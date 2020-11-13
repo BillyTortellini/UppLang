@@ -1,0 +1,11 @@
+ * Auf git pushen
+ * ShaderProgram überarbeiten, sodass ich nur eine file als input hab, alle shader anderst schreiben
+ * Uniform buffers machen
+ * GPU_Mesh_Data überarbeiten
+ * Eventuell globals für: OpenGLState, FileListener, Window, Input
+
+ * ivec2 machen, in window verwenden
+ * Input KEY_CODE zu KEY::
+ * ShaderProgram zu Shader
+
+ * GUI machen

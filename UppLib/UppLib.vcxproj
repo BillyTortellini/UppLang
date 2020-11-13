@@ -1,0 +1,204 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="datastructures\array.hpp" />
+    <ClInclude Include="datastructures\dynamic_array.hpp" />
+    <ClInclude Include="datastructures\hashtable.hpp" />
+    <ClInclude Include="datastructures\string.hpp" />
+    <ClInclude Include="math\matrices.hpp" />
+    <ClInclude Include="math\scalars.hpp" />
+    <ClInclude Include="math\spherical.hpp" />
+    <ClInclude Include="math\umath.hpp" />
+    <ClInclude Include="math\vectors.hpp" />
+    <ClInclude Include="programs\upp_lang\compiler.hpp" />
+    <ClInclude Include="programs\upp_lang\text_editor.hpp" />
+    <ClInclude Include="programs\upp_lang\upp_lang.hpp" />
+    <ClInclude Include="rendering\cameras.hpp" />
+    <ClInclude Include="rendering\camera_controllers.hpp" />
+    <ClInclude Include="rendering\glyph_atlas.hpp" />
+    <ClInclude Include="rendering\mesh_gpu_data.hpp" />
+    <ClInclude Include="rendering\mesh_utils.hpp" />
+    <ClInclude Include="rendering\opengl_function_pointers.hpp" />
+    <ClInclude Include="rendering\opengl_state.hpp" />
+    <ClInclude Include="rendering\opengl_utils.hpp" />
+    <ClInclude Include="rendering\shader_program.hpp" />
+    <ClInclude Include="rendering\texture.hpp" />
+    <ClInclude Include="rendering\text_renderer.hpp" />
+    <ClInclude Include="upplib.hpp" />
+    <ClInclude Include="utility\binary_parser.hpp" />
+    <ClInclude Include="utility\datatypes.hpp" />
+    <ClInclude Include="utility\directory_crawler.hpp" />
+    <ClInclude Include="utility\file_io.hpp" />
+    <ClInclude Include="utility\file_listener.hpp" />
+    <ClInclude Include="utility\utils.hpp" />
+    <ClInclude Include="win32\input.hpp" />
+    <ClInclude Include="win32\timing.hpp" />
+    <ClInclude Include="win32\window.hpp" />
+    <ClInclude Include="win32\windows_helper_functions.hpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="datastructures\array.cpp" />
+    <ClCompile Include="datastructures\dynamic_array.cpp" />
+    <ClCompile Include="datastructures\hashtable.cpp" />
+    <ClCompile Include="datastructures\string.cpp" />
+    <ClCompile Include="main.cpp" />
+    <ClCompile Include="math\matrices.cpp" />
+    <ClCompile Include="math\scalars.cpp" />
+    <ClCompile Include="math\spherical.cpp" />
+    <ClCompile Include="math\vectors.cpp" />
+    <ClCompile Include="programs\upp_lang\compiler.cpp" />
+    <ClCompile Include="programs\upp_lang\text_editor.cpp" />
+    <ClCompile Include="programs\upp_lang\upp_lang.cpp" />
+    <ClCompile Include="rendering\cameras.cpp" />
+    <ClCompile Include="rendering\camera_controllers.cpp" />
+    <ClCompile Include="rendering\glyph_atlas.cpp" />
+    <ClCompile Include="rendering\mesh_gpu_data.cpp" />
+    <ClCompile Include="rendering\mesh_utils.cpp" />
+    <ClCompile Include="rendering\opengl_function_pointers.cpp" />
+    <ClCompile Include="rendering\opengl_state.cpp" />
+    <ClCompile Include="rendering\opengl_utils.cpp" />
+    <ClCompile Include="rendering\shader_program.cpp" />
+    <ClCompile Include="rendering\texture.cpp" />
+    <ClCompile Include="rendering\text_renderer.cpp" />
+    <ClCompile Include="utility\binary_parser.cpp" />
+    <ClCompile Include="utility\directory_crawler.cpp" />
+    <ClCompile Include="utility\file_io.cpp" />
+    <ClCompile Include="utility\file_listener.cpp" />
+    <ClCompile Include="utility\utils.cpp" />
+    <ClCompile Include="win32\input.cpp" />
+    <ClCompile Include="win32\timing.cpp" />
+    <ClCompile Include="win32\window.cpp" />
+    <ClCompile Include="win32\windows_helper_functions.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <Text Include="resources\TODO.txt" />
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>15.0</VCProjectVersion>
+    <ProjectGuid>{3950355D-CAAA-4443-BABB-718005C9FA4A}</ProjectGuid>
+    <RootNamespace>UppLib</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v142</PlatformToolset>
+    <CharacterSet>MultiByte</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v142</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>MultiByte</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v142</PlatformToolset>
+    <CharacterSet>MultiByte</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v142</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>MultiByte</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="Shared">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <IncludePath>$(VC_IncludePath);$(SolutionDir)external_libraries\includes\freetype;$(SolutionDir)external_libraries\includes\opengl_spec;$(WindowsSDK_IncludePath);$(SolutionDir)external_libraries\includes\zlib</IncludePath>
+    <LibraryPath>$(SolutionDir)external_libraries\binaries;$(LibraryPath)</LibraryPath>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <IncludePath>$(VC_IncludePath);$(SolutionDir)external_libraries\includes\freetype;$(SolutionDir)external_libraries\includes\opengl_spec;$(WindowsSDK_IncludePath);$(SolutionDir)external_libraries\includes\zlib</IncludePath>
+    <LibraryPath>$(SolutionDir)external_libraries\binaries;$(LibraryPath)</LibraryPath>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>Disabled</Optimization>
+      <SDLCheck>true</SDLCheck>
+      <ConformanceMode>true</ConformanceMode>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>Disabled</Optimization>
+      <SDLCheck>true</SDLCheck>
+      <ConformanceMode>true</ConformanceMode>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>Opengl32.lib;Winmm.lib;freetype.lib;zlibstatic.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>MaxSpeed</Optimization>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <ConformanceMode>true</ConformanceMode>
+    </ClCompile>
+    <Link>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>MaxSpeed</Optimization>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <ConformanceMode>true</ConformanceMode>
+    </ClCompile>
+    <Link>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <AdditionalDependencies>Opengl32.lib;Winmm.lib;freetype.lib;zlibstatic.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>

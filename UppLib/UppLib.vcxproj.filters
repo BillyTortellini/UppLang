@@ -1,0 +1,272 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hh;hpp;hxx;hm;inl;inc;ipp;xsd</Extensions>
+    </Filter>
+    <Filter Include="Resource Files">
+      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    </Filter>
+    <Filter Include="Header Files\Math">
+      <UniqueIdentifier>{7ab067a7-b343-4269-9cfb-de8e076add80}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Datastructures">
+      <UniqueIdentifier>{349d9e5d-0d12-4aa0-b610-b6700c5c135a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Rendering">
+      <UniqueIdentifier>{5cba0240-f303-4cef-974e-d82f904c5b72}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Rendering">
+      <UniqueIdentifier>{3891d975-81f1-4d78-8bdc-202e359c8569}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Math">
+      <UniqueIdentifier>{f2715306-69d8-4796-b1a3-b23e13ff190a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Datastructures">
+      <UniqueIdentifier>{cb19a5d5-bbf2-469d-bc28-964422e757be}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Utility">
+      <UniqueIdentifier>{f57591d1-3b1d-48ce-8ce8-fe87ccfc753f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Utility">
+      <UniqueIdentifier>{ea736bcd-07d5-467b-947a-d003035101f5}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Programs">
+      <UniqueIdentifier>{7c12507d-02ff-4b09-ae5f-36e7b99dfbe4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Programs\Upp_Lang">
+      <UniqueIdentifier>{1cc28854-1fd3-409c-814e-5d969df59547}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Programs\Proc_City">
+      <UniqueIdentifier>{4030bf76-83f8-4e45-a4c2-8e7235771218}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Win32">
+      <UniqueIdentifier>{491472cc-8b12-4eba-8610-1ec3e05d50ac}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Programs">
+      <UniqueIdentifier>{222b1031-3752-4bba-835c-cd9b7a6a480b}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Programs\Upp_Lang">
+      <UniqueIdentifier>{1de67f4c-8759-4d19-adae-3c007076e502}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Programs\Proc_City">
+      <UniqueIdentifier>{b438c3f2-8a56-409a-8b47-f0fc5e099085}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Win32">
+      <UniqueIdentifier>{f56a672e-dbe3-4a24-8923-c36a332b7330}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="datastructures\array.hpp">
+      <Filter>Header Files\Datastructures</Filter>
+    </ClInclude>
+    <ClInclude Include="datastructures\dynamic_array.hpp">
+      <Filter>Header Files\Datastructures</Filter>
+    </ClInclude>
+    <ClInclude Include="datastructures\hashtable.hpp">
+      <Filter>Header Files\Datastructures</Filter>
+    </ClInclude>
+    <ClInclude Include="datastructures\string.hpp">
+      <Filter>Header Files\Datastructures</Filter>
+    </ClInclude>
+    <ClInclude Include="math\matrices.hpp">
+      <Filter>Header Files\Math</Filter>
+    </ClInclude>
+    <ClInclude Include="math\scalars.hpp">
+      <Filter>Header Files\Math</Filter>
+    </ClInclude>
+    <ClInclude Include="math\spherical.hpp">
+      <Filter>Header Files\Math</Filter>
+    </ClInclude>
+    <ClInclude Include="math\umath.hpp">
+      <Filter>Header Files\Math</Filter>
+    </ClInclude>
+    <ClInclude Include="math\vectors.hpp">
+      <Filter>Header Files\Math</Filter>
+    </ClInclude>
+    <ClInclude Include="win32\input.hpp">
+      <Filter>Header Files\Win32</Filter>
+    </ClInclude>
+    <ClInclude Include="win32\timing.hpp">
+      <Filter>Header Files\Win32</Filter>
+    </ClInclude>
+    <ClInclude Include="win32\window.hpp">
+      <Filter>Header Files\Win32</Filter>
+    </ClInclude>
+    <ClInclude Include="win32\windows_helper_functions.hpp">
+      <Filter>Header Files\Win32</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\upp_lang\compiler.hpp">
+      <Filter>Header Files\Programs\Upp_Lang</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\upp_lang\text_editor.hpp">
+      <Filter>Header Files\Programs\Upp_Lang</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\upp_lang\upp_lang.hpp">
+      <Filter>Header Files\Programs\Upp_Lang</Filter>
+    </ClInclude>
+    <ClInclude Include="rendering\camera_controllers.hpp">
+      <Filter>Header Files\Rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="rendering\cameras.hpp">
+      <Filter>Header Files\Rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="rendering\glyph_atlas.hpp">
+      <Filter>Header Files\Rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="rendering\mesh_gpu_data.hpp">
+      <Filter>Header Files\Rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="rendering\mesh_utils.hpp">
+      <Filter>Header Files\Rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="rendering\opengl_function_pointers.hpp">
+      <Filter>Header Files\Rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="rendering\opengl_state.hpp">
+      <Filter>Header Files\Rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="rendering\opengl_utils.hpp">
+      <Filter>Header Files\Rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="rendering\shader_program.hpp">
+      <Filter>Header Files\Rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="rendering\text_renderer.hpp">
+      <Filter>Header Files\Rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="rendering\texture.hpp">
+      <Filter>Header Files\Rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="utility\binary_parser.hpp">
+      <Filter>Header Files\Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="utility\datatypes.hpp">
+      <Filter>Header Files\Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="utility\directory_crawler.hpp">
+      <Filter>Header Files\Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="utility\file_io.hpp">
+      <Filter>Header Files\Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="utility\file_listener.hpp">
+      <Filter>Header Files\Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="utility\utils.hpp">
+      <Filter>Header Files\Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="upplib.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="datastructures\array.cpp">
+      <Filter>Source Files\Datastructures</Filter>
+    </ClCompile>
+    <ClCompile Include="datastructures\dynamic_array.cpp">
+      <Filter>Source Files\Datastructures</Filter>
+    </ClCompile>
+    <ClCompile Include="datastructures\hashtable.cpp">
+      <Filter>Source Files\Datastructures</Filter>
+    </ClCompile>
+    <ClCompile Include="datastructures\string.cpp">
+      <Filter>Source Files\Datastructures</Filter>
+    </ClCompile>
+    <ClCompile Include="math\matrices.cpp">
+      <Filter>Source Files\Math</Filter>
+    </ClCompile>
+    <ClCompile Include="math\scalars.cpp">
+      <Filter>Source Files\Math</Filter>
+    </ClCompile>
+    <ClCompile Include="math\spherical.cpp">
+      <Filter>Source Files\Math</Filter>
+    </ClCompile>
+    <ClCompile Include="math\vectors.cpp">
+      <Filter>Source Files\Math</Filter>
+    </ClCompile>
+    <ClCompile Include="win32\input.cpp">
+      <Filter>Source Files\Win32</Filter>
+    </ClCompile>
+    <ClCompile Include="win32\timing.cpp">
+      <Filter>Source Files\Win32</Filter>
+    </ClCompile>
+    <ClCompile Include="win32\window.cpp">
+      <Filter>Source Files\Win32</Filter>
+    </ClCompile>
+    <ClCompile Include="win32\windows_helper_functions.cpp">
+      <Filter>Source Files\Win32</Filter>
+    </ClCompile>
+    <ClCompile Include="programs\upp_lang\compiler.cpp">
+      <Filter>Source Files\Programs\Upp_Lang</Filter>
+    </ClCompile>
+    <ClCompile Include="programs\upp_lang\text_editor.cpp">
+      <Filter>Source Files\Programs\Upp_Lang</Filter>
+    </ClCompile>
+    <ClCompile Include="programs\upp_lang\upp_lang.cpp">
+      <Filter>Source Files\Programs\Upp_Lang</Filter>
+    </ClCompile>
+    <ClCompile Include="rendering\camera_controllers.cpp">
+      <Filter>Source Files\Rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="rendering\cameras.cpp">
+      <Filter>Source Files\Rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="rendering\glyph_atlas.cpp">
+      <Filter>Source Files\Rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="rendering\mesh_gpu_data.cpp">
+      <Filter>Source Files\Rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="rendering\mesh_utils.cpp">
+      <Filter>Source Files\Rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="rendering\opengl_function_pointers.cpp">
+      <Filter>Source Files\Rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="rendering\opengl_state.cpp">
+      <Filter>Source Files\Rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="rendering\opengl_utils.cpp">
+      <Filter>Source Files\Rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="rendering\shader_program.cpp">
+      <Filter>Source Files\Rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="rendering\text_renderer.cpp">
+      <Filter>Source Files\Rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="rendering\texture.cpp">
+      <Filter>Source Files\Rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="utility\binary_parser.cpp">
+      <Filter>Source Files\Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="utility\directory_crawler.cpp">
+      <Filter>Source Files\Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="utility\file_io.cpp">
+      <Filter>Source Files\Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="utility\file_listener.cpp">
+      <Filter>Source Files\Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="utility\utils.cpp">
+      <Filter>Source Files\Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="main.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <Text Include="resources\TODO.txt">
+      <Filter>Resource Files</Filter>
+    </Text>
+  </ItemGroup>
+</Project>
