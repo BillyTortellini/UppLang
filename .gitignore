@@ -1,4 +1,4 @@
-external_libraries/**
+external_libraries/library_source/**
 
 ## Visual Studio Gitignore
 ## Ignore Visual Studio temporary files, build results, and
