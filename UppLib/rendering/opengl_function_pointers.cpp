@@ -55,9 +55,14 @@ bool opengl_load_all_functions()
     glGenBuffers = (PFNGLGENBUFFERSPROC) opengl_get_function_address("glGenBuffers");
     glBindBuffer = (PFNGLBINDBUFFERPROC) opengl_get_function_address("glBindBuffer");
     glBufferData = (PFNGLBUFFERDATAPROC) opengl_get_function_address("glBufferData");
+    glBindBufferBase = (PFNGLBINDBUFFERBASEPROC) opengl_get_function_address("glBindBufferBase");
+    glBindBufferRange = (PFNGLBINDBUFFERRANGEPROC) opengl_get_function_address("glBindBufferBase");
     glBufferSubData = (PFNGLBUFFERSUBDATAPROC) opengl_get_function_address("glBufferSubData");
+    glDrawBuffers = (PFNGLDRAWBUFFERSPROC) opengl_get_function_address("glDrawBuffers");
     glVertexAttribPointer = (PFNGLVERTEXATTRIBPOINTERPROC) opengl_get_function_address("glVertexAttribPointer");
     glEnableVertexAttribArray = (PFNGLENABLEVERTEXATTRIBARRAYPROC) opengl_get_function_address("glEnableVertexAttribArray");
+    glVertexAttribDivisor = (PFNGLVERTEXATTRIBDIVISORPROC) opengl_get_function_address("glVertexAttribDivisor");
+    glDrawElementsInstanced = (PFNGLDRAWELEMENTSINSTANCEDPROC) opengl_get_function_address("glDrawElementsInstanced");
     glCreateShader = (PFNGLCREATESHADERPROC) opengl_get_function_address("glCreateShader");
     glShaderSource = (PFNGLSHADERSOURCEPROC) opengl_get_function_address("glShaderSource");
     glCompileShader = (PFNGLCOMPILESHADERPROC) opengl_get_function_address("glCompileShader");
@@ -134,14 +139,19 @@ bool opengl_load_all_functions()
         (glDebugMessageCallback != NULL) &&
         (glGenBuffers != NULL) &&
         (glBindBuffer != NULL) &&
+        (glBindBufferBase != NULL) &&
+        (glBindBufferRange != NULL) &&
         (glBufferData != NULL) &&
         (glBufferSubData != NULL) &&
         (glVertexAttribPointer != NULL) &&
+        (glDrawElementsInstanced != NULL) &&
         (glEnableVertexAttribArray != NULL) &&
         (glCreateShader != NULL) &&
         (glShaderSource != NULL) &&
         (glCompileShader != NULL) &&
+        (glDrawBuffers != NULL) &&
         (glDeleteShader != NULL) &&
+        (glVertexAttribDivisor != NULL) &&
         (glCreateProgram != NULL) &&
         (glDeleteProgram != NULL) &&
         (glAttachShader != NULL) &&
@@ -221,7 +231,6 @@ bool opengl_load_all_functions()
 
 // Debug functions
 PFNGLDEBUGMESSAGECALLBACKPROC glDebugMessageCallback;
-
 // Buffer functions
 PFNGLGENVERTEXARRAYSPROC glGenVertexArrays;
 PFNGLBINDVERTEXARRAYPROC glBindVertexArray;
@@ -229,12 +238,17 @@ PFNGLGENBUFFERSPROC glGenBuffers;
 PFNGLBINDBUFFERPROC glBindBuffer;
 PFNGLBUFFERDATAPROC glBufferData;
 PFNGLBUFFERSUBDATAPROC glBufferSubData;
+PFNGLBINDBUFFERBASEPROC glBindBufferBase;
+PFNGLBINDBUFFERRANGEPROC glBindBufferRange;
 PFNGLVERTEXATTRIBPOINTERPROC glVertexAttribPointer;
 PFNGLENABLEVERTEXATTRIBARRAYPROC glEnableVertexAttribArray;
+PFNGLVERTEXATTRIBDIVISORPROC glVertexAttribDivisor;
 PFNGLUSEPROGRAMPROC glUseProgram;
+PFNGLDRAWBUFFERSPROC glDrawBuffers;
 // Drawing 
 //PFNGLDRAWARRAYSPROC glDrawArrays;
 //PFNGLDRAWELEMENTSPROC glDrawElements;
+PFNGLDRAWELEMENTSINSTANCEDPROC glDrawElementsInstanced;
 // Shader creation
 PFNGLCREATESHADERPROC glCreateShader;
 PFNGLSHADERSOURCEPROC glShaderSource;

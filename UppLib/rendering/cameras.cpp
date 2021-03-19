@@ -19,6 +19,7 @@ Camera_3D camera_3d_make(int width, int height, float fov_x, float near, float f
 void camera_3d_update_matrices(Camera_3D* camera) 
 {
     float aspect_ratio = (float)camera->width/camera->height;
+    //aspect_ratio = 1.0f / aspect_ratio;
     camera->view_matrix = mat4_make_view_matrix_look_in_direction(camera->position, camera->view_direction);
     camera->projection_matrix = mat4_make_projection_matrix(camera->near_distance, camera->far_distance, camera->fov_x, aspect_ratio);
     camera->view_projection_matrix = camera->projection_matrix * camera->view_matrix;

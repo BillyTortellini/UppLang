@@ -3,6 +3,7 @@
 #include <cstring>
 #include <cstdio>
 #include <cstdarg>
+#include <cstdlib>
 
 #include "../math/scalars.hpp"
 #include "../utility/utils.hpp"
@@ -229,12 +230,12 @@ void string_append_character(String* string, char c)
 
 void string_remove_substring(String* string, int start_index, int end_index) 
 {
-    if (string->size == 0 || end_index < start_index) {
+    if (string->size == 0 || end_index <= start_index) {
         return;
     }
     start_index = math_clamp(start_index, 0, string->size-1);
-    end_index = math_clamp(end_index, 0, string->size-1);
-    int length = end_index - start_index + 1;
+    end_index = math_clamp(end_index, 0, string->size);
+    int length = end_index - start_index;
     for (int i = start_index; i < string->size - length; i++) {
         string->characters[i] = string->characters[i + length];
     }
@@ -257,7 +258,7 @@ void string_append_string(String* string, String* appendix)
 
 void string_remove_character(String* string, int index) 
 {
-    if (index >= string->size) {
+    if (index >= string->size || index < 0) {
         return;
     }
     for (int i = index; i + 1 <= string->size; i++) {
@@ -281,5 +282,114 @@ void string_insert_character_before(String* string, byte character, int index)
     // Update size
     string->size += 1;
     string->characters[string->size] = 0; // Null-Terminator
+}
+
+Optional<int> string_find_character_index(String* string, char c, int start_position) {
+    if (start_position >= string->size) {
+        return optional_make_failure<int>();
+    }
+    char* result = strchr(string->characters + start_position, c);
+    if (result == nullptr) {
+        return optional_make_failure<int>();
+    }
+    else {
+        return optional_make_success<int>(result - string->characters);
+    }
+}
+
+bool string_compare_substring(String* string, int start_index, String* other) {
+    if (string->size - start_index < other->size) {
+        return false;
+    }
+    return strncmp(string->characters + start_index, other->characters, other->size) == 0;
+}
+
+void string_insert_string(String* string, String* insertion, int position) 
+{
+    position = math_clamp(position, 0, string->size);
+    int new_size = string->size + insertion->size;
+    string_reserve(string, new_size+1);
+    string->characters[new_size] = 0;
+    // Create a hole in the string where we the insertion can be placed
+    for (int i = new_size - 1; i-insertion->size >= position; i--) {
+        string->characters[i] = string->characters[i - insertion->size];
+    }
+    // Fill the hole with the insertion
+    memory_copy(string->characters + position, insertion->characters, insertion->size);
+    string->size = new_size;
+}
+
+void string_prepend_string(String* string, String* prepension) {
+    string_insert_string(string, prepension, 0);
+}
+
+
+bool string_contains_substring(String* string, String* substring) {
+    return strstr(string->characters, substring->characters) != 0;
+}
+
+void string_clear(String* string)
+{
+    string->size = 0;
+    string->characters[0] = 0;
+}
+
+void string_set_characters(String* string, const char* characters)
+{
+    string_clear(string);
+    string_append(string, characters);
+}
+
+Optional<float> string_parse_float(String* string) {
+    char* end_ptr;
+    float result = strtof(string->characters, &end_ptr);
+    if (string->characters + string->size != end_ptr) {
+        return optional_make_failure<float>();
+    }
+    return optional_make_success(result);
+}
+
+Optional<int> string_parse_int(String* string) {
+    char* end_ptr;
+    int result = strtol(string->characters, &end_ptr, 10);
+    if (string->characters + string->size != end_ptr) {
+        return optional_make_failure<int>();
+    }
+    return optional_make_success(result);
+}
+
+bool string_contains_character(String string, char character) {
+    for (int i = 0; i < string.size; i++) {
+        if (string.characters[i] == character) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void string_append_character_array(String* string, Array<char> appendix) 
+{
+    int appendix_length = appendix.size;
+    int required_capacity = string->size + appendix_length+1;
+    string_reserve(string, required_capacity);
+
+    memory_copy(string->characters + string->size, appendix.data, appendix.size);
+    string->size += appendix.size;
+    string->characters[string->size] = 0;
+}
+
+bool string_contains_only_characters_in_set(String* string, String set, bool use_set_complement)
+{
+    for (int i = 0; i < string->size; i++)
+    {
+        char c = string->characters[i];
+        if (!use_set_complement) {
+            if (!string_contains_character(set, c)) return false;
+        }
+        else {
+            if (string_contains_character(set, c)) return false;
+        }
+    }
+    return true;
 }
 

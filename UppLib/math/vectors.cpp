@@ -9,6 +9,7 @@
 
 #define NORMALIZE_SAVE_MIN 0.000001f
 #include <cmath>
+#include "scalars.hpp"
 
 // VEC 2
 vec2 operator-(const vec2& v) {
@@ -111,6 +112,14 @@ vec2 vector_rotate_90_degree_counter_clockwise(const vec2& v) {
     return vec2(-v.y, v.x);
 }
 
+float vector_get_minimum_axis(const vec2& v) {
+    return math_minimum(v.x, v.y);
+}
+
+float vector_get_maximum_axis(const vec2& v) {
+    return math_maximum(v.x, v.y);
+}
+
 // VEC 3
 vec3 operator-(const vec3& v) {
     return vec3(-v.x, -v.y, -v.z);
@@ -199,6 +208,12 @@ vec3 vector_cross(const vec3& v1, const vec3& v2) {
 }
 vec3 vector_homogenize(const vec3& v) {
     return vec3(v.x/v.z, v.y/v.z, 1.0f);
+}
+float vector_get_minimum_axis(const vec3& v) {
+    return math_minimum(v.x, math_minimum(v.y, v.z));
+}
+float vector_get_maximum_axis(const vec3& v) {
+    return math_maximum(v.x, math_minimum(v.y, v.z));
 }
 
 
@@ -293,4 +308,12 @@ float vector_dot(const vec4& v1, const vec4& v2) {
 
 vec4 vector_homogenize(const vec4& v) {
     return vec4(v.x/v.w, v.y/v.w, v.z/v.w, 1.0f);
+}
+
+float vector_get_minimum_axis(const vec4& v) {
+    return math_minimum(v.x, math_minimum(v.y, math_minimum(v.y, v.w)));
+}
+
+float vector_get_maximum_axis(const vec4& v) {
+    return math_maximum(v.x, math_maximum(v.y, math_maximum(v.y, v.w)));
 }

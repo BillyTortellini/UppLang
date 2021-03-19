@@ -102,19 +102,20 @@ TextRenderer* text_renderer_create_from_font_atlas_file(OpenGLState* state, File
         state
     );
     // Initialize GPU data
-    Vertex_GPU_Buffer vertex_gpu_buffer = vertex_gpu_buffer_create_empty(sizeof(FontVertex)*1024, GL_DYNAMIC_DRAW);
+    //Vertex_GPU_Buffer vertex_gpu_buffer = vertex_gpu_buffer_create_empty(sizeof(FontVertex)*1024, GL_DYNAMIC_DRAW);
     VertexAttributeInformation attribute_informations[] = {
         vertex_attribute_information_make(GL_FLOAT, 2, DefaultVertexAttributeLocation::POSITION_2D, 0, sizeof(FontVertex)),
         vertex_attribute_information_make(GL_FLOAT, 2, DefaultVertexAttributeLocation::TEXTURE_COORDINATE_2D, sizeof(vec2), sizeof(FontVertex)),
         vertex_attribute_information_make(GL_FLOAT, 3, 4, sizeof(vec2) + sizeof(vec2), sizeof(FontVertex)),
         vertex_attribute_information_make(GL_FLOAT, 1, 3, sizeof(vec2)*2 + sizeof(vec3), sizeof(FontVertex)),
     };
-    vertex_gpu_buffer_attach_attribute_informations(&vertex_gpu_buffer, array_create_static<VertexAttributeInformation>(attribute_informations, 4));
-
     text_renderer->font_mesh = mesh_gpu_data_create(
         state,
-        vertex_gpu_buffer, // Transfers ownership
-        index_gpu_buffer_create_empty(state, sizeof(GLuint)*1000, GL_TRIANGLES, GL_DYNAMIC_DRAW)
+        gpu_buffer_create_empty(sizeof(FontVertex)*1024, GL_ARRAY_BUFFER, GL_DYNAMIC_DRAW),
+        array_create_static(attribute_informations, 4),
+        gpu_buffer_create_empty(sizeof(GLuint) * 1024 * 4, GL_ELEMENT_ARRAY_BUFFER, GL_DYNAMIC_DRAW),
+        GL_TRIANGLES,
+        0
     );
 
     text_renderer->text_vertices = dynamic_array_create_empty<FontVertex>(1024);
@@ -140,9 +141,9 @@ vec2 text_renderer_get_scaling_factor(TextRenderer* renderer, float relative_hei
     // Glpyh information sizes (in 23.3 format) to normalized screen coordinates scaling factor
     GlyphAtlas* atlas = &renderer->glyph_atlas;
     float CHARACTER_HEIGHT_NORMALIZED = relative_height;
-    const float scaling_factor_x = CHARACTER_HEIGHT_NORMALIZED/(atlas->ascender - atlas->descender) *
-        ((float)renderer->screen_height/renderer->screen_width);
-    const float scaling_factor_y = CHARACTER_HEIGHT_NORMALIZED/(atlas->ascender - atlas->descender);
+    const float scaling_factor_x = CHARACTER_HEIGHT_NORMALIZED / (atlas->ascender - atlas->descender) *
+        ((float)renderer->screen_height / renderer->screen_width);
+    const float scaling_factor_y = CHARACTER_HEIGHT_NORMALIZED / (atlas->ascender - atlas->descender);
 
     return vec2(scaling_factor_x, scaling_factor_y);
 }
@@ -169,38 +170,38 @@ void text_renderer_add_text_from_layout(
         GlyphInformation* glyph_info = char_pos->glyph_info;
 
         BoundingBox2 char_box;
-        char_box.minimum_coordinates.x =
-            char_pos->bounding_box.minimum_coordinates.x + position.x +
+        char_box.min.x =
+            char_pos->bounding_box.min.x + position.x +
             glyph_info->bearing_x * scaling_factor.x;
-        char_box.minimum_coordinates.y =
-            char_pos->bounding_box.minimum_coordinates.y + position.y - descender +
+        char_box.min.y =
+            char_pos->bounding_box.min.y + position.y - descender +
             (glyph_info->bearing_y - glyph_info->glyph_height) * scaling_factor.y;
-        char_box.maximum_coordinates.x = char_box.minimum_coordinates.x +
+        char_box.max.x = char_box.min.x +
             glyph_info->glyph_width * scaling_factor.x;
-        char_box.maximum_coordinates.y = char_box.minimum_coordinates.y +
+        char_box.max.y = char_box.min.y +
             glyph_info->glyph_height * scaling_factor.y;
 
         // Push back 4 vertices for each glyph
         FontVertex bb_bottom_left(
-            vec2(char_box.minimum_coordinates.x, char_box.minimum_coordinates.y),
+            vec2(char_box.min.x, char_box.min.y),
             vec2(glyph_info->atlas_fragcoords_left, glyph_info->atlas_fragcoords_bottom),
             char_pos->color,
             distance_field_scaling
         );
         FontVertex bb_bottom_right(
-            vec2(char_box.maximum_coordinates.x, char_box.minimum_coordinates.y),
+            vec2(char_box.max.x, char_box.min.y),
             vec2(glyph_info->atlas_fragcoords_right, glyph_info->atlas_fragcoords_bottom),
             char_pos->color,
             distance_field_scaling
         );
         FontVertex bb_top_left(
-            vec2(char_box.minimum_coordinates.x, char_box.maximum_coordinates.y),
+            vec2(char_box.min.x, char_box.max.y),
             vec2(glyph_info->atlas_fragcoords_left, glyph_info->atlas_fragcoords_top),
             char_pos->color,
             distance_field_scaling
         );
         FontVertex bb_top_right(
-            vec2(char_box.maximum_coordinates.x, char_box.maximum_coordinates.y),
+            vec2(char_box.max.x, char_box.max.y),
             vec2(glyph_info->atlas_fragcoords_right, glyph_info->atlas_fragcoords_top),
             char_pos->color,
             distance_field_scaling
@@ -267,8 +268,8 @@ TextLayout* text_renderer_calculate_text_layout(
         {
             Character_Position pos;
             pos.glyph_info = info;
-            pos.bounding_box.minimum_coordinates = vec2(cursor_x, cursor_y);
-            pos.bounding_box.maximum_coordinates = vec2(cursor_x + info->advance_x * scaling_factor.x,
+            pos.bounding_box.min = vec2(cursor_x, cursor_y);
+            pos.bounding_box.max = vec2(cursor_x + info->advance_x * scaling_factor.x,
                 cursor_y + (atlas->ascender - atlas->descender) * scaling_factor.y);
             pos.color = renderer->default_color;
             dynamic_array_push_back(&renderer->text_layout.character_positions, pos);
@@ -283,8 +284,8 @@ TextLayout* text_renderer_calculate_text_layout(
 
     // Push up all character, so that all y coordinates are > 0
     for (int i = 0; i < renderer->text_layout.character_positions.size; i++) {
-        renderer->text_layout.character_positions[i].bounding_box.minimum_coordinates.y += cursor_y;
-        renderer->text_layout.character_positions[i].bounding_box.maximum_coordinates.y += cursor_y;
+        renderer->text_layout.character_positions[i].bounding_box.min.y += cursor_y;
+        renderer->text_layout.character_positions[i].bounding_box.max.y += cursor_y;
     }
 
     renderer->text_layout.size = vec2(max_cursor_x, -cursor_y);
@@ -300,14 +301,17 @@ void text_renderer_update_window_size(TextRenderer* renderer, int new_width, int
 void text_renderer_render(TextRenderer* renderer, OpenGLState* state)
 {
     // Update font_mesh
-    vertex_gpu_buffer_update_data(
-        mesh_gpu_data_get_vertex_gpu_buffer(&renderer->font_mesh, 0),
+    gpu_buffer_update(
+        &renderer->font_mesh.vertex_buffers[0].vertex_buffer,
         dynamic_array_to_bytes(&renderer->text_vertices)
     );
-    index_gpu_buffer_update_data(
-        mesh_gpu_data_get_index_gpu_buffer(&renderer->font_mesh),
-        dynamic_array_to_array(&renderer->text_indices)
+    mesh_gpu_data_update_index_buffer(
+        &renderer->font_mesh,
+        dynamic_array_to_array(&renderer->text_indices),
+        state
     );
+    renderer->font_mesh.index_count = renderer->text_indices.size;
+
     // Reset buffers
     dynamic_array_reset(&renderer->text_vertices);
     dynamic_array_reset(&renderer->text_indices);
@@ -341,6 +345,13 @@ Texture* text_renderer_get_texture(TextRenderer* renderer)
     return &renderer->atlas_sdf_texture;
 }
 
+void text_renderer_set_color(TextRenderer* renderer, vec3 color) {
+    renderer->default_color = color;
+}
+
+float text_renderer_calculate_text_width(TextRenderer* renderer, int char_count, float relative_height) {
+    return (float)renderer->glyph_atlas.cursor_advance / (renderer->glyph_atlas.ascender - renderer->glyph_atlas.descender) * relative_height * char_count;
+}
 
 
 

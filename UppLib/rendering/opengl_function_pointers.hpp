@@ -24,16 +24,21 @@ extern PFNGLGENVERTEXARRAYSPROC glGenVertexArrays;
 extern PFNGLBINDVERTEXARRAYPROC glBindVertexArray;
 extern PFNGLGENBUFFERSPROC glGenBuffers;
 extern PFNGLBINDBUFFERPROC glBindBuffer;
+extern PFNGLBINDBUFFERBASEPROC glBindBufferBase;
+extern PFNGLBINDBUFFERRANGEPROC glBindBufferRange;
 extern PFNGLBUFFERDATAPROC glBufferData;
 extern PFNGLBUFFERSUBDATAPROC glBufferSubData;
 extern PFNGLVERTEXATTRIBPOINTERPROC glVertexAttribPointer;
 extern PFNGLENABLEVERTEXATTRIBARRAYPROC glEnableVertexAttribArray;
+extern PFNGLVERTEXATTRIBDIVISORPROC glVertexAttribDivisor;
 extern PFNGLUSEPROGRAMPROC glUseProgram;
+extern PFNGLDRAWBUFFERSPROC glDrawBuffers;
 // Drawing (Available in Opengl 1.1, meaning in <gl/GL.h>, these are only prototypes)
 //void glDrawElements(GLenum mode, GLsizei count, GLenum type, const void* offset);
 //void glDrawArrays(GLenum mode, GLint first, GLsizei count);
 //extern PFNGLDRAWARRAYSPROC glDrawArrays;
 //extern PFNGLDRAWELEMENTSPROC glDrawElements;
+extern PFNGLDRAWELEMENTSINSTANCEDPROC glDrawElementsInstanced;
 // Shader creation
 extern PFNGLCREATESHADERPROC glCreateShader;
 extern PFNGLSHADERSOURCEPROC glShaderSource;

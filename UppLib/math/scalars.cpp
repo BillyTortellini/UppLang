@@ -27,7 +27,7 @@ double math_ceil(double x) {
 }
 
 int math_modulo(int x, int modulo) {
-    return (x % modulo + x) % modulo;
+    return ((x % modulo) + modulo) % modulo;
 }
 
 float math_modulo(float x, float modulo) {
@@ -48,7 +48,7 @@ float math_tangent(float x) { return tanf(x); }
 float math_arcsine(float x) { return asinf(x); }
 float math_arccosine(float x) { return acosf(x); }
 float math_arctangent(float x) { return atanf(x); }
-float math_arctangent_2(float x, float y) { return atan2f(y, x); }
+float math_arctangent_2(float y, float x) { return atan2f(y, x); }
 float math_square_root(float x) { return sqrtf(x); }
 double math_square_root(double x) { return sqrtl(x); }
 

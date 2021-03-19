@@ -76,7 +76,7 @@ void shader_program_file_changed_callback(void* userdata, const char* filename)
     ShaderProgram* shader_program = (ShaderProgram*)userdata;
     // Delete old shader if it exists
     if (shader_program->program_id) {
-        opengl_utils_destroy_program(shader_program->program_id);
+        glDeleteProgram(shader_program->program_id);
     }
 
     // Recompile shader
@@ -87,6 +87,10 @@ void shader_program_file_changed_callback(void* userdata, const char* filename)
     shader_program_retrieve_shader_variable_information(shader_program);
 }
 
+Optional<ShaderProgram*> shader_program_create(FileListener* file_listener, const char* filepath) {
+    return shader_program_create(file_listener, { filepath });
+}
+
 Optional<ShaderProgram*> shader_program_create(FileListener* file_listener, std::initializer_list<const char*> shader_filepaths)
 {
     Optional<ShaderProgram*> result;
@@ -94,15 +98,7 @@ Optional<ShaderProgram*> shader_program_create(FileListener* file_listener, std:
 
     ShaderProgram* shader_program = new ShaderProgram();
     shader_program->file_listener = file_listener;
-    // Fill shader_file_names array
-    {
-        shader_program->shader_filepaths = array_create_empty<const char*>((int)shader_filepaths.size());
-        int i = 0;
-        for (auto filepath : shader_filepaths) {
-            shader_program->shader_filepaths.data[i] = filepath;
-            i++;
-        }
-    }
+    shader_program->shader_filepaths = array_create_from_list(shader_filepaths);
 
     // Setup file watchers
     {
@@ -182,14 +178,14 @@ void shader_program_print_variable_information(ShaderProgram* program)
     for (int i = 0; i < program->uniform_informations.size; i++) {
         ShaderVariableInformation* info = &program->uniform_informations.data[i];
         string_append_formated(&message, "\t\tLocation: %d, size: %d, type: %s name: \"%s\"\n", 
-            info->location, info->size, opengl_utils_type_to_string(info->type), info->name.characters);
+            info->location, info->size, opengl_utils_datatype_to_string(info->type), info->name.characters);
     }
 
     string_append_formated(&message, "\n\tAttributes(#%d): \n", program->attribute_informations.size);
     for (int i = 0; i < program->attribute_informations.size; i++) {
         ShaderVariableInformation* info = &program->attribute_informations.data[i];
         string_append_formated(&message, "\t\tLocation: %d, size: %d, type: %s name: \"%s\"\n", 
-            info->location, info->size, opengl_utils_type_to_string(info->type), info->name.characters);
+            info->location, info->size, opengl_utils_datatype_to_string(info->type), info->name.characters);
     }
 
     logg("%s", message.characters);

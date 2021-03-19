@@ -62,6 +62,9 @@ mat3 matrix_transpose(const mat3& m);
 mat3 mat3_make_rotation_matrix_from_angles(float yaw, float pitch, float roll);
 mat3 mat3_make_scaling_matrix(const vec3& s);
 mat3 mat3_make_translation_matrix(const vec2& t);
+mat3 mat3_make_rotation_matrix_around_x(float angle);
+mat3 mat3_make_rotation_matrix_around_y(float angle);
+mat3 mat3_make_rotation_matrix_around_z(float angle);
 
 // MATRIX 4x4
 struct mat4
@@ -103,5 +106,6 @@ mat4 mat4_make_view_matrix_look_in_direction(const vec3& pos, const vec3& dir, c
 mat4 mat4_make_view_matrix_look_in_direction(const vec3& pos, const vec3& dir);
 mat4 mat4_make_view_matrix_look_at_position(const vec3& pos, const vec3& at, const vec3& up);
 mat4 mat4_make_view_matrix_look_at_position(const vec3& pos, const vec3& at);
+mat4 mat4_make_scaling_matrix(const vec3& s);
 
 

@@ -12,6 +12,7 @@
 #include "text_editor.hpp"
 #include "../../rendering/mesh_utils.hpp"
 #include "../../win32/window.hpp"
+#include "../../utility/file_io.hpp"
 
 #include "../../math/umath.hpp"
 #include "../../datastructures/hashtable.hpp"
@@ -25,6 +26,8 @@ bool int_equals(int* a, int* b) {
     return (*a == *b);
 }
 
+/*
+*/
 void upp_lang_main() 
 {
     {
@@ -75,19 +78,23 @@ void upp_lang_main()
 
     OpenGLState opengl_state = opengl_state_create();
     SCOPE_EXIT(opengl_state_destroy(&opengl_state));
-    opengl_state_query_current_state(&opengl_state);
-
+    
     // Text Editor
     WindowState* window_state = window_get_window_state(window);
+    double text_renderer_init_start_time = timing_current_time_in_seconds();
     TextRenderer* text_renderer = text_renderer_create_from_font_atlas_file(
         &opengl_state, file_listener, "resources/fonts/glyph_atlas.atlas", window_state->width, window_state->height);
     SCOPE_EXIT(text_renderer_destroy(text_renderer));
-    Text_Editor_Logic text_editor_logic = text_editor_logic_create();
-    SCOPE_EXIT(text_editor_logic_destroy(&text_editor_logic));
     Text_Editor text_editor = text_editor_create(text_renderer, file_listener, &opengl_state);
     {
         String test_string = string_create_static("main :: (x : int) -> void \n{\n\n}");
-        text_editor_set_string(&text_editor, &test_string);
+        text_set_string(&text_editor.lines, &test_string);
+
+        Optional<String> content = file_io_load_text_file("editor_text.txt");
+        if (content.available) {
+            SCOPE_EXIT(string_destroy(&content.value););
+            text_set_string(&text_editor.lines, &content.value);
+        }
     }
     SCOPE_EXIT(text_editor_destroy(&text_editor));
 
@@ -125,19 +132,22 @@ void upp_lang_main()
         u32 triangle_indices[] = {
             0, 1, 2
         };
-
+        VertexAttributeInformation attrib_infos[] = { vertex_attribute_information_make(GL_FLOAT, 3, 0, 0, 4 * 3) };
         mesh_triangle = mesh_gpu_data_create(
             &opengl_state,
-            vertex_gpu_buffer_create_with_attribute_information(
-                array_create_static((byte*)triangle_vertices, sizeof(triangle_vertices)),
-                vertex_attribute_information_make(GL_FLOAT, 3, DefaultVertexAttributeLocation::POSITION_3D, 0, sizeof(vec3)),
+            gpu_buffer_create(
+                array_as_bytes(&array_create_static(triangle_vertices, 3)),
+                GL_ARRAY_BUFFER,
                 GL_STATIC_DRAW
             ),
-            index_gpu_buffer_create(
-                &opengl_state,
-                array_create_static(triangle_indices, sizeof(triangle_vertices)),
-                GL_TRIANGLES, GL_STATIC_DRAW
-            )
+            array_create_static(attrib_infos, 1),
+            gpu_buffer_create(
+                array_as_bytes(&array_create_static(triangle_indices, 3)),
+                GL_ELEMENT_ARRAY_BUFFER,
+                GL_STATIC_DRAW
+            ),
+            GL_TRIANGLES,
+            3
         );
     }
 
@@ -183,7 +193,13 @@ void upp_lang_main()
                 break;
             }
             if (input->close_request_issued || input->key_pressed[KEY_CODE::ESCAPE]) {
+                // Close window
                 window_close(window);
+                // Write text editor output to file
+                String output = string_create_empty(256);
+                SCOPE_EXIT(string_destroy(&output););
+                text_append_to_string(&text_editor.lines, &output);
+                file_io_write_file("editor_text.txt", array_create_static((byte*)output.characters, output.size));
                 break;
             }
             if (input->client_area_resized) {
@@ -197,7 +213,7 @@ void upp_lang_main()
                 window_set_fullscreen(window, !state->fullscreen);
             }
             camera_controller_arcball_update(&camera_controller_arcball, &camera, input);
-            text_editor_logic_update(&text_editor_logic, &text_editor, input);
+            text_editor_update(&text_editor, input);
 
             file_listener_check_if_files_changed(file_listener);
         }
@@ -210,9 +226,10 @@ void upp_lang_main()
             shader_program_set_uniform(shader_simple, &opengl_state, "time", (float)timing_current_time_in_seconds());
             shader_program_set_uniform(shader_simple, &opengl_state, "uniform_mvp", camera.view_projection_matrix);
             mesh_gpu_data_draw_with_shader_program(&mesh_triangle, shader_simple, &opengl_state);
+            /*
+            */
 
             WindowState* window_state = window_get_window_state(window);
-            text_editor_render(&text_editor, &opengl_state, window_state->width, window_state->height, window_state->dpi);
 
             /*
             shader_program_set_uniform(shader_test, &opengl_state, "time", (float)timing_current_time_in_seconds());
@@ -221,6 +238,7 @@ void upp_lang_main()
             shader_program_set_uniform(shader_test, &opengl_state, "camera_position", camera.position);
             mesh_gpu_data_draw_with_shader_program(&mesh_quad, shader_test, &opengl_state);
             */
+            text_editor_render(&text_editor, &opengl_state, window_state->width, window_state->height, window_state->dpi);
 
             window_swap_buffers(window);
         }
@@ -228,7 +246,7 @@ void upp_lang_main()
 
         // Sleep
         {
-            double time_calculations = timing_current_time_in_seconds()  - time_frame_start;
+            double time_calculations = timing_current_time_in_seconds() - time_frame_start;
             //logg("TSLF: %3.2fms, calculation time: %3.2fms\n", time_since_last_update*1000, time_calculations*1000);
 
             // Sleep

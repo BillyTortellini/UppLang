@@ -124,6 +124,7 @@ struct OpenGLState;
 // For shader_program_create to work, the files need to exist, the shader does not need to compile
 // Hot reloading is done by using the file_listeners interface to search for updates
 Optional<ShaderProgram*> shader_program_create(FileListener* file_listener, std::initializer_list<const char*> shader_filepaths);
+Optional<ShaderProgram*> shader_program_create(FileListener* file_listener, const char* filepath);
 void shader_program_destroy(ShaderProgram* program);
 void shader_program_destroy(Optional<ShaderProgram*> program);
 

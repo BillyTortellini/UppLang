@@ -204,13 +204,13 @@ void glyph_atlas_save_as_file(GlyphAtlas* atlas, const char* filepath)
     binary_parser_write_int(&parser, atlas->descender);
     binary_parser_write_int(&parser, atlas->cursor_advance);
     texture_bitmap_binary_parser_write(&atlas->atlas_bitmap, &parser);
-    binary_parser_write_bytes(&parser, array_to_bytes(&atlas->atlas_distance_field));
+    binary_parser_write_bytes(&parser, array_as_bytes(&atlas->atlas_distance_field));
     binary_parser_write_int(&parser, atlas->glyph_informations.size);
     for (int i = 0; i < atlas->glyph_informations.size; i++) {
         glyph_information_binary_parser_write(&atlas->glyph_informations[i], &parser);
     }
     binary_parser_write_int(&parser, atlas->character_to_glyph_map.size);
-    binary_parser_write_bytes(&parser, array_to_bytes(&atlas->character_to_glyph_map));
+    binary_parser_write_bytes(&parser, array_as_bytes(&atlas->character_to_glyph_map));
 
     binary_parser_write_to_file(&parser, filepath);
 }
@@ -232,7 +232,7 @@ Optional<GlyphAtlas> glyph_atlas_create_from_atlas_file(const char* atlas_filepa
     result.cursor_advance = binary_parser_read_int(parser);
     result.atlas_bitmap = texture_bitmap_binary_parser_read(parser);
     result.atlas_distance_field = array_create_empty<float>(width*height);
-    binary_parser_read_bytes(parser, array_to_bytes(&result.atlas_distance_field));
+    binary_parser_read_bytes(parser, array_as_bytes(&result.atlas_distance_field));
     int glyph_information_count = binary_parser_read_int(parser);
     result.glyph_informations = dynamic_array_create_empty<GlyphInformation>(glyph_information_count);
     for (int i = 0; i < glyph_information_count; i++) {
@@ -241,7 +241,7 @@ Optional<GlyphAtlas> glyph_atlas_create_from_atlas_file(const char* atlas_filepa
     }
     int character_to_glyph_map_size = binary_parser_read_int(parser);
     result.character_to_glyph_map = array_create_empty<int>(character_to_glyph_map_size);
-    binary_parser_read_bytes(parser, array_to_bytes(&result.character_to_glyph_map));
+    binary_parser_read_bytes(parser, array_as_bytes(&result.character_to_glyph_map));
 
     return optional_make_success(result);
 }

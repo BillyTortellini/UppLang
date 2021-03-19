@@ -41,8 +41,35 @@ mat3 operator*(const mat3& m1, const mat3& m2) {
     return mat3(m1*m2.columns[0], m1*m2.columns[1], m1*m2.columns[2]);    
 }
 
+mat3 mat3_make_rotation_matrix_around_x(float angle) {
+    mat3 result;
+    result.columns[0] = vec3(1.0f, 0.0f, 0.0f);
+    result.columns[1] = vec3(0.0f, math_cosine(angle), math_sine(angle));
+    result.columns[2] = vec3(0.0f, -math_sine(angle), math_cosine(angle));
+    return result;
+}
+
+mat3 mat3_make_rotation_matrix_around_y(float angle) {
+    mat3 result;
+    result.columns[0] = vec3(math_cosine(angle), 0.0f, math_sine(angle));
+    result.columns[1] = vec3(0.0f, 1.0f, 0.0f);
+    result.columns[2] = vec3(-math_sine(angle), 0.0f,  math_cosine(angle));
+    return result;
+}
+
+mat3 mat3_make_rotation_matrix_around_z(float angle) {
+    mat3 result;
+    result.columns[0] = vec3(math_cosine(angle), -math_sine(angle), 0.0f);
+    result.columns[1] = vec3(math_sine(angle), math_cosine(angle), 0.0f);
+    result.columns[2] = vec3(0.0f, 0.0f, 1.0f);
+    return result;
+}
+
 mat3 mat3_make_rotation_matrix_from_angles(float yaw, float pitch, float roll) {
-    return mat3(0.0f);
+    return 
+        mat3_make_rotation_matrix_around_y(yaw) *
+        mat3_make_rotation_matrix_around_x(pitch) *
+        mat3_make_rotation_matrix_around_z(roll);
 }
 
 mat3 mat3_make_scaling_matrix(const vec3& s) {

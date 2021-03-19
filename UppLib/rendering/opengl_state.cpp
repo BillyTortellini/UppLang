@@ -60,8 +60,8 @@ void opengl_state_bind_vao(OpenGLState* state, GLuint vao) {
 
 void opengl_state_bind_element_buffer(OpenGLState* state, GLuint element_buffer_object) 
 {
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, element_buffer_object);
     state->element_buffer_object = element_buffer_object;
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, element_buffer_object);
 }
 
 void opengl_state_bind_texture(OpenGLState* state, GLenum texture_target, GLuint texture_id)

@@ -23,12 +23,15 @@
     <ClInclude Include="datastructures\dynamic_array.hpp" />
     <ClInclude Include="datastructures\hashtable.hpp" />
     <ClInclude Include="datastructures\string.hpp" />
+    <ClInclude Include="datastructures\string_pool.hpp" />
     <ClInclude Include="math\matrices.hpp" />
     <ClInclude Include="math\scalars.hpp" />
     <ClInclude Include="math\spherical.hpp" />
     <ClInclude Include="math\umath.hpp" />
     <ClInclude Include="math\vectors.hpp" />
+    <ClInclude Include="programs\proc_city\proc_city.hpp" />
     <ClInclude Include="programs\upp_lang\compiler.hpp" />
+    <ClInclude Include="programs\upp_lang\text.hpp" />
     <ClInclude Include="programs\upp_lang\text_editor.hpp" />
     <ClInclude Include="programs\upp_lang\upp_lang.hpp" />
     <ClInclude Include="rendering\cameras.hpp" />
@@ -39,6 +42,7 @@
     <ClInclude Include="rendering\opengl_function_pointers.hpp" />
     <ClInclude Include="rendering\opengl_state.hpp" />
     <ClInclude Include="rendering\opengl_utils.hpp" />
+    <ClInclude Include="rendering\renderer_2d.hpp" />
     <ClInclude Include="rendering\shader_program.hpp" />
     <ClInclude Include="rendering\texture.hpp" />
     <ClInclude Include="rendering\text_renderer.hpp" />
@@ -48,6 +52,7 @@
     <ClInclude Include="utility\directory_crawler.hpp" />
     <ClInclude Include="utility\file_io.hpp" />
     <ClInclude Include="utility\file_listener.hpp" />
+    <ClInclude Include="utility\gui.hpp" />
     <ClInclude Include="utility\utils.hpp" />
     <ClInclude Include="win32\input.hpp" />
     <ClInclude Include="win32\timing.hpp" />
@@ -59,12 +64,15 @@
     <ClCompile Include="datastructures\dynamic_array.cpp" />
     <ClCompile Include="datastructures\hashtable.cpp" />
     <ClCompile Include="datastructures\string.cpp" />
+    <ClCompile Include="datastructures\string_pool.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="math\matrices.cpp" />
     <ClCompile Include="math\scalars.cpp" />
     <ClCompile Include="math\spherical.cpp" />
     <ClCompile Include="math\vectors.cpp" />
+    <ClCompile Include="programs\proc_city\proc_city.cpp" />
     <ClCompile Include="programs\upp_lang\compiler.cpp" />
+    <ClCompile Include="programs\upp_lang\text.cpp" />
     <ClCompile Include="programs\upp_lang\text_editor.cpp" />
     <ClCompile Include="programs\upp_lang\upp_lang.cpp" />
     <ClCompile Include="rendering\cameras.cpp" />
@@ -75,13 +83,16 @@
     <ClCompile Include="rendering\opengl_function_pointers.cpp" />
     <ClCompile Include="rendering\opengl_state.cpp" />
     <ClCompile Include="rendering\opengl_utils.cpp" />
+    <ClCompile Include="rendering\renderer_2d.cpp" />
     <ClCompile Include="rendering\shader_program.cpp" />
     <ClCompile Include="rendering\texture.cpp" />
     <ClCompile Include="rendering\text_renderer.cpp" />
     <ClCompile Include="utility\binary_parser.cpp" />
+    <ClCompile Include="utility\bounding_box.cpp" />
     <ClCompile Include="utility\directory_crawler.cpp" />
     <ClCompile Include="utility\file_io.cpp" />
     <ClCompile Include="utility\file_listener.cpp" />
+    <ClCompile Include="utility\gui.cpp" />
     <ClCompile Include="utility\utils.cpp" />
     <ClCompile Include="win32\input.cpp" />
     <ClCompile Include="win32\timing.cpp" />
@@ -89,7 +100,25 @@
     <ClCompile Include="win32\windows_helper_functions.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <Text Include="resources\TODO.txt" />
+    <Text Include="..\resources\TODO.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\resources\shaders\city_shader.glsl" />
+    <None Include="..\resources\shaders\color_2d.glsl" />
+    <None Include="..\resources\shaders\constant_color.glsl" />
+    <None Include="..\resources\shaders\cursor.frag" />
+    <None Include="..\resources\shaders\cursor.vert" />
+    <None Include="..\resources\shaders\font_bitmap.frag" />
+    <None Include="..\resources\shaders\font_bitmap.vert" />
+    <None Include="..\resources\shaders\font_sdf.frag" />
+    <None Include="..\resources\shaders\font_sdf.vert" />
+    <None Include="..\resources\shaders\geometry_2d.glsl" />
+    <None Include="..\resources\shaders\image_simple.frag" />
+    <None Include="..\resources\shaders\image_simple.vert" />
+    <None Include="..\resources\shaders\simple.frag" />
+    <None Include="..\resources\shaders\simple.vert" />
+    <None Include="..\resources\shaders\test.frag" />
+    <None Include="..\resources\shaders\test.vert" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>15.0</VCProjectVersion>

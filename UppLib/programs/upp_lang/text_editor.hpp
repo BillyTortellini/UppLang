@@ -6,9 +6,142 @@
 #include "../../utility/file_listener.hpp"
 #include "../../rendering/text_renderer.hpp"
 #include "../../win32/input.hpp"
+#include "text.hpp"
 
 struct Input;
 struct OpenGLState;
+
+namespace TextChangeType
+{
+    enum ENUM
+    {
+        STRING_INSERTION,
+        STRING_DELETION,
+        CHARACTER_DELETION,
+        CHARACTER_INSERTION,
+        COMPLEX,
+    };
+}
+
+struct TextChange
+{
+    TextChange* next;
+    TextChange* previous;
+    TextChangeType::ENUM type;
+
+    // For string deletion/insertion
+    String string;
+    Text_Slice slice;
+    // For character stuff
+    Text_Position character_position;
+    char character;
+    // For complex command
+    DynamicArray<TextChange> sub_changes;
+};
+
+struct TextHistory 
+{
+    TextChange* current;
+    // Do something with recording complex commands
+    bool undo_first_change;
+    int recording_depth;
+    DynamicArray<TextChange> complex_command;
+};
+
+namespace MovementType
+{
+    enum ENUM
+    {
+        SEARCH_FORWARDS_TO, // t
+        SEARCH_FORWARDS_FOR, // f
+        SEARCH_BACKWARDS_TO, // T
+        SEARCH_BACKWARDS_FOR, // F
+        REPEAT_LAST_SEARCH, // ;
+        REPEAT_LAST_SEARCH_REVERSE_DIRECTION, // ,
+        MOVE_LEFT, // h
+        MOVE_RIGHT, // l
+        MOVE_UP, // k
+        MOVE_DOWN, //j
+        TO_END_OF_LINE, // $
+        TO_START_OF_LINE, // 0
+        NEXT_WORD, // w
+        NEXT_SPACE, // W
+        PREVIOUS_WORD, // b
+        PREVIOUS_SPACE, // B
+        END_OF_WORD, // e
+        END_OF_WORD_AFTER_SPACE, // E
+        JUMP_ENCLOSURE, // %
+        NEXT_PARAGRAPH, // }
+        PREVIOUS_PARAGRAPH, // {
+    };
+}
+
+namespace MotionType
+{
+    enum ENUM
+    {
+        MOVEMENT, // motion is a movement 
+        WORD, // w
+        SPACES, // W
+        PARENTHESES, // ()
+        BRACES, // {}
+        BRACKETS, // []
+        QUOTATION_MARKS, // ""
+        PARAGRAPH, // p
+    };
+}
+
+struct Movement
+{
+    MovementType::ENUM type;
+    int repeat_count;
+    char search_char;
+};
+
+struct Motion
+{
+    MotionType::ENUM type;
+    int repeat_count;
+    Movement movement; // If type == MOVEMENT
+    bool contains_edges; // In vim, this would be inner or around motions (iw or aw)
+};
+
+namespace NormalModeCommandType
+{
+    enum ENUM
+    {
+        MOVEMENT,
+        ENTER_INSERT_MODE_LINE_START,
+        ENTER_INSERT_MODE_LINE_END,
+        ENTER_INSERT_MODE_ON_CURSOR,
+        ENTER_INSERT_MODE_AFTER_CURSOR,
+        ENTER_INSERT_MODE_NEW_LINE_BELOW,
+        ENTER_INSERT_MODE_NEW_LINE_ABOVE,
+        DELETE_CHARACTER,
+        REPLACE_CHARACTER,
+        DELETE_LINE,
+        DELETE_MOTION,
+        CHANGE_LINE,
+        CHANGE_MOTION,
+        YANK_LINE, // TODO: Yank/Put stuff
+        YANK_MOTION,
+        PUT_AFTER_CURSOR,
+        PUT_BEFORE_CURSOR,
+        REPEAT_LAST_COMMAND,
+        VISUALIZE_MOTION, 
+        UNDO,
+        REDO
+    };
+}
+
+struct NormalModeCommand
+{
+    NormalModeCommandType::ENUM type;
+    Motion motion;
+    Movement movement;
+    char character;
+    int repeat_count;
+};
 
 struct TextHighlight
 {
@@ -18,45 +151,7 @@ struct TextHighlight
     int character_end;
 };
 
-namespace TextEditorCursorMode
-{
-    enum ENUM
-    {
-        BLOCK,
-        LINE,
-    };
-}
-
-struct Text_Editor
-{
-    // Data for rendering
-    TextRenderer* renderer;
-    ShaderProgram* cursor_shader;
-    Mesh_GPU_Data cursor_mesh;
-
-    // Text editor state
-    DynamicArray<String> lines;
-    DynamicArray<DynamicArray<TextHighlight>> text_highlights;
-    int current_line;
-    int current_character;
-    TextEditorCursorMode::ENUM cursor_mode;
-    float line_size_cm;
-};
-
-Text_Editor text_editor_create(TextRenderer* text_renderer, FileListener* listener, OpenGLState* state);
-void text_editor_destroy(Text_Editor* editor);
-void text_editor_render(Text_Editor* editor, OpenGLState* state, int width, int height, int dpi);
-void text_editor_set_string(Text_Editor* editor, String* string);
-void text_editor_append_text_to_string(Text_Editor* editor, String* string);
-
-
-
-
-/*
-    TextEditorLogic
-*/
-
-namespace TextEditorLogicMode
+namespace TextEditorMode
 {
     enum ENUM
     {
@@ -65,22 +160,34 @@ namespace TextEditorLogicMode
     };
 }
 
-struct Text_Editor_Logic
+struct Text_Editor
 {
-    TextEditorLogicMode::ENUM mode;
-    String fill_string;
-    bool text_changed;
+    // Text editor state
+    DynamicArray<String> lines;
 
-    // Command handling
+    // Rendering Stuff
+    TextRenderer* renderer;
+    ShaderProgram* cursor_shader;
+    Mesh_GPU_Data cursor_mesh;
+    DynamicArray<DynamicArray<TextHighlight>> text_highlights;
+    float line_size_cm;
+
+    // Editor Stuff
+    TextHistory history;
+    TextEditorMode::ENUM mode;
+    Text_Position cursor_position;
+    bool text_changed;
     DynamicArray<Key_Message> normal_mode_incomplete_command;
-    int count;
-    // Insert mode
     DynamicArray<Key_Message> last_insert_mode_inputs;
+    NormalModeCommand last_normal_mode_command;
+    bool record_insert_mode_inputs;
+    char last_search_char;
+    bool last_search_was_forwards;
 };
 
-Text_Editor_Logic text_editor_logic_create();
-void text_editor_logic_destroy(Text_Editor_Logic* logic);
-void text_editor_logic_update(Text_Editor_Logic* logic, Text_Editor* editor, Input* input);
-
+Text_Editor text_editor_create(TextRenderer* text_renderer, FileListener* listener, OpenGLState* state);
+void text_editor_destroy(Text_Editor* editor);
+void text_editor_update(Text_Editor* editor, Input* input);
+void text_editor_render(Text_Editor* editor, OpenGLState* state, int width, int height, int dpi);
 
 

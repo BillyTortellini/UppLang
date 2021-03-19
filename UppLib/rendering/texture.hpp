@@ -31,6 +31,7 @@ Array<float> texture_bitmap_create_distance_field_bad(Texture_Bitmap* source);
 void texture_bitmap_print_distance_field(Array<float> data, int width);
 
 
+
 struct Texture_Filtermode
 {
     GLenum minification_mode; // GL_NEAREST, GL_LINEAR, GL_LINEAR_MIMAP_LINEAR, ...
@@ -45,6 +46,8 @@ Texture_Filtermode texture_filtermode_make_nearest();
 Texture_Filtermode texture_filtermode_make_linear();
 Texture_Filtermode texture_filtermode_make_mipmap();
 
+
+
 struct Texture
 {
     GLuint texture_id;
@@ -52,9 +55,9 @@ struct Texture
     int height;
     // The following variables determine how GL stores the colors internal, in the shaders we always get
     // floats after querying textures
-    GLint internal_gpu_format; // GL_RED, GL_RG, GL_RGB, GL_RGBA, GL_DEPTH_COMPONENT, GL_DEPTH_STENCIL, or other compressed formats
+    GLint internal_gpu_format; // GL_RED, GL_RG, GL_RGB, GL_RGBA, GL_DEPTH_COMPONENT, GL_DEPTH_STENCIL, or other (e.g. compressed) formats
     GLenum cpu_data_format; // Same as above
-    GLenum sampler_type;
+    GLenum sampler_type; // For setting uniforms
     Texture_Filtermode filtermode;
     bool has_mipmap;
 };

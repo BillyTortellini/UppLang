@@ -84,7 +84,7 @@ void dynamic_array_remove_ordered(DynamicArray<T>* a, int index)
 }
 
 template<typename T>
-void dynamic_array_insert_ordererd(DynamicArray<T>* a, T item, int index)
+void dynamic_array_insert_ordered(DynamicArray<T>* a, T item, int index)
 {
     if (index >= a->size) {
         dynamic_array_push_back(a, item);
@@ -137,4 +137,11 @@ Array<byte> dynamic_array_to_bytes(DynamicArray<T>* value) {
 template <typename T>
 void dynamic_array_reset(DynamicArray<T>* array) {
     array->size = 0;
+}
+
+template<typename T>
+Array<T> dynamic_array_make_slice(DynamicArray<T>* array, int start_index, int end_index)
+{
+    Array<T> result = dynamic_array_to_array(array);
+    return array_make_slice(result, start_index, end_index);
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../utility/utils.hpp"
+#include "../datastructures/array.hpp"
 
 struct String
 {
@@ -22,19 +23,31 @@ String string_create_from_string_with_extra_capacity(String* other, int extra_ca
 String string_create_substring(String* string, int start_index, int end_index);
 u64 string_calculate_hash(String* string);
 bool string_equals(String* s1, String* s2);
+void string_clear(String* string);
+void string_set_characters(String* string, const char* characters);
 void string_create_from_filepath_to_path_and_filename(String* path, String* filename, const char* filepath);
 void string_destroy(String* string);
 
 void string_remove_substring(String* string, int start_index, int end_index);
+bool string_compare_substring(String* string, int start_index, String* other);
+bool string_contains_substring(String* string, String* substring);
 void string_reset(String* string);
 void string_reserve(String* string, int new_capacity);
 void string_append(String* string, const char* appendix);
 void string_append_string(String* string, String* appendix);
+void string_prepend_string(String* string, String* prepension);
 void string_append_formated(String* string, const char* format, ...);
 void string_append_character(String* string, char c);
+void string_append_character_array(String* string, Array<char> appendix); // Difference to append string is that appendix does not need to be 0 terminated
 void string_truncate(String* string, int vector_length);
 void string_replace_character(String* string, char to_replace, char replace_with);
-Optional<int> string_find_character_index_reverse(String* string, char character, int startpos);
 bool string_ends_with(const char* string, const char* ending);
 void string_remove_character(String* string, int index);
 void string_insert_character_before(String* string, byte character, int index);
+void string_insert_string(String* string, String* insertion, int position);
+bool string_contains_character(String string, char character);
+bool string_contains_only_characters_in_set(String* string, String set, bool use_set_complement);
+Optional<int> string_find_character_index(String* string, char c, int start_position);
+Optional<int> string_find_character_index_reverse(String* string, char character, int startpos);
+Optional<float> string_parse_float(String* string);
+Optional<int> string_parse_int(String* string);

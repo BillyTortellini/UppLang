@@ -3,12 +3,7 @@
 #include "../math/vectors.hpp"
 #include "../utility/file_listener.hpp"
 #include "glyph_atlas.hpp"
-
-struct BoundingBox2
-{
-    vec2 minimum_coordinates;
-    vec2 maximum_coordinates;
-};
+#include "../utility/bounding_box.hpp"
 
 struct Character_Position
 {
@@ -40,6 +35,7 @@ TextRenderer* text_renderer_create_from_font_atlas_file(
 );
 void text_renderer_destroy(TextRenderer* renderer);
 
+float text_renderer_calculate_text_width(TextRenderer* renderer, int char_count, float relative_height);
 TextLayout* text_renderer_calculate_text_layout(
     TextRenderer* renderer,
     String* text,
@@ -58,6 +54,7 @@ void text_renderer_add_text(
     float line_gap_percent
 );
 float text_renderer_get_cursor_advance(TextRenderer* renderer, float relative_height);
+void text_renderer_set_color(TextRenderer* renderer, vec3 color);
 void text_renderer_render(TextRenderer* renderer, OpenGLState* state);
 void text_renderer_update_window_size(TextRenderer* renderer, int new_width, int new_height);
 Texture* text_renderer_get_texture(TextRenderer* renderer);

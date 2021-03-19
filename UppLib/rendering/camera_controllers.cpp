@@ -30,7 +30,7 @@ void camera_controller_arcball_update(Camera_Controller_Arcball* controller, Cam
 
     // Update distance
     controller->zoom_level -= input->mouse_wheel_delta * controller->sensitivity_zoom;
-    float distance_to_center = controller->base_distance_to_center * math_power(2.0f, controller->zoom_level);
+    float distance_to_center = controller->base_distance_to_center * math_power(1.3f, controller->zoom_level);
 
     // Update position correctly
     if (input->mouse_down[MOUSE_KEY_CODE::RIGHT])
