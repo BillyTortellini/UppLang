@@ -11,9 +11,8 @@ out vec4 output_color;
 void main() 
 {
 	float alpha = texture(sampler, uv_coords).r;
-	//output_color = vec4(vec3(1.0), alpha);
 	alpha = alpha * pixel_ratio;
-	float s = 1.0;
+	float s = 1.0; // Actually, 0.5 looks better on very small text, since on smoll texts there should not be a lot of alpha
 	alpha = smoothstep(-s, s, alpha);
 	output_color = vec4(frag_color, alpha);
 }

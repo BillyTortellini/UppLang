@@ -308,15 +308,6 @@ LRESULT CALLBACK window_message_callback(HWND hwnd, UINT msg_type, WPARAM wparam
         // Get new dimension
         int new_width = LOWORD(lparam);
         int new_height = HIWORD(lparam);
-        {
-            /*
-            RECT test_r;
-			//GetClientRect(window_for_message_callback->hwnd, &test_r);
-            int w = test_r.right - test_r.left;
-            int h = test_r.bottom - test_r.top;
-            //logg("WM_SIZE: %d/%d, compare ClientRect: %d/%d\n", new_width, new_height, w, h);
-            */
-        }
 
         // Update window state
         WindowState* state = &window_for_message_callback->state;
@@ -784,19 +775,6 @@ void window_change_fullscreen_mode(Window* window, bool fullscreen);
 */
 bool window_handle_messages(Window* window, bool block_until_next_message)
 {
-    {
-        RECT test_r;
-        GetClientRect(window->hwnd, &test_r);
-        int w = test_r.right - test_r.left;
-        int h = test_r.bottom - test_r.top;
-        if (window->state.width != w || window->state.height != h) {
-            window->state.width = w;
-            window->state.height = h;
-            window->input.client_area_resized = true;
-        }
-        //logg("WM_SIZE: CientRect: %d/%d\n", w, h);
-    }
-
     // Handle fullscreen requests
     if (window->fullscreen_state_request_was_made) {
         window_change_fullscreen_mode(window, window->desired_fullscreen_state);

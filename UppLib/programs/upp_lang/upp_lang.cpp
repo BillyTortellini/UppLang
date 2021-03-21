@@ -156,9 +156,9 @@ void upp_lang_main()
     {
         WindowState* state = window_get_window_state(window);
         camera = camera_3d_make(state->width, state->height, math_degree_to_radians(90), 0.1f, 100.0f);
-        window_set_size(window, 600, 600);
-        //window_set_position(window, -1234, 96);
-        //window_set_fullscreen(window, true);
+        //window_set_size(window, 600, 600);
+        window_set_position(window, -1234, 96);
+        window_set_fullscreen(window, true);
         window_set_vsync(window, true);
 
         glClearColor(0, 0.0f, 0, 0);
@@ -189,7 +189,7 @@ void upp_lang_main()
         // Input Handling
         Input* input = window_get_input(window);
         {
-            if (!window_handle_messages(window, false)) {
+            if (!window_handle_messages(window, true)) {
                 break;
             }
             if (input->close_request_issued || input->key_pressed[KEY_CODE::ESCAPE]) {

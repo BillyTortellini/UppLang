@@ -444,7 +444,7 @@ void text_editor_add_highlight_from_slice(Text_Editor* editor, Text_Slice slice,
 {
     for (int line = slice.start.line; line <= slice.end.line; line++) {
         int start_character = 0;
-        int end_character = editor->lines[line].size - 1;
+        int end_character = editor->lines[line].size;
         if (line == slice.start.line) start_character = slice.start.character;
         if (line == slice.end.line) end_character = slice.end.character;
         if (start_character != end_character) {
@@ -478,6 +478,50 @@ Movement movement_make(MovementType::ENUM type, int repeat_count, char search_ch
     result.type = type;
     result.repeat_count = repeat_count;
     result.search_char = search_char;
+    return result;
+}
+
+Text_Slice text_slice_make_inside_parenthesis(DynamicArray<String>* text, Text_Position pos, char open_parenthesis, char closed_parenthesis) 
+{
+    Text_Slice result = text_slice_make(pos, pos);
+    Text_Position text_start = text_position_make_start();
+    Text_Position text_end = text_position_make_end(text);
+
+    // Get to first parenthesis
+    // "w(123)"
+    Text_Position start = pos;
+    int indentation_level = 1;
+    while (!text_position_are_equal(start, text_start))
+    {
+        if (text_get_character_after(text, start) == closed_parenthesis && !text_position_are_equal(start, pos)) {
+            indentation_level++;
+        }
+        else if (text_get_character_after(text, start) == open_parenthesis) {
+            indentation_level--;
+        }
+        if (indentation_level == 0) break;
+        start = text_position_previous(start, *text);
+    }
+    if (indentation_level != 0) return result;
+    start = text_position_next(start, *text); // Because we want to be inside the parenthesis, not on them
+
+    // Now we have to move forward until we hit the closing parenthesis
+    Text_Position end = start;
+    indentation_level = 1;
+    while (!text_position_are_equal(end, text_end))
+    {
+        if (text_get_character_after(text, end) == closed_parenthesis) {
+            indentation_level--;
+        }
+        else if (text_get_character_after(text, end) == open_parenthesis) {
+            indentation_level++;
+        }
+        if (indentation_level == 0) break;
+        end = text_position_next(end, *text);
+    }
+    if (indentation_level != 0) return result; // Error because there was no proper end of indentation
+
+    result = text_slice_make(start, end);
     return result;
 }
 
@@ -588,6 +632,7 @@ Text_Position movement_evaluate_at_position(Movement movement, DynamicArray<Stri
             String* line = &text->data[pos.line];
             pos.character = line->size;
             *horizontal_position = 10000; // Look at jk movements after $ to understand this
+            set_horizontal_pos = false;
             break;
         }
         case MovementType::TO_START_OF_LINE: {
@@ -637,20 +682,20 @@ Text_Position movement_evaluate_at_position(Movement movement, DynamicArray<Stri
             break;
         }
         case MovementType::END_OF_WORD_AFTER_SPACE: {
-            Text_Slice current_word = motion_evaluate_at_position(motion_make(MotionType::SPACES, 1, false), 
+            Text_Slice current_word = motion_evaluate_at_position(motion_make(MotionType::SPACES, 1, false),
                 text, iterator.position, last_search_char, last_search_was_forwards, horizontal_position);
             Text_Position result = text_position_previous(current_word.end, *text);
             if (text_position_are_equal(result, pos)) { // Currently on end of word, skip one character
                 text_iterator_advance(&iterator);
             }
             text_iterator_skip_characters_in_set(&iterator, whitespace_characters, true); // Skip whitespace
-            current_word = motion_evaluate_at_position(motion_make(MotionType::SPACES, 1, false), 
+            current_word = motion_evaluate_at_position(motion_make(MotionType::SPACES, 1, false),
                 text, iterator.position, last_search_char, last_search_was_forwards, horizontal_position);
             pos = text_position_previous(current_word.end, *text);
             break;
         }
         case MovementType::PREVIOUS_SPACE: {
-            Text_Slice current_word = motion_evaluate_at_position(motion_make(MotionType::SPACES, 1, false), 
+            Text_Slice current_word = motion_evaluate_at_position(motion_make(MotionType::SPACES, 1, false),
                 text, iterator.position, last_search_char, last_search_was_forwards, horizontal_position);
             Text_Position it = pos;
             if (text_position_are_equal(current_word.start, it)) {
@@ -661,13 +706,13 @@ Text_Position movement_evaluate_at_position(Movement movement, DynamicArray<Stri
                 !text_position_are_equal(text_position_make_start(), it)) {
                 it = text_position_previous(it, *text);
             }
-            current_word = motion_evaluate_at_position(motion_make(MotionType::SPACES, 1, false), 
+            current_word = motion_evaluate_at_position(motion_make(MotionType::SPACES, 1, false),
                 text, it, last_search_char, last_search_was_forwards, horizontal_position);
             pos = current_word.start;
             break;
         }
         case MovementType::PREVIOUS_WORD: {
-            Text_Slice current_word = motion_evaluate_at_position(motion_make(MotionType::WORD, 1, false), 
+            Text_Slice current_word = motion_evaluate_at_position(motion_make(MotionType::WORD, 1, false),
                 text, iterator.position, last_search_char, last_search_was_forwards, horizontal_position);
             Text_Position it = pos;
             if (text_position_are_equal(current_word.start, it)) {
@@ -678,7 +723,7 @@ Text_Position movement_evaluate_at_position(Movement movement, DynamicArray<Stri
                 !text_position_are_equal(text_position_make_start(), it)) {
                 it = text_position_previous(it, *text);
             }
-            current_word = motion_evaluate_at_position(motion_make(MotionType::WORD, 1, false), 
+            current_word = motion_evaluate_at_position(motion_make(MotionType::WORD, 1, false),
                 text, it, last_search_char, last_search_was_forwards, horizontal_position);
             pos = current_word.start;
             break;
@@ -710,24 +755,27 @@ Text_Position movement_evaluate_at_position(Movement movement, DynamicArray<Stri
         case MovementType::JUMP_ENCLOSURE: {
             // If on some type of parenthesis its quite logical () {} [] <>, just search next thing
             // The question is what to do when not on such a thing
-            char search_char = '\0';
-            bool search_forwards = false;
+            char open_parenthesis = '\0';
+            char closed_parenthesis = '\0';
+            bool on_open_side = true;
             switch (iterator.character) {
-            case '(': search_forwards = true; search_char = ')'; break;
-            case ')': search_forwards = false; search_char = '('; break;
-            case '{': search_forwards = true; search_char = '}'; break;
-            case '}': search_forwards = false; search_char = '{'; break;
-            case '[': search_forwards = true; search_char = ']'; break;
-            case ']': search_forwards = false; search_char = '['; break;
-            case '<': search_forwards = true; search_char = '>'; break;
-            case '>': search_forwards = false; search_char = '<'; break;
+            case '(': open_parenthesis = '('; closed_parenthesis = ')'; on_open_side = true; break;
+            case ')': open_parenthesis = '('; closed_parenthesis = ')'; on_open_side = false; break;
+            case '{': open_parenthesis = '{'; closed_parenthesis = '}'; on_open_side = true;break;
+            case '}': open_parenthesis = '{'; closed_parenthesis = '}'; on_open_side = false;break;
+            case '[': open_parenthesis = '['; closed_parenthesis = ']'; on_open_side = true;break;
+            case ']': open_parenthesis = '['; closed_parenthesis = ']'; on_open_side = false;break;
             }
-            if (search_char == '\0') {
+            if (open_parenthesis == '\0') {
                 break;
             }
-            bool found = text_iterator_goto_next_character(&iterator, search_char, search_forwards);
-            if (found) {
-                pos = iterator.position;
+            Text_Slice slice = text_slice_make_inside_parenthesis(text, pos, open_parenthesis, closed_parenthesis);
+            if (text_position_are_equal(slice.start, slice.end)) break;
+            if (on_open_side) {
+                pos = slice.end;
+            }
+            else {
+                pos = text_position_previous(slice.start, *text);
             }
             break;
         }
@@ -878,15 +926,15 @@ Text_Slice motion_evaluate_at_position(Motion motion, DynamicArray<String>* text
         break;
     }
     case MotionType::BRACES: {
-        result = text_slice_make_enclosure(text, pos, string_create_static("{"), false, string_create_static("}"), false);
+        result = text_slice_make_inside_parenthesis(text, pos, '{', '}');
         break;
     }
     case MotionType::BRACKETS: {
-        result = text_slice_make_enclosure(text, pos, string_create_static("["), false, string_create_static("]"), false);
+        result = text_slice_make_inside_parenthesis(text, pos, '[', ']');
         break;
     }
     case MotionType::PARENTHESES: {
-        result = text_slice_make_enclosure(text, pos, string_create_static("("), false, string_create_static(")"), false);
+        result = text_slice_make_inside_parenthesis(text, pos, '(', ')');
         break;
     }
     case MotionType::QUOTATION_MARKS: {
@@ -898,13 +946,13 @@ Text_Slice motion_evaluate_at_position(Motion motion, DynamicArray<String>* text
         int paragraph_end = pos.line;
         while (paragraph_start > 0) {
             String* line = &text->data[paragraph_start];
-            if (!string_contains_only_characters_in_set(line, string_create_static(" \t"), false)) break;
+            if (string_contains_only_characters_in_set(line, string_create_static(" \t"), false)) break;
             paragraph_start--;
         }
         while (paragraph_end < text->size) {
             String* line = &text->data[paragraph_end];
-            if (!string_contains_only_characters_in_set(line, string_create_static(" \t"), false)) break;
-            paragraph_start++;
+            if (string_contains_only_characters_in_set(line, string_create_static(" \t"), false)) break;
+            paragraph_end++;
         }
         result.start = text_position_make(paragraph_start, 0);
         result.end = text_position_make(paragraph_end, 0);
@@ -1084,10 +1132,10 @@ ParseResult<Movement> key_messages_parse_movement(Array<Key_Message> messages, P
         }
         else if (msg.character == 'G') {
             if (repeat_count.result > 1) {
-				return parse_result_make_success(movement_make(MovementType::GOTO_LINE_NUMBER, repeat_count.result), 1);
+                return parse_result_make_success(movement_make(MovementType::GOTO_LINE_NUMBER, repeat_count.result), 1);
             }
             else {
-				return parse_result_make_success(movement_make(MovementType::GOTO_END_OF_TEXT, repeat_count.result), 1);
+                return parse_result_make_success(movement_make(MovementType::GOTO_END_OF_TEXT, repeat_count.result), 1);
             }
         }
         else if (msg.character == 'g') {
@@ -1139,7 +1187,7 @@ ParseResult<Motion> key_messages_parse_motion(Array<Key_Message> messages)
     // Motions may also be movements, so we check if we can parse a movement first
     ParseResult<Movement> movement_parse = key_messages_parse_movement(messages, repeat_count_parse);
     if (movement_parse.type == ParseResultType::SUCCESS) {
-        return parse_result_make_success(motion_make_from_movement(movement_parse.result), 
+        return parse_result_make_success(motion_make_from_movement(movement_parse.result),
             movement_parse.key_message_count + repeat_count_parse.key_message_count);
     }
 
@@ -1167,6 +1215,8 @@ ParseResult<Motion> key_messages_parse_motion(Array<Key_Message> messages)
         return parse_result_make_success<Motion>(motion_make(MotionType::BRACES, repeat_count_parse.result, contains_edges), 2 + repeat_count_parse.key_message_count);
     case '}':
         return parse_result_make_success<Motion>(motion_make(MotionType::BRACES, repeat_count_parse.result, contains_edges), 2 + repeat_count_parse.key_message_count);
+    case '"':
+        return parse_result_make_success<Motion>(motion_make(MotionType::QUOTATION_MARKS, repeat_count_parse.result, contains_edges), 2 + repeat_count_parse.key_message_count);
     case 'p':
         return parse_result_make_success<Motion>(motion_make(MotionType::PARAGRAPH, repeat_count_parse.result, contains_edges), 2 + repeat_count_parse.key_message_count);
     case 'P':
@@ -1345,6 +1395,7 @@ void insert_mode_exit(Text_Editor* editor) {
     editor->mode = TextEditorMode::NORMAL;
     text_editor_clamp_cursor(editor);
     text_history_stop_record_complex_command(&editor->history);
+    editor->horizontal_position = editor->cursor_position.character;
 }
 
 void insert_mode_handle_message(Text_Editor* editor, Key_Message* msg);
@@ -1393,11 +1444,22 @@ void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
         for (int i = 0; i < command.repeat_count; i++) {
             delete_end.line++;
         }
+        bool delete_last_line = delete_end.line >= editor->lines.size;
         text_position_sanitize(&delete_end, editor->lines);
-        Text_Slice slice = text_slice_make(delete_start, delete_end);
-        editor->last_yank_was_line = true;
+
         string_reset(&editor->yanked_string);
-        text_append_slice_to_string(editor->lines, slice, &editor->yanked_string);
+        if (delete_last_line) {
+            delete_end = text_position_make_end(&editor->lines);
+            Text_Slice line_slice = text_slice_make(delete_start, delete_end);
+            delete_start = text_position_previous(delete_start, editor->lines);
+            text_append_slice_to_string(editor->lines, line_slice, &editor->yanked_string);
+            string_append_character(&editor->yanked_string, '\n');
+        }
+        Text_Slice slice = text_slice_make(delete_start, delete_end);
+        if (!delete_last_line) {
+            text_append_slice_to_string(editor->lines, slice, &editor->yanked_string);
+        }
+        editor->last_yank_was_line = true;
         text_history_delete_slice(&editor->history, editor, slice);
         save_as_last_command = true;
         break;
@@ -1433,6 +1495,9 @@ void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
     }
     case NormalModeCommandType::ENTER_INSERT_MODE_LINE_START: {
         editor->cursor_position.character = 0;
+        Text_Iterator it = text_iterator_make(&editor->lines, editor->cursor_position);
+        text_iterator_skip_characters_in_set(&it, string_create_static(" \t"), true);
+        editor->cursor_position = it.position;
         insert_mode_enter(editor);
         save_as_last_command = true;
         break;
@@ -1463,9 +1528,9 @@ void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
     }
     case NormalModeCommandType::MOVEMENT: {
         for (int i = 0; i < command.repeat_count; i++) {
-			editor->cursor_position = movement_evaluate_at_position(command.movement, &editor->lines, editor->cursor_position,
-				&editor->last_search_char, &editor->last_search_was_forwards, &editor->horizontal_position);
-			text_editor_clamp_cursor(editor);
+            editor->cursor_position = movement_evaluate_at_position(command.movement, &editor->lines, editor->cursor_position,
+                &editor->last_search_char, &editor->last_search_was_forwards, &editor->horizontal_position);
+            text_editor_clamp_cursor(editor);
         }
         break;
     }
@@ -1508,7 +1573,7 @@ void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
         text_editor_clamp_cursor(editor);
         break;
     }
-    case NormalModeCommandType::YANK_MOTION : {
+    case NormalModeCommandType::YANK_MOTION: {
         Text_Slice slice = motion_evaluate_at_position(command.motion, &editor->lines, editor->cursor_position,
             &editor->last_search_char, &editor->last_search_was_forwards, &editor->horizontal_position);
         string_reset(&editor->yanked_string);
@@ -1537,8 +1602,8 @@ void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
             Text_Position pos = editor->cursor_position;
             pos.character = 0;
             text_position_sanitize(&pos, editor->lines);
-			String copy = string_create_from_string_with_extra_capacity(&editor->yanked_string, 0);
-			text_history_insert_string(&editor->history, editor, pos, copy);
+            String copy = string_create_from_string_with_extra_capacity(&editor->yanked_string, 0);
+            text_history_insert_string(&editor->history, editor, pos, copy);
             break;
         }
         String copy = string_create_from_string_with_extra_capacity(&editor->yanked_string, 0);
@@ -1551,8 +1616,8 @@ void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
             pos.character = 0;
             pos.line++;
             text_position_sanitize(&pos, editor->lines);
-			String copy = string_create_from_string_with_extra_capacity(&editor->yanked_string, 0);
-			text_history_insert_string(&editor->history, editor, pos, copy);
+            String copy = string_create_from_string_with_extra_capacity(&editor->yanked_string, 0);
+            text_history_insert_string(&editor->history, editor, pos, copy);
             break;
         }
         editor->cursor_position = text_position_next(editor->cursor_position, editor->lines);

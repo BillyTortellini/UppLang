@@ -1,33 +1,29 @@
 main :: () -> void
-{
+{    
     I personally think this is pretty good lol
     what Lol why though?
     This is almost nice now lol
     this just worked without anything wow
+    I actually expected this to eat performance, i do no know why
 
     Up Next:
-     * g movement (gg end of file/G start/g line-number)
-     * Keeping cursor indentation with k/j movements
+     * Define text region on screen, cutoff text not in region
+     * Viewport tracking (Text wrapping vertically)
+     * Blinking cursor (Change cursor on almost complete commands, e.g. 'r')
+     * Display line number, relative stuff.
 
     Bugs:
-     * 'I' does not start at first character,
-     * Delete inner () does not work in nested structures
      * Repeat last search does not differentiate 'f'/'t'
      * Alt-Gr spamming still cancels commands
      * Undo-Redo cursor position still sucks a little (Hint: Save positions after/before command)
      * Non ASCII chars destroy some motions (Program crashes)
     
     Features missing:
-     * Viewport tracking
      * Undo/Redo Tree History
      * Visual Mode
      * Visual Block/Multi-Cursor stuff
      * Command recording (@ stuff with vim, altough this could maybe be done better)
 
     Rendering stuff:
-     * Viewport stuff
-     * Blinking cursor (Change cursor on almost complete commands, e.g. 'r')
-     * Text is still a little bit blurry
-     * Display line number, relative stuff..
-     * Smaller text, better distance field computation
+     * Smaller text, better distance field computation (More exact)
 }
