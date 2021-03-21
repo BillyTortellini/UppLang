@@ -179,6 +179,7 @@ struct Text_Editor
     TextHistory history;
     TextEditorMode::ENUM mode;
     Text_Position cursor_position;
+    int horizontal_position;
     bool text_changed;
     DynamicArray<Key_Message> normal_mode_incomplete_command;
     DynamicArray<Key_Message> last_insert_mode_inputs;

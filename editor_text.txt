@@ -14,18 +14,19 @@ main :: () -> void
      * Delete inner () does not work in nested structures
      * Repeat last search does not differentiate 'f'/'t'
      * Alt-Gr spamming still cancels commands
-     * Undo-Redo cursor position still sucks a little
+     * Undo-Redo cursor position still sucks a little (Hint: Save positions after/before command)
      * Non ASCII chars destroy some motions (Program crashes)
     
     Features missing:
      * Viewport tracking
      * Undo/Redo Tree History
      * Visual Mode
-     * Visual Block/Multimonitor
+     * Visual Block/Multi-Cursor stuff
      * Command recording (@ stuff with vim, altough this could maybe be done better)
 
     Rendering stuff:
-     * Blinking cursor (Knowing position what)
+     * Viewport stuff
+     * Blinking cursor (Change cursor on almost complete commands, e.g. 'r')
      * Text is still a little bit blurry
      * Display line number, relative stuff..
      * Smaller text, better distance field computation

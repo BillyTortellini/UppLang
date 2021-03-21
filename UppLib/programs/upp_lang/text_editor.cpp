@@ -295,6 +295,7 @@ Text_Editor text_editor_create(TextRenderer* text_renderer, FileListener* listen
     result.history = text_history_create();
     result.mode = TextEditorMode::NORMAL;
     result.cursor_position = text_position_make(0, 0);
+    result.horizontal_position = 0;
     result.text_changed = true;
     result.last_search_char = ' ';
     result.last_search_was_forwards = true;
@@ -543,17 +544,18 @@ Text_Slice text_slice_get_current_word_slice(DynamicArray<String>* text, Text_Po
 }
 
 // Forward declarations or something
-Text_Slice motion_evaluate_at_position(Motion motion, DynamicArray<String>* text, Text_Position pos, char*, bool*);
+Text_Slice motion_evaluate_at_position(Motion motion, DynamicArray<String>* text, Text_Position pos, char*, bool*, int*);
 Motion motion_make(MotionType::ENUM type, int repeat_count, bool contains_edges);
 
 Text_Position movement_evaluate_at_position(Movement movement, DynamicArray<String>* text, Text_Position pos,
-    char* last_search_char, bool* last_search_was_forwards)
+    char* last_search_char, bool* last_search_was_forwards, int* horizontal_position)
 {
     String word_characters = characters_get_string_valid_identifier_characters();
     String whitespace_characters = characters_get_string_whitespaces();
     String operator_characters = characters_get_string_non_identifier_non_whitespace();
 
     bool repeat_movement = true;
+    bool set_horizontal_pos = true;
     for (int i = 0; i < movement.repeat_count && repeat_movement; i++)
     {
         Text_Iterator iterator = text_iterator_make(text, pos);
@@ -564,10 +566,14 @@ Text_Position movement_evaluate_at_position(Movement movement, DynamicArray<Stri
         {
         case MovementType::MOVE_DOWN: {
             pos.line += 1;
+            pos.character = *horizontal_position;
+            set_horizontal_pos = false;
             break;
         }
         case MovementType::MOVE_UP: {
             pos.line -= 1;
+            pos.character = *horizontal_position;
+            set_horizontal_pos = false;
             break;
         }
         case MovementType::MOVE_LEFT: {
@@ -581,6 +587,7 @@ Text_Position movement_evaluate_at_position(Movement movement, DynamicArray<Stri
         case MovementType::TO_END_OF_LINE: {
             String* line = &text->data[pos.line];
             pos.character = line->size;
+            *horizontal_position = 10000; // Look at jk movements after $ to understand this
             break;
         }
         case MovementType::TO_START_OF_LINE: {
@@ -630,18 +637,21 @@ Text_Position movement_evaluate_at_position(Movement movement, DynamicArray<Stri
             break;
         }
         case MovementType::END_OF_WORD_AFTER_SPACE: {
-            Text_Slice current_word = motion_evaluate_at_position(motion_make(MotionType::SPACES, 1, false), text, iterator.position, last_search_char, last_search_was_forwards);
+            Text_Slice current_word = motion_evaluate_at_position(motion_make(MotionType::SPACES, 1, false), 
+                text, iterator.position, last_search_char, last_search_was_forwards, horizontal_position);
             Text_Position result = text_position_previous(current_word.end, *text);
             if (text_position_are_equal(result, pos)) { // Currently on end of word, skip one character
                 text_iterator_advance(&iterator);
             }
             text_iterator_skip_characters_in_set(&iterator, whitespace_characters, true); // Skip whitespace
-            current_word = motion_evaluate_at_position(motion_make(MotionType::SPACES, 1, false), text, iterator.position, last_search_char, last_search_was_forwards);
+            current_word = motion_evaluate_at_position(motion_make(MotionType::SPACES, 1, false), 
+                text, iterator.position, last_search_char, last_search_was_forwards, horizontal_position);
             pos = text_position_previous(current_word.end, *text);
             break;
         }
         case MovementType::PREVIOUS_SPACE: {
-            Text_Slice current_word = motion_evaluate_at_position(motion_make(MotionType::SPACES, 1, false), text, iterator.position, last_search_char, last_search_was_forwards);
+            Text_Slice current_word = motion_evaluate_at_position(motion_make(MotionType::SPACES, 1, false), 
+                text, iterator.position, last_search_char, last_search_was_forwards, horizontal_position);
             Text_Position it = pos;
             if (text_position_are_equal(current_word.start, it)) {
                 it = text_position_previous(it, *text);
@@ -651,12 +661,14 @@ Text_Position movement_evaluate_at_position(Movement movement, DynamicArray<Stri
                 !text_position_are_equal(text_position_make_start(), it)) {
                 it = text_position_previous(it, *text);
             }
-            current_word = motion_evaluate_at_position(motion_make(MotionType::SPACES, 1, false), text, it, last_search_char, last_search_was_forwards);
+            current_word = motion_evaluate_at_position(motion_make(MotionType::SPACES, 1, false), 
+                text, it, last_search_char, last_search_was_forwards, horizontal_position);
             pos = current_word.start;
             break;
         }
         case MovementType::PREVIOUS_WORD: {
-            Text_Slice current_word = motion_evaluate_at_position(motion_make(MotionType::WORD, 1, false), text, iterator.position, last_search_char, last_search_was_forwards);
+            Text_Slice current_word = motion_evaluate_at_position(motion_make(MotionType::WORD, 1, false), 
+                text, iterator.position, last_search_char, last_search_was_forwards, horizontal_position);
             Text_Position it = pos;
             if (text_position_are_equal(current_word.start, it)) {
                 it = text_position_previous(it, *text);
@@ -666,7 +678,8 @@ Text_Position movement_evaluate_at_position(Movement movement, DynamicArray<Stri
                 !text_position_are_equal(text_position_make_start(), it)) {
                 it = text_position_previous(it, *text);
             }
-            current_word = motion_evaluate_at_position(motion_make(MotionType::WORD, 1, false), text, it, last_search_char, last_search_was_forwards);
+            current_word = motion_evaluate_at_position(motion_make(MotionType::WORD, 1, false), 
+                text, it, last_search_char, last_search_was_forwards, horizontal_position);
             pos = current_word.start;
             break;
         }
@@ -769,7 +782,7 @@ Text_Position movement_evaluate_at_position(Movement movement, DynamicArray<Stri
             else search_movement.type = MovementType::SEARCH_BACKWARDS_FOR;
             search_movement.search_char = *last_search_char;
             search_movement.repeat_count = 1;
-            pos = movement_evaluate_at_position(search_movement, text, pos, last_search_char, last_search_was_forwards);
+            pos = movement_evaluate_at_position(search_movement, text, pos, last_search_char, last_search_was_forwards, horizontal_position);
             break;
         }
         case MovementType::REPEAT_LAST_SEARCH_REVERSE_DIRECTION: {
@@ -778,7 +791,7 @@ Text_Position movement_evaluate_at_position(Movement movement, DynamicArray<Stri
             else search_movement.type = MovementType::SEARCH_BACKWARDS_FOR;
             search_movement.search_char = *last_search_char;
             search_movement.repeat_count = 1;
-            pos = movement_evaluate_at_position(search_movement, text, pos, last_search_char, last_search_was_forwards);
+            pos = movement_evaluate_at_position(search_movement, text, pos, last_search_char, last_search_was_forwards, horizontal_position);
             break;
         }
         case MovementType::GOTO_END_OF_TEXT: {
@@ -801,6 +814,7 @@ Text_Position movement_evaluate_at_position(Movement movement, DynamicArray<Stri
         }
         }
         text_position_sanitize(&pos, *text);
+        if (set_horizontal_pos) *horizontal_position = pos.character;
     }
 
     return pos;
@@ -834,13 +848,13 @@ Motion motion_make_from_movement(Movement movement) {
 }
 
 Text_Slice motion_evaluate_at_position(Motion motion, DynamicArray<String>* text, Text_Position pos,
-    char* last_search_char, bool* last_search_was_forwards)
+    char* last_search_char, bool* last_search_was_forwards, int* horizontal_position)
 {
     Text_Slice result;
     switch (motion.type)
     {
     case MotionType::MOVEMENT: {
-        Text_Position end_pos = movement_evaluate_at_position(motion.movement, text, pos, last_search_char, last_search_was_forwards);
+        Text_Position end_pos = movement_evaluate_at_position(motion.movement, text, pos, last_search_char, last_search_was_forwards, horizontal_position);
         if (!text_position_are_in_order(&pos, &end_pos)) {
             text_position_next(pos, *text);
         }
@@ -1076,8 +1090,19 @@ ParseResult<Movement> key_messages_parse_movement(Array<Key_Message> messages, P
 				return parse_result_make_success(movement_make(MovementType::GOTO_END_OF_TEXT, repeat_count.result), 1);
             }
         }
-        else if (msg.character == 'g' && repeat_count.key_message_count != 0) {
-			return parse_result_make_success(movement_make(MovementType::GOTO_LINE_NUMBER, repeat_count.result), 1);
+        else if (msg.character == 'g') {
+            if (repeat_count.key_message_count != 0) {
+                return parse_result_make_success(movement_make(MovementType::GOTO_LINE_NUMBER, repeat_count.result), 1);
+            }
+            if (messages.size == 1) {
+                return parse_result_make_completable<Movement>();
+            }
+            if (messages.size > 1) {
+                if (messages[1].character == 'g') {
+                    return parse_result_make_success(movement_make(MovementType::GOTO_START_OF_TEXT, repeat_count.result), 2);
+                }
+            }
+            return parse_result_make_failure<Movement>();
         }
     }
 
@@ -1099,9 +1124,6 @@ ParseResult<Movement> key_messages_parse_movement(Array<Key_Message> messages, P
         }
         else if (messages[0].character == 'T') {
             return parse_result_make_success(movement_make(MovementType::SEARCH_BACKWARDS_TO, repeat_count.result, messages[1].character), 2);
-        }
-        else if (messages[0].character == 'g' && messages[1].character == 'g') {
-            return parse_result_make_success(movement_make(MovementType::GOTO_START_OF_TEXT, repeat_count.result), 2);
         }
     }
 
@@ -1342,7 +1364,7 @@ void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
     }
     case NormalModeCommandType::CHANGE_MOTION: {
         Text_Slice slice = motion_evaluate_at_position(command.motion, &editor->lines, editor->cursor_position,
-            &editor->last_search_char, &editor->last_search_was_forwards);
+            &editor->last_search_char, &editor->last_search_was_forwards, &editor->horizontal_position);
         text_history_start_record_complex_command(&editor->history);
         text_history_delete_slice(&editor->history, editor, slice);
         insert_mode_enter(editor);
@@ -1382,7 +1404,7 @@ void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
     }
     case NormalModeCommandType::DELETE_MOTION: {
         Text_Slice slice = motion_evaluate_at_position(command.motion, &editor->lines, editor->cursor_position,
-            &editor->last_search_char, &editor->last_search_was_forwards);
+            &editor->last_search_char, &editor->last_search_was_forwards, &editor->horizontal_position);
         editor->last_yank_was_line = false;
         string_reset(&editor->yanked_string);
         text_append_slice_to_string(editor->lines, slice, &editor->yanked_string);
@@ -1442,14 +1464,14 @@ void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
     case NormalModeCommandType::MOVEMENT: {
         for (int i = 0; i < command.repeat_count; i++) {
 			editor->cursor_position = movement_evaluate_at_position(command.movement, &editor->lines, editor->cursor_position,
-				&editor->last_search_char, &editor->last_search_was_forwards);
+				&editor->last_search_char, &editor->last_search_was_forwards, &editor->horizontal_position);
 			text_editor_clamp_cursor(editor);
         }
         break;
     }
     case NormalModeCommandType::VISUALIZE_MOTION: {
         Text_Slice slice = motion_evaluate_at_position(command.motion, &editor->lines, editor->cursor_position,
-            &editor->last_search_char, &editor->last_search_was_forwards);
+            &editor->last_search_char, &editor->last_search_was_forwards, &editor->horizontal_position);
         text_editor_reset_highlights(editor);
         text_editor_add_highlight_from_slice(editor, slice, vec3(1.0f), vec3(0.0f, 0.3f, 0.0f));
         save_as_last_command = true;
@@ -1488,7 +1510,7 @@ void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
     }
     case NormalModeCommandType::YANK_MOTION : {
         Text_Slice slice = motion_evaluate_at_position(command.motion, &editor->lines, editor->cursor_position,
-            &editor->last_search_char, &editor->last_search_was_forwards);
+            &editor->last_search_char, &editor->last_search_was_forwards, &editor->horizontal_position);
         string_reset(&editor->yanked_string);
         text_append_slice_to_string(editor->lines, slice, &editor->yanked_string);
         editor->last_yank_was_line = false;

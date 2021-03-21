@@ -182,6 +182,9 @@ void text_insert_string(DynamicArray<String>* text, Text_Position pos, String in
             pos.line += 1;
             pos.character = 0;
         }
+        else if (c == '\r') {
+
+        }
         else {
             string_insert_character_before(line, c, pos.character);
             pos.character++;
