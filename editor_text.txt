@@ -1,13 +1,12 @@
 main :: () -> void
 {
+    I personally think this is pretty good lol
+    what Lol why though?
     This is almost nice now lol
-    I personaly think this is pretty good lol
-    what Lol
     this just worked without anything wow
 
     Up Next:
-     * Yank and put
-     * g movement (gg end of file/G start/g linenumber)
+     * g movement (gg end of file/G start/g line-number)
      * Keeping cursor indentation with k/j movements
 
     Bugs:
@@ -31,4 +30,3 @@ main :: () -> void
      * Display line number, relative stuff..
      * Smaller text, better distance field computation
 }
-

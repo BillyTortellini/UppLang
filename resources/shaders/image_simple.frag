@@ -8,12 +8,14 @@ out vec4 output_color;
 
 void main() {
 	float linear = texelFetch(sampler, ivec2(textureSize(sampler, 0) * uv_coords), 0).r;
+	output_color = vec4(vec3(linear), 1.0);
 	float intensity = texture(sampler, uv_coords).r;
+	output_color = vec4(vec3(intensity), 1.0);
+	/*
 	intensity = abs(intensity);
 	//intensity = linear / 5.0;
 	vec3 result = vec3(1.0-intensity);
 	output_color = vec4(result, 1.0);
-	/*
 	if (color.r >= 0.0) {
 		output_color = vec4(1, 0, 0, 1);
 	}

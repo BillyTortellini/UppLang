@@ -154,17 +154,17 @@ void upp_lang_main()
     // Initialize rendering options
     Camera_3D camera;
     {
-        glClearColor(0, 0.0f, 0, 0);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         WindowState* state = window_get_window_state(window);
-        glViewport(0, 0, state->width, state->height);
-        window_set_vsync(window, false);
-
         camera = camera_3d_make(state->width, state->height, math_degree_to_radians(90), 0.1f, 100.0f);
         window_set_size(window, 600, 600);
-        window_set_position(window, -1234, 96);
-        window_set_fullscreen(window, true);
+        //window_set_position(window, -1234, 96);
+        //window_set_fullscreen(window, true);
         window_set_vsync(window, true);
+
+        glClearColor(0, 0.0f, 0, 0);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glViewport(0, 0, state->width, state->height);
+        window_set_vsync(window, false);
     }
 
     // Initialize Camera Controllers
@@ -204,6 +204,7 @@ void upp_lang_main()
             }
             if (input->client_area_resized) {
                 WindowState* state = window_get_window_state(window);
+                logg("New window size: %d/%d\n", state->width, state->height);
                 glViewport(0, 0, state->width, state->height);
                 camera_3d_update_projection_window_size(&camera, state->width, state->height);
                 text_renderer_update_window_size(text_renderer, state->width, state->height);
@@ -223,21 +224,19 @@ void upp_lang_main()
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
             // Render triangle
+            /*
             shader_program_set_uniform(shader_simple, &opengl_state, "time", (float)timing_current_time_in_seconds());
             shader_program_set_uniform(shader_simple, &opengl_state, "uniform_mvp", camera.view_projection_matrix);
             mesh_gpu_data_draw_with_shader_program(&mesh_triangle, shader_simple, &opengl_state);
-            /*
             */
 
             WindowState* window_state = window_get_window_state(window);
 
-            /*
             shader_program_set_uniform(shader_test, &opengl_state, "time", (float)timing_current_time_in_seconds());
             shader_program_set_uniform(shader_test, &opengl_state, "aspect_ratio", (float)window_state->width / window_state->height);
             shader_program_set_uniform(shader_test, &opengl_state, "view_matrix", camera.view_matrix);
             shader_program_set_uniform(shader_test, &opengl_state, "camera_position", camera.position);
             mesh_gpu_data_draw_with_shader_program(&mesh_quad, shader_test, &opengl_state);
-            */
             text_editor_render(&text_editor, &opengl_state, window_state->width, window_state->height, window_state->dpi);
 
             window_swap_buffers(window);

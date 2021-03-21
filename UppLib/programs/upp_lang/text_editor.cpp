@@ -304,6 +304,8 @@ Text_Editor text_editor_create(TextRenderer* text_renderer, FileListener* listen
     result.normal_mode_incomplete_command = dynamic_array_create_empty<Key_Message>(32);
     result.record_insert_mode_inputs = true;
     result.last_insert_mode_inputs = dynamic_array_create_empty<Key_Message>(32);
+    result.yanked_string = string_create_empty(64);
+    result.last_yank_was_line = false;
 
     return result;
 }
@@ -318,6 +320,7 @@ void text_editor_destroy(Text_Editor* editor)
     dynamic_array_destroy(&editor->text_highlights);
     shader_program_destroy(editor->cursor_shader);
     mesh_gpu_data_destroy(&editor->cursor_mesh);
+    string_destroy(&editor->yanked_string);
 
     dynamic_array_destroy(&editor->normal_mode_incomplete_command);
     dynamic_array_destroy(&editor->last_insert_mode_inputs);
@@ -550,7 +553,8 @@ Text_Position movement_evaluate_at_position(Movement movement, DynamicArray<Stri
     String whitespace_characters = characters_get_string_whitespaces();
     String operator_characters = characters_get_string_non_identifier_non_whitespace();
 
-    for (int i = 0; i < movement.repeat_count; i++)
+    bool repeat_movement = true;
+    for (int i = 0; i < movement.repeat_count && repeat_movement; i++)
     {
         Text_Iterator iterator = text_iterator_make(text, pos);
         Text_Position next_position = text_position_next(iterator.position, *text);
@@ -777,6 +781,21 @@ Text_Position movement_evaluate_at_position(Movement movement, DynamicArray<Stri
             pos = movement_evaluate_at_position(search_movement, text, pos, last_search_char, last_search_was_forwards);
             break;
         }
+        case MovementType::GOTO_END_OF_TEXT: {
+            pos = text_position_make_end(text);
+            repeat_movement = false;
+            break;
+        }
+        case MovementType::GOTO_START_OF_TEXT: {
+            pos = text_position_make_start();
+            repeat_movement = false;
+            break;
+        }
+        case MovementType::GOTO_LINE_NUMBER: {
+            pos.line = movement.repeat_count;
+            repeat_movement = false;
+            break;
+        }
         default: {
             logg("ERROR: Movement not supported yet!\n");
         }
@@ -913,10 +932,10 @@ NormalModeCommand normal_mode_command_make_with_motion(NormalModeCommandType::EN
     return result;
 }
 
-NormalModeCommand normal_mode_command_make_movement(int repeat_count, Movement movement) {
+NormalModeCommand normal_mode_command_make_movement(Movement movement) {
     NormalModeCommand result;
     result.type = NormalModeCommandType::MOVEMENT;
-    result.repeat_count = repeat_count;
+    result.repeat_count = 1;
     result.movement = movement;
     return result;
 }
@@ -991,91 +1010,98 @@ ParseResult<int> key_messages_parse_repeat_count(Array<Key_Message> messages)
     return parse_result_make_success(repeat_count, message_index);
 }
 
-ParseResult<Movement> key_messages_parse_movement(Array<Key_Message> messages)
+ParseResult<Movement> key_messages_parse_movement(Array<Key_Message> messages, ParseResult<int> repeat_count)
 {
-    // All movements may start with a repeat count
-    ParseResult<int> repeat_count = key_messages_parse_repeat_count(messages);
-    if (repeat_count.type != ParseResultType::SUCCESS) {
-        return parse_result_propagate_non_success<Movement>(repeat_count);
-    }
-
-    messages = array_make_slice(&messages, repeat_count.key_message_count, messages.size);
     if (messages.size == 0) return parse_result_make_completable<Movement>();
 
     // Check for 1 character movements
     {
         Key_Message msg = messages[0];
         if (msg.character == 'h') {
-            return parse_result_make_success(movement_make(MovementType::MOVE_LEFT, repeat_count.result), 1 + repeat_count.key_message_count);
+            return parse_result_make_success(movement_make(MovementType::MOVE_LEFT, repeat_count.result), 1);
         }
         else if (msg.character == 'l') {
-            return parse_result_make_success(movement_make(MovementType::MOVE_RIGHT, repeat_count.result), 1 + repeat_count.key_message_count);
+            return parse_result_make_success(movement_make(MovementType::MOVE_RIGHT, repeat_count.result), 1);
         }
         else if (msg.character == 'j') {
-            return parse_result_make_success(movement_make(MovementType::MOVE_DOWN, repeat_count.result), 1 + repeat_count.key_message_count);
+            return parse_result_make_success(movement_make(MovementType::MOVE_DOWN, repeat_count.result), 1);
         }
         else if (msg.character == 'k') {
-            return parse_result_make_success(movement_make(MovementType::MOVE_UP, repeat_count.result), 1 + repeat_count.key_message_count);
+            return parse_result_make_success(movement_make(MovementType::MOVE_UP, repeat_count.result), 1);
         }
         else if (msg.character == '$') {
-            return parse_result_make_success(movement_make(MovementType::TO_END_OF_LINE, repeat_count.result), 1 + repeat_count.key_message_count);
+            return parse_result_make_success(movement_make(MovementType::TO_END_OF_LINE, repeat_count.result), 1);
         }
         else if (msg.character == '0') {
-            return parse_result_make_success(movement_make(MovementType::TO_START_OF_LINE, repeat_count.result), 1 + repeat_count.key_message_count);
+            return parse_result_make_success(movement_make(MovementType::TO_START_OF_LINE, repeat_count.result), 1);
         }
         else if (msg.character == 'w') {
-            return parse_result_make_success(movement_make(MovementType::NEXT_WORD, repeat_count.result), 1 + repeat_count.key_message_count);
+            return parse_result_make_success(movement_make(MovementType::NEXT_WORD, repeat_count.result), 1);
         }
         else if (msg.character == 'W') {
-            return parse_result_make_success(movement_make(MovementType::NEXT_SPACE, repeat_count.result), 1 + repeat_count.key_message_count);
+            return parse_result_make_success(movement_make(MovementType::NEXT_SPACE, repeat_count.result), 1);
         }
         else if (msg.character == 'b') {
-            return parse_result_make_success(movement_make(MovementType::PREVIOUS_WORD, repeat_count.result), 1 + repeat_count.key_message_count);
+            return parse_result_make_success(movement_make(MovementType::PREVIOUS_WORD, repeat_count.result), 1);
         }
         else if (msg.character == 'B') {
-            return parse_result_make_success(movement_make(MovementType::PREVIOUS_SPACE, repeat_count.result), 1 + repeat_count.key_message_count);
+            return parse_result_make_success(movement_make(MovementType::PREVIOUS_SPACE, repeat_count.result), 1);
         }
         else if (msg.character == 'e') {
-            return parse_result_make_success(movement_make(MovementType::END_OF_WORD, repeat_count.result), 1 + repeat_count.key_message_count);
+            return parse_result_make_success(movement_make(MovementType::END_OF_WORD, repeat_count.result), 1);
         }
         else if (msg.character == 'E') {
-            return parse_result_make_success(movement_make(MovementType::END_OF_WORD_AFTER_SPACE, repeat_count.result), 1 + repeat_count.key_message_count);
+            return parse_result_make_success(movement_make(MovementType::END_OF_WORD_AFTER_SPACE, repeat_count.result), 1);
         }
         else if (msg.character == '%') {
-            return parse_result_make_success(movement_make(MovementType::JUMP_ENCLOSURE, repeat_count.result), 1 + repeat_count.key_message_count);
+            return parse_result_make_success(movement_make(MovementType::JUMP_ENCLOSURE, repeat_count.result), 1);
         }
         else if (msg.character == ';') {
-            return parse_result_make_success(movement_make(MovementType::REPEAT_LAST_SEARCH, repeat_count.result), 1 + repeat_count.key_message_count);
+            return parse_result_make_success(movement_make(MovementType::REPEAT_LAST_SEARCH, repeat_count.result), 1);
         }
         else if (msg.character == ',') {
-            return parse_result_make_success(movement_make(MovementType::REPEAT_LAST_SEARCH_REVERSE_DIRECTION, repeat_count.result), 1 + repeat_count.key_message_count);
+            return parse_result_make_success(movement_make(MovementType::REPEAT_LAST_SEARCH_REVERSE_DIRECTION, repeat_count.result), 1);
         }
         else if (msg.character == '}') {
-            return parse_result_make_success(movement_make(MovementType::NEXT_PARAGRAPH, repeat_count.result), 1 + repeat_count.key_message_count);
+            return parse_result_make_success(movement_make(MovementType::NEXT_PARAGRAPH, repeat_count.result), 1);
         }
         else if (msg.character == '{') {
-            return parse_result_make_success(movement_make(MovementType::PREVIOUS_PARAGRAPH, repeat_count.result), 1 + repeat_count.key_message_count);
+            return parse_result_make_success(movement_make(MovementType::PREVIOUS_PARAGRAPH, repeat_count.result), 1);
+        }
+        else if (msg.character == 'G') {
+            if (repeat_count.result > 1) {
+				return parse_result_make_success(movement_make(MovementType::GOTO_LINE_NUMBER, repeat_count.result), 1);
+            }
+            else {
+				return parse_result_make_success(movement_make(MovementType::GOTO_END_OF_TEXT, repeat_count.result), 1);
+            }
+        }
+        else if (msg.character == 'g' && repeat_count.key_message_count != 0) {
+			return parse_result_make_success(movement_make(MovementType::GOTO_LINE_NUMBER, repeat_count.result), 1);
         }
     }
 
     // Check 2 character movements (f F t T)
     if (messages.size == 1 && (messages[0].character == 't' || messages[0].character == 'f' ||
-        messages[0].character == 'F' || messages[0].character == 'T')) {
+        messages[0].character == 'F' || messages[0].character == 'T' || messages[0].character == 'g')) {
         return parse_result_make_completable<Movement>();
     }
     if (messages.size >= 2)
     {
         if (messages[0].character == 'f') {
-            return parse_result_make_success(movement_make(MovementType::SEARCH_FORWARDS_FOR, repeat_count.result, messages[1].character), 2 + repeat_count.key_message_count);
+            return parse_result_make_success(movement_make(MovementType::SEARCH_FORWARDS_FOR, repeat_count.result, messages[1].character), 2);
         }
         else if (messages[0].character == 'F') {
-            return parse_result_make_success(movement_make(MovementType::SEARCH_BACKWARDS_FOR, repeat_count.result, messages[1].character), 2 + repeat_count.key_message_count);
+            return parse_result_make_success(movement_make(MovementType::SEARCH_BACKWARDS_FOR, repeat_count.result, messages[1].character), 2);
         }
         else if (messages[0].character == 't') {
-            return parse_result_make_success(movement_make(MovementType::SEARCH_FORWARDS_TO, repeat_count.result, messages[1].character), 2 + repeat_count.key_message_count);
+            return parse_result_make_success(movement_make(MovementType::SEARCH_FORWARDS_TO, repeat_count.result, messages[1].character), 2);
         }
         else if (messages[0].character == 'T') {
-            return parse_result_make_success(movement_make(MovementType::SEARCH_BACKWARDS_TO, repeat_count.result, messages[1].character), 2 + repeat_count.key_message_count);
+            return parse_result_make_success(movement_make(MovementType::SEARCH_BACKWARDS_TO, repeat_count.result, messages[1].character), 2);
+        }
+        else if (messages[0].character == 'g' && messages[1].character == 'g') {
+            return parse_result_make_success(movement_make(MovementType::GOTO_START_OF_TEXT, repeat_count.result), 2);
         }
     }
 
@@ -1084,17 +1110,18 @@ ParseResult<Movement> key_messages_parse_movement(Array<Key_Message> messages)
 
 ParseResult<Motion> key_messages_parse_motion(Array<Key_Message> messages)
 {
-    // Motions may also be movements, so we check if we can parse a movement first
-    ParseResult<Movement> movement_parse = key_messages_parse_movement(messages);
-    if (movement_parse.type == ParseResultType::SUCCESS) {
-        return parse_result_make_success(motion_make_from_movement(movement_parse.result), movement_parse.key_message_count);
-    }
-
-    // Now we need to check for real motions, which may start with a repeat count
     ParseResult<int> repeat_count_parse = key_messages_parse_repeat_count(messages);
     messages = array_make_slice(&messages, repeat_count_parse.key_message_count, messages.size);
     if (messages.size == 0) return parse_result_make_completable<Motion>();
 
+    // Motions may also be movements, so we check if we can parse a movement first
+    ParseResult<Movement> movement_parse = key_messages_parse_movement(messages, repeat_count_parse);
+    if (movement_parse.type == ParseResultType::SUCCESS) {
+        return parse_result_make_success(motion_make_from_movement(movement_parse.result), 
+            movement_parse.key_message_count + repeat_count_parse.key_message_count);
+    }
+
+    // Now we need to check for real motions, which may start with a repeat count
     if (messages[0].character != 'i' && messages[0].character != 'a') return parse_result_make_failure<Motion>();
     else if (messages.size == 1) return parse_result_make_completable<Motion>();
     bool contains_edges = messages[0].character == 'a';
@@ -1138,9 +1165,9 @@ ParseResult<NormalModeCommand> key_messages_parse_normal_mode_command(Array<Key_
     if (messages.size == 0) return parse_result_make_completable<NormalModeCommand>();
 
     // Check if it is a movement
-    ParseResult<Movement> movement_parse = key_messages_parse_movement(messages);
+    ParseResult<Movement> movement_parse = key_messages_parse_movement(messages, repeat_count);
     if (movement_parse.type == ParseResultType::SUCCESS) {
-        return parse_result_make_success(normal_mode_command_make_movement(repeat_count.result, movement_parse.result),
+        return parse_result_make_success(normal_mode_command_make_movement(movement_parse.result),
             repeat_count.key_message_count + movement_parse.key_message_count);
     }
     else if (movement_parse.type == ParseResultType::COMPLETABLE) {
@@ -1186,12 +1213,22 @@ ParseResult<NormalModeCommand> key_messages_parse_normal_mode_command(Array<Key_
                 NormalModeCommandType::CHANGE_MOTION, repeat_count.result, motion_make_from_movement(movement_make(MovementType::TO_END_OF_LINE, 1))
             ),
             1 + repeat_count.key_message_count);
+    case 'p':
+        return parse_result_make_success(normal_mode_command_make(NormalModeCommandType::PUT_AFTER_CURSOR, repeat_count.result),
+            1 + repeat_count.key_message_count);
+    case 'P':
+        return parse_result_make_success(normal_mode_command_make(NormalModeCommandType::PUT_BEFORE_CURSOR, repeat_count.result),
+            1 + repeat_count.key_message_count);
+    case 'Y':
+        return parse_result_make_success(normal_mode_command_make(NormalModeCommandType::YANK_LINE, repeat_count.result),
+            1 + repeat_count.key_message_count);
     case 'u':
         return parse_result_make_success(normal_mode_command_make(NormalModeCommandType::UNDO, repeat_count.result), 1 + repeat_count.key_message_count);
     case 'r':
     case 'd':
     case 'c':
     case 'v':
+    case 'y':
         if (messages.size == 1) return parse_result_make_completable<NormalModeCommand>();
     }
     if (messages[0].key_code == KEY_CODE::R && messages[0].ctrl_down && messages[0].key_down) {
@@ -1201,6 +1238,10 @@ ParseResult<NormalModeCommand> key_messages_parse_normal_mode_command(Array<Key_
     if (messages.size == 1) return parse_result_make_failure<NormalModeCommand>(); // No 1 size command detected
 
     // Parse multi key normal mode commands (d and c for now)
+    if (messages[0].character == 'y' && messages[1].character == 'y') {
+        return parse_result_make_success(normal_mode_command_make(NormalModeCommandType::YANK_LINE, repeat_count.result),
+            1 + repeat_count.key_message_count);
+    }
     if (messages[0].character == 'd') {
         ParseResult<Motion> motion_parse = key_messages_parse_motion(array_make_slice(&messages, 1, messages.size));
         if (motion_parse.type == ParseResultType::SUCCESS) {
@@ -1213,6 +1254,16 @@ ParseResult<NormalModeCommand> key_messages_parse_normal_mode_command(Array<Key_
             return parse_result_make_success(
                 normal_mode_command_make(NormalModeCommandType::DELETE_LINE, repeat_count.result),
                 repeat_count.key_message_count + 2
+            );
+        }
+        return parse_result_propagate_non_success<NormalModeCommand>(motion_parse);
+    }
+    if (messages[0].character == 'y') {
+        ParseResult<Motion> motion_parse = key_messages_parse_motion(array_make_slice(&messages, 1, messages.size));
+        if (motion_parse.type == ParseResultType::SUCCESS) {
+            return parse_result_make_success(
+                normal_mode_command_make_with_motion(NormalModeCommandType::YANK_MOTION, repeat_count.result, motion_parse.result),
+                repeat_count.key_message_count + 1 + motion_parse.key_message_count
             );
         }
         return parse_result_propagate_non_success<NormalModeCommand>(motion_parse);
@@ -1249,7 +1300,6 @@ ParseResult<NormalModeCommand> key_messages_parse_normal_mode_command(Array<Key_
         }
         return parse_result_propagate_non_success<NormalModeCommand>(motion_parse);
     }
-
     return parse_result_make_failure<NormalModeCommand>();
 }
 
@@ -1322,13 +1372,20 @@ void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
             delete_end.line++;
         }
         text_position_sanitize(&delete_end, editor->lines);
-        text_history_delete_slice(&editor->history, editor, text_slice_make(delete_start, delete_end));
+        Text_Slice slice = text_slice_make(delete_start, delete_end);
+        editor->last_yank_was_line = true;
+        string_reset(&editor->yanked_string);
+        text_append_slice_to_string(editor->lines, slice, &editor->yanked_string);
+        text_history_delete_slice(&editor->history, editor, slice);
         save_as_last_command = true;
         break;
     }
     case NormalModeCommandType::DELETE_MOTION: {
         Text_Slice slice = motion_evaluate_at_position(command.motion, &editor->lines, editor->cursor_position,
             &editor->last_search_char, &editor->last_search_was_forwards);
+        editor->last_yank_was_line = false;
+        string_reset(&editor->yanked_string);
+        text_append_slice_to_string(editor->lines, slice, &editor->yanked_string);
         text_history_delete_slice(&editor->history, editor, slice);
         editor->cursor_position = slice.start;
         text_editor_clamp_cursor(editor);
@@ -1383,9 +1440,11 @@ void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
         break;
     }
     case NormalModeCommandType::MOVEMENT: {
-        editor->cursor_position = movement_evaluate_at_position(command.movement, &editor->lines, editor->cursor_position,
-            &editor->last_search_char, &editor->last_search_was_forwards);
-        text_editor_clamp_cursor(editor);
+        for (int i = 0; i < command.repeat_count; i++) {
+			editor->cursor_position = movement_evaluate_at_position(command.movement, &editor->lines, editor->cursor_position,
+				&editor->last_search_char, &editor->last_search_was_forwards);
+			text_editor_clamp_cursor(editor);
+        }
         break;
     }
     case NormalModeCommandType::VISUALIZE_MOTION: {
@@ -1425,6 +1484,58 @@ void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
     case NormalModeCommandType::REDO: {
         text_history_redo(&editor->history, editor);
         text_editor_clamp_cursor(editor);
+        break;
+    }
+    case NormalModeCommandType::YANK_MOTION : {
+        Text_Slice slice = motion_evaluate_at_position(command.motion, &editor->lines, editor->cursor_position,
+            &editor->last_search_char, &editor->last_search_was_forwards);
+        string_reset(&editor->yanked_string);
+        text_append_slice_to_string(editor->lines, slice, &editor->yanked_string);
+        editor->last_yank_was_line = false;
+        break;
+    }
+    case NormalModeCommandType::YANK_LINE: {
+        if (editor->lines.size == 0) break;
+        Text_Position delete_start = editor->cursor_position;
+        delete_start.character = 0;
+        Text_Position delete_end = editor->cursor_position;
+        delete_end.character = 0;
+        for (int i = 0; i < command.repeat_count; i++) {
+            delete_end.line++;
+        }
+        text_position_sanitize(&delete_end, editor->lines);
+        Text_Slice slice = text_slice_make(delete_start, delete_end);
+        string_reset(&editor->yanked_string);
+        text_append_slice_to_string(editor->lines, slice, &editor->yanked_string);
+        editor->last_yank_was_line = true;
+        break;
+    }
+    case NormalModeCommandType::PUT_BEFORE_CURSOR: {
+        if (editor->last_yank_was_line) {
+            Text_Position pos = editor->cursor_position;
+            pos.character = 0;
+            text_position_sanitize(&pos, editor->lines);
+			String copy = string_create_from_string_with_extra_capacity(&editor->yanked_string, 0);
+			text_history_insert_string(&editor->history, editor, pos, copy);
+            break;
+        }
+        String copy = string_create_from_string_with_extra_capacity(&editor->yanked_string, 0);
+        text_history_insert_string(&editor->history, editor, editor->cursor_position, copy);
+        break;
+    }
+    case NormalModeCommandType::PUT_AFTER_CURSOR: {
+        if (editor->last_yank_was_line) {
+            Text_Position pos = editor->cursor_position;
+            pos.character = 0;
+            pos.line++;
+            text_position_sanitize(&pos, editor->lines);
+			String copy = string_create_from_string_with_extra_capacity(&editor->yanked_string, 0);
+			text_history_insert_string(&editor->history, editor, pos, copy);
+            break;
+        }
+        editor->cursor_position = text_position_next(editor->cursor_position, editor->lines);
+        String copy = string_create_from_string_with_extra_capacity(&editor->yanked_string, 0);
+        text_history_insert_string(&editor->history, editor, editor->cursor_position, copy);
         break;
     }
     }

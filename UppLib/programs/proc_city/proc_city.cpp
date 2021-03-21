@@ -1393,7 +1393,8 @@ void polygon_2d_draw(Polygon2D* polygon, Renderer_2D* renderer, vec2 offset, flo
         vec2 b = (polygon->positions[math_modulo(i + 1, polygon->positions.size)]) / (size * 1.3f) + offset;
         renderer_2d_draw_line(renderer, a, b, vec3(1.0f), 3.0f, 0.0f);
         sprintf_s(buffer, "%d", i);
-        renderer_2d_draw_text_in_box(renderer, &string_create_static(buffer), 0.1f, vec3(0.5f), a - vec2(0.05f, 0.0f),
+        String buf = string_create_static(buffer);
+        renderer_2d_draw_text_in_box(renderer, &buf, 0.1f, vec3(0.5f), a - vec2(0.05f, 0.0f),
             vec2(0.1f, 0.1f), ALIGNMENT_HORIZONTAL::CENTER, ALIGNMENT_VERTICAL::CENTER, TEXT_WRAPPING_MODE::SCALE_DOWN);
     }
 }
@@ -1409,7 +1410,8 @@ void polygon_2d_draw_scaled(Polygon2D* polygon, Renderer_2D* renderer, vec2 offs
         vec2 b = (polygon->positions[math_modulo(i + 1, polygon->positions.size)] - center) / (size * 1.3f) + offset;
         renderer_2d_draw_line(renderer, a, b, vec3(1.0f), 3.0f, 0.0f);
         sprintf_s(buffer, "%d", i);
-        renderer_2d_draw_text_in_box(renderer, &string_create_static(buffer), 0.1f, vec3(0.5f), a - vec2(0.05f, 0.0f),
+        String buf = string_create_static(buffer);
+        renderer_2d_draw_text_in_box(renderer, &buf, 0.1f, vec3(0.5f), a - vec2(0.05f, 0.0f),
             vec2(0.1f, 0.1f), ALIGNMENT_HORIZONTAL::CENTER, ALIGNMENT_VERTICAL::CENTER, TEXT_WRAPPING_MODE::SCALE_DOWN);
     }
 }
@@ -1598,7 +1600,8 @@ void proc_city_main()
         opengl_state_set_depth_testing(&opengl_state, true, true, GL_LESS);
         opengl_state_set_blending_state(&opengl_state, false, GL_ONE, GL_ONE, GL_FUNC_ADD);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        gpu_buffer_update(&camera_uniform_buffer, array_as_bytes_static(&camera_3d_uniform_data_make(&camera, (float)now), 1)); // Update camera data
+        Camera_3D_Uniform_Data d = camera_3d_uniform_data_make(&camera, (float)now);
+        gpu_buffer_update(&camera_uniform_buffer, array_as_bytes_static(&d, 1)); // Update camera data
 
 
         // Draw City

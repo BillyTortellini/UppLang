@@ -73,6 +73,9 @@ namespace MovementType
         JUMP_ENCLOSURE, // %
         NEXT_PARAGRAPH, // }
         PREVIOUS_PARAGRAPH, // {
+        GOTO_END_OF_TEXT, // G
+        GOTO_START_OF_TEXT, // gg
+        GOTO_LINE_NUMBER, // g43
     };
 }
 
@@ -123,7 +126,7 @@ namespace NormalModeCommandType
         DELETE_MOTION,
         CHANGE_LINE,
         CHANGE_MOTION,
-        YANK_LINE, // TODO: Yank/Put stuff
+        YANK_LINE, // TODO: Yank/Put stuff (yy is yank line)
         YANK_MOTION,
         PUT_AFTER_CURSOR,
         PUT_BEFORE_CURSOR,
@@ -181,6 +184,8 @@ struct Text_Editor
     DynamicArray<Key_Message> last_insert_mode_inputs;
     NormalModeCommand last_normal_mode_command;
     bool record_insert_mode_inputs;
+    String yanked_string;
+    bool last_yank_was_line;
     char last_search_char;
     bool last_search_was_forwards;
 };

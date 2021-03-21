@@ -445,7 +445,7 @@ Texture texture_create_from_bytes(byte* data, int width, int height, int channel
     result.height = height;
 
     // Determine format
-    GLenum texture_format;
+    GLenum texture_format = GL_RED;
     if (channel_count > 4 || channel_count < 0) {
         panic("Texture data more than 4 channels are not supported!\n");
     }

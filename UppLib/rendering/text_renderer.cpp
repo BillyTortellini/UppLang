@@ -74,13 +74,13 @@ TextRenderer* text_renderer_create_from_font_atlas_file(OpenGLState* state, File
     text_renderer->glyph_atlas = optional_unwrap(glyph_atlas_create_from_atlas_file(font_filepath));
     text_renderer->default_color = vec3(1.0f);
 
-    /*
     // Create Font File
-    text_renderer->glyph_atlas = optional_unwrap(glyph_atlas_create_from_font_file("resources/consola.ttf", 128, 1600, 16, 8, true));
-    glyph_atlas_save_as_file(&text_renderer->glyph_atlas, "resources/glyph_atlas.atlas");
+    //text_renderer->glyph_atlas = optional_unwrap(glyph_atlas_create_from_font_file("resources/fonts/consola.ttf", 256, 3200, 32, 16, false));
+    //glyph_atlas_save_as_file(&text_renderer->glyph_atlas, "resources/fonts/glyph_atlas_new.atlas");
     //text_renderer->glyph_atlas = optional_unwrap(glyph_atlas_create_from_font_file("resources/cour.ttf", 128, 1600, 16, 8, true));
     //glyph_atlas_save_as_file(&text_renderer->glyph_atlas, "resources/glyph_atlas_cour.atlas");
     //glyph_atlas_print_glyph_information(&text_renderer->glyph_atlas);
+    /*
     */
 
     // Initialize shaders
@@ -89,7 +89,7 @@ TextRenderer* text_renderer_create_from_font_atlas_file(OpenGLState* state, File
     // Initialize textures
     text_renderer->atlas_bitmap_texture = texture_create_from_texture_bitmap(
         &text_renderer->glyph_atlas.atlas_bitmap,
-        texture_filtermode_make_nearest(),
+        texture_filtermode_make_linear(),
         state
     );
     text_renderer->atlas_sdf_texture = texture_create_from_bytes(
