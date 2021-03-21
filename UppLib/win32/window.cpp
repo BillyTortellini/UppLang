@@ -741,6 +741,15 @@ Window* window_create(const char* window_title, int multisample_count)
         glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
         glDebugMessageCallback(opengl_debug_callback, 0);
 
+        // Set dpi
+        {
+            // Fucking windows this does not work as proven on my laptop
+            //SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+            //SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_UNAWARE); 
+            SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+            window->state.dpi = GetDpiForWindow(window->hwnd);
+        }
+
         // Get primary monitor info
         MONITORINFO monitor_info;
         monitor_info.cbSize = sizeof(monitor_info);
@@ -749,12 +758,6 @@ Window* window_create(const char* window_title, int multisample_count)
             window->primary_monitor_height = monitor_info.rcMonitor.bottom - monitor_info.rcMonitor.top;
         
         SetWindowLongPtr(window->hwnd, GWLP_USERDATA, (LONG_PTR)window);
-
-        // Get dpi
-        {
-            SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-            window->state.dpi = GetDpiForWindow(window->hwnd);
-        }
     }
 
     return window;
