@@ -21,6 +21,7 @@ String string_create_formated(const char* format, ...);
 String string_create_empty(int capacity);
 String string_create_from_string_with_extra_capacity(String* other, int extra_capacity);
 String string_create_substring(String* string, int start_index, int end_index);
+String string_create_substring_static(String* string, int start_pos, int end_pos);
 u64 string_calculate_hash(String* string);
 bool string_equals(String* s1, String* s2);
 void string_clear(String* string);

@@ -159,12 +159,12 @@ void upp_lang_main()
         //window_set_size(window, 600, 600);
         window_set_position(window, -1234, 96);
         window_set_fullscreen(window, true);
-        window_set_vsync(window, true);
+        window_set_vsync(window, false);
 
         glClearColor(0, 0.0f, 0, 0);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         glViewport(0, 0, state->width, state->height);
-        window_set_vsync(window, false);
+        window_set_vsync(window, true);
     }
 
     // Initialize Camera Controllers
@@ -180,6 +180,7 @@ void upp_lang_main()
 
     // Window Loop
     double time_last_update_start = timing_current_time_in_seconds();
+    float angle = 0.0f;
     while (true)
     {
         double time_frame_start = timing_current_time_in_seconds();
@@ -189,7 +190,7 @@ void upp_lang_main()
         // Input Handling
         Input* input = window_get_input(window);
         {
-            if (!window_handle_messages(window, true)) {
+            if (!window_handle_messages(window, false)) {
                 break;
             }
             if (input->close_request_issued || input->key_pressed[KEY_CODE::ESCAPE]) {
@@ -237,7 +238,14 @@ void upp_lang_main()
             shader_program_set_uniform(shader_test, &opengl_state, "view_matrix", camera.view_matrix);
             shader_program_set_uniform(shader_test, &opengl_state, "camera_position", camera.position);
             mesh_gpu_data_draw_with_shader_program(&mesh_quad, shader_test, &opengl_state);
-            text_editor_render(&text_editor, &opengl_state, window_state->width, window_state->height, window_state->dpi);
+
+            angle += time_since_last_update*0.5f;
+            angle = math_modulo(angle, PI*2.0f);
+            vec2 editor_region_offset = vec2(math_sine(angle), math_cosine(angle))*0.5f;
+            editor_region_offset = vec2(0.0f);
+            BoundingBox2 region = bounding_box_2_make_min_max(vec2(-0.5f, -0.5f) + editor_region_offset, vec2(0.5f, 0.5f) + editor_region_offset);
+            region = bounding_box_2_make_min_max(vec2(-1, -1), vec2(1, 1));
+            text_editor_render(&text_editor, &opengl_state, window_state->width, window_state->height, window_state->dpi, region);
 
             window_swap_buffers(window);
         }

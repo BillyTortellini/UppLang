@@ -1,23 +1,23 @@
 main :: () -> void
-{    
+{
     I personally think this is pretty good lol
     what Lol why though?
     This is almost nice now lol
     this just worked without anything wow
-    I actually expected this to eat performance, i do no know why
+    I actually expected this to eat performance, i do not know why
 
     Up Next:
-     * Define text region on screen, cutoff text not in region
-     * Viewport tracking (Text wrapping vertically)
      * Blinking cursor (Change cursor on almost complete commands, e.g. 'r')
      * Display line number, relative stuff.
+     * Implement display oriented commands (zz,zt,zb, Shift-'h/m/l')
 
     Bugs:
      * Repeat last search does not differentiate 'f'/'t'
      * Alt-Gr spamming still cancels commands
      * Undo-Redo cursor position still sucks a little (Hint: Save positions after/before command)
      * Non ASCII chars destroy some motions (Program crashes)
-    
+     * 'r' is buggy on line end, and on empty lines
+
     Features missing:
      * Undo/Redo Tree History
      * Visual Mode

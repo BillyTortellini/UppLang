@@ -751,6 +751,7 @@ Window* window_create(const char* window_title, int multisample_count)
         SetWindowLongPtr(window->hwnd, GWLP_USERDATA, (LONG_PTR)window);
     }
 
+    FreeConsole();
     return window;
 }
 

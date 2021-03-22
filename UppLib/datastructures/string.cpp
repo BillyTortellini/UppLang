@@ -17,6 +17,19 @@ String string_create_static_with_size(const char* content, int length)
     return result;
 }
 
+String string_create_substring_static(String* string, int start_pos, int end_pos) {
+    if (start_pos >= end_pos) {
+        return string_create_static("");
+    }
+    start_pos = math_clamp(start_pos, 0, string->size);
+    end_pos = math_clamp(end_pos, 0, string->size);
+
+    String result;
+    result.characters = string->characters + start_pos;
+    result.size = end_pos - start_pos;
+    return result;
+}
+
 String string_create_substring(String* string, int start_index, int end_index)
 {
     if (start_index > end_index) {

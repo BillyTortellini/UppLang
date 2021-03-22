@@ -175,6 +175,8 @@ struct Text_Editor
     Mesh_GPU_Data cursor_mesh;
     DynamicArray<DynamicArray<TextHighlight>> text_highlights;
     float line_size_cm;
+    int first_rendered_line;
+    int first_rendered_char;
 
     // Editor Stuff
     TextHistory history;
@@ -195,6 +197,6 @@ struct Text_Editor
 Text_Editor text_editor_create(TextRenderer* text_renderer, FileListener* listener, OpenGLState* state);
 void text_editor_destroy(Text_Editor* editor);
 void text_editor_update(Text_Editor* editor, Input* input);
-void text_editor_render(Text_Editor* editor, OpenGLState* state, int width, int height, int dpi);
+void text_editor_render(Text_Editor* editor, OpenGLState* state, int width, int height, int dpi, BoundingBox2 editor_box);
 
 

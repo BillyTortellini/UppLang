@@ -291,6 +291,8 @@ Text_Editor text_editor_create(TextRenderer* text_renderer, FileListener* listen
     result.cursor_shader = optional_unwrap(shader_program_create(listener, { "resources/shaders/cursor.frag", "resources/shaders/cursor.vert" }));
     result.cursor_mesh = mesh_utils_create_quad_2D(state);
     result.line_size_cm = 1;
+    result.first_rendered_line = 0;
+    result.first_rendered_char = 0;
 
     result.history = text_history_create();
     result.mode = TextEditorMode::NORMAL;
@@ -359,10 +361,11 @@ void text_editor_draw_bounding_box(Text_Editor* editor, OpenGLState* state, Boun
     mesh_gpu_data_draw_with_shader_program(&editor->cursor_mesh, editor->cursor_shader, state);
 }
 
-BoundingBox2 text_editor_get_character_bounding_box(Text_Editor* editor, float text_height, int line, int character)
+BoundingBox2 text_editor_get_character_bounding_box(Text_Editor* editor, float text_height, int line, int character, BoundingBox2 editor_region)
 {
     float glyph_advance = text_renderer_get_cursor_advance(editor->renderer, text_height);
-    vec2 cursor_pos = vec2(glyph_advance * character, 0.0f) + vec2(-1.0f, 1.0f - (line + 1.0f) * text_height);
+    vec2 cursor_pos = vec2(glyph_advance * (character - editor->first_rendered_char), 0.0f) + 
+        vec2(editor_region.min.x, editor_region.max.y - ((line - editor->first_rendered_line) + 1.0f) * text_height);
     vec2 cursor_size = vec2(glyph_advance, text_height);
 
     BoundingBox2 result;
@@ -371,36 +374,54 @@ BoundingBox2 text_editor_get_character_bounding_box(Text_Editor* editor, float t
     return result;
 }
 
-void text_editor_render(Text_Editor* editor, OpenGLState* state, int width, int height, int dpi)
+void text_editor_render(Text_Editor* editor, OpenGLState* state, int width, int height, int dpi, BoundingBox2 editor_region)
 {
+    /*
+        What needs to happen:
+            First i have to calculate how many lines can fit into the editor region (Division), 
+            and how many characters per line i can draw,
+            then I just draw those lines, but i have to cut off after a specific count
+    */
+    //text_editor_draw_bounding_box(editor, state, editor_region, vec3(0.0f, 0.2f, 0.0f));
     float text_height = 2.0f * (editor->line_size_cm) / (height / (float)dpi * 2.54f);
 
-    // Draw Highlights
-    for (int i = 0; i < editor->text_highlights.size; i++) {
-        for (int j = 0; j < editor->text_highlights.data[i].size; j++)
-        {
-            TextHighlight highlight = editor->text_highlights.data[i].data[j];
-            BoundingBox2 highlight_start = text_editor_get_character_bounding_box(editor, text_height, i, highlight.character_start);
-            BoundingBox2 highlight_end = text_editor_get_character_bounding_box(editor, text_height, i, highlight.character_end - 1);
-            BoundingBox2 combined = bounding_box_2_combine(highlight_start, highlight_end);
-            text_editor_draw_bounding_box(editor, state, combined, highlight.background_color);
-        }
+    int max_line_count = (editor_region.max.y - editor_region.min.y) / text_height;
+    if (editor->cursor_position.line < editor->first_rendered_line) {
+        editor->first_rendered_line = editor->cursor_position.line;
+    }
+    int last_line = math_minimum(editor->first_rendered_line + max_line_count-1, editor->lines.size-1);
+    if (editor->cursor_position.line > last_line) {
+        last_line = editor->cursor_position.line;
+        editor->first_rendered_line = last_line - max_line_count+1;
+    }
+
+    int max_character_count = (editor_region.max.x - editor_region.min.x) / text_renderer_get_cursor_advance(editor->renderer, text_height);
+    if (editor->cursor_position.character < editor->first_rendered_char) {
+        editor->first_rendered_char = editor->cursor_position.character;
+    }
+    int last_char = editor->first_rendered_char + max_character_count - 1;
+    if (editor->cursor_position.character > last_char) {
+        last_char = editor->cursor_position.character;
+        editor->first_rendered_char = last_char - max_character_count + 1;
     }
 
     // Draw lines
     text_editor_synchronize_highlights_array(editor);
-    vec2 line_pos = vec2(-1.0f, 1.0f - text_height);
-    for (int i = 0; i < editor->lines.size; i++)
+    vec2 line_pos = vec2(editor_region.min.x, editor_region.max.y - text_height);
+    for (int i = editor->first_rendered_line; i <= last_line; i++)
     {
         String* line = &editor->lines[i];
-        TextLayout* line_layout = text_renderer_calculate_text_layout(editor->renderer, line, text_height, 1.0f);
+        String truncated_line = string_create_substring_static(line, editor->first_rendered_char, last_char+1);
+        TextLayout* line_layout = text_renderer_calculate_text_layout(editor->renderer, &truncated_line, text_height, 1.0f);
         for (int j = 0; j < editor->text_highlights.data[i].size; j++)
         {
             TextHighlight* highlight = &editor->text_highlights.data[i].data[j];
             // Draw text background 
             {
-                BoundingBox2 highlight_start = text_editor_get_character_bounding_box(editor, text_height, i, highlight->character_start);
-                BoundingBox2 highlight_end = text_editor_get_character_bounding_box(editor, text_height, i, highlight->character_end - 1);
+                BoundingBox2 highlight_start = text_editor_get_character_bounding_box(editor, 
+                    text_height, i, highlight->character_start, editor_region);
+                BoundingBox2 highlight_end = text_editor_get_character_bounding_box(editor, text_height, i, highlight->character_end - 1, 
+                    editor_region);
                 BoundingBox2 combined = bounding_box_2_combine(highlight_start, highlight_end);
                 text_editor_draw_bounding_box(editor, state, combined, highlight->background_color);
             }
@@ -420,7 +441,7 @@ void text_editor_render(Text_Editor* editor, OpenGLState* state, int width, int 
     // Draw cursor 
     {
         BoundingBox2 cursor_bb = text_editor_get_character_bounding_box(
-            editor, text_height, editor->cursor_position.line, editor->cursor_position.character
+            editor, text_height, editor->cursor_position.line, editor->cursor_position.character, editor_region
         );
         if (editor->mode == TextEditorMode::INSERT) {
             float pixel_normalized = 2.0f / width;
