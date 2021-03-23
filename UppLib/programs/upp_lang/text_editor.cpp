@@ -457,7 +457,6 @@ void text_editor_render(Text_Editor* editor, OpenGLState* state, int width, int 
         String* line = &editor->lines[i];
         String truncated_line = string_create_substring_static(line, editor->first_rendered_char, last_char+1);
         TextLayout* line_layout = text_renderer_calculate_text_layout(editor->renderer, &truncated_line, text_height, 1.0f);
-        /*
         for (int j = 0; j < editor->text_highlights.data[i].size; j++)
         {
             TextHighlight* highlight = &editor->text_highlights.data[i].data[j];
@@ -471,13 +470,14 @@ void text_editor_render(Text_Editor* editor, OpenGLState* state, int width, int 
                 text_editor_draw_bounding_box(editor, state, combined, highlight->background_color);
             }
             // Set text color
-            for (int k = highlight->character_start; k < highlight->character_end && k < line_layout->character_positions.size; k++)
+            for (int k = highlight->character_start; k < highlight->character_end &&
+                k - editor->first_rendered_char < line_layout->character_positions.size; k++)
             {
-                Character_Position* char_pos = &line_layout->character_positions.data[k];
+                if (k - editor->first_rendered_char < 0) continue;
+                Character_Position* char_pos = &line_layout->character_positions.data[k - editor->first_rendered_char];
                 char_pos->color = highlight->text_color;
             }
         }
-        */
 
         text_renderer_add_text_from_layout(editor->renderer, line_layout, line_pos);
         line_pos.y -= (text_height);
@@ -1273,7 +1273,7 @@ ParseResult<Motion> key_messages_parse_motion(Array<Key_Message> messages)
     }
 
     // Now we need to check for real motions, which may start with a repeat count
-    if (messages[0].character != 'i' && messages[0].character != 'a') return parse_result_make_failure<Motion>();
+    if (messages[0].character != 'i' && messages[0].character != 'a') return parse_result_propagate_non_success<Motion>(movement_parse);
     else if (messages.size == 1) return parse_result_make_completable<Motion>();
     bool contains_edges = messages[0].character == 'a';
 
@@ -1304,7 +1304,7 @@ ParseResult<Motion> key_messages_parse_motion(Array<Key_Message> messages)
         return parse_result_make_success<Motion>(motion_make(MotionType::PARAGRAPH, repeat_count_parse.result, contains_edges), 2 + repeat_count_parse.key_message_count);
     }
 
-    return parse_result_make_failure<Motion>();
+    return parse_result_propagate_non_success<Motion>(movement_parse);
 }
 
 ParseResult<NormalModeCommand> key_messages_parse_normal_mode_command(Array<Key_Message> messages)
@@ -1576,6 +1576,11 @@ void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
     case NormalModeCommandType::DELETE_MOTION: {
         Text_Slice slice = motion_evaluate_at_position(command.motion, &editor->lines, editor->cursor_position,
             &editor->last_search_char, &editor->last_search_was_forwards, &editor->horizontal_position);
+        if (command.motion.type == MotionType::MOVEMENT &&
+            (command.motion.movement.type == MovementType::SEARCH_FORWARDS_FOR ||
+            command.motion.movement.type == MovementType::SEARCH_FORWARDS_TO)) {
+            slice.end = text_position_next(slice.end, editor->lines);
+        }
         editor->last_yank_was_line = false;
         string_reset(&editor->yanked_string);
         text_append_slice_to_string(editor->lines, slice, &editor->yanked_string);
@@ -1849,7 +1854,7 @@ void normal_mode_handle_message(Text_Editor* editor, Key_Message* new_message)
         // Filter out messages (Key Up messages + random shift or alt or ctrl clicks)
         if ((new_message->character == 0 && !(new_message->ctrl_down && new_message->key_down)) || !new_message->key_down
             || new_message->key_code == KEY_CODE::ALT) {
-            logg("message filtered\n");
+            //logg("message filtered\n");
             return;
         }
     }
@@ -1902,7 +1907,6 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
     if (editor->text_changed) {
         text_editor_reset_highlights(editor);
     }
-    /*
     if (editor->text_changed)
     {
         String fill_string = string_create_empty(2048);
@@ -1910,14 +1914,14 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
 
         text_editor_reset_highlights(editor);
         text_append_to_string(&editor->lines, &fill_string);
-        logg("\nPARSING SOURCE_CODE:\n-----------------------\n%s\n---------------------\n", fill_string.characters);
+        //logg("\nPARSING SOURCE_CODE:\n-----------------------\n%s\n---------------------\n", fill_string.characters);
         LexerResult result = lexer_parse_string(&fill_string);
         SCOPE_EXIT(lexer_result_destroy(&result));
 
         // Highlight identifiers
         for (int i = 0; i < result.tokens.size; i++) {
             Token* token = &result.tokens.data[i];
-            if (token->type == TokenTypeA::IDENTIFIER) {
+            if (token->type == Token_Type::IDENTIFIER) {
                 text_editor_add_highlight(
                     editor,
                     text_highlight_make(
@@ -1988,7 +1992,59 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
                 );
             }
         }
+
+        // Highlight comments
+        {
+            vec3 COMMENT_COLOR = vec3(0.0f, 1.0f, 0.0f);
+            vec3 COMMENT_BG_COLOR = vec3(0);
+
+            Text_Position pos = text_position_make_start();
+            Text_Position end = text_position_previous(text_position_make_end(&editor->lines), editor->lines);
+            while (!text_position_are_equal(pos, end) && !text_position_are_equal(pos, text_position_make_end(&editor->lines))) {
+                char current = text_get_character_after(&editor->lines, pos);
+                char next = text_get_character_after(&editor->lines, text_position_next(pos, editor->lines));
+                if (current == '/' && next == '/') {
+                    text_editor_add_highlight_from_slice(editor, 
+                        text_slice_make(pos, text_position_make(pos.line, editor->lines[pos.line].size)), COMMENT_COLOR, COMMENT_BG_COLOR);
+                    pos.line++;
+                    pos.character = 0;
+                    text_position_sanitize(&pos, editor->lines);
+                    continue;
+                }
+                if (current == '/' && next == '*') 
+                {
+                    Text_Position comment_start = pos;
+                    int depth = 1;
+                    pos = text_position_next(pos, editor->lines);
+                    pos = text_position_next(pos, editor->lines);
+                    while (!text_position_are_equal(pos, text_position_make_end(&editor->lines))) 
+                    {
+                        char current = text_get_character_after(&editor->lines, pos);
+                        char next = text_get_character_after(&editor->lines, text_position_next(pos, editor->lines));
+                        if (current == '/' && next == '*') {
+                            depth++;
+                            pos = text_position_next(pos, editor->lines);
+                            pos = text_position_next(pos, editor->lines);
+                            continue;
+                        }
+                        if (current == '*' && next == '/') {
+                            depth--;
+                            pos = text_position_next(pos, editor->lines);
+                            pos = text_position_next(pos, editor->lines);
+                            if (depth == 0) break;
+                            continue;
+                        }
+                        pos = text_position_next(pos, editor->lines);
+                    }
+                    text_editor_add_highlight_from_slice(editor, 
+                        text_slice_make(comment_start, pos), COMMENT_COLOR, COMMENT_BG_COLOR);
+                }
+
+                pos = text_position_next(pos, editor->lines);
+            }
+        }
     }
+    /*
     */
     editor->text_changed = false;
 }

@@ -13,6 +13,7 @@ struct Text_Position
 Text_Position text_position_make(int line, int character);
 Text_Position text_position_make_start();
 Text_Position text_position_make_end(DynamicArray<String>* text);
+Text_Position text_position_make_line_end(DynamicArray<String>* text, int line);
 bool text_position_are_equal(Text_Position a, Text_Position b);
 void text_position_sanitize(Text_Position* pos, DynamicArray<String> text);
 Text_Position text_position_next(Text_Position pos, DynamicArray<String> text);

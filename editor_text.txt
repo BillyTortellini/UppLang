@@ -1,12 +1,14 @@
 main :: () -> void
 {
-    I personally think this is pretty good lol
-    what Lol why though?
-    This is almost nice now lol
-    this just worked without anything wow
-
+    x : int;
+    x = 5;
+    return x;
+/*  
     Up Next:
-     * Start working on language
+     * Fix text highlighting when scrolling right
+     * Syntax highlighting for comments
+     * Add more language features
+     * Work on GUI (Probably necessary for better debugging)
 
     Bugs:
      * Repeat last search does not differentiate 'f'/'t'
@@ -23,4 +25,5 @@ main :: () -> void
 
     Rendering stuff:
      * Smaller text, better distance field computation (More exact)
+*/
 }

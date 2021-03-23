@@ -11,7 +11,7 @@
 */
 
 /* Tokens */
-namespace TokenTypeA
+namespace Token_Type
 {
     enum ENUM
     {
@@ -28,59 +28,59 @@ namespace TokenTypeA
         COLON,      // :
         COMMA,      // ,
         SEMICOLON,  // ;
-        OPEN_BRACKET,
-        CLOSED_BRACKET,
-        OPEN_CURLY_BRACKET,
-        CLOSED_CURLY_BRACKET,
-        OPEN_SQUARE_BRACKET,
-        CLOSED_SQUARE_BRACKET,
+        OPEN_PARENTHESIS, // (
+        CLOSED_PARENTHESIS, // )
+        OPEN_BRACES, // {
+        CLOSED_BRACES, // }
+        OPEN_BRACKETS, // [
+        CLOSED_BRACKETS, // ]
         DOUBLE_COLON,   // ::
         INFER_ASSIGN, // :=
         ARROW,        // ->
         // Operations
-        OP_ASSIGNMENT,
-        OP_PLUS,
-        OP_MINUS,
-        OP_SLASH,
-        OP_STAR,
-        OP_PERCENT,
+        OP_ASSIGNMENT, // =
+        OP_PLUS, // +
+        OP_MINUS, // -
+        OP_SLASH, // /
+        OP_STAR, // *
+        OP_PERCENT, // %
         // Assignments
-        COMPARISON_LESS,
-        COMPARISON_LESS_EQUAL,
-        COMPARISON_GREATER,
-        COMPARISON_GREATER_EQUAL,
-        COMPARISON_EQUAL,
-        COMPARISON_NOT_EQUAL,
+        COMPARISON_LESS, // <
+        COMPARISON_LESS_EQUAL, // <=
+        COMPARISON_GREATER, // >
+        COMPARISON_GREATER_EQUAL, // >=
+        COMPARISON_EQUAL, // ==
+        COMPARISON_NOT_EQUAL, // !=
         // Boolean Logic operators
-        LOGICAL_AND,
-        LOGICAL_OR,
-        LOGICAL_BITWISE_AND,
-        LOGICAL_BITWISE_OR,
-        LOGICAL_NOT,
-        // Constants
+        LOGICAL_AND, // &&
+        LOGICAL_OR, // || 
+        LOGICAL_BITWISE_AND, // &
+        LOGICAL_BITWISE_OR, //  |
+        LOGICAL_NOT, // !
+        // Constants (Literals)
         CONSTANT_INT,
         CONSTANT_FLOAT,
         CONSTANT_DOUBLE,
         // Other important stuff
         IDENTIFIER,
         // Controll Tokens 
-        ERROR_TOKEN
+        ERROR_TOKEN // <- This is usefull because now errors propagate to syntax analysis
     };
 }
 
-bool token_type_is_keyword(TokenTypeA::ENUM type);
+bool token_type_is_keyword(Token_Type::ENUM type);
 
 union TokenAttribute
 {
     int integer_value;
     float float_value;
     double double_value;
-    int identifier_number;
+    int identifier_number; // String identifier
 };
 
 struct Token
 {
-    TokenTypeA::ENUM type;
+    Token_Type::ENUM type;
     TokenAttribute attribute;
     int line_number;
     int character_position;
@@ -91,7 +91,7 @@ struct Token
 struct LexerResult
 {
     DynamicArray<String> identifiers;
-    Hashtable<String, int> identifier_to_index;
+    Hashtable<String, int> identifier_index_lookup_table;
     DynamicArray<Token> tokens;
     bool has_errors;
 };

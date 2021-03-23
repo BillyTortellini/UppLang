@@ -40,7 +40,7 @@ void upp_lang_main()
         String printed_ast = string_create_empty(256);
         SCOPE_EXIT(string_destroy(&printed_ast));
         ast_node_root_append_to_string(&printed_ast, &parser.root, &result);
-        logg("Ast: \n%s\n", printed_ast.characters);
+        //logg("Ast: \n%s\n", printed_ast.characters);
     }
     {
         for (int i = 0; i < 200; i++)
@@ -63,7 +63,7 @@ void upp_lang_main()
         hashtable_insert_element(&table, 5, "Tunerz");
         auto iter = hashtable_iterator_create(&table);
         while (hashtable_iterator_has_next(&iter)) {
-            logg("%d = %s\n", iter.current_entry->key, iter.current_entry->value);
+            //logg("%d = %s\n", iter.current_entry->key, iter.current_entry->value);
             hashtable_iterator_next(&iter);
         }
     }

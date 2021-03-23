@@ -2,17 +2,17 @@
 
 #include <cstring>
 
-bool token_type_is_keyword(TokenTypeA::ENUM type)
+bool token_type_is_keyword(Token_Type::ENUM type)
 {
     switch (type)
     {
-    case TokenTypeA::IF: return true;
-    case TokenTypeA::ELSE: return true;
-    case TokenTypeA::FOR: return true;
-    case TokenTypeA::WHILE: return true;
-    case TokenTypeA::CONTINUE: return true;
-    case TokenTypeA::BREAK: return true;
-    case TokenTypeA::RETURN: return true;
+    case Token_Type::IF: return true;
+    case Token_Type::ELSE: return true;
+    case Token_Type::FOR: return true;
+    case Token_Type::WHILE: return true;
+    case Token_Type::CONTINUE: return true;
+    case Token_Type::BREAK: return true;
+    case Token_Type::RETURN: return true;
     }
     return false;
 }
@@ -23,7 +23,7 @@ TokenAttribute token_attribute_make_empty() {
     return result;
 }
 
-Token token_make(TokenTypeA::ENUM type, TokenAttribute attribute, int line_num, int char_pos, int char_len, int code_index)
+Token token_make(Token_Type::ENUM type, TokenAttribute attribute, int line_num, int char_pos, int char_len, int code_index)
 {
     Token result;
     result.type = type;
@@ -35,16 +35,63 @@ Token token_make(TokenTypeA::ENUM type, TokenAttribute attribute, int line_num, 
     return result;
 }
 
+bool skip_comments(String* code, int* index, int* character_pos, int* line_number)
+{
+    if (*index + 1 >= code->size) return false;
+    if (code->characters[*index] == '/' && code->characters[*index + 1] == '/') {
+        while (*index < code->size && code->characters[*index] != '\n') {
+            *index = *index + 1;
+            *character_pos = *character_pos + 1;
+        }
+        *index = *index + 1;
+        *character_pos = 0;
+        *line_number = *line_number + 1;
+        return true;
+    }
+
+    if (code->characters[*index] == '/' && code->characters[*index + 1] == '*') 
+    {
+        *character_pos = *character_pos + 2;
+        *index = *index + 2;
+        int comment_depth = 1;
+        while (*index + 1 < code->size) 
+        {
+            char current = code->characters[*index];
+            char next = code->characters[*index+1];
+            if (current == '/' && next == '*') {
+                comment_depth++;
+                *index = *index + 2;
+                *character_pos = *character_pos + 2;
+                continue;
+            }
+            if (current == '*' && next == '/') {
+                comment_depth--;
+                *index = *index + 2;
+                *character_pos = *character_pos + 2;
+                if (comment_depth == 0) break;
+                continue;
+            }
+
+            *index = *index + 1;
+            if (current == '\n') {
+                *character_pos = 0;
+                *line_number = *line_number + 1;
+            }
+            else {
+                *character_pos = *character_pos + 1;
+            }
+        }
+        return true;
+    }
+    return false;
+}
+
 void skip_whitespace_and_comments(String* code, int* index, int* character_pos, int* line_number)
 {
-    while (*index < code->size &&
-        (
-            code->characters[*index] == '\t' ||
-            code->characters[*index] == ' '  ||
-            code->characters[*index] == '\n' ||
-            code->characters[*index] == '\r'
-            )
-        ) {
+    while (*index < code->size && string_contains_character(string_create_static("\t \r\n/"), code->characters[*index]))
+    {
+        if (skip_comments(code, index, character_pos, line_number)) continue;
+        else if (code->characters[*index] == '/') break;
         (*character_pos)++;
         if (code->characters[*index] == '\n') {
             *character_pos = 0;
@@ -75,7 +122,7 @@ LexerResult lexer_parse_string(String* code)
     String identifier_string = string_create_empty(256);
     SCOPE_EXIT(string_destroy(&identifier_string));
 
-    Hashtable<String, int> identifier_to_index = hashtable_create_empty<String, int>(2048, &string_calculate_hash, &string_equals);
+    Hashtable<String, int> identifier_index_lookup_table = hashtable_create_empty<String, int>(2048, &string_calculate_hash, &string_equals);
     DynamicArray<String> identifiers = dynamic_array_create_empty<String>(code->size);
     DynamicArray<Token> tokens = dynamic_array_create_empty<Token>(code->size);
     int index = 0;
@@ -94,169 +141,169 @@ LexerResult lexer_parse_string(String* code)
         int current_character = code->characters[index];
         int next_character = -1;
         if (index + 1 < code->size) {
-            next_character = code->characters[index+1];
+            next_character = code->characters[index + 1];
         }
 
         switch (current_character)
         {
             // Check for single symbols
         case '.':
-            dynamic_array_push_back(&tokens, token_make(TokenTypeA::DOT, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&tokens, token_make(Token_Type::DOT, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case ';':
-            dynamic_array_push_back(&tokens, token_make(TokenTypeA::SEMICOLON, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&tokens, token_make(Token_Type::SEMICOLON, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case ',':
-            dynamic_array_push_back(&tokens, token_make(TokenTypeA::COMMA, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&tokens, token_make(Token_Type::COMMA, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case '(':
-            dynamic_array_push_back(&tokens, token_make(TokenTypeA::OPEN_BRACKET, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&tokens, token_make(Token_Type::OPEN_PARENTHESIS, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case ')':
-            dynamic_array_push_back(&tokens, token_make(TokenTypeA::CLOSED_BRACKET, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&tokens, token_make(Token_Type::CLOSED_PARENTHESIS, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case '{':
-            dynamic_array_push_back(&tokens, token_make(TokenTypeA::OPEN_CURLY_BRACKET, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&tokens, token_make(Token_Type::OPEN_BRACES, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case '}':
-            dynamic_array_push_back(&tokens, token_make(TokenTypeA::CLOSED_CURLY_BRACKET, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&tokens, token_make(Token_Type::CLOSED_BRACES, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case '[':
-            dynamic_array_push_back(&tokens, token_make(TokenTypeA::OPEN_SQUARE_BRACKET, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&tokens, token_make(Token_Type::OPEN_BRACKETS, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case ']':
-            dynamic_array_push_back(&tokens, token_make(TokenTypeA::CLOSED_SQUARE_BRACKET, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&tokens, token_make(Token_Type::CLOSED_BRACKETS, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case '+':
-            dynamic_array_push_back(&tokens, token_make(TokenTypeA::OP_PLUS, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&tokens, token_make(Token_Type::OP_PLUS, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case '*':
-            dynamic_array_push_back(&tokens, token_make(TokenTypeA::OP_STAR, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&tokens, token_make(Token_Type::OP_STAR, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case '/':
-            dynamic_array_push_back(&tokens, token_make(TokenTypeA::OP_SLASH, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&tokens, token_make(Token_Type::OP_SLASH, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case '%':
-            dynamic_array_push_back(&tokens, token_make(TokenTypeA::OP_PERCENT, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&tokens, token_make(Token_Type::OP_PERCENT, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
             // Check for ambiguities between one and two characters (< and <=, = and ==, ! and !=, ...)
         case '=':
             if (next_character == '=') {
-                dynamic_array_push_back(&tokens, token_make(TokenTypeA::COMPARISON_EQUAL, token_attribute_make_empty(), line_number, character_pos, 2, index));
+                dynamic_array_push_back(&tokens, token_make(Token_Type::COMPARISON_EQUAL, token_attribute_make_empty(), line_number, character_pos, 2, index));
                 index += 2;
                 character_pos += 2;
                 continue;
             }
-            dynamic_array_push_back(&tokens, token_make(TokenTypeA::OP_ASSIGNMENT, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&tokens, token_make(Token_Type::OP_ASSIGNMENT, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case '-':
             if (next_character == '>') {
-                dynamic_array_push_back(&tokens, token_make(TokenTypeA::ARROW, token_attribute_make_empty(), line_number, character_pos, 2, index));
+                dynamic_array_push_back(&tokens, token_make(Token_Type::ARROW, token_attribute_make_empty(), line_number, character_pos, 2, index));
                 index += 2;
                 character_pos += 2;
                 continue;
             }
-            dynamic_array_push_back(&tokens, token_make(TokenTypeA::OP_MINUS, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&tokens, token_make(Token_Type::OP_MINUS, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case '<':
             if (next_character == '=') {
-                dynamic_array_push_back(&tokens, token_make(TokenTypeA::COMPARISON_LESS_EQUAL, token_attribute_make_empty(), line_number, character_pos, 2, index));
+                dynamic_array_push_back(&tokens, token_make(Token_Type::COMPARISON_LESS_EQUAL, token_attribute_make_empty(), line_number, character_pos, 2, index));
                 index += 2;
                 character_pos += 2;
                 continue;
             }
-            dynamic_array_push_back(&tokens, token_make(TokenTypeA::COMPARISON_LESS, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&tokens, token_make(Token_Type::COMPARISON_LESS, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case '>':
             if (next_character == '=') {
-                dynamic_array_push_back(&tokens, token_make(TokenTypeA::COMPARISON_GREATER_EQUAL, token_attribute_make_empty(), line_number, character_pos, 2, index));
+                dynamic_array_push_back(&tokens, token_make(Token_Type::COMPARISON_GREATER_EQUAL, token_attribute_make_empty(), line_number, character_pos, 2, index));
                 index += 2;
                 character_pos += 2;
                 continue;
             }
-            dynamic_array_push_back(&tokens, token_make(TokenTypeA::COMPARISON_GREATER, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&tokens, token_make(Token_Type::COMPARISON_GREATER, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case '!':
             if (next_character == '=') {
-                dynamic_array_push_back(&tokens, token_make(TokenTypeA::COMPARISON_NOT_EQUAL, token_attribute_make_empty(), line_number, character_pos, 2, index));
+                dynamic_array_push_back(&tokens, token_make(Token_Type::COMPARISON_NOT_EQUAL, token_attribute_make_empty(), line_number, character_pos, 2, index));
                 index += 2;
                 character_pos += 2;
                 continue;
             }
-            dynamic_array_push_back(&tokens, token_make(TokenTypeA::LOGICAL_NOT, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&tokens, token_make(Token_Type::LOGICAL_NOT, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case '&':
             if (next_character == '&') {
-                dynamic_array_push_back(&tokens, token_make(TokenTypeA::LOGICAL_AND, token_attribute_make_empty(), line_number, character_pos, 2, index));
+                dynamic_array_push_back(&tokens, token_make(Token_Type::LOGICAL_AND, token_attribute_make_empty(), line_number, character_pos, 2, index));
                 index += 2;
                 character_pos += 2;
                 continue;
             }
-            dynamic_array_push_back(&tokens, token_make(TokenTypeA::LOGICAL_BITWISE_AND, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&tokens, token_make(Token_Type::LOGICAL_BITWISE_AND, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case '|':
             if (next_character == '|') {
-                dynamic_array_push_back(&tokens, token_make(TokenTypeA::LOGICAL_OR, token_attribute_make_empty(), line_number, character_pos, 2, index));
+                dynamic_array_push_back(&tokens, token_make(Token_Type::LOGICAL_OR, token_attribute_make_empty(), line_number, character_pos, 2, index));
                 index += 2;
                 character_pos += 2;
                 continue;
             }
-            dynamic_array_push_back(&tokens, token_make(TokenTypeA::LOGICAL_BITWISE_OR, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&tokens, token_make(Token_Type::LOGICAL_BITWISE_OR, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case ':':
             if (next_character == ':') {
-                dynamic_array_push_back(&tokens, token_make(TokenTypeA::DOUBLE_COLON, token_attribute_make_empty(), line_number, character_pos, 2, index));
+                dynamic_array_push_back(&tokens, token_make(Token_Type::DOUBLE_COLON, token_attribute_make_empty(), line_number, character_pos, 2, index));
                 index += 2;
                 character_pos += 2;
                 continue;
             }
             else if (next_character == '=') {
-                dynamic_array_push_back(&tokens, token_make(TokenTypeA::INFER_ASSIGN, token_attribute_make_empty(), line_number, character_pos, 2, index));
+                dynamic_array_push_back(&tokens, token_make(Token_Type::INFER_ASSIGN, token_attribute_make_empty(), line_number, character_pos, 2, index));
                 index += 2;
                 character_pos += 2;
                 continue;
             }
-            dynamic_array_push_back(&tokens, token_make(TokenTypeA::COLON, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&tokens, token_make(Token_Type::COLON, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
@@ -282,7 +329,7 @@ LexerResult lexer_parse_string(String* code)
             TokenAttribute attribute;
             attribute.integer_value = value;
             int character_length = pre_comma_end_index - pre_comma_start_index;
-            dynamic_array_push_back(&tokens, token_make(TokenTypeA::CONSTANT_INT, attribute, line_number, character_pos, character_length, index));
+            dynamic_array_push_back(&tokens, token_make(Token_Type::CONSTANT_INT, attribute, line_number, character_pos, character_length, index));
             index += character_length;
             character_pos += character_length;
             continue;
@@ -320,7 +367,7 @@ LexerResult lexer_parse_string(String* code)
             has_errors = true;
             error_end_index--;
             int error_length = error_end_index - index + 1;
-            dynamic_array_push_back(&tokens, token_make(TokenTypeA::ERROR_TOKEN, token_attribute_make_empty(), line_number, character_pos, error_length, index));
+            dynamic_array_push_back(&tokens, token_make(Token_Type::ERROR_TOKEN, token_attribute_make_empty(), line_number, character_pos, error_length, index));
             index += error_length;
             character_pos += error_length;
             continue;
@@ -346,43 +393,43 @@ LexerResult lexer_parse_string(String* code)
 
             // Check if identifier is a keyword
             if (string_equals_cstring(&identifier_string, "if")) {
-                dynamic_array_push_back(&tokens, token_make(TokenTypeA::IF, token_attribute_make_empty(),
+                dynamic_array_push_back(&tokens, token_make(Token_Type::IF, token_attribute_make_empty(),
                     line_number, character_pos, identifier_string_length, index));
                 index += identifier_string_length;
                 character_pos += identifier_string_length;
             }
             else if (string_equals_cstring(&identifier_string, "else")) {
-                dynamic_array_push_back(&tokens, token_make(TokenTypeA::ELSE, token_attribute_make_empty(),
+                dynamic_array_push_back(&tokens, token_make(Token_Type::ELSE, token_attribute_make_empty(),
                     line_number, character_pos, identifier_string_length, index));
                 index += identifier_string_length;
                 character_pos += identifier_string_length;
             }
             else if (string_equals_cstring(&identifier_string, "for")) {
-                dynamic_array_push_back(&tokens, token_make(TokenTypeA::FOR, token_attribute_make_empty(),
+                dynamic_array_push_back(&tokens, token_make(Token_Type::FOR, token_attribute_make_empty(),
                     line_number, character_pos, identifier_string_length, index));
                 index += identifier_string_length;
                 character_pos += identifier_string_length;
             }
             else if (string_equals_cstring(&identifier_string, "while")) {
-                dynamic_array_push_back(&tokens, token_make(TokenTypeA::WHILE, token_attribute_make_empty(),
+                dynamic_array_push_back(&tokens, token_make(Token_Type::WHILE, token_attribute_make_empty(),
                     line_number, character_pos, identifier_string_length, index));
                 index += identifier_string_length;
                 character_pos += identifier_string_length;
             }
             else if (string_equals_cstring(&identifier_string, "continue")) {
-                dynamic_array_push_back(&tokens, token_make(TokenTypeA::CONTINUE, token_attribute_make_empty(),
+                dynamic_array_push_back(&tokens, token_make(Token_Type::CONTINUE, token_attribute_make_empty(),
                     line_number, character_pos, identifier_string_length, index));
                 index += identifier_string_length;
                 character_pos += identifier_string_length;
             }
             else if (string_equals_cstring(&identifier_string, "break")) {
-                dynamic_array_push_back(&tokens, token_make(TokenTypeA::BREAK, token_attribute_make_empty(),
+                dynamic_array_push_back(&tokens, token_make(Token_Type::BREAK, token_attribute_make_empty(),
                     line_number, character_pos, identifier_string_length, index));
                 index += identifier_string_length;
                 character_pos += identifier_string_length;
             }
             else if (string_equals_cstring(&identifier_string, "return")) {
-                dynamic_array_push_back(&tokens, token_make(TokenTypeA::RETURN, token_attribute_make_empty(),
+                dynamic_array_push_back(&tokens, token_make(Token_Type::RETURN, token_attribute_make_empty(),
                     line_number, character_pos, identifier_string_length, index));
                 index += identifier_string_length;
                 character_pos += identifier_string_length;
@@ -390,7 +437,7 @@ LexerResult lexer_parse_string(String* code)
             else {
                 // Identifier is a keyword
                 TokenAttribute attribute;
-                int* identifier_id = hashtable_find_element(&identifier_to_index, identifier_string);
+                int* identifier_id = hashtable_find_element(&identifier_index_lookup_table, identifier_string);
                 if (identifier_id != 0) {
                     attribute.identifier_number = *identifier_id;
                 }
@@ -399,11 +446,11 @@ LexerResult lexer_parse_string(String* code)
                     dynamic_array_push_back(&identifiers, identifier_string_copy);
                     attribute.identifier_number = identifiers.size - 1;
                     // Identifer needs to be added to table
-                    hashtable_insert_element(&identifier_to_index, identifier_string_copy, attribute.identifier_number);
+                    hashtable_insert_element(&identifier_index_lookup_table, identifier_string_copy, attribute.identifier_number);
                 }
 
                 // Add token
-                dynamic_array_push_back(&tokens, token_make(TokenTypeA::IDENTIFIER, attribute,
+                dynamic_array_push_back(&tokens, token_make(Token_Type::IDENTIFIER, attribute,
                     line_number, character_pos, identifier_string_length, index));
                 index += identifier_string_length;
                 character_pos += identifier_string_length;
@@ -415,7 +462,7 @@ LexerResult lexer_parse_string(String* code)
     result.has_errors = has_errors;
     result.identifiers = identifiers;
     result.tokens = tokens;
-    result.identifier_to_index = identifier_to_index;
+    result.identifier_index_lookup_table = identifier_index_lookup_table;
     return result;
 }
 
@@ -426,58 +473,58 @@ void lexer_result_destroy(LexerResult* result)
     }
     dynamic_array_destroy(&result->identifiers);
     dynamic_array_destroy(&result->tokens);
-    hashtable_destroy(&result->identifier_to_index);
+    hashtable_destroy(&result->identifier_index_lookup_table);
 }
 
 String lexer_result_identifer_to_string(LexerResult* result, int index) {
     return result->identifiers[index];
 }
 
-const char* tokentype_to_string(TokenTypeA::ENUM type)
+const char* tokentype_to_string(Token_Type::ENUM type)
 {
     switch (type)
     {
-    case TokenTypeA::IF: return "IF";
-    case TokenTypeA::ELSE: return "ELSE";
-    case TokenTypeA::FOR: return "FOR";
-    case TokenTypeA::WHILE: return "WHILE";
-    case TokenTypeA::CONTINUE: return "CONTINUE";
-    case TokenTypeA::BREAK: return "BREAK";
-    case TokenTypeA::DOT: return "DOT";
-    case TokenTypeA::COLON: return "COLON";
-    case TokenTypeA::COMMA: return "COMMA";
-    case TokenTypeA::DOUBLE_COLON: return "DOUBLE_COLON";
-    case TokenTypeA::INFER_ASSIGN: return "INFER_ASSIGN";
-    case TokenTypeA::ARROW: return "ARROW";
-    case TokenTypeA::SEMICOLON: return "SEMICOLON";
-    case TokenTypeA::OPEN_BRACKET: return "OPEN_BRACKET";
-    case TokenTypeA::CLOSED_BRACKET: return "CLOSED_BRACKET";
-    case TokenTypeA::OPEN_CURLY_BRACKET: return "OPEN_CURLY_BRACKET";
-    case TokenTypeA::CLOSED_CURLY_BRACKET: return "CLOSED_CURLY_BRACKET";
-    case TokenTypeA::OPEN_SQUARE_BRACKET: return "OPEN_SQUARE_BRACKET";
-    case TokenTypeA::CLOSED_SQUARE_BRACKET: return "CLOSED_SQUARE_BRACKET";
-    case TokenTypeA::OP_ASSIGNMENT: return "OP_ASSIGNMENT";
-    case TokenTypeA::OP_PLUS: return "OP_PLUS";
-    case TokenTypeA::OP_MINUS: return "OP_MINUS";
-    case TokenTypeA::OP_SLASH: return "OP_SLASH";
-    case TokenTypeA::OP_STAR: return "OP_STAR";
-    case TokenTypeA::OP_PERCENT: return "OP_PERCENT";
-    case TokenTypeA::COMPARISON_LESS: return "COMPARISON_LESS";
-    case TokenTypeA::COMPARISON_LESS_EQUAL: return "COMPARISON_LESS_EQUAL";
-    case TokenTypeA::COMPARISON_GREATER: return "COMPARISON_GREATER";
-    case TokenTypeA::COMPARISON_GREATER_EQUAL: return "COMPARISON_GREATER_EQUAL";
-    case TokenTypeA::COMPARISON_EQUAL: return "COMPARISON_EQUAL";
-    case TokenTypeA::COMPARISON_NOT_EQUAL: return "COMPARISON_NOT_EQUAL";
-    case TokenTypeA::LOGICAL_AND: return "LOGICAL_AND";
-    case TokenTypeA::LOGICAL_OR: return "LOGICAL_OR";
-    case TokenTypeA::LOGICAL_BITWISE_AND: return "LOGICAL_BITWISE_AND";
-    case TokenTypeA::LOGICAL_BITWISE_OR: return "LOGICAL_BITWISE_OR";
-    case TokenTypeA::LOGICAL_NOT: return "LOGICAL_NOT";
-    case TokenTypeA::CONSTANT_INT: return "CONSTANT_INT";
-    case TokenTypeA::CONSTANT_FLOAT: return "CONSTANT_FLOAT";
-    case TokenTypeA::CONSTANT_DOUBLE: return "CONSTANT_DOUBLE";
-    case TokenTypeA::IDENTIFIER: return "IDENTIFIER";
-    case TokenTypeA::ERROR_TOKEN: return "ERROR_TOKE";
+    case Token_Type::IF: return "IF";
+    case Token_Type::ELSE: return "ELSE";
+    case Token_Type::FOR: return "FOR";
+    case Token_Type::WHILE: return "WHILE";
+    case Token_Type::CONTINUE: return "CONTINUE";
+    case Token_Type::BREAK: return "BREAK";
+    case Token_Type::DOT: return "DOT";
+    case Token_Type::COLON: return "COLON";
+    case Token_Type::COMMA: return "COMMA";
+    case Token_Type::DOUBLE_COLON: return "DOUBLE_COLON";
+    case Token_Type::INFER_ASSIGN: return "INFER_ASSIGN";
+    case Token_Type::ARROW: return "ARROW";
+    case Token_Type::SEMICOLON: return "SEMICOLON";
+    case Token_Type::OPEN_PARENTHESIS: return "OPEN_BRACKET";
+    case Token_Type::CLOSED_PARENTHESIS: return "CLOSED_BRACKET";
+    case Token_Type::OPEN_BRACES: return "OPEN_CURLY_BRACKET";
+    case Token_Type::CLOSED_BRACES: return "CLOSED_CURLY_BRACKET";
+    case Token_Type::OPEN_BRACKETS: return "OPEN_SQUARE_BRACKET";
+    case Token_Type::CLOSED_BRACKETS: return "CLOSED_SQUARE_BRACKET";
+    case Token_Type::OP_ASSIGNMENT: return "OP_ASSIGNMENT";
+    case Token_Type::OP_PLUS: return "OP_PLUS";
+    case Token_Type::OP_MINUS: return "OP_MINUS";
+    case Token_Type::OP_SLASH: return "OP_SLASH";
+    case Token_Type::OP_STAR: return "OP_STAR";
+    case Token_Type::OP_PERCENT: return "OP_PERCENT";
+    case Token_Type::COMPARISON_LESS: return "COMPARISON_LESS";
+    case Token_Type::COMPARISON_LESS_EQUAL: return "COMPARISON_LESS_EQUAL";
+    case Token_Type::COMPARISON_GREATER: return "COMPARISON_GREATER";
+    case Token_Type::COMPARISON_GREATER_EQUAL: return "COMPARISON_GREATER_EQUAL";
+    case Token_Type::COMPARISON_EQUAL: return "COMPARISON_EQUAL";
+    case Token_Type::COMPARISON_NOT_EQUAL: return "COMPARISON_NOT_EQUAL";
+    case Token_Type::LOGICAL_AND: return "LOGICAL_AND";
+    case Token_Type::LOGICAL_OR: return "LOGICAL_OR";
+    case Token_Type::LOGICAL_BITWISE_AND: return "LOGICAL_BITWISE_AND";
+    case Token_Type::LOGICAL_BITWISE_OR: return "LOGICAL_BITWISE_OR";
+    case Token_Type::LOGICAL_NOT: return "LOGICAL_NOT";
+    case Token_Type::CONSTANT_INT: return "CONSTANT_INT";
+    case Token_Type::CONSTANT_FLOAT: return "CONSTANT_FLOAT";
+    case Token_Type::CONSTANT_DOUBLE: return "CONSTANT_DOUBLE";
+    case Token_Type::IDENTIFIER: return "IDENTIFIER";
+    case Token_Type::ERROR_TOKEN: return "ERROR_TOKE";
     }
     return "TOKEN_NOT_KNOWN";
 }
@@ -491,10 +538,10 @@ void lexer_result_print(LexerResult* result)
         Token token = result->tokens[i];
         string_append_formated(&msg, "\t %s (Line %d, Pos %d, Length %d)",
             tokentype_to_string(token.type), token.line_number, token.character_position, token.lexem_length);
-        if (token.type == TokenTypeA::IDENTIFIER) {
+        if (token.type == Token_Type::IDENTIFIER) {
             string_append_formated(&msg, " = %s", result->identifiers.data[token.attribute.identifier_number].characters);
         }
-        else if (token.type == TokenTypeA::CONSTANT_INT) {
+        else if (token.type == Token_Type::CONSTANT_INT) {
             string_append_formated(&msg, " = %d", token.attribute.integer_value);
         }
         string_append_formated(&msg, "\n");
@@ -509,7 +556,7 @@ void lexer_result_print(LexerResult* result)
     x : int = expression;
     x : int;
     x := 5;
-    x :: (int)5;
+    x :: (int)5; // Constant int, i dont think i want this (Because attribute system)
 
     Arrays und dynamic arrays und initialisierung;
     x : int[] = [int: 15, 32, 17, 18];
@@ -552,7 +599,7 @@ void lexer_result_print(LexerResult* result)
     If/For/While statement
 */
 
-int parser_find_next_token_type(Parser* parser, TokenTypeA::ENUM type)
+int parser_find_next_token_type(Parser* parser, Token_Type::ENUM type)
 {
     for (int i = parser->index; i < parser->tokens.size; i++) {
         if (parser->tokens[i].type == type) {
@@ -591,36 +638,36 @@ void parser_log_unresolvable_error(Parser* parser, const char* msg, int start_to
     dynamic_array_push_back(&parser->unresolved_errors, error);
 }
 
-bool parser_test_next_token(Parser* parser, TokenTypeA::ENUM type)
+bool parser_test_next_token(Parser* parser, Token_Type::ENUM type)
 {
     if (parser->index >= parser->tokens.size) {
         return false;
     }
-    if (parser->tokens[parser->index].type ==  type) {
+    if (parser->tokens[parser->index].type == type) {
         return true;
     }
     return false;
 }
 
-bool parser_test_next_2_tokens(Parser* parser, TokenTypeA::ENUM type1, TokenTypeA::ENUM type2)
+bool parser_test_next_2_tokens(Parser* parser, Token_Type::ENUM type1, Token_Type::ENUM type2)
 {
-    if (parser->index+1 >= parser->tokens.size) {
+    if (parser->index + 1 >= parser->tokens.size) {
         return false;
     }
-    if (parser->tokens[parser->index].type == type1 && parser->tokens[parser->index+1].type == type2) {
+    if (parser->tokens[parser->index].type == type1 && parser->tokens[parser->index + 1].type == type2) {
         return true;
     }
     return false;
 }
 
-bool parser_test_next_3_tokens(Parser* parser, TokenTypeA::ENUM type1, TokenTypeA::ENUM type2, TokenTypeA::ENUM type3)
+bool parser_test_next_3_tokens(Parser* parser, Token_Type::ENUM type1, Token_Type::ENUM type2, Token_Type::ENUM type3)
 {
-    if (parser->index+2 >= parser->tokens.size) {
+    if (parser->index + 2 >= parser->tokens.size) {
         return false;
     }
     if (parser->tokens[parser->index].type == type1 &&
-        parser->tokens[parser->index+1].type == type2 &&
-        parser->tokens[parser->index+2].type == type3) {
+        parser->tokens[parser->index + 1].type == type2 &&
+        parser->tokens[parser->index + 2].type == type3) {
         return true;
     }
     return false;
@@ -779,26 +826,26 @@ bool parser_parse_expression(Parser* parser, Ast_Node_Expression* expression);
 
 bool parser_parse_expression_single_value(Parser* parser, Ast_Node_Expression* expression)
 {
-    if (parser_test_next_token(parser, TokenTypeA::IDENTIFIER))
+    if (parser_test_next_token(parser, Token_Type::IDENTIFIER))
     {
         expression->type = ExpressionType::VARIABLE_READ;
         expression->variable_name_id = parser->tokens[parser->index].attribute.identifier_number;
         parser->index++;
         return true;
     }
-    else if (parser_test_next_token(parser, TokenTypeA::CONSTANT_INT))
+    else if (parser_test_next_token(parser, Token_Type::CONSTANT_INT))
     {
         expression->type = ExpressionType::INTEGER_CONSTANT;
         expression->integer_constant_value = parser->tokens[parser->index].attribute.integer_value;
         parser->index++;
         return true;
     }
-    else if (parser_test_next_token(parser, TokenTypeA::OPEN_BRACKET))
+    else if (parser_test_next_token(parser, Token_Type::OPEN_PARENTHESIS))
     {
         int rewind_point = parser->index;
         parser->index++;
         if (parser_parse_expression(parser, expression)) {
-            if (parser_test_next_token(parser, TokenTypeA::CLOSED_BRACKET)) {
+            if (parser_test_next_token(parser, Token_Type::CLOSED_PARENTHESIS)) {
                 parser->index++;
                 return true;
             }
@@ -824,29 +871,29 @@ bool parser_parse_expression_priority(Parser* parser, Ast_Node_Expression* expre
     expression->right = 0;
 
     int rewind_point;
-    int current_priority = minimum_priority+1;
-    while (true) 
+    int current_priority = minimum_priority + 1;
+    while (true)
     {
         rewind_point = parser->index;
         ExpressionType::ENUM op_type = ExpressionType::INTEGER_CONSTANT;
         int operation_priority = 0;
-        if (parser_test_next_token(parser, TokenTypeA::OP_PLUS)) {
+        if (parser_test_next_token(parser, Token_Type::OP_PLUS)) {
             op_type = ExpressionType::OP_ADD;
             operation_priority = 0;
         }
-        else if (parser_test_next_token(parser, TokenTypeA::OP_MINUS)) {
+        else if (parser_test_next_token(parser, Token_Type::OP_MINUS)) {
             op_type = ExpressionType::OP_SUBTRACT;
             operation_priority = 0;
         }
-        else if (parser_test_next_token(parser, TokenTypeA::OP_SLASH)) {
+        else if (parser_test_next_token(parser, Token_Type::OP_SLASH)) {
             op_type = ExpressionType::OP_DIVIDE;
             operation_priority = 1;
         }
-        else if (parser_test_next_token(parser, TokenTypeA::OP_STAR)) {
+        else if (parser_test_next_token(parser, Token_Type::OP_STAR)) {
             op_type = ExpressionType::OP_MULTIPLY;
             operation_priority = 1;
         }
-        else if (parser_test_next_token(parser, TokenTypeA::OP_PERCENT)) {
+        else if (parser_test_next_token(parser, Token_Type::OP_PERCENT)) {
             op_type = ExpressionType::OP_MODULO;
             operation_priority = 2;
         }
@@ -860,7 +907,7 @@ bool parser_parse_expression_priority(Parser* parser, Ast_Node_Expression* expre
         }
 
         if (operation_priority <= current_priority ||
-            (expression->type == ExpressionType::INTEGER_CONSTANT || expression->type == ExpressionType::VARIABLE_READ)) 
+            (expression->type == ExpressionType::INTEGER_CONSTANT || expression->type == ExpressionType::VARIABLE_READ))
         {
             Ast_Node_Expression right;
             if (!parser_parse_expression_single_value(parser, &right)) {
@@ -898,7 +945,7 @@ bool parser_parse_expression(Parser* parser, Ast_Node_Expression* expression)
     if (!parser_parse_expression_single_value(parser, &root)) {
         return false;
     }
-    if (!parser_parse_expression_priority(parser, &root, -1)) { 
+    if (!parser_parse_expression_priority(parser, &root, -1)) {
         return true;
     }
     *expression = root;
@@ -909,7 +956,7 @@ bool parser_parse_statement(Parser* parser, Ast_Node_Statement* statement)
 {
     int rewind_point = parser->index;
 
-    if (parser_test_next_2_tokens(parser, TokenTypeA::RETURN, TokenTypeA::IDENTIFIER))  // Return statement 'return x'
+    if (parser_test_next_2_tokens(parser, Token_Type::RETURN, Token_Type::IDENTIFIER))  // Return statement 'return x'
     {
         statement->type = StatementType::RETURN_STATEMENT;
         statement->variable_name_id = parser->tokens[parser->index + 1].attribute.identifier_number;
@@ -917,16 +964,16 @@ bool parser_parse_statement(Parser* parser, Ast_Node_Statement* statement)
         return true;
     }
 
-    if (parser_test_next_3_tokens(parser, TokenTypeA::IDENTIFIER, TokenTypeA::COLON, TokenTypeA::IDENTIFIER)) // Variable definition 'x : int'
+    if (parser_test_next_3_tokens(parser, Token_Type::IDENTIFIER, Token_Type::COLON, Token_Type::IDENTIFIER)) // Variable definition 'x : int'
     {
         statement->type = StatementType::VARIABLE_DEFINITION;
         statement->variable_name_id = parser->tokens[parser->index].attribute.identifier_number;
-        statement->variable_type_id = parser->tokens[parser->index+2].attribute.identifier_number;
+        statement->variable_type_id = parser->tokens[parser->index + 2].attribute.identifier_number;
         parser->index += 3;
         return true;
     }
 
-    if (parser_test_next_2_tokens(parser, TokenTypeA::IDENTIFIER, TokenTypeA::OP_ASSIGNMENT))
+    if (parser_test_next_2_tokens(parser, Token_Type::IDENTIFIER, Token_Type::OP_ASSIGNMENT))
     {
         // Assignment
         statement->type = StatementType::VARIABLE_ASSIGNMENT;
@@ -954,14 +1001,14 @@ bool parser_parse_statement_block(Parser* parser, Ast_Node_Statement_Block* bloc
         rewind_index = parser->index;
         bool do_error_recovery = true;;
         if (parser_parse_statement(parser, &statement)) {
-            if (parser_test_next_token(parser, TokenTypeA::SEMICOLON)) {
+            if (parser_test_next_token(parser, Token_Type::SEMICOLON)) {
                 dynamic_array_push_back(&block->statements, statement);
                 parser->index++;
                 do_error_recovery = false;
             }
             else {
                 ast_node_statement_destroy(&statement);
-                parser_log_unresolvable_error(parser, "Statement did not end with SEMICOLON(';')!\n", rewind_index, parser->index-1);
+                parser_log_unresolvable_error(parser, "Statement did not end with SEMICOLON(';')!\n", rewind_index, parser->index - 1);
                 do_error_recovery = false;
             }
         }
@@ -969,8 +1016,8 @@ bool parser_parse_statement_block(Parser* parser, Ast_Node_Statement_Block* bloc
         if (do_error_recovery)
         {
             // Error recovery, skip one token and go after next ;
-            int next_semicolon = parser_find_next_token_type(parser, TokenTypeA::SEMICOLON);
-            int next_unexpected_token = parser_find_next_token_type(parser, TokenTypeA::CLOSED_CURLY_BRACKET);
+            int next_semicolon = parser_find_next_token_type(parser, Token_Type::SEMICOLON);
+            int next_unexpected_token = parser_find_next_token_type(parser, Token_Type::CLOSED_BRACES);
             // TODO: maybe do something smarter, like going to next IF or something
             if (next_unexpected_token < next_semicolon || next_semicolon >= parser->tokens.size) { // Stop parsing statements
                 break;
@@ -978,7 +1025,7 @@ bool parser_parse_statement_block(Parser* parser, Ast_Node_Statement_Block* bloc
             else {
                 // Just go to next semicolon, and try parsing
                 parser_log_unresolvable_error(parser, "Could not parse statement, skipped it\n", parser->index, next_semicolon);
-                parser->index = next_semicolon+1;
+                parser->index = next_semicolon + 1;
             }
         }
     }
@@ -998,7 +1045,7 @@ bool parser_parse_function(Parser* parser, Ast_Node_Function* function)
     );
 
     // Parse Function start
-    if (!parser_test_next_3_tokens(parser, TokenTypeA::IDENTIFIER, TokenTypeA::DOUBLE_COLON, TokenTypeA::OPEN_BRACKET)) {
+    if (!parser_test_next_3_tokens(parser, Token_Type::IDENTIFIER, Token_Type::DOUBLE_COLON, Token_Type::OPEN_PARENTHESIS)) {
         parser_log_intermediate_error(parser, "Could not parse function, it did not start with 'ID :: ('", 3);
         exit_failure = true;
         return false;
@@ -1006,10 +1053,10 @@ bool parser_parse_function(Parser* parser, Ast_Node_Function* function)
     function->function_name_id = parser->tokens[parser->index].attribute.identifier_number;
     parser->index += 3;
 
-    while (!parser_test_next_token(parser, TokenTypeA::CLOSED_BRACKET))
+    while (!parser_test_next_token(parser, Token_Type::CLOSED_PARENTHESIS))
     {
         // Parameters need to be named, meaning x : int     
-        if (!parser_test_next_3_tokens(parser, TokenTypeA::IDENTIFIER, TokenTypeA::COLON, TokenTypeA::IDENTIFIER)) {
+        if (!parser_test_next_3_tokens(parser, Token_Type::IDENTIFIER, Token_Type::COLON, Token_Type::IDENTIFIER)) {
             parser_log_intermediate_error(parser, "Could not parse function, parameter was not in the form ID : TYPE", 3);
             exit_failure = true;
             return false;
@@ -1017,23 +1064,23 @@ bool parser_parse_function(Parser* parser, Ast_Node_Function* function)
 
         Parameter param;
         param.name_id = parser->tokens[parser->index].attribute.identifier_number;
-        param.type_id = parser->tokens[parser->index+2].attribute.identifier_number;
+        param.type_id = parser->tokens[parser->index + 2].attribute.identifier_number;
         dynamic_array_push_back(&function->parameters, param);
         parser->index += 3;
 
         // Check for ) or ,
-        if (parser_test_next_token(parser, TokenTypeA::COMMA)) {
+        if (parser_test_next_token(parser, Token_Type::COMMA)) {
             parser->index++;
         }
     }
     parser->index++; // Skip )
 
-    if (!parser_test_next_3_tokens(parser, TokenTypeA::ARROW, TokenTypeA::IDENTIFIER, TokenTypeA::OPEN_CURLY_BRACKET)) {
+    if (!parser_test_next_3_tokens(parser, Token_Type::ARROW, Token_Type::IDENTIFIER, Token_Type::OPEN_BRACES)) {
         parser_log_intermediate_error(parser, "Could not parse function, did not find return type after Parameters '-> TYPE {'", 3);
         exit_failure = true;
         return false;
     }
-    function->return_type_id = parser->tokens[parser->index+1].attribute.identifier_number;
+    function->return_type_id = parser->tokens[parser->index + 1].attribute.identifier_number;
     parser->index += 3;
 
     // Parse statements
@@ -1048,15 +1095,15 @@ bool parser_parse_function(Parser* parser, Ast_Node_Function* function)
     );
 
     // Check that the function ends properly with a closing curly bracket
-    if (!parser_test_next_token(parser, TokenTypeA::CLOSED_CURLY_BRACKET)) {
+    if (!parser_test_next_token(parser, Token_Type::CLOSED_BRACES)) {
         // If it is not, eat all tokens until next curly bracket
-        int next_closed_curly = parser_find_next_token_type(parser, TokenTypeA::CLOSED_CURLY_BRACKET);
+        int next_closed_curly = parser_find_next_token_type(parser, Token_Type::CLOSED_BRACES);
         parser_log_unresolvable_error(parser, "Function did not end properly with }",
-            math_clamp(parser->index, 0, parser->tokens.size-1),
-            math_clamp(next_closed_curly, 0, parser->tokens.size-1)
+            math_clamp(parser->index, 0, parser->tokens.size - 1),
+            math_clamp(next_closed_curly, 0, parser->tokens.size - 1)
         );
         //exit_failure = true;
-        parser->index = next_closed_curly+1;
+        parser->index = next_closed_curly + 1;
         //return false;
     }
     else {
@@ -1089,12 +1136,12 @@ bool parser_parse_root(Parser* parser, Ast_Node_Root* root)
                 next_line_token++;
             }
             if (next_line_token >= parser->tokens.size) {
-                parser_log_unresolvable_error(parser, "Could not parse last function in file!\n", parser->index, parser->tokens.size-1);
+                parser_log_unresolvable_error(parser, "Could not parse last function in file!\n", parser->index, parser->tokens.size - 1);
                 break;
             }
             else {
                 // Skip to next line token, try parsing funciton again
-                parser_log_unresolvable_error(parser, "Could not parse function header!\n", parser->index, next_line_token-1);
+                parser_log_unresolvable_error(parser, "Could not parse function header!\n", parser->index, next_line_token - 1);
                 parser->index = next_line_token;
             }
         }
@@ -1233,7 +1280,7 @@ int ast_interpreter_execute_main(Ast_Node_Root* root, LexerResult* lexer)
     // Find main
     Ast_Node_Function* main = 0;
     {
-        int* main_identifer = hashtable_find_element(&lexer->identifier_to_index, string_create_static("main"));
+        int* main_identifer = hashtable_find_element(&lexer->identifier_index_lookup_table, string_create_static("main"));
         if (main_identifer == 0) {
             logg("Main not defined\n");
             return -1;
