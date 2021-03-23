@@ -45,6 +45,7 @@ u64 math_round_next_multiple(u64 x, u64 m);
 // MODULO FUNCTIONS
 // These are used because the c++ % operator is actually the Mathematical remainder operator, not the Mathematical modulo
 int math_modulo(int x, int modulo);
+double math_modulo(double x, double modulo);
 float math_modulo(float x, float modulo);
 float math_remainder(float x, float modulo);
 

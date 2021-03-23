@@ -4,16 +4,13 @@ main :: () -> void
     what Lol why though?
     This is almost nice now lol
     this just worked without anything wow
-    I actually expected this to eat performance, i do not know why
 
     Up Next:
-     * Blinking cursor (Change cursor on almost complete commands, e.g. 'r')
-     * Display line number, relative stuff.
-     * Implement display oriented commands (zz,zt,zb, Shift-'h/m/l')
+     * Start working on language
 
     Bugs:
      * Repeat last search does not differentiate 'f'/'t'
-     * Alt-Gr spamming still cancels commands
+     * Alt-Gr spamming still cancels commands (win32 nonsense)
      * Undo-Redo cursor position still sucks a little (Hint: Save positions after/before command)
      * Non ASCII chars destroy some motions (Program crashes)
      * 'r' is buggy on line end, and on empty lines

@@ -215,7 +215,7 @@ void upp_lang_main()
                 window_set_fullscreen(window, !state->fullscreen);
             }
             camera_controller_arcball_update(&camera_controller_arcball, &camera, input);
-            text_editor_update(&text_editor, input);
+            text_editor_update(&text_editor, input, timing_current_time_in_seconds());
 
             file_listener_check_if_files_changed(file_listener);
         }
@@ -245,7 +245,8 @@ void upp_lang_main()
             editor_region_offset = vec2(0.0f);
             BoundingBox2 region = bounding_box_2_make_min_max(vec2(-0.5f, -0.5f) + editor_region_offset, vec2(0.5f, 0.5f) + editor_region_offset);
             region = bounding_box_2_make_min_max(vec2(-1, -1), vec2(1, 1));
-            text_editor_render(&text_editor, &opengl_state, window_state->width, window_state->height, window_state->dpi, region);
+            text_editor_render(&text_editor, &opengl_state, window_state->width, window_state->height, window_state->dpi, 
+                region, timing_current_time_in_seconds());
 
             window_swap_buffers(window);
         }

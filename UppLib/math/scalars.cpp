@@ -30,6 +30,10 @@ int math_modulo(int x, int modulo) {
     return ((x % modulo) + modulo) % modulo;
 }
 
+double math_modulo(double x, double modulo) {
+    return x - modulo*math_floor(x/modulo);
+}
+
 float math_modulo(float x, float modulo) {
     return x - modulo*math_floor(x/modulo);
 }

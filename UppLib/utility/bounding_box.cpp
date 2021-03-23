@@ -22,6 +22,10 @@ bool bounding_box_2_is_point_inside(const BoundingBox2& bb, const vec2& p) {
     return p.x >= bb.min.x && p.y >= bb.min.y && p.x <= bb.max.x && p.y <= bb.max.y;
 }
 
+bool bounding_box_2_is_other_box_inside(const BoundingBox2& bb, const BoundingBox2& inside) {
+    return bounding_box_2_is_point_inside(bb, inside.min) && bounding_box_2_is_point_inside(bb, inside.max);
+}
+
 BoundingBox2 bounding_box_2_combine(BoundingBox2 bb1, BoundingBox2 bb2) 
 {
     BoundingBox2 result;

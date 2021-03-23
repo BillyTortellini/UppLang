@@ -293,6 +293,9 @@ Text_Editor text_editor_create(TextRenderer* text_renderer, FileListener* listen
     result.line_size_cm = 1;
     result.first_rendered_line = 0;
     result.first_rendered_char = 0;
+    result.line_count_buffer = string_create_empty(16);
+    result.last_editor_region = bounding_box_2_make_min_max(vec2(-1, -1), vec2(1, 1));
+    result.last_text_height = 0.0f;
 
     result.history = text_history_create();
     result.mode = TextEditorMode::NORMAL;
@@ -301,6 +304,7 @@ Text_Editor text_editor_create(TextRenderer* text_renderer, FileListener* listen
     result.text_changed = true;
     result.last_search_char = ' ';
     result.last_search_was_forwards = true;
+    result.last_keymessage_time = 0.0;
 
     result.last_normal_mode_command = normal_mode_command_make(NormalModeCommandType::MOVEMENT, 0);
     result.last_normal_mode_command.movement = movement_make(MovementType::MOVE_LEFT, 0, 0);
@@ -324,6 +328,7 @@ void text_editor_destroy(Text_Editor* editor)
     shader_program_destroy(editor->cursor_shader);
     mesh_gpu_data_destroy(&editor->cursor_mesh);
     string_destroy(&editor->yanked_string);
+    string_destroy(&editor->line_count_buffer);
 
     dynamic_array_destroy(&editor->normal_mode_incomplete_command);
     dynamic_array_destroy(&editor->last_insert_mode_inputs);
@@ -374,17 +379,14 @@ BoundingBox2 text_editor_get_character_bounding_box(Text_Editor* editor, float t
     return result;
 }
 
-void text_editor_render(Text_Editor* editor, OpenGLState* state, int width, int height, int dpi, BoundingBox2 editor_region)
+void text_editor_render(Text_Editor* editor, OpenGLState* state, int width, int height, int dpi, BoundingBox2 editor_region, double time)
 {
-    /*
-        What needs to happen:
-            First i have to calculate how many lines can fit into the editor region (Division), 
-            and how many characters per line i can draw,
-            then I just draw those lines, but i have to cut off after a specific count
-    */
     //text_editor_draw_bounding_box(editor, state, editor_region, vec3(0.0f, 0.2f, 0.0f));
     float text_height = 2.0f * (editor->line_size_cm) / (height / (float)dpi * 2.54f);
+    editor->last_editor_region = editor_region;
+    editor->last_text_height = text_height;
 
+    // Calculate minimum and maximum line in viewport
     int max_line_count = (editor_region.max.y - editor_region.min.y) / text_height;
     if (editor->cursor_position.line < editor->first_rendered_line) {
         editor->first_rendered_line = editor->cursor_position.line;
@@ -395,6 +397,48 @@ void text_editor_render(Text_Editor* editor, OpenGLState* state, int width, int 
         editor->first_rendered_line = last_line - max_line_count+1;
     }
 
+    // Draw line numbers (Reduces the editor viewport for the text)
+    {
+        string_reset(&editor->line_count_buffer);
+        string_append_formated(&editor->line_count_buffer, "%d ", editor->lines.size);
+        int line_number_char_count = editor->line_count_buffer.size;
+
+        vec2 line_pos = vec2(editor_region.min.x, editor_region.max.y - text_height);
+        for (int i = editor->first_rendered_line; i <= last_line; i++) 
+        {
+            // Do line number formating
+            string_reset(&editor->line_count_buffer);
+            if (i == editor->cursor_position.line) {
+                string_append_formated(&editor->line_count_buffer, "%d", i);
+            }
+            else {
+                int offset_to_cursor = math_absolute(editor->cursor_position.line - i);
+                string_append_formated(&editor->line_count_buffer, "%d", offset_to_cursor);
+                while (editor->line_count_buffer.size < line_number_char_count) {
+                    string_insert_character_before(&editor->line_count_buffer, ' ', 0);
+                }
+            }
+
+            // Trim line number if we are outside of the text_region
+            TextLayout* layout = text_renderer_calculate_text_layout(editor->renderer, &editor->line_count_buffer, text_height, 1.0f);
+            for (int j = layout->character_positions.size-1; j >= 0; j--) {
+                BoundingBox2 positioned_char = layout->character_positions[j].bounding_box;
+                positioned_char.min += line_pos;
+                positioned_char.max += line_pos;
+                if (!bounding_box_2_is_other_box_inside(editor_region, positioned_char)) {
+                    dynamic_array_remove_ordered(&layout->character_positions, j);
+                }
+                else {
+                    layout->character_positions[j].color = vec3(0.5f, 0.5f, 1.0f);
+                }
+            }
+            text_renderer_add_text_from_layout(editor->renderer, layout, line_pos);
+            line_pos.y -= (text_height);
+        }
+        editor_region.min.x += text_renderer_calculate_text_width(editor->renderer, line_number_char_count, text_height);
+    }
+
+    // Calculate the first and last character to be drawn in any line (Viewport)
     int max_character_count = (editor_region.max.x - editor_region.min.x) / text_renderer_get_cursor_advance(editor->renderer, text_height);
     if (editor->cursor_position.character < editor->first_rendered_char) {
         editor->first_rendered_char = editor->cursor_position.character;
@@ -413,6 +457,7 @@ void text_editor_render(Text_Editor* editor, OpenGLState* state, int width, int 
         String* line = &editor->lines[i];
         String truncated_line = string_create_substring_static(line, editor->first_rendered_char, last_char+1);
         TextLayout* line_layout = text_renderer_calculate_text_layout(editor->renderer, &truncated_line, text_height, 1.0f);
+        /*
         for (int j = 0; j < editor->text_highlights.data[i].size; j++)
         {
             TextHighlight* highlight = &editor->text_highlights.data[i].data[j];
@@ -432,6 +477,7 @@ void text_editor_render(Text_Editor* editor, OpenGLState* state, int width, int 
                 char_pos->color = highlight->text_color;
             }
         }
+        */
 
         text_renderer_add_text_from_layout(editor->renderer, line_layout, line_pos);
         line_pos.y -= (text_height);
@@ -440,15 +486,29 @@ void text_editor_render(Text_Editor* editor, OpenGLState* state, int width, int 
 
     // Draw cursor 
     {
+        // Actually i want some time since last input to start blinking the cursor
+        double inactivity_time_to_cursor_blink = 1.0;
+        double blink_length = 0.5;
+        bool show_cursor = true; 
+        if (editor->last_keymessage_time + inactivity_time_to_cursor_blink < time) {
+            show_cursor = math_modulo(time - editor->last_keymessage_time - inactivity_time_to_cursor_blink, blink_length * 2.0) > blink_length;
+        }
         BoundingBox2 cursor_bb = text_editor_get_character_bounding_box(
             editor, text_height, editor->cursor_position.line, editor->cursor_position.character, editor_region
         );
+        // Change cursor height if there are messages to be parsed
+        float cursor_height = text_height;
+        if (editor->mode == TextEditorMode::NORMAL && editor->normal_mode_incomplete_command.size != 0) cursor_height *= 0.5f;
+        cursor_bb.max.y = cursor_bb.min.y + cursor_height;
+
         if (editor->mode == TextEditorMode::INSERT) {
             float pixel_normalized = 2.0f / width;
             float width = math_maximum(pixel_normalized * 3.0f, text_height * 0.04f);
             cursor_bb.max.x = cursor_bb.min.x + width;
         }
-        text_editor_draw_bounding_box(editor, state, cursor_bb, vec3(0.0f, 1.0f, 0.0f));
+        if (show_cursor) {
+            text_editor_draw_bounding_box(editor, state, cursor_bb, vec3(0.0f, 1.0f, 0.0f));
+        }
     }
 }
 
@@ -1306,6 +1366,18 @@ ParseResult<NormalModeCommand> key_messages_parse_normal_mode_command(Array<Key_
                 NormalModeCommandType::CHANGE_MOTION, repeat_count.result, motion_make_from_movement(movement_make(MovementType::TO_END_OF_LINE, 1))
             ),
             1 + repeat_count.key_message_count);
+    case 'L':
+        return parse_result_make_success(
+            normal_mode_command_make(NormalModeCommandType::MOVE_CURSOR_VIEWPORT_BOTTOM, repeat_count.result),
+            repeat_count.key_message_count + 1);
+    case 'M':
+        return parse_result_make_success(
+            normal_mode_command_make(NormalModeCommandType::MOVE_CURSOR_VIEWPORT_CENTER, repeat_count.result),
+            repeat_count.key_message_count + 1);
+    case 'H':
+        return parse_result_make_success(
+            normal_mode_command_make(NormalModeCommandType::MOVE_CURSOR_VIEWPORT_TOP, repeat_count.result),
+            repeat_count.key_message_count + 1);
     case 'p':
         return parse_result_make_success(normal_mode_command_make(NormalModeCommandType::PUT_AFTER_CURSOR, repeat_count.result),
             1 + repeat_count.key_message_count);
@@ -1322,6 +1394,7 @@ ParseResult<NormalModeCommand> key_messages_parse_normal_mode_command(Array<Key_
     case 'c':
     case 'v':
     case 'y':
+    case 'z':
         if (messages.size == 1) return parse_result_make_completable<NormalModeCommand>();
     }
     if (messages[0].key_code == KEY_CODE::R && messages[0].ctrl_down && messages[0].key_down) {
@@ -1392,6 +1465,21 @@ ParseResult<NormalModeCommand> key_messages_parse_normal_mode_command(Array<Key_
             );
         }
         return parse_result_propagate_non_success<NormalModeCommand>(motion_parse);
+    }
+    if (messages[0].character == 'z') {
+        if (messages[1].character == 't') {
+            return parse_result_make_success(normal_mode_command_make(NormalModeCommandType::MOVE_VIEWPORT_CURSOR_TOP, repeat_count.result),
+                repeat_count.key_message_count + 2);
+        }
+        if (messages[1].character == 'z') {
+            return parse_result_make_success(normal_mode_command_make(NormalModeCommandType::MOVE_VIEWPORT_CURSOR_CENTER, repeat_count.result),
+                repeat_count.key_message_count + 2);
+        }
+        if (messages[1].character == 'b') {
+            return parse_result_make_success(normal_mode_command_make(NormalModeCommandType::MOVE_VIEWPORT_CURSOR_BOTTOM, repeat_count.result),
+                repeat_count.key_message_count + 2);
+        }
+        return parse_result_make_failure<NormalModeCommand>();
     }
     return parse_result_make_failure<NormalModeCommand>();
 }
@@ -1646,6 +1734,36 @@ void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
         text_history_insert_string(&editor->history, editor, editor->cursor_position, copy);
         break;
     }
+    case NormalModeCommandType::MOVE_VIEWPORT_CURSOR_TOP: {
+        editor->first_rendered_line = editor->cursor_position.line;
+        break;
+    }
+    case NormalModeCommandType::MOVE_VIEWPORT_CURSOR_CENTER: {
+        int line_count = (editor->last_editor_region.max.y - editor->last_editor_region.min.y) / editor->last_text_height;
+        editor->first_rendered_line = math_maximum(0, editor->cursor_position.line - line_count / 2);
+        break;
+    }
+    case NormalModeCommandType::MOVE_VIEWPORT_CURSOR_BOTTOM: {
+        int line_count = (editor->last_editor_region.max.y - editor->last_editor_region.min.y) / editor->last_text_height;
+        editor->first_rendered_line = math_maximum(0, editor->cursor_position.line - line_count);
+        break;
+    }
+    case NormalModeCommandType::MOVE_CURSOR_VIEWPORT_TOP: {
+        editor->cursor_position.line = editor->first_rendered_line;
+        break;
+    }
+    case NormalModeCommandType::MOVE_CURSOR_VIEWPORT_CENTER: {
+        int line_count = (editor->last_editor_region.max.y - editor->last_editor_region.min.y) / editor->last_text_height;
+        editor->cursor_position.line = editor->first_rendered_line + line_count/2;
+        text_editor_clamp_cursor(editor);
+        break;
+    }
+    case NormalModeCommandType::MOVE_CURSOR_VIEWPORT_BOTTOM: {
+        int line_count = (editor->last_editor_region.max.y - editor->last_editor_region.min.y) / editor->last_text_height;
+        editor->cursor_position.line = editor->first_rendered_line + line_count-1;
+        text_editor_clamp_cursor(editor);
+        break;
+    }
     }
     if (save_as_last_command) editor->last_normal_mode_command = command;
 }
@@ -1753,11 +1871,14 @@ void normal_mode_handle_message(Text_Editor* editor, Key_Message* new_message)
 }
 
 float zoom = 0.0f;
-void text_editor_update(Text_Editor* editor, Input* input)
+void text_editor_update(Text_Editor* editor, Input* input, double current_time)
 {
     // Update zoom in editor
     zoom += input->mouse_wheel_delta;
     editor->line_size_cm = 1.0f * math_power(1.1f, zoom);
+    if (input->key_messages.size != 0) {
+        editor->last_keymessage_time = current_time;
+    }
 
     // Handle all messages
     for (int i = 0; i < input->key_messages.size; i++)
@@ -1778,8 +1899,7 @@ void text_editor_update(Text_Editor* editor, Input* input)
 
     // Stuff that has nothing to do with the text editor, but with the programming language
     // Do syntax highlighting
-    if (editor->text_changed)
-    {
+    if (editor->text_changed) {
         text_editor_reset_highlights(editor);
     }
     /*

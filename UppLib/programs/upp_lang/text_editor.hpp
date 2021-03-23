@@ -134,7 +134,13 @@ namespace NormalModeCommandType
         REPEAT_LAST_COMMAND,
         VISUALIZE_MOTION, 
         UNDO,
-        REDO
+        REDO,
+        MOVE_VIEWPORT_CURSOR_TOP, // zt
+        MOVE_VIEWPORT_CURSOR_CENTER, // zz
+        MOVE_VIEWPORT_CURSOR_BOTTOM, // zb
+        MOVE_CURSOR_VIEWPORT_TOP, // 'Shift-H'
+        MOVE_CURSOR_VIEWPORT_CENTER, // 'Shift-M'
+        MOVE_CURSOR_VIEWPORT_BOTTOM, // 'Shift-L'
     };
 }
 
@@ -175,8 +181,12 @@ struct Text_Editor
     Mesh_GPU_Data cursor_mesh;
     DynamicArray<DynamicArray<TextHighlight>> text_highlights;
     float line_size_cm;
+    double last_keymessage_time;
     int first_rendered_line;
     int first_rendered_char;
+    String line_count_buffer;
+    BoundingBox2 last_editor_region;
+    float last_text_height;
 
     // Editor Stuff
     TextHistory history;
@@ -196,7 +206,7 @@ struct Text_Editor
 
 Text_Editor text_editor_create(TextRenderer* text_renderer, FileListener* listener, OpenGLState* state);
 void text_editor_destroy(Text_Editor* editor);
-void text_editor_update(Text_Editor* editor, Input* input);
-void text_editor_render(Text_Editor* editor, OpenGLState* state, int width, int height, int dpi, BoundingBox2 editor_box);
+void text_editor_update(Text_Editor* editor, Input* input, double time);
+void text_editor_render(Text_Editor* editor, OpenGLState* state, int width, int height, int dpi, BoundingBox2 editor_box, double time);
 
 
