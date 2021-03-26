@@ -358,12 +358,14 @@ void text_editor_reset_highlights(Text_Editor* editor)
     }
 }
 
-void text_editor_draw_bounding_box(Text_Editor* editor, OpenGLState* state, BoundingBox2 bb, vec3 color)
+void text_editor_draw_bounding_box(Text_Editor* editor, OpenGLState* state, BoundingBox2 bb, vec4 color)
 {
+    opengl_state_set_blending_state(state, true, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_FUNC_ADD);
     shader_program_set_uniform(editor->cursor_shader, state, "position", bb.min);
     shader_program_set_uniform(editor->cursor_shader, state, "size", bb.max - bb.min);
     shader_program_set_uniform(editor->cursor_shader, state, "color", color);
     mesh_gpu_data_draw_with_shader_program(&editor->cursor_mesh, editor->cursor_shader, state);
+    opengl_state_set_blending_state(state, false, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_FUNC_ADD);
 }
 
 BoundingBox2 text_editor_get_character_bounding_box(Text_Editor* editor, float text_height, int line, int character, BoundingBox2 editor_region)
@@ -507,12 +509,12 @@ void text_editor_render(Text_Editor* editor, OpenGLState* state, int width, int 
             cursor_bb.max.x = cursor_bb.min.x + width;
         }
         if (show_cursor) {
-            text_editor_draw_bounding_box(editor, state, cursor_bb, vec3(0.0f, 1.0f, 0.0f));
+            text_editor_draw_bounding_box(editor, state, cursor_bb, vec4(0.0f, 1.0f, 0.0f, 1.0f));
         }
     }
 }
 
-TextHighlight text_highlight_make(vec3 text_color, vec3 background_color, int character_start, int character_end) {
+TextHighlight text_highlight_make(vec3 text_color, vec4 background_color, int character_start, int character_end) {
     TextHighlight result;
     result.background_color = background_color;
     result.text_color = text_color;
@@ -521,7 +523,7 @@ TextHighlight text_highlight_make(vec3 text_color, vec3 background_color, int ch
     return result;
 }
 
-void text_editor_add_highlight_from_slice(Text_Editor* editor, Text_Slice slice, vec3 text_color, vec3 background_color)
+void text_editor_add_highlight_from_slice(Text_Editor* editor, Text_Slice slice, vec3 text_color, vec4 background_color)
 {
     for (int line = slice.start.line; line <= slice.end.line; line++) {
         int start_character = 0;
@@ -1502,6 +1504,9 @@ void insert_mode_enter(Text_Editor* editor) {
 
 void insert_mode_exit(Text_Editor* editor) {
     editor->mode = TextEditorMode::NORMAL;
+    if (editor->cursor_position.character != 0) {
+        editor->cursor_position.character--;
+    }
     text_editor_clamp_cursor(editor);
     text_history_stop_record_complex_command(&editor->history);
     editor->horizontal_position = editor->cursor_position.character;
@@ -1525,6 +1530,11 @@ void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
     case NormalModeCommandType::CHANGE_MOTION: {
         Text_Slice slice = motion_evaluate_at_position(command.motion, &editor->lines, editor->cursor_position,
             &editor->last_search_char, &editor->last_search_was_forwards, &editor->horizontal_position);
+        if (command.motion.type == MotionType::MOVEMENT &&
+            (command.motion.movement.type == MovementType::SEARCH_FORWARDS_FOR ||
+            command.motion.movement.type == MovementType::SEARCH_FORWARDS_TO)) {
+            slice.end = text_position_next(slice.end, editor->lines);
+        }
         text_history_start_record_complex_command(&editor->history);
         text_history_delete_slice(&editor->history, editor, slice);
         insert_mode_enter(editor);
@@ -1652,7 +1662,7 @@ void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
         Text_Slice slice = motion_evaluate_at_position(command.motion, &editor->lines, editor->cursor_position,
             &editor->last_search_char, &editor->last_search_was_forwards, &editor->horizontal_position);
         text_editor_reset_highlights(editor);
-        text_editor_add_highlight_from_slice(editor, slice, vec3(1.0f), vec3(0.0f, 0.3f, 0.0f));
+        text_editor_add_highlight_from_slice(editor, slice, vec3(1.0f), vec4(0.0f, 0.3f, 0.0f, 1.0f));
         save_as_last_command = true;
         break;
     }
@@ -1926,7 +1936,7 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
                     editor,
                     text_highlight_make(
                         vec3(0.7f, 0.7f, 1.0f),
-                        vec3(0.0f, 0.0f, 0.0f),
+                        vec4(0),
                         token->character_position,
                         token->character_position + token->lexem_length
                     ),
@@ -1938,7 +1948,7 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
                     editor,
                     text_highlight_make(
                         vec3(0.4f, 0.4f, 0.8f),
-                        vec3(0.0f, 0.0f, 0.0f),
+                        vec4(0),
                         token->character_position,
                         token->character_position + token->lexem_length
                     ),
@@ -1985,7 +1995,7 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
                     editor,
                     text_highlight_make(
                         vec3(1.0f, 1.0f, 1.0f),
-                        vec3(1.0f, 0.0f, 0.0f),
+                        vec4(1.0f, 0.0f, 0.0f, 0.3f),
                         char_start, char_end
                     ),
                     i
@@ -1996,7 +2006,7 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
         // Highlight comments
         {
             vec3 COMMENT_COLOR = vec3(0.0f, 1.0f, 0.0f);
-            vec3 COMMENT_BG_COLOR = vec3(0);
+            vec4 COMMENT_BG_COLOR = vec4(0);
 
             Text_Position pos = text_position_make_start();
             Text_Position end = text_position_previous(text_position_make_end(&editor->lines), editor->lines);

@@ -2,8 +2,8 @@
 
 out vec4 output_color;
 
-uniform vec3 color;
+uniform vec4 color;
 
 void main() {
-	output_color = vec4(color, 1.0);
+	output_color = color;
 }

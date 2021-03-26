@@ -1,29 +1,36 @@
-main :: () -> void
+main :: (x:x, a:b) -> void
 {
-    x : int;
-    x = 5;
-    return x;
+    return 5 + 5 * 2;
 /*  
+    Current UppLang features:
+     * Variable definition/assignment + return
+
+    Next Features:
+     Question: Primitive datatypes as keywords (Lexer stuff)?
+        -> Seems to simplify a lot of stuff
+     * Type System in Interpreter (int bool)
+     * Infer-Assign x := 5;
+     * Flow control ! Almost requires booleans/Types
+
     Up Next:
-     * Fix text highlighting when scrolling right
-     * Syntax highlighting for comments
-     * Add more language features
+     * Add basic language features (Flow-Control...)
+
+    Nice-to-have Features:
+     * Log to window, not to console, maybe something like in a textfield
+        -> Would be best with a toast like notification, and something you can focus
      * Work on GUI (Probably necessary for better debugging)
 
     Bugs:
-     * Repeat last search does not differentiate 'f'/'t'
-     * Alt-Gr spamming still cancels commands (win32 nonsense)
+     * Repeat last search does not differentiate 'f'/'t'/forward backward
+     * 'r' is buggy on line end, and on empty lines
      * Undo-Redo cursor position still sucks a little (Hint: Save positions after/before command)
      * Non ASCII chars destroy some motions (Program crashes)
-     * 'r' is buggy on line end, and on empty lines
+     * Alt-Gr spamming still cancels commands (win32 nonsense)
 
-    Features missing:
+    Editor features missing:
      * Undo/Redo Tree History
      * Visual Mode
      * Visual Block/Multi-Cursor stuff
      * Command recording (@ stuff with vim, altough this could maybe be done better)
-
-    Rendering stuff:
-     * Smaller text, better distance field computation (More exact)
 */
 }

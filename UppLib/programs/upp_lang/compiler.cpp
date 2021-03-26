@@ -782,8 +782,9 @@ void ast_node_statement_append_to_string(String* string, Ast_Node_Statement* sta
         string_append(string, ";");
     }
     else if (statement->type == StatementType::RETURN_STATEMENT) {
-        string_append_formated(string, "return %s;",
-            result->identifiers[statement->variable_name_id].characters);
+        string_append_formated(string, "return ");
+        ast_node_expression_append_to_string(string, &statement->expression, result);
+        string_append_formated(string, ";");
     }
 }
 
@@ -826,6 +827,8 @@ bool parser_parse_expression(Parser* parser, Ast_Node_Expression* expression);
 
 bool parser_parse_expression_single_value(Parser* parser, Ast_Node_Expression* expression)
 {
+    expression->left = 0;
+    expression->right = 0;
     if (parser_test_next_token(parser, Token_Type::IDENTIFIER))
     {
         expression->type = ExpressionType::VARIABLE_READ;
@@ -865,17 +868,95 @@ bool parser_parse_expression_single_value(Parser* parser, Ast_Node_Expression* e
     }
 }
 
-bool parser_parse_expression_priority(Parser* parser, Ast_Node_Expression* expression, int minimum_priority)
+bool parser_parse_binary_operation(Parser* parser, ExpressionType::ENUM* op_type, int* op_priority) 
 {
-    expression->left = 0;
-    expression->right = 0;
+    if (parser_test_next_token(parser, Token_Type::OP_PLUS)) {
+        *op_type = ExpressionType::OP_ADD;
+        *op_priority = 0;
+    }
+    else if (parser_test_next_token(parser, Token_Type::OP_MINUS)) {
+        *op_type = ExpressionType::OP_SUBTRACT;
+        *op_priority = 0;
+    }
+    else if (parser_test_next_token(parser, Token_Type::OP_SLASH)) {
+        *op_type = ExpressionType::OP_DIVIDE;
+        *op_priority = 1;
+    }
+    else if (parser_test_next_token(parser, Token_Type::OP_STAR)) {
+        *op_type = ExpressionType::OP_MULTIPLY;
+        *op_priority = 1;
+    }
+    else if (parser_test_next_token(parser, Token_Type::OP_PERCENT)) {
+        *op_type = ExpressionType::OP_MODULO;
+        *op_priority = 2;
+    }
+    else {
+        return false;
+    }
+    parser->index++;
+    return true;
+}
 
+// Input expression is not empty
+bool parser_parse_expression_new_priority(Parser* parser, Ast_Node_Expression* expression, int min_priority) 
+{
+    int start_point = parser->index;
+    int rewind_point = parser->index;
+
+    bool first_run = true;
+    // Parse expression start operand
+    while (true)
+    {
+        int first_op_priority;
+        ExpressionType::ENUM first_op_type;
+        if (!parser_parse_binary_operation(parser, &first_op_type, &first_op_priority)) {
+            break;
+        }
+        if (first_op_priority < min_priority) {
+            parser->index = rewind_point;
+            break;
+        }
+        if (first_run) {
+            min_priority = first_op_priority;
+            first_run = false;
+        }
+
+        Ast_Node_Expression right_operand;
+        if (!parser_parse_expression_single_value(parser, &right_operand)) {
+            parser->index = rewind_point;
+            break;
+        }
+        rewind_point = parser->index;
+
+        int second_op_priority;
+        ExpressionType::ENUM second_op_type;
+        bool second_op_exists = parser_parse_binary_operation(parser, &second_op_type, &second_op_priority);
+        if (second_op_exists) {
+            parser->index--;
+            if (second_op_priority > first_op_priority) {
+                parser_parse_expression_new_priority(parser, &right_operand, second_op_priority);
+            }
+        }
+        Ast_Node_Expression* new_left = new Ast_Node_Expression();
+        Ast_Node_Expression* new_right = new Ast_Node_Expression();
+        *new_right = right_operand;
+        *new_left = *expression;
+        expression->type = first_op_type;
+        expression->left = new_left;
+        expression->right = new_right;
+        if (!second_op_exists) break;
+    }
+
+    return parser->index != start_point;
+}
+
+bool parser_parse_expression_priority(Parser* parser, Ast_Node_Expression* expression, int priority_level)
+{
     int rewind_point;
-    int current_priority = minimum_priority + 1;
     while (true)
     {
         rewind_point = parser->index;
-        ExpressionType::ENUM op_type = ExpressionType::INTEGER_CONSTANT;
+        ExpressionType::ENUM op_type;
         int operation_priority = 0;
         if (parser_test_next_token(parser, Token_Type::OP_PLUS)) {
             op_type = ExpressionType::OP_ADD;
@@ -898,22 +979,20 @@ bool parser_parse_expression_priority(Parser* parser, Ast_Node_Expression* expre
             operation_priority = 2;
         }
         else {
-            break;
-        }
-        parser->index++;
-
-        if (operation_priority <= minimum_priority) {
-            break;
+            return true;
         }
 
-        if (operation_priority <= current_priority ||
+        if (operation_priority < priority_level) {
+            return true;
+        }
+        if (operation_priority == priority_level ||
             (expression->type == ExpressionType::INTEGER_CONSTANT || expression->type == ExpressionType::VARIABLE_READ))
         {
+            parser->index++;
             Ast_Node_Expression right;
             if (!parser_parse_expression_single_value(parser, &right)) {
                 parser->index = rewind_point;
                 return false;
-                break;
             }
             Ast_Node_Expression* new_left = new Ast_Node_Expression();
             *new_left = *expression;
@@ -922,15 +1001,12 @@ bool parser_parse_expression_priority(Parser* parser, Ast_Node_Expression* expre
             expression->type = op_type;
             expression->left = new_left;
             expression->right = new_right;
-            current_priority = operation_priority;
         }
-        else if (operation_priority > current_priority)
+        else if (operation_priority > priority_level)
         {
-            parser->index--;
-            if (!parser_parse_expression_priority(parser, expression->right, current_priority)) {
+            if (!parser_parse_expression_priority(parser, expression->right, operation_priority)) {
                 parser->index = rewind_point;
                 return false;
-                break;
             }
         }
     }
@@ -941,14 +1017,10 @@ bool parser_parse_expression_priority(Parser* parser, Ast_Node_Expression* expre
 
 bool parser_parse_expression(Parser* parser, Ast_Node_Expression* expression)
 {
-    Ast_Node_Expression root;
-    if (!parser_parse_expression_single_value(parser, &root)) {
+    if (!parser_parse_expression_single_value(parser, expression)) {
         return false;
     }
-    if (!parser_parse_expression_priority(parser, &root, -1)) {
-        return true;
-    }
-    *expression = root;
+    parser_parse_expression_new_priority(parser, expression, 0);
     return true;
 }
 
@@ -956,11 +1028,15 @@ bool parser_parse_statement(Parser* parser, Ast_Node_Statement* statement)
 {
     int rewind_point = parser->index;
 
-    if (parser_test_next_2_tokens(parser, Token_Type::RETURN, Token_Type::IDENTIFIER))  // Return statement 'return x'
-    {
+    if (parser_test_next_token(parser, Token_Type::RETURN)) {
+        parser->index++;
+        Ast_Node_Expression expression;
+        if (!parser_parse_expression(parser, &expression)) { // Return may also be fine if the function does not return anything
+            parser->index = rewind_point;
+            return false;
+        }
         statement->type = StatementType::RETURN_STATEMENT;
-        statement->variable_name_id = parser->tokens[parser->index + 1].attribute.identifier_number;
-        parser->index += 2;
+        statement->expression = expression;
         return true;
     }
 
@@ -1257,8 +1333,12 @@ int ast_interpreter_evaluate_expression(Ast_Interpreter* interpreter, Ast_Node_E
             ast_interpreter_evaluate_expression(interpreter, expression->right);
     }
     else if (expression->type == ExpressionType::OP_DIVIDE) {
-        return ast_interpreter_evaluate_expression(interpreter, expression->left) /
-            ast_interpreter_evaluate_expression(interpreter, expression->right);
+        int divisor = ast_interpreter_evaluate_expression(interpreter, expression->right);
+        if (divisor == 0) {
+            logg("Error division by 0");
+            return -1;
+        }
+        return ast_interpreter_evaluate_expression(interpreter, expression->left) / divisor;
     }
     else if (expression->type == ExpressionType::OP_MULTIPLY) {
         return ast_interpreter_evaluate_expression(interpreter, expression->left) *
@@ -1299,13 +1379,7 @@ int ast_interpreter_execute_main(Ast_Node_Root* root, LexerResult* lexer)
     for (int i = 0; i < main->body.statements.size; i++) {
         Ast_Node_Statement* statement = &main->body.statements[i];
         if (statement->type == StatementType::RETURN_STATEMENT) {
-            int index = ast_interpreter_find_variable_index(&interpreter, statement->variable_name_id);
-            if (index == -1) {
-                logg("Return statement variable %s not defined!\n", lexer_result_identifer_to_string(lexer, statement->variable_name_id).characters);
-                return -1;
-            }
-            Ast_Interpreter_Variable* var = &interpreter.variables[index];
-            return var->value;
+            return ast_interpreter_evaluate_expression(&interpreter, &statement->expression);
         }
         else if (statement->type == StatementType::VARIABLE_ASSIGNMENT) {
             int index = ast_interpreter_find_variable_index(&interpreter, statement->variable_name_id);

@@ -31,6 +31,7 @@ bool int_equals(int* a, int* b) {
 void upp_lang_main() 
 {
     {
+        /*
         String source_code = string_create("main :: ()->void{ x:int; x = 17+3*2%; return x;}");
         LexerResult result = lexer_parse_string(&source_code);
         SCOPE_EXIT(lexer_result_destroy(&result));
@@ -41,6 +42,7 @@ void upp_lang_main()
         SCOPE_EXIT(string_destroy(&printed_ast));
         ast_node_root_append_to_string(&printed_ast, &parser.root, &result);
         //logg("Ast: \n%s\n", printed_ast.characters);
+        */
     }
     {
         for (int i = 0; i < 200; i++)

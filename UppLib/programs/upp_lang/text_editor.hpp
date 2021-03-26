@@ -156,7 +156,7 @@ struct NormalModeCommand
 struct TextHighlight
 {
     vec3 text_color;
-    vec3 background_color;
+    vec4 background_color;
     int character_start;
     int character_end;
 };
