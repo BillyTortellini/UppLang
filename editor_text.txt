@@ -1,26 +1,35 @@
-main :: (x:x, a:b) -> void
+main :: () -> void
 {
-    return 5 + 5 * 2;
+    x := true;
+    y := x * x;
+    return x;
+}
+
 /*  
-    Current UppLang features:
-     * Variable definition/assignment + return
-
     Next Features:
-     Question: Primitive datatypes as keywords (Lexer stuff)?
-        -> Seems to simplify a lot of stuff
-     * Type System in Interpreter (int bool)
-     * Infer-Assign x := 5;
-     * Flow control ! Almost requires booleans/Types
+     * If else structures
+     * Loops (Probably lots of errors)
+     * Function calls
+     * Semantic analysis
+     * Bytecode creator + interpreter
+     * Pointers
+     * Structs
+     * OS-Calls/Calls to libraries (print, new/delete)
 
-    Up Next:
-     * Add basic language features (Flow-Control...)
+    Current UppLang features:
+     * Expression parsing + evaluation
+     * Variable definition/assignment + return
 
     Nice-to-have Features:
      * Log to window, not to console, maybe something like in a textfield
         -> Would be best with a toast like notification, and something you can focus
      * Work on GUI (Probably necessary for better debugging)
 
-    Bugs:
+    Questions about Design:
+     * Primitive datatypes as keywords (Lexer stuff)?
+        -> Seems to simplify a lot of stuff
+
+    Editor-Bugs:
      * Repeat last search does not differentiate 'f'/'t'/forward backward
      * 'r' is buggy on line end, and on empty lines
      * Undo-Redo cursor position still sucks a little (Hint: Save positions after/before command)
@@ -33,4 +42,3 @@ main :: (x:x, a:b) -> void
      * Visual Block/Multi-Cursor stuff
      * Command recording (@ stuff with vim, altough this could maybe be done better)
 */
-}

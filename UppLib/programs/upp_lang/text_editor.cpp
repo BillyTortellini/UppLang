@@ -1962,6 +1962,7 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
         String printed_ast = string_create_empty(256);
         SCOPE_EXIT(string_destroy(&printed_ast));
         ast_node_root_append_to_string(&printed_ast, &parser.root, &result);
+        logg("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n");
         logg("Ast: \n%s\n", printed_ast.characters);
 
         if (parser.unresolved_errors.size > 0) {
@@ -1971,10 +1972,13 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
             }
         }
         else {
-            int main_result = ast_interpreter_execute_main(&parser.root, &result);
-            logg("Main RESULT: %d\n", main_result);
+            Ast_Interpreter_Value val = ast_interpreter_execute_main(&parser.root, &result);
+            String out = string_create_empty(15);
+            SCOPE_EXIT(string_destroy(&out));
+            ast_interpreter_value_append_to_string(val, &out);
+            logg("----------------------------------\n");
+            logg("Interpreter result: %s\n", out.characters);
         }
-
 
         for (int i = 0; i < parser.unresolved_errors.size; i++)
         {

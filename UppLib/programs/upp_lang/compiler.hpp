@@ -58,9 +58,9 @@ namespace Token_Type
         LOGICAL_BITWISE_OR, //  |
         LOGICAL_NOT, // !
         // Constants (Literals)
-        CONSTANT_INT,
-        CONSTANT_FLOAT,
-        CONSTANT_DOUBLE,
+        INTEGER_LITERAL,
+        FLOAT_LITERAL,
+        BOOLEAN_LITERAL,
         // Other important stuff
         IDENTIFIER,
         // Controll Tokens 
@@ -75,6 +75,7 @@ union TokenAttribute
     int integer_value;
     float float_value;
     double double_value;
+    bool bool_value;
     int identifier_number; // String identifier
 };
 
@@ -115,7 +116,15 @@ namespace ExpressionType
         OP_DIVIDE,
         OP_MULTIPLY,
         OP_MODULO,
-        INTEGER_CONSTANT,
+        OP_BOOLEAN_AND,
+        OP_BOOLEAN_OR,
+        OP_GREATER_THAN,
+        OP_GREATER_EQUAL,
+        OP_LESS_THAN,
+        OP_LESS_EQUAL,
+        OP_EQUAL,
+        OP_NOT_EQUAL,
+        LITERAL,
         VARIABLE_READ,
     };
 }
@@ -123,7 +132,7 @@ namespace ExpressionType
 struct Ast_Node_Expression
 {
     ExpressionType::ENUM type;
-    int integer_constant_value;
+    int literal_token_index;
     int variable_name_id;
     Ast_Node_Expression* left;
     Ast_Node_Expression* right;
@@ -133,8 +142,10 @@ namespace StatementType
 {
     enum ENUM
     {
-        VARIABLE_DEFINITION,
-        VARIABLE_ASSIGNMENT,
+        VARIABLE_ASSIGNMENT, // x = 5;
+        VARIABLE_DEFINITION, // x : int;
+        VARIABLE_DEFINE_ASSIGN, // x : int = 5;
+        VARIABLE_DEFINE_INFER, // x := 5;
         RETURN_STATEMENT,
     };
 };
@@ -199,4 +210,25 @@ void parser_destroy(Parser* parser);
 /*
     AST_Interpreter
 */
-int ast_interpreter_execute_main(Ast_Node_Root* root, LexerResult* lexer);
+namespace Ast_Interpreter_Value_Type
+{
+    enum ENUM
+    {
+        INTEGER,
+        FLOAT,
+        BOOLEAN,
+        ERROR_VAL
+    };
+};
+
+struct Ast_Interpreter_Value
+{
+    Ast_Interpreter_Value_Type::ENUM type;
+    int int_value;
+    float float_value;
+    bool bool_value;
+};
+
+Ast_Interpreter_Value ast_interpreter_execute_main(Ast_Node_Root* root, LexerResult* lexer);
+void ast_interpreter_value_append_to_string(Ast_Interpreter_Value value, String* string);
+String ast_interpreter_value_type_to_string(Ast_Interpreter_Value_Type::ENUM type);

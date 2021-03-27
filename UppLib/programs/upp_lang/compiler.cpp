@@ -117,6 +117,22 @@ bool string_equals_cstring(String* string, const char* compare) {
     return false;
 }
 
+int lexer_result_add_identifier_by_string(LexerResult* result, String identifier) 
+{
+    // Identifier is a keyword
+    int* identifier_id = hashtable_find_element(&result->identifier_index_lookup_table, identifier);
+    if (identifier_id != 0) {
+        return *identifier_id;
+    }
+    else {
+        String identifier_string_copy = string_create(identifier.characters);
+        dynamic_array_push_back(&result->identifiers, identifier_string_copy);
+        int index = result->identifiers.size - 1;
+        hashtable_insert_element(&result->identifier_index_lookup_table, identifier_string_copy, index);
+        return index;
+    }
+}
+
 LexerResult lexer_parse_string(String* code)
 {
     String identifier_string = string_create_empty(256);
@@ -319,20 +335,70 @@ LexerResult lexer_parse_string(String* code)
             while (pre_comma_end_index < code->size && code->characters[pre_comma_end_index] >= '0' && code->characters[pre_comma_end_index] <= '9') {
                 pre_comma_end_index++;
             }
-            // TODO: Parse float numbers
-            int value = 0;
-            for (int i = pre_comma_start_index; i < pre_comma_end_index; i++) {
-                int num_value = code->characters[i] - '0'; // 0 to 9
-                value = (value * 10) + num_value;
+            pre_comma_end_index--;
+
+            bool comma_exists = false;
+            int post_comma_start_index, post_comma_end_index;
+            if (pre_comma_end_index+1 < code->size && code->characters[pre_comma_end_index+1] == '.') 
+            {
+                comma_exists = true;
+                post_comma_start_index = pre_comma_end_index + 2;
+                if (pre_comma_end_index + 2 >= code->size) {
+                    post_comma_end_index = -1;
+                    post_comma_start_index = pre_comma_end_index + 1;
+                }
+                else {
+                    post_comma_end_index = post_comma_start_index;
+                    while (post_comma_end_index < code->size && 
+                        code->characters[post_comma_end_index] >= '0' && code->characters[post_comma_end_index] <= '9') {
+                        post_comma_end_index++;
+                    }
+                    post_comma_end_index--;
+                }
             }
-            // Add number
-            TokenAttribute attribute;
-            attribute.integer_value = value;
-            int character_length = pre_comma_end_index - pre_comma_start_index;
-            dynamic_array_push_back(&tokens, token_make(Token_Type::CONSTANT_INT, attribute, line_number, character_pos, character_length, index));
-            index += character_length;
-            character_pos += character_length;
-            continue;
+
+            int int_value = 0;
+            for (int i = pre_comma_start_index; i <= pre_comma_end_index; i++) {
+                int num_value = code->characters[i] - '0'; // 0 to 9
+                int_value = (int_value * 10) + num_value;
+            }
+            if (comma_exists) 
+            {
+                // Calculate float value
+                float fractional_value = 0.0f;
+                float multiplier = 0.1f;
+                for (int i = post_comma_start_index; i <= post_comma_end_index; i++) {
+                    int num_value = code->characters[i] - '0'; // 0 to 9
+                    fractional_value += num_value * multiplier;
+                    multiplier *= 0.1f;
+                }
+                float float_value = int_value + fractional_value;
+
+                // Add float token
+                TokenAttribute attribute;
+                attribute.float_value = float_value;
+                int character_length;
+                if (post_comma_end_index == -1) {
+                    character_length = pre_comma_end_index - pre_comma_start_index + 2;
+                }
+                else {
+                    character_length = post_comma_end_index - pre_comma_start_index + 1;
+                }
+                dynamic_array_push_back(&tokens, token_make(Token_Type::FLOAT_LITERAL, attribute, line_number, character_pos, character_length, index));
+                index += character_length;
+                character_pos += character_length;
+                continue;
+            }
+            else {
+                // Add integer Token
+                TokenAttribute attribute;
+                attribute.integer_value = int_value;
+                int character_length = pre_comma_end_index - pre_comma_start_index + 1;
+                dynamic_array_push_back(&tokens, token_make(Token_Type::INTEGER_LITERAL, attribute, line_number, character_pos, character_length, index));
+                index += character_length;
+                character_pos += character_length;
+                continue;
+            }
         }
 
         // Identifiers, keywords or error
@@ -434,8 +500,24 @@ LexerResult lexer_parse_string(String* code)
                 index += identifier_string_length;
                 character_pos += identifier_string_length;
             }
+            else if (string_equals_cstring(&identifier_string, "true")) {
+                TokenAttribute attribute;
+                attribute.bool_value = true;
+                dynamic_array_push_back(&tokens, token_make(Token_Type::BOOLEAN_LITERAL, attribute,
+                    line_number, character_pos, identifier_string_length, index));
+                index += identifier_string_length;
+                character_pos += identifier_string_length;
+            }
+            else if (string_equals_cstring(&identifier_string, "false")) {
+                TokenAttribute attribute;
+                attribute.bool_value = false;
+                dynamic_array_push_back(&tokens, token_make(Token_Type::BOOLEAN_LITERAL, attribute,
+                    line_number, character_pos, identifier_string_length, index));
+                index += identifier_string_length;
+                character_pos += identifier_string_length;
+            }
             else {
-                // Identifier is a keyword
+                // Identifier is acutally a identifier, not a keyword
                 TokenAttribute attribute;
                 int* identifier_id = hashtable_find_element(&identifier_index_lookup_table, identifier_string);
                 if (identifier_id != 0) {
@@ -520,9 +602,9 @@ const char* tokentype_to_string(Token_Type::ENUM type)
     case Token_Type::LOGICAL_BITWISE_AND: return "LOGICAL_BITWISE_AND";
     case Token_Type::LOGICAL_BITWISE_OR: return "LOGICAL_BITWISE_OR";
     case Token_Type::LOGICAL_NOT: return "LOGICAL_NOT";
-    case Token_Type::CONSTANT_INT: return "CONSTANT_INT";
-    case Token_Type::CONSTANT_FLOAT: return "CONSTANT_FLOAT";
-    case Token_Type::CONSTANT_DOUBLE: return "CONSTANT_DOUBLE";
+    case Token_Type::INTEGER_LITERAL: return "INT_LITERAL";
+    case Token_Type::FLOAT_LITERAL: return "FLOAT_LITERAL";
+    case Token_Type::BOOLEAN_LITERAL: return "BOOLEAN_LITERAL";
     case Token_Type::IDENTIFIER: return "IDENTIFIER";
     case Token_Type::ERROR_TOKEN: return "ERROR_TOKE";
     }
@@ -541,7 +623,7 @@ void lexer_result_print(LexerResult* result)
         if (token.type == Token_Type::IDENTIFIER) {
             string_append_formated(&msg, " = %s", result->identifiers.data[token.attribute.identifier_number].characters);
         }
-        else if (token.type == Token_Type::CONSTANT_INT) {
+        else if (token.type == Token_Type::INTEGER_LITERAL) {
             string_append_formated(&msg, " = %d", token.attribute.integer_value);
         }
         string_append_formated(&msg, "\n");
@@ -673,6 +755,20 @@ bool parser_test_next_3_tokens(Parser* parser, Token_Type::ENUM type1, Token_Typ
     return false;
 }
 
+bool parser_test_next_4_tokens(Parser* parser, Token_Type::ENUM type1, Token_Type::ENUM type2, Token_Type::ENUM type3, Token_Type::ENUM type4)
+{
+    if (parser->index + 3 >= parser->tokens.size) {
+        return false;
+    }
+    if (parser->tokens[parser->index].type == type1 &&
+        parser->tokens[parser->index + 1].type == type2 &&
+        parser->tokens[parser->index + 2].type == type3 &&
+        parser->tokens[parser->index + 3].type == type4) {
+        return true;
+    }
+    return false;
+}
+
 
 
 
@@ -761,8 +857,74 @@ void ast_node_expression_append_to_string(String* string, Ast_Node_Expression* e
         ast_node_expression_append_to_string(string, expression->right, result);
         string_append(string, ")");
     }
-    else if (expression->type == ExpressionType::INTEGER_CONSTANT) {
-        string_append_formated(string, "%d", expression->integer_constant_value);
+    if (expression->type == ExpressionType::OP_BOOLEAN_AND) {
+        string_append(string, "(");
+        ast_node_expression_append_to_string(string, expression->left, result);
+        string_append(string, " && ");
+        ast_node_expression_append_to_string(string, expression->right, result);
+        string_append(string, ")");
+    }
+    if (expression->type == ExpressionType::OP_BOOLEAN_OR) {
+        string_append(string, "(");
+        ast_node_expression_append_to_string(string, expression->left, result);
+        string_append(string, " || ");
+        ast_node_expression_append_to_string(string, expression->right, result);
+        string_append(string, ")");
+    }
+    if (expression->type == ExpressionType::OP_EQUAL) {
+        string_append(string, "(");
+        ast_node_expression_append_to_string(string, expression->left, result);
+        string_append(string, " || ");
+        ast_node_expression_append_to_string(string, expression->right, result);
+        string_append(string, ")");
+    }
+    if (expression->type == ExpressionType::OP_NOT_EQUAL) {
+        string_append(string, "(");
+        ast_node_expression_append_to_string(string, expression->left, result);
+        string_append(string, " || ");
+        ast_node_expression_append_to_string(string, expression->right, result);
+        string_append(string, ")");
+    }
+    if (expression->type == ExpressionType::OP_LESS_THAN) {
+        string_append(string, "(");
+        ast_node_expression_append_to_string(string, expression->left, result);
+        string_append(string, " < ");
+        ast_node_expression_append_to_string(string, expression->right, result);
+        string_append(string, ")");
+    }
+    if (expression->type == ExpressionType::OP_LESS_EQUAL) {
+        string_append(string, "(");
+        ast_node_expression_append_to_string(string, expression->left, result);
+        string_append(string, " <= ");
+        ast_node_expression_append_to_string(string, expression->right, result);
+        string_append(string, ")");
+    }
+    if (expression->type == ExpressionType::OP_GREATER_THAN) {
+        string_append(string, "(");
+        ast_node_expression_append_to_string(string, expression->left, result);
+        string_append(string, " > ");
+        ast_node_expression_append_to_string(string, expression->right, result);
+        string_append(string, ")");
+    }
+    if (expression->type == ExpressionType::OP_GREATER_EQUAL) {
+        string_append(string, "(");
+        ast_node_expression_append_to_string(string, expression->left, result);
+        string_append(string, " >= ");
+        ast_node_expression_append_to_string(string, expression->right, result);
+        string_append(string, ")");
+    }
+    else if (expression->type == ExpressionType::LITERAL) {
+        Token& t = result->tokens[expression->literal_token_index];
+        if (t.type == Token_Type::INTEGER_LITERAL) {
+            string_append_formated(string, "%d", result->tokens[expression->literal_token_index].attribute.integer_value);
+        }
+        else if (t.type == Token_Type::FLOAT_LITERAL) {
+            string_append_formated(string, "%f", result->tokens[expression->literal_token_index].attribute.float_value);
+        }
+        else if (t.type == Token_Type::BOOLEAN_LITERAL) {
+            string_append_formated(string, "%s",
+                result->tokens[expression->literal_token_index].attribute.bool_value ? "true" : "false");
+        }
     }
     else if (expression->type == ExpressionType::VARIABLE_READ) {
         string_append_formated(string, "%s", result->identifiers[expression->variable_name_id].characters);
@@ -783,6 +945,19 @@ void ast_node_statement_append_to_string(String* string, Ast_Node_Statement* sta
     }
     else if (statement->type == StatementType::RETURN_STATEMENT) {
         string_append_formated(string, "return ");
+        ast_node_expression_append_to_string(string, &statement->expression, result);
+        string_append_formated(string, ";");
+    }
+    else if (statement->type == StatementType::VARIABLE_DEFINE_ASSIGN) {
+        string_append_formated(string, "%s : %s = ",
+            result->identifiers[statement->variable_name_id].characters,
+            result->identifiers[statement->variable_type_id].characters);
+        ast_node_expression_append_to_string(string, &statement->expression, result);
+        string_append_formated(string, ";");
+    }
+    else if (statement->type == StatementType::VARIABLE_DEFINE_INFER) {
+        string_append_formated(string, "%s := ",
+            result->identifiers[statement->variable_name_id].characters);
         ast_node_expression_append_to_string(string, &statement->expression, result);
         string_append_formated(string, ";");
     }
@@ -836,10 +1011,12 @@ bool parser_parse_expression_single_value(Parser* parser, Ast_Node_Expression* e
         parser->index++;
         return true;
     }
-    else if (parser_test_next_token(parser, Token_Type::CONSTANT_INT))
+    else if (parser_test_next_token(parser, Token_Type::INTEGER_LITERAL) ||
+        parser_test_next_token(parser, Token_Type::FLOAT_LITERAL) ||
+        parser_test_next_token(parser, Token_Type::BOOLEAN_LITERAL)) 
     {
-        expression->type = ExpressionType::INTEGER_CONSTANT;
-        expression->integer_constant_value = parser->tokens[parser->index].attribute.integer_value;
+        expression->type = ExpressionType::LITERAL;
+        expression->literal_token_index = parser->index;
         parser->index++;
         return true;
     }
@@ -868,27 +1045,69 @@ bool parser_parse_expression_single_value(Parser* parser, Ast_Node_Expression* e
     }
 }
 
-bool parser_parse_binary_operation(Parser* parser, ExpressionType::ENUM* op_type, int* op_priority) 
+bool parser_parse_binary_operation(Parser* parser, ExpressionType::ENUM* op_type, int* op_priority)
 {
+    /*
+        Priority tree:
+            0       ---     &&
+            1       ---     ||
+            2       ---     ==, != 
+            3       ---     <, >, <=, >=
+            4       ---     +, -
+            5       ---     *, /
+            6       ---     %
+    */
     if (parser_test_next_token(parser, Token_Type::OP_PLUS)) {
         *op_type = ExpressionType::OP_ADD;
-        *op_priority = 0;
+        *op_priority = 4;
     }
     else if (parser_test_next_token(parser, Token_Type::OP_MINUS)) {
         *op_type = ExpressionType::OP_SUBTRACT;
-        *op_priority = 0;
+        *op_priority = 4;
     }
     else if (parser_test_next_token(parser, Token_Type::OP_SLASH)) {
         *op_type = ExpressionType::OP_DIVIDE;
-        *op_priority = 1;
+        *op_priority = 5;
     }
     else if (parser_test_next_token(parser, Token_Type::OP_STAR)) {
         *op_type = ExpressionType::OP_MULTIPLY;
-        *op_priority = 1;
+        *op_priority = 5;
     }
     else if (parser_test_next_token(parser, Token_Type::OP_PERCENT)) {
         *op_type = ExpressionType::OP_MODULO;
+        *op_priority = 6;
+    }
+    else if (parser_test_next_token(parser, Token_Type::LOGICAL_AND)) {
+        *op_type = ExpressionType::OP_BOOLEAN_AND;
+        *op_priority = 0;
+    }
+    else if (parser_test_next_token(parser, Token_Type::LOGICAL_OR)) {
+        *op_type = ExpressionType::OP_BOOLEAN_OR;
+        *op_priority = 1;
+    }
+    else if (parser_test_next_token(parser, Token_Type::COMPARISON_EQUAL)) {
+        *op_type = ExpressionType::OP_EQUAL;
         *op_priority = 2;
+    }
+    else if (parser_test_next_token(parser, Token_Type::COMPARISON_NOT_EQUAL)) {
+        *op_type = ExpressionType::OP_NOT_EQUAL;
+        *op_priority = 2;
+    }
+    else if (parser_test_next_token(parser, Token_Type::COMPARISON_GREATER)) {
+        *op_type = ExpressionType::OP_GREATER_THAN;
+        *op_priority = 3;
+    }
+    else if (parser_test_next_token(parser, Token_Type::COMPARISON_GREATER_EQUAL)) {
+        *op_type = ExpressionType::OP_GREATER_EQUAL;
+        *op_priority = 3;
+    }
+    else if (parser_test_next_token(parser, Token_Type::COMPARISON_LESS)) {
+        *op_type = ExpressionType::OP_LESS_THAN;
+        *op_priority = 3;
+    }
+    else if (parser_test_next_token(parser, Token_Type::COMPARISON_LESS_EQUAL)) {
+        *op_type = ExpressionType::OP_LESS_EQUAL;
+        *op_priority = 3;
     }
     else {
         return false;
@@ -898,12 +1117,13 @@ bool parser_parse_binary_operation(Parser* parser, ExpressionType::ENUM* op_type
 }
 
 // Input expression is not empty
-bool parser_parse_expression_new_priority(Parser* parser, Ast_Node_Expression* expression, int min_priority) 
+bool parser_parse_expression_new_priority(Parser* parser, Ast_Node_Expression* expression, int min_priority)
 {
     int start_point = parser->index;
     int rewind_point = parser->index;
 
     bool first_run = true;
+    int first_run_priority = -1;
     // Parse expression start operand
     while (true)
     {
@@ -912,13 +1132,18 @@ bool parser_parse_expression_new_priority(Parser* parser, Ast_Node_Expression* e
         if (!parser_parse_binary_operation(parser, &first_op_type, &first_op_priority)) {
             break;
         }
-        if (first_op_priority < min_priority) {
-            parser->index = rewind_point;
-            break;
-        }
         if (first_run) {
-            min_priority = first_op_priority;
             first_run = false;
+            first_run_priority = first_op_priority;
+        }
+        else {
+            if (first_op_priority < first_run_priority) {
+                first_run_priority = first_op_priority;
+            }
+            if (first_op_priority < min_priority) {
+                parser->index = rewind_point;
+                break;
+            }
         }
 
         Ast_Node_Expression right_operand;
@@ -933,7 +1158,7 @@ bool parser_parse_expression_new_priority(Parser* parser, Ast_Node_Expression* e
         bool second_op_exists = parser_parse_binary_operation(parser, &second_op_type, &second_op_priority);
         if (second_op_exists) {
             parser->index--;
-            if (second_op_priority > first_op_priority) {
+            if (second_op_priority > first_run_priority) {
                 parser_parse_expression_new_priority(parser, &right_operand, second_op_priority);
             }
         }
@@ -950,71 +1175,6 @@ bool parser_parse_expression_new_priority(Parser* parser, Ast_Node_Expression* e
     return parser->index != start_point;
 }
 
-bool parser_parse_expression_priority(Parser* parser, Ast_Node_Expression* expression, int priority_level)
-{
-    int rewind_point;
-    while (true)
-    {
-        rewind_point = parser->index;
-        ExpressionType::ENUM op_type;
-        int operation_priority = 0;
-        if (parser_test_next_token(parser, Token_Type::OP_PLUS)) {
-            op_type = ExpressionType::OP_ADD;
-            operation_priority = 0;
-        }
-        else if (parser_test_next_token(parser, Token_Type::OP_MINUS)) {
-            op_type = ExpressionType::OP_SUBTRACT;
-            operation_priority = 0;
-        }
-        else if (parser_test_next_token(parser, Token_Type::OP_SLASH)) {
-            op_type = ExpressionType::OP_DIVIDE;
-            operation_priority = 1;
-        }
-        else if (parser_test_next_token(parser, Token_Type::OP_STAR)) {
-            op_type = ExpressionType::OP_MULTIPLY;
-            operation_priority = 1;
-        }
-        else if (parser_test_next_token(parser, Token_Type::OP_PERCENT)) {
-            op_type = ExpressionType::OP_MODULO;
-            operation_priority = 2;
-        }
-        else {
-            return true;
-        }
-
-        if (operation_priority < priority_level) {
-            return true;
-        }
-        if (operation_priority == priority_level ||
-            (expression->type == ExpressionType::INTEGER_CONSTANT || expression->type == ExpressionType::VARIABLE_READ))
-        {
-            parser->index++;
-            Ast_Node_Expression right;
-            if (!parser_parse_expression_single_value(parser, &right)) {
-                parser->index = rewind_point;
-                return false;
-            }
-            Ast_Node_Expression* new_left = new Ast_Node_Expression();
-            *new_left = *expression;
-            Ast_Node_Expression* new_right = new Ast_Node_Expression();
-            *new_right = right;
-            expression->type = op_type;
-            expression->left = new_left;
-            expression->right = new_right;
-        }
-        else if (operation_priority > priority_level)
-        {
-            if (!parser_parse_expression_priority(parser, expression->right, operation_priority)) {
-                parser->index = rewind_point;
-                return false;
-            }
-        }
-    }
-
-    parser->index = rewind_point;
-    return true;
-}
-
 bool parser_parse_expression(Parser* parser, Ast_Node_Expression* expression)
 {
     if (!parser_parse_expression_single_value(parser, expression)) {
@@ -1028,7 +1188,8 @@ bool parser_parse_statement(Parser* parser, Ast_Node_Statement* statement)
 {
     int rewind_point = parser->index;
 
-    if (parser_test_next_token(parser, Token_Type::RETURN)) {
+    if (parser_test_next_token(parser, Token_Type::RETURN))
+    {
         parser->index++;
         Ast_Node_Expression expression;
         if (!parser_parse_expression(parser, &expression)) { // Return may also be fine if the function does not return anything
@@ -1040,12 +1201,43 @@ bool parser_parse_statement(Parser* parser, Ast_Node_Statement* statement)
         return true;
     }
 
-    if (parser_test_next_3_tokens(parser, Token_Type::IDENTIFIER, Token_Type::COLON, Token_Type::IDENTIFIER)) // Variable definition 'x : int'
+    if (parser_test_next_4_tokens(parser,
+        Token_Type::IDENTIFIER, Token_Type::COLON, Token_Type::IDENTIFIER, Token_Type::SEMICOLON)) // Variable definition 'x : int;'
     {
         statement->type = StatementType::VARIABLE_DEFINITION;
         statement->variable_name_id = parser->tokens[parser->index].attribute.identifier_number;
         statement->variable_type_id = parser->tokens[parser->index + 2].attribute.identifier_number;
-        parser->index += 3;
+        parser->index += 3; // ! not 4, since the ; parsing is done by the caller of this function
+        return true;
+    }
+
+    if (parser_test_next_4_tokens(parser,
+        Token_Type::IDENTIFIER, Token_Type::COLON, Token_Type::IDENTIFIER, Token_Type::OP_ASSIGNMENT)) // Variable define-assign 'x : int = ...'
+    {
+        statement->type = StatementType::VARIABLE_DEFINE_ASSIGN;
+        statement->variable_name_id = parser->tokens[parser->index].attribute.identifier_number;
+        statement->variable_type_id = parser->tokens[parser->index + 2].attribute.identifier_number;
+        parser->index += 4;
+        Ast_Node_Expression expr;
+        if (!parser_parse_expression(parser, &expr)) {
+            parser->index = rewind_point;
+            return false;
+        }
+        statement->expression = expr;
+        return true;
+    }
+
+    if (parser_test_next_2_tokens(parser, Token_Type::IDENTIFIER, Token_Type::INFER_ASSIGN)) // Variable define-assign 'x :='
+    {
+        statement->type = StatementType::VARIABLE_DEFINE_INFER;
+        statement->variable_name_id = parser->tokens[parser->index].attribute.identifier_number;
+        parser->index += 2;
+        Ast_Node_Expression expr;
+        if (!parser_parse_expression(parser, &expr)) {
+            parser->index = rewind_point;
+            return false;
+        }
+        statement->expression = expr;
         return true;
     }
 
@@ -1262,10 +1454,11 @@ void parser_destroy(Parser* parser)
 /*
     AST INTERPRETER
 */
+
 struct Ast_Interpreter_Variable
 {
     int variable_name;
-    int value;
+    Ast_Interpreter_Value value;
 };
 
 struct Ast_Interpreter
@@ -1288,74 +1481,201 @@ void ast_interpreter_destroy(Ast_Interpreter* interpreter) {
     dynamic_array_destroy(&interpreter->variables);
 }
 
-int ast_interpreter_find_variable_index(Ast_Interpreter* interpreter, int identifier) {
+Ast_Interpreter_Variable* ast_interpreter_find_variable(Ast_Interpreter* interpreter, int var_name) {
     for (int i = 0; i < interpreter->variables.size; i++) {
-        if (interpreter->variables[i].variable_name == identifier) {
-            return i;
+        if (interpreter->variables[i].variable_name == var_name) {
+            return &interpreter->variables[i];
         }
     }
-    return -1;
+    return 0;
 }
 
-void ast_interpreter_define_variable(Ast_Interpreter* interpreter, int identifier) {
-    int index = ast_interpreter_find_variable_index(interpreter, identifier);
-    if (index != -1) {
-        logg("Variable %s already defined", lexer_result_identifer_to_string(interpreter->lexer, identifier).characters);
+void ast_interpreter_define_variable(Ast_Interpreter* interpreter, Ast_Interpreter_Value_Type::ENUM type, int var_name) {
+    if (ast_interpreter_find_variable(interpreter, var_name) != 0) {
+        logg("Variable %s already defined", lexer_result_identifer_to_string(interpreter->lexer, var_name).characters);
         return;
     }
+
     Ast_Interpreter_Variable var;
-    var.value = -1;
-    var.variable_name = identifier;
+    var.value.type = type;
+    var.value.bool_value = false;
+    var.value.int_value = -69;
+    var.value.float_value = -69.69f;
+    var.value.type = type;
+    var.variable_name = var_name;
     dynamic_array_push_back(&interpreter->variables, var);
 }
 
-int ast_interpreter_evaluate_expression(Ast_Interpreter* interpreter, Ast_Node_Expression* expression)
+Ast_Interpreter_Value ast_interpreter_evaluate_expression(Ast_Interpreter* interpreter, Ast_Node_Expression* expression)
 {
-    if (expression->type == ExpressionType::INTEGER_CONSTANT) {
-        return expression->integer_constant_value;
+    Ast_Interpreter_Value result;
+    result.type = Ast_Interpreter_Value_Type::ERROR_VAL;
+
+    if (expression->type == ExpressionType::LITERAL) {
+        Token& token = interpreter->lexer->tokens[expression->literal_token_index];
+        if (token.type == Token_Type::INTEGER_LITERAL) {
+            result.type = Ast_Interpreter_Value_Type::INTEGER;
+            result.int_value = token.attribute.integer_value;
+        }
+        else if (token.type == Token_Type::FLOAT_LITERAL) {
+            result.type = Ast_Interpreter_Value_Type::FLOAT;
+            result.float_value = token.attribute.float_value;
+        }
+        else if (token.type == Token_Type::BOOLEAN_LITERAL) {
+            result.type = Ast_Interpreter_Value_Type::BOOLEAN;
+            result.bool_value = token.attribute.bool_value;
+        }
+        else {
+            panic("I dont think it is possible to ever get here!\n");
+        }
+        return result;
     }
     else if (expression->type == ExpressionType::VARIABLE_READ)
     {
-        int index = ast_interpreter_find_variable_index(interpreter, expression->variable_name_id);
-        if (index == -1) {
+        Ast_Interpreter_Variable* var = ast_interpreter_find_variable(interpreter, expression->variable_name_id);
+        if (var == 0) {
             logg("Expression variable %s not defined!\n", lexer_result_identifer_to_string(interpreter->lexer, expression->variable_name_id).characters);
-            return -1;
+            return result;
         }
-        Ast_Interpreter_Variable* var = &interpreter->variables[index];
         return var->value;
     }
-    else if (expression->type == ExpressionType::OP_ADD) {
-        return ast_interpreter_evaluate_expression(interpreter, expression->left) +
-            ast_interpreter_evaluate_expression(interpreter, expression->right);
-    }
-    else if (expression->type == ExpressionType::OP_SUBTRACT) {
-        return ast_interpreter_evaluate_expression(interpreter, expression->left) -
-            ast_interpreter_evaluate_expression(interpreter, expression->right);
-    }
-    else if (expression->type == ExpressionType::OP_DIVIDE) {
-        int divisor = ast_interpreter_evaluate_expression(interpreter, expression->right);
-        if (divisor == 0) {
-            logg("Error division by 0");
-            return -1;
+    else if (expression->type == ExpressionType::OP_EQUAL ||
+        expression->type == ExpressionType::OP_NOT_EQUAL ||
+        expression->type == ExpressionType::OP_LESS_EQUAL ||
+        expression->type == ExpressionType::OP_LESS_THAN ||
+        expression->type == ExpressionType::OP_GREATER_EQUAL ||
+        expression->type == ExpressionType::OP_GREATER_THAN)
+    {
+        Ast_Interpreter_Value left_operand = ast_interpreter_evaluate_expression(interpreter, expression->left);
+        Ast_Interpreter_Value right_operand = ast_interpreter_evaluate_expression(interpreter, expression->right);
+        Ast_Interpreter_Value& l = left_operand;
+        Ast_Interpreter_Value& r = right_operand;
+        if (left_operand.type != right_operand.type) { // Implicit casting would happen here
+            return result;
         }
-        return ast_interpreter_evaluate_expression(interpreter, expression->left) / divisor;
+
+        result.type = Ast_Interpreter_Value_Type::BOOLEAN;
+        if (left_operand.type == Ast_Interpreter_Value_Type::FLOAT)
+        {
+            switch (expression->type)
+            {
+            case ExpressionType::OP_EQUAL: result.bool_value = l.float_value == r.float_value; break;
+            case ExpressionType::OP_NOT_EQUAL: result.bool_value = l.float_value != r.float_value; break;
+            case ExpressionType::OP_LESS_EQUAL: result.bool_value = l.float_value <= r.float_value; break;
+            case ExpressionType::OP_LESS_THAN: result.bool_value = l.float_value < r.float_value; break;
+            case ExpressionType::OP_GREATER_EQUAL: result.bool_value = l.float_value >= r.float_value; break;
+            case ExpressionType::OP_GREATER_THAN: result.bool_value = l.float_value > r.float_value; break;
+            }
+        }
+        else if (left_operand.type == Ast_Interpreter_Value_Type::INTEGER)
+        {
+            switch (expression->type)
+            {
+            case ExpressionType::OP_EQUAL: result.bool_value = l.int_value == r.int_value; break;
+            case ExpressionType::OP_NOT_EQUAL: result.bool_value = l.int_value != r.int_value; break;
+            case ExpressionType::OP_LESS_EQUAL: result.bool_value = l.int_value <= r.int_value; break;
+            case ExpressionType::OP_LESS_THAN: result.bool_value = l.int_value < r.int_value; break;
+            case ExpressionType::OP_GREATER_EQUAL: result.bool_value = l.int_value >= r.int_value; break;
+            case ExpressionType::OP_GREATER_THAN: result.bool_value = l.int_value > r.int_value; break;
+            }
+        }
+        else if (left_operand.type == Ast_Interpreter_Value_Type::BOOLEAN) {
+            switch (expression->type)
+            {
+            case ExpressionType::OP_EQUAL: result.bool_value = l.bool_value == r.bool_value; break;
+            case ExpressionType::OP_NOT_EQUAL: result.bool_value = l.bool_value != r.bool_value; break;
+            default: {
+                logg("Cannot do comparisions on booleans!");
+                result.type = Ast_Interpreter_Value_Type::ERROR_VAL;
+                return result;
+            }
+            }
+        }
     }
-    else if (expression->type == ExpressionType::OP_MULTIPLY) {
-        return ast_interpreter_evaluate_expression(interpreter, expression->left) *
-            ast_interpreter_evaluate_expression(interpreter, expression->right);
+    else if (expression->type == ExpressionType::OP_ADD ||
+        expression->type == ExpressionType::OP_SUBTRACT ||
+        expression->type == ExpressionType::OP_MODULO ||
+        expression->type == ExpressionType::OP_MULTIPLY ||
+        expression->type == ExpressionType::OP_DIVIDE)
+    {
+        Ast_Interpreter_Value left_operand = ast_interpreter_evaluate_expression(interpreter, expression->left);
+        Ast_Interpreter_Value right_operand = ast_interpreter_evaluate_expression(interpreter, expression->right);
+        Ast_Interpreter_Value& l = left_operand;
+        Ast_Interpreter_Value& r = right_operand;
+        if (left_operand.type != right_operand.type) { // Implicit casting would happen here
+            return result;
+        }
+        if (left_operand.type == Ast_Interpreter_Value_Type::FLOAT)
+        {
+            result.type = Ast_Interpreter_Value_Type::FLOAT;
+            switch (expression->type)
+            {
+            case ExpressionType::OP_ADD: result.float_value = l.float_value + r.float_value; break;
+            case ExpressionType::OP_SUBTRACT: result.float_value = l.float_value - r.float_value; break;
+            case ExpressionType::OP_MULTIPLY: result.float_value = l.float_value * r.float_value; break;
+            case ExpressionType::OP_DIVIDE: result.float_value = l.float_value / r.float_value; break;
+            case ExpressionType::OP_MODULO: {
+                logg("Float modulo float not supported!\n");
+                result.type = Ast_Interpreter_Value_Type::ERROR_VAL;
+                break;
+            }
+            }
+        }
+        else if (left_operand.type == Ast_Interpreter_Value_Type::INTEGER)
+        {
+            result.type = Ast_Interpreter_Value_Type::INTEGER;
+            switch (expression->type)
+            {
+            case ExpressionType::OP_ADD: result.int_value = l.int_value + r.int_value; break;
+            case ExpressionType::OP_SUBTRACT: result.int_value = l.int_value - r.int_value; break;
+            case ExpressionType::OP_MULTIPLY: result.int_value = l.int_value * r.int_value; break;
+            case ExpressionType::OP_MODULO: result.int_value = l.int_value % r.int_value; break;
+            case ExpressionType::OP_DIVIDE: {
+                if (r.int_value == 0) {
+                    logg("Integer Division by zero!\n");
+                    result.type = Ast_Interpreter_Value_Type::ERROR_VAL;
+                    break;
+                }
+                result.int_value = l.int_value / r.int_value; break;
+            }
+            }
+        }
+        else if (left_operand.type == Ast_Interpreter_Value_Type::BOOLEAN) {
+            result.type = Ast_Interpreter_Value_Type::ERROR_VAL;
+        }
+        return result;
     }
-    else if (expression->type == ExpressionType::OP_MODULO) {
-        return ast_interpreter_evaluate_expression(interpreter, expression->left) %
-            ast_interpreter_evaluate_expression(interpreter, expression->right);
+    else if (expression->type == ExpressionType::OP_BOOLEAN_AND ||
+        expression->type == ExpressionType::OP_BOOLEAN_OR)
+    {
+        Ast_Interpreter_Value left_operand = ast_interpreter_evaluate_expression(interpreter, expression->left);
+        Ast_Interpreter_Value right_operand = ast_interpreter_evaluate_expression(interpreter, expression->right);
+        if (left_operand.type != Ast_Interpreter_Value_Type::BOOLEAN ||
+            right_operand.type != Ast_Interpreter_Value_Type::BOOLEAN) {
+            logg("Left an right of Logic-Operator (&& or ||) must be boolean values: left operand type: %s, right operand type:  %s\n",
+                ast_interpreter_value_type_to_string(left_operand.type).characters,
+                ast_interpreter_value_type_to_string(right_operand.type).characters);
+            return result;
+        }
+
+        result.type = Ast_Interpreter_Value_Type::BOOLEAN;
+        switch (expression->type) {
+        case ExpressionType::OP_BOOLEAN_AND: result.bool_value = left_operand.bool_value && right_operand.bool_value; break;
+        case ExpressionType::OP_BOOLEAN_OR: result.bool_value = left_operand.bool_value || right_operand.bool_value; break;
+        }
+        return result;
     }
+
     logg("Expression type invalid!\n");
-    return -1;
+    return result;
 }
 
-int ast_interpreter_execute_main(Ast_Node_Root* root, LexerResult* lexer)
+Ast_Interpreter_Value ast_interpreter_execute_main(Ast_Node_Root* root, LexerResult* lexer)
 {
     Ast_Interpreter interpreter = ast_interpreter_create(root, lexer);
     SCOPE_EXIT(ast_interpreter_destroy(&interpreter));
+    Ast_Interpreter_Value result;
+    result.type = Ast_Interpreter_Value_Type::ERROR_VAL;
 
     // Find main
     Ast_Node_Function* main = 0;
@@ -1363,7 +1683,7 @@ int ast_interpreter_execute_main(Ast_Node_Root* root, LexerResult* lexer)
         int* main_identifer = hashtable_find_element(&lexer->identifier_index_lookup_table, string_create_static("main"));
         if (main_identifer == 0) {
             logg("Main not defined\n");
-            return -1;
+            return result;
         }
         for (int i = 0; i < root->functions.size; i++) {
             if (root->functions[i].function_name_id == *main_identifer) {
@@ -1372,29 +1692,130 @@ int ast_interpreter_execute_main(Ast_Node_Root* root, LexerResult* lexer)
         }
         if (main == 0) {
             logg("Main function not found\n");
-            return -1;
+            return result;
         }
     }
 
-    for (int i = 0; i < main->body.statements.size; i++) {
+    // Find token indices for types
+    int int_token_index = lexer_result_add_identifier_by_string(lexer, string_create_static("int"));
+    int bool_token_index = lexer_result_add_identifier_by_string(lexer, string_create_static("bool"));
+    int float_token_index = lexer_result_add_identifier_by_string(lexer, string_create_static("float"));
+
+    for (int i = 0; i < main->body.statements.size; i++)
+    {
         Ast_Node_Statement* statement = &main->body.statements[i];
         if (statement->type == StatementType::RETURN_STATEMENT) {
             return ast_interpreter_evaluate_expression(&interpreter, &statement->expression);
         }
-        else if (statement->type == StatementType::VARIABLE_ASSIGNMENT) {
-            int index = ast_interpreter_find_variable_index(&interpreter, statement->variable_name_id);
-            if (index == -1) {
-                logg("Variable assignment statement variable %s not defined!\n", lexer_result_identifer_to_string(lexer, statement->variable_name_id).characters);
-                return -1;
+        else if (statement->type == StatementType::VARIABLE_DEFINITION) {
+            if (statement->variable_type_id == int_token_index) {
+                ast_interpreter_define_variable(&interpreter, Ast_Interpreter_Value_Type::INTEGER, statement->variable_name_id);
             }
-            Ast_Interpreter_Variable* var = &interpreter.variables[index];
+            else if (statement->variable_type_id == float_token_index) {
+                ast_interpreter_define_variable(&interpreter, Ast_Interpreter_Value_Type::FLOAT, statement->variable_name_id);
+            }
+            else if (statement->variable_type_id == bool_token_index) {
+                ast_interpreter_define_variable(&interpreter, Ast_Interpreter_Value_Type::BOOLEAN, statement->variable_name_id);
+            }
+            else {
+                logg("Type-Error: %s is not a valid type\n", lexer_result_identifer_to_string(lexer, statement->variable_type_id).characters);
+                return result;
+            }
+        }
+        else if (statement->type == StatementType::VARIABLE_ASSIGNMENT)
+        {
+            Ast_Interpreter_Variable* var = ast_interpreter_find_variable(&interpreter, statement->variable_name_id);
+            if (var == 0) {
+                logg("Variable assignment statement variable %s not defined!\n", lexer_result_identifer_to_string(lexer, statement->variable_name_id).characters);
+                return result;
+            }
+            Ast_Interpreter_Value value = ast_interpreter_evaluate_expression(&interpreter, &statement->expression);
+            if (value.type != var->value.type) {
+                logg("Variable assignment failed, variable type does not match expression type:\n %s = %s\n",
+                    ast_interpreter_value_type_to_string(var->value.type).characters,
+                    ast_interpreter_value_type_to_string(value.type).characters);
+                return result;
+            }
             var->value = ast_interpreter_evaluate_expression(&interpreter, &statement->expression);
         }
-        else if (statement->type == StatementType::VARIABLE_DEFINITION) {
-            ast_interpreter_define_variable(&interpreter, statement->variable_name_id);
+        else if (statement->type == StatementType::VARIABLE_DEFINE_ASSIGN) // x : int = 5
+        {
+            Ast_Interpreter_Variable* var = ast_interpreter_find_variable(&interpreter, statement->variable_name_id);
+            if (var != 0) {
+                logg("Variable %s already defined!",
+                    lexer_result_identifer_to_string(lexer, statement->variable_name_id).characters);
+                return result;
+            }
+
+            Ast_Interpreter_Value value = ast_interpreter_evaluate_expression(&interpreter, &statement->expression);
+            Ast_Interpreter_Value_Type::ENUM var_type;
+            if (statement->variable_type_id == int_token_index) var_type = Ast_Interpreter_Value_Type::INTEGER;
+            else if (statement->variable_type_id == float_token_index) var_type = Ast_Interpreter_Value_Type::FLOAT;
+            else if (statement->variable_type_id == bool_token_index) var_type = Ast_Interpreter_Value_Type::BOOLEAN;
+            else {
+                logg("Type-Error: %s is not a valid type\n", lexer_result_identifer_to_string(lexer, statement->variable_type_id).characters);
+                return result;
+            }
+
+            if (var_type != value.type) {
+                logg("Types not compatible, var type: ", lexer_result_identifer_to_string(lexer, statement->variable_type_id).characters);
+                return result;
+            }
+            ast_interpreter_define_variable(&interpreter, var_type, statement->variable_name_id);
+            var = ast_interpreter_find_variable(&interpreter, statement->variable_name_id);
+            var->value = value;
+        }
+        else if (statement->type == StatementType::VARIABLE_DEFINE_INFER)
+        {
+            Ast_Interpreter_Variable* var = ast_interpreter_find_variable(&interpreter, statement->variable_name_id);
+            if (var != 0) {
+                logg("Variable %s already defined!",
+                    lexer_result_identifer_to_string(lexer, statement->variable_name_id).characters);
+                return result;
+            }
+
+            Ast_Interpreter_Value value = ast_interpreter_evaluate_expression(&interpreter, &statement->expression);
+            ast_interpreter_define_variable(&interpreter, value.type, statement->variable_name_id);
+            var = ast_interpreter_find_variable(&interpreter, statement->variable_name_id);
+            var->value = value;
         }
     }
 
     logg("No return statement found!\n");
-    return -1;
+    return result;
+}
+
+void ast_interpreter_value_append_to_string(Ast_Interpreter_Value value, String* string)
+{
+    switch (value.type)
+    {
+    case Ast_Interpreter_Value_Type::BOOLEAN:
+        string_append_formated(string, "BOOL: %s ", value.bool_value ? "true" : "false"); break;
+    case Ast_Interpreter_Value_Type::INTEGER:
+        string_append_formated(string, "INT: %d ", value.int_value); break;
+    case Ast_Interpreter_Value_Type::FLOAT:
+        string_append_formated(string, "FLOAT: %f ", value.float_value); break;
+    case Ast_Interpreter_Value_Type::ERROR_VAL:
+        string_append_formated(string, "ERROR-Type "); break;
+    default:
+        string_append_formated(string, "SHOULD_NOT_HAPPEN.EXE"); break;
+    }
+    return;
+    return;
+}
+
+String ast_interpreter_value_type_to_string(Ast_Interpreter_Value_Type::ENUM type)
+{
+    switch (type)
+    {
+    case Ast_Interpreter_Value_Type::BOOLEAN:
+        return string_create_static("BOOL");
+    case Ast_Interpreter_Value_Type::INTEGER:
+        return string_create_static("INT");
+    case Ast_Interpreter_Value_Type::FLOAT:
+        return string_create_static("FLOAT");
+    case Ast_Interpreter_Value_Type::ERROR_VAL:
+        return string_create_static("ERROR_TYPE");
+    }
+    return string_create_static("INVALID_VALUE_TYPE_ENUM");
 }
