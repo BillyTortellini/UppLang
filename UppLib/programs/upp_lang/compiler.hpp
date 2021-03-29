@@ -124,6 +124,8 @@ namespace ExpressionType
         OP_LESS_EQUAL,
         OP_EQUAL,
         OP_NOT_EQUAL,
+        OP_NEGATE,
+        OP_LOGICAL_NOT,
         LITERAL,
         VARIABLE_READ,
     };
@@ -147,6 +149,8 @@ namespace StatementType
         VARIABLE_DEFINE_ASSIGN, // x : int = 5;
         VARIABLE_DEFINE_INFER, // x := 5;
         STATEMENT_BLOCK, // { x := 5; y++; ...}
+        IF_BLOCK,
+        IF_ELSE_BLOCK,
         RETURN_STATEMENT,
     };
 };
@@ -164,6 +168,9 @@ struct Ast_Node_Statement
     int variable_type_id;
     Ast_Node_Expression expression;
     Ast_Node_Statement_Block statements;
+
+    Ast_Node_Statement_Block if_statements;
+    Ast_Node_Statement_Block else_statements;
 };
 
 struct Parameter

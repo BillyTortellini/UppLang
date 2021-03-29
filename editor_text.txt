@@ -1,33 +1,32 @@
 main :: () -> void
 {
-    x := 5;
+    x := 11;
+    if x > 10 
+        x = 15;
+    else if x > 5
+        x = 10;
+    else 
+        x = 5; 
+
     return x;
 }
 
-test :: () -> void 
-{
-    what:x= 5;
-}
-
-lol :: () -> void {}
-
-
-
 /*  
     Next Features:
-     * Scopes and Symbol-Table
-     * If-Else Structure
      * Loops 
      * Function calls
      * Semantic analysis
      * Bytecode creator + interpreter
-     * Pointers
+     * Pointers + Arrays
      * Structs
      * OS-Calls/Calls to libraries (print, new/delete)
 
     Current UppLang features:
      * Expression parsing + evaluation
      * Variable definition/assignment + return
+     * Primitive Type System (Int bool float)
+     * Scopes
+     * If-Else Flow control
 
     Nice-to-have Features:
      * Log to window, not to console, maybe something like in a textfield

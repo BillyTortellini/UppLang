@@ -829,6 +829,14 @@ void ast_node_expression_append_to_string(String* string, Ast_Node_Expression* e
         ast_node_expression_append_to_string(string, expression->right, result);
         string_append(string, ")");
     }
+    if (expression->type == ExpressionType::OP_NEGATE) {
+        string_append(string, "-");
+        ast_node_expression_append_to_string(string, expression->left, result);
+    }
+    if (expression->type == ExpressionType::OP_LOGICAL_NOT) {
+        string_append(string, "!");
+        ast_node_expression_append_to_string(string, expression->left, result);
+    }
     if (expression->type == ExpressionType::OP_MULTIPLY) {
         string_append(string, "(");
         ast_node_expression_append_to_string(string, expression->left, result);
@@ -976,6 +984,46 @@ void ast_node_statement_append_to_string(String* string, Ast_Node_Statement* sta
         }
         string_append_formated(string, "}");
     }
+    else if (statement->type == StatementType::IF_BLOCK || statement->type == StatementType::IF_ELSE_BLOCK) 
+    {
+        // Print if block
+        string_append_formated(string, "if ");
+        ast_node_expression_append_to_string(string, &statement->expression, result);
+        string_append_formated(string, "\n");
+        for (int i = 0; i < indentation_level; i++) {
+            string_append_formated(string, "    ");
+        }
+        string_append_formated(string, "{\n");
+        for (int i = 0; i < statement->if_statements.statements.size; i++) {
+            ast_node_statement_append_to_string(string, &statement->if_statements.statements[i], result, indentation_level+1);
+        }
+        string_append_formated(string, "\n");
+        for (int i = 0; i < indentation_level; i++) {
+            string_append_formated(string, "    ");
+        }
+        string_append_formated(string, "}");
+
+        if (statement->type == StatementType::IF_ELSE_BLOCK) 
+        {
+            string_append_formated(string, "\n");
+            for (int i = 0; i < indentation_level; i++) {
+                string_append_formated(string, "    ");
+            }
+            string_append_formated(string, "else\n");
+            for (int i = 0; i < indentation_level; i++) {
+                string_append_formated(string, "    ");
+            }
+            string_append_formated(string, "{\n");
+            for (int i = 0; i < statement->else_statements.statements.size; i++) {
+                ast_node_statement_append_to_string(string, &statement->else_statements.statements[i], result, indentation_level + 1);
+            }
+            string_append_formated(string, "\n");
+            for (int i = 0; i < indentation_level; i++) {
+                string_append_formated(string, "    ");
+            }
+            string_append_formated(string, "}");
+        }
+    }
 }
 
 void ast_node_function_append_to_string(String* string, Ast_Node_Function* function, LexerResult* result)
@@ -1023,6 +1071,30 @@ bool parser_parse_expression_single_value(Parser* parser, Ast_Node_Expression* e
         expression->type = ExpressionType::VARIABLE_READ;
         expression->variable_name_id = parser->tokens[parser->index].attribute.identifier_number;
         parser->index++;
+        return true;
+    }
+    else if (parser_test_next_token(parser, Token_Type::OP_MINUS))
+    {
+        expression->type = ExpressionType::OP_NEGATE;
+        parser->index++;
+        expression->left = new Ast_Node_Expression();
+        if (!parser_parse_expression_single_value(parser, expression->left)) {
+            delete expression->left;
+            parser->index--;
+            return false;
+        }
+        return true;
+    }
+    else if (parser_test_next_token(parser, Token_Type::LOGICAL_NOT))
+    {
+        expression->type = ExpressionType::OP_LOGICAL_NOT;
+        parser->index++;
+        expression->left = new Ast_Node_Expression();
+        if (!parser_parse_expression_single_value(parser, expression->left)) {
+            delete expression->left;
+            parser->index--;
+            return false;
+        }
         return true;
     }
     else if (parser_test_next_token(parser, Token_Type::INTEGER_LITERAL) ||
@@ -1198,6 +1270,7 @@ bool parser_parse_expression(Parser* parser, Ast_Node_Expression* expression)
     return true;
 }
 
+bool parser_parse_statment_block_or_single_statement(Parser* parser, Ast_Node_Statement_Block* block);
 bool parser_parse_statement_block(Parser* parser, Ast_Node_Statement_Block* block);
 bool parser_parse_statement(Parser* parser, Ast_Node_Statement* statement)
 {
@@ -1209,6 +1282,33 @@ bool parser_parse_statement(Parser* parser, Ast_Node_Statement* statement)
     }
 
     bool valid_statement = false;
+    if (!valid_statement && parser_test_next_token(parser, Token_Type::IF))
+    {
+        parser->index++;
+        if (!parser_parse_expression(parser, &statement->expression)) {
+            parser->index = rewind_point;
+            return false;
+        }
+        if (!parser_parse_statment_block_or_single_statement(parser, &statement->if_statements)) {
+            parser->index = rewind_point;
+            return false;
+        }
+        statement->type = StatementType::IF_BLOCK;
+        rewind_point = parser->index;
+
+        // Test else part
+        if (parser_test_next_token(parser, Token_Type::ELSE)) {
+            parser->index++;
+            if (!parser_parse_statment_block_or_single_statement(parser, &statement->else_statements)) {
+                parser->index = rewind_point;
+                return true;
+            }
+            statement->type = StatementType::IF_ELSE_BLOCK;
+            return true;
+        }
+        return true;
+    }
+
     if (!valid_statement && parser_test_next_token(parser, Token_Type::RETURN))
     {
         parser->index++;
@@ -1248,7 +1348,7 @@ bool parser_parse_statement(Parser* parser, Ast_Node_Statement* statement)
         valid_statement = true;
     }
 
-    if (!valid_statement && 
+    if (!valid_statement &&
         parser_test_next_2_tokens(parser, Token_Type::IDENTIFIER, Token_Type::INFER_ASSIGN)) // Variable define-assign 'x :='
     {
         statement->type = StatementType::VARIABLE_DEFINE_INFER;
@@ -1336,9 +1436,24 @@ bool parser_parse_statement_block(Parser* parser, Ast_Node_Statement_Block* bloc
             }
         }
     }
-    parser_log_unresolvable_error(parser, "Scope block does not end with }\n", scope_start, parser->tokens.size-1);
+    parser_log_unresolvable_error(parser, "Scope block does not end with }\n", scope_start, parser->tokens.size - 1);
     exit_failure = true;
     return false;
+}
+
+// Different to parse_block, this function does not need {} around the statements
+bool parser_parse_statment_block_or_single_statement(Parser* parser, Ast_Node_Statement_Block* block)
+{
+    if (parser_parse_statement_block(parser, block)) {
+        return true;
+    }
+    Ast_Node_Statement statement;
+    if (!parser_parse_statement(parser, &statement)) {
+        return false;
+    }
+    block->statements = dynamic_array_create_empty<Ast_Node_Statement>(1);
+    dynamic_array_push_back(&block->statements, statement);
+    return true;
 }
 
 bool parser_parse_function(Parser* parser, Ast_Node_Function* function)
@@ -1355,7 +1470,7 @@ bool parser_parse_function(Parser* parser, Ast_Node_Function* function)
 
     // Parse Function start
     if (!parser_test_next_3_tokens(parser, Token_Type::IDENTIFIER, Token_Type::DOUBLE_COLON, Token_Type::OPEN_PARENTHESIS)) {
-        parser_log_intermediate_error(parser, "Could not parse function, it did not start with 'ID :: ('", parser->index, parser->index+3);
+        parser_log_intermediate_error(parser, "Could not parse function, it did not start with 'ID :: ('", parser->index, parser->index + 3);
         exit_failure = true;
         return false;
     }
@@ -1367,7 +1482,7 @@ bool parser_parse_function(Parser* parser, Ast_Node_Function* function)
     {
         // Parameters need to be named, meaning x : int     
         if (!parser_test_next_3_tokens(parser, Token_Type::IDENTIFIER, Token_Type::COLON, Token_Type::IDENTIFIER)) {
-            parser_log_intermediate_error(parser, "Could not parse function, parameter was not in the form ID : TYPE", parser->index, parser->index+3);
+            parser_log_intermediate_error(parser, "Could not parse function, parameter was not in the form ID : TYPE", parser->index, parser->index + 3);
             exit_failure = true;
             return false;
         }
@@ -1387,8 +1502,8 @@ bool parser_parse_function(Parser* parser, Ast_Node_Function* function)
 
     // Parse Return type
     if (!parser_test_next_2_tokens(parser, Token_Type::ARROW, Token_Type::IDENTIFIER)) {
-        parser_log_intermediate_error(parser, "Could not parse function, did not find return type after Parameters '-> TYPE'", 
-            parser->index, parser->index+2);
+        parser_log_intermediate_error(parser, "Could not parse function, did not find return type after Parameters '-> TYPE'",
+            parser->index, parser->index + 2);
         exit_failure = true;
         return false;
     }
@@ -1400,7 +1515,7 @@ bool parser_parse_function(Parser* parser, Ast_Node_Function* function)
         exit_failure = true;
         return false;
     };
-    SCOPE_EXIT( if (exit_failure) ast_node_statement_block_destroy(&function->body););
+    SCOPE_EXIT(if (exit_failure) ast_node_statement_block_destroy(&function->body););
 
     return true;
 }
@@ -1524,7 +1639,7 @@ void ast_interpreter_destroy(Ast_Interpreter* interpreter) {
 }
 
 int ast_interpreter_find_variable_index(Ast_Interpreter* interpreter, int var_name) {
-    for (int i = interpreter->symbol_table.size-1; i >= 0; i--) {
+    for (int i = interpreter->symbol_table.size - 1; i >= 0; i--) {
         if (interpreter->symbol_table[i].variable_name == var_name) {
             return i;
         }
@@ -1533,7 +1648,7 @@ int ast_interpreter_find_variable_index(Ast_Interpreter* interpreter, int var_na
 }
 
 Ast_Interpreter_Variable* ast_interpreter_find_variable(Ast_Interpreter* interpreter, int var_name) {
-    for (int i = interpreter->symbol_table.size-1; i >= 0; i--) {
+    for (int i = interpreter->symbol_table.size - 1; i >= 0; i--) {
         if (interpreter->symbol_table[i].variable_name == var_name) {
             return &interpreter->symbol_table[i];
         }
@@ -1554,7 +1669,7 @@ void ast_interpreter_exit_scope(Ast_Interpreter* interpreter) {
     dynamic_array_remove_range_ordered(&interpreter->symbol_table, scope_start, interpreter->symbol_table.size);
 }
 
-void ast_interpreter_define_variable(Ast_Interpreter* interpreter, Ast_Interpreter_Value_Type::ENUM type, int var_name) 
+void ast_interpreter_define_variable(Ast_Interpreter* interpreter, Ast_Interpreter_Value_Type::ENUM type, int var_name)
 {
     int current_scope_start = interpreter->scope_beginnings[interpreter->scope_beginnings.size - 1];
     if (ast_interpreter_find_variable_index(interpreter, var_name) >= current_scope_start) {
@@ -1657,6 +1772,7 @@ Ast_Interpreter_Value ast_interpreter_evaluate_expression(Ast_Interpreter* inter
             }
             }
         }
+        return result;
     }
     else if (expression->type == ExpressionType::OP_ADD ||
         expression->type == ExpressionType::OP_SUBTRACT ||
@@ -1731,6 +1847,32 @@ Ast_Interpreter_Value ast_interpreter_evaluate_expression(Ast_Interpreter* inter
         }
         return result;
     }
+    else if (expression->type == ExpressionType::OP_LOGICAL_NOT) {
+        Ast_Interpreter_Value val = ast_interpreter_evaluate_expression(interpreter, expression->left);
+        if (val.type != Ast_Interpreter_Value_Type::BOOLEAN) {
+            logg("Logical not only works on boolean value!\n");
+            return result;
+        }
+        result.type = Ast_Interpreter_Value_Type::BOOLEAN;
+        result.bool_value = !val.bool_value;
+        return result;
+    }
+    else if (expression->type == ExpressionType::OP_NEGATE) {
+        Ast_Interpreter_Value val = ast_interpreter_evaluate_expression(interpreter, expression->left);
+        if (val.type == Ast_Interpreter_Value_Type::BOOLEAN) {
+            logg("Negate does not work on boolean values");
+            return result;
+        }
+        if (val.type == Ast_Interpreter_Value_Type::FLOAT) {
+            result.type = val.type;
+            result.float_value = -val.float_value;
+        }
+        if (val.type == Ast_Interpreter_Value_Type::INTEGER) {
+            result.type = val.type;
+            result.int_value = -val.int_value;
+        }
+        return result;
+    }
 
     logg("Expression type invalid!\n");
     return result;
@@ -1742,6 +1884,20 @@ struct Ast_Interpreter_Statement_Result
     Ast_Interpreter_Value return_value;
 };
 
+Ast_Interpreter_Statement_Result ast_interpreter_execute_statement(Ast_Interpreter* interpreter, Ast_Node_Statement* statement, LexerResult* lexer);
+Ast_Interpreter_Statement_Result ast_interpreter_execute_statment_block(Ast_Interpreter* interpreter, Ast_Node_Statement_Block* block, LexerResult* lexer)
+{
+    ast_interpreter_begin_new_scope(interpreter);
+    for (int i = 0; i < block->statements.size; i++) {
+        Ast_Interpreter_Statement_Result result = ast_interpreter_execute_statement(interpreter, &block->statements[i], lexer);
+        if (result.is_return) return result;
+    }
+    ast_interpreter_exit_scope(interpreter);
+    Ast_Interpreter_Statement_Result result;
+    result.is_return = false;
+    return result;
+}
+
 Ast_Interpreter_Statement_Result ast_interpreter_execute_statement(Ast_Interpreter* interpreter, Ast_Node_Statement* statement, LexerResult* lexer)
 {
     Ast_Interpreter_Statement_Result result;
@@ -1751,6 +1907,29 @@ Ast_Interpreter_Statement_Result ast_interpreter_execute_statement(Ast_Interpret
         result.is_return = true;
         result.return_value = ast_interpreter_evaluate_expression(interpreter, &statement->expression);
         return result;
+    }
+    else if (statement->type == StatementType::IF_BLOCK) {
+        Ast_Interpreter_Value val = ast_interpreter_evaluate_expression(interpreter, &statement->expression);
+        if (val.type != Ast_Interpreter_Value_Type::BOOLEAN) {
+            logg("If expression is not a boolean!\n");
+            return result;
+        }
+        if (val.bool_value) {
+            return ast_interpreter_execute_statment_block(interpreter, &statement->if_statements, lexer);
+        }
+    }
+    else if (statement->type == StatementType::IF_ELSE_BLOCK) {
+        Ast_Interpreter_Value val = ast_interpreter_evaluate_expression(interpreter, &statement->expression);
+        if (val.type != Ast_Interpreter_Value_Type::BOOLEAN) {
+            logg("If expression is not a boolean!\n");
+            return result;
+        }
+        if (val.bool_value) {
+            return ast_interpreter_execute_statment_block(interpreter, &statement->if_statements, lexer);
+        }
+        else {
+            return ast_interpreter_execute_statment_block(interpreter, &statement->else_statements, lexer);
+        }
     }
     else if (statement->type == StatementType::VARIABLE_DEFINITION) {
         if (statement->variable_type_id == interpreter->int_token_index) {
@@ -1824,17 +2003,8 @@ Ast_Interpreter_Statement_Result ast_interpreter_execute_statement(Ast_Interpret
         var = ast_interpreter_find_variable(interpreter, statement->variable_name_id);
         var->value = value;
     }
-    else if (statement->type == StatementType::STATEMENT_BLOCK) 
-    {
-        ast_interpreter_begin_new_scope(interpreter);
-        for (int i = 0; i < statement->statements.statements.size; i++) {
-            Ast_Interpreter_Statement_Result result =
-                ast_interpreter_execute_statement(interpreter, &statement->statements.statements[i], lexer);
-            if (result.is_return) {
-                return result;
-            }
-        }
-        ast_interpreter_exit_scope(interpreter);
+    else if (statement->type == StatementType::STATEMENT_BLOCK) {
+        return ast_interpreter_execute_statment_block(interpreter, &statement->statements, lexer);
     }
 
     return result;
@@ -1844,8 +2014,8 @@ Ast_Interpreter_Value ast_interpreter_execute_main(Ast_Node_Root* root, LexerRes
 {
     Ast_Interpreter interpreter = ast_interpreter_create(root, lexer);
     SCOPE_EXIT(ast_interpreter_destroy(&interpreter));
-    Ast_Interpreter_Value result;
-    result.type = Ast_Interpreter_Value_Type::ERROR_VAL;
+    Ast_Interpreter_Value error_value;
+    error_value.type = Ast_Interpreter_Value_Type::ERROR_VAL;
 
     // Find main
     Ast_Node_Function* main = 0;
@@ -1853,7 +2023,7 @@ Ast_Interpreter_Value ast_interpreter_execute_main(Ast_Node_Root* root, LexerRes
         int* main_identifer = hashtable_find_element(&lexer->identifier_index_lookup_table, string_create_static("main"));
         if (main_identifer == 0) {
             logg("Main not defined\n");
-            return result;
+            return error_value;
         }
         for (int i = 0; i < root->functions.size; i++) {
             if (root->functions[i].function_name_id == *main_identifer) {
@@ -1862,7 +2032,7 @@ Ast_Interpreter_Value ast_interpreter_execute_main(Ast_Node_Root* root, LexerRes
         }
         if (main == 0) {
             logg("Main function not found\n");
-            return result;
+            return error_value;
         }
     }
 
@@ -1871,17 +2041,13 @@ Ast_Interpreter_Value ast_interpreter_execute_main(Ast_Node_Root* root, LexerRes
     interpreter.bool_token_index = lexer_result_add_identifier_by_string(lexer, string_create_static("bool"));
     interpreter.float_token_index = lexer_result_add_identifier_by_string(lexer, string_create_static("float"));
 
-    for (int i = 0; i < main->body.statements.size; i++)
-    {
-        Ast_Node_Statement* statement = &main->body.statements[i];
-        Ast_Interpreter_Statement_Result result = ast_interpreter_execute_statement(&interpreter, statement, lexer);
-        if (result.is_return) {
-            return result.return_value;
-        }
+    Ast_Interpreter_Statement_Result main_result = ast_interpreter_execute_statment_block(&interpreter, &main->body, lexer);
+    if (!main_result.is_return) {
+        logg("No return statement found!\n");
+        return error_value;
     }
 
-    logg("No return statement found!\n");
-    return result;
+    return main_result.return_value;
 }
 
 void ast_interpreter_value_append_to_string(Ast_Interpreter_Value value, String* string)
