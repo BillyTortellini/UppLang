@@ -146,8 +146,15 @@ namespace StatementType
         VARIABLE_DEFINITION, // x : int;
         VARIABLE_DEFINE_ASSIGN, // x : int = 5;
         VARIABLE_DEFINE_INFER, // x := 5;
+        STATEMENT_BLOCK, // { x := 5; y++; ...}
         RETURN_STATEMENT,
     };
+};
+
+struct Ast_Node_Statement;
+struct Ast_Node_Statement_Block
+{
+    DynamicArray<Ast_Node_Statement> statements;
 };
 
 struct Ast_Node_Statement
@@ -156,11 +163,7 @@ struct Ast_Node_Statement
     int variable_name_id;
     int variable_type_id;
     Ast_Node_Expression expression;
-};
-
-struct Ast_Node_Statement_Block
-{
-    DynamicArray<Ast_Node_Statement> statements;
+    Ast_Node_Statement_Block statements;
 };
 
 struct Parameter

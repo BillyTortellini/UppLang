@@ -805,7 +805,7 @@ void streetnetwork_grow_branches(StreetNetwork* network, float dist, float destr
         }
     }
 
-    dynamic_array_remove_range_ordererd(&network->open_branches, 0, branch_count);
+    dynamic_array_remove_range_ordered(&network->open_branches, 0, branch_count); // @Error this function changed since last build of proc_city
 }
 
 void streetnetwork_generate_main_road(StreetNetwork* network, vec2 size, int hotspot_count, float base_min_distance, int closest_count,

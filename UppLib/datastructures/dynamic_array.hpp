@@ -102,12 +102,12 @@ void dynamic_array_insert_ordered(DynamicArray<T>* a, T item, int index)
 
 
 template<typename T>
-void dynamic_array_remove_range_ordererd(DynamicArray<T>* a, int start_index, int end_index)
+void dynamic_array_remove_range_ordered(DynamicArray<T>* a, int start_index, int end_index)
 {
     if (a->size <= 0 || end_index < start_index) { return; }
-    start_index = math_clamp(start_index, 0, a->size-1);
-    end_index = math_clamp(end_index, 0, a->size-1);
-    int length = end_index - start_index + 1;
+    start_index = math_clamp(start_index, 0, a->size);
+    end_index = math_clamp(end_index, 0, a->size);
+    int length = end_index - start_index;
     for (int i = start_index; i < a->size - length; i++) {
         a->data[i] = a->data[i + length];
     }

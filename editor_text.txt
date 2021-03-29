@@ -1,14 +1,23 @@
 main :: () -> void
 {
-    x := true;
-    y := x * x;
+    x := 5;
     return x;
 }
 
+test :: () -> void 
+{
+    what:x= 5;
+}
+
+lol :: () -> void {}
+
+
+
 /*  
     Next Features:
-     * If else structures
-     * Loops (Probably lots of errors)
+     * Scopes and Symbol-Table
+     * If-Else Structure
+     * Loops 
      * Function calls
      * Semantic analysis
      * Bytecode creator + interpreter

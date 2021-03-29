@@ -691,12 +691,12 @@ int parser_find_next_token_type(Parser* parser, Token_Type::ENUM type)
     return parser->tokens.size;
 }
 
-void parser_log_intermediate_error(Parser* parser, const char* msg, int length)
+void parser_log_intermediate_error(Parser* parser, const char* msg, int start_token, int end_token)
 {
     ParserError error;
     error.error_message = msg;
-    error.token_start_index = parser->index;
-    error.token_end_index = parser->index;
+    error.token_start_index = start_token;
+    error.token_end_index = end_token;
     dynamic_array_push_back(&parser->intermediate_errors, error);
 }
 
@@ -931,8 +931,12 @@ void ast_node_expression_append_to_string(String* string, Ast_Node_Expression* e
     }
 }
 
-void ast_node_statement_append_to_string(String* string, Ast_Node_Statement* statement, LexerResult* result)
+void ast_node_statement_append_to_string(String* string, Ast_Node_Statement* statement, LexerResult* result, int indentation_level)
 {
+    for (int i = 0; i < indentation_level; i++) {
+        string_append_formated(string, "    ");
+    }
+
     if (statement->type == StatementType::VARIABLE_DEFINITION) {
         string_append_formated(string, "%s : %s;",
             result->identifiers[statement->variable_name_id].characters,
@@ -961,6 +965,17 @@ void ast_node_statement_append_to_string(String* string, Ast_Node_Statement* sta
         ast_node_expression_append_to_string(string, &statement->expression, result);
         string_append_formated(string, ";");
     }
+    else if (statement->type == StatementType::STATEMENT_BLOCK) {
+        string_append_formated(string, "{\n");
+        for (int i = 0; i < statement->statements.statements.size; i++) {
+            ast_node_statement_append_to_string(string, &statement->statements.statements[i], result, indentation_level+1);
+        }
+        string_append_formated(string, "\n");
+        for (int i = 0; i < indentation_level; i++) {
+            string_append_formated(string, "    ");
+        }
+        string_append_formated(string, "}");
+    }
 }
 
 void ast_node_function_append_to_string(String* string, Ast_Node_Function* function, LexerResult* result)
@@ -976,11 +991,10 @@ void ast_node_function_append_to_string(String* string, Ast_Node_Function* funct
 
     for (int i = 0; i < function->body.statements.size; i++) {
         Ast_Node_Statement* statement = &function->body.statements.data[i];
-        string_append_formated(string, "\t");
-        ast_node_statement_append_to_string(string, statement, result);
+        ast_node_statement_append_to_string(string, statement, result, 1);
         string_append_formated(string, "\n");
     }
-    string_append_formated(string, "}");
+    string_append_formated(string, "}\n");
 }
 
 void ast_node_root_append_to_string(String* string, Ast_Node_Root* root, LexerResult* lexer_result)
@@ -1040,7 +1054,7 @@ bool parser_parse_expression_single_value(Parser* parser, Ast_Node_Expression* e
     }
     else {
         parser_log_intermediate_error(parser,
-            "Error, could not parse single expression, does not start with constant or identifier\n", 1);
+            "Error, could not parse single expression, does not start with constant or identifier\n", parser->index, parser->index+1);
         return false;
     }
 }
@@ -1184,11 +1198,18 @@ bool parser_parse_expression(Parser* parser, Ast_Node_Expression* expression)
     return true;
 }
 
+bool parser_parse_statement_block(Parser* parser, Ast_Node_Statement_Block* block);
 bool parser_parse_statement(Parser* parser, Ast_Node_Statement* statement)
 {
     int rewind_point = parser->index;
 
-    if (parser_test_next_token(parser, Token_Type::RETURN))
+    if (parser_parse_statement_block(parser, &statement->statements)) {
+        statement->type = StatementType::STATEMENT_BLOCK;
+        return true;
+    }
+
+    bool valid_statement = false;
+    if (!valid_statement && parser_test_next_token(parser, Token_Type::RETURN))
     {
         parser->index++;
         Ast_Node_Expression expression;
@@ -1198,20 +1219,20 @@ bool parser_parse_statement(Parser* parser, Ast_Node_Statement* statement)
         }
         statement->type = StatementType::RETURN_STATEMENT;
         statement->expression = expression;
-        return true;
+        valid_statement = true;
     }
 
-    if (parser_test_next_4_tokens(parser,
+    if (!valid_statement && parser_test_next_4_tokens(parser,
         Token_Type::IDENTIFIER, Token_Type::COLON, Token_Type::IDENTIFIER, Token_Type::SEMICOLON)) // Variable definition 'x : int;'
     {
         statement->type = StatementType::VARIABLE_DEFINITION;
         statement->variable_name_id = parser->tokens[parser->index].attribute.identifier_number;
         statement->variable_type_id = parser->tokens[parser->index + 2].attribute.identifier_number;
         parser->index += 3; // ! not 4, since the ; parsing is done by the caller of this function
-        return true;
+        valid_statement = true;
     }
 
-    if (parser_test_next_4_tokens(parser,
+    if (!valid_statement && parser_test_next_4_tokens(parser,
         Token_Type::IDENTIFIER, Token_Type::COLON, Token_Type::IDENTIFIER, Token_Type::OP_ASSIGNMENT)) // Variable define-assign 'x : int = ...'
     {
         statement->type = StatementType::VARIABLE_DEFINE_ASSIGN;
@@ -1224,10 +1245,11 @@ bool parser_parse_statement(Parser* parser, Ast_Node_Statement* statement)
             return false;
         }
         statement->expression = expr;
-        return true;
+        valid_statement = true;
     }
 
-    if (parser_test_next_2_tokens(parser, Token_Type::IDENTIFIER, Token_Type::INFER_ASSIGN)) // Variable define-assign 'x :='
+    if (!valid_statement && 
+        parser_test_next_2_tokens(parser, Token_Type::IDENTIFIER, Token_Type::INFER_ASSIGN)) // Variable define-assign 'x :='
     {
         statement->type = StatementType::VARIABLE_DEFINE_INFER;
         statement->variable_name_id = parser->tokens[parser->index].attribute.identifier_number;
@@ -1238,10 +1260,10 @@ bool parser_parse_statement(Parser* parser, Ast_Node_Statement* statement)
             return false;
         }
         statement->expression = expr;
-        return true;
+        valid_statement = true;
     }
 
-    if (parser_test_next_2_tokens(parser, Token_Type::IDENTIFIER, Token_Type::OP_ASSIGNMENT))
+    if (!valid_statement && parser_test_next_2_tokens(parser, Token_Type::IDENTIFIER, Token_Type::OP_ASSIGNMENT))
     {
         // Assignment
         statement->type = StatementType::VARIABLE_ASSIGNMENT;
@@ -1249,55 +1271,74 @@ bool parser_parse_statement(Parser* parser, Ast_Node_Statement* statement)
         parser->index += 2;
 
         // Parse expression
-        if (parser_parse_expression(parser, &statement->expression)) {
-            return true;
+        if (!parser_parse_expression(parser, &statement->expression)) {
+            parser->index = rewind_point;
+            return false;
         }
-
-        parser->index = rewind_point;
+        valid_statement = true;
     }
 
+    if (!valid_statement) {
+        return false;
+    }
+    if (parser_test_next_token(parser, Token_Type::SEMICOLON)) {
+        parser->index++;
+        return true;
+    }
+
+    parser->index = rewind_point;
     return false;
 }
 
+// Returns true if there is a statement block, false if not
 bool parser_parse_statement_block(Parser* parser, Ast_Node_Statement_Block* block)
 {
+    int scope_start = parser->index;
+    int rewind_index = parser->index;
+    if (!parser_test_next_token(parser, Token_Type::OPEN_BRACES)) {
+        return false;
+    }
+    parser->index++;
+
+    bool exit_failure = false;
     block->statements = dynamic_array_create_empty<Ast_Node_Statement>(16);
+    SCOPE_EXIT(if (exit_failure) ast_node_statement_block_destroy(block););
     Ast_Node_Statement statement;
-    int rewind_index;
     while (parser->index < parser->tokens.size)
     {
-        rewind_index = parser->index;
-        bool do_error_recovery = true;;
-        if (parser_parse_statement(parser, &statement)) {
-            if (parser_test_next_token(parser, Token_Type::SEMICOLON)) {
-                dynamic_array_push_back(&block->statements, statement);
-                parser->index++;
-                do_error_recovery = false;
-            }
-            else {
-                ast_node_statement_destroy(&statement);
-                parser_log_unresolvable_error(parser, "Statement did not end with SEMICOLON(';')!\n", rewind_index, parser->index - 1);
-                do_error_recovery = false;
-            }
+        if (parser_test_next_token(parser, Token_Type::CLOSED_BRACES)) {
+            parser->index++;
+            return true;
         }
 
-        if (do_error_recovery)
+        rewind_index = parser->index;
+        if (parser_parse_statement(parser, &statement)) {
+            dynamic_array_push_back(&block->statements, statement);
+        }
+        else
         {
-            // Error recovery, skip one token and go after next ;
+            // Error recovery, go after next ; or }
             int next_semicolon = parser_find_next_token_type(parser, Token_Type::SEMICOLON);
-            int next_unexpected_token = parser_find_next_token_type(parser, Token_Type::CLOSED_BRACES);
-            // TODO: maybe do something smarter, like going to next IF or something
-            if (next_unexpected_token < next_semicolon || next_semicolon >= parser->tokens.size) { // Stop parsing statements
-                break;
+            int next_braces = parser_find_next_token_type(parser, Token_Type::CLOSED_BRACES);
+            if (next_semicolon >= parser->tokens.size || next_braces >= parser->tokens.size) {
+                parser_log_intermediate_error(parser, "Scope block does not end with } or;\n", parser->index, next_semicolon);
+                exit_failure = true;
+                return false;
             }
-            else {
-                // Just go to next semicolon, and try parsing
+            if (next_semicolon < next_braces) {
                 parser_log_unresolvable_error(parser, "Could not parse statement, skipped it\n", parser->index, next_semicolon);
                 parser->index = next_semicolon + 1;
             }
+            else {
+                parser_log_unresolvable_error(parser, "Could not parse statement, skipped it\n", parser->index, next_braces);
+                parser->index = next_braces + 1;
+                return true;
+            }
         }
     }
-    return true;
+    parser_log_unresolvable_error(parser, "Scope block does not end with }\n", scope_start, parser->tokens.size-1);
+    exit_failure = true;
+    return false;
 }
 
 bool parser_parse_function(Parser* parser, Ast_Node_Function* function)
@@ -1314,18 +1355,19 @@ bool parser_parse_function(Parser* parser, Ast_Node_Function* function)
 
     // Parse Function start
     if (!parser_test_next_3_tokens(parser, Token_Type::IDENTIFIER, Token_Type::DOUBLE_COLON, Token_Type::OPEN_PARENTHESIS)) {
-        parser_log_intermediate_error(parser, "Could not parse function, it did not start with 'ID :: ('", 3);
+        parser_log_intermediate_error(parser, "Could not parse function, it did not start with 'ID :: ('", parser->index, parser->index+3);
         exit_failure = true;
         return false;
     }
     function->function_name_id = parser->tokens[parser->index].attribute.identifier_number;
     parser->index += 3;
 
+    // Parse Parameters
     while (!parser_test_next_token(parser, Token_Type::CLOSED_PARENTHESIS))
     {
         // Parameters need to be named, meaning x : int     
         if (!parser_test_next_3_tokens(parser, Token_Type::IDENTIFIER, Token_Type::COLON, Token_Type::IDENTIFIER)) {
-            parser_log_intermediate_error(parser, "Could not parse function, parameter was not in the form ID : TYPE", 3);
+            parser_log_intermediate_error(parser, "Could not parse function, parameter was not in the form ID : TYPE", parser->index, parser->index+3);
             exit_failure = true;
             return false;
         }
@@ -1343,40 +1385,22 @@ bool parser_parse_function(Parser* parser, Ast_Node_Function* function)
     }
     parser->index++; // Skip )
 
-    if (!parser_test_next_3_tokens(parser, Token_Type::ARROW, Token_Type::IDENTIFIER, Token_Type::OPEN_BRACES)) {
-        parser_log_intermediate_error(parser, "Could not parse function, did not find return type after Parameters '-> TYPE {'", 3);
+    // Parse Return type
+    if (!parser_test_next_2_tokens(parser, Token_Type::ARROW, Token_Type::IDENTIFIER)) {
+        parser_log_intermediate_error(parser, "Could not parse function, did not find return type after Parameters '-> TYPE'", 
+            parser->index, parser->index+2);
         exit_failure = true;
         return false;
     }
     function->return_type_id = parser->tokens[parser->index + 1].attribute.identifier_number;
-    parser->index += 3;
+    parser->index += 2;
 
     // Parse statements
     if (!parser_parse_statement_block(parser, &function->body)) {
-        panic("I dont think this can happen, since we do parser recovery on statement level\n");
+        exit_failure = true;
         return false;
-    }
-    SCOPE_EXIT(
-        if (exit_failure) {
-            ast_node_statement_block_destroy(&function->body);
-        }
-    );
-
-    // Check that the function ends properly with a closing curly bracket
-    if (!parser_test_next_token(parser, Token_Type::CLOSED_BRACES)) {
-        // If it is not, eat all tokens until next curly bracket
-        int next_closed_curly = parser_find_next_token_type(parser, Token_Type::CLOSED_BRACES);
-        parser_log_unresolvable_error(parser, "Function did not end properly with }",
-            math_clamp(parser->index, 0, parser->tokens.size - 1),
-            math_clamp(next_closed_curly, 0, parser->tokens.size - 1)
-        );
-        //exit_failure = true;
-        parser->index = next_closed_curly + 1;
-        //return false;
-    }
-    else {
-        parser->index++; // Eat {
-    }
+    };
+    SCOPE_EXIT( if (exit_failure) ast_node_statement_block_destroy(&function->body););
 
     return true;
 }
@@ -1461,11 +1485,26 @@ struct Ast_Interpreter_Variable
     Ast_Interpreter_Value value;
 };
 
+/*
+Symbol Table + Scoped variable "lifetimes"
+Where do i put the symbol table?
+    --> Is needed in Ast-Interpreter (Is it?, i can just keep track of variables in a stack, which works better i think)
+    --> Is necessary for Semantic Analysis, do i need to save the symbol table for specific ast_nodes?
+    --> Also required for byte-code generation i guess --> Not exactly, since I know after semantic analysis that everythings correct
+
+First --> Statement_Block also parses {}, and statement parsing recursively calls statment block stuff
+*/
+
 struct Ast_Interpreter
 {
     Ast_Node_Root* root;
-    DynamicArray<Ast_Interpreter_Variable> variables;
+    DynamicArray<Ast_Interpreter_Variable> symbol_table;
+    DynamicArray<int> scope_beginnings;
     LexerResult* lexer;
+
+    int int_token_index;
+    int float_token_index;
+    int bool_token_index;
 };
 
 Ast_Interpreter ast_interpreter_create(Ast_Node_Root* root, LexerResult* lexer)
@@ -1473,26 +1512,53 @@ Ast_Interpreter ast_interpreter_create(Ast_Node_Root* root, LexerResult* lexer)
     Ast_Interpreter result;
     result.root = root;
     result.lexer = lexer;
-    result.variables = dynamic_array_create_empty<Ast_Interpreter_Variable>(16);
+    result.symbol_table = dynamic_array_create_empty<Ast_Interpreter_Variable>(16);
+    result.scope_beginnings = dynamic_array_create_empty<int>(16);
+    dynamic_array_push_back(&result.scope_beginnings, 0);
     return result;
 }
 
 void ast_interpreter_destroy(Ast_Interpreter* interpreter) {
-    dynamic_array_destroy(&interpreter->variables);
+    dynamic_array_destroy(&interpreter->symbol_table);
+    dynamic_array_destroy(&interpreter->scope_beginnings);
+}
+
+int ast_interpreter_find_variable_index(Ast_Interpreter* interpreter, int var_name) {
+    for (int i = interpreter->symbol_table.size-1; i >= 0; i--) {
+        if (interpreter->symbol_table[i].variable_name == var_name) {
+            return i;
+        }
+    }
+    return -1;
 }
 
 Ast_Interpreter_Variable* ast_interpreter_find_variable(Ast_Interpreter* interpreter, int var_name) {
-    for (int i = 0; i < interpreter->variables.size; i++) {
-        if (interpreter->variables[i].variable_name == var_name) {
-            return &interpreter->variables[i];
+    for (int i = interpreter->symbol_table.size-1; i >= 0; i--) {
+        if (interpreter->symbol_table[i].variable_name == var_name) {
+            return &interpreter->symbol_table[i];
         }
     }
     return 0;
 }
 
-void ast_interpreter_define_variable(Ast_Interpreter* interpreter, Ast_Interpreter_Value_Type::ENUM type, int var_name) {
-    if (ast_interpreter_find_variable(interpreter, var_name) != 0) {
-        logg("Variable %s already defined", lexer_result_identifer_to_string(interpreter->lexer, var_name).characters);
+void ast_interpreter_begin_new_scope(Ast_Interpreter* interpreter) {
+    dynamic_array_push_back(&interpreter->scope_beginnings, interpreter->symbol_table.size);
+}
+
+void ast_interpreter_exit_scope(Ast_Interpreter* interpreter) {
+    if (interpreter->scope_beginnings.size == 0) {
+        panic("Should not happend!\n");
+        return;
+    }
+    int scope_start = interpreter->scope_beginnings[interpreter->scope_beginnings.size - 1];
+    dynamic_array_remove_range_ordered(&interpreter->symbol_table, scope_start, interpreter->symbol_table.size);
+}
+
+void ast_interpreter_define_variable(Ast_Interpreter* interpreter, Ast_Interpreter_Value_Type::ENUM type, int var_name) 
+{
+    int current_scope_start = interpreter->scope_beginnings[interpreter->scope_beginnings.size - 1];
+    if (ast_interpreter_find_variable_index(interpreter, var_name) >= current_scope_start) {
+        logg("Variable %s already defined in this scope!", lexer_result_identifer_to_string(interpreter->lexer, var_name).characters);
         return;
     }
 
@@ -1503,7 +1569,7 @@ void ast_interpreter_define_variable(Ast_Interpreter* interpreter, Ast_Interpret
     var.value.float_value = -69.69f;
     var.value.type = type;
     var.variable_name = var_name;
-    dynamic_array_push_back(&interpreter->variables, var);
+    dynamic_array_push_back(&interpreter->symbol_table, var);
 }
 
 Ast_Interpreter_Value ast_interpreter_evaluate_expression(Ast_Interpreter* interpreter, Ast_Node_Expression* expression)
@@ -1670,6 +1736,110 @@ Ast_Interpreter_Value ast_interpreter_evaluate_expression(Ast_Interpreter* inter
     return result;
 }
 
+struct Ast_Interpreter_Statement_Result
+{
+    bool is_return;
+    Ast_Interpreter_Value return_value;
+};
+
+Ast_Interpreter_Statement_Result ast_interpreter_execute_statement(Ast_Interpreter* interpreter, Ast_Node_Statement* statement, LexerResult* lexer)
+{
+    Ast_Interpreter_Statement_Result result;
+    result.is_return = false;
+
+    if (statement->type == StatementType::RETURN_STATEMENT) {
+        result.is_return = true;
+        result.return_value = ast_interpreter_evaluate_expression(interpreter, &statement->expression);
+        return result;
+    }
+    else if (statement->type == StatementType::VARIABLE_DEFINITION) {
+        if (statement->variable_type_id == interpreter->int_token_index) {
+            ast_interpreter_define_variable(interpreter, Ast_Interpreter_Value_Type::INTEGER, statement->variable_name_id);
+        }
+        else if (statement->variable_type_id == interpreter->float_token_index) {
+            ast_interpreter_define_variable(interpreter, Ast_Interpreter_Value_Type::FLOAT, statement->variable_name_id);
+        }
+        else if (statement->variable_type_id == interpreter->bool_token_index) {
+            ast_interpreter_define_variable(interpreter, Ast_Interpreter_Value_Type::BOOLEAN, statement->variable_name_id);
+        }
+        else {
+            logg("Type-Error: %s is not a valid type\n", lexer_result_identifer_to_string(lexer, statement->variable_type_id).characters);
+            return result;
+        }
+    }
+    else if (statement->type == StatementType::VARIABLE_ASSIGNMENT)
+    {
+        Ast_Interpreter_Variable* var = ast_interpreter_find_variable(interpreter, statement->variable_name_id);
+        if (var == 0) {
+            logg("Variable assignment statement variable %s not defined!\n", lexer_result_identifer_to_string(lexer, statement->variable_name_id).characters);
+            return result;
+        }
+        Ast_Interpreter_Value value = ast_interpreter_evaluate_expression(interpreter, &statement->expression);
+        if (value.type != var->value.type) {
+            logg("Variable assignment failed, variable type does not match expression type:\n %s = %s\n",
+                ast_interpreter_value_type_to_string(var->value.type).characters,
+                ast_interpreter_value_type_to_string(value.type).characters);
+            return result;
+        }
+        var->value = ast_interpreter_evaluate_expression(interpreter, &statement->expression);
+    }
+    else if (statement->type == StatementType::VARIABLE_DEFINE_ASSIGN) // x : int = 5
+    {
+        Ast_Interpreter_Variable* var = ast_interpreter_find_variable(interpreter, statement->variable_name_id);
+        if (var != 0) {
+            logg("Variable %s already defined!",
+                lexer_result_identifer_to_string(lexer, statement->variable_name_id).characters);
+            return result;
+        }
+
+        Ast_Interpreter_Value value = ast_interpreter_evaluate_expression(interpreter, &statement->expression);
+        Ast_Interpreter_Value_Type::ENUM var_type;
+        if (statement->variable_type_id == interpreter->int_token_index) var_type = Ast_Interpreter_Value_Type::INTEGER;
+        else if (statement->variable_type_id == interpreter->float_token_index) var_type = Ast_Interpreter_Value_Type::FLOAT;
+        else if (statement->variable_type_id == interpreter->bool_token_index) var_type = Ast_Interpreter_Value_Type::BOOLEAN;
+        else {
+            logg("Type-Error: %s is not a valid type\n", lexer_result_identifer_to_string(lexer, statement->variable_type_id).characters);
+            return result;
+        }
+
+        if (var_type != value.type) {
+            logg("Types not compatible, var type: ", lexer_result_identifer_to_string(lexer, statement->variable_type_id).characters);
+            return result;
+        }
+        ast_interpreter_define_variable(interpreter, var_type, statement->variable_name_id);
+        var = ast_interpreter_find_variable(interpreter, statement->variable_name_id);
+        var->value = value;
+    }
+    else if (statement->type == StatementType::VARIABLE_DEFINE_INFER)
+    {
+        Ast_Interpreter_Variable* var = ast_interpreter_find_variable(interpreter, statement->variable_name_id);
+        if (var != 0) {
+            logg("Variable %s already defined!",
+                lexer_result_identifer_to_string(lexer, statement->variable_name_id).characters);
+            return result;
+        }
+
+        Ast_Interpreter_Value value = ast_interpreter_evaluate_expression(interpreter, &statement->expression);
+        ast_interpreter_define_variable(interpreter, value.type, statement->variable_name_id);
+        var = ast_interpreter_find_variable(interpreter, statement->variable_name_id);
+        var->value = value;
+    }
+    else if (statement->type == StatementType::STATEMENT_BLOCK) 
+    {
+        ast_interpreter_begin_new_scope(interpreter);
+        for (int i = 0; i < statement->statements.statements.size; i++) {
+            Ast_Interpreter_Statement_Result result =
+                ast_interpreter_execute_statement(interpreter, &statement->statements.statements[i], lexer);
+            if (result.is_return) {
+                return result;
+            }
+        }
+        ast_interpreter_exit_scope(interpreter);
+    }
+
+    return result;
+}
+
 Ast_Interpreter_Value ast_interpreter_execute_main(Ast_Node_Root* root, LexerResult* lexer)
 {
     Ast_Interpreter interpreter = ast_interpreter_create(root, lexer);
@@ -1697,87 +1867,16 @@ Ast_Interpreter_Value ast_interpreter_execute_main(Ast_Node_Root* root, LexerRes
     }
 
     // Find token indices for types
-    int int_token_index = lexer_result_add_identifier_by_string(lexer, string_create_static("int"));
-    int bool_token_index = lexer_result_add_identifier_by_string(lexer, string_create_static("bool"));
-    int float_token_index = lexer_result_add_identifier_by_string(lexer, string_create_static("float"));
+    interpreter.int_token_index = lexer_result_add_identifier_by_string(lexer, string_create_static("int"));
+    interpreter.bool_token_index = lexer_result_add_identifier_by_string(lexer, string_create_static("bool"));
+    interpreter.float_token_index = lexer_result_add_identifier_by_string(lexer, string_create_static("float"));
 
     for (int i = 0; i < main->body.statements.size; i++)
     {
         Ast_Node_Statement* statement = &main->body.statements[i];
-        if (statement->type == StatementType::RETURN_STATEMENT) {
-            return ast_interpreter_evaluate_expression(&interpreter, &statement->expression);
-        }
-        else if (statement->type == StatementType::VARIABLE_DEFINITION) {
-            if (statement->variable_type_id == int_token_index) {
-                ast_interpreter_define_variable(&interpreter, Ast_Interpreter_Value_Type::INTEGER, statement->variable_name_id);
-            }
-            else if (statement->variable_type_id == float_token_index) {
-                ast_interpreter_define_variable(&interpreter, Ast_Interpreter_Value_Type::FLOAT, statement->variable_name_id);
-            }
-            else if (statement->variable_type_id == bool_token_index) {
-                ast_interpreter_define_variable(&interpreter, Ast_Interpreter_Value_Type::BOOLEAN, statement->variable_name_id);
-            }
-            else {
-                logg("Type-Error: %s is not a valid type\n", lexer_result_identifer_to_string(lexer, statement->variable_type_id).characters);
-                return result;
-            }
-        }
-        else if (statement->type == StatementType::VARIABLE_ASSIGNMENT)
-        {
-            Ast_Interpreter_Variable* var = ast_interpreter_find_variable(&interpreter, statement->variable_name_id);
-            if (var == 0) {
-                logg("Variable assignment statement variable %s not defined!\n", lexer_result_identifer_to_string(lexer, statement->variable_name_id).characters);
-                return result;
-            }
-            Ast_Interpreter_Value value = ast_interpreter_evaluate_expression(&interpreter, &statement->expression);
-            if (value.type != var->value.type) {
-                logg("Variable assignment failed, variable type does not match expression type:\n %s = %s\n",
-                    ast_interpreter_value_type_to_string(var->value.type).characters,
-                    ast_interpreter_value_type_to_string(value.type).characters);
-                return result;
-            }
-            var->value = ast_interpreter_evaluate_expression(&interpreter, &statement->expression);
-        }
-        else if (statement->type == StatementType::VARIABLE_DEFINE_ASSIGN) // x : int = 5
-        {
-            Ast_Interpreter_Variable* var = ast_interpreter_find_variable(&interpreter, statement->variable_name_id);
-            if (var != 0) {
-                logg("Variable %s already defined!",
-                    lexer_result_identifer_to_string(lexer, statement->variable_name_id).characters);
-                return result;
-            }
-
-            Ast_Interpreter_Value value = ast_interpreter_evaluate_expression(&interpreter, &statement->expression);
-            Ast_Interpreter_Value_Type::ENUM var_type;
-            if (statement->variable_type_id == int_token_index) var_type = Ast_Interpreter_Value_Type::INTEGER;
-            else if (statement->variable_type_id == float_token_index) var_type = Ast_Interpreter_Value_Type::FLOAT;
-            else if (statement->variable_type_id == bool_token_index) var_type = Ast_Interpreter_Value_Type::BOOLEAN;
-            else {
-                logg("Type-Error: %s is not a valid type\n", lexer_result_identifer_to_string(lexer, statement->variable_type_id).characters);
-                return result;
-            }
-
-            if (var_type != value.type) {
-                logg("Types not compatible, var type: ", lexer_result_identifer_to_string(lexer, statement->variable_type_id).characters);
-                return result;
-            }
-            ast_interpreter_define_variable(&interpreter, var_type, statement->variable_name_id);
-            var = ast_interpreter_find_variable(&interpreter, statement->variable_name_id);
-            var->value = value;
-        }
-        else if (statement->type == StatementType::VARIABLE_DEFINE_INFER)
-        {
-            Ast_Interpreter_Variable* var = ast_interpreter_find_variable(&interpreter, statement->variable_name_id);
-            if (var != 0) {
-                logg("Variable %s already defined!",
-                    lexer_result_identifer_to_string(lexer, statement->variable_name_id).characters);
-                return result;
-            }
-
-            Ast_Interpreter_Value value = ast_interpreter_evaluate_expression(&interpreter, &statement->expression);
-            ast_interpreter_define_variable(&interpreter, value.type, statement->variable_name_id);
-            var = ast_interpreter_find_variable(&interpreter, statement->variable_name_id);
-            var->value = value;
+        Ast_Interpreter_Statement_Result result = ast_interpreter_execute_statement(&interpreter, statement, lexer);
+        if (result.is_return) {
+            return result.return_value;
         }
     }
 
