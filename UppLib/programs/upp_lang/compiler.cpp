@@ -778,21 +778,70 @@ bool parser_test_next_4_tokens(Parser* parser, Token_Type::ENUM type1, Token_Typ
 */
 void ast_node_expression_destroy(Ast_Node_Expression* expression)
 {
-    if (expression->type == ExpressionType::OP_ADD) {
-        ast_node_expression_destroy(expression->left);
-        ast_node_expression_destroy(expression->right);
+    if (expression->type == ExpressionType::OP_LOGICAL_NOT ||
+        expression->type == ExpressionType::OP_NEGATE)
+    {
         if (expression->left != 0) {
+            ast_node_expression_destroy(expression->left);
+            delete expression->left;
+        }
+    }
+    // Binary operations
+    if (expression->type == ExpressionType::OP_ADD ||
+        expression->type == ExpressionType::OP_SUBTRACT ||
+        expression->type == ExpressionType::OP_DIVIDE ||
+        expression->type == ExpressionType::OP_MULTIPLY ||
+        expression->type == ExpressionType::OP_MODULO ||
+        expression->type == ExpressionType::OP_BOOLEAN_AND ||
+        expression->type == ExpressionType::OP_BOOLEAN_OR ||
+        expression->type == ExpressionType::OP_EQUAL ||
+        expression->type == ExpressionType::OP_NOT_EQUAL ||
+        expression->type == ExpressionType::OP_GREATER_EQUAL ||
+        expression->type == ExpressionType::OP_GREATER_THAN ||
+        expression->type == ExpressionType::OP_LESS_EQUAL ||
+        expression->type == ExpressionType::OP_LESS_THAN) 
+    {
+        if (expression->left != 0) {
+            ast_node_expression_destroy(expression->left);
             delete expression->left;
         }
         if (expression->right != 0) {
+            ast_node_expression_destroy(expression->right);
             delete expression->right;
         }
     }
+
+    if (expression->type == ExpressionType::FUNCTION_CALL) {
+        for (int i = 0; i < expression->arguments.size; i++) {
+            ast_node_expression_destroy(&expression->arguments[i]);
+        }
+        dynamic_array_destroy(&expression->arguments);
+    }
 }
 
-void ast_node_statement_destroy(Ast_Node_Statement* statement) {
-    if (statement->type == StatementType::VARIABLE_ASSIGNMENT) {
+void ast_node_statement_block_destroy(Ast_Node_Statement_Block* block);
+void ast_node_statement_destroy(Ast_Node_Statement* statement) 
+{
+    if (statement->type == StatementType::VARIABLE_ASSIGNMENT ||
+        statement->type == StatementType::IF_BLOCK ||
+        statement->type == StatementType::IF_ELSE_BLOCK ||
+        statement->type == StatementType::WHILE ||
+        statement->type == StatementType::RETURN_STATEMENT ||
+        statement->type == StatementType::EXPRESSION ||
+        statement->type == StatementType::VARIABLE_DEFINE_ASSIGN ||
+        statement->type == StatementType::VARIABLE_DEFINE_INFER) 
+    {
         ast_node_expression_destroy(&statement->expression);
+    }
+    if (statement->type == StatementType::IF_BLOCK ||
+        statement->type == StatementType::IF_ELSE_BLOCK ||
+        statement->type == StatementType::STATEMENT_BLOCK ||
+        statement->type == StatementType::WHILE) 
+    {
+        ast_node_statement_block_destroy(&statement->statements);
+    }
+    if (statement->type == StatementType::IF_ELSE_BLOCK) {
+        ast_node_statement_block_destroy(&statement->else_statements);
     }
 }
 
@@ -937,14 +986,40 @@ void ast_node_expression_append_to_string(String* string, Ast_Node_Expression* e
     else if (expression->type == ExpressionType::VARIABLE_READ) {
         string_append_formated(string, "%s", result->identifiers[expression->variable_name_id].characters);
     }
+    else if (expression->type == ExpressionType::FUNCTION_CALL) {
+        string_append_formated(string, "%s(", result->identifiers[expression->variable_name_id].characters);
+        for (int i = 0; i < expression->arguments.size; i++) {
+            ast_node_expression_append_to_string(string, &expression->arguments[i], result);
+            if (i != expression->arguments.size-1)
+                string_append_formated(string, ", ");
+        }
+        string_append_formated(string, ")");
+    }
+}
+
+void ast_node_statement_append_to_string(String* string, Ast_Node_Statement* statement, LexerResult* result, int indentation_level);
+void ast_node_statement_block_append_to_string(String* string, Ast_Node_Statement_Block* block, LexerResult* result, int current_indentation_lvl)
+{
+    for (int i = 0; i < current_indentation_lvl; i++) {
+        string_append_formated(string, "    ");
+    }
+   string_append_formated(string, "{\n");
+   for (int i = 0; i < block->statements.size; i++) {
+       Ast_Node_Statement* statement = &block->statements.data[i];
+       for (int i = 0; i < current_indentation_lvl+1; i++) {
+           string_append_formated(string, "    ");
+       }
+       ast_node_statement_append_to_string(string, statement, result, current_indentation_lvl+1);
+       string_append_formated(string, "\n");
+   }
+   for (int i = 0; i < current_indentation_lvl; i++) {
+       string_append_formated(string, "    ");
+   }
+   string_append_formated(string, "}");
 }
 
 void ast_node_statement_append_to_string(String* string, Ast_Node_Statement* statement, LexerResult* result, int indentation_level)
 {
-    for (int i = 0; i < indentation_level; i++) {
-        string_append_formated(string, "    ");
-    }
-
     if (statement->type == StatementType::VARIABLE_DEFINITION) {
         string_append_formated(string, "%s : %s;",
             result->identifiers[statement->variable_name_id].characters,
@@ -973,16 +1048,25 @@ void ast_node_statement_append_to_string(String* string, Ast_Node_Statement* sta
         ast_node_expression_append_to_string(string, &statement->expression, result);
         string_append_formated(string, ";");
     }
+    else if (statement->type == StatementType::EXPRESSION) {
+        ast_node_expression_append_to_string(string, &statement->expression, result);
+        string_append_formated(string, ";");
+    }
+    else if (statement->type == StatementType::CONTINUE) {
+        string_append_formated(string, "continue;");
+    }
+    else if (statement->type == StatementType::BREAK) {
+        string_append_formated(string, "break;");
+    }
     else if (statement->type == StatementType::STATEMENT_BLOCK) {
-        string_append_formated(string, "{\n");
-        for (int i = 0; i < statement->statements.statements.size; i++) {
-            ast_node_statement_append_to_string(string, &statement->statements.statements[i], result, indentation_level+1);
-        }
+        ast_node_statement_block_append_to_string(string, &statement->statements, result, indentation_level);
+    }
+    else if (statement->type == StatementType::WHILE)
+    {
+        string_append_formated(string, "while ");
+        ast_node_expression_append_to_string(string, &statement->expression, result);
         string_append_formated(string, "\n");
-        for (int i = 0; i < indentation_level; i++) {
-            string_append_formated(string, "    ");
-        }
-        string_append_formated(string, "}");
+        ast_node_statement_block_append_to_string(string, &statement->statements, result, indentation_level);
     }
     else if (statement->type == StatementType::IF_BLOCK || statement->type == StatementType::IF_ELSE_BLOCK) 
     {
@@ -990,38 +1074,11 @@ void ast_node_statement_append_to_string(String* string, Ast_Node_Statement* sta
         string_append_formated(string, "if ");
         ast_node_expression_append_to_string(string, &statement->expression, result);
         string_append_formated(string, "\n");
-        for (int i = 0; i < indentation_level; i++) {
-            string_append_formated(string, "    ");
-        }
-        string_append_formated(string, "{\n");
-        for (int i = 0; i < statement->if_statements.statements.size; i++) {
-            ast_node_statement_append_to_string(string, &statement->if_statements.statements[i], result, indentation_level+1);
-        }
-        string_append_formated(string, "\n");
-        for (int i = 0; i < indentation_level; i++) {
-            string_append_formated(string, "    ");
-        }
-        string_append_formated(string, "}");
+        ast_node_statement_block_append_to_string(string, &statement->statements, result, indentation_level);
 
-        if (statement->type == StatementType::IF_ELSE_BLOCK) 
-        {
-            string_append_formated(string, "\n");
-            for (int i = 0; i < indentation_level; i++) {
-                string_append_formated(string, "    ");
-            }
+        if (statement->type == StatementType::IF_ELSE_BLOCK) {
             string_append_formated(string, "else\n");
-            for (int i = 0; i < indentation_level; i++) {
-                string_append_formated(string, "    ");
-            }
-            string_append_formated(string, "{\n");
-            for (int i = 0; i < statement->else_statements.statements.size; i++) {
-                ast_node_statement_append_to_string(string, &statement->else_statements.statements[i], result, indentation_level + 1);
-            }
-            string_append_formated(string, "\n");
-            for (int i = 0; i < indentation_level; i++) {
-                string_append_formated(string, "    ");
-            }
-            string_append_formated(string, "}");
+            ast_node_statement_block_append_to_string(string, &statement->statements, result, indentation_level);
         }
     }
 }
@@ -1035,14 +1092,8 @@ void ast_node_function_append_to_string(String* string, Ast_Node_Function* funct
             result->identifiers[param->name_id].characters,
             result->identifiers[param->type_id].characters);
     }
-    string_append_formated(string, ") -> %s {\n", result->identifiers[function->return_type_id].characters);
-
-    for (int i = 0; i < function->body.statements.size; i++) {
-        Ast_Node_Statement* statement = &function->body.statements.data[i];
-        ast_node_statement_append_to_string(string, statement, result, 1);
-        string_append_formated(string, "\n");
-    }
-    string_append_formated(string, "}\n");
+    string_append_formated(string, ") -> %s\n", result->identifiers[function->return_type_id].characters);
+    ast_node_statement_block_append_to_string(string, &function->body, result, 0);
 }
 
 void ast_node_root_append_to_string(String* string, Ast_Node_Root* root, LexerResult* lexer_result)
@@ -1052,6 +1103,7 @@ void ast_node_root_append_to_string(String* string, Ast_Node_Root* root, LexerRe
     {
         Ast_Node_Function* function = &(root->functions.data[i]);
         ast_node_function_append_to_string(string, function, lexer_result);
+        string_append_formated(string, "\n");
     }
 }
 
@@ -1064,13 +1116,46 @@ bool parser_parse_expression(Parser* parser, Ast_Node_Expression* expression);
 
 bool parser_parse_expression_single_value(Parser* parser, Ast_Node_Expression* expression)
 {
+    int rewind_point = parser->index;
     expression->left = 0;
     expression->right = 0;
     if (parser_test_next_token(parser, Token_Type::IDENTIFIER))
     {
-        expression->type = ExpressionType::VARIABLE_READ;
         expression->variable_name_id = parser->tokens[parser->index].attribute.identifier_number;
         parser->index++;
+        if (parser_test_next_token(parser, Token_Type::OPEN_PARENTHESIS)) 
+        { 
+            parser->index++;
+            expression->type = ExpressionType::FUNCTION_CALL;
+            expression->arguments = dynamic_array_create_empty<Ast_Node_Expression>(4);
+            while (true)
+            {
+                Ast_Node_Expression argument;
+                if (!parser_parse_expression(parser, &argument)) {
+                    break;
+                }
+                dynamic_array_push_back(&expression->arguments, argument);
+                if (!parser_test_next_token(parser, Token_Type::COMMA)) {
+                    break;
+                }
+                parser->index++;
+            }
+            // Here we could check last token for , and error if this is the case, but it does not really matter
+            if (parser_test_next_token(parser, Token_Type::CLOSED_PARENTHESIS)) {
+                parser->index++;
+                return true;
+            }
+            // Error, no end of function
+            for (int i = 0; i < expression->arguments.size; i++) {
+                ast_node_expression_destroy(&expression->arguments[i]);
+            }
+            dynamic_array_destroy(&expression->arguments);
+            parser->index = rewind_point;
+            return false;
+        }
+        else {
+            expression->type = ExpressionType::VARIABLE_READ;
+        }
         return true;
     }
     else if (parser_test_next_token(parser, Token_Type::OP_MINUS))
@@ -1099,7 +1184,7 @@ bool parser_parse_expression_single_value(Parser* parser, Ast_Node_Expression* e
     }
     else if (parser_test_next_token(parser, Token_Type::INTEGER_LITERAL) ||
         parser_test_next_token(parser, Token_Type::FLOAT_LITERAL) ||
-        parser_test_next_token(parser, Token_Type::BOOLEAN_LITERAL)) 
+        parser_test_next_token(parser, Token_Type::BOOLEAN_LITERAL))
     {
         expression->type = ExpressionType::LITERAL;
         expression->literal_token_index = parser->index;
@@ -1126,7 +1211,7 @@ bool parser_parse_expression_single_value(Parser* parser, Ast_Node_Expression* e
     }
     else {
         parser_log_intermediate_error(parser,
-            "Error, could not parse single expression, does not start with constant or identifier\n", parser->index, parser->index+1);
+            "Error, could not parse single expression, does not start with constant or identifier\n", parser->index, parser->index + 1);
         return false;
     }
 }
@@ -1137,7 +1222,7 @@ bool parser_parse_binary_operation(Parser* parser, ExpressionType::ENUM* op_type
         Priority tree:
             0       ---     &&
             1       ---     ||
-            2       ---     ==, != 
+            2       ---     ==, !=
             3       ---     <, >, <=, >=
             4       ---     +, -
             5       ---     *, /
@@ -1289,7 +1374,7 @@ bool parser_parse_statement(Parser* parser, Ast_Node_Statement* statement)
             parser->index = rewind_point;
             return false;
         }
-        if (!parser_parse_statment_block_or_single_statement(parser, &statement->if_statements)) {
+        if (!parser_parse_statment_block_or_single_statement(parser, &statement->statements)) {
             parser->index = rewind_point;
             return false;
         }
@@ -1307,6 +1392,35 @@ bool parser_parse_statement(Parser* parser, Ast_Node_Statement* statement)
             return true;
         }
         return true;
+    }
+
+    if (!valid_statement && parser_test_next_token(parser, Token_Type::WHILE))
+    {
+        parser->index++;
+        if (!parser_parse_expression(parser, &statement->expression)) {
+            parser->index = rewind_point;
+            return false;
+        }
+        if (!parser_parse_statment_block_or_single_statement(parser, &statement->statements)) {
+            parser->index = rewind_point;
+            return false;
+        }
+        statement->type = StatementType::WHILE;
+        return true;
+    }
+
+    if (!valid_statement && parser_test_next_token(parser, Token_Type::BREAK))
+    {
+        statement->type = StatementType::BREAK;
+        parser->index++;
+        valid_statement = true;
+    }
+
+    if (!valid_statement && parser_test_next_token(parser, Token_Type::CONTINUE))
+    {
+        statement->type = StatementType::CONTINUE;
+        parser->index++;
+        valid_statement = true;
     }
 
     if (!valid_statement && parser_test_next_token(parser, Token_Type::RETURN))
@@ -1378,6 +1492,14 @@ bool parser_parse_statement(Parser* parser, Ast_Node_Statement* statement)
         valid_statement = true;
     }
 
+    if (!valid_statement)
+    {
+        if (parser_parse_expression(parser, &statement->expression)) {
+            statement->type = StatementType::EXPRESSION;
+            valid_statement = true;
+        }
+    }
+
     if (!valid_statement) {
         return false;
     }
@@ -1385,9 +1507,11 @@ bool parser_parse_statement(Parser* parser, Ast_Node_Statement* statement)
         parser->index++;
         return true;
     }
-
-    parser->index = rewind_point;
-    return false;
+    else {
+        ast_node_statement_destroy(statement);
+        parser->index = rewind_point;
+        return false;
+    }
 }
 
 // Returns true if there is a statement block, false if not
@@ -1606,8 +1730,7 @@ Where do i put the symbol table?
     --> Is needed in Ast-Interpreter (Is it?, i can just keep track of variables in a stack, which works better i think)
     --> Is necessary for Semantic Analysis, do i need to save the symbol table for specific ast_nodes?
     --> Also required for byte-code generation i guess --> Not exactly, since I know after semantic analysis that everythings correct
-
-First --> Statement_Block also parses {}, and statement parsing recursively calls statment block stuff
+-->
 */
 
 struct Ast_Interpreter
@@ -1615,6 +1738,7 @@ struct Ast_Interpreter
     Ast_Node_Root* root;
     DynamicArray<Ast_Interpreter_Variable> symbol_table;
     DynamicArray<int> scope_beginnings;
+    DynamicArray<int> function_scope_beginnings;
     LexerResult* lexer;
 
     int int_token_index;
@@ -1630,6 +1754,8 @@ Ast_Interpreter ast_interpreter_create(Ast_Node_Root* root, LexerResult* lexer)
     result.symbol_table = dynamic_array_create_empty<Ast_Interpreter_Variable>(16);
     result.scope_beginnings = dynamic_array_create_empty<int>(16);
     dynamic_array_push_back(&result.scope_beginnings, 0);
+    result.function_scope_beginnings = dynamic_array_create_empty<int>(16);
+    dynamic_array_push_back(&result.function_scope_beginnings, 0);
     return result;
 }
 
@@ -1639,7 +1765,8 @@ void ast_interpreter_destroy(Ast_Interpreter* interpreter) {
 }
 
 int ast_interpreter_find_variable_index(Ast_Interpreter* interpreter, int var_name) {
-    for (int i = interpreter->symbol_table.size - 1; i >= 0; i--) {
+    int function_scope_beginning = interpreter->function_scope_beginnings[interpreter->function_scope_beginnings.size - 1];
+    for (int i = interpreter->symbol_table.size - 1; i >= function_scope_beginning; i--) {
         if (interpreter->symbol_table[i].variable_name == var_name) {
             return i;
         }
@@ -1648,12 +1775,9 @@ int ast_interpreter_find_variable_index(Ast_Interpreter* interpreter, int var_na
 }
 
 Ast_Interpreter_Variable* ast_interpreter_find_variable(Ast_Interpreter* interpreter, int var_name) {
-    for (int i = interpreter->symbol_table.size - 1; i >= 0; i--) {
-        if (interpreter->symbol_table[i].variable_name == var_name) {
-            return &interpreter->symbol_table[i];
-        }
-    }
-    return 0;
+    int i = ast_interpreter_find_variable_index(interpreter, var_name);
+    if (i == -1) return 0;
+    return &interpreter->symbol_table[i];
 }
 
 void ast_interpreter_begin_new_scope(Ast_Interpreter* interpreter) {
@@ -1667,6 +1791,25 @@ void ast_interpreter_exit_scope(Ast_Interpreter* interpreter) {
     }
     int scope_start = interpreter->scope_beginnings[interpreter->scope_beginnings.size - 1];
     dynamic_array_remove_range_ordered(&interpreter->symbol_table, scope_start, interpreter->symbol_table.size);
+    dynamic_array_swap_remove(&interpreter->scope_beginnings, interpreter->scope_beginnings.size - 1);
+}
+
+void ast_interpreter_begin_new_function_scope(Ast_Interpreter* interpreter) {
+    ast_interpreter_begin_new_scope(interpreter);
+    dynamic_array_push_back(&interpreter->function_scope_beginnings, interpreter->symbol_table.size);
+}
+
+void ast_interpreter_end_function_scope(Ast_Interpreter* interpreter) {
+    ast_interpreter_exit_scope(interpreter);
+    dynamic_array_swap_remove(&interpreter->function_scope_beginnings, interpreter->function_scope_beginnings.size - 1);
+}
+
+Ast_Interpreter_Value_Type::ENUM ast_interpreter_token_index_to_value_type(Ast_Interpreter* interpreter, int index)
+{
+    if (index == interpreter->int_token_index) return Ast_Interpreter_Value_Type::INTEGER;
+    if (index == interpreter->float_token_index) return Ast_Interpreter_Value_Type::FLOAT;
+    if (index == interpreter->bool_token_index) return Ast_Interpreter_Value_Type::BOOLEAN;
+    return Ast_Interpreter_Value_Type::ERROR_VAL;
 }
 
 void ast_interpreter_define_variable(Ast_Interpreter* interpreter, Ast_Interpreter_Value_Type::ENUM type, int var_name)
@@ -1687,6 +1830,7 @@ void ast_interpreter_define_variable(Ast_Interpreter* interpreter, Ast_Interpret
     dynamic_array_push_back(&interpreter->symbol_table, var);
 }
 
+Ast_Interpreter_Statement_Result ast_interpreter_execute_statment_block(Ast_Interpreter* interpreter, Ast_Node_Statement_Block* block, LexerResult* lexer);
 Ast_Interpreter_Value ast_interpreter_evaluate_expression(Ast_Interpreter* interpreter, Ast_Node_Expression* expression)
 {
     Ast_Interpreter_Value result;
@@ -1719,6 +1863,51 @@ Ast_Interpreter_Value ast_interpreter_evaluate_expression(Ast_Interpreter* inter
             return result;
         }
         return var->value;
+    }
+    else if (expression->type == ExpressionType::FUNCTION_CALL)
+    {
+        Ast_Node_Function* function = 0;
+        for (int i = 0; i < interpreter->root->functions.size; i++) {
+            if (interpreter->root->functions[i].function_name_id == expression->variable_name_id) {
+                function = &interpreter->root->functions[i];
+            }
+        }
+        if (function == 0) {
+            logg("Function named %s not found!\n", lexer_result_identifer_to_string(interpreter->lexer, expression->variable_name_id).characters);
+            return result;
+        }
+        if (function->parameters.size != expression->arguments.size) {
+            logg("Function call does not have enough arguments!\n");
+            return result;
+        }
+        ast_interpreter_begin_new_function_scope(interpreter);
+        // Push arguments on the stack
+        bool success = true;
+        for (int i = 0; i < expression->arguments.size; i++) {
+            Ast_Interpreter_Value val = ast_interpreter_evaluate_expression(interpreter, &expression->arguments[i]);
+            if (val.type != ast_interpreter_token_index_to_value_type(interpreter, function->parameters[i].type_id)) {
+                logg("Argument type does not match parameter type of function!\n");
+                success = false;
+                break;
+            }
+            ast_interpreter_define_variable(interpreter, val.type, function->parameters[i].name_id);
+            Ast_Interpreter_Variable* var = ast_interpreter_find_variable(interpreter, function->parameters[i].name_id);
+            var->value = val;
+        }
+        if (success) {
+            Ast_Interpreter_Statement_Result result;
+            result = ast_interpreter_execute_statment_block(interpreter, &function->body, interpreter->lexer);
+            if (result.is_return) {
+                if (result.return_value.type != ast_interpreter_token_index_to_value_type(interpreter, function->return_type_id)) {
+                    logg("Return value does not match return type of function %s\n", 
+                        lexer_result_identifer_to_string(interpreter->lexer, function->function_name_id).characters);
+                }
+                ast_interpreter_end_function_scope(interpreter);
+                return result.return_value;
+            }
+        }
+        ast_interpreter_end_function_scope(interpreter);
+        return result;
     }
     else if (expression->type == ExpressionType::OP_EQUAL ||
         expression->type == ExpressionType::OP_NOT_EQUAL ||
@@ -1878,11 +2067,38 @@ Ast_Interpreter_Value ast_interpreter_evaluate_expression(Ast_Interpreter* inter
     return result;
 }
 
-struct Ast_Interpreter_Statement_Result
-{
-    bool is_return;
-    Ast_Interpreter_Value return_value;
-};
+Ast_Interpreter_Statement_Result ast_interpreter_result_make_empty() {
+    Ast_Interpreter_Statement_Result result;
+    result.is_break = false;
+    result.is_continue = false;
+    result.is_return = false;
+    return result;
+}
+
+Ast_Interpreter_Statement_Result ast_interpreter_result_make_break() {
+    Ast_Interpreter_Statement_Result result;
+    result.is_break = true;
+    result.is_continue = false;
+    result.is_return = false;
+    return result;
+}
+
+Ast_Interpreter_Statement_Result ast_interpreter_result_make_continue() {
+    Ast_Interpreter_Statement_Result result;
+    result.is_break = false;
+    result.is_continue = true;
+    result.is_return = false;
+    return result;
+}
+
+Ast_Interpreter_Statement_Result ast_interpreter_result_make_return(Ast_Interpreter_Value val) {
+    Ast_Interpreter_Statement_Result result;
+    result.is_break = false;
+    result.is_continue = false;
+    result.is_return = true;
+    result.return_value = val;
+    return result;
+}
 
 Ast_Interpreter_Statement_Result ast_interpreter_execute_statement(Ast_Interpreter* interpreter, Ast_Node_Statement* statement, LexerResult* lexer);
 Ast_Interpreter_Statement_Result ast_interpreter_execute_statment_block(Ast_Interpreter* interpreter, Ast_Node_Statement_Block* block, LexerResult* lexer)
@@ -1890,7 +2106,7 @@ Ast_Interpreter_Statement_Result ast_interpreter_execute_statment_block(Ast_Inte
     ast_interpreter_begin_new_scope(interpreter);
     for (int i = 0; i < block->statements.size; i++) {
         Ast_Interpreter_Statement_Result result = ast_interpreter_execute_statement(interpreter, &block->statements[i], lexer);
-        if (result.is_return) return result;
+        if (result.is_return || result.is_continue || result.is_break) return result;
     }
     ast_interpreter_exit_scope(interpreter);
     Ast_Interpreter_Statement_Result result;
@@ -1900,13 +2116,37 @@ Ast_Interpreter_Statement_Result ast_interpreter_execute_statment_block(Ast_Inte
 
 Ast_Interpreter_Statement_Result ast_interpreter_execute_statement(Ast_Interpreter* interpreter, Ast_Node_Statement* statement, LexerResult* lexer)
 {
-    Ast_Interpreter_Statement_Result result;
-    result.is_return = false;
+    Ast_Interpreter_Statement_Result result = ast_interpreter_result_make_empty();
 
     if (statement->type == StatementType::RETURN_STATEMENT) {
         result.is_return = true;
         result.return_value = ast_interpreter_evaluate_expression(interpreter, &statement->expression);
         return result;
+    }
+    else if (statement->type == StatementType::EXPRESSION) // Expression can be function call, thats why we need it here
+    {
+        ast_interpreter_evaluate_expression(interpreter, &statement->expression); 
+        return result;
+    }
+    else if (statement->type == StatementType::WHILE)
+    {
+        while (true)
+        {
+            Ast_Interpreter_Value val = ast_interpreter_evaluate_expression(interpreter, &statement->expression);
+            if (val.type != Ast_Interpreter_Value_Type::BOOLEAN) {
+                logg("WHILE condition is not a boolean!\n");
+                return result;
+            }
+            if (val.bool_value) {
+                Ast_Interpreter_Statement_Result res = ast_interpreter_execute_statment_block(interpreter, &statement->statements, lexer);
+                if (res.is_return) return result;
+                if (res.is_continue) continue;
+                if (res.is_break) return result;
+            }
+            else {
+                return result;
+            }
+        }
     }
     else if (statement->type == StatementType::IF_BLOCK) {
         Ast_Interpreter_Value val = ast_interpreter_evaluate_expression(interpreter, &statement->expression);
@@ -1915,7 +2155,7 @@ Ast_Interpreter_Statement_Result ast_interpreter_execute_statement(Ast_Interpret
             return result;
         }
         if (val.bool_value) {
-            return ast_interpreter_execute_statment_block(interpreter, &statement->if_statements, lexer);
+            return ast_interpreter_execute_statment_block(interpreter, &statement->statements, lexer);
         }
     }
     else if (statement->type == StatementType::IF_ELSE_BLOCK) {
@@ -1925,7 +2165,7 @@ Ast_Interpreter_Statement_Result ast_interpreter_execute_statement(Ast_Interpret
             return result;
         }
         if (val.bool_value) {
-            return ast_interpreter_execute_statment_block(interpreter, &statement->if_statements, lexer);
+            return ast_interpreter_execute_statment_block(interpreter, &statement->statements, lexer);
         }
         else {
             return ast_interpreter_execute_statment_block(interpreter, &statement->else_statements, lexer);
@@ -1964,13 +2204,6 @@ Ast_Interpreter_Statement_Result ast_interpreter_execute_statement(Ast_Interpret
     }
     else if (statement->type == StatementType::VARIABLE_DEFINE_ASSIGN) // x : int = 5
     {
-        Ast_Interpreter_Variable* var = ast_interpreter_find_variable(interpreter, statement->variable_name_id);
-        if (var != 0) {
-            logg("Variable %s already defined!",
-                lexer_result_identifer_to_string(lexer, statement->variable_name_id).characters);
-            return result;
-        }
-
         Ast_Interpreter_Value value = ast_interpreter_evaluate_expression(interpreter, &statement->expression);
         Ast_Interpreter_Value_Type::ENUM var_type;
         if (statement->variable_type_id == interpreter->int_token_index) var_type = Ast_Interpreter_Value_Type::INTEGER;
@@ -1980,33 +2213,31 @@ Ast_Interpreter_Statement_Result ast_interpreter_execute_statement(Ast_Interpret
             logg("Type-Error: %s is not a valid type\n", lexer_result_identifer_to_string(lexer, statement->variable_type_id).characters);
             return result;
         }
-
         if (var_type != value.type) {
             logg("Types not compatible, var type: ", lexer_result_identifer_to_string(lexer, statement->variable_type_id).characters);
             return result;
         }
+
         ast_interpreter_define_variable(interpreter, var_type, statement->variable_name_id);
-        var = ast_interpreter_find_variable(interpreter, statement->variable_name_id);
+        Ast_Interpreter_Variable* var = ast_interpreter_find_variable(interpreter, statement->variable_name_id);
         var->value = value;
     }
     else if (statement->type == StatementType::VARIABLE_DEFINE_INFER)
     {
-        Ast_Interpreter_Variable* var = ast_interpreter_find_variable(interpreter, statement->variable_name_id);
-        if (var != 0) {
-            logg("Variable %s already defined!",
-                lexer_result_identifer_to_string(lexer, statement->variable_name_id).characters);
-            return result;
-        }
-
         Ast_Interpreter_Value value = ast_interpreter_evaluate_expression(interpreter, &statement->expression);
         ast_interpreter_define_variable(interpreter, value.type, statement->variable_name_id);
-        var = ast_interpreter_find_variable(interpreter, statement->variable_name_id);
+        Ast_Interpreter_Variable* var = ast_interpreter_find_variable(interpreter, statement->variable_name_id);
         var->value = value;
     }
     else if (statement->type == StatementType::STATEMENT_BLOCK) {
         return ast_interpreter_execute_statment_block(interpreter, &statement->statements, lexer);
     }
-
+    else if (statement->type == StatementType::BREAK) {
+        return ast_interpreter_result_make_break();
+    }
+    else if (statement->type == StatementType::CONTINUE) {
+        return ast_interpreter_result_make_continue();
+    }
     return result;
 }
 

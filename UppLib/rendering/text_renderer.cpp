@@ -350,7 +350,8 @@ void text_renderer_set_color(TextRenderer* renderer, vec3 color) {
 }
 
 float text_renderer_calculate_text_width(TextRenderer* renderer, int char_count, float relative_height) {
-    return (float)renderer->glyph_atlas.cursor_advance / (renderer->glyph_atlas.ascender - renderer->glyph_atlas.descender) * relative_height * char_count;
+    return (float)renderer->glyph_atlas.cursor_advance / (renderer->glyph_atlas.ascender - renderer->glyph_atlas.descender) * relative_height * char_count
+        * ((float)renderer->screen_height / renderer->screen_width);
 }
 
 

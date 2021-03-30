@@ -437,7 +437,7 @@ void text_editor_render(Text_Editor* editor, OpenGLState* state, int width, int 
             text_renderer_add_text_from_layout(editor->renderer, layout, line_pos);
             line_pos.y -= (text_height);
         }
-        editor_region.min.x += text_renderer_calculate_text_width(editor->renderer, line_number_char_count, text_height);
+        editor_region.min.x += text_renderer_calculate_text_width(editor->renderer, line_number_char_count+1, text_height);
     }
 
     // Calculate the first and last character to be drawn in any line (Viewport)
@@ -1899,6 +1899,7 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
     for (int i = 0; i < input->key_messages.size; i++)
     {
         Key_Message* msg = &input->key_messages[i];
+
         if (editor->mode == TextEditorMode::NORMAL) {
             normal_mode_handle_message(editor, msg);
         }
@@ -1908,25 +1909,45 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
     }
     // Make sure everything still works
     if (!text_check_correctness(editor->lines)) {
-        logg("error, suit yourself\n");
+        panic("error, suit yourself\n");
         __debugbreak();
     }
 
-    // Stuff that has nothing to do with the text editor, but with the programming language
-    // Do syntax highlighting
     if (editor->text_changed) {
         text_editor_reset_highlights(editor);
     }
-    if (editor->text_changed)
+
+    if (editor->text_changed || input->key_pressed[KEY_CODE::F5])
     {
         String fill_string = string_create_empty(2048);
         SCOPE_EXIT(string_destroy(&fill_string));
 
-        text_editor_reset_highlights(editor);
         text_append_to_string(&editor->lines, &fill_string);
-        //logg("\nPARSING SOURCE_CODE:\n-----------------------\n%s\n---------------------\n", fill_string.characters);
         LexerResult result = lexer_parse_string(&fill_string);
         SCOPE_EXIT(lexer_result_destroy(&result));
+
+        Parser parser = parser_parse(&result);
+        SCOPE_EXIT(parser_destroy(&parser));
+        String printed_ast = string_create_empty(256);
+        SCOPE_EXIT(string_destroy(&printed_ast));
+        ast_node_root_append_to_string(&printed_ast, &parser.root, &result);
+        logg("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n");
+        logg("Ast: \n%s\n", printed_ast.characters);
+
+        if (parser.unresolved_errors.size > 0) {
+            logg("There were parser errors: %d\n", parser.unresolved_errors.size);
+            for (int i = 0; i < parser.unresolved_errors.size; i++) {
+                logg("Parser error #%d: %s", parser.unresolved_errors.size, parser.unresolved_errors[i].error_message);
+            }
+        }
+        else if (input->key_pressed[KEY_CODE::F5]) {
+            Ast_Interpreter_Value val = ast_interpreter_execute_main(&parser.root, &result);
+            String out = string_create_empty(15);
+            SCOPE_EXIT(string_destroy(&out));
+            ast_interpreter_value_append_to_string(val, &out);
+            logg("----------------------------------\n");
+            logg("Interpreter result: %s\n", out.characters);
+        }
 
         // Highlight identifiers
         for (int i = 0; i < result.tokens.size; i++) {
@@ -1957,29 +1978,8 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
             }
         }
 
-        Parser parser = parser_parse(&result);
-        SCOPE_EXIT(parser_destroy(&parser));
-        String printed_ast = string_create_empty(256);
-        SCOPE_EXIT(string_destroy(&printed_ast));
-        ast_node_root_append_to_string(&printed_ast, &parser.root, &result);
-        logg("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n");
-        logg("Ast: \n%s\n", printed_ast.characters);
 
-        if (parser.unresolved_errors.size > 0) {
-            logg("There were parser errors: %d\n", parser.unresolved_errors.size);
-            for (int i = 0; i < parser.unresolved_errors.size; i++) {
-                logg("Parser error #%d: %s", parser.unresolved_errors.size, parser.unresolved_errors[i].error_message);
-            }
-        }
-        else {
-            Ast_Interpreter_Value val = ast_interpreter_execute_main(&parser.root, &result);
-            String out = string_create_empty(15);
-            SCOPE_EXIT(string_destroy(&out));
-            ast_interpreter_value_append_to_string(val, &out);
-            logg("----------------------------------\n");
-            logg("Interpreter result: %s\n", out.characters);
-        }
-
+        // Highlight errors
         for (int i = 0; i < parser.unresolved_errors.size; i++)
         {
             ParserError* error = &parser.unresolved_errors.data[i];
@@ -2058,8 +2058,7 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
             }
         }
     }
-    /*
-    */
+
     editor->text_changed = false;
 }
 

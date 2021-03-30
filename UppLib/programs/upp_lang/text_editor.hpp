@@ -182,11 +182,11 @@ struct Text_Editor
     DynamicArray<DynamicArray<TextHighlight>> text_highlights;
     float line_size_cm;
     double last_keymessage_time;
-    int first_rendered_line;
-    int first_rendered_char;
     String line_count_buffer;
     BoundingBox2 last_editor_region;
     float last_text_height;
+    int first_rendered_line;
+    int first_rendered_char;
 
     // Editor Stuff
     TextHistory history;

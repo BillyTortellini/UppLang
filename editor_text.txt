@@ -1,19 +1,25 @@
+fibonnaci_rec :: (n:int) -> int
+{
+    if (n == 0) return 1;
+    if (n == 1) return 2;
+    else return fibonnaci_rec(n-1) +
+                fibonnaci_rec(n-2);
+}
+
 main :: () -> void
 {
-    x := 11;
-    if x > 10 
-        x = 15;
-    else if x > 5
-        x = 10;
-    else 
-        x = 5; 
-
+    // Next up: Debug fibonacci function call, something with symbols
+    x := fibonnaci_rec(3);
     return x;
 }
 
 /*  
+    Missing binary statements x++; x--; x+=1; x-=1; x/=1; x*=1;
+    Short circuit operation on &&
+
+    // TODO: Check why the program eats 160 MB ram at runtime
+
     Next Features:
-     * Loops 
      * Function calls
      * Semantic analysis
      * Bytecode creator + interpreter
@@ -27,15 +33,12 @@ main :: () -> void
      * Primitive Type System (Int bool float)
      * Scopes
      * If-Else Flow control
+     * While loop with break continue
 
     Nice-to-have Features:
      * Log to window, not to console, maybe something like in a textfield
         -> Would be best with a toast like notification, and something you can focus
      * Work on GUI (Probably necessary for better debugging)
-
-    Questions about Design:
-     * Primitive datatypes as keywords (Lexer stuff)?
-        -> Seems to simplify a lot of stuff
 
     Editor-Bugs:
      * Repeat last search does not differentiate 'f'/'t'/forward backward
@@ -43,6 +46,8 @@ main :: () -> void
      * Undo-Redo cursor position still sucks a little (Hint: Save positions after/before command)
      * Non ASCII chars destroy some motions (Program crashes)
      * Alt-Gr spamming still cancels commands (win32 nonsense)
+     * % does not jump on empty parenthesis () {}
+     * O does not work on first line
 
     Editor features missing:
      * Undo/Redo Tree History

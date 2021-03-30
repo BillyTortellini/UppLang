@@ -127,6 +127,7 @@ namespace ExpressionType
         OP_NEGATE,
         OP_LOGICAL_NOT,
         LITERAL,
+        FUNCTION_CALL,
         VARIABLE_READ,
     };
 }
@@ -138,6 +139,7 @@ struct Ast_Node_Expression
     int variable_name_id;
     Ast_Node_Expression* left;
     Ast_Node_Expression* right;
+    DynamicArray<Ast_Node_Expression> arguments;
 };
 
 namespace StatementType
@@ -151,7 +153,11 @@ namespace StatementType
         STATEMENT_BLOCK, // { x := 5; y++; ...}
         IF_BLOCK,
         IF_ELSE_BLOCK,
+        WHILE,
         RETURN_STATEMENT,
+        BREAK,
+        EXPRESSION, // for function calls x();
+        CONTINUE,
     };
 };
 
@@ -168,8 +174,6 @@ struct Ast_Node_Statement
     int variable_type_id;
     Ast_Node_Expression expression;
     Ast_Node_Statement_Block statements;
-
-    Ast_Node_Statement_Block if_statements;
     Ast_Node_Statement_Block else_statements;
 };
 
@@ -238,6 +242,15 @@ struct Ast_Interpreter_Value
     float float_value;
     bool bool_value;
 };
+
+struct Ast_Interpreter_Statement_Result
+{
+    bool is_break;
+    bool is_continue;
+    bool is_return;
+    Ast_Interpreter_Value return_value;
+};
+
 
 Ast_Interpreter_Value ast_interpreter_execute_main(Ast_Node_Root* root, LexerResult* lexer);
 void ast_interpreter_value_append_to_string(Ast_Interpreter_Value value, String* string);
