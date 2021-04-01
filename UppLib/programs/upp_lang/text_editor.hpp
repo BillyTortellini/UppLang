@@ -27,7 +27,7 @@ struct TextChange
 {
     TextChange* next;
     TextChange* previous;
-    TextChangeType::ENUM type;
+    TextChangeType::ENUM symbol_type;
 
     // For string deletion/insertion
     String string;
@@ -97,14 +97,14 @@ namespace MotionType
 
 struct Movement
 {
-    MovementType::ENUM type;
+    MovementType::ENUM symbol_type;
     int repeat_count;
     char search_char;
 };
 
 struct Motion
 {
-    MotionType::ENUM type;
+    MotionType::ENUM symbol_type;
     int repeat_count;
     Movement movement; // If type == MOVEMENT
     bool contains_edges; // In vim, this would be inner or around motions (iw or aw)
@@ -146,7 +146,7 @@ namespace NormalModeCommandType
 
 struct NormalModeCommand
 {
-    NormalModeCommandType::ENUM type;
+    NormalModeCommandType::ENUM symbol_type;
     Motion motion;
     Movement movement;
     char character;

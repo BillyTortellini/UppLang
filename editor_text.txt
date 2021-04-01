@@ -1,31 +1,48 @@
-fibonnaci_rec :: (n:int) -> int
+main :: () -> int
 {
-    if (n == 0) return 1;
-    if (n == 1) return 2;
-    else return fibonnaci_rec(n-1) +
-                fibonnaci_rec(n-2);
+    // Next feature: Semantic analysis error highlighting in editor
+    /*
+        Currently the AST sucks a little:
+         * Token-index to AST node connection is lost
+         * AST-Nodes do not have a connection back to parent
+         * There is no simple way to loop over the whole AST
+        Find a way to resolve all the errors
+    
+        For IDE it would be nice to get the symbol-table at
+        any text_position.
+        Meaning Text_Pos -> Token_Pos -> Ast_Node -> next_upper Symboltable
+        
+        Note: Currently expression have references to a symbol_table,
+            but I think that with a parent pointer in AST this is not necessary
+    */
+    x := 5;
+    y := x * x;
+    return fibonnaci_rec(10); 
 }
 
-main :: () -> void
+fibonnaci_rec :: (n:int) -> int
 {
-    // Next up: Debug fibonacci function call, something with symbols
-    x := fibonnaci_rec(3);
-    return x;
+    if (n <= 2) 
+        return 1;
+    res := fibonnaci_rec(n-1) +
+           fibonnaci_rec(n-2);
+    return res;
 }
+
 
 /*  
     Missing binary statements x++; x--; x+=1; x-=1; x/=1; x*=1;
-    Short circuit operation on &&
-
-    // TODO: Check why the program eats 160 MB ram at runtime
+    Short circuit operation on && and ||
 
     Next Features:
-     * Function calls
      * Semantic analysis
      * Bytecode creator + interpreter
-     * Pointers + Arrays
+     * Pointers + Arrays 
      * Structs
+     * Strings?
      * OS-Calls/Calls to libraries (print, new/delete)
+     * Bytecode Debugger?
+     * Backend?
 
     Current UppLang features:
      * Expression parsing + evaluation
@@ -48,8 +65,11 @@ main :: () -> void
      * Alt-Gr spamming still cancels commands (win32 nonsense)
      * % does not jump on empty parenthesis () {}
      * O does not work on first line
+     * dd with numbers seems to not take the last number
+     * put with 'dd'ed lines is also a bit weird
 
     Editor features missing:
+     * Correct Indentation on new line
      * Undo/Redo Tree History
      * Visual Mode
      * Visual Block/Multi-Cursor stuff

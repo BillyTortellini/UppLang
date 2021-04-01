@@ -183,6 +183,9 @@
     <ClInclude Include="programs\upp_lang\text.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
     </ClInclude>
+    <ClInclude Include="programs\upp_lang\bytecode.hpp">
+      <Filter>Header Files\Programs\Upp_Lang</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="datastructures\array.cpp">
@@ -297,6 +300,9 @@
       <Filter>Source Files\Utility</Filter>
     </ClCompile>
     <ClCompile Include="programs\upp_lang\text.cpp">
+      <Filter>Source Files\Programs\Upp_Lang</Filter>
+    </ClCompile>
+    <ClCompile Include="programs\upp_lang\bytecode.cpp">
       <Filter>Source Files\Programs\Upp_Lang</Filter>
     </ClCompile>
   </ItemGroup>

@@ -89,24 +89,61 @@ struct Token
     int source_code_index;
 };
 
-struct LexerResult
+struct Lexer
 {
     DynamicArray<String> identifiers;
     Hashtable<String, int> identifier_index_lookup_table;
+    // TODO: Lexer should also have a token array with whitespaces and comments, for editor/ide's sake
     DynamicArray<Token> tokens;
     bool has_errors;
 };
 
-LexerResult lexer_parse_string(String* code);
-void lexer_result_destroy(LexerResult* result);
-void lexer_result_print(LexerResult* result);
-String lexer_result_identifer_to_string(LexerResult* result, int index);
+Lexer lexer_parse_string(String* code);
+void lexer_destroy(Lexer* result);
+void lexer_print(Lexer* result);
+String lexer_identifer_to_string(Lexer* Lexer, int index);
+int lexer_add_or_find_identifier_by_string(Lexer* Lexer, String identifier);
 
 
 
 /*
     AST
 */
+namespace SymbolType
+{
+    enum ENUM
+    {
+        VARIABLE,
+        FUNCTION,
+        TYPE,
+        // Here will also be types later on
+        // Maybe i should put int, float, bool .... in here
+    };
+};
+
+struct Ast_Node_Function;
+namespace Variable_Type {
+    enum ENUM;
+}
+struct Symbol {
+    int name;
+    SymbolType::ENUM symbol_type;
+    Variable_Type::ENUM variable_type;
+    Ast_Node_Function* function;
+};
+
+struct SymbolTable
+{
+    SymbolTable* parent;
+    DynamicArray<Symbol> symbols;
+};
+
+SymbolTable symbol_table_create(SymbolTable* parent);
+void symbol_table_destroy(SymbolTable* table);
+SymbolTable* symbol_table_create_new(SymbolTable* parent);
+Symbol* symbol_table_find_symbol(SymbolTable* table, int name, bool* in_current_scope);
+Symbol* symbol_table_find_symbol_type(SymbolTable* table, int name, SymbolType::ENUM symbol_type, bool* in_current_scope);
+
 namespace ExpressionType
 {
     enum ENUM
@@ -135,6 +172,8 @@ namespace ExpressionType
 struct Ast_Node_Expression
 {
     ExpressionType::ENUM type;
+    SymbolTable* symbol_table;
+    bool free_symbol_table_on_destroy;
     int literal_token_index;
     int variable_name_id;
     Ast_Node_Expression* left;
@@ -164,12 +203,16 @@ namespace StatementType
 struct Ast_Node_Statement;
 struct Ast_Node_Statement_Block
 {
+    SymbolTable* symbol_table;
+    bool free_symbol_table_on_destroy;
     DynamicArray<Ast_Node_Statement> statements;
 };
 
 struct Ast_Node_Statement
 {
     StatementType::ENUM type;
+    SymbolTable* symbol_table;
+    bool free_symbol_table_on_destroy;
     int variable_name_id;
     int variable_type_id;
     Ast_Node_Expression expression;
@@ -185,6 +228,8 @@ struct Parameter
 
 struct Ast_Node_Function
 {
+    SymbolTable* symbol_table;
+    bool free_symbol_table_on_destroy;
     int function_name_id;
     int return_type_id;
     DynamicArray<Parameter> parameters;
@@ -193,10 +238,11 @@ struct Ast_Node_Function
 
 struct Ast_Node_Root
 {
+    SymbolTable* symbol_table;
+    bool free_symbol_table_on_destroy;
     DynamicArray<Ast_Node_Function> functions;
 };
-void ast_node_root_append_to_string(String* string, Ast_Node_Root* root, LexerResult* lexer_result);
-
+void ast_node_root_append_to_string(String* string, Ast_Node_Root* root, Lexer* lexer_result);
 
 /*
     Parser
@@ -210,34 +256,46 @@ struct ParserError
 
 struct Parser
 {
-    Array<Token> tokens;
-    DynamicArray<ParserError> intermediate_errors; // Intermediate errors are reported just for debugging, I probably dont want this
-    DynamicArray<ParserError> unresolved_errors;
-    int index;
     Ast_Node_Root root;
+    // TODO: Rethink error handling in the parser, intermediate/unresolved seem a bit wonkey
+    DynamicArray<ParserError> intermediate_errors;
+    DynamicArray<ParserError> unresolved_errors;
+    DynamicArray<const char*> semantic_analysis_errors;
+    // Stuff for parsing
+    int index;
+    Lexer* lexer;
+    // Stuff for semantic analysis
+    Variable_Type::ENUM current_function_return_type;
+    int loop_depth;
 };
 
-Parser parser_parse(LexerResult* result);
+// TODO: This stuff is weird, who handles what memory?
+Parser parser_parse(Lexer* result);
 void parser_destroy(Parser* parser);
 
+/*
+    Semantic Analysis
+*/
+void parser_semantic_analysis(Parser* parser);
 
 /*
     AST_Interpreter
 */
-namespace Ast_Interpreter_Value_Type
+namespace Variable_Type
 {
     enum ENUM
     {
         INTEGER,
         FLOAT,
         BOOLEAN,
-        ERROR_VAL
+        ERROR_TYPE,
+        VOID_TYPE,
     };
 };
 
 struct Ast_Interpreter_Value
 {
-    Ast_Interpreter_Value_Type::ENUM type;
+    Variable_Type::ENUM type;
     int int_value;
     float float_value;
     bool bool_value;
@@ -251,7 +309,6 @@ struct Ast_Interpreter_Statement_Result
     Ast_Interpreter_Value return_value;
 };
 
-
-Ast_Interpreter_Value ast_interpreter_execute_main(Ast_Node_Root* root, LexerResult* lexer);
+Ast_Interpreter_Value ast_interpreter_execute_main(Ast_Node_Root* root, Lexer* Lexer);
 void ast_interpreter_value_append_to_string(Ast_Interpreter_Value value, String* string);
-String ast_interpreter_value_type_to_string(Ast_Interpreter_Value_Type::ENUM type);
+String ast_interpreter_value_type_to_string(Variable_Type::ENUM type);

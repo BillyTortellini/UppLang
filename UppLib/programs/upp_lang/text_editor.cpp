@@ -8,16 +8,17 @@
 #include "../../rendering/shader_program.hpp"
 #include "../../rendering/mesh_utils.hpp"
 #include "../../math/scalars.hpp"
+#include "../../utility/file_io.hpp"
 
 void text_change_destroy_single(TextChange* change) 
 {
-    if (change->type == TextChangeType::STRING_INSERTION) {
+    if (change->symbol_type == TextChangeType::STRING_INSERTION) {
         string_destroy(&change->string);
     }
-    else if (change->type == TextChangeType::STRING_DELETION) {
+    else if (change->symbol_type == TextChangeType::STRING_DELETION) {
         string_destroy(&change->string);
     }
-    else if (change->type == TextChangeType::COMPLEX) {
+    else if (change->symbol_type == TextChangeType::COMPLEX) {
         for (int i = 0; i < change->sub_changes.size; i++) {
             text_change_destroy_single(&change->sub_changes[i]);
         }
@@ -47,7 +48,7 @@ void text_change_destroy_changes_in_past(TextChange* change) {
 
 void text_change_apply(TextChange* change, Text_Editor* editor)
 {
-    switch (change->type)
+    switch (change->symbol_type)
     {
     case TextChangeType::STRING_DELETION: {
         text_delete_slice(&editor->lines, change->slice);
@@ -83,7 +84,7 @@ void text_change_apply(TextChange* change, Text_Editor* editor)
 void text_editor_clamp_cursor(Text_Editor* editor);
 void text_change_undo(TextChange* change, Text_Editor* editor)
 {
-    switch (change->type)
+    switch (change->symbol_type)
     {
     case TextChangeType::STRING_DELETION: {
         text_insert_string(&editor->lines, change->slice.start, change->string);
@@ -175,7 +176,7 @@ void text_history_insert_string(TextHistory* history, Text_Editor* editor, Text_
     change.previous = 0;
     change.slice = slice;
     change.string = string;
-    change.type = TextChangeType::STRING_INSERTION;
+    change.symbol_type = TextChangeType::STRING_INSERTION;
     text_change_apply(&change, editor);
     text_editor_clamp_cursor(editor);
     text_history_record_change(history, change);
@@ -191,7 +192,7 @@ void text_history_delete_slice(TextHistory* history, Text_Editor* editor, Text_S
     change.previous = 0;
     change.slice = slice;
     change.string = str;
-    change.type = TextChangeType::STRING_DELETION;
+    change.symbol_type = TextChangeType::STRING_DELETION;
     text_change_apply(&change, editor);
     text_editor_clamp_cursor(editor);
     text_history_record_change(history, change);
@@ -203,7 +204,7 @@ void text_history_insert_character(TextHistory* history, Text_Editor* editor, Te
     change.previous = 0;
     change.character_position = pos;
     change.character = c;
-    change.type = TextChangeType::CHARACTER_INSERTION;
+    change.symbol_type = TextChangeType::CHARACTER_INSERTION;
     text_change_apply(&change, editor);
     text_editor_clamp_cursor(editor);
     text_history_record_change(history, change);
@@ -216,7 +217,7 @@ void text_history_delete_character(TextHistory* history, Text_Editor* editor, Te
     change.previous = 0;
     change.character_position = pos;
     change.character = text_get_character_after(&editor->lines, pos);
-    change.type = TextChangeType::CHARACTER_DELETION;
+    change.symbol_type = TextChangeType::CHARACTER_DELETION;
     text_change_apply(&change, editor);
     text_editor_clamp_cursor(editor);
     text_history_record_change(history, change);
@@ -234,7 +235,7 @@ void text_history_stop_record_complex_command(TextHistory* history) {
     if (history->recording_depth == 0)
     {
         TextChange change;
-        change.type = TextChangeType::COMPLEX;
+        change.symbol_type = TextChangeType::COMPLEX;
         change.sub_changes = history->complex_command;
         change.next = 0;
         change.previous = 0;
@@ -279,8 +280,8 @@ void text_history_redo(TextHistory* history, Text_Editor* editor)
     }
 }
 
-NormalModeCommand normal_mode_command_make(NormalModeCommandType::ENUM type, int repeat_count);
-Movement movement_make(MovementType::ENUM type, int repeat_count, char search_char);
+NormalModeCommand normal_mode_command_make(NormalModeCommandType::ENUM symbol_type, int repeat_count);
+Movement movement_make(MovementType::ENUM symbol_type, int repeat_count, char search_char);
 Text_Editor text_editor_create(TextRenderer* text_renderer, FileListener* listener, OpenGLState* state)
 {
     Text_Editor result;
@@ -556,9 +557,9 @@ String characters_get_string_all_letters() {
     return string_create_static("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ");
 }
 
-Movement movement_make(MovementType::ENUM type, int repeat_count, char search_char = '\0') {
+Movement movement_make(MovementType::ENUM symbol_type, int repeat_count, char search_char = '\0') {
     Movement result;
-    result.type = type;
+    result.symbol_type = symbol_type;
     result.repeat_count = repeat_count;
     result.search_char = search_char;
     return result;
@@ -672,7 +673,7 @@ Text_Slice text_slice_get_current_word_slice(DynamicArray<String>* text, Text_Po
 
 // Forward declarations or something
 Text_Slice motion_evaluate_at_position(Motion motion, DynamicArray<String>* text, Text_Position pos, char*, bool*, int*);
-Motion motion_make(MotionType::ENUM type, int repeat_count, bool contains_edges);
+Motion motion_make(MotionType::ENUM symbol_type, int repeat_count, bool contains_edges);
 
 Text_Position movement_evaluate_at_position(Movement movement, DynamicArray<String>* text, Text_Position pos,
     char* last_search_char, bool* last_search_was_forwards, int* horizontal_position)
@@ -689,7 +690,7 @@ Text_Position movement_evaluate_at_position(Movement movement, DynamicArray<Stri
         Text_Position next_position = text_position_next(iterator.position, *text);
         text_position_sanitize(&next_position, *text);
         char next_character = text_get_character_after(text, next_position);
-        switch (movement.type)
+        switch (movement.symbol_type)
         {
         case MovementType::MOVE_DOWN: {
             pos.line += 1;
@@ -909,8 +910,8 @@ Text_Position movement_evaluate_at_position(Movement movement, DynamicArray<Stri
         }
         case MovementType::REPEAT_LAST_SEARCH: {
             Movement search_movement;
-            if (last_search_was_forwards) search_movement.type = MovementType::SEARCH_FORWARDS_FOR;
-            else search_movement.type = MovementType::SEARCH_BACKWARDS_FOR;
+            if (last_search_was_forwards) search_movement.symbol_type = MovementType::SEARCH_FORWARDS_FOR;
+            else search_movement.symbol_type = MovementType::SEARCH_BACKWARDS_FOR;
             search_movement.search_char = *last_search_char;
             search_movement.repeat_count = 1;
             pos = movement_evaluate_at_position(search_movement, text, pos, last_search_char, last_search_was_forwards, horizontal_position);
@@ -918,8 +919,8 @@ Text_Position movement_evaluate_at_position(Movement movement, DynamicArray<Stri
         }
         case MovementType::REPEAT_LAST_SEARCH_REVERSE_DIRECTION: {
             Movement search_movement;
-            if (!last_search_was_forwards) search_movement.type = MovementType::SEARCH_FORWARDS_FOR;
-            else search_movement.type = MovementType::SEARCH_BACKWARDS_FOR;
+            if (!last_search_was_forwards) search_movement.symbol_type = MovementType::SEARCH_FORWARDS_FOR;
+            else search_movement.symbol_type = MovementType::SEARCH_BACKWARDS_FOR;
             search_movement.search_char = *last_search_char;
             search_movement.repeat_count = 1;
             pos = movement_evaluate_at_position(search_movement, text, pos, last_search_char, last_search_was_forwards, horizontal_position);
@@ -961,9 +962,9 @@ Text_Position movement_evaluate_at_position(Movement movement, DynamicArray<Stri
 
 */
 
-Motion motion_make(MotionType::ENUM type, int repeat_count, bool contains_edges) {
+Motion motion_make(MotionType::ENUM symbol_type, int repeat_count, bool contains_edges) {
     Motion result;
-    result.type = type;
+    result.symbol_type = symbol_type;
     result.repeat_count = repeat_count;
     result.contains_edges = contains_edges;
     return result;
@@ -971,7 +972,7 @@ Motion motion_make(MotionType::ENUM type, int repeat_count, bool contains_edges)
 
 Motion motion_make_from_movement(Movement movement) {
     Motion result;
-    result.type = MotionType::MOVEMENT;
+    result.symbol_type = MotionType::MOVEMENT;
     result.movement = movement;
     result.repeat_count = 1;
     result.contains_edges = false;
@@ -982,7 +983,7 @@ Text_Slice motion_evaluate_at_position(Motion motion, DynamicArray<String>* text
     char* last_search_char, bool* last_search_was_forwards, int* horizontal_position)
 {
     Text_Slice result;
-    switch (motion.type)
+    switch (motion.symbol_type)
     {
     case MotionType::MOVEMENT: {
         Text_Position end_pos = movement_evaluate_at_position(motion.movement, text, pos, last_search_char, last_search_was_forwards, horizontal_position);
@@ -1054,24 +1055,24 @@ Text_Slice motion_evaluate_at_position(Motion motion, DynamicArray<String>* text
     return result;
 }
 
-NormalModeCommand normal_mode_command_make(NormalModeCommandType::ENUM type, int repeat_count) {
+NormalModeCommand normal_mode_command_make(NormalModeCommandType::ENUM symbol_type, int repeat_count) {
     NormalModeCommand result;
-    result.type = type;
+    result.symbol_type = symbol_type;
     result.repeat_count = repeat_count;
     return result;
 }
 
-NormalModeCommand normal_mode_command_make_with_char(NormalModeCommandType::ENUM type, int repeat_count, char character) {
+NormalModeCommand normal_mode_command_make_with_char(NormalModeCommandType::ENUM symbol_type, int repeat_count, char character) {
     NormalModeCommand result;
-    result.type = type;
+    result.symbol_type = symbol_type;
     result.repeat_count = repeat_count;
     result.character = character;
     return result;
 }
 
-NormalModeCommand normal_mode_command_make_with_motion(NormalModeCommandType::ENUM type, int repeat_count, Motion motion) {
+NormalModeCommand normal_mode_command_make_with_motion(NormalModeCommandType::ENUM symbol_type, int repeat_count, Motion motion) {
     NormalModeCommand result;
-    result.type = type;
+    result.symbol_type = symbol_type;
     result.repeat_count = repeat_count;
     result.motion = motion;
     return result;
@@ -1079,7 +1080,7 @@ NormalModeCommand normal_mode_command_make_with_motion(NormalModeCommandType::EN
 
 NormalModeCommand normal_mode_command_make_movement(Movement movement) {
     NormalModeCommand result;
-    result.type = NormalModeCommandType::MOVEMENT;
+    result.symbol_type = NormalModeCommandType::MOVEMENT;
     result.repeat_count = 1;
     result.movement = movement;
     return result;
@@ -1098,7 +1099,7 @@ namespace ParseResultType
 template<typename T>
 struct ParseResult
 {
-    ParseResultType::ENUM type;
+    ParseResultType::ENUM symbol_type;
     int key_message_count; // How much messages were consumed from the array
     T result;
 };
@@ -1106,7 +1107,7 @@ struct ParseResult
 template<typename T>
 ParseResult<T> parse_result_make_success(T t, int key_message_count) {
     ParseResult<T> result;
-    result.type = ParseResultType::SUCCESS;
+    result.symbol_type = ParseResultType::SUCCESS;
     result.key_message_count = key_message_count;
     result.result = t;
     return result;
@@ -1115,21 +1116,21 @@ ParseResult<T> parse_result_make_success(T t, int key_message_count) {
 template<typename T>
 ParseResult<T> parse_result_make_failure() {
     ParseResult<T> result;
-    result.type = ParseResultType::FAILURE;
+    result.symbol_type = ParseResultType::FAILURE;
     return result;
 }
 
 template<typename T>
 ParseResult<T> parse_result_make_completable() {
     ParseResult<T> result;
-    result.type = ParseResultType::COMPLETABLE;
+    result.symbol_type = ParseResultType::COMPLETABLE;
     return result;
 }
 
 template<typename T, typename K>
 ParseResult<T> parse_result_propagate_non_success(ParseResult<K> prev_result) {
     ParseResult<T> result;
-    result.type = prev_result.type;
+    result.symbol_type = prev_result.symbol_type;
     return result;
 }
 
@@ -1269,7 +1270,7 @@ ParseResult<Motion> key_messages_parse_motion(Array<Key_Message> messages)
 
     // Motions may also be movements, so we check if we can parse a movement first
     ParseResult<Movement> movement_parse = key_messages_parse_movement(messages, repeat_count_parse);
-    if (movement_parse.type == ParseResultType::SUCCESS) {
+    if (movement_parse.symbol_type == ParseResultType::SUCCESS) {
         return parse_result_make_success(motion_make_from_movement(movement_parse.result),
             movement_parse.key_message_count + repeat_count_parse.key_message_count);
     }
@@ -1312,7 +1313,7 @@ ParseResult<Motion> key_messages_parse_motion(Array<Key_Message> messages)
 ParseResult<NormalModeCommand> key_messages_parse_normal_mode_command(Array<Key_Message> messages)
 {
     ParseResult<int> repeat_count = key_messages_parse_repeat_count(messages);
-    if (repeat_count.type != ParseResultType::SUCCESS) {
+    if (repeat_count.symbol_type != ParseResultType::SUCCESS) {
         return parse_result_propagate_non_success<NormalModeCommand>(repeat_count);
     }
 
@@ -1321,11 +1322,11 @@ ParseResult<NormalModeCommand> key_messages_parse_normal_mode_command(Array<Key_
 
     // Check if it is a movement
     ParseResult<Movement> movement_parse = key_messages_parse_movement(messages, repeat_count);
-    if (movement_parse.type == ParseResultType::SUCCESS) {
+    if (movement_parse.symbol_type == ParseResultType::SUCCESS) {
         return parse_result_make_success(normal_mode_command_make_movement(movement_parse.result),
             repeat_count.key_message_count + movement_parse.key_message_count);
     }
-    else if (movement_parse.type == ParseResultType::COMPLETABLE) {
+    else if (movement_parse.symbol_type == ParseResultType::COMPLETABLE) {
         return parse_result_make_completable<NormalModeCommand>();
     }
 
@@ -1412,7 +1413,7 @@ ParseResult<NormalModeCommand> key_messages_parse_normal_mode_command(Array<Key_
     }
     if (messages[0].character == 'd') {
         ParseResult<Motion> motion_parse = key_messages_parse_motion(array_make_slice(&messages, 1, messages.size));
-        if (motion_parse.type == ParseResultType::SUCCESS) {
+        if (motion_parse.symbol_type == ParseResultType::SUCCESS) {
             return parse_result_make_success(
                 normal_mode_command_make_with_motion(NormalModeCommandType::DELETE_MOTION, repeat_count.result, motion_parse.result),
                 repeat_count.key_message_count + 1 + motion_parse.key_message_count
@@ -1428,7 +1429,7 @@ ParseResult<NormalModeCommand> key_messages_parse_normal_mode_command(Array<Key_
     }
     if (messages[0].character == 'y') {
         ParseResult<Motion> motion_parse = key_messages_parse_motion(array_make_slice(&messages, 1, messages.size));
-        if (motion_parse.type == ParseResultType::SUCCESS) {
+        if (motion_parse.symbol_type == ParseResultType::SUCCESS) {
             return parse_result_make_success(
                 normal_mode_command_make_with_motion(NormalModeCommandType::YANK_MOTION, repeat_count.result, motion_parse.result),
                 repeat_count.key_message_count + 1 + motion_parse.key_message_count
@@ -1438,7 +1439,7 @@ ParseResult<NormalModeCommand> key_messages_parse_normal_mode_command(Array<Key_
     }
     if (messages[0].character == 'c') {
         ParseResult<Motion> motion_parse = key_messages_parse_motion(array_make_slice(&messages, 1, messages.size));
-        if (motion_parse.type == ParseResultType::SUCCESS) {
+        if (motion_parse.symbol_type == ParseResultType::SUCCESS) {
             return parse_result_make_success(
                 normal_mode_command_make_with_motion(NormalModeCommandType::CHANGE_MOTION, repeat_count.result, motion_parse.result),
                 repeat_count.key_message_count + 1 + motion_parse.key_message_count
@@ -1460,7 +1461,7 @@ ParseResult<NormalModeCommand> key_messages_parse_normal_mode_command(Array<Key_
     }
     if (messages[0].character == 'v') {
         ParseResult<Motion> motion_parse = key_messages_parse_motion(array_make_slice(&messages, 1, messages.size));
-        if (motion_parse.type == ParseResultType::SUCCESS) {
+        if (motion_parse.symbol_type == ParseResultType::SUCCESS) {
             return parse_result_make_success(
                 normal_mode_command_make_with_motion(NormalModeCommandType::VISUALIZE_MOTION, repeat_count.result, motion_parse.result),
                 repeat_count.key_message_count + 1 + motion_parse.key_message_count
@@ -1516,7 +1517,7 @@ void insert_mode_handle_message(Text_Editor* editor, Key_Message* msg);
 void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
 {
     bool save_as_last_command = false;
-    switch (command.type)
+    switch (command.symbol_type)
     {
     case NormalModeCommandType::CHANGE_LINE: {
         text_history_start_record_complex_command(&editor->history);
@@ -1530,9 +1531,9 @@ void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
     case NormalModeCommandType::CHANGE_MOTION: {
         Text_Slice slice = motion_evaluate_at_position(command.motion, &editor->lines, editor->cursor_position,
             &editor->last_search_char, &editor->last_search_was_forwards, &editor->horizontal_position);
-        if (command.motion.type == MotionType::MOVEMENT &&
-            (command.motion.movement.type == MovementType::SEARCH_FORWARDS_FOR ||
-            command.motion.movement.type == MovementType::SEARCH_FORWARDS_TO)) {
+        if (command.motion.symbol_type == MotionType::MOVEMENT &&
+            (command.motion.movement.symbol_type == MovementType::SEARCH_FORWARDS_FOR ||
+            command.motion.movement.symbol_type == MovementType::SEARCH_FORWARDS_TO)) {
             slice.end = text_position_next(slice.end, editor->lines);
         }
         text_history_start_record_complex_command(&editor->history);
@@ -1586,9 +1587,9 @@ void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
     case NormalModeCommandType::DELETE_MOTION: {
         Text_Slice slice = motion_evaluate_at_position(command.motion, &editor->lines, editor->cursor_position,
             &editor->last_search_char, &editor->last_search_was_forwards, &editor->horizontal_position);
-        if (command.motion.type == MotionType::MOVEMENT &&
-            (command.motion.movement.type == MovementType::SEARCH_FORWARDS_FOR ||
-            command.motion.movement.type == MovementType::SEARCH_FORWARDS_TO)) {
+        if (command.motion.symbol_type == MotionType::MOVEMENT &&
+            (command.motion.movement.symbol_type == MovementType::SEARCH_FORWARDS_FOR ||
+            command.motion.movement.symbol_type == MovementType::SEARCH_FORWARDS_TO)) {
             slice.end = text_position_next(slice.end, editor->lines);
         }
         editor->last_yank_was_line = false;
@@ -1872,11 +1873,11 @@ void normal_mode_handle_message(Text_Editor* editor, Key_Message* new_message)
     dynamic_array_push_back(messages, *new_message);
 
     ParseResult<NormalModeCommand> command_parse = key_messages_parse_normal_mode_command(dynamic_array_to_array(messages));
-    if (command_parse.type == ParseResultType::SUCCESS) {
+    if (command_parse.symbol_type == ParseResultType::SUCCESS) {
         normal_mode_command_execute(command_parse.result, editor);
         dynamic_array_reset(messages);
     }
-    else if (command_parse.type == ParseResultType::FAILURE) {
+    else if (command_parse.symbol_type == ParseResultType::FAILURE) {
         String output = string_create_formated("Could not parse input, length: %d\n", messages->size);
         SCOPE_EXIT(string_destroy(&output));
         key_messages_append_to_string(dynamic_array_to_array(messages), &output);
@@ -1893,6 +1894,14 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
     editor->line_size_cm = 1.0f * math_power(1.1f, zoom);
     if (input->key_messages.size != 0) {
         editor->last_keymessage_time = current_time;
+    }
+
+    if (input->key_down[KEY_CODE::CTRL] && input->key_pressed[KEY_CODE::S]) {
+        String output = string_create_empty(256);
+        SCOPE_EXIT(string_destroy(&output););
+        text_append_to_string(&editor->lines, &output);
+        file_io_write_file("editor_text.txt", array_create_static((byte*)output.characters, output.size));
+        logg("Saved text file!\n");
     }
 
     // Handle all messages
@@ -1923,8 +1932,8 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
         SCOPE_EXIT(string_destroy(&fill_string));
 
         text_append_to_string(&editor->lines, &fill_string);
-        LexerResult result = lexer_parse_string(&fill_string);
-        SCOPE_EXIT(lexer_result_destroy(&result));
+        Lexer result = lexer_parse_string(&fill_string);
+        SCOPE_EXIT(lexer_destroy(&result));
 
         Parser parser = parser_parse(&result);
         SCOPE_EXIT(parser_destroy(&parser));
@@ -1938,6 +1947,12 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
             logg("There were parser errors: %d\n", parser.unresolved_errors.size);
             for (int i = 0; i < parser.unresolved_errors.size; i++) {
                 logg("Parser error #%d: %s", parser.unresolved_errors.size, parser.unresolved_errors[i].error_message);
+            }
+        }
+        else if (parser.semantic_analysis_errors.size > 0) {
+            logg("There were semantic analysis errors (#%d):\n", parser.semantic_analysis_errors.size);
+            for (int i = 0; i < parser.semantic_analysis_errors.size; i++) {
+                logg("%s\n", parser.semantic_analysis_errors[i]);
             }
         }
         else if (input->key_pressed[KEY_CODE::F5]) {
@@ -2018,20 +2033,20 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
                 char current = text_get_character_after(&editor->lines, pos);
                 char next = text_get_character_after(&editor->lines, text_position_next(pos, editor->lines));
                 if (current == '/' && next == '/') {
-                    text_editor_add_highlight_from_slice(editor, 
+                    text_editor_add_highlight_from_slice(editor,
                         text_slice_make(pos, text_position_make(pos.line, editor->lines[pos.line].size)), COMMENT_COLOR, COMMENT_BG_COLOR);
                     pos.line++;
                     pos.character = 0;
                     text_position_sanitize(&pos, editor->lines);
                     continue;
                 }
-                if (current == '/' && next == '*') 
+                if (current == '/' && next == '*')
                 {
                     Text_Position comment_start = pos;
                     int depth = 1;
                     pos = text_position_next(pos, editor->lines);
                     pos = text_position_next(pos, editor->lines);
-                    while (!text_position_are_equal(pos, text_position_make_end(&editor->lines))) 
+                    while (!text_position_are_equal(pos, text_position_make_end(&editor->lines)))
                     {
                         char current = text_get_character_after(&editor->lines, pos);
                         char next = text_get_character_after(&editor->lines, text_position_next(pos, editor->lines));
@@ -2050,7 +2065,7 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
                         }
                         pos = text_position_next(pos, editor->lines);
                     }
-                    text_editor_add_highlight_from_slice(editor, 
+                    text_editor_add_highlight_from_slice(editor,
                         text_slice_make(comment_start, pos), COMMENT_COLOR, COMMENT_BG_COLOR);
                 }
 

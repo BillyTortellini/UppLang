@@ -406,3 +406,10 @@ bool string_contains_only_characters_in_set(String* string, String set, bool use
     return true;
 }
 
+bool string_equals_cstring(String* string, const char* compare) {
+    if (strcmp(string->characters, compare) == 0) {
+        return true;
+    }
+    return false;
+}
+
