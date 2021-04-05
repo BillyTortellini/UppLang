@@ -186,6 +186,15 @@
     <ClInclude Include="programs\upp_lang\bytecode.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
     </ClInclude>
+    <ClInclude Include="programs\upp_lang\ast_structure_test.hpp">
+      <Filter>Header Files\Programs\Upp_Lang</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\upp_lang\lexer.hpp">
+      <Filter>Header Files\Programs\Upp_Lang</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\upp_lang\ast_interpreter.hpp">
+      <Filter>Header Files\Programs\Upp_Lang</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="datastructures\array.cpp">
@@ -303,6 +312,15 @@
       <Filter>Source Files\Programs\Upp_Lang</Filter>
     </ClCompile>
     <ClCompile Include="programs\upp_lang\bytecode.cpp">
+      <Filter>Source Files\Programs\Upp_Lang</Filter>
+    </ClCompile>
+    <ClCompile Include="programs\upp_lang\lexer.cpp">
+      <Filter>Source Files\Programs\Upp_Lang</Filter>
+    </ClCompile>
+    <ClCompile Include="programs\upp_lang\ast_interpreter.cpp">
+      <Filter>Source Files\Programs\Upp_Lang</Filter>
+    </ClCompile>
+    <ClCompile Include="programs\upp_lang\ast_structure_test.cpp">
       <Filter>Source Files\Programs\Upp_Lang</Filter>
     </ClCompile>
   </ItemGroup>

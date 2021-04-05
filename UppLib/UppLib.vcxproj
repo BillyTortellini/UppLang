@@ -30,8 +30,11 @@
     <ClInclude Include="math\umath.hpp" />
     <ClInclude Include="math\vectors.hpp" />
     <ClInclude Include="programs\proc_city\proc_city.hpp" />
+    <ClInclude Include="programs\upp_lang\ast_interpreter.hpp" />
+    <ClInclude Include="programs\upp_lang\ast_structure_test.hpp" />
     <ClInclude Include="programs\upp_lang\bytecode.hpp" />
     <ClInclude Include="programs\upp_lang\compiler.hpp" />
+    <ClInclude Include="programs\upp_lang\lexer.hpp" />
     <ClInclude Include="programs\upp_lang\text.hpp" />
     <ClInclude Include="programs\upp_lang\text_editor.hpp" />
     <ClInclude Include="programs\upp_lang\upp_lang.hpp" />
@@ -72,8 +75,11 @@
     <ClCompile Include="math\spherical.cpp" />
     <ClCompile Include="math\vectors.cpp" />
     <ClCompile Include="programs\proc_city\proc_city.cpp" />
+    <ClCompile Include="programs\upp_lang\ast_interpreter.cpp" />
+    <ClCompile Include="programs\upp_lang\ast_structure_test.cpp" />
     <ClCompile Include="programs\upp_lang\bytecode.cpp" />
     <ClCompile Include="programs\upp_lang\compiler.cpp" />
+    <ClCompile Include="programs\upp_lang\lexer.cpp" />
     <ClCompile Include="programs\upp_lang\text.cpp" />
     <ClCompile Include="programs\upp_lang\text_editor.cpp" />
     <ClCompile Include="programs\upp_lang\upp_lang.cpp" />

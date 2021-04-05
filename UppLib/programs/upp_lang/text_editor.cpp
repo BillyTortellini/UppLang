@@ -1,6 +1,5 @@
 #include "text_editor.hpp"
 
-#include "compiler.hpp"
 #include "../../rendering/text_renderer.hpp"
 #include "../../win32/window.hpp"
 #include "../../rendering/opengl_state.hpp"
@@ -9,6 +8,9 @@
 #include "../../rendering/mesh_utils.hpp"
 #include "../../math/scalars.hpp"
 #include "../../utility/file_io.hpp"
+
+#include "compiler.hpp"
+#include "ast_interpreter.hpp"
 
 void text_change_destroy_single(TextChange* change) 
 {
