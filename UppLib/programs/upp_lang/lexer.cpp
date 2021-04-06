@@ -137,8 +137,11 @@ void code_skip_whitespace_and_comments(String* code, int* index, int* character_
 {
     while (*index < code->size && string_contains_character(string_create_static("\t \r\n/"), code->characters[*index]))
     {
+        // Comment part
         if (code_skip_comments(code, index, character_pos, line_number)) continue;
         else if (code->characters[*index] == '/') break;
+
+        // Whitespace part
         (*character_pos)++;
         if (code->characters[*index] == '\n') {
             *character_pos = 0;
@@ -173,14 +176,24 @@ int lexer_add_or_find_identifier_by_string(Lexer* lexer, String identifier)
     }
 }
 
-Lexer lexer_parse_string(String* code)
+Lexer lexer_create()
+{
+    Lexer lexer;
+    lexer.identifier_index_lookup_table = hashtable_create_empty<String, int>(2048, &string_calculate_hash, &string_equals);
+    lexer.identifiers = dynamic_array_create_empty<String>(1024);
+    lexer.tokens = dynamic_array_create_empty<Token>(1024);
+    return lexer;
+}
+
+void lexer_parse_string(Lexer* lexer, String* code)
 {
     String identifier_string = string_create_empty(256);
     SCOPE_EXIT(string_destroy(&identifier_string));
 
-    Hashtable<String, int> identifier_index_lookup_table = hashtable_create_empty<String, int>(2048, &string_calculate_hash, &string_equals);
-    DynamicArray<String> identifiers = dynamic_array_create_empty<String>(code->size);
-    DynamicArray<Token> tokens = dynamic_array_create_empty<Token>(code->size);
+    dynamic_array_reset(&lexer->tokens);
+    dynamic_array_reset(&lexer->identifiers);
+    hashtable_reset(&lexer->identifier_index_lookup_table);
+
     int index = 0;
     int character_pos = 0;
     int line_number = 0;
@@ -204,162 +217,162 @@ Lexer lexer_parse_string(String* code)
         {
             // Check for single symbols
         case '.':
-            dynamic_array_push_back(&tokens, token_make(Token_Type::DOT, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::DOT, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case ';':
-            dynamic_array_push_back(&tokens, token_make(Token_Type::SEMICOLON, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::SEMICOLON, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case ',':
-            dynamic_array_push_back(&tokens, token_make(Token_Type::COMMA, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::COMMA, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case '(':
-            dynamic_array_push_back(&tokens, token_make(Token_Type::OPEN_PARENTHESIS, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::OPEN_PARENTHESIS, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case ')':
-            dynamic_array_push_back(&tokens, token_make(Token_Type::CLOSED_PARENTHESIS, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::CLOSED_PARENTHESIS, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case '{':
-            dynamic_array_push_back(&tokens, token_make(Token_Type::OPEN_BRACES, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::OPEN_BRACES, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case '}':
-            dynamic_array_push_back(&tokens, token_make(Token_Type::CLOSED_BRACES, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::CLOSED_BRACES, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case '[':
-            dynamic_array_push_back(&tokens, token_make(Token_Type::OPEN_BRACKETS, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::OPEN_BRACKETS, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case ']':
-            dynamic_array_push_back(&tokens, token_make(Token_Type::CLOSED_BRACKETS, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::CLOSED_BRACKETS, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case '+':
-            dynamic_array_push_back(&tokens, token_make(Token_Type::OP_PLUS, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::OP_PLUS, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case '*':
-            dynamic_array_push_back(&tokens, token_make(Token_Type::OP_STAR, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::OP_STAR, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case '/':
-            dynamic_array_push_back(&tokens, token_make(Token_Type::OP_SLASH, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::OP_SLASH, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case '%':
-            dynamic_array_push_back(&tokens, token_make(Token_Type::OP_PERCENT, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::OP_PERCENT, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
             // Check for ambiguities between one and two characters (< and <=, = and ==, ! and !=, ...)
         case '=':
             if (next_character == '=') {
-                dynamic_array_push_back(&tokens, token_make(Token_Type::COMPARISON_EQUAL, token_attribute_make_empty(), line_number, character_pos, 2, index));
+                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::COMPARISON_EQUAL, token_attribute_make_empty(), line_number, character_pos, 2, index));
                 index += 2;
                 character_pos += 2;
                 continue;
             }
-            dynamic_array_push_back(&tokens, token_make(Token_Type::OP_ASSIGNMENT, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::OP_ASSIGNMENT, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case '-':
             if (next_character == '>') {
-                dynamic_array_push_back(&tokens, token_make(Token_Type::ARROW, token_attribute_make_empty(), line_number, character_pos, 2, index));
+                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::ARROW, token_attribute_make_empty(), line_number, character_pos, 2, index));
                 index += 2;
                 character_pos += 2;
                 continue;
             }
-            dynamic_array_push_back(&tokens, token_make(Token_Type::OP_MINUS, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::OP_MINUS, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case '<':
             if (next_character == '=') {
-                dynamic_array_push_back(&tokens, token_make(Token_Type::COMPARISON_LESS_EQUAL, token_attribute_make_empty(), line_number, character_pos, 2, index));
+                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::COMPARISON_LESS_EQUAL, token_attribute_make_empty(), line_number, character_pos, 2, index));
                 index += 2;
                 character_pos += 2;
                 continue;
             }
-            dynamic_array_push_back(&tokens, token_make(Token_Type::COMPARISON_LESS, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::COMPARISON_LESS, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case '>':
             if (next_character == '=') {
-                dynamic_array_push_back(&tokens, token_make(Token_Type::COMPARISON_GREATER_EQUAL, token_attribute_make_empty(), line_number, character_pos, 2, index));
+                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::COMPARISON_GREATER_EQUAL, token_attribute_make_empty(), line_number, character_pos, 2, index));
                 index += 2;
                 character_pos += 2;
                 continue;
             }
-            dynamic_array_push_back(&tokens, token_make(Token_Type::COMPARISON_GREATER, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::COMPARISON_GREATER, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case '!':
             if (next_character == '=') {
-                dynamic_array_push_back(&tokens, token_make(Token_Type::COMPARISON_NOT_EQUAL, token_attribute_make_empty(), line_number, character_pos, 2, index));
+                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::COMPARISON_NOT_EQUAL, token_attribute_make_empty(), line_number, character_pos, 2, index));
                 index += 2;
                 character_pos += 2;
                 continue;
             }
-            dynamic_array_push_back(&tokens, token_make(Token_Type::LOGICAL_NOT, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::LOGICAL_NOT, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case '&':
             if (next_character == '&') {
-                dynamic_array_push_back(&tokens, token_make(Token_Type::LOGICAL_AND, token_attribute_make_empty(), line_number, character_pos, 2, index));
+                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::LOGICAL_AND, token_attribute_make_empty(), line_number, character_pos, 2, index));
                 index += 2;
                 character_pos += 2;
                 continue;
             }
-            dynamic_array_push_back(&tokens, token_make(Token_Type::LOGICAL_BITWISE_AND, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::LOGICAL_BITWISE_AND, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case '|':
             if (next_character == '|') {
-                dynamic_array_push_back(&tokens, token_make(Token_Type::LOGICAL_OR, token_attribute_make_empty(), line_number, character_pos, 2, index));
+                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::LOGICAL_OR, token_attribute_make_empty(), line_number, character_pos, 2, index));
                 index += 2;
                 character_pos += 2;
                 continue;
             }
-            dynamic_array_push_back(&tokens, token_make(Token_Type::LOGICAL_BITWISE_OR, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::LOGICAL_BITWISE_OR, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
         case ':':
             if (next_character == ':') {
-                dynamic_array_push_back(&tokens, token_make(Token_Type::DOUBLE_COLON, token_attribute_make_empty(), line_number, character_pos, 2, index));
+                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::DOUBLE_COLON, token_attribute_make_empty(), line_number, character_pos, 2, index));
                 index += 2;
                 character_pos += 2;
                 continue;
             }
             else if (next_character == '=') {
-                dynamic_array_push_back(&tokens, token_make(Token_Type::INFER_ASSIGN, token_attribute_make_empty(), line_number, character_pos, 2, index));
+                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::INFER_ASSIGN, token_attribute_make_empty(), line_number, character_pos, 2, index));
                 index += 2;
                 character_pos += 2;
                 continue;
             }
-            dynamic_array_push_back(&tokens, token_make(Token_Type::COLON, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::COLON, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
@@ -424,7 +437,7 @@ Lexer lexer_parse_string(String* code)
                 else {
                     character_length = post_comma_end_index - pre_comma_start_index + 1;
                 }
-                dynamic_array_push_back(&tokens, token_make(Token_Type::FLOAT_LITERAL, attribute, line_number, character_pos, character_length, index));
+                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::FLOAT_LITERAL, attribute, line_number, character_pos, character_length, index));
                 index += character_length;
                 character_pos += character_length;
                 continue;
@@ -434,7 +447,7 @@ Lexer lexer_parse_string(String* code)
                 TokenAttribute attribute;
                 attribute.integer_value = int_value;
                 int character_length = pre_comma_end_index - pre_comma_start_index + 1;
-                dynamic_array_push_back(&tokens, token_make(Token_Type::INTEGER_LITERAL, attribute, line_number, character_pos, character_length, index));
+                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::INTEGER_LITERAL, attribute, line_number, character_pos, character_length, index));
                 index += character_length;
                 character_pos += character_length;
                 continue;
@@ -473,7 +486,7 @@ Lexer lexer_parse_string(String* code)
             has_errors = true;
             error_end_index--;
             int error_length = error_end_index - index + 1;
-            dynamic_array_push_back(&tokens, token_make(Token_Type::ERROR_TOKEN, token_attribute_make_empty(), line_number, character_pos, error_length, index));
+            dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::ERROR_TOKEN, token_attribute_make_empty(), line_number, character_pos, error_length, index));
             index += error_length;
             character_pos += error_length;
             continue;
@@ -499,43 +512,43 @@ Lexer lexer_parse_string(String* code)
 
             // Check if identifier is a keyword
             if (string_equals_cstring(&identifier_string, "if")) {
-                dynamic_array_push_back(&tokens, token_make(Token_Type::IF, token_attribute_make_empty(),
+                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::IF, token_attribute_make_empty(),
                     line_number, character_pos, identifier_string_length, index));
                 index += identifier_string_length;
                 character_pos += identifier_string_length;
             }
             else if (string_equals_cstring(&identifier_string, "else")) {
-                dynamic_array_push_back(&tokens, token_make(Token_Type::ELSE, token_attribute_make_empty(),
+                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::ELSE, token_attribute_make_empty(),
                     line_number, character_pos, identifier_string_length, index));
                 index += identifier_string_length;
                 character_pos += identifier_string_length;
             }
             else if (string_equals_cstring(&identifier_string, "for")) {
-                dynamic_array_push_back(&tokens, token_make(Token_Type::FOR, token_attribute_make_empty(),
+                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::FOR, token_attribute_make_empty(),
                     line_number, character_pos, identifier_string_length, index));
                 index += identifier_string_length;
                 character_pos += identifier_string_length;
             }
             else if (string_equals_cstring(&identifier_string, "while")) {
-                dynamic_array_push_back(&tokens, token_make(Token_Type::WHILE, token_attribute_make_empty(),
+                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::WHILE, token_attribute_make_empty(),
                     line_number, character_pos, identifier_string_length, index));
                 index += identifier_string_length;
                 character_pos += identifier_string_length;
             }
             else if (string_equals_cstring(&identifier_string, "continue")) {
-                dynamic_array_push_back(&tokens, token_make(Token_Type::CONTINUE, token_attribute_make_empty(),
+                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::CONTINUE, token_attribute_make_empty(),
                     line_number, character_pos, identifier_string_length, index));
                 index += identifier_string_length;
                 character_pos += identifier_string_length;
             }
             else if (string_equals_cstring(&identifier_string, "break")) {
-                dynamic_array_push_back(&tokens, token_make(Token_Type::BREAK, token_attribute_make_empty(),
+                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::BREAK, token_attribute_make_empty(),
                     line_number, character_pos, identifier_string_length, index));
                 index += identifier_string_length;
                 character_pos += identifier_string_length;
             }
             else if (string_equals_cstring(&identifier_string, "return")) {
-                dynamic_array_push_back(&tokens, token_make(Token_Type::RETURN, token_attribute_make_empty(),
+                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::RETURN, token_attribute_make_empty(),
                     line_number, character_pos, identifier_string_length, index));
                 index += identifier_string_length;
                 character_pos += identifier_string_length;
@@ -543,7 +556,7 @@ Lexer lexer_parse_string(String* code)
             else if (string_equals_cstring(&identifier_string, "true")) {
                 TokenAttribute attribute;
                 attribute.bool_value = true;
-                dynamic_array_push_back(&tokens, token_make(Token_Type::BOOLEAN_LITERAL, attribute,
+                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::BOOLEAN_LITERAL, attribute,
                     line_number, character_pos, identifier_string_length, index));
                 index += identifier_string_length;
                 character_pos += identifier_string_length;
@@ -551,7 +564,7 @@ Lexer lexer_parse_string(String* code)
             else if (string_equals_cstring(&identifier_string, "false")) {
                 TokenAttribute attribute;
                 attribute.bool_value = false;
-                dynamic_array_push_back(&tokens, token_make(Token_Type::BOOLEAN_LITERAL, attribute,
+                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::BOOLEAN_LITERAL, attribute,
                     line_number, character_pos, identifier_string_length, index));
                 index += identifier_string_length;
                 character_pos += identifier_string_length;
@@ -559,32 +572,26 @@ Lexer lexer_parse_string(String* code)
             else {
                 // Identifier is acutally a identifier, not a keyword
                 TokenAttribute attribute;
-                int* identifier_id = hashtable_find_element(&identifier_index_lookup_table, identifier_string);
+                int* identifier_id = hashtable_find_element(&lexer->identifier_index_lookup_table, identifier_string);
                 if (identifier_id != 0) {
                     attribute.identifier_number = *identifier_id;
                 }
                 else {
                     String identifier_string_copy = string_create(identifier_string.characters);
-                    dynamic_array_push_back(&identifiers, identifier_string_copy);
-                    attribute.identifier_number = identifiers.size - 1;
+                    dynamic_array_push_back(&lexer->identifiers, identifier_string_copy);
+                    attribute.identifier_number = lexer->identifiers.size - 1;
                     // Identifer needs to be added to table
-                    hashtable_insert_element(&identifier_index_lookup_table, identifier_string_copy, attribute.identifier_number);
+                    hashtable_insert_element(&lexer->identifier_index_lookup_table, identifier_string_copy, attribute.identifier_number);
                 }
 
                 // Add token
-                dynamic_array_push_back(&tokens, token_make(Token_Type::IDENTIFIER, attribute,
+                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::IDENTIFIER, attribute,
                     line_number, character_pos, identifier_string_length, index));
                 index += identifier_string_length;
                 character_pos += identifier_string_length;
             }
         }
     }
-
-    Lexer result;
-    result.identifiers = identifiers;
-    result.tokens = tokens;
-    result.identifier_index_lookup_table = identifier_index_lookup_table;
-    return result;
 }
 
 void lexer_destroy(Lexer* lexer)

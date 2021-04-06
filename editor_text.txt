@@ -19,10 +19,9 @@ main :: () -> int
     x := 5;
     x = 5;
     y := x * x;
-    return fibonnaci_rec(10); 
+    return fibonnaci_rec(10);
 }
 
-/*
 fibonnaci_rec :: (n:int) -> int
 {
     if (n <= 2) 
@@ -31,7 +30,6 @@ fibonnaci_rec :: (n:int) -> int
            fibonnaci_rec(n-2);
     return res;
 }
-*/
 
 
 /*  

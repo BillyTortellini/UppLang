@@ -9,7 +9,6 @@
 #include "../../math/scalars.hpp"
 #include "../../utility/file_io.hpp"
 
-#include "ast_structure_test.hpp"
 //#include "compiler.hpp"
 //#include "ast_interpreter.hpp"
 
@@ -318,6 +317,9 @@ Text_Editor text_editor_create(TextRenderer* text_renderer, FileListener* listen
     result.yanked_string = string_create_empty(64);
     result.last_yank_was_line = false;
 
+    result.parser = ast_parser_create();
+    result.lexer = lexer_create();
+
     return result;
 }
 
@@ -336,6 +338,9 @@ void text_editor_destroy(Text_Editor* editor)
 
     dynamic_array_destroy(&editor->normal_mode_incomplete_command);
     dynamic_array_destroy(&editor->last_insert_mode_inputs);
+
+    ast_parser_destroy(&editor->parser);
+    lexer_destroy(&editor->lexer);
 }
 
 void text_editor_synchronize_highlights_array(Text_Editor* editor)
@@ -385,8 +390,48 @@ BoundingBox2 text_editor_get_character_bounding_box(Text_Editor* editor, float t
     return result;
 }
 
+Text_Slice token_to_text_slice(Token token) {
+    return text_slice_make(text_position_make(token.line_number, token.character_position),
+                text_position_make(token.line_number, token.character_position + token.lexem_length));
+}
+void text_editor_add_highlight_from_slice(Text_Editor* editor, Text_Slice slice, vec3 text_color, vec4 background_color);
 void text_editor_render(Text_Editor* editor, OpenGLState* state, int width, int height, int dpi, BoundingBox2 editor_region, double time)
 {
+    // Testing
+    {
+        String test = string_create_empty(32);
+        SCOPE_EXIT(string_destroy(&test));
+        // Find current token
+        Token* found = 0;
+        int found_index = 0;
+        for (int i = 0; i < editor->lexer.tokens.size; i++) {
+            Token* t = &editor->lexer.tokens[i];
+            if (editor->cursor_position.character >= t->character_position &&
+                editor->cursor_position.character < t->character_position + t->lexem_length &&
+                editor->cursor_position.line == t->line_number) {
+                found = t;
+                found_index = i;
+            }
+        }
+        text_editor_reset_highlights(editor);
+        int count = 0;
+        for (int i = 0; i < editor->parser.token_mapping.size; i++) {
+            Token_Range range = editor->parser.token_mapping[i];
+            if (range.start_index == range.end_index) continue;
+            Text_Position start = token_to_text_slice(editor->lexer.tokens[range.start_index]).start;
+            Text_Position end = text_position_previous(token_to_text_slice(editor->lexer.tokens[range.end_index-1]).end, editor->lines);
+            Text_Slice slice = text_slice_make(start, end);
+            if (text_slice_contains_position(slice, editor->cursor_position)) {
+                count++;
+                text_editor_add_highlight_from_slice(editor, slice, vec3(1.0f), vec4(0.25f*count, 0.0f, 0.0f, 0.5f));
+                String type_str =ast_node_type_to_string(editor->parser.nodes[i].type);
+                string_append_formated(&test, "%s\n", type_str.characters);
+            }
+        }
+
+        text_renderer_add_text(editor->renderer, &test, vec2(0.0f, 0.0f), 0.05f, 1.0f);
+    }
+
     //text_editor_draw_bounding_box(editor, state, editor_region, vec3(0.0f, 0.2f, 0.0f));
     float text_height = 2.0f * (editor->line_size_cm) / (height / (float)dpi * 2.54f);
     editor->last_editor_region = editor_region;
@@ -397,10 +442,10 @@ void text_editor_render(Text_Editor* editor, OpenGLState* state, int width, int 
     if (editor->cursor_position.line < editor->first_rendered_line) {
         editor->first_rendered_line = editor->cursor_position.line;
     }
-    int last_line = math_minimum(editor->first_rendered_line + max_line_count-1, editor->lines.size-1);
+    int last_line = math_minimum(editor->first_rendered_line + max_line_count - 1, editor->lines.size - 1);
     if (editor->cursor_position.line > last_line) {
         last_line = editor->cursor_position.line;
-        editor->first_rendered_line = last_line - max_line_count+1;
+        editor->first_rendered_line = last_line - max_line_count + 1;
     }
 
     // Draw line numbers (Reduces the editor viewport for the text)
@@ -410,7 +455,7 @@ void text_editor_render(Text_Editor* editor, OpenGLState* state, int width, int 
         int line_number_char_count = editor->line_count_buffer.size;
 
         vec2 line_pos = vec2(editor_region.min.x, editor_region.max.y - text_height);
-        for (int i = editor->first_rendered_line; i <= last_line; i++) 
+        for (int i = editor->first_rendered_line; i <= last_line; i++)
         {
             // Do line number formating
             string_reset(&editor->line_count_buffer);
@@ -427,7 +472,7 @@ void text_editor_render(Text_Editor* editor, OpenGLState* state, int width, int 
 
             // Trim line number if we are outside of the text_region
             TextLayout* layout = text_renderer_calculate_text_layout(editor->renderer, &editor->line_count_buffer, text_height, 1.0f);
-            for (int j = layout->character_positions.size-1; j >= 0; j--) {
+            for (int j = layout->character_positions.size - 1; j >= 0; j--) {
                 BoundingBox2 positioned_char = layout->character_positions[j].bounding_box;
                 positioned_char.min += line_pos;
                 positioned_char.max += line_pos;
@@ -441,7 +486,7 @@ void text_editor_render(Text_Editor* editor, OpenGLState* state, int width, int 
             text_renderer_add_text_from_layout(editor->renderer, layout, line_pos);
             line_pos.y -= (text_height);
         }
-        editor_region.min.x += text_renderer_calculate_text_width(editor->renderer, line_number_char_count+1, text_height);
+        editor_region.min.x += text_renderer_calculate_text_width(editor->renderer, line_number_char_count + 1, text_height);
     }
 
     // Calculate the first and last character to be drawn in any line (Viewport)
@@ -461,16 +506,16 @@ void text_editor_render(Text_Editor* editor, OpenGLState* state, int width, int 
     for (int i = editor->first_rendered_line; i <= last_line; i++)
     {
         String* line = &editor->lines[i];
-        String truncated_line = string_create_substring_static(line, editor->first_rendered_char, last_char+1);
+        String truncated_line = string_create_substring_static(line, editor->first_rendered_char, last_char + 1);
         TextLayout* line_layout = text_renderer_calculate_text_layout(editor->renderer, &truncated_line, text_height, 1.0f);
         for (int j = 0; j < editor->text_highlights.data[i].size; j++)
         {
             TextHighlight* highlight = &editor->text_highlights.data[i].data[j];
             // Draw text background 
             {
-                BoundingBox2 highlight_start = text_editor_get_character_bounding_box(editor, 
+                BoundingBox2 highlight_start = text_editor_get_character_bounding_box(editor,
                     text_height, i, highlight->character_start, editor_region);
-                BoundingBox2 highlight_end = text_editor_get_character_bounding_box(editor, text_height, i, highlight->character_end - 1, 
+                BoundingBox2 highlight_end = text_editor_get_character_bounding_box(editor, text_height, i, highlight->character_end - 1,
                     editor_region);
                 BoundingBox2 combined = bounding_box_2_combine(highlight_start, highlight_end);
                 text_editor_draw_bounding_box(editor, state, combined, highlight->background_color);
@@ -495,7 +540,7 @@ void text_editor_render(Text_Editor* editor, OpenGLState* state, int width, int 
         // Actually i want some time since last input to start blinking the cursor
         double inactivity_time_to_cursor_blink = 1.0;
         double blink_length = 0.5;
-        bool show_cursor = true; 
+        bool show_cursor = true;
         if (editor->last_keymessage_time + inactivity_time_to_cursor_blink < time) {
             show_cursor = math_modulo(time - editor->last_keymessage_time - inactivity_time_to_cursor_blink, blink_length * 2.0) > blink_length;
         }
@@ -568,7 +613,7 @@ Movement movement_make(MovementType::ENUM symbol_type, int repeat_count, char se
     return result;
 }
 
-Text_Slice text_slice_make_inside_parenthesis(DynamicArray<String>* text, Text_Position pos, char open_parenthesis, char closed_parenthesis) 
+Text_Slice text_slice_make_inside_parenthesis(DynamicArray<String>* text, Text_Position pos, char open_parenthesis, char closed_parenthesis)
 {
     Text_Slice result = text_slice_make(pos, pos);
     Text_Position text_start = text_position_make_start();
@@ -848,10 +893,10 @@ Text_Position movement_evaluate_at_position(Movement movement, DynamicArray<Stri
             switch (iterator.character) {
             case '(': open_parenthesis = '('; closed_parenthesis = ')'; on_open_side = true; break;
             case ')': open_parenthesis = '('; closed_parenthesis = ')'; on_open_side = false; break;
-            case '{': open_parenthesis = '{'; closed_parenthesis = '}'; on_open_side = true;break;
-            case '}': open_parenthesis = '{'; closed_parenthesis = '}'; on_open_side = false;break;
-            case '[': open_parenthesis = '['; closed_parenthesis = ']'; on_open_side = true;break;
-            case ']': open_parenthesis = '['; closed_parenthesis = ']'; on_open_side = false;break;
+            case '{': open_parenthesis = '{'; closed_parenthesis = '}'; on_open_side = true; break;
+            case '}': open_parenthesis = '{'; closed_parenthesis = '}'; on_open_side = false; break;
+            case '[': open_parenthesis = '['; closed_parenthesis = ']'; on_open_side = true; break;
+            case ']': open_parenthesis = '['; closed_parenthesis = ']'; on_open_side = false; break;
             }
             if (open_parenthesis == '\0') {
                 break;
@@ -1536,7 +1581,7 @@ void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
             &editor->last_search_char, &editor->last_search_was_forwards, &editor->horizontal_position);
         if (command.motion.symbol_type == MotionType::MOVEMENT &&
             (command.motion.movement.symbol_type == MovementType::SEARCH_FORWARDS_FOR ||
-            command.motion.movement.symbol_type == MovementType::SEARCH_FORWARDS_TO)) {
+                command.motion.movement.symbol_type == MovementType::SEARCH_FORWARDS_TO)) {
             slice.end = text_position_next(slice.end, editor->lines);
         }
         text_history_start_record_complex_command(&editor->history);
@@ -1592,7 +1637,7 @@ void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
             &editor->last_search_char, &editor->last_search_was_forwards, &editor->horizontal_position);
         if (command.motion.symbol_type == MotionType::MOVEMENT &&
             (command.motion.movement.symbol_type == MovementType::SEARCH_FORWARDS_FOR ||
-            command.motion.movement.symbol_type == MovementType::SEARCH_FORWARDS_TO)) {
+                command.motion.movement.symbol_type == MovementType::SEARCH_FORWARDS_TO)) {
             slice.end = text_position_next(slice.end, editor->lines);
         }
         editor->last_yank_was_line = false;
@@ -1773,13 +1818,13 @@ void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
     }
     case NormalModeCommandType::MOVE_CURSOR_VIEWPORT_CENTER: {
         int line_count = (editor->last_editor_region.max.y - editor->last_editor_region.min.y) / editor->last_text_height;
-        editor->cursor_position.line = editor->first_rendered_line + line_count/2;
+        editor->cursor_position.line = editor->first_rendered_line + line_count / 2;
         text_editor_clamp_cursor(editor);
         break;
     }
     case NormalModeCommandType::MOVE_CURSOR_VIEWPORT_BOTTOM: {
         int line_count = (editor->last_editor_region.max.y - editor->last_editor_region.min.y) / editor->last_text_height;
-        editor->cursor_position.line = editor->first_rendered_line + line_count-1;
+        editor->cursor_position.line = editor->first_rendered_line + line_count - 1;
         text_editor_clamp_cursor(editor);
         break;
     }
@@ -1933,18 +1978,15 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
     {
         String fill_string = string_create_empty(2048);
         SCOPE_EXIT(string_destroy(&fill_string));
-
         text_append_to_string(&editor->lines, &fill_string);
         logg("--------Text--------: \n%s\n", fill_string.characters);
-        Lexer result = lexer_parse_string(&fill_string);
-        SCOPE_EXIT(lexer_destroy(&result));
 
-        AST_Parser parser = ast_parser_parse(&result);
-        SCOPE_EXIT(ast_parser_destroy(&parser));
+        lexer_parse_string(&editor->lexer, &fill_string);
+        ast_parser_parse(&editor->parser, &editor->lexer);
 
         String printed_ast = string_create_empty(256);
         SCOPE_EXIT(string_destroy(&printed_ast));
-        ast_parser_append_to_string(&parser, &printed_ast);
+        ast_parser_append_to_string(&editor->parser, &printed_ast);
         logg("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n");
         logg("Ast: \n%s\n", printed_ast.characters);
         //ast_node_root_append_to_string(&printed_ast, &parser.root, &result);

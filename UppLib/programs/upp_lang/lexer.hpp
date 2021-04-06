@@ -91,8 +91,9 @@ struct Lexer
 bool token_type_is_keyword(Token_Type::ENUM type);
 const char* token_type_to_string(Token_Type::ENUM type);
 
-Lexer lexer_parse_string(String* code);
+Lexer lexer_create();
 void lexer_destroy(Lexer* result);
+void lexer_parse_string(Lexer* lexer, String* code);
 void lexer_print(Lexer* result);
 String lexer_identifer_to_string(Lexer* Lexer, int index); // Does not do much
 int lexer_add_or_find_identifier_by_string(Lexer* Lexer, String identifier);

@@ -7,6 +7,8 @@
 #include "../../rendering/text_renderer.hpp"
 #include "../../win32/input.hpp"
 #include "text.hpp"
+#include "ast_structure_test.hpp"
+#include "lexer.hpp"
 
 struct Input;
 struct OpenGLState;
@@ -202,11 +204,16 @@ struct Text_Editor
     bool last_yank_was_line;
     char last_search_char;
     bool last_search_was_forwards;
+
+    // IDE schtuff
+    AST_Parser parser;
+    Lexer lexer;
 };
 
 Text_Editor text_editor_create(TextRenderer* text_renderer, FileListener* listener, OpenGLState* state);
 void text_editor_destroy(Text_Editor* editor);
 void text_editor_update(Text_Editor* editor, Input* input, double time);
 void text_editor_render(Text_Editor* editor, OpenGLState* state, int width, int height, int dpi, BoundingBox2 editor_box, double time);
+
 
 

@@ -61,6 +61,7 @@ struct Token_Range
     int start_index;
     int end_index;
 };
+Token_Range token_range_make(int start_index, int end_index);
 
 struct Parser_Error
 {
@@ -73,12 +74,6 @@ struct AST_Parser
 {
     DynamicArray<AST_Node> nodes;
     DynamicArray<Token_Range> token_mapping;
-
-    // TODO: Rethink error handling in the parser, intermediate/unresolved seem a bit wonkey
-    DynamicArray<Parser_Error> intermediate_errors;
-    DynamicArray<Parser_Error> unresolved_errors;
-
-    // Stuff for parsing
     Lexer* lexer;
     int index;
     AST_Node_Index next_free_node; // What is the next free node
@@ -93,6 +88,8 @@ struct AST_Parser_Checkpoint
     int next_free_node_index;
 };
 
-AST_Parser ast_parser_parse(Lexer* lexer);
+AST_Parser ast_parser_create();
+void ast_parser_parse(AST_Parser* parser, Lexer* lexer);
 void ast_parser_destroy(AST_Parser* parser);
 void ast_parser_append_to_string(AST_Parser* parser, String* string);
+String ast_node_type_to_string(AST_Node_Type::ENUM type);

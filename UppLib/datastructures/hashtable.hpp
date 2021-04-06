@@ -96,6 +96,23 @@ Hashtable<K, V> hashtable_create_empty(int capacity, u64(*hash_function)(K*), bo
 }
 
 template <typename K, typename V>
+void hashtable_reset(Hashtable<K, V>* table)
+{
+    for (int i = 0; i < table->entries.size; i++) {
+        Hashtable_Entry<K,V>* entry = &table->entries[i];
+        entry->valid = false;
+        if (entry->next != 0) {
+            entry = entry->next;
+            while (entry != 0) {
+                Hashtable_Entry<K, V>* next = entry->next;
+                delete entry;
+                entry = next;
+            }
+        }
+    }
+}
+
+template <typename K, typename V>
 void hashtable_destroy(Hashtable<K, V>* table) 
 {
     // Deleate all items in entry lists

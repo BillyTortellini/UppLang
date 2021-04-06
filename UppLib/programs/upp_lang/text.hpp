@@ -28,6 +28,7 @@ Text_Slice text_slice_make(Text_Position start, Text_Position end);
 void text_slice_sanitize(Text_Slice* slice, DynamicArray<String> text); 
 Text_Slice text_slice_make_line(DynamicArray<String> text, int line);
 Text_Slice text_slice_make_character_after(Text_Position pos, DynamicArray<String> text);
+bool text_slice_contains_position(Text_Slice slice, Text_Position pos);
 
 // Text Functions
 DynamicArray<String> text_create_empty();
