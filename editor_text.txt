@@ -1,5 +1,6 @@
 main :: () -> int
 {
+    // TODO: Error handling, code rewrite
     // Next feature: Semantic analysis error highlighting in editor
     /*
         Currently the AST sucks a little:
@@ -16,10 +17,12 @@ main :: () -> int
             but I think that with a parent pointer in AST this is not necessary
     */
     x := 5;
+    x = 5;
     y := x * x;
     return fibonnaci_rec(10); 
 }
 
+/*
 fibonnaci_rec :: (n:int) -> int
 {
     if (n <= 2) 
@@ -28,6 +31,7 @@ fibonnaci_rec :: (n:int) -> int
            fibonnaci_rec(n-2);
     return res;
 }
+*/
 
 
 /*  

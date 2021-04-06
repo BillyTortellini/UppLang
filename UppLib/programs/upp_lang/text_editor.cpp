@@ -9,8 +9,9 @@
 #include "../../math/scalars.hpp"
 #include "../../utility/file_io.hpp"
 
-#include "compiler.hpp"
-#include "ast_interpreter.hpp"
+#include "ast_structure_test.hpp"
+//#include "compiler.hpp"
+//#include "ast_interpreter.hpp"
 
 void text_change_destroy_single(TextChange* change) 
 {
@@ -1934,17 +1935,21 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
         SCOPE_EXIT(string_destroy(&fill_string));
 
         text_append_to_string(&editor->lines, &fill_string);
+        logg("--------Text--------: \n%s\n", fill_string.characters);
         Lexer result = lexer_parse_string(&fill_string);
         SCOPE_EXIT(lexer_destroy(&result));
 
-        Parser parser = parser_parse(&result);
-        SCOPE_EXIT(parser_destroy(&parser));
+        AST_Parser parser = ast_parser_parse(&result);
+        SCOPE_EXIT(ast_parser_destroy(&parser));
+
         String printed_ast = string_create_empty(256);
         SCOPE_EXIT(string_destroy(&printed_ast));
-        ast_node_root_append_to_string(&printed_ast, &parser.root, &result);
+        ast_parser_append_to_string(&parser, &printed_ast);
         logg("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n");
         logg("Ast: \n%s\n", printed_ast.characters);
+        //ast_node_root_append_to_string(&printed_ast, &parser.root, &result);
 
+        /*
         if (parser.unresolved_errors.size > 0) {
             logg("There were parser errors: %d\n", parser.unresolved_errors.size);
             for (int i = 0; i < parser.unresolved_errors.size; i++) {
@@ -2074,6 +2079,7 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
                 pos = text_position_next(pos, editor->lines);
             }
         }
+        */
     }
 
     editor->text_changed = false;
