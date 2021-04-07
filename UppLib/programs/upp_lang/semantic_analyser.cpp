@@ -47,7 +47,7 @@ Symbol* symbol_table_find_symbol(Symbol_Table* table, int name, bool* in_current
     return 0;
 }
 
-Symbol* symbol_table_find_symbol_type(Symbol_Table* table, int name, Symbol_Type::ENUM symbol_type, bool* in_current_scope)
+Symbol* symbol_table_find_symbol_of_type(Symbol_Table* table, int name, Symbol_Type::ENUM symbol_type, bool* in_current_scope)
 {
     *in_current_scope = false;
     for (int i = 0; i < table->symbols.size; i++) {
@@ -57,7 +57,7 @@ Symbol* symbol_table_find_symbol_type(Symbol_Table* table, int name, Symbol_Type
         }
     }
     if (table->parent != 0) {
-        Symbol* result = symbol_table_find_symbol_type(table->parent, name, symbol_type, in_current_scope);
+        Symbol* result = symbol_table_find_symbol_of_type(table->parent, name, symbol_type, in_current_scope);
         *in_current_scope = false;
         return result;
     }
@@ -67,7 +67,7 @@ Symbol* symbol_table_find_symbol_type(Symbol_Table* table, int name, Symbol_Type
 void symbol_table_define_type(Symbol_Table* table, int name_id, Variable_Type::ENUM variable_type)
 {
     bool in_current_scope;
-    Symbol* sym = symbol_table_find_symbol_type(table, name_id, Symbol_Type::TYPE, &in_current_scope);
+    Symbol* sym = symbol_table_find_symbol_of_type(table, name_id, Symbol_Type::TYPE, &in_current_scope);
     if (sym != 0) {
         panic("Types should not overlap currently!\n");
         return;
@@ -83,7 +83,7 @@ void symbol_table_define_type(Symbol_Table* table, int name_id, Variable_Type::E
 Variable_Type::ENUM symbol_table_find_type(Symbol_Table* table, int name_id) 
 {
     bool in_current_scope;
-    Symbol* s = symbol_table_find_symbol_type(table, name_id, Symbol_Type::TYPE, &in_current_scope);
+    Symbol* s = symbol_table_find_symbol_of_type(table, name_id, Symbol_Type::TYPE, &in_current_scope);
     if (s == 0) {
         return Variable_Type::ERROR_TYPE;
     }
@@ -116,7 +116,7 @@ void semantic_analyser_define_function(Semantic_Analyser* analyser, Symbol_Table
 {
     int function_name = analyser->parser->nodes[function_index].name_id;
     bool in_current_scope;
-    Symbol* func = symbol_table_find_symbol_type(table, function_name, Symbol_Type::FUNCTION, &in_current_scope);
+    Symbol* func = symbol_table_find_symbol_of_type(table, function_name, Symbol_Type::FUNCTION, &in_current_scope);
     if (func != 0 && in_current_scope) {
         semantic_analyser_log_error(analyser, "Function already defined!", function_index);
         return;
@@ -133,7 +133,7 @@ void semantic_analyser_define_variable(Semantic_Analyser* analyser, Symbol_Table
 {
     int var_name = analyser->parser->nodes[node_index].name_id;
     bool in_current_scope;
-    Symbol* func = symbol_table_find_symbol_type(table, var_name, Symbol_Type::VARIABLE, &in_current_scope);
+    Symbol* func = symbol_table_find_symbol_of_type(table, var_name, Symbol_Type::VARIABLE, &in_current_scope);
     if (func != 0 && in_current_scope) {
         semantic_analyser_log_error(analyser, "Variable already defined!", node_index);
         return;
@@ -161,7 +161,7 @@ Variable_Type::ENUM semantic_analyser_analyse_expression(Semantic_Analyser* anal
     case AST_Node_Type::EXPRESSION_FUNCTION_CALL: 
     {
         bool in_current_scope;
-        Symbol* func_symbol = symbol_table_find_symbol_type(table, expression->name_id, Symbol_Type::FUNCTION, &in_current_scope);
+        Symbol* func_symbol = symbol_table_find_symbol_of_type(table, expression->name_id, Symbol_Type::FUNCTION, &in_current_scope);
         if (func_symbol == 0) {
             semantic_analyser_log_error(analyser, "Funciton not defined!", expression_index);
             return Variable_Type::ERROR_TYPE;
@@ -188,7 +188,7 @@ Variable_Type::ENUM semantic_analyser_analyse_expression(Semantic_Analyser* anal
     case AST_Node_Type::EXPRESSION_VARIABLE_READ: 
     {
         bool in_current_scope;
-        Symbol* s = symbol_table_find_symbol_type(table, expression->name_id, Symbol_Type::VARIABLE, &in_current_scope);
+        Symbol* s = symbol_table_find_symbol_of_type(table, expression->name_id, Symbol_Type::VARIABLE, &in_current_scope);
         if (s == 0) {
             semantic_analyser_log_error(analyser, "Experssion variable not defined", expression_index);
             return Variable_Type::ERROR_TYPE;
@@ -381,7 +381,7 @@ void semantic_analyser_analyse_statement(Semantic_Analyser* analyser, Symbol_Tab
     case AST_Node_Type::STATEMENT_VARIABLE_ASSIGNMENT: 
     {
         bool in_current_scope;
-        Symbol* s = symbol_table_find_symbol_type(parent, statement->name_id, Symbol_Type::VARIABLE, &in_current_scope);
+        Symbol* s = symbol_table_find_symbol_of_type(parent, statement->name_id, Symbol_Type::VARIABLE, &in_current_scope);
         if (s == 0) {
             semantic_analyser_log_error(analyser, "Variable not defined, cannot be assigned to!", statement_index);
         }
@@ -394,12 +394,12 @@ void semantic_analyser_analyse_statement(Semantic_Analyser* analyser, Symbol_Tab
     case AST_Node_Type::STATEMENT_VARIABLE_DEFINITION:
     {
         bool in_current_scope;
-        Symbol* s = symbol_table_find_symbol_type(parent, statement->name_id, Symbol_Type::VARIABLE, &in_current_scope);
+        Symbol* s = symbol_table_find_symbol_of_type(parent, statement->name_id, Symbol_Type::VARIABLE, &in_current_scope);
         if (s != 0 && in_current_scope) {
             semantic_analyser_log_error(analyser, "Variable already defined", statement_index);
             break;
         }
-        Symbol* var_type = symbol_table_find_symbol_type(parent, statement->type_id, Symbol_Type::TYPE, &in_current_scope);
+        Symbol* var_type = symbol_table_find_symbol_of_type(parent, statement->type_id, Symbol_Type::TYPE, &in_current_scope);
         if (var_type == 0) {
             semantic_analyser_log_error(analyser, "Variable definition failed, variable type is invalid", statement_index);
             break;
@@ -411,13 +411,13 @@ void semantic_analyser_analyse_statement(Semantic_Analyser* analyser, Symbol_Tab
     {
         bool in_current_scope;
         {
-            Symbol* s = symbol_table_find_symbol_type(parent, statement->name_id, Symbol_Type::VARIABLE, &in_current_scope);
+            Symbol* s = symbol_table_find_symbol_of_type(parent, statement->name_id, Symbol_Type::VARIABLE, &in_current_scope);
             if (s != 0 && in_current_scope) {
                 semantic_analyser_log_error(analyser, "Variable already defined", statement_index);
                 break;
             }
         }
-        Symbol* var_type = symbol_table_find_symbol_type(parent, statement->type_id, Symbol_Type::TYPE, &in_current_scope);
+        Symbol* var_type = symbol_table_find_symbol_of_type(parent, statement->type_id, Symbol_Type::TYPE, &in_current_scope);
         if (var_type == 0) {
             semantic_analyser_log_error(analyser, "Variable definition failed, variable type is invalid", statement_index);
             break;
@@ -433,7 +433,7 @@ void semantic_analyser_analyse_statement(Semantic_Analyser* analyser, Symbol_Tab
     {
         {
             bool in_current_scope;
-            Symbol* s = symbol_table_find_symbol_type(parent, statement->name_id, Symbol_Type::VARIABLE, &in_current_scope);
+            Symbol* s = symbol_table_find_symbol_of_type(parent, statement->name_id, Symbol_Type::VARIABLE, &in_current_scope);
             if (s != 0 && in_current_scope) {
                 semantic_analyser_log_error(analyser, "Variable already defined", statement_index);
                 break;
@@ -477,7 +477,7 @@ void semantic_analyser_analyse_function(Semantic_Analyser* analyser, Symbol_Tabl
     {
         AST_Node* parameter = &analyser->parser->nodes[parameter_block->children[i]];
         bool in_current_scope;
-        Symbol* s = symbol_table_find_symbol_type(table, parameter->type_id, Symbol_Type::TYPE, &in_current_scope);
+        Symbol* s = symbol_table_find_symbol_of_type(table, parameter->type_id, Symbol_Type::TYPE, &in_current_scope);
         if (s == 0) {
             semantic_analyser_log_error(analyser, "Parameter type not defined!", parameter_block->children[i]);
             semantic_analyser_define_variable(analyser, table, parameter->name_id, Variable_Type::ERROR_TYPE);
@@ -489,7 +489,7 @@ void semantic_analyser_analyse_function(Semantic_Analyser* analyser, Symbol_Tabl
     // Set return type
     {
         bool in_current_scope;
-        Symbol* s = symbol_table_find_symbol_type(table, function->type_id, Symbol_Type::TYPE, &in_current_scope);
+        Symbol* s = symbol_table_find_symbol_of_type(table, function->type_id, Symbol_Type::TYPE, &in_current_scope);
         if (s == 0) {
             semantic_analyser_log_error(analyser, "Funciton return type not valid type!", function_index);
             analyser->function_return_type = Variable_Type::ERROR_TYPE;

@@ -2,10 +2,17 @@
 // ? Do i want AST-Interpreter on the new AST ?
 // If i do, i need to rework it nau
 
+// BUG: Function parameters in semantic analyser dont work,
+//      see below
+fac :: (n:int) -> int
+{
+    if (n <= 2)  return 1; 
+}
+
 main :: () -> int 
 {
     x := 5;
-    return x;
+    return x * x;
 }
 
 

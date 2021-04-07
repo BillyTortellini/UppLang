@@ -320,6 +320,7 @@ Text_Editor text_editor_create(TextRenderer* text_renderer, FileListener* listen
     result.parser = ast_parser_create();
     result.lexer = lexer_create();
     result.analyser = semantic_analyser_create();
+    result.interpreter = ast_interpreter_create();
 
     return result;
 }
@@ -343,6 +344,7 @@ void text_editor_destroy(Text_Editor* editor)
     ast_parser_destroy(&editor->parser);
     lexer_destroy(&editor->lexer);
     semantic_analyser_destroy(&editor->analyser);
+    ast_interpreter_destroy(&editor->interpreter);
 }
 
 void text_editor_synchronize_highlights_array(Text_Editor* editor)
@@ -1903,14 +1905,6 @@ void normal_mode_handle_message(Text_Editor* editor, Key_Message* new_message)
 {
     // Filter out special messages
     {
-        /*
-        String output = string_create_empty(128);
-        SCOPE_EXIT(string_destroy(&output));
-        key_message_append_to_string(new_message, &output);
-        logg("%s\n", output.characters);
-        */
-    }
-    {
         if (new_message->key_code == KEY_CODE::L && new_message->ctrl_down && new_message->key_down) {
             dynamic_array_reset(&editor->normal_mode_incomplete_command);
             logg("Command canceled!\n");
@@ -2024,8 +2018,14 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
             text_editor_add_highlight_from_slice(editor, token_range_to_slice(e.range, editor), vec3(1.0f), vec4(1.0f, 0.0f, 0.0f, 0.3f));
             logg("Semantic Error: %s\n", e.message);
         }
-        /*
-        */
+        if (input->key_pressed[KEY_CODE::F5] && editor->analyser.errors.size == 0 && editor->parser.errors.size == 0)
+        {
+            AST_Interpreter_Value result = ast_interpreter_execute_main(&editor->interpreter, &editor->analyser);
+            String result_str = string_create_empty(32);
+            SCOPE_EXIT(string_destroy(&result_str));
+            ast_interpreter_value_append_to_string(result, &result_str);
+            logg("Result: %s\n", result_str.characters);
+        }
     }
 
     editor->text_changed = false;

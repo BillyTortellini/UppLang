@@ -10,6 +10,7 @@
 #include "ast_parser.hpp"
 #include "lexer.hpp"
 #include "semantic_analyser.hpp"
+#include "ast_interpreter.hpp"
 
 struct Input;
 struct OpenGLState;
@@ -210,6 +211,7 @@ struct Text_Editor
     AST_Parser parser;
     Lexer lexer;
     Semantic_Analyser analyser;
+    AST_Interpreter interpreter;
 };
 
 Text_Editor text_editor_create(TextRenderer* text_renderer, FileListener* listener, OpenGLState* state);
