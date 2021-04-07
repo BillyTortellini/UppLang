@@ -1,6 +1,6 @@
 #pragma once
 
-#include "compiler.hpp"
+#include "ast_interpreter.hpp"
 
 struct Ast_Interpreter_Value
 {

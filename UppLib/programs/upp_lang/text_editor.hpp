@@ -7,8 +7,9 @@
 #include "../../rendering/text_renderer.hpp"
 #include "../../win32/input.hpp"
 #include "text.hpp"
-#include "ast_structure_test.hpp"
+#include "ast_parser.hpp"
 #include "lexer.hpp"
+#include "semantic_analyser.hpp"
 
 struct Input;
 struct OpenGLState;
@@ -208,6 +209,7 @@ struct Text_Editor
     // IDE schtuff
     AST_Parser parser;
     Lexer lexer;
+    Semantic_Analyser analyser;
 };
 
 Text_Editor text_editor_create(TextRenderer* text_renderer, FileListener* listener, OpenGLState* state);

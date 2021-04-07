@@ -105,9 +105,6 @@
     <ClInclude Include="win32\windows_helper_functions.hpp">
       <Filter>Header Files\Win32</Filter>
     </ClInclude>
-    <ClInclude Include="programs\upp_lang\compiler.hpp">
-      <Filter>Header Files\Programs\Upp_Lang</Filter>
-    </ClInclude>
     <ClInclude Include="programs\upp_lang\text_editor.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
     </ClInclude>
@@ -186,13 +183,13 @@
     <ClInclude Include="programs\upp_lang\bytecode.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
     </ClInclude>
-    <ClInclude Include="programs\upp_lang\ast_structure_test.hpp">
-      <Filter>Header Files\Programs\Upp_Lang</Filter>
-    </ClInclude>
     <ClInclude Include="programs\upp_lang\lexer.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
     </ClInclude>
-    <ClInclude Include="programs\upp_lang\ast_interpreter.hpp">
+    <ClInclude Include="programs\upp_lang\ast_parser.hpp">
+      <Filter>Header Files\Programs\Upp_Lang</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\upp_lang\semantic_analyser.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
     </ClInclude>
   </ItemGroup>
@@ -232,9 +229,6 @@
     </ClCompile>
     <ClCompile Include="win32\windows_helper_functions.cpp">
       <Filter>Source Files\Win32</Filter>
-    </ClCompile>
-    <ClCompile Include="programs\upp_lang\compiler.cpp">
-      <Filter>Source Files\Programs\Upp_Lang</Filter>
     </ClCompile>
     <ClCompile Include="programs\upp_lang\text_editor.cpp">
       <Filter>Source Files\Programs\Upp_Lang</Filter>
@@ -317,10 +311,10 @@
     <ClCompile Include="programs\upp_lang\lexer.cpp">
       <Filter>Source Files\Programs\Upp_Lang</Filter>
     </ClCompile>
-    <ClCompile Include="programs\upp_lang\ast_interpreter.cpp">
+    <ClCompile Include="programs\upp_lang\ast_parser.cpp">
       <Filter>Source Files\Programs\Upp_Lang</Filter>
     </ClCompile>
-    <ClCompile Include="programs\upp_lang\ast_structure_test.cpp">
+    <ClCompile Include="programs\upp_lang\semantic_analyser.cpp">
       <Filter>Source Files\Programs\Upp_Lang</Filter>
     </ClCompile>
   </ItemGroup>

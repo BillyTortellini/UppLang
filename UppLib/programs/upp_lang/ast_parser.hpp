@@ -63,7 +63,7 @@ struct Token_Range
 };
 Token_Range token_range_make(int start_index, int end_index);
 
-struct Parser_Error
+struct Compiler_Error
 {
     const char* message;
     Token_Range range;
@@ -73,7 +73,7 @@ struct AST_Parser
 {
     DynamicArray<AST_Node> nodes;
     DynamicArray<Token_Range> token_mapping;
-    DynamicArray<Parser_Error> errors;
+    DynamicArray<Compiler_Error> errors;
     Lexer* lexer;
     int index;
     AST_Node_Index next_free_node; // What is the next free node

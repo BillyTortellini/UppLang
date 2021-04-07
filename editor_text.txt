@@ -2,14 +2,10 @@
 // ? Do i want AST-Interpreter on the new AST ?
 // If i do, i need to rework it nau
 
-main :: (x:n, y:int) -> int
+main :: () -> int 
 {
-    x := 7;
+    x := 5;
     return x;
-}
-
-asdf :: () -> int
-{
 }
 
 

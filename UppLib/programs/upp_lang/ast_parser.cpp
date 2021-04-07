@@ -1,4 +1,4 @@
-#include "ast_structure_test.hpp"
+#include "ast_parser.hpp"
 
 Token_Range token_range_make(int start_index, int end_index)
 {
@@ -169,15 +169,13 @@ int ast_parser_find_parenthesis_ending(AST_Parser* parser, Token_Type::ENUM open
     return i;
 }
 
-
 void ast_parser_log_error(AST_Parser* parser, const char* msg, Token_Range range)
 {
-    Parser_Error error;
+    Compiler_Error error;
     error.message = msg;
     error.range = range;
     dynamic_array_push_back(&parser->errors, error);
 }
-
 
 bool ast_parser_parse_expression(AST_Parser* parser, int parent_index);
 bool ast_parser_parse_argument_block(AST_Parser* parser, AST_Node_Index parent_index)
@@ -814,7 +812,7 @@ AST_Parser ast_parser_create()
     parser.index = 0;
     parser.nodes = dynamic_array_create_empty<AST_Node>(1024);
     parser.token_mapping = dynamic_array_create_empty<Token_Range>(1024);
-    parser.errors = dynamic_array_create_empty<Parser_Error>(64);
+    parser.errors = dynamic_array_create_empty<Compiler_Error>(64);
     parser.next_free_node = 0;
     return parser;
 }

@@ -319,6 +319,7 @@ Text_Editor text_editor_create(TextRenderer* text_renderer, FileListener* listen
 
     result.parser = ast_parser_create();
     result.lexer = lexer_create();
+    result.analyser = semantic_analyser_create();
 
     return result;
 }
@@ -341,6 +342,7 @@ void text_editor_destroy(Text_Editor* editor)
 
     ast_parser_destroy(&editor->parser);
     lexer_destroy(&editor->lexer);
+    semantic_analyser_destroy(&editor->analyser);
 }
 
 void text_editor_synchronize_highlights_array(Text_Editor* editor)
@@ -395,7 +397,7 @@ Text_Slice token_range_to_slice(Token_Range range, Text_Editor* editor)
     range.end_index = math_clamp(range.end_index, 0, editor->lexer.tokens.size - 1);
     return text_slice_make(
         editor->lexer.tokens[range.start_index].position.start,
-        editor->lexer.tokens[range.end_index].position.end
+        editor->lexer.tokens[range.end_index-1].position.end
     );
 }
 void text_editor_add_highlight_from_slice(Text_Editor* editor, Text_Slice slice, vec3 text_color, vec4 background_color);
@@ -1982,6 +1984,9 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
 
         lexer_parse_string(&editor->lexer, &source_code);
         ast_parser_parse(&editor->parser, &editor->lexer);
+        if (editor->parser.errors.size == 0) {
+            semantic_analyser_analyse(&editor->analyser, &editor->parser);
+        }
 
         // Debug print AST
         {
@@ -2010,10 +2015,17 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
         }
         // Highlight parse errors
         for (int i = 0; i < editor->parser.errors.size; i++) {
-            Parser_Error e = editor->parser.errors[i];
+            Compiler_Error e = editor->parser.errors[i];
             text_editor_add_highlight_from_slice(editor, token_range_to_slice(e.range, editor), vec3(1.0f), vec4(1.0f, 0.0f, 0.0f, 0.3f));
-            logg("Error: %s\n", e.message);
+            logg("Parse Error: %s\n", e.message);
         }
+        for (int i = 0; i < editor->analyser.errors.size; i++) {
+            Compiler_Error e = editor->analyser.errors[i];
+            text_editor_add_highlight_from_slice(editor, token_range_to_slice(e.range, editor), vec3(1.0f), vec4(1.0f, 0.0f, 0.0f, 0.3f));
+            logg("Semantic Error: %s\n", e.message);
+        }
+        /*
+        */
     }
 
     editor->text_changed = false;

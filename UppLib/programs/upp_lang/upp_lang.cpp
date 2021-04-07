@@ -17,8 +17,6 @@
 #include "../../math/umath.hpp"
 #include "../../datastructures/hashtable.hpp"
 
-#include "compiler.hpp"
-
 u64 int_hash(int* i) {
     return (u64)(*i * 17);
 }
