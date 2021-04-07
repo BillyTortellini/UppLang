@@ -70,22 +70,35 @@ TokenAttribute token_attribute_make_empty() {
     return result;
 }
 
-Token token_make(Token_Type::ENUM type, TokenAttribute attribute, int line_num, int char_pos, int char_len, int code_index)
+Token token_make(Token_Type::ENUM type, TokenAttribute attribute, Text_Slice position, int index)
 {
     Token result;
     result.type = type;
     result.attribute = attribute;
-    result.line_number = line_num;
-    result.character_position = char_pos;
-    result.lexem_length = char_len;
-    result.source_code_index = code_index;
+    result.position = position;
+    result.source_code_index = index;
     return result;
 }
 
-bool code_skip_comments(String* code, int* index, int* character_pos, int* line_number)
+Token token_make(Token_Type::ENUM type, TokenAttribute attribute, int line, int character, int length, int index)
+{
+    Token result;
+    result.type = type;
+    result.attribute = attribute;
+    result.position = text_slice_make(text_position_make(line, character), text_position_make(line, character+length));
+    result.source_code_index = index;
+    return result;
+}
+
+bool code_parse_comments(Lexer* lexer, String* code, int* index, int* character_pos, int* line_number)
 {
     if (*index + 1 >= code->size) return false;
-    if (code->characters[*index] == '/' && code->characters[*index + 1] == '/') {
+    // Single line comments
+    int start_index = *index;
+    int start_char = *character_pos;
+    int line_start = *line_number;
+    if (code->characters[*index] == '/' && code->characters[*index + 1] == '/') 
+    {
         while (*index < code->size && code->characters[*index] != '\n') {
             *index = *index + 1;
             *character_pos = *character_pos + 1;
@@ -93,6 +106,12 @@ bool code_skip_comments(String* code, int* index, int* character_pos, int* line_
         *index = *index + 1;
         *character_pos = 0;
         *line_number = *line_number + 1;
+        dynamic_array_push_back(&lexer->tokens, token_make(
+            Token_Type::COMMENT, 
+            token_attribute_make_empty(), 
+            text_slice_make(text_position_make(line_start, start_char), text_position_make(*line_number, 0)),
+            start_index)
+        );
         return true;
     }
 
@@ -128,26 +147,64 @@ bool code_skip_comments(String* code, int* index, int* character_pos, int* line_
                 *character_pos = *character_pos + 1;
             }
         }
+        dynamic_array_push_back(&lexer->tokens, token_make(
+            Token_Type::COMMENT, 
+            token_attribute_make_empty(), 
+            text_slice_make(text_position_make(line_start, start_char), text_position_make(*line_number, *character_pos)),
+            start_index)
+        );
         return true;
     }
     return false;
 }
 
-void code_skip_whitespace_and_comments(String* code, int* index, int* character_pos, int* line_number)
+bool code_parse_newline(Lexer* lexer, String* code, int* index, int* character_pos, int* line_number)
 {
-    while (*index < code->size && string_contains_character(string_create_static("\t \r\n/"), code->characters[*index]))
+    int i = *index;
+    if (i < code->size && code->characters[i] == '\n') 
     {
-        // Comment part
-        if (code_skip_comments(code, index, character_pos, line_number)) continue;
-        else if (code->characters[*index] == '/') break;
-
-        // Whitespace part
-        (*character_pos)++;
-        if (code->characters[*index] == '\n') {
-            *character_pos = 0;
-            *line_number = *line_number + 1;
-        }
+        dynamic_array_push_back(&lexer->tokens, token_make(
+            Token_Type::COMMENT, 
+            token_attribute_make_empty(), 
+            text_slice_make(text_position_make(*line_number, *character_pos), text_position_make(*line_number+1, 0)),
+            *index)
+        );
         *index = *index + 1;
+        *character_pos = 0;
+        *line_number = *line_number + 1;
+        return true;
+    }
+    return false;
+}
+
+bool code_parse_whitespace(Lexer* lexer, String* code, int* index, int* character_pos, int* line_number)
+{
+    int start = *index;
+    int char_start = *character_pos;
+    bool changed = false;
+    while (*index < code->size && string_contains_character(string_create_static("\t \r"), code->characters[*index]))
+    {
+        (*character_pos)++;
+        *index = *index + 1;
+        changed = true;
+    }
+    if (changed) {
+        dynamic_array_push_back(&lexer->tokens, token_make(
+            Token_Type::WHITESPACE, token_attribute_make_empty(), *line_number, char_start, *character_pos - char_start, start)
+        );
+        return true;
+    }
+    return false;
+}
+
+void code_skip_whitespace_and_comments(Lexer* lexer, String* code, int* index, int* character_pos, int* line_number)
+{
+    while (true)
+    {
+        if (code_parse_comments(lexer, code, index, character_pos, line_number)) continue;
+        if (code_parse_newline(lexer, code, index, character_pos, line_number)) continue;
+        if (code_parse_whitespace(lexer, code, index, character_pos, line_number)) continue;
+        break;
     }
 }
 
@@ -182,6 +239,7 @@ Lexer lexer_create()
     lexer.identifier_index_lookup_table = hashtable_create_empty<String, int>(2048, &string_calculate_hash, &string_equals);
     lexer.identifiers = dynamic_array_create_empty<String>(1024);
     lexer.tokens = dynamic_array_create_empty<Token>(1024);
+    lexer.tokens_with_whitespaces = dynamic_array_create_empty<Token>(1024);
     return lexer;
 }
 
@@ -191,6 +249,7 @@ void lexer_parse_string(Lexer* lexer, String* code)
     SCOPE_EXIT(string_destroy(&identifier_string));
 
     dynamic_array_reset(&lexer->tokens);
+    dynamic_array_reset(&lexer->tokens_with_whitespaces);
     dynamic_array_reset(&lexer->identifiers);
     hashtable_reset(&lexer->identifier_index_lookup_table);
 
@@ -201,7 +260,7 @@ void lexer_parse_string(Lexer* lexer, String* code)
     while (index < code->size)
     {
         // Advance index
-        code_skip_whitespace_and_comments(code, &index, &character_pos, &line_number);
+        code_skip_whitespace_and_comments(lexer, code, &index, &character_pos, &line_number);
         if (index >= code->size) {
             break;
         }
@@ -592,6 +651,20 @@ void lexer_parse_string(Lexer* lexer, String* code)
             }
         }
     }
+
+    // Make tokens with non_whitespaces
+    for (int i = 0; i < lexer->tokens.size; i++) {
+        if (lexer->tokens[i].type == Token_Type::WHITESPACE ||
+            lexer->tokens[i].type == Token_Type::NEW_LINE ||
+            lexer->tokens[i].type == Token_Type::COMMENT) {
+            continue;
+        }
+        dynamic_array_push_back(&lexer->tokens_with_whitespaces, lexer->tokens[i]);
+    }
+    DynamicArray<Token> swap = lexer->tokens_with_whitespaces;
+    lexer->tokens_with_whitespaces = lexer->tokens;
+    lexer->tokens = swap;
+    lexer_print(lexer);
 }
 
 void lexer_destroy(Lexer* lexer)
@@ -601,6 +674,7 @@ void lexer_destroy(Lexer* lexer)
     }
     dynamic_array_destroy(&lexer->identifiers);
     dynamic_array_destroy(&lexer->tokens);
+    dynamic_array_destroy(&lexer->tokens_with_whitespaces);
     hashtable_destroy(&lexer->identifier_index_lookup_table);
 }
 
@@ -616,8 +690,8 @@ void lexer_print(Lexer* lexer)
     for (int i = 0; i < lexer->tokens.size; i++) 
     {
         Token token = lexer->tokens[i];
-        string_append_formated(&msg, "\t %s (Line %d, Pos %d, Length %d)",
-            token_type_to_string(token.type), token.line_number, token.character_position, token.lexem_length);
+        string_append_formated(&msg, "\t %s (Line %d, Pos %d)",
+            token_type_to_string(token.type), token.position.start.line, token.position.start.character);
         if (token.type == Token_Type::IDENTIFIER) {
             string_append_formated(&msg, " = %s", lexer->identifiers.data[token.attribute.identifier_number].characters);
         }

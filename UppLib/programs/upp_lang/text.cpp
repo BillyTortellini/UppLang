@@ -101,10 +101,11 @@ Text_Slice text_slice_make_character_after(Text_Position pos, DynamicArray<Strin
     return text_slice_make(pos, next);
 }
 
-bool text_slice_contains_position(Text_Slice slice, Text_Position pos)
+bool text_slice_contains_position(Text_Slice slice, Text_Position pos, DynamicArray<String> text)
 {
+    Text_Position end = text_position_previous(slice.end, text);
     return text_position_are_in_order(&slice.start, &pos) &&
-           text_position_are_in_order(&pos, &slice.end);
+        text_position_are_in_order(&pos, &end);
 }
 
 Text_Slice text_slice_make_line(DynamicArray<String> text, int line)

@@ -1,34 +1,15 @@
-main :: () -> int
+// Next feature: Semantic analysis error types
+// ? Do i want AST-Interpreter on the new AST ?
+// If i do, i need to rework it nau
+
+main :: (x:n, y:int) -> int
 {
-    // TODO: Error handling, code rewrite
-    // Next feature: Semantic analysis error highlighting in editor
-    /*
-        Currently the AST sucks a little:
-         * Token-index to AST node connection is lost
-         * AST-Nodes do not have a connection back to parent
-         * There is no simple way to loop over the whole AST
-        Find a way to resolve all the errors
-    
-        For IDE it would be nice to get the symbol-table at
-        any text_position.
-        Meaning Text_Pos -> Token_Pos -> Ast_Node -> next_upper Symboltable
-        
-        Note: Currently expression have references to a symbol_table,
-            but I think that with a parent pointer in AST this is not necessary
-    */
-    x := 5;
-    x = 5;
-    y := x * x;
-    return fibonnaci_rec(10);
+    x := 7;
+    return x;
 }
 
-fibonnaci_rec :: (n:int) -> int
+asdf :: () -> int
 {
-    if (n <= 2) 
-        return 1;
-    res := fibonnaci_rec(n-1) +
-           fibonnaci_rec(n-2);
-    return res;
 }
 
 

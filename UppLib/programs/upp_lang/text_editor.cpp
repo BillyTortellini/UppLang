@@ -390,47 +390,51 @@ BoundingBox2 text_editor_get_character_bounding_box(Text_Editor* editor, float t
     return result;
 }
 
-Text_Slice token_to_text_slice(Token token) {
-    return text_slice_make(text_position_make(token.line_number, token.character_position),
-                text_position_make(token.line_number, token.character_position + token.lexem_length));
+Text_Slice token_range_to_slice(Token_Range range, Text_Editor* editor)
+{
+    range.end_index = math_clamp(range.end_index, 0, editor->lexer.tokens.size - 1);
+    return text_slice_make(
+        editor->lexer.tokens[range.start_index].position.start,
+        editor->lexer.tokens[range.end_index].position.end
+    );
 }
 void text_editor_add_highlight_from_slice(Text_Editor* editor, Text_Slice slice, vec3 text_color, vec4 background_color);
 void text_editor_render(Text_Editor* editor, OpenGLState* state, int width, int height, int dpi, BoundingBox2 editor_region, double time)
 {
     // Testing
+    /*
     {
         String test = string_create_empty(32);
         SCOPE_EXIT(string_destroy(&test));
-        // Find current token
-        Token* found = 0;
-        int found_index = 0;
-        for (int i = 0; i < editor->lexer.tokens.size; i++) {
-            Token* t = &editor->lexer.tokens[i];
-            if (editor->cursor_position.character >= t->character_position &&
-                editor->cursor_position.character < t->character_position + t->lexem_length &&
-                editor->cursor_position.line == t->line_number) {
-                found = t;
-                found_index = i;
-            }
-        }
         text_editor_reset_highlights(editor);
+
         int count = 0;
-        for (int i = 0; i < editor->parser.token_mapping.size; i++) {
+        Text_Slice min_slice = text_slice_make(text_position_make(0, 0), text_position_make(0, 0));
+        int min_slice_size = 10000;
+        int min_slice_index = -1;
+        for (int i = 0; i < editor->parser.token_mapping.size; i++) 
+        {
             Token_Range range = editor->parser.token_mapping[i];
-            if (range.start_index == range.end_index) continue;
-            Text_Position start = token_to_text_slice(editor->lexer.tokens[range.start_index]).start;
-            Text_Position end = text_position_previous(token_to_text_slice(editor->lexer.tokens[range.end_index-1]).end, editor->lines);
-            Text_Slice slice = text_slice_make(start, end);
-            if (text_slice_contains_position(slice, editor->cursor_position)) {
-                count++;
-                text_editor_add_highlight_from_slice(editor, slice, vec3(1.0f), vec4(0.25f*count, 0.0f, 0.0f, 0.5f));
-                String type_str =ast_node_type_to_string(editor->parser.nodes[i].type);
-                string_append_formated(&test, "%s\n", type_str.characters);
+            Text_Slice slice = token_range_to_slice(range, editor);
+            if (text_slice_contains_position(slice, editor->cursor_position, editor->lines)) {
+                int slice_size = 100000;
+                if (slice.start.line != slice.end.line) slice_size = (slice.end.line - slice.start.line) * 15;
+                else slice_size = slice.end.character - slice.start.character;
+                if (slice_size < min_slice_size) {
+                    min_slice_size = slice_size;
+                    min_slice = slice;
+                    min_slice_index = i;
+                }
             }
         }
-
-        text_renderer_add_text(editor->renderer, &test, vec2(0.0f, 0.0f), 0.05f, 1.0f);
+        if (min_slice_index != -1) {
+            text_editor_add_highlight_from_slice(editor, min_slice, vec3(1.0f), vec4(0.75f, 0.0f, 0.0f, 0.5f));
+            String type_str = ast_node_type_to_string(editor->parser.nodes[min_slice_index].type);
+            string_append_formated(&test, "%s\n", type_str.characters);
+            text_renderer_add_text(editor->renderer, &test, vec2(0.0f, 0.0f), 0.05f, 1.0f);
+        }
     }
+    */
 
     //text_editor_draw_bounding_box(editor, state, editor_region, vec3(0.0f, 0.2f, 0.0f));
     float text_height = 2.0f * (editor->line_size_cm) / (height / (float)dpi * 2.54f);
@@ -1943,15 +1947,6 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
     if (input->key_messages.size != 0) {
         editor->last_keymessage_time = current_time;
     }
-
-    if (input->key_down[KEY_CODE::CTRL] && input->key_pressed[KEY_CODE::S]) {
-        String output = string_create_empty(256);
-        SCOPE_EXIT(string_destroy(&output););
-        text_append_to_string(&editor->lines, &output);
-        file_io_write_file("editor_text.txt", array_create_static((byte*)output.characters, output.size));
-        logg("Saved text file!\n");
-    }
-
     // Handle all messages
     for (int i = 0; i < input->key_messages.size; i++)
     {
@@ -1964,164 +1959,61 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
             insert_mode_handle_message(editor, msg);
         }
     }
-    // Make sure everything still works
     if (!text_check_correctness(editor->lines)) {
         panic("error, suit yourself\n");
         __debugbreak();
     }
 
-    if (editor->text_changed) {
-        text_editor_reset_highlights(editor);
+    // IDE STUFF
+    if (input->key_down[KEY_CODE::CTRL] && input->key_pressed[KEY_CODE::S]) {
+        String output = string_create_empty(256);
+        SCOPE_EXIT(string_destroy(&output););
+        text_append_to_string(&editor->lines, &output);
+        file_io_write_file("editor_text.txt", array_create_static((byte*)output.characters, output.size));
+        logg("Saved text file!\n");
     }
 
     if (editor->text_changed || input->key_pressed[KEY_CODE::F5])
     {
-        String fill_string = string_create_empty(2048);
-        SCOPE_EXIT(string_destroy(&fill_string));
-        text_append_to_string(&editor->lines, &fill_string);
-        logg("--------Text--------: \n%s\n", fill_string.characters);
+        String source_code = string_create_empty(2048);
+        SCOPE_EXIT(string_destroy(&source_code));
+        text_append_to_string(&editor->lines, &source_code);
+        logg("--------SOURCE CODE--------: \n%s\n", source_code.characters);
 
-        lexer_parse_string(&editor->lexer, &fill_string);
+        lexer_parse_string(&editor->lexer, &source_code);
         ast_parser_parse(&editor->parser, &editor->lexer);
 
-        String printed_ast = string_create_empty(256);
-        SCOPE_EXIT(string_destroy(&printed_ast));
-        ast_parser_append_to_string(&editor->parser, &printed_ast);
-        logg("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n");
-        logg("Ast: \n%s\n", printed_ast.characters);
-        //ast_node_root_append_to_string(&printed_ast, &parser.root, &result);
-
-        /*
-        if (parser.unresolved_errors.size > 0) {
-            logg("There were parser errors: %d\n", parser.unresolved_errors.size);
-            for (int i = 0; i < parser.unresolved_errors.size; i++) {
-                logg("Parser error #%d: %s", parser.unresolved_errors.size, parser.unresolved_errors[i].error_message);
-            }
-        }
-        else if (parser.semantic_analysis_errors.size > 0) {
-            logg("There were semantic analysis errors (#%d):\n", parser.semantic_analysis_errors.size);
-            for (int i = 0; i < parser.semantic_analysis_errors.size; i++) {
-                logg("%s\n", parser.semantic_analysis_errors[i]);
-            }
-        }
-        else if (input->key_pressed[KEY_CODE::F5]) {
-            Ast_Interpreter_Value val = ast_interpreter_execute_main(&parser.root, &result);
-            String out = string_create_empty(15);
-            SCOPE_EXIT(string_destroy(&out));
-            ast_interpreter_value_append_to_string(val, &out);
-            logg("----------------------------------\n");
-            logg("Interpreter result: %s\n", out.characters);
-        }
-
-        // Highlight identifiers
-        for (int i = 0; i < result.tokens.size; i++) {
-            Token* token = &result.tokens.data[i];
-            if (token->type == Token_Type::IDENTIFIER) {
-                text_editor_add_highlight(
-                    editor,
-                    text_highlight_make(
-                        vec3(0.7f, 0.7f, 1.0f),
-                        vec4(0),
-                        token->character_position,
-                        token->character_position + token->lexem_length
-                    ),
-                    token->line_number
-                );
-            }
-            else if (token_type_is_keyword(token->type)) {
-                text_editor_add_highlight(
-                    editor,
-                    text_highlight_make(
-                        vec3(0.4f, 0.4f, 0.8f),
-                        vec4(0),
-                        token->character_position,
-                        token->character_position + token->lexem_length
-                    ),
-                    token->line_number
-                );
-            }
-        }
-
-
-        // Highlight errors
-        for (int i = 0; i < parser.unresolved_errors.size; i++)
+        // Debug print AST
         {
-            ParserError* error = &parser.unresolved_errors.data[i];
-            Token* start_token = &result.tokens.data[error->token_start_index];
-            Token* end_token = &result.tokens.data[error->token_end_index];
-            for (int i = start_token->line_number; i <= end_token->line_number && i < editor->lines.size; i++)
-            {
-                int char_start = 0;
-                if (i == start_token->line_number) {
-                    char_start = start_token->character_position;
-                }
-                int char_end = editor->lines.data[i].size;
-                if (i == end_token->line_number) {
-                    char_end = end_token->character_position + end_token->lexem_length;
-                }
-                text_editor_add_highlight(
-                    editor,
-                    text_highlight_make(
-                        vec3(1.0f, 1.0f, 1.0f),
-                        vec4(1.0f, 0.0f, 0.0f, 0.3f),
-                        char_start, char_end
-                    ),
-                    i
-                );
-            }
+            String printed_ast = string_create_empty(256);
+            SCOPE_EXIT(string_destroy(&printed_ast));
+            ast_parser_append_to_string(&editor->parser, &printed_ast);
+            logg("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n");
+            logg("Ast: \n%s\n", printed_ast.characters);
         }
 
-        // Highlight comments
+        // Do syntax highlighting
+        text_editor_reset_highlights(editor);
+        for (int i = 0; i < editor->lexer.tokens_with_whitespaces.size; i++) 
         {
+            Token t = editor->lexer.tokens_with_whitespaces[i];
+            vec3 IDENTIFIER_COLOR = vec3(0.7f, 0.7f, 1.0f);
+            vec3 KEYWORD_COLOR = vec3(0.4f, 0.4f, 0.8f);
             vec3 COMMENT_COLOR = vec3(0.0f, 1.0f, 0.0f);
-            vec4 COMMENT_BG_COLOR = vec4(0);
-
-            Text_Position pos = text_position_make_start();
-            Text_Position end = text_position_previous(text_position_make_end(&editor->lines), editor->lines);
-            while (!text_position_are_equal(pos, end) && !text_position_are_equal(pos, text_position_make_end(&editor->lines))) {
-                char current = text_get_character_after(&editor->lines, pos);
-                char next = text_get_character_after(&editor->lines, text_position_next(pos, editor->lines));
-                if (current == '/' && next == '/') {
-                    text_editor_add_highlight_from_slice(editor,
-                        text_slice_make(pos, text_position_make(pos.line, editor->lines[pos.line].size)), COMMENT_COLOR, COMMENT_BG_COLOR);
-                    pos.line++;
-                    pos.character = 0;
-                    text_position_sanitize(&pos, editor->lines);
-                    continue;
-                }
-                if (current == '/' && next == '*')
-                {
-                    Text_Position comment_start = pos;
-                    int depth = 1;
-                    pos = text_position_next(pos, editor->lines);
-                    pos = text_position_next(pos, editor->lines);
-                    while (!text_position_are_equal(pos, text_position_make_end(&editor->lines)))
-                    {
-                        char current = text_get_character_after(&editor->lines, pos);
-                        char next = text_get_character_after(&editor->lines, text_position_next(pos, editor->lines));
-                        if (current == '/' && next == '*') {
-                            depth++;
-                            pos = text_position_next(pos, editor->lines);
-                            pos = text_position_next(pos, editor->lines);
-                            continue;
-                        }
-                        if (current == '*' && next == '/') {
-                            depth--;
-                            pos = text_position_next(pos, editor->lines);
-                            pos = text_position_next(pos, editor->lines);
-                            if (depth == 0) break;
-                            continue;
-                        }
-                        pos = text_position_next(pos, editor->lines);
-                    }
-                    text_editor_add_highlight_from_slice(editor,
-                        text_slice_make(comment_start, pos), COMMENT_COLOR, COMMENT_BG_COLOR);
-                }
-
-                pos = text_position_next(pos, editor->lines);
-            }
+            vec4 BG_COLOR = vec4(0);
+            if (t.type == Token_Type::COMMENT)
+                text_editor_add_highlight_from_slice(editor, t.position, COMMENT_COLOR, BG_COLOR);
+            else if (token_type_is_keyword(t.type))
+                text_editor_add_highlight_from_slice(editor, t.position, KEYWORD_COLOR, BG_COLOR);
+            else if (t.type == Token_Type::IDENTIFIER)
+                text_editor_add_highlight_from_slice(editor, t.position, IDENTIFIER_COLOR, BG_COLOR);
         }
-        */
+        // Highlight parse errors
+        for (int i = 0; i < editor->parser.errors.size; i++) {
+            Parser_Error e = editor->parser.errors[i];
+            text_editor_add_highlight_from_slice(editor, token_range_to_slice(e.range, editor), vec3(1.0f), vec4(1.0f, 0.0f, 0.0f, 0.3f));
+            logg("Error: %s\n", e.message);
+        }
     }
 
     editor->text_changed = false;

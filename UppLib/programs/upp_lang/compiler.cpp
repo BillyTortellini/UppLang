@@ -1024,7 +1024,7 @@ bool parser_parse_root(Parser* parser, Ast_Node_Root* root)
             // Skip to next token in next line, then try parsing again
             int next_line_token = parser->index;
             while (next_line_token < parser->lexer->tokens.size &&
-                parser->lexer->tokens[next_line_token].line_number == parser->lexer->tokens[parser->index].line_number)
+                parser->lexer->tokens[next_line_token].position.start.line == parser->lexer->tokens[parser->index].position.start.line)
             {
                 next_line_token++;
             }

@@ -65,15 +65,15 @@ Token_Range token_range_make(int start_index, int end_index);
 
 struct Parser_Error
 {
-    const char* error_message;
-    int token_start_index;
-    int token_end_index;
+    const char* message;
+    Token_Range range;
 };
 
 struct AST_Parser
 {
     DynamicArray<AST_Node> nodes;
     DynamicArray<Token_Range> token_mapping;
+    DynamicArray<Parser_Error> errors;
     Lexer* lexer;
     int index;
     AST_Node_Index next_free_node; // What is the next free node

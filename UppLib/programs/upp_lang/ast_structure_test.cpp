@@ -126,6 +126,59 @@ bool ast_parser_test_next_5_tokens(AST_Parser* parser, Token_Type::ENUM type1, T
     return false;
 }
 
+int ast_parser_find_next_token_type(AST_Parser* parser, Token_Type::ENUM type) 
+{
+    int index = parser->index;
+    while (index < parser->lexer->tokens.size)
+    {
+        if (parser->lexer->tokens[index].type == type) {
+            return index;
+        }
+        index++;
+    }
+    return index;
+}
+
+int ast_parser_find_next_line_start_token(AST_Parser* parser)
+{
+    int i = parser->index;
+    int line = parser->lexer->tokens[parser->index].position.start.line;
+    while (i < parser->lexer->tokens.size) {
+        int token_line = parser->lexer->tokens[i].position.start.line;
+        if (token_line != line) return i;
+        i++;
+    }
+    return i;
+}
+
+int ast_parser_find_parenthesis_ending(AST_Parser* parser, Token_Type::ENUM open_type, Token_Type::ENUM closed_type)
+{
+    int i = parser->index;
+    int depth = 0;
+    while (i < parser->lexer->tokens.size)
+    {
+        if (parser->lexer->tokens[i].type == open_type) depth++;
+        if (parser->lexer->tokens[i].type == closed_type) {
+            depth--;
+            if (depth <= 0) {
+                return i;
+            }
+        }
+        i++;
+    }
+    return i;
+}
+
+
+void ast_parser_log_error(AST_Parser* parser, const char* msg, Token_Range range)
+{
+    Parser_Error error;
+    error.message = msg;
+    error.range = range;
+    dynamic_array_push_back(&parser->errors, error);
+}
+
+
 bool ast_parser_parse_expression(AST_Parser* parser, int parent_index);
 bool ast_parser_parse_argument_block(AST_Parser* parser, AST_Node_Index parent_index)
 {
@@ -369,7 +422,10 @@ int ast_parser_parse_expression_priority(AST_Parser* parser, AST_Node_Index node
         parser->nodes[right_operand_index].parent = operator_node;
         dynamic_array_push_back(&parser->nodes[operator_node].children, right_operand_index);
         parser->nodes[operator_node].type = first_op_type;
-        parser->token_mapping[operator_node] = token_range_make(start_point, parser->index);
+        parser->token_mapping[operator_node] = token_range_make(
+            parser->token_mapping[parser->nodes[operator_node].children[0]].start_index,
+            parser->token_mapping[parser->nodes[operator_node].children[1]].end_index
+        );
 
         node_index = operator_node;
         if (!second_op_exists) break;
@@ -609,11 +665,27 @@ bool ast_parser_parse_statement_block(AST_Parser* parser, AST_Node_Index parent_
 
     while (!ast_parser_test_next_token(parser, Token_Type::CLOSED_BRACES))
     {
-        if (!ast_parser_parse_statement(parser, node_index))
-        {
+        if (parser->index >= parser->lexer->tokens.size) {
+            ast_parser_log_error(parser, "Statement block did not end!", token_range_make(checkpoint.rewind_token_index, parser->index));
             ast_parser_checkpoint_reset(checkpoint);
             return false;
         }
+        if (ast_parser_parse_statement(parser, node_index)) continue;
+        // Error handling, goto next ; or next line or end of {} block
+        int next_semi = ast_parser_find_next_token_type(parser, Token_Type::SEMICOLON);
+        int next_closing_braces = ast_parser_find_parenthesis_ending(parser, Token_Type::OPEN_BRACES, Token_Type::CLOSED_BRACES);
+        int next_line = ast_parser_find_next_line_start_token(parser);
+        if (next_line < next_semi && next_line < next_closing_braces) {
+            ast_parser_log_error(parser, "Could not parse statement", token_range_make(parser->index, next_line-1));
+            parser->index = next_line;
+            continue;
+        }
+        if (next_semi < next_closing_braces) {
+            ast_parser_log_error(parser, "Could not parse statement", token_range_make(parser->index, next_semi));
+            parser->index = next_semi + 1;
+            continue;
+        }
+        parser->index = next_closing_braces;
     }
     parser->index++;
 
@@ -636,10 +708,24 @@ bool ast_parser_parse_parameter_block(AST_Parser* parser, AST_Node_Index parent_
         return true;
     }
 
-    // TODO: Better error handling
     while (true)
     {
-        if (!ast_parser_test_next_3_tokens(parser, Token_Type::IDENTIFIER, Token_Type::COLON, Token_Type::IDENTIFIER)) {
+        if (!ast_parser_test_next_3_tokens(parser, Token_Type::IDENTIFIER, Token_Type::COLON, Token_Type::IDENTIFIER)) 
+        {
+            // Error handling: find next ), or next Comma, or next { report error and do further error handling
+            int next_closed_braces = ast_parser_find_next_token_type(parser, Token_Type::CLOSED_BRACES);
+            int next_closed_parenthesis = ast_parser_find_parenthesis_ending(parser, Token_Type::OPEN_PARENTHESIS, Token_Type::CLOSED_PARENTHESIS);
+            int next_comma = ast_parser_find_next_token_type(parser, Token_Type::COMMA);
+            if (next_comma < next_closed_parenthesis && next_comma < next_closed_braces) {
+                ast_parser_log_error(parser, "Could not parse function parameter", token_range_make(parser->index, next_comma));
+                parser->index = next_comma + 1;
+                continue;
+            }
+            if (next_closed_parenthesis < next_closed_braces) {
+                ast_parser_log_error(parser, "Could not parse parameters", token_range_make(parser->index, next_closed_parenthesis));
+                parser->index = next_closed_parenthesis + 1;
+                return true;
+            }
             ast_parser_checkpoint_reset(checkpoint);
             return false;
         }
@@ -707,18 +793,19 @@ bool ast_parser_parse_function(AST_Parser* parser, AST_Node_Index parent_index)
     return true;
 }
 
-// @IDEA Something along those lines for error handling
-void ast_parser_handle_function_header_parsing_error() {
-
-}
-
-// @IDEA Maybe i want one function that calls itself recursively, taking an AST_Node_Type
 void ast_parser_parse_root(AST_Parser* parser)
 {
-    // TODO: Do error handling if this function parsing fails
     int root_index = ast_parser_get_next_node_index(parser, -1);
     parser->nodes[root_index].type = AST_Node_Type::ROOT;
-    while (ast_parser_parse_function(parser, root_index) && parser->index < parser->lexer->tokens.size) {}
+    while (true)
+    {
+        if (parser->index >= parser->lexer->tokens.size) break;
+        if (ast_parser_parse_function(parser, root_index)) continue;
+
+        int next_closing_braces = ast_parser_find_parenthesis_ending(parser, Token_Type::OPEN_BRACES, Token_Type::CLOSED_BRACES);
+        ast_parser_log_error(parser, "Could not parse function", token_range_make(parser->index, next_closing_braces));
+        parser->index = next_closing_braces + 1;
+    }
 }
 
 AST_Parser ast_parser_create()
@@ -727,6 +814,7 @@ AST_Parser ast_parser_create()
     parser.index = 0;
     parser.nodes = dynamic_array_create_empty<AST_Node>(1024);
     parser.token_mapping = dynamic_array_create_empty<Token_Range>(1024);
+    parser.errors = dynamic_array_create_empty<Parser_Error>(64);
     parser.next_free_node = 0;
     return parser;
 }
@@ -736,10 +824,11 @@ void ast_parser_parse(AST_Parser* parser, Lexer* lexer)
     parser->index = 0;
     parser->next_free_node = 0;
     parser->lexer = lexer;
+    dynamic_array_reset(&parser->errors);
+
     ast_parser_parse_root(parser);
-    // Trim arrays
     dynamic_array_remove_range_ordered(&parser->nodes, parser->next_free_node, parser->nodes.size);
-    dynamic_array_remove_range_ordered(&parser->token_mapping, parser->next_free_node, parser->nodes.size);
+    dynamic_array_remove_range_ordered(&parser->token_mapping, parser->next_free_node, parser->token_mapping.size);
 }
 
 void ast_parser_destroy(AST_Parser* parser)
@@ -791,6 +880,76 @@ String ast_node_type_to_string(AST_Node_Type::ENUM type)
     return string_create_static("SHOULD NOT FUCKING HAPPEN MOTHERFUCKER");
 }
 
+bool ast_node_type_is_binary_expression(AST_Node_Type::ENUM type) {
+    return type >= AST_Node_Type::EXPRESSION_LITERAL && type <= AST_Node_Type::EXPRESSION_UNARY_OPERATION_NOT;
+}
+bool ast_node_type_is_unary_expression(AST_Node_Type::ENUM type) {
+    return type >= AST_Node_Type::EXPRESSION_LITERAL && type <= AST_Node_Type::EXPRESSION_UNARY_OPERATION_NOT;
+}
+bool ast_node_type_is_expression(AST_Node_Type::ENUM type) {
+    return type >= AST_Node_Type::EXPRESSION_LITERAL && type <= AST_Node_Type::EXPRESSION_UNARY_OPERATION_NOT;
+}
+
+void ast_node_expression_append_to_string(AST_Parser* parser, AST_Node_Index node_index, String* string)
+{
+    AST_Node* node = &parser->nodes[node_index];
+    bool bin_op = false;
+    bool unary_op = false;
+    const char* bin_op_str = "asfd";
+    switch (node->type)
+    {
+    case AST_Node_Type::EXPRESSION_LITERAL:
+        Token t = parser->lexer->tokens[parser->token_mapping[node_index].start_index];
+        switch (t.type) {
+        case Token_Type::BOOLEAN_LITERAL: string_append_formated(string, t.attribute.bool_value ? "TRUE" : "FALSE"); break;
+        case Token_Type::INTEGER_LITERAL: string_append_formated(string, "%d", t.attribute.integer_value); break;
+        case Token_Type::FLOAT_LITERAL: string_append_formated(string, "%3.2f", t.attribute.float_value); break;
+        }
+        return;
+    case AST_Node_Type::EXPRESSION_FUNCTION_CALL:
+        string_append_formated(string, "%s(", lexer_identifer_to_string(parser->lexer, node->name_id).characters);
+        for (int i = 0; i < node->children.size; i++) {
+            ast_node_expression_append_to_string(parser, node->children[i], string);
+            string_append_formated(string, ", ");
+        }
+        string_append_formated(string, ") ", lexer_identifer_to_string(parser->lexer, node->name_id).characters);
+        return;
+    case AST_Node_Type::EXPRESSION_VARIABLE_READ:
+        string_append_formated(string, "%s", lexer_identifer_to_string(parser->lexer, node->name_id).characters);
+        return;
+    case AST_Node_Type::EXPRESSION_BINARY_OPERATION_ADDITION: bin_op = true, bin_op_str = "+"; break;
+    case AST_Node_Type::EXPRESSION_BINARY_OPERATION_SUBTRACTION: bin_op = true, bin_op_str = "-"; break;
+    case AST_Node_Type::EXPRESSION_BINARY_OPERATION_DIVISION: bin_op = true, bin_op_str = "/"; break;
+    case AST_Node_Type::EXPRESSION_BINARY_OPERATION_MULTIPLICATION: bin_op = true, bin_op_str = "*"; break;
+    case AST_Node_Type::EXPRESSION_BINARY_OPERATION_MODULO: bin_op = true, bin_op_str = "%"; break;
+    case AST_Node_Type::EXPRESSION_BINARY_OPERATION_AND: bin_op = true, bin_op_str = "&&"; break;
+    case AST_Node_Type::EXPRESSION_BINARY_OPERATION_OR: bin_op = true, bin_op_str = "||"; break;
+    case AST_Node_Type::EXPRESSION_BINARY_OPERATION_EQUAL: bin_op = true, bin_op_str = "=="; break;
+    case AST_Node_Type::EXPRESSION_BINARY_OPERATION_NOT_EQUAL: bin_op = true, bin_op_str = "!="; break;
+    case AST_Node_Type::EXPRESSION_BINARY_OPERATION_LESS: bin_op = true, bin_op_str = "<"; break;
+    case AST_Node_Type::EXPRESSION_BINARY_OPERATION_LESS_OR_EQUAL: bin_op = true, bin_op_str = "<="; break;
+    case AST_Node_Type::EXPRESSION_BINARY_OPERATION_GREATER: bin_op = true, bin_op_str = ">"; break;
+    case AST_Node_Type::EXPRESSION_BINARY_OPERATION_GREATER_OR_EQUAL: bin_op = true, bin_op_str = ">="; break;
+    case AST_Node_Type::EXPRESSION_UNARY_OPERATION_NEGATE: unary_op = true, bin_op_str = "-"; break;
+    case AST_Node_Type::EXPRESSION_UNARY_OPERATION_NOT:unary_op = true, bin_op_str = "!"; break;
+    default: return;
+    }
+    if (bin_op)
+    {
+        string_append_formated(string, "(");
+        ast_node_expression_append_to_string(parser, node->children[0], string);
+        string_append_formated(string, " %s ", bin_op_str);
+        ast_node_expression_append_to_string(parser, node->children[1], string);
+        string_append_formated(string, ")");
+        return;
+    }
+    else if (unary_op)
+    {
+        string_append_formated(string, bin_op_str);
+        ast_node_expression_append_to_string(parser, node->children[0], string);
+    }
+}
+
 void ast_node_append_to_string(AST_Parser* parser, int node_index, String* string, int indentation_lvl)
 {
     AST_Node* node = &parser->nodes[node_index];
@@ -799,9 +958,16 @@ void ast_node_append_to_string(AST_Parser* parser, int node_index, String* strin
     }
     String type_str = ast_node_type_to_string(node->type);
     string_append_string(string, &type_str);
-    string_append_formated(string, "\n");
-    for (int i = 0; i < node->children.size; i++) {
-        ast_node_append_to_string(parser, node->children[i], string, indentation_lvl + 1);
+    if (ast_node_type_is_expression(node->type)) {
+        string_append_formated(string, ": ");
+        ast_node_expression_append_to_string(parser, node_index, string);
+        string_append_formated(string, "\n");
+    }
+    else {
+        string_append_formated(string, "\n");
+        for (int i = 0; i < node->children.size; i++) {
+            ast_node_append_to_string(parser, node->children[i], string, indentation_lvl + 1);
+        }
     }
 }
 

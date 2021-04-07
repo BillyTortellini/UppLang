@@ -3,6 +3,7 @@
 #include "../../datastructures/dynamic_array.hpp"
 #include "../../datastructures/hashtable.hpp"
 #include "../../datastructures/string.hpp"
+#include "text.hpp"
 
 namespace Token_Type
 {
@@ -56,6 +57,9 @@ namespace Token_Type
         BOOLEAN_LITERAL,
         // Other important stuff
         IDENTIFIER,
+        COMMENT,
+        WHITESPACE, // Tabs and spaces
+        NEW_LINE, // \n
         // Controll Tokens 
         ERROR_TOKEN // <- This is usefull because now errors propagate to syntax analysis
     };
@@ -74,9 +78,7 @@ struct Token
     Token_Type::ENUM type;
     TokenAttribute attribute;
     // Position information
-    int line_number;
-    int character_position;
-    int lexem_length;
+    Text_Slice position;
     int source_code_index;
 };
 
@@ -86,6 +88,7 @@ struct Lexer
     DynamicArray<String> identifiers;
     Hashtable<String, int> identifier_index_lookup_table;
     DynamicArray<Token> tokens;
+    DynamicArray<Token> tokens_with_whitespaces;
 };
 
 bool token_type_is_keyword(Token_Type::ENUM type);
