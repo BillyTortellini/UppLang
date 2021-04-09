@@ -1,18 +1,34 @@
-// Next feature: Semantic analysis error types
-// ? Do i want AST-Interpreter on the new AST ?
-// If i do, i need to rework it nau
+// Next Up: Bytecode generator
+fac_iter :: (n:int) -> int
+{
+    prev := 1;
+    curr := 1;
+    i := 2;
+    while (i < n)
+    {
+        old := curr;
+        curr = prev + curr; 
+        prev = old;
+        i=i+1;
+    }
+    return curr;
+}
 
-// BUG: Function parameters in semantic analyser dont work,
-//      see below
 fac :: (n:int) -> int
 {
     if (n <= 2)  return 1; 
+    return fac(n-1) + fac(n-2);
 }
 
-main :: () -> int 
+main :: () -> int
 {
-    x := 5;
-    return x * x;
+    x := true;
+    y : int = 5;
+
+    while (x) {
+        break;
+    }
+    return fac_iter(1000);
 }
 
 
@@ -21,7 +37,6 @@ main :: () -> int
     Short circuit operation on && and ||
 
     Next Features:
-     * Semantic analysis
      * Bytecode creator + interpreter
      * Pointers + Arrays 
      * Structs
@@ -30,6 +45,9 @@ main :: () -> int
      * Bytecode Debugger?
      * Backend?
 
+    UppLang small improvements:
+     * Just highlight relevant stuff on parser errors
+
     Current UppLang features:
      * Expression parsing + evaluation
      * Variable definition/assignment + return
@@ -37,6 +55,7 @@ main :: () -> int
      * Scopes
      * If-Else Flow control
      * While loop with break continue
+     * Functions with parameters and return types
 
     Nice-to-have Features:
      * Log to window, not to console, maybe something like in a textfield

@@ -46,8 +46,8 @@ void ast_interpreter_exit_scope(AST_Interpreter* interpreter) {
         return;
     }
     int scope_start = interpreter->scope_beginnings[interpreter->scope_beginnings.size - 1];
-    dynamic_array_remove_range_ordered(&interpreter->symbol_table, scope_start, interpreter->symbol_table.size);
-    dynamic_array_swap_remove(&interpreter->scope_beginnings, interpreter->scope_beginnings.size - 1);
+    dynamic_array_rollback_to_size(&interpreter->symbol_table, scope_start);
+    dynamic_array_rollback_to_size(&interpreter->scope_beginnings, interpreter->scope_beginnings.size-1);
 }
 
 void ast_interpreter_begin_new_function_scope(AST_Interpreter* interpreter) {

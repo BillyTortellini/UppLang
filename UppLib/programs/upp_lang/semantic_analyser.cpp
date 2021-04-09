@@ -103,6 +103,15 @@ void semantic_analyser_log_error(Semantic_Analyser* analyser, const char* msg, i
     dynamic_array_push_back(&analyser->errors, error);
 }
 
+void semantic_analyser_log_error(Semantic_Analyser* analyser, const char* msg, int node_start_index, int node_end_index)
+{
+    Compiler_Error error;
+    error.message = msg;
+    error.range.start_index = analyser->parser->token_mapping[node_start_index].start_index;
+    error.range.end_index = analyser->parser->token_mapping[node_end_index].end_index;
+    dynamic_array_push_back(&analyser->errors, error);
+}
+
 Symbol_Table* semantic_analyser_install_symbol_table(Semantic_Analyser* analyser, Symbol_Table* parent, int node_index) 
 {
     Symbol_Table* table = new Symbol_Table();
@@ -311,11 +320,21 @@ Variable_Type::ENUM semantic_analyser_analyse_expression(Semantic_Analyser* anal
     return Variable_Type::ERROR_TYPE;
 }
 
-void semantic_analyser_analyse_statement_block(Semantic_Analyser* analyser, Symbol_Table* parent, int block_index, bool create_symbol_table);
-void semantic_analyser_analyse_statement(Semantic_Analyser* analyser, Symbol_Table* parent, int statement_index)
+namespace Analyser_Result
 {
-    // I think i need an analysis if there is a return on all paths (if and else schtaff)
+    enum ENUM {
+        NO_RETURN,
+        RETURN,
+        CONTINUE,
+        BREAK
+    };
+}
+
+Analyser_Result::ENUM semantic_analyser_analyse_statement_block(Semantic_Analyser* analyser, Symbol_Table* parent, int block_index, bool create_symbol_table);
+Analyser_Result::ENUM semantic_analyser_analyse_statement(Semantic_Analyser* analyser, Symbol_Table* parent, int statement_index)
+{
     AST_Node* statement = &analyser->parser->nodes[statement_index];
+    Variable_Type::ENUM result = Variable_Type::VOID_TYPE;
     switch (statement->type)
     {
     case AST_Node_Type::STATEMENT_RETURN: {
@@ -323,30 +342,29 @@ void semantic_analyser_analyse_statement(Semantic_Analyser* analyser, Symbol_Tab
         if (return_type != analyser->function_return_type) {
             semantic_analyser_log_error(analyser, "Return type does not match function return type", statement_index);
         }
-        break;
+        return Analyser_Result::RETURN;
     }
     case AST_Node_Type::STATEMENT_BREAK: {
         if (analyser->loop_depth <= 0) {
             semantic_analyser_log_error(analyser, "Break not inside loop!", statement_index);
         }
-        break;
+        return Analyser_Result::BREAK;
     }
     case AST_Node_Type::STATEMENT_CONTINUE: {
         if (analyser->loop_depth <= 0) {
             semantic_analyser_log_error(analyser, "Continue not inside loop!", statement_index);
         }
-        break;
+        return Analyser_Result::CONTINUE;
     }
     case AST_Node_Type::STATEMENT_EXPRESSION: {
         AST_Node* node = &analyser->parser->nodes[statement->children[0]];
         if (node->type != AST_Node_Type::EXPRESSION_FUNCTION_CALL) {
             semantic_analyser_log_error(analyser, "Expression statement must be funciton call!", statement_index);
         }
-        break;
+        return Analyser_Result::NO_RETURN;
     }
     case AST_Node_Type::STATEMENT_BLOCK: {
-        semantic_analyser_analyse_statement_block(analyser, parent, statement->children[0], true);
-        break;
+        return semantic_analyser_analyse_statement_block(analyser, parent, statement->children[0], true);
     }
     case AST_Node_Type::STATEMENT_IF: 
     {
@@ -355,7 +373,7 @@ void semantic_analyser_analyse_statement(Semantic_Analyser* analyser, Symbol_Tab
             semantic_analyser_log_error(analyser, "If condition must be of boolean type!", statement_index);
         }
         semantic_analyser_analyse_statement_block(analyser, parent, statement->children[1], true);
-        break;
+        return Analyser_Result::NO_RETURN;
     }
     case AST_Node_Type::STATEMENT_IF_ELSE: 
     {
@@ -363,9 +381,10 @@ void semantic_analyser_analyse_statement(Semantic_Analyser* analyser, Symbol_Tab
         if (condition_type != Variable_Type::BOOLEAN) {
             semantic_analyser_log_error(analyser, "If condition must be of boolean type!", statement_index);
         }
-        semantic_analyser_analyse_statement_block(analyser, parent, statement->children[1], true);
-        semantic_analyser_analyse_statement_block(analyser, parent, statement->children[2], true);
-        break;
+        Analyser_Result::ENUM if_result = semantic_analyser_analyse_statement_block(analyser, parent, statement->children[1], true);
+        Analyser_Result::ENUM else_result = semantic_analyser_analyse_statement_block(analyser, parent, statement->children[2], true);
+        if (if_result == else_result) return if_result;
+        return Analyser_Result::NO_RETURN; // Maybe i need to do something different here, but I dont think so
     }
     case AST_Node_Type::STATEMENT_WHILE: 
     {
@@ -374,9 +393,18 @@ void semantic_analyser_analyse_statement(Semantic_Analyser* analyser, Symbol_Tab
             semantic_analyser_log_error(analyser, "If condition must be of boolean type!", statement_index);
         }
         analyser->loop_depth++;
-        semantic_analyser_analyse_statement_block(analyser, parent, statement->children[1], true);
+        Analyser_Result::ENUM block_result = semantic_analyser_analyse_statement_block(analyser, parent, statement->children[1], true);
         analyser->loop_depth--;
-        break;
+        if (block_result == Analyser_Result::RETURN) {
+            semantic_analyser_log_error(analyser, "While loop never runs more than once, since it always returns!", statement_index);
+        }
+        else if (block_result == Analyser_Result::CONTINUE) {
+            semantic_analyser_log_error(analyser, "While loop stops, since it always continues!", statement_index);
+        }
+        else if (block_result == Analyser_Result::BREAK) {
+            semantic_analyser_log_error(analyser, "While loop never more than once, since it always breaks!", statement_index);
+        }
+        return Analyser_Result::NO_RETURN;
     }
     case AST_Node_Type::STATEMENT_VARIABLE_ASSIGNMENT: 
     {
@@ -384,6 +412,7 @@ void semantic_analyser_analyse_statement(Semantic_Analyser* analyser, Symbol_Tab
         Symbol* s = symbol_table_find_symbol_of_type(parent, statement->name_id, Symbol_Type::VARIABLE, &in_current_scope);
         if (s == 0) {
             semantic_analyser_log_error(analyser, "Variable not defined, cannot be assigned to!", statement_index);
+            break;
         }
         Variable_Type::ENUM assignment_type = semantic_analyser_analyse_expression(analyser, parent, statement->children[0]);
         if (assignment_type != s->variable_type) {
@@ -423,7 +452,7 @@ void semantic_analyser_analyse_statement(Semantic_Analyser* analyser, Symbol_Tab
             break;
         }
         Variable_Type::ENUM assignment_type = semantic_analyser_analyse_expression(analyser, parent, statement->children[0]);
-        if (assignment_type != var_type->variable_type) {
+        if (assignment_type != var_type->variable_type && assignment_type != Variable_Type::ERROR_TYPE) {
             semantic_analyser_log_error(analyser, "Variable type does not match expression type", statement_index);
         }
         semantic_analyser_define_variable(analyser, parent, statement_index, var_type->variable_type);
@@ -449,10 +478,10 @@ void semantic_analyser_analyse_statement(Semantic_Analyser* analyser, Symbol_Tab
     }
     }
 
-    return;
+    return Analyser_Result::NO_RETURN;
 }
 
-void semantic_analyser_analyse_statement_block(Semantic_Analyser* analyser, Symbol_Table* parent, int block_index, bool create_symbol_table)
+Analyser_Result::ENUM semantic_analyser_analyse_statement_block(Semantic_Analyser* analyser, Symbol_Table* parent, int block_index, bool create_symbol_table)
 {
     Symbol_Table* table;
     if (create_symbol_table)
@@ -460,10 +489,45 @@ void semantic_analyser_analyse_statement_block(Semantic_Analyser* analyser, Symb
     else
         table = parent;
 
+    int result_type_found = false; // Continue or break make 'dead code' returns or other things invalid
+    Analyser_Result::ENUM result = Analyser_Result::NO_RETURN;
     AST_Node* block = &analyser->parser->nodes[block_index];
-    for (int i = 0; i < block->children.size; i++) {
-        semantic_analyser_analyse_statement(analyser, table, block->children[i]);
+    for (int i = 0; i < block->children.size; i++) 
+    {
+        Analyser_Result::ENUM statement_result = semantic_analyser_analyse_statement(analyser, table, block->children[i]);
+        switch (statement_result)
+        {
+        case Analyser_Result::BREAK: 
+        case Analyser_Result::CONTINUE: {
+            if (!result_type_found)
+            {
+                result = Analyser_Result::NO_RETURN;
+                if (i != block->children.size - 1) {
+                    // This should probably be a warning
+                    semantic_analyser_log_error(analyser, "Code will never be reached, break or continue before prevents that!",
+                        block->children[i+1], block->children[block->children.size - 1]);
+                }
+                result_type_found = true;
+            }
+            break;
+        }
+        case Analyser_Result::RETURN:
+            if (!result_type_found)
+            {
+                result = Analyser_Result::RETURN;
+                if (i != block->children.size - 1) {
+                    // This should probably be a warning
+                    semantic_analyser_log_error(analyser, "Code will never be reached, return before prevents that!",
+                        block->children[i+1], block->children[block->children.size - 1]);
+                }
+                result_type_found = true;
+            }
+            break;
+        case Analyser_Result::NO_RETURN:
+            break;
+        }
     }
+    return result;
 }
 
 void semantic_analyser_analyse_function(Semantic_Analyser* analyser, Symbol_Table* parent, int function_index)
@@ -480,10 +544,10 @@ void semantic_analyser_analyse_function(Semantic_Analyser* analyser, Symbol_Tabl
         Symbol* s = symbol_table_find_symbol_of_type(table, parameter->type_id, Symbol_Type::TYPE, &in_current_scope);
         if (s == 0) {
             semantic_analyser_log_error(analyser, "Parameter type not defined!", parameter_block->children[i]);
-            semantic_analyser_define_variable(analyser, table, parameter->name_id, Variable_Type::ERROR_TYPE);
+            semantic_analyser_define_variable(analyser, table, parameter_block->children[i], Variable_Type::ERROR_TYPE);
             continue;
         }
-        semantic_analyser_define_variable(analyser, table, parameter->name_id, s->variable_type);
+        semantic_analyser_define_variable(analyser, table, parameter_block->children[i], s->variable_type);
     }
 
     // Set return type
@@ -499,7 +563,10 @@ void semantic_analyser_analyse_function(Semantic_Analyser* analyser, Symbol_Tabl
         }
     }
     analyser->loop_depth = 0;
-    semantic_analyser_analyse_statement_block(analyser, table, function->children[1], false);
+    Analyser_Result::ENUM result = semantic_analyser_analyse_statement_block(analyser, table, function->children[1], false);
+    if (result != Analyser_Result::RETURN) {
+        semantic_analyser_log_error(analyser, "Not all code paths return a value!", function_index);
+    }
 }
 
 // Semantic Analyser

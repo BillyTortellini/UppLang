@@ -115,6 +115,11 @@ void dynamic_array_remove_range_ordered(DynamicArray<T>* a, int start_index, int
 }
 
 template<typename T>
+void dynamic_array_rollback_to_size(DynamicArray<T>* a, int size) {
+    a->size = size;
+}
+
+template<typename T>
 struct Array;
 
 template <typename T>
