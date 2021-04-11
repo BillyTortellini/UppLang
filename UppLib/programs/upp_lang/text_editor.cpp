@@ -321,6 +321,7 @@ Text_Editor text_editor_create(TextRenderer* text_renderer, FileListener* listen
     result.lexer = lexer_create();
     result.analyser = semantic_analyser_create();
     result.interpreter = ast_interpreter_create();
+    result.generator = bytecode_generator_create();
 
     return result;
 }
@@ -345,6 +346,7 @@ void text_editor_destroy(Text_Editor* editor)
     lexer_destroy(&editor->lexer);
     semantic_analyser_destroy(&editor->analyser);
     ast_interpreter_destroy(&editor->interpreter);
+    bytecode_generator_destroy(&editor->generator);
 }
 
 void text_editor_synchronize_highlights_array(Text_Editor* editor)
@@ -2020,11 +2022,17 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
         }
         if (input->key_pressed[KEY_CODE::F5] && editor->analyser.errors.size == 0 && editor->parser.errors.size == 0)
         {
-            AST_Interpreter_Value result = ast_interpreter_execute_main(&editor->interpreter, &editor->analyser);
             String result_str = string_create_empty(32);
             SCOPE_EXIT(string_destroy(&result_str));
+            bytecode_generator_generate(&editor->generator, &editor->analyser);
+            bytecode_generator_append_bytecode_to_string(&editor->generator, &result_str);
+            logg("BYTECODE_GENERATOR RESULT: \n--------------------------------\n%s\n", result_str.characters);
+            /*
+            AST_Interpreter_Value result = ast_interpreter_execute_main(&editor->interpreter, &editor->analyser);
             ast_interpreter_value_append_to_string(result, &result_str);
             logg("Result: %s\n", result_str.characters);
+            */
+
         }
     }
 
