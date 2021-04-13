@@ -9,6 +9,7 @@ Bytecode_Generator bytecode_generator_create()
     result.continue_instructions_to_fill_out = dynamic_array_create_empty<int>(64);
     result.function_locations = dynamic_array_create_empty<Function_Location>(64);
     result.function_calls = dynamic_array_create_empty<Function_Call_Location>(64);
+    result.maximum_function_stack_depth = 0;
     return result;
 }
 
@@ -98,11 +99,12 @@ Variable_Type::ENUM bytecode_generator_generate_expression(Bytecode_Generator* g
         }
         Function_Call_Location call_loc;
         call_loc.call_instruction_location = bytecode_generator_add_instruction(generator, 
-            instruction_make_2(Instruction_Type::CALL, 0, generator->stack_base_offset));
+            instruction_make_2(Instruction_Type::CALL, 0, argument_reg_start + expression->children.size));
         call_loc.function_name = expression->name_id;
         dynamic_array_push_back(&generator->function_calls, call_loc);
+        bytecode_generator_add_instruction(generator, instruction_make_1(Instruction_Type::LOAD_RETURN_VALUE, result_register));
 
-        //TODO: Find return type, this needs to be done better at some point (Symbol_Table containing the return type, and argument types)
+        //TODO: Find return type, this needs to be done better at some point (Symbol_Table containing the return type, and argument types of a function)
         bool in_current_scope;
         AST_Node* function = &generator->analyser->parser->nodes[
             symbol_table_find_symbol_of_type(table, expression->name_id, Symbol_Type::FUNCTION, &in_current_scope)->function_index];
@@ -450,7 +452,7 @@ void bytecode_generator_generate_function_code(Bytecode_Generator* generator, AS
     AST_Node* parameter_block = &generator->analyser->parser->nodes[function->children[0]];
     Symbol_Table* table = generator->analyser->symbol_tables[generator->analyser->node_to_table_mappings[function_index]];
 
-    generator->stack_base_offset = 1; // Since stack points to the retur address
+    generator->stack_base_offset = 0;
     generator->max_stack_base_offset = 0;
     generator->in_main_function = false;
     if (function->name_id == generator->main_name_id) {
@@ -469,7 +471,7 @@ void bytecode_generator_generate_function_code(Bytecode_Generator* generator, AS
         }
         Variable_Location loc;
         if (i < parameter_block->children.size) {
-            loc.stack_base_offset = parameter_block->children.size - i - 2; // - 2 since return address is also on the stack
+            loc.stack_base_offset = (i - parameter_block->children.size + 1) - 3; // - 3 since return address and old base ptr is also on the stack
         }
         else {
             loc.stack_base_offset = bytecode_generator_generate_register(generator);
@@ -479,12 +481,14 @@ void bytecode_generator_generate_function_code(Bytecode_Generator* generator, AS
         dynamic_array_push_back(&generator->variable_locations, loc);
     }
 
-    int fill_out_max_register = bytecode_generator_add_instruction(generator, instruction_make_0(Instruction_Type::ENTER));
+    int function_entry = generator->instructions.size;
     bytecode_generator_generate_statement_block(generator, function->children[1], false);
-    generator->instructions[fill_out_max_register].op1 = generator->max_stack_base_offset;
+    if (generator->max_stack_base_offset > generator->maximum_function_stack_depth) {
+        generator->maximum_function_stack_depth = generator->max_stack_base_offset;
+    }
 
     Function_Location location;
-    location.function_entry_instruction = fill_out_max_register;
+    location.function_entry_instruction = function_entry;
     location.name_id = function->name_id;
     dynamic_array_push_back(&generator->function_locations, location);
 }
@@ -501,6 +505,8 @@ void bytecode_generator_generate(Bytecode_Generator* generator, Semantic_Analyse
     dynamic_array_reset(&generator->function_locations);
     generator->main_name_id = lexer_add_or_find_identifier_by_string(analyser->parser->lexer, string_create_static("main"));
     generator->entry_point_index = -1;
+    generator->maximum_function_stack_depth = 0;
+    generator->max_stack_base_offset = 0;
 
     // Generate code for all functions
     for (int i = 0; i < analyser->parser->nodes[0].children.size; i++) {
@@ -557,9 +563,6 @@ void bytecode_generator_append_bytecode_to_string(Bytecode_Generator* generator,
             break;
         case Instruction_Type::CALL:
             string_append_formated(string, "CALL                              dest=%d, stack_offset=%d\n", instruction.op1, instruction.op2);
-            break;
-        case Instruction_Type::ENTER:
-            string_append_formated(string, "ENTER                             stack_size=%d\n", instruction.op1);
             break;
         case Instruction_Type::RETURN:
             string_append_formated(string, "RETURN                            return_reg=%d\n", instruction.op1);

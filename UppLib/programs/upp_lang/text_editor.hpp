@@ -12,6 +12,7 @@
 #include "semantic_analyser.hpp"
 #include "ast_interpreter.hpp"
 #include "bytecode.hpp"
+#include "bytecode_interpreter.hpp"
 
 struct Input;
 struct OpenGLState;
@@ -214,6 +215,7 @@ struct Text_Editor
     Semantic_Analyser analyser;
     AST_Interpreter interpreter;
     Bytecode_Generator generator;
+    Bytecode_Interpreter bytecode_interpreter;
 };
 
 Text_Editor text_editor_create(TextRenderer* text_renderer, FileListener* listener, OpenGLState* state);

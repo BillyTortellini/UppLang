@@ -181,7 +181,7 @@ Variable_Type::ENUM semantic_analyser_analyse_expression(Semantic_Analyser* anal
         if (expression->children.size != parameter_block->children.size) {
             semantic_analyser_log_error(analyser, "Argument size does not match function parameter size!", expression_index);
         }
-        for (int i = 0; i < function->children.size && i < expression->children.size; i++) 
+        for (int i = 0; i < parameter_block->children.size && i < expression->children.size; i++) 
         {
             AST_Node* argument = &analyser->parser->nodes[expression->children[i]];
             Variable_Type::ENUM argument_type = semantic_analyser_analyse_expression(analyser, table, expression->children[i]);

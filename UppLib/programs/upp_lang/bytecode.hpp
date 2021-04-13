@@ -38,20 +38,18 @@
     Accessing the stack is done relative to the base_index. (Closures wont work this way, but IDC yet)
     Caller: Function calls look like this (Calling Convention):
         1. Push arguments onto the stack, from left to right
-        2. Push return address onto stack   \
-        3. Call function                     ---> This is both done using the call instruction
+        2. Push return address onto stack    \
+        3. Push old base pointer onto stack  |
+        4. Adjust base pointer               |
+        5. Call function                     \---> This is all done using the call instruction
     Callee: Function Prolog:
-        1. Push Base_Pointer on the stack
-        2. Push Stack_Index onto Base_Index
-        3. Move stack-pointer forwards, so that push/pop wont affect local variables   ---> This is done using the enter instruction
+        // Nothing really --> No enter function required, except for stack checking
     Callee: Function End:
         1. Move return value into return register
-        2. Move Base_Pointer to stack Pointer                                 |
-        3. Pop into Base_Pointer (now points to calling function frame)       |
-        4. Return (Pops index from stack and then jumps)                      ---> Are all done using the return keyword
+        2. Reset base pointer (old one on stack)
+        3. Return to return address
     Caller: 
-        1. Pop arguments from stack
-        2. Move return value to variable on stack 
+        1. Move return value to variable on stack 
 
 */
 namespace Instruction_Type
@@ -64,7 +62,6 @@ namespace Instruction_Type
         JUMP_ON_TRUE, // op1 = instruction_index, op2 = cnd_reg
         JUMP_ON_FALSE, // op1 = instruction_index, op2 = cnd_reg
         CALL, // Pushes return address, op1 = instruction_index, op2 = register_in_use_count
-        ENTER, // Does function prolog, op1 = stack size required for function
         RETURN, // Pops return address, op1 = return_value reg
         LOAD_RETURN_VALUE, // op1 = dst_reg
         EXIT, // op1 = return_value_register
@@ -138,6 +135,7 @@ struct Bytecode_Generator
     int entry_point_index;
     int main_name_id;
     bool in_main_function;
+    int maximum_function_stack_depth;
 };
 
 Bytecode_Generator bytecode_generator_create();

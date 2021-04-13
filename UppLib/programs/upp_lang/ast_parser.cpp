@@ -43,7 +43,10 @@ AST_Parser_Checkpoint ast_parser_checkpoint_make(AST_Parser* parser, AST_Node_In
     AST_Parser_Checkpoint result;
     result.parser = parser;
     result.parent_index = parent_index;
-    result.parent_child_count = parser->nodes.data[parent_index].children.size;
+    if (parent_index != -1)
+        result.parent_child_count = parser->nodes.data[parent_index].children.size;
+    else
+        result.parent_child_count = 0;
     result.rewind_token_index = parser->index;
     result.next_free_node_index = parser->next_free_node;
     return result;
@@ -262,7 +265,7 @@ AST_Node_Index ast_parser_parse_expression_single_value(AST_Parser* parser)
         dynamic_array_push_back(&parser->nodes[node_index].children, child_index);
         parser->nodes[child_index].parent = node_index;
         parser->token_mapping[node_index] = token_range_make(checkpoint.rewind_token_index, parser->index);
-        return true;
+        return node_index;
     }
     else if (ast_parser_test_next_token(parser, Token_Type::LOGICAL_NOT))
     {
@@ -276,7 +279,7 @@ AST_Node_Index ast_parser_parse_expression_single_value(AST_Parser* parser)
         dynamic_array_push_back(&parser->nodes[node_index].children, child_index);
         parser->nodes[child_index].parent = node_index;
         parser->token_mapping[node_index] = token_range_make(checkpoint.rewind_token_index, parser->index);
-        return true;
+        return child_index;
     }
 
     ast_parser_checkpoint_reset(checkpoint);
@@ -826,6 +829,8 @@ void ast_parser_parse(AST_Parser* parser, Lexer* lexer)
     parser->next_free_node = 0;
     parser->lexer = lexer;
     dynamic_array_reset(&parser->errors);
+    dynamic_array_reset(&parser->nodes);
+    dynamic_array_reset(&parser->token_mapping);
 
     ast_parser_parse_root(parser);
     dynamic_array_rollback_to_size(&parser->nodes, parser->next_free_node);

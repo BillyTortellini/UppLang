@@ -8,6 +8,7 @@
 #include "../../rendering/mesh_utils.hpp"
 #include "../../math/scalars.hpp"
 #include "../../utility/file_io.hpp"
+#include "../../win32/timing.hpp"
 
 //#include "compiler.hpp"
 //#include "ast_interpreter.hpp"
@@ -322,6 +323,7 @@ Text_Editor text_editor_create(TextRenderer* text_renderer, FileListener* listen
     result.analyser = semantic_analyser_create();
     result.interpreter = ast_interpreter_create();
     result.generator = bytecode_generator_create();
+    result.bytecode_interpreter = bytecode_intepreter_create();
 
     return result;
 }
@@ -347,6 +349,7 @@ void text_editor_destroy(Text_Editor* editor)
     semantic_analyser_destroy(&editor->analyser);
     ast_interpreter_destroy(&editor->interpreter);
     bytecode_generator_destroy(&editor->generator);
+    bytecode_interpreter_destroy(&editor->bytecode_interpreter);
 }
 
 void text_editor_synchronize_highlights_array(Text_Editor* editor)
@@ -1980,10 +1983,6 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
 
         lexer_parse_string(&editor->lexer, &source_code);
         ast_parser_parse(&editor->parser, &editor->lexer);
-        if (editor->parser.errors.size == 0) {
-            semantic_analyser_analyse(&editor->analyser, &editor->parser);
-        }
-
         // Debug print AST
         {
             String printed_ast = string_create_empty(256);
@@ -1991,6 +1990,10 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
             ast_parser_append_to_string(&editor->parser, &printed_ast);
             logg("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n");
             logg("Ast: \n%s\n", printed_ast.characters);
+        }
+
+        if (editor->parser.errors.size == 0) {
+            semantic_analyser_analyse(&editor->analyser, &editor->parser);
         }
 
         // Do syntax highlighting
@@ -2027,12 +2030,20 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
             bytecode_generator_generate(&editor->generator, &editor->analyser);
             bytecode_generator_append_bytecode_to_string(&editor->generator, &result_str);
             logg("BYTECODE_GENERATOR RESULT: \n--------------------------------\n%s\n", result_str.characters);
-            /*
-            AST_Interpreter_Value result = ast_interpreter_execute_main(&editor->interpreter, &editor->analyser);
-            ast_interpreter_value_append_to_string(result, &result_str);
-            logg("Result: %s\n", result_str.characters);
-            */
 
+            string_reset(&result_str);
+            double ast_start = timing_current_time_in_seconds();
+            AST_Interpreter_Value result = ast_interpreter_execute_main(&editor->interpreter, &editor->analyser);
+            double ast_end = timing_current_time_in_seconds();
+            float ast_time = (ast_end - ast_start);
+            ast_interpreter_value_append_to_string(result, &result_str);
+            logg("AST_Interpreter result: %s (%2.5f seconds)\n", result_str.characters, ast_time);
+
+            double bytecode_start = timing_current_time_in_seconds();
+            bytecode_interpreter_execute_main(&editor->bytecode_interpreter, &editor->generator);
+            double bytecode_end = timing_current_time_in_seconds();
+            float bytecode_time = (bytecode_end - bytecode_start);
+            logg("Bytecode interpreter result: %d (%2.5f seconds)\n", editor->bytecode_interpreter.return_register, bytecode_time);
         }
     }
 

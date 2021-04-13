@@ -1,5 +1,5 @@
 // Next Up: Bytecode generator
-fac_iter :: (n:int) -> int
+fib_iter :: (n:int) -> int
 {
     prev := 1;
     curr := 1;
@@ -14,21 +14,48 @@ fac_iter :: (n:int) -> int
     return curr;
 }
 
-fac :: (n:int) -> int
+fib :: (n:int) -> int
 {
     if (n <= 2)  return 1; 
-    return fac(n-1) + fac(n-2);
+    return fib(n-1) + fib(n-2);
+}
+
+test_2 :: (n:int) -> int
+{
+    return n * 2;
+}
+
+test_1 :: (n:int) -> int
+{
+    x := 5;
+    x = test_2(n);
+    y := 3;
+    z := n;
+    z = z + y;
+    return x + y + z;
+}
+
+fac_it :: (n:int) -> int 
+{
+    res := 1;
+    x := 2;
+    while (x <= n) {
+        res = res * x; 
+        x = x+1;
+    }
+    return res;
 }
 
 main :: () -> int
 {
-    x := true;
-    y : int = 5;
-
-    while (x) {
-        break;
+    i := 0;
+    res := 0;
+    while (i < 1000000) 
+    {
+        i = i+1;
+        fac_it(20);
     }
-    return fac_iter(1000);
+    return res;
 }
 
 
@@ -37,7 +64,6 @@ main :: () -> int
     Short circuit operation on && and ||
 
     Next Features:
-     * Bytecode creator + interpreter
      * Pointers + Arrays 
      * Structs
      * Strings?
