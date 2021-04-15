@@ -4,7 +4,7 @@
 
 struct AST_Interpreter_Value
 {
-    Variable_Type::ENUM type;
+    Primitive_Type type;
     union
     {
         int int_value;

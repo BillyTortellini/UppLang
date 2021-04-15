@@ -10,7 +10,6 @@
 #include "ast_parser.hpp"
 #include "lexer.hpp"
 #include "semantic_analyser.hpp"
-#include "ast_interpreter.hpp"
 #include "bytecode.hpp"
 #include "bytecode_interpreter.hpp"
 
@@ -213,7 +212,6 @@ struct Text_Editor
     AST_Parser parser;
     Lexer lexer;
     Semantic_Analyser analyser;
-    AST_Interpreter interpreter;
     Bytecode_Generator generator;
     Bytecode_Interpreter bytecode_interpreter;
 };

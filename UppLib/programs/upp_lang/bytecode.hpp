@@ -65,6 +65,9 @@ namespace Instruction_Type
         RETURN, // Pops return address, op1 = return_value reg
         LOAD_RETURN_VALUE, // op1 = dst_reg
         EXIT, // op1 = return_value_register
+        LOAD_REGISTER_ADDRESS, // op1 = dest_reg, op2 = register_to_load
+        STORE_TO_ADDRESS, // op1 = address_register, op2 = value_register
+        LOAD_FROM_ADDRESS, // op1 = dest_register, op2 = address_register
         // Expression Instructions
         INT_ADDITION, // All binary operations work the following: op1 = destination, op2 = left_op, op3 = right_op
         INT_SUBTRACT,
@@ -104,7 +107,7 @@ struct Bytecode_Instruction
 struct Variable_Location
 {
     int variable_name;
-    Variable_Type::ENUM variable_type;
+    int type_index;
     int stack_base_offset;
 };
 

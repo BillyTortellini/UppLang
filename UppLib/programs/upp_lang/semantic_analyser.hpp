@@ -7,18 +7,44 @@
 #include "lexer.hpp"
 #include "ast_parser.hpp"
 
-namespace Variable_Type
+/*
+    Changes:
+        Function Parameters
+        Function Return type
+        Function children count
+        Variable definition
+        Variable define-assign
+        Assignment Statement
+        Expression AddressOf
+        Expression Dereference
+*/
+
+enum class Primitive_Type
 {
-    enum ENUM
-    {
-        INTEGER,
-        FLOAT,
-        BOOLEAN,
-        ERROR_TYPE,
-        VOID_TYPE,
-    };
+    INTEGER,
+    FLOAT,
+    BOOLEAN,
 };
-String variable_type_to_string(Variable_Type::ENUM type);
+
+enum class Signature_Type
+{
+    PRIMITIVE,
+    POINTER,
+    FUNCTION,
+    ERROR_TYPE,
+    // Future: Array, function, union, ...
+};
+
+struct Type_Signature
+{
+    Signature_Type type;
+    Primitive_Type primtive_type;
+    int pointed_to_type_index;
+    DynamicArray<int> parameter_type_indices;
+    int return_type_index;
+};
+
+String variable_type_to_string(Primitive_Type type);
 
 namespace Symbol_Type
 {
@@ -26,19 +52,16 @@ namespace Symbol_Type
     {
         VARIABLE,
         FUNCTION,
-        TYPE,
+        TYPE, // This will be required when we have Structs
     };
 };
 
-struct Symbol 
+struct Symbol
 {
     int name;
     Symbol_Type::ENUM symbol_type;
-    union
-    {
-        Variable_Type::ENUM variable_type;
-        int function_index;
-    };
+    int type_index;
+    int function_index;
 };
 
 struct Symbol_Table
@@ -47,21 +70,49 @@ struct Symbol_Table
     DynamicArray<Symbol> symbols;
 };
 
+struct Semantic_Node_Information
+{
+    int symbol_table_index;
+    int expression_result_type_index;
+};
+
 struct Semantic_Analyser
 {
+    DynamicArray<Type_Signature> types;
     DynamicArray<Symbol_Table*> symbol_tables;
-    DynamicArray<int> node_to_table_mappings;
+    DynamicArray<Semantic_Node_Information> semantic_information;
     DynamicArray<Compiler_Error> errors;
-    AST_Parser* parser;
 
-    Variable_Type::ENUM function_return_type;
+    // Temporary stuff needed for analysis
+    AST_Parser* parser;
+    int function_return_type_index;
     int loop_depth;
+
+    // Type indices
+    int error_type_index;
+    int int_type_index;
+    int float_type_index;
+    int bool_type_index;
+};
+
+enum class Statement_Analysis_Result
+{
+    NO_RETURN,
+    RETURN,
+    CONTINUE,
+    BREAK
+};
+
+struct Expression_Analysis_Result
+{
+    int type_index;
+    bool has_memory_address;
 };
 
 Symbol_Table symbol_table_create(Symbol_Table* parent);
 void symbol_table_destroy(Symbol_Table* table);
 Symbol* symbol_table_find_symbol(Symbol_Table* table, int name, bool* in_current_scope);
-Symbol* symbol_table_find_symbol_of_type(Symbol_Table* table, int name, Symbol_Type::ENUM symbol_type, bool* in_current_scope);
+Symbol* symbol_table_find_symbol_of_type(Symbol_Table* table, int name, Symbol_Type::ENUM symbol_type);
 
 Semantic_Analyser semantic_analyser_create();
 void semantic_analyser_destroy(Semantic_Analyser* analyser);

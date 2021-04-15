@@ -321,7 +321,6 @@ Text_Editor text_editor_create(TextRenderer* text_renderer, FileListener* listen
     result.parser = ast_parser_create();
     result.lexer = lexer_create();
     result.analyser = semantic_analyser_create();
-    result.interpreter = ast_interpreter_create();
     result.generator = bytecode_generator_create();
     result.bytecode_interpreter = bytecode_intepreter_create();
 
@@ -347,7 +346,6 @@ void text_editor_destroy(Text_Editor* editor)
     ast_parser_destroy(&editor->parser);
     lexer_destroy(&editor->lexer);
     semantic_analyser_destroy(&editor->analyser);
-    ast_interpreter_destroy(&editor->interpreter);
     bytecode_generator_destroy(&editor->generator);
     bytecode_interpreter_destroy(&editor->bytecode_interpreter);
 }
@@ -1991,9 +1989,25 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
             logg("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n");
             logg("Ast: \n%s\n", printed_ast.characters);
         }
+        bool disable_analysis = false;
 
-        if (editor->parser.errors.size == 0) {
+        if (editor->parser.errors.size == 0 && !disable_analysis) {
             semantic_analyser_analyse(&editor->analyser, &editor->parser);
+        }
+        // Run code
+        if (editor->parser.errors.size == 0 &&  editor->analyser.errors.size == 0 && input->key_pressed[KEY_CODE::F5])
+        {
+            String result_str = string_create_empty(32);
+            SCOPE_EXIT(string_destroy(&result_str));
+            bytecode_generator_generate(&editor->generator, &editor->analyser);
+            bytecode_generator_append_bytecode_to_string(&editor->generator, &result_str);
+            logg("BYTECODE_GENERATOR RESULT: \n--------------------------------\n%s\n", result_str.characters);
+
+            double bytecode_start = timing_current_time_in_seconds();
+            bytecode_interpreter_execute_main(&editor->bytecode_interpreter, &editor->generator);
+            double bytecode_end = timing_current_time_in_seconds();
+            float bytecode_time = (bytecode_end - bytecode_start);
+            logg("Bytecode interpreter result: %d (%2.5f seconds)\n", editor->bytecode_interpreter.return_register, bytecode_time);
         }
 
         // Do syntax highlighting
@@ -2018,32 +2032,12 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
             text_editor_add_highlight_from_slice(editor, token_range_to_slice(e.range, editor), vec3(1.0f), vec4(1.0f, 0.0f, 0.0f, 0.3f));
             logg("Parse Error: %s\n", e.message);
         }
-        for (int i = 0; i < editor->analyser.errors.size; i++) {
-            Compiler_Error e = editor->analyser.errors[i];
-            text_editor_add_highlight_from_slice(editor, token_range_to_slice(e.range, editor), vec3(1.0f), vec4(1.0f, 0.0f, 0.0f, 0.3f));
-            logg("Semantic Error: %s\n", e.message);
-        }
-        if (input->key_pressed[KEY_CODE::F5] && editor->analyser.errors.size == 0 && editor->parser.errors.size == 0)
-        {
-            String result_str = string_create_empty(32);
-            SCOPE_EXIT(string_destroy(&result_str));
-            bytecode_generator_generate(&editor->generator, &editor->analyser);
-            bytecode_generator_append_bytecode_to_string(&editor->generator, &result_str);
-            logg("BYTECODE_GENERATOR RESULT: \n--------------------------------\n%s\n", result_str.characters);
-
-            string_reset(&result_str);
-            double ast_start = timing_current_time_in_seconds();
-            AST_Interpreter_Value result = ast_interpreter_execute_main(&editor->interpreter, &editor->analyser);
-            double ast_end = timing_current_time_in_seconds();
-            float ast_time = (ast_end - ast_start);
-            ast_interpreter_value_append_to_string(result, &result_str);
-            logg("AST_Interpreter result: %s (%2.5f seconds)\n", result_str.characters, ast_time);
-
-            double bytecode_start = timing_current_time_in_seconds();
-            bytecode_interpreter_execute_main(&editor->bytecode_interpreter, &editor->generator);
-            double bytecode_end = timing_current_time_in_seconds();
-            float bytecode_time = (bytecode_end - bytecode_start);
-            logg("Bytecode interpreter result: %d (%2.5f seconds)\n", editor->bytecode_interpreter.return_register, bytecode_time);
+        if (editor->parser.errors.size == 0) {
+            for (int i = 0; i < editor->analyser.errors.size; i++) {
+                Compiler_Error e = editor->analyser.errors[i];
+                text_editor_add_highlight_from_slice(editor, token_range_to_slice(e.range, editor), vec3(1.0f), vec4(1.0f, 0.0f, 0.0f, 0.3f));
+                logg("Semantic Error: %s\n", e.message);
+            }
         }
     }
 

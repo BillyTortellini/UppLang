@@ -95,6 +95,7 @@ void logger_panic(const char* file_name, int line_number, const char* message_fo
 
     // Send to custom panic function
     logger_custom_panic_fn(logger_message_buffer);
+    __debugbreak();
 }
 
 void assert_function(bool condition, const char* condition_as_string, const char* file_name, int line_number, const char* message, ...) {

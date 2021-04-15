@@ -7,22 +7,24 @@ namespace AST_Node_Type
 {
     enum ENUM
     {
-        ROOT,
-        FUNCTION,
-        PARAMETER_BLOCK,
-        PARAMETER,
-        STATEMENT_BLOCK,
-        STATEMENT_IF,
-        STATEMENT_IF_ELSE,
-        STATEMENT_WHILE,
-        STATEMENT_BREAK,
-        STATEMENT_CONTINUE,
-        STATEMENT_RETURN,
-        STATEMENT_EXPRESSION, // for function calls x();
-        STATEMENT_VARIABLE_ASSIGNMENT, // x = 5;
-        STATEMENT_VARIABLE_DEFINITION, // x : int;
-        STATEMENT_VARIABLE_DEFINE_ASSIGN, // x : int = 5;
-        STATEMENT_VARIABLE_DEFINE_INFER, // x := 5;
+        ROOT, // Children: functions
+        FUNCTION, // Child 0: parameter_block, Child 1: Return Type, Child 2: Statement_Block
+        PARAMETER_BLOCK, // Children: Parameters
+        PARAMETER, // Child 0: Type
+        TYPE_IDENTIFIER, // No Children
+        TYPE_POINTER_TO, // Child 0: Type
+        STATEMENT_BLOCK, // Children: Statements
+        STATEMENT_IF, // Child 0: Condition, Child 1: Statements
+        STATEMENT_IF_ELSE, // Child 0: Condition, Child 1: if-Statement_Block, Child 2: Else-Statement-Block
+        STATEMENT_WHILE, // Child 0: Condition, Child 1: Statements
+        STATEMENT_BREAK, // No Children
+        STATEMENT_CONTINUE, // No Children
+        STATEMENT_RETURN, // Child 0: Return-Expression
+        STATEMENT_EXPRESSION, // Child 0: Expression
+        STATEMENT_ASSIGNMENT, // Child 0: Destination-Expression, Child 1: Value-Expression
+        STATEMENT_VARIABLE_DEFINITION, //
+        STATEMENT_VARIABLE_DEFINE_ASSIGN, //
+        STATEMENT_VARIABLE_DEFINE_INFER, //
         EXPRESSION_LITERAL,
         EXPRESSION_FUNCTION_CALL,
         EXPRESSION_VARIABLE_READ,
@@ -41,6 +43,8 @@ namespace AST_Node_Type
         EXPRESSION_BINARY_OPERATION_GREATER_OR_EQUAL,
         EXPRESSION_UNARY_OPERATION_NEGATE,
         EXPRESSION_UNARY_OPERATION_NOT,
+        EXPRESSION_UNARY_OPERATION_ADDRESS_OF,
+        EXPRESSION_UNARY_OPERATION_DEREFERENCE,
         UNDEFINED, // Just for debugging
     };
 }
@@ -53,7 +57,6 @@ struct AST_Node
     DynamicArray<AST_Node_Index> children;
     // Node information from parsing
     int name_id; // Multipurpose: variable read, write, function name, function call
-    int type_id; // Multipurpose: variable type, return type
 };
 
 struct Token_Range

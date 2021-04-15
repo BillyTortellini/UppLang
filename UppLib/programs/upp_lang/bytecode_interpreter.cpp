@@ -21,6 +21,28 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         interpreter->stack[interpreter->base_pointer + instruction->op1] = instruction->op2;
         break;
     }
+    case Instruction_Type::LOAD_REGISTER_ADDRESS: {
+        interpreter->stack[interpreter->base_pointer + instruction->op1] = interpreter->base_pointer + instruction->op2;
+        break;
+    }
+    case Instruction_Type::LOAD_FROM_ADDRESS: {
+        int address = interpreter->stack[interpreter->base_pointer + instruction->op2];
+        if (address < 0 || address >= interpreter->stack.size) {
+            __debugbreak();
+            panic("Read from invalid address");
+        }
+        interpreter->stack[interpreter->base_pointer + instruction->op1] = interpreter->stack[address];
+        break;
+    }
+    case Instruction_Type::STORE_TO_ADDRESS: {
+        int address = interpreter->stack[interpreter->base_pointer + instruction->op1];
+        if (address < 0 || address >= interpreter->stack.size) {
+            __debugbreak();
+            panic("Write to invalid address");
+        }
+        interpreter->stack[address] = interpreter->stack[interpreter->base_pointer + instruction->op2];
+        break;
+    }
     case Instruction_Type::MOVE: { // op1 = dest_reg, op2 = src_reg
         interpreter->stack[interpreter->base_pointer + instruction->op1] = interpreter->stack[interpreter->base_pointer + instruction->op2];
         break;

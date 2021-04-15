@@ -60,7 +60,7 @@ void ast_interpreter_end_function_scope(AST_Interpreter* interpreter) {
     dynamic_array_swap_remove(&interpreter->function_scope_beginnings, interpreter->function_scope_beginnings.size - 1);
 }
 
-void ast_interpreter_define_variable(AST_Interpreter* interpreter, Variable_Type::ENUM type, int var_name)
+void ast_interpreter_define_variable(AST_Interpreter* interpreter, Primitive_Type type, int var_name)
 {
     int current_scope_start = interpreter->scope_beginnings[interpreter->scope_beginnings.size - 1];
     if (ast_interpreter_find_variable_index(interpreter, var_name) >= current_scope_start) {
@@ -81,21 +81,21 @@ AST_Interpreter_Statement_Result ast_interpreter_execute_statment_block(AST_Inte
 AST_Interpreter_Value ast_interpreter_evaluate_expression(AST_Interpreter* interpreter, int expression_index)
 {
     AST_Interpreter_Value result;
-    result.type = Variable_Type::ERROR_TYPE;
+    result.type = Primitive_Type::ERROR_TYPE;
     AST_Node* expression = &interpreter->analyser->parser->nodes[expression_index];
 
     if (expression->type == AST_Node_Type::EXPRESSION_LITERAL) {
         Token& token = interpreter->analyser->parser->lexer->tokens[interpreter->analyser->parser->token_mapping[expression_index].start_index];
         if (token.type == Token_Type::INTEGER_LITERAL) {
-            result.type = Variable_Type::INTEGER;
+            result.type = Primitive_Type::INTEGER;
             result.int_value = token.attribute.integer_value;
         }
         else if (token.type == Token_Type::FLOAT_LITERAL) {
-            result.type = Variable_Type::FLOAT;
+            result.type = Primitive_Type::FLOAT;
             result.float_value = token.attribute.float_value;
         }
         else if (token.type == Token_Type::BOOLEAN_LITERAL) {
-            result.type = Variable_Type::BOOLEAN;
+            result.type = Primitive_Type::BOOLEAN;
             result.bool_value = token.attribute.bool_value;
         }
         else {
@@ -113,7 +113,7 @@ AST_Interpreter_Value ast_interpreter_evaluate_expression(AST_Interpreter* inter
         // Find function
         bool unused;
         Symbol* function_symbol = symbol_table_find_symbol_of_type(
-            interpreter->analyser->symbol_tables[interpreter->analyser->node_to_table_mappings[expression_index]],
+            interpreter->analyser->symbol_tables[interpreter->analyser->semantic_information[expression_index]],
             expression->name_id, Symbol_Type::FUNCTION, &unused
         );
         int function_index = function_symbol->function_index;
@@ -163,8 +163,8 @@ AST_Interpreter_Value ast_interpreter_evaluate_expression(AST_Interpreter* inter
             return result;
         }
 
-        result.type = Variable_Type::BOOLEAN;
-        if (left_operand.type == Variable_Type::FLOAT)
+        result.type = Primitive_Type::BOOLEAN;
+        if (left_operand.type == Primitive_Type::FLOAT)
         {
             switch (expression->type)
             {
@@ -176,7 +176,7 @@ AST_Interpreter_Value ast_interpreter_evaluate_expression(AST_Interpreter* inter
             case AST_Node_Type::EXPRESSION_BINARY_OPERATION_GREATER: result.bool_value = l.float_value > r.float_value; break;
             }
         }
-        else if (left_operand.type == Variable_Type::INTEGER)
+        else if (left_operand.type == Primitive_Type::INTEGER)
         {
             switch (expression->type)
             {
@@ -188,14 +188,14 @@ AST_Interpreter_Value ast_interpreter_evaluate_expression(AST_Interpreter* inter
             case AST_Node_Type::EXPRESSION_BINARY_OPERATION_GREATER: result.bool_value = l.int_value > r.int_value; break;
             }
         }
-        else if (left_operand.type == Variable_Type::BOOLEAN) {
+        else if (left_operand.type == Primitive_Type::BOOLEAN) {
             switch (expression->type)
             {
             case AST_Node_Type::EXPRESSION_BINARY_OPERATION_EQUAL: result.bool_value = l.bool_value == r.bool_value; break;
             case AST_Node_Type::EXPRESSION_BINARY_OPERATION_NOT_EQUAL: result.bool_value = l.bool_value != r.bool_value; break;
             default: {
                 logg("Cannot do comparisions on booleans!");
-                result.type = Variable_Type::ERROR_TYPE;
+                result.type = Primitive_Type::ERROR_TYPE;
                 return result;
             }
             }
@@ -215,9 +215,9 @@ AST_Interpreter_Value ast_interpreter_evaluate_expression(AST_Interpreter* inter
         if (left_operand.type != right_operand.type) { // Implicit casting would happen here
             return result;
         }
-        if (left_operand.type == Variable_Type::FLOAT)
+        if (left_operand.type == Primitive_Type::FLOAT)
         {
-            result.type = Variable_Type::FLOAT;
+            result.type = Primitive_Type::FLOAT;
             switch (expression->type)
             {
             case AST_Node_Type::EXPRESSION_BINARY_OPERATION_ADDITION: result.float_value = l.float_value + r.float_value; break;
@@ -226,14 +226,14 @@ AST_Interpreter_Value ast_interpreter_evaluate_expression(AST_Interpreter* inter
             case AST_Node_Type::EXPRESSION_BINARY_OPERATION_DIVISION: result.float_value = l.float_value / r.float_value; break;
             case AST_Node_Type::EXPRESSION_BINARY_OPERATION_MODULO: {
                 logg("Float modulo float not supported!\n");
-                result.type = Variable_Type::ERROR_TYPE;
+                result.type = Primitive_Type::ERROR_TYPE;
                 break;
             }
             }
         }
-        else if (left_operand.type == Variable_Type::INTEGER)
+        else if (left_operand.type == Primitive_Type::INTEGER)
         {
-            result.type = Variable_Type::INTEGER;
+            result.type = Primitive_Type::INTEGER;
             switch (expression->type)
             {
             case AST_Node_Type::EXPRESSION_BINARY_OPERATION_ADDITION: result.int_value = l.int_value + r.int_value; break;
@@ -243,15 +243,15 @@ AST_Interpreter_Value ast_interpreter_evaluate_expression(AST_Interpreter* inter
             case AST_Node_Type::EXPRESSION_BINARY_OPERATION_DIVISION: {
                 if (r.int_value == 0) {
                     logg("Integer Division by zero!\n");
-                    result.type = Variable_Type::ERROR_TYPE;
+                    result.type = Primitive_Type::ERROR_TYPE;
                     break;
                 }
                 result.int_value = l.int_value / r.int_value; break;
             }
             }
         }
-        else if (left_operand.type == Variable_Type::BOOLEAN) {
-            result.type = Variable_Type::ERROR_TYPE;
+        else if (left_operand.type == Primitive_Type::BOOLEAN) {
+            result.type = Primitive_Type::ERROR_TYPE;
         }
         return result;
     }
@@ -260,15 +260,15 @@ AST_Interpreter_Value ast_interpreter_evaluate_expression(AST_Interpreter* inter
     {
         AST_Interpreter_Value left_operand = ast_interpreter_evaluate_expression(interpreter, expression->children[0]);
         AST_Interpreter_Value right_operand = ast_interpreter_evaluate_expression(interpreter, expression->children[1]);
-        if (left_operand.type != Variable_Type::BOOLEAN ||
-            right_operand.type != Variable_Type::BOOLEAN) {
+        if (left_operand.type != Primitive_Type::BOOLEAN ||
+            right_operand.type != Primitive_Type::BOOLEAN) {
             logg("Left an right of Logic-Operator (&& or ||) must be boolean values: left operand type: %s, right operand type:  %s\n",
                 variable_type_to_string(left_operand.type).characters,
                 variable_type_to_string(right_operand.type).characters);
             return result;
         }
 
-        result.type = Variable_Type::BOOLEAN;
+        result.type = Primitive_Type::BOOLEAN;
         switch (expression->type) {
         case AST_Node_Type::EXPRESSION_BINARY_OPERATION_AND: result.bool_value = left_operand.bool_value && right_operand.bool_value; break;
         case AST_Node_Type::EXPRESSION_BINARY_OPERATION_OR: result.bool_value = left_operand.bool_value || right_operand.bool_value; break;
@@ -277,25 +277,25 @@ AST_Interpreter_Value ast_interpreter_evaluate_expression(AST_Interpreter* inter
     }
     else if (expression->type == AST_Node_Type::EXPRESSION_UNARY_OPERATION_NOT) {
         AST_Interpreter_Value val = ast_interpreter_evaluate_expression(interpreter, expression->children[0]);
-        if (val.type != Variable_Type::BOOLEAN) {
+        if (val.type != Primitive_Type::BOOLEAN) {
             logg("Logical not only works on boolean value!\n");
             return result;
         }
-        result.type = Variable_Type::BOOLEAN;
+        result.type = Primitive_Type::BOOLEAN;
         result.bool_value = !val.bool_value;
         return result;
     }
     else if (expression->type == AST_Node_Type::EXPRESSION_UNARY_OPERATION_NEGATE) {
         AST_Interpreter_Value val = ast_interpreter_evaluate_expression(interpreter, expression->children[0]);
-        if (val.type == Variable_Type::BOOLEAN) {
+        if (val.type == Primitive_Type::BOOLEAN) {
             logg("Negate does not work on boolean values");
             return result;
         }
-        if (val.type == Variable_Type::FLOAT) {
+        if (val.type == Primitive_Type::FLOAT) {
             result.type = val.type;
             result.float_value = -val.float_value;
         }
-        if (val.type == Variable_Type::INTEGER) {
+        if (val.type == Primitive_Type::INTEGER) {
             result.type = val.type;
             result.int_value = -val.int_value;
         }
@@ -384,7 +384,7 @@ AST_Interpreter_Statement_Result ast_interpreter_execute_statement(AST_Interpret
         while (true)
         {
             AST_Interpreter_Value val = ast_interpreter_evaluate_expression(interpreter, statement->children[0]);
-            if (val.type != Variable_Type::BOOLEAN) {
+            if (val.type != Primitive_Type::BOOLEAN) {
                 logg("WHILE condition is not a boolean!\n");
                 return result;
             }
@@ -401,7 +401,7 @@ AST_Interpreter_Statement_Result ast_interpreter_execute_statement(AST_Interpret
     }
     else if (statement->type == AST_Node_Type::STATEMENT_IF) {
         AST_Interpreter_Value val = ast_interpreter_evaluate_expression(interpreter, statement->children[0]);
-        if (val.type != Variable_Type::BOOLEAN) {
+        if (val.type != Primitive_Type::BOOLEAN) {
             logg("If expression is not a boolean!\n");
             return result;
         }
@@ -411,7 +411,7 @@ AST_Interpreter_Statement_Result ast_interpreter_execute_statement(AST_Interpret
     }
     else if (statement->type == AST_Node_Type::STATEMENT_IF_ELSE) {
         AST_Interpreter_Value val = ast_interpreter_evaluate_expression(interpreter, statement->children[0]);
-        if (val.type != Variable_Type::BOOLEAN) {
+        if (val.type != Primitive_Type::BOOLEAN) {
             logg("If expression is not a boolean!\n");
             return result;
         }
@@ -426,12 +426,12 @@ AST_Interpreter_Statement_Result ast_interpreter_execute_statement(AST_Interpret
     {
         bool unused;
         Symbol* s = symbol_table_find_symbol(
-            interpreter->analyser->symbol_tables[interpreter->analyser->node_to_table_mappings[statement_index]],
+            interpreter->analyser->symbol_tables[interpreter->analyser->semantic_information[statement_index]],
             statement->name_id, &unused
         );
         ast_interpreter_define_variable(interpreter, s->variable_type, statement->name_id);
     }
-    else if (statement->type == AST_Node_Type::STATEMENT_VARIABLE_ASSIGNMENT)
+    else if (statement->type == AST_Node_Type::STATEMENT_ASSIGNMENT)
     {
         AST_Interpreter_Variable* var = ast_interpreter_find_variable(interpreter, statement->name_id);
         var->value = ast_interpreter_evaluate_expression(interpreter, statement->children[0]);
@@ -457,7 +457,7 @@ AST_Interpreter_Value ast_interpreter_execute_main(AST_Interpreter* interpreter,
 {
     interpreter->analyser = analyser;
     AST_Interpreter_Value error_value;
-    error_value.type = Variable_Type::ERROR_TYPE;
+    error_value.type = Primitive_Type::ERROR_TYPE;
     dynamic_array_reset(&interpreter->argument_evaluation_buffer);
     dynamic_array_reset(&interpreter->function_scope_beginnings);
     dynamic_array_reset(&interpreter->scope_beginnings);
@@ -473,7 +473,7 @@ AST_Interpreter_Value ast_interpreter_execute_main(AST_Interpreter* interpreter,
             logg("Main not defined\n");
             return error_value;
         }
-        Symbol_Table* root_table = analyser->symbol_tables[analyser->node_to_table_mappings[0]];
+        Symbol_Table* root_table = analyser->symbol_tables[analyser->semantic_information[0]];
         bool in_current_scope;
         Symbol* s = symbol_table_find_symbol_of_type(root_table, *main_identifer, Symbol_Type::FUNCTION, &in_current_scope);
         if (s == 0) {
@@ -496,13 +496,13 @@ void ast_interpreter_value_append_to_string(AST_Interpreter_Value value, String*
 {
     switch (value.type)
     {
-    case Variable_Type::BOOLEAN:
+    case Primitive_Type::BOOLEAN:
         string_append_formated(string, "BOOL: %s ", value.bool_value ? "true" : "false"); break;
-    case Variable_Type::INTEGER:
+    case Primitive_Type::INTEGER:
         string_append_formated(string, "INT: %d ", value.int_value); break;
-    case Variable_Type::FLOAT:
+    case Primitive_Type::FLOAT:
         string_append_formated(string, "FLOAT: %f ", value.float_value); break;
-    case Variable_Type::ERROR_TYPE:
+    case Primitive_Type::ERROR_TYPE:
         string_append_formated(string, "ERROR-Type "); break;
     default:
         string_append_formated(string, "SHOULD_NOT_HAPPEN.EXE"); break;
