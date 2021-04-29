@@ -1,5 +1,7 @@
 // Next Up: Arrays
 /*
+    Arrays are basically just a struct with
+    .data and .size + [] indexing
     x: []int = [int: 2, 3, 5];
     b := [int: 5];
     x : [5]int;
@@ -8,23 +10,24 @@
     x.size;
     x.data;
 */
-double :: (val: *int, v2 : *int) -> bool
-{
-    &val = &val * 2;
-    &v2 = 69;
-    return true;
-}
+
+/* New things in Parser:
+    - TYPE_ARRAY_SIZED + TYPE_ARRAY_UNSIZED
+    - EXPRESSION_ARRAY_ACCESS
+    - EXPRESSION_MEMBER_ACCESS
+TODO:
+    - Add size to types, change bytecode so pointers are 64bit
+    - Create Bytecode for array/member access
+    - Defining static array data
+Unsized vs Sized arrays:
+    []int VS [5]int
+*/
 
 main :: () -> int
 {
-    val_1 := 5;
-    val_2 := 10;
-    ptr := *val_1;
-    ptr_ptr := *ptr;
-    &ptr_ptr = *val_2;
-    a := 5;
-    double(ptr, *a);
-    return val_1;
+    b : [15]int;
+    x := b.size;
+    return 0;
 }
 
 
@@ -33,7 +36,6 @@ main :: () -> int
     Short circuit operation on && and ||
 
     Next Features:
-     * Pointers/Dereferencing
      * Arrays
      * Structs
      * Predefine functions (print)
@@ -56,6 +58,7 @@ main :: () -> int
      * If-Else Flow control
      * While loop with break continue
      * Functions with parameters and return types
+     * Pointers/Dereferencing
 
     Nice-to-have Features:
      * Log to window, not to console, maybe something like in a textfield

@@ -13,6 +13,8 @@ namespace AST_Node_Type
         PARAMETER, // Child 0: Type
         TYPE_IDENTIFIER, // No Children
         TYPE_POINTER_TO, // Child 0: Type
+        TYPE_ARRAY_SIZED, // Child 0: Expression (Compile time available), Child 1: Type
+        TYPE_ARRAY_UNSIZED, // Child 0: Type
         STATEMENT_BLOCK, // Children: Statements
         STATEMENT_IF, // Child 0: Condition, Child 1: Statements
         STATEMENT_IF_ELSE, // Child 0: Condition, Child 1: if-Statement_Block, Child 2: Else-Statement-Block
@@ -28,6 +30,8 @@ namespace AST_Node_Type
         EXPRESSION_LITERAL,
         EXPRESSION_FUNCTION_CALL,
         EXPRESSION_VARIABLE_READ,
+        EXPRESSION_ARRAY_ACCESS, // Child 0: Access-to-Expression, Child 1: Index-Expression
+        EXPRESSION_MEMBER_ACCESS, // Child 0: left side, name_id is the .what operator a.y.y[5].z
         EXPRESSION_BINARY_OPERATION_ADDITION,
         EXPRESSION_BINARY_OPERATION_SUBTRACTION,
         EXPRESSION_BINARY_OPERATION_DIVISION,

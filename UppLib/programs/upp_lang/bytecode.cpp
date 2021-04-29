@@ -53,10 +53,14 @@ Bytecode_Instruction instruction_make_3(Instruction_Type::ENUM type, int src_1, 
     return instr;
 }
 
-int bytecode_generator_generate_register(Bytecode_Generator* generator)
+int bytecode_generator_allocate_stack_data(Bytecode_Generator* generator)
 {
+    int type_index = 123; // TODO
+    Type_Signature* type = type_system_get_type(&generator->analyser->type_system, type_index);
+    // Round stack_base_offset to align with alignment ^^
+    generator->stack_base_offset = ((generator->stack_base_offset / type->alignment_in_bytes) + 1) * type->alignment_in_bytes;
     int result = generator->stack_base_offset;
-    generator->stack_base_offset++;
+    generator->stack_base_offset += type->size_in_bytes;
     if (generator->stack_base_offset > generator->max_stack_base_offset) {
         generator->max_stack_base_offset = generator->stack_base_offset;
     }
@@ -84,20 +88,20 @@ Instruction_Type::ENUM binary_operation_get_instruction_type(Bytecode_Generator*
     switch (op_type)
     {
         case AST_Node_Type::EXPRESSION_BINARY_OPERATION_ADDITION:
-            if (operand_types == generator->analyser->float_type_index) return Instruction_Type::FLOAT_ADDITION;
-            if (operand_types == generator->analyser->int_type_index) return Instruction_Type::INT_ADDITION;
+            if (operand_types == generator->analyser->f32_type_index) return Instruction_Type::FLOAT_ADDITION;
+            if (operand_types == generator->analyser->i32_type_index) return Instruction_Type::INT_ADDITION;
             panic("Not valid, should have been caught!");
         case AST_Node_Type::EXPRESSION_BINARY_OPERATION_SUBTRACTION:
-            if (operand_types == generator->analyser->float_type_index) return Instruction_Type::FLOAT_SUBTRACT;
-            if (operand_types == generator->analyser->int_type_index) return Instruction_Type::INT_SUBTRACT;
+            if (operand_types == generator->analyser->f32_type_index) return Instruction_Type::FLOAT_SUBTRACT;
+            if (operand_types == generator->analyser->i32_type_index) return Instruction_Type::INT_SUBTRACT;
             panic("Not valid, should have been caught!");
         case AST_Node_Type::EXPRESSION_BINARY_OPERATION_DIVISION:
-            if (operand_types == generator->analyser->float_type_index) return Instruction_Type::FLOAT_DIVISION;
-            if (operand_types == generator->analyser->int_type_index) return Instruction_Type::INT_DIVISION;
+            if (operand_types == generator->analyser->f32_type_index) return Instruction_Type::FLOAT_DIVISION;
+            if (operand_types == generator->analyser->i32_type_index) return Instruction_Type::INT_DIVISION;
             panic("Not valid, should have been caught!");
         case AST_Node_Type::EXPRESSION_BINARY_OPERATION_MULTIPLICATION:
-            if (operand_types == generator->analyser->float_type_index) return Instruction_Type::FLOAT_MULTIPLY;
-            if (operand_types == generator->analyser->int_type_index) return Instruction_Type::INT_MULTIPLY;
+            if (operand_types == generator->analyser->f32_type_index) return Instruction_Type::FLOAT_MULTIPLY;
+            if (operand_types == generator->analyser->i32_type_index) return Instruction_Type::INT_MULTIPLY;
             panic("Not valid, should have been caught!");
         case AST_Node_Type::EXPRESSION_BINARY_OPERATION_MODULO:
             return Instruction_Type::INT_MODULO;
@@ -110,20 +114,20 @@ Instruction_Type::ENUM binary_operation_get_instruction_type(Bytecode_Generator*
         case AST_Node_Type::EXPRESSION_BINARY_OPERATION_NOT_EQUAL:
             return Instruction_Type::COMPARE_REGISTERS_4BYTE_NOT_EQUAL;
         case AST_Node_Type::EXPRESSION_BINARY_OPERATION_LESS:
-            if (operand_types == generator->analyser->float_type_index) return Instruction_Type::COMPARE_FLOAT_LESS_THAN;
-            if (operand_types == generator->analyser->int_type_index) return Instruction_Type::COMPARE_INT_LESS_THAN;
+            if (operand_types == generator->analyser->f32_type_index) return Instruction_Type::COMPARE_FLOAT_LESS_THAN;
+            if (operand_types == generator->analyser->i32_type_index) return Instruction_Type::COMPARE_INT_LESS_THAN;
             panic("Not valid, should have been caught!");
         case AST_Node_Type::EXPRESSION_BINARY_OPERATION_LESS_OR_EQUAL:
-            if (operand_types == generator->analyser->float_type_index) return Instruction_Type::COMPARE_FLOAT_LESS_EQUAL;
-            if (operand_types == generator->analyser->int_type_index) return Instruction_Type::COMPARE_INT_LESS_EQUAL;
+            if (operand_types == generator->analyser->f32_type_index) return Instruction_Type::COMPARE_FLOAT_LESS_EQUAL;
+            if (operand_types == generator->analyser->i32_type_index) return Instruction_Type::COMPARE_INT_LESS_EQUAL;
             panic("Not valid, should have been caught!");
         case AST_Node_Type::EXPRESSION_BINARY_OPERATION_GREATER:
-            if (operand_types == generator->analyser->float_type_index) return Instruction_Type::COMPARE_FLOAT_GREATER_THAN;
-            if (operand_types == generator->analyser->int_type_index) return Instruction_Type::COMPARE_INT_GREATER_THAN;
+            if (operand_types == generator->analyser->f32_type_index) return Instruction_Type::COMPARE_FLOAT_GREATER_THAN;
+            if (operand_types == generator->analyser->i32_type_index) return Instruction_Type::COMPARE_INT_GREATER_THAN;
             panic("Not valid, should have been caught!");
         case AST_Node_Type::EXPRESSION_BINARY_OPERATION_GREATER_OR_EQUAL:
-            if (operand_types == generator->analyser->float_type_index) return Instruction_Type::COMPARE_FLOAT_GREATER_EQUAL;
-            if (operand_types == generator->analyser->int_type_index) return Instruction_Type::COMPARE_INT_GREATER_EQUAL;
+            if (operand_types == generator->analyser->f32_type_index) return Instruction_Type::COMPARE_FLOAT_GREATER_EQUAL;
+            if (operand_types == generator->analyser->i32_type_index) return Instruction_Type::COMPARE_INT_GREATER_EQUAL;
             panic("Not valid, should have been caught!");
     }
     panic("This should not happen :)\n");
@@ -139,9 +143,9 @@ int bytecode_generator_generate_expression(Bytecode_Generator* generator, AST_No
     {
     case AST_Node_Type::EXPRESSION_FUNCTION_CALL: 
     {
-        int argument_reg_start = bytecode_generator_generate_register(generator);
+        int argument_reg_start = bytecode_generator_allocate_stack_data(generator);
         for (int i = 0; i < expression->children.size - 1; i++) {
-            bytecode_generator_generate_register(generator);
+            bytecode_generator_allocate_stack_data(generator);
         }
         for (int i = 0; i < expression->children.size; i++) {
             int argument_index = expression->children[i];
@@ -150,12 +154,13 @@ int bytecode_generator_generate_expression(Bytecode_Generator* generator, AST_No
                 bytecode_generator_add_instruction(generator, instruction_make_2(Instruction_Type::MOVE, argument_reg_start + i, arg_reg));
             }
         }
+
         Function_Call_Location call_loc;
         call_loc.call_instruction_location = bytecode_generator_add_instruction(generator, 
             instruction_make_2(Instruction_Type::CALL, 0, argument_reg_start + expression->children.size));
         call_loc.function_name = expression->name_id;
         dynamic_array_push_back(&generator->function_calls, call_loc);
-        int result_register = bytecode_generator_generate_register(generator);
+        int result_register = bytecode_generator_allocate_stack_data(generator);
         bytecode_generator_add_instruction(generator, instruction_make_1(Instruction_Type::LOAD_RETURN_VALUE, result_register));
         return result_register;
     }
@@ -163,17 +168,17 @@ int bytecode_generator_generate_expression(Bytecode_Generator* generator, AST_No
     {
         int return_type_index;
         Token& token = generator->analyser->parser->lexer->tokens[generator->analyser->parser->token_mapping[expression_index].start_index];
-        int result_register = bytecode_generator_generate_register(generator);
+        int result_register = bytecode_generator_allocate_stack_data(generator);
         switch (token.type)
         {
         case Token_Type::FLOAT_LITERAL:
-            return_type_index = generator->analyser->float_type_index;
+            return_type_index = generator->analyser->f32_type_index;
             bytecode_generator_add_instruction(generator, instruction_make_2(
                 Instruction_Type::LOAD_INTERMEDIATE_4BYTE, result_register, *((int*)((void*)(&token.attribute.float_value)))
             ));
             break;
         case Token_Type::INTEGER_LITERAL:
-            return_type_index = generator->analyser->int_type_index;
+            return_type_index = generator->analyser->i32_type_index;
             bytecode_generator_add_instruction(generator, instruction_make_2(
                 Instruction_Type::LOAD_INTERMEDIATE_4BYTE, result_register, token.attribute.integer_value)
             );
@@ -188,6 +193,15 @@ int bytecode_generator_generate_expression(Bytecode_Generator* generator, AST_No
             panic("Should not frigging happen!");
         }
         return result_register;
+    }
+    case AST_Node_Type::EXPRESSION_ARRAY_ACCESS: {
+        // 1. Evaluate Index,
+        Variable_Location* loc = bytecode_generator_get_variable_loc(generator, expression->name_id);
+        return loc->stack_base_offset;
+    }
+    case AST_Node_Type::EXPRESSION_MEMBER_ACCESS: {
+        Variable_Location* loc = bytecode_generator_get_variable_loc(generator, expression->name_id);
+        return loc->stack_base_offset;
     }
     case AST_Node_Type::EXPRESSION_VARIABLE_READ: {
         Variable_Location* loc = bytecode_generator_get_variable_loc(generator, expression->name_id);
@@ -211,7 +225,7 @@ int bytecode_generator_generate_expression(Bytecode_Generator* generator, AST_No
         Instruction_Type::ENUM instr_type = binary_operation_get_instruction_type(generator, expression->type, left_type);
         int left_register = bytecode_generator_generate_expression(generator, expression->children[0]);
         int right_register = bytecode_generator_generate_expression(generator, expression->children[1]);
-        int result_register = bytecode_generator_generate_register(generator);
+        int result_register = bytecode_generator_allocate_stack_data(generator);
         bytecode_generator_add_instruction(generator, instruction_make_3(instr_type, result_register, left_register, right_register));
         return result_register;
     }
@@ -219,11 +233,11 @@ int bytecode_generator_generate_expression(Bytecode_Generator* generator, AST_No
     {
         int operand_type = generator->analyser->semantic_information[expression->children[0]].expression_result_type_index;
         int operand_register = bytecode_generator_generate_expression(generator, expression->children[0]);
-        int result_register = bytecode_generator_generate_register(generator);
-        if (operand_type == generator->analyser->float_type_index) {
+        int result_register = bytecode_generator_allocate_stack_data(generator);
+        if (operand_type == generator->analyser->f32_type_index) {
             bytecode_generator_add_instruction(generator, instruction_make_2(Instruction_Type::FLOAT_NEGATE, result_register, operand_register));
         }
-        else if (operand_type == generator->analyser->int_type_index) {
+        else if (operand_type == generator->analyser->i32_type_index) {
             bytecode_generator_add_instruction(generator, instruction_make_2(Instruction_Type::INT_NEGATE, result_register, operand_register));
         }
         else panic("Should not happen");
@@ -232,21 +246,21 @@ int bytecode_generator_generate_expression(Bytecode_Generator* generator, AST_No
     case AST_Node_Type::EXPRESSION_UNARY_OPERATION_NOT: 
     {
         int operand_register = bytecode_generator_generate_expression(generator, expression->children[0]);
-        int result_register = bytecode_generator_generate_register(generator);
+        int result_register = bytecode_generator_allocate_stack_data(generator);
         bytecode_generator_add_instruction(generator, instruction_make_2(Instruction_Type::BOOLEAN_NOT, result_register, operand_register));
         return result_register;
     }
     case AST_Node_Type::EXPRESSION_UNARY_OPERATION_ADDRESS_OF: 
     {
         int operand_register = bytecode_generator_generate_expression(generator, expression->children[0]);
-        int result_register = bytecode_generator_generate_register(generator);
+        int result_register = bytecode_generator_allocate_stack_data(generator);
         bytecode_generator_add_instruction(generator, instruction_make_2(Instruction_Type::LOAD_REGISTER_ADDRESS, result_register, operand_register));
         return result_register;
     }
     case AST_Node_Type::EXPRESSION_UNARY_OPERATION_DEREFERENCE: 
     {
         int operand_register = bytecode_generator_generate_expression(generator, expression->children[0]);
-        int result_register = bytecode_generator_generate_register(generator);
+        int result_register = bytecode_generator_allocate_stack_data(generator);
         bytecode_generator_add_instruction(generator, instruction_make_2(Instruction_Type::LOAD_FROM_ADDRESS, result_register, operand_register));
         return result_register;
     }
@@ -384,7 +398,7 @@ void bytecode_generator_generate_statement_block(Bytecode_Generator* generator, 
                 continue;
             }
             Variable_Location loc;
-            loc.stack_base_offset = bytecode_generator_generate_register(generator);
+            loc.stack_base_offset = bytecode_generator_allocate_stack_data(generator);
             loc.variable_name = s.name;
             loc.type_index = s.type_index;
             dynamic_array_push_back(&generator->variable_locations, loc);
@@ -397,11 +411,11 @@ void bytecode_generator_generate_statement_block(Bytecode_Generator* generator, 
     generator->stack_base_offset = register_rewind;
 }
 
-void bytecode_generator_generate_function_code(Bytecode_Generator* generator, AST_Node_Index function_index)
+void bytecode_generator_generate_function_code(Bytecode_Generator* generator, AST_Node_Index function_node_index)
 {
-    AST_Node* function = &generator->analyser->parser->nodes[function_index];
+    AST_Node* function = &generator->analyser->parser->nodes[function_node_index];
     AST_Node* parameter_block = &generator->analyser->parser->nodes[function->children[0]];
-    Symbol_Table* table = generator->analyser->symbol_tables[generator->analyser->semantic_information[function_index].symbol_table_index];
+    Symbol_Table* table = generator->analyser->symbol_tables[generator->analyser->semantic_information[function_node_index].symbol_table_index];
 
     generator->stack_base_offset = 0;
     generator->max_stack_base_offset = 0;
@@ -425,7 +439,7 @@ void bytecode_generator_generate_function_code(Bytecode_Generator* generator, AS
             loc.stack_base_offset = (i - parameter_block->children.size + 1) - 3; // - 3 since return address and old base ptr is also on the stack
         }
         else {
-            loc.stack_base_offset = bytecode_generator_generate_register(generator);
+            loc.stack_base_offset = bytecode_generator_allocate_stack_data(generator);
         }
         loc.variable_name = s.name;
         loc.type_index = s.type_index;
@@ -461,8 +475,8 @@ void bytecode_generator_generate(Bytecode_Generator* generator, Semantic_Analyse
 
     // Generate code for all functions
     for (int i = 0; i < analyser->parser->nodes[0].children.size; i++) {
-        AST_Node_Index function_index = analyser->parser->nodes[0].children[i];
-        bytecode_generator_generate_function_code(generator, function_index);
+        AST_Node_Index function_node_index = analyser->parser->nodes[0].children[i];
+        bytecode_generator_generate_function_code(generator, function_node_index);
     }
 
     // Fill out all function calls

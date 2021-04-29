@@ -1,23 +1,5 @@
- Next Up:
- --------
- * GUI machen
- * Maybe do opengl state with all buffer bindings, but i dont think its worth it currently
+TODO:
+-----
+1. Implement Intermediate Code Thing
 
- Kleinscheiß
- -----------
- * Eventuell globals für: OpenGLState, FileListener, Window, Input
- * Trennung von Hotreloading/Shaderprogram
- * Es gibt sicher was bessers für VertexAttribInfos
-
- * ivec2 machen, in window verwenden
- * Input KEY_CODE zu KEY::
- * ShaderProgram zu Shader
-
-DONE
-----
- * ShaderProgram nicht mit @ machen, sondern mit #ifdef, weil die Language-Integration scheiße ist
- * Uniform buffers
- * InstanceData 
- * Reworked Mesh_GPU_Data
-
-
+Semantic Analyse should keep the first definition of each symbol, currently only true for functions

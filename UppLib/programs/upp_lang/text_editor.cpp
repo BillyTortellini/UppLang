@@ -1989,30 +1989,37 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
             logg("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n");
             logg("Ast: \n%s\n", printed_ast.characters);
         }
-        bool disable_analysis = false;
 
-        if (editor->parser.errors.size == 0 && !disable_analysis) {
-            semantic_analyser_analyse(&editor->analyser, &editor->parser);
-        }
-        // Run code
-        if (editor->parser.errors.size == 0 &&  editor->analyser.errors.size == 0 && input->key_pressed[KEY_CODE::F5])
-        {
-            String result_str = string_create_empty(32);
-            SCOPE_EXIT(string_destroy(&result_str));
-            bytecode_generator_generate(&editor->generator, &editor->analyser);
-            bytecode_generator_append_bytecode_to_string(&editor->generator, &result_str);
-            logg("BYTECODE_GENERATOR RESULT: \n--------------------------------\n%s\n", result_str.characters);
+        if (true)
+        { 
+            if (editor->parser.errors.size == 0) {
+                semantic_analyser_analyse(&editor->analyser, &editor->parser);
+            }
+            // Compile Code
+            if (true)
+            {
+                if (editor->parser.errors.size == 0 && editor->analyser.errors.size == 0 && input->key_pressed[KEY_CODE::F5])
+                {
+                    String result_str = string_create_empty(32);
+                    SCOPE_EXIT(string_destroy(&result_str));
+                    bytecode_generator_generate(&editor->generator, &editor->analyser);
+                    bytecode_generator_append_bytecode_to_string(&editor->generator, &result_str);
+                    logg("BYTECODE_GENERATOR RESULT: \n--------------------------------\n%s\n", result_str.characters);
 
-            double bytecode_start = timing_current_time_in_seconds();
-            bytecode_interpreter_execute_main(&editor->bytecode_interpreter, &editor->generator);
-            double bytecode_end = timing_current_time_in_seconds();
-            float bytecode_time = (bytecode_end - bytecode_start);
-            logg("Bytecode interpreter result: %d (%2.5f seconds)\n", editor->bytecode_interpreter.return_register, bytecode_time);
+                    /*
+                    double bytecode_start = timing_current_time_in_seconds();
+                    bytecode_interpreter_execute_main(&editor->bytecode_interpreter, &editor->generator);
+                    double bytecode_end = timing_current_time_in_seconds();
+                    float bytecode_time = (bytecode_end - bytecode_start);
+                    logg("Bytecode interpreter result: %d (%2.5f seconds)\n", editor->bytecode_interpreter.return_register, bytecode_time);
+                    */
+                }
+            }
         }
 
         // Do syntax highlighting
         text_editor_reset_highlights(editor);
-        for (int i = 0; i < editor->lexer.tokens_with_whitespaces.size; i++) 
+        for (int i = 0; i < editor->lexer.tokens_with_whitespaces.size; i++)
         {
             Token t = editor->lexer.tokens_with_whitespaces[i];
             vec3 IDENTIFIER_COLOR = vec3(0.7f, 0.7f, 1.0f);

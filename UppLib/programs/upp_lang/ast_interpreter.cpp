@@ -116,8 +116,8 @@ AST_Interpreter_Value ast_interpreter_evaluate_expression(AST_Interpreter* inter
             interpreter->analyser->symbol_tables[interpreter->analyser->semantic_information[expression_index]],
             expression->name_id, Symbol_Type::FUNCTION, &unused
         );
-        int function_index = function_symbol->function_index;
-        AST_Node* function = &interpreter->analyser->parser->nodes[function_index];
+        int function_node_index = function_symbol->function_node_index;
+        AST_Node* function = &interpreter->analyser->parser->nodes[function_node_index];
         AST_Node* parameter_block = &interpreter->analyser->parser->nodes[function->children[0]];
 
         // Evaluate arguments before making new scope, since afterwards expressions that need variable reads dont work
@@ -480,7 +480,7 @@ AST_Interpreter_Value ast_interpreter_execute_main(AST_Interpreter* interpreter,
             logg("Main not defined\n");
             return error_value;
         }
-        main = &analyser->parser->nodes[s->function_index];
+        main = &analyser->parser->nodes[s->function_node_index];
     }
 
     AST_Interpreter_Statement_Result main_result = ast_interpreter_execute_statment_block(interpreter, main->children[1]);
