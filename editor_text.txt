@@ -25,9 +25,10 @@ Unsized vs Sized arrays:
 
 main :: () -> int
 {
-    b : [15]int;
-    x := b.size;
-    return 0;
+    b := 5;
+    a: *int = *b;
+    &a = 7;
+    return b;
 }
 
 

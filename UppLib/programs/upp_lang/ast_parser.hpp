@@ -25,8 +25,8 @@ namespace AST_Node_Type
         STATEMENT_EXPRESSION, // Child 0: Expression
         STATEMENT_ASSIGNMENT, // Child 0: Destination-Expression, Child 1: Value-Expression
         STATEMENT_VARIABLE_DEFINITION, //
-        STATEMENT_VARIABLE_DEFINE_ASSIGN, //
-        STATEMENT_VARIABLE_DEFINE_INFER, //
+        STATEMENT_VARIABLE_DEFINE_ASSIGN, // Child 0: Type index, Child 1: Value-Expression
+        STATEMENT_VARIABLE_DEFINE_INFER, // Child 0: Expression
         EXPRESSION_LITERAL,
         EXPRESSION_FUNCTION_CALL,
         EXPRESSION_VARIABLE_READ,

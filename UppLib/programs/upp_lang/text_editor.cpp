@@ -323,6 +323,7 @@ Text_Editor text_editor_create(TextRenderer* text_renderer, FileListener* listen
     result.analyser = semantic_analyser_create();
     result.generator = bytecode_generator_create();
     result.bytecode_interpreter = bytecode_intepreter_create();
+    result.intermediate_generator = intermediate_generator_create();
 
     return result;
 }
@@ -348,6 +349,7 @@ void text_editor_destroy(Text_Editor* editor)
     semantic_analyser_destroy(&editor->analyser);
     bytecode_generator_destroy(&editor->generator);
     bytecode_interpreter_destroy(&editor->bytecode_interpreter);
+    intermediate_generator_destroy(&editor->intermediate_generator);
 }
 
 void text_editor_synchronize_highlights_array(Text_Editor* editor)
@@ -1995,8 +1997,15 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
             if (editor->parser.errors.size == 0) {
                 semantic_analyser_analyse(&editor->analyser, &editor->parser);
             }
+            if (editor->analyser.errors.size == 0 && input->key_pressed[KEY_CODE::F5] && true) {
+                intermediate_generator_generate(&editor->intermediate_generator, &editor->analyser);
+                String result_str = string_create_empty(32);
+                SCOPE_EXIT(string_destroy(&result_str));
+                intermediate_generator_append_to_string(&result_str, &editor->intermediate_generator);
+                logg("%s\n\n", result_str.characters);
+            }
             // Compile Code
-            if (true)
+            if (false)
             {
                 if (editor->parser.errors.size == 0 && editor->analyser.errors.size == 0 && input->key_pressed[KEY_CODE::F5])
                 {

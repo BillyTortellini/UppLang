@@ -17,36 +17,73 @@
         * Operator overloading should happen here
         * Function overloading should happen here
         * Should contain all instructions explicitly (E.g. casting data types)
+        
+    Question:
+        When i do member access, what Code do i expect here. E.g.
+            A :: struct { x,y : int; }
+            inst : A;
+            inst.x = 5;
+            inst.y = 7;
+        I think for C and my Bytecode calculating the offset would be better. E.g.
+            Intermediate_Register5 = expression_result; (X)
+            Intermediate_Register6 = expression_result; (Y)
+            Intermediate_Register7 = address_of(Variable_Register0);
+            Intermediate_Register8 = Offset_Pointer_By_Byte(Intermediate_Register_7, 0);
+            Offset_access Variable_Register, 0
+        Just change this if this makes any problems later on
 */
 
 // How do I do array access and member access?
 // Also loading immediate data, e.g. constants
 enum class Intermediate_Instruction_Type
 {
-    MOVE_CONSTANT, // Dest
-    MOVE_REGISTER, // Src Dest
     ADDRESS_OF_REGISTER, // Src Dest ,Should be resolved at compile time by the backend compiler
+    WRITE_TO_MEMORY, // Dest, Src, where dest is a register holding a pointer, and src is the data to be copied
+    READ_FROM_MEMORY, // Dest, Src, wheresrc is a register holding a pointer, and dest ist the register written to
     IF_BLOCK,
     WHILE_BLOCK,
     CALL_FUNCTION, // Arguments + Destination Register
     RETURN, // Src
     EXIT,
+    BREAK, // Currently just breaks out of the active while loop
+    CONTINUE, // Just continues the current while loop
+    CALC_ARRAY_ACCESS_POINTER, // Dest, left = base_pointer, right = index, type size given by register type
+    OFFSET_POINTER_BY_I32, // Dest, left = base_pointer, right = byte_offset, type is given by dest type
+    MOVE_REGISTER, // Src Dest
+    MOVE_CONSTANT_F32, // Dest
+    MOVE_CONSTANT_I32, // Dest
+    MOVE_CONSTANT_BOOL, // Dest
     // Operations
-    BINARY_OP_ARITHMETIC_ADDITION,
-    BINARY_OP_ARITHMETIC_SUBTRACTION,
-    BINARY_OP_ARITHMETIC_MULTIPLICATION,
-    BINARY_OP_ARITHMETIC_DIVISION,
-    BINARY_OP_ARITHMETIC_MODULO,
-    BINARY_OP_COMPARISON_GREATER_THAN,
-    BINARY_OP_COMPARISON_GREATER_EQUAL,
-    BINARY_OP_COMPARISON_LESS_THAN,
-    BINARY_OP_COMPARISON_LESS_EQUAL,
-    BINARY_OP_COMPARISON_EQUAL,
-    BINARY_OP_COMPARISON_NOT_EQUAL,
+    BINARY_OP_ARITHMETIC_ADDITION_I32,
+    BINARY_OP_ARITHMETIC_SUBTRACTION_I32,
+    BINARY_OP_ARITHMETIC_MULTIPLICATION_I32,
+    BINARY_OP_ARITHMETIC_DIVISION_I32,
+    BINARY_OP_ARITHMETIC_MODULO_I32,
+    BINARY_OP_COMPARISON_EQUAL_I32,
+    BINARY_OP_COMPARISON_NOT_EQUAL_I32,
+    BINARY_OP_COMPARISON_GREATER_THAN_I32,
+    BINARY_OP_COMPARISON_GREATER_EQUAL_I32,
+    BINARY_OP_COMPARISON_LESS_THAN_I32,
+    BINARY_OP_COMPARISON_LESS_EQUAL_I32,
+    UNARY_OP_ARITHMETIC_NEGATE_I32,
+
+    BINARY_OP_ARITHMETIC_ADDITION_F32,
+    BINARY_OP_ARITHMETIC_SUBTRACTION_F32,
+    BINARY_OP_ARITHMETIC_MULTIPLICATION_F32,
+    BINARY_OP_ARITHMETIC_DIVISION_F32,
+    BINARY_OP_COMPARISON_EQUAL_F32,
+    BINARY_OP_COMPARISON_NOT_EQUAL_F32,
+    BINARY_OP_COMPARISON_GREATER_THAN_F32,
+    BINARY_OP_COMPARISON_GREATER_EQUAL_F32,
+    BINARY_OP_COMPARISON_LESS_THAN_F32,
+    BINARY_OP_COMPARISON_LESS_EQUAL_F32,
+    UNARY_OP_ARITHMETIC_NEGATE_F32,
+
+    BINARY_OP_COMPARISON_EQUAL_BOOL,
+    BINARY_OP_COMPARISON_NOT_EQUAL_BOOL,
     BINARY_OP_BOOLEAN_AND,
     BINARY_OP_BOOLEAN_OR,
     UNARY_OP_BOOLEAN_NOT,
-    UNARY_OP_ARITHMETIC_NEGATE,
 };
 
 struct Intermediate_Instruction
@@ -56,7 +93,6 @@ struct Intermediate_Instruction
     int destination_register;
     int left_operand_register;
     int right_operand_register;
-    u64 constant_value;
     // While/If block
     int condition_register;
     int true_branch_instruction_start;
@@ -64,8 +100,14 @@ struct Intermediate_Instruction
     int false_branch_instruction_start;
     int false_branch_instruction_size;
     // Function call
-    int function_node_index;
+    int intermediate_function_index;
     DynamicArray<int> argument_registers;
+    // Load constants
+    union {
+        float constant_f32_value;
+        int constant_i32_value;
+        bool constant_bool_value;
+    };
 };
 
 enum class Intermediate_Register_Type
@@ -75,11 +117,13 @@ enum class Intermediate_Register_Type
     PARAMETER
 };
 
-struct Intermediate_Register 
+struct Intermediate_Register
 {
     Intermediate_Register_Type type;
-    int type_index;
+    int type_index; // If read_pointer_on_access is true, then this is a pointer type
     int parameter_index;
+    int name_id; // Just for debugging, variable name
+    bool read_pointer_on_access; // For somewhat "implict" conversions, e.g. 5 + a[5], where a[5] returns a pointer to an integer
 };
 
 struct Intermediate_Function
@@ -103,8 +147,10 @@ struct Intermediate_Generator
     DynamicArray<Variable_Mapping> variable_mappings;
     Semantic_Analyser* analyser;
     int main_function_index;
+    int current_function_index;
 };
 
 Intermediate_Generator intermediate_generator_create();
 void intermediate_generator_destroy(Intermediate_Generator* generator);
 void intermediate_generator_generate(Intermediate_Generator* generator, Semantic_Analyser* analyser);
+void intermediate_generator_append_to_string(String* string, Intermediate_Generator* generator);

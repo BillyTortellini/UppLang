@@ -159,7 +159,7 @@ int type_system_find_or_create_type(Type_System* system, Type_Signature s)
             if (cmp->type == Signature_Type::ARRAY_UNSIZED && cmp->child_type_index == s.child_type_index) return i;
             if (cmp->type == Signature_Type::POINTER && cmp->child_type_index == s.child_type_index) return i;
             if (cmp->type == Signature_Type::ERROR_TYPE) return i;
-            if (cmp->type == Signature_Type::PRIMITIVE) return i;
+            if (cmp->type == Signature_Type::PRIMITIVE && cmp->primitive_type == s.primitive_type) return i;
             if (cmp->type == Signature_Type::FUNCTION) {
                 if (cmp->parameter_type_indices.size != s.parameter_type_indices.size) continue;
                 for (int i = 0; i < cmp->parameter_type_indices.size; i++) {
@@ -420,8 +420,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
     {
         Token_Type::ENUM type = analyser->parser->lexer->tokens[analyser->parser->token_mapping[expression_index].start_index].type;
         if (type == Token_Type::BOOLEAN_LITERAL) {
-            analyser->semantic_information[expression_index].expression_result_type_index = 
-                type_system_find_or_create_type(&analyser->type_system, type_signature_make_primitive(Primitive_Type::BOOLEAN));
+            analyser->semantic_information[expression_index].expression_result_type_index = analyser->bool_type_index;
             return expression_analysis_result_make(analyser->bool_type_index, false);
         }
         if (type == Token_Type::INTEGER_LITERAL) {
@@ -556,6 +555,9 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
     {
         Expression_Analysis_Result left_expr_result = semantic_analyser_analyse_expression(analyser, table, expression->children[0]);
         Expression_Analysis_Result right_expr_result = semantic_analyser_analyse_expression(analyser, table, expression->children[1]);
+        if (left_expr_result.type_index == analyser->error_type_index || right_expr_result.type_index == analyser->error_type_index) {
+            return expression_analysis_result_make(analyser->error_type_index, true);
+        }
         if (left_expr_result.type_index != right_expr_result.type_index) {
             semantic_analyser_log_error(analyser, "Left and right of binary operation do not match", expression_index);
         }
@@ -612,7 +614,7 @@ Statement_Analysis_Result semantic_analyser_analyse_statement(Semantic_Analyser*
     {
     case AST_Node_Type::STATEMENT_RETURN: {
         int return_type_index = semantic_analyser_analyse_expression(analyser, parent, statement->children[0]).type_index;
-        if (return_type_index != analyser->function_return_type_index) {
+        if (return_type_index != analyser->function_return_type_index && return_type_index != analyser->error_type_index) {
             semantic_analyser_log_error(analyser, "Return type does not match function return type", statement_index);
         }
         return Statement_Analysis_Result::RETURN;

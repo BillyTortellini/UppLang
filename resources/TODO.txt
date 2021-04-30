@@ -2,4 +2,40 @@ TODO:
 -----
 1. Implement Intermediate Code Thing
 
+Improvements that should be made:
+---------------------------------
 Semantic Analyse should keep the first definition of each symbol, currently only true for functions
+Intermediate Code should not hold type information of register results, these should be from semantic analysis
+
+Long-Term Goals:
+----------------
+1. Intermediate Code working
+2. Generate Bytecode from the new Intermediate Code
+3. Array-Access and Pointers working
+4. Structs and Member-Access working
+5. Hard-Coded functions for print, new and delete
+6. C-Backend
+7. Calling C-Functions in C-Backend
+8. Calling C-Functions in Bytecode interpreter
+9. More language features
+
+More Language features:
+-----------------------
+Primitive Types
+Structs
+Defer statement
+No return value on functions
+Multiple return values on functions
+Tagged Unions
+Location (Stack thing)
+Any-Type and Type access (Varargs in this language)
+Global Data
+Modules
+Constant values and other modifiers for variables
+Code/Value-Analysis
+Compile-Time Bytecode execution
+Variation for simple Dynamic dispatch  (Like interfaces in OO...)
+Hot-Code reloading
+Context
+Iterators
+Macro-System
