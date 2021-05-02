@@ -30,12 +30,13 @@ Type_Signature type_signature_make_array_sized(Type_System* system, int array_el
     result.child_type_index = array_element_index;
     result.alignment_in_bytes = system->types[array_element_index].alignment_in_bytes;
     result.size_in_bytes = system->types[array_element_index].size_in_bytes * array_size;
+    result.array_size = array_size;
     return result;
 }
 
 Type_Signature type_signature_make_array_unsized(Type_System* system, int array_element_index) {
     Type_Signature result;
-    result.type = Signature_Type::ARRAY_SIZED;
+    result.type = Signature_Type::ARRAY_UNSIZED;
     result.child_type_index = array_element_index;
     result.alignment_in_bytes = system->types[array_element_index].alignment_in_bytes;
     result.size_in_bytes = 16;
@@ -183,6 +184,40 @@ Symbol_Table symbol_table_create(Symbol_Table* parent)
     result.parent = parent;
     result.symbols = dynamic_array_create_empty<Symbol>(8);
     return result;
+}
+
+void type_index_append_to_string(String* string, Type_System* system, int index)
+{
+    Type_Signature* sig = &system->types[index];
+    switch (sig->type) 
+    {
+    case Signature_Type::ARRAY_SIZED:
+        string_append_formated(string, "[%d]", sig->array_size);
+        type_index_append_to_string(string, system, sig->child_type_index);
+        break;
+    case Signature_Type::ARRAY_UNSIZED:
+        string_append_formated(string, "[]");
+        type_index_append_to_string(string, system, sig->child_type_index);
+        break;
+    case Signature_Type::ERROR_TYPE:
+        string_append_formated(string, "ERROR-Type");
+        break;
+    case Signature_Type::POINTER:
+        string_append_formated(string, "*");
+        type_index_append_to_string(string, system, sig->child_type_index);
+        break;
+    case Signature_Type::PRIMITIVE:
+        String s = primitive_type_to_string(sig->primitive_type);
+        string_append_string(string, &s);
+        break;
+    case Signature_Type::FUNCTION:
+        string_append_formated(string, "(");
+        for (int i = 0; i < sig->parameter_type_indices.size; i++) {
+            type_index_append_to_string(string, system, sig->parameter_type_indices[i]);
+        }
+        string_append_formated(string, ") -> ");
+        type_index_append_to_string(string, system, sig->return_type_index);
+    }
 }
 
 
@@ -335,26 +370,23 @@ int semantic_analyser_analyse_type(Semantic_Analyser* analyser, int type_node_in
             return analyser->error_type_index;
         }
 
-        return  type_system_find_or_create_type(
-                    &analyser->type_system, 
-                    type_signature_make_array_sized(
-                        &analyser->type_system,
-                        semantic_analyser_analyse_type(analyser, type_node->children[1]), 
-                        literal_token.attribute.integer_value
-                    )
-                );
+        return type_system_find_or_create_type(
+            &analyser->type_system,
+            type_signature_make_array_sized(
+                &analyser->type_system,
+                semantic_analyser_analyse_type(analyser, type_node->children[1]),
+                literal_token.attribute.integer_value
+            )
+        );
     }
     case AST_Node_Type::TYPE_ARRAY_UNSIZED: {
-        Type_Signature s;
-        s.type = Signature_Type::ARRAY_UNSIZED;
-        s.child_type_index = semantic_analyser_analyse_type(analyser, type_node->children[0]);
-        return  type_system_find_or_create_type(
-                    &analyser->type_system, 
-                    type_signature_make_array_unsized(
-                        &analyser->type_system,
-                        semantic_analyser_analyse_type(analyser, type_node->children[1])
-                    )
-                );
+        return type_system_find_or_create_type(
+            &analyser->type_system,
+            type_signature_make_array_unsized(
+                &analyser->type_system,
+                semantic_analyser_analyse_type(analyser, type_node->children[0])
+            )
+        );
     }
     }
 
@@ -383,7 +415,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
     int return_type_index;
     switch (expression->type)
     {
-    case AST_Node_Type::EXPRESSION_FUNCTION_CALL: 
+    case AST_Node_Type::EXPRESSION_FUNCTION_CALL:
     {
         Symbol* func_symbol = symbol_table_find_symbol_of_type(table, expression->name_id, Symbol_Type::FUNCTION);
         if (func_symbol == 0) {
@@ -395,7 +427,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
         if (expression->children.size != signature->parameter_type_indices.size) {
             semantic_analyser_log_error(analyser, "Argument size does not match function parameter size!", expression_index);
         }
-        for (int i = 0; i < signature->parameter_type_indices.size && i < expression->children.size; i++) 
+        for (int i = 0; i < signature->parameter_type_indices.size && i < expression->children.size; i++)
         {
             Expression_Analysis_Result expr_result = semantic_analyser_analyse_expression(analyser, table, expression->children[i]);
             if (expr_result.type_index != signature->parameter_type_indices[i] || expr_result.type_index == analyser->error_type_index) {
@@ -406,7 +438,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
         analyser->semantic_information[expression_index].expression_result_type_index = signature->return_type_index;
         return expression_analysis_result_make(signature->return_type_index, false);
     }
-    case AST_Node_Type::EXPRESSION_VARIABLE_READ: 
+    case AST_Node_Type::EXPRESSION_VARIABLE_READ:
     {
         Symbol* s = symbol_table_find_symbol_of_type(table, expression->name_id, Symbol_Type::VARIABLE);
         if (s == 0) {
@@ -416,7 +448,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
         analyser->semantic_information[expression_index].expression_result_type_index = s->type_index;
         return expression_analysis_result_make(s->type_index, true);
     }
-    case AST_Node_Type::EXPRESSION_LITERAL: 
+    case AST_Node_Type::EXPRESSION_LITERAL:
     {
         Token_Type::ENUM type = analyser->parser->lexer->tokens[analyser->parser->token_mapping[expression_index].start_index].type;
         if (type == Token_Type::BOOLEAN_LITERAL) {
@@ -449,7 +481,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
         analyser->semantic_information[expression_index].expression_result_type_index = access_signature->child_type_index;
         return expression_analysis_result_make(access_signature->child_type_index, true);
     }
-    case AST_Node_Type::EXPRESSION_MEMBER_ACCESS: 
+    case AST_Node_Type::EXPRESSION_MEMBER_ACCESS:
     {
         Expression_Analysis_Result access_expr_result = semantic_analyser_analyse_expression(analyser, table, expression->children[0]);
         Type_Signature* type_signature = type_system_get_type(&analyser->type_system, access_expr_result.type_index);
@@ -460,16 +492,24 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
             semantic_analyser_log_error(analyser, "Expression type does not have any members to access!", expression_index);
             return expression_analysis_result_make(analyser->error_type_index, true);
         }
-        if (expression->name_id != analyser->size_token_index) {
-            semantic_analyser_log_error(analyser, "Arrays only have .size as member!", expression_index);
+        if (expression->name_id != analyser->size_token_index && expression->name_id != analyser->data_token_index) {
+            semantic_analyser_log_error(analyser, "Arrays only have .size or .data as member!", expression_index);
             return expression_analysis_result_make(analyser->error_type_index, true);
         }
-        analyser->semantic_information[expression_index].expression_result_type_index = analyser->i32_type_index;
-        if (type_signature->type == Signature_Type::ARRAY_SIZED) {
-            return expression_analysis_result_make(analyser->i32_type_index, false);
+        int result_type;
+        if (expression->name_id == analyser->size_token_index) {
+            result_type = analyser->i32_type_index;
         }
         else {
-            return expression_analysis_result_make(analyser->i32_type_index, true);
+            result_type = type_system_find_or_create_type(
+                &analyser->type_system, type_signature_make_pointer(type_signature->child_type_index));
+        }
+        analyser->semantic_information[expression_index].expression_result_type_index = result_type;
+        if (type_signature->type == Signature_Type::ARRAY_SIZED) {
+            return expression_analysis_result_make(result_type, false);
+        }
+        else {
+            return expression_analysis_result_make(result_type, true);
         }
     }
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_ADDITION:
@@ -801,7 +841,7 @@ void semantic_analyser_analyse_function(Semantic_Analyser* analyser, Symbol_Tabl
     // Define parameter variables
     AST_Node* parameter_block = &analyser->parser->nodes[function->children[0]];
     Type_Signature* function_signature = type_system_get_type(
-        &analyser->type_system, 
+        &analyser->type_system,
         symbol_table_find_symbol_of_type(parent, function->name_id, Symbol_Type::FUNCTION)->type_index
     );
     for (int i = 0; i < parameter_block->children.size; i++) {
@@ -911,33 +951,33 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, AST_Parser* parser)
         analyser->i32_type_index = type_system_find_or_create_type(&analyser->type_system, type_signature_make_primitive(Primitive_Type::SIGNED_INT_32));
         analyser->bool_type_index = type_system_find_or_create_type(&analyser->type_system, type_signature_make_primitive(Primitive_Type::BOOLEAN));
 
-        symbol_table_define_type(root_table, int_token_index, 
+        symbol_table_define_type(root_table, int_token_index,
             type_system_find_or_create_type(&analyser->type_system, type_signature_make_primitive(Primitive_Type::SIGNED_INT_32)));
-        symbol_table_define_type(root_table, bool_token_index, 
+        symbol_table_define_type(root_table, bool_token_index,
             type_system_find_or_create_type(&analyser->type_system, type_signature_make_primitive(Primitive_Type::BOOLEAN)));
-        symbol_table_define_type(root_table, float_token_index, 
+        symbol_table_define_type(root_table, float_token_index,
             type_system_find_or_create_type(&analyser->type_system, type_signature_make_primitive(Primitive_Type::FLOAT_32)));
-        symbol_table_define_type(root_table, f32_token_index, 
+        symbol_table_define_type(root_table, f32_token_index,
             type_system_find_or_create_type(&analyser->type_system, type_signature_make_primitive(Primitive_Type::FLOAT_32)));
-        symbol_table_define_type(root_table, f64_token_index, 
+        symbol_table_define_type(root_table, f64_token_index,
             type_system_find_or_create_type(&analyser->type_system, type_signature_make_primitive(Primitive_Type::FLOAT_64)));
-        symbol_table_define_type(root_table, u8_token_index, 
+        symbol_table_define_type(root_table, u8_token_index,
             type_system_find_or_create_type(&analyser->type_system, type_signature_make_primitive(Primitive_Type::UNSIGNED_INT_8)));
-        symbol_table_define_type(root_table, byte_token_index, 
+        symbol_table_define_type(root_table, byte_token_index,
             type_system_find_or_create_type(&analyser->type_system, type_signature_make_primitive(Primitive_Type::UNSIGNED_INT_8)));
-        symbol_table_define_type(root_table, u16_token_index, 
+        symbol_table_define_type(root_table, u16_token_index,
             type_system_find_or_create_type(&analyser->type_system, type_signature_make_primitive(Primitive_Type::UNSIGNED_INT_16)));
-        symbol_table_define_type(root_table, u32_token_index, 
+        symbol_table_define_type(root_table, u32_token_index,
             type_system_find_or_create_type(&analyser->type_system, type_signature_make_primitive(Primitive_Type::UNSIGNED_INT_32)));
-        symbol_table_define_type(root_table, u64_token_index, 
+        symbol_table_define_type(root_table, u64_token_index,
             type_system_find_or_create_type(&analyser->type_system, type_signature_make_primitive(Primitive_Type::UNSIGNED_INT_64)));
-        symbol_table_define_type(root_table, i8_token_index, 
+        symbol_table_define_type(root_table, i8_token_index,
             type_system_find_or_create_type(&analyser->type_system, type_signature_make_primitive(Primitive_Type::SIGNED_INT_8)));
-        symbol_table_define_type(root_table, i16_token_index, 
+        symbol_table_define_type(root_table, i16_token_index,
             type_system_find_or_create_type(&analyser->type_system, type_signature_make_primitive(Primitive_Type::SIGNED_INT_16)));
-        symbol_table_define_type(root_table, i32_token_index, 
+        symbol_table_define_type(root_table, i32_token_index,
             type_system_find_or_create_type(&analyser->type_system, type_signature_make_primitive(Primitive_Type::SIGNED_INT_32)));
-        symbol_table_define_type(root_table, i64_token_index, 
+        symbol_table_define_type(root_table, i64_token_index,
             type_system_find_or_create_type(&analyser->type_system, type_signature_make_primitive(Primitive_Type::SIGNED_INT_64)));
 
         analyser->size_token_index = lexer_add_or_find_identifier_by_string(parser->lexer, string_create_static("size"));

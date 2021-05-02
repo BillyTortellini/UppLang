@@ -49,7 +49,6 @@ struct Type_Signature
     int array_size;
 };
 
-
 // This will later also contain which types can be implicitly cast, maybe this wont work for structs
 struct Type_System
 {
@@ -67,6 +66,7 @@ void type_system_destroy(Type_System* system);
 void type_system_reset_all(Type_System* system);
 int type_system_find_or_create_type(Type_System* system, Type_Signature s);
 Type_Signature* type_system_get_type(Type_System* system, int index);
+void type_index_append_to_string(String* string, Type_System* system, int index);
 
 
 

@@ -33,26 +33,40 @@
         Just change this if this makes any problems later on
 */
 
+enum class Data_Access_Type
+{
+    MEMORY_ACCESS, // Through pointer, which is in register
+    REGISTER_ACCESS,
+    // GLOBAL_ACCESS, (TODO)
+};
+
+struct Data_Access
+{
+    Data_Access_Type type;
+    int register_index; // If memory_access, this is the register that holds the pointer, otherwise this is the register that holds the data
+};
+
 // How do I do array access and member access?
 // Also loading immediate data, e.g. constants
 enum class Intermediate_Instruction_Type
 {
-    ADDRESS_OF_REGISTER, // Src Dest ,Should be resolved at compile time by the backend compiler
-    WRITE_TO_MEMORY, // Dest, Src, where dest is a register holding a pointer, and src is the data to be copied
-    READ_FROM_MEMORY, // Dest, Src, wheresrc is a register holding a pointer, and dest ist the register written to
-    IF_BLOCK,
-    WHILE_BLOCK,
+    // a := *b; 
+    // x := *a; 
+    ADDRESS_OF, // Dest, Src | If Src is a Register_Access, it returns a pointer to the register, if src = Memory_Access, then it also returns pointer to register
+    MOVE_DATA, // Dest, Src  | Just moves data from register to memory or in any other combination
+    IF_BLOCK, // Source1 is the condition access
+    WHILE_BLOCK, // Source 1 is the condition access
     CALL_FUNCTION, // Arguments + Destination Register
     RETURN, // Src
     EXIT,
+    CALCULATE_MEMBER_ACCESS_POINTER, // Destination, Source, offset in constant_i32_value
+    CALCULATE_ARRAY_ACCESS_POINTER, // Destination, Source1: base_ptr, Source2: index_access, type_size in constant_i32_value
     BREAK, // Currently just breaks out of the active while loop
     CONTINUE, // Just continues the current while loop
-    CALC_ARRAY_ACCESS_POINTER, // Dest, left = base_pointer, right = index, type size given by register type
-    OFFSET_POINTER_BY_I32, // Dest, left = base_pointer, right = byte_offset, type is given by dest type
-    MOVE_REGISTER, // Src Dest
-    MOVE_CONSTANT_F32, // Dest
-    MOVE_CONSTANT_I32, // Dest
-    MOVE_CONSTANT_BOOL, // Dest
+    LOAD_CONSTANT_F32, // Dest
+    LOAD_CONSTANT_I32, // Dest
+    LOAD_CONSTANT_BOOL, // Dest
+
     // Operations
     BINARY_OP_ARITHMETIC_ADDITION_I32,
     BINARY_OP_ARITHMETIC_SUBTRACTION_I32,
@@ -89,19 +103,17 @@ enum class Intermediate_Instruction_Type
 struct Intermediate_Instruction
 {
     Intermediate_Instruction_Type type;
-    int source_register;
-    int destination_register;
-    int left_operand_register;
-    int right_operand_register;
+    Data_Access destination;
+    Data_Access source1;
+    Data_Access source2;
     // While/If block
-    int condition_register;
     int true_branch_instruction_start;
     int true_branch_instruction_size;
     int false_branch_instruction_start;
     int false_branch_instruction_size;
     // Function call
     int intermediate_function_index;
-    DynamicArray<int> argument_registers;
+    DynamicArray<Data_Access> arguments;
     // Load constants
     union {
         float constant_f32_value;
@@ -123,7 +135,7 @@ struct Intermediate_Register
     int type_index; // If read_pointer_on_access is true, then this is a pointer type
     int parameter_index;
     int name_id; // Just for debugging, variable name
-    bool read_pointer_on_access; // For somewhat "implict" conversions, e.g. 5 + a[5], where a[5] returns a pointer to an integer
+    //bool read_pointer_on_access; // For somewhat "implict" conversions, e.g. 5 + a[5], where a[5] returns a pointer to an integer
 };
 
 struct Intermediate_Function
