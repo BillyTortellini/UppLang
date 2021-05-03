@@ -178,6 +178,14 @@ Type_Signature* type_system_get_type(Type_System* system, int index) {
     return &system->types[index];
 }
 
+Type_Signature* type_system_get_child_type(Type_System* system, int index) {
+    Type_Signature* parent_sig = type_system_get_type(system, index);
+    if (parent_sig->type != Signature_Type::POINTER &&
+        parent_sig->type != Signature_Type::ARRAY_SIZED &&
+        parent_sig->type != Signature_Type::ARRAY_UNSIZED) panic("Should not happen");
+    return type_system_get_type(system, parent_sig->child_type_index);
+}
+
 Symbol_Table symbol_table_create(Symbol_Table* parent)
 {
     Symbol_Table result;
@@ -657,6 +665,7 @@ Statement_Analysis_Result semantic_analyser_analyse_statement(Semantic_Analyser*
         if (return_type_index != analyser->function_return_type_index && return_type_index != analyser->error_type_index) {
             semantic_analyser_log_error(analyser, "Return type does not match function return type", statement_index);
         }
+        analyser->semantic_information[statement_index].expression_result_type_index = return_type_index;
         return Statement_Analysis_Result::RETURN;
     }
     case AST_Node_Type::STATEMENT_BREAK: {
@@ -909,6 +918,8 @@ void semantic_analyser_analyse_function_header(Semantic_Analyser* analyser, Symb
     s.function_node_index = function_node_index;
     s.type_index = function_type_index;
     dynamic_array_push_back(&table->symbols, s);
+
+    analyser->semantic_information[function_node_index].function_signature_index = function_type_index;
 }
 
 void semantic_analyser_analyse(Semantic_Analyser* analyser, AST_Parser* parser)

@@ -5,10 +5,10 @@
 struct Bytecode_Interpreter
 {
     Bytecode_Generator* generator;
-    int instruction_pointer;
-    int return_register;
-    int base_pointer;
-    Array<int> stack;
+    Bytecode_Instruction* instruction_pointer;
+    byte return_register[16];
+    Array<byte> stack;
+    byte* stack_pointer;
 };
 
 Bytecode_Interpreter bytecode_intepreter_create();

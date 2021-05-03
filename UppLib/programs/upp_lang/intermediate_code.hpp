@@ -17,22 +17,9 @@
         * Operator overloading should happen here
         * Function overloading should happen here
         * Should contain all instructions explicitly (E.g. casting data types)
-        
-    Question:
-        When i do member access, what Code do i expect here. E.g.
-            A :: struct { x,y : int; }
-            inst : A;
-            inst.x = 5;
-            inst.y = 7;
-        I think for C and my Bytecode calculating the offset would be better. E.g.
-            Intermediate_Register5 = expression_result; (X)
-            Intermediate_Register6 = expression_result; (Y)
-            Intermediate_Register7 = address_of(Variable_Register0);
-            Intermediate_Register8 = Offset_Pointer_By_Byte(Intermediate_Register_7, 0);
-            Offset_access Variable_Register, 0
-        Just change this if this makes any problems later on
 */
 
+// TODO: Check if we need this for global access, or if the type could actually be just a boolean
 enum class Data_Access_Type
 {
     MEMORY_ACCESS, // Through pointer, which is in register
@@ -46,26 +33,24 @@ struct Data_Access
     int register_index; // If memory_access, this is the register that holds the pointer, otherwise this is the register that holds the data
 };
 
-// How do I do array access and member access?
-// Also loading immediate data, e.g. constants
 enum class Intermediate_Instruction_Type
 {
-    // a := *b; 
-    // x := *a; 
-    ADDRESS_OF, // Dest, Src | If Src is a Register_Access, it returns a pointer to the register, if src = Memory_Access, then it also returns pointer to register
-    MOVE_DATA, // Dest, Src  | Just moves data from register to memory or in any other combination
-    IF_BLOCK, // Source1 is the condition access
-    WHILE_BLOCK, // Source 1 is the condition access
-    CALL_FUNCTION, // Arguments + Destination Register
-    RETURN, // Src
-    EXIT,
-    CALCULATE_MEMBER_ACCESS_POINTER, // Destination, Source, offset in constant_i32_value
-    CALCULATE_ARRAY_ACCESS_POINTER, // Destination, Source1: base_ptr, Source2: index_access, type_size in constant_i32_value
-    BREAK, // Currently just breaks out of the active while loop
-    CONTINUE, // Just continues the current while loop
+    MOVE_DATA, // Dest, Src  | Moves data from between registers and memory
     LOAD_CONSTANT_F32, // Dest
     LOAD_CONSTANT_I32, // Dest
     LOAD_CONSTANT_BOOL, // Dest
+
+    IF_BLOCK,
+    CALL_FUNCTION, // Arguments + Destination Register
+    RETURN, // Source 1 is return register, contains size information
+    EXIT, // Source 1 is return register, contains size information
+    WHILE_BLOCK,
+    BREAK, // Currently just breaks out of the active while loop
+    CONTINUE, // Just continues the current while loop
+
+    ADDRESS_OF, // Dest, Src | If Src is a Register_Access, it returns a pointer to the register, if src = Memory_Access, then it also returns pointer to register
+    CALCULATE_MEMBER_ACCESS_POINTER, // Destination, Source, offset in constant_i32_value | !Different Behavior depending on Memory_Access!
+    CALCULATE_ARRAY_ACCESS_POINTER, // Destination, Source1: base_ptr, Source2: index_access, type_size in constant_i32_value | !Different Behavior depending on Memory_Access!
 
     // Operations
     BINARY_OP_ARITHMETIC_ADDITION_I32,
@@ -107,14 +92,16 @@ struct Intermediate_Instruction
     Data_Access source1;
     Data_Access source2;
     // While/If block
+    int condition_calculation_instruction_start;
+    int condition_calculation_instruction_end_exclusive;
     int true_branch_instruction_start;
-    int true_branch_instruction_size;
+    int true_branch_instruction_end_exclusive;
     int false_branch_instruction_start;
-    int false_branch_instruction_size;
+    int false_branch_instruction_end_exclusive;
     // Function call
     int intermediate_function_index;
     DynamicArray<Data_Access> arguments;
-    // Load constants
+    // Load constants, TODO: Do better with global data
     union {
         float constant_f32_value;
         int constant_i32_value;
@@ -132,10 +119,9 @@ enum class Intermediate_Register_Type
 struct Intermediate_Register
 {
     Intermediate_Register_Type type;
-    int type_index; // If read_pointer_on_access is true, then this is a pointer type
+    int type_index;
     int parameter_index;
-    int name_id; // Just for debugging, variable name
-    //bool read_pointer_on_access; // For somewhat "implict" conversions, e.g. 5 + a[5], where a[5] returns a pointer to an integer
+    int name_id;
 };
 
 struct Intermediate_Function

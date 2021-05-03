@@ -23,12 +23,22 @@ Unsized vs Sized arrays:
     []int VS [5]int
 */
 
+double :: (x:int) -> int
+{
+    return x*2;
+}
+
 main :: () -> int
 {
-    a: []int;
-    a.size = 5;
-    
-    return a[0];
+    a: int = 5; 
+    b: int = 7;
+
+    ap: *int = *a;
+    bp: *int = *b;
+    &ap = &bp;
+
+    a = double(a);
+    return a;
 }
 
 

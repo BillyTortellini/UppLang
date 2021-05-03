@@ -1,6 +1,6 @@
 #pragma once
 
-#include "semantic_analyser.hpp"
+#include "intermediate_code.hpp"
 
 /*
     General Architecture Notes for Bytecode:
@@ -8,106 +8,73 @@
         * Jumps are either conditional or non_conditional
         * Stack: Grows upwards, has a limited size
 
-    Ideas:
-        - Just save all registers on the stack before function call, arguments on stack --> Seems like a register stack would be useful
-        - The abstract machine could also handle function calls, and save the registers itself --> register stack
-        - I think there isnt a really good use for registers, since i could do all calculations in-memory on the stack,
-            relative to the base pointor
-        - But i could have two stacks, one for registers, and one for what exactly?
-        I think i would like to try to have only one stack, so i can 
-        What are the things that are on the stack? Local variables, function arguments, return address, return value
-
-    How do i do function calls, which can be easily translated to C or LLVM or my code and which runs fast? 
-    I am thinking about intermediate Code, which cannot be executed directly.
-    But how is this Code different, and why shouldn't it be able to be executed directly?
-    Types: When I want to translate to C or LLVM, I still want to have:
-        - The underlying type of a variable in a register (u8, u16, u32, u64, f32, f64, bool, structs/unions/sized arrays)
-        - Function calls
-        - Ifs, Loops
-        Function calls should be translatable, which means i need to know the arguments (The register numbers) + return values
-        I also want a mapping from expressions to ast-nodes
-        So variables and expression results will become the same thing, a register.
-        This does not work since we need to be able to assign values to variables!
-        So each function has a set of local variables, and a set of registers which are expression results
-
     So the runtime system will have a:
-        - Stack (Return addresses, function arguments)
-        - Registers (Unlimited, but each programm has a maximum number)
-        - Base_Index,
-        - Stack_Index 
-        - Instruction_Index
+        - Stack (Return addresses, register data, function arguments)
+        - Stack_Pointer
+        - Instruction_Pointer
         - Return_Register (s, when we have multiple return values)
-            For return values, since doing this on the stack is hairy. Other methods would be
-            to pass a pointer as an parameter, and the caller stores it there. 
-            I think the best method is that the caller reserves space on the stack, before the arguments,
-            and the callee writes to those values (Also works with multiple return values). On real
-            machines, you would probably use registers for small values (32-64 bit, or maybe more).
-            And large values would be put on the stack and passed by pointer.
 
-    What about expression evaluation?
-        Generate a unique register for each intermediate result.
-        Each register has 64 bit, and only one Primitive type can be contained in one register.
-
-    The stack grows upwards (Dynamic_Array), and it is indexed on a 4-byte index basis.
-    Accessing the stack is done relative to the base_index. (Closures wont work this way, but IDC yet)
-    Caller: Function calls look like this (Calling Convention):
-        1. Save all registers from 0 to argument count on the stack
-        2. Fill the arguments into the first registers, from left to right
-        3. Push return address onto stack    \
-        4. Jump to function entry point
-        5. Push old base pointer onto stack  |
-        6. Adjust base pointer               |
-        7. Call function                     \---> This is all done using the call instruction
-    Callee: Function Prolog:
-        // Nothing really
-    Callee: Function End:
-        1. Move return value into return register
-        2. Reset base pointer (old one on stack)
-        3. Return to return address
-    Caller: 
-        1. Move return value into register
+    The stack grows upwards (Dynamic_Array), and it is indexed on a one-byte index basis.
+    Accessing the stack is done relative to the Stack_Pointer. 
+    A Functions Stack-Frame looks like this:
+    [ParamReg0] [ParamReg1] [ParamRegs...] [Return_Address] [Old_Stack_Pointer] [Reg0] [Reg1] [Reg2] [Regs...]
 */
 namespace Instruction_Type
 {
     enum ENUM
     {
-        LOAD_INTERMEDIATE_4BYTE, // op1 = dest_reg, op2 = value
-        MOVE,  // op1 = dest_reg, op2 = src_reg
+        MOVE_REGISTERS,  // op1 = dest_reg, op2 = src_reg, op3 = size
+        WRITE_MEMORY, // op1 = address_register, op2 = value_register, op3 = size
+        READ_MEMORY, // op1 = dest_register, op2 = address_register, op3 = size
+        MEMORY_COPY, // op1 = dest_address_register, op2 = src_address_register, op3 = size
+        U64_ADD_CONSTANT_I32, // op1 = dest_reg, op2 = constant offset
+        U64_MULTIPLY_ADD_I32, // op1 = dest_reg, op2 = src_register, op3 = index_register, op4 = size
+
         JUMP, // op1 = instruction_index
         JUMP_ON_TRUE, // op1 = instruction_index, op2 = cnd_reg
         JUMP_ON_FALSE, // op1 = instruction_index, op2 = cnd_reg
-        CALL, // Pushes return address, op1 = instruction_index
-        RETURN, // Pops return address, op1 = return_value reg
-        LOAD_RETURN_VALUE, // op1 = dst_reg
-        EXIT, // op1 = return_value_register
-        LOAD_REGISTER_ADDRESS, // op1 = dest_reg, op2 = register_to_load
-        STORE_TO_ADDRESS, // op1 = address_register, op2 = value_register
-        LOAD_FROM_ADDRESS, // op1 = dest_register, op2 = address_register
-        // Expression Instructions
-        INT_ADDITION, // All binary operations work the following: op1 = destination, op2 = left_op, op3 = right_op
-        INT_SUBTRACT,
-        INT_MULTIPLY,
-        INT_DIVISION,
-        INT_MODULO,
-        INT_NEGATE,
-        FLOAT_ADDITION,
-        FLOAT_SUBTRACT,
-        FLOAT_MULTIPLY,
-        FLOAT_DIVISION,
-        FLOAT_NEGATE,
-        BOOLEAN_AND,
-        BOOLEAN_OR,
-        BOOLEAN_NOT,
-        COMPARE_INT_GREATER_THAN,
-        COMPARE_INT_GREATER_EQUAL,
-        COMPARE_INT_LESS_THAN,
-        COMPARE_INT_LESS_EQUAL,
-        COMPARE_FLOAT_GREATER_THAN,
-        COMPARE_FLOAT_GREATER_EQUAL,
-        COMPARE_FLOAT_LESS_THAN,
-        COMPARE_FLOAT_LESS_EQUAL,
-        COMPARE_REGISTERS_4BYTE_EQUAL,
-        COMPARE_REGISTERS_4BYTE_NOT_EQUAL,
+        CALL, // Pushes return address, op1 = instruction_index, op2 = stack_offset for new frame
+        RETURN, // Pops return address, op1 = return_value reg, op2 = return_size (Capped at 16 bytes)
+        EXIT, // op1 = return_value_register, op2 = return size (Capped at 16)
+
+        LOAD_RETURN_VALUE, // op1 = dst_reg, op2 = size
+        LOAD_REGISTER_ADDRESS, // op1 = dest_reg, op2 = register_to_load, // TODO: Also only works because we are lucky
+        LOAD_CONSTANT_F32, // op1 = dest_reg, op2 = value // Todo: Only works because we dont 64bit constants yet
+        LOAD_CONSTANT_I32, // op1 = dest_reg, op2 = value // Todo: Only works because we dont 64bit constants yet
+        LOAD_CONSTANT_BOOLEAN, // op1 = dest_reg, op2 = value // Todo: Only works because we dont 64bit constants yet
+
+        // Expression Instructions, all binary operations work the following: op1 = dest_byte_offset, op2 = left_byte_offset, op3 = right_byte_offset
+        // ! This has to be in sync with the intermediate code ENUM
+        BINARY_OP_ARITHMETIC_ADDITION_I32,
+        BINARY_OP_ARITHMETIC_SUBTRACTION_I32,
+        BINARY_OP_ARITHMETIC_MULTIPLICATION_I32,
+        BINARY_OP_ARITHMETIC_DIVISION_I32,
+        BINARY_OP_ARITHMETIC_MODULO_I32,
+        BINARY_OP_COMPARISON_EQUAL_I32,
+        BINARY_OP_COMPARISON_NOT_EQUAL_I32,
+        BINARY_OP_COMPARISON_GREATER_THAN_I32,
+        BINARY_OP_COMPARISON_GREATER_EQUAL_I32,
+        BINARY_OP_COMPARISON_LESS_THAN_I32,
+        BINARY_OP_COMPARISON_LESS_EQUAL_I32,
+        UNARY_OP_ARITHMETIC_NEGATE_I32,
+
+        BINARY_OP_ARITHMETIC_ADDITION_F32,
+        BINARY_OP_ARITHMETIC_SUBTRACTION_F32,
+        BINARY_OP_ARITHMETIC_MULTIPLICATION_F32,
+        BINARY_OP_ARITHMETIC_DIVISION_F32,
+        BINARY_OP_COMPARISON_EQUAL_F32,
+        BINARY_OP_COMPARISON_NOT_EQUAL_F32,
+        BINARY_OP_COMPARISON_GREATER_THAN_F32,
+        BINARY_OP_COMPARISON_GREATER_EQUAL_F32,
+        BINARY_OP_COMPARISON_LESS_THAN_F32,
+        BINARY_OP_COMPARISON_LESS_EQUAL_F32,
+        UNARY_OP_ARITHMETIC_NEGATE_F32,
+
+        BINARY_OP_COMPARISON_EQUAL_BOOL,
+        BINARY_OP_COMPARISON_NOT_EQUAL_BOOL,
+        BINARY_OP_BOOLEAN_AND,
+        BINARY_OP_BOOLEAN_OR,
+        UNARY_OP_BOOLEAN_NOT,
     };
 }
 
@@ -117,46 +84,34 @@ struct Bytecode_Instruction
     int op1;
     int op2;
     int op3;
-};
-
-struct Variable_Location
-{
-    int variable_name;
-    int type_index;
-    int stack_base_offset;
-};
-
-struct Function_Location
-{
-    int name_id;
-    int function_entry_instruction;
+    int op4;
 };
 
 struct Function_Call_Location
 {
-    int function_name;
+    int function_index;
     int call_instruction_location;
 };
 
 struct Bytecode_Generator
 {
-    DynamicArray<Bytecode_Instruction> instructions;
-    DynamicArray<Variable_Location> variable_locations;
+    // Data required for generation
+    Intermediate_Generator* im_generator;
     DynamicArray<int> break_instructions_to_fill_out;
     DynamicArray<int> continue_instructions_to_fill_out;
-    DynamicArray<Function_Location> function_locations;
-    DynamicArray<Function_Call_Location> function_calls;
 
-    Semantic_Analyser* analyser;
-    int stack_base_offset;
-    int max_stack_base_offset;
+    // Result data
+    DynamicArray<Bytecode_Instruction> instructions;
+    DynamicArray<int> function_locations;
+    DynamicArray<Function_Call_Location> function_calls;
+    DynamicArray<int> register_stack_locations;
+
     int entry_point_index;
-    int main_name_id;
-    bool in_main_function;
     int maximum_function_stack_depth;
+    int stack_offset_end_of_variables;
 };
 
 Bytecode_Generator bytecode_generator_create();
 void bytecode_generator_destroy(Bytecode_Generator* generator);
-void bytecode_generator_generate(Bytecode_Generator* generator, Semantic_Analyser* analyser);
+void bytecode_generator_generate(Bytecode_Generator* generator, Intermediate_Generator* im_generator);
 void bytecode_generator_append_bytecode_to_string(Bytecode_Generator* generator, String* string);

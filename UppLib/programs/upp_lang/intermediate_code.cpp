@@ -219,7 +219,7 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
 
         // Generate argument Expressions
         for (int i = 0; i < expression->children.size; i++) {
-            Data_Access argument = intermediate_generator_generate_expression(generator, expression->children[i], true, data_access_make_empty());
+            Data_Access argument = intermediate_generator_generate_expression(generator, expression->children[i], false, data_access_make_empty());
             dynamic_array_push_back(&instr.arguments, argument);
         }
         dynamic_array_push_back(&function->instructions, instr);
@@ -341,6 +341,7 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
             instr.destination = destination;
             instr.source1 = result_access;
             dynamic_array_push_back(&function->instructions, instr);
+            return instr.destination;
         }
         else {
             return result_access;
@@ -414,6 +415,7 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
 
                 result_access.type = Data_Access_Type::MEMORY_ACCESS;
             }
+            else { result_access = data_access_make_empty(); panic("Lol"); };
         }
         else {
             result_access = array_data;
@@ -458,8 +460,8 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_GREATER_OR_EQUAL:
     {
         int left_type = generator->analyser->semantic_information[expression->children[0]].expression_result_type_index;
-        Intermediate_Instruction_Type instr_type = binary_operation_get_instruction_type(generator, expression->type, left_type);
         Intermediate_Instruction instr;
+        instr.type = binary_operation_get_instruction_type(generator, expression->type, left_type);
         instr.source1 = intermediate_generator_generate_expression(generator, expression->children[0], false, data_access_make_empty());
         instr.source2 = intermediate_generator_generate_expression(generator, expression->children[1], false, data_access_make_empty());
         if (force_destination) {
@@ -556,72 +558,54 @@ void intermediate_generator_generate_statement(Intermediate_Generator* generator
         if (generator->current_function_index == generator->main_function_index) {
             i.type = Intermediate_Instruction_Type::EXIT;
         }
-        i.destination = intermediate_generator_generate_expression(generator, statement->children[0], false, data_access_make_empty());
+        i.source1 = intermediate_generator_generate_expression(generator, statement->children[0], false, data_access_make_empty());
+        i.constant_i32_value = type_system_get_type(
+            &generator->analyser->type_system,
+            generator->analyser->semantic_information[statement_index].expression_result_type_index
+        )->size_in_bytes;
         dynamic_array_push_back(&function->instructions, i);
         break;
     }
     case AST_Node_Type::STATEMENT_IF:
-    {
-        int if_instruction_index_fill_out = function->instructions.size;
-        Intermediate_Instruction i;
-        i.type = Intermediate_Instruction_Type::IF_BLOCK;
-        i.source1 = intermediate_generator_generate_expression(generator, statement->children[0], false, data_access_make_empty());
-        dynamic_array_push_back(&function->instructions, i);
-
-        // Generate Code
-        int true_branch_start_index = function->instructions.size;
-        intermediate_generator_generate_statement_block(generator, statement->children[1]);
-        int true_branch_size = function->instructions.size - true_branch_start_index;
-        int false_branch_start_index = function->instructions.size;
-        int false_branch_size = 0;
-
-        function->instructions[if_instruction_index_fill_out].true_branch_instruction_start = true_branch_start_index;
-        function->instructions[if_instruction_index_fill_out].true_branch_instruction_size = true_branch_size;
-        function->instructions[if_instruction_index_fill_out].false_branch_instruction_start = false_branch_start_index;
-        function->instructions[if_instruction_index_fill_out].false_branch_instruction_size = false_branch_size;
-        break;
-    }
     case AST_Node_Type::STATEMENT_IF_ELSE:
-    {
-        int if_instruction_index_fill_out = function->instructions.size;
-        Intermediate_Instruction i;
-        i.type = Intermediate_Instruction_Type::IF_BLOCK;
-        i.source1 = intermediate_generator_generate_expression(generator, statement->children[0], false, data_access_make_empty());
-        dynamic_array_push_back(&function->instructions, i);
-
-        // Generate Code
-        int true_branch_start_index = function->instructions.size;
-        intermediate_generator_generate_statement_block(generator, statement->children[1]);
-        int true_branch_size = function->instructions.size - true_branch_start_index;
-        int false_branch_start_index = function->instructions.size;
-        intermediate_generator_generate_statement_block(generator, statement->children[2]);
-        int false_branch_size = function->instructions.size - false_branch_start_index;
-
-        function->instructions[if_instruction_index_fill_out].true_branch_instruction_start = true_branch_start_index;
-        function->instructions[if_instruction_index_fill_out].true_branch_instruction_size = true_branch_size;
-        function->instructions[if_instruction_index_fill_out].false_branch_instruction_start = false_branch_start_index;
-        function->instructions[if_instruction_index_fill_out].false_branch_instruction_size = false_branch_size;
-        break;
-    }
     case AST_Node_Type::STATEMENT_WHILE:
     {
-        int if_instruction_index_fill_out = function->instructions.size;
         Intermediate_Instruction i;
-        i.type = Intermediate_Instruction_Type::WHILE_BLOCK;
-        i.source1 = intermediate_generator_generate_expression(generator, statement->children[0], false, data_access_make_empty());
+        bool generate_else_path;
+        if (statement->type == AST_Node_Type::STATEMENT_IF) {
+            i.type = Intermediate_Instruction_Type::IF_BLOCK;
+            generate_else_path = false;
+        }
+        else if (statement->type == AST_Node_Type::STATEMENT_IF_ELSE) {
+            i.type = Intermediate_Instruction_Type::IF_BLOCK;
+            generate_else_path = true;
+        }
+        else if (statement->type == AST_Node_Type::STATEMENT_WHILE) {
+            i.type = Intermediate_Instruction_Type::WHILE_BLOCK;
+            generate_else_path = false;
+        }
+        else panic("Cannot happen");
+
+        int branch_instruction_index = function->instructions.size;
+        i.condition_calculation_instruction_start = function->instructions.size + 1;
         dynamic_array_push_back(&function->instructions, i);
+        Data_Access condition_access = intermediate_generator_generate_expression(generator, statement->children[0], false, data_access_make_empty());
 
         // Generate Code
-        int true_branch_start_index = function->instructions.size;
+        int condition_end = function->instructions.size;
         intermediate_generator_generate_statement_block(generator, statement->children[1]);
-        int true_branch_size = function->instructions.size - true_branch_start_index;
         int false_branch_start_index = function->instructions.size;
-        int false_branch_size = 0;
+        if (generate_else_path) {
+            intermediate_generator_generate_statement_block(generator, statement->children[2]);
+        }
+        int false_branch_end = function->instructions.size;
 
-        function->instructions[if_instruction_index_fill_out].true_branch_instruction_start = true_branch_start_index;
-        function->instructions[if_instruction_index_fill_out].true_branch_instruction_size = true_branch_size;
-        function->instructions[if_instruction_index_fill_out].false_branch_instruction_start = false_branch_start_index;
-        function->instructions[if_instruction_index_fill_out].false_branch_instruction_size = false_branch_size;
+        function->instructions[branch_instruction_index].condition_calculation_instruction_end_exclusive = condition_end;
+        function->instructions[branch_instruction_index].source1 = condition_access;
+        function->instructions[branch_instruction_index].true_branch_instruction_start = condition_end;
+        function->instructions[branch_instruction_index].true_branch_instruction_end_exclusive = false_branch_start_index;
+        function->instructions[branch_instruction_index].false_branch_instruction_start = false_branch_start_index;
+        function->instructions[branch_instruction_index].false_branch_instruction_end_exclusive = false_branch_end;
         break;
     }
     case AST_Node_Type::STATEMENT_EXPRESSION: {
@@ -822,6 +806,7 @@ void intermediate_instruction_append_to_string(String* string, Intermediate_Inst
     bool append_source_destination = false;
     bool append_binary = false;
     bool append_destination = false;
+    bool append_src_1 = false;
     switch (instruction->type)
     {
     case Intermediate_Instruction_Type::ADDRESS_OF:
@@ -831,18 +816,18 @@ void intermediate_instruction_append_to_string(String* string, Intermediate_Inst
     case Intermediate_Instruction_Type::IF_BLOCK:
         string_append_formated(string, "IF_BLOCK, condition: ");
         data_access_append_to_string(string, instruction->source1, function, generator);
-        string_append_formated(string, " true_start: %d, true_size: %d, false_start: %d, false_size: %d",
-            instruction->true_branch_instruction_start, instruction->true_branch_instruction_size,
-            instruction->false_branch_instruction_start, instruction->false_branch_instruction_size);
+        string_append_formated(string, " true_start: %d, true_end: %d, false_start: %d, false_end: %d",
+            instruction->true_branch_instruction_start, instruction->true_branch_instruction_end_exclusive,
+            instruction->false_branch_instruction_start, instruction->false_branch_instruction_end_exclusive);
         break;
     case Intermediate_Instruction_Type::WHILE_BLOCK:
         string_append_formated(string, "WHILE_BLOCK, condition: ");
         data_access_append_to_string(string, instruction->source1, function, generator);
-        string_append_formated(string, " true_start: %d, true_size: %d",
-            instruction->true_branch_instruction_start, instruction->true_branch_instruction_size);
+        string_append_formated(string, " true_start: %d, true_end: %d",
+            instruction->true_branch_instruction_start, instruction->true_branch_instruction_end_exclusive);
         break;
     case Intermediate_Instruction_Type::CALL_FUNCTION:
-        string_append_formated(string, "CALL_FUNCTION, function_index: %d, return_data: ");
+        string_append_formated(string, "CALL_FUNCTION, function_index: %d, \n\t\treturn_data: ", instruction->intermediate_function_index);
         data_access_append_to_string(string, instruction->destination, function, generator);
         for (int i = 0; i < instruction->arguments.size; i++) {
             string_append_formated(string, "\n\t\t#%d: ", i);
@@ -851,11 +836,11 @@ void intermediate_instruction_append_to_string(String* string, Intermediate_Inst
         break;
     case Intermediate_Instruction_Type::RETURN:
         string_append_formated(string, "RETURN, return_data: ");
-        append_destination = true;
+        append_src_1= true;
         break;
     case Intermediate_Instruction_Type::EXIT:
         string_append_formated(string, "EXIT ");
-        append_destination = true;
+        append_src_1 = true;
         break;
     case Intermediate_Instruction_Type::BREAK:
         string_append_formated(string, "BREAK");
@@ -999,6 +984,9 @@ void intermediate_instruction_append_to_string(String* string, Intermediate_Inst
         string_append_formated(string, "UNARY_OP_BOOLEAN_NOT ");
         append_binary = true;
         break;
+    default: 
+        logg("Should not fucking happen!");
+        break;
     }
 
     if (append_binary) {
@@ -1018,6 +1006,10 @@ void intermediate_instruction_append_to_string(String* string, Intermediate_Inst
     if (append_destination) {
         string_append_formated(string, "\n\t\tdest = ");
         data_access_append_to_string(string, instruction->destination, function, generator);
+    }
+    if (append_src_1) {
+        string_append_formated(string, "\n\t\tsrc = ");
+        data_access_append_to_string(string, instruction->source1, function, generator);
     }
 }
 

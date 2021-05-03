@@ -49,7 +49,7 @@ struct Type_Signature
     int array_size;
 };
 
-// This will later also contain which types can be implicitly cast, maybe this wont work for structs
+// This will later also contain which types can be implicitly cast, maybe i need to rethink some stuff for structs
 struct Type_System
 {
     DynamicArray<Type_Signature> types;
@@ -66,6 +66,7 @@ void type_system_destroy(Type_System* system);
 void type_system_reset_all(Type_System* system);
 int type_system_find_or_create_type(Type_System* system, Type_Signature s);
 Type_Signature* type_system_get_type(Type_System* system, int index);
+Type_Signature* type_system_get_child_type(Type_System* system, int index);
 void type_index_append_to_string(String* string, Type_System* system, int index);
 
 
@@ -98,6 +99,7 @@ struct Semantic_Node_Information
 {
     int symbol_table_index; // Which symbol table is active in this node
     int expression_result_type_index;
+    int function_signature_index;
 };
 
 struct Semantic_Analyser
