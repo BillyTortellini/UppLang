@@ -102,10 +102,6 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         break;
     case Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_I32:
         *(i32*)(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) * *(i32*)(interpreter->stack_pointer + i->op3);
-        logg("%d = %d * %d", *(i32*)(interpreter->stack_pointer + i->op1),
-                *(i32*)(interpreter->stack_pointer + i->op2),
-                *(i32*)(interpreter->stack_pointer + i->op3)
-            );
         break;
     case Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_I32:
         *(i32*)(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) / *(i32*)(interpreter->stack_pointer + i->op3);
@@ -189,6 +185,39 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         panic("Should not happen!\n");
         return true;
     }
+    }
+
+    // Debug output
+    if (false)
+    {
+        int start = (int)Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32;
+        int end = (int)Instruction_Type::UNARY_OP_BOOLEAN_NOT;
+        int index = (int)i->instruction_type;
+        if (index >= start && index <= end)
+        {
+            int counter = interpreter->instruction_pointer - interpreter->generator->instructions.data;
+            bool unary = i->instruction_type == Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_F32 ||
+                i->instruction_type == Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I32 ||
+                i->instruction_type == Instruction_Type::UNARY_OP_BOOLEAN_NOT;
+            logg("%d Stack index: %d\n", counter, (int)(interpreter->stack_pointer - interpreter->stack.data));
+            logg("%d dest = %6d / %3.2f / %s\n",
+                counter,
+                *(int*)(interpreter->stack_pointer + i->op1),
+                *(float*)(interpreter->stack_pointer + i->op1),
+                (*(bool*)(interpreter->stack_pointer + i->op1)) ? "True" : "False");
+            logg("%d src1 = %6d / %3.2f / %s\n",
+                counter,
+                *(int*)(interpreter->stack_pointer + i->op2),
+                *(float*)(interpreter->stack_pointer + i->op2),
+                (*(bool*)(interpreter->stack_pointer + i->op2)) ? "True" : "False");
+            if (!unary) {
+                logg("%d src2 = %6d / %3.2f / %s\n",
+                    counter,
+                    *(int*)(interpreter->stack_pointer + i->op3),
+                    *(float*)(interpreter->stack_pointer + i->op3),
+                    (*(bool*)(interpreter->stack_pointer + i->op3)) ? "True" : "False");
+            }
+        }
     }
 
     interpreter->instruction_pointer = &interpreter->instruction_pointer[1];

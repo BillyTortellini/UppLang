@@ -240,7 +240,7 @@ void bytecode_generator_generate_function_instruction_slice(
         case Intermediate_Instruction_Type::CALL_FUNCTION:
         {
             // Move registers to the right place, then generate call instruction
-            int argument_stack_offset = generator->stack_offset_end_of_variables;
+            int argument_stack_offset = align_offset_next_multiple(generator->stack_offset_end_of_variables, 16); // I think 16 is the hightest i have
             for (int i = 0; i < instr->arguments.size; i++)
             {
                 Data_Access* arg = &instr->arguments[i];
@@ -258,6 +258,7 @@ void bytecode_generator_generate_function_instruction_slice(
                             sig->size_in_bytes
                         )
                     );
+                    argument_stack_offset += sig->size_in_bytes;
                 }
                 else {
                     int pointer_type_index = function->registers[arg->register_index].type_index;
@@ -273,7 +274,7 @@ void bytecode_generator_generate_function_instruction_slice(
                             sig->size_in_bytes
                         )
                     );
-                    argument_stack_offset += sig->alignment_in_bytes;
+                    argument_stack_offset += sig->size_in_bytes;
                 }
             }
             // Align argument_stack_offset for return pointer
@@ -728,7 +729,7 @@ void bytecode_generator_generate_function_instruction_slice(
 
             Instruction_Type::ENUM result_instr_type = (Instruction_Type::ENUM) (
                 (int)Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32 +
-                ((int)Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32 - (int)instr->type)
+                ((int)instr->type - (int)Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32)
                 );
 
             int tmp_reg_stack_offset = align_offset_next_multiple(generator->stack_offset_end_of_variables, operand_type->alignment_in_bytes);
@@ -826,7 +827,7 @@ void bytecode_generator_generate_function_code(Bytecode_Generator* generator, in
                 &generator->im_generator->analyser->type_system,
                 function_signature->parameter_type_indices[i]
             );
-            stack_size_of_parameters = align_offset_next_multiple(stack_offset, param_sig->alignment_in_bytes);
+            stack_offset = align_offset_next_multiple(stack_offset, param_sig->alignment_in_bytes);
             generator->register_stack_locations[reg_index] = stack_offset;
             stack_offset += param_sig->size_in_bytes;
         }

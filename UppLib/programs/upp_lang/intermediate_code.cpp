@@ -982,7 +982,7 @@ void intermediate_instruction_append_to_string(String* string, Intermediate_Inst
         break;
     case Intermediate_Instruction_Type::UNARY_OP_BOOLEAN_NOT:
         string_append_formated(string, "UNARY_OP_BOOLEAN_NOT ");
-        append_binary = true;
+        append_source_destination = true;
         break;
     default: 
         logg("Should not fucking happen!");

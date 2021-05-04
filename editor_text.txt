@@ -23,22 +23,27 @@ Unsized vs Sized arrays:
     []int VS [5]int
 */
 
-double :: (x:int) -> int
+even :: (a: int) -> bool 
 {
-    return x*2;
+    return a % 2 == 0;
 }
 
-main :: () -> int
+double :: (a: int, b: int, c: int) -> int
+{
+    return a * b + c;
+}
+
+main :: () -> bool
 {
     a: int = 5; 
     b: int = 7;
 
     ap: *int = *a;
     bp: *int = *b;
-    &ap = &bp;
+    //&ap = &bp;
 
-    a = double(a);
-    return a;
+    a = double(a, b, 1);
+    return !even(a);
 }
 
 

@@ -554,7 +554,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_EQUAL:
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_NOT_EQUAL: {
         is_binary_op = true;
-        bool_valid, int_valid, float_valid = true;
+        bool_valid = int_valid = float_valid = true;
         return_type_index = analyser->bool_type_index;
         break;
     }
