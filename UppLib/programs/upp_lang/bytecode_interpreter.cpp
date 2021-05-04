@@ -40,15 +40,17 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         interpreter->instruction_pointer = &interpreter->generator->instructions[i->op1];
         return false;
     case Instruction_Type::JUMP_ON_TRUE:
-        if (*(interpreter->stack_pointer + i->op1) != 0) {
-            interpreter->instruction_pointer = &interpreter->generator->instructions[i->op2];
+        if (*(interpreter->stack_pointer + i->op2) != 0) {
+            interpreter->instruction_pointer = &interpreter->generator->instructions[i->op1];
+            return false;
         }
-        return false;
+        break;
     case Instruction_Type::JUMP_ON_FALSE:
-        if (*(interpreter->stack_pointer + i->op1) == 0) {
-            interpreter->instruction_pointer = &interpreter->generator->instructions[i->op2];
+        if (*(interpreter->stack_pointer + i->op2) == 0) {
+            interpreter->instruction_pointer = &interpreter->generator->instructions[i->op1];
+            return false;
         }
-        return false;
+        break;
     case Instruction_Type::CALL: {
         if (&interpreter->stack[interpreter->stack.size-1] - interpreter->stack_pointer < interpreter->generator->maximum_function_stack_depth) {
             logg("Stack overflow!\n");

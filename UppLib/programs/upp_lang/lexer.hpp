@@ -100,4 +100,4 @@ void lexer_parse_string(Lexer* lexer, String* code);
 void lexer_print(Lexer* result);
 String lexer_identifer_to_string(Lexer* Lexer, int index); // Does not do much
 int lexer_add_or_find_identifier_by_string(Lexer* Lexer, String identifier);
-
+void lexer_print_identifiers(Lexer* lexer);

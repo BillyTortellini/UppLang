@@ -1996,6 +1996,8 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
         { 
             if (editor->parser.errors.size == 0) {
                 semantic_analyser_analyse(&editor->analyser, &editor->parser);
+                lexer_print_identifiers(&editor->lexer);
+                type_system_print(&editor->analyser.type_system);
             }
             if (editor->analyser.errors.size == 0 && input->key_pressed[KEY_CODE::F5] && true) 
             {

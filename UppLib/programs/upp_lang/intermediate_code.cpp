@@ -814,17 +814,21 @@ void intermediate_instruction_append_to_string(String* string, Intermediate_Inst
         append_source_destination = true;
         break;
     case Intermediate_Instruction_Type::IF_BLOCK:
-        string_append_formated(string, "IF_BLOCK, condition: ");
-        data_access_append_to_string(string, instruction->source1, function, generator);
-        string_append_formated(string, " true_start: %d, true_end: %d, false_start: %d, false_end: %d",
+        string_append_formated(string, "IF_BLOCK, \n\t\tcond_start: %d, cond_end: %d\n\t\ttrue_start: %d, true_end: %d\n\t\t, false_start: %d, false_end: %d",
+            instruction->condition_calculation_instruction_start, instruction->condition_calculation_instruction_end_exclusive,
             instruction->true_branch_instruction_start, instruction->true_branch_instruction_end_exclusive,
-            instruction->false_branch_instruction_start, instruction->false_branch_instruction_end_exclusive);
+            instruction->false_branch_instruction_start, instruction->false_branch_instruction_end_exclusive
+        );
+        string_append_formated(string, "\n\t\tcondition: ");
+        data_access_append_to_string(string, instruction->source1, function, generator);
         break;
     case Intermediate_Instruction_Type::WHILE_BLOCK:
-        string_append_formated(string, "WHILE_BLOCK, condition: ");
+        string_append_formated(string, "WHILE_BLOCK, \n\t\tcond_start: %d, cond_end: %d\n\t\ttrue_start: %d, true_end: %d",
+            instruction->condition_calculation_instruction_start, instruction->condition_calculation_instruction_end_exclusive,
+            instruction->true_branch_instruction_start, instruction->true_branch_instruction_end_exclusive
+        );
+        string_append_formated(string, "\n\t\tcondition: ");
         data_access_append_to_string(string, instruction->source1, function, generator);
-        string_append_formated(string, " true_start: %d, true_end: %d",
-            instruction->true_branch_instruction_start, instruction->true_branch_instruction_end_exclusive);
         break;
     case Intermediate_Instruction_Type::CALL_FUNCTION:
         string_append_formated(string, "CALL_FUNCTION, function_index: %d, \n\t\treturn_data: ", instruction->intermediate_function_index);

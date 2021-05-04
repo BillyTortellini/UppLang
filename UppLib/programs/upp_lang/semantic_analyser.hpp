@@ -68,6 +68,7 @@ int type_system_find_or_create_type(Type_System* system, Type_Signature s);
 Type_Signature* type_system_get_type(Type_System* system, int index);
 Type_Signature* type_system_get_child_type(Type_System* system, int index);
 void type_index_append_to_string(String* string, Type_System* system, int index);
+void type_system_print(Type_System* system);
 
 
 

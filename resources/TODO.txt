@@ -1,6 +1,7 @@
 Current Work Item:
 ------------------
-1. Implement Intermediate Code Thing
+1. Fix Bugs with function return type
+1. Bugs when starting to uncomment things (/* and theres an error)
 
 Improvements that should be made (When I have time):
 ----------------------------------------------------

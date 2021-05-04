@@ -33,17 +33,41 @@ double :: (a: int, b: int, c: int) -> int
     return a * b + c;
 }
 
-main :: () -> bool
+sum_first :: (n: int) -> int
+{
+    i := 0;
+    sum := 0;
+    while (i < 1000) {
+        i = i+1;
+        sum = sum + i;
+    } 
+    return sum;
+}
+
+fact_rec :: (n: int) -> int
+{
+    if (n <= 2) return n; 
+    return fact_rec(n-1) * n;
+}
+
+fib_rec :: (n: int) -> int
+{
+    if (n <= 2) return 1;
+    return fib_rec(n-1) + fib_rec(n-2);
+}
+
+main :: () -> int
 {
     a: int = 5; 
-    b: int = 7;
+    b: int = 7-2;
 
     ap: *int = *a;
     bp: *int = *b;
-    //&ap = &bp;
 
-    a = double(a, b, 1);
-    return !even(a);
+    if (a > b) {
+        a = 0;
+    }
+    return fib_rec(30);
 }
 
 

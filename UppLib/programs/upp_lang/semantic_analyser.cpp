@@ -137,6 +137,7 @@ int type_system_find_or_create_function_signature(Type_System* system, Type_Sign
         Type_Signature* cmp = &system->types[i];
         if (cmp->type == s.type) {
             if (cmp->type == Signature_Type::FUNCTION) {
+                if (cmp->return_type_index != s.return_type_index) continue;
                 if (cmp->parameter_type_indices.size != s.parameter_type_indices.size) continue;
                 for (int i = 0; i < cmp->parameter_type_indices.size; i++) {
                     if (cmp->parameter_type_indices[i] != s.parameter_type_indices[i]) continue;
@@ -226,6 +227,20 @@ void type_index_append_to_string(String* string, Type_System* system, int index)
         string_append_formated(string, ") -> ");
         type_index_append_to_string(string, system, sig->return_type_index);
     }
+}
+
+void type_system_print(Type_System* system)
+{
+    String msg = string_create_empty(256);
+    SCOPE_EXIT(string_destroy(&msg));
+    string_append_formated(&msg, "Type_System: ");
+    for (int i = 0; i < system->types.size; i++)
+    {
+        string_append_formated(&msg, "\n\t%d: ", i);
+        type_index_append_to_string(&msg, system, i);
+    }
+    string_append_formated(&msg, "\n");
+    logg("%s", msg.characters);
 }
 
 
@@ -428,6 +443,8 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
         Symbol* func_symbol = symbol_table_find_symbol_of_type(table, expression->name_id, Symbol_Type::FUNCTION);
         if (func_symbol == 0) {
             semantic_analyser_log_error(analyser, "Function call to not defined Function!", expression_index);
+            lexer_print_identifiers(analyser->parser->lexer);
+            type_system_print(&analyser->type_system);
             return expression_analysis_result_make(analyser->error_type_index, true);
         }
 

@@ -702,3 +702,15 @@ void lexer_print(Lexer* lexer)
     }
     logg("\n%s\n", msg.characters);
 }
+
+void lexer_print_identifiers(Lexer* lexer)
+{
+    String msg = string_create_empty(256);
+    SCOPE_EXIT(string_destroy(&msg));
+    string_append_formated(&msg, "Identifiers: ");
+    for (int i = 0; i < lexer->identifiers.size; i++) {
+        string_append_formated(&msg, "\n\t%d: %s", i, lexer->identifiers[i].characters);
+    }
+    string_append_formated(&msg, "\n");
+    logg("%s", msg.characters);
+}
