@@ -1,26 +1,6 @@
-// Next Up: Arrays
-/*
-    Arrays are basically just a struct with
-    .data and .size + [] indexing
-    x: []int = [int: 2, 3, 5];
-    b := [int: 5];
-    x : [5]int;
-    x[5] = 7;
-    a := x[2];
-    x.size;
-    x.data;
-*/
-
-/* New things in Parser:
-    - TYPE_ARRAY_SIZED + TYPE_ARRAY_UNSIZED
-    - EXPRESSION_ARRAY_ACCESS
-    - EXPRESSION_MEMBER_ACCESS
+/* 
 TODO:
-    - Add size to types, change bytecode so pointers are 64bit
-    - Create Bytecode for array/member access
     - Defining static array data
-Unsized vs Sized arrays:
-    []int VS [5]int
 */
 
 even :: (a: int) -> bool 
@@ -28,7 +8,7 @@ even :: (a: int) -> bool
     return a % 2 == 0;
 }
 
-double :: (a: int, b: int, c: int) -> int
+mul_add :: (a: int, b: int, c: int) -> int
 {
     return a * b + c;
 }
@@ -58,20 +38,10 @@ fib_rec :: (n: int) -> int
 
 main :: () -> int
 {
-    a: int = 5; 
-    b: int = 7-2;
-
-    ap: *int = *a;
-    bp: *int = *b;
-
-    if (a > b) {
-        a = 0;
-    }
-    return fib_rec(30);
+    return fib_rec(32);
 }
 
-
-/*  
+/*
     Missing binary statements x++; x--; x+=1; x-=1; x/=1; x*=1;
     Short circuit operation on && and ||
 
@@ -104,23 +74,4 @@ main :: () -> int
      * Log to window, not to console, maybe something like in a textfield
         -> Would be best with a toast like notification, and something you can focus
      * Work on GUI (Probably necessary for better debugging)
-
-    Editor-Bugs:
-     * Repeat last search does not differentiate 'f'/'t'/forward backward
-     * 'r' is buggy on line end, and on empty lines
-     * Undo-Redo cursor position still sucks a little (Hint: Save positions after/before command)
-     * Non ASCII chars destroy some motions (Program crashes)
-     * Alt-Gr spamming still cancels commands (win32 nonsense)
-     * % does not jump on empty parenthesis () {}
-     * O does not work on first line
-     * dd with numbers seems to not take the last number
-     * put with 'dd'ed lines is also a bit weird
-     * CTRL-W in insert mode deletes all newlines too
-
-    Editor features missing:
-     * Correct Indentation on new line
-     * Undo/Redo Tree History
-     * Visual Mode
-     * Visual Block/Multi-Cursor stuff
-     * Command recording (@ stuff with vim, altough this could maybe be done better)
 */

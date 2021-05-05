@@ -223,6 +223,9 @@ void type_index_append_to_string(String* string, Type_System* system, int index)
         string_append_formated(string, "(");
         for (int i = 0; i < sig->parameter_type_indices.size; i++) {
             type_index_append_to_string(string, system, sig->parameter_type_indices[i]);
+            if (i != sig->parameter_type_indices.size - 1) {
+                string_append_formated(string, ", ");
+            }
         }
         string_append_formated(string, ") -> ");
         type_index_append_to_string(string, system, sig->return_type_index);

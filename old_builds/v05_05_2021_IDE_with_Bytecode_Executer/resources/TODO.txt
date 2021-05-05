@@ -1,0 +1,82 @@
+Current Work Item:
+------------------
+ * Bugs when starting to uncomment things (/* and theres an error)
+    --> Have an open comment that does not end /*
+        Add a line at the end with o
+
+Improvements that should be made (When I have time):
+----------------------------------------------------
+Function-Parsing Error handling should check each following line if it is a function
+Semantic Analyse should keep the first definition of each symbol, currently only true for functions
+Also Intermediate Code should keep positional information
+
+Open Questions:
+---------------
+Intermediate Code should not hold type information of register results, these should be from semantic analysis
+although this is not quite true, since some operations are implicitily given by the AST (Array access and stuff)
+But it would be nice if the intermediate Code + Type-System is enough to create the final output, 
+so its not too bad to copy the type from the semantic analyser
+
+Long-Term Goals:
+----------------
+ * Intermediate Code working 
+ * Generate Bytecode from the new Intermediate Code
+ * Array-Access and Pointers working
+ * Structs and Member-Access working
+ * Syntax for new/delete
+ * Hard-Coded functions for print, maybe input or other stuff
+ * C-Backend
+ * Calling C-Functions in C-Backend
+ * Calling C-Functions in Bytecode interpreter
+ * Linter
+ * Bytecode-Debugger
+ * More language features
+
+Ideas that need to be tested:
+-----------------------------
+Redirect debug output to application window
+Error-Handling with the most recent build of the language
+Using compile-time code-execution for metaprogramming and other stuff
+Code-Analysis with data-value semantics (Tag System)
+Hot-Code Reloading
+Stack-Analysis for Debug information (Or others?)
+
+More Language features to implement:
+------------------------------------
+Primitive Types (And calculating with them)
+Casting (Float/Int implicit, from smaller to bigger implicit?, reinterpret cast thing)
+Structs
+Global Data
+Multiple return values or no return values on functions
+Defer statement
+Tagged Unions
+Location-Information (Filename, line_number...)
+Any-Type and Type access (Varargs in this language)
+Code-Polymorphism (Template/Generic System)
+Modules
+Constant values (Maybe as the first iteration of the tag-system)
+Variation for simple Dynamic dispatch  (Like interfaces in OO..., similar to dynamic in Rust)
+Iterators
+Macro-System
+Context (Used for memory allocations, useful in Multi-Threading)
+
+Editor-Bugs:
+------------
+ * Repeat last search does not differentiate 'f'/'t'/forward backward
+ * 'r' is buggy on line end, and on empty lines
+ * Undo-Redo cursor position still sucks a little (Hint: Save positions after/before command)
+ * Non ASCII chars destroy some motions (Program crashes)
+ * Alt-Gr spamming still cancels commands (win32 nonsense)
+ * % does not jump on empty parenthesis () {}
+ * O does not work on first line
+ * dd with numbers seems to not take the last number
+ * put with 'dd'ed lines is also a bit weird
+ * CTRL-W in insert mode deletes all newlines too
+
+Editor features missing:
+------------------------
+ * Correct Indentation on new line
+ * Undo/Redo Tree History
+ * Visual Mode
+ * Visual Block/Multi-Cursor stuff
+ * Command recording (@ stuff with vim, altough this could maybe be done better)

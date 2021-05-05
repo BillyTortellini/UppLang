@@ -102,11 +102,12 @@ void hashtable_reset(Hashtable<K, V>* table)
         Hashtable_Entry<K,V>* entry = &table->entries[i];
         entry->valid = false;
         if (entry->next != 0) {
-            entry = entry->next;
-            while (entry != 0) {
-                Hashtable_Entry<K, V>* next = entry->next;
-                delete entry;
-                entry = next;
+            Hashtable_Entry<K, V>* next = entry->next;
+            entry->next = 0;
+            while (next != 0) {
+                Hashtable_Entry<K, V>* next_next = next->next;
+                delete next;
+                next = next_next;
             }
         }
     }

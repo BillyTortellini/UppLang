@@ -1979,49 +1979,63 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
         String source_code = string_create_empty(2048);
         SCOPE_EXIT(string_destroy(&source_code));
         text_append_to_string(&editor->lines, &source_code);
-        logg("--------SOURCE CODE--------: \n%s\n", source_code.characters);
 
+        // Compile
         lexer_parse_string(&editor->lexer, &source_code);
         ast_parser_parse(&editor->parser, &editor->lexer);
-        // Debug print AST
+        if (editor->parser.errors.size == 0) {
+            semantic_analyser_analyse(&editor->analyser, &editor->parser);
+        }
+        if (editor->parser.errors.size == 0 && editor->analyser.errors.size == 0 && input->key_pressed[KEY_CODE::F5])
         {
+            // Generate Intermediate Code
+            intermediate_generator_generate(&editor->intermediate_generator, &editor->analyser);
+            // Generate Bytecode from IM
+            bytecode_generator_generate(&editor->generator, &editor->intermediate_generator);
+        }
+
+        // Debug Print
+        if (input->key_pressed[KEY_CODE::F5])
+        {
+            logg("\n\n\n\n\n\n\n\n\n\n\n\n--------SOURCE CODE--------: \n%s\n\n", source_code.characters);
+            logg("\n\n\n\n--------LEXER RESULT--------:\n");
+            lexer_print(&editor->lexer);
+
+            logg("\n--------IDENTIFIERS:--------:\n");
+            lexer_print_identifiers(&editor->lexer);
+
             String printed_ast = string_create_empty(256);
             SCOPE_EXIT(string_destroy(&printed_ast));
             ast_parser_append_to_string(&editor->parser, &printed_ast);
-            logg("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n");
-            logg("Ast: \n%s\n", printed_ast.characters);
-        }
+            logg("\n");
+            logg("--------AST PARSE RESULT--------:\n");
+            logg("\n%s\n", printed_ast.characters);
 
-        if (true)
-        { 
             if (editor->parser.errors.size == 0) {
-                semantic_analyser_analyse(&editor->analyser, &editor->parser);
-                lexer_print_identifiers(&editor->lexer);
+                logg("--------TYPE SYSTEM RESULT--------:\n");
                 type_system_print(&editor->analyser.type_system);
             }
-            if (editor->analyser.errors.size == 0 && input->key_pressed[KEY_CODE::F5] && true) 
+            if (editor->analyser.errors.size == 0) 
             {
                 String result_str = string_create_empty(32);
                 SCOPE_EXIT(string_destroy(&result_str));
-
-                // Generate Intermediate Code
-                intermediate_generator_generate(&editor->intermediate_generator, &editor->analyser);
                 intermediate_generator_append_to_string(&result_str, &editor->intermediate_generator);
-                logg("%s\n\n", result_str.characters);
+                logg("---------INTERMEDIATE_GENERATOR_RESULT----------\n%s\n\n", result_str.characters);
                 string_reset(&result_str);
 
-                // Generate Bytecode from IM
-                bytecode_generator_generate(&editor->generator, &editor->intermediate_generator);
                 bytecode_generator_append_bytecode_to_string(&editor->generator, &result_str);
-                logg("BYTECODE_GENERATOR RESULT: \n--------------------------------\n%s\n", result_str.characters);
-
-                // Execute Bytecode
-                double bytecode_start = timing_current_time_in_seconds();
-                bytecode_interpreter_execute_main(&editor->bytecode_interpreter, &editor->generator);
-                double bytecode_end = timing_current_time_in_seconds();
-                float bytecode_time = (bytecode_end - bytecode_start);
-                logg("Bytecode interpreter result: %d (%2.5f seconds)\n", *(int*)(byte*)&editor->bytecode_interpreter.return_register[0], bytecode_time);
+                logg("----------------BYTECODE_GENERATOR RESULT---------------: \n%s\n", result_str.characters);
             }
+        }
+
+        // Execute
+        if (editor->parser.errors.size == 0 && editor->analyser.errors.size == 0 && input->key_pressed[KEY_CODE::F5] && true)
+        {
+            double bytecode_start = timing_current_time_in_seconds();
+            bytecode_interpreter_execute_main(&editor->bytecode_interpreter, &editor->generator);
+            double bytecode_end = timing_current_time_in_seconds();
+            float bytecode_time = (bytecode_end - bytecode_start);
+            logg("Bytecode interpreter result: %d (%2.5f seconds)\n", *(int*)(byte*)&editor->bytecode_interpreter.return_register[0], bytecode_time);
         }
 
         // Do syntax highlighting

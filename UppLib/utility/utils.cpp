@@ -55,9 +55,9 @@ void logger_log(const char* file_name, int line_number, const char* message_form
     if (logger_message_buffer_length < required_length) {
         logger_message_buffer_length = required_length;
         if (logger_message_buffer != nullptr) {
-            delete logger_message_buffer;
+            delete[] logger_message_buffer;
         }
-        logger_message_buffer = new char[logger_message_buffer_length];
+        logger_message_buffer = new char[logger_message_buffer_length+10];
     }
 
     // Fill buffer
@@ -82,9 +82,9 @@ void logger_panic(const char* file_name, int line_number, const char* message_fo
     if (logger_message_buffer_length < required_length) {
         logger_message_buffer_length = required_length;
         if (logger_message_buffer != nullptr) {
-            delete logger_message_buffer;
+            delete[] logger_message_buffer;
         }
-        logger_message_buffer = new char[logger_message_buffer_length];
+        logger_message_buffer = new char[logger_message_buffer_length + 10];
     }
 
     // Fill buffer

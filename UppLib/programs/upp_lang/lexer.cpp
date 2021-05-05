@@ -60,7 +60,12 @@ const char* token_type_to_string(Token_Type::ENUM type)
     case Token_Type::BOOLEAN_LITERAL: return "BOOLEAN_LITERAL";
     case Token_Type::IDENTIFIER: return "IDENTIFIER";
     case Token_Type::ERROR_TOKEN: return "ERROR_TOKE";
+    case Token_Type::COMMENT: return "COMMENT";
+    case Token_Type::WHITESPACE: return "WHITESPACE";
+    case Token_Type::NEW_LINE: return "NEWLINE";
+    case Token_Type::RETURN: return "RETURN";
     }
+    panic("Should not happen!");
     return "TOKEN_NOT_KNOWN";
 }
 
@@ -147,6 +152,18 @@ bool code_parse_comments(Lexer* lexer, String* code, int* index, int* character_
                 *character_pos = *character_pos + 1;
             }
         }
+        // To prevent errors when the last comment isnt closed
+        if (comment_depth != 0 && *index == code->size-1) 
+        {
+            if (code->characters[*index] == '\n') {
+                *line_number = *line_number + 1;
+                *character_pos = 0;
+            }
+            else {
+                *character_pos = *character_pos + 1;
+            }
+            *index = *index + 1;
+        }
         dynamic_array_push_back(&lexer->tokens, token_make(
             Token_Type::COMMENT, 
             token_attribute_make_empty(), 
@@ -164,7 +181,7 @@ bool code_parse_newline(Lexer* lexer, String* code, int* index, int* character_p
     if (i < code->size && code->characters[i] == '\n') 
     {
         dynamic_array_push_back(&lexer->tokens, token_make(
-            Token_Type::COMMENT, 
+            Token_Type::NEW_LINE, 
             token_attribute_make_empty(), 
             text_slice_make(text_position_make(*line_number, *character_pos), text_position_make(*line_number+1, 0)),
             *index)
@@ -664,7 +681,6 @@ void lexer_parse_string(Lexer* lexer, String* code)
     DynamicArray<Token> swap = lexer->tokens_with_whitespaces;
     lexer->tokens_with_whitespaces = lexer->tokens;
     lexer->tokens = swap;
-    lexer_print(lexer);
 }
 
 void lexer_destroy(Lexer* lexer)
@@ -687,11 +703,12 @@ void lexer_print(Lexer* lexer)
     String msg = string_create_empty(256);
     SCOPE_EXIT(string_destroy(&msg));
     string_append_formated(&msg, "Tokens: \n");
-    for (int i = 0; i < lexer->tokens.size; i++) 
+    for (int i = 0; i < lexer->tokens_with_whitespaces.size; i++) 
     {
-        Token token = lexer->tokens[i];
-        string_append_formated(&msg, "\t %s (Line %d, Pos %d)",
-            token_type_to_string(token.type), token.position.start.line, token.position.start.character);
+        Token token = lexer->tokens_with_whitespaces[i];
+        string_append_formated(&msg, "\t %s (Line %d, Pos %d, size: %d)",
+            token_type_to_string(token.type), token.position.start.line, token.position.start.character,
+            math_maximum(token.position.end.character - token.position.start.character, 0));
         if (token.type == Token_Type::IDENTIFIER) {
             string_append_formated(&msg, " = %s", lexer->identifiers.data[token.attribute.identifier_number].characters);
         }
