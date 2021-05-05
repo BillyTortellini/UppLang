@@ -3,6 +3,66 @@ TODO:
     - Defining static array data
 */
 
+array_bubble_sort :: (a: []int) -> int
+{
+    i := 0;
+    while (i < a.size)
+    {
+        j := i + 1;
+        while (j < a.size) 
+        {
+            if (a[j] < a[i]) {
+                swap := a[i];
+                a[i] = a[j];
+                a[j] = swap;
+            }
+            j = j+1;
+        }
+        i = i+1;
+    }
+    return 0;
+}
+
+array_set_even_constant :: (array: []int, c: int) -> int
+{
+    i := 0;
+    while (i < array.size)
+    {
+        if even(array[i]) {
+            array[i] = c;
+        }
+        i = i+1;
+    }
+    return 0;
+}
+
+main :: () -> int
+{
+    array: [30]int;
+    i := 0;
+    while (i < array.size)
+    {
+        array[i] = i;
+        i = i+1;
+    }
+    a: []int;
+    a.data = array.data;
+    a.size = array.size;
+    array_set_even_constant(a, 7); 
+
+    arr2: [5]int;
+    a2: []int;
+    a2.size = arr2.size;
+    a2.data = arr2.data;
+    a2[0] = 3;
+    a2[1] = 0;
+    a2[2] = 2;
+    a2[3] = 1;
+    a2[4] = 4;
+    array_bubble_sort(a2);
+    return a2[3];
+}
+
 even :: (a: int) -> bool 
 {
     return a % 2 == 0;
@@ -36,10 +96,6 @@ fib_rec :: (n: int) -> int
     return fib_rec(n-1) + fib_rec(n-2);
 }
 
-main :: () -> int
-{
-    return fib_rec(32);
-}
 
 /*
     Missing binary statements x++; x--; x+=1; x-=1; x/=1; x*=1;

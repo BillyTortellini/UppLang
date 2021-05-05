@@ -294,7 +294,7 @@ Text_Editor text_editor_create(TextRenderer* text_renderer, FileListener* listen
     result.text_highlights = dynamic_array_create_empty<DynamicArray<TextHighlight>>(32);
     result.cursor_shader = optional_unwrap(shader_program_create(listener, { "resources/shaders/cursor.frag", "resources/shaders/cursor.vert" }));
     result.cursor_mesh = mesh_utils_create_quad_2D(state);
-    result.line_size_cm = 1;
+    result.line_size_cm = 0.3f;
     result.first_rendered_line = 0;
     result.first_rendered_char = 0;
     result.line_count_buffer = string_create_empty(16);
@@ -1939,7 +1939,7 @@ void normal_mode_handle_message(Text_Editor* editor, Key_Message* new_message)
     }
 }
 
-float zoom = 0.0f;
+float zoom = -7.0f;
 void text_editor_update(Text_Editor* editor, Input* input, double current_time)
 {
     // Update zoom in editor
@@ -2035,7 +2035,14 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
             bytecode_interpreter_execute_main(&editor->bytecode_interpreter, &editor->generator);
             double bytecode_end = timing_current_time_in_seconds();
             float bytecode_time = (bytecode_end - bytecode_start);
-            logg("Bytecode interpreter result: %d (%2.5f seconds)\n", *(int*)(byte*)&editor->bytecode_interpreter.return_register[0], bytecode_time);
+            if (editor->bytecode_interpreter.exit_code == Exit_Code::SUCCESS) {
+                logg("Bytecode interpreter result: %d (%2.5f seconds)\n", *(int*)(byte*)&editor->bytecode_interpreter.return_register[0], bytecode_time);
+            }
+            else {
+                string_reset(&source_code);
+                exit_code_append_to_string(&source_code, editor->bytecode_interpreter.exit_code);
+                logg("Bytecode interpreter error: %s\n", source_code.characters);
+            }
         }
 
         // Do syntax highlighting
@@ -2055,6 +2062,9 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
                 text_editor_add_highlight_from_slice(editor, t.position, IDENTIFIER_COLOR, BG_COLOR);
         }
         // Highlight parse errors
+        if (editor->parser.errors.size > 0 || editor->analyser.errors.size > 0) {
+            logg("\n\nThere were errors while compiling!\n");
+        }
         for (int i = 0; i < editor->parser.errors.size; i++) {
             Compiler_Error e = editor->parser.errors[i];
             text_editor_add_highlight_from_slice(editor, token_range_to_slice(e.range, editor), vec3(1.0f), vec4(1.0f, 0.0f, 0.0f, 0.3f));

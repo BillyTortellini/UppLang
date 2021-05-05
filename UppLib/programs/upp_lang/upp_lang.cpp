@@ -168,13 +168,11 @@ void upp_lang_main()
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
             // Draw Background
-            /*
             shader_program_set_uniform(background_shader, &opengl_state, "time", (float)timing_current_time_in_seconds());
             shader_program_set_uniform(background_shader, &opengl_state, "aspect_ratio", (float)window_state->width / window_state->height);
             shader_program_set_uniform(background_shader, &opengl_state, "view_matrix", camera.view_matrix);
             shader_program_set_uniform(background_shader, &opengl_state, "camera_position", camera.position);
             mesh_gpu_data_draw_with_shader_program(&mesh_quad, background_shader, &opengl_state);
-            */
 
             // Text editor
             BoundingBox2 region = bounding_box_2_make_min_max(vec2(-1, -1), vec2(1, 1));

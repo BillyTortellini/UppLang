@@ -172,9 +172,9 @@ void bytecode_generator_generate_function_instruction_slice(
                 else
                     instr_type = Instruction_Type::READ_MEMORY;
             }
-            else if (instr->source1.type == Data_Access_Type::MEMORY_ACCESS) {
+            else if (instr->destination.type == Data_Access_Type::MEMORY_ACCESS) {
                 if (instr->source1.type == Data_Access_Type::REGISTER_ACCESS)
-                    instr_type = Instruction_Type::READ_MEMORY;
+                    instr_type = Instruction_Type::WRITE_MEMORY;
                 else
                     instr_type = Instruction_Type::MEMORY_COPY;
             }
@@ -369,6 +369,10 @@ void bytecode_generator_generate_function_instruction_slice(
             }
             break;
         }
+        case Intermediate_Instruction_Type::ERROR_EXIT: {
+            bytecode_generator_add_instruction(generator, instruction_make_1(Instruction_Type::ERROR_EXIT, instr->constant_i32_value));
+            break;
+        }
         case Intermediate_Instruction_Type::WHILE_BLOCK:
         {
             instruction_index = instr->true_branch_instruction_end_exclusive - 1;
@@ -447,10 +451,11 @@ void bytecode_generator_generate_function_instruction_slice(
             if (instr->destination.type == Data_Access_Type::MEMORY_ACCESS) {
                 bytecode_generator_add_instruction(
                     generator,
-                    instruction_make_2(
+                    instruction_make_3(
                         Instruction_Type::WRITE_MEMORY,
                         generator->register_stack_locations[instr->destination.register_index],
-                        result_offset
+                        result_offset,
+                        8 // TODO: Maybe check this for 32bit systems, otherwise pointers are always 8 byte aligned
                     )
                 );
             }
@@ -496,10 +501,11 @@ void bytecode_generator_generate_function_instruction_slice(
             if (instr->destination.type == Data_Access_Type::MEMORY_ACCESS) {
                 bytecode_generator_add_instruction(
                     generator,
-                    instruction_make_2(
+                    instruction_make_3(
                         Instruction_Type::WRITE_MEMORY,
                         generator->register_stack_locations[instr->destination.register_index],
-                        result_offset
+                        result_offset,
+                        8 // TODO: Check if we need 32 bit support, this would be such a case, maybe just use size of result type
                     )
                 );
             }
@@ -533,10 +539,11 @@ void bytecode_generator_generate_function_instruction_slice(
                 tmp_register_offset += 8;
                 bytecode_generator_add_instruction(
                     generator,
-                    instruction_make_2(
+                    instruction_make_3(
                         Instruction_Type::READ_MEMORY,
                         register_index_reg,
-                        generator->register_stack_locations[instr->source2.register_index]
+                        generator->register_stack_locations[instr->source2.register_index],
+                        4 // Has to be an u32 TODO: Check if other int types are valid
                     )
                 );
             }
@@ -564,10 +571,11 @@ void bytecode_generator_generate_function_instruction_slice(
             if (instr->destination.type == Data_Access_Type::MEMORY_ACCESS) {
                 bytecode_generator_add_instruction(
                     generator,
-                    instruction_make_2(
+                    instruction_make_3(
                         Instruction_Type::WRITE_MEMORY,
                         generator->register_stack_locations[instr->destination.register_index],
-                        result_offset
+                        result_offset,
+                        8 // TODO: 32bit, just use result type instead of hard-coding this
                     )
                 );
             }
@@ -638,10 +646,11 @@ void bytecode_generator_generate_function_instruction_slice(
                 tmp_reg_stack_offset += operand_type->size_in_bytes;
                 bytecode_generator_add_instruction(
                     generator,
-                    instruction_make_2(
+                    instruction_make_3(
                         Instruction_Type::READ_MEMORY,
                         operand_1_reg_offset,
-                        generator->register_stack_locations[instr->source1.register_index]
+                        generator->register_stack_locations[instr->source1.register_index],
+                        operand_type->size_in_bytes
                     )
                 );
             }
@@ -654,10 +663,11 @@ void bytecode_generator_generate_function_instruction_slice(
                 tmp_reg_stack_offset += operand_type->size_in_bytes;
                 bytecode_generator_add_instruction(
                     generator,
-                    instruction_make_2(
+                    instruction_make_3(
                         Instruction_Type::READ_MEMORY,
                         operand_2_reg_offset,
-                        generator->register_stack_locations[instr->source2.register_index]
+                        generator->register_stack_locations[instr->source2.register_index],
+                        operand_type->size_in_bytes
                     )
                 );
             }
@@ -686,10 +696,11 @@ void bytecode_generator_generate_function_instruction_slice(
             if (instr->destination.type == Data_Access_Type::MEMORY_ACCESS) {
                 bytecode_generator_add_instruction(
                     generator,
-                    instruction_make_2(
+                    instruction_make_3(
                         Instruction_Type::WRITE_MEMORY,
                         generator->register_stack_locations[instr->destination.register_index],
-                        result_reg_offset
+                        result_reg_offset,
+                        result_type->size_in_bytes
                     )
                 );
             }
@@ -739,10 +750,11 @@ void bytecode_generator_generate_function_instruction_slice(
                 tmp_reg_stack_offset += operand_type->size_in_bytes;
                 bytecode_generator_add_instruction(
                     generator,
-                    instruction_make_2(
+                    instruction_make_3(
                         Instruction_Type::READ_MEMORY,
                         operand_1_reg_offset,
-                        generator->register_stack_locations[instr->source1.register_index]
+                        generator->register_stack_locations[instr->source1.register_index],
+                        operand_type->size_in_bytes
                     )
                 );
             }
@@ -769,10 +781,11 @@ void bytecode_generator_generate_function_instruction_slice(
             if (instr->destination.type == Data_Access_Type::MEMORY_ACCESS) {
                 bytecode_generator_add_instruction(
                     generator,
-                    instruction_make_2(
+                    instruction_make_3(
                         Instruction_Type::WRITE_MEMORY,
                         generator->register_stack_locations[instr->destination.register_index],
-                        result_reg_offset
+                        result_reg_offset,
+                        result_type->size_in_bytes
                     )
                 );
             }
@@ -933,13 +946,13 @@ void bytecode_generator_append_bytecode_to_string(Bytecode_Generator* generator,
             string_append_formated(string, "LOAD_CONSTANT_I32                 dest=%d, val=%d\n", instruction.op1, instruction.op2);
             break;
         case Instruction_Type::MOVE_REGISTERS:
-            string_append_formated(string, "MOVE_REGISTER                     dest=%d, src=%d\n", instruction.op1, instruction.op2);
+            string_append_formated(string, "MOVE_REGISTER                     dest=%d, src=%d, size=%d\n", instruction.op1, instruction.op2, instruction.op3);
             break;
         case Instruction_Type::READ_MEMORY:
-            string_append_formated(string, "READ_MEMORY                       address_reg=%d, value_reg=%d\n", instruction.op1, instruction.op2);
+            string_append_formated(string, "READ_MEMORY                       dest=%d, address_reg=%d, size=%d\n", instruction.op1, instruction.op2, instruction.op3);
             break;
         case Instruction_Type::WRITE_MEMORY:
-            string_append_formated(string, "WRITE_MEMORY                      dest=%d, address_reg=%d\n", instruction.op1, instruction.op2);
+            string_append_formated(string, "WRITE_MEMORY                      dest=%d, address_reg=%d, size=%d\n", instruction.op1, instruction.op2, instruction.op3);
             break;
         case Instruction_Type::MEMORY_COPY:
             string_append_formated(string, "MEMORY_COPY                       dest=%d, src=%d\n", instruction.op1, instruction.op2);
@@ -973,6 +986,11 @@ void bytecode_generator_append_bytecode_to_string(Bytecode_Generator* generator,
             break;
         case Instruction_Type::EXIT:
             string_append_formated(string, "EXIT                              src=%d, size=%d\n", instruction.op1, instruction.op2);
+            break;
+        case Instruction_Type::ERROR_EXIT:
+            string_append_formated(string, "ERROR_EXIT                        error: ");
+            exit_code_append_to_string(string, (Exit_Code)instruction.op1);
+            string_append_formated(string, "\n");
             break;
         case Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32:
             string_append_formated(string, "BINARY_OP_ARITHMETIC_ADDITION_I32         dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);

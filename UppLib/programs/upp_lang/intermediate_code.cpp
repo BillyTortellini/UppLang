@@ -350,15 +350,56 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
     case AST_Node_Type::EXPRESSION_MEMBER_ACCESS:
     {
         Data_Access structure_data = intermediate_generator_generate_expression(generator, expression->children[0], false, data_access_make_empty());
-        Intermediate_Instruction instr;
-        instr.type = Intermediate_Instruction_Type::CALCULATE_MEMBER_ACCESS_POINTER;
+        Type_Signature* accessor_signature = type_system_get_type(
+            &generator->analyser->type_system,
+            function->registers[structure_data.register_index].type_index
+        );
+
+        int member_offset;
         if (expression->name_id == generator->analyser->size_token_index) {
-            instr.constant_i32_value = 8;
+            member_offset = 8;
         }
         else if (expression->name_id == generator->analyser->data_token_index) {
-            instr.constant_i32_value = 0;
+            member_offset = 0;
         }
-        else panic("Should not happen!");
+        else panic("Shit");
+
+        if (accessor_signature->type == Signature_Type::ARRAY_SIZED) 
+        {
+            if (expression->name_id == generator->analyser->data_token_index)
+            {
+                Intermediate_Instruction instr;
+                instr.type = Intermediate_Instruction_Type::ADDRESS_OF;
+                instr.source1 = structure_data;
+                if (force_destination) {
+                    instr.destination = destination;
+                }
+                else {
+                    instr.destination = intermediate_generator_create_intermediate_register(generator, generator->analyser->i32_type_index);
+                }
+                dynamic_array_push_back(&function->instructions, instr);
+                return instr.destination;
+            }
+            else if (expression->name_id == generator->analyser->size_token_index)
+            {
+                Intermediate_Instruction instr;
+                instr.type = Intermediate_Instruction_Type::LOAD_CONSTANT_I32;
+                if (force_destination) {
+                    instr.destination = destination;
+                }
+                else {
+                    instr.destination = intermediate_generator_create_intermediate_register(generator, generator->analyser->i32_type_index);
+                }
+                instr.constant_i32_value = accessor_signature->array_size;
+                dynamic_array_push_back(&function->instructions, instr);
+                return instr.destination;
+            }
+            else panic("Should not happen, really!");
+        }
+
+        Intermediate_Instruction instr;
+        instr.type = Intermediate_Instruction_Type::CALCULATE_MEMBER_ACCESS_POINTER;
+        instr.constant_i32_value = member_offset;
         instr.destination = intermediate_generator_create_intermediate_register(
             generator,
             type_system_find_or_create_type(&generator->analyser->type_system,
@@ -395,7 +436,7 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
         Data_Access index_data = intermediate_generator_generate_expression(generator, expression->children[1], false, data_access_make_empty());
 
         Data_Access result_access;
-        if (array_type_signature->type == Signature_Type::ARRAY_UNSIZED) 
+        if (array_type_signature->type == Signature_Type::ARRAY_UNSIZED)
         {
             // Load pointer if array_data is a memory access, otherwise set it to memory access
             // This is the case for multiple dereferences
@@ -419,6 +460,62 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
         }
         else {
             result_access = array_data;
+        }
+        
+        // Array bounds check
+        {
+            Data_Access size_data;
+            if (array_type_signature->type == Signature_Type::ARRAY_SIZED)
+            {
+                // If its an sized array, i need to compare the index data with the constant size of something 
+                Intermediate_Instruction load_size_instr;
+                load_size_instr.type = Intermediate_Instruction_Type::LOAD_CONSTANT_I32;
+                load_size_instr.destination = intermediate_generator_create_intermediate_register(generator, generator->analyser->i32_type_index);
+                load_size_instr.constant_i32_value = array_type_signature->array_size;
+                dynamic_array_push_back(&function->instructions, load_size_instr);
+                size_data = load_size_instr.destination;
+            }
+            else
+            {
+                // If its a unsized array, i need to compare the index data with the size stored in the unsized array
+                Type_Signature sig = type_signature_make_pointer(generator->analyser->i32_type_index);
+                int int_ptr_type_index = type_system_find_or_create_type(&generator->analyser->type_system, sig);
+
+                Intermediate_Instruction offset_instr;
+                offset_instr.type = Intermediate_Instruction_Type::CALCULATE_MEMBER_ACCESS_POINTER;
+                offset_instr.destination = intermediate_generator_create_intermediate_register(generator, int_ptr_type_index);
+                offset_instr.source1 = array_data;
+                offset_instr.constant_i32_value = 8;
+                dynamic_array_push_back(&function->instructions, offset_instr);
+                size_data = offset_instr.destination;
+                size_data.type = Data_Access_Type::MEMORY_ACCESS;
+            }
+
+            // Generate an if instruction, an condition register and an error message
+            Intermediate_Instruction if_out_of_bounds_instr;
+            if_out_of_bounds_instr.type = Intermediate_Instruction_Type::IF_BLOCK;
+            if_out_of_bounds_instr.source1 = intermediate_generator_create_intermediate_register(generator, generator->analyser->bool_type_index);
+            if_out_of_bounds_instr.condition_calculation_instruction_start = function->instructions.size + 1;
+            if_out_of_bounds_instr.condition_calculation_instruction_end_exclusive = function->instructions.size + 2;
+            if_out_of_bounds_instr.true_branch_instruction_start = function->instructions.size + 2;
+            if_out_of_bounds_instr.true_branch_instruction_end_exclusive = function->instructions.size + 3;
+            if_out_of_bounds_instr.false_branch_instruction_start = function->instructions.size + 3;
+            if_out_of_bounds_instr.false_branch_instruction_end_exclusive = function->instructions.size + 3;
+            dynamic_array_push_back(&function->instructions, if_out_of_bounds_instr);
+
+            // Condition instruction
+            Intermediate_Instruction condition_instr;
+            condition_instr.type = Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_I32;
+            condition_instr.destination = if_out_of_bounds_instr.source1;
+            condition_instr.source1 = index_data;
+            condition_instr.source2 = size_data;
+            dynamic_array_push_back(&function->instructions, condition_instr);
+
+            // Error Instruciton
+            Intermediate_Instruction error_instr;
+            condition_instr.type = Intermediate_Instruction_Type::ERROR_EXIT;
+            condition_instr.constant_i32_value = (int)Exit_Code::OUT_OF_BOUNDS;
+            dynamic_array_push_back(&function->instructions, condition_instr);
         }
 
         Intermediate_Instruction instr;
@@ -801,6 +898,26 @@ void data_access_append_to_string(String* string, Data_Access access, Intermedia
     }
 }
 
+void exit_code_append_to_string(String* string, Exit_Code code) 
+{
+    switch (code)
+    {
+    case Exit_Code::SUCCESS:
+        string_append_formated(string, "OUT OF BOUNDS");
+        break;
+    case Exit_Code::OUT_OF_BOUNDS:
+        string_append_formated(string, "OUT OF BOUNDS");
+        break;
+    case Exit_Code::STACK_OVERFLOW:
+        string_append_formated(string, "STACK_OVERFLOW");
+        break;
+    case Exit_Code::RETURN_VALUE_OVERFLOW:
+        string_append_formated(string, "STACK_OVERFLOW");
+        break;
+    default: panic("");
+    }
+}
+
 void intermediate_instruction_append_to_string(String* string, Intermediate_Instruction* instruction, Intermediate_Function* function, Intermediate_Generator* generator)
 {
     bool append_source_destination = false;
@@ -840,11 +957,15 @@ void intermediate_instruction_append_to_string(String* string, Intermediate_Inst
         break;
     case Intermediate_Instruction_Type::RETURN:
         string_append_formated(string, "RETURN, return_data: ");
-        append_src_1= true;
+        append_src_1 = true;
         break;
     case Intermediate_Instruction_Type::EXIT:
         string_append_formated(string, "EXIT ");
         append_src_1 = true;
+        break;
+    case Intermediate_Instruction_Type::ERROR_EXIT:
+        string_append_formated(string, "ERROR_EXIT ");
+        exit_code_append_to_string(string, (Exit_Code)instruction->constant_i32_value);
         break;
     case Intermediate_Instruction_Type::BREAK:
         string_append_formated(string, "BREAK");
@@ -922,7 +1043,7 @@ void intermediate_instruction_append_to_string(String* string, Intermediate_Inst
         break;
     case Intermediate_Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I32:
         string_append_formated(string, "UNARY_OP_ARITHMETIC_NEGATE_I32 ");
-        append_binary = true;
+        append_source_destination = true;
         break;
     case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_F32:
         string_append_formated(string, "BINARY_OP_ARITHMETIC_ADDITION_F32 ");
@@ -966,7 +1087,7 @@ void intermediate_instruction_append_to_string(String* string, Intermediate_Inst
         break;
     case Intermediate_Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_F32:
         string_append_formated(string, "UNARY_OP_ARITHMETIC_NEGATE_F32 ");
-        append_binary = true;
+        append_source_destination = true;
         break;
     case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_BOOL:
         string_append_formated(string, "BINARY_OP_COMPARISON_EQUAL_BOOL ");
@@ -988,7 +1109,7 @@ void intermediate_instruction_append_to_string(String* string, Intermediate_Inst
         string_append_formated(string, "UNARY_OP_BOOLEAN_NOT ");
         append_source_destination = true;
         break;
-    default: 
+    default:
         logg("Should not fucking happen!");
         break;
     }

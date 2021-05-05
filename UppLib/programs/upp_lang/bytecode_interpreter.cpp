@@ -23,19 +23,26 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
     case Instruction_Type::WRITE_MEMORY:
         memory_copy(*(void**)(interpreter->stack_pointer + i->op1), interpreter->stack_pointer + i->op2, i->op3);
         break;
-    case Instruction_Type::READ_MEMORY:
-        memory_copy(interpreter->stack_pointer + i->op1, (void*)*(u64*)(interpreter->stack_pointer + i->op2), i->op3);
+    case Instruction_Type::READ_MEMORY: {
+        void* result = *(void**)(interpreter->stack_pointer + i->op2);
+        memory_copy(interpreter->stack_pointer + i->op1, *((void**)(interpreter->stack_pointer + i->op2)), i->op3);
         break;
+    }
     case Instruction_Type::MEMORY_COPY:
-        memory_copy((void*)*(u64*)(interpreter->stack_pointer + i->op1), (void*)*(u64*)(interpreter->stack_pointer + i->op2), i->op3);
+        memory_copy(*(void**)(interpreter->stack_pointer + i->op1), *(void**)(interpreter->stack_pointer + i->op2), i->op3);
         break;
     case Instruction_Type::U64_ADD_CONSTANT_I32:
         *(u64*)(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) + (i->op3);
         break;
-    case Instruction_Type::U64_MULTIPLY_ADD_I32:
-        *(u64*)(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) + 
-            (u64)((*(u32*)(interpreter->stack_pointer + i->op3)) * (u64)i->op4);
+    case Instruction_Type::U64_MULTIPLY_ADD_I32: {
+        u64 offset = (u64)((*(u32*)(interpreter->stack_pointer + i->op3)) * (u64)i->op4);
+        if ((i32)offset < 0) {
+            interpreter->exit_code = Exit_Code::OUT_OF_BOUNDS;
+            return true;
+        }
+        *(u64**)(interpreter->stack_pointer + i->op1) = (u64*)(*(byte**)(interpreter->stack_pointer + i->op2) + offset);
         break;
+    }
     case Instruction_Type::JUMP:
         interpreter->instruction_pointer = &interpreter->generator->instructions[i->op1];
         return false;
@@ -53,7 +60,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         break;
     case Instruction_Type::CALL: {
         if (&interpreter->stack[interpreter->stack.size-1] - interpreter->stack_pointer < interpreter->generator->maximum_function_stack_depth) {
-            logg("Stack overflow!\n");
+            interpreter->exit_code = Exit_Code::STACK_OVERFLOW;
             return true;
         }
         byte* base_pointer = interpreter->stack_pointer;
@@ -65,6 +72,10 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         return false;
     }
     case Instruction_Type::RETURN: {
+        if (i->op2 > 256) {
+            interpreter->exit_code = Exit_Code::RETURN_VALUE_OVERFLOW;
+            return true;
+        }
         memory_copy(&interpreter->return_register[0], interpreter->stack_pointer + i->op1, i->op2);
         Bytecode_Instruction* return_address = *(Bytecode_Instruction**)interpreter->stack_pointer;
         byte* stack_old_base = *(byte**)(interpreter->stack_pointer + 8);
@@ -74,10 +85,11 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
     }
     case Instruction_Type::EXIT: {
         memory_copy(&interpreter->return_register[0], interpreter->stack_pointer + i->op1, i->op2);
-        Bytecode_Instruction* return_address = (Bytecode_Instruction*)interpreter->stack_pointer;
-        byte* stack_old_base = (byte*)(interpreter->stack_pointer + 8);
-        interpreter->instruction_pointer = return_address;
-        interpreter->stack_pointer = stack_old_base;
+        interpreter->exit_code = Exit_Code::SUCCESS;
+        return true;
+    }
+    case Instruction_Type::ERROR_EXIT: {
+        interpreter->exit_code = (Exit_Code)i->op1;
         return true;
     }
     case Instruction_Type::LOAD_RETURN_VALUE:

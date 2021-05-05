@@ -127,30 +127,6 @@ void type_system_reset_all(Type_System* system) {
     type_system_add_primitives(system);
 }
 
-int type_system_find_or_create_function_signature(Type_System* system, Type_Signature s)
-{
-    if (s.type != Signature_Type::FUNCTION) {
-        panic("Should not happen!");
-    }
-    for (int i = 0; i < system->types.size; i++) 
-    {
-        Type_Signature* cmp = &system->types[i];
-        if (cmp->type == s.type) {
-            if (cmp->type == Signature_Type::FUNCTION) {
-                if (cmp->return_type_index != s.return_type_index) continue;
-                if (cmp->parameter_type_indices.size != s.parameter_type_indices.size) continue;
-                for (int i = 0; i < cmp->parameter_type_indices.size; i++) {
-                    if (cmp->parameter_type_indices[i] != s.parameter_type_indices[i]) continue;
-                }
-                type_signature_destroy(&s);
-                return i;
-            }
-        }
-    }
-    dynamic_array_push_back(&system->types, s);
-    return system->types.size - 1;
-}
-
 int type_system_find_or_create_type(Type_System* system, Type_Signature s) 
 {
     for (int i = 0; i < system->types.size; i++) 
@@ -163,10 +139,17 @@ int type_system_find_or_create_type(Type_System* system, Type_Signature s)
             if (cmp->type == Signature_Type::ERROR_TYPE) return i;
             if (cmp->type == Signature_Type::PRIMITIVE && cmp->primitive_type == s.primitive_type) return i;
             if (cmp->type == Signature_Type::FUNCTION) {
+                if (cmp->return_type_index != s.return_type_index) continue;
                 if (cmp->parameter_type_indices.size != s.parameter_type_indices.size) continue;
+                bool matches = true;
                 for (int i = 0; i < cmp->parameter_type_indices.size; i++) {
-                    if (cmp->parameter_type_indices[i] != s.parameter_type_indices[i]) continue;
+                    if (cmp->parameter_type_indices[i] != s.parameter_type_indices[i]) {
+                        matches = false; 
+                        break;
+                    }
                 }
+                if (!matches) continue;
+                type_signature_destroy(&s);
                 return i;
             }
         }
@@ -241,6 +224,7 @@ void type_system_print(Type_System* system)
     {
         string_append_formated(&msg, "\n\t%d: ", i);
         type_index_append_to_string(&msg, system, i);
+        string_append_formated(&msg, " size: %d, alignment: %d", system->types[i].size_in_bytes, system->types[i].alignment_in_bytes);
     }
     string_append_formated(&msg, "\n");
     logg("%s", msg.characters);
@@ -930,7 +914,7 @@ void semantic_analyser_analyse_function_header(Semantic_Analyser* analyser, Symb
         dynamic_array_push_back(&function_signature.parameter_type_indices, semantic_analyser_analyse_type(analyser, parameter->children[0]));
     }
     function_signature.return_type_index = semantic_analyser_analyse_type(analyser, function->children[1]);
-    int function_type_index = type_system_find_or_create_function_signature(&analyser->type_system, function_signature);
+    int function_type_index = type_system_find_or_create_type(&analyser->type_system, function_signature);
 
     Symbol s;
     s.symbol_type = Symbol_Type::FUNCTION;
