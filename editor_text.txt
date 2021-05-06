@@ -2,8 +2,32 @@
 TODO:
     - Defining static array data
 */
+main :: () -> int
+{
+    array: [30]int;
+    i := 0;
+    while (i < array.size)
+    {
+        array[i] = i;
+        i = i+1;
+    }
+    a: []int;
+    a.data = array.data;
+    a.size = array.size;
 
-array_bubble_sort :: (a: []int) -> int
+    arr2: [15]int;
+    a2: []int;
+    a2.size = arr2.size;
+    a2.data = arr2.data;
+    array_fill_random(a2, 15);
+    //array_fill_from_console(a2);
+    array_bubble_sort(a2);
+    //array_set_even_constant(a2, 7); 
+    array_print(a2);
+    return 23;
+}
+
+array_bubble_sort :: (a: []int) -> void
 {
     i := 0;
     while (i < a.size)
@@ -20,10 +44,10 @@ array_bubble_sort :: (a: []int) -> int
         }
         i = i+1;
     }
-    return 0;
+    return;
 }
 
-array_set_even_constant :: (array: []int, c: int) -> int
+array_set_even_constant :: (array: []int, c: int) -> void
 {
     i := 0;
     while (i < array.size)
@@ -33,10 +57,10 @@ array_set_even_constant :: (array: []int, c: int) -> int
         }
         i = i+1;
     }
-    return 0;
+    return;
 }
 
-array_print :: (array: []int) -> int
+array_print :: (array: []int) -> void
 {
     i := 0;
     print_line();
@@ -45,10 +69,10 @@ array_print :: (array: []int) -> int
         print_line();
         i = i+1;
     }
-    return 0;
+    return;
 }
 
-array_fill_from_console :: (array: []int) -> int
+array_fill_from_console :: (array: []int) -> void
 {
     i := 0;
     while (i < array.size)
@@ -56,37 +80,21 @@ array_fill_from_console :: (array: []int) -> int
         array[i] = read_i32();
         i = i + 1;
     }
-    return 0;
+    return;
 }
 
-main :: () -> int
+array_fill_random :: (array: []int, max: int) -> void
 {
-    array: [30]int;
     i := 0;
     while (i < array.size)
     {
-        array[i] = i;
+        array[i] = random_i32() % max;
+        if (array[i] < 0) array[i] = -array[i];
         i = i+1;
     }
-    a: []int;
-    a.data = array.data;
-    a.size = array.size;
-    array_set_even_constant(a, 7); 
-
-    arr2: [5]int;
-    a2: []int;
-    a2.size = arr2.size;
-    a2.data = arr2.data;
-    a2[0] = 3;
-    a2[1] = 0;
-    a2[2] = 2;
-    a2[3] = 1;
-    a2[4] = 4;
-    array_fill_from_console(a2);
-    array_bubble_sort(a2);
-    array_print(a2);
-    return 0;
+    return;
 }
+
 
 even :: (a: int) -> bool 
 {

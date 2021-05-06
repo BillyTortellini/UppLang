@@ -2,55 +2,6 @@
 
 #include "../../datastructures/string.hpp"
 
-Type_Signature type_signature_make_error() {
-    Type_Signature result;
-    result.type = Signature_Type::ERROR_TYPE;
-    result.size_in_bytes = 0;
-    result.alignment_in_bytes = 0;
-    return result;
-}
-
-Type_Signature type_signature_make_pointer(int type_index_pointed_to) {
-    Type_Signature result;
-    result.type = Signature_Type::POINTER;
-    result.child_type_index = type_index_pointed_to;
-    result.size_in_bytes = 8;
-    result.alignment_in_bytes = 8;
-    return result;
-}
-
-void type_signature_destroy(Type_Signature* sig) {
-    if (sig->type == Signature_Type::FUNCTION)
-        dynamic_array_destroy(&sig->parameter_type_indices);
-}
-
-Type_Signature type_signature_make_array_sized(Type_System* system, int array_element_index, int array_size) {
-    Type_Signature result;
-    result.type = Signature_Type::ARRAY_SIZED;
-    result.child_type_index = array_element_index;
-    result.alignment_in_bytes = system->types[array_element_index].alignment_in_bytes;
-    result.size_in_bytes = system->types[array_element_index].size_in_bytes * array_size;
-    result.array_size = array_size;
-    return result;
-}
-
-Type_Signature type_signature_make_array_unsized(Type_System* system, int array_element_index) {
-    Type_Signature result;
-    result.type = Signature_Type::ARRAY_UNSIZED;
-    result.child_type_index = array_element_index;
-    result.alignment_in_bytes = system->types[array_element_index].alignment_in_bytes;
-    result.size_in_bytes = 16;
-    return result;
-}
-
-Semantic_Node_Information semantic_node_information_make(int symbol_table_index, int expression_result_type)
-{
-    Semantic_Node_Information info;
-    info.symbol_table_index = symbol_table_index;
-    info.expression_result_type_index = expression_result_type;
-    return info;
-}
-
 String primitive_type_to_string(Primitive_Type type)
 {
     switch (type)
@@ -69,6 +20,21 @@ String primitive_type_to_string(Primitive_Type type)
     }
     return string_create_static("INVALID_VALUE_TYPE_ENUM");
 }
+
+Type_Signature type_signature_make_error() 
+{
+    Type_Signature result;
+    result.type = Signature_Type::ERROR_TYPE;
+    result.size_in_bytes = 0;
+    result.alignment_in_bytes = 0;
+    return result;
+}
+
+void type_signature_destroy(Type_Signature* sig) {
+    if (sig->type == Signature_Type::FUNCTION)
+        dynamic_array_destroy(&sig->parameter_types);
+}
+
 Type_Signature type_signature_make_primitive(Primitive_Type type) 
 {
     Type_Signature result;
@@ -92,25 +58,122 @@ Type_Signature type_signature_make_primitive(Primitive_Type type)
     return result;
 }
 
+bool type_signatures_are_equal(Type_Signature* sig1, Type_Signature* sig2)
+{
+    if (sig1->type == sig2->type) 
+    {
+        if (sig1->type == Signature_Type::ARRAY_SIZED && sig1->child_type== sig2->child_type&& sig1->array_element_count == sig2->array_element_count) return true;
+        if (sig1->type == Signature_Type::ARRAY_UNSIZED && sig1->child_type == sig2->child_type) return true;
+        if (sig1->type == Signature_Type::POINTER && sig1->child_type == sig2->child_type) return true;
+        if (sig1->type == Signature_Type::ERROR_TYPE) return true;
+        if (sig1->type == Signature_Type::VOID_TYPE) return true;
+        if (sig1->type == Signature_Type::PRIMITIVE && sig1->primitive_type == sig2->primitive_type) return true;
+        if (sig1->type == Signature_Type::FUNCTION) 
+        {
+            if (sig1->return_type!= sig2->return_type) return false;
+            if (sig1->parameter_types.size != sig2->parameter_types.size) return false;
+            for (int i = 0; i < sig1->parameter_types.size; i++) {
+                if (sig1->parameter_types[i] != sig2->parameter_types[i]) {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+void type_signature_append_to_string(String* string, Type_Signature* signature)
+{
+    switch (signature->type)
+    {
+    case Signature_Type::VOID_TYPE:
+        string_append_formated(string, "VOID");
+        break;
+    case Signature_Type::ARRAY_SIZED:
+        string_append_formated(string, "[%d]", signature->array_element_count);
+        type_signature_append_to_string(string, signature->child_type);
+        break;
+    case Signature_Type::ARRAY_UNSIZED:
+        string_append_formated(string, "[]");
+        type_signature_append_to_string(string, signature->child_type);
+        break;
+    case Signature_Type::ERROR_TYPE:
+        string_append_formated(string, "ERROR-Type");
+        break;
+    case Signature_Type::POINTER:
+        string_append_formated(string, "*");
+        type_signature_append_to_string(string, signature->child_type);
+        break;
+    case Signature_Type::PRIMITIVE:
+        String s = primitive_type_to_string(signature->primitive_type);
+        string_append_string(string, &s);
+        break;
+    case Signature_Type::FUNCTION:
+        string_append_formated(string, "(");
+        for (int i = 0; i < signature->parameter_types.size; i++) {
+            type_signature_append_to_string(string, signature->parameter_types[i]);
+            if (i != signature->parameter_types.size - 1) {
+                string_append_formated(string, ", ");
+            }
+        }
+        string_append_formated(string, ") -> ");
+        type_signature_append_to_string(string, signature->return_type);
+    }
+}
+
+
 void type_system_add_primitives(Type_System* system)
 {
-    dynamic_array_push_back(&system->types, type_signature_make_primitive(Primitive_Type::BOOLEAN));
-    dynamic_array_push_back(&system->types, type_signature_make_primitive(Primitive_Type::SIGNED_INT_8));
-    dynamic_array_push_back(&system->types, type_signature_make_primitive(Primitive_Type::SIGNED_INT_16));
-    dynamic_array_push_back(&system->types, type_signature_make_primitive(Primitive_Type::SIGNED_INT_32));
-    dynamic_array_push_back(&system->types, type_signature_make_primitive(Primitive_Type::SIGNED_INT_64));
-    dynamic_array_push_back(&system->types, type_signature_make_primitive(Primitive_Type::UNSIGNED_INT_8));
-    dynamic_array_push_back(&system->types, type_signature_make_primitive(Primitive_Type::UNSIGNED_INT_16));
-    dynamic_array_push_back(&system->types, type_signature_make_primitive(Primitive_Type::UNSIGNED_INT_32));
-    dynamic_array_push_back(&system->types, type_signature_make_primitive(Primitive_Type::UNSIGNED_INT_64));
-    dynamic_array_push_back(&system->types, type_signature_make_primitive(Primitive_Type::FLOAT_32));
-    dynamic_array_push_back(&system->types, type_signature_make_primitive(Primitive_Type::FLOAT_64));
+    system->bool_type = new Type_Signature();
+    system->i8_type = new Type_Signature();
+    system->i16_type = new Type_Signature();
+    system->i32_type = new Type_Signature();
+    system->i64_type = new Type_Signature();
+    system->u8_type = new Type_Signature();
+    system->u16_type = new Type_Signature();
+    system->u32_type = new Type_Signature();
+    system->u64_type = new Type_Signature();
+    system->f32_type = new Type_Signature();
+    system->f64_type = new Type_Signature();
+    system->error_type = new Type_Signature();
+    system->void_type = new Type_Signature();
+
+    *system->bool_type = type_signature_make_primitive(Primitive_Type::BOOLEAN);
+    *system->i8_type   = type_signature_make_primitive(Primitive_Type::SIGNED_INT_8);
+    *system->i16_type  = type_signature_make_primitive(Primitive_Type::SIGNED_INT_16);
+    *system->i32_type  = type_signature_make_primitive(Primitive_Type::SIGNED_INT_32);
+    *system->i64_type  = type_signature_make_primitive(Primitive_Type::SIGNED_INT_64);
+    *system->u8_type   = type_signature_make_primitive(Primitive_Type::UNSIGNED_INT_8);
+    *system->u16_type  = type_signature_make_primitive(Primitive_Type::UNSIGNED_INT_16);
+    *system->u32_type  = type_signature_make_primitive(Primitive_Type::UNSIGNED_INT_32);
+    *system->u64_type  = type_signature_make_primitive(Primitive_Type::UNSIGNED_INT_64);
+    *system->f32_type  = type_signature_make_primitive(Primitive_Type::FLOAT_32);
+    *system->f64_type  = type_signature_make_primitive(Primitive_Type::FLOAT_64);
+    *system->error_type  = type_signature_make_error();
+    system->void_type->type = Signature_Type::VOID_TYPE;
+    system->void_type->size_in_bytes = 0;
+    system->void_type->alignment_in_bytes = 0;
+
+    dynamic_array_push_back(&system->types, system->bool_type);
+    dynamic_array_push_back(&system->types, system->i8_type);
+    dynamic_array_push_back(&system->types, system->i16_type);
+    dynamic_array_push_back(&system->types, system->i32_type);
+    dynamic_array_push_back(&system->types, system->i64_type);
+    dynamic_array_push_back(&system->types, system->u8_type);
+    dynamic_array_push_back(&system->types, system->u16_type);
+    dynamic_array_push_back(&system->types, system->u32_type);
+    dynamic_array_push_back(&system->types, system->u64_type);
+    dynamic_array_push_back(&system->types, system->f32_type);
+    dynamic_array_push_back(&system->types, system->f64_type);
+    dynamic_array_push_back(&system->types, system->error_type);
+    dynamic_array_push_back(&system->types, system->void_type);
 }
 
 Type_System type_system_create()
 {
     Type_System result;
-    result.types = dynamic_array_create_empty<Type_Signature>(256);
+    result.types = dynamic_array_create_empty<Type_Signature*>(256);
     type_system_add_primitives(&result);
     return result;
 }
@@ -121,98 +184,69 @@ void type_system_destroy(Type_System* system) {
 
 void type_system_reset_all(Type_System* system) {
     for (int i = 0; i < system->types.size; i++) {
-        type_signature_destroy(&system->types[i]);
+        type_signature_destroy(system->types[i]);
+        delete system->types[i];
     }
     dynamic_array_reset(&system->types);
     type_system_add_primitives(system);
 }
 
-int type_system_find_or_create_type(Type_System* system, Type_Signature s) 
+Type_Signature* type_system_make_type(Type_System* system, Type_Signature signature)
 {
-    for (int i = 0; i < system->types.size; i++) 
+    for (int i = 0; i < system->types.size; i++)
     {
-        Type_Signature* cmp = &system->types[i];
-        if (cmp->type == s.type) {
-            if (cmp->type == Signature_Type::ARRAY_SIZED && cmp->child_type_index == s.child_type_index && cmp->array_size == s.array_size) return i;
-            if (cmp->type == Signature_Type::ARRAY_UNSIZED && cmp->child_type_index == s.child_type_index) return i;
-            if (cmp->type == Signature_Type::POINTER && cmp->child_type_index == s.child_type_index) return i;
-            if (cmp->type == Signature_Type::ERROR_TYPE) return i;
-            if (cmp->type == Signature_Type::PRIMITIVE && cmp->primitive_type == s.primitive_type) return i;
-            if (cmp->type == Signature_Type::FUNCTION) {
-                if (cmp->return_type_index != s.return_type_index) continue;
-                if (cmp->parameter_type_indices.size != s.parameter_type_indices.size) continue;
-                bool matches = true;
-                for (int i = 0; i < cmp->parameter_type_indices.size; i++) {
-                    if (cmp->parameter_type_indices[i] != s.parameter_type_indices[i]) {
-                        matches = false; 
-                        break;
-                    }
-                }
-                if (!matches) continue;
-                type_signature_destroy(&s);
-                return i;
-            }
+        Type_Signature* cmp = system->types[i];
+        if (type_signatures_are_equal(cmp, &signature)) {
+            type_signature_destroy(&signature);
+            return cmp;
         }
     }
-    dynamic_array_push_back(&system->types, s);
-    return system->types.size - 1;
+    Type_Signature* new_sig = new Type_Signature();
+    *new_sig = signature;
+    dynamic_array_push_back(&system->types, new_sig);
+    return new_sig;
 }
 
-Type_Signature* type_system_get_type(Type_System* system, int index) {
-    return &system->types[index];
-}
-
-Type_Signature* type_system_get_child_type(Type_System* system, int index) {
-    Type_Signature* parent_sig = type_system_get_type(system, index);
-    if (parent_sig->type != Signature_Type::POINTER &&
-        parent_sig->type != Signature_Type::ARRAY_SIZED &&
-        parent_sig->type != Signature_Type::ARRAY_UNSIZED) panic("Should not happen");
-    return type_system_get_type(system, parent_sig->child_type_index);
-}
-
-Symbol_Table symbol_table_create(Symbol_Table* parent)
+Type_Signature* type_system_make_pointer(Type_System* system, Type_Signature* child_type) 
 {
-    Symbol_Table result;
-    result.parent = parent;
-    result.symbols = dynamic_array_create_empty<Symbol>(8);
-    return result;
+    Type_Signature result;
+    result.type = Signature_Type::POINTER;
+    result.child_type = child_type;
+    result.size_in_bytes = 8;
+    result.alignment_in_bytes = 8;
+    return type_system_make_type(system, result);
 }
 
-void type_index_append_to_string(String* string, Type_System* system, int index)
+Type_Signature* type_system_make_array_sized(Type_System* system, Type_Signature* element_type, int array_element_count) 
 {
-    Type_Signature* sig = &system->types[index];
-    switch (sig->type) 
-    {
-    case Signature_Type::ARRAY_SIZED:
-        string_append_formated(string, "[%d]", sig->array_size);
-        type_index_append_to_string(string, system, sig->child_type_index);
-        break;
-    case Signature_Type::ARRAY_UNSIZED:
-        string_append_formated(string, "[]");
-        type_index_append_to_string(string, system, sig->child_type_index);
-        break;
-    case Signature_Type::ERROR_TYPE:
-        string_append_formated(string, "ERROR-Type");
-        break;
-    case Signature_Type::POINTER:
-        string_append_formated(string, "*");
-        type_index_append_to_string(string, system, sig->child_type_index);
-        break;
-    case Signature_Type::PRIMITIVE:
-        String s = primitive_type_to_string(sig->primitive_type);
-        string_append_string(string, &s);
-        break;
-    case Signature_Type::FUNCTION:
-        string_append_formated(string, "(");
-        for (int i = 0; i < sig->parameter_type_indices.size; i++) {
-            type_index_append_to_string(string, system, sig->parameter_type_indices[i]);
-            if (i != sig->parameter_type_indices.size - 1) {
-                string_append_formated(string, ", ");
-            }
-        }
-        string_append_formated(string, ") -> ");
-        type_index_append_to_string(string, system, sig->return_type_index);
-    }
+    Type_Signature result;
+    result.type = Signature_Type::ARRAY_SIZED;
+    result.child_type = element_type;
+    result.alignment_in_bytes = element_type->alignment_in_bytes;
+    result.size_in_bytes = element_type->size_in_bytes * array_element_count;
+    result.array_element_count = array_element_count;
+    return type_system_make_type(system, result);
+}
+
+Type_Signature* type_system_make_array_unsized(Type_System* system, Type_Signature* element_type) 
+{
+    Type_Signature result;
+    result.type = Signature_Type::ARRAY_UNSIZED;
+    result.child_type = element_type;
+    result.alignment_in_bytes = 8;
+    result.size_in_bytes = 16;
+    return type_system_make_type(system, result);
+}
+
+Type_Signature* type_system_make_function(Type_System* system, DynamicArray<Type_Signature*> parameter_types, Type_Signature* return_type) 
+{
+    Type_Signature result;
+    result.type = Signature_Type::FUNCTION;
+    result.alignment_in_bytes = 0;
+    result.size_in_bytes = 0;
+    result.parameter_types = parameter_types;
+    result.return_type = return_type;
+    return type_system_make_type(system, result);
 }
 
 void type_system_print(Type_System* system)
@@ -222,9 +256,10 @@ void type_system_print(Type_System* system)
     string_append_formated(&msg, "Type_System: ");
     for (int i = 0; i < system->types.size; i++)
     {
+        Type_Signature* type = system->types[i];
         string_append_formated(&msg, "\n\t%d: ", i);
-        type_index_append_to_string(&msg, system, i);
-        string_append_formated(&msg, " size: %d, alignment: %d", system->types[i].size_in_bytes, system->types[i].alignment_in_bytes);
+        type_signature_append_to_string(&msg, type);
+        string_append_formated(&msg, " size: %d, alignment: %d", type->size_in_bytes, type->alignment_in_bytes);
     }
     string_append_formated(&msg, "\n");
     logg("%s", msg.characters);
@@ -232,59 +267,67 @@ void type_system_print(Type_System* system)
 
 
 
+Symbol_Table symbol_table_create(Symbol_Table* parent)
+{
+    Symbol_Table result;
+    result.parent = parent;
+    result.symbols = dynamic_array_create_empty<Symbol>(8);
+    return result;
+}
+
 void symbol_table_destroy(Symbol_Table* table) {
     dynamic_array_destroy(&table->symbols);
 }
 
-Symbol* symbol_table_find_symbol(Symbol_Table* table, int name, bool* in_current_scope) 
+Symbol* symbol_table_find_symbol(Symbol_Table* table, int name_handle, bool* in_current_scope)
 {
     *in_current_scope = false;
     for (int i = 0; i < table->symbols.size; i++) {
-        if (table->symbols[i].name == name) {
+        if (table->symbols[i].name_handle == name_handle) {
             *in_current_scope = true;
             return &table->symbols[i];
         }
     }
     if (table->parent != 0) {
-        Symbol* result = symbol_table_find_symbol(table->parent, name, in_current_scope);
+        Symbol* result = symbol_table_find_symbol(table->parent, name_handle, in_current_scope);
         *in_current_scope = false;
         return result;
     }
     return 0;
 }
 
-Symbol* symbol_table_find_symbol_of_type_with_scope_info(Symbol_Table* table, int name, Symbol_Type::ENUM symbol_type, bool* in_current_scope)
+Symbol* symbol_table_find_symbol_of_type_with_scope_info(Symbol_Table* table, int name_handle, Symbol_Type::ENUM symbol_type, bool* in_current_scope)
 {
     *in_current_scope = false;
     for (int i = 0; i < table->symbols.size; i++) {
-        if (table->symbols[i].name == name && table->symbols[i].symbol_type == symbol_type) {
+        if (table->symbols[i].name_handle == name_handle && table->symbols[i].symbol_type == symbol_type) {
             *in_current_scope = true;
             return &table->symbols[i];
         }
     }
     if (table->parent != 0) {
-        Symbol* result = symbol_table_find_symbol_of_type_with_scope_info(table->parent, name, symbol_type, in_current_scope);
+        Symbol* result = symbol_table_find_symbol_of_type_with_scope_info(table->parent, name_handle, symbol_type, in_current_scope);
         *in_current_scope = false;
         return result;
     }
     return 0;
 }
 
-Symbol* symbol_table_find_symbol_of_type(Symbol_Table* table, int name, Symbol_Type::ENUM symbol_type)
+Symbol* symbol_table_find_symbol_of_type(Symbol_Table* table, int name_handle, Symbol_Type::ENUM symbol_type)
 {
     for (int i = 0; i < table->symbols.size; i++) {
-        if (table->symbols[i].name == name && table->symbols[i].symbol_type == symbol_type) {
+        if (table->symbols[i].name_handle == name_handle && table->symbols[i].symbol_type == symbol_type) {
             return &table->symbols[i];
         }
     }
     if (table->parent != 0) {
-        Symbol* result = symbol_table_find_symbol_of_type(table->parent, name, symbol_type);
+        Symbol* result = symbol_table_find_symbol_of_type(table->parent, name_handle, symbol_type);
         return result;
     }
     return 0;
 }
 
-void symbol_table_define_type(Symbol_Table* table, int name_id, int type_index)
+void symbol_table_define_type(Symbol_Table* table, int name_id, Type_Signature* type)
 {
     Symbol* sym = symbol_table_find_symbol_of_type(table, name_id, Symbol_Type::TYPE);
     if (sym != 0) {
@@ -294,8 +337,8 @@ void symbol_table_define_type(Symbol_Table* table, int name_id, int type_index)
 
     Symbol s;
     s.symbol_type = Symbol_Type::TYPE;
-    s.type_index = type_index;
-    s.name = name_id;
+    s.type = type;
+    s.name_handle = name_id;
     dynamic_array_push_back(&table->symbols, s);
 }
 
@@ -319,16 +362,16 @@ void semantic_analyser_log_error(Semantic_Analyser* analyser, const char* msg, i
     dynamic_array_push_back(&analyser->errors, error);
 }
 
-Symbol_Table* semantic_analyser_install_symbol_table(Semantic_Analyser* analyser, Symbol_Table* parent, int node_index) 
+Symbol_Table* semantic_analyser_install_symbol_table(Semantic_Analyser* analyser, Symbol_Table* parent, int node_index)
 {
     Symbol_Table* table = new Symbol_Table();
     *table = symbol_table_create(parent);
     dynamic_array_push_back(&analyser->symbol_tables, table);
-    analyser->semantic_information[node_index].symbol_table_index = analyser->symbol_tables.size-1;
+    analyser->semantic_information[node_index].symbol_table_index = analyser->symbol_tables.size - 1;
     return table;
 }
 
-void semantic_analyser_define_variable(Semantic_Analyser* analyser, Symbol_Table* table, int node_index, int type_index) 
+void semantic_analyser_define_variable(Semantic_Analyser* analyser, Symbol_Table* table, int node_index, Type_Signature* type)
 {
     bool in_current_scope;
     int var_name = analyser->parser->nodes[node_index].name_id;
@@ -340,12 +383,12 @@ void semantic_analyser_define_variable(Semantic_Analyser* analyser, Symbol_Table
 
     Symbol s;
     s.symbol_type = Symbol_Type::VARIABLE;
-    s.type_index = type_index;
-    s.name = var_name;
+    s.type = type;
+    s.name_handle = var_name;
     dynamic_array_push_back(&table->symbols, s);
 }
 
-int semantic_analyser_analyse_type(Semantic_Analyser* analyser, int type_node_index)
+Type_Signature* semantic_analyser_analyse_type(Semantic_Analyser* analyser, int type_node_index)
 {
     AST_Node* type_node = &analyser->parser->nodes[type_node_index];
     switch (type_node->type)
@@ -355,59 +398,47 @@ int semantic_analyser_analyse_type(Semantic_Analyser* analyser, int type_node_in
         Symbol* symbol_type = symbol_table_find_symbol_of_type(analyser->symbol_tables[0], type_node->name_id, Symbol_Type::TYPE);
         if (symbol_type == 0) {
             semantic_analyser_log_error(analyser, "Invalid type, identifier is not a type!", type_node_index);
-            return analyser->error_type_index;
+            return analyser->type_system.error_type;
         }
-        return symbol_type->type_index;
+        return symbol_type->type;
     }
     case AST_Node_Type::TYPE_POINTER_TO: {
-        return type_system_find_or_create_type(
-            &analyser->type_system, 
-            type_signature_make_pointer(semantic_analyser_analyse_type(analyser, type_node->children[0]))
-        );
+        return type_system_make_pointer(&analyser->type_system, semantic_analyser_analyse_type(analyser, type_node->children[0]));
     }
-    case AST_Node_Type::TYPE_ARRAY_SIZED: 
+    case AST_Node_Type::TYPE_ARRAY_SIZED:
     {
         // TODO check if expression is compile time known, currently just literal value
         int index_node_array_size = type_node->children[0];
         AST_Node* node_array_size = &analyser->parser->nodes[index_node_array_size];
         if (node_array_size->type != AST_Node_Type::EXPRESSION_LITERAL) {
             semantic_analyser_log_error(analyser, "Array size is not a expression literal, currently not evaluable", index_node_array_size);
-            return analyser->error_type_index;
+            return analyser->type_system.error_type;
         }
         Token literal_token = analyser->parser->lexer->tokens[analyser->parser->token_mapping[index_node_array_size].start_index];
         if (literal_token.type != Token_Type::INTEGER_LITERAL) {
             semantic_analyser_log_error(analyser, "Array size is not an integer literal, currently not evaluable", index_node_array_size);
-            return analyser->error_type_index;
+            return analyser->type_system.error_type;
         }
 
-        return type_system_find_or_create_type(
-            &analyser->type_system,
-            type_signature_make_array_sized(
-                &analyser->type_system,
-                semantic_analyser_analyse_type(analyser, type_node->children[1]),
-                literal_token.attribute.integer_value
-            )
+        return type_system_make_array_sized(
+            &analyser->type_system, 
+            semantic_analyser_analyse_type(analyser, type_node->children[1]), 
+            literal_token.attribute.integer_value
         );
     }
     case AST_Node_Type::TYPE_ARRAY_UNSIZED: {
-        return type_system_find_or_create_type(
-            &analyser->type_system,
-            type_signature_make_array_unsized(
-                &analyser->type_system,
-                semantic_analyser_analyse_type(analyser, type_node->children[0])
-            )
-        );
+        return type_system_make_array_unsized(&analyser->type_system, semantic_analyser_analyse_type(analyser, type_node->children[0]));
     }
     }
 
     panic("This should not happen, this means that the child was not a type!\n");
-    return -1;
+    return analyser->type_system.error_type;
 }
 
-Expression_Analysis_Result expression_analysis_result_make(int result_type_index, bool has_memory_address)
+Expression_Analysis_Result expression_analysis_result_make(Type_Signature* expression_result, bool has_memory_address)
 {
     Expression_Analysis_Result result;
-    result.type_index = result_type_index;
+    result.type = expression_result;
     result.has_memory_address = has_memory_address;
     return result;
 }
@@ -415,14 +446,16 @@ Expression_Analysis_Result expression_analysis_result_make(int result_type_index
 Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyser* analyser, Symbol_Table* table, int expression_index)
 {
     AST_Node* expression = &analyser->parser->nodes[expression_index];
-    analyser->semantic_information[expression_index].expression_result_type_index = analyser->error_type_index;
+    analyser->semantic_information[expression_index].expression_result_type = analyser->type_system.error_type;
 
+    // For unary and binary operations
     bool is_binary_op = false;
     bool is_unary_op = false;
     bool int_valid, float_valid, bool_valid;
     int_valid = float_valid = bool_valid = false;
     bool return_left_type = false;
-    int return_type_index;
+    Type_Signature* return_type = analyser->type_system.error_type;
+
     switch (expression->type)
     {
     case AST_Node_Type::EXPRESSION_FUNCTION_CALL:
@@ -432,91 +465,87 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
             semantic_analyser_log_error(analyser, "Function call to not defined Function!", expression_index);
             lexer_print_identifiers(analyser->parser->lexer);
             type_system_print(&analyser->type_system);
-            return expression_analysis_result_make(analyser->error_type_index, true);
+            return expression_analysis_result_make(analyser->type_system.error_type, true);
         }
 
-        Type_Signature* signature = type_system_get_type(&analyser->type_system, func_symbol->type_index);
-        if (expression->children.size != signature->parameter_type_indices.size) {
+        Type_Signature* signature = func_symbol->type;
+        if (expression->children.size != signature->parameter_types.size) {
             semantic_analyser_log_error(analyser, "Argument size does not match function parameter size!", expression_index);
         }
-        for (int i = 0; i < signature->parameter_type_indices.size && i < expression->children.size; i++)
+        for (int i = 0; i < signature->parameter_types.size && i < expression->children.size; i++)
         {
             Expression_Analysis_Result expr_result = semantic_analyser_analyse_expression(analyser, table, expression->children[i]);
-            if (expr_result.type_index != signature->parameter_type_indices[i] || expr_result.type_index == analyser->error_type_index) {
+            if (expr_result.type != signature->parameter_types[i] || expr_result.type == analyser->type_system.error_type) {
                 semantic_analyser_log_error(analyser, "Argument type does not match parameter type", expression->children[i]);
             }
         }
 
-        analyser->semantic_information[expression_index].expression_result_type_index = signature->return_type_index;
-        return expression_analysis_result_make(signature->return_type_index, false);
+        analyser->semantic_information[expression_index].expression_result_type = signature->return_type;
+        return expression_analysis_result_make(signature->return_type, false);
     }
     case AST_Node_Type::EXPRESSION_VARIABLE_READ:
     {
         Symbol* s = symbol_table_find_symbol_of_type(table, expression->name_id, Symbol_Type::VARIABLE);
         if (s == 0) {
             semantic_analyser_log_error(analyser, "Expression variable not defined", expression_index);
-            return expression_analysis_result_make(analyser->error_type_index, true);
+            return expression_analysis_result_make(analyser->type_system.error_type, true);
         }
-        analyser->semantic_information[expression_index].expression_result_type_index = s->type_index;
-        return expression_analysis_result_make(s->type_index, true);
+        analyser->semantic_information[expression_index].expression_result_type = s->type;
+        return expression_analysis_result_make(s->type, true);
     }
     case AST_Node_Type::EXPRESSION_LITERAL:
     {
         Token_Type::ENUM type = analyser->parser->lexer->tokens[analyser->parser->token_mapping[expression_index].start_index].type;
         if (type == Token_Type::BOOLEAN_LITERAL) {
-            analyser->semantic_information[expression_index].expression_result_type_index = analyser->bool_type_index;
-            return expression_analysis_result_make(analyser->bool_type_index, false);
+            analyser->semantic_information[expression_index].expression_result_type = analyser->type_system.bool_type;
         }
         if (type == Token_Type::INTEGER_LITERAL) {
-            analyser->semantic_information[expression_index].expression_result_type_index = analyser->i32_type_index;
-            return expression_analysis_result_make(analyser->i32_type_index, false);
+            analyser->semantic_information[expression_index].expression_result_type = analyser->type_system.i32_type;
         }
         if (type == Token_Type::FLOAT_LITERAL) {
-            analyser->semantic_information[expression_index].expression_result_type_index = analyser->f32_type_index;
-            return expression_analysis_result_make(analyser->f32_type_index, false);
+            analyser->semantic_information[expression_index].expression_result_type = analyser->type_system.f32_type;
         }
-        panic("This should not happend\n");
-        break;
+        return expression_analysis_result_make(analyser->semantic_information[expression_index].expression_result_type, false);
     }
     case AST_Node_Type::EXPRESSION_ARRAY_ACCESS: {
         Expression_Analysis_Result array_access_expr = semantic_analyser_analyse_expression(analyser, table, expression->children[0]);
-        Type_Signature* access_signature = type_system_get_type(&analyser->type_system, array_access_expr.type_index);
+        Type_Signature* access_signature = array_access_expr.type;
         if (access_signature->type != Signature_Type::ARRAY_SIZED && access_signature->type != Signature_Type::ARRAY_UNSIZED) {
             semantic_analyser_log_error(analyser, "Expression is not an array, cannot access with []!", expression->children[0]);
-            return expression_analysis_result_make(analyser->error_type_index, true);
+            return expression_analysis_result_make(analyser->type_system.error_type, true);
         }
         Expression_Analysis_Result index_expr_result = semantic_analyser_analyse_expression(analyser, table, expression->children[1]);
-        if (index_expr_result.type_index != analyser->i32_type_index) {
+        if (index_expr_result.type != analyser->type_system.i32_type) {
             semantic_analyser_log_error(analyser, "Array index must be integer!", expression->children[1]);
-            return expression_analysis_result_make(analyser->error_type_index, true);
+            return expression_analysis_result_make(analyser->type_system.error_type, true);
         }
-        analyser->semantic_information[expression_index].expression_result_type_index = access_signature->child_type_index;
-        return expression_analysis_result_make(access_signature->child_type_index, true);
+        analyser->semantic_information[expression_index].expression_result_type = access_signature->child_type;
+        return expression_analysis_result_make(access_signature->child_type, true);
     }
     case AST_Node_Type::EXPRESSION_MEMBER_ACCESS:
     {
         Expression_Analysis_Result access_expr_result = semantic_analyser_analyse_expression(analyser, table, expression->children[0]);
-        Type_Signature* type_signature = type_system_get_type(&analyser->type_system, access_expr_result.type_index);
+        Type_Signature* type_signature = access_expr_result.type;
         if (type_signature->type == Signature_Type::ERROR_TYPE) {
-            return expression_analysis_result_make(analyser->error_type_index, true);;
+            return expression_analysis_result_make(analyser->type_system.error_type, true);;
         }
         if (type_signature->type != Signature_Type::ARRAY_SIZED && type_signature->type != Signature_Type::ARRAY_UNSIZED) {
             semantic_analyser_log_error(analyser, "Expression type does not have any members to access!", expression_index);
-            return expression_analysis_result_make(analyser->error_type_index, true);
+            return expression_analysis_result_make(analyser->type_system.error_type, true);
         }
         if (expression->name_id != analyser->size_token_index && expression->name_id != analyser->data_token_index) {
             semantic_analyser_log_error(analyser, "Arrays only have .size or .data as member!", expression_index);
-            return expression_analysis_result_make(analyser->error_type_index, true);
+            return expression_analysis_result_make(analyser->type_system.error_type, true);
         }
-        int result_type;
+        Type_Signature* result_type;
         if (expression->name_id == analyser->size_token_index) {
-            result_type = analyser->i32_type_index;
+            result_type = analyser->type_system.i32_type;
         }
         else {
-            result_type = type_system_find_or_create_type(
-                &analyser->type_system, type_signature_make_pointer(type_signature->child_type_index));
+            result_type = type_system_make_pointer(&analyser->type_system, type_signature->child_type);
         }
-        analyser->semantic_information[expression_index].expression_result_type_index = result_type;
+        analyser->semantic_information[expression_index].expression_result_type = result_type;
+
         if (type_signature->type == Signature_Type::ARRAY_SIZED) {
             return expression_analysis_result_make(result_type, false);
         }
@@ -539,7 +568,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_LESS_OR_EQUAL: {
         is_binary_op = true;
         int_valid = float_valid = true;
-        return_type_index = analyser->bool_type_index;
+        return_type = analyser->type_system.bool_type;
         break;
     }
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_MODULO: {
@@ -559,13 +588,13 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_NOT_EQUAL: {
         is_binary_op = true;
         bool_valid = int_valid = float_valid = true;
-        return_type_index = analyser->bool_type_index;
+        return_type = analyser->type_system.bool_type;
         break;
     }
     case AST_Node_Type::EXPRESSION_UNARY_OPERATION_NOT: {
         is_unary_op = true;
         bool_valid = true;
-        return_type_index = analyser->bool_type_index;
+        return_type = analyser->type_system.bool_type;
         break;
     }
     case AST_Node_Type::EXPRESSION_UNARY_OPERATION_NEGATE: {
@@ -581,20 +610,21 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
             semantic_analyser_log_error(analyser, "Cannot get address of expression!", expression->children[0]);
         }
         bool unused;
-        int result_type = type_system_find_or_create_type(&analyser->type_system, type_signature_make_pointer(result.type_index));
-        analyser->semantic_information[expression_index].expression_result_type_index = result_type;
+        Type_Signature* result_type = type_system_make_pointer(&analyser->type_system, result.type);
+        analyser->semantic_information[expression_index].expression_result_type = result_type;
         return expression_analysis_result_make(result_type, false);
         break;
     }
-    case AST_Node_Type::EXPRESSION_UNARY_OPERATION_DEREFERENCE: {
+    case AST_Node_Type::EXPRESSION_UNARY_OPERATION_DEREFERENCE: 
+    {
         Expression_Analysis_Result result = semantic_analyser_analyse_expression(analyser, table, expression->children[0]);
-        Type_Signature* signature = type_system_get_type(&analyser->type_system, result.type_index);
+        Type_Signature* signature = result.type;
         if (signature->type != Signature_Type::POINTER) {
             semantic_analyser_log_error(analyser, "Tried to dereference non pointer type!", expression->children[0]);
-            return expression_analysis_result_make(analyser->error_type_index, false);
+            return expression_analysis_result_make(analyser->type_system.error_type, false);
         }
-        analyser->semantic_information[expression_index].expression_result_type_index = signature->child_type_index;
-        return expression_analysis_result_make(signature->child_type_index, true);
+        analyser->semantic_information[expression_index].expression_result_type = signature->child_type;
+        return expression_analysis_result_make(signature->child_type, true);
         break;
     }
     default: {
@@ -607,55 +637,55 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
     {
         Expression_Analysis_Result left_expr_result = semantic_analyser_analyse_expression(analyser, table, expression->children[0]);
         Expression_Analysis_Result right_expr_result = semantic_analyser_analyse_expression(analyser, table, expression->children[1]);
-        if (left_expr_result.type_index == analyser->error_type_index || right_expr_result.type_index == analyser->error_type_index) {
-            return expression_analysis_result_make(analyser->error_type_index, true);
+        if (left_expr_result.type == analyser->type_system.error_type || right_expr_result.type == analyser->type_system.error_type) {
+            return expression_analysis_result_make(analyser->type_system.error_type, true);
         }
-        if (left_expr_result.type_index != right_expr_result.type_index) {
+        if (left_expr_result.type != right_expr_result.type) {
             semantic_analyser_log_error(analyser, "Left and right of binary operation do not match", expression_index);
         }
-        if (!int_valid && left_expr_result.type_index == analyser->i32_type_index) {
+        if (!int_valid && left_expr_result.type == analyser->type_system.i32_type) {
             semantic_analyser_log_error(analyser, "Operands cannot be integers", expression_index);
-            return expression_analysis_result_make(analyser->error_type_index, false);
+            return expression_analysis_result_make(analyser->type_system.error_type, false);
         }
-        if (!bool_valid && left_expr_result.type_index == analyser->bool_type_index) {
+        if (!bool_valid && left_expr_result.type == analyser->type_system.bool_type) {
             semantic_analyser_log_error(analyser, "Operands cannot be booleans", expression_index);
-            return expression_analysis_result_make(analyser->error_type_index, false);
+            return expression_analysis_result_make(analyser->type_system.error_type, false);
         }
-        if (!float_valid && left_expr_result.type_index == analyser->f32_type_index) {
+        if (!float_valid && left_expr_result.type == analyser->type_system.f32_type) {
             semantic_analyser_log_error(analyser, "Operands cannot be floats", expression_index);
-            return expression_analysis_result_make(analyser->error_type_index, false);
+            return expression_analysis_result_make(analyser->type_system.error_type, false);
         }
         if (return_left_type) {
-            analyser->semantic_information[expression_index].expression_result_type_index = left_expr_result.type_index;
-            return expression_analysis_result_make(left_expr_result.type_index, false);
+            analyser->semantic_information[expression_index].expression_result_type = left_expr_result.type;
+            return expression_analysis_result_make(left_expr_result.type, false);
         }
-        analyser->semantic_information[expression_index].expression_result_type_index = return_type_index;
-        return expression_analysis_result_make(return_type_index, false);
+        analyser->semantic_information[expression_index].expression_result_type = return_type;
+        return expression_analysis_result_make(return_type, false);
     }
     if (is_unary_op)
     {
-        int left_type_index = semantic_analyser_analyse_expression(analyser, table, expression->children[0]).type_index;
-        if (!int_valid && left_type_index == analyser->i32_type_index) {
+        Type_Signature* left_type = semantic_analyser_analyse_expression(analyser, table, expression->children[0]).type;
+        if (!int_valid && left_type == analyser->type_system.i32_type) {
             semantic_analyser_log_error(analyser, "Operand cannot be integer", expression_index);
-            return expression_analysis_result_make(analyser->error_type_index, false);
+            return expression_analysis_result_make(analyser->type_system.error_type, false);
         }
-        if (!bool_valid && left_type_index == analyser->bool_type_index) {
+        if (!bool_valid && left_type == analyser->type_system.bool_type) {
             semantic_analyser_log_error(analyser, "Operand cannot be boolean", expression_index);
-            return expression_analysis_result_make(analyser->error_type_index, false);
+            return expression_analysis_result_make(analyser->type_system.error_type, false);
         }
-        if (!float_valid && left_type_index == analyser->f32_type_index) {
+        if (!float_valid && left_type == analyser->type_system.f32_type) {
             semantic_analyser_log_error(analyser, "Operand cannot be float", expression_index);
-            return expression_analysis_result_make(analyser->error_type_index, false);
+            return expression_analysis_result_make(analyser->type_system.error_type, false);
         }
         if (return_left_type) {
-            analyser->semantic_information[expression_index].expression_result_type_index = left_type_index;
-            return expression_analysis_result_make(left_type_index, false);
+            analyser->semantic_information[expression_index].expression_result_type = left_type;
+            return expression_analysis_result_make(left_type, false);
         }
-        analyser->semantic_information[expression_index].expression_result_type_index = return_type_index;
-        return expression_analysis_result_make(return_type_index, false);
+        analyser->semantic_information[expression_index].expression_result_type = return_type;
+        return expression_analysis_result_make(return_type, false);
     }
 
-    return expression_analysis_result_make(return_type_index, false);
+    return expression_analysis_result_make(return_type, false);
 }
 
 Statement_Analysis_Result semantic_analyser_analyse_statement_block(Semantic_Analyser* analyser, Symbol_Table* parent, int block_index);
@@ -665,11 +695,21 @@ Statement_Analysis_Result semantic_analyser_analyse_statement(Semantic_Analyser*
     switch (statement->type)
     {
     case AST_Node_Type::STATEMENT_RETURN: {
-        int return_type_index = semantic_analyser_analyse_expression(analyser, parent, statement->children[0]).type_index;
-        if (return_type_index != analyser->function_return_type_index && return_type_index != analyser->error_type_index) {
+        Type_Signature* return_type;
+        if (statement->children.size == 0) {
+            return_type = analyser->type_system.void_type;
+        }
+        else {
+            return_type = semantic_analyser_analyse_expression(analyser, parent, statement->children[0]).type;
+            if (return_type == analyser->type_system.void_type) {
+                semantic_analyser_log_error(analyser, "Cannot return void type", statement_index);
+                return Statement_Analysis_Result::RETURN;
+            }
+        }
+        if (return_type != analyser->function_return_type && return_type != analyser->type_system.error_type) {
             semantic_analyser_log_error(analyser, "Return type does not match function return type", statement_index);
         }
-        analyser->semantic_information[statement_index].expression_result_type_index = return_type_index;
+        analyser->semantic_information[statement_index].expression_result_type = return_type;
         return Statement_Analysis_Result::RETURN;
     }
     case AST_Node_Type::STATEMENT_BREAK: {
@@ -698,8 +738,8 @@ Statement_Analysis_Result semantic_analyser_analyse_statement(Semantic_Analyser*
     }
     case AST_Node_Type::STATEMENT_IF:
     {
-        int condition_type_index = semantic_analyser_analyse_expression(analyser, parent, statement->children[0]).type_index;
-        if (condition_type_index != analyser->bool_type_index) {
+        Type_Signature* condition_type = semantic_analyser_analyse_expression(analyser, parent, statement->children[0]).type;
+        if (condition_type != analyser->type_system.bool_type) {
             semantic_analyser_log_error(analyser, "If condition must be of boolean type!", statement_index);
         }
         semantic_analyser_analyse_statement_block(analyser, parent, statement->children[1]);
@@ -707,8 +747,8 @@ Statement_Analysis_Result semantic_analyser_analyse_statement(Semantic_Analyser*
     }
     case AST_Node_Type::STATEMENT_IF_ELSE:
     {
-        int condition_type_index = semantic_analyser_analyse_expression(analyser, parent, statement->children[0]).type_index;
-        if (condition_type_index != analyser->bool_type_index) {
+        Type_Signature* condition_type = semantic_analyser_analyse_expression(analyser, parent, statement->children[0]).type;
+        if (condition_type != analyser->type_system.bool_type) {
             semantic_analyser_log_error(analyser, "If condition must be of boolean type!", statement_index);
         }
         Statement_Analysis_Result if_result = semantic_analyser_analyse_statement_block(analyser, parent, statement->children[1]);
@@ -718,8 +758,8 @@ Statement_Analysis_Result semantic_analyser_analyse_statement(Semantic_Analyser*
     }
     case AST_Node_Type::STATEMENT_WHILE:
     {
-        int condition_type_index = semantic_analyser_analyse_expression(analyser, parent, statement->children[0]).type_index;
-        if (condition_type_index != analyser->bool_type_index) {
+        Type_Signature* condition_type = semantic_analyser_analyse_expression(analyser, parent, statement->children[0]).type;
+        if (condition_type != analyser->type_system.bool_type) {
             semantic_analyser_log_error(analyser, "If condition must be of boolean type!", statement_index);
         }
         analyser->loop_depth++;
@@ -740,10 +780,14 @@ Statement_Analysis_Result semantic_analyser_analyse_statement(Semantic_Analyser*
     {
         Expression_Analysis_Result left_result = semantic_analyser_analyse_expression(analyser, parent, statement->children[0]);
         Expression_Analysis_Result right_result = semantic_analyser_analyse_expression(analyser, parent, statement->children[1]);
+        if (right_result.type == analyser->type_system.void_type) {
+            semantic_analyser_log_error(analyser, "Cannot assign void type to anything", statement_index);
+            return Statement_Analysis_Result::NO_RETURN;
+        }
         if (!left_result.has_memory_address) {
             semantic_analyser_log_error(analyser, "Left side of assignment cannot be assigned to, does not have a memory address", statement_index);
         }
-        if (left_result.type_index != right_result.type_index) {
+        if (left_result.type != right_result.type) {
             semantic_analyser_log_error(analyser, "Left side of assignment is not the same as right side", statement_index);
         }
         return Statement_Analysis_Result::NO_RETURN;
@@ -756,8 +800,12 @@ Statement_Analysis_Result semantic_analyser_analyse_statement(Semantic_Analyser*
             semantic_analyser_log_error(analyser, "Variable already defined", statement_index);
             break;
         }
-        int var_type_index = semantic_analyser_analyse_type(analyser, statement->children[0]);
-        semantic_analyser_define_variable(analyser, parent, statement_index, var_type_index);
+        Type_Signature* var_type = semantic_analyser_analyse_type(analyser, statement->children[0]);
+        if (var_type == analyser->type_system.void_type) {
+            semantic_analyser_log_error(analyser, "Cannot create variable of void type", statement_index);
+            return Statement_Analysis_Result::NO_RETURN;
+        }
+        semantic_analyser_define_variable(analyser, parent, statement_index, var_type);
         break;
     }
     case AST_Node_Type::STATEMENT_VARIABLE_DEFINE_ASSIGN:
@@ -770,12 +818,20 @@ Statement_Analysis_Result semantic_analyser_analyse_statement(Semantic_Analyser*
                 break;
             }
         }
-        int var_type_index = semantic_analyser_analyse_type(analyser, statement->children[0]);
-        int assignment_type_index = semantic_analyser_analyse_expression(analyser, parent, statement->children[1]).type_index;
-        if (assignment_type_index != var_type_index && assignment_type_index != analyser->error_type_index) {
+        Type_Signature* var_type = semantic_analyser_analyse_type(analyser, statement->children[0]);
+        Type_Signature* assignment_type = semantic_analyser_analyse_expression(analyser, parent, statement->children[1]).type;
+        if (var_type == analyser->type_system.void_type) {
+            semantic_analyser_log_error(analyser, "Cannot create variable of void type", statement_index);
+            return Statement_Analysis_Result::NO_RETURN;
+        }
+        if (assignment_type == analyser->type_system.void_type) {
+            semantic_analyser_log_error(analyser, "Trying to assign void type to variable", statement_index);
+            return Statement_Analysis_Result::NO_RETURN;
+        }
+        if (assignment_type != var_type && assignment_type != analyser->type_system.error_type) {
             semantic_analyser_log_error(analyser, "Variable type does not match expression type", statement_index);
         }
-        semantic_analyser_define_variable(analyser, parent, statement_index, var_type_index);
+        semantic_analyser_define_variable(analyser, parent, statement_index, var_type);
         break;
     }
     case AST_Node_Type::STATEMENT_VARIABLE_DEFINE_INFER:
@@ -788,8 +844,12 @@ Statement_Analysis_Result semantic_analyser_analyse_statement(Semantic_Analyser*
                 break;
             }
         }
-        semantic_analyser_define_variable(analyser, parent, statement_index,
-            semantic_analyser_analyse_expression(analyser, parent, statement->children[0]).type_index);
+        Type_Signature* var_type = semantic_analyser_analyse_expression(analyser, parent, statement->children[0]).type;
+        if (var_type == analyser->type_system.void_type) {
+            semantic_analyser_log_error(analyser, "Trying to create variable as void type", statement_index);
+            return Statement_Analysis_Result::NO_RETURN;
+        }
+        semantic_analyser_define_variable(analyser, parent, statement_index, var_type);
         break;
     }
     default: {
@@ -853,15 +913,12 @@ void semantic_analyser_analyse_function(Semantic_Analyser* analyser, Symbol_Tabl
 
     // Define parameter variables
     AST_Node* parameter_block = &analyser->parser->nodes[function->children[0]];
-    Type_Signature* function_signature = type_system_get_type(
-        &analyser->type_system,
-        symbol_table_find_symbol_of_type(parent, function->name_id, Symbol_Type::FUNCTION)->type_index
-    );
+    Type_Signature* function_signature = symbol_table_find_symbol_of_type(parent, function->name_id, Symbol_Type::FUNCTION)->type;
     for (int i = 0; i < parameter_block->children.size; i++) {
-        semantic_analyser_define_variable(analyser, table, parameter_block->children[i], function_signature->parameter_type_indices[i]);
+        semantic_analyser_define_variable(analyser, table, parameter_block->children[i], function_signature->parameter_types[i]);
     }
 
-    analyser->function_return_type_index = function_signature->return_type_index;
+    analyser->function_return_type = function_signature->return_type;
     analyser->loop_depth = 0;
     Statement_Analysis_Result result = semantic_analyser_analyse_statement_block(analyser, table, function->children[2]);
     if (result != Statement_Analysis_Result::RETURN) {
@@ -908,26 +965,22 @@ void semantic_analyser_analyse_function_header(Semantic_Analyser* analyser, Symb
     }
 
     AST_Node* parameter_block = &analyser->parser->nodes[function->children[0]];
-    Type_Signature function_signature;
-    function_signature.type = Signature_Type::FUNCTION;
-    function_signature.parameter_type_indices = dynamic_array_create_empty<int>(parameter_block->children.size);
-    function_signature.size_in_bytes = 0;
-    function_signature.alignment_in_bytes = 0;
+    DynamicArray<Type_Signature*> parameter_types = dynamic_array_create_empty<Type_Signature*>(parameter_block->children.size);
     for (int i = 0; i < parameter_block->children.size; i++) {
         int parameter_index = parameter_block->children[i];
         AST_Node* parameter = &analyser->parser->nodes[parameter_index];
-        dynamic_array_push_back(&function_signature.parameter_type_indices, semantic_analyser_analyse_type(analyser, parameter->children[0]));
+        dynamic_array_push_back(&parameter_types, semantic_analyser_analyse_type(analyser, parameter->children[0]));
     }
-    function_signature.return_type_index = semantic_analyser_analyse_type(analyser, function->children[1]);
-    int function_type_index = type_system_find_or_create_type(&analyser->type_system, function_signature);
+    Type_Signature* return_type = semantic_analyser_analyse_type(analyser, function->children[1]);
+    Type_Signature* function_type = type_system_make_function(&analyser->type_system, parameter_types, return_type);
 
     Symbol s;
     s.symbol_type = Symbol_Type::FUNCTION;
-    s.name = function_name;
-    s.type_index = function_type_index;
+    s.name_handle = function_name;
+    s.type = function_type;
     dynamic_array_push_back(&table->symbols, s);
 
-    analyser->semantic_information[function_node_index].function_signature_index = function_type_index;
+    analyser->semantic_information[function_node_index].function_signature = function_type;
 }
 
 void semantic_analyser_analyse(Semantic_Analyser* analyser, AST_Parser* parser)
@@ -945,7 +998,11 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, AST_Parser* parser)
 
     dynamic_array_reserve(&analyser->semantic_information, parser->nodes.size);
     for (int i = 0; i < parser->nodes.size; i++) {
-        dynamic_array_push_back(&analyser->semantic_information, semantic_node_information_make(0, 0));
+        Semantic_Node_Information info;
+        info.expression_result_type = analyser->type_system.error_type;
+        info.function_signature = analyser->type_system.error_type;
+        info.symbol_table_index = 0;
+        dynamic_array_push_back(&analyser->semantic_information, info);
     }
 
     // Create root table
@@ -967,70 +1024,50 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, AST_Parser* parser)
         int f64_token_index = lexer_add_or_find_identifier_by_string(parser->lexer, string_create_static("f64"));
         int f32_token_index = lexer_add_or_find_identifier_by_string(parser->lexer, string_create_static("f32"));
         int byte_token_index = lexer_add_or_find_identifier_by_string(parser->lexer, string_create_static("byte"));
+        int void_token_index = lexer_add_or_find_identifier_by_string(parser->lexer, string_create_static("void"));
 
-        analyser->f32_type_index = type_system_find_or_create_type(&analyser->type_system, type_signature_make_primitive(Primitive_Type::FLOAT_32));
-        analyser->i32_type_index = type_system_find_or_create_type(&analyser->type_system, type_signature_make_primitive(Primitive_Type::SIGNED_INT_32));
-        analyser->bool_type_index = type_system_find_or_create_type(&analyser->type_system, type_signature_make_primitive(Primitive_Type::BOOLEAN));
-
-        symbol_table_define_type(root_table, int_token_index,
-            type_system_find_or_create_type(&analyser->type_system, type_signature_make_primitive(Primitive_Type::SIGNED_INT_32)));
-        symbol_table_define_type(root_table, bool_token_index,
-            type_system_find_or_create_type(&analyser->type_system, type_signature_make_primitive(Primitive_Type::BOOLEAN)));
-        symbol_table_define_type(root_table, float_token_index,
-            type_system_find_or_create_type(&analyser->type_system, type_signature_make_primitive(Primitive_Type::FLOAT_32)));
-        symbol_table_define_type(root_table, f32_token_index,
-            type_system_find_or_create_type(&analyser->type_system, type_signature_make_primitive(Primitive_Type::FLOAT_32)));
-        symbol_table_define_type(root_table, f64_token_index,
-            type_system_find_or_create_type(&analyser->type_system, type_signature_make_primitive(Primitive_Type::FLOAT_64)));
-        symbol_table_define_type(root_table, u8_token_index,
-            type_system_find_or_create_type(&analyser->type_system, type_signature_make_primitive(Primitive_Type::UNSIGNED_INT_8)));
-        symbol_table_define_type(root_table, byte_token_index,
-            type_system_find_or_create_type(&analyser->type_system, type_signature_make_primitive(Primitive_Type::UNSIGNED_INT_8)));
-        symbol_table_define_type(root_table, u16_token_index,
-            type_system_find_or_create_type(&analyser->type_system, type_signature_make_primitive(Primitive_Type::UNSIGNED_INT_16)));
-        symbol_table_define_type(root_table, u32_token_index,
-            type_system_find_or_create_type(&analyser->type_system, type_signature_make_primitive(Primitive_Type::UNSIGNED_INT_32)));
-        symbol_table_define_type(root_table, u64_token_index,
-            type_system_find_or_create_type(&analyser->type_system, type_signature_make_primitive(Primitive_Type::UNSIGNED_INT_64)));
-        symbol_table_define_type(root_table, i8_token_index,
-            type_system_find_or_create_type(&analyser->type_system, type_signature_make_primitive(Primitive_Type::SIGNED_INT_8)));
-        symbol_table_define_type(root_table, i16_token_index,
-            type_system_find_or_create_type(&analyser->type_system, type_signature_make_primitive(Primitive_Type::SIGNED_INT_16)));
-        symbol_table_define_type(root_table, i32_token_index,
-            type_system_find_or_create_type(&analyser->type_system, type_signature_make_primitive(Primitive_Type::SIGNED_INT_32)));
-        symbol_table_define_type(root_table, i64_token_index,
-            type_system_find_or_create_type(&analyser->type_system, type_signature_make_primitive(Primitive_Type::SIGNED_INT_64)));
+        symbol_table_define_type(root_table, int_token_index, analyser->type_system.i32_type);
+        symbol_table_define_type(root_table, bool_token_index, analyser->type_system.bool_type);
+        symbol_table_define_type(root_table, float_token_index, analyser->type_system.f32_type);
+        symbol_table_define_type(root_table, f32_token_index, analyser->type_system.f32_type);
+        symbol_table_define_type(root_table, f64_token_index, analyser->type_system.f64_type);
+        symbol_table_define_type(root_table, u8_token_index, analyser->type_system.u8_type);
+        symbol_table_define_type(root_table, byte_token_index, analyser->type_system.u8_type);
+        symbol_table_define_type(root_table, u16_token_index, analyser->type_system.u16_type);
+        symbol_table_define_type(root_table, u32_token_index, analyser->type_system.u32_type);
+        symbol_table_define_type(root_table, u64_token_index, analyser->type_system.u64_type);
+        symbol_table_define_type(root_table, i8_token_index, analyser->type_system.i8_type);
+        symbol_table_define_type(root_table, i16_token_index, analyser->type_system.i16_type);
+        symbol_table_define_type(root_table, i32_token_index, analyser->type_system.i32_type);
+        symbol_table_define_type(root_table, i64_token_index, analyser->type_system.i64_type);
+        symbol_table_define_type(root_table, void_token_index, analyser->type_system.void_type);
 
         analyser->size_token_index = lexer_add_or_find_identifier_by_string(parser->lexer, string_create_static("size"));
         analyser->data_token_index = lexer_add_or_find_identifier_by_string(parser->lexer, string_create_static("data"));
         analyser->main_token_index = lexer_add_or_find_identifier_by_string(parser->lexer, string_create_static("main"));
-        analyser->error_type_index = type_system_find_or_create_type(&analyser->type_system, type_signature_make_error());
     }
 
     // Add symbols for hardcoded functions
-    for (int i = 0; i < analyser->hardcoded_functions.size; i++) 
+    for (int i = 0; i < analyser->hardcoded_functions.size; i++)
     {
         Hardcoded_Function_Type type = analyser->hardcoded_functions[i].type;
-        Type_Signature sig;
-        sig.type = Signature_Type::FUNCTION;
-        sig.alignment_in_bytes = sig.array_size = sig.child_type_index = sig.size_in_bytes = 0;
-        sig.parameter_type_indices = dynamic_array_create_empty<int>(1);
-        sig.return_type_index = analyser->i32_type_index;
+        DynamicArray<Type_Signature*> parameter_types = dynamic_array_create_empty<Type_Signature*>(1);
+        Type_Signature* return_type = analyser->type_system.void_type;
         int name_handle;
         switch (type)
         {
         case Hardcoded_Function_Type::PRINT_I32: {
-            dynamic_array_push_back(&sig.parameter_type_indices, analyser->i32_type_index);
+            dynamic_array_push_back(&parameter_types, analyser->type_system.i32_type);
             name_handle = lexer_add_or_find_identifier_by_string(analyser->parser->lexer, string_create_static("print_i32"));
             break;
         }
         case Hardcoded_Function_Type::PRINT_F32: {
-            dynamic_array_push_back(&sig.parameter_type_indices, analyser->f32_type_index);
+            dynamic_array_push_back(&parameter_types, analyser->type_system.f32_type);
             name_handle = lexer_add_or_find_identifier_by_string(analyser->parser->lexer, string_create_static("print_f32"));
             break;
         }
         case Hardcoded_Function_Type::PRINT_BOOL: {
-            dynamic_array_push_back(&sig.parameter_type_indices, analyser->bool_type_index);
+            dynamic_array_push_back(&parameter_types, analyser->type_system.bool_type);
             name_handle = lexer_add_or_find_identifier_by_string(analyser->parser->lexer, string_create_static("print_bool"));
             break;
         }
@@ -1040,32 +1077,29 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, AST_Parser* parser)
         }
         case Hardcoded_Function_Type::READ_I32: {
             name_handle = lexer_add_or_find_identifier_by_string(analyser->parser->lexer, string_create_static("read_i32"));
-            sig.return_type_index = analyser->i32_type_index;
+            return_type = analyser->type_system.i32_type;
             break;
         }
         case Hardcoded_Function_Type::READ_F32: {
             name_handle = lexer_add_or_find_identifier_by_string(analyser->parser->lexer, string_create_static("read_f32"));
-            sig.return_type_index = analyser->f32_type_index;
+            return_type = analyser->type_system.f32_type;
             break;
         }
         case Hardcoded_Function_Type::READ_BOOL: {
             name_handle = lexer_add_or_find_identifier_by_string(analyser->parser->lexer, string_create_static("read_bool"));
-            sig.return_type_index = analyser->bool_type_index;
+            return_type = analyser->type_system.bool_type;
             break;
         }
         case Hardcoded_Function_Type::RANDOM_I32: {
             name_handle = lexer_add_or_find_identifier_by_string(analyser->parser->lexer, string_create_static("random_i32"));
-            sig.return_type_index = analyser->i32_type_index;
+            return_type = analyser->type_system.i32_type;
             break;
         }
         default:
             panic("What");
         }
         analyser->hardcoded_functions[i].name_handle = name_handle;
-        analyser->hardcoded_functions[i].type_handle = type_system_find_or_create_type(
-            &analyser->type_system,
-            sig
-        );
+        analyser->hardcoded_functions[i].function_type = type_system_make_function(&analyser->type_system, parameter_types, return_type);
         Symbol* func = symbol_table_find_symbol_of_type(root_table, analyser->hardcoded_functions[i].name_handle, Symbol_Type::FUNCTION);
         if (func != 0) {
             semantic_analyser_log_error(analyser, "Hardcoded_Function already defined!", 0);
@@ -1073,8 +1107,8 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, AST_Parser* parser)
         else {
             Symbol s;
             s.symbol_type = Symbol_Type::FUNCTION;
-            s.type_index = analyser->hardcoded_functions[i].type_handle;
-            s.name = analyser->hardcoded_functions[i].name_handle;
+            s.type = analyser->hardcoded_functions[i].function_type;
+            s.name_handle = analyser->hardcoded_functions[i].name_handle;
             dynamic_array_push_back(&root_table->symbols, s);
         }
     }

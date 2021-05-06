@@ -6,15 +6,15 @@
 #include "../utility/utils.hpp"
 
 HMODULE opengl_module = 0;
-void* opengl_get_function_address(const char* name) 
+void* opengl_get_function_address(const char* name_handle) 
 {
-    void* function_address = (void*)wglGetProcAddress(name);
+    void* function_address = (void*)wglGetProcAddress(name_handle);
     // Check if failed
     if ((i64)function_address <= 3 || function_address == (void*)-1) { // wglGetProcAddress failed
         if (opengl_module == 0) {
             opengl_module = LoadLibraryA("opengl32.dll");
         }
-        function_address = GetProcAddress(opengl_module, name);
+        function_address = GetProcAddress(opengl_module, name_handle);
     }
     return function_address;
 }

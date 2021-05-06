@@ -104,7 +104,7 @@ struct ShaderVariableInformation
     GLint location;
     GLenum type;
     GLsizei size; // Size of array, if variable is array, else 1
-    String name;
+    String name_handle;
 };
 
 struct ShaderProgram
@@ -130,10 +130,10 @@ void shader_program_destroy(Optional<ShaderProgram*> program);
 
 void shader_program_use(ShaderProgram* program, OpenGLState* state);
 void shader_program_print_variable_information(ShaderProgram* program);
-ShaderVariableInformation* shader_program_find_shader_variable_information_by_name(ShaderProgram* program, const char* name);
-bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name, int value);
-bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name, u32 value);
-bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name, float value);
+ShaderVariableInformation* shader_program_find_shader_variable_information_by_name(ShaderProgram* program, const char* name_handle);
+bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name_handle, int value);
+bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name_handle, u32 value);
+bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name_handle, float value);
 
 struct vec2;
 struct vec3;
@@ -141,9 +141,9 @@ struct vec4;
 struct mat2;
 struct mat3;
 struct mat4;
-bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name, const vec2& value);
-bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name, const vec3& value);
-bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name, const vec4& value);
-bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name, const mat2& value);
-bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name, const mat3& value);
-bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name, const mat4& value);
+bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name_handle, const vec2& value);
+bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name_handle, const vec3& value);
+bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name_handle, const vec4& value);
+bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name_handle, const mat2& value);
+bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name_handle, const mat3& value);
+bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name_handle, const mat4& value);

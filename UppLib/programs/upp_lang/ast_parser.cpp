@@ -933,6 +933,11 @@ bool ast_parser_parse_statement(AST_Parser* parser, AST_Node_Index parent_index)
     {
         parser->nodes[node_index].type = AST_Node_Type::STATEMENT_RETURN;
         parser->index++;
+        if (ast_parser_test_next_token(parser, Token_Type::SEMICOLON)) {
+            parser->index++;
+            parser->token_mapping[node_index] = token_range_make(checkpoint.rewind_token_index, parser->index);
+            return true;
+        }
         if (!ast_parser_parse_expression(parser, node_index)) {
             ast_parser_checkpoint_reset(checkpoint);
             return false;

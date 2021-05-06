@@ -25,6 +25,7 @@ String primitive_type_to_string(Primitive_Type type);
 
 enum class Signature_Type
 {
+    VOID_TYPE,
     PRIMITIVE,
     POINTER,
     FUNCTION,
@@ -37,37 +38,46 @@ enum class Signature_Type
 struct Type_Signature
 {
     Signature_Type type;
-    Primitive_Type primitive_type;
     int size_in_bytes;
     int alignment_in_bytes;
-    // Array or Pointer Child
-    int child_type_index;
+    // Primitve type
+    Primitive_Type primitive_type;
+    // Array or Pointer Stuff
+    Type_Signature* child_type;
     // Function Stuff
-    DynamicArray<int> parameter_type_indices;
-    int return_type_index;
-    // Array Data
-    int array_size;
+    DynamicArray<Type_Signature*> parameter_types;
+    Type_Signature* return_type;
+    // Array Stuff
+    int array_element_count;
 };
+void type_signature_append_to_string(String* string, Type_Signature* signature);
 
 // This will later also contain which types can be implicitly cast, maybe i need to rethink some stuff for structs
 struct Type_System
 {
-    DynamicArray<Type_Signature> types;
-};
+    DynamicArray<Type_Signature*> types;
 
-Type_Signature type_signature_make_error();
-Type_Signature type_signature_make_pointer(int type_index_pointed_to);
-Type_Signature type_signature_make_primitive(Primitive_Type type);
-Type_Signature type_signature_make_array_unsized(Type_System* system, int array_element_index);
-Type_Signature type_signature_make_array_sized(Type_System* system, int array_element_index, int array_size);
+    Type_Signature* error_type;
+    Type_Signature* bool_type;
+    Type_Signature* i8_type;
+    Type_Signature* i16_type;
+    Type_Signature* i32_type;
+    Type_Signature* i64_type;
+    Type_Signature* u8_type;
+    Type_Signature* u16_type;
+    Type_Signature* u32_type;
+    Type_Signature* u64_type;
+    Type_Signature* f32_type;
+    Type_Signature* f64_type;
+    Type_Signature* void_type;
+};
 
 Type_System type_system_create();
 void type_system_destroy(Type_System* system);
 void type_system_reset_all(Type_System* system);
-int type_system_find_or_create_type(Type_System* system, Type_Signature s);
-Type_Signature* type_system_get_type(Type_System* system, int index);
-Type_Signature* type_system_get_child_type(Type_System* system, int index);
-void type_index_append_to_string(String* string, Type_System* system, int index);
+Type_Signature* type_system_make_pointer(Type_System* system, Type_Signature* child_type);
+Type_Signature* type_system_make_array_unsized(Type_System* system, Type_Signature* element_type);
+Type_Signature* type_system_make_array_sized(Type_System* system, Type_Signature* element_type, int array_element_count);
 void type_system_print(Type_System* system);
 
 
@@ -90,7 +100,7 @@ struct Hardcoded_Function
 {
     Hardcoded_Function_Type type;
     int name_handle;
-    int type_handle;
+    Type_Signature* function_type;
 };
 
 
@@ -107,9 +117,9 @@ namespace Symbol_Type
 
 struct Symbol
 {
-    int name;
+    int name_handle;
     Symbol_Type::ENUM symbol_type; // Required since functions, variables and Types could have the same type? TODO: Check this
-    int type_index;
+    Type_Signature* type;
 };
 
 struct Symbol_Table
@@ -121,8 +131,8 @@ struct Symbol_Table
 struct Semantic_Node_Information
 {
     int symbol_table_index; // Which symbol table is active in this node
-    int expression_result_type_index;
-    int function_signature_index;
+    Type_Signature* expression_result_type;
+    Type_Signature* function_signature;
 };
 
 struct Semantic_Analyser
@@ -133,18 +143,15 @@ struct Semantic_Analyser
     DynamicArray<Compiler_Error> errors;
     Array<Hardcoded_Function> hardcoded_functions;
 
-    // Temporary stuff needed for analysis
-    AST_Parser* parser;
-    int function_return_type_index;
-    int loop_depth;
-
+    // Usefull stuff for now
     int size_token_index;
     int data_token_index;
     int main_token_index;
-    int error_type_index;
-    int bool_type_index;
-    int i32_type_index;
-    int f32_type_index;
+
+    // Temporary stuff needed for analysis
+    AST_Parser* parser;
+    Type_Signature* function_return_type;
+    int loop_depth;
 };
 
 enum class Statement_Analysis_Result
@@ -157,14 +164,14 @@ enum class Statement_Analysis_Result
 
 struct Expression_Analysis_Result
 {
-    int type_index;
+    Type_Signature* type;
     bool has_memory_address;
 };
 
 Symbol_Table symbol_table_create(Symbol_Table* parent);
 void symbol_table_destroy(Symbol_Table* table);
-Symbol* symbol_table_find_symbol(Symbol_Table* table, int name, bool* in_current_scope);
-Symbol* symbol_table_find_symbol_of_type(Symbol_Table* table, int name, Symbol_Type::ENUM symbol_type);
+Symbol* symbol_table_find_symbol(Symbol_Table* table, int name_handle, bool* in_current_scope);
+Symbol* symbol_table_find_symbol_of_type(Symbol_Table* table, int name_handle, Symbol_Type::ENUM symbol_type);
 
 Semantic_Analyser semantic_analyser_create();
 void semantic_analyser_destroy(Semantic_Analyser* analyser);

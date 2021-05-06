@@ -89,7 +89,7 @@ Array<FileInfo> directory_crawler_create_file_infos(DirectoryCrawler* crawler)
         {
             info.is_directory = found_file_description.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY;
             info.size = found_file_description.nFileSizeHigh * (((i64)MAXDWORD)+1) + found_file_description.nFileSizeLow;
-            info.name = string_create(found_file_description.cFileName);
+            info.name_handle = string_create(found_file_description.cFileName);
         }
         dynamic_array_push_back(&file_infos, info);
     } while (FindNextFile(search_handle, &found_file_description) != 0);
@@ -106,7 +106,7 @@ Array<FileInfo> directory_crawler_create_file_infos(DirectoryCrawler* crawler)
 
 void directory_crawler_destroy_file_infos(Array<FileInfo>* file_infos) {
     for (int i = 0; i < file_infos->size; i++) {
-        string_destroy(&file_infos->data[i].name);
+        string_destroy(&file_infos->data[i].name_handle);
     }
     array_destroy(file_infos);
 }

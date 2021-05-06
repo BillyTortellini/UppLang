@@ -1981,21 +1981,27 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
         text_append_to_string(&editor->lines, &source_code);
 
         // Compile
+        double lexer_start_time = timing_current_time_in_seconds();
         lexer_parse_string(&editor->lexer, &source_code);
+        double parser_start_time = timing_current_time_in_seconds();
         ast_parser_parse(&editor->parser, &editor->lexer);
+        double semantic_analysis_start_time = timing_current_time_in_seconds();
         if (editor->parser.errors.size == 0) {
             semantic_analyser_analyse(&editor->analyser, &editor->parser);
         }
+        double intermediate_generator_start_time = timing_current_time_in_seconds();
+        double bytecode_generator_start_time = timing_current_time_in_seconds();
         if (editor->parser.errors.size == 0 && editor->analyser.errors.size == 0 && input->key_pressed[KEY_CODE::F5])
         {
             // Generate Intermediate Code
             intermediate_generator_generate(&editor->intermediate_generator, &editor->analyser);
+            bytecode_generator_start_time = timing_current_time_in_seconds();
             // Generate Bytecode from IM
             bytecode_generator_generate(&editor->generator, &editor->intermediate_generator);
         }
-
+        double debug_print_start_time = timing_current_time_in_seconds();
         // Debug Print
-        if (input->key_pressed[KEY_CODE::F5])
+        if (input->key_pressed[KEY_CODE::F5] && true)
         {
             logg("\n\n\n\n\n\n\n\n\n\n\n\n--------SOURCE CODE--------: \n%s\n\n", source_code.characters);
             logg("\n\n\n\n--------LEXER RESULT--------:\n");
@@ -2015,7 +2021,7 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
                 logg("--------TYPE SYSTEM RESULT--------:\n");
                 type_system_print(&editor->analyser.type_system);
             }
-            if (editor->analyser.errors.size == 0) 
+            if (editor->analyser.errors.size == 0)
             {
                 String result_str = string_create_empty(32);
                 SCOPE_EXIT(string_destroy(&result_str));
@@ -2027,6 +2033,16 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
                 logg("----------------BYTECODE_GENERATOR RESULT---------------: \n%s\n", result_str.characters);
             }
         }
+        double debug_print_end_time = timing_current_time_in_seconds();
+        logg(
+            "--------- TIMINGS -----------\nlexer time: \t%3.2fms\nparser time: \t%3.2fms\nanalyser time: %3.2fms\nintermediate time: %3.2fms\nbytecode time: %3.2fms\ndebug print: %3.2fms\n",
+            (float)(parser_start_time - lexer_start_time) * 1000.0f,
+            (float)(semantic_analysis_start_time - parser_start_time) * 1000.0f,
+            (float)(intermediate_generator_start_time - semantic_analysis_start_time) * 1000.0f,
+            (float)(bytecode_generator_start_time - intermediate_generator_start_time) * 1000.0f,
+            (float)(debug_print_start_time - bytecode_generator_start_time) * 1000.0f,
+            (float)(debug_print_end_time - debug_print_start_time) * 1000.0f
+        );
 
         // Execute
         if (editor->parser.errors.size == 0 && editor->analyser.errors.size == 0 && input->key_pressed[KEY_CODE::F5] && true)

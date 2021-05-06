@@ -1,10 +1,18 @@
 Current Work Item:
 ------------------
- * Exit should just be done with code
- * Replace type_index with Type_Signature* globally
  * Functions with no return values
  * Structs
  * Syntax for new/delete
+
+ Functions with no return values:
+    main :: (x: int) -> void
+ If i implement a void type, then the parser and the type system would not be concerned, only analyser, im-generator and code-generator
+  This concerns:
+    - Parser (AST_Node for function may not have a return value now)
+    - Type_System (Currently all function types have a return value)
+    - Semantic Analysis (You cannot move results from void functions to somewhere)
+    - Intermediate Generator (Return must be able to return nothing)
+    - Bytecode Generator (Return must be able to do nothing, also return type should not be loaded)
 
 Long-Term Goals:
 ----------------
@@ -16,7 +24,6 @@ Long-Term Goals:
 
 More Language features to implement:
 ------------------------------------
- * Hard-Coded functions for print, maybe input or other stuff
  * Structs
  * Syntax for new/delete
    ------- Before this I should implement some editor features (Linter at least) -------
@@ -73,10 +80,10 @@ Ideas that need to be tested:
 
 Improvements that should be made (When I have time):
 ----------------------------------------------------
-Replace type_index int with just a Type_Signature pointer. This way, the type_system
-struct is not necessary to get to type information, and comparisions are also possible by just
-comparing the pointers. This seems way better than the stuff I currently have.
-Also replace name_id with name_handle in lexer. I think I would like to do that now.
+Replace all namespace ENUM types with enum class things.
+
+Maybe we could also use String* for names, since then I only need to compare string pointers, and not actually strings.
+This would also make debuggin so much easier, since we would see the names of things.
 
 Semantic Analyse should keep the node_index of the first definition of each symbol (Symbol table), 
 currently only true for functions. 
@@ -85,16 +92,30 @@ Improved Parser-Error handling. (Function-Parsing Error handling should check ea
 
 Open Questions:
 ---------------
-Intermediate Code should not hold type information of register results, these should be from semantic analysis
-although this is not quite true, since some operations are implicitily given by the AST (Array access and stuff)
-But it would be nice if the intermediate Code + Type-System is enough to create the final output, 
-so its not too bad to copy the type from the semantic analyser
+Should I change the function syntax? 
+From
+    main :: (x:int, y: int) -> int {}
+To
+    main(x: int, y: int) -> int {}
+    main(x: int) -> 
+Maybe, but i dont think it makes a big difference, and it wont work with structs or other fixed data
+I actually quite like it, so I will probably do it 
+The problem here is that function calls will look very similar to function definitions
+    main(15);
+    main(x: int){}
+But function calls can only be done in expressions, so parsing this should be no problem!
+I dont actually think i want this, the more i think about it. It does not make a difference and it may not make sense
 
 How does the syntax for array initialization look like?
     C:
         int x[] = {1, 2, 3, 4, 5}; 
     UppLang:
         x: []int = [1, 2, 3, 4, 5]; // Could this be a potential problem with array access? -> Dont really think so
+
+How do i implement dynamic arrays?
+I think it would be really nice if the language would know about these
+    x: [..]int;
+    new [5]int;
 
 
 

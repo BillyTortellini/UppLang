@@ -3,7 +3,7 @@
 /*
     FUNCTION POINTER LOADING HELPERS
 */
-void* opengl_get_function_address(const char* name);
+void* opengl_get_function_address(const char* name_handle);
 bool opengl_load_all_functions();
 void opengl_print_all_extensions(void* hdc); // Because I dont want to include Windows.h for HDC typedef, this is void*
 

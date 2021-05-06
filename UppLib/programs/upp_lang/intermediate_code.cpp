@@ -4,7 +4,7 @@ int intermediate_generator_find_variable_register_by_name(Intermediate_Generator
 {
     Intermediate_Function* function = &generator->functions[generator->current_function_index];
     for (int i = generator->variable_mappings.size - 1; i >= 0; i--) {
-        if (generator->variable_mappings[i].name == name_id) {
+        if (generator->variable_mappings[i].name_handle == name_id) {
             return generator->variable_mappings[i].register_index;
         }
     }
@@ -12,12 +12,13 @@ int intermediate_generator_find_variable_register_by_name(Intermediate_Generator
     return -1;
 }
 
-Data_Access intermediate_generator_create_intermediate_register(Intermediate_Generator* generator, int type_index)
+Data_Access intermediate_generator_create_intermediate_register(Intermediate_Generator* generator, Type_Signature* type_signature)
 {
+    if (type_signature == generator->analyser->type_system.void_type) panic("Should not happen");
     Intermediate_Function* function = &generator->functions[generator->current_function_index];
 
     Intermediate_Register reg;
-    reg.type_index = type_index;
+    reg.type_signature = type_signature;
     reg.type = Intermediate_Register_Type::EXPRESSION_RESULT;
     dynamic_array_push_back(&function->registers, reg);
 
@@ -28,34 +29,35 @@ Data_Access intermediate_generator_create_intermediate_register(Intermediate_Gen
     return result;
 }
 
-void intermediate_generator_create_parameter_register(Intermediate_Generator* generator, int name_id, int type_index, int parameter_index)
+void intermediate_generator_create_parameter_register(Intermediate_Generator* generator, int name_id, Type_Signature* type_signature, int parameter_index)
 {
+    if (type_signature == generator->analyser->type_system.void_type) panic("Should not happen");
     Intermediate_Function* function = &generator->functions[generator->current_function_index];
 
     Intermediate_Register reg;
     reg.parameter_index = parameter_index;
-    reg.type_index = type_index;
+    reg.type_signature = type_signature;
     reg.type = Intermediate_Register_Type::PARAMETER;
     dynamic_array_push_back(&function->registers, reg);
 
     Variable_Mapping m;
-    m.name = name_id;
+    m.name_handle = name_id;
     m.register_index = function->registers.size - 1;
     dynamic_array_push_back(&generator->variable_mappings, m);
 }
 
-void intermediate_generator_create_variable_register(Intermediate_Generator* generator, int name_id, int type_index)
+void intermediate_generator_create_variable_register(Intermediate_Generator* generator, int name_id, Type_Signature* type_signature)
 {
     Intermediate_Function* function = &generator->functions[generator->current_function_index];
 
     Intermediate_Register reg;
-    reg.type_index = type_index;
+    reg.type_signature = type_signature;
     reg.type = Intermediate_Register_Type::VARIABLE;
     reg.name_id = name_id;
     dynamic_array_push_back(&function->registers, reg);
 
     Variable_Mapping m;
-    m.name = name_id;
+    m.name_handle = name_id;
     m.register_index = function->registers.size - 1;
     dynamic_array_push_back(&generator->variable_mappings, m);
 }
@@ -63,8 +65,8 @@ void intermediate_generator_create_variable_register(Intermediate_Generator* gen
 int intermediate_generator_find_function_by_name(Intermediate_Generator* generator, int name_id)
 {
     for (int i = 0; i < generator->function_to_ast_node_mapping.size; i++) {
-        int name = generator->analyser->parser->nodes[generator->function_to_ast_node_mapping[i]].name_id;
-        if (name == name_id) {
+        int name_handle = generator->analyser->parser->nodes[generator->function_to_ast_node_mapping[i]].name_id;
+        if (name_handle == name_id) {
             return i;
         }
     }
@@ -72,7 +74,7 @@ int intermediate_generator_find_function_by_name(Intermediate_Generator* generat
     return 0;
 }
 
-int intermediate_instruction_binary_operation_get_result_type(Intermediate_Instruction_Type instr_type, Intermediate_Generator* generator)
+Type_Signature* intermediate_instruction_binary_operation_get_result_type(Intermediate_Instruction_Type instr_type, Intermediate_Generator* generator)
 {
     switch (instr_type)
     {
@@ -82,13 +84,13 @@ int intermediate_instruction_binary_operation_get_result_type(Intermediate_Instr
     case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_I32:
     case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_I32:
     case Intermediate_Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I32:
-        return generator->analyser->i32_type_index;
+        return generator->analyser->type_system.i32_type;
     case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_F32: 
     case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_F32:
     case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_F32:
     case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_F32:
     case Intermediate_Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_F32:
-        return generator->analyser->f32_type_index;
+        return generator->analyser->type_system.f32_type;
     case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_I32:
     case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_I32:
     case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_I32:
@@ -106,31 +108,31 @@ int intermediate_instruction_binary_operation_get_result_type(Intermediate_Instr
     case Intermediate_Instruction_Type::BINARY_OP_BOOLEAN_AND:
     case Intermediate_Instruction_Type::BINARY_OP_BOOLEAN_OR:
     case Intermediate_Instruction_Type::UNARY_OP_BOOLEAN_NOT:
-        return generator->analyser->bool_type_index;
+        return generator->analyser->type_system.bool_type;
     }
     panic("Sheit\n");
     return 0;
 }
 
-Intermediate_Instruction_Type binary_operation_get_instruction_type(Intermediate_Generator* generator, AST_Node_Type::ENUM op_type, int operand_types)
+Intermediate_Instruction_Type binary_operation_get_instruction_type(Intermediate_Generator* generator, AST_Node_Type::ENUM op_type, Type_Signature* operand_types)
 {
     switch (op_type)
     {
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_ADDITION:
-        if (operand_types == generator->analyser->i32_type_index) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32;
-        if (operand_types == generator->analyser->f32_type_index) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_F32;
+        if (operand_types == generator->analyser->type_system.i32_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32;
+        if (operand_types == generator->analyser->type_system.f32_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_F32;
         panic("Not valid, should have been caught!");
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_SUBTRACTION:
-        if (operand_types == generator->analyser->i32_type_index) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_I32;
-        if (operand_types == generator->analyser->f32_type_index) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_F32;
+        if (operand_types == generator->analyser->type_system.i32_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_I32;
+        if (operand_types == generator->analyser->type_system.f32_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_F32;
         panic("Not valid, should have been caught!");
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_DIVISION:
-        if (operand_types == generator->analyser->i32_type_index) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_I32;
-        if (operand_types == generator->analyser->f32_type_index) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_F32;
+        if (operand_types == generator->analyser->type_system.i32_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_I32;
+        if (operand_types == generator->analyser->type_system.f32_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_F32;
         panic("Not valid, should have been caught!");
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_MULTIPLICATION:
-        if (operand_types == generator->analyser->i32_type_index) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_I32;
-        if (operand_types == generator->analyser->f32_type_index) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_F32;
+        if (operand_types == generator->analyser->type_system.i32_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_I32;
+        if (operand_types == generator->analyser->type_system.f32_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_F32;
         panic("Not valid, should have been caught!");
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_MODULO:
         return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_I32;
@@ -139,30 +141,30 @@ Intermediate_Instruction_Type binary_operation_get_instruction_type(Intermediate
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_OR:
         return Intermediate_Instruction_Type::BINARY_OP_BOOLEAN_OR;
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_EQUAL:
-        if (operand_types == generator->analyser->i32_type_index) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_I32;
-        if (operand_types == generator->analyser->f32_type_index) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_F32;
-        if (operand_types == generator->analyser->bool_type_index) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_BOOL;
+        if (operand_types == generator->analyser->type_system.i32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_I32;
+        if (operand_types == generator->analyser->type_system.f32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_F32;
+        if (operand_types == generator->analyser->type_system.bool_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_BOOL;
         panic("Not valid, should have been caught!");
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_NOT_EQUAL:
-        if (operand_types == generator->analyser->i32_type_index) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_I32;
-        if (operand_types == generator->analyser->f32_type_index) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_F32;
-        if (operand_types == generator->analyser->bool_type_index) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_BOOL;
+        if (operand_types == generator->analyser->type_system.i32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_I32;
+        if (operand_types == generator->analyser->type_system.f32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_F32;
+        if (operand_types == generator->analyser->type_system.bool_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_BOOL;
         panic("Not valid, should have been caught!");
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_LESS:
-        if (operand_types == generator->analyser->i32_type_index) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_I32;
-        if (operand_types == generator->analyser->f32_type_index) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_F32;
+        if (operand_types == generator->analyser->type_system.i32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_I32;
+        if (operand_types == generator->analyser->type_system.f32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_F32;
         panic("Not valid, should have been caught!");
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_LESS_OR_EQUAL:
-        if (operand_types == generator->analyser->i32_type_index) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_I32;
-        if (operand_types == generator->analyser->f32_type_index) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_F32;
+        if (operand_types == generator->analyser->type_system.i32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_I32;
+        if (operand_types == generator->analyser->type_system.f32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_F32;
         panic("Not valid, should have been caught!");
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_GREATER:
-        if (operand_types == generator->analyser->i32_type_index) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_I32;
-        if (operand_types == generator->analyser->f32_type_index) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_F32;
+        if (operand_types == generator->analyser->type_system.i32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_I32;
+        if (operand_types == generator->analyser->type_system.f32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_F32;
         panic("Not valid, should have been caught!");
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_GREATER_OR_EQUAL:
-        if (operand_types == generator->analyser->i32_type_index) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_I32;
-        if (operand_types == generator->analyser->f32_type_index) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_F32;
+        if (operand_types == generator->analyser->type_system.i32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_I32;
+        if (operand_types == generator->analyser->type_system.f32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_F32;
         panic("Not valid, should have been caught!");
     }
     panic("This should not happen :)\n");
@@ -204,21 +206,12 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
         if (function_symbol == 0) panic("Should not happen, maybe semantic information isnt complete yet!");
 
         Intermediate_Instruction instr;
-        if (force_destination) {
-            instr.destination = destination;
-        }
-        else {
-            instr.destination = intermediate_generator_create_intermediate_register(
-                generator,
-                generator->analyser->semantic_information[expression_index].expression_result_type_index
-            );
-        }
         // Check if its an hardcoded function
         bool is_hardcoded = false;
         for (int i = 0; i < generator->analyser->hardcoded_functions.size; i++) {
             if (expression->name_id == generator->analyser->hardcoded_functions[i].name_handle) {
                 instr.type = Intermediate_Instruction_Type::CALL_HARDCODED_FUNCTION;
-                instr.constant_i32_value = (i32)generator->analyser->hardcoded_functions[i].type;
+                instr.hardcoded_function_type = generator->analyser->hardcoded_functions[i].type;
                 is_hardcoded = true;
             }
         }
@@ -234,6 +227,22 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
             Data_Access argument = intermediate_generator_generate_expression(generator, expression->children[i], false, data_access_make_empty());
             dynamic_array_push_back(&instr.arguments, argument);
         }
+        // Generate destination
+        if (generator->analyser->semantic_information[expression_index].expression_result_type != generator->analyser->type_system.void_type)
+        {
+            if (force_destination) {
+                instr.destination = destination;
+            }
+            else {
+                instr.destination = intermediate_generator_create_intermediate_register(
+                    generator,
+                    generator->analyser->semantic_information[expression_index].expression_result_type
+                );
+            }
+        }
+        else {
+            instr.destination = data_access_make_empty();
+        }
         dynamic_array_push_back(&function->instructions, instr);
         return instr.destination;
     }
@@ -246,26 +255,22 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
         else {
             instr.destination = intermediate_generator_create_intermediate_register(
                 generator,
-                generator->analyser->semantic_information[expression_index].expression_result_type_index
+                generator->analyser->semantic_information[expression_index].expression_result_type
             );
         }
 
         Token& token = generator->analyser->parser->lexer->tokens[generator->analyser->parser->token_mapping[expression_index].start_index];
-        int result_type;
         if (token.type == Token_Type::FLOAT_LITERAL) {
-            result_type = generator->analyser->f32_type_index;
             instr.type = Intermediate_Instruction_Type::LOAD_CONSTANT_F32;
             instr.constant_f32_value = token.attribute.float_value;
         }
         else if (token.type == Token_Type::INTEGER_LITERAL) {
-            result_type = generator->analyser->i32_type_index;
             instr.type = Intermediate_Instruction_Type::LOAD_CONSTANT_I32;
             instr.constant_i32_value = token.attribute.integer_value;
         }
         else if (token.type == Token_Type::BOOLEAN_LITERAL) {
-            result_type = generator->analyser->bool_type_index;
             instr.type = Intermediate_Instruction_Type::LOAD_CONSTANT_BOOL;
-            instr.constant_i32_value = token.attribute.bool_value;
+            instr.constant_bool_value = token.attribute.bool_value;
         }
         else panic("what");
 
@@ -314,7 +319,7 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
         else {
             instr.destination = intermediate_generator_create_intermediate_register(
                 generator,
-                generator->analyser->semantic_information[expression_index].expression_result_type_index
+                generator->analyser->semantic_information[expression_index].expression_result_type
             );
         }
         dynamic_array_push_back(&function->instructions, instr);
@@ -333,7 +338,7 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
         {
             // This is the case for multiple dereferences
             result_access = intermediate_generator_create_intermediate_register(generator,
-                generator->analyser->semantic_information[expression->children[0]].expression_result_type_index);
+                generator->analyser->semantic_information[expression->children[0]].expression_result_type);
             Intermediate_Instruction instr;
             instr.type = Intermediate_Instruction_Type::MOVE_DATA;
             instr.destination = result_access;
@@ -362,10 +367,7 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
     case AST_Node_Type::EXPRESSION_MEMBER_ACCESS:
     {
         Data_Access structure_data = intermediate_generator_generate_expression(generator, expression->children[0], false, data_access_make_empty());
-        Type_Signature* accessor_signature = type_system_get_type(
-            &generator->analyser->type_system,
-            function->registers[structure_data.register_index].type_index
-        );
+        Type_Signature* accessor_signature = function->registers[structure_data.register_index].type_signature;
 
         int member_offset;
         if (expression->name_id == generator->analyser->size_token_index) {
@@ -387,7 +389,7 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
                     instr.destination = destination;
                 }
                 else {
-                    instr.destination = intermediate_generator_create_intermediate_register(generator, generator->analyser->i32_type_index);
+                    instr.destination = intermediate_generator_create_intermediate_register(generator, generator->analyser->type_system.i32_type);
                 }
                 dynamic_array_push_back(&function->instructions, instr);
                 return instr.destination;
@@ -400,9 +402,9 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
                     instr.destination = destination;
                 }
                 else {
-                    instr.destination = intermediate_generator_create_intermediate_register(generator, generator->analyser->i32_type_index);
+                    instr.destination = intermediate_generator_create_intermediate_register(generator, generator->analyser->type_system.i32_type);
                 }
-                instr.constant_i32_value = accessor_signature->array_size;
+                instr.constant_i32_value = accessor_signature->array_element_count;
                 dynamic_array_push_back(&function->instructions, instr);
                 return instr.destination;
             }
@@ -414,8 +416,9 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
         instr.constant_i32_value = member_offset;
         instr.destination = intermediate_generator_create_intermediate_register(
             generator,
-            type_system_find_or_create_type(&generator->analyser->type_system,
-                type_signature_make_pointer(generator->analyser->semantic_information[expression_index].expression_result_type_index)
+            type_system_make_pointer(
+                &generator->analyser->type_system,
+                generator->analyser->semantic_information[expression_index].expression_result_type
             )
         );
         instr.source1 = structure_data;
@@ -436,13 +439,9 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
     }
     case AST_Node_Type::EXPRESSION_ARRAY_ACCESS:
     {
-        int array_type = generator->analyser->semantic_information[expression->children[0]].expression_result_type_index;
-        Type_Signature* array_type_signature = type_system_get_type(&generator->analyser->type_system, array_type);
-        Type_Signature* element_type_signature = type_system_get_type(&generator->analyser->type_system, array_type_signature->child_type_index);
-        int element_pointer_type = type_system_find_or_create_type(
-            &generator->analyser->type_system,
-            type_signature_make_pointer(array_type_signature->child_type_index)
-        );
+        Type_Signature* array_type_signature = generator->analyser->semantic_information[expression->children[0]].expression_result_type;
+        Type_Signature* element_type_signature = array_type_signature->child_type;
+        Type_Signature* element_pointer_type = type_system_make_pointer(&generator->analyser->type_system, array_type_signature->child_type);
 
         Data_Access array_data = intermediate_generator_generate_expression(generator, expression->children[0], false, data_access_make_empty());
         Data_Access index_data = intermediate_generator_generate_expression(generator, expression->children[1], false, data_access_make_empty());
@@ -482,20 +481,19 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
                 // If its an sized array, i need to compare the index data with the constant size of something 
                 Intermediate_Instruction load_size_instr;
                 load_size_instr.type = Intermediate_Instruction_Type::LOAD_CONSTANT_I32;
-                load_size_instr.destination = intermediate_generator_create_intermediate_register(generator, generator->analyser->i32_type_index);
-                load_size_instr.constant_i32_value = array_type_signature->array_size;
+                load_size_instr.destination = intermediate_generator_create_intermediate_register(generator, generator->analyser->type_system.i32_type);
+                load_size_instr.constant_i32_value = array_type_signature->array_element_count;
                 dynamic_array_push_back(&function->instructions, load_size_instr);
                 size_data = load_size_instr.destination;
             }
             else
             {
                 // If its a unsized array, i need to compare the index data with the size stored in the unsized array
-                Type_Signature sig = type_signature_make_pointer(generator->analyser->i32_type_index);
-                int int_ptr_type_index = type_system_find_or_create_type(&generator->analyser->type_system, sig);
+                Type_Signature* int_ptr_type = type_system_make_pointer(&generator->analyser->type_system, generator->analyser->type_system.i32_type);
 
                 Intermediate_Instruction offset_instr;
                 offset_instr.type = Intermediate_Instruction_Type::CALCULATE_MEMBER_ACCESS_POINTER;
-                offset_instr.destination = intermediate_generator_create_intermediate_register(generator, int_ptr_type_index);
+                offset_instr.destination = intermediate_generator_create_intermediate_register(generator, int_ptr_type);
                 offset_instr.source1 = array_data;
                 offset_instr.constant_i32_value = 8;
                 dynamic_array_push_back(&function->instructions, offset_instr);
@@ -506,7 +504,7 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
             // Generate an if instruction, an condition register and an error message
             Intermediate_Instruction if_out_of_bounds_instr;
             if_out_of_bounds_instr.type = Intermediate_Instruction_Type::IF_BLOCK;
-            if_out_of_bounds_instr.source1 = intermediate_generator_create_intermediate_register(generator, generator->analyser->bool_type_index);
+            if_out_of_bounds_instr.source1 = intermediate_generator_create_intermediate_register(generator, generator->analyser->type_system.bool_type);
             if_out_of_bounds_instr.condition_calculation_instruction_start = function->instructions.size + 1;
             if_out_of_bounds_instr.condition_calculation_instruction_end_exclusive = function->instructions.size + 2;
             if_out_of_bounds_instr.true_branch_instruction_start = function->instructions.size + 2;
@@ -525,9 +523,10 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
 
             // Error Instruciton
             Intermediate_Instruction error_instr;
-            condition_instr.type = Intermediate_Instruction_Type::EXIT_ERROR;
-            condition_instr.constant_i32_value = (int)Exit_Code::OUT_OF_BOUNDS;
-            dynamic_array_push_back(&function->instructions, condition_instr);
+            error_instr.source1 = index_data;
+            error_instr.type = Intermediate_Instruction_Type::EXIT;
+            error_instr.exit_code = Exit_Code::OUT_OF_BOUNDS;
+            dynamic_array_push_back(&function->instructions, error_instr);
         }
 
         Intermediate_Instruction instr;
@@ -568,7 +567,7 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_GREATER:
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_GREATER_OR_EQUAL:
     {
-        int left_type = generator->analyser->semantic_information[expression->children[0]].expression_result_type_index;
+        Type_Signature* left_type = generator->analyser->semantic_information[expression->children[0]].expression_result_type;
         Intermediate_Instruction instr;
         instr.type = binary_operation_get_instruction_type(generator, expression->type, left_type);
         instr.source1 = intermediate_generator_generate_expression(generator, expression->children[0], false, data_access_make_empty());
@@ -579,7 +578,7 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
         else {
             instr.destination = intermediate_generator_create_intermediate_register(
                 generator,
-                generator->analyser->semantic_information[expression_index].expression_result_type_index
+                generator->analyser->semantic_information[expression_index].expression_result_type
             );
         }
         dynamic_array_push_back(&function->instructions, instr);
@@ -588,11 +587,11 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
     case AST_Node_Type::EXPRESSION_UNARY_OPERATION_NEGATE:
     {
         Intermediate_Instruction_Type instr_type;
-        int operand_type = generator->analyser->semantic_information[expression->children[0]].expression_result_type_index;
-        if (operand_type == generator->analyser->f32_type_index) {
+        Type_Signature* operand_type = generator->analyser->semantic_information[expression->children[0]].expression_result_type;
+        if (operand_type == generator->analyser->type_system.f32_type) {
             instr_type = Intermediate_Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_F32;
         }
-        else if (operand_type == generator->analyser->i32_type_index) {
+        else if (operand_type == generator->analyser->type_system.i32_type) {
             instr_type = Intermediate_Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I32;
         }
         else panic("Should not happen");
@@ -606,7 +605,7 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
         else {
             instr.destination = intermediate_generator_create_intermediate_register(
                 generator,
-                generator->analyser->semantic_information[expression_index].expression_result_type_index
+                generator->analyser->semantic_information[expression_index].expression_result_type
             );
         }
         dynamic_array_push_back(&function->instructions, instr);
@@ -623,7 +622,7 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
         else {
             instr.destination = intermediate_generator_create_intermediate_register(
                 generator,
-                generator->analyser->semantic_information[expression_index].expression_result_type_index
+                generator->analyser->semantic_information[expression_index].expression_result_type
             );
         }
         dynamic_array_push_back(&function->instructions, instr);
@@ -666,12 +665,13 @@ void intermediate_generator_generate_statement(Intermediate_Generator* generator
         i.type = Intermediate_Instruction_Type::RETURN;
         if (generator->current_function_index == generator->main_function_index) {
             i.type = Intermediate_Instruction_Type::EXIT;
+            i.exit_code = Exit_Code::SUCCESS;
         }
-        i.source1 = intermediate_generator_generate_expression(generator, statement->children[0], false, data_access_make_empty());
-        i.constant_i32_value = type_system_get_type(
-            &generator->analyser->type_system,
-            generator->analyser->semantic_information[statement_index].expression_result_type_index
-        )->size_in_bytes;
+        i.return_has_value = false;
+        if (function->function_type->return_type != generator->analyser->type_system.void_type) {
+            i.return_has_value = true;
+            i.source1 = intermediate_generator_generate_expression(generator, statement->children[0], false, data_access_make_empty());
+        }
         dynamic_array_push_back(&function->instructions, i);
         break;
     }
@@ -763,7 +763,7 @@ void intermediate_generator_generate_statement_block(Intermediate_Generator* gen
             panic("Shouldnt happen now, only when we have inline functions and types\n");
             continue;
         }
-        intermediate_generator_create_variable_register(generator, s.name, s.type_index);
+        intermediate_generator_create_variable_register(generator, s.name_handle, s.type);
     }
     for (int i = 0; i < block->children.size; i++) {
         intermediate_generator_generate_statement(generator, block->children[i]);
@@ -784,11 +784,11 @@ void intermediate_generator_generate_function_code(Intermediate_Generator* gener
         Symbol* s = &function_table->symbols[i];
         Intermediate_Register reg;
         reg.parameter_index = i;
-        reg.type_index = s->type_index;
+        reg.type_signature = s->type;
         reg.type = Intermediate_Register_Type::PARAMETER;
         dynamic_array_push_back(&im_function->registers, reg);
         Variable_Mapping m;
-        m.name = function_table->symbols[i].name;
+        m.name_handle = function_table->symbols[i].name_handle;
         m.register_index = im_function->registers.size - 1;
         dynamic_array_push_back(&generator->variable_mappings, m);
     }
@@ -810,13 +810,15 @@ void intermediate_instruction_destroy(Intermediate_Instruction* instruction)
     }
 }
 
-Intermediate_Function intermediate_function_create()
+Intermediate_Function intermediate_function_create(int name_handle, Type_Signature* function_signature)
 {
     Intermediate_Function result;
     result.instructions = dynamic_array_create_empty<Intermediate_Instruction>(64);
     result.instruction_to_ast_node_mapping = dynamic_array_create_empty<int>(64);
     result.registers = dynamic_array_create_empty<Intermediate_Register>(64);
     result.register_to_ast_mapping = dynamic_array_create_empty<int>(64);
+    result.name_handle = name_handle;
+    result.function_type = function_signature;
     return result;
 }
 
@@ -860,9 +862,14 @@ void intermediate_generator_generate(Intermediate_Generator* generator, Semantic
     generator->main_function_index = -1;
 
     // Generate all (empty) functions
-    for (int i = 0; i < analyser->parser->nodes[0].children.size; i++) {
+    for (int i = 0; i < analyser->parser->nodes[0].children.size; i++)
+    {
         AST_Node_Index function_node_index = analyser->parser->nodes[0].children[i];
-        dynamic_array_push_back(&generator->functions, intermediate_function_create());
+        AST_Node* function_node = &analyser->parser->nodes[function_node_index];
+        dynamic_array_push_back(
+            &generator->functions,
+            intermediate_function_create(function_node->name_id, analyser->semantic_information[function_node_index].function_signature)
+        );
         dynamic_array_push_back(&generator->function_to_ast_node_mapping, function_node_index);
         if (analyser->parser->nodes[function_node_index].name_id == analyser->main_token_index) {
             generator->main_function_index = generator->functions.size - 1;
@@ -891,7 +898,7 @@ void intermediate_register_append_to_string(String* string, Intermediate_Functio
         break;
     }
     string_append_formated(string, " <");
-    type_index_append_to_string(string, &generator->analyser->type_system, function->registers[register_index].type_index);
+    type_signature_append_to_string(string, function->registers[register_index].type_signature);
     string_append_formated(string, ">");
 }
 
@@ -961,14 +968,19 @@ void intermediate_instruction_append_to_string(String* string, Intermediate_Inst
         break;
     case Intermediate_Instruction_Type::CALL_FUNCTION:
         string_append_formated(string, "CALL_FUNCTION, function_index: %d, \n\t\treturn_data: ", instruction->intermediate_function_index);
-        data_access_append_to_string(string, instruction->destination, function, generator);
+        if (generator->functions[instruction->intermediate_function_index].function_type->return_type != generator->analyser->type_system.void_type) {
+            data_access_append_to_string(string, instruction->destination, function, generator);
+        }
+        else {
+            string_append_formated(string, "void");
+        }
         for (int i = 0; i < instruction->arguments.size; i++) {
             string_append_formated(string, "\n\t\t#%d: ", i);
             data_access_append_to_string(string, instruction->arguments[i], function, generator);
         }
         break;
     case Intermediate_Instruction_Type::CALL_HARDCODED_FUNCTION:
-        string_append_formated(string, "CALL_HARDCODED_FUNCTION, function_id: %d, \n\t\treturn_data: ", instruction->constant_i32_value);
+        string_append_formated(string, "CALL_HARDCODED_FUNCTION, function_id: %d, \n\t\treturn_data: ", (i32)instruction->hardcoded_function_type);
         data_access_append_to_string(string, instruction->destination, function, generator);
         for (int i = 0; i < instruction->arguments.size; i++) {
             string_append_formated(string, "\n\t\t#%d: ", i);
@@ -977,15 +989,17 @@ void intermediate_instruction_append_to_string(String* string, Intermediate_Inst
         break;
     case Intermediate_Instruction_Type::RETURN:
         string_append_formated(string, "RETURN, return_data: ");
-        append_src_1 = true;
+        if (instruction->return_has_value)
+            append_src_1 = true;
+        else {
+            string_append_formated(string, "void");
+        }
         break;
     case Intermediate_Instruction_Type::EXIT:
         string_append_formated(string, "EXIT ");
-        append_src_1 = true;
-        break;
-    case Intermediate_Instruction_Type::EXIT_ERROR:
-        string_append_formated(string, "ERROR_EXIT ");
-        exit_code_append_to_string(string, (Exit_Code)instruction->constant_i32_value);
+        if (instruction->exit_code == Exit_Code::SUCCESS && instruction->return_has_value)
+            append_src_1 = true;
+        exit_code_append_to_string(string, instruction->exit_code);
         break;
     case Intermediate_Instruction_Type::BREAK:
         string_append_formated(string, "BREAK");

@@ -55,9 +55,8 @@ enum class Intermediate_Instruction_Type
     CALL_HARDCODED_FUNCTION, // Arguments + Destination Register, i32_value = Hardcoded_Function_Type
     BREAK, // Currently just breaks out of the active while loop
     CONTINUE, // Just continues the current while loop
-    RETURN, // Source 1 is return register, contains size information
-    EXIT, // Source 1 is return register, contains size information
-    EXIT_ERROR, // Exits with a predefined error index, which is a handle to an error type (Currently only out of bounds)
+    RETURN, // Source 1 is return register
+    EXIT, // Source 1 is return register, exit code
 
     ADDRESS_OF, // Dest, Src | If Src is a Register_Access, it returns a pointer to the register, if src = Memory_Access, then it also returns pointer to register
     CALCULATE_MEMBER_ACCESS_POINTER, // Destination, Source, offset in constant_i32_value | !Different Behavior depending on Memory_Access!
@@ -112,6 +111,10 @@ struct Intermediate_Instruction
     // Function call
     int intermediate_function_index;
     DynamicArray<Data_Access> arguments;
+    Hardcoded_Function_Type hardcoded_function_type;
+    // Return thing
+    bool return_has_value;
+    Exit_Code exit_code;
     // Load constants, TODO: Do better with global data
     union {
         float constant_f32_value;
@@ -130,7 +133,7 @@ enum class Intermediate_Register_Type
 struct Intermediate_Register
 {
     Intermediate_Register_Type type;
-    int type_index;
+    Type_Signature* type_signature;
     int parameter_index;
     int name_id;
 };
@@ -141,11 +144,13 @@ struct Intermediate_Function
     DynamicArray<Intermediate_Instruction> instructions;
     DynamicArray<int> instruction_to_ast_node_mapping;
     DynamicArray<int> register_to_ast_mapping;
+    int name_handle;
+    Type_Signature* function_type;
 };
 
 struct Variable_Mapping
 {
-    int name;
+    int name_handle;
     int register_index;
 };
 

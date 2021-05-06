@@ -36,8 +36,7 @@ namespace Instruction_Type
         CALL, // Pushes return address, op1 = instruction_index, op2 = stack_offset for new frame
         CALL_HARDCODED_FUNCTION, // op1 = hardcoded_function_type, op2 = stack_offset for new frame
         RETURN, // Pops return address, op1 = return_value reg, op2 = return_size (Capped at 16 bytes)
-        EXIT, // op1 = return_value_register, op2 = return size (Capped at 16)
-        EXIT_ERROR, // Returns, op1 = error value
+        EXIT, // op1 = return_value_register, op2 = return size (Capped at 16), op3 = exit_code
 
         LOAD_RETURN_VALUE, // op1 = dst_reg, op2 = size
         LOAD_REGISTER_ADDRESS, // op1 = dest_reg, op2 = register_to_load, // TODO: Also only works because we are lucky

@@ -150,19 +150,11 @@ void bytecode_generator_generate_function_instruction_slice(
         {
             int move_byte_size;
             if (instr->destination.type == Data_Access_Type::REGISTER_ACCESS) {
-                move_byte_size = type_system_get_type(
-                    &generator->im_generator->analyser->type_system,
-                    function->registers[instr->destination.register_index].type_index)->size_in_bytes;
+                move_byte_size = function->registers[instr->destination.register_index].type_signature->size_in_bytes;
             }
             else {
-                Type_Signature* pointer_sig = type_system_get_type(
-                    &generator->im_generator->analyser->type_system,
-                    function->registers[instr->destination.register_index].type_index
-                );
-                move_byte_size = type_system_get_type(
-                    &generator->im_generator->analyser->type_system,
-                    pointer_sig->child_type_index
-                )->size_in_bytes;
+                Type_Signature* pointer_sig = function->registers[instr->destination.register_index].type_signature;
+                move_byte_size = pointer_sig->child_type->size_in_bytes;
             }
 
             Instruction_Type::ENUM instr_type;
@@ -247,8 +239,7 @@ void bytecode_generator_generate_function_instruction_slice(
                 Data_Access* arg = &instr->arguments[i];
                 if (arg->type == Data_Access_Type::REGISTER_ACCESS)
                 {
-                    int type_index = function->registers[arg->register_index].type_index;
-                    Type_Signature* sig = type_system_get_type(&generator->im_generator->analyser->type_system, type_index);
+                    Type_Signature* sig = function->registers[arg->register_index].type_signature;
                     argument_stack_offset = align_offset_next_multiple(argument_stack_offset, sig->alignment_in_bytes);
                     bytecode_generator_add_instruction(
                         generator,
@@ -261,10 +252,10 @@ void bytecode_generator_generate_function_instruction_slice(
                     );
                     argument_stack_offset += sig->size_in_bytes;
                 }
-                else {
-                    int pointer_type_index = function->registers[arg->register_index].type_index;
-                    Type_Signature* pointer_sig = type_system_get_type(&generator->im_generator->analyser->type_system, pointer_type_index);
-                    Type_Signature* sig = type_system_get_type(&generator->im_generator->analyser->type_system, pointer_sig->child_type_index);
+                else 
+                {
+                    Type_Signature* pointer_sig = function->registers[arg->register_index].type_signature;
+                    Type_Signature* sig = pointer_sig->child_type;
                     argument_stack_offset = align_offset_next_multiple(argument_stack_offset, sig->alignment_in_bytes);
                     bytecode_generator_add_instruction(
                         generator,
@@ -283,7 +274,7 @@ void bytecode_generator_generate_function_instruction_slice(
             if (instr->type == Intermediate_Instruction_Type::CALL_HARDCODED_FUNCTION) {
                 bytecode_generator_add_instruction(
                     generator,
-                    instruction_make_2(Instruction_Type::CALL_HARDCODED_FUNCTION, instr->constant_i32_value, argument_stack_offset)
+                    instruction_make_2(Instruction_Type::CALL_HARDCODED_FUNCTION, (i32)instr->hardcoded_function_type, argument_stack_offset)
                 );
             }
             else {
@@ -299,99 +290,86 @@ void bytecode_generator_generate_function_instruction_slice(
 
             // Load return value to destination
             Type_Signature* return_type;
-            if (instr->type == Intermediate_Instruction_Type::CALL_HARDCODED_FUNCTION) 
-            {
-                Type_Signature* function_type = type_system_get_type(
-                    &generator->im_generator->analyser->type_system,
-                    generator->im_generator->analyser->hardcoded_functions[instr->constant_i32_value].type_handle
-                );
-                return_type = type_system_get_type(
-                    &generator->im_generator->analyser->type_system,
-                    function_type->return_type_index
-                );
-            }
-            else 
-            {
-                Type_Signature* function_type = type_system_get_type(
-                    &generator->im_generator->analyser->type_system,
-                    generator->im_generator->analyser->semantic_information[
-                        generator->im_generator->function_to_ast_node_mapping[instr->intermediate_function_index]
-                    ].function_signature_index
-                );
-                return_type = type_system_get_type(
-                    &generator->im_generator->analyser->type_system,
-                    function_type->return_type_index
-                );
-            }
-            int destination_stack_offset;
-            if (instr->destination.type == Data_Access_Type::MEMORY_ACCESS) {
-                destination_stack_offset = align_offset_next_multiple(argument_stack_offset, 16);
-                argument_stack_offset += 16;
+            if (instr->type == Intermediate_Instruction_Type::CALL_HARDCODED_FUNCTION) {
+                Type_Signature* function_type = generator->im_generator->analyser->hardcoded_functions[(u32)instr->hardcoded_function_type].function_type;
+                return_type = function_type->return_type;
             }
             else {
-                destination_stack_offset = generator->register_stack_locations[instr->destination.register_index];
+                Type_Signature* function_type = generator->im_generator->functions[instr->intermediate_function_index].function_type;
+                return_type = function_type->return_type;
             }
-            bytecode_generator_add_instruction(
-                generator,
-                instruction_make_2(
-                    Instruction_Type::LOAD_RETURN_VALUE,
-                    destination_stack_offset,
-                    return_type->size_in_bytes
-                )
-            );
-            if (instr->destination.type == Data_Access_Type::MEMORY_ACCESS) {
+
+            if (return_type != generator->im_generator->analyser->type_system.void_type)
+            {
+                int destination_stack_offset;
+                if (instr->destination.type == Data_Access_Type::MEMORY_ACCESS) {
+                    destination_stack_offset = align_offset_next_multiple(argument_stack_offset, 16);
+                    argument_stack_offset += 16;
+                }
+                else {
+                    destination_stack_offset = generator->register_stack_locations[instr->destination.register_index];
+                }
                 bytecode_generator_add_instruction(
                     generator,
-                    instruction_make_3(
-                        Instruction_Type::WRITE_MEMORY,
-                        generator->register_stack_locations[instr->destination.register_index],
+                    instruction_make_2(
+                        Instruction_Type::LOAD_RETURN_VALUE,
                         destination_stack_offset,
                         return_type->size_in_bytes
                     )
                 );
+                if (instr->destination.type == Data_Access_Type::MEMORY_ACCESS) {
+                    bytecode_generator_add_instruction(
+                        generator,
+                        instruction_make_3(
+                            Instruction_Type::WRITE_MEMORY,
+                            generator->register_stack_locations[instr->destination.register_index],
+                            destination_stack_offset,
+                            return_type->size_in_bytes
+                        )
+                    );
+                }
             }
             break;
         }
         case Intermediate_Instruction_Type::RETURN:
         case Intermediate_Instruction_Type::EXIT:
         {
-            Instruction_Type::ENUM result_instr_type = instr->type == Intermediate_Instruction_Type::RETURN ? Instruction_Type::RETURN : Instruction_Type::EXIT;
-            if (instr->source1.type == Data_Access_Type::MEMORY_ACCESS)
+            Type_Signature* return_sig = generator->im_generator->analyser->type_system.void_type;
+            int return_data_stack_offset = 0;
+            if (instr->return_has_value)
             {
-                // Whats the return type?
-                Type_Signature* return_sig = type_system_get_child_type(
-                    &generator->im_generator->analyser->type_system,
-                    function->registers[instr->source1.register_index].type_index
-                );
-                int tmp_return_value_stack_offset = align_offset_next_multiple(generator->stack_offset_end_of_variables, return_sig->size_in_bytes);
+                if (instr->source1.type == Data_Access_Type::MEMORY_ACCESS)
+                {
+                    return_sig = function->registers[instr->source1.register_index].type_signature->child_type;
+                    return_data_stack_offset = align_offset_next_multiple(generator->stack_offset_end_of_variables, return_sig->size_in_bytes);
+                    bytecode_generator_add_instruction(
+                        generator,
+                        instruction_make_3(
+                            Instruction_Type::READ_MEMORY,
+                            return_data_stack_offset,
+                            generator->register_stack_locations[instr->source1.register_index],
+                            return_sig->size_in_bytes
+                        )
+                    );
+                }
+                else {
+                    return_sig = function->registers[instr->source1.register_index].type_signature;
+                    return_data_stack_offset = generator->register_stack_locations[instr->source1.register_index];
+                }
+            }
+
+            if (instr->type == Intermediate_Instruction_Type::EXIT) {
                 bytecode_generator_add_instruction(
                     generator,
-                    instruction_make_3(
-                        Instruction_Type::READ_MEMORY,
-                        tmp_return_value_stack_offset,
-                        generator->register_stack_locations[instr->source1.register_index],
-                        return_sig->size_in_bytes
-                    )
-                );
-                bytecode_generator_add_instruction(
-                    generator,
-                    instruction_make_2(result_instr_type, tmp_return_value_stack_offset, return_sig->size_in_bytes)
+                    instruction_make_3(Instruction_Type::EXIT, return_data_stack_offset, return_sig->size_in_bytes, (i32)instr->exit_code)
                 );
             }
             else {
-                Type_Signature* return_sig = type_system_get_type(
-                    &generator->im_generator->analyser->type_system,
-                    function->registers[instr->source1.register_index].type_index
-                );
                 bytecode_generator_add_instruction(
                     generator,
-                    instruction_make_2(result_instr_type, generator->register_stack_locations[instr->source1.register_index], return_sig->size_in_bytes)
+                    instruction_make_2(Instruction_Type::RETURN, return_data_stack_offset, return_sig->size_in_bytes)
                 );
             }
-            break;
-        }
-        case Intermediate_Instruction_Type::EXIT_ERROR: {
-            bytecode_generator_add_instruction(generator, instruction_make_1(Instruction_Type::EXIT_ERROR, instr->constant_i32_value));
             break;
         }
         case Intermediate_Instruction_Type::WHILE_BLOCK:
@@ -631,28 +609,16 @@ void bytecode_generator_generate_function_instruction_slice(
             Type_Signature* operand_type;
             Type_Signature* result_type;
             if (instr->source1.type == Data_Access_Type::MEMORY_ACCESS) {
-                operand_type = type_system_get_child_type(
-                    &generator->im_generator->analyser->type_system,
-                    function->registers[instr->source1.register_index].type_index
-                );
+                operand_type = function->registers[instr->source1.register_index].type_signature->child_type;
             }
             else {
-                operand_type = type_system_get_type(
-                    &generator->im_generator->analyser->type_system,
-                    function->registers[instr->source1.register_index].type_index
-                );
+                operand_type = function->registers[instr->source1.register_index].type_signature;
             }
             if (instr->destination.type == Data_Access_Type::MEMORY_ACCESS) {
-                result_type = type_system_get_child_type(
-                    &generator->im_generator->analyser->type_system,
-                    function->registers[instr->destination.register_index].type_index
-                );
+                result_type = function->registers[instr->destination.register_index].type_signature->child_type;
             }
             else {
-                result_type = type_system_get_type(
-                    &generator->im_generator->analyser->type_system,
-                    function->registers[instr->destination.register_index].type_index
-                );
+                result_type = function->registers[instr->destination.register_index].type_signature;
             }
 
             Instruction_Type::ENUM result_instr_type = (Instruction_Type::ENUM) (
@@ -735,28 +701,16 @@ void bytecode_generator_generate_function_instruction_slice(
             Type_Signature* operand_type;
             Type_Signature* result_type;
             if (instr->source1.type == Data_Access_Type::MEMORY_ACCESS) {
-                operand_type = type_system_get_child_type(
-                    &generator->im_generator->analyser->type_system,
-                    function->registers[instr->source1.register_index].type_index
-                );
+                operand_type = function->registers[instr->source1.register_index].type_signature->child_type;
             }
             else {
-                operand_type = type_system_get_type(
-                    &generator->im_generator->analyser->type_system,
-                    function->registers[instr->source1.register_index].type_index
-                );
+                operand_type = function->registers[instr->source1.register_index].type_signature;
             }
             if (instr->destination.type == Data_Access_Type::MEMORY_ACCESS) {
-                result_type = type_system_get_child_type(
-                    &generator->im_generator->analyser->type_system,
-                    function->registers[instr->destination.register_index].type_index
-                );
+                result_type = function->registers[instr->destination.register_index].type_signature->child_type;
             }
             else {
-                result_type = type_system_get_type(
-                    &generator->im_generator->analyser->type_system,
-                    function->registers[instr->destination.register_index].type_index
-                );
+                result_type = function->registers[instr->destination.register_index].type_signature;
             }
 
             Instruction_Type::ENUM result_instr_type = (Instruction_Type::ENUM) (
@@ -825,19 +779,11 @@ void bytecode_generator_generate_function_code(Bytecode_Generator* generator, in
     // Set parameter stack locations
     {
         int stack_size_of_parameters = 0;
-        Type_Signature* function_signature = type_system_get_type(
-            &generator->im_generator->analyser->type_system,
-            generator->im_generator->analyser->semantic_information[
-                generator->im_generator->function_to_ast_node_mapping[function_index]
-            ].function_signature_index
-        );
+        Type_Signature* function_signature = generator->im_generator->functions[function_index].function_type;
 
-        for (int i = 0; i < function_signature->parameter_type_indices.size; i++)
+        for (int i = 0; i < function_signature->parameter_types.size; i++)
         {
-            Type_Signature* param_sig = type_system_get_type(
-                &generator->im_generator->analyser->type_system,
-                function_signature->parameter_type_indices[i]
-            );
+            Type_Signature* param_sig = function_signature->parameter_types[i];
             stack_size_of_parameters = align_offset_next_multiple(stack_size_of_parameters, param_sig->alignment_in_bytes);
             stack_size_of_parameters += param_sig->size_in_bytes;
         }
@@ -846,7 +792,7 @@ void bytecode_generator_generate_function_code(Bytecode_Generator* generator, in
 
         // Now actually set the things
         int stack_offset = -stack_size_of_parameters;
-        for (int i = 0; i < function_signature->parameter_type_indices.size; i++)
+        for (int i = 0; i < function_signature->parameter_types.size; i++)
         {
             int reg_index = -1;
             for (int j = 0; j < function->registers.size; j++) {
@@ -857,10 +803,7 @@ void bytecode_generator_generate_function_code(Bytecode_Generator* generator, in
             }
             assert(reg_index != -1, "Should never happen");
 
-            Type_Signature* param_sig = type_system_get_type(
-                &generator->im_generator->analyser->type_system,
-                function_signature->parameter_type_indices[i]
-            );
+            Type_Signature* param_sig = function_signature->parameter_types[i];
             stack_offset = align_offset_next_multiple(stack_offset, param_sig->alignment_in_bytes);
             generator->register_stack_locations[reg_index] = stack_offset;
             stack_offset += param_sig->size_in_bytes;
@@ -875,10 +818,7 @@ void bytecode_generator_generate_function_code(Bytecode_Generator* generator, in
         {
             Intermediate_Register* reg = &function->registers[i];
             if (reg->type == Intermediate_Register_Type::PARAMETER) continue; // Done in previous step
-            Type_Signature* type_sig = type_system_get_type(
-                &generator->im_generator->analyser->type_system,
-                reg->type_index
-            );
+            Type_Signature* type_sig = reg->type_signature;
             stack_offset = align_offset_next_multiple(stack_offset, type_sig->alignment_in_bytes);
             generator->register_stack_locations[i] = stack_offset;
             stack_offset += type_sig->size_in_bytes;
@@ -908,7 +848,7 @@ void bytecode_generator_generate(Bytecode_Generator* generator, Intermediate_Gen
         Intermediate_Function* function = &im_generator->functions[i];
         int max_function_stack_depth = 256;
         for (int j = 0; j < function->registers.size; j++) {
-            Type_Signature* sig = type_system_get_type(&generator->im_generator->analyser->type_system, function->registers[j].type_index);
+            Type_Signature* sig = function->registers[j].type_signature;
             max_function_stack_depth += sig->size_in_bytes + sig->alignment_in_bytes;
         }
         if (max_function_stack_depth > generator->maximum_function_stack_depth) {
@@ -1010,11 +950,6 @@ void bytecode_generator_append_bytecode_to_string(Bytecode_Generator* generator,
             break;
         case Instruction_Type::EXIT:
             string_append_formated(string, "EXIT                              src=%d, size=%d\n", instruction.op1, instruction.op2);
-            break;
-        case Instruction_Type::EXIT_ERROR:
-            string_append_formated(string, "ERROR_EXIT                        error: ");
-            exit_code_append_to_string(string, (Exit_Code)instruction.op1);
-            string_append_formated(string, "\n");
             break;
         case Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32:
             string_append_formated(string, "BINARY_OP_ARITHMETIC_ADDITION_I32         dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);

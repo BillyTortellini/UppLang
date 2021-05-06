@@ -30,14 +30,14 @@ void shader_program_retrieve_shader_variable_information(ShaderProgram* program)
         for (int i = 0; i < attribute_count; i++)
         {
             ShaderVariableInformation info;
-            info.name = string_create_empty(longest_attribute_name_length);
+            info.name_handle = string_create_empty(longest_attribute_name_length);
 
             // Get Infos
             /* INFO: Inbuilts (Staring with prefix gl_, like gl_VertexID) are also attributes, but glGetActiveAttrib returns -1 in this case */
             glGetActiveAttrib(program->program_id, (GLuint)i,
-                longest_attribute_name_length, NULL, &info.size, &info.type, info.name.characters);
-            info.name.size = (int)strlen(info.name.characters); // Actualize string length
-            info.location = glGetAttribLocation(program->program_id, info.name.characters);
+                longest_attribute_name_length, NULL, &info.size, &info.type, info.name_handle.characters);
+            info.name_handle.size = (int)strlen(info.name_handle.characters); // Actualize string length
+            info.location = glGetAttribLocation(program->program_id, info.name_handle.characters);
 
             // Put attribute info in dynamic array
             dynamic_array_push_back(&program->attribute_informations, info);
@@ -57,13 +57,13 @@ void shader_program_retrieve_shader_variable_information(ShaderProgram* program)
         for (int i = 0; i < uniform_count; i++)
         {
             ShaderVariableInformation info;
-            info.name = string_create_empty(longest_uniform_name_length);
+            info.name_handle = string_create_empty(longest_uniform_name_length);
 
             // Get Infos
             glGetActiveUniform(program->program_id, (GLuint)i, 256, NULL,
-                &info.size, &info.type, (GLchar*)info.name.characters);
-            info.name.size = (int)strlen(info.name.characters); // Actualize string length
-            info.location = glGetUniformLocation(program->program_id, info.name.characters);
+                &info.size, &info.type, (GLchar*)info.name_handle.characters);
+            info.name_handle.size = (int)strlen(info.name_handle.characters); // Actualize string length
+            info.location = glGetUniformLocation(program->program_id, info.name_handle.characters);
 
             // Put uniform data in dynamic array
             dynamic_array_push_back(&program->uniform_informations, info);
@@ -178,34 +178,34 @@ void shader_program_print_variable_information(ShaderProgram* program)
     for (int i = 0; i < program->uniform_informations.size; i++) {
         ShaderVariableInformation* info = &program->uniform_informations.data[i];
         string_append_formated(&message, "\t\tLocation: %d, size: %d, type: %s name: \"%s\"\n", 
-            info->location, info->size, opengl_utils_datatype_to_string(info->type), info->name.characters);
+            info->location, info->size, opengl_utils_datatype_to_string(info->type), info->name_handle.characters);
     }
 
     string_append_formated(&message, "\n\tAttributes(#%d): \n", program->attribute_informations.size);
     for (int i = 0; i < program->attribute_informations.size; i++) {
         ShaderVariableInformation* info = &program->attribute_informations.data[i];
         string_append_formated(&message, "\t\tLocation: %d, size: %d, type: %s name: \"%s\"\n", 
-            info->location, info->size, opengl_utils_datatype_to_string(info->type), info->name.characters);
+            info->location, info->size, opengl_utils_datatype_to_string(info->type), info->name_handle.characters);
     }
 
     logg("%s", message.characters);
 }
 
-ShaderVariableInformation* shader_program_find_shader_variable_information_by_name(ShaderProgram* program, const char* name) 
+ShaderVariableInformation* shader_program_find_shader_variable_information_by_name(ShaderProgram* program, const char* name_handle) 
 {
     for (int i = 0; i < program->uniform_informations.size; i++) {
         ShaderVariableInformation* info = &program->uniform_informations.data[i];
-        if (strcmp(name, info->name.characters) == 0) {
+        if (strcmp(name_handle, info->name_handle.characters) == 0) {
             return info;
         }
     }
     return 0;
 }
 
-bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name, int value) 
+bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name_handle, int value) 
 {
     opengl_state_use_program(state, program->program_id);
-    ShaderVariableInformation* info = shader_program_find_shader_variable_information_by_name(program, name);
+    ShaderVariableInformation* info = shader_program_find_shader_variable_information_by_name(program, name_handle);
     if (info == nullptr) {
         return false;
     }
@@ -216,10 +216,10 @@ bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, cons
     return true;
 }
 
-bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name, u32 value)
+bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name_handle, u32 value)
 {
     opengl_state_use_program(state, program->program_id);
-    ShaderVariableInformation* info = shader_program_find_shader_variable_information_by_name(program, name);
+    ShaderVariableInformation* info = shader_program_find_shader_variable_information_by_name(program, name_handle);
     if (info == nullptr) {
         return false;
     }
@@ -230,10 +230,10 @@ bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, cons
     return true;
 }
 
-bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name, float value)
+bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name_handle, float value)
 {
     opengl_state_use_program(state, program->program_id);
-    ShaderVariableInformation* info = shader_program_find_shader_variable_information_by_name(program, name);
+    ShaderVariableInformation* info = shader_program_find_shader_variable_information_by_name(program, name_handle);
     if (info == nullptr) {
         return false;
     }
@@ -244,9 +244,9 @@ bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, cons
     return true;
 }
 
-bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name, const vec2& value) {
+bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name_handle, const vec2& value) {
     opengl_state_use_program(state, program->program_id);
-    ShaderVariableInformation* info = shader_program_find_shader_variable_information_by_name(program, name);
+    ShaderVariableInformation* info = shader_program_find_shader_variable_information_by_name(program, name_handle);
     if (info == nullptr) {
         return false;
     }
@@ -257,9 +257,9 @@ bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, cons
     return true;
 }
 
-bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name, const vec3& value) {
+bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name_handle, const vec3& value) {
     opengl_state_use_program(state, program->program_id);
-    ShaderVariableInformation* info = shader_program_find_shader_variable_information_by_name(program, name);
+    ShaderVariableInformation* info = shader_program_find_shader_variable_information_by_name(program, name_handle);
     if (info == nullptr) {
         return false;
     }
@@ -269,9 +269,9 @@ bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, cons
     glUniform3fv(info->location, 1, (GLfloat*)&value);
     return true;
 }
-bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name, const vec4& value) {
+bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name_handle, const vec4& value) {
     opengl_state_use_program(state, program->program_id);
-    ShaderVariableInformation* info = shader_program_find_shader_variable_information_by_name(program, name);
+    ShaderVariableInformation* info = shader_program_find_shader_variable_information_by_name(program, name_handle);
     if (info == nullptr) {
         return false;
     }
@@ -281,9 +281,9 @@ bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, cons
     glUniform4fv(info->location, 1, (GLfloat*)&value);
     return true;
 }
-bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name, const mat2& value) {
+bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name_handle, const mat2& value) {
     opengl_state_use_program(state, program->program_id);
-    ShaderVariableInformation* info = shader_program_find_shader_variable_information_by_name(program, name);
+    ShaderVariableInformation* info = shader_program_find_shader_variable_information_by_name(program, name_handle);
     if (info == nullptr) {
         return false;
     }
@@ -293,9 +293,9 @@ bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, cons
     glUniformMatrix2fv(info->location, 1, GL_FALSE, (GLfloat*) &value);
     return true;
 }
-bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name, const mat3& value) {
+bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name_handle, const mat3& value) {
     opengl_state_use_program(state, program->program_id);
-    ShaderVariableInformation* info = shader_program_find_shader_variable_information_by_name(program, name);
+    ShaderVariableInformation* info = shader_program_find_shader_variable_information_by_name(program, name_handle);
     if (info == nullptr) {
         return false;
     }
@@ -305,9 +305,9 @@ bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, cons
     glUniformMatrix3fv(info->location, 1, GL_FALSE, (GLfloat*) &value);
     return true;
 }
-bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name, const mat4& value) {
+bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name_handle, const mat4& value) {
     opengl_state_use_program(state, program->program_id);
-    ShaderVariableInformation* info = shader_program_find_shader_variable_information_by_name(program, name);
+    ShaderVariableInformation* info = shader_program_find_shader_variable_information_by_name(program, name_handle);
     if (info == nullptr) {
         return false;
     }

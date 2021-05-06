@@ -87,12 +87,10 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         return false;
     }
     case Instruction_Type::EXIT: {
-        memory_copy(&interpreter->return_register[0], interpreter->stack_pointer + i->op1, i->op2);
-        interpreter->exit_code = Exit_Code::SUCCESS;
-        return true;
-    }
-    case Instruction_Type::EXIT_ERROR: {
-        interpreter->exit_code = (Exit_Code)i->op1;
+        interpreter->exit_code = (Exit_Code) i->op3;
+        if (interpreter->exit_code == Exit_Code::SUCCESS) {
+            memory_copy(&interpreter->return_register[0], interpreter->stack_pointer + i->op1, i->op2);
+        }
         return true;
     }
     case Instruction_Type::CALL_HARDCODED_FUNCTION: 
