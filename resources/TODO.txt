@@ -1,6 +1,8 @@
 Current Work Item:
 ------------------
- * Hard-Coded functions for print, maybe input or random int (Dont need too much, because this will be irrelevant once we have C-Bindings)
+ * Exit should just be done with code
+ * Replace type_index with Type_Signature* globally
+ * Functions with no return values
  * Structs
  * Syntax for new/delete
 

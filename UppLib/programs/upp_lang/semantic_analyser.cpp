@@ -877,6 +877,10 @@ Semantic_Analyser semantic_analyser_create()
     result.semantic_information = dynamic_array_create_empty<Semantic_Node_Information>(64);
     result.errors = dynamic_array_create_empty<Compiler_Error>(64);
     result.type_system = type_system_create();
+    result.hardcoded_functions = array_create_empty<Hardcoded_Function>((i32)Hardcoded_Function_Type::HARDCODED_FUNCTION_COUNT);
+    for (int i = 0; i < (i32)Hardcoded_Function_Type::HARDCODED_FUNCTION_COUNT; i++) {
+        result.hardcoded_functions[i].type = (Hardcoded_Function_Type)i;
+    }
     return result;
 }
 
@@ -889,6 +893,7 @@ void semantic_analyser_destroy(Semantic_Analyser* analyser)
     dynamic_array_destroy(&analyser->symbol_tables);
     dynamic_array_destroy(&analyser->semantic_information);
     dynamic_array_destroy(&analyser->errors);
+    array_destroy(&analyser->hardcoded_functions);
     type_system_destroy(&analyser->type_system);
 }
 
@@ -919,7 +924,6 @@ void semantic_analyser_analyse_function_header(Semantic_Analyser* analyser, Symb
     Symbol s;
     s.symbol_type = Symbol_Type::FUNCTION;
     s.name = function_name;
-    s.function_node_index = function_node_index;
     s.type_index = function_type_index;
     dynamic_array_push_back(&table->symbols, s);
 
@@ -944,9 +948,11 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, AST_Parser* parser)
         dynamic_array_push_back(&analyser->semantic_information, semantic_node_information_make(0, 0));
     }
 
+    // Create root table
     Symbol_Table* root_table = semantic_analyser_install_symbol_table(analyser, 0, 0);
+
+    // Add tokens for basic datatypes
     {
-        // Add tokens for basic datatypes
         int int_token_index = lexer_add_or_find_identifier_by_string(parser->lexer, string_create_static("int"));
         int bool_token_index = lexer_add_or_find_identifier_by_string(parser->lexer, string_create_static("bool"));
         int float_token_index = lexer_add_or_find_identifier_by_string(parser->lexer, string_create_static("float"));
@@ -999,6 +1005,78 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, AST_Parser* parser)
         analyser->data_token_index = lexer_add_or_find_identifier_by_string(parser->lexer, string_create_static("data"));
         analyser->main_token_index = lexer_add_or_find_identifier_by_string(parser->lexer, string_create_static("main"));
         analyser->error_type_index = type_system_find_or_create_type(&analyser->type_system, type_signature_make_error());
+    }
+
+    // Add symbols for hardcoded functions
+    for (int i = 0; i < analyser->hardcoded_functions.size; i++) 
+    {
+        Hardcoded_Function_Type type = analyser->hardcoded_functions[i].type;
+        Type_Signature sig;
+        sig.type = Signature_Type::FUNCTION;
+        sig.alignment_in_bytes = sig.array_size = sig.child_type_index = sig.size_in_bytes = 0;
+        sig.parameter_type_indices = dynamic_array_create_empty<int>(1);
+        sig.return_type_index = analyser->i32_type_index;
+        int name_handle;
+        switch (type)
+        {
+        case Hardcoded_Function_Type::PRINT_I32: {
+            dynamic_array_push_back(&sig.parameter_type_indices, analyser->i32_type_index);
+            name_handle = lexer_add_or_find_identifier_by_string(analyser->parser->lexer, string_create_static("print_i32"));
+            break;
+        }
+        case Hardcoded_Function_Type::PRINT_F32: {
+            dynamic_array_push_back(&sig.parameter_type_indices, analyser->f32_type_index);
+            name_handle = lexer_add_or_find_identifier_by_string(analyser->parser->lexer, string_create_static("print_f32"));
+            break;
+        }
+        case Hardcoded_Function_Type::PRINT_BOOL: {
+            dynamic_array_push_back(&sig.parameter_type_indices, analyser->bool_type_index);
+            name_handle = lexer_add_or_find_identifier_by_string(analyser->parser->lexer, string_create_static("print_bool"));
+            break;
+        }
+        case Hardcoded_Function_Type::PRINT_LINE: {
+            name_handle = lexer_add_or_find_identifier_by_string(analyser->parser->lexer, string_create_static("print_line"));
+            break;
+        }
+        case Hardcoded_Function_Type::READ_I32: {
+            name_handle = lexer_add_or_find_identifier_by_string(analyser->parser->lexer, string_create_static("read_i32"));
+            sig.return_type_index = analyser->i32_type_index;
+            break;
+        }
+        case Hardcoded_Function_Type::READ_F32: {
+            name_handle = lexer_add_or_find_identifier_by_string(analyser->parser->lexer, string_create_static("read_f32"));
+            sig.return_type_index = analyser->f32_type_index;
+            break;
+        }
+        case Hardcoded_Function_Type::READ_BOOL: {
+            name_handle = lexer_add_or_find_identifier_by_string(analyser->parser->lexer, string_create_static("read_bool"));
+            sig.return_type_index = analyser->bool_type_index;
+            break;
+        }
+        case Hardcoded_Function_Type::RANDOM_I32: {
+            name_handle = lexer_add_or_find_identifier_by_string(analyser->parser->lexer, string_create_static("random_i32"));
+            sig.return_type_index = analyser->i32_type_index;
+            break;
+        }
+        default:
+            panic("What");
+        }
+        analyser->hardcoded_functions[i].name_handle = name_handle;
+        analyser->hardcoded_functions[i].type_handle = type_system_find_or_create_type(
+            &analyser->type_system,
+            sig
+        );
+        Symbol* func = symbol_table_find_symbol_of_type(root_table, analyser->hardcoded_functions[i].name_handle, Symbol_Type::FUNCTION);
+        if (func != 0) {
+            semantic_analyser_log_error(analyser, "Hardcoded_Function already defined!", 0);
+        }
+        else {
+            Symbol s;
+            s.symbol_type = Symbol_Type::FUNCTION;
+            s.type_index = analyser->hardcoded_functions[i].type_handle;
+            s.name = analyser->hardcoded_functions[i].name_handle;
+            dynamic_array_push_back(&root_table->symbols, s);
+        }
     }
 
     // Add all functions to root_table

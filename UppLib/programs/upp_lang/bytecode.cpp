@@ -237,6 +237,7 @@ void bytecode_generator_generate_function_instruction_slice(
 
             break;
         }
+        case Intermediate_Instruction_Type::CALL_HARDCODED_FUNCTION:
         case Intermediate_Instruction_Type::CALL_FUNCTION:
         {
             // Move registers to the right place, then generate call instruction
@@ -279,17 +280,37 @@ void bytecode_generator_generate_function_instruction_slice(
             }
             // Align argument_stack_offset for return pointer
             argument_stack_offset = align_offset_next_multiple(argument_stack_offset, 8);
-            bytecode_generator_add_instruction(
-                generator,
-                instruction_make_2(Instruction_Type::CALL, 0, argument_stack_offset)
-            );
-            Function_Call_Location call_loc;
-            call_loc.call_instruction_location = generator->instructions.size - 1;
-            call_loc.function_index = instr->intermediate_function_index;
-            dynamic_array_push_back(&generator->function_calls, call_loc);
+            if (instr->type == Intermediate_Instruction_Type::CALL_HARDCODED_FUNCTION) {
+                bytecode_generator_add_instruction(
+                    generator,
+                    instruction_make_2(Instruction_Type::CALL_HARDCODED_FUNCTION, instr->constant_i32_value, argument_stack_offset)
+                );
+            }
+            else {
+                bytecode_generator_add_instruction(
+                    generator,
+                    instruction_make_2(Instruction_Type::CALL, 0, argument_stack_offset)
+                );
+                Function_Call_Location call_loc;
+                call_loc.call_instruction_location = generator->instructions.size - 1;
+                call_loc.function_index = instr->intermediate_function_index;
+                dynamic_array_push_back(&generator->function_calls, call_loc);
+            }
 
             // Load return value to destination
             Type_Signature* return_type;
+            if (instr->type == Intermediate_Instruction_Type::CALL_HARDCODED_FUNCTION) 
+            {
+                Type_Signature* function_type = type_system_get_type(
+                    &generator->im_generator->analyser->type_system,
+                    generator->im_generator->analyser->hardcoded_functions[instr->constant_i32_value].type_handle
+                );
+                return_type = type_system_get_type(
+                    &generator->im_generator->analyser->type_system,
+                    function_type->return_type_index
+                );
+            }
+            else 
             {
                 Type_Signature* function_type = type_system_get_type(
                     &generator->im_generator->analyser->type_system,
@@ -369,8 +390,8 @@ void bytecode_generator_generate_function_instruction_slice(
             }
             break;
         }
-        case Intermediate_Instruction_Type::ERROR_EXIT: {
-            bytecode_generator_add_instruction(generator, instruction_make_1(Instruction_Type::ERROR_EXIT, instr->constant_i32_value));
+        case Intermediate_Instruction_Type::EXIT_ERROR: {
+            bytecode_generator_add_instruction(generator, instruction_make_1(Instruction_Type::EXIT_ERROR, instr->constant_i32_value));
             break;
         }
         case Intermediate_Instruction_Type::WHILE_BLOCK:
@@ -978,6 +999,9 @@ void bytecode_generator_append_bytecode_to_string(Bytecode_Generator* generator,
         case Instruction_Type::CALL:
             string_append_formated(string, "CALL                              dest=%d, stack_offset=%d\n", instruction.op1, instruction.op2);
             break;
+        case Instruction_Type::CALL_HARDCODED_FUNCTION:
+            string_append_formated(string, "CALL_HARDCODED_FUNCTION           func_ind=%d, stack_offset=%d\n", instruction.op1, instruction.op2);
+            break;
         case Instruction_Type::RETURN:
             string_append_formated(string, "RETURN                            return_reg=%d, size=%d\n", instruction.op1, instruction.op2);
             break;
@@ -987,7 +1011,7 @@ void bytecode_generator_append_bytecode_to_string(Bytecode_Generator* generator,
         case Instruction_Type::EXIT:
             string_append_formated(string, "EXIT                              src=%d, size=%d\n", instruction.op1, instruction.op2);
             break;
-        case Instruction_Type::ERROR_EXIT:
+        case Instruction_Type::EXIT_ERROR:
             string_append_formated(string, "ERROR_EXIT                        error: ");
             exit_code_append_to_string(string, (Exit_Code)instruction.op1);
             string_append_formated(string, "\n");

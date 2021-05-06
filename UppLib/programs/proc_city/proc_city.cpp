@@ -14,6 +14,7 @@
 #include "../../rendering/renderer_2d.hpp"
 #include "../../utility/gui.hpp"
 #include "../../math/scalars.hpp"
+#include "../../utility/random.hpp"
 
 /*
     Next up:
@@ -125,40 +126,6 @@ void street_generate_from_points(
 
     //mesh_gpu_data_update_index_buffer(street_mesh, dynamic_array_to_array(index_buffer), state);
     //gpu_buffer_update(&street_mesh->vertex_buffers[0].vertex_buffer, dynamic_array_to_bytes(vertex_buffer));
-}
-
-uint32 g_xor_shift;
-uint32 random_next_int() {
-    uint32 a = g_xor_shift;
-    a ^= a << 13;
-    a ^= a >> 17;
-    a ^= a << 5;
-    g_xor_shift = a;
-    return a;
-}
-
-float random_next_float() {
-    uint32 random = random_next_int();
-    random = random % 100000;
-    double r = (double)random / 100000.0;
-    return (float)r;
-}
-
-bool random_next_bool(float probability) {
-    return random_next_float() < probability;
-}
-
-void random_initialize() {
-    uint32 a = 0;
-    // Initialize with current time
-    while (a == 0) {
-        a = (uint32)timing_current_tick();
-    }
-    g_xor_shift = a;
-    // Run for some interators to get the generator "warm"
-    for (int i = 0; i < 10000; i++) {
-        random_next_int();
-    }
 }
 
 /*

@@ -13,6 +13,7 @@
 #include "../../rendering/mesh_utils.hpp"
 #include "../../win32/window.hpp"
 #include "../../utility/file_io.hpp"
+#include "../../utility/random.hpp"
 
 #include "../../math/umath.hpp"
 #include "../../datastructures/hashtable.hpp"
@@ -62,6 +63,7 @@ void upp_lang_main()
     WindowState* window_state = window_get_window_state(window);
 
     timing_initialize();
+    random_initialize();
 
     FileListener* file_listener = file_listener_create();
     SCOPE_EXIT(file_listener_destroy(file_listener));

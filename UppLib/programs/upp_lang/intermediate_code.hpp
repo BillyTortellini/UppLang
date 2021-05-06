@@ -33,6 +33,15 @@ struct Data_Access
     int register_index; // If memory_access, this is the register that holds the pointer, otherwise this is the register that holds the data
 };
 
+enum class Exit_Code
+{
+    SUCCESS,
+    OUT_OF_BOUNDS, 
+    STACK_OVERFLOW,
+    RETURN_VALUE_OVERFLOW,
+};
+void exit_code_append_to_string(String* string, Exit_Code code);
+
 enum class Intermediate_Instruction_Type
 {
     MOVE_DATA, // Dest, Src  | Moves data from between registers and memory
@@ -43,11 +52,12 @@ enum class Intermediate_Instruction_Type
     IF_BLOCK, // Use source 1 as condition
     WHILE_BLOCK, // Use source 1 as condition
     CALL_FUNCTION, // Arguments + Destination Register
+    CALL_HARDCODED_FUNCTION, // Arguments + Destination Register, i32_value = Hardcoded_Function_Type
     BREAK, // Currently just breaks out of the active while loop
     CONTINUE, // Just continues the current while loop
     RETURN, // Source 1 is return register, contains size information
     EXIT, // Source 1 is return register, contains size information
-    ERROR_EXIT, // Exits with a predefined error index, which is a handle to an error type (Currently only out of bounds)
+    EXIT_ERROR, // Exits with a predefined error index, which is a handle to an error type (Currently only out of bounds)
 
     ADDRESS_OF, // Dest, Src | If Src is a Register_Access, it returns a pointer to the register, if src = Memory_Access, then it also returns pointer to register
     CALCULATE_MEMBER_ACCESS_POINTER, // Destination, Source, offset in constant_i32_value | !Different Behavior depending on Memory_Access!
@@ -85,15 +95,6 @@ enum class Intermediate_Instruction_Type
     BINARY_OP_BOOLEAN_OR,
     UNARY_OP_BOOLEAN_NOT,
 };
-
-enum class Exit_Code
-{
-    SUCCESS,
-    OUT_OF_BOUNDS, 
-    STACK_OVERFLOW,
-    RETURN_VALUE_OVERFLOW,
-};
-void exit_code_append_to_string(String* string, Exit_Code code);
 
 struct Intermediate_Instruction
 {

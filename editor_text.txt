@@ -36,6 +36,29 @@ array_set_even_constant :: (array: []int, c: int) -> int
     return 0;
 }
 
+array_print :: (array: []int) -> int
+{
+    i := 0;
+    print_line();
+    while (i < array.size) {
+        print_i32(array[i]);
+        print_line();
+        i = i+1;
+    }
+    return 0;
+}
+
+array_fill_from_console :: (array: []int) -> int
+{
+    i := 0;
+    while (i < array.size)
+    {
+        array[i] = read_i32();
+        i = i + 1;
+    }
+    return 0;
+}
+
 main :: () -> int
 {
     array: [30]int;
@@ -59,8 +82,10 @@ main :: () -> int
     a2[2] = 2;
     a2[3] = 1;
     a2[4] = 4;
+    array_fill_from_console(a2);
     array_bubble_sort(a2);
-    return a2[3];
+    array_print(a2);
+    return 0;
 }
 
 even :: (a: int) -> bool 

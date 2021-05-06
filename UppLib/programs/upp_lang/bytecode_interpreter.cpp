@@ -1,5 +1,8 @@
 #include "bytecode_interpreter.hpp"
 
+#include <iostream>
+#include "../../utility/random.hpp"
+
 Bytecode_Interpreter bytecode_intepreter_create()
 {
     Bytecode_Interpreter result;
@@ -88,9 +91,78 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         interpreter->exit_code = Exit_Code::SUCCESS;
         return true;
     }
-    case Instruction_Type::ERROR_EXIT: {
+    case Instruction_Type::EXIT_ERROR: {
         interpreter->exit_code = (Exit_Code)i->op1;
         return true;
+    }
+    case Instruction_Type::CALL_HARDCODED_FUNCTION: 
+    {
+        Hardcoded_Function_Type type = (Hardcoded_Function_Type)i->op1;
+        byte* argument_start = interpreter->stack_pointer + i->op2 - 8; // Check if this is correct
+        memory_set_bytes(&interpreter->return_register[0], 256, 0);
+        switch (type)
+        {
+        case Hardcoded_Function_Type::PRINT_I32: {
+            logg("%d", *(i32*)(argument_start)); break;
+        }
+        case Hardcoded_Function_Type::PRINT_F32: {
+            logg("%3.2f", *(f32*)(argument_start)); break;
+        }
+        case Hardcoded_Function_Type::PRINT_BOOL: {
+            logg("%s", *(argument_start) == 0 ? "FALSE" : "TRUE"); break;
+        }
+        case Hardcoded_Function_Type::PRINT_LINE: {
+            logg("\n"); break;
+        }
+        case Hardcoded_Function_Type::READ_I32: {
+            logg("Please input an i32: ");
+            i32 num;
+            std::cin >> num;
+            if (std::cin.fail()) {
+                num = 0;
+            }
+            std::cin.ignore(10000, '\n');
+            std::cin.clear();
+            memory_copy(interpreter->return_register, &num, 4);
+            break;
+        }
+        case Hardcoded_Function_Type::READ_F32: {
+            logg("Please input an f32: ");
+            f32 num;
+            std::cin >> num;
+            if (std::cin.fail()) {
+                num = 0;
+            }
+            std::cin.ignore(10000, '\n');
+            std::cin.clear();
+            memory_copy(interpreter->return_register, &num, 4);
+            break;
+        }
+        case Hardcoded_Function_Type::READ_BOOL: {
+            logg("Please input an bool (As int): ");
+            i32 num;
+            std::cin >> num;
+            if (std::cin.fail()) {
+                num = 0;
+            }
+            std::cin.ignore(10000, '\n');
+            std::cin.clear();
+            if (num == 0) {
+                interpreter->return_register[0] = 0;
+            }
+            else {
+                interpreter->return_register[0] = 1;
+            }
+            break;
+        }
+        case Hardcoded_Function_Type::RANDOM_I32: {
+            i32 result = random_next_int();
+            memory_copy(interpreter->return_register, &result, 4);
+            break;
+        }
+        default: {panic("What"); }
+        }
+        break;
     }
     case Instruction_Type::LOAD_RETURN_VALUE:
         memory_copy(interpreter->stack_pointer + i->op1, &interpreter->return_register[0], i->op2);
@@ -130,7 +202,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         *(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) != *(i32*)(interpreter->stack_pointer + i->op3);
         break;
     case Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_I32:
-        *(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) > *(i32*)(interpreter->stack_pointer + i->op3);
+        *(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) > * (i32*)(interpreter->stack_pointer + i->op3);
         break;
     case Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_I32:
         *(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) >= *(i32*)(interpreter->stack_pointer + i->op3);
@@ -164,7 +236,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         *(interpreter->stack_pointer + i->op1) = *(f32*)(interpreter->stack_pointer + i->op2) != *(f32*)(interpreter->stack_pointer + i->op3);
         break;
     case Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_F32:
-        *(interpreter->stack_pointer + i->op1) = *(f32*)(interpreter->stack_pointer + i->op2) > *(f32*)(interpreter->stack_pointer + i->op3);
+        *(interpreter->stack_pointer + i->op1) = *(f32*)(interpreter->stack_pointer + i->op2) > * (f32*)(interpreter->stack_pointer + i->op3);
         break;
     case Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_F32:
         *(interpreter->stack_pointer + i->op1) = *(f32*)(interpreter->stack_pointer + i->op2) >= *(f32*)(interpreter->stack_pointer + i->op3);

@@ -72,6 +72,29 @@ void type_system_print(Type_System* system);
 
 
 
+enum class Hardcoded_Function_Type
+{
+    PRINT_I32, // print(15) "15"
+    PRINT_F32, // print(23.32) 
+    PRINT_BOOL, // print(true)
+    PRINT_LINE, // print_line()
+    READ_I32,
+    READ_F32,
+    READ_BOOL,
+    RANDOM_I32,
+
+    HARDCODED_FUNCTION_COUNT, // Should always be last element
+};
+
+struct Hardcoded_Function
+{
+    Hardcoded_Function_Type type;
+    int name_handle;
+    int type_handle;
+};
+
+
+
 namespace Symbol_Type
 {
     enum ENUM
@@ -87,7 +110,6 @@ struct Symbol
     int name;
     Symbol_Type::ENUM symbol_type; // Required since functions, variables and Types could have the same type? TODO: Check this
     int type_index;
-    int function_node_index; // For Functions
 };
 
 struct Symbol_Table
@@ -109,6 +131,7 @@ struct Semantic_Analyser
     DynamicArray<Symbol_Table*> symbol_tables;
     DynamicArray<Semantic_Node_Information> semantic_information;
     DynamicArray<Compiler_Error> errors;
+    Array<Hardcoded_Function> hardcoded_functions;
 
     // Temporary stuff needed for analysis
     AST_Parser* parser;

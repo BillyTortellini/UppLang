@@ -198,6 +198,9 @@
     <ClInclude Include="programs\upp_lang\intermediate_code.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
     </ClInclude>
+    <ClInclude Include="utility\random.hpp">
+      <Filter>Header Files\Utility</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="datastructures\array.cpp">
@@ -328,6 +331,9 @@
     </ClCompile>
     <ClCompile Include="programs\upp_lang\intermediate_code.cpp">
       <Filter>Source Files\Programs\Upp_Lang</Filter>
+    </ClCompile>
+    <ClCompile Include="utility\random.cpp">
+      <Filter>Source Files\Utility</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

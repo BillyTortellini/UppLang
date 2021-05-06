@@ -213,8 +213,20 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
                 generator->analyser->semantic_information[expression_index].expression_result_type_index
             );
         }
-        instr.type = Intermediate_Instruction_Type::CALL_FUNCTION;
-        instr.intermediate_function_index = intermediate_generator_find_function_by_name(generator, expression->name_id);
+        // Check if its an hardcoded function
+        bool is_hardcoded = false;
+        for (int i = 0; i < generator->analyser->hardcoded_functions.size; i++) {
+            if (expression->name_id == generator->analyser->hardcoded_functions[i].name_handle) {
+                instr.type = Intermediate_Instruction_Type::CALL_HARDCODED_FUNCTION;
+                instr.constant_i32_value = (i32)generator->analyser->hardcoded_functions[i].type;
+                is_hardcoded = true;
+            }
+        }
+        if (!is_hardcoded)
+        {
+            instr.type = Intermediate_Instruction_Type::CALL_FUNCTION;
+            instr.intermediate_function_index = intermediate_generator_find_function_by_name(generator, expression->name_id);
+        }
         instr.arguments = dynamic_array_create_empty<Data_Access>(expression->children.size);
 
         // Generate argument Expressions
@@ -279,7 +291,7 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
     case AST_Node_Type::EXPRESSION_UNARY_OPERATION_ADDRESS_OF:
     {
         Data_Access access = intermediate_generator_generate_expression(generator, expression->children[0], false, data_access_make_empty());
-        if (access.type == Data_Access_Type::MEMORY_ACCESS) 
+        if (access.type == Data_Access_Type::MEMORY_ACCESS)
         {
             access.type = Data_Access_Type::REGISTER_ACCESS;
             if (force_destination) {
@@ -364,7 +376,7 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
         }
         else panic("Shit");
 
-        if (accessor_signature->type == Signature_Type::ARRAY_SIZED) 
+        if (accessor_signature->type == Signature_Type::ARRAY_SIZED)
         {
             if (expression->name_id == generator->analyser->data_token_index)
             {
@@ -461,7 +473,7 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
         else {
             result_access = array_data;
         }
-        
+
         // Array bounds check
         {
             Data_Access size_data;
@@ -513,7 +525,7 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
 
             // Error Instruciton
             Intermediate_Instruction error_instr;
-            condition_instr.type = Intermediate_Instruction_Type::ERROR_EXIT;
+            condition_instr.type = Intermediate_Instruction_Type::EXIT_ERROR;
             condition_instr.constant_i32_value = (int)Exit_Code::OUT_OF_BOUNDS;
             dynamic_array_push_back(&function->instructions, condition_instr);
         }
@@ -840,7 +852,7 @@ void intermediate_generator_destroy(Intermediate_Generator* generator)
 
 void intermediate_generator_generate(Intermediate_Generator* generator, Semantic_Analyser* analyser)
 {
-    // TODO: Do reset better
+    // TODO: Do reset better, kinda tricky because of intermediate functions
     intermediate_generator_destroy(generator);
     *generator = intermediate_generator_create();
 
@@ -898,7 +910,7 @@ void data_access_append_to_string(String* string, Data_Access access, Intermedia
     }
 }
 
-void exit_code_append_to_string(String* string, Exit_Code code) 
+void exit_code_append_to_string(String* string, Exit_Code code)
 {
     switch (code)
     {
@@ -955,6 +967,14 @@ void intermediate_instruction_append_to_string(String* string, Intermediate_Inst
             data_access_append_to_string(string, instruction->arguments[i], function, generator);
         }
         break;
+    case Intermediate_Instruction_Type::CALL_HARDCODED_FUNCTION:
+        string_append_formated(string, "CALL_HARDCODED_FUNCTION, function_id: %d, \n\t\treturn_data: ", instruction->constant_i32_value);
+        data_access_append_to_string(string, instruction->destination, function, generator);
+        for (int i = 0; i < instruction->arguments.size; i++) {
+            string_append_formated(string, "\n\t\t#%d: ", i);
+            data_access_append_to_string(string, instruction->arguments[i], function, generator);
+        }
+        break;
     case Intermediate_Instruction_Type::RETURN:
         string_append_formated(string, "RETURN, return_data: ");
         append_src_1 = true;
@@ -963,7 +983,7 @@ void intermediate_instruction_append_to_string(String* string, Intermediate_Inst
         string_append_formated(string, "EXIT ");
         append_src_1 = true;
         break;
-    case Intermediate_Instruction_Type::ERROR_EXIT:
+    case Intermediate_Instruction_Type::EXIT_ERROR:
         string_append_formated(string, "ERROR_EXIT ");
         exit_code_append_to_string(string, (Exit_Code)instruction->constant_i32_value);
         break;

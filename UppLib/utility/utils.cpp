@@ -40,6 +40,7 @@ void logger_set_options(custom_log_fn custom_log_fn, custom_panic_fn custom_pani
 static char* logger_message_buffer = nullptr;
 static int logger_message_buffer_length = 0;
 static const char* LOGGER_PREFIX_FORMAT = "%-10s %04d: ";
+bool logger_log_prefix = false;
 
 void logger_log(const char* file_name, int line_number, const char* message_format, ...) 
 {
@@ -61,9 +62,14 @@ void logger_log(const char* file_name, int line_number, const char* message_form
     }
 
     // Fill buffer
-    snprintf(logger_message_buffer, logger_message_buffer_length, LOGGER_PREFIX_FORMAT, file_name, line_number);
-    const int offset = prefix_length;
-    vsnprintf(logger_message_buffer + offset, logger_message_buffer_length - offset, message_format, variadic_arguments);
+    if (logger_log_prefix) {
+        snprintf(logger_message_buffer, logger_message_buffer_length, LOGGER_PREFIX_FORMAT, file_name, line_number);
+        const int offset = prefix_length;
+        vsnprintf(logger_message_buffer + offset, logger_message_buffer_length - offset, message_format, variadic_arguments);
+    }
+    else {
+        vsnprintf(logger_message_buffer, logger_message_buffer_length, message_format, variadic_arguments);
+    }
     va_end(variadic_arguments);
 
     // Send to custom logging function
