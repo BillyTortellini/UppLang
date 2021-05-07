@@ -368,58 +368,43 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
     {
         Data_Access structure_data = intermediate_generator_generate_expression(generator, expression->children[0], false, data_access_make_empty());
         Type_Signature* accessor_signature = function->registers[structure_data.register_index].type_signature;
+        Semantic_Node_Information* node_info = &generator->analyser->semantic_information[expression_index];
 
-        int member_offset;
-        if (expression->name_id == generator->analyser->size_token_index) {
-            member_offset = 8;
-        }
-        else if (expression->name_id == generator->analyser->data_token_index) {
-            member_offset = 0;
-        }
-        else panic("Shit");
-
-        if (accessor_signature->type == Signature_Type::ARRAY_SIZED)
+        if (node_info->member_access_is_address_of) 
         {
-            if (expression->name_id == generator->analyser->data_token_index)
-            {
-                Intermediate_Instruction instr;
-                instr.type = Intermediate_Instruction_Type::ADDRESS_OF;
-                instr.source1 = structure_data;
-                if (force_destination) {
-                    instr.destination = destination;
-                }
-                else {
-                    instr.destination = intermediate_generator_create_intermediate_register(generator, generator->analyser->type_system.i32_type);
-                }
-                dynamic_array_push_back(&function->instructions, instr);
-                return instr.destination;
+            Intermediate_Instruction instr;
+            instr.type = Intermediate_Instruction_Type::ADDRESS_OF;
+            instr.source1 = structure_data;
+            if (force_destination) {
+                instr.destination = destination;
             }
-            else if (expression->name_id == generator->analyser->size_token_index)
-            {
-                Intermediate_Instruction instr;
-                instr.type = Intermediate_Instruction_Type::LOAD_CONSTANT_I32;
-                if (force_destination) {
-                    instr.destination = destination;
-                }
-                else {
-                    instr.destination = intermediate_generator_create_intermediate_register(generator, generator->analyser->type_system.i32_type);
-                }
-                instr.constant_i32_value = accessor_signature->array_element_count;
-                dynamic_array_push_back(&function->instructions, instr);
-                return instr.destination;
+            else {
+                instr.destination = intermediate_generator_create_intermediate_register(generator, node_info->expression_result_type);
             }
-            else panic("Should not happen, really!");
+            dynamic_array_push_back(&function->instructions, instr);
+            return instr.destination;
+        }
+        if (node_info->member_access_is_constant_size)
+        {
+            Intermediate_Instruction instr;
+            instr.type = Intermediate_Instruction_Type::LOAD_CONSTANT_I32;
+            if (force_destination) {
+                instr.destination = destination;
+            }
+            else {
+                instr.destination = intermediate_generator_create_intermediate_register(generator, generator->analyser->type_system.i32_type);
+            }
+            instr.constant_i32_value = node_info->member_access_offset;
+            dynamic_array_push_back(&function->instructions, instr);
+            return instr.destination;
         }
 
         Intermediate_Instruction instr;
         instr.type = Intermediate_Instruction_Type::CALCULATE_MEMBER_ACCESS_POINTER;
-        instr.constant_i32_value = member_offset;
+        instr.constant_i32_value = node_info->member_access_offset;
         instr.destination = intermediate_generator_create_intermediate_register(
             generator,
-            type_system_make_pointer(
-                &generator->analyser->type_system,
-                generator->analyser->semantic_information[expression_index].expression_result_type
-            )
+            type_system_make_pointer(&generator->analyser->type_system, node_info->expression_result_type)
         );
         instr.source1 = structure_data;
         dynamic_array_push_back(&function->instructions, instr);
@@ -866,6 +851,7 @@ void intermediate_generator_generate(Intermediate_Generator* generator, Semantic
     {
         AST_Node_Index function_node_index = analyser->parser->nodes[0].children[i];
         AST_Node* function_node = &analyser->parser->nodes[function_node_index];
+        if (function_node->type != AST_Node_Type::FUNCTION) continue;
         dynamic_array_push_back(
             &generator->functions,
             intermediate_function_create(function_node->name_id, analyser->semantic_information[function_node_index].function_signature)

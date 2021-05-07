@@ -2,7 +2,58 @@
 TODO:
     - Defining static array data
 */
-main :: () -> int
+main :: () -> void
+{
+    struct_test();
+    return;
+}
+
+Player :: struct
+{
+    age: int;
+    alive: bool;
+    level: int;
+}
+
+player_level_up :: (player: *Player) -> void
+{
+    (&player).level = (&player).level + 1;
+    return; 
+}
+
+player_make :: (age: int, alive: bool, level: int) -> Player
+{
+    player: Player;
+    player.age = age;
+    player.alive = alive;
+    player.level = level;
+    return player;
+}
+
+player_kill :: (killer: *Player, victim: *Player) -> void
+{
+    if !(&victim).alive return;
+    (&victim).alive = false;
+    (&killer).level = (&killer).level + (&victim).level;
+    return;
+}
+
+struct_test :: () -> void
+{
+    p1 := player_make(69, true, 12);
+    p2 := player_make(77, true, 3);
+
+    player_level_up(*p1);
+    player_kill(*p1, *p2);
+
+    print_line();
+    print_i32(p1.level);
+    print_line();
+    return;
+}
+
+/*
+array_test :: () -> void
 {
     array: [30]int;
     i := 0;
@@ -15,16 +66,16 @@ main :: () -> int
     a.data = array.data;
     a.size = array.size;
 
-    arr2: [15]int;
+    arr2: [100]int;
     a2: []int;
     a2.size = arr2.size;
     a2.data = arr2.data;
-    array_fill_random(a2, 15);
+    array_fill_random(a2, a2.size);
     //array_fill_from_console(a2);
     array_bubble_sort(a2);
-    //array_set_even_constant(a2, 7); 
+    array_set_even_constant(a2, 420); 
     array_print(a2);
-    return 23;
+    return;
 }
 
 array_bubble_sort :: (a: []int) -> void
@@ -95,7 +146,6 @@ array_fill_random :: (array: []int, max: int) -> void
     return;
 }
 
-
 even :: (a: int) -> bool 
 {
     return a % 2 == 0;
@@ -129,21 +179,18 @@ fib_rec :: (n: int) -> int
     return fib_rec(n-1) + fib_rec(n-2);
 }
 
-
+*/
 /*
     Missing binary statements x++; x--; x+=1; x-=1; x/=1; x*=1;
     Short circuit operation on && and ||
 
     Next Features:
-     * Arrays
      * Structs
-     * Predefine functions (print)
-     * Casting
+     * Casting/Implicit conversions
      * Strings?
      * OS-Calls/Calls to libraries (print, new/delete)
      * Bytecode Debugger
      * Backend (LLVM or C or just x64 assembly)
-     * Float/Int conversion / Maybe implicit?
      * Globals
 
     UppLang small improvements:

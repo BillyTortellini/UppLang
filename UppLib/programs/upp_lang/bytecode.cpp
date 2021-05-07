@@ -4,6 +4,9 @@ int align_offset_next_multiple(int offset, int alignment) {
     // Check if this works if offset is negative
     int dist = offset % alignment;
     if (dist == 0) return offset;
+    if (dist < 0) {
+        return offset - dist;
+    }
     return offset + (alignment - dist);
 }
 
@@ -771,11 +774,9 @@ void bytecode_generator_generate_function_instruction_slice(
     }
 }
 
-void bytecode_generator_generate_function_code(Bytecode_Generator* generator, int function_index)
+void bytecode_generator_calculate_function_register_locations(Bytecode_Generator* generator, int function_index)
 {
     Intermediate_Function* function = &generator->im_generator->functions[function_index];
-    generator->function_locations[function_index] = generator->instructions.size;
-
     // Set parameter stack locations
     {
         int stack_size_of_parameters = 0;
@@ -827,6 +828,14 @@ void bytecode_generator_generate_function_code(Bytecode_Generator* generator, in
     }
 
     generator->stack_offset_end_of_variables = stack_offset_end_of_variables;
+}
+
+void bytecode_generator_generate_function_code(Bytecode_Generator* generator, int function_index)
+{
+    Intermediate_Function* function = &generator->im_generator->functions[function_index];
+    generator->function_locations[function_index] = generator->instructions.size;
+
+    bytecode_generator_calculate_function_register_locations(generator, function_index);
     bytecode_generator_generate_function_instruction_slice(generator, function_index, 0, function->instructions.size);
 }
 
@@ -881,6 +890,154 @@ void bytecode_generator_generate(Bytecode_Generator* generator, Intermediate_Gen
     generator->entry_point_index = generator->function_locations[generator->im_generator->main_function_index];
 }
 
+void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction instruction)
+{
+    switch (instruction.instruction_type)
+    {
+    case Instruction_Type::LOAD_CONSTANT_BOOLEAN:
+        string_append_formated(string, "LOAD_CONSTANT_BOOLEAN             dest=%d, val=%s\n", instruction.op1, instruction.op2 ? "TRUE" : "FALSE");
+        break;
+    case Instruction_Type::LOAD_CONSTANT_F32:
+        string_append_formated(string, "LOAD_CONSTANT_F32                 dest=%d, val=%3.2f\n", instruction.op1, *((float*)&instruction.op2));
+        break;
+    case Instruction_Type::LOAD_CONSTANT_I32:
+        string_append_formated(string, "LOAD_CONSTANT_I32                 dest=%d, val=%d\n", instruction.op1, instruction.op2);
+        break;
+    case Instruction_Type::MOVE_REGISTERS:
+        string_append_formated(string, "MOVE_REGISTER                     dest=%d, src=%d, size=%d\n", instruction.op1, instruction.op2, instruction.op3);
+        break;
+    case Instruction_Type::READ_MEMORY:
+        string_append_formated(string, "READ_MEMORY                       dest=%d, address_reg=%d, size=%d\n", instruction.op1, instruction.op2, instruction.op3);
+        break;
+    case Instruction_Type::WRITE_MEMORY:
+        string_append_formated(string, "WRITE_MEMORY                      dest=%d, address_reg=%d, size=%d\n", instruction.op1, instruction.op2, instruction.op3);
+        break;
+    case Instruction_Type::MEMORY_COPY:
+        string_append_formated(string, "MEMORY_COPY                       dest=%d, src=%d\n", instruction.op1, instruction.op2);
+        break;
+    case Instruction_Type::LOAD_REGISTER_ADDRESS:
+        string_append_formated(string, "LOAD_REGISTER_ADDRESS             dest=%d, reg_id=%d\n", instruction.op1, instruction.op2);
+        break;
+    case Instruction_Type::U64_ADD_CONSTANT_I32:
+        string_append_formated(string, "U64_ADD_CONSTANT_I32              dest=%d, reg_id=%d, offset=%d\n", instruction.op1, instruction.op2, instruction.op3);
+        break;
+    case Instruction_Type::U64_MULTIPLY_ADD_I32:
+        string_append_formated(string, "U64_MULTIPLY_ADD_I32              dest=%d, base_reg=%d, index_reg=%d, size=%d\n", instruction.op1, instruction.op2, instruction.op3, instruction.op4);
+        break;
+    case Instruction_Type::JUMP:
+        string_append_formated(string, "JUMP                              dest=%d\n", instruction.op1);
+        break;
+    case Instruction_Type::JUMP_ON_TRUE:
+        string_append_formated(string, "JUMP_ON_TRUE                      dest=%d, cond=%d\n", instruction.op1, instruction.op2);
+        break;
+    case Instruction_Type::JUMP_ON_FALSE:
+        string_append_formated(string, "JUMP_ON_FALSE                     dest=%d, cond=%d\n", instruction.op1, instruction.op2);
+        break;
+    case Instruction_Type::CALL:
+        string_append_formated(string, "CALL                              dest=%d, stack_offset=%d\n", instruction.op1, instruction.op2);
+        break;
+    case Instruction_Type::CALL_HARDCODED_FUNCTION:
+        string_append_formated(string, "CALL_HARDCODED_FUNCTION           func_ind=%d, stack_offset=%d\n", instruction.op1, instruction.op2);
+        break;
+    case Instruction_Type::RETURN:
+        string_append_formated(string, "RETURN                            return_reg=%d, size=%d\n", instruction.op1, instruction.op2);
+        break;
+    case Instruction_Type::LOAD_RETURN_VALUE:
+        string_append_formated(string, "LOAD_RETURN_VALUE                 dst=%d, size=%d\n", instruction.op1, instruction.op2);
+        break;
+    case Instruction_Type::EXIT:
+        string_append_formated(string, "EXIT                              src=%d, size=%d\n", instruction.op1, instruction.op2);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32:
+        string_append_formated(string, "BINARY_OP_ARITHMETIC_ADDITION_I32         dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_I32:
+        string_append_formated(string, "BINARY_OP_ARITHMETIC_SUBTRACTION_I32      dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_I32:
+        string_append_formated(string, "BINARY_OP_ARITHMETIC_MULTIPLICATION_I32   dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_I32:
+        string_append_formated(string, "BINARY_OP_ARITHMETIC_DIVISION_I32         dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_I32:
+        string_append_formated(string, "BINARY_OP_ARITHMETIC_MODULO_I32           dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_EQUAL_I32:
+        string_append_formated(string, "BINARY_OP_COMPARISON_EQUAL_I32            dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_I32:
+        string_append_formated(string, "BINARY_OP_COMPARISON_NOT_EQUAL_I32        dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_I32:
+        string_append_formated(string, "BINARY_OP_COMPARISON_GREATER_THAN_I32     dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_I32:
+        string_append_formated(string, "BINARY_OP_COMPARISON_GREATER_EQUAL_I32    dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_I32:
+        string_append_formated(string, "BINARY_OP_COMPARISON_LESS_THAN_I32        dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_I32:
+        string_append_formated(string, "BINARY_OP_COMPARISON_LESS_EQUAL_I32       dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
+        break;
+    case Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I32:
+        string_append_formated(string, "UNARY_OP_ARITHMETIC_NEGATE_I32            dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_F32:
+        string_append_formated(string, "BINARY_OP_ARITHMETIC_ADDITION_F32         dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_F32:
+        string_append_formated(string, "BINARY_OP_ARITHMETIC_SUBTRACTION_F32      dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_F32:
+        string_append_formated(string, "BINARY_OP_ARITHMETIC_MULTIPLICATION_F32   dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_F32:
+        string_append_formated(string, "BINARY_OP_ARITHMETIC_DIVISION_F32         dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_EQUAL_F32:
+        string_append_formated(string, "BINARY_OP_COMPARISON_EQUAL_F32            dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_F32:
+        string_append_formated(string, "BINARY_OP_COMPARISON_NOT_EQUAL_F32        dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_F32:
+        string_append_formated(string, "BINARY_OP_COMPARISON_GREATER_THAN_F32     dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_F32:
+        string_append_formated(string, "BINARY_OP_COMPARISON_GREATER_EQUAL_F32    dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_F32:
+        string_append_formated(string, "BINARY_OP_COMPARISON_LESS_THAN_F32        dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_F32:
+        string_append_formated(string, "BINARY_OP_COMPARISON_LESS_EQUAL_F32       dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
+        break;
+    case Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_F32:
+        string_append_formated(string, "UNARY_OP_ARITHMETIC_NEGATE_F32            dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_EQUAL_BOOL:
+        string_append_formated(string, "BINARY_OP_COMPARISON_EQUAL_BOOL           dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_BOOL:
+        string_append_formated(string, "BINARY_OP_COMPARISON_NOT_EQUAL_BOOL       dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
+        break;
+    case Instruction_Type::BINARY_OP_BOOLEAN_AND:
+        string_append_formated(string, "BINARY_OP_BOOLEAN_AND                     dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
+        break;
+    case Instruction_Type::BINARY_OP_BOOLEAN_OR:
+        string_append_formated(string, "BINARY_OP_BOOLEAN_OR                      dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
+        break;
+    case Instruction_Type::UNARY_OP_BOOLEAN_NOT:
+        string_append_formated(string, "UNARY_OP_BOOLEAN_NOT                      dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
+        break;
+    default:
+        string_append_formated(string, "FUCKING HELL\n");
+        break;
+    }
+}
+
 void bytecode_generator_append_bytecode_to_string(Bytecode_Generator* generator, String* string)
 {
     string_append_formated(string, "Functions:\n");
@@ -895,150 +1052,7 @@ void bytecode_generator_append_bytecode_to_string(Bytecode_Generator* generator,
     {
         Bytecode_Instruction& instruction = generator->instructions[i];
         string_append_formated(string, "%4d: ", i);
-        switch (instruction.instruction_type)
-        {
-        case Instruction_Type::LOAD_CONSTANT_BOOLEAN:
-            string_append_formated(string, "LOAD_CONSTANT_BOOLEAN             dest=%d, val=%s\n", instruction.op1, instruction.op2 ? "TRUE" : "FALSE");
-            break;
-        case Instruction_Type::LOAD_CONSTANT_F32:
-            string_append_formated(string, "LOAD_CONSTANT_F32                 dest=%d, val=%3.2f\n", instruction.op1, *((float*)&instruction.op2));
-            break;
-        case Instruction_Type::LOAD_CONSTANT_I32:
-            string_append_formated(string, "LOAD_CONSTANT_I32                 dest=%d, val=%d\n", instruction.op1, instruction.op2);
-            break;
-        case Instruction_Type::MOVE_REGISTERS:
-            string_append_formated(string, "MOVE_REGISTER                     dest=%d, src=%d, size=%d\n", instruction.op1, instruction.op2, instruction.op3);
-            break;
-        case Instruction_Type::READ_MEMORY:
-            string_append_formated(string, "READ_MEMORY                       dest=%d, address_reg=%d, size=%d\n", instruction.op1, instruction.op2, instruction.op3);
-            break;
-        case Instruction_Type::WRITE_MEMORY:
-            string_append_formated(string, "WRITE_MEMORY                      dest=%d, address_reg=%d, size=%d\n", instruction.op1, instruction.op2, instruction.op3);
-            break;
-        case Instruction_Type::MEMORY_COPY:
-            string_append_formated(string, "MEMORY_COPY                       dest=%d, src=%d\n", instruction.op1, instruction.op2);
-            break;
-        case Instruction_Type::LOAD_REGISTER_ADDRESS:
-            string_append_formated(string, "LOAD_REGISTER_ADDRESS             dest=%d, reg_id=%d\n", instruction.op1, instruction.op2);
-            break;
-        case Instruction_Type::U64_ADD_CONSTANT_I32:
-            string_append_formated(string, "U64_ADD_CONSTANT_I32              dest=%d, reg_id=%d, offset=%d\n", instruction.op1, instruction.op2, instruction.op3);
-            break;
-        case Instruction_Type::U64_MULTIPLY_ADD_I32:
-            string_append_formated(string, "U64_MULTIPLY_ADD_I32              dest=%d, base_reg=%d, index_reg=%d, size=%d\n", instruction.op1, instruction.op2, instruction.op3, instruction.op4);
-            break;
-        case Instruction_Type::JUMP:
-            string_append_formated(string, "JUMP                              dest=%d\n", instruction.op1);
-            break;
-        case Instruction_Type::JUMP_ON_TRUE:
-            string_append_formated(string, "JUMP_ON_TRUE                      dest=%d, cond=%d\n", instruction.op1, instruction.op2);
-            break;
-        case Instruction_Type::JUMP_ON_FALSE:
-            string_append_formated(string, "JUMP_ON_FALSE                     dest=%d, cond=%d\n", instruction.op1, instruction.op2);
-            break;
-        case Instruction_Type::CALL:
-            string_append_formated(string, "CALL                              dest=%d, stack_offset=%d\n", instruction.op1, instruction.op2);
-            break;
-        case Instruction_Type::CALL_HARDCODED_FUNCTION:
-            string_append_formated(string, "CALL_HARDCODED_FUNCTION           func_ind=%d, stack_offset=%d\n", instruction.op1, instruction.op2);
-            break;
-        case Instruction_Type::RETURN:
-            string_append_formated(string, "RETURN                            return_reg=%d, size=%d\n", instruction.op1, instruction.op2);
-            break;
-        case Instruction_Type::LOAD_RETURN_VALUE:
-            string_append_formated(string, "LOAD_RETURN_VALUE                 dst=%d, size=%d\n", instruction.op1, instruction.op2);
-            break;
-        case Instruction_Type::EXIT:
-            string_append_formated(string, "EXIT                              src=%d, size=%d\n", instruction.op1, instruction.op2);
-            break;
-        case Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32:
-            string_append_formated(string, "BINARY_OP_ARITHMETIC_ADDITION_I32         dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
-            break;
-        case Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_I32:
-            string_append_formated(string, "BINARY_OP_ARITHMETIC_SUBTRACTION_I32      dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
-            break;
-        case Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_I32:
-            string_append_formated(string, "BINARY_OP_ARITHMETIC_MULTIPLICATION_I32   dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
-            break;
-        case Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_I32:
-            string_append_formated(string, "BINARY_OP_ARITHMETIC_DIVISION_I32         dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
-            break;
-        case Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_I32:
-            string_append_formated(string, "BINARY_OP_ARITHMETIC_MODULO_I32           dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
-            break;
-        case Instruction_Type::BINARY_OP_COMPARISON_EQUAL_I32:
-            string_append_formated(string, "BINARY_OP_COMPARISON_EQUAL_I32            dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
-            break;
-        case Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_I32:
-            string_append_formated(string, "BINARY_OP_COMPARISON_NOT_EQUAL_I32        dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
-            break;
-        case Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_I32:
-            string_append_formated(string, "BINARY_OP_COMPARISON_GREATER_THAN_I32     dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
-            break;
-        case Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_I32:
-            string_append_formated(string, "BINARY_OP_COMPARISON_GREATER_EQUAL_I32    dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
-            break;
-        case Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_I32:
-            string_append_formated(string, "BINARY_OP_COMPARISON_LESS_THAN_I32        dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
-            break;
-        case Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_I32:
-            string_append_formated(string, "BINARY_OP_COMPARISON_LESS_EQUAL_I32       dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
-            break;
-        case Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I32:
-            string_append_formated(string, "UNARY_OP_ARITHMETIC_NEGATE_I32            dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
-            break;
-        case Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_F32:
-            string_append_formated(string, "BINARY_OP_ARITHMETIC_ADDITION_F32         dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
-            break;
-        case Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_F32:
-            string_append_formated(string, "BINARY_OP_ARITHMETIC_SUBTRACTION_F32      dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
-            break;
-        case Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_F32:
-            string_append_formated(string, "BINARY_OP_ARITHMETIC_MULTIPLICATION_F32   dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
-            break;
-        case Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_F32:
-            string_append_formated(string, "BINARY_OP_ARITHMETIC_DIVISION_F32         dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
-            break;
-        case Instruction_Type::BINARY_OP_COMPARISON_EQUAL_F32:
-            string_append_formated(string, "BINARY_OP_COMPARISON_EQUAL_F32            dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
-            break;
-        case Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_F32:
-            string_append_formated(string, "BINARY_OP_COMPARISON_NOT_EQUAL_F32        dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
-            break;
-        case Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_F32:
-            string_append_formated(string, "BINARY_OP_COMPARISON_GREATER_THAN_F32     dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
-            break;
-        case Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_F32:
-            string_append_formated(string, "BINARY_OP_COMPARISON_GREATER_EQUAL_F32    dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
-            break;
-        case Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_F32:
-            string_append_formated(string, "BINARY_OP_COMPARISON_LESS_THAN_F32        dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
-            break;
-        case Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_F32:
-            string_append_formated(string, "BINARY_OP_COMPARISON_LESS_EQUAL_F32       dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
-            break;
-        case Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_F32:
-            string_append_formated(string, "UNARY_OP_ARITHMETIC_NEGATE_F32            dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
-            break;
-        case Instruction_Type::BINARY_OP_COMPARISON_EQUAL_BOOL:
-            string_append_formated(string, "BINARY_OP_COMPARISON_EQUAL_BOOL           dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
-            break;
-        case Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_BOOL:
-            string_append_formated(string, "BINARY_OP_COMPARISON_NOT_EQUAL_BOOL       dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
-            break;
-        case Instruction_Type::BINARY_OP_BOOLEAN_AND:
-            string_append_formated(string, "BINARY_OP_BOOLEAN_AND                     dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
-            break;
-        case Instruction_Type::BINARY_OP_BOOLEAN_OR:
-            string_append_formated(string, "BINARY_OP_BOOLEAN_OR                      dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
-            break;
-        case Instruction_Type::UNARY_OP_BOOLEAN_NOT:
-            string_append_formated(string, "UNARY_OP_BOOLEAN_NOT                      dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
-            break;
-        default:
-            string_append_formated(string, "FUCKING HELL\n");
-            break;
-        }
+        bytecode_instruction_append_to_string(string, generator->instructions[i]);
     }
 }
 

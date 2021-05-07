@@ -8,6 +8,7 @@ namespace AST_Node_Type
     enum ENUM
     {
         ROOT, // Children: functions
+        STRUCT, // Children: Variable definitions
         FUNCTION, // Child 0: parameter_block, Child 1: Return Type, Child 2: Statement_Block
         PARAMETER_BLOCK, // Children: Parameters
         PARAMETER, // Child 0: Type
@@ -24,11 +25,11 @@ namespace AST_Node_Type
         STATEMENT_RETURN, // Child 0: Return-Expression
         STATEMENT_EXPRESSION, // Child 0: Expression
         STATEMENT_ASSIGNMENT, // Child 0: Destination-Expression, Child 1: Value-Expression
-        STATEMENT_VARIABLE_DEFINITION, //
+        STATEMENT_VARIABLE_DEFINITION, // Child 0: Type index, name_id
         STATEMENT_VARIABLE_DEFINE_ASSIGN, // Child 0: Type index, Child 1: Value-Expression
         STATEMENT_VARIABLE_DEFINE_INFER, // Child 0: Expression
         EXPRESSION_LITERAL,
-        EXPRESSION_FUNCTION_CALL,
+        EXPRESSION_FUNCTION_CALL, // Children: Argument expressions, name_id is name of function to call
         EXPRESSION_VARIABLE_READ,
         EXPRESSION_ARRAY_ACCESS, // Child 0: Access-to-Expression, Child 1: Index-Expression
         EXPRESSION_MEMBER_ACCESS, // Child 0: left side, name_id is the .what operator a.y.y[5].z

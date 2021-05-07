@@ -79,7 +79,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
             interpreter->exit_code = Exit_Code::RETURN_VALUE_OVERFLOW;
             return true;
         }
-        memory_copy(&interpreter->return_register[0], interpreter->stack_pointer + i->op1, i->op2);
+        memory_copy(interpreter->return_register, interpreter->stack_pointer + i->op1, i->op2);
         Bytecode_Instruction* return_address = *(Bytecode_Instruction**)interpreter->stack_pointer;
         byte* stack_old_base = *(byte**)(interpreter->stack_pointer + 8);
         interpreter->instruction_pointer = return_address;
@@ -308,14 +308,193 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
     return false;
 }
 
+void type_signature_print_value(Type_Signature* type, byte* value_ptr)
+{
+    switch (type->type)
+    {
+    case Signature_Type::FUNCTION:
+    case Signature_Type::VOID_TYPE:
+    case Signature_Type::ERROR_TYPE:
+    case Signature_Type::ARRAY_SIZED: 
+    {
+        logg("[%d]: ", type->array_element_count);
+        if (type->array_element_count > 4) {
+            logg("...");
+            return;
+        }
+        for (int i = 0; i < type->array_element_count; i++) {
+            byte* element_ptr = value_ptr + (i * type->child_type->size_in_bytes);
+            type_signature_print_value(type->child_type, element_ptr);
+            logg(", ");
+        }
+        break;
+    }
+    case Signature_Type::ARRAY_UNSIZED: 
+    {
+        byte* data_ptr = *((byte**)value_ptr);
+        int element_count = *((int*)(value_ptr + 8));
+        logg("[%d]: ", element_count);
+        if (element_count > 4) {
+            logg("...");
+            return;
+        }
+        for (int i = 0; i < element_count; i++) {
+            byte* element_ptr = data_ptr + (i * type->child_type->size_in_bytes);
+            type_signature_print_value(type->child_type, element_ptr);
+            logg(", ");
+        }
+        break;
+    }
+    case Signature_Type::POINTER: 
+    {
+        byte* data_ptr = *((byte**)value_ptr);
+        if (data_ptr == 0) {
+            logg("nullpointer");
+            return;
+        }
+        logg("Ptr %p", data_ptr);
+        break;
+    }
+    case Signature_Type::STRUCT: 
+    {
+        logg("Struct: {");
+        for (int i = 0; i < type->member_types.size; i++) {
+            Struct_Member* mem = &type->member_types[i];
+            byte* mem_ptr = value_ptr + mem->offset;
+            type_signature_print_value(mem->type, mem_ptr);
+            logg(", ");
+        }
+        logg("}");
+        break;
+    }
+    case Signature_Type::PRIMITIVE: 
+    {
+        switch (type->primitive_type)
+        {
+        case Primitive_Type::BOOLEAN: {
+            bool val = *(bool*)value_ptr;
+            logg("%s", val ? "TRUE" : "FALSE");
+            break;
+        }
+        case Primitive_Type::SIGNED_INT_8: {
+            int val = (i32)*(i8*)value_ptr;
+            logg("%d", val);
+            break;
+        }
+        case Primitive_Type::SIGNED_INT_16: {
+            int val = (i32)*(i16*)value_ptr;
+            logg("%d", val);
+            break;
+        }
+        case Primitive_Type::SIGNED_INT_32: {
+            int val = (i32)*(i32*)value_ptr;
+            logg("%d", val);
+            break;
+        }
+        case Primitive_Type::SIGNED_INT_64: {
+            int val = (i32)*(i64*)value_ptr;
+            logg("%d", val);
+            break;
+        }
+        case Primitive_Type::UNSIGNED_INT_8 : {
+            int val = (i32)*(u8*)value_ptr;
+            logg("%d", val);
+            break;
+        }
+        case Primitive_Type::UNSIGNED_INT_16: {
+            int val = (i32)*(u16*)value_ptr;
+            logg("%d", val);
+            break;
+        }
+        case Primitive_Type::UNSIGNED_INT_32: {
+            int val = (i32)*(u32*)value_ptr;
+            logg("%d", val);
+            break;
+        }
+        case Primitive_Type::UNSIGNED_INT_64: {
+            int val = (i32)*(u64*)value_ptr;
+            logg("%d", val);
+            break;
+        }
+        case Primitive_Type::FLOAT_32: {
+            float val = *(float*)value_ptr;
+            logg("%3.2f", val);
+            break;
+        }
+        case Primitive_Type::FLOAT_64: {
+            double val = *(double*)value_ptr;
+            logg("%3.2f", val);
+            break;
+        }
+        }
+        break;
+    }
+    }
+
+}
+
+void bytecode_interpreter_print_state(Bytecode_Interpreter* interpreter)
+{
+    int current_instruction_index = interpreter->instruction_pointer - interpreter->generator->instructions.data;
+    int current_function_index = -1;
+    for (int i = 0; i < interpreter->generator->function_locations.size; i++)
+    {
+        int function_start_loc = interpreter->generator->function_locations[i];
+        int function_end_loc_exclusive = interpreter->generator->instructions.size;
+        if (i + 1 < interpreter->generator->function_locations.size) {
+            function_end_loc_exclusive = interpreter->generator->function_locations[i + 1];
+        }
+        if (current_instruction_index >= function_start_loc && current_instruction_index < function_end_loc_exclusive) {
+            current_function_index = i;
+            break;
+        }
+    }
+    if (current_function_index == -1) panic("Should not happen!\n");
+
+    bytecode_generator_calculate_function_register_locations(interpreter->generator, current_function_index);
+    Intermediate_Function* func = &interpreter->generator->im_generator->functions[current_function_index];
+    logg("\n\n\n\n---------------------- CURRENT STATE ----------------------\n");
+    logg("Current Function: %s\n", lexer_identifer_to_string(interpreter->generator->im_generator->analyser->parser->lexer, func->name_handle).characters);
+    logg("Current Stack offset: %d\n", interpreter->stack.data - interpreter->stack_pointer);
+    logg("Instruction Index: %d\n", current_instruction_index);
+    {
+        String tmp = string_create_empty(64);
+        SCOPE_EXIT(string_destroy(&tmp));
+        bytecode_instruction_append_to_string(&tmp, interpreter->generator->instructions[current_instruction_index]);
+        logg("Instruction: %s\n", tmp.characters);
+    }
+    for (int i = 0; i < func->registers.size; i++)
+    {
+        Intermediate_Register* reg = &func->registers[i];
+        int stack_offset = interpreter->generator->register_stack_locations[i];
+        byte* reg_data_ptr = interpreter->stack_pointer + stack_offset;
+        Type_Signature* reg_type = reg->type_signature;
+        if (reg->type == Intermediate_Register_Type::PARAMETER) {
+            logg("Parameter %d (Offset %d): ", reg->parameter_index, stack_offset);
+        }
+        else if (reg->type == Intermediate_Register_Type::VARIABLE) {
+            logg("Variable %s (Offset %d): ",
+                lexer_identifer_to_string(interpreter->generator->im_generator->analyser->parser->lexer, reg->name_id).characters,
+                stack_offset
+            );
+        }
+        else continue;
+        type_signature_print_value(reg_type, reg_data_ptr);
+        logg("\n");
+    }
+}
+
 void bytecode_interpreter_execute_main(Bytecode_Interpreter* interpreter, Bytecode_Generator* generator)
 {
     interpreter->generator = generator;
-    memory_set_bytes(&interpreter->return_register, 16, 0);
+    memory_set_bytes(&interpreter->return_register, 256, 0);
+    memory_set_bytes(interpreter->stack.data, 16, 0);
     interpreter->instruction_pointer = &generator->instructions[generator->entry_point_index];
     interpreter->stack_pointer = &interpreter->stack[0];
+    int current_instruction_index = interpreter->instruction_pointer - interpreter->generator->instructions.data;
 
     while (true) {
+        //bytecode_interpreter_print_state(interpreter);
         if (bytecode_interpreter_execute_current_instruction(interpreter)) { break; }
     }
 }

@@ -29,10 +29,19 @@ enum class Signature_Type
     PRIMITIVE,
     POINTER,
     FUNCTION,
+    STRUCT,
     ARRAY_SIZED, // Array with known size, like [5]int
     ARRAY_UNSIZED, // With unknown size, int[]
     ERROR_TYPE,
     // Future: Struct, Union, Tagged Union ...
+};
+
+struct Type_Signature;
+struct Struct_Member
+{
+    Type_Signature* type;
+    int offset;
+    int name_handle;
 };
 
 struct Type_Signature
@@ -44,6 +53,8 @@ struct Type_Signature
     Primitive_Type primitive_type;
     // Array or Pointer Stuff
     Type_Signature* child_type;
+    // Structs
+    DynamicArray<Struct_Member> member_types;
     // Function Stuff
     DynamicArray<Type_Signature*> parameter_types;
     Type_Signature* return_type;
@@ -78,6 +89,7 @@ void type_system_reset_all(Type_System* system);
 Type_Signature* type_system_make_pointer(Type_System* system, Type_Signature* child_type);
 Type_Signature* type_system_make_array_unsized(Type_System* system, Type_Signature* element_type);
 Type_Signature* type_system_make_array_sized(Type_System* system, Type_Signature* element_type, int array_element_count);
+Type_Signature* type_system_make_function(Type_System* system, DynamicArray<Type_Signature*> parameter_types, Type_Signature* return_type);
 void type_system_print(Type_System* system);
 
 
@@ -133,6 +145,19 @@ struct Semantic_Node_Information
     int symbol_table_index; // Which symbol table is active in this node
     Type_Signature* expression_result_type;
     Type_Signature* function_signature;
+    Type_Signature* struct_signature;
+    bool member_access_is_address_of;
+    bool member_access_is_constant_size; // If this is true, then the size is stored in member_access_offset
+    int member_access_offset;
+};
+
+struct Struct_Fill_Out
+{
+    Type_Signature* signature;
+    int struct_node_index;
+    bool marked;
+    bool generated;
+    int name_id;
 };
 
 struct Semantic_Analyser
@@ -142,6 +167,7 @@ struct Semantic_Analyser
     DynamicArray<Semantic_Node_Information> semantic_information;
     DynamicArray<Compiler_Error> errors;
     Array<Hardcoded_Function> hardcoded_functions;
+    DynamicArray<Struct_Fill_Out> struct_fill_outs;
 
     // Usefull stuff for now
     int size_token_index;
@@ -170,7 +196,7 @@ struct Expression_Analysis_Result
 
 Symbol_Table symbol_table_create(Symbol_Table* parent);
 void symbol_table_destroy(Symbol_Table* table);
-Symbol* symbol_table_find_symbol(Symbol_Table* table, int name_handle, bool* in_current_scope);
+Symbol* symbol_table_find_symbol(Symbol_Table* table, int name_handle);
 Symbol* symbol_table_find_symbol_of_type(Symbol_Table* table, int name_handle, Symbol_Type::ENUM symbol_type);
 
 Semantic_Analyser semantic_analyser_create();

@@ -41,6 +41,7 @@ float math_ceil(float x);
 double math_ceil(double x);
 u64 math_round_previous_multiple(u64 x, u64 modulo);
 u64 math_round_next_multiple(u64 x, u64 m);
+i32 math_round_next_multiple(i32 x, i32 m);
 
 // MODULO FUNCTIONS
 // These are used because the c++ % operator is actually the Mathematical remainder operator, not the Mathematical modulo

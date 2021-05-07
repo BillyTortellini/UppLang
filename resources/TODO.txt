@@ -1,18 +1,18 @@
 Current Work Item:
 ------------------
- * Functions with no return values
  * Structs
  * Syntax for new/delete
 
- Functions with no return values:
-    main :: (x: int) -> void
- If i implement a void type, then the parser and the type system would not be concerned, only analyser, im-generator and code-generator
-  This concerns:
-    - Parser (AST_Node for function may not have a return value now)
-    - Type_System (Currently all function types have a return value)
-    - Semantic Analysis (You cannot move results from void functions to somewhere)
-    - Intermediate Generator (Return must be able to return nothing)
-    - Bytecode Generator (Return must be able to do nothing, also return type should not be loaded)
+Structs need syntax for creation, I guess it would be
+    Struct      <--     Identifier :: struct { Members }
+    Members     <--     Member {Member}
+    Member      <--     Identifier: Type;
+
+What code is affected:
+    - Parser                        ... Need parsing of the AST
+    - Semantic Analyser             ... Need new analysis, No empty struct definitions -> Warning
+    - Intermediate_Code_Geneartor   ... Member access currently only works on .size and .data, this needs to change
+                                        Also i think its currently assumed that all root-children are functions
 
 Long-Term Goals:
 ----------------
@@ -68,6 +68,7 @@ Editor-Bugs:
  * dd with numbers seems to not take the last number
  * put with 'dd'ed lines is also a bit weird
  * CTRL-W in insert mode deletes all newlines too
+ * When the text file is empty, syntax highlighting crashes
 
 Ideas that need to be tested:
 -----------------------------
@@ -81,6 +82,16 @@ Ideas that need to be tested:
 Improvements that should be made (When I have time):
 ----------------------------------------------------
 Replace all namespace ENUM types with enum class things.
+
+Create a Compiler struct that holds all the relevant stuff
+    * Lexer
+    * Parser
+    * Analyser
+    * IM-Generator
+    * Bytecode-Generator
+    * Bytecode-Interpreter
+And just call the Compiler from the text editor --> This has to be done eventually,
+but then I need to rewrite how things are access through the compiler.
 
 Maybe we could also use String* for names, since then I only need to compare string pointers, and not actually strings.
 This would also make debuggin so much easier, since we would see the names of things.
@@ -116,6 +127,7 @@ How do i implement dynamic arrays?
 I think it would be really nice if the language would know about these
     x: [..]int;
     new [5]int;
+Check out Jonathan Blows streams to check what hes doing
 
 
 

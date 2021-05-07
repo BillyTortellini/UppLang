@@ -433,17 +433,30 @@ AST_Node_Index ast_parser_parse_general_access(AST_Parser* parser)
         return node_index;
     }
 
-    int var_read_index = ast_parser_parse_variable_read(parser);
-    if (var_read_index == -1) {
+    AST_Node_Index expr_index = -1;
+    if (ast_parser_test_next_token(parser, Token_Type::OPEN_PARENTHESIS))
+    {
+        parser->index++;
+        expr_index = ast_parser_parse_expression_no_parents(parser);
+        if (expr_index == -1 || !ast_parser_test_next_token(parser, Token_Type::CLOSED_PARENTHESIS)) {
+            ast_parser_checkpoint_reset(checkpoint);
+            return -1;
+        }
+        parser->index++;
+    }
+    if (expr_index == -1) {
+        expr_index = ast_parser_parse_variable_read(parser);
+    }
+    if (expr_index == -1) {
         ast_parser_checkpoint_reset(checkpoint);
         return -1;
     }
-    var_read_index = ast_parser_parse_array_or_member_access(parser, var_read_index);
-    if (var_read_index == -1) {
+    expr_index = ast_parser_parse_array_or_member_access(parser, expr_index);
+    if (expr_index == -1) {
         ast_parser_checkpoint_reset(checkpoint);
         return -1;
     }
-    return var_read_index;
+    return expr_index;
 }
 
 AST_Node_Index ast_parser_parse_expression_single_value(AST_Parser* parser)
@@ -468,20 +481,33 @@ AST_Node_Index ast_parser_parse_expression_single_value(AST_Parser* parser)
         MEMBER_ACCESS <-- VAR_READ . VAR_READ
         MEMBER_ACCESS <-- MEMBER_ACCESS . VAR_READ
     */
+    /*
+        What is a single value? 
+            a       ... Variable read
+            true    ... Literal
+            (a+b)   ... Parenthesised expression
+            a[5]    ... Array_Access
+            a()     ... Function Call
+            a.m     ... Member access
+            *a      ... Reference-Of operator
+            &a      ... Dereference operator
+            -a      ... Negate operator
+            !a      ... Not operator
+
+        Single_Value    <-- Variable_Read | Literal | Parenthesis | Array_Access | Function_Call | Member_Access | Unary_Op
+        Variable_Read   <-- Identifier     
+        Function_Call
+
+        Watch out for tree order
+            a.b.c           --> Member_Access (.c) -> Member_Access(.b) -> Variable_Read(a)
+            a[5].b.c[2].d   --> Member_Access (.d) -> Array_Access[2] -> Member_Access(.c) -> Member_Access (.b) -> Array_Access(5) -> Var_Read(a) 
+            a(7).b[2]       --> 
+
+        Do While (has member access at the end)
+            Do While (has array access or function call)
+    */
 
     // Cases: Function Call, Variable read, Literal Value, Unary Operation
-    if (ast_parser_test_next_token(parser, Token_Type::OPEN_PARENTHESIS))
-    {
-        parser->index++;
-        AST_Node_Index expr_index = ast_parser_parse_expression_no_parents(parser);
-        if (expr_index == -1 || !ast_parser_test_next_token(parser, Token_Type::CLOSED_PARENTHESIS)) {
-            ast_parser_checkpoint_reset(checkpoint);
-            return -1;
-        }
-        parser->index++;
-        return expr_index;
-    }
-
     if (ast_parser_test_next_token(parser, Token_Type::IDENTIFIER))
     {
         int node_index = ast_parser_get_next_node_index_no_parent(parser);
@@ -1070,6 +1096,77 @@ bool ast_parser_parse_parameter_block(AST_Parser* parser, AST_Node_Index parent_
     return false;
 }
 
+bool ast_parser_parse_variable_definitions(AST_Parser* parser, AST_Node_Index parent_index)
+{
+    while (!ast_parser_test_next_token(parser, Token_Type::CLOSED_BRACES))
+    {
+        AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, parent_index);
+        int node_index = ast_parser_get_next_node_index(parser, parent_index);
+        parser->nodes[node_index].type = AST_Node_Type::STATEMENT_VARIABLE_DEFINITION;
+
+        bool do_error_handling = false;
+        if (!ast_parser_test_next_2_tokens(parser, Token_Type::IDENTIFIER, Token_Type::COLON)) {
+            do_error_handling = true;
+        }
+        else {
+            parser->nodes[node_index].name_id = parser->lexer->tokens[parser->index].attribute.identifier_number;
+            parser->index += 2;
+        }
+        if (!do_error_handling) { 
+            if (!ast_parser_parse_type(parser, node_index)) do_error_handling = true;
+        }
+        if (!ast_parser_test_next_token(parser, Token_Type::SEMICOLON)) {
+            do_error_handling = true;
+        }
+        else {
+            if (!do_error_handling) {
+                parser->token_mapping[node_index] = token_range_make(checkpoint.rewind_token_index, parser->index);
+            }
+            parser->index++;
+        }
+
+        // Do error handling here (Goto next semicolon or Closed Braces)
+        if (do_error_handling)
+        {
+            int next_semicolon = ast_parser_find_next_token_type(parser, Token_Type::SEMICOLON);
+            int next_closing_braces = ast_parser_find_next_token_type(parser, Token_Type::CLOSED_BRACES);
+            if (next_semicolon < next_closing_braces) {
+                ast_parser_log_error(parser, "Variable definition invalid!", token_range_make(checkpoint.rewind_token_index, next_semicolon));
+                parser->index = next_semicolon+1;
+                continue;
+            }
+            ast_parser_log_error(parser, "Variable definition invalid!", token_range_make(checkpoint.rewind_token_index, next_closing_braces));
+            parser->index = next_closing_braces;
+            break;
+        }
+    }
+
+    return true;
+}
+
+bool ast_parser_parse_struct(AST_Parser* parser, AST_Node_Index parent_index)
+{
+    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, parent_index);
+    int node_index = ast_parser_get_next_node_index(parser, parent_index);
+    parser->nodes[node_index].type = AST_Node_Type::STRUCT;
+
+    // Parse Struct name
+    if (!ast_parser_test_next_4_tokens(parser, Token_Type::IDENTIFIER, Token_Type::DOUBLE_COLON, Token_Type::STRUCT, Token_Type::OPEN_BRACES)) {
+        return false;
+    }
+    parser->nodes[node_index].name_id = parser->lexer->tokens[parser->index].attribute.identifier_number;
+    parser->index += 4;
+    ast_parser_parse_variable_definitions(parser, node_index);
+
+    if (ast_parser_test_next_token(parser, Token_Type::CLOSED_BRACES)) {
+        parser->index++;
+        parser->token_mapping[node_index] = token_range_make(checkpoint.rewind_token_index, parser->index);
+        return true;
+    }
+    ast_parser_checkpoint_reset(checkpoint);
+    return false;
+}
+
 bool ast_parser_parse_function(AST_Parser* parser, AST_Node_Index parent_index)
 {
     AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, parent_index);
@@ -1118,7 +1215,9 @@ void ast_parser_parse_root(AST_Parser* parser)
     {
         if (parser->index >= parser->lexer->tokens.size) break;
         if (ast_parser_parse_function(parser, root_index)) continue;
+        if (ast_parser_parse_struct(parser, root_index)) continue;
 
+        // TODO: Better error handling: Skip through each line (not in parenthesis) and try parsing function or struct
         int next_closing_braces = ast_parser_find_parenthesis_ending(parser, Token_Type::OPEN_BRACES, Token_Type::CLOSED_BRACES);
         ast_parser_log_error(parser, "Could not parse function", token_range_make(parser->index, next_closing_braces));
         parser->index = next_closing_braces + 1;
@@ -1161,6 +1260,7 @@ String ast_node_type_to_string(AST_Node_Type::ENUM type)
     switch (type)
     {
     case AST_Node_Type::ROOT: return string_create_static("ROOT");
+    case AST_Node_Type::STRUCT: return string_create_static("STRUCT");
     case AST_Node_Type::FUNCTION: return string_create_static("FUNCTION");
     case AST_Node_Type::TYPE_IDENTIFIER: return string_create_static("TYPE_IDENTIFIER");
     case AST_Node_Type::TYPE_POINTER_TO: return string_create_static("TYPE_POINTER_TO");

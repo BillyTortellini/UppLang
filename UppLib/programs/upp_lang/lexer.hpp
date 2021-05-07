@@ -17,6 +17,7 @@ namespace Token_Type
         CONTINUE,
         BREAK,
         RETURN,
+        STRUCT,
         // Delimiters
         DOT,        // .
         COLON,      // :

@@ -26,12 +26,14 @@ Type_Signature type_signature_make_error()
     Type_Signature result;
     result.type = Signature_Type::ERROR_TYPE;
     result.size_in_bytes = 0;
-    result.alignment_in_bytes = 0;
+    result.alignment_in_bytes = 1;
     return result;
 }
 
 void type_signature_destroy(Type_Signature* sig) {
     if (sig->type == Signature_Type::FUNCTION)
+        dynamic_array_destroy(&sig->parameter_types);
+    if (sig->type == Signature_Type::STRUCT)
         dynamic_array_destroy(&sig->parameter_types);
 }
 
@@ -62,15 +64,15 @@ bool type_signatures_are_equal(Type_Signature* sig1, Type_Signature* sig2)
 {
     if (sig1->type == sig2->type) 
     {
-        if (sig1->type == Signature_Type::ARRAY_SIZED && sig1->child_type== sig2->child_type&& sig1->array_element_count == sig2->array_element_count) return true;
+        if (sig1->type == Signature_Type::ARRAY_SIZED && sig1->child_type == sig2->child_type && sig1->array_element_count == sig2->array_element_count) return true;
         if (sig1->type == Signature_Type::ARRAY_UNSIZED && sig1->child_type == sig2->child_type) return true;
         if (sig1->type == Signature_Type::POINTER && sig1->child_type == sig2->child_type) return true;
         if (sig1->type == Signature_Type::ERROR_TYPE) return true;
         if (sig1->type == Signature_Type::VOID_TYPE) return true;
         if (sig1->type == Signature_Type::PRIMITIVE && sig1->primitive_type == sig2->primitive_type) return true;
-        if (sig1->type == Signature_Type::FUNCTION) 
+        if (sig1->type == Signature_Type::FUNCTION)
         {
-            if (sig1->return_type!= sig2->return_type) return false;
+            if (sig1->return_type != sig2->return_type) return false;
             if (sig1->parameter_types.size != sig2->parameter_types.size) return false;
             for (int i = 0; i < sig1->parameter_types.size; i++) {
                 if (sig1->parameter_types[i] != sig2->parameter_types[i]) {
@@ -78,6 +80,9 @@ bool type_signatures_are_equal(Type_Signature* sig1, Type_Signature* sig2)
                 }
             }
             return true;
+        }
+        if (sig1->type == Signature_Type::STRUCT) {
+            return false;
         }
     }
     return false;
@@ -108,6 +113,16 @@ void type_signature_append_to_string(String* string, Type_Signature* signature)
     case Signature_Type::PRIMITIVE:
         String s = primitive_type_to_string(signature->primitive_type);
         string_append_string(string, &s);
+        break;
+    case Signature_Type::STRUCT:
+        string_append_formated(string, "STRUCT {");
+        for (int i = 0; i < signature->member_types.size; i++) {
+            type_signature_append_to_string(string, signature->member_types[i].type);
+            if (i != signature->parameter_types.size - 1) {
+                string_append_formated(string, ", ");
+            }
+        }
+        string_append_formated(string, "}");
         break;
     case Signature_Type::FUNCTION:
         string_append_formated(string, "(");
@@ -153,7 +168,7 @@ void type_system_add_primitives(Type_System* system)
     *system->error_type  = type_signature_make_error();
     system->void_type->type = Signature_Type::VOID_TYPE;
     system->void_type->size_in_bytes = 0;
-    system->void_type->alignment_in_bytes = 0;
+    system->void_type->alignment_in_bytes = 1;
 
     dynamic_array_push_back(&system->types, system->bool_type);
     dynamic_array_push_back(&system->types, system->i8_type);
@@ -242,7 +257,7 @@ Type_Signature* type_system_make_function(Type_System* system, DynamicArray<Type
 {
     Type_Signature result;
     result.type = Signature_Type::FUNCTION;
-    result.alignment_in_bytes = 0;
+    result.alignment_in_bytes = 1;
     result.size_in_bytes = 0;
     result.parameter_types = parameter_types;
     result.return_type = return_type;
@@ -279,7 +294,7 @@ void symbol_table_destroy(Symbol_Table* table) {
     dynamic_array_destroy(&table->symbols);
 }
 
-Symbol* symbol_table_find_symbol(Symbol_Table* table, int name_handle, bool* in_current_scope)
+Symbol* symbol_table_find_symbol_with_scope_info(Symbol_Table* table, int name_handle, bool* in_current_scope)
 {
     *in_current_scope = false;
     for (int i = 0; i < table->symbols.size; i++) {
@@ -289,11 +304,17 @@ Symbol* symbol_table_find_symbol(Symbol_Table* table, int name_handle, bool* in_
         }
     }
     if (table->parent != 0) {
-        Symbol* result = symbol_table_find_symbol(table->parent, name_handle, in_current_scope);
+        Symbol* result = symbol_table_find_symbol_with_scope_info(table->parent, name_handle, in_current_scope);
         *in_current_scope = false;
         return result;
     }
     return 0;
+}
+
+Symbol* symbol_table_find_symbol(Symbol_Table* table, int name_handle)
+{
+    bool unused;
+    return symbol_table_find_symbol_with_scope_info(table, name_handle, &unused);
 }
 
 Symbol* symbol_table_find_symbol_of_type_with_scope_info(Symbol_Table* table, int name_handle, Symbol_Type::ENUM symbol_type, bool* in_current_scope)
@@ -315,16 +336,8 @@ Symbol* symbol_table_find_symbol_of_type_with_scope_info(Symbol_Table* table, in
 
 Symbol* symbol_table_find_symbol_of_type(Symbol_Table* table, int name_handle, Symbol_Type::ENUM symbol_type)
 {
-    for (int i = 0; i < table->symbols.size; i++) {
-        if (table->symbols[i].name_handle == name_handle && table->symbols[i].symbol_type == symbol_type) {
-            return &table->symbols[i];
-        }
-    }
-    if (table->parent != 0) {
-        Symbol* result = symbol_table_find_symbol_of_type(table->parent, name_handle, symbol_type);
-        return result;
-    }
-    return 0;
+    bool unused;
+    return symbol_table_find_symbol_of_type_with_scope_info(table, name_handle, symbol_type, &unused);
 }
 
 void symbol_table_define_type(Symbol_Table* table, int name_id, Type_Signature* type)
@@ -388,6 +401,7 @@ void semantic_analyser_define_variable(Semantic_Analyser* analyser, Symbol_Table
     dynamic_array_push_back(&table->symbols, s);
 }
 
+void semantic_analyser_analyse_struct_fill_out(Semantic_Analyser* analyser, Struct_Fill_Out* fill_out, int error_node_index);
 Type_Signature* semantic_analyser_analyse_type(Semantic_Analyser* analyser, int type_node_index)
 {
     AST_Node* type_node = &analyser->parser->nodes[type_node_index];
@@ -420,9 +434,17 @@ Type_Signature* semantic_analyser_analyse_type(Semantic_Analyser* analyser, int 
             return analyser->type_system.error_type;
         }
 
+        Type_Signature* element_type = semantic_analyser_analyse_type(analyser, type_node->children[1]);
+        for (int i = 0; i < analyser->struct_fill_outs.size; i++) {
+            Struct_Fill_Out* fill_out = &analyser->struct_fill_outs[i];
+            if (fill_out->signature == element_type) {
+                semantic_analyser_analyse_struct_fill_out(analyser, fill_out, type_node_index);
+            }
+        }
+
         return type_system_make_array_sized(
             &analyser->type_system, 
-            semantic_analyser_analyse_type(analyser, type_node->children[1]), 
+            element_type,
             literal_token.attribute.integer_value
         );
     }
@@ -447,6 +469,9 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
 {
     AST_Node* expression = &analyser->parser->nodes[expression_index];
     analyser->semantic_information[expression_index].expression_result_type = analyser->type_system.error_type;
+    analyser->semantic_information[expression_index].member_access_is_address_of = false;
+    analyser->semantic_information[expression_index].member_access_is_constant_size = false;
+    analyser->semantic_information[expression_index].member_access_offset = 0;
 
     // For unary and binary operations
     bool is_binary_op = false;
@@ -524,34 +549,73 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
     }
     case AST_Node_Type::EXPRESSION_MEMBER_ACCESS:
     {
+        analyser->semantic_information[expression_index].expression_result_type = analyser->type_system.error_type;
+        analyser->semantic_information[expression_index].member_access_offset = 0;
+
         Expression_Analysis_Result access_expr_result = semantic_analyser_analyse_expression(analyser, table, expression->children[0]);
         Type_Signature* type_signature = access_expr_result.type;
         if (type_signature->type == Signature_Type::ERROR_TYPE) {
             return expression_analysis_result_make(analyser->type_system.error_type, true);;
         }
-        if (type_signature->type != Signature_Type::ARRAY_SIZED && type_signature->type != Signature_Type::ARRAY_UNSIZED) {
+        if (type_signature->type == Signature_Type::STRUCT)
+        {
+            Struct_Member* found = 0;
+            for (int i = 0; i < type_signature->member_types.size; i++) {
+                Struct_Member* member = &type_signature->member_types[i];
+                if (member->name_handle == expression->name_id) {
+                    found = member;
+                }
+            }
+            if (found == 0) {
+                semantic_analyser_log_error(analyser, "Struct does not contain this member name", expression_index);
+                return expression_analysis_result_make(analyser->type_system.error_type, true);
+            }
+            analyser->semantic_information[expression_index].expression_result_type = found->type;
+            analyser->semantic_information[expression_index].member_access_offset = found->offset;
+            return expression_analysis_result_make(found->type, true);
+        }
+        else if (type_signature->type != Signature_Type::ARRAY_SIZED && type_signature->type != Signature_Type::ARRAY_UNSIZED) {
             semantic_analyser_log_error(analyser, "Expression type does not have any members to access!", expression_index);
             return expression_analysis_result_make(analyser->type_system.error_type, true);
         }
-        if (expression->name_id != analyser->size_token_index && expression->name_id != analyser->data_token_index) {
-            semantic_analyser_log_error(analyser, "Arrays only have .size or .data as member!", expression_index);
-            return expression_analysis_result_make(analyser->type_system.error_type, true);
+        else // Array type
+        {
+            if (expression->name_id != analyser->size_token_index && expression->name_id != analyser->data_token_index) {
+                semantic_analyser_log_error(analyser, "Arrays only have .size or .data as member!", expression_index);
+                return expression_analysis_result_make(analyser->type_system.error_type, true);
+            }
+            if (type_signature->type == Signature_Type::ARRAY_UNSIZED)
+            {
+                if (expression->name_id == analyser->size_token_index) {
+                    analyser->semantic_information[expression_index].expression_result_type = analyser->type_system.i32_type;
+                    analyser->semantic_information[expression_index].member_access_offset = 8;
+                    return expression_analysis_result_make(analyser->semantic_information[expression_index].expression_result_type, true);
+                }
+                else { // Data token
+                    analyser->semantic_information[expression_index].expression_result_type =
+                        type_system_make_pointer(&analyser->type_system, type_signature->child_type);
+                    analyser->semantic_information[expression_index].member_access_offset = 0;
+                    return expression_analysis_result_make(analyser->semantic_information[expression_index].expression_result_type, true);
+                }
+            }
+            else // Array_Sized
+            {
+                if (expression->name_id == analyser->size_token_index) {
+                    analyser->semantic_information[expression_index].expression_result_type = analyser->type_system.i32_type;
+                    analyser->semantic_information[expression_index].member_access_is_address_of = false;
+                    analyser->semantic_information[expression_index].member_access_is_constant_size = true;
+                    analyser->semantic_information[expression_index].member_access_offset = type_signature->array_element_count;
+                    return expression_analysis_result_make(analyser->semantic_information[expression_index].expression_result_type, true);
+                }
+                else { // Data token
+                    analyser->semantic_information[expression_index].expression_result_type =
+                        type_system_make_pointer(&analyser->type_system, type_signature->child_type);
+                    analyser->semantic_information[expression_index].member_access_is_address_of = true;
+                    return expression_analysis_result_make(analyser->semantic_information[expression_index].expression_result_type, true);
+                }
+            }
         }
-        Type_Signature* result_type;
-        if (expression->name_id == analyser->size_token_index) {
-            result_type = analyser->type_system.i32_type;
-        }
-        else {
-            result_type = type_system_make_pointer(&analyser->type_system, type_signature->child_type);
-        }
-        analyser->semantic_information[expression_index].expression_result_type = result_type;
-
-        if (type_signature->type == Signature_Type::ARRAY_SIZED) {
-            return expression_analysis_result_make(result_type, false);
-        }
-        else {
-            return expression_analysis_result_make(result_type, true);
-        }
+        panic("Should not happen");
     }
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_ADDITION:
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_SUBTRACTION:
@@ -615,7 +679,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
         return expression_analysis_result_make(result_type, false);
         break;
     }
-    case AST_Node_Type::EXPRESSION_UNARY_OPERATION_DEREFERENCE: 
+    case AST_Node_Type::EXPRESSION_UNARY_OPERATION_DEREFERENCE:
     {
         Expression_Analysis_Result result = semantic_analyser_analyse_expression(analyser, table, expression->children[0]);
         Type_Signature* signature = result.type;
@@ -933,6 +997,7 @@ Semantic_Analyser semantic_analyser_create()
     result.symbol_tables = dynamic_array_create_empty<Symbol_Table*>(64);
     result.semantic_information = dynamic_array_create_empty<Semantic_Node_Information>(64);
     result.errors = dynamic_array_create_empty<Compiler_Error>(64);
+    result.struct_fill_outs = dynamic_array_create_empty<Struct_Fill_Out>(64);
     result.type_system = type_system_create();
     result.hardcoded_functions = array_create_empty<Hardcoded_Function>((i32)Hardcoded_Function_Type::HARDCODED_FUNCTION_COUNT);
     for (int i = 0; i < (i32)Hardcoded_Function_Type::HARDCODED_FUNCTION_COUNT; i++) {
@@ -948,6 +1013,7 @@ void semantic_analyser_destroy(Semantic_Analyser* analyser)
         delete analyser->symbol_tables[i];
     }
     dynamic_array_destroy(&analyser->symbol_tables);
+    dynamic_array_destroy(&analyser->struct_fill_outs);
     dynamic_array_destroy(&analyser->semantic_information);
     dynamic_array_destroy(&analyser->errors);
     array_destroy(&analyser->hardcoded_functions);
@@ -983,6 +1049,56 @@ void semantic_analyser_analyse_function_header(Semantic_Analyser* analyser, Symb
     analyser->semantic_information[function_node_index].function_signature = function_type;
 }
 
+void semantic_analyser_analyse_struct_fill_out(Semantic_Analyser* analyser, Struct_Fill_Out* fill_out, int error_node_index)
+{
+    if (fill_out->generated == true) return;
+    else
+    {
+        if (fill_out->marked) {
+            semantic_analyser_log_error(analyser, "Recursive struct definition not valid!", error_node_index);
+            return;
+        }
+        else {
+            fill_out->marked = true;
+        }
+    }
+
+    AST_Node* struct_node = &analyser->parser->nodes[fill_out->struct_node_index];
+    int byte_offset = 0;
+    int max_alignment = 1;
+    for (int i = 0; i < struct_node->children.size; i++)
+    {
+        int variable_definition_node_index = struct_node->children[i];
+        AST_Node* variable_definition_node = &analyser->parser->nodes[variable_definition_node_index];
+        int type_node_index = variable_definition_node->children[0];
+        Type_Signature* variable_type = semantic_analyser_analyse_type(analyser, type_node_index);
+        if (variable_type->type == Signature_Type::STRUCT)
+        {
+            Struct_Fill_Out* other = 0;
+            for (int j = 0; j < analyser->struct_fill_outs.size; j++) {
+                if (analyser->struct_fill_outs[j].signature == variable_type) {
+                    other = &analyser->struct_fill_outs[j];
+                }
+            }
+            if (other == 0) panic("Should not happen i think");
+            semantic_analyser_analyse_struct_fill_out(analyser, other, type_node_index);
+        }
+        if (variable_type->alignment_in_bytes > max_alignment) {
+            max_alignment = variable_type->alignment_in_bytes;
+        }
+        byte_offset = math_round_next_multiple(byte_offset, variable_type->alignment_in_bytes);
+        Struct_Member member;
+        member.type = variable_type;
+        member.name_handle = variable_definition_node->name_id;
+        member.offset = byte_offset;
+        byte_offset += variable_type->size_in_bytes;
+        dynamic_array_push_back(&fill_out->signature->member_types, member);
+    }
+    fill_out->signature->size_in_bytes = byte_offset;
+    fill_out->signature->alignment_in_bytes = max_alignment;
+    fill_out->generated = true;
+}
+
 void semantic_analyser_analyse(Semantic_Analyser* analyser, AST_Parser* parser)
 {
     // TODO: We could also reuse the previous memory in the symbol tables, like in the parser
@@ -994,6 +1110,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, AST_Parser* parser)
     dynamic_array_reset(&analyser->symbol_tables);
     dynamic_array_reset(&analyser->semantic_information);
     dynamic_array_reset(&analyser->errors);
+    dynamic_array_reset(&analyser->struct_fill_outs);
     analyser->parser = parser;
 
     dynamic_array_reserve(&analyser->semantic_information, parser->nodes.size);
@@ -1113,15 +1230,65 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, AST_Parser* parser)
         }
     }
 
-    // Add all functions to root_table
+    // Analyse all top level structs
+    // Save all Type_Signature* which are not in type_system yet into buffer
     AST_Node* root = &analyser->parser->nodes[0];
+    for (int i = 0; i < root->children.size; i++)
+    {
+        int struct_node_index = root->children[i];
+        AST_Node* struct_node = &analyser->parser->nodes[struct_node_index];
+        if (struct_node->type != AST_Node_Type::STRUCT) continue;
+        if (struct_node->children.size == 0) {
+            semantic_analyser_log_error(analyser, "Struct cannot have 0 members", struct_node_index);
+        }
+
+        if (symbol_table_find_symbol(root_table, struct_node->name_id)) {
+            semantic_analyser_log_error(analyser, "Struct name is already in use", struct_node_index);
+            analyser->semantic_information[struct_node_index].struct_signature = analyser->type_system.error_type;
+        }
+        else {
+            Type_Signature* struct_signature = new Type_Signature();
+            struct_signature->type = Signature_Type::STRUCT;
+            struct_signature->alignment_in_bytes = 1;
+            struct_signature->size_in_bytes = 0;
+            struct_signature->member_types = dynamic_array_create_empty<Struct_Member>(4);
+            Struct_Fill_Out fill;
+            fill.signature = struct_signature;
+            fill.struct_node_index = struct_node_index;
+            fill.marked = false;
+            fill.generated = false;
+            fill.name_id = struct_node->name_id;
+            dynamic_array_push_back(&analyser->struct_fill_outs, fill);
+            dynamic_array_push_back(&analyser->type_system.types, struct_signature);
+            symbol_table_define_type(root_table, struct_node->name_id, struct_signature);
+            analyser->semantic_information[struct_node_index].struct_signature = struct_signature;
+        }
+    }
+    // Fill out struct data
+    for (int i = 0; i < analyser->struct_fill_outs.size; i++)
+    {
+        // Reset marks TODO: Check if this is actually a good way to go, i dont think i need this
+        for (int j = 0; j < analyser->struct_fill_outs.size; j++) {
+            Struct_Fill_Out* fill_out = &analyser->struct_fill_outs[i];
+            fill_out->marked = false;
+        }
+        Struct_Fill_Out* fill_out = &analyser->struct_fill_outs[i];
+        semantic_analyser_analyse_struct_fill_out(analyser, fill_out, fill_out->struct_node_index);
+    }
+    dynamic_array_reset(&analyser->struct_fill_outs);
+
+    // Analyse function headers
     for (int i = 0; i < root->children.size; i++) {
-        semantic_analyser_analyse_function_header(analyser, root_table, root->children[i]);
+        int index = root->children[i];
+        AST_Node* function_or_struct_node = &analyser->parser->nodes[index];
+        if (function_or_struct_node->type != AST_Node_Type::FUNCTION) continue;
+        semantic_analyser_analyse_function_header(analyser, root_table, index);
     }
     analyser->semantic_information[0].symbol_table_index = 0;
 
     // Analyse all functions
     for (int i = 0; i < root->children.size; i++) {
+        if (analyser->parser->nodes[root->children[i]].type != AST_Node_Type::FUNCTION) continue;
         semantic_analyser_analyse_function(analyser, root_table, root->children[i]);
     }
 

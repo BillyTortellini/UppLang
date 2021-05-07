@@ -115,4 +115,6 @@ struct Bytecode_Generator
 Bytecode_Generator bytecode_generator_create();
 void bytecode_generator_destroy(Bytecode_Generator* generator);
 void bytecode_generator_generate(Bytecode_Generator* generator, Intermediate_Generator* im_generator);
+void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction instruction);
 void bytecode_generator_append_bytecode_to_string(Bytecode_Generator* generator, String* string);
+void bytecode_generator_calculate_function_register_locations(Bytecode_Generator* generator, int function_index);

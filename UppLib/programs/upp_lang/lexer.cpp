@@ -11,6 +11,7 @@ bool token_type_is_keyword(Token_Type::ENUM type)
     case Token_Type::CONTINUE: return true;
     case Token_Type::BREAK: return true;
     case Token_Type::RETURN: return true;
+    case Token_Type::STRUCT: return true;
     }
     return false;
 }
@@ -24,6 +25,7 @@ const char* token_type_to_string(Token_Type::ENUM type)
     case Token_Type::FOR: return "FOR";
     case Token_Type::WHILE: return "WHILE";
     case Token_Type::CONTINUE: return "CONTINUE";
+    case Token_Type::STRUCT: return "STRUCT";
     case Token_Type::BREAK: return "BREAK";
     case Token_Type::DOT: return "DOT";
     case Token_Type::COLON: return "COLON";
@@ -625,6 +627,12 @@ void lexer_parse_string(Lexer* lexer, String* code)
             }
             else if (string_equals_cstring(&identifier_string, "return")) {
                 dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::RETURN, token_attribute_make_empty(),
+                    line_number, character_pos, identifier_string_length, index));
+                index += identifier_string_length;
+                character_pos += identifier_string_length;
+            }
+            else if (string_equals_cstring(&identifier_string, "struct")) {
+                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::STRUCT, token_attribute_make_empty(),
                     line_number, character_pos, identifier_string_length, index));
                 index += identifier_string_length;
                 character_pos += identifier_string_length;

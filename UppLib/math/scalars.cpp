@@ -13,6 +13,13 @@ u64 math_round_next_multiple(u64 x, u64 m) {
     return x + (m - x % m);
 }
 
+i32 math_round_next_multiple(i32 x, i32 m) {
+    if (x % m == 0) {
+        return x;
+    }
+    return x + (m - x % m);
+}
+
 float math_floor(float x) {
     return floorf(x);
 }
