@@ -12,6 +12,8 @@ bool token_type_is_keyword(Token_Type::ENUM type)
     case Token_Type::BREAK: return true;
     case Token_Type::RETURN: return true;
     case Token_Type::STRUCT: return true;
+    case Token_Type::NEW: return true;
+    case Token_Type::DELETE_TOKEN: return true;
     }
     return false;
 }
@@ -28,6 +30,8 @@ const char* token_type_to_string(Token_Type::ENUM type)
     case Token_Type::STRUCT: return "STRUCT";
     case Token_Type::BREAK: return "BREAK";
     case Token_Type::DOT: return "DOT";
+    case Token_Type::NEW: return "NEW";
+    case Token_Type::DELETE_TOKEN: return "DELETE";
     case Token_Type::COLON: return "COLON";
     case Token_Type::COMMA: return "COMMA";
     case Token_Type::DOUBLE_COLON: return "DOUBLE_COLON";
@@ -633,6 +637,18 @@ void lexer_parse_string(Lexer* lexer, String* code)
             }
             else if (string_equals_cstring(&identifier_string, "struct")) {
                 dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::STRUCT, token_attribute_make_empty(),
+                    line_number, character_pos, identifier_string_length, index));
+                index += identifier_string_length;
+                character_pos += identifier_string_length;
+            }
+            else if (string_equals_cstring(&identifier_string, "new")) {
+                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::NEW, token_attribute_make_empty(),
+                    line_number, character_pos, identifier_string_length, index));
+                index += identifier_string_length;
+                character_pos += identifier_string_length;
+            }
+            else if (string_equals_cstring(&identifier_string, "delete")) {
+                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::DELETE_TOKEN, token_attribute_make_empty(),
                     line_number, character_pos, identifier_string_length, index));
                 index += identifier_string_length;
                 character_pos += identifier_string_length;

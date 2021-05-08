@@ -188,6 +188,22 @@ void intermediate_geneartor_add_instruction_unary(Intermediate_Function* functio
     dynamic_array_push_back(&function->instructions, instr);
 }
 
+Data_Access intermediate_generator_generate_offset_access(Intermediate_Generator* generator, Data_Access access, int offset, Type_Signature* result_type)
+{
+    Intermediate_Function* function = &generator->functions[generator->current_function_index];
+    Intermediate_Instruction calc_member_access;
+    calc_member_access.type = Intermediate_Instruction_Type::CALCULATE_MEMBER_ACCESS_POINTER;
+    calc_member_access.source1 = access;
+    calc_member_access.destination = intermediate_generator_create_intermediate_register(generator,
+        type_system_make_pointer(&generator->analyser->type_system, result_type)
+    );
+    calc_member_access.constant_i32_value = offset;
+    dynamic_array_push_back(&function->instructions, calc_member_access);
+
+    calc_member_access.destination.type = Data_Access_Type::MEMORY_ACCESS;
+    return calc_member_access.destination;
+}
+
 // Returns expression result register
 Data_Access intermediate_generator_generate_expression(Intermediate_Generator* generator, int expression_index,
     bool force_destination, Data_Access destination)
@@ -276,6 +292,68 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
 
         dynamic_array_push_back(&function->instructions, instr);
         return instr.destination;
+    }
+    case AST_Node_Type::EXPRESSION_NEW:
+    {
+        Type_Signature* type = generator->analyser->semantic_information[expression_index].expression_result_type;
+        int allocate_size = type->child_type->size_in_bytes;
+
+        Intermediate_Instruction load_size_instr;
+        load_size_instr.type = Intermediate_Instruction_Type::LOAD_CONSTANT_I32;
+        load_size_instr.constant_i32_value = allocate_size;
+        load_size_instr.destination = intermediate_generator_create_intermediate_register(generator, generator->analyser->type_system.i32_type);
+        dynamic_array_push_back(&function->instructions, load_size_instr);
+
+        Intermediate_Instruction i;
+        i.type = Intermediate_Instruction_Type::CALL_HARDCODED_FUNCTION;
+        i.hardcoded_function_type = Hardcoded_Function_Type::MALLOC_SIZE_I32;
+        i.arguments = dynamic_array_create_empty<Data_Access>(1);
+        dynamic_array_push_back(&i.arguments, load_size_instr.destination);
+        if (force_destination) {
+            i.destination = destination;
+        }
+        else {
+            i.destination = intermediate_generator_create_intermediate_register(generator, type);
+        }
+        dynamic_array_push_back(&function->instructions, i);
+        return i.destination;
+    }
+    case AST_Node_Type::EXPRESSION_NEW_ARRAY:
+    {
+        Type_Signature* type = generator->analyser->semantic_information[expression_index].expression_result_type;
+        int element_size = type->child_type->size_in_bytes;
+
+        Data_Access result_access;
+        if (force_destination) {
+            result_access = destination;
+        }
+        else {
+            result_access = intermediate_generator_create_intermediate_register(generator, type);
+        }
+        Data_Access element_count_access = intermediate_generator_generate_offset_access(generator, result_access, 8, generator->analyser->type_system.i32_type);
+        intermediate_generator_generate_expression(generator, expression->children[0], true, element_count_access);
+
+        Intermediate_Instruction load_element_size_instr;
+        load_element_size_instr.type = Intermediate_Instruction_Type::LOAD_CONSTANT_I32;
+        load_element_size_instr.constant_i32_value = element_size;
+        load_element_size_instr.destination = intermediate_generator_create_intermediate_register(generator, generator->analyser->type_system.i32_type);
+        dynamic_array_push_back(&function->instructions, load_element_size_instr);
+
+        Intermediate_Instruction calc_array_byte_size_instr;
+        calc_array_byte_size_instr.type = Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_I32;
+        calc_array_byte_size_instr.source1 = element_count_access;
+        calc_array_byte_size_instr.source2 = load_element_size_instr.destination;
+        calc_array_byte_size_instr.destination = intermediate_generator_create_intermediate_register(generator, generator->analyser->type_system.i32_type);
+        dynamic_array_push_back(&function->instructions, calc_array_byte_size_instr);
+
+        Intermediate_Instruction i;
+        i.type = Intermediate_Instruction_Type::CALL_HARDCODED_FUNCTION;
+        i.hardcoded_function_type = Hardcoded_Function_Type::MALLOC_SIZE_I32;
+        i.destination = result_access;
+        i.arguments = dynamic_array_create_empty<Data_Access>(1);
+        dynamic_array_push_back(&i.arguments, calc_array_byte_size_instr.destination);
+        dynamic_array_push_back(&function->instructions, i);
+        return i.destination;
     }
     case AST_Node_Type::EXPRESSION_VARIABLE_READ:
     {
@@ -370,7 +448,7 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
         Type_Signature* accessor_signature = function->registers[structure_data.register_index].type_signature;
         Semantic_Node_Information* node_info = &generator->analyser->semantic_information[expression_index];
 
-        if (node_info->member_access_is_address_of) 
+        if (node_info->member_access_is_address_of)
         {
             Intermediate_Instruction instr;
             instr.type = Intermediate_Instruction_Type::ADDRESS_OF;
@@ -631,6 +709,18 @@ void intermediate_generator_generate_statement(Intermediate_Generator* generator
         intermediate_generator_generate_statement_block(generator, statement->children[0]);
         break;
     }
+    case AST_Node_Type::STATEMENT_DELETE:
+    {
+        Data_Access delete_access = intermediate_generator_generate_expression(generator, statement->children[0], false, data_access_make_empty());
+        Intermediate_Instruction i;
+        i.type = Intermediate_Instruction_Type::CALL_HARDCODED_FUNCTION;
+        i.hardcoded_function_type = Hardcoded_Function_Type::FREE_POINTER;
+        i.arguments = dynamic_array_create_empty<Data_Access>(1);
+        i.destination = data_access_make_empty();
+        dynamic_array_push_back(&i.arguments, delete_access);
+        dynamic_array_push_back(&function->instructions, i);
+        break;
+    }
     case AST_Node_Type::STATEMENT_BREAK:
     {
         Intermediate_Instruction i;
@@ -788,6 +878,7 @@ void intermediate_instruction_destroy(Intermediate_Instruction* instruction)
 {
     switch (instruction->type)
     {
+    case Intermediate_Instruction_Type::CALL_HARDCODED_FUNCTION:
     case Intermediate_Instruction_Type::CALL_FUNCTION: {
         dynamic_array_destroy(&instruction->arguments);
         return;
@@ -908,7 +999,7 @@ void exit_code_append_to_string(String* string, Exit_Code code)
     switch (code)
     {
     case Exit_Code::SUCCESS:
-        string_append_formated(string, "OUT OF BOUNDS");
+        string_append_formated(string, "SUCCESS");
         break;
     case Exit_Code::OUT_OF_BOUNDS:
         string_append_formated(string, "OUT OF BOUNDS");
@@ -967,7 +1058,13 @@ void intermediate_instruction_append_to_string(String* string, Intermediate_Inst
         break;
     case Intermediate_Instruction_Type::CALL_HARDCODED_FUNCTION:
         string_append_formated(string, "CALL_HARDCODED_FUNCTION, function_id: %d, \n\t\treturn_data: ", (i32)instruction->hardcoded_function_type);
-        data_access_append_to_string(string, instruction->destination, function, generator);
+        if (generator->analyser->hardcoded_functions[(int)instruction->hardcoded_function_type].function_type->return_type
+            != generator->analyser->type_system.void_type) {
+            data_access_append_to_string(string, instruction->destination, function, generator);
+        }
+        else {
+            string_append_formated(string, "void");
+        }
         for (int i = 0; i < instruction->arguments.size; i++) {
             string_append_formated(string, "\n\t\t#%d: ", i);
             data_access_append_to_string(string, instruction->arguments[i], function, generator);

@@ -100,6 +100,17 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         memory_set_bytes(&interpreter->return_register[0], 256, 0);
         switch (type)
         {
+        case Hardcoded_Function_Type::MALLOC_SIZE_I32: {
+            i32 size = *(i32*) argument_start;
+            void* alloc_data = malloc(size);
+            memory_copy(interpreter->return_register, &alloc_data, 8);
+            break;
+        }
+        case Hardcoded_Function_Type::FREE_POINTER: {
+            void* free_data = *(void**) argument_start;
+            free(free_data);
+            break;
+        }
         case Hardcoded_Function_Type::PRINT_I32: {
             logg("%d", *(i32*)(argument_start)); break;
         }
@@ -333,7 +344,7 @@ void type_signature_print_value(Type_Signature* type, byte* value_ptr)
     {
         byte* data_ptr = *((byte**)value_ptr);
         int element_count = *((int*)(value_ptr + 8));
-        logg("[%d]: ", element_count);
+        logg("ptr: %p  [%d]: ", data_ptr, element_count);
         if (element_count > 4) {
             logg("...");
             return;

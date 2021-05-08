@@ -28,6 +28,9 @@ namespace AST_Node_Type
         STATEMENT_VARIABLE_DEFINITION, // Child 0: Type index, name_id
         STATEMENT_VARIABLE_DEFINE_ASSIGN, // Child 0: Type index, Child 1: Value-Expression
         STATEMENT_VARIABLE_DEFINE_INFER, // Child 0: Expression
+        STATEMENT_DELETE, // Child =: expression
+        EXPRESSION_NEW, // Child 0: Type
+        EXPRESSION_NEW_ARRAY, // Child 0: Array size expression, Child 1: Type
         EXPRESSION_LITERAL,
         EXPRESSION_FUNCTION_CALL, // Children: Argument expressions, name_id is name of function to call
         EXPRESSION_VARIABLE_READ,

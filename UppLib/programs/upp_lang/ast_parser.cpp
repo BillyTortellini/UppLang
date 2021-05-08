@@ -780,8 +780,52 @@ AST_Node_Index ast_parser_parse_expression_no_parents(AST_Parser* parser)
     return op_tree_root_index;
 }
 
+bool ast_parser_parse_single_statement_expression(AST_Parser* parser, int parent_index)
+{
+    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, parent_index);
+    AST_Node_Index node_index = ast_parser_get_next_node_index(parser, parent_index);
+    if (ast_parser_test_next_token(parser, Token_Type::NEW)) 
+    {
+        parser->nodes[node_index].type = AST_Node_Type::EXPRESSION_NEW;
+        parser->index++;
+        if (ast_parser_test_next_2_tokens(parser, Token_Type::OPEN_BRACKETS, Token_Type::CLOSED_BRACKETS)) {
+            ast_parser_log_error(parser, "Cannot have new with empty brackets", token_range_make(checkpoint.rewind_token_index, parser->index));
+            ast_parser_checkpoint_reset(checkpoint);
+            return false;
+        }
+        if (ast_parser_test_next_token(parser, Token_Type::OPEN_BRACKETS))
+        {
+            parser->nodes[node_index].type = AST_Node_Type::EXPRESSION_NEW_ARRAY;
+            parser->index++;
+            if (!ast_parser_parse_expression(parser, node_index)) {
+                ast_parser_log_error(parser, "Invalid array-size expression in new", token_range_make(checkpoint.rewind_token_index, parser->index));
+                ast_parser_checkpoint_reset(checkpoint);
+                return false;
+            }
+            if (!ast_parser_test_next_token(parser, Token_Type::CLOSED_BRACKETS)) {
+                ast_parser_log_error(parser, "Missing closing brackets in array new", token_range_make(checkpoint.rewind_token_index, parser->index));
+                ast_parser_checkpoint_reset(checkpoint);
+                return false;
+            }
+            parser->index++;
+        }
+        if (!ast_parser_parse_type(parser, node_index)) {
+            ast_parser_checkpoint_reset(checkpoint);
+            return false;
+        }
+        parser->token_mapping[node_index] = token_range_make(checkpoint.rewind_token_index, parser->index);
+        return true;
+    }
+    ast_parser_checkpoint_reset(checkpoint);
+    return false;
+}
+
 bool ast_parser_parse_expression(AST_Parser* parser, int parent_index)
 {
+    if (ast_parser_parse_single_statement_expression(parser, parent_index)) {
+        return true;
+    }
+
     AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, parent_index);
     AST_Node_Index op_tree_root_index = ast_parser_parse_expression_no_parents(parser);
     if (op_tree_root_index == -1) {
@@ -895,6 +939,26 @@ bool ast_parser_parse_statement(AST_Parser* parser, AST_Node_Index parent_index)
         }
         ast_parser_checkpoint_reset(checkpoint);
         return false;
+    }
+
+    if (ast_parser_test_next_token(parser, Token_Type::DELETE_TOKEN))
+    {
+        parser->nodes[node_index].type = AST_Node_Type::STATEMENT_DELETE;
+        parser->index++;
+        if (!ast_parser_parse_expression(parser, node_index)) {
+            ast_parser_log_error(parser, "Invalid expression after delete", token_range_make(checkpoint.rewind_token_index, parser->index));
+            ast_parser_checkpoint_reset(checkpoint);
+            return false;
+        }
+        if (ast_parser_test_next_token(parser, Token_Type::SEMICOLON)) {
+            parser->index++;
+            parser->token_mapping[node_index] = token_range_make(checkpoint.rewind_token_index, parser->index);
+            return true;
+        }
+        else {
+            ast_parser_checkpoint_reset(checkpoint);
+            return false;
+        }
     }
 
     if (ast_parser_test_next_token(parser, Token_Type::IF))
@@ -1112,7 +1176,7 @@ bool ast_parser_parse_variable_definitions(AST_Parser* parser, AST_Node_Index pa
             parser->nodes[node_index].name_id = parser->lexer->tokens[parser->index].attribute.identifier_number;
             parser->index += 2;
         }
-        if (!do_error_handling) { 
+        if (!do_error_handling) {
             if (!ast_parser_parse_type(parser, node_index)) do_error_handling = true;
         }
         if (!ast_parser_test_next_token(parser, Token_Type::SEMICOLON)) {
@@ -1132,7 +1196,7 @@ bool ast_parser_parse_variable_definitions(AST_Parser* parser, AST_Node_Index pa
             int next_closing_braces = ast_parser_find_next_token_type(parser, Token_Type::CLOSED_BRACES);
             if (next_semicolon < next_closing_braces) {
                 ast_parser_log_error(parser, "Variable definition invalid!", token_range_make(checkpoint.rewind_token_index, next_semicolon));
-                parser->index = next_semicolon+1;
+                parser->index = next_semicolon + 1;
                 continue;
             }
             ast_parser_log_error(parser, "Variable definition invalid!", token_range_make(checkpoint.rewind_token_index, next_closing_braces));
@@ -1280,11 +1344,14 @@ String ast_node_type_to_string(AST_Node_Type::ENUM type)
     case AST_Node_Type::STATEMENT_VARIABLE_DEFINITION: return string_create_static("STATEMENT_VARIABLE_DEFINITION");
     case AST_Node_Type::STATEMENT_VARIABLE_DEFINE_ASSIGN: return string_create_static("STATEMENT_VARIABLE_DEFINE_ASSIGN");
     case AST_Node_Type::STATEMENT_VARIABLE_DEFINE_INFER: return string_create_static("STATEMENT_VARIABLE_DEFINE_INFER");
+    case AST_Node_Type::STATEMENT_DELETE: return string_create_static("STATEMENT_DELETE");
     case AST_Node_Type::EXPRESSION_ARRAY_ACCESS: return string_create_static("EXPRESSION_ARRAY_INDEX");
     case AST_Node_Type::EXPRESSION_MEMBER_ACCESS: return string_create_static("EXPRESSION_MEMBER_ACCESS");
     case AST_Node_Type::EXPRESSION_LITERAL: return string_create_static("EXPRESSION_LITERAL");
     case AST_Node_Type::EXPRESSION_FUNCTION_CALL: return string_create_static("EXPRESSION_FUNCTION_CALL");
     case AST_Node_Type::EXPRESSION_VARIABLE_READ: return string_create_static("EXPRESSION_VARIABLE_READ");
+    case AST_Node_Type::EXPRESSION_NEW: return string_create_static("EXPRESSION_NEW");
+    case AST_Node_Type::EXPRESSION_NEW_ARRAY: return string_create_static("EXPRESSION_NEW_ARRAY");
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_ADDITION: return string_create_static("EXPRESSION_BINARY_OPERATION_ADDITION");
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_SUBTRACTION: return string_create_static("EXPRESSION_BINARY_OPERATION_SUBTRACTION");
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_DIVISION: return string_create_static("EXPRESSION_BINARY_OPERATION_DIVISION");

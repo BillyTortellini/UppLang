@@ -532,6 +532,35 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
         }
         return expression_analysis_result_make(analyser->semantic_information[expression_index].expression_result_type, false);
     }
+    case AST_Node_Type::EXPRESSION_NEW: {
+        Type_Signature* new_type = semantic_analyser_analyse_type(analyser, expression->children[0]);
+        if (new_type == analyser->type_system.error_type) {
+            return expression_analysis_result_make(analyser->type_system.error_type, true);
+        }
+        if (new_type == analyser->type_system.void_type) {
+            semantic_analyser_log_error(analyser, "Cannot apply new to void type!", expression_index);
+            return expression_analysis_result_make(analyser->type_system.error_type, true);
+        }
+        analyser->semantic_information[expression_index].expression_result_type = type_system_make_pointer(&analyser->type_system, new_type);
+        return expression_analysis_result_make(analyser->semantic_information[expression_index].expression_result_type, false);
+    }
+    case AST_Node_Type::EXPRESSION_NEW_ARRAY: {
+        Type_Signature* new_type = semantic_analyser_analyse_type(analyser, expression->children[1]);
+        if (new_type == analyser->type_system.error_type) {
+            return expression_analysis_result_make(analyser->type_system.error_type, true);
+        }
+        if (new_type == analyser->type_system.void_type) {
+            semantic_analyser_log_error(analyser, "Cannot apply new to void type!", expression_index);
+            return expression_analysis_result_make(analyser->type_system.error_type, true);
+        }
+        Expression_Analysis_Result index_result = semantic_analyser_analyse_expression(analyser, table, expression->children[0]);
+        if (index_result.type != analyser->type_system.i32_type) {
+            semantic_analyser_log_error(analyser, "Array size in new must be of type i32", expression_index);
+            return expression_analysis_result_make(analyser->type_system.error_type, true);
+        }
+        analyser->semantic_information[expression_index].expression_result_type = type_system_make_array_unsized(&analyser->type_system, new_type);
+        return expression_analysis_result_make(analyser->semantic_information[expression_index].expression_result_type, false);
+    }
     case AST_Node_Type::EXPRESSION_ARRAY_ACCESS: {
         Expression_Analysis_Result array_access_expr = semantic_analyser_analyse_expression(analyser, table, expression->children[0]);
         Type_Signature* access_signature = array_access_expr.type;
@@ -807,6 +836,17 @@ Statement_Analysis_Result semantic_analyser_analyse_statement(Semantic_Analyser*
             semantic_analyser_log_error(analyser, "If condition must be of boolean type!", statement_index);
         }
         semantic_analyser_analyse_statement_block(analyser, parent, statement->children[1]);
+        return Statement_Analysis_Result::NO_RETURN;
+    }
+    case AST_Node_Type::STATEMENT_DELETE:
+    {
+        Type_Signature* delete_type = semantic_analyser_analyse_expression(analyser, parent, statement->children[0]).type;
+        if (delete_type == analyser->type_system.error_type) {
+            return Statement_Analysis_Result::NO_RETURN;
+        }
+        if (delete_type->type != Signature_Type::POINTER && delete_type->type != Signature_Type::ARRAY_UNSIZED) {
+            semantic_analyser_log_error(analyser, "Delete must be called on either an pointer or an unsized array", statement_index);
+        }
         return Statement_Analysis_Result::NO_RETURN;
     }
     case AST_Node_Type::STATEMENT_IF_ELSE:
@@ -1211,6 +1251,20 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, AST_Parser* parser)
             name_handle = lexer_add_or_find_identifier_by_string(analyser->parser->lexer, string_create_static("random_i32"));
             return_type = analyser->type_system.i32_type;
             break;
+        }
+        case Hardcoded_Function_Type::FREE_POINTER: {
+            analyser->hardcoded_functions[i].name_handle = 0;
+            dynamic_array_push_back(&parameter_types, type_system_make_pointer(&analyser->type_system,  analyser->type_system.i32_type));
+            return_type = analyser->type_system.void_type;
+            analyser->hardcoded_functions[i].function_type = type_system_make_function(&analyser->type_system, parameter_types, return_type);
+            continue;
+        }
+        case Hardcoded_Function_Type::MALLOC_SIZE_I32: {
+            analyser->hardcoded_functions[i].name_handle = 0;
+            dynamic_array_push_back(&parameter_types, analyser->type_system.i32_type);
+            return_type = type_system_make_pointer(&analyser->type_system, analyser->type_system.i32_type);
+            analyser->hardcoded_functions[i].function_type = type_system_make_function(&analyser->type_system, parameter_types, return_type);
+            continue;
         }
         default:
             panic("What");

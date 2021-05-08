@@ -237,40 +237,35 @@ void bytecode_generator_generate_function_instruction_slice(
         {
             // Move registers to the right place, then generate call instruction
             int argument_stack_offset = align_offset_next_multiple(generator->stack_offset_end_of_variables, 16); // I think 16 is the hightest i have
-            for (int i = 0; i < instr->arguments.size; i++)
+            Type_Signature* function_sig;
+            if (instr->type == Intermediate_Instruction_Type::CALL_HARDCODED_FUNCTION) {
+                function_sig = generator->im_generator->analyser->hardcoded_functions[(int)instr->hardcoded_function_type].function_type;
+            }
+            else {
+                function_sig = generator->im_generator->functions[instr->intermediate_function_index].function_type;
+            }
+            for (int i = 0; i < function_sig->parameter_types.size; i++)
             {
+                Type_Signature* parameter_sig = function_sig->parameter_types[i];
+                argument_stack_offset = align_offset_next_multiple(argument_stack_offset, parameter_sig->alignment_in_bytes);
+                Instruction_Type::ENUM instr_type;
                 Data_Access* arg = &instr->arguments[i];
-                if (arg->type == Data_Access_Type::REGISTER_ACCESS)
-                {
-                    Type_Signature* sig = function->registers[arg->register_index].type_signature;
-                    argument_stack_offset = align_offset_next_multiple(argument_stack_offset, sig->alignment_in_bytes);
-                    bytecode_generator_add_instruction(
-                        generator,
-                        instruction_make_3(
-                            Instruction_Type::MOVE_REGISTERS,
-                            argument_stack_offset,
-                            generator->register_stack_locations[arg->register_index],
-                            sig->size_in_bytes
-                        )
-                    );
-                    argument_stack_offset += sig->size_in_bytes;
+                if (arg->type == Data_Access_Type::REGISTER_ACCESS) {
+                    instr_type = Instruction_Type::MOVE_REGISTERS;
                 }
-                else 
-                {
-                    Type_Signature* pointer_sig = function->registers[arg->register_index].type_signature;
-                    Type_Signature* sig = pointer_sig->child_type;
-                    argument_stack_offset = align_offset_next_multiple(argument_stack_offset, sig->alignment_in_bytes);
-                    bytecode_generator_add_instruction(
-                        generator,
-                        instruction_make_3(
-                            Instruction_Type::READ_MEMORY,
-                            argument_stack_offset,
-                            generator->register_stack_locations[arg->register_index],
-                            sig->size_in_bytes
-                        )
-                    );
-                    argument_stack_offset += sig->size_in_bytes;
+                else {
+                    instr_type = Instruction_Type::READ_MEMORY;
                 }
+                bytecode_generator_add_instruction(
+                    generator,
+                    instruction_make_3(
+                        instr_type,
+                        argument_stack_offset,
+                        generator->register_stack_locations[arg->register_index],
+                        parameter_sig->size_in_bytes
+                    )
+                );
+                argument_stack_offset += parameter_sig->size_in_bytes;
             }
             // Align argument_stack_offset for return pointer
             argument_stack_offset = align_offset_next_multiple(argument_stack_offset, 8);

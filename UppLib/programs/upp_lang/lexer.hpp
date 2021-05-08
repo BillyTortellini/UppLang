@@ -18,6 +18,8 @@ namespace Token_Type
         BREAK,
         RETURN,
         STRUCT,
+        NEW,
+        DELETE_TOKEN,
         // Delimiters
         DOT,        // .
         COLON,      // :

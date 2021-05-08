@@ -104,6 +104,8 @@ enum class Hardcoded_Function_Type
     READ_F32,
     READ_BOOL,
     RANDOM_I32,
+    MALLOC_SIZE_I32,
+    FREE_POINTER,
 
     HARDCODED_FUNCTION_COUNT, // Should always be last element
 };

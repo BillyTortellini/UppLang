@@ -4,7 +4,20 @@ TODO:
 */
 main :: () -> void
 {
+    array_test();
     struct_test();
+    memory_test();
+    return;
+}
+
+memory_test :: () -> void
+{
+    size := read_i32();
+    a: []int = new [size]int;
+    array_fill_random(a, 100);
+    array_bubble_sort(a);
+    array_print(a);
+    delete a;
     return;
 }
 
@@ -52,7 +65,6 @@ struct_test :: () -> void
     return;
 }
 
-/*
 array_test :: () -> void
 {
     array: [30]int;
@@ -66,7 +78,7 @@ array_test :: () -> void
     a.data = array.data;
     a.size = array.size;
 
-    arr2: [100]int;
+    arr2: [20]int;
     a2: []int;
     a2.size = arr2.size;
     a2.data = arr2.data;
@@ -179,7 +191,6 @@ fib_rec :: (n: int) -> int
     return fib_rec(n-1) + fib_rec(n-2);
 }
 
-*/
 /*
     Missing binary statements x++; x--; x+=1; x-=1; x/=1; x*=1;
     Short circuit operation on && and ||
