@@ -1,0 +1,20 @@
+array_print :: (a: []int) -> void
+{
+    i := 0;
+    while i < a.size
+    {
+        }
+    return;
+}
+
+main :: () -> int
+{
+    a: []int = new [read_i32()]int;
+    i := 0;
+    while i < a.size 
+    {
+        a[i] = i;
+        i = i+1;
+    }
+    return a[5];
+}

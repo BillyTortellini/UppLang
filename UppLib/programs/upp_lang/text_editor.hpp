@@ -139,6 +139,7 @@ namespace NormalModeCommandType
         PUT_BEFORE_CURSOR,
         REPEAT_LAST_COMMAND,
         VISUALIZE_MOTION, 
+        FORMAT_TEXT,
         UNDO,
         REDO,
         MOVE_VIEWPORT_CURSOR_TOP, // zt
@@ -210,12 +211,12 @@ struct Text_Editor
     bool last_search_was_forwards;
 
     // IDE schtuff
-    AST_Parser parser;
     Lexer lexer;
+    AST_Parser parser;
     Semantic_Analyser analyser;
+    Intermediate_Generator intermediate_generator;
     Bytecode_Generator generator;
     Bytecode_Interpreter bytecode_interpreter;
-    Intermediate_Generator intermediate_generator;
 };
 
 Text_Editor text_editor_create(TextRenderer* text_renderer, FileListener* listener, OpenGLState* state);

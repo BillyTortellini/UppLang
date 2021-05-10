@@ -1,6 +1,8 @@
 Current Work Item:
 ------------------
- * Linter, jump to definition, fix editor bugs
+ * Formating with = seems to be buggy, destroys editor sometimes, also = should ignore comments
+ * Code completion with symbol table
+ * Jump to definition of function or variable
  * Casting, Float/Int implicit, from smaller to bigger implicit?, reinterpret cast thing, Array sized to unsized, Member access with . on pointer
  * Implement List or dynamic array 
 
@@ -46,17 +48,12 @@ Editor features to implement:
 
 Editor-Bugs:
 ------------
- * Repeat last search does not differentiate 'f'/'t'/forward backward
- * 'r' is buggy on line end, and on empty lines
- * Undo-Redo cursor position still sucks a little (Hint: Save positions after/before command)
- * Non ASCII chars destroy some motions (Program crashes)
- * Alt-Gr spamming still cancels commands (win32 nonsense)
- * % does not jump on empty parenthesis () {}
- * O does not work on first line
+ * When the text file is empty, syntax highlighting crashes
  * dd with numbers seems to not take the last line
  * put with 'dd'ed lines is also a bit weird
- * CTRL-W in insert mode deletes all newlines too
- * When the text file is empty, syntax highlighting crashes
+ * Alt-Gr spamming still cancels commands (win32 nonsense)
+ * Undo-Redo cursor position still sucks a little (Hint: Save positions after/before command)
+ * Non ASCII chars destroy some motions (Program crashes)
 
 Ideas that need to be tested:
 -----------------------------

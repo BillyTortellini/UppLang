@@ -237,6 +237,7 @@ char text_get_character_after(DynamicArray<String>* text, Text_Position pos)
 {
     String* line = &text->data[pos.line];
     if (pos.character >= line->size) {
+        if (pos.line == text->size - 1) return '\0';
         return '\n';
     }
     else {

@@ -401,7 +401,7 @@ BoundingBox2 text_editor_get_character_bounding_box(Text_Editor* editor, float t
 
 Text_Slice token_range_to_slice(Token_Range range, Text_Editor* editor)
 {
-    range.end_index = math_clamp(range.end_index, 0, editor->lexer.tokens.size - 1);
+    range.end_index = math_clamp(range.end_index, 0, math_maximum(0, editor->lexer.tokens.size - 1));
     return text_slice_make(
         editor->lexer.tokens[range.start_index].position.start,
         editor->lexer.tokens[range.end_index-1].position.end
@@ -915,7 +915,6 @@ Text_Position movement_evaluate_at_position(Movement movement, DynamicArray<Stri
                 break;
             }
             Text_Slice slice = text_slice_make_inside_parenthesis(text, pos, open_parenthesis, closed_parenthesis);
-            if (text_position_are_equal(slice.start, slice.end)) break;
             if (on_open_side) {
                 pos = slice.end;
             }
@@ -971,20 +970,24 @@ Text_Position movement_evaluate_at_position(Movement movement, DynamicArray<Stri
         }
         case MovementType::REPEAT_LAST_SEARCH: {
             Movement search_movement;
-            if (last_search_was_forwards) search_movement.symbol_type = MovementType::SEARCH_FORWARDS_FOR;
+            bool forwards = *last_search_was_forwards;
+            if (forwards) search_movement.symbol_type = MovementType::SEARCH_FORWARDS_FOR;
             else search_movement.symbol_type = MovementType::SEARCH_BACKWARDS_FOR;
             search_movement.search_char = *last_search_char;
             search_movement.repeat_count = 1;
             pos = movement_evaluate_at_position(search_movement, text, pos, last_search_char, last_search_was_forwards, horizontal_position);
+            *last_search_was_forwards = forwards;
             break;
         }
         case MovementType::REPEAT_LAST_SEARCH_REVERSE_DIRECTION: {
             Movement search_movement;
-            if (!last_search_was_forwards) search_movement.symbol_type = MovementType::SEARCH_FORWARDS_FOR;
+            bool forwards = *last_search_was_forwards;
+            if (!forwards) search_movement.symbol_type = MovementType::SEARCH_FORWARDS_FOR;
             else search_movement.symbol_type = MovementType::SEARCH_BACKWARDS_FOR;
             search_movement.search_char = *last_search_char;
             search_movement.repeat_count = 1;
             pos = movement_evaluate_at_position(search_movement, text, pos, last_search_char, last_search_was_forwards, horizontal_position);
+            *last_search_was_forwards = forwards;
             break;
         }
         case MovementType::GOTO_END_OF_TEXT: {
@@ -1394,6 +1397,9 @@ ParseResult<NormalModeCommand> key_messages_parse_normal_mode_command(Array<Key_
     // Check 1 character commands
     switch (messages[0].character)
     {
+    case '=':
+        return parse_result_make_success(
+            normal_mode_command_make(NormalModeCommandType::FORMAT_TEXT, 1), 1 + repeat_count.key_message_count);
     case 'x':
         return parse_result_make_success(
             normal_mode_command_make(NormalModeCommandType::DELETE_CHARACTER, repeat_count.result), 1 + repeat_count.key_message_count);
@@ -1574,6 +1580,50 @@ void insert_mode_exit(Text_Editor* editor) {
     editor->horizontal_position = editor->cursor_position.character;
 }
 
+int text_editor_find_line_indentation(Text_Editor* editor, int line_number)
+{
+    // If the selected line is empty (Only contains spaces, we will have to go up the lines until we find an non-empty line upwards)
+    bool last_character_was_open_parenthesis = false;
+    {
+        String* line = &editor->lines[line_number];
+        while(line_number >= 0 && string_contains_only_characters_in_set(line, string_create_static(" "), false)) {
+            line_number--;
+            if (line_number == -1) return 0;
+            line = &editor->lines[line_number];
+        }
+
+        int char_pos = line->size-1;
+        bool found = false;
+        char found_char = ' ';
+        while (char_pos >= 0) 
+        {
+            char c = line->characters[char_pos];
+            if (c != ' ') {
+                found = true;
+                found_char = c;
+                break;
+            }
+            char_pos -= 1;
+        }
+
+        if (found) {
+            if (string_contains_character(string_create_static("([{"), found_char)) {
+                last_character_was_open_parenthesis = true;
+            }
+        }
+    }
+    Text_Position start_pos = text_position_make(line_number, 0);
+    Text_Iterator it = text_iterator_make(&editor->lines, start_pos);
+    text_iterator_skip_characters_in_set(&it, string_create_static(" "), true);
+    if (it.position.line != line_number) {
+        panic("I dont think this can happen, text must be wrong!");
+        return 0;
+    }
+    int indentation = it.position.character;
+    if (last_character_was_open_parenthesis) indentation += 4;
+    return indentation;
+}
+
 void insert_mode_handle_message(Text_Editor* editor, Key_Message* msg);
 void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
 {
@@ -1689,11 +1739,17 @@ void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
         break;
     }
     case NormalModeCommandType::ENTER_INSERT_MODE_NEW_LINE_ABOVE: {
-        Text_Position prev_line_last;
-        prev_line_last.line = math_maximum(editor->cursor_position.line - 1, 0);
-        prev_line_last.character = editor->lines[prev_line_last.line].size;
+        Text_Position new_pos;
+        new_pos.line = editor->cursor_position.line;
+        new_pos.character = 0;
+        int indentation = text_editor_find_line_indentation(editor, math_maximum(0, new_pos.line-1));
         text_history_start_record_complex_command(&editor->history);
-        text_history_insert_string(&editor->history, editor, prev_line_last, string_create_formated("\n"));
+        text_history_insert_character(&editor->history, editor, new_pos, '\n');
+        for (int i = 0; i < indentation; i++) {
+            text_history_insert_character(&editor->history, editor, new_pos, ' ');
+            new_pos.character += 1;
+        }
+        editor->cursor_position = new_pos;
         insert_mode_enter(editor);
         text_history_stop_record_complex_command(&editor->history); // Works because recording is an int that counts up/down
         editor->text_changed = true;
@@ -1701,15 +1757,82 @@ void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
         break;
     }
     case NormalModeCommandType::ENTER_INSERT_MODE_NEW_LINE_BELOW: {
-        Text_Position line_last;
-        line_last.line = editor->cursor_position.line;
-        line_last.character = editor->lines[line_last.line].size;
+        Text_Position new_pos;
+        new_pos.line = editor->cursor_position.line;
+        new_pos.character = editor->lines[new_pos.line].size;
+        int indentation = text_editor_find_line_indentation(editor, new_pos.line);
         text_history_start_record_complex_command(&editor->history);
-        text_history_insert_string(&editor->history, editor, line_last, string_create_formated("\n"));
+        text_history_insert_character(&editor->history, editor, new_pos, '\n');
+        new_pos.line += 1;
+        new_pos.character = 0;
+        for (int i = 0; i < indentation; i++) {
+            text_history_insert_character(&editor->history, editor, new_pos, ' ');
+            new_pos.character += 1;
+        }
+        editor->cursor_position = new_pos;
         insert_mode_enter(editor);
         text_history_stop_record_complex_command(&editor->history); // Works because recording is an int that counts up/down
         editor->text_changed = true;
         save_as_last_command = true;
+        break;
+    }
+    case NormalModeCommandType::FORMAT_TEXT: 
+    {
+        // Start at the start of the text, go through every single character, check
+        int depth = 0;
+        text_history_start_record_complex_command(&editor->history);
+        SCOPE_EXIT(text_history_stop_record_complex_command(&editor->history));
+        for (int line_index = 0; line_index < editor->lines.size; line_index++)
+        {
+            String* line = &editor->lines[line_index];
+            if (string_contains_only_characters_in_set(line, string_create_static(" "), false)) continue;
+            int depth_diff_after_line = 0;
+            bool use_depth_minus_one = false;
+            {
+                bool first_non_space_char = true;
+                for (int i = 0; i < line->size; i++) {
+                    if (string_contains_character(string_create_static("{(["), line->characters[i])) {
+                        depth_diff_after_line++;
+                    }
+                    if (string_contains_character(string_create_static("})]"), line->characters[i])) {
+                        if (first_non_space_char) {
+                            use_depth_minus_one = true;
+                        }
+                        depth_diff_after_line--;
+                    }
+                    if (line->characters[i] != ' ') first_non_space_char = false;
+                }
+            }
+            // Check indentation level, and if its not correct, fix it
+            int line_depth = 0;
+            while (line_depth < line->size) {
+                if (line->characters[line_depth] != ' ') break;
+                line_depth++;
+            }
+
+            int expected_depth = use_depth_minus_one ? (depth - 1) * 4 : depth * 4;
+            expected_depth = math_maximum(0, expected_depth);
+            if (line_depth < expected_depth) {
+                int diff = expected_depth - line_depth;
+                for (int i = 0; i < diff; i++) {
+                    text_history_insert_character(&editor->history, editor, text_position_make(line_index, 0), ' ');
+                }
+                if (editor->cursor_position.line == line_index) {
+                    editor->cursor_position.character += diff;
+                }
+            }
+            else if (line_depth > expected_depth) {
+                int diff = line_depth - expected_depth;
+                for (int i = 0; i < diff; i++) {
+                    text_history_delete_character(&editor->history, editor, text_position_make(line_index, 0));
+                }
+                if (editor->cursor_position.line == line_index) {
+                    editor->cursor_position.character -= diff;
+                }
+            }
+            depth += depth_diff_after_line;
+            depth = math_maximum(0, depth);
+        }
         break;
     }
     case NormalModeCommandType::MOVEMENT: {
@@ -1730,10 +1853,21 @@ void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
     }
     case NormalModeCommandType::REPLACE_CHARACTER: {
         String* line = &editor->lines[editor->cursor_position.line];
-        if (line->size == 0) break;
+        if (line->size == 0) {
+            text_history_insert_character(&editor->history, editor, editor->cursor_position, command.character);
+            break;
+        }
         text_history_start_record_complex_command(&editor->history);
+        bool forward = editor->cursor_position.character == line->size - 1;
         text_history_delete_character(&editor->history, editor, editor->cursor_position);
-        text_history_insert_character(&editor->history, editor, editor->cursor_position, command.character);
+        if (forward) {
+            Text_Position next = text_position_next(editor->cursor_position, editor->lines);
+            text_history_insert_character(&editor->history, editor, next, command.character);
+            editor->cursor_position = next;
+        }
+        else {
+            text_history_insert_character(&editor->history, editor, editor->cursor_position, command.character);
+        }
         text_history_stop_record_complex_command(&editor->history);
         save_as_last_command = true;
         break;
@@ -1862,10 +1996,46 @@ void insert_mode_handle_message(Text_Editor* editor, Key_Message* msg)
             editor->cursor_position.character++;
         }
     }
-    else if (msg->key_code == KEY_CODE::W && msg->key_down && msg->ctrl_down) {
-        NormalModeCommand cmd = normal_mode_command_make_with_motion(NormalModeCommandType::DELETE_MOTION, 1,
-            motion_make_from_movement(movement_make(MovementType::PREVIOUS_WORD, 1, 0)));
-        normal_mode_command_execute(cmd, editor);
+    else if (msg->key_code == KEY_CODE::W && msg->key_down && msg->ctrl_down) 
+    {
+        if (editor->cursor_position.character == 0) {
+            if (editor->cursor_position.line != 0) {
+                Text_Position previous = text_position_previous(editor->cursor_position, editor->lines);
+                text_history_delete_character(&editor->history, editor, previous);
+                editor->cursor_position = previous;
+            }
+        }
+        else 
+        {
+            Text_Position pos = text_position_previous(editor->cursor_position, editor->lines);
+            char char_under_cursor = text_get_character_after(&editor->lines, pos);
+            bool all_whitespaces = false;
+            if (char_under_cursor == ' ') 
+            {
+                // Check if the before the cursor are only spaces
+                all_whitespaces = true;
+                while (pos.character >= 0) {
+                    char c = text_get_character_after(&editor->lines, pos);
+                    if (c != ' ') {
+                        all_whitespaces = false;
+                        break;
+                    }
+                    pos.character -= 1;
+                }
+                pos.character = 0;
+            }
+            if (all_whitespaces) {
+                pos.character = 0;
+                pos.line = editor->cursor_position.line;
+                text_history_delete_slice(&editor->history, editor, text_slice_make(pos, editor->cursor_position));
+                editor->cursor_position = pos;
+            }
+            else {
+                NormalModeCommand cmd = normal_mode_command_make_with_motion(NormalModeCommandType::DELETE_MOTION, 1,
+                    motion_make_from_movement(movement_make(MovementType::PREVIOUS_WORD, 1, 0)));
+                normal_mode_command_execute(cmd, editor);
+            }
+        }
     }
     else if (msg->key_code == KEY_CODE::U && msg->key_down && msg->ctrl_down) {
         Text_Position line_start = editor->cursor_position;
@@ -1873,14 +2043,59 @@ void insert_mode_handle_message(Text_Editor* editor, Key_Message* msg)
         text_history_delete_slice(&editor->history, editor, text_slice_make(line_start, editor->cursor_position));
         editor->cursor_position = line_start;
     }
-    else if (msg->character >= 32) {
+    else if (msg->character >= 32) 
+    {
         text_history_insert_character(&editor->history, editor, editor->cursor_position, msg->character);
         editor->cursor_position.character++;
+        // Do some stupid formating
+        if (string_contains_character(string_create_static("}])"), msg->character)) 
+        {
+            // Check if the line before is empty, if it is, find the matching parenthesis and put current parenthesis on this level
+            String* line = &editor->lines[editor->cursor_position.line];
+            bool before_is_whitespace = true;
+            for (int i = 0; i < editor->cursor_position.character - 1; i++) {
+                if (text_get_character_after(&editor->lines, text_position_make(editor->cursor_position.line, i)) != ' ') {
+                    before_is_whitespace = false;
+                    break;
+                }
+            }
+            if (before_is_whitespace) 
+            {
+                Text_Position closing_pos = text_position_make(editor->cursor_position.line, editor->cursor_position.character - 1);
+                Movement mov;
+                mov.repeat_count = 1;
+                mov.symbol_type = MovementType::JUMP_ENCLOSURE;
+                Text_Position other_pos = movement_evaluate_at_position(mov, &editor->lines, closing_pos, 0, 0, &editor->horizontal_position);
+                int target_character = text_editor_find_line_indentation(editor, other_pos.line);
+                int line_index = editor->cursor_position.line;
+                if (closing_pos.character < target_character) {
+                    int diff = target_character - closing_pos.character;
+                    for (int i = 0; i < diff; i++) {
+                        text_history_insert_character(&editor->history, editor, text_position_make(line_index, 0), ' ');
+                    }
+                    text_editor_clamp_cursor(editor);
+                }
+                else if (closing_pos.character > target_character) {
+                    int diff = closing_pos.character - target_character;
+                    for (int i = 0; i < diff; i++) {
+                        text_history_delete_character(&editor->history, editor, text_position_make(line_index, 0));
+                    }
+                    text_editor_clamp_cursor(editor);
+                }
+                editor->cursor_position = text_position_next(text_position_make(editor->cursor_position.line, target_character), editor->lines);
+            }
+        }
     }
-    else if (msg->key_code == KEY_CODE::RETURN && msg->key_down) {
+    else if (msg->key_code == KEY_CODE::RETURN && msg->key_down)
+    {
+        int indentation = text_editor_find_line_indentation(editor, editor->cursor_position.line);
         text_history_insert_character(&editor->history, editor, editor->cursor_position, '\n');
         editor->cursor_position.line++;
         editor->cursor_position.character = 0;
+        for (int i = 0; i < indentation; i++) {
+            text_history_insert_character(&editor->history, editor, editor->cursor_position, ' ');
+            editor->cursor_position.character += 1;
+        }
     }
     else if (msg->key_code == KEY_CODE::BACKSPACE && msg->key_down)
     {
