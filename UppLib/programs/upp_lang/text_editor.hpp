@@ -110,7 +110,7 @@ struct Movement
 
 struct Motion
 {
-    MotionType::ENUM symbol_type;
+    MotionType::ENUM motion_type;
     int repeat_count;
     Movement movement; // If type == MOVEMENT
     bool contains_edges; // In vim, this would be inner or around motions (iw or aw)
@@ -140,6 +140,7 @@ namespace NormalModeCommandType
         REPEAT_LAST_COMMAND,
         VISUALIZE_MOTION, 
         FORMAT_TEXT,
+        JUMP_TO_DEFINITION,
         UNDO,
         REDO,
         MOVE_VIEWPORT_CURSOR_TOP, // zt

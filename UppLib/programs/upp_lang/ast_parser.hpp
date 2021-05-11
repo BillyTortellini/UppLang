@@ -103,4 +103,5 @@ AST_Parser ast_parser_create();
 void ast_parser_parse(AST_Parser* parser, Lexer* lexer);
 void ast_parser_destroy(AST_Parser* parser);
 void ast_parser_append_to_string(AST_Parser* parser, String* string);
+int ast_parser_get_closest_node_to_text_position(AST_Parser* parser, Text_Position pos);
 String ast_node_type_to_string(AST_Node_Type::ENUM type);

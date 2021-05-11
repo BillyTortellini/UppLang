@@ -1,10 +1,20 @@
 Current Work Item:
 ------------------
- * Formating with = seems to be buggy, destroys editor sometimes, also = should ignore comments
- * Code completion with symbol table
  * Jump to definition of function or variable
+ * Scrolling with CTRL-D and CTRL-U
+ * Code completion with symbol table
  * Casting, Float/Int implicit, from smaller to bigger implicit?, reinterpret cast thing, Array sized to unsized, Member access with . on pointer
  * Implement List or dynamic array 
+
+Jump to definition:
+    XXX  I need to store the Location of the first definition of a variable/function in the symbol-table
+    XXX Then I need to have the symbol table defined for each cursor location,
+    XXX    first I want to implement just printing all visible symbols
+    Afterwards I need to select the current_word under the cursor and check if it matches a Variable,
+        then jump
+    When this works, I need CTRL-I and CTRL-O to jump between last calls, so i need a stack of last visited positions
+
+
 
 Long-Term Goals:
 ----------------
@@ -39,12 +49,15 @@ More Language features to implement:
 
 Editor features to implement:
 -----------------------------
- * Linter (Auto-formating)
  * Jump to definition, so i can jump between functions, and also jump back
  * Autocompletion using current symbol table
+ * CTRL-R for replace word  
+ * Scrolling with CTRL-D and CTRL-U
  * Visual Mode/Blockmode (Multicursor)/Visual Line
  * Undo/Redo Tree History
  * Command recording (@ stuff with vim, altough this could maybe be done better)
+ * Tab for indentation/Ctrl-Tab for no indentation
+ * Formating with = should remove unneccessary whitespaces/add them where needed, and should ignore comments
 
 Editor-Bugs:
 ------------

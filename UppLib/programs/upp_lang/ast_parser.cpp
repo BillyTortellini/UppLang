@@ -859,6 +859,10 @@ bool ast_parser_parse_single_statement_or_block(AST_Parser* parser, AST_Node_Ind
 
 bool ast_parser_parse_statement(AST_Parser* parser, AST_Node_Index parent_index)
 {
+    if (ast_parser_parse_statement_block(parser, parent_index)) {
+        return true;
+    }
+
     AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, parent_index);
     int node_index = ast_parser_get_next_node_index(parser, parent_index);
 
@@ -1118,6 +1122,8 @@ bool ast_parser_parse_parameter_block(AST_Parser* parser, AST_Node_Index parent_
         {
             node->type = AST_Node_Type::PARAMETER;
             node->name_id = parser->lexer->tokens[recoverable_checkpoint.rewind_token_index].attribute.identifier_number;
+            parser->token_mapping[parameter_index].start_index = recoverable_checkpoint.rewind_token_index;
+            parser->token_mapping[parameter_index].end_index = parser->index;
 
             if (ast_parser_test_next_token(parser, Token_Type::COMMA)) {
                 parser->index++;
@@ -1469,6 +1475,12 @@ void ast_node_append_to_string(AST_Parser* parser, int node_index, String* strin
         ast_node_expression_append_to_string(parser, node_index, string);
         //string_append_formated(string, "\n");
     }
+    string_append_formated(string, " Line-Range: %d-%d, Character-Range: %d-%d ",
+        parser->lexer->tokens[parser->token_mapping[node_index].start_index].position.start.line,
+        parser->lexer->tokens[parser->token_mapping[node_index].end_index].position.end.line,
+        parser->lexer->tokens[parser->token_mapping[node_index].start_index].position.start.character,
+        parser->lexer->tokens[parser->token_mapping[node_index].end_index].position.end.character
+    );
     {
         string_append_formated(string, "\n");
         for (int i = 0; i < node->children.size; i++) {
@@ -1481,3 +1493,32 @@ void ast_parser_append_to_string(AST_Parser* parser, String* string) {
     ast_node_append_to_string(parser, 0, string, 0);
 }
 
+int ast_parser_get_closest_node_to_text_position(AST_Parser* parser, Text_Position pos)
+{
+    AST_Node_Index min_node_index = 0;
+    int min_slice_size = 10000;
+    for (int i = 0; i < parser->token_mapping.size; i++)
+    {
+        int min = 0;
+        int max = parser->lexer->tokens.size - 1;
+        int start_index = math_clamp(parser->token_mapping[i].start_index, min, max);
+        int end_index = math_clamp(parser->token_mapping[i].end_index, min, max);
+        Token* token_start = &parser->lexer->tokens[start_index];
+        Token* token_end = &parser->lexer->tokens[end_index];
+        Text_Slice node_slice = text_slice_make(token_start->position.start, token_end->position.end);
+
+        //if (text_slice_contains_position(node_slice, editor->cursor_position, editor->lines)) 
+        if (text_position_are_in_order(&node_slice.start, &pos) &&
+            text_position_are_in_order(&pos, &node_slice.end))
+        {
+            int slice_size;
+            if (node_slice.start.line == node_slice.end.line) slice_size = node_slice.end.character - node_slice.start.character;
+            else slice_size = (node_slice.end.line - node_slice.start.line) * 100;
+            if (slice_size <= min_slice_size) {
+                min_slice_size = slice_size;
+                min_node_index = i;
+            }
+        }
+    }
+    return min_node_index;
+}

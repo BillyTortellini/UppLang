@@ -317,6 +317,21 @@ Symbol* symbol_table_find_symbol(Symbol_Table* table, int name_handle)
     return symbol_table_find_symbol_with_scope_info(table, name_handle, &unused);
 }
 
+Symbol* symbol_table_find_symbol_by_string(Symbol_Table* table, String* string, Lexer* lexer)
+{
+    for (int i = 0; i < table->symbols.size; i++) {
+        String symbol_name = lexer_identifer_to_string(lexer, table->symbols[i].name_handle);
+        if (string_equals(&symbol_name, string)) {
+            return &table->symbols[i];
+        }
+    }
+    if (table->parent != 0) {
+        Symbol* result = symbol_table_find_symbol_by_string(table->parent, string, lexer);
+        return result;
+    }
+    return 0;
+}
+
 Symbol* symbol_table_find_symbol_of_type_with_scope_info(Symbol_Table* table, int name_handle, Symbol_Type::ENUM symbol_type, bool* in_current_scope)
 {
     *in_current_scope = false;
@@ -340,7 +355,7 @@ Symbol* symbol_table_find_symbol_of_type(Symbol_Table* table, int name_handle, S
     return symbol_table_find_symbol_of_type_with_scope_info(table, name_handle, symbol_type, &unused);
 }
 
-void symbol_table_define_type(Symbol_Table* table, int name_id, Type_Signature* type)
+void symbol_table_define_type(Symbol_Table* table, int name_id, Type_Signature* type, int token_index_definition)
 {
     Symbol* sym = symbol_table_find_symbol_of_type(table, name_id, Symbol_Type::TYPE);
     if (sym != 0) {
@@ -352,8 +367,47 @@ void symbol_table_define_type(Symbol_Table* table, int name_id, Type_Signature* 
     s.symbol_type = Symbol_Type::TYPE;
     s.type = type;
     s.name_handle = name_id;
+    s.token_index_definition = token_index_definition;
     dynamic_array_push_back(&table->symbols, s);
 }
+
+void symbol_table_append_to_string_with_parent_info(String* string, Symbol_Table* table, Lexer* lexer, bool is_parent, bool print_root)
+{
+    if (!print_root && table->parent == 0) return;
+    if (!is_parent) {
+        string_append_formated(string, "Symbols: \n");
+    }
+    for (int i = 0; i < table->symbols.size; i++)
+    {
+        Symbol* s = &table->symbols[i];
+        if (is_parent) {
+            string_append_formated(string, "\t");
+        }
+        string_append_formated(string, "\t%s (", lexer_identifer_to_string(lexer, s->name_handle).characters);
+        switch (s->symbol_type)
+        {
+        case Symbol_Type::VARIABLE:
+            string_append_formated(string, "Variable"); break;
+        case Symbol_Type::TYPE:
+            string_append_formated(string, "Type"); break;
+        case Symbol_Type::FUNCTION: 
+            string_append_formated(string, "Function"); break;
+        }
+
+        string_append_formated(string, "): ");
+        type_signature_append_to_string(string, s->type);
+        string_append_formated(string, "\n");
+    }
+    if (table->parent != 0) {
+        symbol_table_append_to_string_with_parent_info(string, table->parent, lexer, true, print_root);
+    }
+}
+
+void symbol_table_append_to_string(String* string, Symbol_Table* table, Lexer* lexer, bool print_root) {
+    symbol_table_append_to_string_with_parent_info(string, table, lexer, false, print_root);
+}
+
+
 
 /*
     SEMANTIC ANALYSER
@@ -375,16 +429,24 @@ void semantic_analyser_log_error(Semantic_Analyser* analyser, const char* msg, i
     dynamic_array_push_back(&analyser->errors, error);
 }
 
+void semantic_analyser_set_symbol_table_information(Semantic_Analyser* analyser, int symbol_table_index, int node_index)
+{
+    analyser->semantic_information[node_index].symbol_table_index = symbol_table_index;
+    for (int i = 0; i < analyser->parser->nodes[node_index].children.size; i++) {
+        semantic_analyser_set_symbol_table_information(analyser, symbol_table_index, analyser->parser->nodes[node_index].children[i]);
+    }
+}
+
 Symbol_Table* semantic_analyser_install_symbol_table(Semantic_Analyser* analyser, Symbol_Table* parent, int node_index)
 {
     Symbol_Table* table = new Symbol_Table();
     *table = symbol_table_create(parent);
     dynamic_array_push_back(&analyser->symbol_tables, table);
-    analyser->semantic_information[node_index].symbol_table_index = analyser->symbol_tables.size - 1;
+    semantic_analyser_set_symbol_table_information(analyser, analyser->symbol_tables.size - 1, node_index);
     return table;
 }
 
-void semantic_analyser_define_variable(Semantic_Analyser* analyser, Symbol_Table* table, int node_index, Type_Signature* type)
+void semantic_analyser_define_variable(Semantic_Analyser* analyser, Symbol_Table* table, int node_index, Type_Signature* type, int token_index_definition)
 {
     bool in_current_scope;
     int var_name = analyser->parser->nodes[node_index].name_id;
@@ -398,6 +460,7 @@ void semantic_analyser_define_variable(Semantic_Analyser* analyser, Symbol_Table
     s.symbol_type = Symbol_Type::VARIABLE;
     s.type = type;
     s.name_handle = var_name;
+    s.token_index_definition = token_index_definition;
     dynamic_array_push_back(&table->symbols, s);
 }
 
@@ -443,7 +506,7 @@ Type_Signature* semantic_analyser_analyse_type(Semantic_Analyser* analyser, int 
         }
 
         return type_system_make_array_sized(
-            &analyser->type_system, 
+            &analyser->type_system,
             element_type,
             literal_token.attribute.integer_value
         );
@@ -827,7 +890,7 @@ Statement_Analysis_Result semantic_analyser_analyse_statement(Semantic_Analyser*
         return Statement_Analysis_Result::NO_RETURN;
     }
     case AST_Node_Type::STATEMENT_BLOCK: {
-        return semantic_analyser_analyse_statement_block(analyser, parent, statement->children[0]);
+        return semantic_analyser_analyse_statement_block(analyser, parent, statement_index);
     }
     case AST_Node_Type::STATEMENT_IF:
     {
@@ -909,7 +972,7 @@ Statement_Analysis_Result semantic_analyser_analyse_statement(Semantic_Analyser*
             semantic_analyser_log_error(analyser, "Cannot create variable of void type", statement_index);
             return Statement_Analysis_Result::NO_RETURN;
         }
-        semantic_analyser_define_variable(analyser, parent, statement_index, var_type);
+        semantic_analyser_define_variable(analyser, parent, statement_index, var_type, analyser->parser->token_mapping[statement_index].start_index);
         break;
     }
     case AST_Node_Type::STATEMENT_VARIABLE_DEFINE_ASSIGN:
@@ -935,7 +998,7 @@ Statement_Analysis_Result semantic_analyser_analyse_statement(Semantic_Analyser*
         if (assignment_type != var_type && assignment_type != analyser->type_system.error_type) {
             semantic_analyser_log_error(analyser, "Variable type does not match expression type", statement_index);
         }
-        semantic_analyser_define_variable(analyser, parent, statement_index, var_type);
+        semantic_analyser_define_variable(analyser, parent, statement_index, var_type, analyser->parser->token_mapping[statement_index].start_index);
         break;
     }
     case AST_Node_Type::STATEMENT_VARIABLE_DEFINE_INFER:
@@ -953,7 +1016,7 @@ Statement_Analysis_Result semantic_analyser_analyse_statement(Semantic_Analyser*
             semantic_analyser_log_error(analyser, "Trying to create variable as void type", statement_index);
             return Statement_Analysis_Result::NO_RETURN;
         }
-        semantic_analyser_define_variable(analyser, parent, statement_index, var_type);
+        semantic_analyser_define_variable(analyser, parent, statement_index, var_type, analyser->parser->token_mapping[statement_index].start_index);
         break;
     }
     default: {
@@ -1019,7 +1082,8 @@ void semantic_analyser_analyse_function(Semantic_Analyser* analyser, Symbol_Tabl
     AST_Node* parameter_block = &analyser->parser->nodes[function->children[0]];
     Type_Signature* function_signature = symbol_table_find_symbol_of_type(parent, function->name_id, Symbol_Type::FUNCTION)->type;
     for (int i = 0; i < parameter_block->children.size; i++) {
-        semantic_analyser_define_variable(analyser, table, parameter_block->children[i], function_signature->parameter_types[i]);
+        semantic_analyser_define_variable(analyser, table, parameter_block->children[i], 
+            function_signature->parameter_types[i], analyser->parser->token_mapping[parameter_block->children[i]].start_index);
     }
 
     analyser->function_return_type = function_signature->return_type;
@@ -1084,6 +1148,7 @@ void semantic_analyser_analyse_function_header(Semantic_Analyser* analyser, Symb
     s.symbol_type = Symbol_Type::FUNCTION;
     s.name_handle = function_name;
     s.type = function_type;
+    s.token_index_definition = analyser->parser->token_mapping[function_node_index].start_index;
     dynamic_array_push_back(&table->symbols, s);
 
     analyser->semantic_information[function_node_index].function_signature = function_type;
@@ -1158,6 +1223,10 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, AST_Parser* parser)
         Semantic_Node_Information info;
         info.expression_result_type = analyser->type_system.error_type;
         info.function_signature = analyser->type_system.error_type;
+        info.member_access_is_address_of = false;
+        info.member_access_is_constant_size = false;
+        info.member_access_offset = 0;
+        info.struct_signature = analyser->type_system.error_type;
         info.symbol_table_index = 0;
         dynamic_array_push_back(&analyser->semantic_information, info);
     }
@@ -1183,21 +1252,21 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, AST_Parser* parser)
         int byte_token_index = lexer_add_or_find_identifier_by_string(parser->lexer, string_create_static("byte"));
         int void_token_index = lexer_add_or_find_identifier_by_string(parser->lexer, string_create_static("void"));
 
-        symbol_table_define_type(root_table, int_token_index, analyser->type_system.i32_type);
-        symbol_table_define_type(root_table, bool_token_index, analyser->type_system.bool_type);
-        symbol_table_define_type(root_table, float_token_index, analyser->type_system.f32_type);
-        symbol_table_define_type(root_table, f32_token_index, analyser->type_system.f32_type);
-        symbol_table_define_type(root_table, f64_token_index, analyser->type_system.f64_type);
-        symbol_table_define_type(root_table, u8_token_index, analyser->type_system.u8_type);
-        symbol_table_define_type(root_table, byte_token_index, analyser->type_system.u8_type);
-        symbol_table_define_type(root_table, u16_token_index, analyser->type_system.u16_type);
-        symbol_table_define_type(root_table, u32_token_index, analyser->type_system.u32_type);
-        symbol_table_define_type(root_table, u64_token_index, analyser->type_system.u64_type);
-        symbol_table_define_type(root_table, i8_token_index, analyser->type_system.i8_type);
-        symbol_table_define_type(root_table, i16_token_index, analyser->type_system.i16_type);
-        symbol_table_define_type(root_table, i32_token_index, analyser->type_system.i32_type);
-        symbol_table_define_type(root_table, i64_token_index, analyser->type_system.i64_type);
-        symbol_table_define_type(root_table, void_token_index, analyser->type_system.void_type);
+        symbol_table_define_type(root_table, int_token_index, analyser->type_system.i32_type, -1);
+        symbol_table_define_type(root_table, bool_token_index, analyser->type_system.bool_type, -1);
+        symbol_table_define_type(root_table, float_token_index, analyser->type_system.f32_type, -1);
+        symbol_table_define_type(root_table, f32_token_index, analyser->type_system.f32_type, -1);
+        symbol_table_define_type(root_table, f64_token_index, analyser->type_system.f64_type, -1);
+        symbol_table_define_type(root_table, u8_token_index, analyser->type_system.u8_type, -1);
+        symbol_table_define_type(root_table, byte_token_index, analyser->type_system.u8_type, -1);
+        symbol_table_define_type(root_table, u16_token_index, analyser->type_system.u16_type, -1);
+        symbol_table_define_type(root_table, u32_token_index, analyser->type_system.u32_type, -1);
+        symbol_table_define_type(root_table, u64_token_index, analyser->type_system.u64_type, -1);
+        symbol_table_define_type(root_table, i8_token_index, analyser->type_system.i8_type, -1);
+        symbol_table_define_type(root_table, i16_token_index, analyser->type_system.i16_type, -1);
+        symbol_table_define_type(root_table, i32_token_index, analyser->type_system.i32_type, -1);
+        symbol_table_define_type(root_table, i64_token_index, analyser->type_system.i64_type, -1);
+        symbol_table_define_type(root_table, void_token_index, analyser->type_system.void_type, -1);
 
         analyser->size_token_index = lexer_add_or_find_identifier_by_string(parser->lexer, string_create_static("size"));
         analyser->data_token_index = lexer_add_or_find_identifier_by_string(parser->lexer, string_create_static("data"));
@@ -1254,7 +1323,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, AST_Parser* parser)
         }
         case Hardcoded_Function_Type::FREE_POINTER: {
             analyser->hardcoded_functions[i].name_handle = 0;
-            dynamic_array_push_back(&parameter_types, type_system_make_pointer(&analyser->type_system,  analyser->type_system.i32_type));
+            dynamic_array_push_back(&parameter_types, type_system_make_pointer(&analyser->type_system, analyser->type_system.i32_type));
             return_type = analyser->type_system.void_type;
             analyser->hardcoded_functions[i].function_type = type_system_make_function(&analyser->type_system, parameter_types, return_type);
             continue;
@@ -1279,6 +1348,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, AST_Parser* parser)
             Symbol s;
             s.symbol_type = Symbol_Type::FUNCTION;
             s.type = analyser->hardcoded_functions[i].function_type;
+            s.token_index_definition = -1;
             s.name_handle = analyser->hardcoded_functions[i].name_handle;
             dynamic_array_push_back(&root_table->symbols, s);
         }
@@ -1314,7 +1384,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, AST_Parser* parser)
             fill.name_id = struct_node->name_id;
             dynamic_array_push_back(&analyser->struct_fill_outs, fill);
             dynamic_array_push_back(&analyser->type_system.types, struct_signature);
-            symbol_table_define_type(root_table, struct_node->name_id, struct_signature);
+            symbol_table_define_type(root_table, struct_node->name_id, struct_signature, analyser->parser->token_mapping[struct_node_index].start_index);
             analyser->semantic_information[struct_node_index].struct_signature = struct_signature;
         }
     }

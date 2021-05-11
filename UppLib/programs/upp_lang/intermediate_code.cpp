@@ -706,7 +706,7 @@ void intermediate_generator_generate_statement(Intermediate_Generator* generator
     switch (statement->type)
     {
     case AST_Node_Type::STATEMENT_BLOCK: {
-        intermediate_generator_generate_statement_block(generator, statement->children[0]);
+        intermediate_generator_generate_statement_block(generator, statement_index);
         break;
     }
     case AST_Node_Type::STATEMENT_DELETE:

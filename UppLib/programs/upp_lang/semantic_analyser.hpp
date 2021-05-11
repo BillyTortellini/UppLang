@@ -134,6 +134,7 @@ struct Symbol
     int name_handle;
     Symbol_Type::ENUM symbol_type; // Required since functions, variables and Types could have the same type? TODO: Check this
     Type_Signature* type;
+    int token_index_definition;
 };
 
 struct Symbol_Table
@@ -199,7 +200,9 @@ struct Expression_Analysis_Result
 Symbol_Table symbol_table_create(Symbol_Table* parent);
 void symbol_table_destroy(Symbol_Table* table);
 Symbol* symbol_table_find_symbol(Symbol_Table* table, int name_handle);
+Symbol* symbol_table_find_symbol_by_string(Symbol_Table* table, String* string, Lexer* lexer);
 Symbol* symbol_table_find_symbol_of_type(Symbol_Table* table, int name_handle, Symbol_Type::ENUM symbol_type);
+void symbol_table_append_to_string(String* string, Symbol_Table* table, Lexer* lexer, bool print_root);
 
 Semantic_Analyser semantic_analyser_create();
 void semantic_analyser_destroy(Semantic_Analyser* analyser);

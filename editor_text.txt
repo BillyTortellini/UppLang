@@ -1,6 +1,6 @@
 /* 
 TODO:
-    - Defining static array data
+- Defining static array data
             
 */
 
@@ -9,12 +9,27 @@ main :: () -> void
     array_test();
     struct_test();
     memory_test();
+    scope_test();
+    return;
+}
+
+scope_test :: () -> void
+{
+    a: int = 0;
+    x: int = 5;
+    {
+        x: int = 17;
+        a = x;
+    }
+    print_i32(a);
+    print_line();
     return;
 }
 
 memory_test :: () -> void
 {
-    size := read_i32();
+    //size := read_i32();
+    size := 30;
     a: []int = new [size]int;
     array_fill_random(a, 100);
     array_bubble_sort(a);
@@ -194,33 +209,33 @@ fib_rec :: (n: int) -> int
 }
 
 /*
-    Missing binary statements x++; x--; x+=1; x-=1; x/=1; x*=1;
-    Short circuit operation on && and ||
+Missing binary statements x++; x--; x+=1; x-=1; x/=1; x*=1;
+Short circuit operation on && and ||
 
-    Next Features:
-     * Structs
-     * Casting/Implicit conversions
-     * Strings?
-     * OS-Calls/Calls to libraries (print, new/delete)
-     * Bytecode Debugger
-     * Backend (LLVM or C or just x64 assembly)
-     * Globals
+Next Features:
+* Structs
+* Casting/Implicit conversions
+* Strings?
+* OS-Calls/Calls to libraries (print, new/delete)
+* Bytecode Debugger
+* Backend (LLVM or C or just x64 assembly)
+* Globals
 
-    UppLang small improvements:
-     * Just highlight relevant stuff on parser errors
+UppLang small improvements:
+* Just highlight relevant stuff on parser errors
 
-    Current UppLang features:
-     * Expression parsing + evaluation
-     * Variable definition/assignment + return
-     * Primitive Type System (Int bool float)
-     * Scopes
-     * If-Else Flow control
-     * While loop with break continue
-     * Functions with parameters and return types
-     * Pointers/Dereferencing
+Current UppLang features:
+* Expression parsing + evaluation
+* Variable definition/assignment + return
+* Primitive Type System (Int bool float)
+* Scopes
+* If-Else Flow control
+* While loop with break continue
+* Functions with parameters and return types
+* Pointers/Dereferencing
 
-    Nice-to-have Features:
-     * Log to window, not to console, maybe something like in a textfield
-        -> Would be best with a toast like notification, and something you can focus
-     * Work on GUI (Probably necessary for better debugging)
+Nice-to-have Features:
+* Log to window, not to console, maybe something like in a textfield
+-> Would be best with a toast like notification, and something you can focus
+* Work on GUI (Probably necessary for better debugging)
 */
