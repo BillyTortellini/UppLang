@@ -870,6 +870,17 @@ void intermediate_generator_generate_function_code(Intermediate_Generator* gener
 
     // Generate function code
     intermediate_generator_generate_statement_block(generator, function->children[2]);
+    
+    if (generator->analyser->semantic_information[function_node_index].needs_empty_return_at_end) {
+        Intermediate_Instruction i;
+        i.type = Intermediate_Instruction_Type::RETURN;
+        if (generator->current_function_index == generator->main_function_index) {
+            i.type = Intermediate_Instruction_Type::EXIT;
+            i.exit_code = Exit_Code::SUCCESS;
+        }
+        i.return_has_value = false;
+        dynamic_array_push_back(&im_function->instructions, i);
+    }
 
     dynamic_array_reset(&generator->variable_mappings);
 }

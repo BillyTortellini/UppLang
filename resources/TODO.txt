@@ -1,20 +1,12 @@
 Current Work Item:
 ------------------
- * Jump to definition of function or variable
- * Scrolling with CTRL-D and CTRL-U
- * Code completion with symbol table
+ * Jumping to last places with CTRL-I and CTRL-O
+ * Scrolling up/down with CTRL-D and CTRL-U
+ * Jump to definition with string search (Maybe Ctrl-F)
+ * CTRL-R to replace motion
+ * Code completion with symbol table --> Really hard probably
  * Casting, Float/Int implicit, from smaller to bigger implicit?, reinterpret cast thing, Array sized to unsized, Member access with . on pointer
  * Implement List or dynamic array 
-
-Jump to definition:
-    XXX  I need to store the Location of the first definition of a variable/function in the symbol-table
-    XXX Then I need to have the symbol table defined for each cursor location,
-    XXX    first I want to implement just printing all visible symbols
-    Afterwards I need to select the current_word under the cursor and check if it matches a Variable,
-        then jump
-    When this works, I need CTRL-I and CTRL-O to jump between last calls, so i need a stack of last visited positions
-
-
 
 Long-Term Goals:
 ----------------
@@ -26,6 +18,7 @@ Long-Term Goals:
 
 More Language features to implement:
 ------------------------------------
+ * Functions with void return should not need return as the last statement, but bytecode needs to generate it
    ------- Before this I should implement some editor features (Linter at least) -------
  * Default variable initialization (0), probably
  * Primitive Types (And calculating with them, e.g. u8, u16, u32...) INFO: Array bounds check should then be done with u32, not i32, so negative values are detected
@@ -58,6 +51,7 @@ Editor features to implement:
  * Command recording (@ stuff with vim, altough this could maybe be done better)
  * Tab for indentation/Ctrl-Tab for no indentation
  * Formating with = should remove unneccessary whitespaces/add them where needed, and should ignore comments
+ * Multi-Window support (Multiple Tabs/Vertical or Horizontal splits)
 
 Editor-Bugs:
 ------------
@@ -72,7 +66,7 @@ Ideas that need to be tested:
 -----------------------------
  * Redirect debug output to application window
  * Error-Handling with the most recent build of the language
- * Using compile-time code-execution for metaprogramming and other stuff
+ * Using compile-time code-execution for metaprogramming and static analysis
  * Code-Analysis with data-value semantics (Tag System)
  * Hot-Code Reloading
  * Stack-Analysis for Debug information (Or others? E.g. logging)
@@ -89,13 +83,11 @@ Create a Compiler struct that holds all the relevant stuff
     * Bytecode-Generator
     * Bytecode-Interpreter
 And just call the Compiler from the text editor --> This has to be done eventually,
-but then I need to rewrite how things are access through the compiler.
+but then I need to rewrite how things are accessed through the compiler.
 
 Maybe we could also use String* for names, since then I only need to compare string pointers, and not actually strings.
 This would also make debuggin so much easier, since we would see the names of things.
 
-Semantic Analyse should keep the node_index of the first definition of each symbol (Symbol table), 
-currently only true for functions. 
 Intermediate Code should keep positional information, so should the bytecode (Will be necessary for the debugger)
 Improved Parser-Error handling. (Function-Parsing Error handling should check each following line if it is a function)
 
@@ -112,6 +104,17 @@ I think it would be nice? if the language would know about these
     x: [..]int;
     new [5]int;
 Check out Jonathan Blows streams to check what hes doing
+
+At which stage does metaprogramming/template instances/automatic code generation happen?
+I currently almost think that I need another AST-Tree for this, since
+I dont think I want to manipulate code on the Intermediate Representation level, due to
+the Access things and the expression evaluation things and all this kinda complicated stuff.
+
+This generally concerns me for defer, templates and macros, since doing this on an AST-Level
+seems a lot simpler (This isn't confirmed yet). I could also split variable definitions in two things
+(Currently define, define-assign, define-infer) and add implicit conversions or return statements when necessary.
+Thought: I think templates can ONLY be done on the AST-Level, since the Intermediate Representation already has
+exact instructions for binary operators and other stuff.
 
 
 

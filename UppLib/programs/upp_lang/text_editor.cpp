@@ -1835,7 +1835,7 @@ void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
         SCOPE_EXIT(string_destroy(&search_name));
         text_append_slice_to_string(editor->lines, result, &search_name);
 
-        AST_Node_Index closest_node_index = ast_parser_get_closest_node_to_text_position(&editor->parser, editor->cursor_position);
+        AST_Node_Index closest_node_index = ast_parser_get_closest_node_to_text_position(&editor->parser, editor->cursor_position, editor->lines);
         int symbol_table_index = editor->analyser.semantic_information[closest_node_index].symbol_table_index;
         Symbol_Table* symbol_table = editor->analyser.symbol_tables[symbol_table_index];
         if (symbol_table != 0) {
@@ -2127,10 +2127,7 @@ void insert_mode_handle_message(Text_Editor* editor, Key_Message* msg)
         text_history_insert_character(&editor->history, editor, editor->cursor_position, '\n');
         editor->cursor_position.line++;
         editor->cursor_position.character = 0;
-        for (int i = 0; i < indentation; i++) {
-            text_history_insert_character(&editor->history, editor, editor->cursor_position, ' ');
-            editor->cursor_position.character += 1;
-        }
+        text_editor_set_line_indentation(editor, editor->cursor_position.line, indentation);
     }
     else if (msg->key_code == KEY_CODE::BACKSPACE && msg->key_down)
     {
@@ -2217,11 +2214,12 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
 
     if (input->key_messages.size != 0 && editor->analyser.errors.size == 0 && editor->parser.errors.size == 0) 
     {
-        AST_Node_Index closest_node_index = ast_parser_get_closest_node_to_text_position(&editor->parser, editor->cursor_position);
+        AST_Node_Index closest_node_index = ast_parser_get_closest_node_to_text_position(&editor->parser, editor->cursor_position, editor->lines);
+        AST_Node* node = &editor->parser.nodes[closest_node_index];
         String type_string = ast_node_type_to_string(editor->parser.nodes[closest_node_index].type);
         int symbol_table_index = editor->analyser.semantic_information[closest_node_index].symbol_table_index;
-        logg("Currently under cursor: %s, Cursor pos: Line %d, Char %d, Table-Index: %d, Node-Mapping: %d-%d\n", 
-            type_string.characters, editor->cursor_position.line, editor->cursor_position.character, symbol_table_index,
+        logg("Currently under cursor: %s (#%d), Cursor pos: Line %d, Char %d, Table-Index: %d, Node-Mapping: %d-%d\n", 
+            type_string.characters, closest_node_index, editor->cursor_position.line, editor->cursor_position.character, symbol_table_index,
             editor->parser.token_mapping[closest_node_index].start_index, editor->parser.token_mapping[closest_node_index].end_index
         );
 

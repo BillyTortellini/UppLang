@@ -8,6 +8,21 @@ Token_Range token_range_make(int start_index, int end_index)
     return result;
 }
 
+int ast_parser_check_for_undefines(AST_Parser* parser)
+{
+    int count = 0;
+    for (int i = 0; i < parser->next_free_node; i++) {
+        if (parser->nodes[i].type == AST_Node_Type::UNDEFINED) {
+            //logg("Undefined at %d\n", i);
+            count++;
+        }
+    }
+    if (count > 0) {
+        logg("wellerman\n");
+    }
+    return count;
+}
+
 int ast_parser_get_next_node_index_no_parent(AST_Parser* parser)
 {
     while (parser->next_free_node >= parser->nodes.size) {
@@ -16,7 +31,7 @@ int ast_parser_get_next_node_index_no_parent(AST_Parser* parser)
         node.children = dynamic_array_create_empty<AST_Node_Index>(2);
         node.parent = -1;
         dynamic_array_push_back(&parser->nodes, node);
-        dynamic_array_push_back(&parser->token_mapping, token_range_make(0, 0));
+        dynamic_array_push_back(&parser->token_mapping, token_range_make(-1, -1));
     }
 
     AST_Node* node = &parser->nodes[parser->next_free_node];
@@ -31,7 +46,6 @@ int ast_parser_get_next_node_index(AST_Parser* parser, AST_Node_Index parent_ind
     int index = ast_parser_get_next_node_index_no_parent(parser);
     AST_Node* node = &parser->nodes[index];
     node->parent = parent_index;
-
         
     if (parent_index != -1) {
         dynamic_array_push_back(&parser->nodes[parent_index].children, parser->next_free_node - 1);
@@ -344,6 +358,7 @@ AST_Node_Index ast_parser_parse_variable_read(AST_Parser* parser)
     AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, -1);
     int node_index = ast_parser_get_next_node_index_no_parent(parser);
     if (!ast_parser_test_next_token(parser, Token_Type::IDENTIFIER)) {
+        ast_parser_checkpoint_reset(checkpoint);
         return -1;
     }
     parser->nodes[node_index].type = AST_Node_Type::EXPRESSION_VARIABLE_READ;
@@ -433,9 +448,11 @@ AST_Node_Index ast_parser_parse_general_access(AST_Parser* parser)
         return node_index;
     }
 
+    ast_parser_checkpoint_reset(checkpoint);
     AST_Node_Index expr_index = -1;
     if (ast_parser_test_next_token(parser, Token_Type::OPEN_PARENTHESIS))
     {
+        ast_parser_checkpoint_reset(checkpoint); // Remove last thing
         parser->index++;
         expr_index = ast_parser_parse_expression_no_parents(parser);
         if (expr_index == -1 || !ast_parser_test_next_token(parser, Token_Type::CLOSED_PARENTHESIS)) {
@@ -461,7 +478,6 @@ AST_Node_Index ast_parser_parse_general_access(AST_Parser* parser)
 
 AST_Node_Index ast_parser_parse_expression_single_value(AST_Parser* parser)
 {
-    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, -1);
     /*
         Evaluation order of unary ops? Also what expressions are valid
         a: int[5];
@@ -508,6 +524,7 @@ AST_Node_Index ast_parser_parse_expression_single_value(AST_Parser* parser)
     */
 
     // Cases: Function Call, Variable read, Literal Value, Unary Operation
+    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, -1);
     if (ast_parser_test_next_token(parser, Token_Type::IDENTIFIER))
     {
         int node_index = ast_parser_get_next_node_index_no_parent(parser);
@@ -515,16 +532,18 @@ AST_Node_Index ast_parser_parse_expression_single_value(AST_Parser* parser)
         parser->nodes[node_index].name_id = parser->lexer->tokens[parser->index].attribute.identifier_number;
         parser->index++;
         if (ast_parser_parse_argument_block(parser, node_index)) {
-            parser->token_mapping[node_index] = token_range_make(checkpoint.rewind_token_index, checkpoint.rewind_token_index + 2);
+            parser->token_mapping[node_index] = token_range_make(checkpoint.rewind_token_index, parser->index);
             return node_index;
         }
-        parser->index--;
+        ast_parser_checkpoint_reset(checkpoint);
     }
+    checkpoint = ast_parser_checkpoint_make(parser, -1);
     {
         int node_index = ast_parser_parse_general_access(parser);
         if (node_index != -1) {
             return node_index;
         }
+        ast_parser_checkpoint_reset(checkpoint);
     }
 
     int node_index = ast_parser_get_next_node_index_no_parent(parser);
@@ -730,6 +749,7 @@ int ast_parser_parse_expression_priority(AST_Parser* parser, AST_Node_Index node
         }
 
         AST_Node_Index operator_node = ast_parser_get_next_node_index_no_parent(parser);
+        parser->nodes[operator_node].type = AST_Node_Type::EXPRESSION_BINARY_OPERATION_AND; // This is just so that we dont have any undefines
         AST_Node_Index right_operand_index = ast_parser_parse_expression_single_value(parser);
         if (right_operand_index == -1) {
             ast_parser_checkpoint_reset(checkpoint);
@@ -828,6 +848,7 @@ bool ast_parser_parse_expression(AST_Parser* parser, int parent_index)
 
     AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, parent_index);
     AST_Node_Index op_tree_root_index = ast_parser_parse_expression_no_parents(parser);
+
     if (op_tree_root_index == -1) {
         ast_parser_checkpoint_reset(checkpoint);
         return false;
@@ -853,6 +874,8 @@ bool ast_parser_parse_single_statement_or_block(AST_Parser* parser, AST_Node_Ind
         ast_parser_checkpoint_reset(checkpoint);
         return false;
     }
+    parser->nodes[node_index].type = AST_Node_Type::STATEMENT_BLOCK;
+    parser->token_mapping[node_index] = token_range_make(checkpoint.rewind_token_index, parser->index);
 
     return true;
 }
@@ -1052,6 +1075,7 @@ bool ast_parser_parse_statement(AST_Parser* parser, AST_Node_Index parent_index)
 
 bool ast_parser_parse_statement_block(AST_Parser* parser, AST_Node_Index parent_index)
 {
+    int start_token_index = parser->index;
     AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, parent_index);
     int node_index = ast_parser_get_next_node_index(parser, parent_index);
 
@@ -1069,7 +1093,11 @@ bool ast_parser_parse_statement_block(AST_Parser* parser, AST_Node_Index parent_
             ast_parser_checkpoint_reset(checkpoint);
             return false;
         }
-        if (ast_parser_parse_statement(parser, node_index)) continue;
+        checkpoint = ast_parser_checkpoint_make(parser, parent_index);
+        if (ast_parser_parse_statement(parser, node_index)) {
+            continue;
+        }
+        ast_parser_checkpoint_reset(checkpoint);
         // Error handling, goto next ; or next line or end of {} block
         int next_semi = ast_parser_find_next_token_type(parser, Token_Type::SEMICOLON);
         int next_closing_braces = ast_parser_find_parenthesis_ending(parser, Token_Type::OPEN_BRACES, Token_Type::CLOSED_BRACES);
@@ -1089,7 +1117,13 @@ bool ast_parser_parse_statement_block(AST_Parser* parser, AST_Node_Index parent_
     }
     parser->index++;
 
-    parser->token_mapping[node_index] = token_range_make(checkpoint.rewind_token_index, parser->index);
+    parser->token_mapping[node_index] = token_range_make(start_token_index, parser->index);
+    if (parser->nodes[node_index].type != AST_Node_Type::STATEMENT_BLOCK) {
+        logg("Wath");
+    }
+    if (parser->token_mapping[node_index].start_index == 0) {
+        logg("What");
+    }
     return true;
 }
 
@@ -1105,6 +1139,7 @@ bool ast_parser_parse_parameter_block(AST_Parser* parser, AST_Node_Index parent_
     parser->index++;
     if (ast_parser_test_next_token(parser, Token_Type::CLOSED_PARENTHESIS)) {
         parser->index++;
+        parser->token_mapping[block_index] = token_range_make(checkpoint.rewind_token_index, parser->index);
         return true;
     }
 
@@ -1114,14 +1149,13 @@ bool ast_parser_parse_parameter_block(AST_Parser* parser, AST_Node_Index parent_
         bool success = ast_parser_test_next_2_tokens(parser, Token_Type::IDENTIFIER, Token_Type::COLON);
 
         AST_Node_Index parameter_index = ast_parser_get_next_node_index(parser, block_index);
-        AST_Node* node = &parser->nodes[parameter_index];
         parser->index += 2;
 
         if (success) success = ast_parser_parse_type(parser, parameter_index);
         if (success)
         {
-            node->type = AST_Node_Type::PARAMETER;
-            node->name_id = parser->lexer->tokens[recoverable_checkpoint.rewind_token_index].attribute.identifier_number;
+            parser->nodes[parameter_index].type = AST_Node_Type::PARAMETER;
+            parser->nodes[parameter_index].name_id = parser->lexer->tokens[recoverable_checkpoint.rewind_token_index].attribute.identifier_number;
             parser->token_mapping[parameter_index].start_index = recoverable_checkpoint.rewind_token_index;
             parser->token_mapping[parameter_index].end_index = parser->index;
 
@@ -1266,7 +1300,6 @@ bool ast_parser_parse_function(AST_Parser* parser, AST_Node_Index parent_index)
         ast_parser_checkpoint_reset(checkpoint);
         return false;
     }
-    parser->token_mapping[node_index] = token_range_make(checkpoint.rewind_token_index, parser->index);
 
     // Parse statements
     if (!ast_parser_parse_statement_block(parser, node_index)) {
@@ -1274,6 +1307,7 @@ bool ast_parser_parse_function(AST_Parser* parser, AST_Node_Index parent_index)
         return false;
     };
 
+    parser->token_mapping[node_index] = token_range_make(checkpoint.rewind_token_index, parser->index);
     return true;
 }
 
@@ -1283,15 +1317,19 @@ void ast_parser_parse_root(AST_Parser* parser)
     parser->nodes[root_index].type = AST_Node_Type::ROOT;
     while (true)
     {
+        AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, root_index);
         if (parser->index >= parser->lexer->tokens.size) break;
         if (ast_parser_parse_function(parser, root_index)) continue;
         if (ast_parser_parse_struct(parser, root_index)) continue;
 
         // TODO: Better error handling: Skip through each line (not in parenthesis) and try parsing function or struct
         int next_closing_braces = ast_parser_find_parenthesis_ending(parser, Token_Type::OPEN_BRACES, Token_Type::CLOSED_BRACES);
+        ast_parser_checkpoint_reset(checkpoint);
         ast_parser_log_error(parser, "Could not parse function", token_range_make(parser->index, next_closing_braces));
         parser->index = next_closing_braces + 1;
     }
+    parser->token_mapping[root_index].start_index = 0;
+    parser->token_mapping[root_index].end_index = parser->lexer->tokens.size - 1;
 }
 
 AST_Parser ast_parser_create()
@@ -1311,18 +1349,40 @@ void ast_parser_parse(AST_Parser* parser, Lexer* lexer)
     parser->next_free_node = 0;
     parser->lexer = lexer;
     dynamic_array_reset(&parser->errors);
+    for (int i = 0; i < parser->nodes.size; i++) {
+        dynamic_array_destroy(&parser->nodes[i].children);
+    }
     dynamic_array_reset(&parser->nodes);
     dynamic_array_reset(&parser->token_mapping);
 
     ast_parser_parse_root(parser);
+    for (int i = parser->next_free_node; i < parser->nodes.size; i++) {
+        dynamic_array_destroy(&parser->nodes[i].children);
+    }
     dynamic_array_rollback_to_size(&parser->nodes, parser->next_free_node);
     dynamic_array_rollback_to_size(&parser->token_mapping, parser->next_free_node);
+
+    int count = ast_parser_check_for_undefines(parser);
+    logg("Undefined count: %d\n", count);
+    count = 0;
+    for (int i = 0; i < parser->token_mapping.size; i++) {
+        int start = parser->token_mapping[i].start_index;
+        int end = parser->token_mapping[i].end_index;
+        if (start == end) {
+            AST_Node* node = &parser->nodes[i];
+            logg("Should not happen: range: %d-%d, index: %d\n", start, end, i);
+            logg("Node_Type::%s\n", ast_node_type_to_string(node->type).characters);
+        }
+    }
 }
 
 void ast_parser_destroy(AST_Parser* parser)
 {
-    dynamic_array_destroy(&parser->token_mapping);
+    for (int i = 0; i < parser->nodes.size; i++) {
+        dynamic_array_destroy(&parser->nodes[i].children);
+    }
     dynamic_array_destroy(&parser->nodes);
+    dynamic_array_destroy(&parser->token_mapping);
 }
 
 String ast_node_type_to_string(AST_Node_Type::ENUM type)
@@ -1468,6 +1528,7 @@ void ast_node_append_to_string(AST_Parser* parser, int node_index, String* strin
     for (int j = 0; j < indentation_lvl; j++) {
         string_append_formated(string, "  ");
     }
+    string_append_formated(string, "#%3d ", node_index);
     String type_str = ast_node_type_to_string(node->type);
     string_append_string(string, &type_str);
     if (ast_node_type_is_expression(node->type)) {
@@ -1493,23 +1554,57 @@ void ast_parser_append_to_string(AST_Parser* parser, String* string) {
     ast_node_append_to_string(parser, 0, string, 0);
 }
 
-int ast_parser_get_closest_node_to_text_position(AST_Parser* parser, Text_Position pos)
+int ast_parser_get_closest_node_to_text_position(AST_Parser* parser, Text_Position pos, DynamicArray<String> text)
 {
+    int closest_index = 0;
+    AST_Node* closest = &parser->nodes[0];
+    while (true) 
+    {
+        bool continue_search = true;
+        for (int i = 0; i < closest->children.size && continue_search; i++)
+        {
+            int child_index = closest->children[i];
+            Token* token_start, *token_end;
+            {
+                int min = 0;
+                int max = parser->lexer->tokens.size;
+                int start_index = parser->token_mapping[child_index].start_index;
+                int end_index = parser->token_mapping[child_index].end_index;
+                if (start_index == -1 || end_index == -1) continue;
+                start_index = math_clamp(start_index, min, max);
+                end_index = math_clamp(end_index, min, max);
+                token_start = &parser->lexer->tokens[start_index];
+                token_end = &parser->lexer->tokens[end_index - 1];
+            }
+
+            Text_Slice node_slice = text_slice_make(token_start->position.start, token_end->position.end);
+            if (text_slice_contains_position(node_slice, pos, text)) {
+                closest_index = child_index;
+                closest = &parser->nodes[closest_index];
+                continue_search = false;
+            }
+        }
+        if (continue_search) break;
+    }
+    return closest_index;
+
+    /*
     AST_Node_Index min_node_index = 0;
     int min_slice_size = 10000;
     for (int i = 0; i < parser->token_mapping.size; i++)
     {
         int min = 0;
         int max = parser->lexer->tokens.size - 1;
-        int start_index = math_clamp(parser->token_mapping[i].start_index, min, max);
-        int end_index = math_clamp(parser->token_mapping[i].end_index, min, max);
+        int start_index = parser->token_mapping[i].start_index;
+        int end_index = parser->token_mapping[i].end_index;
+        if (start_index == -1 || end_index == -1) continue;
+        start_index = math_clamp(start_index, min, max);
+        end_index = math_clamp(end_index, min, max);
         Token* token_start = &parser->lexer->tokens[start_index];
-        Token* token_end = &parser->lexer->tokens[end_index];
+        Token* token_end = &parser->lexer->tokens[end_index - 1];
         Text_Slice node_slice = text_slice_make(token_start->position.start, token_end->position.end);
 
-        //if (text_slice_contains_position(node_slice, editor->cursor_position, editor->lines)) 
-        if (text_position_are_in_order(&node_slice.start, &pos) &&
-            text_position_are_in_order(&pos, &node_slice.end))
+        if (text_slice_contains_position(node_slice, pos, text))
         {
             int slice_size;
             if (node_slice.start.line == node_slice.end.line) slice_size = node_slice.end.character - node_slice.start.character;
@@ -1521,4 +1616,5 @@ int ast_parser_get_closest_node_to_text_position(AST_Parser* parser, Text_Positi
         }
     }
     return min_node_index;
+    */
 }

@@ -152,6 +152,7 @@ struct Semantic_Node_Information
     bool member_access_is_address_of;
     bool member_access_is_constant_size; // If this is true, then the size is stored in member_access_offset
     int member_access_offset;
+    bool needs_empty_return_at_end;
 };
 
 struct Struct_Fill_Out

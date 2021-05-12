@@ -1090,7 +1090,12 @@ void semantic_analyser_analyse_function(Semantic_Analyser* analyser, Symbol_Tabl
     analyser->loop_depth = 0;
     Statement_Analysis_Result result = semantic_analyser_analyse_statement_block(analyser, table, function->children[2]);
     if (result != Statement_Analysis_Result::RETURN) {
-        semantic_analyser_log_error(analyser, "Not all code paths return a value!", function_node_index);
+        if (function_signature->return_type == analyser->type_system.void_type) {
+            analyser->semantic_information[function_node_index].needs_empty_return_at_end = true;
+        }
+        else {
+            semantic_analyser_log_error(analyser, "Not all code paths return a value!", function_node_index);
+        }
     }
 }
 
@@ -1226,6 +1231,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, AST_Parser* parser)
         info.member_access_is_address_of = false;
         info.member_access_is_constant_size = false;
         info.member_access_offset = 0;
+        info.needs_empty_return_at_end = false;
         info.struct_signature = analyser->type_system.error_type;
         info.symbol_table_index = 0;
         dynamic_array_push_back(&analyser->semantic_information, info);

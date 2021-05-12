@@ -4,13 +4,12 @@ TODO:
             
 */
 
-main :: () -> void
+main :: () -> void 
 {
     array_test();
     struct_test();
     memory_test();
     scope_test();
-    return;
 }
 
 scope_test :: () -> void
@@ -23,7 +22,6 @@ scope_test :: () -> void
     }
     print_i32(a);
     print_line();
-    return;
 }
 
 memory_test :: () -> void
@@ -35,7 +33,6 @@ memory_test :: () -> void
     array_bubble_sort(a);
     array_print(a);
     delete a;
-    return;
 }
 
 Player :: struct
@@ -48,7 +45,6 @@ Player :: struct
 player_level_up :: (player: *Player) -> void
 {
     (&player).level = (&player).level + 1;
-    return; 
 }
 
 player_make :: (age: int, alive: bool, level: int) -> Player
@@ -65,7 +61,6 @@ player_kill :: (killer: *Player, victim: *Player) -> void
     if !(&victim).alive return;
     (&victim).alive = false;
     (&killer).level = (&killer).level + (&victim).level;
-    return;
 }
 
 struct_test :: () -> void
@@ -79,7 +74,6 @@ struct_test :: () -> void
     print_line();
     print_i32(p1.level);
     print_line();
-    return;
 }
 
 array_test :: () -> void
@@ -104,7 +98,6 @@ array_test :: () -> void
     array_bubble_sort(a2);
     array_set_even_constant(a2, 420); 
     array_print(a2);
-    return;
 }
 
 array_bubble_sort :: (a: []int) -> void
@@ -124,7 +117,6 @@ array_bubble_sort :: (a: []int) -> void
         }
         i = i+1;
     }
-    return;
 }
 
 array_set_even_constant :: (array: []int, c: int) -> void
@@ -137,7 +129,6 @@ array_set_even_constant :: (array: []int, c: int) -> void
         }
         i = i+1;
     }
-    return;
 }
 
 array_print :: (array: []int) -> void
@@ -149,7 +140,6 @@ array_print :: (array: []int) -> void
         print_line();
         i = i+1;
     }
-    return;
 }
 
 array_fill_from_console :: (array: []int) -> void
@@ -160,7 +150,6 @@ array_fill_from_console :: (array: []int) -> void
         array[i] = read_i32();
         i = i + 1;
     }
-    return;
 }
 
 array_fill_random :: (array: []int, max: int) -> void
@@ -172,7 +161,6 @@ array_fill_random :: (array: []int, max: int) -> void
         if (array[i] < 0) array[i] = -array[i];
         i = i+1;
     }
-    return;
 }
 
 even :: (a: int) -> bool 
