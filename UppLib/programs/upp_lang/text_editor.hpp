@@ -33,7 +33,7 @@ struct TextChange
 {
     TextChange* next;
     TextChange* previous;
-    TextChangeType::ENUM symbol_type;
+    TextChangeType::ENUM type;
 
     // For string deletion/insertion
     String string;
@@ -103,7 +103,7 @@ namespace MotionType
 
 struct Movement
 {
-    MovementType::ENUM symbol_type;
+    MovementType::ENUM type;
     int repeat_count;
     char search_char;
 };
@@ -141,6 +141,10 @@ namespace NormalModeCommandType
         VISUALIZE_MOTION, 
         FORMAT_TEXT,
         JUMP_TO_DEFINITION,
+        GOTO_LAST_JUMP,
+        GOTO_NEXT_JUMP,
+        SCROLL_DOWNWARDS_HALF_PAGE,
+        SCROLL_UPWARDS_HALF_PAGE,
         UNDO,
         REDO,
         MOVE_VIEWPORT_CURSOR_TOP, // zt
@@ -154,7 +158,7 @@ namespace NormalModeCommandType
 
 struct NormalModeCommand
 {
-    NormalModeCommandType::ENUM symbol_type;
+    NormalModeCommandType::ENUM type;
     Motion motion;
     Movement movement;
     char character;
@@ -177,6 +181,12 @@ namespace TextEditorMode
         INSERT,
     };
 }
+
+struct Text_Editor_Jump
+{
+    Text_Position jump_start;
+    Text_Position jump_end;
+};
 
 struct Text_Editor
 {
@@ -210,6 +220,9 @@ struct Text_Editor
     bool last_yank_was_line;
     char last_search_char;
     bool last_search_was_forwards;
+    DynamicArray<Text_Editor_Jump> jump_history;
+    int jump_history_index;
+    Text_Position last_change_position;
 
     // IDE schtuff
     Lexer lexer;

@@ -14,6 +14,7 @@ bool token_type_is_keyword(Token_Type::ENUM type)
     case Token_Type::STRUCT: return true;
     case Token_Type::NEW: return true;
     case Token_Type::DELETE_TOKEN: return true;
+    case Token_Type::BOOLEAN_LITERAL: return true;
     }
     return false;
 }

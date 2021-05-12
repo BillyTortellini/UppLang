@@ -1,9 +1,3 @@
-/* 
-TODO:
-- Defining static array data
-            
-*/
-
 main :: () -> void 
 {
     array_test();
@@ -26,7 +20,6 @@ scope_test :: () -> void
 
 memory_test :: () -> void
 {
-    //size := read_i32();
     size := 30;
     a: []int = new [size]int;
     array_fill_random(a, 100);

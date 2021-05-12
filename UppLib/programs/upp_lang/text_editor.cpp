@@ -15,13 +15,13 @@
 
 void text_change_destroy_single(TextChange* change) 
 {
-    if (change->symbol_type == TextChangeType::STRING_INSERTION) {
+    if (change->type == TextChangeType::STRING_INSERTION) {
         string_destroy(&change->string);
     }
-    else if (change->symbol_type == TextChangeType::STRING_DELETION) {
+    else if (change->type == TextChangeType::STRING_DELETION) {
         string_destroy(&change->string);
     }
-    else if (change->symbol_type == TextChangeType::COMPLEX) {
+    else if (change->type == TextChangeType::COMPLEX) {
         for (int i = 0; i < change->sub_changes.size; i++) {
             text_change_destroy_single(&change->sub_changes[i]);
         }
@@ -51,7 +51,7 @@ void text_change_destroy_changes_in_past(TextChange* change) {
 
 void text_change_apply(TextChange* change, Text_Editor* editor)
 {
-    switch (change->symbol_type)
+    switch (change->type)
     {
     case TextChangeType::STRING_DELETION: {
         text_delete_slice(&editor->lines, change->slice);
@@ -87,7 +87,7 @@ void text_change_apply(TextChange* change, Text_Editor* editor)
 void text_editor_clamp_cursor(Text_Editor* editor);
 void text_change_undo(TextChange* change, Text_Editor* editor)
 {
-    switch (change->symbol_type)
+    switch (change->type)
     {
     case TextChangeType::STRING_DELETION: {
         text_insert_string(&editor->lines, change->slice.start, change->string);
@@ -179,7 +179,7 @@ void text_history_insert_string(TextHistory* history, Text_Editor* editor, Text_
     change.previous = 0;
     change.slice = slice;
     change.string = string;
-    change.symbol_type = TextChangeType::STRING_INSERTION;
+    change.type = TextChangeType::STRING_INSERTION;
     text_change_apply(&change, editor);
     text_editor_clamp_cursor(editor);
     text_history_record_change(history, change);
@@ -195,7 +195,7 @@ void text_history_delete_slice(TextHistory* history, Text_Editor* editor, Text_S
     change.previous = 0;
     change.slice = slice;
     change.string = str;
-    change.symbol_type = TextChangeType::STRING_DELETION;
+    change.type = TextChangeType::STRING_DELETION;
     text_change_apply(&change, editor);
     text_editor_clamp_cursor(editor);
     text_history_record_change(history, change);
@@ -207,7 +207,7 @@ void text_history_insert_character(TextHistory* history, Text_Editor* editor, Te
     change.previous = 0;
     change.character_position = pos;
     change.character = c;
-    change.symbol_type = TextChangeType::CHARACTER_INSERTION;
+    change.type = TextChangeType::CHARACTER_INSERTION;
     text_change_apply(&change, editor);
     text_editor_clamp_cursor(editor);
     text_history_record_change(history, change);
@@ -220,7 +220,7 @@ void text_history_delete_character(TextHistory* history, Text_Editor* editor, Te
     change.previous = 0;
     change.character_position = pos;
     change.character = text_get_character_after(&editor->lines, pos);
-    change.symbol_type = TextChangeType::CHARACTER_DELETION;
+    change.type = TextChangeType::CHARACTER_DELETION;
     text_change_apply(&change, editor);
     text_editor_clamp_cursor(editor);
     text_history_record_change(history, change);
@@ -238,7 +238,7 @@ void text_history_stop_record_complex_command(TextHistory* history) {
     if (history->recording_depth == 0)
     {
         TextChange change;
-        change.symbol_type = TextChangeType::COMPLEX;
+        change.type = TextChangeType::COMPLEX;
         change.sub_changes = history->complex_command;
         change.next = 0;
         change.previous = 0;
@@ -304,11 +304,14 @@ Text_Editor text_editor_create(TextRenderer* text_renderer, FileListener* listen
     result.history = text_history_create();
     result.mode = TextEditorMode::NORMAL;
     result.cursor_position = text_position_make(0, 0);
+    result.last_change_position = text_position_make(0, 0);
     result.horizontal_position = 0;
     result.text_changed = true;
     result.last_search_char = ' ';
     result.last_search_was_forwards = true;
     result.last_keymessage_time = 0.0;
+    result.jump_history = dynamic_array_create_empty<Text_Editor_Jump>(32);
+    result.jump_history_index = 0;
 
     result.last_normal_mode_command = normal_mode_command_make(NormalModeCommandType::MOVEMENT, 0);
     result.last_normal_mode_command.movement = movement_make(MovementType::MOVE_LEFT, 0, 0);
@@ -343,6 +346,7 @@ void text_editor_destroy(Text_Editor* editor)
 
     dynamic_array_destroy(&editor->normal_mode_incomplete_command);
     dynamic_array_destroy(&editor->last_insert_mode_inputs);
+    dynamic_array_destroy(&editor->jump_history);
 
     ast_parser_destroy(&editor->parser);
     lexer_destroy(&editor->lexer);
@@ -620,7 +624,7 @@ String characters_get_string_all_letters() {
 
 Movement movement_make(MovementType::ENUM symbol_type, int repeat_count, char search_char = '\0') {
     Movement result;
-    result.symbol_type = symbol_type;
+    result.type = symbol_type;
     result.repeat_count = repeat_count;
     result.search_char = search_char;
     return result;
@@ -751,7 +755,7 @@ Text_Position movement_evaluate_at_position(Movement movement, DynamicArray<Stri
         Text_Position next_position = text_position_next(iterator.position, *text);
         text_position_sanitize(&next_position, *text);
         char next_character = text_get_character_after(text, next_position);
-        switch (movement.symbol_type)
+        switch (movement.type)
         {
         case MovementType::MOVE_DOWN: {
             pos.line += 1;
@@ -971,8 +975,8 @@ Text_Position movement_evaluate_at_position(Movement movement, DynamicArray<Stri
         case MovementType::REPEAT_LAST_SEARCH: {
             Movement search_movement;
             bool forwards = *last_search_was_forwards;
-            if (forwards) search_movement.symbol_type = MovementType::SEARCH_FORWARDS_FOR;
-            else search_movement.symbol_type = MovementType::SEARCH_BACKWARDS_FOR;
+            if (forwards) search_movement.type = MovementType::SEARCH_FORWARDS_FOR;
+            else search_movement.type = MovementType::SEARCH_BACKWARDS_FOR;
             search_movement.search_char = *last_search_char;
             search_movement.repeat_count = 1;
             pos = movement_evaluate_at_position(search_movement, text, pos, last_search_char, last_search_was_forwards, horizontal_position);
@@ -982,8 +986,8 @@ Text_Position movement_evaluate_at_position(Movement movement, DynamicArray<Stri
         case MovementType::REPEAT_LAST_SEARCH_REVERSE_DIRECTION: {
             Movement search_movement;
             bool forwards = *last_search_was_forwards;
-            if (!forwards) search_movement.symbol_type = MovementType::SEARCH_FORWARDS_FOR;
-            else search_movement.symbol_type = MovementType::SEARCH_BACKWARDS_FOR;
+            if (!forwards) search_movement.type = MovementType::SEARCH_FORWARDS_FOR;
+            else search_movement.type = MovementType::SEARCH_BACKWARDS_FOR;
             search_movement.search_char = *last_search_char;
             search_movement.repeat_count = 1;
             pos = movement_evaluate_at_position(search_movement, text, pos, last_search_char, last_search_was_forwards, horizontal_position);
@@ -1121,14 +1125,14 @@ Text_Slice motion_evaluate_at_position(Motion motion, DynamicArray<String>* text
 
 NormalModeCommand normal_mode_command_make(NormalModeCommandType::ENUM symbol_type, int repeat_count) {
     NormalModeCommand result;
-    result.symbol_type = symbol_type;
+    result.type = symbol_type;
     result.repeat_count = repeat_count;
     return result;
 }
 
 NormalModeCommand normal_mode_command_make_with_char(NormalModeCommandType::ENUM symbol_type, int repeat_count, char character) {
     NormalModeCommand result;
-    result.symbol_type = symbol_type;
+    result.type = symbol_type;
     result.repeat_count = repeat_count;
     result.character = character;
     return result;
@@ -1136,7 +1140,7 @@ NormalModeCommand normal_mode_command_make_with_char(NormalModeCommandType::ENUM
 
 NormalModeCommand normal_mode_command_make_with_motion(NormalModeCommandType::ENUM symbol_type, int repeat_count, Motion motion) {
     NormalModeCommand result;
-    result.symbol_type = symbol_type;
+    result.type = symbol_type;
     result.repeat_count = repeat_count;
     result.motion = motion;
     return result;
@@ -1144,7 +1148,7 @@ NormalModeCommand normal_mode_command_make_with_motion(NormalModeCommandType::EN
 
 NormalModeCommand normal_mode_command_make_movement(Movement movement) {
     NormalModeCommand result;
-    result.symbol_type = NormalModeCommandType::MOVEMENT;
+    result.type = NormalModeCommandType::MOVEMENT;
     result.repeat_count = 1;
     result.movement = movement;
     return result;
@@ -1462,16 +1466,35 @@ ParseResult<NormalModeCommand> key_messages_parse_normal_mode_command(Array<Key_
             1 + repeat_count.key_message_count);
     case 'u':
         return parse_result_make_success(normal_mode_command_make(NormalModeCommandType::UNDO, repeat_count.result), 1 + repeat_count.key_message_count);
-    case 'r':
     case 'd':
+    case 'r':
     case 'c':
     case 'v':
     case 'y':
     case 'z':
         if (messages.size == 1) return parse_result_make_completable<NormalModeCommand>();
     }
-    if (messages[0].key_code == KEY_CODE::R && messages[0].ctrl_down && messages[0].key_down) {
-        return parse_result_make_success(normal_mode_command_make(NormalModeCommandType::REDO, repeat_count.result), 1 + repeat_count.key_message_count);
+    if (messages[0].ctrl_down && messages[0].key_down)
+    {
+        if (messages[0].key_code == KEY_CODE::R) {
+            return parse_result_make_success(normal_mode_command_make(NormalModeCommandType::REDO, repeat_count.result), 1 + repeat_count.key_message_count);
+        }
+        else if (messages[0].key_code == KEY_CODE::U) {
+            return parse_result_make_success(
+                normal_mode_command_make(NormalModeCommandType::SCROLL_UPWARDS_HALF_PAGE, 1), 1 + repeat_count.key_message_count);
+        }
+        else if (messages[0].key_code == KEY_CODE::D) {
+            return parse_result_make_success(
+                normal_mode_command_make(NormalModeCommandType::SCROLL_DOWNWARDS_HALF_PAGE, 1), 1 + repeat_count.key_message_count);
+        }
+        else if (messages[0].key_code == KEY_CODE::O) {
+            return parse_result_make_success(
+                normal_mode_command_make(NormalModeCommandType::GOTO_LAST_JUMP, 1), 1 + repeat_count.key_message_count);
+        }
+        else if (messages[0].key_code == KEY_CODE::I) {
+            return parse_result_make_success(
+                normal_mode_command_make(NormalModeCommandType::GOTO_NEXT_JUMP, 1), 1 + repeat_count.key_message_count);
+        }
     }
 
     if (messages.size == 1) return parse_result_make_failure<NormalModeCommand>(); // No 1 size command detected
@@ -1589,16 +1612,16 @@ int text_editor_find_line_indentation(Text_Editor* editor, int line_number, bool
     bool last_character_was_open_parenthesis = false;
     {
         String* line = &editor->lines[line_number];
-        while(line_number >= 0 && string_contains_only_characters_in_set(line, string_create_static(" "), false)) {
+        while (line_number >= 0 && string_contains_only_characters_in_set(line, string_create_static(" "), false)) {
             line_number--;
             if (line_number == -1) return 0;
             line = &editor->lines[line_number];
         }
 
-        int char_pos = line->size-1;
+        int char_pos = line->size - 1;
         bool found = false;
         char found_char = ' ';
-        while (char_pos >= 0) 
+        while (char_pos >= 0)
         {
             char c = line->characters[char_pos];
             if (c != ' ') {
@@ -1641,7 +1664,7 @@ void text_editor_set_line_indentation(Text_Editor* editor, int line_number, int 
 
     text_history_start_record_complex_command(&editor->history);
     SCOPE_EXIT(text_history_stop_record_complex_command(&editor->history));
-    if (current_line_indentation < indentation) 
+    if (current_line_indentation < indentation)
     {
         int diff = indentation - current_line_indentation;
         for (int i = 0; i < diff; i++) {
@@ -1652,7 +1675,7 @@ void text_editor_set_line_indentation(Text_Editor* editor, int line_number, int 
         }
         text_editor_clamp_cursor(editor);
     }
-    else if (current_line_indentation > indentation) 
+    else if (current_line_indentation > indentation)
     {
         int diff = current_line_indentation - indentation;
         if (editor->cursor_position.line == line_number) {
@@ -1667,11 +1690,28 @@ void text_editor_set_line_indentation(Text_Editor* editor, int line_number, int 
     }
 }
 
+void text_editor_record_jump(Text_Editor* editor, Text_Position start, Text_Position end)
+{
+    if (editor->jump_history_index == editor->jump_history.size) {
+        editor->jump_history_index++;
+        Text_Editor_Jump jump;
+        jump.jump_start = start;
+        jump.jump_end = end;
+        dynamic_array_push_back(&editor->jump_history, jump);
+    }
+    else {
+        editor->jump_history[editor->jump_history_index].jump_start = start;
+        editor->jump_history[editor->jump_history_index].jump_end = end;
+        editor->jump_history_index++;
+        dynamic_array_rollback_to_size(&editor->jump_history, editor->jump_history_index);
+    }
+}
+
 void insert_mode_handle_message(Text_Editor* editor, Key_Message* msg);
 void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
 {
     bool save_as_last_command = false;
-    switch (command.symbol_type)
+    switch (command.type)
     {
     case NormalModeCommandType::CHANGE_LINE: {
         text_history_start_record_complex_command(&editor->history);
@@ -1686,8 +1726,8 @@ void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
         Text_Slice slice = motion_evaluate_at_position(command.motion, &editor->lines, editor->cursor_position,
             &editor->last_search_char, &editor->last_search_was_forwards, &editor->horizontal_position);
         if (command.motion.motion_type == MotionType::MOVEMENT &&
-            (command.motion.movement.symbol_type == MovementType::SEARCH_FORWARDS_FOR ||
-                command.motion.movement.symbol_type == MovementType::SEARCH_FORWARDS_TO)) {
+            (command.motion.movement.type == MovementType::SEARCH_FORWARDS_FOR ||
+                command.motion.movement.type == MovementType::SEARCH_FORWARDS_TO)) {
             slice.end = text_position_next(slice.end, editor->lines);
         }
         text_history_start_record_complex_command(&editor->history);
@@ -1742,8 +1782,8 @@ void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
         Text_Slice slice = motion_evaluate_at_position(command.motion, &editor->lines, editor->cursor_position,
             &editor->last_search_char, &editor->last_search_was_forwards, &editor->horizontal_position);
         if (command.motion.motion_type == MotionType::MOVEMENT &&
-            (command.motion.movement.symbol_type == MovementType::SEARCH_FORWARDS_FOR ||
-                command.motion.movement.symbol_type == MovementType::SEARCH_FORWARDS_TO)) {
+            (command.motion.movement.type == MovementType::SEARCH_FORWARDS_FOR ||
+                command.motion.movement.type == MovementType::SEARCH_FORWARDS_TO)) {
             slice.end = text_position_next(slice.end, editor->lines);
         }
         editor->last_yank_was_line = false;
@@ -1827,7 +1867,7 @@ void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
         m.contains_edges = false;
         m.repeat_count = 1;
         m.motion_type = MotionType::WORD;
-        Text_Slice result = motion_evaluate_at_position(m, &editor->lines, 
+        Text_Slice result = motion_evaluate_at_position(m, &editor->lines,
             editor->cursor_position, &editor->last_search_char, &editor->last_search_was_forwards, &editor->horizontal_position
         );
         if (text_position_are_equal(result.start, result.end)) break;
@@ -1843,6 +1883,9 @@ void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
             if (s != 0 && s->token_index_definition != -1) {
                 Token* token = &editor->lexer.tokens[s->token_index_definition];
                 Text_Position result_pos = editor->lexer.tokens[s->token_index_definition].position.start;
+                if (math_absolute(result_pos.line - editor->cursor_position.line) > 5) {
+                    text_editor_record_jump(editor, editor->cursor_position, result_pos);
+                }
                 editor->cursor_position = result_pos;
                 editor->horizontal_position = editor->cursor_position.character;
                 text_editor_clamp_cursor(editor);
@@ -2025,6 +2068,34 @@ void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
         text_editor_clamp_cursor(editor);
         break;
     }
+    case NormalModeCommandType::SCROLL_DOWNWARDS_HALF_PAGE: {
+        int line_count = (editor->last_editor_region.max.y - editor->last_editor_region.min.y) / editor->last_text_height;
+        editor->cursor_position.line += line_count / 2;
+        text_editor_clamp_cursor(editor);
+        editor->first_rendered_line = math_minimum(editor->lines.size - 1, editor->first_rendered_line + line_count / 2);
+        break;
+    }
+    case NormalModeCommandType::SCROLL_UPWARDS_HALF_PAGE: {
+        int line_count = (editor->last_editor_region.max.y - editor->last_editor_region.min.y) / editor->last_text_height;
+        editor->cursor_position.line -= line_count / 2;
+        text_editor_clamp_cursor(editor);
+        editor->first_rendered_line = math_maximum(0, editor->first_rendered_line - line_count / 2);
+        break;
+    }
+    case NormalModeCommandType::GOTO_LAST_JUMP: {
+        if (editor->jump_history_index == 0) break;
+        editor->jump_history_index--;
+        editor->cursor_position = editor->jump_history[editor->jump_history_index].jump_start;
+        text_editor_clamp_cursor(editor);
+        break;
+    }
+    case NormalModeCommandType::GOTO_NEXT_JUMP: {
+        if (editor->jump_history_index >= editor->jump_history.size) break;
+        editor->cursor_position = editor->jump_history[editor->jump_history_index].jump_end;
+        editor->jump_history_index++;
+        text_editor_clamp_cursor(editor);
+        break;
+    }
     }
     if (save_as_last_command) editor->last_normal_mode_command = command;
 }
@@ -2114,7 +2185,7 @@ void insert_mode_handle_message(Text_Editor* editor, Key_Message* msg)
                 Text_Position closing_pos = text_position_make(editor->cursor_position.line, editor->cursor_position.character - 1);
                 Movement mov;
                 mov.repeat_count = 1;
-                mov.symbol_type = MovementType::JUMP_ENCLOSURE;
+                mov.type = MovementType::JUMP_ENCLOSURE;
                 Text_Position other_pos = movement_evaluate_at_position(mov, &editor->lines, closing_pos, 0, 0, &editor->horizontal_position);
                 int target_indentation = text_editor_find_line_indentation(editor, other_pos.line, false);
                 text_editor_set_line_indentation(editor, editor->cursor_position.line, target_indentation);
@@ -2207,30 +2278,43 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
             insert_mode_handle_message(editor, msg);
         }
     }
+    if (editor->text_changed)
+    {
+        if (math_absolute(editor->last_change_position.line - editor->cursor_position.line) > 8) {
+            if (editor->jump_history_index != 0) {
+                text_editor_record_jump(editor, editor->jump_history[editor->jump_history_index-1].jump_end, editor->cursor_position);
+            }
+        }
+        editor->last_change_position = editor->cursor_position;
+    }
+
+
     if (!text_check_correctness(editor->lines)) {
         panic("error, suit yourself\n");
         __debugbreak();
     }
 
-    if (input->key_messages.size != 0 && editor->analyser.errors.size == 0 && editor->parser.errors.size == 0) 
+    if (input->key_messages.size != 0 && editor->analyser.errors.size == 0 && editor->parser.errors.size == 0)
     {
         AST_Node_Index closest_node_index = ast_parser_get_closest_node_to_text_position(&editor->parser, editor->cursor_position, editor->lines);
         AST_Node* node = &editor->parser.nodes[closest_node_index];
         String type_string = ast_node_type_to_string(editor->parser.nodes[closest_node_index].type);
         int symbol_table_index = editor->analyser.semantic_information[closest_node_index].symbol_table_index;
-        logg("Currently under cursor: %s (#%d), Cursor pos: Line %d, Char %d, Table-Index: %d, Node-Mapping: %d-%d\n", 
+        /*
+        logg("Currently under cursor: %s (#%d), Cursor pos: Line %d, Char %d, Table-Index: %d, Node-Mapping: %d-%d\n",
             type_string.characters, closest_node_index, editor->cursor_position.line, editor->cursor_position.character, symbol_table_index,
             editor->parser.token_mapping[closest_node_index].start_index, editor->parser.token_mapping[closest_node_index].end_index
         );
 
         Symbol_Table* symbol_table = editor->analyser.symbol_tables[symbol_table_index];
-        if (symbol_table != 0) 
+        if (symbol_table != 0)
         {
             String fill = string_create_empty(1024);
             SCOPE_EXIT(string_destroy(&fill));
             symbol_table_append_to_string(&fill, symbol_table, &editor->lexer, false);
             logg("%s", fill.characters);
         }
+        */
     }
 
     // IDE STUFF
@@ -2254,8 +2338,8 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
         double parser_start_time = timing_current_time_in_seconds();
         ast_parser_parse(&editor->parser, &editor->lexer);
         double semantic_analysis_start_time = timing_current_time_in_seconds();
+        semantic_analyser_analyse(&editor->analyser, &editor->parser);
         if (editor->parser.errors.size == 0) {
-            semantic_analyser_analyse(&editor->analyser, &editor->parser);
         }
         double intermediate_generator_start_time = timing_current_time_in_seconds();
         double bytecode_generator_start_time = timing_current_time_in_seconds();
@@ -2331,19 +2415,55 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
 
         // Do syntax highlighting
         text_editor_reset_highlights(editor);
+        vec3 KEYWORD_COLOR = vec3(0.65f, 0.4f, 0.8f);
+        vec3 COMMENT_COLOR = vec3(0.0f, 1.0f, 0.0f);
+        vec3 FUNCTION_COLOR = vec3(0.7f, 0.7f, 0.4f);
+        vec3 IDENTIFIER_FALLBACK_COLOR = vec3(0.7f, 0.7f, 1.0f);
+        vec3 VARIABLE_COLOR = vec3(0.5f, 0.5f, 0.8f);
+        vec3 TYPE_COLOR = vec3(0.4f, 0.9f, 0.9f);
+        vec3 PRIMITIVE_TYPE_COLOR = vec3(0.3f, 0.3f, 0.75f);
+        vec4 BG_COLOR = vec4(0);
         for (int i = 0; i < editor->lexer.tokens_with_whitespaces.size; i++)
         {
             Token t = editor->lexer.tokens_with_whitespaces[i];
-            vec3 IDENTIFIER_COLOR = vec3(0.7f, 0.7f, 1.0f);
-            vec3 KEYWORD_COLOR = vec3(0.4f, 0.4f, 0.8f);
-            vec3 COMMENT_COLOR = vec3(0.0f, 1.0f, 0.0f);
-            vec4 BG_COLOR = vec4(0);
             if (t.type == Token_Type::COMMENT)
                 text_editor_add_highlight_from_slice(editor, t.position, COMMENT_COLOR, BG_COLOR);
             else if (token_type_is_keyword(t.type))
                 text_editor_add_highlight_from_slice(editor, t.position, KEYWORD_COLOR, BG_COLOR);
-            else if (t.type == Token_Type::IDENTIFIER)
-                text_editor_add_highlight_from_slice(editor, t.position, IDENTIFIER_COLOR, BG_COLOR);
+            else if (t.type == Token_Type::IDENTIFIER) 
+            {
+                AST_Node_Index nearest_node_index = ast_parser_get_closest_node_to_text_position(&editor->parser, t.position.start, editor->lines);
+                AST_Node* nearest_node = &editor->parser.nodes[nearest_node_index];
+                vec3 color = IDENTIFIER_FALLBACK_COLOR;
+                if (nearest_node->type == AST_Node_Type::EXPRESSION_FUNCTION_CALL ||
+                    nearest_node->type == AST_Node_Type::FUNCTION) {
+                    color = FUNCTION_COLOR;
+                }
+                if (nearest_node->type == AST_Node_Type::STRUCT) {
+                    color = TYPE_COLOR;
+                }
+                Symbol_Table* table = editor->analyser.symbol_tables[editor->analyser.semantic_information[nearest_node_index].symbol_table_index];
+                Symbol* symbol = symbol_table_find_symbol(table, t.attribute.identifier_number);
+                if (symbol != 0)
+                {
+                    if (symbol->symbol_type == Symbol_Type::TYPE) {
+                        if (symbol->type->type == Signature_Type::PRIMITIVE) {
+                            color = PRIMITIVE_TYPE_COLOR;
+                        }
+                        else {
+                            color = TYPE_COLOR;
+                        }
+                    }
+                    else if (symbol->symbol_type == Symbol_Type::VARIABLE) {
+                        color = VARIABLE_COLOR;
+                    }
+                }
+                text_editor_add_highlight_from_slice(editor, t.position, color, BG_COLOR);
+            }
+        }
+        // We need the parser for function calls and functions
+        if (editor->parser.errors.size == 0 && editor->analyser.errors.size == 0) {
+
         }
         // Highlight parse errors
         if (editor->parser.errors.size > 0 || editor->analyser.errors.size > 0) {
@@ -2351,6 +2471,8 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
         }
         for (int i = 0; i < editor->parser.errors.size; i++) {
             Compiler_Error e = editor->parser.errors[i];
+            e.range.end_index += 1;
+            e.range.end_index = math_minimum(editor->lexer.tokens.size - 1, e.range.end_index);
             text_editor_add_highlight_from_slice(editor, token_range_to_slice(e.range, editor), vec3(1.0f), vec4(1.0f, 0.0f, 0.0f, 0.3f));
             logg("Parse Error: %s\n", e.message);
         }

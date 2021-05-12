@@ -1,10 +1,8 @@
 Current Work Item:
 ------------------
- * Jumping to last places with CTRL-I and CTRL-O
- * Scrolling up/down with CTRL-D and CTRL-U
  * Jump to definition with string search (Maybe Ctrl-F)
- * CTRL-R to replace motion
- * Code completion with symbol table --> Really hard probably
+
+ * Code completion with symbol table --> Really hard probably, since I require code completion on incomplete statements.
  * Casting, Float/Int implicit, from smaller to bigger implicit?, reinterpret cast thing, Array sized to unsized, Member access with . on pointer
  * Implement List or dynamic array 
 
@@ -18,14 +16,14 @@ Long-Term Goals:
 
 More Language features to implement:
 ------------------------------------
- * Functions with void return should not need return as the last statement, but bytecode needs to generate it
    ------- Before this I should implement some editor features (Linter at least) -------
  * Default variable initialization (0), probably
  * Primitive Types (And calculating with them, e.g. u8, u16, u32...) INFO: Array bounds check should then be done with u32, not i32, so negative values are detected
+ * Casting, Float/Int implicit, from smaller to bigger implicit?, reinterpret cast thing, Array sized to unsized, Member access with . on pointer
  * Global Data
  * Strings
- * Syntax for fixed array initialization [int :: 1, 2, 3, 4, 5]
    ------- Before this I should fix all the editor bugs ------
+ * Syntax for fixed array initialization [int :: 1, 2, 3, 4, 5]
  * Function return value overhaul: Multiple return values or no return value should be possible
  * Function pointers, lambdas
  * Defer statement
@@ -42,10 +40,8 @@ More Language features to implement:
 
 Editor features to implement:
 -----------------------------
- * Jump to definition, so i can jump between functions, and also jump back
  * Autocompletion using current symbol table
- * CTRL-R for replace word  
- * Scrolling with CTRL-D and CTRL-U
+ * CTRL-R for replace word --> I would need Shift-R, since control R is already Redo
  * Visual Mode/Blockmode (Multicursor)/Visual Line
  * Undo/Redo Tree History
  * Command recording (@ stuff with vim, altough this could maybe be done better)
