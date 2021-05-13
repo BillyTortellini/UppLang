@@ -27,6 +27,7 @@ Type_Signature type_signature_make_error()
     result.type = Signature_Type::ERROR_TYPE;
     result.size_in_bytes = 0;
     result.alignment_in_bytes = 1;
+    result.struct_name_handle = -1;
     return result;
 }
 
@@ -82,7 +83,7 @@ bool type_signatures_are_equal(Type_Signature* sig1, Type_Signature* sig2)
             return true;
         }
         if (sig1->type == Signature_Type::STRUCT) {
-            return false;
+            return sig1->struct_name_handle == sig2->struct_name_handle;
         }
     }
     return false;
@@ -136,7 +137,6 @@ void type_signature_append_to_string(String* string, Type_Signature* signature)
         type_signature_append_to_string(string, signature->return_type);
     }
 }
-
 
 void type_system_add_primitives(Type_System* system)
 {
@@ -1381,6 +1381,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, AST_Parser* parser)
             struct_signature->type = Signature_Type::STRUCT;
             struct_signature->alignment_in_bytes = 1;
             struct_signature->size_in_bytes = 0;
+            struct_signature->struct_name_handle = struct_node->name_id;
             struct_signature->member_types = dynamic_array_create_empty<Struct_Member>(4);
             Struct_Fill_Out fill;
             fill.signature = struct_signature;

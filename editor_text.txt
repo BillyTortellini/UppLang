@@ -1,3 +1,14 @@
+// Current work item
+
+/*
+    Sollte eins weiter gehen
+    ASDF 1
+    ASDF 1
+    ASDF 1
+    JKL  2
+    WHAT
+*/
+
 main :: () -> void 
 {
     array_test();

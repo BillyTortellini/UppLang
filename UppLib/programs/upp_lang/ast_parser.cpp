@@ -1070,6 +1070,7 @@ bool ast_parser_parse_statement(AST_Parser* parser, AST_Node_Index parent_index)
         }
     }
 
+    ast_parser_checkpoint_reset(checkpoint);
     return false;
 }
 
@@ -1370,8 +1371,10 @@ void ast_parser_parse(AST_Parser* parser, Lexer* lexer)
         int end = parser->token_mapping[i].end_index;
         if (start == end) {
             AST_Node* node = &parser->nodes[i];
-            logg("Should not happen: range: %d-%d, index: %d\n", start, end, i);
-            logg("Node_Type::%s\n", ast_node_type_to_string(node->type).characters);
+            if (node->type != AST_Node_Type::ROOT) {
+                logg("Should not happen: range: %d-%d, index: %d\n", start, end, i);
+                logg("Node_Type::%s\n", ast_node_type_to_string(node->type).characters);
+            }
         }
     }
 }

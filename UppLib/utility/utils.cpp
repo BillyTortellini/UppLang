@@ -16,7 +16,7 @@ static void logger_default_panic_function(const char* message) {
     printf("\n\nSYSTEM_PANIC %s", message);
     printf("\n\n");
     system("pause");
-    exit(-1);
+    //exit(-1);
 }
 
 static custom_log_fn logger_custom_log_fn = &logger_default_log_function;

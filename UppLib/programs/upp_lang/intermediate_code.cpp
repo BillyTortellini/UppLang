@@ -37,6 +37,7 @@ void intermediate_generator_create_parameter_register(Intermediate_Generator* ge
     Intermediate_Register reg;
     reg.parameter_index = parameter_index;
     reg.type_signature = type_signature;
+    reg.name_id = name_id;
     reg.type = Intermediate_Register_Type::PARAMETER;
     dynamic_array_push_back(&function->registers, reg);
 
@@ -78,14 +79,14 @@ Type_Signature* intermediate_instruction_binary_operation_get_result_type(Interm
 {
     switch (instr_type)
     {
-    case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32: 
+    case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32:
     case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_I32:
     case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_I32:
     case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_I32:
     case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_I32:
     case Intermediate_Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I32:
         return generator->analyser->type_system.i32_type;
-    case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_F32: 
+    case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_F32:
     case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_F32:
     case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_F32:
     case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_F32:
@@ -857,20 +858,12 @@ void intermediate_generator_generate_function_code(Intermediate_Generator* gener
     // Generate Parameter Registers
     for (int i = 0; i < function_table->symbols.size; i++) {
         Symbol* s = &function_table->symbols[i];
-        Intermediate_Register reg;
-        reg.parameter_index = i;
-        reg.type_signature = s->type;
-        reg.type = Intermediate_Register_Type::PARAMETER;
-        dynamic_array_push_back(&im_function->registers, reg);
-        Variable_Mapping m;
-        m.name_handle = function_table->symbols[i].name_handle;
-        m.register_index = im_function->registers.size - 1;
-        dynamic_array_push_back(&generator->variable_mappings, m);
+        intermediate_generator_create_parameter_register(generator, s->name_handle, s->type, i);
     }
 
     // Generate function code
     intermediate_generator_generate_statement_block(generator, function->children[2]);
-    
+
     if (generator->analyser->semantic_information[function_node_index].needs_empty_return_at_end) {
         Intermediate_Instruction i;
         i.type = Intermediate_Instruction_Type::RETURN;

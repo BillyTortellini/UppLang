@@ -1,17 +1,16 @@
 Current Work Item:
 ------------------
- * Jump to definition with string search (Maybe Ctrl-F)
-
  * Code completion with symbol table --> Really hard probably, since I require code completion on incomplete statements.
  * Casting, Float/Int implicit, from smaller to bigger implicit?, reinterpret cast thing, Array sized to unsized, Member access with . on pointer
  * Implement List or dynamic array 
 
 Long-Term Goals:
 ----------------
- * More language features
  * C-Backend
+ * Calling C-Functions in the C-Backend (Maybe with Clang for header file parsing)
+ * More language features
+ * Calling C-Functions in Bytecode (Look into dyncall)
  * Debugger
- * Calling C-Functions (Look into dyncall)
  * More Editor features
 
 More Language features to implement:
@@ -22,7 +21,7 @@ More Language features to implement:
  * Casting, Float/Int implicit, from smaller to bigger implicit?, reinterpret cast thing, Array sized to unsized, Member access with . on pointer
  * Global Data
  * Strings
-   ------- Before this I should fix all the editor bugs ------
+   ------- Before this I should fix all the editor bugs + C Backend or calling C functions ------
  * Syntax for fixed array initialization [int :: 1, 2, 3, 4, 5]
  * Function return value overhaul: Multiple return values or no return value should be possible
  * Function pointers, lambdas
@@ -41,6 +40,7 @@ More Language features to implement:
 Editor features to implement:
 -----------------------------
  * Autocompletion using current symbol table
+ * Jump to definition with string search (Maybe Ctrl-F)
  * CTRL-R for replace word --> I would need Shift-R, since control R is already Redo
  * Visual Mode/Blockmode (Multicursor)/Visual Line
  * Undo/Redo Tree History
@@ -51,12 +51,9 @@ Editor features to implement:
 
 Editor-Bugs:
 ------------
- * When the text file is empty, syntax highlighting crashes
- * dd with numbers seems to not take the last line
- * put with 'dd'ed lines is also a bit weird
  * Alt-Gr spamming still cancels commands (win32 nonsense)
  * Undo-Redo cursor position still sucks a little (Hint: Save positions after/before command)
- * Non ASCII chars destroy some motions (Program crashes)
+ * Non ASCII chars destroy some motions (Currently disabled) (Program crashes)
 
 Ideas that need to be tested:
 -----------------------------

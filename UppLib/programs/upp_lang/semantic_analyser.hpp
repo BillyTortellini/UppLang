@@ -47,6 +47,7 @@ struct Struct_Member
 struct Type_Signature
 {
     Signature_Type type;
+    int struct_name_handle;
     int size_in_bytes;
     int alignment_in_bytes;
     // Primitve type

@@ -285,7 +285,7 @@ void text_history_redo(TextHistory* history, Text_Editor* editor)
 
 NormalModeCommand normal_mode_command_make(NormalModeCommandType::ENUM symbol_type, int repeat_count);
 Movement movement_make(MovementType::ENUM symbol_type, int repeat_count, char search_char);
-Text_Editor text_editor_create(TextRenderer* text_renderer, FileListener* listener, OpenGLState* state)
+Text_Editor text_editor_create(TextRenderer* text_renderer, FileListener* listener, OpenGLState* state, GUI* gui)
 {
     Text_Editor result;
     result.lines = text_create_empty();
@@ -321,12 +321,16 @@ Text_Editor text_editor_create(TextRenderer* text_renderer, FileListener* listen
     result.yanked_string = string_create_empty(64);
     result.last_yank_was_line = false;
 
+    result.gui = gui;
+    result.gui_search_string = string_create_empty(64);
+
     result.parser = ast_parser_create();
     result.lexer = lexer_create();
     result.analyser = semantic_analyser_create();
     result.generator = bytecode_generator_create();
     result.bytecode_interpreter = bytecode_intepreter_create();
     result.intermediate_generator = intermediate_generator_create();
+    result.c_generator = c_generator_create();
 
     return result;
 }
@@ -348,12 +352,15 @@ void text_editor_destroy(Text_Editor* editor)
     dynamic_array_destroy(&editor->last_insert_mode_inputs);
     dynamic_array_destroy(&editor->jump_history);
 
+    string_destroy(&editor->gui_search_string);
+
     ast_parser_destroy(&editor->parser);
     lexer_destroy(&editor->lexer);
     semantic_analyser_destroy(&editor->analyser);
     bytecode_generator_destroy(&editor->generator);
     bytecode_interpreter_destroy(&editor->bytecode_interpreter);
     intermediate_generator_destroy(&editor->intermediate_generator);
+    c_generator_destroy(&editor->c_generator);
 }
 
 void text_editor_synchronize_highlights_array(Text_Editor* editor)
@@ -448,6 +455,7 @@ void text_editor_render(Text_Editor* editor, OpenGLState* state, int width, int 
         }
     }
     */
+    opengl_state_set_depth_testing(state, false, false, GL_LESS);
 
     //text_editor_draw_bounding_box(editor, state, editor_region, vec3(0.0f, 0.2f, 0.0f));
     float text_height = 2.0f * (editor->line_size_cm) / (height / (float)dpi * 2.54f);
@@ -550,6 +558,7 @@ void text_editor_render(Text_Editor* editor, OpenGLState* state, int width, int 
         text_renderer_add_text_from_layout(editor->renderer, line_layout, line_pos);
         line_pos.y -= (text_height);
     }
+
     text_renderer_render(editor->renderer, state);
 
     // Draw cursor 
@@ -1758,6 +1767,9 @@ void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
         for (int i = 0; i < command.repeat_count; i++) {
             delete_end.line++;
         }
+        if (command.repeat_count != 1) {
+            delete_end.line++;
+        }
         bool delete_last_line = delete_end.line >= editor->lines.size;
         text_position_sanitize(&delete_end, editor->lines);
 
@@ -2012,11 +2024,14 @@ void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
     }
     case NormalModeCommandType::PUT_BEFORE_CURSOR: {
         if (editor->last_yank_was_line) {
+            Text_Position start_pos = editor->cursor_position;
             Text_Position pos = editor->cursor_position;
             pos.character = 0;
             text_position_sanitize(&pos, editor->lines);
-            String copy = string_create_from_string_with_extra_capacity(&editor->yanked_string, 0);
+            String copy = string_create(editor->yanked_string.characters);
             text_history_insert_string(&editor->history, editor, pos, copy);
+            editor->cursor_position = start_pos;
+            text_editor_clamp_cursor(editor);
             break;
         }
         String copy = string_create_from_string_with_extra_capacity(&editor->yanked_string, 0);
@@ -2025,12 +2040,15 @@ void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
     }
     case NormalModeCommandType::PUT_AFTER_CURSOR: {
         if (editor->last_yank_was_line) {
+            Text_Position start_pos = editor->cursor_position;
             Text_Position pos = editor->cursor_position;
             pos.character = 0;
             pos.line++;
             text_position_sanitize(&pos, editor->lines);
             String copy = string_create_from_string_with_extra_capacity(&editor->yanked_string, 0);
             text_history_insert_string(&editor->history, editor, pos, copy);
+            editor->cursor_position = start_pos;
+            text_editor_clamp_cursor(editor);
             break;
         }
         editor->cursor_position = text_position_next(editor->cursor_position, editor->lines);
@@ -2164,7 +2182,7 @@ void insert_mode_handle_message(Text_Editor* editor, Key_Message* msg)
         text_history_delete_slice(&editor->history, editor, text_slice_make(line_start, editor->cursor_position));
         editor->cursor_position = line_start;
     }
-    else if (msg->character >= 32)
+    else if (msg->character >= 32 && msg->character < 128)
     {
         text_history_insert_character(&editor->history, editor, editor->cursor_position, msg->character);
         editor->cursor_position.character++;
@@ -2288,7 +2306,6 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
         editor->last_change_position = editor->cursor_position;
     }
 
-
     if (!text_check_correctness(editor->lines)) {
         panic("error, suit yourself\n");
         __debugbreak();
@@ -2411,6 +2428,9 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
                 exit_code_append_to_string(&source_code, editor->bytecode_interpreter.exit_code);
                 logg("Bytecode interpreter error: %s\n", source_code.characters);
             }
+
+            c_generator_generate(&editor->c_generator, &editor->intermediate_generator);
+            logg("C-Code:\n------------------\n%s\n", editor->c_generator.output_string.characters);
         }
 
         // Do syntax highlighting

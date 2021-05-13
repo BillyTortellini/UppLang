@@ -14,6 +14,8 @@
 #include "../../win32/window.hpp"
 #include "../../utility/file_io.hpp"
 #include "../../utility/random.hpp"
+#include "../../utility/gui.hpp"
+#include "../../rendering/renderer_2d.hpp"
 
 #include "../../math/umath.hpp"
 #include "../../datastructures/hashtable.hpp"
@@ -71,11 +73,19 @@ void upp_lang_main()
     OpenGLState opengl_state = opengl_state_create();
     SCOPE_EXIT(opengl_state_destroy(&opengl_state));
 
+    vertex_attribute_information_maker_create();
+    SCOPE_EXIT(vertex_attribute_information_maker_destroy());
+
     TextRenderer* text_renderer = text_renderer_create_from_font_atlas_file(
         &opengl_state, file_listener, "resources/fonts/glyph_atlas.atlas", window_state->width, window_state->height);
     SCOPE_EXIT(text_renderer_destroy(text_renderer));
 
-    Text_Editor text_editor = text_editor_create(text_renderer, file_listener, &opengl_state);
+    Renderer_2D renderer_2d = renderer_2d_create(&opengl_state, file_listener, text_renderer, window_state->width, window_state->height);
+    SCOPE_EXIT(renderer_2d_destroy(&renderer_2d));
+    GUI gui = gui_create(&opengl_state, file_listener, &renderer_2d, window_state, window_get_input(window));
+    SCOPE_EXIT(gui_destroy(&gui));
+
+    Text_Editor text_editor = text_editor_create(text_renderer, file_listener, &opengl_state, &gui);
     SCOPE_EXIT(text_editor_destroy(&text_editor));
 
     // Load file into text editor
@@ -161,6 +171,7 @@ void upp_lang_main()
             }
 
             camera_controller_arcball_update(&camera_controller_arcball, &camera, input);
+            gui_update(&gui, input, window_state);
             text_editor_update(&text_editor, input, timing_current_time_in_seconds());
             file_listener_check_if_files_changed(file_listener);
         }
@@ -180,6 +191,10 @@ void upp_lang_main()
             BoundingBox2 region = bounding_box_2_make_min_max(vec2(-1, -1), vec2(1, 1));
             text_editor_render(&text_editor, &opengl_state, window_state->width, window_state->height, window_state->dpi,
                 region, timing_current_time_in_seconds());
+
+            // GUI
+            gui_draw(&gui, &opengl_state);
+
 
             window_swap_buffers(window);
         }
