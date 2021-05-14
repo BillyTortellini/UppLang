@@ -1,22 +1,18 @@
-// Current work item
-
-/*
-    Sollte eins weiter gehen
-    ASDF 1
-    ASDF 1
-    ASDF 1
-    JKL  2
-    WHAT
-*/
-
 main :: () -> void 
 {
+    /*
     array_test();
     struct_test();
     memory_test();
     scope_test();
+    */
+    a := 5;
+    if (a > 7) a = 8;
+    print_i32(a);
+    return;
 }
 
+/*
 scope_test :: () -> void
 {
     a: int = 0;
@@ -200,14 +196,14 @@ fib_rec :: (n: int) -> int
     return fib_rec(n-1) + fib_rec(n-2);
 }
 
+*/
 /*
 Missing binary statements x++; x--; x+=1; x-=1; x/=1; x*=1;
 Short circuit operation on && and ||
 
 Next Features:
-* Structs
 * Casting/Implicit conversions
-* Strings?
+* Strings
 * OS-Calls/Calls to libraries (print, new/delete)
 * Bytecode Debugger
 * Backend (LLVM or C or just x64 assembly)
@@ -224,10 +220,7 @@ Current UppLang features:
 * If-Else Flow control
 * While loop with break continue
 * Functions with parameters and return types
-* Pointers/Dereferencing
-
-Nice-to-have Features:
-* Log to window, not to console, maybe something like in a textfield
--> Would be best with a toast like notification, and something you can focus
-* Work on GUI (Probably necessary for better debugging)
+* Pointers/Dereferencing + new/delete
+* Arrays
+* Structs
 */
