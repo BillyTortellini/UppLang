@@ -16,3 +16,4 @@ Bytecode_Interpreter bytecode_intepreter_create();
 void bytecode_interpreter_destroy(Bytecode_Interpreter* interpreter);
 bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* interpreter);
 void bytecode_interpreter_execute_main(Bytecode_Interpreter* interpreter, Bytecode_Generator* generator);
+void bytecode_interpreter_print_state(Bytecode_Interpreter* interpreter);

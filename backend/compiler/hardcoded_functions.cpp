@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
+#include <ctime>
 
 void print_i32(i32 x) 
 {
@@ -64,9 +65,27 @@ u8 read_bool()
 	return num == 0 ? 0 : 1;
 }
 
-i32 random_i32()
-{
-	return 69;
+uint32 g_xor_shift;
+i32 random_i32() {
+    uint32 a = g_xor_shift;
+    a ^= a << 13;
+    a ^= a >> 17;
+    a ^= a << 5;
+    g_xor_shift = a;
+    return (i32)a;
+}
+
+void random_initialize() {
+    uint32 a = 0;
+    // Initialize with current time
+    while (a == 0) {
+        a = (uint32) time(NULL);
+    }
+    g_xor_shift = a;
+    // Run for some iterators to get the generator "warm"
+    for (int i = 0; i < 10000; i++) {
+        random_i32();
+    }
 }
 
 void* malloc_size_i32(i32 x) {

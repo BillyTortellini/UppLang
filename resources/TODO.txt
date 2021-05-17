@@ -1,8 +1,7 @@
 Current Work Item:
 ------------------
- * Code completion with symbol table --> Really hard probably, since I require code completion on incomplete statements.
- * Casting, Float/Int implicit, from smaller to bigger implicit?, reinterpret cast thing, Array sized to unsized, Member access with . on pointer
- * Implement List or dynamic array 
+ * Rethink how my arrays differ from C-Arrays, and check if Intermediate Code works like I would expect it to
+ * Fix C-Backend code
 
 Long-Term Goals:
 ----------------
@@ -16,11 +15,11 @@ Long-Term Goals:
 More Language features to implement:
 ------------------------------------
    ------- Before this I should implement some editor features (Linter at least) -------
- * Default variable initialization (0), probably
  * Primitive Types (And calculating with them, e.g. u8, u16, u32...) INFO: Array bounds check should then be done with u32, not i32, so negative values are detected
  * Casting, Float/Int implicit, from smaller to bigger implicit?, reinterpret cast thing, Array sized to unsized, Member access with . on pointer
  * Global Data
  * Strings
+ * Default variable initialization (0), probably
    ------- Before this I should fix all the editor bugs + C Backend or calling C functions ------
  * Syntax for fixed array initialization [int :: 1, 2, 3, 4, 5]
  * Function return value overhaul: Multiple return values or no return value should be possible

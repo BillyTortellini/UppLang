@@ -11,5 +11,6 @@ f32 read_f32();
 i32 random_i32();
 void* malloc_size_i32(i32 x);
 void free_pointer(void* ptr);
+void random_initialize();
 
 

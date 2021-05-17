@@ -1,28 +1,21 @@
 main :: () -> void 
 {
-    /*
-    array_test();
-    struct_test();
-    memory_test();
     scope_test();
-    */
-    a := 5;
-    if (a > 7) a = 8;
-    print_i32(a);
-    return;
+    struct_test();
+    array_test();
+    memory_test();
 }
 
-/*
-scope_test :: () -> void
+array_fill_random :: (array: []int, max: int) -> void
 {
-    a: int = 0;
-    x: int = 5;
+    i := 0;
+    while (i < array.size)
     {
-        x: int = 17;
-        a = x;
+        array[i] = random_i32(); // % max;
+        if (array[i] < 0) array[i] = -array[i];
+        array[i] = array[i] % max;
+        i = i+1;
     }
-    print_i32(a);
-    print_line();
 }
 
 memory_test :: () -> void
@@ -33,6 +26,18 @@ memory_test :: () -> void
     array_bubble_sort(a);
     array_print(a);
     delete a;
+}
+
+scope_test :: () -> void
+{
+    a: int = 0;
+    x: int = 5;
+    {
+        x: int = 17;
+        a = x;
+    }
+    print_i32(a);
+    print_line();
 }
 
 Player :: struct
@@ -152,16 +157,6 @@ array_fill_from_console :: (array: []int) -> void
     }
 }
 
-array_fill_random :: (array: []int, max: int) -> void
-{
-    i := 0;
-    while (i < array.size)
-    {
-        array[i] = random_i32() % max;
-        if (array[i] < 0) array[i] = -array[i];
-        i = i+1;
-    }
-}
 
 even :: (a: int) -> bool 
 {
@@ -195,8 +190,6 @@ fib_rec :: (n: int) -> int
     if (n <= 2) return 1;
     return fib_rec(n-1) + fib_rec(n-2);
 }
-
-*/
 /*
 Missing binary statements x++; x--; x+=1; x-=1; x/=1; x*=1;
 Short circuit operation on && and ||

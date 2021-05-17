@@ -72,6 +72,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         *((Bytecode_Instruction**)interpreter->stack_pointer) = next;
         *(byte**)(interpreter->stack_pointer + 8) = base_pointer;
         interpreter->instruction_pointer = &interpreter->generator->instructions[i->op1];
+
         return false;
     }
     case Instruction_Type::RETURN: {
@@ -489,7 +490,10 @@ void bytecode_interpreter_print_state(Bytecode_Interpreter* interpreter)
                 stack_offset
             );
         }
-        else continue;
+        else if (reg->type == Intermediate_Register_Type::EXPRESSION_RESULT) {
+            logg("Expression %d (Offset %d): ", i, stack_offset);
+        }
+
         type_signature_print_value(reg_type, reg_data_ptr);
         logg("\n");
     }

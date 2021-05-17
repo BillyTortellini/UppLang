@@ -512,16 +512,16 @@ void bytecode_generator_generate_function_instruction_slice(
         {
             int tmp_register_offset = align_offset_next_multiple(generator->stack_offset_end_of_variables, 8);
             int register_address_reg;
-            if (instr->source1.type == Data_Access_Type::REGISTER_ACCESS)
+            if (instr->source1.type == Data_Access_Type::MEMORY_ACCESS)
             {
                 register_address_reg = tmp_register_offset;
                 tmp_register_offset += 8;
                 bytecode_generator_add_instruction(
                     generator,
-                    instruction_make_2(
-                        Instruction_Type::LOAD_REGISTER_ADDRESS,
+                    instruction_make_3(
+                        Instruction_Type::READ_MEMORY,
                         register_address_reg,
-                        generator->register_stack_locations[instr->source1.register_index]
+                        generator->register_stack_locations[instr->source1.register_index], 8
                     )
                 );
             }
@@ -902,13 +902,13 @@ void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction 
         string_append_formated(string, "MOVE_REGISTER                     dest=%d, src=%d, size=%d\n", instruction.op1, instruction.op2, instruction.op3);
         break;
     case Instruction_Type::READ_MEMORY:
-        string_append_formated(string, "READ_MEMORY                       dest=%d, address_reg=%d, size=%d\n", instruction.op1, instruction.op2, instruction.op3);
+        string_append_formated(string, "READ_MEMORY                       dest=%d, src_addr_reg=%d, size=%d\n", instruction.op1, instruction.op2, instruction.op3);
         break;
     case Instruction_Type::WRITE_MEMORY:
-        string_append_formated(string, "WRITE_MEMORY                      dest=%d, address_reg=%d, size=%d\n", instruction.op1, instruction.op2, instruction.op3);
+        string_append_formated(string, "WRITE_MEMORY                      dest_addr_reg=%d, src=%d, size=%d\n", instruction.op1, instruction.op2, instruction.op3);
         break;
     case Instruction_Type::MEMORY_COPY:
-        string_append_formated(string, "MEMORY_COPY                       dest=%d, src=%d\n", instruction.op1, instruction.op2);
+        string_append_formated(string, "MEMORY_COPY                       dest_addr_reg=%d, src_addr_reg=%d\n", instruction.op1, instruction.op2);
         break;
     case Instruction_Type::LOAD_REGISTER_ADDRESS:
         string_append_formated(string, "LOAD_REGISTER_ADDRESS             dest=%d, reg_id=%d\n", instruction.op1, instruction.op2);

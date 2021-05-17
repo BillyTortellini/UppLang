@@ -2428,9 +2428,11 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
                 exit_code_append_to_string(&source_code, editor->bytecode_interpreter.exit_code);
                 logg("Bytecode interpreter error: %s\n", source_code.characters);
             }
+            /*
+            */
 
             c_generator_generate(&editor->c_generator, &editor->intermediate_generator);
-            logg("C-Code:\n------------------\n%s\n", editor->c_generator.output_string.characters);
+            //logg("C-Code:\n------------------\n%s\n", editor->c_generator.output_string.characters);
         }
 
         // Do syntax highlighting

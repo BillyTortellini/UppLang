@@ -331,6 +331,10 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
         else {
             result_access = intermediate_generator_create_intermediate_register(generator, type);
         }
+
+        Type_Signature* element_pointer_type = type_system_make_pointer(&generator->analyser->type_system, type->child_type);
+        Data_Access pointer_access = intermediate_generator_generate_offset_access(generator, destination, 0, element_pointer_type);
+
         Data_Access element_count_access = intermediate_generator_generate_offset_access(generator, result_access, 8, generator->analyser->type_system.i32_type);
         intermediate_generator_generate_expression(generator, expression->children[0], true, element_count_access);
 
@@ -350,11 +354,11 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
         Intermediate_Instruction i;
         i.type = Intermediate_Instruction_Type::CALL_HARDCODED_FUNCTION;
         i.hardcoded_function_type = Hardcoded_Function_Type::MALLOC_SIZE_I32;
-        i.destination = result_access;
+        i.destination = pointer_access;
         i.arguments = dynamic_array_create_empty<Data_Access>(1);
         dynamic_array_push_back(&i.arguments, calc_array_byte_size_instr.destination);
         dynamic_array_push_back(&function->instructions, i);
-        return i.destination;
+        return result_access;
     }
     case AST_Node_Type::EXPRESSION_VARIABLE_READ:
     {
@@ -511,33 +515,22 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
         Data_Access index_data = intermediate_generator_generate_expression(generator, expression->children[1], false, data_access_make_empty());
 
         Data_Access result_access;
+        Data_Access base_pointer_access = intermediate_generator_generate_offset_access(generator, array_data, 0, element_pointer_type);
         if (array_type_signature->type == Signature_Type::ARRAY_UNSIZED)
         {
-            // Load pointer if array_data is a memory access, otherwise set it to memory access
-            // This is the case for multiple dereferences
-            if (array_data.type == Data_Access_Type::REGISTER_ACCESS)
-            {
-                result_access = array_data;
-                result_access.type = Data_Access_Type::MEMORY_ACCESS;
-            }
-            else if (array_data.type == Data_Access_Type::MEMORY_ACCESS)
-            {
-                result_access = intermediate_generator_create_intermediate_register(generator, element_pointer_type);
-                Intermediate_Instruction instr;
-                instr.type = Intermediate_Instruction_Type::MOVE_DATA;
-                instr.destination = result_access;
-                instr.source1 = array_data;
-                dynamic_array_push_back(&function->instructions, instr);
-
-                result_access.type = Data_Access_Type::MEMORY_ACCESS;
-            }
-            else { result_access = data_access_make_empty(); panic("Lol"); };
+            base_pointer_access = intermediate_generator_generate_offset_access(generator, array_data, 0, element_pointer_type);
         }
         else {
-            result_access = array_data;
+            Intermediate_Instruction instr_addr_off;
+            instr_addr_off.type = Intermediate_Instruction_Type::ADDRESS_OF;
+            instr_addr_off.destination = intermediate_generator_create_intermediate_register(generator, element_pointer_type);
+            instr_addr_off.source1 = array_data;
+            dynamic_array_push_back(&function->instructions, instr_addr_off);
+            base_pointer_access = instr_addr_off.destination;
         }
 
         // Array bounds check
+        if (false)
         {
             Data_Access size_data;
             if (array_type_signature->type == Signature_Type::ARRAY_SIZED)
@@ -600,7 +593,7 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
             generator,
             element_pointer_type
         );
-        instr.source1 = result_access;
+        instr.source1 = base_pointer_access;
         instr.source2 = index_data;
         dynamic_array_push_back(&function->instructions, instr);
         instr.destination.type = Data_Access_Type::MEMORY_ACCESS;
@@ -702,6 +695,7 @@ void intermediate_generator_generate_statement_block(Intermediate_Generator* gen
 void intermediate_generator_generate_statement(Intermediate_Generator* generator, int statement_index)
 {
     Intermediate_Function* function = &generator->functions[generator->current_function_index];
+    Semantic_Node_Information* info = &generator->analyser->semantic_information[statement_index];
 
     AST_Node* statement = &generator->analyser->parser->nodes[statement_index];
     switch (statement->type)
@@ -713,6 +707,11 @@ void intermediate_generator_generate_statement(Intermediate_Generator* generator
     case AST_Node_Type::STATEMENT_DELETE:
     {
         Data_Access delete_access = intermediate_generator_generate_expression(generator, statement->children[0], false, data_access_make_empty());
+        if (info->delete_is_array_delete) {
+            Type_Signature* type = generator->analyser->semantic_information[statement->children[0]].expression_result_type;
+            Type_Signature* element_pointer_type = type_system_make_pointer(&generator->analyser->type_system, type->child_type);
+            delete_access = intermediate_generator_generate_offset_access(generator, delete_access, 0, element_pointer_type);
+        }
         Intermediate_Instruction i;
         i.type = Intermediate_Instruction_Type::CALL_HARDCODED_FUNCTION;
         i.hardcoded_function_type = Hardcoded_Function_Type::FREE_POINTER;

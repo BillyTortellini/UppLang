@@ -1,3 +1,4 @@
+backend/**
 external_libraries/library_source/**
 
 ## Visual Studio Gitignore

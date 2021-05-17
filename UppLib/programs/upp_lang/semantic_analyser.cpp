@@ -910,6 +910,9 @@ Statement_Analysis_Result semantic_analyser_analyse_statement(Semantic_Analyser*
         if (delete_type->type != Signature_Type::POINTER && delete_type->type != Signature_Type::ARRAY_UNSIZED) {
             semantic_analyser_log_error(analyser, "Delete must be called on either an pointer or an unsized array", statement_index);
         }
+        if (delete_type->type == Signature_Type::ARRAY_UNSIZED) {
+            analyser->semantic_information[statement_index].delete_is_array_delete = true;
+        }
         return Statement_Analysis_Result::NO_RETURN;
     }
     case AST_Node_Type::STATEMENT_IF_ELSE:
@@ -1234,6 +1237,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, AST_Parser* parser)
         info.needs_empty_return_at_end = false;
         info.struct_signature = analyser->type_system.error_type;
         info.symbol_table_index = 0;
+        info.delete_is_array_delete = false;
         dynamic_array_push_back(&analyser->semantic_information, info);
     }
 
