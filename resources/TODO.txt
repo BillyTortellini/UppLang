@@ -1,7 +1,31 @@
 Current Work Item:
 ------------------
- * Rethink how my arrays differ from C-Arrays, and check if Intermediate Code works like I would expect it to
- * Fix C-Backend code
+Refactor bytecode generator so that I dont always have to read_memory on memory access, or write memory on memory access
+ * Primitive Types (And calculating with them, e.g. u8, u16, u32...) INFO: Array bounds check should then be done with u64, not i32, so negative values are detected
+ * Casting, Float/Int implicit, from smaller to bigger implicit?, reinterpret cast thing, Array sized to unsized, Member access with . on pointer
+
+How do I do casting:
+    x: u8 = 15; // 15 should be i64
+    x: u8 = cast<u8> 15; // This should be casted implicitly
+
+I also will need new constant literals, probably i64 and f64 types and then cast respectively
+Now I need casting to and from sizes
+    - Signed to unsigned
+    - Switch between different sizes
+    - Integer to floating-point (Cutaways digits after decimal point)
+
+4 unsigned, 4 signed, 2 float, 1 bool 11 * 10 = 110 conversions
+    So i need: 
+        - CAST_INTEGER_TO_DIFFERENT_INTEGER, with source and destination type
+        - CAST_INTEGER_TO_FLOAT (32 or 64 bit)
+        - CAST_FLOAT_TO_INTEGER (32 or 64 bit)
+
+Additional casting that needs to be implemented:
+    - Cast pointer types to any other pointer type
+    - Pointer type to u64 and backwards
+    - Sized Array to unsized array
+
+Also change array so that size is u64
 
 Long-Term Goals:
 ----------------
@@ -14,7 +38,6 @@ Long-Term Goals:
 
 More Language features to implement:
 ------------------------------------
-   ------- Before this I should implement some editor features (Linter at least) -------
  * Primitive Types (And calculating with them, e.g. u8, u16, u32...) INFO: Array bounds check should then be done with u32, not i32, so negative values are detected
  * Casting, Float/Int implicit, from smaller to bigger implicit?, reinterpret cast thing, Array sized to unsized, Member access with . on pointer
  * Global Data
@@ -65,6 +88,7 @@ Ideas that need to be tested:
 
 Improvements that should be made (When I have time):
 ----------------------------------------------------
+Make a parser check sanity function, that checks if the tree nodes are of the correct type
 Replace all namespace ENUM types with enum class things.
 
 Create a Compiler struct that holds all the relevant stuff

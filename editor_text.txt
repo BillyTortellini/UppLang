@@ -1,9 +1,13 @@
 main :: () -> void 
 {
+    /*
     scope_test();
     struct_test();
     array_test();
     memory_test();
+    */
+    
+    a: u8 = cast<u8> 54;
 }
 
 array_fill_random :: (array: []int, max: int) -> void

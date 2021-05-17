@@ -120,52 +120,140 @@ Intermediate_Instruction_Type binary_operation_get_instruction_type(Intermediate
     switch (op_type)
     {
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_ADDITION:
+        if (operand_types == generator->analyser->type_system.u8_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U8;
+        if (operand_types == generator->analyser->type_system.u16_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U16;
+        if (operand_types == generator->analyser->type_system.u32_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U32;
+        if (operand_types == generator->analyser->type_system.u64_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U64;
+        if (operand_types == generator->analyser->type_system.i8_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I8;
+        if (operand_types == generator->analyser->type_system.i16_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I16;
         if (operand_types == generator->analyser->type_system.i32_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32;
+        if (operand_types == generator->analyser->type_system.i64_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I64;
         if (operand_types == generator->analyser->type_system.f32_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_F32;
+        if (operand_types == generator->analyser->type_system.f64_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_F64;
         panic("Not valid, should have been caught!");
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_SUBTRACTION:
+        if (operand_types == generator->analyser->type_system.u8_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_U8;
+        if (operand_types == generator->analyser->type_system.u16_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_U16;
+        if (operand_types == generator->analyser->type_system.u32_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_U32;
+        if (operand_types == generator->analyser->type_system.u64_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_U64;
+        if (operand_types == generator->analyser->type_system.i8_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_I8;
+        if (operand_types == generator->analyser->type_system.i16_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_I16;
         if (operand_types == generator->analyser->type_system.i32_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_I32;
+        if (operand_types == generator->analyser->type_system.i64_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_I64;
         if (operand_types == generator->analyser->type_system.f32_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_F32;
+        if (operand_types == generator->analyser->type_system.f64_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_F64;
         panic("Not valid, should have been caught!");
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_DIVISION:
+        if (operand_types == generator->analyser->type_system.u8_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_U8;
+        if (operand_types == generator->analyser->type_system.u16_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_U16;
+        if (operand_types == generator->analyser->type_system.u32_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_U32;
+        if (operand_types == generator->analyser->type_system.u64_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_U64;
+        if (operand_types == generator->analyser->type_system.i8_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_I8;
+        if (operand_types == generator->analyser->type_system.i16_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_I16;
         if (operand_types == generator->analyser->type_system.i32_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_I32;
+        if (operand_types == generator->analyser->type_system.i64_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_I64;
         if (operand_types == generator->analyser->type_system.f32_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_F32;
+        if (operand_types == generator->analyser->type_system.f64_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_F64;
         panic("Not valid, should have been caught!");
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_MULTIPLICATION:
+        if (operand_types == generator->analyser->type_system.u8_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_U8;
+        if (operand_types == generator->analyser->type_system.u16_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_U16;
+        if (operand_types == generator->analyser->type_system.u32_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_U32;
+        if (operand_types == generator->analyser->type_system.u64_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_U64;
+        if (operand_types == generator->analyser->type_system.i8_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_I8;
+        if (operand_types == generator->analyser->type_system.i16_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_I16;
         if (operand_types == generator->analyser->type_system.i32_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_I32;
+        if (operand_types == generator->analyser->type_system.i64_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_I64;
         if (operand_types == generator->analyser->type_system.f32_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_F32;
+        if (operand_types == generator->analyser->type_system.f64_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_F64;
         panic("Not valid, should have been caught!");
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_MODULO:
-        return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_I32;
+        if (operand_types == generator->analyser->type_system.u8_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_U8;
+        if (operand_types == generator->analyser->type_system.u16_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_U16;
+        if (operand_types == generator->analyser->type_system.u32_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_U32;
+        if (operand_types == generator->analyser->type_system.u64_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_U64;
+        if (operand_types == generator->analyser->type_system.i8_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_I8;
+        if (operand_types == generator->analyser->type_system.i16_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_I16;
+        if (operand_types == generator->analyser->type_system.i32_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_I32;
+        if (operand_types == generator->analyser->type_system.i64_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_I64;
+        panic("Not valid, should have been caught!");
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_AND:
         return Intermediate_Instruction_Type::BINARY_OP_BOOLEAN_AND;
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_OR:
         return Intermediate_Instruction_Type::BINARY_OP_BOOLEAN_OR;
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_EQUAL:
+        if (operand_types == generator->analyser->type_system.u8_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_U8;
+        if (operand_types == generator->analyser->type_system.u16_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_U16;
+        if (operand_types == generator->analyser->type_system.u32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_U32;
+        if (operand_types == generator->analyser->type_system.u64_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_U64;
+        if (operand_types == generator->analyser->type_system.i8_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_I8;
+        if (operand_types == generator->analyser->type_system.i16_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_I16;
         if (operand_types == generator->analyser->type_system.i32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_I32;
+        if (operand_types == generator->analyser->type_system.i64_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_I64;
         if (operand_types == generator->analyser->type_system.f32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_F32;
+        if (operand_types == generator->analyser->type_system.f64_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_F64;
         if (operand_types == generator->analyser->type_system.bool_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_BOOL;
         panic("Not valid, should have been caught!");
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_NOT_EQUAL:
+        if (operand_types == generator->analyser->type_system.u8_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_U8;
+        if (operand_types == generator->analyser->type_system.u16_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_U16;
+        if (operand_types == generator->analyser->type_system.u32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_U32;
+        if (operand_types == generator->analyser->type_system.u64_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_U64;
+        if (operand_types == generator->analyser->type_system.i8_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_I8;
+        if (operand_types == generator->analyser->type_system.i16_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_I16;
         if (operand_types == generator->analyser->type_system.i32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_I32;
+        if (operand_types == generator->analyser->type_system.i64_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_I64;
         if (operand_types == generator->analyser->type_system.f32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_F32;
+        if (operand_types == generator->analyser->type_system.f64_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_F64;
         if (operand_types == generator->analyser->type_system.bool_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_BOOL;
         panic("Not valid, should have been caught!");
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_LESS:
+        if (operand_types == generator->analyser->type_system.u8_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_U8;
+        if (operand_types == generator->analyser->type_system.u16_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_U16;
+        if (operand_types == generator->analyser->type_system.u32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_U32;
+        if (operand_types == generator->analyser->type_system.u64_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_U64;
+        if (operand_types == generator->analyser->type_system.i8_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_I8;
+        if (operand_types == generator->analyser->type_system.i16_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_I16;
         if (operand_types == generator->analyser->type_system.i32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_I32;
+        if (operand_types == generator->analyser->type_system.i64_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_I64;
         if (operand_types == generator->analyser->type_system.f32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_F32;
+        if (operand_types == generator->analyser->type_system.f64_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_F64;
         panic("Not valid, should have been caught!");
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_LESS_OR_EQUAL:
+        if (operand_types == generator->analyser->type_system.u8_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_U8;
+        if (operand_types == generator->analyser->type_system.u16_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_U16;
+        if (operand_types == generator->analyser->type_system.u32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_U32;
+        if (operand_types == generator->analyser->type_system.u64_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_U64;
+        if (operand_types == generator->analyser->type_system.i8_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_I8;
+        if (operand_types == generator->analyser->type_system.i16_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_I16;
         if (operand_types == generator->analyser->type_system.i32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_I32;
+        if (operand_types == generator->analyser->type_system.i64_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_I64;
         if (operand_types == generator->analyser->type_system.f32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_F32;
+        if (operand_types == generator->analyser->type_system.f64_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_F64;
         panic("Not valid, should have been caught!");
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_GREATER:
+        if (operand_types == generator->analyser->type_system.u8_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_U8;
+        if (operand_types == generator->analyser->type_system.u16_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_U16;
+        if (operand_types == generator->analyser->type_system.u32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_U32;
+        if (operand_types == generator->analyser->type_system.u64_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_U64;
+        if (operand_types == generator->analyser->type_system.i8_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_I8;
+        if (operand_types == generator->analyser->type_system.i16_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_I16;
         if (operand_types == generator->analyser->type_system.i32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_I32;
+        if (operand_types == generator->analyser->type_system.i64_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_I64;
         if (operand_types == generator->analyser->type_system.f32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_F32;
+        if (operand_types == generator->analyser->type_system.f64_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_F64;
         panic("Not valid, should have been caught!");
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_GREATER_OR_EQUAL:
+        if (operand_types == generator->analyser->type_system.u8_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_U8;
+        if (operand_types == generator->analyser->type_system.u16_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_U16;
+        if (operand_types == generator->analyser->type_system.u32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_U32;
+        if (operand_types == generator->analyser->type_system.u64_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_U64;
+        if (operand_types == generator->analyser->type_system.i8_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_I8;
+        if (operand_types == generator->analyser->type_system.i16_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_I16;
         if (operand_types == generator->analyser->type_system.i32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_I32;
+        if (operand_types == generator->analyser->type_system.i64_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_I64;
         if (operand_types == generator->analyser->type_system.f32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_F32;
+        if (operand_types == generator->analyser->type_system.f64_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_F64;
         panic("Not valid, should have been caught!");
     }
     panic("This should not happen :)\n");
@@ -260,6 +348,33 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
         else {
             instr.destination = data_access_make_empty();
         }
+        dynamic_array_push_back(&function->instructions, instr);
+        return instr.destination;
+    }
+    case AST_Node_Type::EXPRESSION_CAST:
+    {
+        Type_Signature* cast_to_type = generator->analyser->semantic_information[expression_index].expression_result_type;
+        Type_Signature* cast_from_type = generator->analyser->semantic_information[expression->children[1]].expression_result_type;
+        if (cast_to_type == cast_from_type) 
+        {
+            if (force_destination) {
+                return intermediate_generator_generate_expression(generator, expression->children[1], true, destination);
+            }
+            else {
+                return intermediate_generator_generate_expression(generator, expression->children[1], false, data_access_make_empty());
+            }
+        }
+        Intermediate_Instruction instr;
+        if (force_destination) {
+            instr.destination = destination;
+        }
+        else {
+            instr.destination = intermediate_generator_create_intermediate_register(generator, cast_to_type);
+        }
+        instr.source1 = intermediate_generator_generate_expression(generator, expression->children[1], false, data_access_make_empty());
+        instr.type = Intermediate_Instruction_Type::CAST_PRIMITIVE_TYPES;
+        instr.cast_from = cast_from_type;
+        instr.cast_to = cast_to_type;
         dynamic_array_push_back(&function->instructions, instr);
         return instr.destination;
     }

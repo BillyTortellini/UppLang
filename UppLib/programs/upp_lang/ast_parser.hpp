@@ -36,6 +36,7 @@ namespace AST_Node_Type
         EXPRESSION_VARIABLE_READ,
         EXPRESSION_ARRAY_ACCESS, // Child 0: Access-to-Expression, Child 1: Index-Expression
         EXPRESSION_MEMBER_ACCESS, // Child 0: left side, name_id is the .what operator a.y.y[5].z
+        EXPRESSION_CAST, // Child 0: type, Child 1: Expression
         EXPRESSION_BINARY_OPERATION_ADDITION,
         EXPRESSION_BINARY_OPERATION_SUBTRACTION,
         EXPRESSION_BINARY_OPERATION_DIVISION,

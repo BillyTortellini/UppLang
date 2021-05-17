@@ -604,6 +604,7 @@ void c_generator_generate(C_Generator* generator, Intermediate_Generator* im_gen
     //const char* cmd_compile = "cl /MTd /Fi /Zi /Wall /RTCsu /JMC backend\\main.exe backend\\main.cpp backed\\compiler\\hardcoded_functions.cpp";
     //const char* cmd_compile_simple = "cl.exe";
     //system(cmd_compile_simple);
+    /*
     PROCESS_INFORMATION proc_info;
     STARTUPINFOA start_info = {};
     start_info.cb = sizeof(start_info);
@@ -649,4 +650,5 @@ void c_generator_generate(C_Generator* generator, Intermediate_Generator* im_gen
         }
         logg("\n");
     }
+    */
 }

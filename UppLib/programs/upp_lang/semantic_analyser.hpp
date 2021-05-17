@@ -22,6 +22,9 @@ enum class Primitive_Type
     FLOAT_64,
 };
 String primitive_type_to_string(Primitive_Type type);
+bool primitive_type_is_float(Primitive_Type type);
+bool primitive_type_is_signed(Primitive_Type type);
+bool primitive_type_is_integer(Primitive_Type type);
 
 enum class Signature_Type
 {

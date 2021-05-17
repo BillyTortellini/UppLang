@@ -20,6 +20,7 @@ namespace Token_Type
         STRUCT,
         NEW,
         DELETE_TOKEN,
+        CAST,
         // Delimiters
         DOT,        // .
         COLON,      // :

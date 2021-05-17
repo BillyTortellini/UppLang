@@ -404,6 +404,28 @@ AST_Node_Index ast_parser_parse_general_access(AST_Parser* parser)
     AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, -1);
     int node_index = ast_parser_get_next_node_index_no_parent(parser);
 
+    if (ast_parser_test_next_2_tokens(parser, Token_Type::CAST, Token_Type::COMPARISON_LESS))
+    {
+        parser->index += 2;
+        parser->nodes[node_index].type = AST_Node_Type::EXPRESSION_CAST;
+        if (!ast_parser_parse_type(parser, node_index)) {
+            ast_parser_checkpoint_reset(checkpoint);
+            return -1;
+        }
+        if (!ast_parser_test_next_token(parser, Token_Type::COMPARISON_GREATER)) {
+            ast_parser_checkpoint_reset(checkpoint);
+            return -1;
+        }
+        parser->index += 1;
+        AST_Node_Index child = ast_parser_parse_general_access(parser);
+        if (child == -1) {
+            ast_parser_checkpoint_reset(checkpoint);
+            return -1;
+        }
+        ast_parser_add_parent_child_connection(parser, node_index, child);
+        parser->token_mapping[node_index] = token_range_make(checkpoint.rewind_token_index, checkpoint.rewind_token_index + 1);
+        return node_index;
+    }
     if (ast_parser_test_next_token(parser, Token_Type::OP_STAR))
     {
         parser->index++;
@@ -1416,6 +1438,7 @@ String ast_node_type_to_string(AST_Node_Type::ENUM type)
     case AST_Node_Type::STATEMENT_DELETE: return string_create_static("STATEMENT_DELETE");
     case AST_Node_Type::EXPRESSION_ARRAY_ACCESS: return string_create_static("EXPRESSION_ARRAY_INDEX");
     case AST_Node_Type::EXPRESSION_MEMBER_ACCESS: return string_create_static("EXPRESSION_MEMBER_ACCESS");
+    case AST_Node_Type::EXPRESSION_CAST: return string_create_static("EXPRESSION_CAST");
     case AST_Node_Type::EXPRESSION_LITERAL: return string_create_static("EXPRESSION_LITERAL");
     case AST_Node_Type::EXPRESSION_FUNCTION_CALL: return string_create_static("EXPRESSION_FUNCTION_CALL");
     case AST_Node_Type::EXPRESSION_VARIABLE_READ: return string_create_static("EXPRESSION_VARIABLE_READ");
@@ -1489,6 +1512,10 @@ void ast_node_expression_append_to_string(AST_Parser* parser, AST_Node_Index nod
     case AST_Node_Type::EXPRESSION_MEMBER_ACCESS:
         ast_node_expression_append_to_string(parser, node->children[0], string);
         string_append_formated(string, ".%s", lexer_identifer_to_string(parser->lexer, node->name_id).characters);
+        return;
+    case AST_Node_Type::EXPRESSION_CAST:
+        string_append_formated(string, "cast(...)");
+        ast_node_expression_append_to_string(parser, node->children[1], string);
         return;
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_ADDITION: bin_op = true, bin_op_str = "+"; break;
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_SUBTRACTION: bin_op = true, bin_op_str = "-"; break;

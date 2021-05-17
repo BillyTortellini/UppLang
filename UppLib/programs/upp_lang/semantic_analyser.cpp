@@ -21,6 +21,66 @@ String primitive_type_to_string(Primitive_Type type)
     return string_create_static("INVALID_VALUE_TYPE_ENUM");
 }
 
+bool primitive_type_is_integer(Primitive_Type type)
+{
+    switch (type)
+    {
+    case Primitive_Type::BOOLEAN:
+    case Primitive_Type::FLOAT_32:
+    case Primitive_Type::FLOAT_64: return false;
+    case Primitive_Type::SIGNED_INT_8:
+    case Primitive_Type::SIGNED_INT_16:
+    case Primitive_Type::SIGNED_INT_32:
+    case Primitive_Type::SIGNED_INT_64:
+    case Primitive_Type::UNSIGNED_INT_8:
+    case Primitive_Type::UNSIGNED_INT_16:
+    case Primitive_Type::UNSIGNED_INT_32:
+    case Primitive_Type::UNSIGNED_INT_64: return true;
+    }
+    panic("Shit");
+    return false;
+}
+
+bool primitive_type_is_signed(Primitive_Type type)
+{
+    switch (type)
+    {
+    case Primitive_Type::BOOLEAN: return false;
+    case Primitive_Type::FLOAT_32:
+    case Primitive_Type::FLOAT_64: return true;
+    case Primitive_Type::SIGNED_INT_8:
+    case Primitive_Type::SIGNED_INT_16:
+    case Primitive_Type::SIGNED_INT_32:
+    case Primitive_Type::SIGNED_INT_64: return true;
+    case Primitive_Type::UNSIGNED_INT_8:
+    case Primitive_Type::UNSIGNED_INT_16:
+    case Primitive_Type::UNSIGNED_INT_32:
+    case Primitive_Type::UNSIGNED_INT_64: return false;
+    }
+    panic("Shit");
+    return false;
+}
+
+bool primitive_type_is_float(Primitive_Type type)
+{
+    switch (type)
+    {
+    case Primitive_Type::BOOLEAN: return false;
+    case Primitive_Type::FLOAT_32:
+    case Primitive_Type::FLOAT_64: return true;
+    case Primitive_Type::SIGNED_INT_8:
+    case Primitive_Type::SIGNED_INT_16:
+    case Primitive_Type::SIGNED_INT_32:
+    case Primitive_Type::SIGNED_INT_64:
+    case Primitive_Type::UNSIGNED_INT_8:
+    case Primitive_Type::UNSIGNED_INT_16:
+    case Primitive_Type::UNSIGNED_INT_32:
+    case Primitive_Type::UNSIGNED_INT_64: return false;
+    }
+    panic("Shit");
+    return false;
+}
+
 Type_Signature type_signature_make_error() 
 {
     Type_Signature result;
@@ -540,6 +600,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
     bool is_binary_op = false;
     bool is_unary_op = false;
     bool int_valid, float_valid, bool_valid;
+    bool unsigned_valid = true;
     int_valid = float_valid = bool_valid = false;
     bool return_left_type = false;
     Type_Signature* return_type = analyser->type_system.error_type;
@@ -580,6 +641,30 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
         }
         analyser->semantic_information[expression_index].expression_result_type = s->type;
         return expression_analysis_result_make(s->type, true);
+    }
+    case AST_Node_Type::EXPRESSION_CAST:
+    {
+        Type_Signature* cast_destination_type = semantic_analyser_analyse_type(analyser, expression->children[0]);
+        if (cast_destination_type == analyser->type_system.error_type) {
+            return expression_analysis_result_make(analyser->type_system.error_type, true);
+        }
+        Expression_Analysis_Result expr_result = semantic_analyser_analyse_expression(analyser, table, expression->children[1]);
+        Type_Signature* cast_source_type = semantic_analyser_analyse_type(analyser, expression->children[1]);
+        if (cast_source_type == analyser->type_system.error_type) {
+            return expression_analysis_result_make(analyser->type_system.error_type, true);
+        }
+
+        if (cast_source_type->type != Signature_Type::PRIMITIVE || cast_destination_type->type != Signature_Type::PRIMITIVE) {
+            semantic_analyser_log_error(analyser, "Currently we only can cast primitives", expression_index);
+            return expression_analysis_result_make(analyser->type_system.error_type, true);
+        }
+        if (cast_source_type->primitive_type == Primitive_Type::BOOLEAN || cast_destination_type->primitive_type == Primitive_Type::BOOLEAN) {
+            semantic_analyser_log_error(analyser, "Cannot cast boolean types", expression_index);
+            return expression_analysis_result_make(analyser->type_system.error_type, true);
+        }
+
+        analyser->semantic_information[expression_index].expression_result_type = cast_destination_type;
+        return expression_analysis_result_make(cast_destination_type, false); // Primitive type casting does not have memory address, but pointers do
     }
     case AST_Node_Type::EXPRESSION_LITERAL:
     {
@@ -757,6 +842,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
         is_unary_op = true;
         float_valid = int_valid = true;
         return_left_type = true;
+        unsigned_valid = false;
         break;
     }
     case AST_Node_Type::EXPRESSION_UNARY_OPERATION_ADDRESS_OF:
@@ -799,18 +885,38 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
         if (left_expr_result.type != right_expr_result.type) {
             semantic_analyser_log_error(analyser, "Left and right of binary operation do not match", expression_index);
         }
-        if (!int_valid && left_expr_result.type == analyser->type_system.i32_type) {
-            semantic_analyser_log_error(analyser, "Operands cannot be integers", expression_index);
-            return expression_analysis_result_make(analyser->type_system.error_type, false);
+
+        if (left_expr_result.type == analyser->type_system.u8_type ||
+            left_expr_result.type == analyser->type_system.u16_type ||
+            left_expr_result.type == analyser->type_system.u32_type ||
+            left_expr_result.type == analyser->type_system.u64_type ||
+            left_expr_result.type == analyser->type_system.i8_type ||
+            left_expr_result.type == analyser->type_system.i16_type ||
+            left_expr_result.type == analyser->type_system.i32_type ||
+            left_expr_result.type == analyser->type_system.i64_type)
+        {
+            if (!int_valid) {
+                semantic_analyser_log_error(analyser, "Operands cannot be integers", expression_index);
+                return expression_analysis_result_make(analyser->type_system.error_type, false);
+            }
         }
-        if (!bool_valid && left_expr_result.type == analyser->type_system.bool_type) {
-            semantic_analyser_log_error(analyser, "Operands cannot be booleans", expression_index);
-            return expression_analysis_result_make(analyser->type_system.error_type, false);
+
+        if (left_expr_result.type == analyser->type_system.f32_type ||
+            left_expr_result.type == analyser->type_system.f64_type)
+        {
+            if (!float_valid) {
+                semantic_analyser_log_error(analyser, "Operands cannot be floats", expression_index);
+                return expression_analysis_result_make(analyser->type_system.error_type, false);
+            }
         }
-        if (!float_valid && left_expr_result.type == analyser->type_system.f32_type) {
-            semantic_analyser_log_error(analyser, "Operands cannot be floats", expression_index);
-            return expression_analysis_result_make(analyser->type_system.error_type, false);
+
+        if (left_expr_result.type == analyser->type_system.bool_type) {
+            if (!bool_valid) {
+                semantic_analyser_log_error(analyser, "Operands cannot be booleans", expression_index);
+                return expression_analysis_result_make(analyser->type_system.error_type, false);
+            }
         }
+
         if (return_left_type) {
             analyser->semantic_information[expression_index].expression_result_type = left_expr_result.type;
             return expression_analysis_result_make(left_expr_result.type, false);
@@ -821,18 +927,43 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
     if (is_unary_op)
     {
         Type_Signature* left_type = semantic_analyser_analyse_expression(analyser, table, expression->children[0]).type;
-        if (!int_valid && left_type == analyser->type_system.i32_type) {
-            semantic_analyser_log_error(analyser, "Operand cannot be integer", expression_index);
-            return expression_analysis_result_make(analyser->type_system.error_type, false);
+        if (left_type == analyser->type_system.u8_type ||
+            left_type == analyser->type_system.u16_type ||
+            left_type == analyser->type_system.u32_type ||
+            left_type == analyser->type_system.u64_type)
+        {
+            if (!int_valid || !unsigned_valid) {
+                semantic_analyser_log_error(analyser, "Operands cannot be unsigned integers", expression_index);
+                return expression_analysis_result_make(analyser->type_system.error_type, false);
+            }
         }
-        if (!bool_valid && left_type == analyser->type_system.bool_type) {
-            semantic_analyser_log_error(analyser, "Operand cannot be boolean", expression_index);
-            return expression_analysis_result_make(analyser->type_system.error_type, false);
+        if (left_type == analyser->type_system.i8_type ||
+            left_type == analyser->type_system.i16_type ||
+            left_type == analyser->type_system.i32_type ||
+            left_type == analyser->type_system.i64_type)
+        {
+            if (!int_valid) {
+                semantic_analyser_log_error(analyser, "Operands cannot be integers", expression_index);
+                return expression_analysis_result_make(analyser->type_system.error_type, false);
+            }
         }
-        if (!float_valid && left_type == analyser->type_system.f32_type) {
-            semantic_analyser_log_error(analyser, "Operand cannot be float", expression_index);
-            return expression_analysis_result_make(analyser->type_system.error_type, false);
+
+        if (left_type == analyser->type_system.f32_type ||
+            left_type == analyser->type_system.f64_type)
+        {
+            if (!float_valid) {
+                semantic_analyser_log_error(analyser, "Operands cannot be floats", expression_index);
+                return expression_analysis_result_make(analyser->type_system.error_type, false);
+            }
         }
+
+        if (left_type == analyser->type_system.bool_type) {
+            if (!bool_valid) {
+                semantic_analyser_log_error(analyser, "Operands cannot be booleans", expression_index);
+                return expression_analysis_result_make(analyser->type_system.error_type, false);
+            }
+        }
+
         if (return_left_type) {
             analyser->semantic_information[expression_index].expression_result_type = left_type;
             return expression_analysis_result_make(left_type, false);
@@ -1085,7 +1216,7 @@ void semantic_analyser_analyse_function(Semantic_Analyser* analyser, Symbol_Tabl
     AST_Node* parameter_block = &analyser->parser->nodes[function->children[0]];
     Type_Signature* function_signature = symbol_table_find_symbol_of_type(parent, function->name_id, Symbol_Type::FUNCTION)->type;
     for (int i = 0; i < parameter_block->children.size; i++) {
-        semantic_analyser_define_variable(analyser, table, parameter_block->children[i], 
+        semantic_analyser_define_variable(analyser, table, parameter_block->children[i],
             function_signature->parameter_types[i], analyser->parser->token_mapping[parameter_block->children[i]].start_index);
     }
 

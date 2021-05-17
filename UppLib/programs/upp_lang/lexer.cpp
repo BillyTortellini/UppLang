@@ -71,6 +71,7 @@ const char* token_type_to_string(Token_Type::ENUM type)
     case Token_Type::WHITESPACE: return "WHITESPACE";
     case Token_Type::NEW_LINE: return "NEWLINE";
     case Token_Type::RETURN: return "RETURN";
+    case Token_Type::CAST: return "CAST";
     }
     panic("Should not happen!");
     return "TOKEN_NOT_KNOWN";
@@ -638,6 +639,12 @@ void lexer_parse_string(Lexer* lexer, String* code)
             }
             else if (string_equals_cstring(&identifier_string, "struct")) {
                 dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::STRUCT, token_attribute_make_empty(),
+                    line_number, character_pos, identifier_string_length, index));
+                index += identifier_string_length;
+                character_pos += identifier_string_length;
+            }
+            else if (string_equals_cstring(&identifier_string, "cast")) {
+                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::CAST, token_attribute_make_empty(),
                     line_number, character_pos, identifier_string_length, index));
                 index += identifier_string_length;
                 character_pos += identifier_string_length;

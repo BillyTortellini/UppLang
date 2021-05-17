@@ -189,7 +189,230 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
     case Instruction_Type::LOAD_CONSTANT_BOOLEAN:
         *(interpreter->stack_pointer + i->op1) = (byte)i->op2;
         break;
+    
+    /*
+    -------------------------
+    --- BINARY_OPERATIONS ---
+    -------------------------
+    */
+    
+    // U8
+    case Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U8:
+        *(u8*)(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) + *(u8*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_U8:
+        *(u8*)(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) - *(u8*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_U8:
+        *(u8*)(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) * *(u8*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_U8:
+        *(u8*)(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) / *(u8*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_U8:
+        *(u8*)(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) % *(u8*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_EQUAL_U8:
+        *(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) == *(u8*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_U8:
+        *(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) != *(u8*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_U8:
+        *(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) > * (u8*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_U8:
+        *(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) >= *(u8*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_U8:
+        *(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) < *(u8*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_U8:
+        *(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) <= *(u8*)(interpreter->stack_pointer + i->op3);
+        break;
 
+    // U16
+    case Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U16:
+        *(u16*)(interpreter->stack_pointer + i->op1) = *(u16*)(interpreter->stack_pointer + i->op2) + *(u16*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_U16:
+        *(u16*)(interpreter->stack_pointer + i->op1) = *(u16*)(interpreter->stack_pointer + i->op2) - *(u16*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_U16:
+        *(u16*)(interpreter->stack_pointer + i->op1) = *(u16*)(interpreter->stack_pointer + i->op2) * *(u16*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_U16:
+        *(u16*)(interpreter->stack_pointer + i->op1) = *(u16*)(interpreter->stack_pointer + i->op2) / *(u16*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_U16:
+        *(u16*)(interpreter->stack_pointer + i->op1) = *(u16*)(interpreter->stack_pointer + i->op2) % *(u16*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_EQUAL_U16:
+        *(interpreter->stack_pointer + i->op1) = *(u16*)(interpreter->stack_pointer + i->op2) == *(u16*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_U16:
+        *(interpreter->stack_pointer + i->op1) = *(u16*)(interpreter->stack_pointer + i->op2) != *(u16*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_U16:
+        *(interpreter->stack_pointer + i->op1) = *(u16*)(interpreter->stack_pointer + i->op2) > * (u16*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_U16:
+        *(interpreter->stack_pointer + i->op1) = *(u16*)(interpreter->stack_pointer + i->op2) >= *(u16*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_U16:
+        *(interpreter->stack_pointer + i->op1) = *(u16*)(interpreter->stack_pointer + i->op2) < *(u16*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_U16:
+        *(interpreter->stack_pointer + i->op1) = *(u16*)(interpreter->stack_pointer + i->op2) <= *(u16*)(interpreter->stack_pointer + i->op3);
+        break;
+
+    // U32
+    case Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U32:
+        *(u32*)(interpreter->stack_pointer + i->op1) = *(u32*)(interpreter->stack_pointer + i->op2) + *(u32*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_U32:
+        *(u32*)(interpreter->stack_pointer + i->op1) = *(u32*)(interpreter->stack_pointer + i->op2) - *(u32*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_U32:
+        *(u32*)(interpreter->stack_pointer + i->op1) = *(u32*)(interpreter->stack_pointer + i->op2) * *(u32*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_U32:
+        *(u32*)(interpreter->stack_pointer + i->op1) = *(u32*)(interpreter->stack_pointer + i->op2) / *(u32*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_U32:
+        *(u32*)(interpreter->stack_pointer + i->op1) = *(u32*)(interpreter->stack_pointer + i->op2) % *(u32*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_EQUAL_U32:
+        *(interpreter->stack_pointer + i->op1) = *(u32*)(interpreter->stack_pointer + i->op2) == *(u32*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_U32:
+        *(interpreter->stack_pointer + i->op1) = *(u32*)(interpreter->stack_pointer + i->op2) != *(u32*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_U32:
+        *(interpreter->stack_pointer + i->op1) = *(u32*)(interpreter->stack_pointer + i->op2) > * (u32*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_U32:
+        *(interpreter->stack_pointer + i->op1) = *(u32*)(interpreter->stack_pointer + i->op2) >= *(u32*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_U32:
+        *(interpreter->stack_pointer + i->op1) = *(u32*)(interpreter->stack_pointer + i->op2) < *(u32*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_U32:
+        *(interpreter->stack_pointer + i->op1) = *(u32*)(interpreter->stack_pointer + i->op2) <= *(u32*)(interpreter->stack_pointer + i->op3);
+        break;
+
+    // U64
+    case Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U64:
+        *(u64*)(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) + *(u64*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_U64:
+        *(u64*)(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) - *(u64*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_U64:
+        *(u64*)(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) * *(u64*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_U64:
+        *(u64*)(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) / *(u64*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_U64:
+        *(u64*)(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) % *(u64*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_EQUAL_U64:
+        *(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) == *(u64*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_U64:
+        *(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) != *(u64*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_U64:
+        *(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) > * (u64*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_U64:
+        *(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) >= *(u64*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_U64:
+        *(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) < *(u64*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_U64:
+        *(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) <= *(u64*)(interpreter->stack_pointer + i->op3);
+        break;
+
+    // U8
+    case Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I8:
+        *(i8*)(interpreter->stack_pointer + i->op1) = *(i8*)(interpreter->stack_pointer + i->op2) + *(i8*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_I8:
+        *(i8*)(interpreter->stack_pointer + i->op1) = *(i8*)(interpreter->stack_pointer + i->op2) - *(i8*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_I8:
+        *(i8*)(interpreter->stack_pointer + i->op1) = *(i8*)(interpreter->stack_pointer + i->op2) * *(i8*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_I8:
+        *(i8*)(interpreter->stack_pointer + i->op1) = *(i8*)(interpreter->stack_pointer + i->op2) / *(i8*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_I8:
+        *(i8*)(interpreter->stack_pointer + i->op1) = *(i8*)(interpreter->stack_pointer + i->op2) % *(i8*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_EQUAL_I8:
+        *(interpreter->stack_pointer + i->op1) = *(i8*)(interpreter->stack_pointer + i->op2) == *(i8*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_I8:
+        *(interpreter->stack_pointer + i->op1) = *(i8*)(interpreter->stack_pointer + i->op2) != *(i8*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_I8:
+        *(interpreter->stack_pointer + i->op1) = *(i8*)(interpreter->stack_pointer + i->op2) > * (u8*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_I8:
+        *(interpreter->stack_pointer + i->op1) = *(i8*)(interpreter->stack_pointer + i->op2) >= *(i8*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_I8:
+        *(interpreter->stack_pointer + i->op1) = *(i8*)(interpreter->stack_pointer + i->op2) < *(i8*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_I8:
+        *(interpreter->stack_pointer + i->op1) = *(i8*)(interpreter->stack_pointer + i->op2) <= *(i8*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I8:
+        *(i8*)(interpreter->stack_pointer + i->op1) = -(*(i8*)(interpreter->stack_pointer + i->op2));
+        break;
+
+    // U16
+    case Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I16:
+        *(i16*)(interpreter->stack_pointer + i->op1) = *(i16*)(interpreter->stack_pointer + i->op2) + *(i16*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_I16:
+        *(i16*)(interpreter->stack_pointer + i->op1) = *(i16*)(interpreter->stack_pointer + i->op2) - *(i16*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_I16:
+        *(i16*)(interpreter->stack_pointer + i->op1) = *(i16*)(interpreter->stack_pointer + i->op2) * *(i16*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_I16:
+        *(i16*)(interpreter->stack_pointer + i->op1) = *(i16*)(interpreter->stack_pointer + i->op2) / *(i16*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_I16:
+        *(i16*)(interpreter->stack_pointer + i->op1) = *(i16*)(interpreter->stack_pointer + i->op2) % *(i16*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_EQUAL_I16:
+        *(interpreter->stack_pointer + i->op1) = *(i16*)(interpreter->stack_pointer + i->op2) == *(i16*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_I16:
+        *(interpreter->stack_pointer + i->op1) = *(i16*)(interpreter->stack_pointer + i->op2) != *(i16*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_I16:
+        *(interpreter->stack_pointer + i->op1) = *(i16*)(interpreter->stack_pointer + i->op2) > * (u16*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_I16:
+        *(interpreter->stack_pointer + i->op1) = *(i16*)(interpreter->stack_pointer + i->op2) >= *(i16*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_I16:
+        *(interpreter->stack_pointer + i->op1) = *(i16*)(interpreter->stack_pointer + i->op2) < *(i16*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_I16:
+        *(interpreter->stack_pointer + i->op1) = *(i16*)(interpreter->stack_pointer + i->op2) <= *(i16*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I16:
+        *(i16*)(interpreter->stack_pointer + i->op1) = -(*(i16*)(interpreter->stack_pointer + i->op2));
+        break;
+
+    // U32
     case Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32:
         *(i32*)(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) + *(i32*)(interpreter->stack_pointer + i->op3);
         break;
@@ -212,7 +435,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         *(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) != *(i32*)(interpreter->stack_pointer + i->op3);
         break;
     case Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_I32:
-        *(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) > * (i32*)(interpreter->stack_pointer + i->op3);
+        *(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) > * (u32*)(interpreter->stack_pointer + i->op3);
         break;
     case Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_I32:
         *(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) >= *(i32*)(interpreter->stack_pointer + i->op3);
@@ -227,6 +450,45 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         *(i32*)(interpreter->stack_pointer + i->op1) = -(*(i32*)(interpreter->stack_pointer + i->op2));
         break;
 
+    // U64
+    case Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I64:
+        *(i64*)(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) + *(i64*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_I64:
+        *(i64*)(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) - *(i64*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_I64:
+        *(i64*)(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) * *(i64*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_I64:
+        *(i64*)(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) / *(i64*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_I64:
+        *(i64*)(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) % *(i64*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_EQUAL_I64:
+        *(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) == *(i64*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_I64:
+        *(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) != *(i64*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_I64:
+        *(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) > * (u64*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_I64:
+        *(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) >= *(i64*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_I64:
+        *(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) < *(i64*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_I64:
+        *(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) <= *(i64*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I64:
+        *(i64*)(interpreter->stack_pointer + i->op1) = -(*(i64*)(interpreter->stack_pointer + i->op2));
+        break;
+
+    // F32
     case Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_F32:
         *(f32*)(interpreter->stack_pointer + i->op1) = *(f32*)(interpreter->stack_pointer + i->op2) + *(f32*)(interpreter->stack_pointer + i->op3);
         break;
@@ -259,6 +521,41 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         break;
     case Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_F32:
         *(f32*)(interpreter->stack_pointer + i->op1) = -(*(f32*)(interpreter->stack_pointer + i->op2));
+        break;
+
+    // F64
+    case Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_F64:
+        *(f64*)(interpreter->stack_pointer + i->op1) = *(f64*)(interpreter->stack_pointer + i->op2) + *(f64*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_F64:
+        *(f64*)(interpreter->stack_pointer + i->op1) = *(f64*)(interpreter->stack_pointer + i->op2) - *(f64*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_F64:
+        *(f64*)(interpreter->stack_pointer + i->op1) = *(f64*)(interpreter->stack_pointer + i->op2) * *(f64*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_F64:
+        *(f64*)(interpreter->stack_pointer + i->op1) = *(f64*)(interpreter->stack_pointer + i->op2) / *(f64*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_EQUAL_F64:
+        *(interpreter->stack_pointer + i->op1) = *(f64*)(interpreter->stack_pointer + i->op2) == *(f64*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_F64:
+        *(interpreter->stack_pointer + i->op1) = *(f64*)(interpreter->stack_pointer + i->op2) != *(f64*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_F64:
+        *(interpreter->stack_pointer + i->op1) = *(f64*)(interpreter->stack_pointer + i->op2) > * (f64*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_F64:
+        *(interpreter->stack_pointer + i->op1) = *(f64*)(interpreter->stack_pointer + i->op2) >= *(f64*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_F64:
+        *(interpreter->stack_pointer + i->op1) = *(f64*)(interpreter->stack_pointer + i->op2) < *(f64*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_F64:
+        *(interpreter->stack_pointer + i->op1) = *(f64*)(interpreter->stack_pointer + i->op2) <= *(f64*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_F64:
+        *(f64*)(interpreter->stack_pointer + i->op1) = -(*(f64*)(interpreter->stack_pointer + i->op2));
         break;
 
     case Instruction_Type::BINARY_OP_COMPARISON_EQUAL_BOOL:
