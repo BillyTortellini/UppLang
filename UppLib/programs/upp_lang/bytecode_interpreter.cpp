@@ -189,6 +189,91 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
     case Instruction_Type::LOAD_CONSTANT_BOOLEAN:
         *(interpreter->stack_pointer + i->op1) = (byte)i->op2;
         break;
+    case Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE: {
+        u64 source_unsigned;
+        i64 source_signed;
+        bool source_is_signed = false;
+        switch ((Primitive_Type) i->op4) {
+        case Primitive_Type::SIGNED_INT_8: source_is_signed = true; source_signed = *(i8*)(interpreter->stack_pointer + i->op2); break;
+        case Primitive_Type::SIGNED_INT_16: source_is_signed = true; source_signed = *(i16*)(interpreter->stack_pointer + i->op2); break;
+        case Primitive_Type::SIGNED_INT_32: source_is_signed = true; source_signed = *(i32*)(interpreter->stack_pointer + i->op2); break;
+        case Primitive_Type::SIGNED_INT_64: source_is_signed = true; source_signed = *(i64*)(interpreter->stack_pointer + i->op2); break;
+        case Primitive_Type::UNSIGNED_INT_8: source_is_signed = false; source_unsigned = *(u8*)(interpreter->stack_pointer + i->op2); break;
+        case Primitive_Type::UNSIGNED_INT_16: source_is_signed = false; source_unsigned = *(u16*)(interpreter->stack_pointer + i->op2); break;
+        case Primitive_Type::UNSIGNED_INT_32: source_is_signed = false; source_unsigned = *(u32*)(interpreter->stack_pointer + i->op2); break;
+        case Primitive_Type::UNSIGNED_INT_64: source_is_signed = false; source_unsigned = *(u64*)(interpreter->stack_pointer + i->op2); break;
+        default: panic("what the frigg\n");
+        }
+        switch ((Primitive_Type) i->op3) {
+        case Primitive_Type::SIGNED_INT_8:    *(i8*)(interpreter->stack_pointer + i->op1) = (i8) source_is_signed ? source_signed : source_unsigned; break;
+        case Primitive_Type::SIGNED_INT_16:   *(i16*)(interpreter->stack_pointer + i->op1) = (i16) source_is_signed ? source_signed : source_unsigned; break;
+        case Primitive_Type::SIGNED_INT_32:   *(i32*)(interpreter->stack_pointer + i->op1) = (i32) source_is_signed ? source_signed : source_unsigned; break;
+        case Primitive_Type::SIGNED_INT_64:   *(i64*)(interpreter->stack_pointer + i->op1) = (i64) source_is_signed ? source_signed : source_unsigned; break;
+        case Primitive_Type::UNSIGNED_INT_8:  *(u8*)(interpreter->stack_pointer + i->op1) = (u8) source_is_signed ? source_signed : source_unsigned; break;
+        case Primitive_Type::UNSIGNED_INT_16: *(u16*)(interpreter->stack_pointer + i->op1) = (u16) source_is_signed ? source_signed : source_unsigned; break;
+        case Primitive_Type::UNSIGNED_INT_32: *(u32*)(interpreter->stack_pointer + i->op1) = (u32) source_is_signed ? source_signed : source_unsigned; break;
+        case Primitive_Type::UNSIGNED_INT_64: *(u64*)(interpreter->stack_pointer + i->op1) = (u64) source_is_signed ? source_signed : source_unsigned; break;
+        default: panic("what the frigg\n");
+        }
+        break;
+    }
+    case Instruction_Type::CAST_FLOAT_DIFFERENT_SIZE: {
+        double source;
+        switch ((Primitive_Type) i->op4) {
+        case Primitive_Type::FLOAT_32: source = *(float*)(interpreter->stack_pointer + i->op2); break;
+        case Primitive_Type::FLOAT_64: source = *(double*)(interpreter->stack_pointer + i->op2); break;
+        default: panic("what the frigg\n");
+        }
+        switch ((Primitive_Type) i->op3) {
+        case Primitive_Type::FLOAT_32: *(float*)(interpreter->stack_pointer + i->op1) = (float)source; break;
+        case Primitive_Type::FLOAT_64: *(double*)(interpreter->stack_pointer + i->op1) = (double)source; break;
+        default: panic("what the frigg\n");
+        }
+        break;
+    }
+    case Instruction_Type::CAST_FLOAT_INTEGER: {
+        double source;
+        switch ((Primitive_Type) i->op4) {
+        case Primitive_Type::FLOAT_32: source = *(float*)(interpreter->stack_pointer + i->op2); break;
+        case Primitive_Type::FLOAT_64: source = *(double*)(interpreter->stack_pointer + i->op2); break;
+        default: panic("what the frigg\n");
+        }
+        switch ((Primitive_Type) i->op3) {
+        case Primitive_Type::SIGNED_INT_8:    *(i8*)(interpreter->stack_pointer + i->op1) = (i8) source; break;
+        case Primitive_Type::SIGNED_INT_16:   *(i16*)(interpreter->stack_pointer + i->op1) = (i16) source; break;
+        case Primitive_Type::SIGNED_INT_32:   *(i32*)(interpreter->stack_pointer + i->op1) = (i32) source; break;
+        case Primitive_Type::SIGNED_INT_64:   *(i64*)(interpreter->stack_pointer + i->op1) = (i64) source; break;
+        case Primitive_Type::UNSIGNED_INT_8:  *(u8*)(interpreter->stack_pointer + i->op1) = (u8) source; break;
+        case Primitive_Type::UNSIGNED_INT_16: *(u16*)(interpreter->stack_pointer + i->op1) = (u16) source; break;
+        case Primitive_Type::UNSIGNED_INT_32: *(u32*)(interpreter->stack_pointer + i->op1) = (u32) source; break;
+        case Primitive_Type::UNSIGNED_INT_64: *(u64*)(interpreter->stack_pointer + i->op1) = (u64) source; break;
+        default: panic("what the frigg\n");
+        }
+        break;
+    }
+    case Instruction_Type::CAST_INTEGER_FLOAT: 
+    {
+        u64 source_unsigned;
+        i64 source_signed;
+        bool source_is_signed = false;
+        switch ((Primitive_Type) i->op4) {
+        case Primitive_Type::SIGNED_INT_8: source_is_signed = true; source_signed = *(i8*)(interpreter->stack_pointer + i->op2); break;
+        case Primitive_Type::SIGNED_INT_16: source_is_signed = true; source_signed = *(i16*)(interpreter->stack_pointer + i->op2); break;
+        case Primitive_Type::SIGNED_INT_32: source_is_signed = true; source_signed = *(i32*)(interpreter->stack_pointer + i->op2); break;
+        case Primitive_Type::SIGNED_INT_64: source_is_signed = true; source_signed = *(i64*)(interpreter->stack_pointer + i->op2); break;
+        case Primitive_Type::UNSIGNED_INT_8: source_is_signed = false; source_unsigned = *(u8*)(interpreter->stack_pointer + i->op2); break;
+        case Primitive_Type::UNSIGNED_INT_16: source_is_signed = false; source_unsigned = *(u16*)(interpreter->stack_pointer + i->op2); break;
+        case Primitive_Type::UNSIGNED_INT_32: source_is_signed = false; source_unsigned = *(u32*)(interpreter->stack_pointer + i->op2); break;
+        case Primitive_Type::UNSIGNED_INT_64: source_is_signed = false; source_unsigned = *(u64*)(interpreter->stack_pointer + i->op2); break;
+        default: panic("what the frigg\n");
+        }
+        switch ((Primitive_Type) i->op3) {
+        case Primitive_Type::FLOAT_32: *(float*)(interpreter->stack_pointer + i->op1) = (float) source_is_signed ? source_signed : source_unsigned; break;
+        case Primitive_Type::FLOAT_64: *(double*)(interpreter->stack_pointer + i->op1) = (double) source_is_signed ? source_signed : source_unsigned; break;
+        default: panic("what the frigg\n");
+        }
+        break;
+    }
     
     /*
     -------------------------

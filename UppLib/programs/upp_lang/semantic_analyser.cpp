@@ -649,7 +649,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
             return expression_analysis_result_make(analyser->type_system.error_type, true);
         }
         Expression_Analysis_Result expr_result = semantic_analyser_analyse_expression(analyser, table, expression->children[1]);
-        Type_Signature* cast_source_type = semantic_analyser_analyse_type(analyser, expression->children[1]);
+        Type_Signature* cast_source_type = expr_result.type;
         if (cast_source_type == analyser->type_system.error_type) {
             return expression_analysis_result_make(analyser->type_system.error_type, true);
         }

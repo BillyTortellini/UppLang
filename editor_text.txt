@@ -7,9 +7,13 @@ main :: () -> void
     memory_test();
     */
     
-    a: u8 = cast<u8> 54;
+    a := cast<i8> -1;
+    b := cast<i32> a; 
+    print_i32(b);
+    print_line();
 }
 
+/*
 array_fill_random :: (array: []int, max: int) -> void
 {
     i := 0;
@@ -194,6 +198,8 @@ fib_rec :: (n: int) -> int
     if (n <= 2) return 1;
     return fib_rec(n-1) + fib_rec(n-2);
 }
+*/
+
 /*
 Missing binary statements x++; x--; x+=1; x-=1; x/=1; x*=1;
 Short circuit operation on && and ||

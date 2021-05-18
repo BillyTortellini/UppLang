@@ -1132,221 +1132,237 @@ void exit_code_append_to_string(String* string, Exit_Code code)
     }
 }
 
+bool intermediate_instruction_type_is_unary_operation(Intermediate_Instruction_Type instruction_type)
+{
+    if ((i32)instruction_type >= (i32)Intermediate_Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I8 &&
+        (i32)instruction_type <= (i32)Intermediate_Instruction_Type::UNARY_OP_BOOLEAN_NOT) {
+        return true;
+    }
+    return false;
+}
+
+bool intermediate_instruction_type_is_binary_operation(Intermediate_Instruction_Type instruction_type)
+{
+    if ((i32)instruction_type >= (i32)Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U8 &&
+        (i32)instruction_type <= (i32)Intermediate_Instruction_Type::BINARY_OP_BOOLEAN_OR) {
+        return true;
+    }
+    return false;
+}
+
+void intermediate_instruction_unary_operation_append_to_string(String* string, Intermediate_Instruction_Type instruction_type)
+{
+    switch (instruction_type)
+    {
+    case Intermediate_Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I8: {
+        string_append_formated(string, "UNARY_OP_ARITHMETIC_NEGATE_I8");
+        break;
+    }
+    case Intermediate_Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I16: {
+        string_append_formated(string, "UNARY_OP_ARITHMETIC_NEGATE_I16");
+        break;
+    }
+    case Intermediate_Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I32: {
+        string_append_formated(string, "UNARY_OP_ARITHMETIC_NEGATE_I32");
+        break;
+    }
+    case Intermediate_Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I64: {
+        string_append_formated(string, "UNARY_OP_ARITHMETIC_NEGATE_I64");
+        break;
+    }
+    case Intermediate_Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_F32: {
+        string_append_formated(string, "UNARY_OP_ARITHMETIC_NEGATE_F32");
+        break;
+    }
+    case Intermediate_Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_F64: {
+        string_append_formated(string, "UNARY_OP_ARITHMETIC_NEGATE_F64");
+        break;
+    }
+    case Intermediate_Instruction_Type::UNARY_OP_BOOLEAN_NOT: {
+        string_append_formated(string, "UNARY_OP_BOOLEAN_NOT");
+        break;
+    }
+    default: panic("what");
+    }
+    return;
+}
+
+void intermediate_instruction_binop_append_to_string(String* string, Intermediate_Instruction_Type instruction_type)
+{
+    if ((i32)instruction_type >= (i32)Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U8 &&
+        (i32)instruction_type <= (i32)Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_F64)
+    {
+        const char* instruction_prefix = "Error";
+        const char* type_postfix = "_Error";
+        const char* prefixes[] = {
+            "BINARY_OP_ARITHMETIC_ADDITION_",
+            "BINARY_OP_ARITHMETIC_SUBTRACTION_",
+            "BINARY_OP_ARITHMETIC_MULTIPLICATION_",
+            "BINARY_OP_ARITHMETIC_DIVISION_",
+            "BINARY_OP_ARITHMETIC_MODULO_",
+            "BINARY_OP_COMPARISON_EQUAL_",
+            "BINARY_OP_COMPARISON_NOT_EQUAL_",
+            "BINARY_OP_COMPARISON_GREATER_THAN_",
+            "BINARY_OP_COMPARISON_GREATER_EQUAL_",
+            "BINARY_OP_COMPARISON_LESS_THAN_",
+            "BINARY_OP_COMPARISON_LESS_EQUAL_",
+        };
+        const char* types[] = { "U8", "U16", "U32", "U64", "I8", "I16", "I32", "I64", "F32", "F64" };
+        i32 type_index = (i32)Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U8 - (i32)instruction_type;
+        int prefix_index = type_index % 11;
+        int postfix_index = type_index / 11;
+        instruction_prefix = prefixes[prefix_index];
+        type_postfix = types[postfix_index];
+        string_append_formated(string, "%s", instruction_prefix);
+        string_append_formated(string, "%s", type_postfix);
+    }
+
+    switch (instruction_type)
+    {
+    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_BOOL: {
+        string_append_formated(string, "BINARY_OP_COMPARISON_EQUAL_BOOL");
+        break;
+    }
+    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_BOOL: {
+        string_append_formated(string, "BINARY_OP_COMPARISON_NOT_EQUAL_BOOL");
+        break;
+    }
+    case Intermediate_Instruction_Type::BINARY_OP_BOOLEAN_AND: {
+        string_append_formated(string, "BINARY_OP_BOOLEAN_AND");
+        break;
+    }
+    case Intermediate_Instruction_Type::BINARY_OP_BOOLEAN_OR: {
+        string_append_formated(string, "BINARY_OP_BOOLEAN_OR");
+        break;
+    }
+    }
+    return;
+}
+
 void intermediate_instruction_append_to_string(String* string, Intermediate_Instruction* instruction, Intermediate_Function* function, Intermediate_Generator* generator)
 {
     bool append_source_destination = false;
     bool append_binary = false;
     bool append_destination = false;
     bool append_src_1 = false;
-    switch (instruction->type)
+
+    if (intermediate_instruction_type_is_binary_operation(instruction->type)) {
+        intermediate_instruction_binop_append_to_string(string, instruction->type);
+        string_append_formated(string, " ");
+        append_binary = true;
+    }
+    else if (intermediate_instruction_type_is_unary_operation(instruction->type)) {
+        intermediate_instruction_unary_operation_append_to_string(string, instruction->type);
+        string_append_formated(string, " ");
+        append_source_destination = true;
+    }
+    else
     {
-    case Intermediate_Instruction_Type::ADDRESS_OF:
-        string_append_formated(string, "ADDRESS_OF");
-        append_source_destination = true;
-        break;
-    case Intermediate_Instruction_Type::IF_BLOCK:
-        string_append_formated(string, "IF_BLOCK, \n\t\tcond_start: %d, cond_end: %d\n\t\ttrue_start: %d, true_end: %d\n\t\t, false_start: %d, false_end: %d",
-            instruction->condition_calculation_instruction_start, instruction->condition_calculation_instruction_end_exclusive,
-            instruction->true_branch_instruction_start, instruction->true_branch_instruction_end_exclusive,
-            instruction->false_branch_instruction_start, instruction->false_branch_instruction_end_exclusive
-        );
-        string_append_formated(string, "\n\t\tcondition: ");
-        data_access_append_to_string(string, instruction->source1, function, generator);
-        break;
-    case Intermediate_Instruction_Type::WHILE_BLOCK:
-        string_append_formated(string, "WHILE_BLOCK, \n\t\tcond_start: %d, cond_end: %d\n\t\ttrue_start: %d, true_end: %d",
-            instruction->condition_calculation_instruction_start, instruction->condition_calculation_instruction_end_exclusive,
-            instruction->true_branch_instruction_start, instruction->true_branch_instruction_end_exclusive
-        );
-        string_append_formated(string, "\n\t\tcondition: ");
-        data_access_append_to_string(string, instruction->source1, function, generator);
-        break;
-    case Intermediate_Instruction_Type::CALL_FUNCTION:
-        string_append_formated(string, "CALL_FUNCTION, function_index: %d, \n\t\treturn_data: ", instruction->intermediate_function_index);
-        if (generator->functions[instruction->intermediate_function_index].function_type->return_type != generator->analyser->type_system.void_type) {
-            data_access_append_to_string(string, instruction->destination, function, generator);
+        switch (instruction->type)
+        {
+        case Intermediate_Instruction_Type::ADDRESS_OF:
+            string_append_formated(string, "ADDRESS_OF");
+            append_source_destination = true;
+            break;
+        case Intermediate_Instruction_Type::IF_BLOCK:
+            string_append_formated(string, "IF_BLOCK, \n\t\tcond_start: %d, cond_end: %d\n\t\ttrue_start: %d, true_end: %d\n\t\t, false_start: %d, false_end: %d",
+                instruction->condition_calculation_instruction_start, instruction->condition_calculation_instruction_end_exclusive,
+                instruction->true_branch_instruction_start, instruction->true_branch_instruction_end_exclusive,
+                instruction->false_branch_instruction_start, instruction->false_branch_instruction_end_exclusive
+            );
+            string_append_formated(string, "\n\t\tcondition: ");
+            data_access_append_to_string(string, instruction->source1, function, generator);
+            break;
+        case Intermediate_Instruction_Type::WHILE_BLOCK:
+            string_append_formated(string, "WHILE_BLOCK, \n\t\tcond_start: %d, cond_end: %d\n\t\ttrue_start: %d, true_end: %d",
+                instruction->condition_calculation_instruction_start, instruction->condition_calculation_instruction_end_exclusive,
+                instruction->true_branch_instruction_start, instruction->true_branch_instruction_end_exclusive
+            );
+            string_append_formated(string, "\n\t\tcondition: ");
+            data_access_append_to_string(string, instruction->source1, function, generator);
+            break;
+        case Intermediate_Instruction_Type::CAST_PRIMITIVE_TYPES:
+            string_append_formated(string, "CAST_PRIMITIVE_TYPES, ");
+            type_signature_append_to_string(string, instruction->cast_to);
+            string_append_formated(string, " <-- ");
+            type_signature_append_to_string(string, instruction->cast_from);
+            append_source_destination = true;
+            break;
+        case Intermediate_Instruction_Type::CALL_FUNCTION:
+            string_append_formated(string, "CALL_FUNCTION, function_index: %d, \n\t\treturn_data: ", instruction->intermediate_function_index);
+            if (generator->functions[instruction->intermediate_function_index].function_type->return_type != generator->analyser->type_system.void_type) {
+                data_access_append_to_string(string, instruction->destination, function, generator);
+            }
+            else {
+                string_append_formated(string, "void");
+            }
+            for (int i = 0; i < instruction->arguments.size; i++) {
+                string_append_formated(string, "\n\t\t#%d: ", i);
+                data_access_append_to_string(string, instruction->arguments[i], function, generator);
+            }
+            break;
+        case Intermediate_Instruction_Type::CALL_HARDCODED_FUNCTION:
+            string_append_formated(string, "CALL_HARDCODED_FUNCTION, function_id: %d, \n\t\treturn_data: ", (i32)instruction->hardcoded_function_type);
+            if (generator->analyser->hardcoded_functions[(int)instruction->hardcoded_function_type].function_type->return_type
+                != generator->analyser->type_system.void_type) {
+                data_access_append_to_string(string, instruction->destination, function, generator);
+            }
+            else {
+                string_append_formated(string, "void");
+            }
+            for (int i = 0; i < instruction->arguments.size; i++) {
+                string_append_formated(string, "\n\t\t#%d: ", i);
+                data_access_append_to_string(string, instruction->arguments[i], function, generator);
+            }
+            break;
+        case Intermediate_Instruction_Type::RETURN:
+            string_append_formated(string, "RETURN, return_data: ");
+            if (instruction->return_has_value)
+                append_src_1 = true;
+            else {
+                string_append_formated(string, "void");
+            }
+            break;
+        case Intermediate_Instruction_Type::EXIT:
+            string_append_formated(string, "EXIT ");
+            if (instruction->exit_code == Exit_Code::SUCCESS && instruction->return_has_value)
+                append_src_1 = true;
+            exit_code_append_to_string(string, instruction->exit_code);
+            break;
+        case Intermediate_Instruction_Type::BREAK:
+            string_append_formated(string, "BREAK");
+            break;
+        case Intermediate_Instruction_Type::CONTINUE:
+            string_append_formated(string, "CONTINUE");
+            break;
+        case Intermediate_Instruction_Type::CALCULATE_ARRAY_ACCESS_POINTER:
+            string_append_formated(string, "CALCULATE_ARRAY_ACCESS_POINTER, type_size: %d,  ", instruction->constant_i32_value);
+            append_binary = true;
+            break;
+        case Intermediate_Instruction_Type::CALCULATE_MEMBER_ACCESS_POINTER:
+            string_append_formated(string, "CALCULATE_MEMBER_ACCESS_POINTER, offset: %d ", instruction->constant_i32_value);
+            append_source_destination = true;
+            break;
+        case Intermediate_Instruction_Type::MOVE_DATA:
+            string_append_formated(string, "MOVE_DATA");
+            append_source_destination = true;
+            break;
+        case Intermediate_Instruction_Type::LOAD_CONSTANT_F32:
+            string_append_formated(string, "LOAD_CONSTANT_F32, value: %3.2f ", instruction->constant_f32_value);
+            append_destination = true;
+            break;
+        case Intermediate_Instruction_Type::LOAD_CONSTANT_I32:
+            string_append_formated(string, "LOAD_CONSTANT_I32, value: %d ", instruction->constant_i32_value);
+            append_destination = true;
+            break;
+        case Intermediate_Instruction_Type::LOAD_CONSTANT_BOOL:
+            string_append_formated(string, "LOAD_CONSTANT_BOOL, value: %s ", instruction->constant_bool_value ? "TRUE" : "FALSE");
+            append_destination = true;
+            break;
+        default:
+            logg("Should not fucking happen!");
+            break;
         }
-        else {
-            string_append_formated(string, "void");
-        }
-        for (int i = 0; i < instruction->arguments.size; i++) {
-            string_append_formated(string, "\n\t\t#%d: ", i);
-            data_access_append_to_string(string, instruction->arguments[i], function, generator);
-        }
-        break;
-    case Intermediate_Instruction_Type::CALL_HARDCODED_FUNCTION:
-        string_append_formated(string, "CALL_HARDCODED_FUNCTION, function_id: %d, \n\t\treturn_data: ", (i32)instruction->hardcoded_function_type);
-        if (generator->analyser->hardcoded_functions[(int)instruction->hardcoded_function_type].function_type->return_type
-            != generator->analyser->type_system.void_type) {
-            data_access_append_to_string(string, instruction->destination, function, generator);
-        }
-        else {
-            string_append_formated(string, "void");
-        }
-        for (int i = 0; i < instruction->arguments.size; i++) {
-            string_append_formated(string, "\n\t\t#%d: ", i);
-            data_access_append_to_string(string, instruction->arguments[i], function, generator);
-        }
-        break;
-    case Intermediate_Instruction_Type::RETURN:
-        string_append_formated(string, "RETURN, return_data: ");
-        if (instruction->return_has_value)
-            append_src_1 = true;
-        else {
-            string_append_formated(string, "void");
-        }
-        break;
-    case Intermediate_Instruction_Type::EXIT:
-        string_append_formated(string, "EXIT ");
-        if (instruction->exit_code == Exit_Code::SUCCESS && instruction->return_has_value)
-            append_src_1 = true;
-        exit_code_append_to_string(string, instruction->exit_code);
-        break;
-    case Intermediate_Instruction_Type::BREAK:
-        string_append_formated(string, "BREAK");
-        break;
-    case Intermediate_Instruction_Type::CONTINUE:
-        string_append_formated(string, "CONTINUE");
-        break;
-    case Intermediate_Instruction_Type::CALCULATE_ARRAY_ACCESS_POINTER:
-        string_append_formated(string, "CALCULATE_ARRAY_ACCESS_POINTER, type_size: %d,  ", instruction->constant_i32_value);
-        append_binary = true;
-        break;
-    case Intermediate_Instruction_Type::CALCULATE_MEMBER_ACCESS_POINTER:
-        string_append_formated(string, "CALCULATE_MEMBER_ACCESS_POINTER, offset: %d ", instruction->constant_i32_value);
-        append_source_destination = true;
-        break;
-    case Intermediate_Instruction_Type::MOVE_DATA:
-        string_append_formated(string, "MOVE_DATA");
-        append_source_destination = true;
-        break;
-    case Intermediate_Instruction_Type::LOAD_CONSTANT_F32:
-        string_append_formated(string, "LOAD_CONSTANT_F32, value: %3.2f ", instruction->constant_f32_value);
-        append_destination = true;
-        break;
-    case Intermediate_Instruction_Type::LOAD_CONSTANT_I32:
-        string_append_formated(string, "LOAD_CONSTANT_I32, value: %d ", instruction->constant_i32_value);
-        append_destination = true;
-        break;
-    case Intermediate_Instruction_Type::LOAD_CONSTANT_BOOL:
-        string_append_formated(string, "LOAD_CONSTANT_BOOL, value: %s ", instruction->constant_bool_value ? "TRUE" : "FALSE");
-        append_destination = true;
-        break;
-    case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32:
-        string_append_formated(string, "BINARY_OP_ARITHMETIC_ADDITION_I32 ");
-        append_binary = true;
-        break;
-    case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_I32:
-        string_append_formated(string, "BINARY_OP_ARITHMETIC_SUBTRACTION_I32 ");
-        append_binary = true;
-        break;
-    case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_I32:
-        string_append_formated(string, "BINARY_OP_ARITHMETIC_MULTIPLICATION_I32 ");
-        append_binary = true;
-        break;
-    case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_I32:
-        string_append_formated(string, "BINARY_OP_ARITHMETIC_DIVISION_I32 ");
-        append_binary = true;
-        break;
-    case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_I32:
-        string_append_formated(string, "BINARY_OP_ARITHMETIC_MODULO_I32 ");
-        append_binary = true;
-        break;
-    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_I32:
-        string_append_formated(string, "BINARY_OP_COMPARISON_EQUAL_I32 ");
-        append_binary = true;
-        break;
-    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_I32:
-        string_append_formated(string, "BINARY_OP_COMPARISON_NOT_EQUAL_I32 ");
-        append_binary = true;
-        break;
-    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_I32:
-        string_append_formated(string, "BINARY_OP_COMPARISON_GREATER_THAN_I32 ");
-        append_binary = true;
-        break;
-    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_I32:
-        string_append_formated(string, "BINARY_OP_COMPARISON_GREATER_EQUAL_I32 ");
-        append_binary = true;
-        break;
-    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_I32:
-        string_append_formated(string, "BINARY_OP_COMPARISON_LESS_THAN_I32 ");
-        append_binary = true;
-        break;
-    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_I32:
-        string_append_formated(string, "BINARY_OP_COMPARISON_LESS_EQUAL_I32 ");
-        append_binary = true;
-        break;
-    case Intermediate_Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I32:
-        string_append_formated(string, "UNARY_OP_ARITHMETIC_NEGATE_I32 ");
-        append_source_destination = true;
-        break;
-    case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_F32:
-        string_append_formated(string, "BINARY_OP_ARITHMETIC_ADDITION_F32 ");
-        append_binary = true;
-        break;
-    case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_F32:
-        string_append_formated(string, "BINARY_OP_ARITHMETIC_SUBTRACTION_F32 ");
-        append_binary = true;
-        break;
-    case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_F32:
-        string_append_formated(string, "BINARY_OP_ARITHMETIC_MULTIPLICATION_F32 ");
-        append_binary = true;
-        break;
-    case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_F32:
-        string_append_formated(string, "BINARY_OP_ARITHMETIC_DIVISION_F32 ");
-        append_binary = true;
-        break;
-    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_F32:
-        string_append_formated(string, "BINARY_OP_COMPARISON_EQUAL_F32 ");
-        append_binary = true;
-        break;
-    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_F32:
-        string_append_formated(string, "BINARY_OP_COMPARISON_NOT_EQUAL_F32 ");
-        append_binary = true;
-        break;
-    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_F32:
-        string_append_formated(string, "BINARY_OP_COMPARISON_GREATER_THAN_F32 ");
-        append_binary = true;
-        break;
-    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_F32:
-        string_append_formated(string, "BINARY_OP_COMPARISON_GREATER_EQUAL_F32 ");
-        append_binary = true;
-        break;
-    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_F32:
-        string_append_formated(string, "BINARY_OP_COMPARISON_LESS_THAN_F32 ");
-        append_binary = true;
-        break;
-    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_F32:
-        string_append_formated(string, "BINARY_OP_COMPARISON_LESS_EQUAL_F32 ");
-        append_binary = true;
-        break;
-    case Intermediate_Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_F32:
-        string_append_formated(string, "UNARY_OP_ARITHMETIC_NEGATE_F32 ");
-        append_source_destination = true;
-        break;
-    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_BOOL:
-        string_append_formated(string, "BINARY_OP_COMPARISON_EQUAL_BOOL ");
-        append_binary = true;
-        break;
-    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_BOOL:
-        string_append_formated(string, "BINARY_OP_COMPARISON_NOT_EQUAL_BOOL ");
-        append_binary = true;
-        break;
-    case Intermediate_Instruction_Type::BINARY_OP_BOOLEAN_AND:
-        string_append_formated(string, "BINARY_OP_BOOLEAN_AND ");
-        append_binary = true;
-        break;
-    case Intermediate_Instruction_Type::BINARY_OP_BOOLEAN_OR:
-        string_append_formated(string, "BINARY_OP_BOOLEAN_OR ");
-        append_binary = true;
-        break;
-    case Intermediate_Instruction_Type::UNARY_OP_BOOLEAN_NOT:
-        string_append_formated(string, "UNARY_OP_BOOLEAN_NOT ");
-        append_source_destination = true;
-        break;
-    default:
-        logg("Should not fucking happen!");
-        break;
     }
 
     if (append_binary) {

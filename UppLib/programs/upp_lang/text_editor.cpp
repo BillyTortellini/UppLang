@@ -2356,8 +2356,6 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
         ast_parser_parse(&editor->parser, &editor->lexer);
         double semantic_analysis_start_time = timing_current_time_in_seconds();
         semantic_analyser_analyse(&editor->analyser, &editor->parser);
-        if (editor->parser.errors.size == 0) {
-        }
         double intermediate_generator_start_time = timing_current_time_in_seconds();
         double bytecode_generator_start_time = timing_current_time_in_seconds();
         if (editor->parser.errors.size == 0 && editor->analyser.errors.size == 0 && input->key_pressed[KEY_CODE::F5])
@@ -2386,10 +2384,8 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
             logg("--------AST PARSE RESULT--------:\n");
             logg("\n%s\n", printed_ast.characters);
 
-            if (editor->parser.errors.size == 0) {
-                logg("--------TYPE SYSTEM RESULT--------:\n");
-                type_system_print(&editor->analyser.type_system);
-            }
+            logg("--------TYPE SYSTEM RESULT--------:\n");
+            type_system_print(&editor->analyser.type_system);
             if (editor->analyser.errors.size == 0)
             {
                 String result_str = string_create_empty(32);
@@ -2402,6 +2398,7 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
                 logg("----------------BYTECODE_GENERATOR RESULT---------------: \n%s\n", result_str.characters);
             }
         }
+
         double debug_print_end_time = timing_current_time_in_seconds();
         logg(
             "--------- TIMINGS -----------\nlexer time: \t%3.2fms\nparser time: \t%3.2fms\nanalyser time: %3.2fms\nintermediate time: %3.2fms\nbytecode time: %3.2fms\ndebug print: %3.2fms\n",
@@ -2428,10 +2425,8 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
                 exit_code_append_to_string(&source_code, editor->bytecode_interpreter.exit_code);
                 logg("Bytecode interpreter error: %s\n", source_code.characters);
             }
-            /*
-            */
 
-            c_generator_generate(&editor->c_generator, &editor->intermediate_generator);
+            //c_generator_generate(&editor->c_generator, &editor->intermediate_generator);
             //logg("C-Code:\n------------------\n%s\n", editor->c_generator.output_string.characters);
         }
 
@@ -2443,7 +2438,7 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
         vec3 IDENTIFIER_FALLBACK_COLOR = vec3(0.7f, 0.7f, 1.0f);
         vec3 VARIABLE_COLOR = vec3(0.5f, 0.5f, 0.8f);
         vec3 TYPE_COLOR = vec3(0.4f, 0.9f, 0.9f);
-        vec3 PRIMITIVE_TYPE_COLOR = vec3(0.3f, 0.3f, 0.75f);
+        vec3 PRIMITIVE_TYPE_COLOR = vec3(0.1f, 0.3f, 1.0f);
         vec4 BG_COLOR = vec4(0);
         for (int i = 0; i < editor->lexer.tokens_with_whitespaces.size; i++)
         {
@@ -2452,7 +2447,7 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
                 text_editor_add_highlight_from_slice(editor, t.position, COMMENT_COLOR, BG_COLOR);
             else if (token_type_is_keyword(t.type))
                 text_editor_add_highlight_from_slice(editor, t.position, KEYWORD_COLOR, BG_COLOR);
-            else if (t.type == Token_Type::IDENTIFIER) 
+            else if (t.type == Token_Type::IDENTIFIER)
             {
                 AST_Node_Index nearest_node_index = ast_parser_get_closest_node_to_text_position(&editor->parser, t.position.start, editor->lines);
                 AST_Node* nearest_node = &editor->parser.nodes[nearest_node_index];

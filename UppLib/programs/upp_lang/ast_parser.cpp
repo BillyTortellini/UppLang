@@ -368,6 +368,7 @@ AST_Node_Index ast_parser_parse_variable_read(AST_Parser* parser)
     return node_index;
 }
 
+AST_Node_Index ast_parser_parse_expression_single_value(AST_Parser* parser);
 AST_Node_Index ast_parser_parse_array_or_member_access(AST_Parser* parser, AST_Node_Index child_node)
 {
     AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, -1);
@@ -417,7 +418,7 @@ AST_Node_Index ast_parser_parse_general_access(AST_Parser* parser)
             return -1;
         }
         parser->index += 1;
-        AST_Node_Index child = ast_parser_parse_general_access(parser);
+        AST_Node_Index child = ast_parser_parse_expression_single_value(parser);
         if (child == -1) {
             ast_parser_checkpoint_reset(checkpoint);
             return -1;

@@ -195,6 +195,10 @@ enum class Intermediate_Instruction_Type
     UNARY_OP_ARITHMETIC_NEGATE_F64,
     UNARY_OP_BOOLEAN_NOT,
 };
+bool intermediate_instruction_type_is_unary_operation(Intermediate_Instruction_Type instruction_type);
+bool intermediate_instruction_type_is_binary_operation(Intermediate_Instruction_Type instruction_type);
+void intermediate_instruction_binop_append_to_string(String* string, Intermediate_Instruction_Type instruction_type);
+void intermediate_instruction_unary_operation_append_to_string(String* string, Intermediate_Instruction_Type instruction_type);
 
 struct Intermediate_Instruction
 {

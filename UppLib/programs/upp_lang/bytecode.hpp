@@ -19,6 +19,7 @@
     A Functions Stack-Frame looks like this:
     [ParamReg0] [ParamReg1] [ParamRegs...] [Return_Address] [Old_Stack_Pointer] [Reg0] [Reg1] [Reg2] [Regs...]
 */
+
 namespace Instruction_Type
 {
     enum ENUM
@@ -44,14 +45,10 @@ namespace Instruction_Type
         LOAD_CONSTANT_I32, // op1 = dest_reg, op2 = value // Todo: Only works because we dont 64bit constants yet
         LOAD_CONSTANT_BOOLEAN, // op1 = dest_reg, op2 = value // Todo: Only works because we dont 64bit constants yet
 
-        CAST_U8_I64, // op1 = dst_reg,, op2 = src_reg
-        CAST_U16_I64, // op1 = dst_reg,, op2 = src_reg
-        CAST_U32_I64, // op1 = dst_reg,, op2 = src_reg
-        CAST_I64_U8, // op1 = dst_reg,, op2 = src_reg
-        CAST_I64_U16, // op1 = dst_reg,, op2 = src_reg
-        CAST_I64_U32, // op1 = dst_reg,, op2 = src_reg
-        CAST_F32_F64, // op1 = dst_reg,, op2 = src_reg
-        CAST_F64_F32, // op1 = dst_reg,, op2 = src_reg
+        CAST_INTEGER_DIFFERENT_SIZE, // op1 = dst_reg, op2 = src_reg, op3 = dst_prim_type, op4 = src_prim_type
+        CAST_FLOAT_DIFFERENT_SIZE, // op1 = dst_reg, op2 = src_reg, op3 = dst_prim_type, op4 = src_prim_type
+        CAST_FLOAT_INTEGER, // op1 = dst_reg, op2 = src_reg, op3 = dst_prim_type, op4 = src_prim_type
+        CAST_INTEGER_FLOAT, // op1 = dst_reg, op2 = src_reg, op3 = dst_prim_type, op4 = src_prim_type
 
         // Expression Instructions, all binary operations work the following: op1 = dest_byte_offset, op2 = left_byte_offset, op3 = right_byte_offset
         // ! This has to be in sync with the intermediate code ENUM
