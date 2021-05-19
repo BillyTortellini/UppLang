@@ -85,6 +85,7 @@ struct Type_System
     Type_Signature* f32_type;
     Type_Signature* f64_type;
     Type_Signature* void_type;
+    Type_Signature* void_ptr_type;
 };
 
 Type_System type_system_create();
@@ -158,6 +159,8 @@ struct Semantic_Node_Information
     int member_access_offset;
     bool needs_empty_return_at_end;
     bool delete_is_array_delete;
+    bool needs_casting_to_cast_type;
+    Type_Signature* cast_result_type;
 };
 
 struct Struct_Fill_Out

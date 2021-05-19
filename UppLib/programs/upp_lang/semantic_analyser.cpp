@@ -213,6 +213,7 @@ void type_system_add_primitives(Type_System* system)
     system->f64_type = new Type_Signature();
     system->error_type = new Type_Signature();
     system->void_type = new Type_Signature();
+    system->void_ptr_type = new Type_Signature();
 
     *system->bool_type = type_signature_make_primitive(Primitive_Type::BOOLEAN);
     *system->i8_type   = type_signature_make_primitive(Primitive_Type::SIGNED_INT_8);
@@ -230,6 +231,11 @@ void type_system_add_primitives(Type_System* system)
     system->void_type->size_in_bytes = 0;
     system->void_type->alignment_in_bytes = 1;
 
+    system->void_ptr_type->type = Signature_Type::POINTER;
+    system->void_ptr_type->size_in_bytes = 8;
+    system->void_ptr_type->alignment_in_bytes = 8;
+    system->void_ptr_type->child_type = system->void_type;
+
     dynamic_array_push_back(&system->types, system->bool_type);
     dynamic_array_push_back(&system->types, system->i8_type);
     dynamic_array_push_back(&system->types, system->i16_type);
@@ -243,6 +249,7 @@ void type_system_add_primitives(Type_System* system)
     dynamic_array_push_back(&system->types, system->f64_type);
     dynamic_array_push_back(&system->types, system->error_type);
     dynamic_array_push_back(&system->types, system->void_type);
+    dynamic_array_push_back(&system->types, system->void_ptr_type);
 }
 
 Type_System type_system_create()
@@ -558,6 +565,10 @@ Type_Signature* semantic_analyser_analyse_type(Semantic_Analyser* analyser, int 
         }
 
         Type_Signature* element_type = semantic_analyser_analyse_type(analyser, type_node->children[1]);
+        if (element_type == analyser->type_system.void_type) {
+            semantic_analyser_log_error(analyser, "Cannot have array of void type!", index_node_array_size);
+            return analyser->type_system.error_type;
+        }
         for (int i = 0; i < analyser->struct_fill_outs.size; i++) {
             Struct_Fill_Out* fill_out = &analyser->struct_fill_outs[i];
             if (fill_out->signature == element_type) {
@@ -572,7 +583,12 @@ Type_Signature* semantic_analyser_analyse_type(Semantic_Analyser* analyser, int 
         );
     }
     case AST_Node_Type::TYPE_ARRAY_UNSIZED: {
-        return type_system_make_array_unsized(&analyser->type_system, semantic_analyser_analyse_type(analyser, type_node->children[0]));
+        Type_Signature* element_type = semantic_analyser_analyse_type(analyser, type_node->children[0]);
+        if (element_type == analyser->type_system.void_type) {
+            semantic_analyser_log_error(analyser, "Cannot have array of void type!", type_node->children[0]);
+            return analyser->type_system.error_type;
+        }
+        return type_system_make_array_unsized(&analyser->type_system, element_type);
     }
     }
 
@@ -586,6 +602,58 @@ Expression_Analysis_Result expression_analysis_result_make(Type_Signature* expre
     result.type = expression_result;
     result.has_memory_address = has_memory_address;
     return result;
+}
+
+bool semantic_analyser_type_can_be_cast_implicit(Semantic_Analyser* analyser, Type_Signature* source, Type_Signature* destination)
+{
+    // Int to bigger int always
+    if (source->type == Signature_Type::PRIMITIVE && destination->type == Signature_Type::PRIMITIVE)
+    {
+        if (primitive_type_is_integer(source->primitive_type) && primitive_type_is_integer(destination->primitive_type)) {
+            if (primitive_type_is_signed(source->primitive_type) != primitive_type_is_signed(destination->primitive_type)) return false;
+            return destination->size_in_bytes >= source->size_in_bytes;
+        }
+        if (primitive_type_is_float(destination->primitive_type) && primitive_type_is_float(source->primitive_type)) {
+            return destination->size_in_bytes >= source->size_in_bytes;
+        }
+
+        if (primitive_type_is_float(destination->primitive_type) && primitive_type_is_integer(source->primitive_type)) return true;
+    }
+
+    // Pointer to void_ptr and void_ptr to pointer
+    return false;
+}
+
+bool semantic_analyser_implicit_cast_possible(Semantic_Analyser* analyser, Type_Signature* source, Type_Signature* destination)
+{
+    bool cast_valid = false;
+    // Pointer casting
+    if (source->type == Signature_Type::POINTER && destination->type == Signature_Type::POINTER) {
+        if (source == analyser->type_system.void_ptr_type || destination == analyser->type_system.void_ptr_type) return true;
+        return false;
+    }
+    // Primitive Casting:
+    if (source->type == Signature_Type::PRIMITIVE && destination->type == Signature_Type::PRIMITIVE) 
+    {
+        if (primitive_type_is_integer(source->primitive_type) && primitive_type_is_integer(destination->primitive_type)) {
+            if (primitive_type_is_signed(source->primitive_type) != primitive_type_is_signed(destination->primitive_type)) return false;
+            return destination->size_in_bytes > source->size_in_bytes;
+        }
+        if (primitive_type_is_float(destination->primitive_type) && primitive_type_is_integer(source->primitive_type)) {
+            return true;
+        }
+        if (primitive_type_is_float(destination->primitive_type) && primitive_type_is_float(source->primitive_type)) {
+            return destination->size_in_bytes > source->size_in_bytes;
+        }
+        if (source->primitive_type == Primitive_Type::BOOLEAN || destination->primitive_type == Primitive_Type::BOOLEAN) {
+            return false;
+        }
+    }
+    // Array casting
+    if (source->type == Signature_Type::ARRAY_SIZED && destination->type == Signature_Type::ARRAY_UNSIZED) {
+        if (source->child_type == destination->child_type) return true;
+    }
+    return false;
 }
 
 Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyser* analyser, Symbol_Table* table, int expression_index)
@@ -602,7 +670,8 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
     bool int_valid, float_valid, bool_valid;
     bool unsigned_valid = true;
     int_valid = float_valid = bool_valid = false;
-    bool return_left_type = false;
+    bool return_operand_type = false;
+    bool ptr_valid = false;
     Type_Signature* return_type = analyser->type_system.error_type;
 
     switch (expression->type)
@@ -624,8 +693,14 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
         for (int i = 0; i < signature->parameter_types.size && i < expression->children.size; i++)
         {
             Expression_Analysis_Result expr_result = semantic_analyser_analyse_expression(analyser, table, expression->children[i]);
-            if (expr_result.type != signature->parameter_types[i] || expr_result.type == analyser->type_system.error_type) {
-                semantic_analyser_log_error(analyser, "Argument type does not match parameter type", expression->children[i]);
+            if (expr_result.type != signature->parameter_types[i] && expr_result.type != analyser->type_system.error_type) {
+                if (semantic_analyser_implicit_cast_possible(analyser, expr_result.type, signature->parameter_types[i])) {
+                    analyser->semantic_information[expression->children[i]].needs_casting_to_cast_type = true;
+                    analyser->semantic_information[expression->children[i]].cast_result_type = signature->parameter_types[i];
+                }
+                else {
+                    semantic_analyser_log_error(analyser, "Argument type does not match parameter type", expression->children[i]);
+                }
             }
         }
 
@@ -654,17 +729,31 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
             return expression_analysis_result_make(analyser->type_system.error_type, true);
         }
 
-        if (cast_source_type->type != Signature_Type::PRIMITIVE || cast_destination_type->type != Signature_Type::PRIMITIVE) {
-            semantic_analyser_log_error(analyser, "Currently we only can cast primitives", expression_index);
-            return expression_analysis_result_make(analyser->type_system.error_type, true);
+        bool cast_valid = false;
+        // Pointer casting
+        if (cast_source_type->type == Signature_Type::POINTER && cast_destination_type->type == Signature_Type::POINTER) cast_valid = true;
+        // U64 to Pointer
+        if (cast_source_type == analyser->type_system.u64_type && cast_destination_type->type == Signature_Type::POINTER) cast_valid = true;
+        // Pointer to U64
+        if (cast_source_type->type == Signature_Type::POINTER && cast_destination_type == analyser->type_system.u64_type) cast_valid = true;
+        // Primitive Casting:
+        if (cast_source_type->type == Signature_Type::PRIMITIVE && cast_destination_type->type == Signature_Type::PRIMITIVE) {
+            cast_valid = true;
+            if (cast_source_type->primitive_type == Primitive_Type::BOOLEAN || cast_destination_type->primitive_type == Primitive_Type::BOOLEAN) {
+                cast_valid = false;
+            }
         }
-        if (cast_source_type->primitive_type == Primitive_Type::BOOLEAN || cast_destination_type->primitive_type == Primitive_Type::BOOLEAN) {
-            semantic_analyser_log_error(analyser, "Cannot cast boolean types", expression_index);
-            return expression_analysis_result_make(analyser->type_system.error_type, true);
+        // Array casting
+        if (cast_source_type->type == Signature_Type::ARRAY_SIZED && cast_destination_type->type == Signature_Type::ARRAY_UNSIZED) {
+            if (cast_source_type->child_type == cast_destination_type->child_type) cast_valid = true;
         }
 
-        analyser->semantic_information[expression_index].expression_result_type = cast_destination_type;
-        return expression_analysis_result_make(cast_destination_type, false); // Primitive type casting does not have memory address, but pointers do
+        if (cast_valid) {
+            analyser->semantic_information[expression_index].expression_result_type = cast_destination_type;
+            return expression_analysis_result_make(cast_destination_type, false);
+        }
+        semantic_analyser_log_error(analyser, "Invalid cast!", expression_index);
+        return expression_analysis_result_make(analyser->type_system.error_type, true);
     }
     case AST_Node_Type::EXPRESSION_LITERAL:
     {
@@ -672,11 +761,17 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
         if (type == Token_Type::BOOLEAN_LITERAL) {
             analyser->semantic_information[expression_index].expression_result_type = analyser->type_system.bool_type;
         }
-        if (type == Token_Type::INTEGER_LITERAL) {
+        else if (type == Token_Type::INTEGER_LITERAL) {
             analyser->semantic_information[expression_index].expression_result_type = analyser->type_system.i32_type;
         }
-        if (type == Token_Type::FLOAT_LITERAL) {
+        else if (type == Token_Type::FLOAT_LITERAL) {
             analyser->semantic_information[expression_index].expression_result_type = analyser->type_system.f32_type;
+        }
+        else if (type == Token_Type::NULLPTR) {
+            analyser->semantic_information[expression_index].expression_result_type = analyser->type_system.void_ptr_type;
+        }
+        else {
+            panic("Should not happen!");
         }
         return expression_analysis_result_make(analyser->semantic_information[expression_index].expression_result_type, false);
     }
@@ -800,7 +895,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_MULTIPLICATION: {
         is_binary_op = true;
         int_valid = float_valid = true;
-        return_left_type = true;
+        return_operand_type = true;
         break;
     }
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_GREATER:
@@ -815,14 +910,14 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_MODULO: {
         is_binary_op = true;
         int_valid = true;
-        return_left_type = true;
+        return_operand_type = true;
         break;
     }
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_AND:
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_OR: {
         is_binary_op = true;
         bool_valid = true;
-        return_left_type = true;
+        return_operand_type = true;
         break;
     }
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_EQUAL:
@@ -830,6 +925,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
         is_binary_op = true;
         bool_valid = int_valid = float_valid = true;
         return_type = analyser->type_system.bool_type;
+        ptr_valid = true;
         break;
     }
     case AST_Node_Type::EXPRESSION_UNARY_OPERATION_NOT: {
@@ -841,7 +937,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
     case AST_Node_Type::EXPRESSION_UNARY_OPERATION_NEGATE: {
         is_unary_op = true;
         float_valid = int_valid = true;
-        return_left_type = true;
+        return_operand_type = true;
         unsigned_valid = false;
         break;
     }
@@ -879,21 +975,64 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
     {
         Expression_Analysis_Result left_expr_result = semantic_analyser_analyse_expression(analyser, table, expression->children[0]);
         Expression_Analysis_Result right_expr_result = semantic_analyser_analyse_expression(analyser, table, expression->children[1]);
+        Type_Signature* operand_type = left_expr_result.type;
         if (left_expr_result.type == analyser->type_system.error_type || right_expr_result.type == analyser->type_system.error_type) {
             return expression_analysis_result_make(analyser->type_system.error_type, true);
         }
-        if (left_expr_result.type != right_expr_result.type) {
-            semantic_analyser_log_error(analyser, "Left and right of binary operation do not match", expression_index);
+        if (left_expr_result.type != right_expr_result.type)
+        {
+            // What are the cases where casts are necessary? 
+            bool cast_possible = false;
+            switch (expression->type)
+            {
+            case AST_Node_Type::EXPRESSION_BINARY_OPERATION_ADDITION:
+            case AST_Node_Type::EXPRESSION_BINARY_OPERATION_SUBTRACTION:
+            case AST_Node_Type::EXPRESSION_BINARY_OPERATION_DIVISION:
+            case AST_Node_Type::EXPRESSION_BINARY_OPERATION_MULTIPLICATION:
+            case AST_Node_Type::EXPRESSION_BINARY_OPERATION_MODULO:
+            case AST_Node_Type::EXPRESSION_BINARY_OPERATION_LESS:
+            case AST_Node_Type::EXPRESSION_BINARY_OPERATION_LESS_OR_EQUAL:
+            case AST_Node_Type::EXPRESSION_BINARY_OPERATION_GREATER:
+            case AST_Node_Type::EXPRESSION_BINARY_OPERATION_GREATER_OR_EQUAL:
+                cast_possible = true;
+                break;
+            default: cast_possible = false;
+            }
+            if (!cast_possible) {
+                semantic_analyser_log_error(analyser, "Left and right of binary operation do not match", expression_index);
+                return expression_analysis_result_make(analyser->type_system.error_type, false);
+            }
+            if (semantic_analyser_implicit_cast_possible(analyser, left_expr_result.type, right_expr_result.type)) {
+                analyser->semantic_information[expression->children[0]].needs_casting_to_cast_type = true;
+                analyser->semantic_information[expression->children[0]].cast_result_type = right_expr_result.type;
+                operand_type = right_expr_result.type;
+            }
+            else if (semantic_analyser_implicit_cast_possible(analyser, right_expr_result.type, left_expr_result.type)) {
+                analyser->semantic_information[expression->children[1]].needs_casting_to_cast_type = true;
+                analyser->semantic_information[expression->children[1]].cast_result_type = left_expr_result.type;
+                operand_type = left_expr_result.type;
+            }
+            else {
+                semantic_analyser_log_error(analyser, "Left and right of binary operation do not match and cannot be cast", expression_index);
+                return expression_analysis_result_make(analyser->type_system.error_type, false);
+            }
         }
 
-        if (left_expr_result.type == analyser->type_system.u8_type ||
-            left_expr_result.type == analyser->type_system.u16_type ||
-            left_expr_result.type == analyser->type_system.u32_type ||
-            left_expr_result.type == analyser->type_system.u64_type ||
-            left_expr_result.type == analyser->type_system.i8_type ||
-            left_expr_result.type == analyser->type_system.i16_type ||
-            left_expr_result.type == analyser->type_system.i32_type ||
-            left_expr_result.type == analyser->type_system.i64_type)
+        if (operand_type->type == Signature_Type::POINTER) {
+            if (!ptr_valid) {
+                semantic_analyser_log_error(analyser, "Pointer not valid for this type of operation", expression_index);
+                return expression_analysis_result_make(analyser->type_system.error_type, false);
+            }
+        }
+
+        if (operand_type == analyser->type_system.u8_type ||
+            operand_type == analyser->type_system.u16_type ||
+            operand_type == analyser->type_system.u32_type ||
+            operand_type == analyser->type_system.u64_type ||
+            operand_type == analyser->type_system.i8_type ||
+            operand_type == analyser->type_system.i16_type ||
+            operand_type == analyser->type_system.i32_type ||
+            operand_type == analyser->type_system.i64_type)
         {
             if (!int_valid) {
                 semantic_analyser_log_error(analyser, "Operands cannot be integers", expression_index);
@@ -901,8 +1040,8 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
             }
         }
 
-        if (left_expr_result.type == analyser->type_system.f32_type ||
-            left_expr_result.type == analyser->type_system.f64_type)
+        if (operand_type == analyser->type_system.f32_type ||
+            operand_type == analyser->type_system.f64_type)
         {
             if (!float_valid) {
                 semantic_analyser_log_error(analyser, "Operands cannot be floats", expression_index);
@@ -910,16 +1049,16 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
             }
         }
 
-        if (left_expr_result.type == analyser->type_system.bool_type) {
+        if (operand_type == analyser->type_system.bool_type) {
             if (!bool_valid) {
                 semantic_analyser_log_error(analyser, "Operands cannot be booleans", expression_index);
                 return expression_analysis_result_make(analyser->type_system.error_type, false);
             }
         }
 
-        if (return_left_type) {
-            analyser->semantic_information[expression_index].expression_result_type = left_expr_result.type;
-            return expression_analysis_result_make(left_expr_result.type, false);
+        if (return_operand_type) {
+            analyser->semantic_information[expression_index].expression_result_type = operand_type;
+            return expression_analysis_result_make(operand_type, false);
         }
         analyser->semantic_information[expression_index].expression_result_type = return_type;
         return expression_analysis_result_make(return_type, false);
@@ -964,7 +1103,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
             }
         }
 
-        if (return_left_type) {
+        if (return_operand_type) {
             analyser->semantic_information[expression_index].expression_result_type = left_type;
             return expression_analysis_result_make(left_type, false);
         }
@@ -1089,6 +1228,11 @@ Statement_Analysis_Result semantic_analyser_analyse_statement(Semantic_Analyser*
             semantic_analyser_log_error(analyser, "Left side of assignment cannot be assigned to, does not have a memory address", statement_index);
         }
         if (left_result.type != right_result.type) {
+            if (semantic_analyser_implicit_cast_possible(analyser, right_result.type, left_result.type)) {
+                analyser->semantic_information[statement->children[1]].needs_casting_to_cast_type = true;
+                analyser->semantic_information[statement->children[1]].cast_result_type = left_result.type;
+                return Statement_Analysis_Result::NO_RETURN;
+            }
             semantic_analyser_log_error(analyser, "Left side of assignment is not the same as right side", statement_index);
         }
         return Statement_Analysis_Result::NO_RETURN;
@@ -1129,8 +1273,14 @@ Statement_Analysis_Result semantic_analyser_analyse_statement(Semantic_Analyser*
             semantic_analyser_log_error(analyser, "Trying to assign void type to variable", statement_index);
             return Statement_Analysis_Result::NO_RETURN;
         }
-        if (assignment_type != var_type && assignment_type != analyser->type_system.error_type) {
-            semantic_analyser_log_error(analyser, "Variable type does not match expression type", statement_index);
+        if (var_type != assignment_type) {
+            if (semantic_analyser_implicit_cast_possible(analyser, assignment_type, var_type)) {
+                analyser->semantic_information[statement->children[1]].needs_casting_to_cast_type = true;
+                analyser->semantic_information[statement->children[1]].cast_result_type = var_type;
+            }
+            else {
+                semantic_analyser_log_error(analyser, "Left side of assignment is not the same as right side", statement_index);
+            }
         }
         semantic_analyser_define_variable(analyser, parent, statement_index, var_type, analyser->parser->token_mapping[statement_index].start_index);
         break;
@@ -1369,6 +1519,8 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, AST_Parser* parser)
         info.struct_signature = analyser->type_system.error_type;
         info.symbol_table_index = 0;
         info.delete_is_array_delete = false;
+        info.needs_casting_to_cast_type = false;
+        info.cast_result_type = analyser->type_system.error_type;
         dynamic_array_push_back(&analyser->semantic_information, info);
     }
 
@@ -1463,14 +1615,14 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, AST_Parser* parser)
             break;
         }
         case Hardcoded_Function_Type::FREE_POINTER: {
-            analyser->hardcoded_functions[i].name_handle = 0;
+            analyser->hardcoded_functions[i].name_handle = -1;
             dynamic_array_push_back(&parameter_types, type_system_make_pointer(&analyser->type_system, analyser->type_system.i32_type));
             return_type = analyser->type_system.void_type;
             analyser->hardcoded_functions[i].function_type = type_system_make_function(&analyser->type_system, parameter_types, return_type);
             continue;
         }
         case Hardcoded_Function_Type::MALLOC_SIZE_I32: {
-            analyser->hardcoded_functions[i].name_handle = 0;
+            analyser->hardcoded_functions[i].name_handle = -1;
             dynamic_array_push_back(&parameter_types, analyser->type_system.i32_type);
             return_type = type_system_make_pointer(&analyser->type_system, analyser->type_system.i32_type);
             analyser->hardcoded_functions[i].function_type = type_system_make_function(&analyser->type_system, parameter_types, return_type);

@@ -48,6 +48,7 @@ enum class Intermediate_Instruction_Type
     LOAD_CONSTANT_F32, // Dest
     LOAD_CONSTANT_I32, // Dest
     LOAD_CONSTANT_BOOL, // Dest
+    LOAD_NULLPTR, // Dest
 
     IF_BLOCK, // Use source 1 as condition
     WHILE_BLOCK, // Use source 1 as condition
@@ -62,6 +63,9 @@ enum class Intermediate_Instruction_Type
     CALCULATE_MEMBER_ACCESS_POINTER, // Destination, Source, offset in constant_i32_value | !Different Behavior depending on Memory_Access!
     CALCULATE_ARRAY_ACCESS_POINTER, // Destination, Source1: base_ptr, Source2: index_access, type_size in constant_i32_value | !Different Behavior depending on Memory_Access!
     CAST_PRIMITIVE_TYPES, // Destination, Source
+    CAST_POINTERS, // Destination, Source
+    CAST_POINTER_TO_U64, // Destination, Source
+    CAST_U64_TO_POINTER, // Destination, Source
 
     // Operations
     BINARY_OP_ARITHMETIC_ADDITION_U8,
@@ -186,6 +190,9 @@ enum class Intermediate_Instruction_Type
     BINARY_OP_COMPARISON_NOT_EQUAL_BOOL,
     BINARY_OP_BOOLEAN_AND,
     BINARY_OP_BOOLEAN_OR,
+
+    BINARY_OP_COMPARISON_EQUAL_POINTER,
+    BINARY_OP_COMPARISON_NOT_EQUAL_POINTER,
 
     UNARY_OP_ARITHMETIC_NEGATE_I8,
     UNARY_OP_ARITHMETIC_NEGATE_I16,

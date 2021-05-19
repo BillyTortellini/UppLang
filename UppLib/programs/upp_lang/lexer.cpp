@@ -34,6 +34,7 @@ const char* token_type_to_string(Token_Type::ENUM type)
     case Token_Type::DOT: return "DOT";
     case Token_Type::NEW: return "NEW";
     case Token_Type::DELETE_TOKEN: return "DELETE";
+    case Token_Type::NULLPTR: return "NULLPTR";
     case Token_Type::COLON: return "COLON";
     case Token_Type::COMMA: return "COMMA";
     case Token_Type::DOUBLE_COLON: return "DOUBLE_COLON";
@@ -646,6 +647,12 @@ void lexer_parse_string(Lexer* lexer, String* code)
             }
             else if (string_equals_cstring(&identifier_string, "cast")) {
                 dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::CAST, token_attribute_make_empty(),
+                    line_number, character_pos, identifier_string_length, index));
+                index += identifier_string_length;
+                character_pos += identifier_string_length;
+            }
+            else if (string_equals_cstring(&identifier_string, "nullptr")) {
+                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::NULLPTR, token_attribute_make_empty(),
                     line_number, character_pos, identifier_string_length, index));
                 index += identifier_string_length;
                 character_pos += identifier_string_length;

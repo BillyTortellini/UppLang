@@ -21,6 +21,7 @@ namespace Token_Type
         NEW,
         DELETE_TOKEN,
         CAST,
+        NULLPTR,
         // Delimiters
         DOT,        // .
         COLON,      // :

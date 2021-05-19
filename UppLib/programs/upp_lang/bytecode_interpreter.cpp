@@ -186,6 +186,9 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
     case Instruction_Type::LOAD_CONSTANT_I32:
         *(i32*)(interpreter->stack_pointer + i->op1) = i->op2;
         break;
+    case Instruction_Type::LOAD_NULLPTR:
+        *(void**)(interpreter->stack_pointer + i->op1) = nullptr;
+        break;
     case Instruction_Type::LOAD_CONSTANT_BOOLEAN:
         *(interpreter->stack_pointer + i->op1) = (byte)i->op2;
         break;
@@ -268,8 +271,8 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         default: panic("what the frigg\n");
         }
         switch ((Primitive_Type) i->op3) {
-        case Primitive_Type::FLOAT_32: *(float*)(interpreter->stack_pointer + i->op1) = (float) source_is_signed ? source_signed : source_unsigned; break;
-        case Primitive_Type::FLOAT_64: *(double*)(interpreter->stack_pointer + i->op1) = (double) source_is_signed ? source_signed : source_unsigned; break;
+        case Primitive_Type::FLOAT_32: *(float*)(interpreter->stack_pointer + i->op1) = (float) (source_is_signed ? source_signed : source_unsigned); break;
+        case Primitive_Type::FLOAT_64: *(double*)(interpreter->stack_pointer + i->op1) = (double) (source_is_signed ? source_signed : source_unsigned); break;
         default: panic("what the frigg\n");
         }
         break;
@@ -641,6 +644,13 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         break;
     case Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_F64:
         *(f64*)(interpreter->stack_pointer + i->op1) = -(*(f64*)(interpreter->stack_pointer + i->op2));
+        break;
+
+    case Instruction_Type::BINARY_OP_COMPARISON_EQUAL_POINTER:
+        *(interpreter->stack_pointer + i->op1) = *(void**)(interpreter->stack_pointer + i->op2) == *(void**)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_POINTER:
+        *(interpreter->stack_pointer + i->op1) = *(void**)(interpreter->stack_pointer + i->op2) != *(void**)(interpreter->stack_pointer + i->op3);
         break;
 
     case Instruction_Type::BINARY_OP_COMPARISON_EQUAL_BOOL:

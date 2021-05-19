@@ -182,6 +182,7 @@ Intermediate_Instruction_Type binary_operation_get_instruction_type(Intermediate
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_OR:
         return Intermediate_Instruction_Type::BINARY_OP_BOOLEAN_OR;
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_EQUAL:
+        if (operand_types->type == Signature_Type::POINTER) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_POINTER;
         if (operand_types == generator->analyser->type_system.u8_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_U8;
         if (operand_types == generator->analyser->type_system.u16_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_U16;
         if (operand_types == generator->analyser->type_system.u32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_U32;
@@ -195,6 +196,7 @@ Intermediate_Instruction_Type binary_operation_get_instruction_type(Intermediate
         if (operand_types == generator->analyser->type_system.bool_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_BOOL;
         panic("Not valid, should have been caught!");
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_NOT_EQUAL:
+        if (operand_types->type == Signature_Type::POINTER) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_POINTER;
         if (operand_types == generator->analyser->type_system.u8_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_U8;
         if (operand_types == generator->analyser->type_system.u16_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_U16;
         if (operand_types == generator->analyser->type_system.u32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_U32;
@@ -293,6 +295,71 @@ Data_Access intermediate_generator_generate_offset_access(Intermediate_Generator
     return calc_member_access.destination;
 }
 
+Data_Access intermediate_generator_generate_cast(Intermediate_Generator* generator, Data_Access source_access, 
+    Type_Signature* source_type, Type_Signature* destination_type, bool force_destination, Data_Access destination)
+{
+    Intermediate_Function* function = &generator->functions[generator->current_function_index];
+    if (source_type->type == Signature_Type::ARRAY_SIZED && destination_type->type == Signature_Type::ARRAY_UNSIZED)
+    {
+        Data_Access sized_array_access;
+        Type_Signature* child_ptr_type = type_system_make_pointer(&generator->analyser->type_system, destination_type->child_type);
+        if (force_destination) sized_array_access = destination;
+        else {
+            sized_array_access = intermediate_generator_create_intermediate_register(generator, destination_type);
+        }
+
+        Data_Access ptr_access = intermediate_generator_generate_offset_access(generator, sized_array_access, 0, child_ptr_type);
+        Data_Access size_access = intermediate_generator_generate_offset_access(generator, sized_array_access, 8,
+            generator->analyser->type_system.i32_type
+        );
+
+        Intermediate_Instruction ptr_move_instr;
+        ptr_move_instr.type = Intermediate_Instruction_Type::ADDRESS_OF;
+        ptr_move_instr.destination = ptr_access;
+        ptr_move_instr.source1 = source_access;
+        dynamic_array_push_back(&function->instructions, ptr_move_instr);
+
+        Intermediate_Instruction set_size_instr;
+        set_size_instr.type = Intermediate_Instruction_Type::LOAD_CONSTANT_I32;
+        set_size_instr.destination = size_access;
+        set_size_instr.constant_i32_value = source_type->array_element_count;
+        dynamic_array_push_back(&function->instructions, set_size_instr);
+
+        return sized_array_access;
+    }
+
+    Intermediate_Instruction instr;
+    if (force_destination) {
+        instr.destination = destination;
+    }
+    else {
+        instr.destination = intermediate_generator_create_intermediate_register(generator, destination_type);
+    }
+    instr.source1 = source_access;
+    instr.cast_from = source_type;
+    instr.cast_to = destination_type;
+
+    if (instr.cast_from == generator->analyser->type_system.u64_type && instr.cast_to->type == Signature_Type::POINTER) {
+        instr.type = Intermediate_Instruction_Type::CAST_U64_TO_POINTER;
+    }
+    else if (instr.cast_to == generator->analyser->type_system.u64_type && instr.cast_from->type == Signature_Type::POINTER) {
+        instr.type = Intermediate_Instruction_Type::CAST_POINTER_TO_U64;
+    }
+    else if (destination_type->type == Signature_Type::POINTER && source_type->type == Signature_Type::POINTER) {
+        instr.type = Intermediate_Instruction_Type::CAST_POINTERS;
+    }
+    else if (source_type->type == Signature_Type::PRIMITIVE && destination_type->type == Signature_Type::PRIMITIVE) {
+        instr.type = Intermediate_Instruction_Type::CAST_PRIMITIVE_TYPES;
+    }
+    else panic("Should not happen!");
+
+    dynamic_array_push_back(&function->instructions, instr);
+    return instr.destination;
+}
+
+
+Data_Access intermediate_generator_generate_expression_with_implicit_casting(Intermediate_Generator* generator, int expression_index,
+    bool force_destination, Data_Access destination);
 // Returns expression result register
 Data_Access intermediate_generator_generate_expression(Intermediate_Generator* generator, int expression_index,
     bool force_destination, Data_Access destination)
@@ -329,7 +396,9 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
 
         // Generate argument Expressions
         for (int i = 0; i < expression->children.size; i++) {
-            Data_Access argument = intermediate_generator_generate_expression(generator, expression->children[i], false, data_access_make_empty());
+            Data_Access argument = intermediate_generator_generate_expression_with_implicit_casting(
+                generator, expression->children[i], false, data_access_make_empty()
+            );
             dynamic_array_push_back(&instr.arguments, argument);
         }
         // Generate destination
@@ -355,7 +424,7 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
     {
         Type_Signature* cast_to_type = generator->analyser->semantic_information[expression_index].expression_result_type;
         Type_Signature* cast_from_type = generator->analyser->semantic_information[expression->children[1]].expression_result_type;
-        if (cast_to_type == cast_from_type) 
+        if (cast_to_type == cast_from_type)
         {
             if (force_destination) {
                 return intermediate_generator_generate_expression(generator, expression->children[1], true, destination);
@@ -364,19 +433,9 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
                 return intermediate_generator_generate_expression(generator, expression->children[1], false, data_access_make_empty());
             }
         }
-        Intermediate_Instruction instr;
-        if (force_destination) {
-            instr.destination = destination;
-        }
-        else {
-            instr.destination = intermediate_generator_create_intermediate_register(generator, cast_to_type);
-        }
-        instr.source1 = intermediate_generator_generate_expression(generator, expression->children[1], false, data_access_make_empty());
-        instr.type = Intermediate_Instruction_Type::CAST_PRIMITIVE_TYPES;
-        instr.cast_from = cast_from_type;
-        instr.cast_to = cast_to_type;
-        dynamic_array_push_back(&function->instructions, instr);
-        return instr.destination;
+
+        Data_Access source = intermediate_generator_generate_expression(generator, expression->children[1], false, data_access_make_empty());
+        return intermediate_generator_generate_cast(generator, source, cast_from_type, cast_to_type, force_destination, destination);
     }
     case AST_Node_Type::EXPRESSION_LITERAL:
     {
@@ -403,6 +462,9 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
         else if (token.type == Token_Type::BOOLEAN_LITERAL) {
             instr.type = Intermediate_Instruction_Type::LOAD_CONSTANT_BOOL;
             instr.constant_bool_value = token.attribute.bool_value;
+        }
+        else if (token.type == Token_Type::NULLPTR) {
+            instr.type = Intermediate_Instruction_Type::LOAD_NULLPTR;
         }
         else panic("what");
 
@@ -742,8 +804,8 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
         Type_Signature* left_type = generator->analyser->semantic_information[expression->children[0]].expression_result_type;
         Intermediate_Instruction instr;
         instr.type = binary_operation_get_instruction_type(generator, expression->type, left_type);
-        instr.source1 = intermediate_generator_generate_expression(generator, expression->children[0], false, data_access_make_empty());
-        instr.source2 = intermediate_generator_generate_expression(generator, expression->children[1], false, data_access_make_empty());
+        instr.source1 = intermediate_generator_generate_expression_with_implicit_casting(generator, expression->children[0], false, data_access_make_empty());
+        instr.source2 = intermediate_generator_generate_expression_with_implicit_casting(generator, expression->children[1], false, data_access_make_empty());
         if (force_destination) {
             instr.destination = destination;
         }
@@ -804,6 +866,16 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
 
     panic("Shit this is not something that should happen!\n");
     return data_access_make_empty();
+}
+
+Data_Access intermediate_generator_generate_expression_with_implicit_casting(Intermediate_Generator* generator, int expression_index,
+    bool force_destination, Data_Access destination)
+{
+    Semantic_Node_Information* info = &generator->analyser->semantic_information[expression_index];
+    if (!info->needs_casting_to_cast_type) return intermediate_generator_generate_expression(generator, expression_index, force_destination, destination);
+
+    Data_Access source_access = intermediate_generator_generate_expression(generator, expression_index, false, data_access_make_empty());
+    return intermediate_generator_generate_cast(generator, source_access, info->expression_result_type, info->cast_result_type, force_destination, destination);
 }
 
 void intermediate_generator_generate_statement_block(Intermediate_Generator* generator, int block_index);
@@ -913,7 +985,9 @@ void intermediate_generator_generate_statement(Intermediate_Generator* generator
     }
     case AST_Node_Type::STATEMENT_ASSIGNMENT:
     {
-        Data_Access destination_register = intermediate_generator_generate_expression(generator, statement->children[0], false, data_access_make_empty());
+        Data_Access destination_register = intermediate_generator_generate_expression_with_implicit_casting(
+            generator, statement->children[0], false, data_access_make_empty()
+        );
         intermediate_generator_generate_expression(generator, statement->children[1], true, destination_register);
         break;
     }
@@ -921,7 +995,7 @@ void intermediate_generator_generate_statement(Intermediate_Generator* generator
         Data_Access variable_access;
         variable_access.register_index = intermediate_generator_find_variable_register_by_name(generator, statement->name_id);
         variable_access.type = Data_Access_Type::REGISTER_ACCESS;
-        intermediate_generator_generate_expression(generator, statement->children[1], true, variable_access);
+        intermediate_generator_generate_expression_with_implicit_casting(generator, statement->children[1], true, variable_access);
         break;
     }
     case AST_Node_Type::STATEMENT_VARIABLE_DEFINE_INFER: {
@@ -1144,7 +1218,7 @@ bool intermediate_instruction_type_is_unary_operation(Intermediate_Instruction_T
 bool intermediate_instruction_type_is_binary_operation(Intermediate_Instruction_Type instruction_type)
 {
     if ((i32)instruction_type >= (i32)Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U8 &&
-        (i32)instruction_type <= (i32)Intermediate_Instruction_Type::BINARY_OP_BOOLEAN_OR) {
+        (i32)instruction_type <= (i32)Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_POINTER) {
         return true;
     }
     return false;
@@ -1208,7 +1282,7 @@ void intermediate_instruction_binop_append_to_string(String* string, Intermediat
             "BINARY_OP_COMPARISON_LESS_EQUAL_",
         };
         const char* types[] = { "U8", "U16", "U32", "U64", "I8", "I16", "I32", "I64", "F32", "F64" };
-        i32 type_index = (i32)Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U8 - (i32)instruction_type;
+        i32 type_index = (i32)instruction_type - (i32)Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U8;
         int prefix_index = type_index % 11;
         int postfix_index = type_index / 11;
         instruction_prefix = prefixes[prefix_index];
@@ -1233,6 +1307,14 @@ void intermediate_instruction_binop_append_to_string(String* string, Intermediat
     }
     case Intermediate_Instruction_Type::BINARY_OP_BOOLEAN_OR: {
         string_append_formated(string, "BINARY_OP_BOOLEAN_OR");
+        break;
+    }
+    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_POINTER: {
+        string_append_formated(string, "BINARY_OP_COMPARISON_EQUAL_POINTER");
+        break;
+    }
+    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_POINTER: {
+        string_append_formated(string, "BINARY_OP_COMPARISON_NOT_EQUAL_POINTER");
         break;
     }
     }
@@ -1281,8 +1363,29 @@ void intermediate_instruction_append_to_string(String* string, Intermediate_Inst
             string_append_formated(string, "\n\t\tcondition: ");
             data_access_append_to_string(string, instruction->source1, function, generator);
             break;
+        case Intermediate_Instruction_Type::CAST_U64_TO_POINTER:
+            string_append_formated(string, "CAST_U64_TO_POINTER, ");
+            type_signature_append_to_string(string, instruction->cast_to);
+            string_append_formated(string, " <-- ");
+            type_signature_append_to_string(string, instruction->cast_from);
+            append_source_destination = true;
+            break;
+        case Intermediate_Instruction_Type::CAST_POINTER_TO_U64:
+            string_append_formated(string, "CAST_POINTER_TO_U64, ");
+            type_signature_append_to_string(string, instruction->cast_to);
+            string_append_formated(string, " <-- ");
+            type_signature_append_to_string(string, instruction->cast_from);
+            append_source_destination = true;
+            break;
         case Intermediate_Instruction_Type::CAST_PRIMITIVE_TYPES:
             string_append_formated(string, "CAST_PRIMITIVE_TYPES, ");
+            type_signature_append_to_string(string, instruction->cast_to);
+            string_append_formated(string, " <-- ");
+            type_signature_append_to_string(string, instruction->cast_from);
+            append_source_destination = true;
+            break;
+        case Intermediate_Instruction_Type::CAST_POINTERS:
+            string_append_formated(string, "CAST_POINTERS, ");
             type_signature_append_to_string(string, instruction->cast_to);
             string_append_formated(string, " <-- ");
             type_signature_append_to_string(string, instruction->cast_from);
@@ -1357,6 +1460,10 @@ void intermediate_instruction_append_to_string(String* string, Intermediate_Inst
             break;
         case Intermediate_Instruction_Type::LOAD_CONSTANT_BOOL:
             string_append_formated(string, "LOAD_CONSTANT_BOOL, value: %s ", instruction->constant_bool_value ? "TRUE" : "FALSE");
+            append_destination = true;
+            break;
+        case Intermediate_Instruction_Type::LOAD_NULLPTR:
+            string_append_formated(string, "LOAD_NULLPTR ");
             append_destination = true;
             break;
         default:

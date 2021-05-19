@@ -1,31 +1,39 @@
 Current Work Item:
 ------------------
-Refactor bytecode generator so that I dont always have to read_memory on memory access, or write memory on memory access
- * Primitive Types (And calculating with them, e.g. u8, u16, u32...) INFO: Array bounds check should then be done with u64, not i32, so negative values are detected
- * Casting, Float/Int implicit, from smaller to bigger implicit?, reinterpret cast thing, Array sized to unsized, Member access with . on pointer
+ * Implicit Casting
+ * Rethink how literals work, maybe add more?
+ * Array should have u64 as size, bounds checks needs adjustments
+ * Member access with . on pointer
 
-How do I do casting:
-    x: u8 = 15; // 15 should be i64
-    x: u8 = cast<u8> 15; // This should be casted implicitly
+ Implicit Casting:
+    - smaller to bigger int types/float to double
+    - int to float/double (All int sizes, since floats can handle large values much better)
+    - sized to unsized array
+    - void ptr/ptr
 
-I also will need new constant literals, probably i64 and f64 types and then cast respectively
-Now I need casting to and from sizes
-    - Signed to unsigned
-    - Switch between different sizes
-    - Integer to floating-point (Cutaways digits after decimal point)
+ Explicit Casting:
+    - bigger to smaller
+    - unsigned/signed
+    - Float to integer
 
-4 unsigned, 4 signed, 2 float, 1 bool 11 * 10 = 110 conversions
-    So i need: 
-        - CAST_INTEGER_TO_DIFFERENT_INTEGER, with source and destination type
-        - CAST_INTEGER_TO_FLOAT (32 or 64 bit)
-        - CAST_FLOAT_TO_INTEGER (32 or 64 bit)
+ How do I handle Literals? --> I mean I could just keep them as i32/float for the time being
 
-Additional casting that needs to be implemented:
-    - Cast pointer types to any other pointer type
-    - Pointer type to u64 and backwards
-    - Sized Array to unsized array
+In which cases does implicit casting apply:
+    Binary operations (When types dont match, i think i need special smth here, required type would be the bigger one I guess?)
+        - Comparisons (== !=) should not have casting, less/equal stuff should
+    Arguments in function calls (Here we have one required type and one given type)
+    Assignment statement (Here we also have one required type and one given type)
 
-Also change array so that size is u64
+ With literal handling i mean integer literals and floating point literals
+    15
+    0 
+    -5
+    0.0
+    137.43
+The problem is that it depends in which contexts they are used, how they should behave.
+    
+
+
 
 Long-Term Goals:
 ----------------
@@ -44,10 +52,14 @@ More Language features to implement:
  * Strings
  * Default variable initialization (0), probably
    ------- Before this I should fix all the editor bugs + C Backend or calling C functions ------
+   ------- Here I also should check what I can add later, and what are necessary features for programming ------
  * Syntax for fixed array initialization [int :: 1, 2, 3, 4, 5]
+ * Loop statements, maybe loop over array syntax
  * Function return value overhaul: Multiple return values or no return value should be possible
- * Function pointers, lambdas
+ * Function pointers
+ * Lambdas
  * Defer statement
+ * Enums
  * Tagged Unions
  * Location-Information (Filename, line_number...)
  * Any-Type and Type access (Varargs in this language)
@@ -63,6 +75,7 @@ Editor features to implement:
 -----------------------------
  * Autocompletion using current symbol table
  * Jump to definition with string search (Maybe Ctrl-F)
+ * Search and Replace
  * CTRL-R for replace word --> I would need Shift-R, since control R is already Redo
  * Visual Mode/Blockmode (Multicursor)/Visual Line
  * Undo/Redo Tree History
@@ -70,6 +83,7 @@ Editor features to implement:
  * Tab for indentation/Ctrl-Tab for no indentation
  * Formating with = should remove unneccessary whitespaces/add them where needed, and should ignore comments
  * Multi-Window support (Multiple Tabs/Vertical or Horizontal splits)
+ * UTF-8 Support?
 
 Editor-Bugs:
 ------------
@@ -79,12 +93,14 @@ Editor-Bugs:
 
 Ideas that need to be tested:
 -----------------------------
- * Redirect debug output to application window
- * Error-Handling with the most recent build of the language
  * Using compile-time code-execution for metaprogramming and static analysis
  * Code-Analysis with data-value semantics (Tag System)
  * Hot-Code Reloading
  * Stack-Analysis for Debug information (Or others? E.g. logging)
+ * Differentiate break_loop, break_switch
+ * Redirect debug output to application window
+ * Error-Handling with the most recent build of the language
+ * Incremental Builds
 
 Improvements that should be made (When I have time):
 ----------------------------------------------------

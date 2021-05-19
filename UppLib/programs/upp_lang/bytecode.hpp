@@ -15,7 +15,7 @@
         - Return_Register (s, when we have multiple return values)
 
     The stack grows upwards (Dynamic_Array), and it is indexed on a one-byte index basis.
-    Accessing the stack is done relative to the Stack_Pointer. 
+    Accessing the stack is done relative to the Stack_Pointer.
     A Functions Stack-Frame looks like this:
     [ParamReg0] [ParamReg1] [ParamRegs...] [Return_Address] [Old_Stack_Pointer] [Reg0] [Reg1] [Reg2] [Regs...]
 */
@@ -40,10 +40,11 @@ namespace Instruction_Type
         EXIT, // op1 = return_value_register, op2 = return size (Capped at 16), op3 = exit_code
 
         LOAD_RETURN_VALUE, // op1 = dst_reg, op2 = size
-        LOAD_REGISTER_ADDRESS, // op1 = dest_reg, op2 = register_to_load, // TODO: Also only works because we are lucky
+        LOAD_REGISTER_ADDRESS, // op1 = dest_reg, op2 = register_to_load, // TODO: Also only works because we are lucky, and registers are accessed by offset
         LOAD_CONSTANT_F32, // op1 = dest_reg, op2 = value // Todo: Only works because we dont 64bit constants yet
         LOAD_CONSTANT_I32, // op1 = dest_reg, op2 = value // Todo: Only works because we dont 64bit constants yet
         LOAD_CONSTANT_BOOLEAN, // op1 = dest_reg, op2 = value // Todo: Only works because we dont 64bit constants yet
+        LOAD_NULLPTR, // op1 = dest_reg
 
         CAST_INTEGER_DIFFERENT_SIZE, // op1 = dst_reg, op2 = src_reg, op3 = dst_prim_type, op4 = src_prim_type
         CAST_FLOAT_DIFFERENT_SIZE, // op1 = dst_reg, op2 = src_reg, op3 = dst_prim_type, op4 = src_prim_type
@@ -175,13 +176,16 @@ namespace Instruction_Type
         BINARY_OP_BOOLEAN_AND,
         BINARY_OP_BOOLEAN_OR,
 
+        BINARY_OP_COMPARISON_EQUAL_POINTER,
+        BINARY_OP_COMPARISON_NOT_EQUAL_POINTER,
+
         UNARY_OP_ARITHMETIC_NEGATE_I8,
         UNARY_OP_ARITHMETIC_NEGATE_I16,
         UNARY_OP_ARITHMETIC_NEGATE_I32,
         UNARY_OP_ARITHMETIC_NEGATE_I64,
         UNARY_OP_ARITHMETIC_NEGATE_F32,
         UNARY_OP_ARITHMETIC_NEGATE_F64,
-        UNARY_OP_BOOLEAN_NOT,
+        UNARY_OP_BOOLEAN_NOT
     };
 }
 

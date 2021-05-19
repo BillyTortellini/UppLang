@@ -78,6 +78,38 @@ int bytecode_generator_add_instruction(Bytecode_Generator* generator, Bytecode_I
     return generator->instructions.size - 1;
 }
 
+int bytecode_generator_add_access_instruction(Bytecode_Generator* generator, Data_Access destination, Bytecode_Instruction instr, int function_index)
+{
+    int result_reg_offset;
+    Type_Signature* type;
+    if (destination.type == Data_Access_Type::MEMORY_ACCESS) {
+        type = generator->im_generator->functions[function_index].registers[destination.register_index].type_signature->child_type;
+        generator->tmp_stack_offset = align_offset_next_multiple(generator->tmp_stack_offset, type->alignment_in_bytes);
+        result_reg_offset = generator->tmp_stack_offset;
+        generator->tmp_stack_offset = result_reg_offset + type->size_in_bytes;
+    }
+    else {
+        type = generator->im_generator->functions[function_index].registers[destination.register_index].type_signature;
+        result_reg_offset = generator->register_stack_locations[destination.register_index];
+    }
+
+    instr.op1 = result_reg_offset;
+    int instruction_index = bytecode_generator_add_instruction(generator, instr);
+    if (destination.type == Data_Access_Type::MEMORY_ACCESS) {
+        bytecode_generator_add_instruction(
+            generator,
+            instruction_make_3(
+                Instruction_Type::WRITE_MEMORY,
+                generator->register_stack_locations[destination.register_index],
+                result_reg_offset,
+                type->size_in_bytes
+            )
+        );
+    }
+    return instruction_index;
+}
+
+
 void bytecode_generator_generate_load_constant_instruction(Bytecode_Generator* generator, int function_index, int instruction_index)
 {
     Intermediate_Function* function = &generator->im_generator->functions[function_index];
@@ -101,40 +133,14 @@ void bytecode_generator_generate_load_constant_instruction(Bytecode_Generator* g
         result_data = instruction->constant_bool_value ? 1 : 0;
         result_size = 1;
     }
+    else if (instruction->type == Intermediate_Instruction_Type::LOAD_NULLPTR) {
+        result_type = Instruction_Type::LOAD_NULLPTR;
+        result_data = 0;
+        result_size = 8;
+    }
     else panic("not implemented yet?!?");
 
-    if (instruction->destination.type == Data_Access_Type::REGISTER_ACCESS)
-    {
-        bytecode_generator_add_instruction(
-            generator,
-            instruction_make_2(
-                result_type,
-                generator->register_stack_locations[instruction->destination.register_index],
-                result_data
-            )
-        );
-    }
-    else
-    {
-        int temporary_stack_location = align_offset_next_multiple(generator->stack_offset_end_of_variables, result_size);
-        bytecode_generator_add_instruction(
-            generator,
-            instruction_make_2(
-                result_type,
-                temporary_stack_location,
-                result_data
-            )
-        );
-        bytecode_generator_add_instruction(
-            generator,
-            instruction_make_3(
-                Instruction_Type::WRITE_MEMORY,
-                generator->register_stack_locations[instruction->destination.register_index],
-                temporary_stack_location,
-                result_size
-            )
-        );
-    }
+    bytecode_generator_add_access_instruction(generator, instruction->destination, instruction_make_2(result_type, 0, result_data), function_index);
 }
 
 void bytecode_generator_move_accesses(Bytecode_Generator* generator, Data_Access destination, Data_Access source, int function_index)
@@ -198,37 +204,6 @@ int bytecode_generator_read_access_stack_offset(Bytecode_Generator* generator, D
     }
 }
 
-int bytecode_generator_add_access_instruction(Bytecode_Generator* generator, Data_Access destination, Bytecode_Instruction instr, int function_index)
-{
-    int result_reg_offset;
-    Type_Signature* type;
-    if (destination.type == Data_Access_Type::MEMORY_ACCESS) {
-        type = generator->im_generator->functions[function_index].registers[destination.register_index].type_signature->child_type;
-        generator->tmp_stack_offset = align_offset_next_multiple(generator->tmp_stack_offset, type->alignment_in_bytes);
-        result_reg_offset = generator->tmp_stack_offset;
-        generator->tmp_stack_offset = result_reg_offset + type->size_in_bytes;
-    }
-    else {
-        type = generator->im_generator->functions[function_index].registers[destination.register_index].type_signature;
-        result_reg_offset = generator->register_stack_locations[destination.register_index];
-    }
-
-    instr.op1 = result_reg_offset;
-    int instruction_index = bytecode_generator_add_instruction(generator, instr);
-    if (destination.type == Data_Access_Type::MEMORY_ACCESS) {
-        bytecode_generator_add_instruction(
-            generator,
-            instruction_make_3(
-                Instruction_Type::WRITE_MEMORY,
-                generator->register_stack_locations[destination.register_index],
-                result_reg_offset,
-                type->size_in_bytes
-            )
-        );
-    }
-    return instruction_index;
-}
-
 void bytecode_generator_generate_function_instruction_slice(
     Bytecode_Generator* generator, int function_index, int instruction_start_index, int instruction_end_index_exclusive
 )
@@ -241,8 +216,7 @@ void bytecode_generator_generate_function_instruction_slice(
         Intermediate_Instruction* instr = &function->instructions[instruction_index];
 
         // Binary operations
-        if ((int)instr->type >= (int)Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U8 &&
-            (int)instr->type <= (int)Intermediate_Instruction_Type::BINARY_OP_BOOLEAN_OR)
+        if (intermediate_instruction_type_is_binary_operation(instr->type))
         {
             Instruction_Type::ENUM result_instr_type = (Instruction_Type::ENUM) (
                 (int)Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32 +
@@ -257,8 +231,7 @@ void bytecode_generator_generate_function_instruction_slice(
         }
 
         // Unary operations
-        if ((int)instr->type >= (int)Intermediate_Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I8 &&
-            (int)instr->type <= (int)Intermediate_Instruction_Type::UNARY_OP_BOOLEAN_NOT)
+        if (intermediate_instruction_type_is_unary_operation(instr->type))
         {
             Instruction_Type::ENUM result_instr_type = (Instruction_Type::ENUM) (
                 (int)Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32 +
@@ -279,6 +252,7 @@ void bytecode_generator_generate_function_instruction_slice(
         }
         case Intermediate_Instruction_Type::LOAD_CONSTANT_F32:
         case Intermediate_Instruction_Type::LOAD_CONSTANT_I32:
+        case Intermediate_Instruction_Type::LOAD_NULLPTR: 
         case Intermediate_Instruction_Type::LOAD_CONSTANT_BOOL: {
             bytecode_generator_generate_load_constant_instruction(generator, function_index, instruction_index);
             break;
@@ -304,12 +278,15 @@ void bytecode_generator_generate_function_instruction_slice(
                     generator,
                     instruction_make_1(Instruction_Type::JUMP, 0)
                 );
+                generator->instructions[jmp_instruction_index].op1 = generator->instructions.size;
                 bytecode_generator_generate_function_instruction_slice(
                     generator, function_index, instr->false_branch_instruction_start, instr->false_branch_instruction_end_exclusive
                 );
                 generator->instructions[jmp_over_else_instruction_index].op1 = generator->instructions.size;
             }
-            generator->instructions[jmp_instruction_index].op1 = generator->instructions.size;
+            else {
+                generator->instructions[jmp_instruction_index].op1 = generator->instructions.size;
+            }
 
             break;
         }
@@ -456,6 +433,13 @@ void bytecode_generator_generate_function_instruction_slice(
             dynamic_array_push_back(&generator->continue_instructions_to_fill_out, continue_jump);
             break;
         }
+        case Intermediate_Instruction_Type::CAST_POINTERS:
+        case Intermediate_Instruction_Type::CAST_U64_TO_POINTER:
+        case Intermediate_Instruction_Type::CAST_POINTER_TO_U64:
+        {
+            bytecode_generator_move_accesses(generator, instr->destination, instr->source1, function_index);
+            break;
+        }
         case Intermediate_Instruction_Type::CAST_PRIMITIVE_TYPES:
         {
             Instruction_Type::ENUM cast_type;
@@ -478,7 +462,7 @@ void bytecode_generator_generate_function_instruction_slice(
                     cast_type, 0,
                     bytecode_generator_read_access_stack_offset(generator, instr->source1, function_index),
                     (int)instr->cast_to->primitive_type, (int)instr->cast_from->primitive_type
-                ), 
+                ),
                 function_index
             );
             break;
@@ -637,7 +621,7 @@ void bytecode_generator_generate_function_instruction_slice(
     }
 }
 
-void bytecode_generator_calculate_function_register_locations(Bytecode_Generator* generator, int function_index)
+void bytecode_generator_calculate_function_register_locations(Bytecode_Generator * generator, int function_index)
 {
     Intermediate_Function* function = &generator->im_generator->functions[function_index];
     // Set parameter stack locations
@@ -694,7 +678,7 @@ void bytecode_generator_calculate_function_register_locations(Bytecode_Generator
     generator->tmp_stack_offset = generator->stack_offset_end_of_variables;
 }
 
-void bytecode_generator_generate_function_code(Bytecode_Generator* generator, int function_index)
+void bytecode_generator_generate_function_code(Bytecode_Generator * generator, int function_index)
 {
     Intermediate_Function* function = &generator->im_generator->functions[function_index];
     generator->function_locations[function_index] = generator->instructions.size;
@@ -703,7 +687,7 @@ void bytecode_generator_generate_function_code(Bytecode_Generator* generator, in
     bytecode_generator_generate_function_instruction_slice(generator, function_index, 0, function->instructions.size);
 }
 
-void bytecode_generator_generate(Bytecode_Generator* generator, Intermediate_Generator* im_generator)
+void bytecode_generator_generate(Bytecode_Generator * generator, Intermediate_Generator * im_generator)
 {
     generator->im_generator = im_generator;
     dynamic_array_reset(&generator->instructions);
@@ -754,11 +738,11 @@ void bytecode_generator_generate(Bytecode_Generator* generator, Intermediate_Gen
     generator->entry_point_index = generator->function_locations[generator->im_generator->main_function_index];
 }
 
-void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction instruction)
+void bytecode_instruction_append_to_string(String * string, Bytecode_Instruction instruction)
 {
     Intermediate_Instruction_Type intermediate_type = (Intermediate_Instruction_Type)(
-            (int)instruction.instruction_type - (int) Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32
-            + (int) Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32
+        (int)instruction.instruction_type - (int)Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32
+        + (int)Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32
         );
     if (intermediate_instruction_type_is_binary_operation(intermediate_type)) {
         intermediate_instruction_binop_append_to_string(string, intermediate_type);
@@ -772,6 +756,9 @@ void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction 
     {
         switch (instruction.instruction_type)
         {
+        case Instruction_Type::LOAD_NULLPTR:
+            string_append_formated(string, "LOAD_NULLPTR                      dest=%d\n", instruction.op1);
+            break;
         case Instruction_Type::LOAD_CONSTANT_BOOLEAN:
             string_append_formated(string, "LOAD_CONSTANT_BOOLEAN             dest=%d, val=%s\n", instruction.op1, instruction.op2 ? "TRUE" : "FALSE");
             break;
@@ -827,7 +814,7 @@ void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction 
             string_append_formated(string, "EXIT                              src=%d, size=%d\n", instruction.op1, instruction.op2);
             break;
         case Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE:
-            string_append_formated(string, "CAST_INTEGER_DIFFERENT_SIZE       dst=%d, src=%d, dst_size=%d, src_size=%d\n", 
+            string_append_formated(string, "CAST_INTEGER_DIFFERENT_SIZE       dst=%d, src=%d, dst_size=%d, src_size=%d\n",
                 instruction.op1, instruction.op2, instruction.op3, instruction.op4);
             break;
         case Instruction_Type::CAST_FLOAT_DIFFERENT_SIZE:
@@ -849,7 +836,7 @@ void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction 
     }
 }
 
-void bytecode_generator_append_bytecode_to_string(Bytecode_Generator* generator, String* string)
+void bytecode_generator_append_bytecode_to_string(Bytecode_Generator * generator, String * string)
 {
     string_append_formated(string, "Functions:\n");
     for (int i = 0; i < generator->function_locations.size; i++) {

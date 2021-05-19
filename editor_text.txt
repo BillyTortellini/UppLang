@@ -1,19 +1,108 @@
+add :: (a: i64, b: i64) -> i64 {
+    return a + b;
+}
+
 main :: () -> void 
 {
-    /*
     scope_test();
     struct_test();
     array_test();
     memory_test();
-    */
-    
-    a := cast<i8> -1;
-    b := cast<i32> a; 
-    print_i32(b);
-    print_line();
+    cast_test(); 
 }
 
-/*
+cast_test :: () -> void
+{
+    {
+        f: f32 = 5.68;    
+        b: f64 = cast<f64> -2.3;
+        f = f + cast<f32>b;
+        a := cast<int> f;
+        print_i32(a);
+        print_line();
+        print_f32(f);
+        print_line();
+    }
+    
+    {
+        a: [2]int;
+    
+        ap := *a[0];
+        &ap = 7;
+    
+        addr := cast<u64>ap;
+        addr = addr + cast<u64>4;
+        ap = cast<*int>addr;
+    
+        &ap = 5;
+    
+        print_i32(a[0]);
+        print_line();
+        print_i32(a[1]);
+        print_line();
+    }
+    {
+        a := 0;
+        a_addr := cast<u64> *a;
+        b0 := cast<*byte> (a_addr + cast<u64> 0);
+        b1 := cast<*byte> (a_addr + cast<u64> 1);
+        b2 := cast<*byte> (a_addr + cast<u64> 2);
+        b3 := cast<*byte> (a_addr + cast<u64> 3);
+        
+        &b0 = cast<byte> 0;
+        &b1 = cast<byte> 0;
+        &b2 = cast<byte> 1;
+        &b3 = cast<byte> 0;
+        
+        print_i32(a);
+        print_line();
+    }
+    {
+        a: [20]int;
+        b: []int = cast<[]int> a;
+    
+        array_fill_random(b, 100);
+        array_bubble_sort(b);
+    }
+    {
+        a := 5;
+        ap: *int = *a;
+    
+        b: *void = cast<*void> ap;
+        c: *int = cast<*int> b;
+        &c = 3;
+    
+        x: int = 100;
+        d := cast<*void>*x;
+    
+        print_bool(d == b);
+        print_line();
+        print_i32(a);
+        print_line();
+    }
+    
+    {
+        a: *void = nullptr;
+        if (cast<u64>0 == cast<u64>a) {
+            print_line();
+            print_line();
+            print_i32(420);
+            print_line();
+            print_line();
+        }
+        else {
+            print_i32(69);
+            print_line();
+        }
+    }
+    
+    {
+        a := add(32, 5);
+        print_f32(cast<i32>a);
+        print_line();
+    }
+}
+
 array_fill_random :: (array: []int, max: int) -> void
 {
     i := 0;
@@ -198,7 +287,6 @@ fib_rec :: (n: int) -> int
     if (n <= 2) return 1;
     return fib_rec(n-1) + fib_rec(n-2);
 }
-*/
 
 /*
 Missing binary statements x++; x--; x+=1; x-=1; x/=1; x*=1;

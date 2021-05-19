@@ -572,7 +572,8 @@ AST_Node_Index ast_parser_parse_expression_single_value(AST_Parser* parser)
     int node_index = ast_parser_get_next_node_index_no_parent(parser);
     if (ast_parser_test_next_token(parser, Token_Type::INTEGER_LITERAL) ||
         ast_parser_test_next_token(parser, Token_Type::FLOAT_LITERAL) ||
-        ast_parser_test_next_token(parser, Token_Type::BOOLEAN_LITERAL))
+        ast_parser_test_next_token(parser, Token_Type::BOOLEAN_LITERAL) ||
+        ast_parser_test_next_token(parser, Token_Type::NULLPTR))
     {
         parser->nodes[node_index].type = AST_Node_Type::EXPRESSION_LITERAL;
         parser->index++;
