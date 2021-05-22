@@ -90,6 +90,7 @@ void c_generator_generate_type_definition(C_Generator* generator, Type_Signature
 
 void c_generator_generate_register_name(C_Generator* generator, int register_index)
 {
+    /*
     Intermediate_Register* reg = &generator->im_generator->functions[generator->current_function_index].registers[register_index];
     if (reg->type == Intermediate_Register_Type::VARIABLE) {
         string_append_formated(&generator->output_string, "%s_var%d", c_generator_id_to_string(generator, reg->name_id), register_index);
@@ -100,14 +101,17 @@ void c_generator_generate_register_name(C_Generator* generator, int register_ind
     else if (reg->type == Intermediate_Register_Type::EXPRESSION_RESULT) {
         string_append_formated(&generator->output_string, "_upp_expr_%d", register_index);
     }
+    */
 }
 
 void c_generator_generate_data_access(C_Generator* generator, Data_Access access)
 {
+    /*
     if (access.type == Data_Access_Type::MEMORY_ACCESS) {
         string_append_formated(&generator->output_string, "*");
     }
     c_generator_generate_register_name(generator, access.register_index);
+    */
 }
 
 /* C arrays suck a little, because:
@@ -137,6 +141,7 @@ void c_generator_generate_variable_definition_with_name_handle(C_Generator* gene
 
 void c_generator_generate_variable_definition_with_register_index(C_Generator* generator, int register_index, bool semicolon)
 {
+    /*
     Intermediate_Register* reg = &generator->im_generator->functions[generator->current_function_index].registers[register_index];
     dynamic_array_reset(&generator->array_index_stack);
     c_generator_generate_type_definition(generator, reg->type_signature, false);
@@ -152,6 +157,7 @@ void c_generator_generate_variable_definition_with_register_index(C_Generator* g
     if (semicolon) {
         string_append_formated(&generator->output_string, ";");
     }
+    */
 }
 
 void c_generator_generate_function_header(C_Generator* generator, int function_index)
@@ -170,6 +176,7 @@ void c_generator_generate_function_header(C_Generator* generator, int function_i
     }
 
     // I dont remember why i removed this, but I hope the reasons were bad...
+    /*
     for (int i = 0; i < function->registers.size; i++)
     {
         Intermediate_Register* reg = &function->registers[i];
@@ -179,6 +186,7 @@ void c_generator_generate_function_header(C_Generator* generator, int function_i
         }
         c_generator_generate_variable_definition_with_register_index(generator, i, false);
     }
+    */
     /*
     for (int i = 0; i < signature->parameter_types.size; i++)
     {
@@ -224,6 +232,7 @@ void c_generator_generate_function_instruction_slice(
         case Intermediate_Instruction_Type::ADDRESS_OF:
         {
             c_generator_generate_data_access(generator, instr->destination);
+            /*
             Intermediate_Register* reg = &function->registers[instr->source1.register_index];
             if (reg->type_signature->type == Signature_Type::ARRAY_SIZED && instr->source1.type == Data_Access_Type::REGISTER_ACCESS) {
                 string_append_formated(&generator->output_string, " = ");
@@ -231,6 +240,7 @@ void c_generator_generate_function_instruction_slice(
                 string_append_formated(&generator->output_string, ";\n");
                 break;
             }
+            */
             string_append_formated(&generator->output_string, " = &");
             c_generator_generate_data_access(generator, instr->source1);
             string_append_formated(&generator->output_string, ";\n");
@@ -416,6 +426,7 @@ void c_generator_generate_function_instruction_slice(
         case Intermediate_Instruction_Type::CALCULATE_ARRAY_ACCESS_POINTER:
         {
             // Either we have a base_pointer as source 1, or we have an unsized array I think
+            /*
             c_generator_generate_data_access(generator, instr->destination);
             Type_Signature* result_type = function->registers[instr->destination.register_index].type_signature;
             string_append_formated(&generator->output_string, " = (");
@@ -432,6 +443,7 @@ void c_generator_generate_function_instruction_slice(
 
                 }
             }
+            */
             string_append_formated(&generator->output_string, "((u8*)(");
             c_generator_generate_data_access(generator, instr->source1);
             string_append_formated(&generator->output_string, ") + ");
@@ -451,12 +463,14 @@ void c_generator_generate_function_instruction_slice(
         case Intermediate_Instruction_Type::CALCULATE_MEMBER_ACCESS_POINTER:
         {
             c_generator_generate_data_access(generator, instr->destination);
+            /*
             Type_Signature* result_type = function->registers[instr->destination.register_index].type_signature;
             string_append_formated(&generator->output_string, " = (");
             c_generator_generate_type_definition(generator, result_type, false);
             string_append_formated(&generator->output_string, ") ((u8*)(&");
             c_generator_generate_data_access(generator, instr->source1);
             string_append_formated(&generator->output_string, ") + %d);\n", instr->constant_i32_value);
+            */
             break;
 
             /* TODO: It would be nicer if I would use member access of C instead of pointer manipulation
@@ -580,6 +594,7 @@ void c_generator_generate(C_Generator* generator, Intermediate_Generator* im_gen
         generator->current_function_index = i;
         c_generator_generate_function_header(generator, i);
         string_append_formated(&generator->output_string, "\n{\n");
+        /*
         for (int j = 0; j < im_generator->functions[i].registers.size; j++)
         {
             Intermediate_Register* reg = &im_generator->functions[i].registers[j];
@@ -591,6 +606,7 @@ void c_generator_generate(C_Generator* generator, Intermediate_Generator* im_gen
         }
         c_generator_generate_function_instruction_slice(generator, 1, true, 0, im_generator->functions[i].instructions.size);
         string_append_formated(&generator->output_string, "\n}\n");
+        */
     }
 
     // Create real main function

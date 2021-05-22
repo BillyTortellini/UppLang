@@ -412,6 +412,9 @@ BoundingBox2 text_editor_get_character_bounding_box(Text_Editor* editor, float t
 
 Text_Slice token_range_to_slice(Token_Range range, Text_Editor* editor)
 {
+    if (editor->lexer.tokens.size == 0) {
+        return text_slice_make(text_position_make(0, 0), text_position_make(0, 0));
+    }
     range.end_index = math_clamp(range.end_index, 0, math_maximum(0, editor->lexer.tokens.size - 1));
     return text_slice_make(
         editor->lexer.tokens[range.start_index].position.start,
@@ -732,6 +735,8 @@ Text_Slice text_slice_get_current_word_slice(DynamicArray<String>* text, Text_Po
     String whitespace_characters = characters_get_string_whitespaces();
     String operator_characters = characters_get_string_non_identifier_non_whitespace();
     String identifier_characters = characters_get_string_valid_identifier_characters();
+    if (it.character == '\0') 
+        return text_slice_make(pos, pos);
     if (string_contains_character(whitespace_characters, it.character)) return text_slice_make(pos, pos);
     if (string_contains_character(identifier_characters, it.character)) {
         *on_word = true;
@@ -2355,10 +2360,11 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
         double parser_start_time = timing_current_time_in_seconds();
         ast_parser_parse(&editor->parser, &editor->lexer);
         double semantic_analysis_start_time = timing_current_time_in_seconds();
+        
         semantic_analyser_analyse(&editor->analyser, &editor->parser);
         double intermediate_generator_start_time = timing_current_time_in_seconds();
         double bytecode_generator_start_time = timing_current_time_in_seconds();
-        if (editor->parser.errors.size == 0 && editor->analyser.errors.size == 0 && input->key_pressed[KEY_CODE::F5])
+        if (editor->parser.errors.size == 0 && editor->analyser.errors.size == 0 && input->key_pressed[KEY_CODE::F5] && true)
         {
             // Generate Intermediate Code
             intermediate_generator_generate(&editor->intermediate_generator, &editor->analyser);
@@ -2366,6 +2372,7 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
             // Generate Bytecode from IM
             bytecode_generator_generate(&editor->generator, &editor->intermediate_generator);
         }
+       
         double debug_print_start_time = timing_current_time_in_seconds();
         // Debug Print
         if (input->key_pressed[KEY_CODE::F5] && true)
@@ -2386,7 +2393,7 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
 
             logg("--------TYPE SYSTEM RESULT--------:\n");
             type_system_print(&editor->analyser.type_system);
-            if (editor->analyser.errors.size == 0)
+            if (editor->analyser.errors.size == 0 && true)
             {
                 String result_str = string_create_empty(32);
                 SCOPE_EXIT(string_destroy(&result_str));
@@ -2459,20 +2466,23 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
                 if (nearest_node->type == AST_Node_Type::STRUCT) {
                     color = TYPE_COLOR;
                 }
-                Symbol_Table* table = editor->analyser.symbol_tables[editor->analyser.semantic_information[nearest_node_index].symbol_table_index];
-                Symbol* symbol = symbol_table_find_symbol(table, t.attribute.identifier_number);
-                if (symbol != 0)
+                if (editor->analyser.symbol_tables.size != 0)
                 {
-                    if (symbol->symbol_type == Symbol_Type::TYPE) {
-                        if (symbol->type->type == Signature_Type::PRIMITIVE) {
-                            color = PRIMITIVE_TYPE_COLOR;
+                    Symbol_Table* table = editor->analyser.symbol_tables[editor->analyser.semantic_information[nearest_node_index].symbol_table_index];
+                    Symbol* symbol = symbol_table_find_symbol(table, t.attribute.identifier_number);
+                    if (symbol != 0)
+                    {
+                        if (symbol->symbol_type == Symbol_Type::TYPE) {
+                            if (symbol->type->type == Signature_Type::PRIMITIVE) {
+                                color = PRIMITIVE_TYPE_COLOR;
+                            }
+                            else {
+                                color = TYPE_COLOR;
+                            }
                         }
-                        else {
-                            color = TYPE_COLOR;
+                        else if (symbol->symbol_type == Symbol_Type::VARIABLE) {
+                            color = VARIABLE_COLOR;
                         }
-                    }
-                    else if (symbol->symbol_type == Symbol_Type::VARIABLE) {
-                        color = VARIABLE_COLOR;
                     }
                 }
                 text_editor_add_highlight_from_slice(editor, t.position, color, BG_COLOR);

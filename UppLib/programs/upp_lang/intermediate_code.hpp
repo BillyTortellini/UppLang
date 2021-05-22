@@ -3,36 +3,6 @@
 #include "../../datastructures/dynamic_array.hpp"
 #include "semantic_analyser.hpp"
 
-/*
-    What do I want from this intermediate Code:
-        * It should make it easier to generate "Backend"-Code for C, LLVM or my Bytecode (Which can be run @ compile-time)
-        * Should be slightly more highlevel than executable code, so it can be smartly translated
-        * Works in tandum with the type system
-        * Each function should have local variables, arguments and intermediate results combined as registers
-        * Determines what should be called as a value or as pointer (But the implementation of function calling is backend dependent)
-        * Registers have types
-        * Variable names should be thrown away, but reconstructible
-        * Metaprogramming is going to be resolved here
-        * Namespacing and the Module System is going to be resolved here
-        * Operator overloading should happen here
-        * Function overloading should happen here
-        * Should contain all instructions explicitly (E.g. casting data types)
-*/
-
-// TODO: Check if we need this for global access, or if the type could actually be just a boolean
-enum class Data_Access_Type
-{
-    MEMORY_ACCESS, // Through pointer, which is in register
-    REGISTER_ACCESS,
-    // GLOBAL_ACCESS, (TODO)
-};
-
-struct Data_Access
-{
-    Data_Access_Type type;
-    int register_index; // If memory_access, this is the register that holds the pointer, otherwise this is the register that holds the data
-};
-
 enum class Exit_Code
 {
     SUCCESS,
@@ -44,24 +14,25 @@ void exit_code_append_to_string(String* string, Exit_Code code);
 
 enum class Intermediate_Instruction_Type
 {
-    MOVE_DATA, // Dest, Src  | Moves data from between registers and memory
+    MOVE_DATA, // Dest, Src     | Moves data between variables, globals and memory
     LOAD_CONSTANT_F32, // Dest
     LOAD_CONSTANT_I32, // Dest
     LOAD_CONSTANT_BOOL, // Dest
     LOAD_NULLPTR, // Dest
 
-    IF_BLOCK, // Use source 1 as condition
-    WHILE_BLOCK, // Use source 1 as condition
+    IF_BLOCK, // Source 1 is condition, the statement comes before the condition and the blocks
+    WHILE_BLOCK, // Source 1 is condition, the statement comes before the condition and the blocks
     CALL_FUNCTION, // Arguments + Destination Register
     CALL_HARDCODED_FUNCTION, // Arguments + Destination Register, i32_value = Hardcoded_Function_Type
-    BREAK, // Currently just breaks out of the active while loop
-    CONTINUE, // Just continues the current while loop
+    BREAK, // No additional data
+    CONTINUE, // No additional data
     RETURN, // Source 1 is return register
-    EXIT, // Source 1 is return register, exit code
+    EXIT, // Source 1 is return register, Exit-Code
 
-    ADDRESS_OF, // Dest, Src | If Src is a Register_Access, it returns a pointer to the register, if src = Memory_Access, then it also returns pointer to register
+    ADDRESS_OF, // Dest, Src | Returns address of src register
     CALCULATE_MEMBER_ACCESS_POINTER, // Destination, Source, offset in constant_i32_value | !Different Behavior depending on Memory_Access!
     CALCULATE_ARRAY_ACCESS_POINTER, // Destination, Source1: base_ptr, Source2: index_access, type_size in constant_i32_value | !Different Behavior depending on Memory_Access!
+
     CAST_PRIMITIVE_TYPES, // Destination, Source
     CAST_POINTERS, // Destination, Source
     CAST_POINTER_TO_U64, // Destination, Source
@@ -207,6 +178,23 @@ bool intermediate_instruction_type_is_binary_operation(Intermediate_Instruction_
 void intermediate_instruction_binop_append_to_string(String* string, Intermediate_Instruction_Type instruction_type);
 void intermediate_instruction_unary_operation_append_to_string(String* string, Intermediate_Instruction_Type instruction_type);
 
+enum class Data_Access_Type
+{
+    VARIABLE_ACCESS, // Accessed through current function variables
+    INTERMEDIATE_ACCESS, // Accessed through current function intermediate results
+    PARAMETER_ACCESS, // Accessed through current function parameters
+    GLOBAL_ACCESS, // Accessed through global variables
+};
+
+struct Data_Access
+{
+    bool is_pointer_access;
+    Data_Access_Type access_type; 
+    int access_index;
+};
+struct Intermediate_Generator;
+Type_Signature* data_access_get_type_signature(Intermediate_Generator* generator, Data_Access access);
+
 struct Intermediate_Instruction
 {
     Intermediate_Instruction_Type type;
@@ -226,11 +214,12 @@ struct Intermediate_Instruction
     Hardcoded_Function_Type hardcoded_function_type;
     // Return thing
     bool return_has_value;
+    // Exit instruction
     Exit_Code exit_code;
     // Casting
     Type_Signature* cast_from;
     Type_Signature* cast_to;
-    // Load constants, TODO: Do better with global data
+    // Constant loading
     union {
         float constant_f32_value;
         int constant_i32_value;
@@ -238,45 +227,42 @@ struct Intermediate_Instruction
     };
 };
 
-enum class Intermediate_Register_Type
+struct Intermediate_Variable
 {
-    VARIABLE,
-    EXPRESSION_RESULT,
-    PARAMETER
-};
-
-struct Intermediate_Register
-{
-    Intermediate_Register_Type type;
-    Type_Signature* type_signature;
-    int parameter_index;
-    int name_id;
+    int name_handle;
+    Type_Signature* type;
 };
 
 struct Intermediate_Function
 {
-    DynamicArray<Intermediate_Register> registers;
-    DynamicArray<Intermediate_Instruction> instructions;
-    DynamicArray<int> instruction_to_ast_node_mapping;
-    DynamicArray<int> register_to_ast_mapping;
     int name_handle;
     Type_Signature* function_type;
+    DynamicArray<Intermediate_Variable> local_variables;
+    DynamicArray<Type_Signature*> intermediate_results;
+    DynamicArray<Intermediate_Instruction> instructions;
+    // I think the next two arent in use right now
+    DynamicArray<int> instruction_to_ast_node_mapping;
+    DynamicArray<int> register_to_ast_mapping;
 };
 
-struct Variable_Mapping
+struct Name_Mapping
 {
     int name_handle;
-    int register_index;
+    int access_index;
+    Data_Access_Type access_type;
 };
 
 struct Intermediate_Generator
 {
-    DynamicArray<Intermediate_Function> functions;
-    DynamicArray<int> function_to_ast_node_mapping;
-    DynamicArray<Variable_Mapping> variable_mappings;
-    Semantic_Analyser* analyser;
     int main_function_index;
+    DynamicArray<Intermediate_Function> functions;
+    DynamicArray<Intermediate_Variable> global_variables;
+    DynamicArray<int> function_to_ast_node_mapping;
+
+    // Temporary data for generation
+    Semantic_Analyser* analyser;
     int current_function_index;
+    DynamicArray<Name_Mapping> name_mappings;
 };
 
 Intermediate_Generator intermediate_generator_create();

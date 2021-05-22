@@ -904,15 +904,10 @@ bool ast_parser_parse_single_statement_or_block(AST_Parser* parser, AST_Node_Ind
     return true;
 }
 
-bool ast_parser_parse_statement(AST_Parser* parser, AST_Node_Index parent_index)
+bool ast_parser_parse_single_variable_definition(AST_Parser* parser, AST_Node_Index parent_index)
 {
-    if (ast_parser_parse_statement_block(parser, parent_index)) {
-        return true;
-    }
-
     AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, parent_index);
     int node_index = ast_parser_get_next_node_index(parser, parent_index);
-
     if (ast_parser_test_next_2_tokens(parser, Token_Type::IDENTIFIER, Token_Type::COLON))
     {
         parser->index += 2;
@@ -926,6 +921,27 @@ bool ast_parser_parse_statement(AST_Parser* parser, AST_Node_Index parent_index)
             parser->index += 1;
             parser->token_mapping[node_index] = token_range_make(checkpoint.rewind_token_index, parser->index);
             return true;
+        }
+    }
+    ast_parser_checkpoint_reset(checkpoint);
+    return false;
+}
+
+bool ast_parser_parse_variable_creation_statement(AST_Parser* parser, AST_Node_Index parent_index)
+{
+    if (ast_parser_parse_single_variable_definition(parser, parent_index)) {
+        return true;
+    }
+
+    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, parent_index);
+    int node_index = ast_parser_get_next_node_index(parser, parent_index);
+
+    if (ast_parser_test_next_2_tokens(parser, Token_Type::IDENTIFIER, Token_Type::COLON))
+    {
+        parser->index += 2;
+        if (!ast_parser_parse_type(parser, node_index)) {
+            ast_parser_checkpoint_reset(checkpoint);
+            return false;
         }
         if (ast_parser_test_next_token(parser, Token_Type::OP_ASSIGNMENT))
         {
@@ -969,6 +985,22 @@ bool ast_parser_parse_statement(AST_Parser* parser, AST_Node_Index parent_index)
             return false;
         }
     }
+
+    ast_parser_checkpoint_reset(checkpoint);
+    return false;
+}
+
+bool ast_parser_parse_statement(AST_Parser* parser, AST_Node_Index parent_index)
+{
+    if (ast_parser_parse_statement_block(parser, parent_index)) {
+        return true;
+    }
+    if (ast_parser_parse_variable_creation_statement(parser, parent_index)) {
+        return true;
+    }
+
+    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, parent_index);
+    int node_index = ast_parser_get_next_node_index(parser, parent_index);
 
     if (ast_parser_parse_expression(parser, node_index))
     {
@@ -1118,7 +1150,7 @@ bool ast_parser_parse_statement_block(AST_Parser* parser, AST_Node_Index parent_
             ast_parser_checkpoint_reset(checkpoint);
             return false;
         }
-        checkpoint = ast_parser_checkpoint_make(parser, parent_index);
+        checkpoint = ast_parser_checkpoint_make(parser, node_index);
         if (ast_parser_parse_statement(parser, node_index)) {
             continue;
         }
@@ -1225,38 +1257,16 @@ bool ast_parser_parse_parameter_block(AST_Parser* parser, AST_Node_Index parent_
     return false;
 }
 
-bool ast_parser_parse_variable_definitions(AST_Parser* parser, AST_Node_Index parent_index)
+bool ast_parser_parse_struct_members(AST_Parser* parser, AST_Node_Index parent_index)
 {
     while (!ast_parser_test_next_token(parser, Token_Type::CLOSED_BRACES))
     {
         AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, parent_index);
-        int node_index = ast_parser_get_next_node_index(parser, parent_index);
-        parser->nodes[node_index].type = AST_Node_Type::STATEMENT_VARIABLE_DEFINITION;
-
-        bool do_error_handling = false;
-        if (!ast_parser_test_next_2_tokens(parser, Token_Type::IDENTIFIER, Token_Type::COLON)) {
-            do_error_handling = true;
-        }
-        else {
-            parser->nodes[node_index].name_id = parser->lexer->tokens[parser->index].attribute.identifier_number;
-            parser->index += 2;
-        }
-        if (!do_error_handling) {
-            if (!ast_parser_parse_type(parser, node_index)) do_error_handling = true;
-        }
-        if (!ast_parser_test_next_token(parser, Token_Type::SEMICOLON)) {
-            do_error_handling = true;
-        }
-        else {
-            if (!do_error_handling) {
-                parser->token_mapping[node_index] = token_range_make(checkpoint.rewind_token_index, parser->index);
-            }
-            parser->index++;
-        }
-
+        bool success = ast_parser_parse_single_variable_definition(parser, parent_index);
         // Do error handling here (Goto next semicolon or Closed Braces)
-        if (do_error_handling)
+        if (!success)
         {
+            ast_parser_checkpoint_reset(checkpoint);
             int next_semicolon = ast_parser_find_next_token_type(parser, Token_Type::SEMICOLON);
             int next_closing_braces = ast_parser_find_next_token_type(parser, Token_Type::CLOSED_BRACES);
             if (next_semicolon < next_closing_braces) {
@@ -1281,11 +1291,12 @@ bool ast_parser_parse_struct(AST_Parser* parser, AST_Node_Index parent_index)
 
     // Parse Struct name
     if (!ast_parser_test_next_4_tokens(parser, Token_Type::IDENTIFIER, Token_Type::DOUBLE_COLON, Token_Type::STRUCT, Token_Type::OPEN_BRACES)) {
+        ast_parser_checkpoint_reset(checkpoint);
         return false;
     }
     parser->nodes[node_index].name_id = parser->lexer->tokens[parser->index].attribute.identifier_number;
     parser->index += 4;
-    ast_parser_parse_variable_definitions(parser, node_index);
+    ast_parser_parse_struct_members(parser, node_index);
 
     if (ast_parser_test_next_token(parser, Token_Type::CLOSED_BRACES)) {
         parser->index++;
@@ -1304,6 +1315,7 @@ bool ast_parser_parse_function(AST_Parser* parser, AST_Node_Index parent_index)
 
     // Parse Function start
     if (!ast_parser_test_next_2_tokens(parser, Token_Type::IDENTIFIER, Token_Type::DOUBLE_COLON)) {
+        ast_parser_checkpoint_reset(checkpoint);
         return false;
     }
     parser->nodes[node_index].name_id = parser->lexer->tokens[parser->index].attribute.identifier_number;
@@ -1344,8 +1356,24 @@ void ast_parser_parse_root(AST_Parser* parser)
     {
         AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, root_index);
         if (parser->index >= parser->lexer->tokens.size) break;
-        if (ast_parser_parse_function(parser, root_index)) continue;
-        if (ast_parser_parse_struct(parser, root_index)) continue;
+        if (ast_parser_parse_function(parser, root_index)) {
+            continue;
+        }
+        else {
+            ast_parser_checkpoint_reset(checkpoint);
+        }
+        if (ast_parser_parse_struct(parser, root_index)) {
+            continue;
+        }
+        else {
+            ast_parser_checkpoint_reset(checkpoint);
+        }
+        if (ast_parser_parse_variable_creation_statement(parser, root_index)) {
+            continue;
+        }
+        else {
+            ast_parser_checkpoint_reset(checkpoint);
+        }
 
         // TODO: Better error handling: Skip through each line (not in parenthesis) and try parsing function or struct
         int next_closing_braces = ast_parser_find_parenthesis_ending(parser, Token_Type::OPEN_BRACES, Token_Type::CLOSED_BRACES);
@@ -1354,7 +1382,7 @@ void ast_parser_parse_root(AST_Parser* parser)
         parser->index = next_closing_braces + 1;
     }
     parser->token_mapping[root_index].start_index = 0;
-    parser->token_mapping[root_index].end_index = parser->lexer->tokens.size - 1;
+    parser->token_mapping[root_index].end_index = math_maximum(0,  parser->lexer->tokens.size - 1);
 }
 
 AST_Parser ast_parser_create()
@@ -1366,6 +1394,326 @@ AST_Parser ast_parser_create()
     parser.errors = dynamic_array_create_empty<Compiler_Error>(64);
     parser.next_free_node = 0;
     return parser;
+}
+
+void ast_parser_check_sanity(AST_Parser* parser)
+{
+    // Check for undefines
+    int count = ast_parser_check_for_undefines(parser);
+    logg("Undefined count: %d\n", count);
+    count = 0;
+
+    // Check parent indices
+    for (int i = 0; i < parser->nodes.size; i++)
+    {
+        int parent_index = parser->nodes[i].parent;
+        if (parent_index == -1) {
+            if (parser->nodes[i].type == AST_Node_Type::ROOT) {
+                continue;
+            }
+            panic("Should not happen");
+        }
+        if (parent_index < 0 || parent_index >= parser->nodes.size) {
+            panic("Should not happen");
+        }
+    }
+
+    // Check if token mappings arent 0 sized
+    for (int i = 0; i < parser->token_mapping.size; i++) 
+    {
+        int start = parser->token_mapping[i].start_index;
+        int end = parser->token_mapping[i].end_index;
+        if (parser->lexer->tokens.size != 0) 
+        {
+            if (start < 0 || end < 0 || start >= parser->lexer->tokens.size || end > parser->lexer->tokens.size) {
+                panic("Should not happen!");
+            }
+            if (start == end) {
+                AST_Node* node = &parser->nodes[i];
+                if (node->type != AST_Node_Type::ROOT) {
+                    logg("Should not happen: range: %d-%d, index: %d\n", start, end, i);
+                    logg("Node_Type::%s\n", ast_node_type_to_string(node->type).characters);
+                    panic("Should not happen!");
+                }
+            }
+        }
+    }
+
+    // Check child types of nodes
+    for (int j = 0; j < parser->nodes.size; j++) 
+    {
+        AST_Node* node = &parser->nodes[j];
+        for (int i = 0; i < node->children.size; i++) {
+            int index = node->children[i];
+            if (index < 0 || index >= parser->nodes.size) {
+                panic("Should not happen\n");
+            }
+        }
+        switch (node->type)
+        {
+        case AST_Node_Type::ROOT:
+            for (int i = 0; i < node->children.size; i++) 
+            {
+                AST_Node_Type::ENUM child_type = parser->nodes[node->children[i]].type;
+                if (child_type != AST_Node_Type::FUNCTION &&
+                    child_type != AST_Node_Type::STRUCT &&
+                    child_type != AST_Node_Type::STATEMENT_VARIABLE_DEFINE_ASSIGN &&
+                    child_type != AST_Node_Type::STATEMENT_VARIABLE_DEFINITION &&
+                    child_type != AST_Node_Type::STATEMENT_VARIABLE_DEFINE_INFER) 
+                {
+                    panic("Should not happen");
+                }
+            }
+            break;
+        case AST_Node_Type::STRUCT:
+            for (int i = 0; i < node->children.size; i++) {
+                AST_Node_Type::ENUM child_type = parser->nodes[node->children[i]].type;
+                if (child_type != AST_Node_Type::STATEMENT_VARIABLE_DEFINITION) {
+                    panic("Should not happen");
+                }
+            }
+            break;
+        case AST_Node_Type::FUNCTION:
+            if (node->children.size != 3) {
+                panic("Should not happen");
+            }
+            if (parser->nodes[node->children[0]].type != AST_Node_Type::PARAMETER_BLOCK ||
+                !ast_node_type_is_type(parser->nodes[node->children[1]].type) ||
+                parser->nodes[node->children[2]].type != AST_Node_Type::STATEMENT_BLOCK) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::PARAMETER_BLOCK:
+            for (int i = 0; i < node->children.size; i++) {
+                AST_Node_Type::ENUM child_type = parser->nodes[node->children[i]].type;
+                if (child_type != AST_Node_Type::PARAMETER) {
+                    panic("Should not happen");
+                }
+            }
+            break;
+        case AST_Node_Type::TYPE_ARRAY_UNSIZED:
+        case AST_Node_Type::TYPE_POINTER_TO:
+        case AST_Node_Type::PARAMETER:
+            if (node->children.size != 1) {
+                panic("Should not happen");
+            }
+            if (!ast_node_type_is_type(parser->nodes[node->children[0]].type)) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::TYPE_ARRAY_SIZED:
+            if (node->children.size != 2) {
+                panic("Should not happen");
+            }
+            if (!ast_node_type_is_expression(parser->nodes[node->children[0]].type)) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::STATEMENT_BLOCK:
+            for (int i = 0; i < node->children.size; i++) {
+                AST_Node_Type::ENUM child_type = parser->nodes[node->children[i]].type;
+                if (!ast_node_type_is_statement(child_type)) {
+                    panic("Should not happen");
+                }
+            }
+            break;
+        case AST_Node_Type::STATEMENT_WHILE:
+        case AST_Node_Type::STATEMENT_IF:
+            if (node->children.size != 2) {
+                panic("Should not happen");
+            }
+            if (!ast_node_type_is_expression(parser->nodes[node->children[0]].type)) {
+                panic("Should not happen");
+            }
+            if (parser->nodes[node->children[1]].type != AST_Node_Type::STATEMENT_BLOCK) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::STATEMENT_IF_ELSE:
+            if (node->children.size != 3) {
+                panic("Should not happen");
+            }
+            if (!ast_node_type_is_expression(parser->nodes[node->children[0]].type)) {
+                panic("Should not happen");
+            }
+            if (parser->nodes[node->children[1]].type != AST_Node_Type::STATEMENT_BLOCK) {
+                panic("Should not happen");
+            }
+            if (parser->nodes[node->children[2]].type != AST_Node_Type::STATEMENT_BLOCK) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::STATEMENT_BREAK:
+        case AST_Node_Type::STATEMENT_CONTINUE:
+        case AST_Node_Type::TYPE_IDENTIFIER:
+            if (node->children.size != 0) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::STATEMENT_EXPRESSION:
+        case AST_Node_Type::STATEMENT_RETURN:
+            if (node->children.size != 1) {
+                panic("Should not happen");
+            }
+            if (!ast_node_type_is_expression(parser->nodes[node->children[0]].type)) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::STATEMENT_ASSIGNMENT:
+            if (node->children.size != 2) {
+                panic("Should not happen");
+            }
+            if (!ast_node_type_is_expression(parser->nodes[node->children[0]].type)) {
+                panic("Should not happen");
+            }
+            if (!ast_node_type_is_expression(parser->nodes[node->children[1]].type)) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::STATEMENT_VARIABLE_DEFINITION:
+            if (node->children.size != 1) {
+                panic("Should not happen");
+            }
+            if (!ast_node_type_is_type(parser->nodes[node->children[0]].type)) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::STATEMENT_VARIABLE_DEFINE_ASSIGN:
+            if (node->children.size != 2) {
+                panic("Should not happen");
+            }
+            if (!ast_node_type_is_type(parser->nodes[node->children[0]].type)) {
+                panic("Should not happen");
+            }
+            if (!ast_node_type_is_expression(parser->nodes[node->children[1]].type)) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::STATEMENT_VARIABLE_DEFINE_INFER:
+            if (node->children.size != 1) {
+                panic("Should not happen");
+            }
+            if (!ast_node_type_is_expression(parser->nodes[node->children[0]].type)) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::STATEMENT_DELETE:
+            if (node->children.size != 1) {
+                panic("Should not happen");
+            }
+            if (!ast_node_type_is_expression(parser->nodes[node->children[0]].type)) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::EXPRESSION_NEW:
+            if (node->children.size != 1) {
+                panic("Should not happen");
+            }
+            if (!ast_node_type_is_type(parser->nodes[node->children[0]].type)) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::EXPRESSION_NEW_ARRAY:
+            if (node->children.size != 2) {
+                panic("Should not happen");
+            }
+            if (!ast_node_type_is_expression(parser->nodes[node->children[0]].type)) {
+                panic("Should not happen");
+            }
+            if (!ast_node_type_is_type(parser->nodes[node->children[1]].type)) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::EXPRESSION_LITERAL:
+            if (node->children.size != 0) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::EXPRESSION_FUNCTION_CALL:
+            for (int i = 0; i < node->children.size; i++) {
+                AST_Node_Type::ENUM child_type = parser->nodes[node->children[i]].type;
+                if (!ast_node_type_is_expression(child_type)) {
+                    panic("Should not happen");
+                }
+            }
+            break;
+        case AST_Node_Type::EXPRESSION_VARIABLE_READ:
+            if (node->children.size != 0) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::EXPRESSION_ARRAY_ACCESS:
+            if (node->children.size != 2) {
+                panic("Should not happen");
+            }
+            if (!ast_node_type_is_expression(parser->nodes[node->children[0]].type)) {
+                panic("Should not happen");
+            }
+            if (!ast_node_type_is_expression(parser->nodes[node->children[1]].type)) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::EXPRESSION_MEMBER_ACCESS:
+            if (node->children.size != 1) {
+                panic("Should not happen");
+            }
+            if (!ast_node_type_is_expression(parser->nodes[node->children[0]].type)) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::EXPRESSION_CAST:
+            if (node->children.size != 2) {
+                panic("Should not happen");
+            }
+            if (!ast_node_type_is_type(parser->nodes[node->children[0]].type)) {
+                panic("Should not happen");
+            }
+            if (!ast_node_type_is_expression(parser->nodes[node->children[1]].type)) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::EXPRESSION_BINARY_OPERATION_ADDITION:
+        case AST_Node_Type::EXPRESSION_BINARY_OPERATION_SUBTRACTION:
+        case AST_Node_Type::EXPRESSION_BINARY_OPERATION_DIVISION:
+        case AST_Node_Type::EXPRESSION_BINARY_OPERATION_MULTIPLICATION:
+        case AST_Node_Type::EXPRESSION_BINARY_OPERATION_MODULO:
+        case AST_Node_Type::EXPRESSION_BINARY_OPERATION_AND:
+        case AST_Node_Type::EXPRESSION_BINARY_OPERATION_OR:
+        case AST_Node_Type::EXPRESSION_BINARY_OPERATION_EQUAL:
+        case AST_Node_Type::EXPRESSION_BINARY_OPERATION_NOT_EQUAL:
+        case AST_Node_Type::EXPRESSION_BINARY_OPERATION_LESS:
+        case AST_Node_Type::EXPRESSION_BINARY_OPERATION_LESS_OR_EQUAL:
+        case AST_Node_Type::EXPRESSION_BINARY_OPERATION_GREATER:
+        case AST_Node_Type::EXPRESSION_BINARY_OPERATION_GREATER_OR_EQUAL:
+            if (node->children.size != 2) {
+                panic("Should not happen");
+            }
+            if (!ast_node_type_is_expression(parser->nodes[node->children[0]].type)) {
+                panic("Should not happen");
+            }
+            if (!ast_node_type_is_expression(parser->nodes[node->children[1]].type)) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::EXPRESSION_UNARY_OPERATION_NEGATE:
+        case AST_Node_Type::EXPRESSION_UNARY_OPERATION_NOT:
+        case AST_Node_Type::EXPRESSION_UNARY_OPERATION_ADDRESS_OF:
+        case AST_Node_Type::EXPRESSION_UNARY_OPERATION_DEREFERENCE:
+            if (node->children.size != 1) {
+                panic("Should not happen");
+            }
+            if (!ast_node_type_is_expression(parser->nodes[node->children[0]].type)) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::UNDEFINED:
+            panic("Should not happen!");
+            break;
+        default: 
+            panic("Should not happen!");
+            break;
+        }
+    }
 }
 
 void ast_parser_parse(AST_Parser* parser, Lexer* lexer)
@@ -1387,20 +1735,7 @@ void ast_parser_parse(AST_Parser* parser, Lexer* lexer)
     dynamic_array_rollback_to_size(&parser->nodes, parser->next_free_node);
     dynamic_array_rollback_to_size(&parser->token_mapping, parser->next_free_node);
 
-    int count = ast_parser_check_for_undefines(parser);
-    logg("Undefined count: %d\n", count);
-    count = 0;
-    for (int i = 0; i < parser->token_mapping.size; i++) {
-        int start = parser->token_mapping[i].start_index;
-        int end = parser->token_mapping[i].end_index;
-        if (start == end) {
-            AST_Node* node = &parser->nodes[i];
-            if (node->type != AST_Node_Type::ROOT) {
-                logg("Should not happen: range: %d-%d, index: %d\n", start, end, i);
-                logg("Node_Type::%s\n", ast_node_type_to_string(node->type).characters);
-            }
-        }
-    }
+    ast_parser_check_sanity(parser);
 }
 
 void ast_parser_destroy(AST_Parser* parser)
@@ -1476,6 +1811,12 @@ bool ast_node_type_is_unary_expression(AST_Node_Type::ENUM type) {
 }
 bool ast_node_type_is_expression(AST_Node_Type::ENUM type) {
     return type >= AST_Node_Type::EXPRESSION_LITERAL && type <= AST_Node_Type::EXPRESSION_UNARY_OPERATION_DEREFERENCE;
+}
+bool ast_node_type_is_statement(AST_Node_Type::ENUM type) {
+    return type >= AST_Node_Type::STATEMENT_BLOCK && type <= AST_Node_Type::STATEMENT_DELETE;
+}
+bool ast_node_type_is_type(AST_Node_Type::ENUM type) {
+    return type >= AST_Node_Type::TYPE_IDENTIFIER && type <= AST_Node_Type::TYPE_ARRAY_UNSIZED;
 }
 
 void ast_node_expression_append_to_string(AST_Parser* parser, AST_Node_Index node_index, String* string)
@@ -1560,7 +1901,7 @@ void ast_node_append_to_string(AST_Parser* parser, int node_index, String* strin
     for (int j = 0; j < indentation_lvl; j++) {
         string_append_formated(string, "  ");
     }
-    string_append_formated(string, "#%3d ", node_index);
+    string_append_formated(string, "#%d ", node_index);
     String type_str = ast_node_type_to_string(node->type);
     string_append_string(string, &type_str);
     if (ast_node_type_is_expression(node->type)) {
@@ -1568,12 +1909,19 @@ void ast_node_append_to_string(AST_Parser* parser, int node_index, String* strin
         ast_node_expression_append_to_string(parser, node_index, string);
         //string_append_formated(string, "\n");
     }
-    string_append_formated(string, " Line-Range: %d-%d, Character-Range: %d-%d ",
-        parser->lexer->tokens[parser->token_mapping[node_index].start_index].position.start.line,
-        parser->lexer->tokens[parser->token_mapping[node_index].end_index].position.end.line,
-        parser->lexer->tokens[parser->token_mapping[node_index].start_index].position.start.character,
-        parser->lexer->tokens[parser->token_mapping[node_index].end_index].position.end.character
-    );
+    if (parser->lexer->tokens.size > 0) {
+        int start_index = parser->token_mapping[node_index].start_index;
+        int end_index = parser->token_mapping[node_index].end_index;
+        if (end_index == parser->lexer->tokens.size) {
+            end_index = parser->lexer->tokens.size - 1;
+        }
+        string_append_formated(string, " Line-Range: %d-%d, Character-Range: %d-%d ",
+            parser->lexer->tokens[start_index].position.start.line,
+            parser->lexer->tokens[end_index].position.end.line,
+            parser->lexer->tokens[start_index].position.start.character,
+            parser->lexer->tokens[end_index].position.end.character
+        );
+    }
     {
         string_append_formated(string, "\n");
         for (int i = 0; i < node->children.size; i++) {
@@ -1590,13 +1938,13 @@ int ast_parser_get_closest_node_to_text_position(AST_Parser* parser, Text_Positi
 {
     int closest_index = 0;
     AST_Node* closest = &parser->nodes[0];
-    while (true) 
+    while (true)
     {
         bool continue_search = true;
         for (int i = 0; i < closest->children.size && continue_search; i++)
         {
             int child_index = closest->children[i];
-            Token* token_start, *token_end;
+            Token* token_start, * token_end;
             {
                 int min = 0;
                 int max = parser->lexer->tokens.size;

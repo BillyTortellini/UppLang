@@ -20,7 +20,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
     Bytecode_Instruction* i = interpreter->instruction_pointer;
     switch (i->instruction_type)
     {
-    case Instruction_Type::MOVE_REGISTERS:
+    case Instruction_Type::MOVE_STACK_DATA:
         memory_copy(interpreter->stack_pointer + i->op1, interpreter->stack_pointer + i->op2, i->op3);
         break;
     case Instruction_Type::WRITE_MEMORY:
@@ -855,7 +855,7 @@ void bytecode_interpreter_print_state(Bytecode_Interpreter* interpreter)
     }
     if (current_function_index == -1) panic("Should not happen!\n");
 
-    bytecode_generator_calculate_function_register_locations(interpreter->generator, current_function_index);
+    bytecode_generator_calculate_function_variable_and_parameter_offsets(interpreter->generator, current_function_index);
     Intermediate_Function* func = &interpreter->generator->im_generator->functions[current_function_index];
     logg("\n\n\n\n---------------------- CURRENT STATE ----------------------\n");
     logg("Current Function: %s\n", lexer_identifer_to_string(interpreter->generator->im_generator->analyser->parser->lexer, func->name_handle).characters);
@@ -867,10 +867,11 @@ void bytecode_interpreter_print_state(Bytecode_Interpreter* interpreter)
         bytecode_instruction_append_to_string(&tmp, interpreter->generator->instructions[current_instruction_index]);
         logg("Instruction: %s\n", tmp.characters);
     }
+    /*
     for (int i = 0; i < func->registers.size; i++)
     {
         Intermediate_Register* reg = &func->registers[i];
-        int stack_offset = interpreter->generator->register_stack_locations[i];
+        int stack_offset = interpreter->generator->variable_stack_offsets[i];
         byte* reg_data_ptr = interpreter->stack_pointer + stack_offset;
         Type_Signature* reg_type = reg->type_signature;
         if (reg->type == Intermediate_Register_Type::PARAMETER) {
@@ -889,6 +890,7 @@ void bytecode_interpreter_print_state(Bytecode_Interpreter* interpreter)
         type_signature_print_value(reg_type, reg_data_ptr);
         logg("\n");
     }
+    */
 }
 
 void bytecode_interpreter_execute_main(Bytecode_Interpreter* interpreter, Bytecode_Generator* generator)

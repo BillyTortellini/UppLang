@@ -14,7 +14,7 @@ enum class Primitive_Type
     SIGNED_INT_16,
     SIGNED_INT_32,
     SIGNED_INT_64,
-    UNSIGNED_INT_8, // Same as byte
+    UNSIGNED_INT_8, // byte is an alias for this
     UNSIGNED_INT_16,
     UNSIGNED_INT_32,
     UNSIGNED_INT_64,
@@ -36,7 +36,7 @@ enum class Signature_Type
     ARRAY_SIZED, // Array with known size, like [5]int
     ARRAY_UNSIZED, // With unknown size, int[]
     ERROR_TYPE,
-    // Future: Struct, Union, Tagged Union ...
+    // Future: Union, Tagged Union ...
 };
 
 struct Type_Signature;
@@ -50,24 +50,23 @@ struct Struct_Member
 struct Type_Signature
 {
     Signature_Type type;
-    int struct_name_handle;
     int size_in_bytes;
     int alignment_in_bytes;
     // Primitve type
     Primitive_Type primitive_type;
-    // Array or Pointer Stuff
-    Type_Signature* child_type;
-    // Structs
-    DynamicArray<Struct_Member> member_types;
-    // Function Stuff
+    // Function
     DynamicArray<Type_Signature*> parameter_types;
     Type_Signature* return_type;
-    // Array Stuff
+    // Array or Pointer
+    Type_Signature* child_type;
+    // Array
     int array_element_count;
+    // Struct
+    int struct_name_handle;
+    DynamicArray<Struct_Member> member_types;
 };
 void type_signature_append_to_string(String* string, Type_Signature* signature);
 
-// This will later also contain which types can be implicitly cast, maybe i need to rethink some stuff for structs
 struct Type_System
 {
     DynamicArray<Type_Signature*> types;
@@ -99,29 +98,6 @@ void type_system_print(Type_System* system);
 
 
 
-enum class Hardcoded_Function_Type
-{
-    PRINT_I32, // print(15) "15"
-    PRINT_F32, // print(23.32) 
-    PRINT_BOOL, // print(true)
-    PRINT_LINE, // print_line()
-    READ_I32,
-    READ_F32,
-    READ_BOOL,
-    RANDOM_I32,
-    MALLOC_SIZE_I32,
-    FREE_POINTER,
-
-    HARDCODED_FUNCTION_COUNT, // Should always be last element
-};
-
-struct Hardcoded_Function
-{
-    Hardcoded_Function_Type type;
-    int name_handle;
-    Type_Signature* function_type;
-};
-
 
 
 namespace Symbol_Type
@@ -130,7 +106,7 @@ namespace Symbol_Type
     {
         VARIABLE,
         FUNCTION,
-        TYPE, // This is already used to map u8, int, f64 are mapped to types
+        TYPE, // Used to map identifiers to types (E.g. "float" to type f32, struct identifier to struct type)
     };
 };
 
@@ -148,17 +124,36 @@ struct Symbol_Table
     DynamicArray<Symbol> symbols;
 };
 
+Symbol_Table symbol_table_create(Symbol_Table* parent);
+void symbol_table_destroy(Symbol_Table* table);
+Symbol* symbol_table_find_symbol(Symbol_Table* table, int name_handle);
+Symbol* symbol_table_find_symbol_by_string(Symbol_Table* table, String* string, Lexer* lexer);
+Symbol* symbol_table_find_symbol_of_type(Symbol_Table* table, int name_handle, Symbol_Type::ENUM symbol_type);
+void symbol_table_append_to_string(String* string, Symbol_Table* table, Lexer* lexer, bool print_root);
+
+
+
+
+
 struct Semantic_Node_Information
 {
-    int symbol_table_index; // Which symbol table is active in this node
+    // Available on all node-types
+    int symbol_table_index;
+    // Available on expressions
     Type_Signature* expression_result_type;
-    Type_Signature* function_signature;
+    // Available on structs
     Type_Signature* struct_signature;
+    // Available on member access expression
     bool member_access_is_address_of;
     bool member_access_is_constant_size; // If this is true, then the size is stored in member_access_offset
+    bool member_access_needs_pointer_dereference;
     int member_access_offset;
+    // Available on functions
+    Type_Signature* function_signature;
     bool needs_empty_return_at_end;
+    // Available on delete
     bool delete_is_array_delete;
+    // Available on expressions before binary operation, function arguments and assignment statements
     bool needs_casting_to_cast_type;
     Type_Signature* cast_result_type;
 };
@@ -172,6 +167,29 @@ struct Struct_Fill_Out
     int name_id;
 };
 
+enum class Hardcoded_Function_Type
+{
+    PRINT_I32,
+    PRINT_F32,
+    PRINT_BOOL,
+    PRINT_LINE,
+    READ_I32,
+    READ_F32,
+    READ_BOOL,
+    RANDOM_I32,
+    MALLOC_SIZE_I32,
+    FREE_POINTER,
+
+    HARDCODED_FUNCTION_COUNT, // Should always be last element
+};
+
+struct Hardcoded_Function
+{
+    Hardcoded_Function_Type type;
+    int name_handle;
+    Type_Signature* function_type;
+};
+
 struct Semantic_Analyser
 {
     Type_System type_system;
@@ -179,39 +197,17 @@ struct Semantic_Analyser
     DynamicArray<Semantic_Node_Information> semantic_information;
     DynamicArray<Compiler_Error> errors;
     Array<Hardcoded_Function> hardcoded_functions;
-    DynamicArray<Struct_Fill_Out> struct_fill_outs;
-
-    // Usefull stuff for now
-    int size_token_index;
-    int data_token_index;
-    int main_token_index;
 
     // Temporary stuff needed for analysis
     AST_Parser* parser;
+    DynamicArray<Struct_Fill_Out> struct_fill_outs;
     Type_Signature* function_return_type;
     int loop_depth;
-};
 
-enum class Statement_Analysis_Result
-{
-    NO_RETURN,
-    RETURN,
-    CONTINUE,
-    BREAK
+    int size_token_index;
+    int data_token_index;
+    int main_token_index;
 };
-
-struct Expression_Analysis_Result
-{
-    Type_Signature* type;
-    bool has_memory_address;
-};
-
-Symbol_Table symbol_table_create(Symbol_Table* parent);
-void symbol_table_destroy(Symbol_Table* table);
-Symbol* symbol_table_find_symbol(Symbol_Table* table, int name_handle);
-Symbol* symbol_table_find_symbol_by_string(Symbol_Table* table, String* string, Lexer* lexer);
-Symbol* symbol_table_find_symbol_of_type(Symbol_Table* table, int name_handle, Symbol_Type::ENUM symbol_type);
-void symbol_table_append_to_string(String* string, Symbol_Table* table, Lexer* lexer, bool print_root);
 
 Semantic_Analyser semantic_analyser_create();
 void semantic_analyser_destroy(Semantic_Analyser* analyser);

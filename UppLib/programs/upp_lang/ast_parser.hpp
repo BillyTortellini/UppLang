@@ -58,6 +58,12 @@ namespace AST_Node_Type
     };
 }
 
+bool ast_node_type_is_binary_expression(AST_Node_Type::ENUM type);
+bool ast_node_type_is_unary_expression(AST_Node_Type::ENUM type);
+bool ast_node_type_is_expression(AST_Node_Type::ENUM type);
+bool ast_node_type_is_statement(AST_Node_Type::ENUM type);
+bool ast_node_type_is_type(AST_Node_Type::ENUM type);
+
 typedef int AST_Node_Index;
 struct AST_Node
 {
@@ -88,7 +94,7 @@ struct AST_Parser
     DynamicArray<Compiler_Error> errors;
     Lexer* lexer;
     int index;
-    AST_Node_Index next_free_node; // What is the next free node
+    AST_Node_Index next_free_node;
 };
 
 struct AST_Parser_Checkpoint

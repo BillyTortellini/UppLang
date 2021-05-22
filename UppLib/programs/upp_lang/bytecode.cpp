@@ -1,7 +1,7 @@
 #include "bytecode.hpp"
 
-int align_offset_next_multiple(int offset, int alignment) {
-    // Check if this works if offset is negative
+int align_offset_next_multiple(int offset, int alignment) 
+{
     int dist = offset % alignment;
     if (dist == 0) return offset;
     if (dist < 0) {
@@ -18,7 +18,10 @@ Bytecode_Generator bytecode_generator_create()
     result.continue_instructions_to_fill_out = dynamic_array_create_empty<int>(64);
     result.function_locations = dynamic_array_create_empty<int>(64);
     result.function_calls = dynamic_array_create_empty<Function_Call_Location>(64);
-    result.register_stack_locations = dynamic_array_create_empty<int>(2048); // I hope this never makes any problems, only if we have more that 2048 register
+    result.variable_stack_offsets = dynamic_array_create_empty<int>(256);
+    result.parameter_stack_offsets = dynamic_array_create_empty<int>(256);
+    result.global_offsets = dynamic_array_create_empty<int>(256);
+    result.intermediate_stack_offsets = dynamic_array_create_empty<int>(256);
     result.maximum_function_stack_depth = 0;
     return result;
 }
@@ -30,7 +33,10 @@ void bytecode_generator_destroy(Bytecode_Generator* generator)
     dynamic_array_destroy(&generator->continue_instructions_to_fill_out);
     dynamic_array_destroy(&generator->function_calls);
     dynamic_array_destroy(&generator->function_locations);
-    dynamic_array_destroy(&generator->register_stack_locations);
+    dynamic_array_destroy(&generator->variable_stack_offsets);
+    dynamic_array_destroy(&generator->global_offsets);
+    dynamic_array_destroy(&generator->intermediate_stack_offsets);
+    dynamic_array_destroy(&generator->parameter_stack_offsets);
 } 
 
 Bytecode_Instruction instruction_make_0(Instruction_Type::ENUM type) {
@@ -78,37 +84,140 @@ int bytecode_generator_add_instruction(Bytecode_Generator* generator, Bytecode_I
     return generator->instructions.size - 1;
 }
 
-int bytecode_generator_add_access_instruction(Bytecode_Generator* generator, Data_Access destination, Bytecode_Instruction instr, int function_index)
+int bytecode_generator_create_temporary_stack_offset(Bytecode_Generator* generator, Type_Signature* type) 
 {
-    int result_reg_offset;
-    Type_Signature* type;
-    if (destination.type == Data_Access_Type::MEMORY_ACCESS) {
-        type = generator->im_generator->functions[function_index].registers[destination.register_index].type_signature->child_type;
-        generator->tmp_stack_offset = align_offset_next_multiple(generator->tmp_stack_offset, type->alignment_in_bytes);
-        result_reg_offset = generator->tmp_stack_offset;
-        generator->tmp_stack_offset = result_reg_offset + type->size_in_bytes;
+    generator->tmp_stack_offset = align_offset_next_multiple(generator->tmp_stack_offset, type->alignment_in_bytes);
+    int result = generator->tmp_stack_offset;
+    generator->tmp_stack_offset += type->size_in_bytes;
+    return result;
+}
+
+int bytecode_generator_get_data_access_offset(Bytecode_Generator* generator, Data_Access access)
+{
+    switch (access.access_type)
+    {
+    case Data_Access_Type::GLOBAL_ACCESS:
+        return generator->global_offsets[access.access_index];
+    case Data_Access_Type::INTERMEDIATE_ACCESS:
+        return generator->intermediate_stack_offsets[access.access_index];
+    case Data_Access_Type::PARAMETER_ACCESS:
+        return generator->parameter_stack_offsets[access.access_index];
+    case Data_Access_Type::VARIABLE_ACCESS:
+        return generator->variable_stack_offsets[access.access_index];
+    }
+    panic("Should not happen");
+    return 0;
+}
+
+int bytecode_generator_data_access_to_stack_offset(Bytecode_Generator* generator, Data_Access access, int function_index)
+{
+    Type_Signature* access_type = data_access_get_type_signature(generator->im_generator, access);
+    int result_access_offset;
+    switch (access.access_type)
+    {
+    case Data_Access_Type::GLOBAL_ACCESS:
+        result_access_offset = bytecode_generator_create_temporary_stack_offset(generator, access_type);
+        bytecode_generator_add_instruction(generator,
+            instruction_make_2(Instruction_Type::LOAD_GLOBAL, generator->global_offsets[access.access_index], access_type->size_in_bytes)
+        );
+        break;
+    case Data_Access_Type::INTERMEDIATE_ACCESS:
+        result_access_offset = generator->intermediate_stack_offsets[access.access_index];
+        break;
+    case Data_Access_Type::PARAMETER_ACCESS:
+        result_access_offset = generator->parameter_stack_offsets[access.access_index];
+        break;
+    case Data_Access_Type::VARIABLE_ACCESS:
+        result_access_offset = generator->variable_stack_offsets[access.access_index];
+        break;
+    }
+    if (access.is_pointer_access) 
+    {
+        Type_Signature* type = access_type->child_type;
+        int result_offset = bytecode_generator_create_temporary_stack_offset(generator, type);
+        bytecode_generator_add_instruction(
+            generator,
+            instruction_make_3(
+                Instruction_Type::READ_MEMORY,
+                result_offset,
+                result_access_offset,
+                type->size_in_bytes
+            )
+        );
+        return result_offset;
     }
     else {
-        type = generator->im_generator->functions[function_index].registers[destination.register_index].type_signature;
-        result_reg_offset = generator->register_stack_locations[destination.register_index];
+        return result_access_offset;
     }
+}
 
-    instr.op1 = result_reg_offset;
-    int instruction_index = bytecode_generator_add_instruction(generator, instr);
-    if (destination.type == Data_Access_Type::MEMORY_ACCESS) {
+
+int bytecode_generator_add_instruction_with_destination_access(Bytecode_Generator* generator, 
+    Data_Access destination, Bytecode_Instruction instr, int function_index
+)
+{
+    if (destination.is_pointer_access)
+    {
+        Type_Signature* type = data_access_get_type_signature(generator->im_generator, destination)->child_type;
+        int source_reg_offset = bytecode_generator_create_temporary_stack_offset(generator, type);
+        instr.op1 = source_reg_offset;
+        int instruction_index = bytecode_generator_add_instruction(generator, instr);
+
+        destination.is_pointer_access = false;
+        int pointer_stack_offset = bytecode_generator_data_access_to_stack_offset(generator, destination, function_index);
+
         bytecode_generator_add_instruction(
             generator,
             instruction_make_3(
                 Instruction_Type::WRITE_MEMORY,
-                generator->register_stack_locations[destination.register_index],
-                result_reg_offset,
+                pointer_stack_offset,
+                source_reg_offset,
                 type->size_in_bytes
             )
         );
+        return instruction_index;
     }
-    return instruction_index;
+    else
+    {
+        if (destination.access_type == Data_Access_Type::GLOBAL_ACCESS)
+        {
+            Type_Signature* type = data_access_get_type_signature(generator->im_generator, destination);
+            int source_reg_offset = bytecode_generator_create_temporary_stack_offset(generator, type);
+            instr.op1 = source_reg_offset;
+            int instruction_index = bytecode_generator_add_instruction(generator, instr);
+            bytecode_generator_add_instruction(
+                generator,
+                instruction_make_3(
+                    Instruction_Type::WRITE_GLOBAL,
+                    generator->global_offsets[destination.access_index],
+                    source_reg_offset,
+                    type->size_in_bytes
+                )
+            );
+            return instruction_index;
+        }
+        else {
+            instr.op1 = bytecode_generator_data_access_to_stack_offset(generator, destination, function_index);
+            return bytecode_generator_add_instruction(generator, instr);
+        }
+    }
 }
 
+void bytecode_generator_move_accesses(Bytecode_Generator* generator, Data_Access destination, Data_Access source, int function_index)
+{
+    Intermediate_Function* function = &generator->im_generator->functions[function_index];
+    int move_byte_size;
+    if (destination.is_pointer_access) {
+        move_byte_size = data_access_get_type_signature(generator->im_generator, destination)->child_type->size_in_bytes;
+    }
+    else {
+        move_byte_size = data_access_get_type_signature(generator->im_generator, destination)->size_in_bytes;
+    }
+
+    int source_offset = bytecode_generator_data_access_to_stack_offset(generator, source, function_index);
+    Bytecode_Instruction instr = instruction_make_3(Instruction_Type::MOVE_STACK_DATA, 0, source_offset, move_byte_size);
+    bytecode_generator_add_instruction_with_destination_access(generator, destination, instr, function_index);
+}
 
 void bytecode_generator_generate_load_constant_instruction(Bytecode_Generator* generator, int function_index, int instruction_index)
 {
@@ -140,68 +249,7 @@ void bytecode_generator_generate_load_constant_instruction(Bytecode_Generator* g
     }
     else panic("not implemented yet?!?");
 
-    bytecode_generator_add_access_instruction(generator, instruction->destination, instruction_make_2(result_type, 0, result_data), function_index);
-}
-
-void bytecode_generator_move_accesses(Bytecode_Generator* generator, Data_Access destination, Data_Access source, int function_index)
-{
-    Intermediate_Function* function = &generator->im_generator->functions[function_index];
-    int move_byte_size;
-    if (destination.type == Data_Access_Type::REGISTER_ACCESS) {
-        move_byte_size = function->registers[destination.register_index].type_signature->size_in_bytes;
-    }
-    else {
-        Type_Signature* pointer_sig = function->registers[destination.register_index].type_signature;
-        move_byte_size = pointer_sig->child_type->size_in_bytes;
-    }
-
-    Instruction_Type::ENUM instr_type;
-    if (destination.type == Data_Access_Type::REGISTER_ACCESS) {
-        if (source.type == Data_Access_Type::REGISTER_ACCESS)
-            instr_type = Instruction_Type::MOVE_REGISTERS;
-        else
-            instr_type = Instruction_Type::READ_MEMORY;
-    }
-    else if (destination.type == Data_Access_Type::MEMORY_ACCESS) {
-        if (source.type == Data_Access_Type::REGISTER_ACCESS)
-            instr_type = Instruction_Type::WRITE_MEMORY;
-        else
-            instr_type = Instruction_Type::MEMORY_COPY;
-    }
-    else panic("LOL");
-
-    bytecode_generator_add_instruction(
-        generator,
-        instruction_make_3(
-            instr_type,
-            generator->register_stack_locations[destination.register_index],
-            generator->register_stack_locations[source.register_index],
-            move_byte_size
-        )
-    );
-}
-
-int bytecode_generator_read_access_stack_offset(Bytecode_Generator* generator, Data_Access access, int function_index)
-{
-    if (access.type == Data_Access_Type::REGISTER_ACCESS) {
-        return generator->register_stack_locations[access.register_index];
-    }
-    else {
-        Type_Signature* type = generator->im_generator->functions[function_index].registers[access.register_index].type_signature->child_type;
-        generator->tmp_stack_offset = align_offset_next_multiple(generator->tmp_stack_offset, type->alignment_in_bytes);
-        int result_reg_offset = generator->tmp_stack_offset;
-        generator->tmp_stack_offset += type->size_in_bytes;
-        bytecode_generator_add_instruction(
-            generator,
-            instruction_make_3(
-                Instruction_Type::READ_MEMORY,
-                result_reg_offset,
-                generator->register_stack_locations[access.register_index],
-                type->size_in_bytes
-            )
-        );
-        return result_reg_offset;
-    }
+    bytecode_generator_add_instruction_with_destination_access(generator, instruction->destination, instruction_make_2(result_type, 0, result_data), function_index);
 }
 
 void bytecode_generator_generate_function_instruction_slice(
@@ -223,10 +271,10 @@ void bytecode_generator_generate_function_instruction_slice(
                 ((int)instr->type - (int)Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32)
                 );
 
-            int operand_1_reg_offset = bytecode_generator_read_access_stack_offset(generator, instr->source1, function_index);
-            int operand_2_reg_offset = bytecode_generator_read_access_stack_offset(generator, instr->source2, function_index);
+            int operand_1_reg_offset = bytecode_generator_data_access_to_stack_offset(generator, instr->source1, function_index);
+            int operand_2_reg_offset = bytecode_generator_data_access_to_stack_offset(generator, instr->source2, function_index);
             Bytecode_Instruction result_instr = instruction_make_3(result_instr_type, 0, operand_1_reg_offset, operand_2_reg_offset);
-            bytecode_generator_add_access_instruction(generator, instr->destination, result_instr, function_index);
+            bytecode_generator_add_instruction_with_destination_access(generator, instr->destination, result_instr, function_index);
             continue;
         }
 
@@ -237,9 +285,9 @@ void bytecode_generator_generate_function_instruction_slice(
                 (int)Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32 +
                 ((int)instr->type - (int)Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32)
                 );
-            int operand_1_reg_offset = bytecode_generator_read_access_stack_offset(generator, instr->source1, function_index);
+            int operand_1_reg_offset = bytecode_generator_data_access_to_stack_offset(generator, instr->source1, function_index);
             Bytecode_Instruction result_instr = instruction_make_2(result_instr_type, 0, operand_1_reg_offset);
-            bytecode_generator_add_access_instruction(generator, instr->destination, result_instr, function_index);
+            bytecode_generator_add_instruction_with_destination_access(generator, instr->destination, result_instr, function_index);
             continue;
         }
 
@@ -252,7 +300,7 @@ void bytecode_generator_generate_function_instruction_slice(
         }
         case Intermediate_Instruction_Type::LOAD_CONSTANT_F32:
         case Intermediate_Instruction_Type::LOAD_CONSTANT_I32:
-        case Intermediate_Instruction_Type::LOAD_NULLPTR: 
+        case Intermediate_Instruction_Type::LOAD_NULLPTR:
         case Intermediate_Instruction_Type::LOAD_CONSTANT_BOOL: {
             bytecode_generator_generate_load_constant_instruction(generator, function_index, instruction_index);
             break;
@@ -262,7 +310,7 @@ void bytecode_generator_generate_function_instruction_slice(
             bytecode_generator_generate_function_instruction_slice(
                 generator, function_index, instr->condition_calculation_instruction_start, instr->condition_calculation_instruction_end_exclusive
             );
-            int condition_stack_offset = bytecode_generator_read_access_stack_offset(generator, instr->source1, function_index);
+            int condition_stack_offset = bytecode_generator_data_access_to_stack_offset(generator, instr->source1, function_index);
             int jmp_instruction_index = bytecode_generator_add_instruction(
                 generator,
                 instruction_make_2(Instruction_Type::JUMP_ON_FALSE, 0, condition_stack_offset)
@@ -294,7 +342,9 @@ void bytecode_generator_generate_function_instruction_slice(
         case Intermediate_Instruction_Type::CALL_FUNCTION:
         {
             // Move registers to the right place, then generate call instruction
+            int pointer_offset = bytecode_generator_create_temporary_stack_offset(generator, generator->im_generator->analyser->type_system.void_ptr_type);
             int argument_stack_offset = align_offset_next_multiple(generator->tmp_stack_offset, 16); // I think 16 is the hightest i have
+
             Type_Signature* function_sig;
             if (instr->type == Intermediate_Instruction_Type::CALL_HARDCODED_FUNCTION) {
                 function_sig = generator->im_generator->analyser->hardcoded_functions[(int)instr->hardcoded_function_type].function_type;
@@ -302,29 +352,70 @@ void bytecode_generator_generate_function_instruction_slice(
             else {
                 function_sig = generator->im_generator->functions[instr->intermediate_function_index].function_type;
             }
+
+            // Put arguments into the correct place on the stack
             for (int i = 0; i < function_sig->parameter_types.size; i++)
             {
                 Type_Signature* parameter_sig = function_sig->parameter_types[i];
                 argument_stack_offset = align_offset_next_multiple(argument_stack_offset, parameter_sig->alignment_in_bytes);
-                Instruction_Type::ENUM instr_type;
                 Data_Access* arg = &instr->arguments[i];
-                if (arg->type == Data_Access_Type::REGISTER_ACCESS) {
-                    instr_type = Instruction_Type::MOVE_REGISTERS;
+
+                if (arg->access_type != Data_Access_Type::GLOBAL_ACCESS)
+                {
+                    Instruction_Type::ENUM instr_type;
+                    if (arg->is_pointer_access) {
+                        instr_type = Instruction_Type::READ_MEMORY;
+                    }
+                    else {
+                        instr_type = Instruction_Type::MOVE_STACK_DATA;
+                    }
+                    bytecode_generator_add_instruction(
+                        generator,
+                        instruction_make_3(
+                            instr_type,
+                            argument_stack_offset,
+                            bytecode_generator_get_data_access_offset(generator, *arg),
+                            parameter_sig->size_in_bytes
+                        )
+                    );
                 }
-                else {
-                    instr_type = Instruction_Type::READ_MEMORY;
+                else
+                {
+                    if (arg->is_pointer_access)
+                    {
+                        bytecode_generator_add_instruction(generator,
+                            instruction_make_3(
+                                Instruction_Type::LOAD_GLOBAL, 
+                                pointer_offset, 
+                                generator->global_offsets[arg->access_index], 
+                                8
+                            )
+                        );
+                        bytecode_generator_add_instruction(
+                            generator,
+                            instruction_make_3(
+                                Instruction_Type::READ_MEMORY,
+                                argument_stack_offset,
+                                pointer_offset,
+                                parameter_sig->size_in_bytes
+                            )
+                        );
+                    }
+                    else {
+                        bytecode_generator_add_instruction(generator,
+                            instruction_make_3(
+                                Instruction_Type::LOAD_GLOBAL,
+                                argument_stack_offset,
+                                generator->global_offsets[arg->access_index],
+                                parameter_sig->size_in_bytes
+                            )
+                        );
+                    }
                 }
-                bytecode_generator_add_instruction(
-                    generator,
-                    instruction_make_3(
-                        instr_type,
-                        argument_stack_offset,
-                        generator->register_stack_locations[arg->register_index],
-                        parameter_sig->size_in_bytes
-                    )
-                );
+
                 argument_stack_offset += parameter_sig->size_in_bytes;
             }
+
             // Align argument_stack_offset for return pointer
             argument_stack_offset = align_offset_next_multiple(argument_stack_offset, 8);
             if (instr->type == Intermediate_Instruction_Type::CALL_HARDCODED_FUNCTION) {
@@ -358,7 +449,7 @@ void bytecode_generator_generate_function_instruction_slice(
             if (return_type != generator->im_generator->analyser->type_system.void_type)
             {
                 Bytecode_Instruction ret_val_instr = instruction_make_2(Instruction_Type::LOAD_RETURN_VALUE, 0, return_type->size_in_bytes);
-                bytecode_generator_add_access_instruction(generator, instr->destination, ret_val_instr, function_index);
+                bytecode_generator_add_instruction_with_destination_access(generator, instr->destination, ret_val_instr, function_index);
             }
             break;
         }
@@ -368,7 +459,7 @@ void bytecode_generator_generate_function_instruction_slice(
             Type_Signature* return_sig = generator->im_generator->functions[function_index].function_type->return_type;
             int return_data_stack_offset = 0;
             if (instr->return_has_value) {
-                return_data_stack_offset = bytecode_generator_read_access_stack_offset(generator, instr->source1, function_index);
+                return_data_stack_offset = bytecode_generator_data_access_to_stack_offset(generator, instr->source1, function_index);
             }
 
             if (instr->type == Intermediate_Instruction_Type::EXIT) {
@@ -392,7 +483,7 @@ void bytecode_generator_generate_function_instruction_slice(
             bytecode_generator_generate_function_instruction_slice(
                 generator, function_index, instr->condition_calculation_instruction_start, instr->condition_calculation_instruction_end_exclusive
             );
-            int condition_stack_offset = bytecode_generator_read_access_stack_offset(generator, instr->source1, function_index);
+            int condition_stack_offset = bytecode_generator_data_access_to_stack_offset(generator, instr->source1, function_index);
             int jmp_instruction_index = bytecode_generator_add_instruction(
                 generator,
                 instruction_make_2(Instruction_Type::JUMP_ON_FALSE, 0, condition_stack_offset)
@@ -457,10 +548,10 @@ void bytecode_generator_generate_function_instruction_slice(
             }
             else panic("Should not happen!");
 
-            bytecode_generator_add_access_instruction(generator, instr->destination,
+            bytecode_generator_add_instruction_with_destination_access(generator, instr->destination,
                 instruction_make_4(
                     cast_type, 0,
-                    bytecode_generator_read_access_stack_offset(generator, instr->source1, function_index),
+                    bytecode_generator_data_access_to_stack_offset(generator, instr->source1, function_index),
                     (int)instr->cast_to->primitive_type, (int)instr->cast_from->primitive_type
                 ),
                 function_index
@@ -469,225 +560,141 @@ void bytecode_generator_generate_function_instruction_slice(
         }
         case Intermediate_Instruction_Type::ADDRESS_OF:
         {
-            int result_offset;
-            if (instr->destination.type == Data_Access_Type::REGISTER_ACCESS) {
-                result_offset = generator->register_stack_locations[instr->destination.register_index];
+            Bytecode_Instruction load_instr;
+            if (instr->source1.access_type == Data_Access_Type::GLOBAL_ACCESS) {
+                load_instr.instruction_type = Instruction_Type::LOAD_GLOBAL_ADDRESS;
             }
             else {
-                result_offset = align_offset_next_multiple(generator->stack_offset_end_of_variables, 8);
+                load_instr.instruction_type = Instruction_Type::LOAD_REGISTER_ADDRESS;
             }
-            bytecode_generator_add_instruction(
-                generator,
-                instruction_make_2(
-                    Instruction_Type::LOAD_REGISTER_ADDRESS,
-                    result_offset,
-                    generator->register_stack_locations[instr->source1.register_index]
-                )
-            );
-            if (instr->destination.type == Data_Access_Type::MEMORY_ACCESS) {
-                bytecode_generator_add_instruction(
-                    generator,
-                    instruction_make_3(
-                        Instruction_Type::WRITE_MEMORY,
-                        generator->register_stack_locations[instr->destination.register_index],
-                        result_offset,
-                        8 // TODO: Maybe check this for 32bit systems, otherwise pointers are always 8 byte aligned
-                    )
-                );
-            }
+            load_instr.op2 = bytecode_generator_get_data_access_offset(generator, instr->source1);
+            bytecode_generator_add_instruction_with_destination_access(generator, instr->destination, load_instr, function_index);
             break;
         }
         case Intermediate_Instruction_Type::CALCULATE_MEMBER_ACCESS_POINTER:
         {
-            int tmp_register_offset = align_offset_next_multiple(generator->stack_offset_end_of_variables, 8);
             int register_address_reg;
-            if (instr->source1.type == Data_Access_Type::REGISTER_ACCESS)
+            if (instr->source1.is_pointer_access) {
+                Data_Access copy = instr->source1;
+                copy.is_pointer_access = false;
+                register_address_reg = bytecode_generator_data_access_to_stack_offset(generator, copy, function_index);
+            }
+            else 
             {
-                register_address_reg = tmp_register_offset;
-                tmp_register_offset += 8;
+                Instruction_Type::ENUM instr_type;
+                if (instr->source1.access_type == Data_Access_Type::GLOBAL_ACCESS) {
+                    instr_type = Instruction_Type::LOAD_GLOBAL_ADDRESS;
+                }
+                else {
+                    instr_type = Instruction_Type::LOAD_REGISTER_ADDRESS;
+                }
+                register_address_reg = bytecode_generator_create_temporary_stack_offset(generator, generator->im_generator->analyser->type_system.void_ptr_type);
                 bytecode_generator_add_instruction(
                     generator,
                     instruction_make_2(
-                        Instruction_Type::LOAD_REGISTER_ADDRESS,
+                        instr_type,
                         register_address_reg,
-                        generator->register_stack_locations[instr->source1.register_index]
+                        bytecode_generator_get_data_access_offset(generator, instr->source1)
                     )
                 );
-            }
-            else {
-                register_address_reg = generator->register_stack_locations[instr->source1.register_index];
             }
 
-            int result_offset;
-            if (instr->destination.type == Data_Access_Type::MEMORY_ACCESS) {
-                result_offset = align_offset_next_multiple(generator->stack_offset_end_of_variables, 8);
-            }
-            else {
-                result_offset = generator->register_stack_locations[instr->destination.register_index];
-            }
-            bytecode_generator_add_instruction(
-                generator,
+            bytecode_generator_add_instruction_with_destination_access(generator, instr->destination,
                 instruction_make_3(
                     Instruction_Type::U64_ADD_CONSTANT_I32,
-                    result_offset,
+                    0,
                     register_address_reg,
                     instr->constant_i32_value
-                )
+                ), 
+                function_index
             );
-            if (instr->destination.type == Data_Access_Type::MEMORY_ACCESS) {
-                bytecode_generator_add_instruction(
-                    generator,
-                    instruction_make_3(
-                        Instruction_Type::WRITE_MEMORY,
-                        generator->register_stack_locations[instr->destination.register_index],
-                        result_offset,
-                        8 // TODO: Check if we need 32 bit support, this would be such a case, maybe just use size of result type
-                    )
-                );
-            }
             break;
         }
         case Intermediate_Instruction_Type::CALCULATE_ARRAY_ACCESS_POINTER:
         {
-            int tmp_register_offset = align_offset_next_multiple(generator->stack_offset_end_of_variables, 8);
-            int register_address_reg;
-            if (instr->source1.type == Data_Access_Type::MEMORY_ACCESS)
-            {
-                register_address_reg = tmp_register_offset;
-                tmp_register_offset += 8;
-                bytecode_generator_add_instruction(
-                    generator,
-                    instruction_make_3(
-                        Instruction_Type::READ_MEMORY,
-                        register_address_reg,
-                        generator->register_stack_locations[instr->source1.register_index], 8
-                    )
-                );
-            }
-            else {
-                register_address_reg = generator->register_stack_locations[instr->source1.register_index];
-            }
-
-            int register_index_reg;
-            if (instr->source2.type == Data_Access_Type::MEMORY_ACCESS)
-            {
-                register_index_reg = tmp_register_offset;
-                tmp_register_offset += 8;
-                bytecode_generator_add_instruction(
-                    generator,
-                    instruction_make_3(
-                        Instruction_Type::READ_MEMORY,
-                        register_index_reg,
-                        generator->register_stack_locations[instr->source2.register_index],
-                        4 // Has to be an u32 TODO: Check if other int types are valid
-                    )
-                );
-            }
-            else {
-                register_index_reg = generator->register_stack_locations[instr->source2.register_index];
-            }
-
-            int result_offset;
-            if (instr->destination.type == Data_Access_Type::MEMORY_ACCESS) {
-                result_offset = align_offset_next_multiple(generator->stack_offset_end_of_variables, 8);
-            }
-            else {
-                result_offset = generator->register_stack_locations[instr->destination.register_index];
-            }
-            bytecode_generator_add_instruction(
-                generator,
+            int base_pointer_offset = bytecode_generator_data_access_to_stack_offset(generator, instr->source1, function_index);
+            int index_offset = bytecode_generator_data_access_to_stack_offset(generator, instr->source2, function_index);
+            bytecode_generator_add_instruction_with_destination_access(generator, instr->destination,
                 instruction_make_4(
                     Instruction_Type::U64_MULTIPLY_ADD_I32,
-                    result_offset,
-                    register_address_reg,
-                    register_index_reg,
+                    0,
+                    base_pointer_offset,
+                    index_offset,
                     instr->constant_i32_value
-                )
+                ), function_index
             );
-            if (instr->destination.type == Data_Access_Type::MEMORY_ACCESS) {
-                bytecode_generator_add_instruction(
-                    generator,
-                    instruction_make_3(
-                        Instruction_Type::WRITE_MEMORY,
-                        generator->register_stack_locations[instr->destination.register_index],
-                        result_offset,
-                        8 // TODO: 32bit, just use result type instead of hard-coding this
-                    )
-                );
-            }
             break;
         }
         }
     }
 }
 
-void bytecode_generator_calculate_function_register_locations(Bytecode_Generator * generator, int function_index)
+void bytecode_generator_calculate_function_variable_and_parameter_offsets(Bytecode_Generator* generator, int function_index)
 {
     Intermediate_Function* function = &generator->im_generator->functions[function_index];
     // Set parameter stack locations
     {
+        dynamic_array_reset(&generator->parameter_stack_offsets);
         int stack_size_of_parameters = 0;
         Type_Signature* function_signature = generator->im_generator->functions[function_index].function_type;
+        dynamic_array_reserve(&generator->parameter_stack_offsets, function_signature->parameter_types.size);
 
         for (int i = 0; i < function_signature->parameter_types.size; i++)
         {
             Type_Signature* param_sig = function_signature->parameter_types[i];
             stack_size_of_parameters = align_offset_next_multiple(stack_size_of_parameters, param_sig->alignment_in_bytes);
+            dynamic_array_push_back(&generator->parameter_stack_offsets, stack_size_of_parameters);
             stack_size_of_parameters += param_sig->size_in_bytes;
         }
         // Adjust for pointer alignment of return address
         stack_size_of_parameters = align_offset_next_multiple(stack_size_of_parameters, 8);
-
-        // Now actually set the things
-        int stack_offset = -stack_size_of_parameters;
-        for (int i = 0; i < function_signature->parameter_types.size; i++)
-        {
-            int reg_index = -1;
-            for (int j = 0; j < function->registers.size; j++) {
-                if (function->registers[j].type == Intermediate_Register_Type::PARAMETER &&
-                    function->registers[j].parameter_index == i) {
-                    reg_index = j;
-                }
-            }
-            assert(reg_index != -1, "Should never happen");
-
-            Type_Signature* param_sig = function_signature->parameter_types[i];
-            stack_offset = align_offset_next_multiple(stack_offset, param_sig->alignment_in_bytes);
-            generator->register_stack_locations[reg_index] = stack_offset;
-            stack_offset += param_sig->size_in_bytes;
+        for (int i = 0; i < generator->parameter_stack_offsets.size; i++) {
+            generator->parameter_stack_offsets[i] = generator->parameter_stack_offsets[i] - stack_size_of_parameters;
         }
     }
 
-    // Set variable and intermediate results stack locations
-    int stack_offset_end_of_variables = 0;
+    // Set variable stack locations
+    int stack_offset = 16;
     {
-        int stack_offset = 16; // return pointer + old stack pointer
-        for (int i = 0; i < function->registers.size; i++)
+        dynamic_array_reset(&generator->variable_stack_offsets);
+        dynamic_array_reserve(&generator->variable_stack_offsets, function->local_variables.size);
+        for (int i = 0; i < function->local_variables.size; i++)
         {
-            Intermediate_Register* reg = &function->registers[i];
-            if (reg->type == Intermediate_Register_Type::PARAMETER) continue; // Done in previous step
-            Type_Signature* type_sig = reg->type_signature;
+            Type_Signature* type_sig = function->local_variables[i].type;
             stack_offset = align_offset_next_multiple(stack_offset, type_sig->alignment_in_bytes);
-            generator->register_stack_locations[i] = stack_offset;
+            dynamic_array_push_back(&generator->variable_stack_offsets, stack_offset);
             stack_offset += type_sig->size_in_bytes;
         }
-        stack_offset_end_of_variables = stack_offset;
     }
 
-    generator->stack_offset_end_of_variables = stack_offset_end_of_variables;
-    generator->tmp_stack_offset = generator->stack_offset_end_of_variables;
+    // Set intermediate results stack offsets
+    {
+        dynamic_array_reset(&generator->intermediate_stack_offsets);
+        dynamic_array_reserve(&generator->intermediate_stack_offsets, function->intermediate_results.size);
+        for (int i = 0; i < function->intermediate_results.size; i++)
+        {
+            Type_Signature* type_sig = function->intermediate_results[i];
+            stack_offset = align_offset_next_multiple(stack_offset, type_sig->alignment_in_bytes);
+            dynamic_array_push_back(&generator->intermediate_stack_offsets, stack_offset);
+            stack_offset += type_sig->size_in_bytes;
+        }
+    }
+    generator->tmp_stack_offset = stack_offset;
 }
 
-void bytecode_generator_generate_function_code(Bytecode_Generator * generator, int function_index)
+void bytecode_generator_generate_function_code(Bytecode_Generator* generator, int function_index)
 {
     Intermediate_Function* function = &generator->im_generator->functions[function_index];
     generator->function_locations[function_index] = generator->instructions.size;
 
-    bytecode_generator_calculate_function_register_locations(generator, function_index);
+    bytecode_generator_calculate_function_variable_and_parameter_offsets(generator, function_index);
     bytecode_generator_generate_function_instruction_slice(generator, function_index, 0, function->instructions.size);
+    if (generator->tmp_stack_offset > generator->maximum_function_stack_depth) {
+        generator->maximum_function_stack_depth = generator->tmp_stack_offset;
+    }
 }
 
-void bytecode_generator_generate(Bytecode_Generator * generator, Intermediate_Generator * im_generator)
+void bytecode_generator_generate(Bytecode_Generator* generator, Intermediate_Generator* im_generator)
 {
     generator->im_generator = im_generator;
     dynamic_array_reset(&generator->instructions);
@@ -695,33 +702,23 @@ void bytecode_generator_generate(Bytecode_Generator * generator, Intermediate_Ge
     dynamic_array_reset(&generator->continue_instructions_to_fill_out);
     dynamic_array_reset(&generator->function_calls);
     dynamic_array_reset(&generator->function_locations);
-    dynamic_array_reset(&generator->register_stack_locations);
+    dynamic_array_reset(&generator->variable_stack_offsets);
+    dynamic_array_reset(&generator->global_offsets);
+    dynamic_array_reset(&generator->parameter_stack_offsets);
+    dynamic_array_reset(&generator->intermediate_stack_offsets);
 
-    // Find function with highest register_count
-    int max_register_count = 0;
-    generator->maximum_function_stack_depth = 0;
-    for (int i = 0; i < im_generator->functions.size; i++)
-    {
-        Intermediate_Function* function = &im_generator->functions[i];
-        int max_function_stack_depth = 256;
-        for (int j = 0; j < function->registers.size; j++) {
-            Type_Signature* sig = function->registers[j].type_signature;
-            max_function_stack_depth += sig->size_in_bytes + sig->alignment_in_bytes;
-        }
-        if (max_function_stack_depth > generator->maximum_function_stack_depth) {
-            generator->maximum_function_stack_depth = max_function_stack_depth;
-        }
-        if (function->registers.size > max_register_count) {
-            max_register_count = function->registers.size;
-        }
-    }
-    dynamic_array_reserve(&generator->register_stack_locations, max_register_count);
-    while (generator->register_stack_locations.size < max_register_count) {
-        dynamic_array_push_back(&generator->register_stack_locations, 0);
-    }
     dynamic_array_reserve(&generator->function_locations, generator->im_generator->functions.size);
     while (generator->function_locations.size < generator->im_generator->functions.size) {
         dynamic_array_push_back(&generator->function_locations, 0);
+    }
+
+    generator->global_data_size = 0;
+    dynamic_array_reserve(&generator->global_offsets, generator->im_generator->global_variables.size);
+    for (int i = 0; i < im_generator->global_variables.size; i++) {
+        Type_Signature* signature = im_generator->global_variables[i].type;
+        generator->global_data_size = align_offset_next_multiple(generator->global_data_size, signature->alignment_in_bytes);
+        dynamic_array_push_back(&generator->global_offsets, generator->global_data_size);
+        generator->global_data_size += signature->size_in_bytes;
     }
 
     // Generate code for all functions
@@ -738,7 +735,7 @@ void bytecode_generator_generate(Bytecode_Generator * generator, Intermediate_Ge
     generator->entry_point_index = generator->function_locations[generator->im_generator->main_function_index];
 }
 
-void bytecode_instruction_append_to_string(String * string, Bytecode_Instruction instruction)
+void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction instruction)
 {
     Intermediate_Instruction_Type intermediate_type = (Intermediate_Instruction_Type)(
         (int)instruction.instruction_type - (int)Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32
@@ -768,7 +765,7 @@ void bytecode_instruction_append_to_string(String * string, Bytecode_Instruction
         case Instruction_Type::LOAD_CONSTANT_I32:
             string_append_formated(string, "LOAD_CONSTANT_I32                 dest=%d, val=%d\n", instruction.op1, instruction.op2);
             break;
-        case Instruction_Type::MOVE_REGISTERS:
+        case Instruction_Type::MOVE_STACK_DATA:
             string_append_formated(string, "MOVE_REGISTER                     dest=%d, src=%d, size=%d\n", instruction.op1, instruction.op2, instruction.op3);
             break;
         case Instruction_Type::READ_MEMORY:
@@ -836,7 +833,7 @@ void bytecode_instruction_append_to_string(String * string, Bytecode_Instruction
     }
 }
 
-void bytecode_generator_append_bytecode_to_string(Bytecode_Generator * generator, String * string)
+void bytecode_generator_append_bytecode_to_string(Bytecode_Generator* generator, String* string)
 {
     string_append_formated(string, "Functions:\n");
     for (int i = 0; i < generator->function_locations.size; i++) {

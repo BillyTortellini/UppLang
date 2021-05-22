@@ -3,33 +3,28 @@
 #include "intermediate_code.hpp"
 
 /*
-    General Architecture Notes for Bytecode:
-        * Each Codeword can have up to 2 operands (registers) + 1 destination register
-        * Jumps are either conditional or non_conditional
-        * Stack: Grows upwards, has a limited size
-
-    So the runtime system will have a:
+    Runtime system has:
         - Stack (Return addresses, register data, function arguments)
         - Stack_Pointer
         - Instruction_Pointer
         - Return_Register (s, when we have multiple return values)
 
-    The stack grows upwards (Dynamic_Array), and it is indexed on a one-byte index basis.
-    Accessing the stack is done relative to the Stack_Pointer.
-    A Functions Stack-Frame looks like this:
-    [ParamReg0] [ParamReg1] [ParamRegs...] [Return_Address] [Old_Stack_Pointer] [Reg0] [Reg1] [Reg2] [Regs...]
+    A Stack-Frame looks like this:
+    [Param0] [Param1] [ParamX...] [Return_Address] [Old_Stack_Pointer] [Reg0] [Reg1] [Reg2] [Regs...]
 */
 
 namespace Instruction_Type
 {
     enum ENUM
     {
-        MOVE_REGISTERS,  // op1 = dest_reg, op2 = src_reg, op3 = size
-        WRITE_MEMORY, // op1 = address_register, op2 = value_register, op3 = size
-        READ_MEMORY, // op1 = dest_register, op2 = address_register, op3 = size
-        MEMORY_COPY, // op1 = dest_address_register, op2 = src_address_register, op3 = size
+        MOVE_STACK_DATA,  // op1 = dest_reg, op2 = src_reg, op3 = size
+        WRITE_MEMORY, // op1 = address_reg, op2 = value_reg, op3 = size
+        READ_MEMORY, // op1 = dest_reg, op2 = address_reg, op3 = size
+        MEMORY_COPY, // op1 = dest_address_reg, op2 = src_address_reg, op3 = size
+        LOAD_GLOBAL, // op1 = dest_address_reg, op2 = global offset, op3 = size
+        WRITE_GLOBAL, // op1 = dest_global offset, op2 = src_reg, op3 = size
         U64_ADD_CONSTANT_I32, // op1 = dest_reg, op2 = constant offset
-        U64_MULTIPLY_ADD_I32, // op1 = dest_reg, op2 = base_register, op3 = index_register, op4 = size
+        U64_MULTIPLY_ADD_I32, // op1 = dest_reg, op2 = base_reg, op3 = index_reg, op4 = size
 
         JUMP, // op1 = instruction_index
         JUMP_ON_TRUE, // op1 = instruction_index, op2 = cnd_reg
@@ -40,7 +35,8 @@ namespace Instruction_Type
         EXIT, // op1 = return_value_register, op2 = return size (Capped at 16), op3 = exit_code
 
         LOAD_RETURN_VALUE, // op1 = dst_reg, op2 = size
-        LOAD_REGISTER_ADDRESS, // op1 = dest_reg, op2 = register_to_load, // TODO: Also only works because we are lucky, and registers are accessed by offset
+        LOAD_REGISTER_ADDRESS, // op1 = dest_reg, op2 = register_to_load
+        LOAD_GLOBAL_ADDRESS, // op1 = dest_reg, op2 = global offset
         LOAD_CONSTANT_F32, // op1 = dest_reg, op2 = value // Todo: Only works because we dont 64bit constants yet
         LOAD_CONSTANT_I32, // op1 = dest_reg, op2 = value // Todo: Only works because we dont 64bit constants yet
         LOAD_CONSTANT_BOOLEAN, // op1 = dest_reg, op2 = value // Todo: Only works because we dont 64bit constants yet
@@ -206,20 +202,24 @@ struct Function_Call_Location
 
 struct Bytecode_Generator
 {
-    // Data required for generation
-    Intermediate_Generator* im_generator;
-    DynamicArray<int> break_instructions_to_fill_out;
-    DynamicArray<int> continue_instructions_to_fill_out;
-
     // Result data
     DynamicArray<Bytecode_Instruction> instructions;
     DynamicArray<int> function_locations;
-    DynamicArray<Function_Call_Location> function_calls;
-    DynamicArray<int> register_stack_locations;
 
+    int global_data_size;
     int entry_point_index;
     int maximum_function_stack_depth;
-    int stack_offset_end_of_variables;
+
+    // Data required for generation
+    Intermediate_Generator* im_generator;
+    DynamicArray<Function_Call_Location> function_calls;
+    DynamicArray<int> break_instructions_to_fill_out;
+    DynamicArray<int> continue_instructions_to_fill_out;
+
+    DynamicArray<int> parameter_stack_offsets;
+    DynamicArray<int> variable_stack_offsets;
+    DynamicArray<int> intermediate_stack_offsets;
+    DynamicArray<int> global_offsets;
     int tmp_stack_offset;
 };
 
@@ -228,4 +228,4 @@ void bytecode_generator_destroy(Bytecode_Generator* generator);
 void bytecode_generator_generate(Bytecode_Generator* generator, Intermediate_Generator* im_generator);
 void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction instruction);
 void bytecode_generator_append_bytecode_to_string(Bytecode_Generator* generator, String* string);
-void bytecode_generator_calculate_function_register_locations(Bytecode_Generator* generator, int function_index);
+void bytecode_generator_calculate_function_variable_and_parameter_offsets(Bytecode_Generator* generator, int function_index);

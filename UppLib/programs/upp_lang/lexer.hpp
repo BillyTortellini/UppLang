@@ -87,7 +87,6 @@ struct Token
     int source_code_index;
 };
 
-// TODO: Lexer should also have a token array with whitespaces and comments, for editor/ide's sake
 struct Lexer
 {
     DynamicArray<String> identifiers;
@@ -102,7 +101,9 @@ const char* token_type_to_string(Token_Type::ENUM type);
 Lexer lexer_create();
 void lexer_destroy(Lexer* result);
 void lexer_parse_string(Lexer* lexer, String* code);
-void lexer_print(Lexer* result);
-String lexer_identifer_to_string(Lexer* Lexer, int index); // Does not do much
+
+String lexer_identifer_to_string(Lexer* Lexer, int index);
 int lexer_add_or_find_identifier_by_string(Lexer* Lexer, String identifier);
+
+void lexer_print(Lexer* result);
 void lexer_print_identifiers(Lexer* lexer);

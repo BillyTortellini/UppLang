@@ -2,6 +2,20 @@
 
 #include "../../datastructures/string.hpp"
 
+enum class Statement_Analysis_Result
+{
+    NO_RETURN,
+    RETURN,
+    CONTINUE,
+    BREAK
+};
+
+struct Expression_Analysis_Result
+{
+    Type_Signature* type;
+    bool has_memory_address;
+};
+
 String primitive_type_to_string(Primitive_Type type)
 {
     switch (type)
@@ -149,7 +163,7 @@ bool type_signatures_are_equal(Type_Signature* sig1, Type_Signature* sig2)
     return false;
 }
 
-void type_signature_append_to_string(String* string, Type_Signature* signature)
+void type_signature_append_to_string_with_children(String* string, Type_Signature* signature, bool print_child)
 {
     switch (signature->type)
     {
@@ -158,18 +172,18 @@ void type_signature_append_to_string(String* string, Type_Signature* signature)
         break;
     case Signature_Type::ARRAY_SIZED:
         string_append_formated(string, "[%d]", signature->array_element_count);
-        type_signature_append_to_string(string, signature->child_type);
+        type_signature_append_to_string_with_children(string, signature->child_type, print_child);
         break;
     case Signature_Type::ARRAY_UNSIZED:
         string_append_formated(string, "[]");
-        type_signature_append_to_string(string, signature->child_type);
+        type_signature_append_to_string_with_children(string, signature->child_type, print_child);
         break;
     case Signature_Type::ERROR_TYPE:
         string_append_formated(string, "ERROR-Type");
         break;
     case Signature_Type::POINTER:
         string_append_formated(string, "*");
-        type_signature_append_to_string(string, signature->child_type);
+        type_signature_append_to_string_with_children(string, signature->child_type, print_child);
         break;
     case Signature_Type::PRIMITIVE:
         String s = primitive_type_to_string(signature->primitive_type);
@@ -177,8 +191,8 @@ void type_signature_append_to_string(String* string, Type_Signature* signature)
         break;
     case Signature_Type::STRUCT:
         string_append_formated(string, "STRUCT {");
-        for (int i = 0; i < signature->member_types.size; i++) {
-            type_signature_append_to_string(string, signature->member_types[i].type);
+        for (int i = 0; i < signature->member_types.size && print_child; i++) {
+            type_signature_append_to_string_with_children(string, signature->member_types[i].type, false);
             if (i != signature->parameter_types.size - 1) {
                 string_append_formated(string, ", ");
             }
@@ -188,14 +202,19 @@ void type_signature_append_to_string(String* string, Type_Signature* signature)
     case Signature_Type::FUNCTION:
         string_append_formated(string, "(");
         for (int i = 0; i < signature->parameter_types.size; i++) {
-            type_signature_append_to_string(string, signature->parameter_types[i]);
+            type_signature_append_to_string_with_children(string, signature->parameter_types[i], print_child);
             if (i != signature->parameter_types.size - 1) {
                 string_append_formated(string, ", ");
             }
         }
         string_append_formated(string, ") -> ");
-        type_signature_append_to_string(string, signature->return_type);
+        type_signature_append_to_string_with_children(string, signature->return_type, print_child);
     }
+}
+
+void type_signature_append_to_string(String* string, Type_Signature* signature)
+{
+    type_signature_append_to_string_with_children(string, signature, true);
 }
 
 void type_system_add_primitives(Type_System* system)
@@ -821,14 +840,23 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
     }
     case AST_Node_Type::EXPRESSION_MEMBER_ACCESS:
     {
-        analyser->semantic_information[expression_index].expression_result_type = analyser->type_system.error_type;
-        analyser->semantic_information[expression_index].member_access_offset = 0;
+        Semantic_Node_Information* info = &analyser->semantic_information[expression_index];
+        info->expression_result_type = analyser->type_system.error_type;
+        info->member_access_offset = 0;
 
         Expression_Analysis_Result access_expr_result = semantic_analyser_analyse_expression(analyser, table, expression->children[0]);
         Type_Signature* type_signature = access_expr_result.type;
         if (type_signature->type == Signature_Type::ERROR_TYPE) {
             return expression_analysis_result_make(analyser->type_system.error_type, true);;
         }
+        
+        if (type_signature->type == Signature_Type::POINTER) {
+            if (type_signature->child_type->type == Signature_Type::STRUCT) {
+                info->member_access_needs_pointer_dereference = true;
+                type_signature = type_signature->child_type;
+            }
+        }
+
         if (type_signature->type == Signature_Type::STRUCT)
         {
             Struct_Member* found = 0;
@@ -842,51 +870,45 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
                 semantic_analyser_log_error(analyser, "Struct does not contain this member name", expression_index);
                 return expression_analysis_result_make(analyser->type_system.error_type, true);
             }
-            analyser->semantic_information[expression_index].expression_result_type = found->type;
-            analyser->semantic_information[expression_index].member_access_offset = found->offset;
+            info->expression_result_type = found->type;
+            info->member_access_offset = found->offset;
             return expression_analysis_result_make(found->type, true);
         }
-        else if (type_signature->type != Signature_Type::ARRAY_SIZED && type_signature->type != Signature_Type::ARRAY_UNSIZED) {
+
+        if (type_signature->type != Signature_Type::ARRAY_SIZED && type_signature->type != Signature_Type::ARRAY_UNSIZED) {
             semantic_analyser_log_error(analyser, "Expression type does not have any members to access!", expression_index);
             return expression_analysis_result_make(analyser->type_system.error_type, true);
         }
-        else // Array type
+
+        // Array access
+        if (expression->name_id != analyser->size_token_index && expression->name_id != analyser->data_token_index) {
+            semantic_analyser_log_error(analyser, "Arrays only have .size or .data as member!", expression_index);
+            return expression_analysis_result_make(analyser->type_system.error_type, true);
+        }
+        if (type_signature->type == Signature_Type::ARRAY_UNSIZED)
         {
-            if (expression->name_id != analyser->size_token_index && expression->name_id != analyser->data_token_index) {
-                semantic_analyser_log_error(analyser, "Arrays only have .size or .data as member!", expression_index);
-                return expression_analysis_result_make(analyser->type_system.error_type, true);
+            if (expression->name_id == analyser->size_token_index) {
+                info->expression_result_type = analyser->type_system.i32_type;
+                info->member_access_offset = 8;
             }
-            if (type_signature->type == Signature_Type::ARRAY_UNSIZED)
-            {
-                if (expression->name_id == analyser->size_token_index) {
-                    analyser->semantic_information[expression_index].expression_result_type = analyser->type_system.i32_type;
-                    analyser->semantic_information[expression_index].member_access_offset = 8;
-                    return expression_analysis_result_make(analyser->semantic_information[expression_index].expression_result_type, true);
-                }
-                else { // Data token
-                    analyser->semantic_information[expression_index].expression_result_type =
-                        type_system_make_pointer(&analyser->type_system, type_signature->child_type);
-                    analyser->semantic_information[expression_index].member_access_offset = 0;
-                    return expression_analysis_result_make(analyser->semantic_information[expression_index].expression_result_type, true);
-                }
-            }
-            else // Array_Sized
-            {
-                if (expression->name_id == analyser->size_token_index) {
-                    analyser->semantic_information[expression_index].expression_result_type = analyser->type_system.i32_type;
-                    analyser->semantic_information[expression_index].member_access_is_address_of = false;
-                    analyser->semantic_information[expression_index].member_access_is_constant_size = true;
-                    analyser->semantic_information[expression_index].member_access_offset = type_signature->array_element_count;
-                    return expression_analysis_result_make(analyser->semantic_information[expression_index].expression_result_type, true);
-                }
-                else { // Data token
-                    analyser->semantic_information[expression_index].expression_result_type =
-                        type_system_make_pointer(&analyser->type_system, type_signature->child_type);
-                    analyser->semantic_information[expression_index].member_access_is_address_of = true;
-                    return expression_analysis_result_make(analyser->semantic_information[expression_index].expression_result_type, true);
-                }
+            else { // Data token
+                info->expression_result_type = type_system_make_pointer(&analyser->type_system, type_signature->child_type);
+                info->member_access_offset = 0;
             }
         }
+        else // Array_Sized
+        {
+            if (expression->name_id == analyser->size_token_index) {
+                info->expression_result_type = analyser->type_system.i32_type;
+                info->member_access_is_constant_size = true;
+                info->member_access_offset = type_signature->array_element_count;
+            }
+            else { // Data token
+                info->expression_result_type = type_system_make_pointer(&analyser->type_system, type_signature->child_type);
+                info->member_access_is_address_of = true;
+            }
+        }
+        return expression_analysis_result_make(info->expression_result_type, true);
         panic("Should not happen");
     }
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_ADDITION:
@@ -1114,6 +1136,83 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
     return expression_analysis_result_make(return_type, false);
 }
 
+void semantic_analyser_analyse_variable_creation_statements(Semantic_Analyser* analyser, Symbol_Table* parent, int statement_index)
+{
+    AST_Node* statement = &analyser->parser->nodes[statement_index];
+    switch (statement->type)
+    {
+    case AST_Node_Type::STATEMENT_VARIABLE_DEFINITION:
+    {
+        bool in_current_scope;
+        Symbol* s = symbol_table_find_symbol_of_type_with_scope_info(parent, statement->name_id, Symbol_Type::VARIABLE, &in_current_scope);
+        if (s != 0 && in_current_scope) {
+            semantic_analyser_log_error(analyser, "Variable already defined", statement_index);
+            break;
+        }
+        Type_Signature* var_type = semantic_analyser_analyse_type(analyser, statement->children[0]);
+        if (var_type == analyser->type_system.void_type) {
+            semantic_analyser_log_error(analyser, "Cannot create variable of void type", statement_index);
+            return;
+        }
+        semantic_analyser_define_variable(analyser, parent, statement_index, var_type, analyser->parser->token_mapping[statement_index].start_index);
+        break;
+    }
+    case AST_Node_Type::STATEMENT_VARIABLE_DEFINE_ASSIGN:
+    {
+        bool in_current_scope;
+        {
+            Symbol* s = symbol_table_find_symbol_of_type_with_scope_info(parent, statement->name_id, Symbol_Type::VARIABLE, &in_current_scope);
+            if (s != 0 && in_current_scope) {
+                semantic_analyser_log_error(analyser, "Variable already defined", statement_index);
+                break;
+            }
+        }
+        Type_Signature* var_type = semantic_analyser_analyse_type(analyser, statement->children[0]);
+        Type_Signature* assignment_type = semantic_analyser_analyse_expression(analyser, parent, statement->children[1]).type;
+        if (var_type == analyser->type_system.void_type) {
+            semantic_analyser_log_error(analyser, "Cannot create variable of void type", statement_index);
+            return;
+        }
+        if (assignment_type == analyser->type_system.void_type) {
+            semantic_analyser_log_error(analyser, "Trying to assign void type to variable", statement_index);
+            return;
+        }
+        if (var_type != assignment_type) {
+            if (semantic_analyser_implicit_cast_possible(analyser, assignment_type, var_type)) {
+                analyser->semantic_information[statement->children[1]].needs_casting_to_cast_type = true;
+                analyser->semantic_information[statement->children[1]].cast_result_type = var_type;
+            }
+            else {
+                semantic_analyser_log_error(analyser, "Left side of assignment is not the same as right side", statement_index);
+            }
+        }
+        semantic_analyser_define_variable(analyser, parent, statement_index, var_type, analyser->parser->token_mapping[statement_index].start_index);
+        break;
+    }
+    case AST_Node_Type::STATEMENT_VARIABLE_DEFINE_INFER:
+    {
+        {
+            bool in_current_scope;
+            Symbol* s = symbol_table_find_symbol_of_type_with_scope_info(parent, statement->name_id, Symbol_Type::VARIABLE, &in_current_scope);
+            if (s != 0 && in_current_scope) {
+                semantic_analyser_log_error(analyser, "Variable already defined", statement_index);
+                break;
+            }
+        }
+        Type_Signature* var_type = semantic_analyser_analyse_expression(analyser, parent, statement->children[0]).type;
+        if (var_type == analyser->type_system.void_type) {
+            semantic_analyser_log_error(analyser, "Trying to create variable as void type", statement_index);
+            return;
+        }
+        semantic_analyser_define_variable(analyser, parent, statement_index, var_type, analyser->parser->token_mapping[statement_index].start_index);
+        break;
+    }
+    default:
+        panic("Should not happen!");
+    }
+    return;
+}
+
 Statement_Analysis_Result semantic_analyser_analyse_statement_block(Semantic_Analyser* analyser, Symbol_Table* parent, int block_index);
 Statement_Analysis_Result semantic_analyser_analyse_statement(Semantic_Analyser* analyser, Symbol_Table* parent, int statement_index)
 {
@@ -1238,70 +1337,10 @@ Statement_Analysis_Result semantic_analyser_analyse_statement(Semantic_Analyser*
         return Statement_Analysis_Result::NO_RETURN;
     }
     case AST_Node_Type::STATEMENT_VARIABLE_DEFINITION:
-    {
-        bool in_current_scope;
-        Symbol* s = symbol_table_find_symbol_of_type_with_scope_info(parent, statement->name_id, Symbol_Type::VARIABLE, &in_current_scope);
-        if (s != 0 && in_current_scope) {
-            semantic_analyser_log_error(analyser, "Variable already defined", statement_index);
-            break;
-        }
-        Type_Signature* var_type = semantic_analyser_analyse_type(analyser, statement->children[0]);
-        if (var_type == analyser->type_system.void_type) {
-            semantic_analyser_log_error(analyser, "Cannot create variable of void type", statement_index);
-            return Statement_Analysis_Result::NO_RETURN;
-        }
-        semantic_analyser_define_variable(analyser, parent, statement_index, var_type, analyser->parser->token_mapping[statement_index].start_index);
-        break;
-    }
     case AST_Node_Type::STATEMENT_VARIABLE_DEFINE_ASSIGN:
-    {
-        bool in_current_scope;
-        {
-            Symbol* s = symbol_table_find_symbol_of_type_with_scope_info(parent, statement->name_id, Symbol_Type::VARIABLE, &in_current_scope);
-            if (s != 0 && in_current_scope) {
-                semantic_analyser_log_error(analyser, "Variable already defined", statement_index);
-                break;
-            }
-        }
-        Type_Signature* var_type = semantic_analyser_analyse_type(analyser, statement->children[0]);
-        Type_Signature* assignment_type = semantic_analyser_analyse_expression(analyser, parent, statement->children[1]).type;
-        if (var_type == analyser->type_system.void_type) {
-            semantic_analyser_log_error(analyser, "Cannot create variable of void type", statement_index);
-            return Statement_Analysis_Result::NO_RETURN;
-        }
-        if (assignment_type == analyser->type_system.void_type) {
-            semantic_analyser_log_error(analyser, "Trying to assign void type to variable", statement_index);
-            return Statement_Analysis_Result::NO_RETURN;
-        }
-        if (var_type != assignment_type) {
-            if (semantic_analyser_implicit_cast_possible(analyser, assignment_type, var_type)) {
-                analyser->semantic_information[statement->children[1]].needs_casting_to_cast_type = true;
-                analyser->semantic_information[statement->children[1]].cast_result_type = var_type;
-            }
-            else {
-                semantic_analyser_log_error(analyser, "Left side of assignment is not the same as right side", statement_index);
-            }
-        }
-        semantic_analyser_define_variable(analyser, parent, statement_index, var_type, analyser->parser->token_mapping[statement_index].start_index);
-        break;
-    }
-    case AST_Node_Type::STATEMENT_VARIABLE_DEFINE_INFER:
-    {
-        {
-            bool in_current_scope;
-            Symbol* s = symbol_table_find_symbol_of_type_with_scope_info(parent, statement->name_id, Symbol_Type::VARIABLE, &in_current_scope);
-            if (s != 0 && in_current_scope) {
-                semantic_analyser_log_error(analyser, "Variable already defined", statement_index);
-                break;
-            }
-        }
-        Type_Signature* var_type = semantic_analyser_analyse_expression(analyser, parent, statement->children[0]).type;
-        if (var_type == analyser->type_system.void_type) {
-            semantic_analyser_log_error(analyser, "Trying to create variable as void type", statement_index);
-            return Statement_Analysis_Result::NO_RETURN;
-        }
-        semantic_analyser_define_variable(analyser, parent, statement_index, var_type, analyser->parser->token_mapping[statement_index].start_index);
-        break;
+    case AST_Node_Type::STATEMENT_VARIABLE_DEFINE_INFER: {
+        semantic_analyser_analyse_variable_creation_statements(analyser, parent, statement_index);
+        return Statement_Analysis_Result::NO_RETURN;
     }
     default: {
         panic("Should be covered!\n");
@@ -1514,6 +1553,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, AST_Parser* parser)
         info.function_signature = analyser->type_system.error_type;
         info.member_access_is_address_of = false;
         info.member_access_is_constant_size = false;
+        info.member_access_needs_pointer_dereference = false;
         info.member_access_offset = 0;
         info.needs_empty_return_at_end = false;
         info.struct_signature = analyser->type_system.error_type;
@@ -1616,7 +1656,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, AST_Parser* parser)
         }
         case Hardcoded_Function_Type::FREE_POINTER: {
             analyser->hardcoded_functions[i].name_handle = -1;
-            dynamic_array_push_back(&parameter_types, type_system_make_pointer(&analyser->type_system, analyser->type_system.i32_type));
+            dynamic_array_push_back(&parameter_types, analyser->type_system.void_ptr_type);
             return_type = analyser->type_system.void_type;
             analyser->hardcoded_functions[i].function_type = type_system_make_function(&analyser->type_system, parameter_types, return_type);
             continue;
@@ -1624,7 +1664,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, AST_Parser* parser)
         case Hardcoded_Function_Type::MALLOC_SIZE_I32: {
             analyser->hardcoded_functions[i].name_handle = -1;
             dynamic_array_push_back(&parameter_types, analyser->type_system.i32_type);
-            return_type = type_system_make_pointer(&analyser->type_system, analyser->type_system.i32_type);
+            return_type = analyser->type_system.void_ptr_type;
             analyser->hardcoded_functions[i].function_type = type_system_make_function(&analyser->type_system, parameter_types, return_type);
             continue;
         }
@@ -1703,6 +1743,16 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, AST_Parser* parser)
         semantic_analyser_analyse_function_header(analyser, root_table, index);
     }
     analyser->semantic_information[0].symbol_table_index = 0;
+
+    // Analyse all global variables
+    for (int i = 0; i < root->children.size; i++) {
+        int index = root->children[i];
+        AST_Node* function_or_struct_node = &analyser->parser->nodes[index];
+        if (function_or_struct_node->type != AST_Node_Type::STATEMENT_VARIABLE_DEFINITION &&
+            function_or_struct_node->type != AST_Node_Type::STATEMENT_VARIABLE_DEFINE_ASSIGN &&
+            function_or_struct_node->type != AST_Node_Type::STATEMENT_VARIABLE_DEFINE_INFER) continue;
+        semantic_analyser_analyse_variable_creation_statements(analyser, root_table, index);
+    }
 
     // Analyse all functions
     for (int i = 0; i < root->children.size; i++) {
