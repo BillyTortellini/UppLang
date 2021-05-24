@@ -111,14 +111,14 @@ int bytecode_generator_get_data_access_offset(Bytecode_Generator* generator, Dat
 
 int bytecode_generator_data_access_to_stack_offset(Bytecode_Generator* generator, Data_Access access, int function_index)
 {
-    Type_Signature* access_type = data_access_get_type_signature(generator->im_generator, access);
+    Type_Signature* access_type = data_access_get_type_signature(generator->im_generator, access, function_index);
     int result_access_offset;
     switch (access.access_type)
     {
     case Data_Access_Type::GLOBAL_ACCESS:
         result_access_offset = bytecode_generator_create_temporary_stack_offset(generator, access_type);
         bytecode_generator_add_instruction(generator,
-            instruction_make_2(Instruction_Type::LOAD_GLOBAL, generator->global_offsets[access.access_index], access_type->size_in_bytes)
+            instruction_make_3(Instruction_Type::READ_GLOBAL, result_access_offset, generator->global_offsets[access.access_index], access_type->size_in_bytes)
         );
         break;
     case Data_Access_Type::INTERMEDIATE_ACCESS:
@@ -151,14 +151,13 @@ int bytecode_generator_data_access_to_stack_offset(Bytecode_Generator* generator
     }
 }
 
-
 int bytecode_generator_add_instruction_with_destination_access(Bytecode_Generator* generator, 
     Data_Access destination, Bytecode_Instruction instr, int function_index
 )
 {
     if (destination.is_pointer_access)
     {
-        Type_Signature* type = data_access_get_type_signature(generator->im_generator, destination)->child_type;
+        Type_Signature* type = data_access_get_type_signature(generator->im_generator, destination, function_index)->child_type;
         int source_reg_offset = bytecode_generator_create_temporary_stack_offset(generator, type);
         instr.op1 = source_reg_offset;
         int instruction_index = bytecode_generator_add_instruction(generator, instr);
@@ -181,7 +180,7 @@ int bytecode_generator_add_instruction_with_destination_access(Bytecode_Generato
     {
         if (destination.access_type == Data_Access_Type::GLOBAL_ACCESS)
         {
-            Type_Signature* type = data_access_get_type_signature(generator->im_generator, destination);
+            Type_Signature* type = data_access_get_type_signature(generator->im_generator, destination, function_index);
             int source_reg_offset = bytecode_generator_create_temporary_stack_offset(generator, type);
             instr.op1 = source_reg_offset;
             int instruction_index = bytecode_generator_add_instruction(generator, instr);
@@ -208,10 +207,10 @@ void bytecode_generator_move_accesses(Bytecode_Generator* generator, Data_Access
     Intermediate_Function* function = &generator->im_generator->functions[function_index];
     int move_byte_size;
     if (destination.is_pointer_access) {
-        move_byte_size = data_access_get_type_signature(generator->im_generator, destination)->child_type->size_in_bytes;
+        move_byte_size = data_access_get_type_signature(generator->im_generator, destination, function_index)->child_type->size_in_bytes;
     }
     else {
-        move_byte_size = data_access_get_type_signature(generator->im_generator, destination)->size_in_bytes;
+        move_byte_size = data_access_get_type_signature(generator->im_generator, destination, function_index)->size_in_bytes;
     }
 
     int source_offset = bytecode_generator_data_access_to_stack_offset(generator, source, function_index);
@@ -385,7 +384,7 @@ void bytecode_generator_generate_function_instruction_slice(
                     {
                         bytecode_generator_add_instruction(generator,
                             instruction_make_3(
-                                Instruction_Type::LOAD_GLOBAL, 
+                                Instruction_Type::READ_GLOBAL, 
                                 pointer_offset, 
                                 generator->global_offsets[arg->access_index], 
                                 8
@@ -404,7 +403,7 @@ void bytecode_generator_generate_function_instruction_slice(
                     else {
                         bytecode_generator_add_instruction(generator,
                             instruction_make_3(
-                                Instruction_Type::LOAD_GLOBAL,
+                                Instruction_Type::READ_GLOBAL,
                                 argument_stack_offset,
                                 generator->global_offsets[arg->access_index],
                                 parameter_sig->size_in_bytes
@@ -774,11 +773,20 @@ void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction 
         case Instruction_Type::WRITE_MEMORY:
             string_append_formated(string, "WRITE_MEMORY                      dest_addr_reg=%d, src=%d, size=%d\n", instruction.op1, instruction.op2, instruction.op3);
             break;
+        case Instruction_Type::READ_GLOBAL:
+            string_append_formated(string, "READ_GLOBAL                       dest=%d, global_index=%d, size=%d\n", instruction.op1, instruction.op2, instruction.op3);
+            break;
+        case Instruction_Type::WRITE_GLOBAL:
+            string_append_formated(string, "WRITE_GLOBAL                      global_index=%d, src=%d, size=%d\n", instruction.op1, instruction.op2, instruction.op3);
+            break;
         case Instruction_Type::MEMORY_COPY:
             string_append_formated(string, "MEMORY_COPY                       dest_addr_reg=%d, src_addr_reg=%d\n", instruction.op1, instruction.op2);
             break;
         case Instruction_Type::LOAD_REGISTER_ADDRESS:
             string_append_formated(string, "LOAD_REGISTER_ADDRESS             dest=%d, reg_id=%d\n", instruction.op1, instruction.op2);
+            break;
+        case Instruction_Type::LOAD_GLOBAL_ADDRESS:
+            string_append_formated(string, "LOAD_GLOBAL_ADDRESS               dest=%d, global_id=%d\n", instruction.op1, instruction.op2);
             break;
         case Instruction_Type::U64_ADD_CONSTANT_I32:
             string_append_formated(string, "U64_ADD_CONSTANT_I32              dest=%d, reg_id=%d, offset=%d\n", instruction.op1, instruction.op2, instruction.op3);
@@ -841,6 +849,7 @@ void bytecode_generator_append_bytecode_to_string(Bytecode_Generator* generator,
             i, generator->function_locations[i]
         );
     }
+    string_append_formated(string, "Global size: %d\n\n", generator->global_data_size);
     string_append_formated(string, "Code: \n");
 
     for (int i = 0; i < generator->instructions.size; i++)

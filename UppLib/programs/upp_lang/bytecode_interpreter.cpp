@@ -7,11 +7,15 @@ Bytecode_Interpreter bytecode_intepreter_create()
 {
     Bytecode_Interpreter result;
     result.stack = array_create_empty<byte>(8192);
+    result.globals.data = 0;
     return result;
 }
 
 void bytecode_interpreter_destroy(Bytecode_Interpreter* interpreter) {
     array_destroy(&interpreter->stack);
+    if (interpreter->globals.data != 0) {
+        array_destroy(&interpreter->globals);
+    }
 }
 
 // Returns true if we need to stop execution, e.g. on exit instruction
@@ -22,6 +26,12 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
     {
     case Instruction_Type::MOVE_STACK_DATA:
         memory_copy(interpreter->stack_pointer + i->op1, interpreter->stack_pointer + i->op2, i->op3);
+        break;
+    case Instruction_Type::READ_GLOBAL:
+        memory_copy(interpreter->stack_pointer + i->op1, interpreter->globals.data + i->op2, i->op3);
+        break;
+    case Instruction_Type::WRITE_GLOBAL:
+        memory_copy(interpreter->globals.data + i->op1, interpreter->stack_pointer + i->op2, i->op3);
         break;
     case Instruction_Type::WRITE_MEMORY:
         memory_copy(*(void**)(interpreter->stack_pointer + i->op1), interpreter->stack_pointer + i->op2, i->op3);
@@ -179,6 +189,9 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         break;
     case Instruction_Type::LOAD_REGISTER_ADDRESS:
         *(void**)(interpreter->stack_pointer + i->op1) = (void*)(interpreter->stack_pointer + i->op2);
+        break;
+    case Instruction_Type::LOAD_GLOBAL_ADDRESS:
+        *(void**)(interpreter->stack_pointer + i->op1) = (void*)(interpreter->globals.data + i->op2);
         break;
     case Instruction_Type::LOAD_CONSTANT_F32:
         *(f32*)(interpreter->stack_pointer + i->op1) = *((f32*)&i->op2);
@@ -900,7 +913,14 @@ void bytecode_interpreter_execute_main(Bytecode_Interpreter* interpreter, Byteco
     memory_set_bytes(interpreter->stack.data, 16, 0);
     interpreter->instruction_pointer = &generator->instructions[generator->entry_point_index];
     interpreter->stack_pointer = &interpreter->stack[0];
+    if (generator->global_data_size != 0) {
+        if (interpreter->globals.data != 0) {
+            array_destroy(&interpreter->globals);
+        }
+        interpreter->globals = array_create_empty<byte>(generator->global_data_size);
+    }
     int current_instruction_index = interpreter->instruction_pointer - interpreter->generator->instructions.data;
+
 
     while (true) {
         //bytecode_interpreter_print_state(interpreter);

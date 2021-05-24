@@ -1552,6 +1552,7 @@ void ast_parser_check_sanity(AST_Parser* parser)
             break;
         case AST_Node_Type::STATEMENT_EXPRESSION:
         case AST_Node_Type::STATEMENT_RETURN:
+            if (node->children.size == 0) return;
             if (node->children.size != 1) {
                 panic("Should not happen");
             }
@@ -1804,13 +1805,13 @@ String ast_node_type_to_string(AST_Node_Type::ENUM type)
 }
 
 bool ast_node_type_is_binary_expression(AST_Node_Type::ENUM type) {
-    return type >= AST_Node_Type::EXPRESSION_LITERAL && type <= AST_Node_Type::EXPRESSION_BINARY_OPERATION_GREATER_OR_EQUAL;
+    return type >= AST_Node_Type::EXPRESSION_BINARY_OPERATION_ADDITION && type <= AST_Node_Type::EXPRESSION_BINARY_OPERATION_GREATER_OR_EQUAL;
 }
 bool ast_node_type_is_unary_expression(AST_Node_Type::ENUM type) {
     return type >= AST_Node_Type::EXPRESSION_UNARY_OPERATION_NEGATE && type <= AST_Node_Type::EXPRESSION_UNARY_OPERATION_DEREFERENCE;
 }
 bool ast_node_type_is_expression(AST_Node_Type::ENUM type) {
-    return type >= AST_Node_Type::EXPRESSION_LITERAL && type <= AST_Node_Type::EXPRESSION_UNARY_OPERATION_DEREFERENCE;
+    return type >= AST_Node_Type::EXPRESSION_NEW && type <= AST_Node_Type::EXPRESSION_UNARY_OPERATION_DEREFERENCE;
 }
 bool ast_node_type_is_statement(AST_Node_Type::ENUM type) {
     return type >= AST_Node_Type::STATEMENT_BLOCK && type <= AST_Node_Type::STATEMENT_DELETE;

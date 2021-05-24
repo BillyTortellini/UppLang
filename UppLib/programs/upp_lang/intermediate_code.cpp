@@ -56,9 +56,9 @@ Data_Access data_access_create_member_access(Intermediate_Generator* generator, 
     return calc_member_access.destination;
 }
 
-Type_Signature* data_access_get_type_signature(Intermediate_Generator* generator, Data_Access access)
+Type_Signature* data_access_get_type_signature(Intermediate_Generator* generator, Data_Access access, int function_index)
 {
-    Intermediate_Function* function = &generator->functions[generator->current_function_index];
+    Intermediate_Function* function = &generator->functions[function_index];
     switch (access.access_type)
     {
     case Data_Access_Type::GLOBAL_ACCESS: return generator->global_variables[access.access_index].type;
@@ -152,6 +152,7 @@ Block_Recorder block_recorder_0_start_record_condition(Intermediate_Generator* g
     dynamic_array_push_back(&function->instructions, i);
 
     Block_Recorder result;
+    result.generator = generator;
     result.instruction_index = function->instructions.size - 1;
     result.running_index = function->instructions.size;
     return result;
@@ -667,7 +668,7 @@ Data_Access intermediate_generator_generate_expression_without_casting(Intermedi
     {
         Data_Access pointer_access = intermediate_generator_generate_expression(generator, expression->children[0], false, data_access_make_empty());
         Data_Access result_access;
-        if (!pointer_access.is_pointer_access)
+        if (pointer_access.is_pointer_access)
         {
             // This is the case for multiple dereferences
             result_access = intermediate_generator_create_intermediate_result(generator,
@@ -700,7 +701,6 @@ Data_Access intermediate_generator_generate_expression_without_casting(Intermedi
     case AST_Node_Type::EXPRESSION_MEMBER_ACCESS:
     {
         Data_Access structure_data = intermediate_generator_generate_expression(generator, expression->children[0], false, data_access_make_empty());
-        Type_Signature* accessor_signature = data_access_get_type_signature(generator, structure_data);
         Semantic_Node_Information* node_info = &generator->analyser->semantic_information[expression_index];
 
         if (node_info->member_access_needs_pointer_dereference) // Access with . on pointers
@@ -1231,7 +1231,7 @@ void intermediate_generator_generate(Intermediate_Generator* generator, Semantic
 void data_access_append_to_string(String* string, Data_Access access, int function_index, Intermediate_Generator* generator)
 {
     Intermediate_Function* function = &generator->functions[function_index];
-    Type_Signature* type;
+    Type_Signature* type = generator->analyser->type_system.error_type;
     if (access.is_pointer_access) {
         string_append_formated(string, "MEMORY_ACCESS through ");
     }
@@ -1267,6 +1267,8 @@ void data_access_append_to_string(String* string, Data_Access access, int functi
         type = function->function_type->parameter_types[access.access_index];
         break;
     }
+    string_append_formated(string, ": ");
+    type_signature_append_to_string(string, type);
 }
 
 void exit_code_append_to_string(String* string, Exit_Code code)

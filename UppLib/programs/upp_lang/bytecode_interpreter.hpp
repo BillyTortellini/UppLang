@@ -8,6 +8,7 @@ struct Bytecode_Interpreter
     Bytecode_Instruction* instruction_pointer;
     byte return_register[256];
     Array<byte> stack;
+    Array<byte> globals;
     byte* stack_pointer;
     Exit_Code exit_code;
 };

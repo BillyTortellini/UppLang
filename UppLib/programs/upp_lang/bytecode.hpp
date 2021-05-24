@@ -21,7 +21,7 @@ namespace Instruction_Type
         WRITE_MEMORY, // op1 = address_reg, op2 = value_reg, op3 = size
         READ_MEMORY, // op1 = dest_reg, op2 = address_reg, op3 = size
         MEMORY_COPY, // op1 = dest_address_reg, op2 = src_address_reg, op3 = size
-        LOAD_GLOBAL, // op1 = dest_address_reg, op2 = global offset, op3 = size
+        READ_GLOBAL, // op1 = dest_address_reg, op2 = global offset, op3 = size
         WRITE_GLOBAL, // op1 = dest_global offset, op2 = src_reg, op3 = size
         U64_ADD_CONSTANT_I32, // op1 = dest_reg, op2 = constant offset
         U64_MULTIPLY_ADD_I32, // op1 = dest_reg, op2 = base_reg, op3 = index_reg, op4 = size

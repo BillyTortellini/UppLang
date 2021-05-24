@@ -193,7 +193,7 @@ struct Data_Access
     int access_index;
 };
 struct Intermediate_Generator;
-Type_Signature* data_access_get_type_signature(Intermediate_Generator* generator, Data_Access access);
+Type_Signature* data_access_get_type_signature(Intermediate_Generator* generator, Data_Access access, int function_index);
 
 struct Intermediate_Instruction
 {
