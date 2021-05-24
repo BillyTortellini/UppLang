@@ -4,8 +4,9 @@
 #include "../../datastructures/dynamic_array.hpp"
 #include "../../datastructures/hashtable.hpp"
 
-#include "lexer.hpp"
-#include "ast_parser.hpp"
+struct Compiler;
+struct Lexer;
+struct Compiler_Error;
 
 enum class Primitive_Type
 {
@@ -192,14 +193,13 @@ struct Hardcoded_Function
 
 struct Semantic_Analyser
 {
-    Type_System type_system;
     DynamicArray<Symbol_Table*> symbol_tables;
     DynamicArray<Semantic_Node_Information> semantic_information;
     DynamicArray<Compiler_Error> errors;
     Array<Hardcoded_Function> hardcoded_functions;
 
     // Temporary stuff needed for analysis
-    AST_Parser* parser;
+    Compiler* compiler;
     DynamicArray<Struct_Fill_Out> struct_fill_outs;
     Type_Signature* function_return_type;
     int loop_depth;
@@ -211,4 +211,4 @@ struct Semantic_Analyser
 
 Semantic_Analyser semantic_analyser_create();
 void semantic_analyser_destroy(Semantic_Analyser* analyser);
-void semantic_analyser_analyse(Semantic_Analyser* analyser, AST_Parser* parser);
+void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler);

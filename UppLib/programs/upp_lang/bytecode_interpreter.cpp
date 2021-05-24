@@ -2,6 +2,7 @@
 
 #include <iostream>
 #include "../../utility/random.hpp"
+#include "compiler.hpp"
 
 Bytecode_Interpreter bytecode_intepreter_create()
 {
@@ -869,9 +870,9 @@ void bytecode_interpreter_print_state(Bytecode_Interpreter* interpreter)
     if (current_function_index == -1) panic("Should not happen!\n");
 
     bytecode_generator_calculate_function_variable_and_parameter_offsets(interpreter->generator, current_function_index);
-    Intermediate_Function* func = &interpreter->generator->im_generator->functions[current_function_index];
+    Intermediate_Function* func = &interpreter->compiler->intermediate_generator.functions[current_function_index];
     logg("\n\n\n\n---------------------- CURRENT STATE ----------------------\n");
-    logg("Current Function: %s\n", lexer_identifer_to_string(interpreter->generator->im_generator->analyser->parser->lexer, func->name_handle).characters);
+    logg("Current Function: %s\n", lexer_identifer_to_string(&interpreter->compiler->lexer, func->name_handle).characters);
     logg("Current Stack offset: %d\n", interpreter->stack.data - interpreter->stack_pointer);
     logg("Instruction Index: %d\n", current_instruction_index);
     {
@@ -906,18 +907,19 @@ void bytecode_interpreter_print_state(Bytecode_Interpreter* interpreter)
     */
 }
 
-void bytecode_interpreter_execute_main(Bytecode_Interpreter* interpreter, Bytecode_Generator* generator)
+void bytecode_interpreter_execute_main(Bytecode_Interpreter* interpreter, Compiler* compiler)
 {
-    interpreter->generator = generator;
+    interpreter->compiler = compiler;
+    interpreter->generator = &compiler->bytecode_generator;
     memory_set_bytes(&interpreter->return_register, 256, 0);
     memory_set_bytes(interpreter->stack.data, 16, 0);
-    interpreter->instruction_pointer = &generator->instructions[generator->entry_point_index];
+    interpreter->instruction_pointer = &interpreter->generator->instructions[interpreter->generator->entry_point_index];
     interpreter->stack_pointer = &interpreter->stack[0];
-    if (generator->global_data_size != 0) {
+    if (interpreter->generator->global_data_size != 0) {
         if (interpreter->globals.data != 0) {
             array_destroy(&interpreter->globals);
         }
-        interpreter->globals = array_create_empty<byte>(generator->global_data_size);
+        interpreter->globals = array_create_empty<byte>(interpreter->generator->global_data_size);
     }
     int current_instruction_index = interpreter->instruction_pointer - interpreter->generator->instructions.data;
 

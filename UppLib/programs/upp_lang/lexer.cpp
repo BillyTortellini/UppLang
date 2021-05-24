@@ -1,6 +1,6 @@
 #include "lexer.hpp"
 
-bool token_type_is_keyword(Token_Type::ENUM type)
+bool token_type_is_keyword(Token_Type type)
 {
     switch (type)
     {
@@ -20,7 +20,7 @@ bool token_type_is_keyword(Token_Type::ENUM type)
     return false;
 }
 
-const char* token_type_to_string(Token_Type::ENUM type)
+const char* token_type_to_string(Token_Type type)
 {
     switch (type)
     {
@@ -79,13 +79,13 @@ const char* token_type_to_string(Token_Type::ENUM type)
     return "TOKEN_NOT_KNOWN";
 }
 
-TokenAttribute token_attribute_make_empty() {
-    TokenAttribute result;
+Token_Attribute token_attribute_make_empty() {
+    Token_Attribute result;
     result.integer_value = 67676767;
     return result;
 }
 
-Token token_make(Token_Type::ENUM type, TokenAttribute attribute, Text_Slice position, int index)
+Token token_make(Token_Type type, Token_Attribute attribute, Text_Slice position, int index)
 {
     Token result;
     result.type = type;
@@ -95,7 +95,7 @@ Token token_make(Token_Type::ENUM type, TokenAttribute attribute, Text_Slice pos
     return result;
 }
 
-Token token_make(Token_Type::ENUM type, TokenAttribute attribute, int line, int character, int length, int index)
+Token token_make(Token_Type type, Token_Attribute attribute, int line, int character, int length, int index)
 {
     Token result;
     result.type = type;
@@ -514,7 +514,7 @@ void lexer_parse_string(Lexer* lexer, String* code)
                 float float_value = int_value + fractional_value;
 
                 // Add float token
-                TokenAttribute attribute;
+                Token_Attribute attribute;
                 attribute.float_value = float_value;
                 int character_length;
                 if (post_comma_end_index == -1) {
@@ -530,7 +530,7 @@ void lexer_parse_string(Lexer* lexer, String* code)
             }
             else {
                 // Add integer Token
-                TokenAttribute attribute;
+                Token_Attribute attribute;
                 attribute.integer_value = int_value;
                 int character_length = pre_comma_end_index - pre_comma_start_index + 1;
                 dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::INTEGER_LITERAL, attribute, line_number, character_pos, character_length, index));
@@ -670,7 +670,7 @@ void lexer_parse_string(Lexer* lexer, String* code)
                 character_pos += identifier_string_length;
             }
             else if (string_equals_cstring(&identifier_string, "true")) {
-                TokenAttribute attribute;
+                Token_Attribute attribute;
                 attribute.bool_value = true;
                 dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::BOOLEAN_LITERAL, attribute,
                     line_number, character_pos, identifier_string_length, index));
@@ -678,7 +678,7 @@ void lexer_parse_string(Lexer* lexer, String* code)
                 character_pos += identifier_string_length;
             }
             else if (string_equals_cstring(&identifier_string, "false")) {
-                TokenAttribute attribute;
+                Token_Attribute attribute;
                 attribute.bool_value = false;
                 dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::BOOLEAN_LITERAL, attribute,
                     line_number, character_pos, identifier_string_length, index));
@@ -687,7 +687,7 @@ void lexer_parse_string(Lexer* lexer, String* code)
             }
             else {
                 // Identifier is acutally a identifier, not a keyword
-                TokenAttribute attribute;
+                Token_Attribute attribute;
                 int* identifier_id = hashtable_find_element(&lexer->identifier_index_lookup_table, identifier_string);
                 if (identifier_id != 0) {
                     attribute.identifier_number = *identifier_id;

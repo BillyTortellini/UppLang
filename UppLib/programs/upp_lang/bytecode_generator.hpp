@@ -1,6 +1,9 @@
 #pragma once
 
-#include "intermediate_code.hpp"
+#include "../../datastructures/dynamic_array.hpp"
+#include "../../datastructures/string.hpp"
+
+struct Compiler;
 
 /*
     Runtime system has:
@@ -211,7 +214,7 @@ struct Bytecode_Generator
     int maximum_function_stack_depth;
 
     // Data required for generation
-    Intermediate_Generator* im_generator;
+    Compiler* compiler;
     DynamicArray<Function_Call_Location> function_calls;
     DynamicArray<int> break_instructions_to_fill_out;
     DynamicArray<int> continue_instructions_to_fill_out;
@@ -225,7 +228,7 @@ struct Bytecode_Generator
 
 Bytecode_Generator bytecode_generator_create();
 void bytecode_generator_destroy(Bytecode_Generator* generator);
-void bytecode_generator_generate(Bytecode_Generator* generator, Intermediate_Generator* im_generator);
+void bytecode_generator_generate(Bytecode_Generator* generator, Compiler* compiler);
 void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction instruction);
 void bytecode_generator_append_bytecode_to_string(Bytecode_Generator* generator, String* string);
 void bytecode_generator_calculate_function_variable_and_parameter_offsets(Bytecode_Generator* generator, int function_index);

@@ -1,5 +1,6 @@
 #include "c_backend.hpp"
 
+#include "compiler.hpp"
 #include "../../utility/file_io.hpp"
 #include <cstdlib>
 #include <Windows.h>
@@ -20,7 +21,7 @@ void c_generator_destroy(C_Generator* generator)
 }
 
 const char* c_generator_id_to_string(C_Generator* generator, int name_handle) {
-    return lexer_identifer_to_string(generator->im_generator->analyser->parser->lexer, name_handle).characters;
+    return lexer_identifer_to_string(&generator->compiler->lexer, name_handle).characters;
 }
 
 void c_generator_generate_type_definition(C_Generator* generator, Type_Signature* signature, bool is_pointer)
@@ -162,8 +163,8 @@ void c_generator_generate_variable_definition_with_register_index(C_Generator* g
 
 void c_generator_generate_function_header(C_Generator* generator, int function_index)
 {
-    AST_Node* function_node = &generator->im_generator->analyser->parser->nodes[generator->im_generator->function_to_ast_node_mapping[function_index]];
-    AST_Node* parameter_block_node = &generator->im_generator->analyser->parser->nodes[function_node->children[0]];
+    AST_Node* function_node = &generator->compiler->parser.nodes[generator->im_generator->function_to_ast_node_mapping[function_index]];
+    AST_Node* parameter_block_node = &generator->compiler->parser.nodes[function_node->children[0]];
     Intermediate_Function* function = &generator->im_generator->functions[function_index];
     Type_Signature* signature = function->function_type;
 
@@ -259,7 +260,7 @@ void c_generator_generate_function_instruction_slice(
             bool cast_to_type = false;
             if (instr->type == Intermediate_Instruction_Type::CALL_HARDCODED_FUNCTION)
             {
-                Hardcoded_Function* hardcoded = &generator->im_generator->analyser->hardcoded_functions[(u32)instr->hardcoded_function_type];
+                Hardcoded_Function* hardcoded = &generator->compiler->analyser.hardcoded_functions[(u32)instr->hardcoded_function_type];
                 Type_Signature* function_type = hardcoded->function_type;
                 return_type = function_type->return_type;
                 if (instr->hardcoded_function_type == Hardcoded_Function_Type::FREE_POINTER) {
@@ -279,7 +280,7 @@ void c_generator_generate_function_instruction_slice(
                 function_str = c_generator_id_to_string(generator, generator->im_generator->functions[instr->intermediate_function_index].name_handle);
             }
 
-            if (return_type != generator->im_generator->analyser->type_system.void_type)
+            if (return_type != generator->compiler->type_system.void_type)
             {
                 c_generator_generate_data_access(generator, instr->destination);
                 string_append_formated(&generator->output_string, " = ");
@@ -545,16 +546,17 @@ void c_generator_generate_function_instruction_slice(
     }
 }
 
-void c_generator_generate(C_Generator* generator, Intermediate_Generator* im_generator)
+void c_generator_generate(C_Generator* generator, Compiler* compiler)
 {
-    generator->im_generator = im_generator;
+    generator->compiler = compiler;
+    generator->im_generator = &compiler->intermediate_generator;
     string_reset(&generator->output_string);
 
     string_append_formated(&generator->output_string, "#pragma once\n#include <cstdlib>\n#include \"compiler/hardcoded_functions.h\"\n#include \"compiler/datatypes.h\"\n\n");
     string_append_formated(&generator->output_string, "struct Unsized_Array {void* data; i32 size;};\n\n");
 
     // Create forward declaration for structs
-    Symbol_Table* root_table = im_generator->analyser->symbol_tables[0];
+    Symbol_Table* root_table = compiler->analyser.symbol_tables[0];
     for (int i = 0; i < root_table->symbols.size; i++)
     {
         Symbol* symbol = &root_table->symbols[i];
@@ -583,13 +585,13 @@ void c_generator_generate(C_Generator* generator, Intermediate_Generator* im_gen
     }
 
     // Generate function headers
-    for (int i = 0; i < im_generator->functions.size; i++) {
+    for (int i = 0; i < generator->im_generator->functions.size; i++) {
         generator->current_function_index = i;
         c_generator_generate_function_header(generator, i);
         string_append_formated(&generator->output_string, ";\n");
     }
     // Generate Function Code
-    for (int i = 0; i < im_generator->functions.size; i++)
+    for (int i = 0; i < generator->im_generator->functions.size; i++)
     {
         generator->current_function_index = i;
         c_generator_generate_function_header(generator, i);

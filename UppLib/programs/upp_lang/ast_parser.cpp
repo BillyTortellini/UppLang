@@ -1,12 +1,5 @@
 #include "ast_parser.hpp"
-
-Token_Range token_range_make(int start_index, int end_index)
-{
-    Token_Range result;
-    result.start_index = start_index;
-    result.end_index = end_index;
-    return result;
-}
+#include "compiler.hpp"
 
 int ast_parser_check_for_undefines(AST_Parser* parser)
 {
@@ -84,7 +77,7 @@ void ast_parser_checkpoint_reset(AST_Parser_Checkpoint checkpoint)
     }
 }
 
-bool ast_parser_test_next_token(AST_Parser* parser, Token_Type::ENUM type)
+bool ast_parser_test_next_token(AST_Parser* parser, Token_Type type)
 {
     if (parser->index >= parser->lexer->tokens.size) {
         return false;
@@ -95,7 +88,7 @@ bool ast_parser_test_next_token(AST_Parser* parser, Token_Type::ENUM type)
     return false;
 }
 
-bool ast_parser_test_next_2_tokens(AST_Parser* parser, Token_Type::ENUM type1, Token_Type::ENUM type2)
+bool ast_parser_test_next_2_tokens(AST_Parser* parser, Token_Type type1, Token_Type type2)
 {
     if (parser->index + 1 >= parser->lexer->tokens.size) {
         return false;
@@ -106,7 +99,7 @@ bool ast_parser_test_next_2_tokens(AST_Parser* parser, Token_Type::ENUM type1, T
     return false;
 }
 
-bool ast_parser_test_next_3_tokens(AST_Parser* parser, Token_Type::ENUM type1, Token_Type::ENUM type2, Token_Type::ENUM type3)
+bool ast_parser_test_next_3_tokens(AST_Parser* parser, Token_Type type1, Token_Type type2, Token_Type type3)
 {
     if (parser->index + 2 >= parser->lexer->tokens.size) {
         return false;
@@ -119,8 +112,8 @@ bool ast_parser_test_next_3_tokens(AST_Parser* parser, Token_Type::ENUM type1, T
     return false;
 }
 
-bool ast_parser_test_next_4_tokens(AST_Parser* parser, Token_Type::ENUM type1, Token_Type::ENUM type2, Token_Type::ENUM type3,
-    Token_Type::ENUM type4)
+bool ast_parser_test_next_4_tokens(AST_Parser* parser, Token_Type type1, Token_Type type2, Token_Type type3,
+    Token_Type type4)
 {
     if (parser->index + 3 >= parser->lexer->tokens.size) {
         return false;
@@ -135,8 +128,8 @@ bool ast_parser_test_next_4_tokens(AST_Parser* parser, Token_Type::ENUM type1, T
     return false;
 }
 
-bool ast_parser_test_next_5_tokens(AST_Parser* parser, Token_Type::ENUM type1, Token_Type::ENUM type2, Token_Type::ENUM type3,
-    Token_Type::ENUM type4, Token_Type::ENUM type5)
+bool ast_parser_test_next_5_tokens(AST_Parser* parser, Token_Type type1, Token_Type type2, Token_Type type3,
+    Token_Type type4, Token_Type type5)
 {
     if (parser->index + 4 >= parser->lexer->tokens.size) {
         return false;
@@ -151,7 +144,7 @@ bool ast_parser_test_next_5_tokens(AST_Parser* parser, Token_Type::ENUM type1, T
     return false;
 }
 
-int ast_parser_find_next_token_type(AST_Parser* parser, Token_Type::ENUM type) 
+int ast_parser_find_next_token_type(AST_Parser* parser, Token_Type type) 
 {
     int index = parser->index;
     while (index < parser->lexer->tokens.size)
@@ -176,7 +169,7 @@ int ast_parser_find_next_line_start_token(AST_Parser* parser)
     return i;
 }
 
-int ast_parser_find_parenthesis_ending(AST_Parser* parser, Token_Type::ENUM open_type, Token_Type::ENUM closed_type)
+int ast_parser_find_parenthesis_ending(AST_Parser* parser, Token_Type open_type, Token_Type closed_type)
 {
     int i = parser->index;
     int depth = 0;
@@ -658,7 +651,7 @@ AST_Node_Index ast_parser_parse_expression_single_value(AST_Parser* parser)
     return -1;
 }
 
-bool ast_parser_parse_binary_operation(AST_Parser* parser, AST_Node_Type::ENUM* op_type, int* op_priority)
+bool ast_parser_parse_binary_operation(AST_Parser* parser, AST_Node_Type* op_type, int* op_priority)
 {
     /*
         Priority tree:
@@ -760,7 +753,7 @@ int ast_parser_parse_expression_priority(AST_Parser* parser, AST_Node_Index node
 
         int first_op_priority;
         int first_op_index = parser->index;
-        AST_Node_Type::ENUM first_op_type;
+        AST_Node_Type first_op_type;
         if (!ast_parser_parse_binary_operation(parser, &first_op_type, &first_op_priority)) {
             break;
         }
@@ -782,7 +775,7 @@ int ast_parser_parse_expression_priority(AST_Parser* parser, AST_Node_Index node
         rewind_point = parser->index;
 
         int second_op_priority;
-        AST_Node_Type::ENUM second_op_type;
+        AST_Node_Type second_op_type;
         bool second_op_exists = ast_parser_parse_binary_operation(parser, &second_op_type, &second_op_priority);
         if (second_op_exists)
         {
@@ -1454,7 +1447,7 @@ void ast_parser_check_sanity(AST_Parser* parser)
         case AST_Node_Type::ROOT:
             for (int i = 0; i < node->children.size; i++) 
             {
-                AST_Node_Type::ENUM child_type = parser->nodes[node->children[i]].type;
+                AST_Node_Type child_type = parser->nodes[node->children[i]].type;
                 if (child_type != AST_Node_Type::FUNCTION &&
                     child_type != AST_Node_Type::STRUCT &&
                     child_type != AST_Node_Type::STATEMENT_VARIABLE_DEFINE_ASSIGN &&
@@ -1467,7 +1460,7 @@ void ast_parser_check_sanity(AST_Parser* parser)
             break;
         case AST_Node_Type::STRUCT:
             for (int i = 0; i < node->children.size; i++) {
-                AST_Node_Type::ENUM child_type = parser->nodes[node->children[i]].type;
+                AST_Node_Type child_type = parser->nodes[node->children[i]].type;
                 if (child_type != AST_Node_Type::STATEMENT_VARIABLE_DEFINITION) {
                     panic("Should not happen");
                 }
@@ -1485,7 +1478,7 @@ void ast_parser_check_sanity(AST_Parser* parser)
             break;
         case AST_Node_Type::PARAMETER_BLOCK:
             for (int i = 0; i < node->children.size; i++) {
-                AST_Node_Type::ENUM child_type = parser->nodes[node->children[i]].type;
+                AST_Node_Type child_type = parser->nodes[node->children[i]].type;
                 if (child_type != AST_Node_Type::PARAMETER) {
                     panic("Should not happen");
                 }
@@ -1511,7 +1504,7 @@ void ast_parser_check_sanity(AST_Parser* parser)
             break;
         case AST_Node_Type::STATEMENT_BLOCK:
             for (int i = 0; i < node->children.size; i++) {
-                AST_Node_Type::ENUM child_type = parser->nodes[node->children[i]].type;
+                AST_Node_Type child_type = parser->nodes[node->children[i]].type;
                 if (!ast_node_type_is_statement(child_type)) {
                     panic("Should not happen");
                 }
@@ -1632,7 +1625,7 @@ void ast_parser_check_sanity(AST_Parser* parser)
             break;
         case AST_Node_Type::EXPRESSION_FUNCTION_CALL:
             for (int i = 0; i < node->children.size; i++) {
-                AST_Node_Type::ENUM child_type = parser->nodes[node->children[i]].type;
+                AST_Node_Type child_type = parser->nodes[node->children[i]].type;
                 if (!ast_node_type_is_expression(child_type)) {
                     panic("Should not happen");
                 }
@@ -1748,7 +1741,7 @@ void ast_parser_destroy(AST_Parser* parser)
     dynamic_array_destroy(&parser->token_mapping);
 }
 
-String ast_node_type_to_string(AST_Node_Type::ENUM type)
+String ast_node_type_to_string(AST_Node_Type type)
 {
     switch (type)
     {
@@ -1804,19 +1797,19 @@ String ast_node_type_to_string(AST_Node_Type::ENUM type)
     return string_create_static("SHOULD NOT FUCKING HAPPEN MOTHERFUCKER");
 }
 
-bool ast_node_type_is_binary_expression(AST_Node_Type::ENUM type) {
+bool ast_node_type_is_binary_expression(AST_Node_Type type) {
     return type >= AST_Node_Type::EXPRESSION_BINARY_OPERATION_ADDITION && type <= AST_Node_Type::EXPRESSION_BINARY_OPERATION_GREATER_OR_EQUAL;
 }
-bool ast_node_type_is_unary_expression(AST_Node_Type::ENUM type) {
+bool ast_node_type_is_unary_expression(AST_Node_Type type) {
     return type >= AST_Node_Type::EXPRESSION_UNARY_OPERATION_NEGATE && type <= AST_Node_Type::EXPRESSION_UNARY_OPERATION_DEREFERENCE;
 }
-bool ast_node_type_is_expression(AST_Node_Type::ENUM type) {
+bool ast_node_type_is_expression(AST_Node_Type type) {
     return type >= AST_Node_Type::EXPRESSION_NEW && type <= AST_Node_Type::EXPRESSION_UNARY_OPERATION_DEREFERENCE;
 }
-bool ast_node_type_is_statement(AST_Node_Type::ENUM type) {
+bool ast_node_type_is_statement(AST_Node_Type type) {
     return type >= AST_Node_Type::STATEMENT_BLOCK && type <= AST_Node_Type::STATEMENT_DELETE;
 }
-bool ast_node_type_is_type(AST_Node_Type::ENUM type) {
+bool ast_node_type_is_type(AST_Node_Type type) {
     return type >= AST_Node_Type::TYPE_IDENTIFIER && type <= AST_Node_Type::TYPE_ARRAY_UNSIZED;
 }
 

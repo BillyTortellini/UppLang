@@ -1,9 +1,16 @@
 #pragma once
 
-#include "bytecode.hpp"
+#include "../../datastructures/array.hpp"
+#include "../../utility/datatypes.hpp"
+#include "intermediate_code.hpp"
+
+struct Compiler;
+struct Bytecode_Generator;
+struct Bytecode_Instruction;
 
 struct Bytecode_Interpreter
 {
+    Compiler* compiler;
     Bytecode_Generator* generator;
     Bytecode_Instruction* instruction_pointer;
     byte return_register[256];
@@ -16,5 +23,5 @@ struct Bytecode_Interpreter
 Bytecode_Interpreter bytecode_intepreter_create();
 void bytecode_interpreter_destroy(Bytecode_Interpreter* interpreter);
 bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* interpreter);
-void bytecode_interpreter_execute_main(Bytecode_Interpreter* interpreter, Bytecode_Generator* generator);
+void bytecode_interpreter_execute_main(Bytecode_Interpreter* interpreter, Compiler* compiler);
 void bytecode_interpreter_print_state(Bytecode_Interpreter* interpreter);

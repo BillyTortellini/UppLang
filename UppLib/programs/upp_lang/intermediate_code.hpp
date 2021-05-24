@@ -1,7 +1,9 @@
 #pragma once
 
 #include "../../datastructures/dynamic_array.hpp"
+#include "../../datastructures/string.hpp"
 #include "semantic_analyser.hpp"
+struct Compiler;
 
 enum class Exit_Code
 {
@@ -192,8 +194,6 @@ struct Data_Access
     Data_Access_Type access_type; 
     int access_index;
 };
-struct Intermediate_Generator;
-Type_Signature* data_access_get_type_signature(Intermediate_Generator* generator, Data_Access access, int function_index);
 
 struct Intermediate_Instruction
 {
@@ -260,12 +260,13 @@ struct Intermediate_Generator
     DynamicArray<int> function_to_ast_node_mapping;
 
     // Temporary data for generation
-    Semantic_Analyser* analyser;
+    Compiler* compiler;
     int current_function_index;
     DynamicArray<Name_Mapping> name_mappings;
 };
 
 Intermediate_Generator intermediate_generator_create();
 void intermediate_generator_destroy(Intermediate_Generator* generator);
-void intermediate_generator_generate(Intermediate_Generator* generator, Semantic_Analyser* analyser);
+void intermediate_generator_generate(Intermediate_Generator* generator, Compiler* compiler);
 void intermediate_generator_append_to_string(String* string, Intermediate_Generator* generator);
+Type_Signature* intermediate_generator_get_access_signature(Intermediate_Generator* generator, Data_Access access, int function_index);

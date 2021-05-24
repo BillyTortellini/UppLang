@@ -8,13 +8,7 @@
 #include "../../win32/input.hpp"
 #include "../../utility/gui.hpp"
 #include "text.hpp"
-#include "ast_parser.hpp"
-#include "lexer.hpp"
-#include "semantic_analyser.hpp"
-#include "bytecode.hpp"
-#include "bytecode_interpreter.hpp"
-#include "intermediate_code.hpp"
-#include "c_backend.hpp"
+#include "compiler.hpp"
 
 struct Input;
 struct OpenGLState;
@@ -226,18 +220,11 @@ struct Text_Editor
     int jump_history_index;
     Text_Position last_change_position;
 
+    Compiler compiler;
+
     // Testing
     String gui_search_string;
     GUI* gui;
-
-    // IDE schtuff
-    Lexer lexer;
-    AST_Parser parser;
-    Semantic_Analyser analyser;
-    Intermediate_Generator intermediate_generator;
-    Bytecode_Generator generator;
-    Bytecode_Interpreter bytecode_interpreter;
-    C_Generator c_generator;
 };
 
 Text_Editor text_editor_create(TextRenderer* text_renderer, FileListener* listener, OpenGLState* state, GUI* gui);

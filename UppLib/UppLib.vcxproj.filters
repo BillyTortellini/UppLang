@@ -180,9 +180,6 @@
     <ClInclude Include="programs\upp_lang\text.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
     </ClInclude>
-    <ClInclude Include="programs\upp_lang\bytecode.hpp">
-      <Filter>Header Files\Programs\Upp_Lang</Filter>
-    </ClInclude>
     <ClInclude Include="programs\upp_lang\lexer.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
     </ClInclude>
@@ -202,6 +199,12 @@
       <Filter>Header Files\Utility</Filter>
     </ClInclude>
     <ClInclude Include="programs\upp_lang\c_backend.hpp">
+      <Filter>Header Files\Programs\Upp_Lang</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\upp_lang\compiler.hpp">
+      <Filter>Header Files\Programs\Upp_Lang</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\upp_lang\bytecode_generator.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
     </ClInclude>
   </ItemGroup>
@@ -317,9 +320,6 @@
     <ClCompile Include="programs\upp_lang\text.cpp">
       <Filter>Source Files\Programs\Upp_Lang</Filter>
     </ClCompile>
-    <ClCompile Include="programs\upp_lang\bytecode.cpp">
-      <Filter>Source Files\Programs\Upp_Lang</Filter>
-    </ClCompile>
     <ClCompile Include="programs\upp_lang\lexer.cpp">
       <Filter>Source Files\Programs\Upp_Lang</Filter>
     </ClCompile>
@@ -339,6 +339,12 @@
       <Filter>Source Files\Utility</Filter>
     </ClCompile>
     <ClCompile Include="programs\upp_lang\c_backend.cpp">
+      <Filter>Source Files\Programs\Upp_Lang</Filter>
+    </ClCompile>
+    <ClCompile Include="programs\upp_lang\compiler.cpp">
+      <Filter>Source Files\Programs\Upp_Lang</Filter>
+    </ClCompile>
+    <ClCompile Include="programs\upp_lang\bytecode_generator.cpp">
       <Filter>Source Files\Programs\Upp_Lang</Filter>
     </ClCompile>
   </ItemGroup>

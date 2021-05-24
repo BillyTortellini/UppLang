@@ -324,13 +324,7 @@ Text_Editor text_editor_create(TextRenderer* text_renderer, FileListener* listen
     result.gui = gui;
     result.gui_search_string = string_create_empty(64);
 
-    result.parser = ast_parser_create();
-    result.lexer = lexer_create();
-    result.analyser = semantic_analyser_create();
-    result.generator = bytecode_generator_create();
-    result.bytecode_interpreter = bytecode_intepreter_create();
-    result.intermediate_generator = intermediate_generator_create();
-    result.c_generator = c_generator_create();
+    result.compiler = compiler_create();
 
     return result;
 }
@@ -353,14 +347,7 @@ void text_editor_destroy(Text_Editor* editor)
     dynamic_array_destroy(&editor->jump_history);
 
     string_destroy(&editor->gui_search_string);
-
-    ast_parser_destroy(&editor->parser);
-    lexer_destroy(&editor->lexer);
-    semantic_analyser_destroy(&editor->analyser);
-    bytecode_generator_destroy(&editor->generator);
-    bytecode_interpreter_destroy(&editor->bytecode_interpreter);
-    intermediate_generator_destroy(&editor->intermediate_generator);
-    c_generator_destroy(&editor->c_generator);
+    compiler_destroy(&editor->compiler);
 }
 
 void text_editor_synchronize_highlights_array(Text_Editor* editor)
@@ -412,13 +399,13 @@ BoundingBox2 text_editor_get_character_bounding_box(Text_Editor* editor, float t
 
 Text_Slice token_range_to_slice(Token_Range range, Text_Editor* editor)
 {
-    if (editor->lexer.tokens.size == 0) {
+    if (editor->compiler.lexer.tokens.size == 0) {
         return text_slice_make(text_position_make(0, 0), text_position_make(0, 0));
     }
-    range.end_index = math_clamp(range.end_index, 0, math_maximum(0, editor->lexer.tokens.size - 1));
+    range.end_index = math_clamp(range.end_index, 0, math_maximum(0, editor->compiler.lexer.tokens.size - 1));
     return text_slice_make(
-        editor->lexer.tokens[range.start_index].position.start,
-        editor->lexer.tokens[range.end_index-1].position.end
+        editor->compiler.lexer.tokens[range.start_index].position.start,
+        editor->compiler.lexer.tokens[range.end_index-1].position.end
     );
 }
 void text_editor_add_highlight_from_slice(Text_Editor* editor, Text_Slice slice, vec3 text_color, vec4 background_color);
@@ -1878,7 +1865,7 @@ void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
     }
     case NormalModeCommandType::JUMP_TO_DEFINITION:
     {
-        if (editor->parser.errors.size != 0 || editor->analyser.errors.size != 0) break;
+        if (editor->compiler.parser.errors.size != 0 || editor->compiler.analyser.errors.size != 0) break;
         // Check if we are on a word, and extract if possible
         Motion m;
         m.contains_edges = false;
@@ -1892,14 +1879,14 @@ void normal_mode_command_execute(NormalModeCommand command, Text_Editor* editor)
         SCOPE_EXIT(string_destroy(&search_name));
         text_append_slice_to_string(editor->lines, result, &search_name);
 
-        AST_Node_Index closest_node_index = ast_parser_get_closest_node_to_text_position(&editor->parser, editor->cursor_position, editor->lines);
-        int symbol_table_index = editor->analyser.semantic_information[closest_node_index].symbol_table_index;
-        Symbol_Table* symbol_table = editor->analyser.symbol_tables[symbol_table_index];
+        AST_Node_Index closest_node_index = ast_parser_get_closest_node_to_text_position(&editor->compiler.parser, editor->cursor_position, editor->lines);
+        int symbol_table_index = editor->compiler.analyser.semantic_information[closest_node_index].symbol_table_index;
+        Symbol_Table* symbol_table = editor->compiler.analyser.symbol_tables[symbol_table_index];
         if (symbol_table != 0) {
-            Symbol* s = symbol_table_find_symbol_by_string(symbol_table, &search_name, &editor->lexer);
+            Symbol* s = symbol_table_find_symbol_by_string(symbol_table, &search_name, &editor->compiler.lexer);
             if (s != 0 && s->token_index_definition != -1) {
-                Token* token = &editor->lexer.tokens[s->token_index_definition];
-                Text_Position result_pos = editor->lexer.tokens[s->token_index_definition].position.start;
+                Token* token = &editor->compiler.lexer.tokens[s->token_index_definition];
+                Text_Position result_pos = editor->compiler.lexer.tokens[s->token_index_definition].position.start;
                 if (math_absolute(result_pos.line - editor->cursor_position.line) > 5) {
                     text_editor_record_jump(editor, editor->cursor_position, result_pos);
                 }
@@ -2316,12 +2303,12 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
         __debugbreak();
     }
 
-    if (input->key_messages.size != 0 && editor->analyser.errors.size == 0 && editor->parser.errors.size == 0)
+    if (input->key_messages.size != 0 && editor->compiler.analyser.errors.size == 0 && editor->compiler.parser.errors.size == 0)
     {
-        AST_Node_Index closest_node_index = ast_parser_get_closest_node_to_text_position(&editor->parser, editor->cursor_position, editor->lines);
-        AST_Node* node = &editor->parser.nodes[closest_node_index];
-        String type_string = ast_node_type_to_string(editor->parser.nodes[closest_node_index].type);
-        int symbol_table_index = editor->analyser.semantic_information[closest_node_index].symbol_table_index;
+        AST_Node_Index closest_node_index = ast_parser_get_closest_node_to_text_position(&editor->compiler.parser, editor->cursor_position, editor->lines);
+        AST_Node* node = &editor->compiler.parser.nodes[closest_node_index];
+        String type_string = ast_node_type_to_string(editor->compiler.parser.nodes[closest_node_index].type);
+        int symbol_table_index = editor->compiler.analyser.semantic_information[closest_node_index].symbol_table_index;
         /*
         logg("Currently under cursor: %s (#%d), Cursor pos: Line %d, Char %d, Table-Index: %d, Node-Mapping: %d-%d\n",
             type_string.characters, closest_node_index, editor->cursor_position.line, editor->cursor_position.character, symbol_table_index,
@@ -2353,88 +2340,12 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
         String source_code = string_create_empty(2048);
         SCOPE_EXIT(string_destroy(&source_code));
         text_append_to_string(&editor->lines, &source_code);
-
-        // Compile
-        double lexer_start_time = timing_current_time_in_seconds();
-        lexer_parse_string(&editor->lexer, &source_code);
-        double parser_start_time = timing_current_time_in_seconds();
-        ast_parser_parse(&editor->parser, &editor->lexer);
-        double semantic_analysis_start_time = timing_current_time_in_seconds();
-        
-        semantic_analyser_analyse(&editor->analyser, &editor->parser);
-        double intermediate_generator_start_time = timing_current_time_in_seconds();
-        double bytecode_generator_start_time = timing_current_time_in_seconds();
-        if (editor->parser.errors.size == 0 && editor->analyser.errors.size == 0 && input->key_pressed[KEY_CODE::F5] && true)
-        {
-            // Generate Intermediate Code
-            intermediate_generator_generate(&editor->intermediate_generator, &editor->analyser);
-            bytecode_generator_start_time = timing_current_time_in_seconds();
-            // Generate Bytecode from IM
-            bytecode_generator_generate(&editor->generator, &editor->intermediate_generator);
+        if (input->key_pressed[KEY_CODE::F5]) {
+            compiler_compile(&editor->compiler, &source_code, true);
+            compiler_execute(&editor->compiler);
         }
-       
-        double debug_print_start_time = timing_current_time_in_seconds();
-        // Debug Print
-        if (input->key_pressed[KEY_CODE::F5] && true)
-        {
-            logg("\n\n\n\n\n\n\n\n\n\n\n\n--------SOURCE CODE--------: \n%s\n\n", source_code.characters);
-            logg("\n\n\n\n--------LEXER RESULT--------:\n");
-            lexer_print(&editor->lexer);
-
-            logg("\n--------IDENTIFIERS:--------:\n");
-            lexer_print_identifiers(&editor->lexer);
-
-            String printed_ast = string_create_empty(256);
-            SCOPE_EXIT(string_destroy(&printed_ast));
-            ast_parser_append_to_string(&editor->parser, &printed_ast);
-            logg("\n");
-            logg("--------AST PARSE RESULT--------:\n");
-            logg("\n%s\n", printed_ast.characters);
-
-            logg("--------TYPE SYSTEM RESULT--------:\n");
-            type_system_print(&editor->analyser.type_system);
-            if (editor->analyser.errors.size == 0 && true)
-            {
-                String result_str = string_create_empty(32);
-                SCOPE_EXIT(string_destroy(&result_str));
-                intermediate_generator_append_to_string(&result_str, &editor->intermediate_generator);
-                logg("---------INTERMEDIATE_GENERATOR_RESULT----------\n%s\n\n", result_str.characters);
-                string_reset(&result_str);
-
-                bytecode_generator_append_bytecode_to_string(&editor->generator, &result_str);
-                logg("----------------BYTECODE_GENERATOR RESULT---------------: \n%s\n", result_str.characters);
-            }
-        }
-
-        double debug_print_end_time = timing_current_time_in_seconds();
-        logg(
-            "--------- TIMINGS -----------\nlexer time: \t%3.2fms\nparser time: \t%3.2fms\nanalyser time: %3.2fms\nintermediate time: %3.2fms\nbytecode time: %3.2fms\ndebug print: %3.2fms\n",
-            (float)(parser_start_time - lexer_start_time) * 1000.0f,
-            (float)(semantic_analysis_start_time - parser_start_time) * 1000.0f,
-            (float)(intermediate_generator_start_time - semantic_analysis_start_time) * 1000.0f,
-            (float)(bytecode_generator_start_time - intermediate_generator_start_time) * 1000.0f,
-            (float)(debug_print_start_time - bytecode_generator_start_time) * 1000.0f,
-            (float)(debug_print_end_time - debug_print_start_time) * 1000.0f
-        );
-
-        // Execute
-        if (editor->parser.errors.size == 0 && editor->analyser.errors.size == 0 && input->key_pressed[KEY_CODE::F5] && true)
-        {
-            double bytecode_start = timing_current_time_in_seconds();
-            bytecode_interpreter_execute_main(&editor->bytecode_interpreter, &editor->generator);
-            double bytecode_end = timing_current_time_in_seconds();
-            float bytecode_time = (bytecode_end - bytecode_start);
-            if (editor->bytecode_interpreter.exit_code == Exit_Code::SUCCESS) {
-                logg("Bytecode interpreter result: %d (%2.5f seconds)\n", *(int*)(byte*)&editor->bytecode_interpreter.return_register[0], bytecode_time);
-            }
-            else {
-                string_reset(&source_code);
-                exit_code_append_to_string(&source_code, editor->bytecode_interpreter.exit_code);
-                logg("Bytecode interpreter error: %s\n", source_code.characters);
-            }
-
-            //c_generator_generate(&editor->c_generator, &editor->intermediate_generator);
-            //logg("C-Code:\n------------------\n%s\n", editor->c_generator.output_string.characters);
+        else {
+            compiler_compile(&editor->compiler, &source_code, false);
         }
 
         // Do syntax highlighting
@@ -2447,17 +2358,17 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
         vec3 TYPE_COLOR = vec3(0.4f, 0.9f, 0.9f);
         vec3 PRIMITIVE_TYPE_COLOR = vec3(0.1f, 0.3f, 1.0f);
         vec4 BG_COLOR = vec4(0);
-        for (int i = 0; i < editor->lexer.tokens_with_whitespaces.size; i++)
+        for (int i = 0; i < editor->compiler.lexer.tokens_with_whitespaces.size; i++)
         {
-            Token t = editor->lexer.tokens_with_whitespaces[i];
+            Token t = editor->compiler.lexer.tokens_with_whitespaces[i];
             if (t.type == Token_Type::COMMENT)
                 text_editor_add_highlight_from_slice(editor, t.position, COMMENT_COLOR, BG_COLOR);
             else if (token_type_is_keyword(t.type))
                 text_editor_add_highlight_from_slice(editor, t.position, KEYWORD_COLOR, BG_COLOR);
             else if (t.type == Token_Type::IDENTIFIER)
             {
-                AST_Node_Index nearest_node_index = ast_parser_get_closest_node_to_text_position(&editor->parser, t.position.start, editor->lines);
-                AST_Node* nearest_node = &editor->parser.nodes[nearest_node_index];
+                AST_Node_Index nearest_node_index = ast_parser_get_closest_node_to_text_position(&editor->compiler.parser, t.position.start, editor->lines);
+                AST_Node* nearest_node = &editor->compiler.parser.nodes[nearest_node_index];
                 vec3 color = IDENTIFIER_FALLBACK_COLOR;
                 if (nearest_node->type == AST_Node_Type::EXPRESSION_FUNCTION_CALL ||
                     nearest_node->type == AST_Node_Type::FUNCTION) {
@@ -2466,9 +2377,11 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
                 if (nearest_node->type == AST_Node_Type::STRUCT) {
                     color = TYPE_COLOR;
                 }
-                if (editor->analyser.symbol_tables.size != 0)
+                if (editor->compiler.analyser.symbol_tables.size != 0)
                 {
-                    Symbol_Table* table = editor->analyser.symbol_tables[editor->analyser.semantic_information[nearest_node_index].symbol_table_index];
+                    Symbol_Table* table = editor->compiler.analyser.symbol_tables[
+                        editor->compiler.analyser.semantic_information[nearest_node_index].symbol_table_index
+                    ];
                     Symbol* symbol = symbol_table_find_symbol(table, t.attribute.identifier_number);
                     if (symbol != 0)
                     {
@@ -2489,23 +2402,23 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
             }
         }
         // We need the parser for function calls and functions
-        if (editor->parser.errors.size == 0 && editor->analyser.errors.size == 0) {
+        if (editor->compiler.parser.errors.size == 0 && editor->compiler.analyser.errors.size == 0) {
 
         }
         // Highlight parse errors
-        if (editor->parser.errors.size > 0 || editor->analyser.errors.size > 0) {
+        if (editor->compiler.parser.errors.size > 0 || editor->compiler.analyser.errors.size > 0) {
             logg("\n\nThere were errors while compiling!\n");
         }
-        for (int i = 0; i < editor->parser.errors.size; i++) {
-            Compiler_Error e = editor->parser.errors[i];
+        for (int i = 0; i < editor->compiler.parser.errors.size; i++) {
+            Compiler_Error e = editor->compiler.parser.errors[i];
             e.range.end_index += 1;
-            e.range.end_index = math_minimum(editor->lexer.tokens.size - 1, e.range.end_index);
+            e.range.end_index = math_minimum(editor->compiler.lexer.tokens.size - 1, e.range.end_index);
             text_editor_add_highlight_from_slice(editor, token_range_to_slice(e.range, editor), vec3(1.0f), vec4(1.0f, 0.0f, 0.0f, 0.3f));
             logg("Parse Error: %s\n", e.message);
         }
-        if (editor->parser.errors.size == 0) {
-            for (int i = 0; i < editor->analyser.errors.size; i++) {
-                Compiler_Error e = editor->analyser.errors[i];
+        if (editor->compiler.parser.errors.size == 0) {
+            for (int i = 0; i < editor->compiler.analyser.errors.size; i++) {
+                Compiler_Error e = editor->compiler.analyser.errors[i];
                 text_editor_add_highlight_from_slice(editor, token_range_to_slice(e.range, editor), vec3(1.0f), vec4(1.0f, 0.0f, 0.0f, 0.3f));
                 logg("Semantic Error: %s\n", e.message);
             }

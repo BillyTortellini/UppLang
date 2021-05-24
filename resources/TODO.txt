@@ -1,24 +1,8 @@
 Current Work Item:
 ------------------
- * Global Data
- * Compiler struct
+ * Strings
 
-Intermediate Instruction Member access should also work with base pointer, I think
-What is global data, what makes global data hard, how is it different than normal data?
-So I need to be able to declare variables at global scope, and accesses
-to them are also a little bit harder...
 
-When is global data initialized?
-Current solution: Global variables are initialized in definition order
-Probably at the start of the progam, I probably could do it at the start of the main function,
-or should this be done in its own function?
-Constant values currently dont exist, so I dont need to think about it.
-What about global variable initialization order? Think of:
-    a: int = 15;
-    b: int = a;
-I think global variables should be initialized to zero, and that I cannot initialize them with values
-The correct solution would be to identify the dependencies between all global variables, and then
-initialize them in the correct order
 
 Long-Term Goals:
 ----------------
@@ -32,8 +16,9 @@ Long-Term Goals:
 More Language features to implement:
 ------------------------------------
  * Strings
- * Default variable initialization (0), probably
    ------- Here I also should check what I can add later, and what are necessary features for programming ------
+ * Default variable initialization (Maybe) (0), but, that should be left uninitialized
+ * Array access with pointers to arrays
  * Literal overhaul (What is a float, what isnt...)
  * Array size should have u64
  * Syntax for fixed array initialization [int :: 1, 2, 3, 4, 5]
@@ -57,6 +42,7 @@ More Language features to implement:
 
 Editor features to implement:
 -----------------------------
+ * Delete with numbers were correct, but position with a movement up or down is actually a line delete
  * Autocompletion using current symbol table
  * Jump to definition with string search (Maybe Ctrl-F)
  * Search and Replace
@@ -94,18 +80,6 @@ Improvements that should be made (When I have time):
 ----------------------------------------------------
 Proper Error Handling in parser and semantic analyser, with error codes and highlighting things in editor.
 Also with differentiation between errors and Warnings
-
-Replace all namespace ENUM types with enum class things.
-
-Create a Compiler struct that holds all the relevant stuff
-    * Lexer
-    * Parser
-    * Analyser
-    * IM-Generator
-    * Bytecode-Generator
-    * Bytecode-Interpreter
-And just call the Compiler from the text editor --> This has to be done eventually,
-but then I need to rewrite how things are accessed through the compiler.
 
 Maybe we could also use String* for names, since then I only need to compare string pointers, and not actually strings.
 This would also make debuggin so much easier, since we would see the names of things.

@@ -1,4 +1,6 @@
-#include "bytecode.hpp"
+#include "bytecode_generator.hpp"
+
+#include "compiler.hpp"
 
 int align_offset_next_multiple(int offset, int alignment) 
 {
@@ -111,7 +113,7 @@ int bytecode_generator_get_data_access_offset(Bytecode_Generator* generator, Dat
 
 int bytecode_generator_data_access_to_stack_offset(Bytecode_Generator* generator, Data_Access access, int function_index)
 {
-    Type_Signature* access_type = data_access_get_type_signature(generator->im_generator, access, function_index);
+    Type_Signature* access_type = intermediate_generator_get_access_signature(&generator->compiler->intermediate_generator, access, function_index);
     int result_access_offset;
     switch (access.access_type)
     {
@@ -157,7 +159,7 @@ int bytecode_generator_add_instruction_with_destination_access(Bytecode_Generato
 {
     if (destination.is_pointer_access)
     {
-        Type_Signature* type = data_access_get_type_signature(generator->im_generator, destination, function_index)->child_type;
+        Type_Signature* type = intermediate_generator_get_access_signature(&generator->compiler->intermediate_generator, destination, function_index)->child_type;
         int source_reg_offset = bytecode_generator_create_temporary_stack_offset(generator, type);
         instr.op1 = source_reg_offset;
         int instruction_index = bytecode_generator_add_instruction(generator, instr);
@@ -180,7 +182,7 @@ int bytecode_generator_add_instruction_with_destination_access(Bytecode_Generato
     {
         if (destination.access_type == Data_Access_Type::GLOBAL_ACCESS)
         {
-            Type_Signature* type = data_access_get_type_signature(generator->im_generator, destination, function_index);
+            Type_Signature* type = intermediate_generator_get_access_signature(&generator->compiler->intermediate_generator, destination, function_index);
             int source_reg_offset = bytecode_generator_create_temporary_stack_offset(generator, type);
             instr.op1 = source_reg_offset;
             int instruction_index = bytecode_generator_add_instruction(generator, instr);
@@ -204,13 +206,13 @@ int bytecode_generator_add_instruction_with_destination_access(Bytecode_Generato
 
 void bytecode_generator_move_accesses(Bytecode_Generator* generator, Data_Access destination, Data_Access source, int function_index)
 {
-    Intermediate_Function* function = &generator->im_generator->functions[function_index];
+    Intermediate_Function* function = &generator->compiler->intermediate_generator.functions[function_index];
     int move_byte_size;
     if (destination.is_pointer_access) {
-        move_byte_size = data_access_get_type_signature(generator->im_generator, destination, function_index)->child_type->size_in_bytes;
+        move_byte_size = intermediate_generator_get_access_signature(&generator->compiler->intermediate_generator, destination, function_index)->child_type->size_in_bytes;
     }
     else {
-        move_byte_size = data_access_get_type_signature(generator->im_generator, destination, function_index)->size_in_bytes;
+        move_byte_size = intermediate_generator_get_access_signature(&generator->compiler->intermediate_generator, destination, function_index)->size_in_bytes;
     }
 
     int source_offset = bytecode_generator_data_access_to_stack_offset(generator, source, function_index);
@@ -220,7 +222,7 @@ void bytecode_generator_move_accesses(Bytecode_Generator* generator, Data_Access
 
 void bytecode_generator_generate_load_constant_instruction(Bytecode_Generator* generator, int function_index, int instruction_index)
 {
-    Intermediate_Function* function = &generator->im_generator->functions[function_index];
+    Intermediate_Function* function = &generator->compiler->intermediate_generator.functions[function_index];
     Intermediate_Instruction* instruction = &function->instructions[instruction_index];
 
     Instruction_Type::ENUM result_type;
@@ -255,7 +257,7 @@ void bytecode_generator_generate_function_instruction_slice(
     Bytecode_Generator* generator, int function_index, int instruction_start_index, int instruction_end_index_exclusive
 )
 {
-    Intermediate_Function* function = &generator->im_generator->functions[function_index];
+    Intermediate_Function* function = &generator->compiler->intermediate_generator.functions[function_index];
     for (int instruction_index = instruction_start_index;
         instruction_index < function->instructions.size && instruction_index < instruction_end_index_exclusive;
         instruction_index++)
@@ -341,15 +343,15 @@ void bytecode_generator_generate_function_instruction_slice(
         case Intermediate_Instruction_Type::CALL_FUNCTION:
         {
             // Move registers to the right place, then generate call instruction
-            int pointer_offset = bytecode_generator_create_temporary_stack_offset(generator, generator->im_generator->analyser->type_system.void_ptr_type);
+            int pointer_offset = bytecode_generator_create_temporary_stack_offset(generator, generator->compiler->type_system.void_ptr_type);
             int argument_stack_offset = align_offset_next_multiple(generator->tmp_stack_offset, 16); // I think 16 is the hightest i have
 
             Type_Signature* function_sig;
             if (instr->type == Intermediate_Instruction_Type::CALL_HARDCODED_FUNCTION) {
-                function_sig = generator->im_generator->analyser->hardcoded_functions[(int)instr->hardcoded_function_type].function_type;
+                function_sig = generator->compiler->analyser.hardcoded_functions[(int)instr->hardcoded_function_type].function_type;
             }
             else {
-                function_sig = generator->im_generator->functions[instr->intermediate_function_index].function_type;
+                function_sig = generator->compiler->intermediate_generator.functions[instr->intermediate_function_index].function_type;
             }
 
             // Put arguments into the correct place on the stack
@@ -437,15 +439,15 @@ void bytecode_generator_generate_function_instruction_slice(
             // Load return value to destination
             Type_Signature* return_type;
             if (instr->type == Intermediate_Instruction_Type::CALL_HARDCODED_FUNCTION) {
-                Type_Signature* function_type = generator->im_generator->analyser->hardcoded_functions[(u32)instr->hardcoded_function_type].function_type;
+                Type_Signature* function_type = generator->compiler->analyser.hardcoded_functions[(u32)instr->hardcoded_function_type].function_type;
                 return_type = function_type->return_type;
             }
             else {
-                Type_Signature* function_type = generator->im_generator->functions[instr->intermediate_function_index].function_type;
+                Type_Signature* function_type = generator->compiler->intermediate_generator.functions[instr->intermediate_function_index].function_type;
                 return_type = function_type->return_type;
             }
 
-            if (return_type != generator->im_generator->analyser->type_system.void_type)
+            if (return_type != generator->compiler->type_system.void_type)
             {
                 Bytecode_Instruction ret_val_instr = instruction_make_2(Instruction_Type::LOAD_RETURN_VALUE, 0, return_type->size_in_bytes);
                 bytecode_generator_add_instruction_with_destination_access(generator, instr->destination, ret_val_instr, function_index);
@@ -455,7 +457,7 @@ void bytecode_generator_generate_function_instruction_slice(
         case Intermediate_Instruction_Type::RETURN:
         case Intermediate_Instruction_Type::EXIT:
         {
-            Type_Signature* return_sig = generator->im_generator->functions[function_index].function_type->return_type;
+            Type_Signature* return_sig = generator->compiler->intermediate_generator.functions[function_index].function_type->return_type;
             int return_data_stack_offset = 0;
             if (instr->return_has_value) {
                 return_data_stack_offset = bytecode_generator_data_access_to_stack_offset(generator, instr->source1, function_index);
@@ -587,7 +589,7 @@ void bytecode_generator_generate_function_instruction_slice(
                 else {
                     instr_type = Instruction_Type::LOAD_REGISTER_ADDRESS;
                 }
-                register_address_reg = bytecode_generator_create_temporary_stack_offset(generator, generator->im_generator->analyser->type_system.void_ptr_type);
+                register_address_reg = bytecode_generator_create_temporary_stack_offset(generator, generator->compiler->type_system.void_ptr_type);
                 bytecode_generator_add_instruction(
                     generator,
                     instruction_make_2(
@@ -630,12 +632,12 @@ void bytecode_generator_generate_function_instruction_slice(
 
 void bytecode_generator_calculate_function_variable_and_parameter_offsets(Bytecode_Generator* generator, int function_index)
 {
-    Intermediate_Function* function = &generator->im_generator->functions[function_index];
+    Intermediate_Function* function = &generator->compiler->intermediate_generator.functions[function_index];
     // Set parameter stack locations
     {
         dynamic_array_reset(&generator->parameter_stack_offsets);
         int stack_size_of_parameters = 0;
-        Type_Signature* function_signature = generator->im_generator->functions[function_index].function_type;
+        Type_Signature* function_signature = generator->compiler->intermediate_generator.functions[function_index].function_type;
         dynamic_array_reserve(&generator->parameter_stack_offsets, function_signature->parameter_types.size);
 
         for (int i = 0; i < function_signature->parameter_types.size; i++)
@@ -683,7 +685,7 @@ void bytecode_generator_calculate_function_variable_and_parameter_offsets(Byteco
 
 void bytecode_generator_generate_function_code(Bytecode_Generator* generator, int function_index)
 {
-    Intermediate_Function* function = &generator->im_generator->functions[function_index];
+    Intermediate_Function* function = &generator->compiler->intermediate_generator.functions[function_index];
     generator->function_locations[function_index] = generator->instructions.size;
 
     bytecode_generator_calculate_function_variable_and_parameter_offsets(generator, function_index);
@@ -693,9 +695,9 @@ void bytecode_generator_generate_function_code(Bytecode_Generator* generator, in
     }
 }
 
-void bytecode_generator_generate(Bytecode_Generator* generator, Intermediate_Generator* im_generator)
+void bytecode_generator_generate(Bytecode_Generator* generator, Compiler* compiler)
 {
-    generator->im_generator = im_generator;
+    generator->compiler = compiler;
     dynamic_array_reset(&generator->instructions);
     dynamic_array_reset(&generator->break_instructions_to_fill_out);
     dynamic_array_reset(&generator->continue_instructions_to_fill_out);
@@ -706,22 +708,22 @@ void bytecode_generator_generate(Bytecode_Generator* generator, Intermediate_Gen
     dynamic_array_reset(&generator->parameter_stack_offsets);
     dynamic_array_reset(&generator->intermediate_stack_offsets);
 
-    dynamic_array_reserve(&generator->function_locations, generator->im_generator->functions.size);
-    while (generator->function_locations.size < generator->im_generator->functions.size) {
+    dynamic_array_reserve(&generator->function_locations, generator->compiler->intermediate_generator.functions.size);
+    while (generator->function_locations.size < generator->compiler->intermediate_generator.functions.size) {
         dynamic_array_push_back(&generator->function_locations, 0);
     }
 
     generator->global_data_size = 0;
-    dynamic_array_reserve(&generator->global_offsets, generator->im_generator->global_variables.size);
-    for (int i = 0; i < im_generator->global_variables.size; i++) {
-        Type_Signature* signature = im_generator->global_variables[i].type;
+    dynamic_array_reserve(&generator->global_offsets, generator->compiler->intermediate_generator.global_variables.size);
+    for (int i = 0; i < compiler->intermediate_generator.global_variables.size; i++) {
+        Type_Signature* signature = compiler->intermediate_generator.global_variables[i].type;
         generator->global_data_size = align_offset_next_multiple(generator->global_data_size, signature->alignment_in_bytes);
         dynamic_array_push_back(&generator->global_offsets, generator->global_data_size);
         generator->global_data_size += signature->size_in_bytes;
     }
 
     // Generate code for all functions
-    for (int i = 0; i < im_generator->functions.size; i++) {
+    for (int i = 0; i < compiler->intermediate_generator.functions.size; i++) {
         bytecode_generator_generate_function_code(generator, i);
     }
 
@@ -731,7 +733,7 @@ void bytecode_generator_generate(Bytecode_Generator* generator, Intermediate_Gen
         generator->instructions[call_loc.call_instruction_location].op1 = generator->function_locations[call_loc.function_index];
     }
 
-    generator->entry_point_index = generator->function_locations[generator->im_generator->main_function_index];
+    generator->entry_point_index = generator->function_locations[generator->compiler->intermediate_generator.main_function_index];
 }
 
 void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction instruction)
