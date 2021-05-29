@@ -178,188 +178,36 @@ void block_recorder_3_stop_record_false_block(Block_Recorder* recorder)
     recorder->running_index = function->instructions.size;
 }
 
-Type_Signature* intermediate_instruction_binary_operation_get_result_type(Intermediate_Instruction_Type instr_type, Intermediate_Generator* generator)
-{
-    switch (instr_type)
-    {
-    case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32:
-    case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_I32:
-    case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_I32:
-    case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_I32:
-    case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_I32:
-    case Intermediate_Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I32:
-        return generator->compiler->type_system.i32_type;
-    case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_F32:
-    case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_F32:
-    case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_F32:
-    case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_F32:
-    case Intermediate_Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_F32:
-        return generator->compiler->type_system.f32_type;
-    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_I32:
-    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_I32:
-    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_I32:
-    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_I32:
-    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_I32:
-    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_I32:
-    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_F32:
-    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_F32:
-    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_F32:
-    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_F32:
-    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_F32:
-    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_F32:
-    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_BOOL:
-    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_BOOL:
-    case Intermediate_Instruction_Type::BINARY_OP_BOOLEAN_AND:
-    case Intermediate_Instruction_Type::BINARY_OP_BOOLEAN_OR:
-    case Intermediate_Instruction_Type::UNARY_OP_BOOLEAN_NOT:
-        return generator->compiler->type_system.bool_type;
-    }
-    panic("Sheit\n");
-    return 0;
-}
-
-Intermediate_Instruction_Type binary_operation_get_instruction_type(Intermediate_Generator* generator, AST_Node_Type op_type, Type_Signature* operand_types)
+Intermediate_Instruction_Type binary_operation_get_instruction_type(Intermediate_Generator* generator, AST_Node_Type op_type)
 {
     switch (op_type)
     {
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_ADDITION:
-        if (operand_types == generator->compiler->type_system.u8_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U8;
-        if (operand_types == generator->compiler->type_system.u16_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U16;
-        if (operand_types == generator->compiler->type_system.u32_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U32;
-        if (operand_types == generator->compiler->type_system.u64_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U64;
-        if (operand_types == generator->compiler->type_system.i8_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I8;
-        if (operand_types == generator->compiler->type_system.i16_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I16;
-        if (operand_types == generator->compiler->type_system.i32_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32;
-        if (operand_types == generator->compiler->type_system.i64_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I64;
-        if (operand_types == generator->compiler->type_system.f32_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_F32;
-        if (operand_types == generator->compiler->type_system.f64_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_F64;
-        panic("Not valid, should have been caught!");
+        return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION;
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_SUBTRACTION:
-        if (operand_types == generator->compiler->type_system.u8_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_U8;
-        if (operand_types == generator->compiler->type_system.u16_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_U16;
-        if (operand_types == generator->compiler->type_system.u32_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_U32;
-        if (operand_types == generator->compiler->type_system.u64_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_U64;
-        if (operand_types == generator->compiler->type_system.i8_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_I8;
-        if (operand_types == generator->compiler->type_system.i16_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_I16;
-        if (operand_types == generator->compiler->type_system.i32_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_I32;
-        if (operand_types == generator->compiler->type_system.i64_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_I64;
-        if (operand_types == generator->compiler->type_system.f32_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_F32;
-        if (operand_types == generator->compiler->type_system.f64_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_F64;
-        panic("Not valid, should have been caught!");
+        return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION;
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_DIVISION:
-        if (operand_types == generator->compiler->type_system.u8_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_U8;
-        if (operand_types == generator->compiler->type_system.u16_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_U16;
-        if (operand_types == generator->compiler->type_system.u32_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_U32;
-        if (operand_types == generator->compiler->type_system.u64_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_U64;
-        if (operand_types == generator->compiler->type_system.i8_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_I8;
-        if (operand_types == generator->compiler->type_system.i16_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_I16;
-        if (operand_types == generator->compiler->type_system.i32_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_I32;
-        if (operand_types == generator->compiler->type_system.i64_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_I64;
-        if (operand_types == generator->compiler->type_system.f32_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_F32;
-        if (operand_types == generator->compiler->type_system.f64_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_F64;
-        panic("Not valid, should have been caught!");
+        return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION;
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_MULTIPLICATION:
-        if (operand_types == generator->compiler->type_system.u8_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_U8;
-        if (operand_types == generator->compiler->type_system.u16_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_U16;
-        if (operand_types == generator->compiler->type_system.u32_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_U32;
-        if (operand_types == generator->compiler->type_system.u64_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_U64;
-        if (operand_types == generator->compiler->type_system.i8_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_I8;
-        if (operand_types == generator->compiler->type_system.i16_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_I16;
-        if (operand_types == generator->compiler->type_system.i32_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_I32;
-        if (operand_types == generator->compiler->type_system.i64_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_I64;
-        if (operand_types == generator->compiler->type_system.f32_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_F32;
-        if (operand_types == generator->compiler->type_system.f64_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_F64;
-        panic("Not valid, should have been caught!");
+        return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION;
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_MODULO:
-        if (operand_types == generator->compiler->type_system.u8_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_U8;
-        if (operand_types == generator->compiler->type_system.u16_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_U16;
-        if (operand_types == generator->compiler->type_system.u32_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_U32;
-        if (operand_types == generator->compiler->type_system.u64_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_U64;
-        if (operand_types == generator->compiler->type_system.i8_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_I8;
-        if (operand_types == generator->compiler->type_system.i16_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_I16;
-        if (operand_types == generator->compiler->type_system.i32_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_I32;
-        if (operand_types == generator->compiler->type_system.i64_type) return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_I64;
-        panic("Not valid, should have been caught!");
+        return Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MODULO;
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_AND:
         return Intermediate_Instruction_Type::BINARY_OP_BOOLEAN_AND;
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_OR:
         return Intermediate_Instruction_Type::BINARY_OP_BOOLEAN_OR;
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_EQUAL:
-        if (operand_types->type == Signature_Type::POINTER) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_POINTER;
-        if (operand_types == generator->compiler->type_system.u8_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_U8;
-        if (operand_types == generator->compiler->type_system.u16_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_U16;
-        if (operand_types == generator->compiler->type_system.u32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_U32;
-        if (operand_types == generator->compiler->type_system.u64_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_U64;
-        if (operand_types == generator->compiler->type_system.i8_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_I8;
-        if (operand_types == generator->compiler->type_system.i16_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_I16;
-        if (operand_types == generator->compiler->type_system.i32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_I32;
-        if (operand_types == generator->compiler->type_system.i64_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_I64;
-        if (operand_types == generator->compiler->type_system.f32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_F32;
-        if (operand_types == generator->compiler->type_system.f64_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_F64;
-        if (operand_types == generator->compiler->type_system.bool_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_BOOL;
-        panic("Not valid, should have been caught!");
+        return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL;
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_NOT_EQUAL:
-        if (operand_types->type == Signature_Type::POINTER) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_POINTER;
-        if (operand_types == generator->compiler->type_system.u8_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_U8;
-        if (operand_types == generator->compiler->type_system.u16_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_U16;
-        if (operand_types == generator->compiler->type_system.u32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_U32;
-        if (operand_types == generator->compiler->type_system.u64_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_U64;
-        if (operand_types == generator->compiler->type_system.i8_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_I8;
-        if (operand_types == generator->compiler->type_system.i16_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_I16;
-        if (operand_types == generator->compiler->type_system.i32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_I32;
-        if (operand_types == generator->compiler->type_system.i64_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_I64;
-        if (operand_types == generator->compiler->type_system.f32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_F32;
-        if (operand_types == generator->compiler->type_system.f64_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_F64;
-        if (operand_types == generator->compiler->type_system.bool_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_BOOL;
-        panic("Not valid, should have been caught!");
+        return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL;
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_LESS:
-        if (operand_types == generator->compiler->type_system.u8_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_U8;
-        if (operand_types == generator->compiler->type_system.u16_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_U16;
-        if (operand_types == generator->compiler->type_system.u32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_U32;
-        if (operand_types == generator->compiler->type_system.u64_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_U64;
-        if (operand_types == generator->compiler->type_system.i8_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_I8;
-        if (operand_types == generator->compiler->type_system.i16_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_I16;
-        if (operand_types == generator->compiler->type_system.i32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_I32;
-        if (operand_types == generator->compiler->type_system.i64_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_I64;
-        if (operand_types == generator->compiler->type_system.f32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_F32;
-        if (operand_types == generator->compiler->type_system.f64_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_F64;
-        panic("Not valid, should have been caught!");
+        return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN;
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_LESS_OR_EQUAL:
-        if (operand_types == generator->compiler->type_system.u8_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_U8;
-        if (operand_types == generator->compiler->type_system.u16_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_U16;
-        if (operand_types == generator->compiler->type_system.u32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_U32;
-        if (operand_types == generator->compiler->type_system.u64_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_U64;
-        if (operand_types == generator->compiler->type_system.i8_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_I8;
-        if (operand_types == generator->compiler->type_system.i16_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_I16;
-        if (operand_types == generator->compiler->type_system.i32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_I32;
-        if (operand_types == generator->compiler->type_system.i64_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_I64;
-        if (operand_types == generator->compiler->type_system.f32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_F32;
-        if (operand_types == generator->compiler->type_system.f64_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_F64;
-        panic("Not valid, should have been caught!");
+        return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL;
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_GREATER:
-        if (operand_types == generator->compiler->type_system.u8_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_U8;
-        if (operand_types == generator->compiler->type_system.u16_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_U16;
-        if (operand_types == generator->compiler->type_system.u32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_U32;
-        if (operand_types == generator->compiler->type_system.u64_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_U64;
-        if (operand_types == generator->compiler->type_system.i8_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_I8;
-        if (operand_types == generator->compiler->type_system.i16_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_I16;
-        if (operand_types == generator->compiler->type_system.i32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_I32;
-        if (operand_types == generator->compiler->type_system.i64_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_I64;
-        if (operand_types == generator->compiler->type_system.f32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_F32;
-        if (operand_types == generator->compiler->type_system.f64_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_F64;
-        panic("Not valid, should have been caught!");
+        return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN;
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_GREATER_OR_EQUAL:
-        if (operand_types == generator->compiler->type_system.u8_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_U8;
-        if (operand_types == generator->compiler->type_system.u16_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_U16;
-        if (operand_types == generator->compiler->type_system.u32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_U32;
-        if (operand_types == generator->compiler->type_system.u64_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_U64;
-        if (operand_types == generator->compiler->type_system.i8_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_I8;
-        if (operand_types == generator->compiler->type_system.i16_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_I16;
-        if (operand_types == generator->compiler->type_system.i32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_I32;
-        if (operand_types == generator->compiler->type_system.i64_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_I64;
-        if (operand_types == generator->compiler->type_system.f32_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_F32;
-        if (operand_types == generator->compiler->type_system.f64_type) return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_F64;
-        panic("Not valid, should have been caught!");
+        return Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL;
     }
     panic("This should not happen :)\n");
     return Intermediate_Instruction_Type::BINARY_OP_BOOLEAN_AND;
@@ -520,6 +368,34 @@ Data_Access intermediate_generator_generate_expression_without_casting(Intermedi
         }
 
         Token& token = generator->compiler->parser.lexer->tokens[generator->compiler->parser.token_mapping[expression_index].start_index];
+        if (token.type == Token_Type::STRING_LITERAL) 
+        {
+            // First we need to load the string pointer to .character
+            Data_Access string_access = instr.destination;
+            Data_Access char_ptr_access = data_access_create_member_access(generator, string_access, 0, 
+                type_system_make_pointer(&generator->compiler->type_system, generator->compiler->type_system.u8_type)
+            );
+            Data_Access capacity_access = data_access_create_member_access(generator, string_access, 8, generator->compiler->type_system.i32_type);
+            Data_Access size_access = data_access_create_member_access(generator, string_access, 16, generator->compiler->type_system.i32_type);
+
+            instr.type = Intermediate_Instruction_Type::LOAD_STRING_POINTER;
+            instr.destination = char_ptr_access;
+            instr.constant_string_value = lexer_identifer_to_string(&generator->compiler->lexer, token.attribute.identifier_number).characters;
+            dynamic_array_push_back(&function->instructions, instr);
+
+            instr.type = Intermediate_Instruction_Type::LOAD_CONSTANT_I32;
+            instr.destination = capacity_access;
+            instr.constant_i32_value = 0;
+            dynamic_array_push_back(&function->instructions, instr);
+
+            instr.type = Intermediate_Instruction_Type::LOAD_CONSTANT_I32;
+            instr.destination = size_access;
+            instr.constant_i32_value = lexer_identifer_to_string(&generator->compiler->lexer, token.attribute.identifier_number).size;
+            dynamic_array_push_back(&function->instructions, instr);
+
+            return instr.destination;
+        }
+
         if (token.type == Token_Type::FLOAT_LITERAL) {
             instr.type = Intermediate_Instruction_Type::LOAD_CONSTANT_F32;
             instr.constant_f32_value = token.attribute.float_value;
@@ -591,7 +467,8 @@ Data_Access intermediate_generator_generate_expression_without_casting(Intermedi
         dynamic_array_push_back(&function->instructions, load_element_size_instr);
 
         Intermediate_Instruction calc_array_byte_size_instr;
-        calc_array_byte_size_instr.type = Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_I32;
+        calc_array_byte_size_instr.type = Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION;
+        calc_array_byte_size_instr.operand_types = generator->compiler->type_system.i32_type;
         calc_array_byte_size_instr.source1 = element_count_access;
         calc_array_byte_size_instr.source2 = load_element_size_instr.destination;
         calc_array_byte_size_instr.destination = intermediate_generator_create_intermediate_result(generator, generator->compiler->type_system.i32_type);
@@ -786,7 +663,8 @@ Data_Access intermediate_generator_generate_expression_without_casting(Intermedi
             }
             Block_Recorder recorder = block_recorder_0_start_record_condition(generator, Intermediate_Instruction_Type::IF_BLOCK);
             Intermediate_Instruction condition_instr;
-            condition_instr.type = Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_I32;
+            condition_instr.type = Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL;
+            condition_instr.operand_types = generator->compiler->type_system.i32_type;
             condition_instr.destination = intermediate_generator_create_intermediate_result(generator, generator->compiler->type_system.bool_type);
             condition_instr.source1 = index_data;
             condition_instr.source2 = size_data;
@@ -840,11 +718,11 @@ Data_Access intermediate_generator_generate_expression_without_casting(Intermedi
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_GREATER:
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_GREATER_OR_EQUAL:
     {
-        Type_Signature* left_type = generator->compiler->analyser.semantic_information[expression->children[0]].expression_result_type;
         Intermediate_Instruction instr;
-        instr.type = binary_operation_get_instruction_type(generator, expression->type, left_type);
+        instr.type = binary_operation_get_instruction_type(generator, expression->type);
         instr.source1 = intermediate_generator_generate_expression(generator, expression->children[0], false, data_access_make_empty());
         instr.source2 = intermediate_generator_generate_expression(generator, expression->children[1], false, data_access_make_empty());
+        instr.operand_types = generator->compiler->analyser.semantic_information[expression->children[0]].expression_result_type;
         if (force_destination) {
             instr.destination = destination;
         }
@@ -859,18 +737,9 @@ Data_Access intermediate_generator_generate_expression_without_casting(Intermedi
     }
     case AST_Node_Type::EXPRESSION_UNARY_OPERATION_NEGATE:
     {
-        Intermediate_Instruction_Type instr_type;
-        Type_Signature* operand_type = generator->compiler->analyser.semantic_information[expression->children[0]].expression_result_type;
-        if (operand_type == generator->compiler->type_system.f32_type) {
-            instr_type = Intermediate_Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_F32;
-        }
-        else if (operand_type == generator->compiler->type_system.i32_type) {
-            instr_type = Intermediate_Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I32;
-        }
-        else panic("Should not happen");
-
         Intermediate_Instruction instr;
-        instr.type = instr_type;
+        instr.type = Intermediate_Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE;
+        instr.operand_types = generator->compiler->analyser.semantic_information[expression->children[0]].expression_result_type;
         instr.source1 = intermediate_generator_generate_expression(generator, expression->children[0], false, data_access_make_empty());
         if (force_destination) {
             instr.destination = destination;
@@ -888,6 +757,7 @@ Data_Access intermediate_generator_generate_expression_without_casting(Intermedi
     {
         Intermediate_Instruction instr;
         instr.type = Intermediate_Instruction_Type::UNARY_OP_BOOLEAN_NOT;
+        instr.operand_types = generator->compiler->analyser.semantic_information[expression->children[0]].expression_result_type;
         instr.source1 = intermediate_generator_generate_expression(generator, expression->children[0], false, data_access_make_empty());
         if (force_destination) {
             instr.destination = destination;
@@ -1280,48 +1150,26 @@ void exit_code_append_to_string(String* string, Exit_Code code)
 
 bool intermediate_instruction_type_is_unary_operation(Intermediate_Instruction_Type instruction_type)
 {
-    if ((i32)instruction_type >= (i32)Intermediate_Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I8 &&
-        (i32)instruction_type <= (i32)Intermediate_Instruction_Type::UNARY_OP_BOOLEAN_NOT) {
-        return true;
-    }
-    return false;
+    return
+        (i32)instruction_type == (i32)Intermediate_Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE ||
+        (i32)instruction_type == (i32)Intermediate_Instruction_Type::UNARY_OP_BOOLEAN_NOT;
 }
 
 bool intermediate_instruction_type_is_binary_operation(Intermediate_Instruction_Type instruction_type)
 {
-    if ((i32)instruction_type >= (i32)Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U8 &&
-        (i32)instruction_type <= (i32)Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_POINTER) {
+    if ((i32)instruction_type >= (i32)Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION &&
+        (i32)instruction_type <= (i32)Intermediate_Instruction_Type::BINARY_OP_BOOLEAN_OR) {
         return true;
     }
     return false;
 }
 
-void intermediate_instruction_unary_operation_append_to_string(String* string, Intermediate_Instruction_Type instruction_type)
+void intermediate_instruction_type_unary_operation_append_to_string(String* string, Intermediate_Instruction_Type instruction_type)
 {
     switch (instruction_type)
     {
-    case Intermediate_Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I8: {
-        string_append_formated(string, "UNARY_OP_ARITHMETIC_NEGATE_I8");
-        break;
-    }
-    case Intermediate_Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I16: {
-        string_append_formated(string, "UNARY_OP_ARITHMETIC_NEGATE_I16");
-        break;
-    }
-    case Intermediate_Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I32: {
-        string_append_formated(string, "UNARY_OP_ARITHMETIC_NEGATE_I32");
-        break;
-    }
-    case Intermediate_Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I64: {
-        string_append_formated(string, "UNARY_OP_ARITHMETIC_NEGATE_I64");
-        break;
-    }
-    case Intermediate_Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_F32: {
-        string_append_formated(string, "UNARY_OP_ARITHMETIC_NEGATE_F32");
-        break;
-    }
-    case Intermediate_Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_F64: {
-        string_append_formated(string, "UNARY_OP_ARITHMETIC_NEGATE_F64");
+    case Intermediate_Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE: {
+        string_append_formated(string, "UNARY_OP_ARITHMETIC_NEGATE");
         break;
     }
     case Intermediate_Instruction_Type::UNARY_OP_BOOLEAN_NOT: {
@@ -1333,62 +1181,44 @@ void intermediate_instruction_unary_operation_append_to_string(String* string, I
     return;
 }
 
-void intermediate_instruction_binop_append_to_string(String* string, Intermediate_Instruction_Type instruction_type)
+void intermediate_instruction_type_binop_append_to_string(String* string, Intermediate_Instruction_Type instruction_type)
 {
-    if ((i32)instruction_type >= (i32)Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U8 &&
-        (i32)instruction_type <= (i32)Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_F64)
-    {
-        const char* instruction_prefix = "Error";
-        const char* type_postfix = "_Error";
-        const char* prefixes[] = {
-            "BINARY_OP_ARITHMETIC_ADDITION_",
-            "BINARY_OP_ARITHMETIC_SUBTRACTION_",
-            "BINARY_OP_ARITHMETIC_MULTIPLICATION_",
-            "BINARY_OP_ARITHMETIC_DIVISION_",
-            "BINARY_OP_ARITHMETIC_MODULO_",
-            "BINARY_OP_COMPARISON_EQUAL_",
-            "BINARY_OP_COMPARISON_NOT_EQUAL_",
-            "BINARY_OP_COMPARISON_GREATER_THAN_",
-            "BINARY_OP_COMPARISON_GREATER_EQUAL_",
-            "BINARY_OP_COMPARISON_LESS_THAN_",
-            "BINARY_OP_COMPARISON_LESS_EQUAL_",
-        };
-        const char* types[] = { "U8", "U16", "U32", "U64", "I8", "I16", "I32", "I64", "F32", "F64" };
-        i32 type_index = (i32)instruction_type - (i32)Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U8;
-        int prefix_index = type_index % 11;
-        int postfix_index = type_index / 11;
-        instruction_prefix = prefixes[prefix_index];
-        type_postfix = types[postfix_index];
-        string_append_formated(string, "%s", instruction_prefix);
-        string_append_formated(string, "%s", type_postfix);
-    }
-
     switch (instruction_type)
     {
-    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_BOOL: {
-        string_append_formated(string, "BINARY_OP_COMPARISON_EQUAL_BOOL");
+    case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION:
+        string_append_formated(string, "BINARY_OP_ARITHMETIC_ADDITION");
         break;
-    }
-    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_BOOL: {
-        string_append_formated(string, "BINARY_OP_COMPARISON_NOT_EQUAL_BOOL");
+    case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION:
+        string_append_formated(string, "BINARY_OP_ARITHMETIC_SUBTRACTION");
         break;
-    }
-    case Intermediate_Instruction_Type::BINARY_OP_BOOLEAN_AND: {
-        string_append_formated(string, "BINARY_OP_BOOLEAN_AND");
+    case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION:
+        string_append_formated(string, "BINARY_OP_ARITHMETIC_MULTIPLICATION");
         break;
-    }
-    case Intermediate_Instruction_Type::BINARY_OP_BOOLEAN_OR: {
-        string_append_formated(string, "BINARY_OP_BOOLEAN_OR");
+    case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION:
+        string_append_formated(string, "BINARY_OP_ARITHMETIC_DIVISION");
         break;
-    }
-    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL_POINTER: {
-        string_append_formated(string, "BINARY_OP_COMPARISON_EQUAL_POINTER");
+    case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MODULO:
+        string_append_formated(string, "BINARY_OP_ARITHMETIC_MODULO");
         break;
-    }
-    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_POINTER: {
-        string_append_formated(string, "BINARY_OP_COMPARISON_NOT_EQUAL_POINTER");
+    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL:
+        string_append_formated(string, "BINARY_OP_COMPARISON_EQUAL");
         break;
-    }
+    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL:
+        string_append_formated(string, "BINARY_OP_COMPARISON_NOT_EQUAL");
+        break;
+    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN:
+        string_append_formated(string, "BINARY_OP_COMPARISON_GREATER_THAN");
+        break;
+    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL:
+        string_append_formated(string, "BINARY_OP_COMPARISON_GREATER_EQUAL");
+        break;
+    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN:
+        string_append_formated(string, "BINARY_OP_COMPARISON_LESS_THAN");
+        break;
+    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL:
+        string_append_formated(string, "BINARY_OP_COMPARISON_LESS_EQUAL");
+        break;
+    default: panic("what");
     }
     return;
 }
@@ -1401,18 +1231,6 @@ void intermediate_instruction_append_to_string(String* string, Intermediate_Inst
     bool append_destination = false;
     bool append_src_1 = false;
 
-    if (intermediate_instruction_type_is_binary_operation(instruction->type)) {
-        intermediate_instruction_binop_append_to_string(string, instruction->type);
-        string_append_formated(string, " ");
-        append_binary = true;
-    }
-    else if (intermediate_instruction_type_is_unary_operation(instruction->type)) {
-        intermediate_instruction_unary_operation_append_to_string(string, instruction->type);
-        string_append_formated(string, " ");
-        append_source_destination = true;
-    }
-    else
-    {
         switch (instruction->type)
         {
         case Intermediate_Instruction_Type::ADDRESS_OF:
@@ -1527,6 +1345,10 @@ void intermediate_instruction_append_to_string(String* string, Intermediate_Inst
             string_append_formated(string, "LOAD_CONSTANT_F32, value: %3.2f ", instruction->constant_f32_value);
             append_destination = true;
             break;
+        case Intermediate_Instruction_Type::LOAD_STRING_POINTER:
+            string_append_formated(string, "LOAD_STRING_POINTER, value: %s ", instruction->constant_string_value);
+            append_destination = true;
+            break;
         case Intermediate_Instruction_Type::LOAD_CONSTANT_I32:
             string_append_formated(string, "LOAD_CONSTANT_I32, value: %d ", instruction->constant_i32_value);
             append_destination = true;
@@ -1539,34 +1361,138 @@ void intermediate_instruction_append_to_string(String* string, Intermediate_Inst
             string_append_formated(string, "LOAD_NULLPTR ");
             append_destination = true;
             break;
+        case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION:
+            string_append_formated(string, "BINARY_OP_ARITHMETIC_ADDITION");
+            append_binary = true;
+            string_append_formated(string, "_");
+            type_signature_append_to_string(string, instruction->operand_types);
+            string_append_formated(string, " ");
+            break;
+        case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION:
+            string_append_formated(string, "BINARY_OP_ARITHMETIC_SUBTRACTION");
+            append_binary = true;
+            string_append_formated(string, "_");
+            type_signature_append_to_string(string, instruction->operand_types);
+            string_append_formated(string, " ");
+            break;
+        case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION:
+            string_append_formated(string, "BINARY_OP_ARITHMETIC_MULTIPLICATION");
+            append_binary = true;
+            string_append_formated(string, "_");
+            type_signature_append_to_string(string, instruction->operand_types);
+            string_append_formated(string, " ");
+            break;
+        case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION:
+            string_append_formated(string, "BINARY_OP_ARITHMETIC_DIVISION");
+            append_binary = true;
+            string_append_formated(string, "_");
+            type_signature_append_to_string(string, instruction->operand_types);
+            string_append_formated(string, " ");
+            break;
+        case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MODULO:
+            string_append_formated(string, "BINARY_OP_ARITHMETIC_MODULO");
+            append_binary = true;
+            string_append_formated(string, "_");
+            type_signature_append_to_string(string, instruction->operand_types);
+            string_append_formated(string, " ");
+            break;
+        case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL:
+            string_append_formated(string, "BINARY_OP_COMPARISON_EQUAL");
+            append_binary = true;
+            string_append_formated(string, "_");
+            type_signature_append_to_string(string, instruction->operand_types);
+            string_append_formated(string, " ");
+            break;
+        case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL:
+            string_append_formated(string, "BINARY_OP_COMPARISON_NOT_EQUAL");
+            append_binary = true;
+            string_append_formated(string, "_");
+            type_signature_append_to_string(string, instruction->operand_types);
+            string_append_formated(string, " ");
+            break;
+        case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN:
+            string_append_formated(string, "BINARY_OP_COMPARISON_GREATER_THAN");
+            append_binary = true;
+            string_append_formated(string, "_");
+            type_signature_append_to_string(string, instruction->operand_types);
+            string_append_formated(string, " ");
+            break;
+        case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL:
+            string_append_formated(string, "BINARY_OP_COMPARISON_GREATER_EQUAL");
+            append_binary = true;
+            string_append_formated(string, "_");
+            type_signature_append_to_string(string, instruction->operand_types);
+            string_append_formated(string, " ");
+            break;
+        case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN:
+            string_append_formated(string, "BINARY_OP_COMPARISON_LESS_THAN");
+            append_binary = true;
+            string_append_formated(string, "_");
+            type_signature_append_to_string(string, instruction->operand_types);
+            string_append_formated(string, " ");
+            break;
+        case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL:
+            string_append_formated(string, "BINARY_OP_COMPARISON_LESS_EQUAL");
+            append_binary = true;
+            string_append_formated(string, "_");
+            type_signature_append_to_string(string, instruction->operand_types);
+            string_append_formated(string, " ");
+            break;
+        case Intermediate_Instruction_Type::BINARY_OP_BOOLEAN_AND:
+            string_append_formated(string, "BINARY_OP_BOOLEAN_AND");
+            append_binary = true;
+            string_append_formated(string, "_");
+            type_signature_append_to_string(string, instruction->operand_types);
+            string_append_formated(string, " ");
+            break;
+        case Intermediate_Instruction_Type::BINARY_OP_BOOLEAN_OR:
+            string_append_formated(string, "BINARY_OP_BOOLEAN_OR");
+            append_binary = true;
+            string_append_formated(string, "_");
+            type_signature_append_to_string(string, instruction->operand_types);
+            string_append_formated(string, " ");
+            break;
+        case Intermediate_Instruction_Type::UNARY_OP_BOOLEAN_NOT:
+            string_append_formated(string, "UNARY_OP_BOOLEAN_NOT");
+            append_source_destination = true;
+            string_append_formated(string, "_");
+            type_signature_append_to_string(string, instruction->operand_types);
+            string_append_formated(string, " ");
+            break;
+        case Intermediate_Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE:
+            string_append_formated(string, "UNARY_OP_ARITHMETIC_NEGATE");
+            append_source_destination = true;
+            string_append_formated(string, "_");
+            type_signature_append_to_string(string, instruction->operand_types);
+            string_append_formated(string, " ");
+            break;
         default:
             logg("Should not fucking happen!");
             break;
         }
-    }
 
-    if (append_binary) {
-        string_append_formated(string, "\n\t\tleft = ");
-        data_access_append_to_string(string, instruction->source1, function_index, generator);
-        string_append_formated(string, "\n\t\tright = ");
-        data_access_append_to_string(string, instruction->source2, function_index, generator);
-        string_append_formated(string, "\n\t\tdest = ");
-        data_access_append_to_string(string, instruction->destination, function_index, generator);
-    }
-    if (append_source_destination) {
-        string_append_formated(string, "\n\t\tsrc = ");
-        data_access_append_to_string(string, instruction->source1, function_index, generator);
-        string_append_formated(string, "\n\t\tdest = ");
-        data_access_append_to_string(string, instruction->destination, function_index, generator);
-    }
-    if (append_destination) {
-        string_append_formated(string, "\n\t\tdest = ");
-        data_access_append_to_string(string, instruction->destination, function_index, generator);
-    }
-    if (append_src_1) {
-        string_append_formated(string, "\n\t\tsrc = ");
-        data_access_append_to_string(string, instruction->source1, function_index, generator);
-    }
+        if (append_binary) {
+            string_append_formated(string, "\n\t\tleft = ");
+            data_access_append_to_string(string, instruction->source1, function_index, generator);
+            string_append_formated(string, "\n\t\tright = ");
+            data_access_append_to_string(string, instruction->source2, function_index, generator);
+            string_append_formated(string, "\n\t\tdest = ");
+            data_access_append_to_string(string, instruction->destination, function_index, generator);
+        }
+        if (append_source_destination) {
+            string_append_formated(string, "\n\t\tsrc = ");
+            data_access_append_to_string(string, instruction->source1, function_index, generator);
+            string_append_formated(string, "\n\t\tdest = ");
+            data_access_append_to_string(string, instruction->destination, function_index, generator);
+        }
+        if (append_destination) {
+            string_append_formated(string, "\n\t\tdest = ");
+            data_access_append_to_string(string, instruction->destination, function_index, generator);
+        }
+        if (append_src_1) {
+            string_append_formated(string, "\n\t\tsrc = ");
+            data_access_append_to_string(string, instruction->source1, function_index, generator);
+        }
 }
 
 void intermediate_function_append_to_string(String* string, Intermediate_Generator* generator, int index)

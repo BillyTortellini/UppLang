@@ -58,6 +58,7 @@ enum class Token_Type
     INTEGER_LITERAL,
     FLOAT_LITERAL,
     BOOLEAN_LITERAL,
+    STRING_LITERAL,
     // Other important stuff
     IDENTIFIER,
     COMMENT,

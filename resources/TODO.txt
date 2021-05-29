@@ -1,48 +1,51 @@
 Current Work Item:
 ------------------
- * Strings
+ * Binary Expression Instructions should just have a primitive type on which it operates, so I dont need so many cases
+ * Maybe bytecode debugger, than I can work a little on the GUI, which i could also use for searching
 
 
 
 Long-Term Goals:
 ----------------
+ * Calling C-Functions in Bytecode (Look into dyncall)
  * C-Backend
  * Calling C-Functions in the C-Backend (Maybe with Clang for header file parsing)
- * More language features
- * Calling C-Functions in Bytecode (Look into dyncall)
  * Debugger
+ * More language features
  * More Editor features
 
 More Language features to implement:
 ------------------------------------
- * Strings
-   ------- Here I also should check what I can add later, and what are necessary features for programming ------
- * Default variable initialization (Maybe) (0), but, that should be left uninitialized
- * Array access with pointers to arrays
- * Literal overhaul (What is a float, what isnt...)
- * Array size should have u64
- * Syntax for fixed array initialization [int :: 1, 2, 3, 4, 5]
- * Loop statements, maybe loop over array syntax
- * Function return value overhaul: Multiple return values or no return value should be possible
  * Function pointers
- * Lambdas
- * Defer statement
+ * Defer
  * Enums
  * switch
+ * Modules
+ * Tag-System (For constant values, but also other stuff)
+ * Code-Polymorphism (Template/Generic System)
+
+   ------- These features are for convenience, but they are not top priority ------
  * Tagged Unions
  * Location-Information (Filename, line_number...)
- * Any-Type and Type access (Varargs in this language)
- * Code-Polymorphism (Template/Generic System)
- * Modules
- * Constant values (Maybe as the first iteration of the tag-system)
- * Variation for simple Dynamic dispatch  (Like interfaces in OO..., similar to dynamic in Rust)
+ * Any-Type and Type access (Varargs in this language, maybe use this for printf)
  * Iterators
  * Macro-System
  * Context (Used for memory allocations, useful in Multi-Threading)
+ * Lambdas
+ * Default variable initialization (Maybe) with 0, although if the value-analyser works correctly, this should be fine
+ * Array access with pointers to arrays
+ * Array size should be u64, then iteration is more tedious (casting), but with iterators it should be fine
+ * Automatic casting from non-pointer type to pointer in function calls
+ * Literal overhaul (What is a float, what isnt...)
+ * Syntax for fixed array initialization [int :: 1, 2, 3, 4, 5]
+ * Loop statements, maybe loop over array syntax
+ * Function return value overhaul: Multiple return values or no return value should be possible
+ * Variation for simple Dynamic dispatch  (Like interfaces in OO..., similar to dynamic in Rust)
 
 Editor features to implement:
 -----------------------------
  * Delete with numbers were correct, but position with a movement up or down is actually a line delete
+ * Limit 'f' 'F' 't' 'T' search range, I think jumping with those should not be possible
  * Autocompletion using current symbol table
  * Jump to definition with string search (Maybe Ctrl-F)
  * Search and Replace
@@ -69,6 +72,7 @@ Ideas that need to be tested:
  * Visualizations for Code, better navigation, module system
  * Non-Destructive Code-Editing for larger modules
 
+ * Tag for not used anymore for variables
  * Hot-Reloading Code
  * Incremental Builds
  * Stack-Analysis for Debug information (Or others? E.g. logging)
@@ -86,6 +90,8 @@ This would also make debuggin so much easier, since we would see the names of th
 
 Intermediate Code should keep positional information, so should the bytecode (Will be necessary for the debugger)
 Improved Parser-Error handling. (Function-Parsing Error handling should check each following line if it is a function)
+
+At some point the editor should not render at 60 FPS, but rather update when necessary.
 
 Open Questions:
 ---------------

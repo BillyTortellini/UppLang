@@ -15,7 +15,7 @@ Compiler compiler_create()
     result.lexer = lexer_create();
     result.parser = ast_parser_create();
     result.lexer = lexer_create();
-    result.type_system = type_system_create();
+    result.type_system = type_system_create(&result.lexer);
     result.analyser = semantic_analyser_create();
     result.bytecode_generator = bytecode_generator_create();
     result.bytecode_interpreter = bytecode_intepreter_create();
@@ -58,7 +58,7 @@ void compiler_compile(Compiler* compiler, String* source_code, bool generate_cod
 
     double debug_print_start_time = timing_current_time_in_seconds();
     // Debug Print
-    if (generate_code && true)
+    if (generate_code && false)
     {
         logg("\n\n\n\n\n\n\n\n\n\n\n\n--------SOURCE CODE--------: \n%s\n\n", source_code->characters);
         logg("\n\n\n\n--------LEXER RESULT--------:\n");
@@ -76,7 +76,7 @@ void compiler_compile(Compiler* compiler, String* source_code, bool generate_cod
 
         logg("--------TYPE SYSTEM RESULT--------:\n");
         type_system_print(&compiler->type_system);
-        if (&compiler->analyser.errors.size == 0 && true)
+        if (compiler->analyser.errors.size == 0 && true)
         {
             String result_str = string_create_empty(32);
             SCOPE_EXIT(string_destroy(&result_str));

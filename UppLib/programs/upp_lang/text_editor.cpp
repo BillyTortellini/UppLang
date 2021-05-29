@@ -2303,13 +2303,13 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
         __debugbreak();
     }
 
+        /*
     if (input->key_messages.size != 0 && editor->compiler.analyser.errors.size == 0 && editor->compiler.parser.errors.size == 0)
     {
         AST_Node_Index closest_node_index = ast_parser_get_closest_node_to_text_position(&editor->compiler.parser, editor->cursor_position, editor->lines);
         AST_Node* node = &editor->compiler.parser.nodes[closest_node_index];
         String type_string = ast_node_type_to_string(editor->compiler.parser.nodes[closest_node_index].type);
         int symbol_table_index = editor->compiler.analyser.semantic_information[closest_node_index].symbol_table_index;
-        /*
         logg("Currently under cursor: %s (#%d), Cursor pos: Line %d, Char %d, Table-Index: %d, Node-Mapping: %d-%d\n",
             type_string.characters, closest_node_index, editor->cursor_position.line, editor->cursor_position.character, symbol_table_index,
             editor->parser.token_mapping[closest_node_index].start_index, editor->parser.token_mapping[closest_node_index].end_index
@@ -2323,8 +2323,8 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
             symbol_table_append_to_string(&fill, symbol_table, &editor->lexer, false);
             logg("%s", fill.characters);
         }
-        */
     }
+        */
 
     // IDE STUFF
     if (input->key_down[KEY_CODE::CTRL] && input->key_pressed[KEY_CODE::S]) {
@@ -2357,6 +2357,8 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
         vec3 VARIABLE_COLOR = vec3(0.5f, 0.5f, 0.8f);
         vec3 TYPE_COLOR = vec3(0.4f, 0.9f, 0.9f);
         vec3 PRIMITIVE_TYPE_COLOR = vec3(0.1f, 0.3f, 1.0f);
+        vec3 STRING_LITERAL_COLOR = vec3(0.0f, 1.0f, 0.2f);
+        vec3 ERROR_TOKEN_COLOR = vec3(1.0f, 0.0f, 0.0f);
         vec4 BG_COLOR = vec4(0);
         for (int i = 0; i < editor->compiler.lexer.tokens_with_whitespaces.size; i++)
         {
@@ -2365,6 +2367,10 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
                 text_editor_add_highlight_from_slice(editor, t.position, COMMENT_COLOR, BG_COLOR);
             else if (token_type_is_keyword(t.type))
                 text_editor_add_highlight_from_slice(editor, t.position, KEYWORD_COLOR, BG_COLOR);
+            else if (t.type == Token_Type::STRING_LITERAL) 
+                text_editor_add_highlight_from_slice(editor, t.position, STRING_LITERAL_COLOR, BG_COLOR);
+            else if (t.type == Token_Type::ERROR_TOKEN) 
+                text_editor_add_highlight_from_slice(editor, t.position, ERROR_TOKEN_COLOR, BG_COLOR);
             else if (t.type == Token_Type::IDENTIFIER)
             {
                 AST_Node_Index nearest_node_index = ast_parser_get_closest_node_to_text_position(&editor->compiler.parser, t.position.start, editor->lines);

@@ -566,6 +566,7 @@ AST_Node_Index ast_parser_parse_expression_single_value(AST_Parser* parser)
     if (ast_parser_test_next_token(parser, Token_Type::INTEGER_LITERAL) ||
         ast_parser_test_next_token(parser, Token_Type::FLOAT_LITERAL) ||
         ast_parser_test_next_token(parser, Token_Type::BOOLEAN_LITERAL) ||
+        ast_parser_test_next_token(parser, Token_Type::STRING_LITERAL) ||
         ast_parser_test_next_token(parser, Token_Type::NULLPTR))
     {
         parser->nodes[node_index].type = AST_Node_Type::EXPRESSION_LITERAL;
@@ -1238,6 +1239,7 @@ bool ast_parser_parse_parameter_block(AST_Parser* parser, AST_Node_Index parent_
             if (next_closed_parenthesis < next_closed_braces) {
                 ast_parser_log_error(parser, "Could not parse parameters", token_range_make(parser->index, next_closed_parenthesis));
                 parser->index = next_closed_parenthesis + 1;
+                parser->token_mapping[block_index] = token_range_make(checkpoint.rewind_token_index, parser->index);
                 return true;
             }
             ast_parser_checkpoint_reset(checkpoint);
@@ -1419,6 +1421,8 @@ void ast_parser_check_sanity(AST_Parser* parser)
         if (parser->lexer->tokens.size != 0) 
         {
             if (start < 0 || end < 0 || start >= parser->lexer->tokens.size || end > parser->lexer->tokens.size) {
+                AST_Node* node = &parser->nodes[i];
+                logg("Should not happen: range: %d-%d, index: %d\n", start, end, i);
                 panic("Should not happen!");
             }
             if (start == end) {
@@ -1827,6 +1831,8 @@ void ast_node_expression_append_to_string(AST_Parser* parser, AST_Node_Index nod
         case Token_Type::BOOLEAN_LITERAL: string_append_formated(string, t.attribute.bool_value ? "TRUE" : "FALSE"); break;
         case Token_Type::INTEGER_LITERAL: string_append_formated(string, "%d", t.attribute.integer_value); break;
         case Token_Type::FLOAT_LITERAL: string_append_formated(string, "%3.2f", t.attribute.float_value); break;
+        case Token_Type::STRING_LITERAL: string_append_formated(string, "\"%s\"", 
+            lexer_identifer_to_string(parser->lexer, t.attribute.identifier_number).characters); break;
         }
         return;
     case AST_Node_Type::EXPRESSION_FUNCTION_CALL:

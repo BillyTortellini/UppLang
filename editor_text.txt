@@ -6,7 +6,86 @@ main :: () -> void
     memory_test();
     cast_test(); 
     global_test();
+    string_test();
 }
+
+string_create :: (str: String) -> String
+{
+    result: String;
+    result.character_buffer = new [str.size]u8;
+    result.size = str.size;
+    i := 0;
+    while i < str.size {
+        result.character_buffer[i] = str.character_buffer[i];
+        i = i+1;
+    }
+    return result;
+}
+
+string_reserve :: (str: *String, n: int) -> void
+{
+    if str.character_buffer.size >= n return;
+    new_buffer := new [n]u8;
+    i := 0;
+    while i < str.size {
+        new_buffer[i] = str.character_buffer[i];
+        i = i+1;
+    }
+    delete str.character_buffer;
+    str.character_buffer = new_buffer;
+}
+
+string_double :: (str: *String) -> void
+{
+    string_reserve(str, str.size * 2);
+    i := 0;
+    while i < str.size {
+        str.character_buffer[i + str.size] = str.character_buffer[i];
+        i = i+1;
+    }
+    str.size = str.size * 2;
+}
+
+string_create_empty :: (initial_capacity: int) -> String
+{
+    result: String;
+    result.character_buffer = new [initial_capacity]u8;
+    result.size = 0;
+    return result;
+}
+
+string_destroy :: (str: *String) -> void 
+{
+    delete str.character_buffer;
+    str.character_buffer.size = 0;
+    str.character_buffer.data = nullptr;
+    str.size = 0;
+}
+
+string_print_characters :: (max: int, x: String) -> void
+{
+    i := 0;
+    while i < x.size && i < max {
+        print_i32(cast<i32> x.character_buffer[i]);
+        print_line();
+        i = i+1;
+    }
+}
+
+string_test :: () -> void
+{
+    x := "Hallo\nLol Lol Lol\n";
+    x = string_create(x);
+    string_double(*x);
+    string_double(*x);
+    string_double(*x);
+    
+    string_print_characters(4, x);
+    print_string(x);
+    
+    string_destroy(*x);
+}
+
 
 global_x: int;
 global_y: i32 = 5;

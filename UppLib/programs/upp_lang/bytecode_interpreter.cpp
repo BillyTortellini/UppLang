@@ -108,18 +108,30 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
     case Instruction_Type::CALL_HARDCODED_FUNCTION: 
     {
         Hardcoded_Function_Type type = (Hardcoded_Function_Type)i->op1;
-        byte* argument_start = interpreter->stack_pointer + i->op2 - 8; // Check if this is correct
+        Type_Signature* function_sig = interpreter->compiler->analyser.hardcoded_functions[i->op1].function_type;
+        byte* argument_start;
+        {
+            int start_offset = 0;
+            for (int i = 0; i < function_sig->parameter_types.size; i++) {
+                Type_Signature* type = function_sig->parameter_types[i];
+                start_offset = align_offset_next_multiple(start_offset, type->alignment_in_bytes);
+                start_offset += type->size_in_bytes;
+            }
+            start_offset = align_offset_next_multiple(start_offset, 8);
+            argument_start = interpreter->stack_pointer + i->op2 - start_offset;
+        }
+        // Argument start only works if the argument type is of size 8, and only if the function has one argument
         memory_set_bytes(&interpreter->return_register[0], 256, 0);
         switch (type)
         {
         case Hardcoded_Function_Type::MALLOC_SIZE_I32: {
-            i32 size = *(i32*) argument_start;
+            i32 size = *(i32*)argument_start;
             void* alloc_data = malloc(size);
             memory_copy(interpreter->return_register, &alloc_data, 8);
             break;
         }
         case Hardcoded_Function_Type::FREE_POINTER: {
-            void* free_data = *(void**) argument_start;
+            void* free_data = *(void**)argument_start;
             free(free_data);
             break;
         }
@@ -131,6 +143,18 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         }
         case Hardcoded_Function_Type::PRINT_BOOL: {
             logg("%s", *(argument_start) == 0 ? "FALSE" : "TRUE"); break;
+        }
+        case Hardcoded_Function_Type::PRINT_STRING: {
+            //byte* argument_start = interpreter->stack_pointer + i->op2 - 24;
+            char* str = *(char**)argument_start;
+            int size = *(int*)(argument_start + 16);
+
+            char* buffer = new char[size + 1];
+            SCOPE_EXIT(delete[] buffer);
+            memory_copy(buffer, str, size);
+            buffer[size] = 0;
+            logg("%s", buffer);
+            break;
         }
         case Hardcoded_Function_Type::PRINT_LINE: {
             logg("\n"); break;
@@ -206,11 +230,14 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
     case Instruction_Type::LOAD_CONSTANT_BOOLEAN:
         *(interpreter->stack_pointer + i->op1) = (byte)i->op2;
         break;
+    case Instruction_Type::LOAD_CONSTANT_U64:
+        *(u64*)(interpreter->stack_pointer + i->op1) = interpreter->generator->constants_u64[i->op2];
+        break;
     case Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE: {
         u64 source_unsigned;
         i64 source_signed;
         bool source_is_signed = false;
-        switch ((Primitive_Type) i->op4) {
+        switch ((Primitive_Type)i->op4) {
         case Primitive_Type::SIGNED_INT_8: source_is_signed = true; source_signed = *(i8*)(interpreter->stack_pointer + i->op2); break;
         case Primitive_Type::SIGNED_INT_16: source_is_signed = true; source_signed = *(i16*)(interpreter->stack_pointer + i->op2); break;
         case Primitive_Type::SIGNED_INT_32: source_is_signed = true; source_signed = *(i32*)(interpreter->stack_pointer + i->op2); break;
@@ -221,27 +248,27 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         case Primitive_Type::UNSIGNED_INT_64: source_is_signed = false; source_unsigned = *(u64*)(interpreter->stack_pointer + i->op2); break;
         default: panic("what the frigg\n");
         }
-        switch ((Primitive_Type) i->op3) {
-        case Primitive_Type::SIGNED_INT_8:    *(i8*)(interpreter->stack_pointer + i->op1) = (i8) source_is_signed ? source_signed : source_unsigned; break;
-        case Primitive_Type::SIGNED_INT_16:   *(i16*)(interpreter->stack_pointer + i->op1) = (i16) source_is_signed ? source_signed : source_unsigned; break;
-        case Primitive_Type::SIGNED_INT_32:   *(i32*)(interpreter->stack_pointer + i->op1) = (i32) source_is_signed ? source_signed : source_unsigned; break;
-        case Primitive_Type::SIGNED_INT_64:   *(i64*)(interpreter->stack_pointer + i->op1) = (i64) source_is_signed ? source_signed : source_unsigned; break;
-        case Primitive_Type::UNSIGNED_INT_8:  *(u8*)(interpreter->stack_pointer + i->op1) = (u8) source_is_signed ? source_signed : source_unsigned; break;
-        case Primitive_Type::UNSIGNED_INT_16: *(u16*)(interpreter->stack_pointer + i->op1) = (u16) source_is_signed ? source_signed : source_unsigned; break;
-        case Primitive_Type::UNSIGNED_INT_32: *(u32*)(interpreter->stack_pointer + i->op1) = (u32) source_is_signed ? source_signed : source_unsigned; break;
-        case Primitive_Type::UNSIGNED_INT_64: *(u64*)(interpreter->stack_pointer + i->op1) = (u64) source_is_signed ? source_signed : source_unsigned; break;
+        switch ((Primitive_Type)i->op3) {
+        case Primitive_Type::SIGNED_INT_8:    *(i8*)(interpreter->stack_pointer + i->op1) = (i8)source_is_signed ? source_signed : source_unsigned; break;
+        case Primitive_Type::SIGNED_INT_16:   *(i16*)(interpreter->stack_pointer + i->op1) = (i16)source_is_signed ? source_signed : source_unsigned; break;
+        case Primitive_Type::SIGNED_INT_32:   *(i32*)(interpreter->stack_pointer + i->op1) = (i32)source_is_signed ? source_signed : source_unsigned; break;
+        case Primitive_Type::SIGNED_INT_64:   *(i64*)(interpreter->stack_pointer + i->op1) = (i64)source_is_signed ? source_signed : source_unsigned; break;
+        case Primitive_Type::UNSIGNED_INT_8:  *(u8*)(interpreter->stack_pointer + i->op1) = (u8)source_is_signed ? source_signed : source_unsigned; break;
+        case Primitive_Type::UNSIGNED_INT_16: *(u16*)(interpreter->stack_pointer + i->op1) = (u16)source_is_signed ? source_signed : source_unsigned; break;
+        case Primitive_Type::UNSIGNED_INT_32: *(u32*)(interpreter->stack_pointer + i->op1) = (u32)source_is_signed ? source_signed : source_unsigned; break;
+        case Primitive_Type::UNSIGNED_INT_64: *(u64*)(interpreter->stack_pointer + i->op1) = (u64)source_is_signed ? source_signed : source_unsigned; break;
         default: panic("what the frigg\n");
         }
         break;
     }
     case Instruction_Type::CAST_FLOAT_DIFFERENT_SIZE: {
         double source;
-        switch ((Primitive_Type) i->op4) {
+        switch ((Primitive_Type)i->op4) {
         case Primitive_Type::FLOAT_32: source = *(float*)(interpreter->stack_pointer + i->op2); break;
         case Primitive_Type::FLOAT_64: source = *(double*)(interpreter->stack_pointer + i->op2); break;
         default: panic("what the frigg\n");
         }
-        switch ((Primitive_Type) i->op3) {
+        switch ((Primitive_Type)i->op3) {
         case Primitive_Type::FLOAT_32: *(float*)(interpreter->stack_pointer + i->op1) = (float)source; break;
         case Primitive_Type::FLOAT_64: *(double*)(interpreter->stack_pointer + i->op1) = (double)source; break;
         default: panic("what the frigg\n");
@@ -250,30 +277,30 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
     }
     case Instruction_Type::CAST_FLOAT_INTEGER: {
         double source;
-        switch ((Primitive_Type) i->op4) {
+        switch ((Primitive_Type)i->op4) {
         case Primitive_Type::FLOAT_32: source = *(float*)(interpreter->stack_pointer + i->op2); break;
         case Primitive_Type::FLOAT_64: source = *(double*)(interpreter->stack_pointer + i->op2); break;
         default: panic("what the frigg\n");
         }
-        switch ((Primitive_Type) i->op3) {
-        case Primitive_Type::SIGNED_INT_8:    *(i8*)(interpreter->stack_pointer + i->op1) = (i8) source; break;
-        case Primitive_Type::SIGNED_INT_16:   *(i16*)(interpreter->stack_pointer + i->op1) = (i16) source; break;
-        case Primitive_Type::SIGNED_INT_32:   *(i32*)(interpreter->stack_pointer + i->op1) = (i32) source; break;
-        case Primitive_Type::SIGNED_INT_64:   *(i64*)(interpreter->stack_pointer + i->op1) = (i64) source; break;
-        case Primitive_Type::UNSIGNED_INT_8:  *(u8*)(interpreter->stack_pointer + i->op1) = (u8) source; break;
-        case Primitive_Type::UNSIGNED_INT_16: *(u16*)(interpreter->stack_pointer + i->op1) = (u16) source; break;
-        case Primitive_Type::UNSIGNED_INT_32: *(u32*)(interpreter->stack_pointer + i->op1) = (u32) source; break;
-        case Primitive_Type::UNSIGNED_INT_64: *(u64*)(interpreter->stack_pointer + i->op1) = (u64) source; break;
+        switch ((Primitive_Type)i->op3) {
+        case Primitive_Type::SIGNED_INT_8:    *(i8*)(interpreter->stack_pointer + i->op1) = (i8)source; break;
+        case Primitive_Type::SIGNED_INT_16:   *(i16*)(interpreter->stack_pointer + i->op1) = (i16)source; break;
+        case Primitive_Type::SIGNED_INT_32:   *(i32*)(interpreter->stack_pointer + i->op1) = (i32)source; break;
+        case Primitive_Type::SIGNED_INT_64:   *(i64*)(interpreter->stack_pointer + i->op1) = (i64)source; break;
+        case Primitive_Type::UNSIGNED_INT_8:  *(u8*)(interpreter->stack_pointer + i->op1) = (u8)source; break;
+        case Primitive_Type::UNSIGNED_INT_16: *(u16*)(interpreter->stack_pointer + i->op1) = (u16)source; break;
+        case Primitive_Type::UNSIGNED_INT_32: *(u32*)(interpreter->stack_pointer + i->op1) = (u32)source; break;
+        case Primitive_Type::UNSIGNED_INT_64: *(u64*)(interpreter->stack_pointer + i->op1) = (u64)source; break;
         default: panic("what the frigg\n");
         }
         break;
     }
-    case Instruction_Type::CAST_INTEGER_FLOAT: 
+    case Instruction_Type::CAST_INTEGER_FLOAT:
     {
         u64 source_unsigned;
         i64 source_signed;
         bool source_is_signed = false;
-        switch ((Primitive_Type) i->op4) {
+        switch ((Primitive_Type)i->op4) {
         case Primitive_Type::SIGNED_INT_8: source_is_signed = true; source_signed = *(i8*)(interpreter->stack_pointer + i->op2); break;
         case Primitive_Type::SIGNED_INT_16: source_is_signed = true; source_signed = *(i16*)(interpreter->stack_pointer + i->op2); break;
         case Primitive_Type::SIGNED_INT_32: source_is_signed = true; source_signed = *(i32*)(interpreter->stack_pointer + i->op2); break;
@@ -284,20 +311,20 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         case Primitive_Type::UNSIGNED_INT_64: source_is_signed = false; source_unsigned = *(u64*)(interpreter->stack_pointer + i->op2); break;
         default: panic("what the frigg\n");
         }
-        switch ((Primitive_Type) i->op3) {
-        case Primitive_Type::FLOAT_32: *(float*)(interpreter->stack_pointer + i->op1) = (float) (source_is_signed ? source_signed : source_unsigned); break;
-        case Primitive_Type::FLOAT_64: *(double*)(interpreter->stack_pointer + i->op1) = (double) (source_is_signed ? source_signed : source_unsigned); break;
+        switch ((Primitive_Type)i->op3) {
+        case Primitive_Type::FLOAT_32: *(float*)(interpreter->stack_pointer + i->op1) = (float)(source_is_signed ? source_signed : source_unsigned); break;
+        case Primitive_Type::FLOAT_64: *(double*)(interpreter->stack_pointer + i->op1) = (double)(source_is_signed ? source_signed : source_unsigned); break;
         default: panic("what the frigg\n");
         }
         break;
     }
-    
+
     /*
     -------------------------
     --- BINARY_OPERATIONS ---
     -------------------------
     */
-    
+
     // U8
     case Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U8:
         *(u8*)(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) + *(u8*)(interpreter->stack_pointer + i->op3);
@@ -333,7 +360,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         *(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) <= *(u8*)(interpreter->stack_pointer + i->op3);
         break;
 
-    // U16
+        // U16
     case Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U16:
         *(u16*)(interpreter->stack_pointer + i->op1) = *(u16*)(interpreter->stack_pointer + i->op2) + *(u16*)(interpreter->stack_pointer + i->op3);
         break;
@@ -368,7 +395,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         *(interpreter->stack_pointer + i->op1) = *(u16*)(interpreter->stack_pointer + i->op2) <= *(u16*)(interpreter->stack_pointer + i->op3);
         break;
 
-    // U32
+        // U32
     case Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U32:
         *(u32*)(interpreter->stack_pointer + i->op1) = *(u32*)(interpreter->stack_pointer + i->op2) + *(u32*)(interpreter->stack_pointer + i->op3);
         break;
@@ -403,7 +430,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         *(interpreter->stack_pointer + i->op1) = *(u32*)(interpreter->stack_pointer + i->op2) <= *(u32*)(interpreter->stack_pointer + i->op3);
         break;
 
-    // U64
+        // U64
     case Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U64:
         *(u64*)(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) + *(u64*)(interpreter->stack_pointer + i->op3);
         break;
@@ -438,7 +465,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         *(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) <= *(u64*)(interpreter->stack_pointer + i->op3);
         break;
 
-    // U8
+        // U8
     case Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I8:
         *(i8*)(interpreter->stack_pointer + i->op1) = *(i8*)(interpreter->stack_pointer + i->op2) + *(i8*)(interpreter->stack_pointer + i->op3);
         break;
@@ -476,7 +503,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         *(i8*)(interpreter->stack_pointer + i->op1) = -(*(i8*)(interpreter->stack_pointer + i->op2));
         break;
 
-    // U16
+        // U16
     case Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I16:
         *(i16*)(interpreter->stack_pointer + i->op1) = *(i16*)(interpreter->stack_pointer + i->op2) + *(i16*)(interpreter->stack_pointer + i->op3);
         break;
@@ -514,7 +541,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         *(i16*)(interpreter->stack_pointer + i->op1) = -(*(i16*)(interpreter->stack_pointer + i->op2));
         break;
 
-    // U32
+        // U32
     case Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32:
         *(i32*)(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) + *(i32*)(interpreter->stack_pointer + i->op3);
         break;
@@ -552,7 +579,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         *(i32*)(interpreter->stack_pointer + i->op1) = -(*(i32*)(interpreter->stack_pointer + i->op2));
         break;
 
-    // U64
+        // U64
     case Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I64:
         *(i64*)(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) + *(i64*)(interpreter->stack_pointer + i->op3);
         break;
@@ -590,7 +617,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         *(i64*)(interpreter->stack_pointer + i->op1) = -(*(i64*)(interpreter->stack_pointer + i->op2));
         break;
 
-    // F32
+        // F32
     case Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_F32:
         *(f32*)(interpreter->stack_pointer + i->op1) = *(f32*)(interpreter->stack_pointer + i->op2) + *(f32*)(interpreter->stack_pointer + i->op3);
         break;
@@ -625,7 +652,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         *(f32*)(interpreter->stack_pointer + i->op1) = -(*(f32*)(interpreter->stack_pointer + i->op2));
         break;
 
-    // F64
+        // F64
     case Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_F64:
         *(f64*)(interpreter->stack_pointer + i->op1) = *(f64*)(interpreter->stack_pointer + i->op2) + *(f64*)(interpreter->stack_pointer + i->op3);
         break;
@@ -733,7 +760,7 @@ void type_signature_print_value(Type_Signature* type, byte* value_ptr)
     case Signature_Type::FUNCTION:
     case Signature_Type::VOID_TYPE:
     case Signature_Type::ERROR_TYPE:
-    case Signature_Type::ARRAY_SIZED: 
+    case Signature_Type::ARRAY_SIZED:
     {
         logg("[%d]: ", type->array_element_count);
         if (type->array_element_count > 4) {
@@ -747,7 +774,7 @@ void type_signature_print_value(Type_Signature* type, byte* value_ptr)
         }
         break;
     }
-    case Signature_Type::ARRAY_UNSIZED: 
+    case Signature_Type::ARRAY_UNSIZED:
     {
         byte* data_ptr = *((byte**)value_ptr);
         int element_count = *((int*)(value_ptr + 8));
@@ -763,7 +790,7 @@ void type_signature_print_value(Type_Signature* type, byte* value_ptr)
         }
         break;
     }
-    case Signature_Type::POINTER: 
+    case Signature_Type::POINTER:
     {
         byte* data_ptr = *((byte**)value_ptr);
         if (data_ptr == 0) {
@@ -773,7 +800,7 @@ void type_signature_print_value(Type_Signature* type, byte* value_ptr)
         logg("Ptr %p", data_ptr);
         break;
     }
-    case Signature_Type::STRUCT: 
+    case Signature_Type::STRUCT:
     {
         logg("Struct: {");
         for (int i = 0; i < type->member_types.size; i++) {
@@ -785,7 +812,7 @@ void type_signature_print_value(Type_Signature* type, byte* value_ptr)
         logg("}");
         break;
     }
-    case Signature_Type::PRIMITIVE: 
+    case Signature_Type::PRIMITIVE:
     {
         switch (type->primitive_type)
         {
@@ -795,42 +822,42 @@ void type_signature_print_value(Type_Signature* type, byte* value_ptr)
             break;
         }
         case Primitive_Type::SIGNED_INT_8: {
-            int val = (i32)*(i8*)value_ptr;
+            int val = (i32) * (i8*)value_ptr;
             logg("%d", val);
             break;
         }
         case Primitive_Type::SIGNED_INT_16: {
-            int val = (i32)*(i16*)value_ptr;
+            int val = (i32) * (i16*)value_ptr;
             logg("%d", val);
             break;
         }
         case Primitive_Type::SIGNED_INT_32: {
-            int val = (i32)*(i32*)value_ptr;
+            int val = (i32) * (i32*)value_ptr;
             logg("%d", val);
             break;
         }
         case Primitive_Type::SIGNED_INT_64: {
-            int val = (i32)*(i64*)value_ptr;
+            int val = (i32) * (i64*)value_ptr;
             logg("%d", val);
             break;
         }
-        case Primitive_Type::UNSIGNED_INT_8 : {
-            int val = (i32)*(u8*)value_ptr;
+        case Primitive_Type::UNSIGNED_INT_8: {
+            int val = (i32) * (u8*)value_ptr;
             logg("%d", val);
             break;
         }
         case Primitive_Type::UNSIGNED_INT_16: {
-            int val = (i32)*(u16*)value_ptr;
+            int val = (i32) * (u16*)value_ptr;
             logg("%d", val);
             break;
         }
         case Primitive_Type::UNSIGNED_INT_32: {
-            int val = (i32)*(u32*)value_ptr;
+            int val = (i32) * (u32*)value_ptr;
             logg("%d", val);
             break;
         }
         case Primitive_Type::UNSIGNED_INT_64: {
-            int val = (i32)*(u64*)value_ptr;
+            int val = (i32) * (u64*)value_ptr;
             logg("%d", val);
             break;
         }

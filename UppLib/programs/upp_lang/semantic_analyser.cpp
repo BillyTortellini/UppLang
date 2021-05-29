@@ -270,11 +270,36 @@ void type_system_add_primitives(Type_System* system)
     dynamic_array_push_back(&system->types, system->error_type);
     dynamic_array_push_back(&system->types, system->void_type);
     dynamic_array_push_back(&system->types, system->void_ptr_type);
+
+    {
+        Struct_Member character_buffer_member;
+        character_buffer_member.name_handle = lexer_add_or_find_identifier_by_string(system->lexer, string_create_static("character_buffer"));
+        character_buffer_member.offset = 0;
+        character_buffer_member.type = type_system_make_array_unsized(system, system->u8_type);
+
+        Struct_Member size_member;
+        size_member.name_handle = lexer_add_or_find_identifier_by_string(system->lexer, string_create_static("size"));
+        size_member.offset = 16;
+        size_member.type = system->i32_type;
+
+        DynamicArray<Struct_Member> string_members = dynamic_array_create_empty<Struct_Member>(2);
+        dynamic_array_push_back(&string_members, character_buffer_member);
+        dynamic_array_push_back(&string_members, size_member);
+
+        system->string_type = new Type_Signature();
+        system->string_type->type = Signature_Type::STRUCT;
+        system->string_type->alignment_in_bytes = 8;
+        system->string_type->size_in_bytes = 20;
+        system->string_type->member_types = string_members;
+        system->string_type->struct_name_handle = lexer_add_or_find_identifier_by_string(system->lexer, string_create_static("String"));
+        dynamic_array_push_back(&system->types, system->string_type);
+    }
 }
 
-Type_System type_system_create()
+Type_System type_system_create(Lexer* lexer)
 {
     Type_System result;
+    result.lexer = lexer;
     result.types = dynamic_array_create_empty<Type_Signature*>(256);
     type_system_add_primitives(&result);
     return result;
@@ -284,12 +309,13 @@ void type_system_destroy(Type_System* system) {
     dynamic_array_destroy(&system->types);
 }
 
-void type_system_reset_all(Type_System* system) {
+void type_system_reset_all(Type_System* system, Lexer* lexer) {
     for (int i = 0; i < system->types.size; i++) {
         type_signature_destroy(system->types[i]);
         delete system->types[i];
     }
     dynamic_array_reset(&system->types);
+    system->lexer = lexer;
     type_system_add_primitives(system);
 }
 
@@ -698,6 +724,11 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
     {
     case AST_Node_Type::EXPRESSION_FUNCTION_CALL:
     {
+        if (expression->name_id == analyser->main_token_index) {
+            semantic_analyser_log_error(analyser, "One cannot call the main function again!", expression_index);
+            return expression_analysis_result_make(analyser->compiler->type_system.error_type, true);
+        }
+
         Symbol* func_symbol = symbol_table_find_symbol_of_type(table, expression->name_id, Symbol_Type::FUNCTION);
         if (func_symbol == 0) {
             semantic_analyser_log_error(analyser, "Function call to not defined Function!", expression_index);
@@ -789,6 +820,9 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
         }
         else if (type == Token_Type::NULLPTR) {
             analyser->semantic_information[expression_index].expression_result_type = analyser->compiler->type_system.void_ptr_type;
+        }
+        else if (type == Token_Type::STRING_LITERAL) {
+            analyser->semantic_information[expression_index].expression_result_type = analyser->compiler->type_system.string_type;
         }
         else {
             panic("Should not happen!");
@@ -1539,7 +1573,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
         symbol_table_destroy(analyser->symbol_tables[i]);
         delete analyser->symbol_tables[i];
     }
-    type_system_reset_all(&analyser->compiler->type_system);
+    type_system_reset_all(&analyser->compiler->type_system, &analyser->compiler->lexer);
     dynamic_array_reset(&analyser->symbol_tables);
     dynamic_array_reset(&analyser->semantic_information);
     dynamic_array_reset(&analyser->errors);
@@ -1583,6 +1617,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
         int f32_token_index = lexer_add_or_find_identifier_by_string(compiler->parser.lexer, string_create_static("f32"));
         int byte_token_index = lexer_add_or_find_identifier_by_string(compiler->parser.lexer, string_create_static("byte"));
         int void_token_index = lexer_add_or_find_identifier_by_string(compiler->parser.lexer, string_create_static("void"));
+        int string_token_index = lexer_add_or_find_identifier_by_string(compiler->parser.lexer, string_create_static("String"));
 
         symbol_table_define_type(root_table, int_token_index, analyser->compiler->type_system.i32_type, -1);
         symbol_table_define_type(root_table, bool_token_index, analyser->compiler->type_system.bool_type, -1);
@@ -1599,6 +1634,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
         symbol_table_define_type(root_table, i32_token_index, analyser->compiler->type_system.i32_type, -1);
         symbol_table_define_type(root_table, i64_token_index, analyser->compiler->type_system.i64_type, -1);
         symbol_table_define_type(root_table, void_token_index, analyser->compiler->type_system.void_type, -1);
+        symbol_table_define_type(root_table, string_token_index, analyser->compiler->type_system.string_type, -1);
 
         analyser->size_token_index = lexer_add_or_find_identifier_by_string(compiler->parser.lexer, string_create_static("size"));
         analyser->data_token_index = lexer_add_or_find_identifier_by_string(compiler->parser.lexer, string_create_static("data"));
@@ -1627,6 +1663,11 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
         case Hardcoded_Function_Type::PRINT_BOOL: {
             dynamic_array_push_back(&parameter_types, analyser->compiler->type_system.bool_type);
             name_handle = lexer_add_or_find_identifier_by_string(analyser->compiler->parser.lexer, string_create_static("print_bool"));
+            break;
+        }
+        case Hardcoded_Function_Type::PRINT_STRING: {
+            dynamic_array_push_back(&parameter_types, analyser->compiler->type_system.string_type);
+            name_handle = lexer_add_or_find_identifier_by_string(analyser->compiler->parser.lexer, string_create_static("print_string"));
             break;
         }
         case Hardcoded_Function_Type::PRINT_LINE: {
@@ -1726,7 +1767,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
     {
         // Reset marks TODO: Check if this is actually a good way to go, i dont think i need this
         for (int j = 0; j < analyser->struct_fill_outs.size; j++) {
-            Struct_Fill_Out* fill_out = &analyser->struct_fill_outs[i];
+            Struct_Fill_Out* fill_out = &analyser->struct_fill_outs[j];
             fill_out->marked = false;
         }
         Struct_Fill_Out* fill_out = &analyser->struct_fill_outs[i];

@@ -26,6 +26,7 @@ const char* c_generator_id_to_string(C_Generator* generator, int name_handle) {
 
 void c_generator_generate_type_definition(C_Generator* generator, Type_Signature* signature, bool is_pointer)
 {
+    /*
     switch (signature->type)
     {
     case Signature_Type::VOID_TYPE: {
@@ -87,6 +88,7 @@ void c_generator_generate_type_definition(C_Generator* generator, Type_Signature
         break;
     }
     }
+    */
 }
 
 void c_generator_generate_register_name(C_Generator* generator, int register_index)
@@ -128,6 +130,7 @@ void c_generator_generate_data_access(C_Generator* generator, Data_Access access
 */
 void c_generator_generate_variable_definition_with_name_handle(C_Generator* generator, int name_handle, Type_Signature* signature, bool semicolon)
 {
+    /*
     dynamic_array_reset(&generator->array_index_stack);
     c_generator_generate_type_definition(generator, signature, false);
     string_append_formated(&generator->output_string, " %s", c_generator_id_to_string(generator, name_handle));
@@ -138,6 +141,7 @@ void c_generator_generate_variable_definition_with_name_handle(C_Generator* gene
     if (semicolon) {
         string_append_formated(&generator->output_string, ";");
     }
+    */
 }
 
 void c_generator_generate_variable_definition_with_register_index(C_Generator* generator, int register_index, bool semicolon)
@@ -163,6 +167,7 @@ void c_generator_generate_variable_definition_with_register_index(C_Generator* g
 
 void c_generator_generate_function_header(C_Generator* generator, int function_index)
 {
+    /*
     AST_Node* function_node = &generator->compiler->parser.nodes[generator->im_generator->function_to_ast_node_mapping[function_index]];
     AST_Node* parameter_block_node = &generator->compiler->parser.nodes[function_node->children[0]];
     Intermediate_Function* function = &generator->im_generator->functions[function_index];
@@ -177,7 +182,6 @@ void c_generator_generate_function_header(C_Generator* generator, int function_i
     }
 
     // I dont remember why i removed this, but I hope the reasons were bad...
-    /*
     for (int i = 0; i < function->registers.size; i++)
     {
         Intermediate_Register* reg = &function->registers[i];
@@ -198,13 +202,14 @@ void c_generator_generate_function_header(C_Generator* generator, int function_i
             string_append_formated(&generator->output_string, ",");
         }
     }
-    */
     string_append_formated(&generator->output_string, ")");
+    */
 }
 
 void c_generator_generate_function_instruction_slice(
     C_Generator* generator, int indentation_level, bool indent_first, int instr_start_index, int instr_end_index_exclusive)
 {
+    /*
     Intermediate_Function* function = &generator->im_generator->functions[generator->current_function_index];
     for (int instruction_index = instr_start_index;
         instruction_index < function->instructions.size && instruction_index < instr_end_index_exclusive;
@@ -233,7 +238,6 @@ void c_generator_generate_function_instruction_slice(
         case Intermediate_Instruction_Type::ADDRESS_OF:
         {
             c_generator_generate_data_access(generator, instr->destination);
-            /*
             Intermediate_Register* reg = &function->registers[instr->source1.register_index];
             if (reg->type_signature->type == Signature_Type::ARRAY_SIZED && instr->source1.type == Data_Access_Type::REGISTER_ACCESS) {
                 string_append_formated(&generator->output_string, " = ");
@@ -241,7 +245,6 @@ void c_generator_generate_function_instruction_slice(
                 string_append_formated(&generator->output_string, ";\n");
                 break;
             }
-            */
             string_append_formated(&generator->output_string, " = &");
             c_generator_generate_data_access(generator, instr->source1);
             string_append_formated(&generator->output_string, ";\n");
@@ -427,7 +430,6 @@ void c_generator_generate_function_instruction_slice(
         case Intermediate_Instruction_Type::CALCULATE_ARRAY_ACCESS_POINTER:
         {
             // Either we have a base_pointer as source 1, or we have an unsized array I think
-            /*
             c_generator_generate_data_access(generator, instr->destination);
             Type_Signature* result_type = function->registers[instr->destination.register_index].type_signature;
             string_append_formated(&generator->output_string, " = (");
@@ -444,37 +446,32 @@ void c_generator_generate_function_instruction_slice(
 
                 }
             }
-            */
             string_append_formated(&generator->output_string, "((u8*)(");
             c_generator_generate_data_access(generator, instr->source1);
             string_append_formated(&generator->output_string, ") + ");
             c_generator_generate_data_access(generator, instr->source2);
             string_append_formated(&generator->output_string, " * %d);\n", instr->constant_i32_value);
 
-            /*
             c_generator_generate_data_access(generator, instr->destination);
             string_append_formated(&generator->output_string, " = &((");
             c_generator_generate_data_access(generator, instr->source1);
             string_append_formated(&generator->output_string, ")[");
             c_generator_generate_data_access(generator, instr->source2);
             string_append_formated(&generator->output_string, "]);\n");
-            */
             break;
         }
         case Intermediate_Instruction_Type::CALCULATE_MEMBER_ACCESS_POINTER:
         {
             c_generator_generate_data_access(generator, instr->destination);
-            /*
             Type_Signature* result_type = function->registers[instr->destination.register_index].type_signature;
             string_append_formated(&generator->output_string, " = (");
             c_generator_generate_type_definition(generator, result_type, false);
             string_append_formated(&generator->output_string, ") ((u8*)(&");
             c_generator_generate_data_access(generator, instr->source1);
             string_append_formated(&generator->output_string, ") + %d);\n", instr->constant_i32_value);
-            */
             break;
 
-            /* TODO: It would be nicer if I would use member access of C instead of pointer manipulation
+             TODO: It would be nicer if I would use member access of C instead of pointer manipulation
             Type_Signature* struct_signature = function->registers[instr->source1.register_index].type_signature;
             if (struct_signature->type == Signature_Type::POINTER) struct_signature = struct_signature->child_type;
             Struct_Member* found = nullptr;
@@ -491,7 +488,6 @@ void c_generator_generate_function_instruction_slice(
             c_generator_generate_register_access(generator, instr->source1);
             string_append_formated(&generator->output_string, ").%s);\n", c_generator_id_to_string(generator, found->name_handle));
             break;
-            */
         }
         case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_F32:
         case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32: is_binary_op = true; operation_str = "+"; break;
@@ -544,6 +540,7 @@ void c_generator_generate_function_instruction_slice(
             string_append_formated(&generator->output_string, ");\n", operation_str);
         }
     }
+    */
 }
 
 void c_generator_generate(C_Generator* generator, Compiler* compiler)

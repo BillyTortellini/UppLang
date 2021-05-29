@@ -67,6 +67,7 @@ const char* token_type_to_string(Token_Type type)
     case Token_Type::INTEGER_LITERAL: return "INT_LITERAL";
     case Token_Type::FLOAT_LITERAL: return "FLOAT_LITERAL";
     case Token_Type::BOOLEAN_LITERAL: return "BOOLEAN_LITERAL";
+    case Token_Type::STRING_LITERAL: return "STRING_LITERAL";
     case Token_Type::IDENTIFIER: return "IDENTIFIER";
     case Token_Type::ERROR_TOKEN: return "ERROR_TOKE";
     case Token_Type::COMMENT: return "COMMENT";
@@ -101,6 +102,16 @@ Token token_make(Token_Type type, Token_Attribute attribute, int line, int chara
     result.type = type;
     result.attribute = attribute;
     result.position = text_slice_make(text_position_make(line, character), text_position_make(line, character+length));
+    result.source_code_index = index;
+    return result;
+}
+
+Token token_make_with_slice(Token_Type type, Token_Attribute attribute, Text_Slice slice, int length, int index)
+{
+    Token result;
+    result.type = type;
+    result.attribute = attribute;
+    result.position = slice;
     result.source_code_index = index;
     return result;
 }
@@ -462,6 +473,102 @@ void lexer_parse_string(Lexer* lexer, String* code)
             character_pos++;
             index++;
             continue;
+        case '\"': 
+        {
+            // Parse String literal
+            Text_Position start_pos = text_position_make(line_number, character_pos);
+            int string_literal_start_index = index;
+            bool last_was_escape = false;
+            index++;
+            character_pos++;
+
+            bool invalid_escape_found = false;
+            bool terminated_successfull = false;
+            string_reset(&identifier_string);
+            while (index < code->size)
+            {
+                if (last_was_escape)
+                {
+                    switch (code->characters[index])
+                    {
+                    case 'n':
+                        string_append_character(&identifier_string, '\n');
+                        break;
+                    case 'r':
+                        string_append_character(&identifier_string, '\r');
+                        break;
+                    case 't':
+                        string_append_character(&identifier_string, '\t');
+                        break;
+                    case '\\':
+                        string_append_character(&identifier_string, '\\');
+                        break;
+                    case '\'':
+                        string_append_character(&identifier_string, '\'');
+                        break;
+                    case '\"':
+                        string_append_character(&identifier_string, '\"');
+                        break;
+                    case '\n':
+                        break;
+                    default:
+                        invalid_escape_found = true;
+                        break;
+                    }
+                    last_was_escape = false;
+                }
+                else 
+                {
+                    if (code->characters[index] == '\"') {
+                        index++;
+                        character_pos++;
+                        terminated_successfull = true;
+                        break;
+                    }
+                    last_was_escape = code->characters[index] == '\\';
+                    if (!last_was_escape) {
+                        string_append_character(&identifier_string, code->characters[index]); 
+                    }
+                }
+                if (code->characters[index] == '\n') {
+                    line_number++;
+                    character_pos = 0;
+                }
+                else {
+                    character_pos++;
+                }
+                index++;
+            }
+
+            Text_Slice token_slice = text_slice_make(start_pos, text_position_make(line_number, character_pos+1));
+            if (!terminated_successfull || invalid_escape_found) 
+            {
+                token_slice.end.character -= 1;
+                has_errors = true;
+                dynamic_array_push_back(&lexer->tokens, 
+                    token_make_with_slice(Token_Type::ERROR_TOKEN, token_attribute_make_empty(), token_slice,
+                        index - string_literal_start_index, string_literal_start_index)
+                );
+                continue;
+            }
+
+            // Add Token
+            Token_Attribute attribute;
+            int* identifier_id = hashtable_find_element(&lexer->identifier_index_lookup_table, identifier_string);
+            if (identifier_id != 0) {
+                attribute.identifier_number = *identifier_id;
+            }
+            else {
+                String identifier_string_copy = string_create(identifier_string.characters);
+                dynamic_array_push_back(&lexer->identifiers, identifier_string_copy);
+                attribute.identifier_number = lexer->identifiers.size - 1;
+                hashtable_insert_element(&lexer->identifier_index_lookup_table, identifier_string_copy, attribute.identifier_number);
+            }
+
+            dynamic_array_push_back(&lexer->tokens, token_make_with_slice(Token_Type::STRING_LITERAL, attribute,
+                token_slice, index - string_literal_start_index, string_literal_start_index));
+            continue;
+        }
         }
 
         // Constants, Identifier and Keywords
@@ -478,7 +585,7 @@ void lexer_parse_string(Lexer* lexer, String* code)
 
             bool comma_exists = false;
             int post_comma_start_index, post_comma_end_index;
-            if (pre_comma_end_index+1 < code->size && code->characters[pre_comma_end_index+1] == '.') 
+            if (pre_comma_end_index + 1 < code->size && code->characters[pre_comma_end_index + 1] == '.')
             {
                 comma_exists = true;
                 post_comma_start_index = pre_comma_end_index + 2;
@@ -488,7 +595,7 @@ void lexer_parse_string(Lexer* lexer, String* code)
                 }
                 else {
                     post_comma_end_index = post_comma_start_index;
-                    while (post_comma_end_index < code->size && 
+                    while (post_comma_end_index < code->size &&
                         code->characters[post_comma_end_index] >= '0' && code->characters[post_comma_end_index] <= '9') {
                         post_comma_end_index++;
                     }
@@ -501,7 +608,7 @@ void lexer_parse_string(Lexer* lexer, String* code)
                 int num_value = code->characters[i] - '0'; // 0 to 9
                 int_value = (int_value * 10) + num_value;
             }
-            if (comma_exists) 
+            if (comma_exists)
             {
                 // Calculate float value
                 float fractional_value = 0.0f;
@@ -743,7 +850,7 @@ void lexer_print(Lexer* lexer)
     String msg = string_create_empty(256);
     SCOPE_EXIT(string_destroy(&msg));
     string_append_formated(&msg, "Tokens: \n");
-    for (int i = 0; i < lexer->tokens_with_whitespaces.size; i++) 
+    for (int i = 0; i < lexer->tokens_with_whitespaces.size; i++)
     {
         Token token = lexer->tokens_with_whitespaces[i];
         string_append_formated(&msg, "\t %s (Line %d, Pos %d, size: %d)",

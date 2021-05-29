@@ -24,6 +24,7 @@ Bytecode_Generator bytecode_generator_create()
     result.parameter_stack_offsets = dynamic_array_create_empty<int>(256);
     result.global_offsets = dynamic_array_create_empty<int>(256);
     result.intermediate_stack_offsets = dynamic_array_create_empty<int>(256);
+    result.constants_u64 = dynamic_array_create_empty<u64>(256);
     result.maximum_function_stack_depth = 0;
     return result;
 }
@@ -39,22 +40,23 @@ void bytecode_generator_destroy(Bytecode_Generator* generator)
     dynamic_array_destroy(&generator->global_offsets);
     dynamic_array_destroy(&generator->intermediate_stack_offsets);
     dynamic_array_destroy(&generator->parameter_stack_offsets);
+    dynamic_array_destroy(&generator->constants_u64);
 } 
 
-Bytecode_Instruction instruction_make_0(Instruction_Type::ENUM type) {
+Bytecode_Instruction instruction_make_0(Instruction_Type type) {
     Bytecode_Instruction instr;
     instr.instruction_type = type;
     return instr;
 }
 
-Bytecode_Instruction instruction_make_1(Instruction_Type::ENUM type, int src_1) {
+Bytecode_Instruction instruction_make_1(Instruction_Type type, int src_1) {
     Bytecode_Instruction instr;
     instr.instruction_type = type;
     instr.op1 = src_1;
     return instr;
 }
 
-Bytecode_Instruction instruction_make_2(Instruction_Type::ENUM type, int src_1, int src_2) {
+Bytecode_Instruction instruction_make_2(Instruction_Type type, int src_1, int src_2) {
     Bytecode_Instruction instr;
     instr.instruction_type = type;
     instr.op1 = src_1;
@@ -62,7 +64,7 @@ Bytecode_Instruction instruction_make_2(Instruction_Type::ENUM type, int src_1, 
     return instr;
 }
 
-Bytecode_Instruction instruction_make_3(Instruction_Type::ENUM type, int src_1, int src_2, int src_3) {
+Bytecode_Instruction instruction_make_3(Instruction_Type type, int src_1, int src_2, int src_3) {
     Bytecode_Instruction instr;
     instr.instruction_type = type;
     instr.op1 = src_1;
@@ -71,7 +73,7 @@ Bytecode_Instruction instruction_make_3(Instruction_Type::ENUM type, int src_1, 
     return instr;
 }
 
-Bytecode_Instruction instruction_make_4(Instruction_Type::ENUM type, int src_1, int src_2, int src_3, int src_4) {
+Bytecode_Instruction instruction_make_4(Instruction_Type type, int src_1, int src_2, int src_3, int src_4) {
     Bytecode_Instruction instr;
     instr.instruction_type = type;
     instr.op1 = src_1;
@@ -225,7 +227,7 @@ void bytecode_generator_generate_load_constant_instruction(Bytecode_Generator* g
     Intermediate_Function* function = &generator->compiler->intermediate_generator.functions[function_index];
     Intermediate_Instruction* instruction = &function->instructions[instruction_index];
 
-    Instruction_Type::ENUM result_type;
+    Instruction_Type result_type;
     int result_data;
     int result_size;
     if (instruction->type == Intermediate_Instruction_Type::LOAD_CONSTANT_F32) {
@@ -248,6 +250,13 @@ void bytecode_generator_generate_load_constant_instruction(Bytecode_Generator* g
         result_data = 0;
         result_size = 8;
     }
+    else if (instruction->type == Intermediate_Instruction_Type::LOAD_STRING_POINTER) {
+        result_type = Instruction_Type::LOAD_CONSTANT_U64;
+        u64 char_ptr = (u64) instruction->constant_string_value;
+        dynamic_array_push_back(&generator->constants_u64, char_ptr);
+        result_data = generator->constants_u64.size - 1;
+        result_size = 8;
+    }
     else panic("not implemented yet?!?");
 
     bytecode_generator_add_instruction_with_destination_access(generator, instruction->destination, instruction_make_2(result_type, 0, result_data), function_index);
@@ -267,10 +276,90 @@ void bytecode_generator_generate_function_instruction_slice(
         // Binary operations
         if (intermediate_instruction_type_is_binary_operation(instr->type))
         {
-            Instruction_Type::ENUM result_instr_type = (Instruction_Type::ENUM) (
-                (int)Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32 +
-                ((int)instr->type - (int)Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32)
-                );
+            Instruction_Type result_instr_type;
+            if (instr->operand_types->type == Signature_Type::POINTER)
+            {
+                if (instr->type == Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL) {
+                    result_instr_type = Instruction_Type::BINARY_OP_COMPARISON_EQUAL_POINTER;
+                }
+                else if (instr->type == Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL) {
+                    result_instr_type = Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_POINTER;
+                }
+                else panic("Should not happen");
+            }
+            else
+            {
+                assert(instr->operand_types->type == Signature_Type::PRIMITIVE, "Should not happen");
+
+                Instruction_Type instr_block_start;
+                switch (instr->operand_types->primitive_type)
+                {
+                case Primitive_Type::UNSIGNED_INT_8: instr_block_start = Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U8; break;
+                case Primitive_Type::UNSIGNED_INT_16: instr_block_start = Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U16; break;
+                case Primitive_Type::UNSIGNED_INT_32: instr_block_start = Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U32; break;
+                case Primitive_Type::UNSIGNED_INT_64: instr_block_start = Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U64; break;
+                case Primitive_Type::SIGNED_INT_8: instr_block_start = Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I8; break;
+                case Primitive_Type::SIGNED_INT_16: instr_block_start = Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I16; break;
+                case Primitive_Type::SIGNED_INT_32: instr_block_start = Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32; break;
+                case Primitive_Type::SIGNED_INT_64: instr_block_start = Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I64; break;
+                case Primitive_Type::FLOAT_32: instr_block_start = Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_F32; break;
+                case Primitive_Type::FLOAT_64: instr_block_start = Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_F64; break;
+                case Primitive_Type::BOOLEAN: instr_block_start = Instruction_Type::BINARY_OP_COMPARISON_EQUAL_BOOL; break;
+                }
+
+                if (instr->operand_types->primitive_type != Primitive_Type::BOOLEAN)
+                {
+                    switch (instr->type)
+                    {
+                    case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION:
+                        result_instr_type = (Instruction_Type)((int)instr_block_start + 0);
+                        break;
+                    case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION:
+                        result_instr_type = (Instruction_Type)((int)instr_block_start + 1);
+                        break;
+                    case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION:
+                        result_instr_type = (Instruction_Type)((int)instr_block_start + 2);
+                        break;
+                    case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION:
+                        result_instr_type = (Instruction_Type)((int)instr_block_start + 3);
+                        break;
+                    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL:
+                        result_instr_type = (Instruction_Type)((int)instr_block_start + 4);
+                        break;
+                    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL:
+                        result_instr_type = (Instruction_Type)((int)instr_block_start + 5);
+                        break;
+                    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN:
+                        result_instr_type = (Instruction_Type)((int)instr_block_start + 6);
+                        break;
+                    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL:
+                        result_instr_type = (Instruction_Type)((int)instr_block_start + 7);
+                        break;
+                    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN:
+                        result_instr_type = (Instruction_Type)((int)instr_block_start + 8);
+                        break;
+                    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL:
+                        result_instr_type = (Instruction_Type)((int)instr_block_start + 9);
+                        break;
+                    case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MODULO:
+                        result_instr_type = (Instruction_Type)((int)instr_block_start + 10);
+                        break;
+                    default: panic("Should not happen!");
+                    }
+                }
+                else {
+                    switch (instr->type)
+                    {
+                    case Intermediate_Instruction_Type::BINARY_OP_BOOLEAN_AND:
+                        result_instr_type = Instruction_Type::BINARY_OP_BOOLEAN_AND;
+                        break;
+                    case Intermediate_Instruction_Type::BINARY_OP_BOOLEAN_OR:
+                        result_instr_type = Instruction_Type::BINARY_OP_BOOLEAN_OR;
+                        break;
+                    default: panic("Should not happen");
+                    }
+                }
+            }
 
             int operand_1_reg_offset = bytecode_generator_data_access_to_stack_offset(generator, instr->source1, function_index);
             int operand_2_reg_offset = bytecode_generator_data_access_to_stack_offset(generator, instr->source2, function_index);
@@ -282,10 +371,34 @@ void bytecode_generator_generate_function_instruction_slice(
         // Unary operations
         if (intermediate_instruction_type_is_unary_operation(instr->type))
         {
-            Instruction_Type::ENUM result_instr_type = (Instruction_Type::ENUM) (
-                (int)Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32 +
-                ((int)instr->type - (int)Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32)
-                );
+            Instruction_Type result_instr_type;
+            if (instr->operand_types->primitive_type == Primitive_Type::BOOLEAN) {
+                result_instr_type = Instruction_Type::UNARY_OP_BOOLEAN_NOT;
+            }
+            else {
+                switch (instr->operand_types->primitive_type)
+                {
+                case Primitive_Type::SIGNED_INT_8:
+                    result_instr_type = Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I8;
+                    break;
+                case Primitive_Type::SIGNED_INT_16:
+                    result_instr_type = Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I16;
+                    break;
+                case Primitive_Type::SIGNED_INT_32:
+                    result_instr_type = Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I32;
+                    break;
+                case Primitive_Type::SIGNED_INT_64:
+                    result_instr_type = Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I64;
+                    break;
+                case Primitive_Type::FLOAT_32:
+                    result_instr_type = Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_F32;
+                    break;
+                case Primitive_Type::FLOAT_64:
+                    result_instr_type = Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_F64;
+                    break;
+                default: panic("Should not happen");
+                }
+            }
             int operand_1_reg_offset = bytecode_generator_data_access_to_stack_offset(generator, instr->source1, function_index);
             Bytecode_Instruction result_instr = instruction_make_2(result_instr_type, 0, operand_1_reg_offset);
             bytecode_generator_add_instruction_with_destination_access(generator, instr->destination, result_instr, function_index);
@@ -302,6 +415,7 @@ void bytecode_generator_generate_function_instruction_slice(
         case Intermediate_Instruction_Type::LOAD_CONSTANT_F32:
         case Intermediate_Instruction_Type::LOAD_CONSTANT_I32:
         case Intermediate_Instruction_Type::LOAD_NULLPTR:
+        case Intermediate_Instruction_Type::LOAD_STRING_POINTER:
         case Intermediate_Instruction_Type::LOAD_CONSTANT_BOOL: {
             bytecode_generator_generate_load_constant_instruction(generator, function_index, instruction_index);
             break;
@@ -363,7 +477,7 @@ void bytecode_generator_generate_function_instruction_slice(
 
                 if (arg->access_type != Data_Access_Type::GLOBAL_ACCESS)
                 {
-                    Instruction_Type::ENUM instr_type;
+                    Instruction_Type instr_type;
                     if (arg->is_pointer_access) {
                         instr_type = Instruction_Type::READ_MEMORY;
                     }
@@ -386,9 +500,9 @@ void bytecode_generator_generate_function_instruction_slice(
                     {
                         bytecode_generator_add_instruction(generator,
                             instruction_make_3(
-                                Instruction_Type::READ_GLOBAL, 
-                                pointer_offset, 
-                                generator->global_offsets[arg->access_index], 
+                                Instruction_Type::READ_GLOBAL,
+                                pointer_offset,
+                                generator->global_offsets[arg->access_index],
                                 8
                             )
                         );
@@ -534,7 +648,7 @@ void bytecode_generator_generate_function_instruction_slice(
         }
         case Intermediate_Instruction_Type::CAST_PRIMITIVE_TYPES:
         {
-            Instruction_Type::ENUM cast_type;
+            Instruction_Type cast_type;
             if (primitive_type_is_integer(instr->cast_from->primitive_type) && primitive_type_is_integer(instr->cast_to->primitive_type)) {
                 cast_type = Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE;
             }
@@ -580,9 +694,9 @@ void bytecode_generator_generate_function_instruction_slice(
                 copy.is_pointer_access = false;
                 register_address_reg = bytecode_generator_data_access_to_stack_offset(generator, copy, function_index);
             }
-            else 
+            else
             {
-                Instruction_Type::ENUM instr_type;
+                Instruction_Type instr_type;
                 if (instr->source1.access_type == Data_Access_Type::GLOBAL_ACCESS) {
                     instr_type = Instruction_Type::LOAD_GLOBAL_ADDRESS;
                 }
@@ -606,7 +720,7 @@ void bytecode_generator_generate_function_instruction_slice(
                     0,
                     register_address_reg,
                     instr->constant_i32_value
-                ), 
+                ),
                 function_index
             );
             break;
@@ -707,6 +821,7 @@ void bytecode_generator_generate(Bytecode_Generator* generator, Compiler* compil
     dynamic_array_reset(&generator->global_offsets);
     dynamic_array_reset(&generator->parameter_stack_offsets);
     dynamic_array_reset(&generator->intermediate_stack_offsets);
+    dynamic_array_reset(&generator->constants_u64);
 
     dynamic_array_reserve(&generator->function_locations, generator->compiler->intermediate_generator.functions.size);
     while (generator->function_locations.size < generator->compiler->intermediate_generator.functions.size) {
@@ -736,18 +851,145 @@ void bytecode_generator_generate(Bytecode_Generator* generator, Compiler* compil
     generator->entry_point_index = generator->function_locations[generator->compiler->intermediate_generator.main_function_index];
 }
 
+bool instruction_type_is_binary_op(Instruction_Type type) {
+    return type >= Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U8 && type <= Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_POINTER;
+}
+
+bool instruction_type_is_unary_op(Instruction_Type type) {
+    return type >= Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I8 && type <= Instruction_Type::UNARY_OP_BOOLEAN_NOT;
+}
+
+void instruction_type_unary_op_append_to_string(String* string, Instruction_Type type)
+{
+    switch (type)
+    {
+    case Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I8:
+        string_append_formated(string, "UNARY_OP_ARITHMETIC_NEGATE_I8");
+        break;
+    case Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I16:
+        string_append_formated(string, "UNARY_OP_ARITHMETIC_NEGATE_I16");
+        break;
+    case Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I32:
+        string_append_formated(string, "UNARY_OP_ARITHMETIC_NEGATE_I32");
+        break;
+    case Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I64:
+        string_append_formated(string, "UNARY_OP_ARITHMETIC_NEGATE_I64");
+        break;
+    case Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_F32:
+        string_append_formated(string, "UNARY_OP_ARITHMETIC_NEGATE_F32");
+        break;
+    case Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_F64:
+        string_append_formated(string, "UNARY_OP_ARITHMETIC_NEGATE_F64");
+        break;
+    case Instruction_Type::UNARY_OP_BOOLEAN_NOT:
+        string_append_formated(string, "UNARY_OP_BOOLEAN_NOT");
+        break;
+    default: panic("Shit");
+    }
+}
+
+void instruction_type_binary_op_append_to_string(String* string, Instruction_Type type)
+{
+    const char* operation_types[] = {
+        "BINARY_OP_ARITHMETIC_ADDITION",
+        "BINARY_OP_ARITHMETIC_SUBTRACTION",
+        "BINARY_OP_ARITHMETIC_MULTIPLICATION",
+        "BINARY_OP_ARITHMETIC_DIVISION",
+        "BINARY_OP_COMPARISON_EQUAL",
+        "BINARY_OP_COMPARISON_NOT_EQUAL",
+        "BINARY_OP_COMPARISON_GREATER_THAN",
+        "BINARY_OP_COMPARISON_GREATER_EQUAL",
+        "BINARY_OP_COMPARISON_LESS_THAN",
+        "BINARY_OP_COMPARISON_LESS_EQUAL",
+        "BINARY_OP_ARITHMETIC_MODULO"
+    };
+
+    if (type >= Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U8 && type <= Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_I64)
+    {
+        int type_index =  (int) type - (int) Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U8;
+        int data_type_index = type_index / 11;
+        int operation_type_index = type_index % 11;
+
+        const char* data_types[] = {
+            "U8",
+            "U16",
+            "U32",
+            "U64",
+            "I8",
+            "I16",
+            "I32",
+            "I64",
+        };
+
+        string_append_formated(string, "%s_%s", operation_types[operation_type_index], data_types[data_type_index]);
+    }
+    else if (type >= Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_F32 && type <= Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_F64)
+    {
+        int type_index =  (int)type - (int)Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_F32;
+        int data_type_index = type_index / 10;
+        int operation_type_index = type_index % 10;
+        const char* data_types[] = {
+            "F32",
+            "F64",
+        };
+    }
+    else 
+    {
+        switch (type)
+        {
+        case Instruction_Type::BINARY_OP_COMPARISON_EQUAL_BOOL:
+            string_append_formated(string, "BINARY_OP_COMPARISON_EQUAL_BOOL");
+            break;
+        case Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_BOOL:
+            string_append_formated(string, "BINARY_OP_COMPARISON_NOT_EQUAL_BOOL");
+            break;
+        case Instruction_Type::BINARY_OP_BOOLEAN_AND:
+            string_append_formated(string, "BINARY_OP_BOOLEAN_AND");
+            break;
+        case Instruction_Type::BINARY_OP_BOOLEAN_OR:
+            string_append_formated(string, "BINARY_OP_BOOLEAN_OR");
+            break;
+        case Instruction_Type::BINARY_OP_COMPARISON_EQUAL_POINTER:
+            string_append_formated(string, "BINARY_OP_COMPARISON_EQUAL_POINTER");
+            break;
+        case Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_POINTER:
+            string_append_formated(string, "BINARY_OP_COMPARISON_NOT_EQUAL_POINTER");
+            break;
+        case Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I8:
+            string_append_formated(string, "UNARY_OP_ARITHMETIC_NEGATE_I8");
+            break;
+        case Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I16:
+            string_append_formated(string, "UNARY_OP_ARITHMETIC_NEGATE_I16");
+            break;
+        case Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I32:
+            string_append_formated(string, "UNARY_OP_ARITHMETIC_NEGATE_I32");
+            break;
+        case Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I64:
+            string_append_formated(string, "UNARY_OP_ARITHMETIC_NEGATE_I64");
+            break;
+        case Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_F32:
+            string_append_formated(string, "UNARY_OP_ARITHMETIC_NEGATE_F32");
+            break;
+        case Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_F64:
+            string_append_formated(string, "UNARY_OP_ARITHMETIC_NEGATE_F64");
+            break;
+        case Instruction_Type::UNARY_OP_BOOLEAN_NOT:
+            string_append_formated(string, "UNARY_OP_BOOLEAN_NOT");
+            break;
+        default:
+            panic("Shit");
+        }
+    }
+}
+
 void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction instruction)
 {
-    Intermediate_Instruction_Type intermediate_type = (Intermediate_Instruction_Type)(
-        (int)instruction.instruction_type - (int)Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32
-        + (int)Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32
-        );
-    if (intermediate_instruction_type_is_binary_operation(intermediate_type)) {
-        intermediate_instruction_binop_append_to_string(string, intermediate_type);
+    if (instruction_type_is_binary_op(instruction.instruction_type)) {
+        instruction_type_binary_op_append_to_string(string, instruction.instruction_type);
         string_append_formated(string, "\t dst=%d, src1=%d, src2=%d\n", instruction.op1, instruction.op2, instruction.op3);
     }
-    else if (intermediate_instruction_type_is_unary_operation(intermediate_type)) {
-        intermediate_instruction_unary_operation_append_to_string(string, intermediate_type);
+    else if (instruction_type_is_unary_op(instruction.instruction_type)) {
+        instruction_type_unary_op_append_to_string(string, instruction.instruction_type);
         string_append_formated(string, "\t dst=%d, src1=%d\n", instruction.op1, instruction.op2);
     }
     else
@@ -816,6 +1058,9 @@ void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction 
             break;
         case Instruction_Type::LOAD_RETURN_VALUE:
             string_append_formated(string, "LOAD_RETURN_VALUE                 dst=%d, size=%d\n", instruction.op1, instruction.op2);
+            break;
+        case Instruction_Type::LOAD_CONSTANT_U64:
+            string_append_formated(string, "LOAD_CONSTANT_U64                 dst=%d, u64_index=%d\n", instruction.op1, instruction.op2);
             break;
         case Instruction_Type::EXIT:
             string_append_formated(string, "EXIT                              src=%d, size=%d\n", instruction.op1, instruction.op2);

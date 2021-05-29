@@ -70,6 +70,7 @@ void type_signature_append_to_string(String* string, Type_Signature* signature);
 
 struct Type_System
 {
+    Lexer* lexer;
     DynamicArray<Type_Signature*> types;
 
     Type_Signature* error_type;
@@ -86,9 +87,10 @@ struct Type_System
     Type_Signature* f64_type;
     Type_Signature* void_type;
     Type_Signature* void_ptr_type;
+    Type_Signature* string_type;
 };
 
-Type_System type_system_create();
+Type_System type_system_create(Lexer* lexer);
 void type_system_destroy(Type_System* system);
 void type_system_reset_all(Type_System* system);
 Type_Signature* type_system_make_pointer(Type_System* system, Type_Signature* child_type);
@@ -174,6 +176,7 @@ enum class Hardcoded_Function_Type
     PRINT_F32,
     PRINT_BOOL,
     PRINT_LINE,
+    PRINT_STRING,
     READ_I32,
     READ_F32,
     READ_BOOL,
