@@ -4,12 +4,13 @@
 #include "../../win32/timing.hpp"
 #include "../../utility/file_listener.hpp"
 #include "../../utility/file_io.hpp"
-#include "../../rendering/opengl_state.hpp"
+#include "../../rendering/rendering_core.hpp"
 #include "../../rendering/cameras.hpp"
 #include "../../rendering/camera_controllers.hpp"
-#include "../../rendering/mesh_gpu_data.hpp"
+#include "../../rendering/gpu_buffers.hpp"
 #include "../../rendering/mesh_utils.hpp"
 #include "../../rendering/text_renderer.hpp"
+#include "../../rendering/shader_program.hpp"
 #include "../../utility/bounding_box.hpp"
 #include "../../rendering/renderer_2d.hpp"
 #include "../../utility/gui.hpp"
@@ -75,9 +76,8 @@ City_Vertex city_vertex_make(vec3 pos, vec3 color) {
 
 void street_generate_from_points(
     Array<vec2> street_positions,
-    DynamicArray<City_Vertex>* vertex_buffer,
-    DynamicArray<uint32>* index_buffer,
-    OpenGLState* state,
+    Dynamic_Array<City_Vertex>* vertex_buffer,
+    Dynamic_Array<uint32>* index_buffer,
     float thickness)
 {
     if (street_positions.size <= 2) {
@@ -237,11 +237,11 @@ StreetBuildingPlaceholder street_buidling_placeholder_make(vec2 position, float 
 
 struct StreetNetwork
 {
-    DynamicArray<vec2> positions;
-    DynamicArray<StreetLine> lines;
-    DynamicArray<StreetBranch> open_branches;
-    DynamicArray<StreetBuildingPlaceholder> buildings;
-    Array<DynamicArray<int>> grid;
+    Dynamic_Array<vec2> positions;
+    Dynamic_Array<StreetLine> lines;
+    Dynamic_Array<StreetBranch> open_branches;
+    Dynamic_Array<StreetBuildingPlaceholder> buildings;
+    Array<Dynamic_Array<int>> grid;
     float grid_width;
     int row_count;
 };
@@ -254,7 +254,7 @@ StreetNetwork streetnetwork_create(float grid_width, int row_count) {
     result.buildings = dynamic_array_create_empty<StreetBuildingPlaceholder>(128);
     result.grid_width = grid_width;
     result.row_count = row_count;
-    result.grid = array_create_empty<DynamicArray<int>>(row_count * row_count);
+    result.grid = array_create_empty<Dynamic_Array<int>>(row_count * row_count);
     for (int i = 0; i < row_count * row_count; i++) {
         result.grid[i] = dynamic_array_create_empty<int>(4);
     }
@@ -304,7 +304,7 @@ void streetnetwork_update_grid_size(StreetNetwork* network, float size, int row_
 
     network->grid_width = size;
     network->row_count = row_count;
-    network->grid = array_create_empty<DynamicArray<int>>(row_count * row_count);
+    network->grid = array_create_empty<Dynamic_Array<int>>(row_count * row_count);
     for (int i = 0; i < row_count * row_count; i++) {
         network->grid[i] = dynamic_array_create_empty<int>(4);
     }
@@ -508,17 +508,17 @@ void streetnetwork_draw(StreetNetwork* network, Renderer_2D* renderer, vec2 cent
 {
     for (int i = 0; i < network->open_branches.size; i++) {
         vec2 pos = (network->positions[network->open_branches[i].position_index] - center) / size;
-        renderer_2d_draw_rectangle(renderer, pos, vec2(0.05f), vec3(0.0f, 1.0f, 0.0f), 0.0f);
+        renderer_2D_add_rectangle(renderer, pos, vec2(0.05f), vec3(0.0f, 1.0f, 0.0f), 0.0f);
     }
     for (int i = 0; i < network->buildings.size; i++) {
         StreetBuildingPlaceholder& building = network->buildings[i];
-        renderer_2d_draw_rectangle(renderer, building.position / size, vec2(building.radius) / size, vec3(0.0f, 1.0f, 0.3f), 0.0f);
+        renderer_2D_add_rectangle(renderer, building.position / size, vec2(building.radius) / size, vec3(0.0f, 1.0f, 0.3f), 0.0f);
     }
     for (int i = 0; i < network->lines.size; i++) {
         vec2 a = network->positions[network->lines[i].start] - center;
         vec2 b = network->positions[network->lines[i].end] - center;
         float thickness = network->lines[i].main_road ? 6.0f : 3.0f;
-        renderer_2d_draw_line(renderer, a / size, b / size, vec3(1.0f), thickness, 0.0f);
+        renderer_2D_add_line(renderer, a / size, b / size, vec3(1.0f), thickness, 0.0f);
     }
 }
 
@@ -803,12 +803,12 @@ void streetnetwork_generate_main_road(StreetNetwork* network, vec2 size, int hot
             if (skip) continue;
             dynamic_array_push_back(&network->positions, pos);
         }
-        radius += base_min_distance * (0.333f + 0.3 * ring);
+        radius += base_min_distance * (0.333f + 0.3f * ring);
         ring++;
     }
 
     // Create streets for x closest points
-    DynamicArray<int> connected_indices = dynamic_array_create_empty<int>(16);
+    Dynamic_Array<int> connected_indices = dynamic_array_create_empty<int>(16);
     SCOPE_EXIT(dynamic_array_destroy(&connected_indices));
     int position_count = network->positions.size;
     for (int i = 0; i < position_count; i++)
@@ -905,7 +905,7 @@ void street_generate_between_hotspots_random(
 
 struct Polygon2D
 {
-    DynamicArray<vec2> positions;
+    Dynamic_Array<vec2> positions;
 };
 
 Polygon2D polygon_2d_create() {
@@ -959,10 +959,10 @@ bool triangle_2d_point_inside(vec2 a, vec2 b, vec2 c, vec2 p)
     return false;
 }
 
-void polygon_2d_triangulate(Polygon2D* polygon, DynamicArray<uint32>* index_buffer)
+void polygon_2d_triangulate(Polygon2D* polygon, Dynamic_Array<uint32>* index_buffer)
 {
-    DynamicArray<vec2>& positions = polygon->positions;
-    DynamicArray<int> indices = dynamic_array_create_empty<int>(positions.size);
+    Dynamic_Array<vec2>& positions = polygon->positions;
+    Dynamic_Array<int> indices = dynamic_array_create_empty<int>(positions.size);
     SCOPE_EXIT(dynamic_array_destroy(&indices));
     for (int i = 0; i < positions.size; i++) {
         dynamic_array_push_back(&indices, i);
@@ -1108,7 +1108,7 @@ void polygon_2d_union_new(Polygon2D* p0, Polygon2D* p1)
 
     }
 
-    DynamicArray<vec2> points = dynamic_array_create_empty<vec2>(16);
+    Dynamic_Array<vec2> points = dynamic_array_create_empty<vec2>(16);
     SCOPE_EXIT(dynamic_array_destroy(&points));
     if (start_index == -1) { // All points inside
         dynamic_array_reset(&p0->positions);
@@ -1122,7 +1122,7 @@ void polygon_2d_union_new(Polygon2D* p0, Polygon2D* p1)
 void polygon_2d_union(Polygon2D* p0, Polygon2D* p1)
 {
     // Walk along p0, intersect line with all other lines in p1, if int
-    DynamicArray<vec2> points = dynamic_array_create_empty<vec2>(16);
+    Dynamic_Array<vec2> points = dynamic_array_create_empty<vec2>(16);
     SCOPE_EXIT(dynamic_array_destroy(&points));
     int start_index = -1;
     for (int i = 0; i < p0->positions.size; i++) {
@@ -1273,7 +1273,7 @@ BoundingBox2 polygon_2d_get_bounding_box(Polygon2D* polygon) {
     return bounding_box_2_make_min_max(minimum, maximum);
 }
 
-void building_create_from_polygon_2d(Polygon2D* polygon, DynamicArray<Building_Vertex>* vertices, DynamicArray<uint32>* indices, float height)
+void building_create_from_polygon_2d(Polygon2D* polygon, Dynamic_Array<Building_Vertex>* vertices, Dynamic_Array<uint32>* indices, float height)
 {
     dynamic_array_reset(vertices);
     dynamic_array_reset(indices);
@@ -1303,7 +1303,7 @@ void building_create_from_polygon_2d(Polygon2D* polygon, DynamicArray<Building_V
         dynamic_array_push_back(vertices, building_vertex_make(vec3(p.x, height, -p.y), vec3(0.0f, 1.0f, 0.0f), uv));
     }
 
-    DynamicArray<uint32> ceiling_indices = dynamic_array_create_empty<uint32>(polygon->positions.size * 2);
+    Dynamic_Array<uint32> ceiling_indices = dynamic_array_create_empty<uint32>(polygon->positions.size * 2);
     SCOPE_EXIT(dynamic_array_destroy(&ceiling_indices));
     polygon_2d_triangulate(polygon, &ceiling_indices);
     for (int i = 0; i < ceiling_indices.size; i++) {
@@ -1317,32 +1317,25 @@ Mesh_GPU_Data city_street_create_mesh_from_network()
 }
 */
 
-Mesh_GPU_Data city_building_create_mesh_from_polygon(Polygon2D* polygon, float height, OpenGLState* state)
+Mesh_GPU_Buffer city_building_create_mesh_from_polygon(Polygon2D* polygon, float height, Rendering_Core* core)
 {
-    DynamicArray<Building_Vertex> building_vertices = dynamic_array_create_empty<Building_Vertex>(32);
-    DynamicArray<uint32> building_indices = dynamic_array_create_empty<uint32>(32);
+    Dynamic_Array<Building_Vertex> building_vertices = dynamic_array_create_empty<Building_Vertex>(32);
+    Dynamic_Array<uint32> building_indices = dynamic_array_create_empty<uint32>(32);
     SCOPE_EXIT(dynamic_array_destroy(&building_vertices));
     SCOPE_EXIT(dynamic_array_destroy(&building_indices));
     building_create_from_polygon_2d(polygon, &building_vertices, &building_indices, 5.0f);
 
-    vertex_attribute_information_maker_reset();
-    vertex_attribute_information_maker_add(0, VertexAttributeInformationType::VEC3);
-    vertex_attribute_information_maker_add(1, VertexAttributeInformationType::VEC3);
-    vertex_attribute_information_maker_add(2, VertexAttributeInformationType::VEC2);
-    Mesh_GPU_Data building_mesh = mesh_gpu_data_create(
-        state,
-        gpu_buffer_create(
-            dynamic_array_to_bytes(&building_vertices),
-            GL_ARRAY_BUFFER,
-            GL_STATIC_DRAW
-        ),
-        vertex_attribute_information_maker_make(),
-        gpu_buffer_create(
-            dynamic_array_to_bytes(&building_indices),
-            GL_ELEMENT_ARRAY_BUFFER,
-            GL_STATIC_DRAW
-        ),
-        GL_TRIANGLES,
+    Vertex_Attribute vertex_attributes[] = {
+        vertex_attribute_make(Vertex_Attribute_Type::POSITION_3D),
+        vertex_attribute_make(Vertex_Attribute_Type::NORMAL),
+        vertex_attribute_make(Vertex_Attribute_Type::UV_COORDINATES_0),
+    };
+    Mesh_GPU_Buffer building_mesh = mesh_gpu_buffer_create_with_single_vertex_buffer(
+        core,
+        gpu_buffer_create(dynamic_array_as_bytes(&building_vertices), GPU_Buffer_Type::VERTEX_BUFFER, GPU_Buffer_Usage::STATIC),
+        array_create_static(vertex_attributes, 1),
+        gpu_buffer_create(dynamic_array_as_bytes(&building_indices), GPU_Buffer_Type::INDEX_BUFFER, GPU_Buffer_Usage::STATIC),
+        Mesh_Topology::TRIANGLES,
         building_indices.size
     );
 
@@ -1358,11 +1351,11 @@ void polygon_2d_draw(Polygon2D* polygon, Renderer_2D* renderer, vec2 offset, flo
     for (int i = 0; i < polygon->positions.size; i++) {
         vec2 a = (polygon->positions[i]) / (size * 1.3f) + offset;
         vec2 b = (polygon->positions[math_modulo(i + 1, polygon->positions.size)]) / (size * 1.3f) + offset;
-        renderer_2d_draw_line(renderer, a, b, vec3(1.0f), 3.0f, 0.0f);
+        renderer_2D_add_line(renderer, a, b, vec3(1.0f), 3.0f, 0.0f);
         sprintf_s(buffer, "%d", i);
         String buf = string_create_static(buffer);
-        renderer_2d_draw_text_in_box(renderer, &buf, 0.1f, vec3(0.5f), a - vec2(0.05f, 0.0f),
-            vec2(0.1f, 0.1f), ALIGNMENT_HORIZONTAL::CENTER, ALIGNMENT_VERTICAL::CENTER, TEXT_WRAPPING_MODE::SCALE_DOWN);
+        renderer_2D_add_text_in_box(renderer, &buf, 0.1f, vec3(0.5f), a - vec2(0.05f, 0.0f),
+            vec2(0.1f, 0.1f), Text_Alignment_Horizontal::CENTER, Text_Alignment_Vertical::CENTER, Text_Wrapping_Mode::SCALE_DOWN);
     }
 }
 
@@ -1375,11 +1368,11 @@ void polygon_2d_draw_scaled(Polygon2D* polygon, Renderer_2D* renderer, vec2 offs
     for (int i = 0; i < polygon->positions.size; i++) {
         vec2 a = (polygon->positions[i] - center) / (size * 1.3f) + offset;
         vec2 b = (polygon->positions[math_modulo(i + 1, polygon->positions.size)] - center) / (size * 1.3f) + offset;
-        renderer_2d_draw_line(renderer, a, b, vec3(1.0f), 3.0f, 0.0f);
+        renderer_2D_add_line(renderer, a, b, vec3(1.0f), 3.0f, 0.0f);
         sprintf_s(buffer, "%d", i);
         String buf = string_create_static(buffer);
-        renderer_2d_draw_text_in_box(renderer, &buf, 0.1f, vec3(0.5f), a - vec2(0.05f, 0.0f),
-            vec2(0.1f, 0.1f), ALIGNMENT_HORIZONTAL::CENTER, ALIGNMENT_VERTICAL::CENTER, TEXT_WRAPPING_MODE::SCALE_DOWN);
+        renderer_2D_add_text_in_box(renderer, &buf, 0.1f, vec3(0.5f), a - vec2(0.05f, 0.0f),
+            vec2(0.1f, 0.1f), Text_Alignment_Horizontal::CENTER, Text_Alignment_Vertical::CENTER, Text_Wrapping_Mode::SCALE_DOWN);
     }
 }
 
@@ -1406,7 +1399,7 @@ void polygon_2d_fill_random_polygon(Polygon2D* polygon, float radius)
     polygon_2d_translate_positions(polygon, (vec2(random_next_float(), random_next_float()) - 0.5f) * radius);
 }
 
-void polygon_2d_fill_random(Polygon2D* polygon, float radius, GUI* gui, OpenGLState* state, Window* window)
+void polygon_2d_fill_random(Polygon2D* polygon, float radius, GUI* gui, Rendering_Core* core, Window* window)
 {
     Polygon2D addition_shape = polygon_2d_create();
     SCOPE_EXIT(polygon_2d_destroy(&addition_shape));
@@ -1418,12 +1411,12 @@ void polygon_2d_fill_random(Polygon2D* polygon, float radius, GUI* gui, OpenGLSt
         polygon_2d_fill_with_ngon(&addition_shape, radius, count);
         polygon_2d_translate_positions(&addition_shape, (vec2(random_next_float(), random_next_float()) - 0.5f) * radius);
 
-        gui_draw(gui, state);
+        gui_render(gui, core);
         window_swap_buffers(window);
         polygon_2d_draw_scaled(polygon, gui->renderer_2d, vec2(0.0f));
         polygon_2d_draw_scaled(&addition_shape, gui->renderer_2d, vec2(0.0f));
         polygon_2d_draw_scaled(&addition_shape, gui->renderer_2d, vec2(0.0f));
-        gui_draw(gui, state);
+        gui_render(gui, core);
         window_swap_buffers(window);
 
         polygon_2d_union(polygon, &addition_shape);
@@ -1473,32 +1466,26 @@ void proc_city_main()
     Window* window = window_create("Proc_City", 0);
     SCOPE_EXIT(window_destroy(window));
 
+    Window_State* window_state = window_get_window_state(window);
     timing_initialize();
     random_initialize();
 
-    FileListener* file_listener = file_listener_create();
-    SCOPE_EXIT(file_listener_destroy(file_listener));
+    Rendering_Core core = rendering_core_create(window_state->width, window_state->height, (float)window_state->dpi);
+    SCOPE_EXIT(rendering_core_destroy(&core));
 
-    OpenGLState opengl_state = opengl_state_create();
-    SCOPE_EXIT(opengl_state_destroy(&opengl_state));
-    vertex_attribute_information_maker_create();
-    SCOPE_EXIT(vertex_attribute_information_maker_destroy());
-
-    WindowState* window_state = window_get_window_state(window);
     Input* input = window_get_input(window);
     Camera_3D camera = camera_3d_make(window_state->width, window_state->height, math_degree_to_radians(90.0f), 0.1f, 1000.0f);
     Camera_Controller_Arcball controller = camera_controller_arcball_make(vec3(0.0f), 1.0f);
 
-    GPU_Buffer camera_uniform_buffer = gpu_buffer_create_empty(sizeof(Camera_3D_Uniform_Data), GL_UNIFORM_BUFFER, GL_DYNAMIC_DRAW);
+    GPU_Buffer camera_uniform_buffer = gpu_buffer_create_empty(sizeof(Camera_3D_Uniform_Data), GPU_Buffer_Type::UNIFORM_BUFFER, GPU_Buffer_Usage::DYNAMIC);
     gpu_buffer_bind_indexed(&camera_uniform_buffer, 0);
     SCOPE_EXIT(gpu_buffer_destroy(&camera_uniform_buffer));
 
-    TextRenderer* text_renderer = text_renderer_create_from_font_atlas_file(
-        &opengl_state, file_listener, "resources/fonts/glyph_atlas.atlas", window_state->width, window_state->height);
+    Text_Renderer* text_renderer = text_renderer_create_from_font_atlas_file(&core, "resources/fonts/glyph_atlas.atlas", window_state->width, window_state->height);
     SCOPE_EXIT(text_renderer_destroy(text_renderer));
-    Renderer_2D renderer_2d = renderer_2d_create(&opengl_state, file_listener, text_renderer, window_state->width, window_state->height);
+    Renderer_2D renderer_2d = renderer_2D_create(&core, text_renderer, window_state->width, window_state->height);
     SCOPE_EXIT(renderer_2d_destroy(&renderer_2d));
-    GUI gui = gui_create(&opengl_state, file_listener, &renderer_2d, window_state, input);
+    GUI gui = gui_create(&renderer_2d, window_state, input);
     SCOPE_EXIT(gui_destroy(&gui));
 
     glViewport(0, 0, window_state->width, window_state->height);
@@ -1506,7 +1493,7 @@ void proc_city_main()
 
 
     // City Stuff
-    ShaderProgram* city_shader = optional_unwrap(shader_program_create(file_listener, { "resources/shaders/city_shader.glsl" }));
+    Shader_Program* city_shader = shader_program_create_from_multiple_sources(&core, { "resources/shaders/city_shader.glsl" });
     SCOPE_EXIT(shader_program_destroy(city_shader));
 
     // Building mesh
@@ -1521,8 +1508,8 @@ void proc_city_main()
     polygon_2d_union(&square, &hex);
     polygon_2d_cleanup_near_points_and_colinear_points(&square, 0.3f, 0.01f);
 
-    Mesh_GPU_Data building_mesh = city_building_create_mesh_from_polygon(&square, 5.0f, &opengl_state);
-    SCOPE_EXIT(mesh_gpu_data_destroy(&building_mesh));
+    Mesh_GPU_Buffer building_mesh = city_building_create_mesh_from_polygon(&square, 5.0f, &core);
+    SCOPE_EXIT(mesh_gpu_buffer_destroy(&building_mesh));
     dynamic_array_reset(&square.positions);
 
     float city_size = 3.0f;
@@ -1542,7 +1529,7 @@ void proc_city_main()
         // Update
         input_reset(input);
         window_handle_messages(window, false);
-        file_listener_check_if_files_changed(file_listener);
+        rendering_core_prepare_frame(&core, (float)now);
         gui_update(&gui, input, window_state);
 
         if (input->key_down[KEY_CODE::ESCAPE]) {
@@ -1552,34 +1539,35 @@ void proc_city_main()
             glViewport(0, 0, window_state->width, window_state->height);
             camera_3d_update_projection_window_size(&camera, window_state->width, window_state->height);
             text_renderer_update_window_size(text_renderer, window_state->width, window_state->height);
-            renderer_2d_update_window_size(&renderer_2d, window_state->width, window_state->height);
+            renderer_2D_update_window_size(&renderer_2d, window_state->width, window_state->height);
         }
         camera_controller_arcball_update(&controller, &camera, input);
 
         static float city_size = 3.0f;
-        bool changed = gui_slider(&gui, gui_position_make_on_window_border(&gui, vec2(0.5f, 0.1f), ANCHOR::TOP_LEFT), &city_size, 3.0f, 20.0f);
-        if (changed || gui_button(&gui, gui_position_make_on_window_border(&gui, vec2(0.3f, 0.1f), ANCHOR::CENTER_LEFT), "Reset network")) {
+        bool changed = gui_slider(&gui, gui_position_make_on_window_border(&gui, vec2(0.5f, 0.1f), Anchor_2D::TOP_LEFT), &city_size, 3.0f, 20.0f);
+        if (changed || gui_button(&gui, gui_position_make_on_window_border(&gui, vec2(0.3f, 0.1f), Anchor_2D::CENTER_LEFT), "Reset network")) {
             streetnetwork_regenerate(&street_network, city_size);
         }
 
         // Render
         // Set state
-        opengl_state_set_depth_testing(&opengl_state, true, true, GL_LESS);
-        opengl_state_set_blending_state(&opengl_state, false, GL_ONE, GL_ONE, GL_FUNC_ADD);
+        Pipeline_State pipeline_state = pipeline_state_make_default();
+        pipeline_state.depth_state.test_type = Depth_Test_Type::TEST_DEPTH;
+        pipeline_state.blending_state.blending_enabled = false;
+        rendering_core_updated_pipeline_state(&core, pipeline_state);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         Camera_3D_Uniform_Data d = camera_3d_uniform_data_make(&camera, (float)now);
-        gpu_buffer_update(&camera_uniform_buffer, array_as_bytes_static(&d, 1)); // Update camera data
-
+        gpu_buffer_update(&camera_uniform_buffer, array_create_static_as_bytes(&d, 1)); // Update camera data
 
         // Draw City
         polygon_2d_draw(&polygon_random, &renderer_2d, vec2(0.0f), 3.0f);
         string_reset(&string);
         string_append_formated(&string, "%d", polygon_random.positions.size);
         gui_label(&gui, gui_position_make(vec2(-0.8f, 0.0f), vec2(0.5f, 0.1f)), string.characters);
-        if (gui_button(&gui, gui_position_make_on_window_border(&gui, vec2(0.5f, 0.2f), ANCHOR::TOP_CENTER), "Random poly")) {
+        if (gui_button(&gui, gui_position_make_on_window_border(&gui, vec2(0.5f, 0.2f), Anchor_2D::TOP_CENTER), "Random poly")) {
             polygon_2d_fill_random_polygon(&square, 3.0f);
             polygon_2d_draw(&square, &renderer_2d, vec2(0.0f, 0.0f), 3.0f);
-            gui_draw(&gui, &opengl_state);
+            gui_render(&gui, &core);
             window_swap_buffers(window);
 
             polygon_2d_union(&polygon_random, &square);
@@ -1593,11 +1581,11 @@ void proc_city_main()
             mat4 model = mat4_make_translation_matrix(vec3(p.position.x, 0.0f, -p.position.y) * 10.0f) *
                 mat4(mat3_make_rotation_matrix_around_y(math_arctangent_2(p.normal_to_street.x, -p.normal_to_street.y))) *
                 mat4(mat3_make_scaling_matrix(vec3(0.1f)));
-            shader_program_set_uniform(city_shader, &opengl_state, "u_model", model);
-            mesh_gpu_data_draw_with_shader_program(&building_mesh, city_shader, &opengl_state);
+            shader_program_set_uniform(city_shader, &core, "u_model", model);
+            mesh_gpu_buffer_draw_with_shader_program(&building_mesh, city_shader, &core);
         }
 
-        gui_draw(&gui, &opengl_state);
+        gui_render(&gui, &core);
 
         // Present and sleep
         window_swap_buffers(window);

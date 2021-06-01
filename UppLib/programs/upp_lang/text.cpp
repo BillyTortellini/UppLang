@@ -2,20 +2,20 @@
 
 #include <cstring>
 
-DynamicArray<String> text_create_empty() {
-    DynamicArray<String> text = dynamic_array_create_empty<String>(6);
+Dynamic_Array<String> text_create_empty() {
+    Dynamic_Array<String> text = dynamic_array_create_empty<String>(6);
     dynamic_array_push_back(&text, string_create_empty(16));
     return text;
 }
 
-void text_destroy(DynamicArray<String>* text) {
+void text_destroy(Dynamic_Array<String>* text) {
     for (int i = 0; i < text->size; i++) {
         string_destroy(&text->data[i]);
     }
     dynamic_array_destroy(text);
 }
 
-void text_reset(DynamicArray<String>* text) {
+void text_reset(Dynamic_Array<String>* text) {
     for (int i = 0; i < text->size; i++) {
         string_destroy(&text->data[i]);
     }
@@ -23,7 +23,7 @@ void text_reset(DynamicArray<String>* text) {
     dynamic_array_push_back(text, string_create_empty(16));
 }
 
-void text_delete_line(DynamicArray<String>* text, int line) {
+void text_delete_line(Dynamic_Array<String>* text, int line) {
     if (line == 0 && text->size == 1) return;
     if (line < 0 || line > text->size) return;
     string_destroy(&text->data[line]);
@@ -42,20 +42,24 @@ Text_Position text_position_make_start() {
     return text_position_make(0, 0);
 }
 
-Text_Position text_position_make_end(DynamicArray<String>* text) {
+Text_Position text_position_make_end(Dynamic_Array<String>* text) {
     return text_position_make(text->size-1, text->data[text->size-1].size);
+}
+
+Text_Position text_position_make_line_end(Dynamic_Array<String>* text, int line) {
+    return text_position_make(line, text->data[line].size);
 }
 
 bool text_position_are_equal(Text_Position a, Text_Position b) {
     return a.line == b.line && a.character == b.character;
 }
 
-void text_position_sanitize(Text_Position* pos, DynamicArray<String> text) {
+void text_position_sanitize(Text_Position* pos, Dynamic_Array<String> text) {
     pos->line = math_clamp(pos->line, 0, math_maximum(0, text.size-1));
     pos->character = math_clamp(pos->character, 0, text[pos->line].size);
 }
 
-Text_Position text_position_previous(Text_Position pos, DynamicArray<String> text) {
+Text_Position text_position_previous(Text_Position pos, Dynamic_Array<String> text) {
     Text_Position result = pos;
     if (pos.character > 0) {
         result.character--;
@@ -71,7 +75,7 @@ Text_Position text_position_previous(Text_Position pos, DynamicArray<String> tex
     }
 }
 
-Text_Position text_position_next(Text_Position pos, DynamicArray<String> text) {
+Text_Position text_position_next(Text_Position pos, Dynamic_Array<String> text) {
     String* line = &text[pos.line];
     Text_Position next = pos;
     if (pos.character < line->size) next.character++;
@@ -94,28 +98,28 @@ Text_Slice text_slice_make(Text_Position start, Text_Position end) {
     return result;
 }
 
-Text_Slice text_slice_make_character_after(Text_Position pos, DynamicArray<String> text)
+Text_Slice text_slice_make_character_after(Text_Position pos, Dynamic_Array<String> text)
 {
     text_position_sanitize(&pos, text);
     Text_Position next = text_position_next(pos, text);
     return text_slice_make(pos, next);
 }
 
-bool text_slice_contains_position(Text_Slice slice, Text_Position pos, DynamicArray<String> text)
+bool text_slice_contains_position(Text_Slice slice, Text_Position pos, Dynamic_Array<String> text)
 {
     Text_Position end = text_position_previous(slice.end, text);
     return text_position_are_in_order(&slice.start, &pos) &&
         text_position_are_in_order(&pos, &end);
 }
 
-Text_Slice text_slice_make_line(DynamicArray<String> text, int line)
+Text_Slice text_slice_make_line(Dynamic_Array<String> text, int line)
 {
     if (line < 0 || line >= text.size) return text_slice_make(text_position_make(0, 0), text_position_make(0, 0));
     String* str = &text[line];
     return text_slice_make(text_position_make(line, 0), text_position_make(line, str->size));
 }
 
-void text_slice_sanitize(Text_Slice* slice, DynamicArray<String> text) {
+void text_slice_sanitize(Text_Slice* slice, Dynamic_Array<String> text) {
     text_position_sanitize(&slice->start, text);
     text_position_sanitize(&slice->end, text);
     if (!text_position_are_in_order(&slice->start, &slice->end)) {
@@ -125,7 +129,7 @@ void text_slice_sanitize(Text_Slice* slice, DynamicArray<String> text) {
     }
 }
 
-void text_append_slice_to_string(DynamicArray<String> text, Text_Slice slice, String* string)
+void text_append_slice_to_string(Dynamic_Array<String> text, Text_Slice slice, String* string)
 {
     text_slice_sanitize(&slice, text);
     if (slice.start.line == slice.end.line) { // Special case if slice is only in one line
@@ -152,7 +156,7 @@ void text_append_slice_to_string(DynamicArray<String> text, Text_Slice slice, St
     string_append_character_array(string, array_create_static(end_line->characters, slice.end.character));
 }
 
-Text_Slice text_calculate_insertion_string_slice(DynamicArray<String>* text, Text_Position pos, String insertion)
+Text_Slice text_calculate_insertion_string_slice(Dynamic_Array<String>* text, Text_Position pos, String insertion)
 {
     Text_Slice result;
     result.start = pos;
@@ -175,7 +179,7 @@ Text_Slice text_calculate_insertion_string_slice(DynamicArray<String>* text, Tex
     return result;
 }
 
-void text_insert_string(DynamicArray<String>* text, Text_Position pos, String insertion)
+void text_insert_string(Dynamic_Array<String>* text, Text_Position pos, String insertion)
 {
     text_position_sanitize(&pos, *text);
     // Dumb implementation: Go through each character and add it to the current position
@@ -199,7 +203,7 @@ void text_insert_string(DynamicArray<String>* text, Text_Position pos, String in
     }
 }
 
-void text_delete_slice(DynamicArray<String>* text, Text_Slice slice)
+void text_delete_slice(Dynamic_Array<String>* text, Text_Slice slice)
 {
     text_slice_sanitize(&slice, *text);
     if (slice.end.line == slice.start.line)
@@ -219,21 +223,21 @@ void text_delete_slice(DynamicArray<String>* text, Text_Slice slice)
     }
 }
 
-void text_set_string(DynamicArray<String>* text, String* string)
+void text_set_string(Dynamic_Array<String>* text, String* string)
 {
     text_destroy(text);
     *text = text_create_empty();
     text_insert_string(text, text_position_make(0, 0), *string);
 }
 
-void text_append_to_string(DynamicArray<String>* text, String* result)
+void text_append_to_string(Dynamic_Array<String>* text, String* result)
 {
     text_append_slice_to_string(*text, 
         text_slice_make(text_position_make(0, 0), text_position_make(text->size - 1, text->data[text->size - 1].size)),
         result);
 }
 
-char text_get_character_after(DynamicArray<String>* text, Text_Position pos)
+char text_get_character_after(Dynamic_Array<String>* text, Text_Position pos)
 {
     String* line = &text->data[pos.line];
     if (pos.character >= line->size) {
@@ -245,7 +249,7 @@ char text_get_character_after(DynamicArray<String>* text, Text_Position pos)
     }
 }
 
-bool text_check_correctness(DynamicArray<String> text) 
+bool text_check_correctness(Dynamic_Array<String> text) 
 {
     if (text.size == 0) {
         logg("Correctness failed, text size is 0\n");
@@ -269,7 +273,7 @@ bool text_check_correctness(DynamicArray<String> text)
 
 bool test_text_to_string_and_back(String string)
 {
-    DynamicArray<String> text = text_create_empty();
+    Dynamic_Array<String> text = text_create_empty();
     SCOPE_EXIT(text_destroy(&text));
     text_set_string(&text, &string);
 
@@ -285,7 +289,7 @@ bool test_text_to_string_and_back(String string)
 
 void test_text_editor()
 {
-    DynamicArray<String> text = dynamic_array_create_empty<String>(4);
+    Dynamic_Array<String> text = dynamic_array_create_empty<String>(4);
     dynamic_array_push_back(&text, string_create_empty(64));
 
     String str = string_create_static("Hello there\n What is up my dude\n\n Hello there\n what\n\n");
@@ -334,7 +338,7 @@ void test_text_editor()
     logg("shit");
 }
 
-void text_insert_character_before(DynamicArray<String>* text, Text_Position pos, char c)
+void text_insert_character_before(Dynamic_Array<String>* text, Text_Position pos, char c)
 {
     text_position_sanitize(&pos, *text);
     String* line = &text->data[pos.line];
@@ -348,12 +352,12 @@ void text_insert_character_before(DynamicArray<String>* text, Text_Position pos,
     }
 }
 
-Text_Position text_get_last_position(DynamicArray<String>* text)
+Text_Position text_get_last_position(Dynamic_Array<String>* text)
 {
     return text_position_make(text->size - 1, text->data[text->size - 1].size);
 }
 
-Text_Iterator text_iterator_make(DynamicArray<String>* text, Text_Position pos)
+Text_Iterator text_iterator_make(Dynamic_Array<String>* text, Text_Position pos)
 {
     Text_Iterator result;
     text_position_sanitize(&pos, *text);

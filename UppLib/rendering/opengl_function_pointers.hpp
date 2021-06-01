@@ -114,5 +114,7 @@ extern PFNGLGENRENDERBUFFERSPROC glGenRenderbuffers;
 extern PFNGLDELETERENDERBUFFERSPROC glDeleteRenderbuffers;
 extern PFNGLBINDRENDERBUFFERPROC glBindRenderbuffer;
 extern PFNGLRENDERBUFFERSTORAGEPROC glRenderbufferStorage;
+//extern PFNGLTEXSUBIMAGE2DPROC glTexSubImage2D;
 // Blending
 extern PFNGLBLENDEQUATIONPROC glBlendEquation;
+extern PFNGLBLENDCOLORPROC glBlendColor;

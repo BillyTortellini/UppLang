@@ -87,10 +87,10 @@ struct Token
 
 struct Lexer
 {
-    DynamicArray<String> identifiers;
+    Dynamic_Array<String> identifiers;
     Hashtable<String, int> identifier_index_lookup_table;
-    DynamicArray<Token> tokens;
-    DynamicArray<Token> tokens_with_whitespaces;
+    Dynamic_Array<Token> tokens;
+    Dynamic_Array<Token> tokens_with_whitespaces;
 };
 
 bool token_type_is_keyword(Token_Type type);

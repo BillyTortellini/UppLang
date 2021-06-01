@@ -124,3 +124,17 @@ void compiler_execute(Compiler* compiler)
         //logg("C-Code:\n------------------\n%s\n", &compiler->c_generator.output_string.characters);
     }
 }
+
+Text_Slice token_range_to_text_slice(Token_Range range, Compiler* compiler)
+{
+    if (compiler->lexer.tokens.size == 0) {
+        return text_slice_make(text_position_make(0, 0), text_position_make(0, 0));
+    }
+    range.end_index = math_clamp(range.end_index, 0, math_maximum(0, compiler->lexer.tokens.size - 1));
+    return text_slice_make(
+        compiler->lexer.tokens[range.start_index].position.start,
+        compiler->lexer.tokens[range.end_index-1].position.end
+    );
+}
+
+

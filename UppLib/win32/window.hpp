@@ -4,7 +4,7 @@
 
 struct Window;
 
-struct WindowState
+struct Window_State
 {
     // Position and size
     int x, y;
@@ -24,7 +24,7 @@ bool window_handle_messages(Window* window, bool block_until_next_message);
 void window_swap_buffers(Window* window);
 void window_activate_context(Window* window);
 
-WindowState* window_get_window_state(Window* window);
+Window_State* window_get_window_state(Window* window);
 Input* window_get_input(Window* window);
 
 void window_set_fullscreen(Window* window, bool fullscreen);

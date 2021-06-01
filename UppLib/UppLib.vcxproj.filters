@@ -64,6 +64,24 @@
     <Filter Include="Resource Files\Shaders">
       <UniqueIdentifier>{c976234c-3ac4-46c7-899d-44bdf1c1587e}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Header Files\Rendering\Core">
+      <UniqueIdentifier>{46009852-c24f-48ba-a9b5-aee98d4f86c6}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Rendering\Utility">
+      <UniqueIdentifier>{6e8961df-a84d-4de3-a962-9d7bd4102668}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Rendering\2D">
+      <UniqueIdentifier>{bf38fd37-de12-4e4c-af9c-c1f6ec21b7ba}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Rendering\Core">
+      <UniqueIdentifier>{cef1c01e-c2c1-44f9-b16d-e93286da6fdb}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Rendering\Utility">
+      <UniqueIdentifier>{85a369e9-4dd7-4a2e-9c5f-7d84161dda57}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Rendering\2D">
+      <UniqueIdentifier>{7f6603e8-926b-4f78-b11c-180695243fda}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="datastructures\array.hpp">
@@ -111,39 +129,6 @@
     <ClInclude Include="programs\upp_lang\upp_lang.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
     </ClInclude>
-    <ClInclude Include="rendering\camera_controllers.hpp">
-      <Filter>Header Files\Rendering</Filter>
-    </ClInclude>
-    <ClInclude Include="rendering\cameras.hpp">
-      <Filter>Header Files\Rendering</Filter>
-    </ClInclude>
-    <ClInclude Include="rendering\glyph_atlas.hpp">
-      <Filter>Header Files\Rendering</Filter>
-    </ClInclude>
-    <ClInclude Include="rendering\mesh_gpu_data.hpp">
-      <Filter>Header Files\Rendering</Filter>
-    </ClInclude>
-    <ClInclude Include="rendering\mesh_utils.hpp">
-      <Filter>Header Files\Rendering</Filter>
-    </ClInclude>
-    <ClInclude Include="rendering\opengl_function_pointers.hpp">
-      <Filter>Header Files\Rendering</Filter>
-    </ClInclude>
-    <ClInclude Include="rendering\opengl_state.hpp">
-      <Filter>Header Files\Rendering</Filter>
-    </ClInclude>
-    <ClInclude Include="rendering\opengl_utils.hpp">
-      <Filter>Header Files\Rendering</Filter>
-    </ClInclude>
-    <ClInclude Include="rendering\shader_program.hpp">
-      <Filter>Header Files\Rendering</Filter>
-    </ClInclude>
-    <ClInclude Include="rendering\text_renderer.hpp">
-      <Filter>Header Files\Rendering</Filter>
-    </ClInclude>
-    <ClInclude Include="rendering\texture.hpp">
-      <Filter>Header Files\Rendering</Filter>
-    </ClInclude>
     <ClInclude Include="utility\binary_parser.hpp">
       <Filter>Header Files\Utility</Filter>
     </ClInclude>
@@ -167,9 +152,6 @@
     </ClInclude>
     <ClInclude Include="programs\proc_city\proc_city.hpp">
       <Filter>Header Files\Programs\Proc_City</Filter>
-    </ClInclude>
-    <ClInclude Include="rendering\renderer_2d.hpp">
-      <Filter>Header Files\Rendering</Filter>
     </ClInclude>
     <ClInclude Include="datastructures\string_pool.hpp">
       <Filter>Header Files\Datastructures</Filter>
@@ -206,6 +188,51 @@
     </ClInclude>
     <ClInclude Include="programs\upp_lang\bytecode_generator.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\upp_lang\code_editor.hpp">
+      <Filter>Header Files\Programs\Upp_Lang</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\upp_lang\test_renderer.hpp">
+      <Filter>Header Files\Programs\Upp_Lang</Filter>
+    </ClInclude>
+    <ClInclude Include="rendering\rendering_core.hpp">
+      <Filter>Header Files\Rendering\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="rendering\cameras.hpp">
+      <Filter>Header Files\Rendering\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="rendering\opengl_function_pointers.hpp">
+      <Filter>Header Files\Rendering\Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="rendering\opengl_utils.hpp">
+      <Filter>Header Files\Rendering\Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="rendering\mesh_utils.hpp">
+      <Filter>Header Files\Rendering\Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="rendering\camera_controllers.hpp">
+      <Filter>Header Files\Rendering\Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="rendering\shader_program.hpp">
+      <Filter>Header Files\Rendering\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="rendering\glyph_atlas.hpp">
+      <Filter>Header Files\Rendering\2D</Filter>
+    </ClInclude>
+    <ClInclude Include="rendering\text_renderer.hpp">
+      <Filter>Header Files\Rendering\2D</Filter>
+    </ClInclude>
+    <ClInclude Include="rendering\texture_bitmap.hpp">
+      <Filter>Header Files\Rendering\Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="rendering\gpu_buffers.hpp">
+      <Filter>Header Files\Rendering\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="rendering\texture_2D.hpp">
+      <Filter>Header Files\Rendering\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="rendering\renderer_2D.hpp">
+      <Filter>Header Files\Rendering\2D</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -251,39 +278,6 @@
     <ClCompile Include="programs\upp_lang\upp_lang.cpp">
       <Filter>Source Files\Programs\Upp_Lang</Filter>
     </ClCompile>
-    <ClCompile Include="rendering\camera_controllers.cpp">
-      <Filter>Source Files\Rendering</Filter>
-    </ClCompile>
-    <ClCompile Include="rendering\cameras.cpp">
-      <Filter>Source Files\Rendering</Filter>
-    </ClCompile>
-    <ClCompile Include="rendering\glyph_atlas.cpp">
-      <Filter>Source Files\Rendering</Filter>
-    </ClCompile>
-    <ClCompile Include="rendering\mesh_gpu_data.cpp">
-      <Filter>Source Files\Rendering</Filter>
-    </ClCompile>
-    <ClCompile Include="rendering\mesh_utils.cpp">
-      <Filter>Source Files\Rendering</Filter>
-    </ClCompile>
-    <ClCompile Include="rendering\opengl_function_pointers.cpp">
-      <Filter>Source Files\Rendering</Filter>
-    </ClCompile>
-    <ClCompile Include="rendering\opengl_state.cpp">
-      <Filter>Source Files\Rendering</Filter>
-    </ClCompile>
-    <ClCompile Include="rendering\opengl_utils.cpp">
-      <Filter>Source Files\Rendering</Filter>
-    </ClCompile>
-    <ClCompile Include="rendering\shader_program.cpp">
-      <Filter>Source Files\Rendering</Filter>
-    </ClCompile>
-    <ClCompile Include="rendering\text_renderer.cpp">
-      <Filter>Source Files\Rendering</Filter>
-    </ClCompile>
-    <ClCompile Include="rendering\texture.cpp">
-      <Filter>Source Files\Rendering</Filter>
-    </ClCompile>
     <ClCompile Include="utility\binary_parser.cpp">
       <Filter>Source Files\Utility</Filter>
     </ClCompile>
@@ -307,9 +301,6 @@
     </ClCompile>
     <ClCompile Include="utility\bounding_box.cpp">
       <Filter>Source Files\Utility</Filter>
-    </ClCompile>
-    <ClCompile Include="rendering\renderer_2d.cpp">
-      <Filter>Source Files\Rendering</Filter>
     </ClCompile>
     <ClCompile Include="datastructures\string_pool.cpp">
       <Filter>Source Files\Datastructures</Filter>
@@ -346,6 +337,51 @@
     </ClCompile>
     <ClCompile Include="programs\upp_lang\bytecode_generator.cpp">
       <Filter>Source Files\Programs\Upp_Lang</Filter>
+    </ClCompile>
+    <ClCompile Include="programs\upp_lang\code_editor.cpp">
+      <Filter>Source Files\Programs\Upp_Lang</Filter>
+    </ClCompile>
+    <ClCompile Include="programs\upp_lang\test_renderer.cpp">
+      <Filter>Source Files\Programs\Upp_Lang</Filter>
+    </ClCompile>
+    <ClCompile Include="rendering\camera_controllers.cpp">
+      <Filter>Source Files\Rendering\Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="rendering\cameras.cpp">
+      <Filter>Source Files\Rendering\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="rendering\glyph_atlas.cpp">
+      <Filter>Source Files\Rendering\2D</Filter>
+    </ClCompile>
+    <ClCompile Include="rendering\mesh_utils.cpp">
+      <Filter>Source Files\Rendering\Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="rendering\opengl_function_pointers.cpp">
+      <Filter>Source Files\Rendering\Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="rendering\opengl_utils.cpp">
+      <Filter>Source Files\Rendering\Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="rendering\rendering_core.cpp">
+      <Filter>Source Files\Rendering\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="rendering\shader_program.cpp">
+      <Filter>Source Files\Rendering\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="rendering\text_renderer.cpp">
+      <Filter>Source Files\Rendering\2D</Filter>
+    </ClCompile>
+    <ClCompile Include="rendering\gpu_buffers.cpp">
+      <Filter>Source Files\Rendering\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="rendering\texture_2D.cpp">
+      <Filter>Source Files\Rendering\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="rendering\renderer_2D.cpp">
+      <Filter>Source Files\Rendering\2D</Filter>
+    </ClCompile>
+    <ClCompile Include="rendering\texture_bitmap.cpp">
+      <Filter>Source Files\Rendering\Utility</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -400,6 +436,9 @@
       <Filter>Resource Files\Shaders</Filter>
     </None>
     <None Include="..\resources\shaders\city_shader.glsl">
+      <Filter>Resource Files\Shaders</Filter>
+    </None>
+    <None Include="..\resources\shaders\test.glsl">
       <Filter>Resource Files\Shaders</Filter>
     </None>
   </ItemGroup>

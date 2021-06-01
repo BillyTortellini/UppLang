@@ -122,8 +122,8 @@ struct Input
     // Keyboard input
     bool key_down[KEYBOARD_KEY_COUNT];    // Indicating if the key is currently down
     bool key_pressed[KEYBOARD_KEY_COUNT]; // If the key was pressed since last input reset
-    DynamicArray<Key_Message> key_messages;
-    DynamicArray<Mouse_Message> mouse_messages;
+    Dynamic_Array<Key_Message> key_messages;
+    Dynamic_Array<Mouse_Message> mouse_messages;
 
     // Mouse input
     bool mouse_down[MOUSE_KEY_COUNT];

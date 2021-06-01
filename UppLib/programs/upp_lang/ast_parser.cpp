@@ -71,7 +71,7 @@ void ast_parser_checkpoint_reset(AST_Parser_Checkpoint checkpoint)
     checkpoint.parser->index = checkpoint.rewind_token_index;
     checkpoint.parser->next_free_node = checkpoint.next_free_node_index;
     if (checkpoint.parent_index != -1) { // This is the case if root
-        DynamicArray<AST_Node_Index>* parent_childs = &checkpoint.parser->nodes.data[checkpoint.parent_index].children;
+        Dynamic_Array<AST_Node_Index>* parent_childs = &checkpoint.parser->nodes.data[checkpoint.parent_index].children;
         dynamic_array_remove_range_ordered(parent_childs, checkpoint.parent_child_count, parent_childs->size); 
         dynamic_array_rollback_to_size(parent_childs, checkpoint.parent_child_count); 
     }
@@ -1934,7 +1934,7 @@ void ast_parser_append_to_string(AST_Parser* parser, String* string) {
     ast_node_append_to_string(parser, 0, string, 0);
 }
 
-int ast_parser_get_closest_node_to_text_position(AST_Parser* parser, Text_Position pos, DynamicArray<String> text)
+int ast_parser_get_closest_node_to_text_position(AST_Parser* parser, Text_Position pos, Dynamic_Array<String> text)
 {
     int closest_index = 0;
     AST_Node* closest = &parser->nodes[0];

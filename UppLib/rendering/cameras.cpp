@@ -4,6 +4,7 @@ Camera_3D camera_3d_make(int width, int height, float fov_x, float near, float f
 {
     Camera_3D result;
     result.fov_x = fov_x;
+    result.fov_y = fov_x * ((float)height / width);
     result.near_distance = near;
     result.far_distance = far;
     result.width = width;
@@ -35,10 +36,11 @@ void camera_3d_update_projection_window_size(Camera_3D* camera, int width, int h
 void camera_3d_update_field_of_view(Camera_3D* camera, float fov_x) 
 {
     camera->fov_x = fov_x;
+    camera->fov_y = fov_x * ((float)camera->height / camera->width);
     camera_3d_update_matrices(camera);
 }
 
-void camera_3d_update_view(Camera_3D* camera, const vec3& position, const vec3& view_direction, const vec3& up)
+void camera_3d_update_view_with_up_vector(Camera_3D* camera, const vec3& position, const vec3& view_direction, const vec3& up)
 {
     camera->position = position;
     camera->view_direction = view_direction;
@@ -53,5 +55,20 @@ void camera_3d_update_view(Camera_3D* camera, const vec3& position, const vec3& 
     camera_3d_update_matrices(camera);
 }
 
-
+Camera_3D_UBO_Data camera_3d_ubo_data_make(Camera_3D* camera)
+{
+    Camera_3D_UBO_Data data;
+    data.camera_direction = vec4(camera->view_direction, 1.0f);
+    data.camera_position = vec4(camera->position, 1.0f);
+    data.camera_up = vec4(camera->up, 1.0f);
+    data.near_distance = camera->near_distance;
+    data.far_distance = camera->far_distance;
+    data.field_of_view_x = camera->fov_x;
+    data.field_of_view_y = camera->fov_y;
+    data.view = camera->view_matrix;
+    data.projection = camera->projection_matrix;
+    data.view_projection = camera->view_projection_matrix;
+    data.inverse_view = matrix_transpose(camera->view_matrix);
+    return data;
+}
 

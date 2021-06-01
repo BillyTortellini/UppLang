@@ -35,11 +35,11 @@ void binary_parser_destroy(BinaryParser* parser) {
 }
 
 bool binary_parser_write_to_file(BinaryParser* parser, const char* filepath) {
-    return file_io_write_file(filepath, dynamic_array_to_array(&parser->data));
+    return file_io_write_file(filepath, dynamic_array_as_array(&parser->data));
 }
 
 Array<byte> binary_parser_get_data(BinaryParser* parser) {
-    return dynamic_array_to_array(&parser->data);
+    return dynamic_array_as_array(&parser->data);
 }
 
 void binary_parser_write_bytes(BinaryParser* parser, Array<byte> data)

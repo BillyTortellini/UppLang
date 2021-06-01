@@ -132,7 +132,9 @@ bool opengl_load_all_functions()
     glDeleteRenderbuffers = (PFNGLDELETERENDERBUFFERSPROC) opengl_get_function_address("glDeleteRenderbuffers");
     glBindRenderbuffer = (PFNGLBINDRENDERBUFFERPROC) opengl_get_function_address("glBindRenderbuffer");
     glRenderbufferStorage = (PFNGLRENDERBUFFERSTORAGEPROC) opengl_get_function_address("glRenderbufferStorage");
+    //glTexSubImage2D = (PFNGLTEXSUBIMAGE2DPROC)opengl_get_function_address("glTexSubImage2D");
     glBlendEquation = (PFNGLBLENDEQUATIONPROC)opengl_get_function_address("glBlendEquation");
+    glBlendColor = (PFNGLBLENDCOLORPROC)opengl_get_function_address("glBlendColor");
 
     bool success = true;
     success = success &&
@@ -217,6 +219,8 @@ bool opengl_load_all_functions()
         (glDeleteRenderbuffers != NULL) &&
         (glBindRenderbuffer != NULL) &&
         (glRenderbufferStorage != NULL) &&
+        //(glTexSubImage2D != NULL) &&
+        (glBlendColor != NULL) &&
         (glBlendEquation != NULL);
 
     // Load extensions
@@ -324,5 +328,7 @@ PFNGLGENRENDERBUFFERSPROC glGenRenderbuffers;
 PFNGLDELETERENDERBUFFERSPROC glDeleteRenderbuffers;
 PFNGLBINDRENDERBUFFERPROC glBindRenderbuffer;
 PFNGLRENDERBUFFERSTORAGEPROC glRenderbufferStorage;
+//PFNGLTEXSUBIMAGE2DPROC glTexSubImage2D;
 // Blending
  PFNGLBLENDEQUATIONPROC glBlendEquation;
+ PFNGLBLENDCOLORPROC glBlendColor;

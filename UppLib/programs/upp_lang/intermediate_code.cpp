@@ -393,7 +393,7 @@ Data_Access intermediate_generator_generate_expression_without_casting(Intermedi
             instr.constant_i32_value = lexer_identifer_to_string(&generator->compiler->lexer, token.attribute.identifier_number).size;
             dynamic_array_push_back(&function->instructions, instr);
 
-            return instr.destination;
+            return string_access;
         }
 
         if (token.type == Token_Type::FLOAT_LITERAL) {

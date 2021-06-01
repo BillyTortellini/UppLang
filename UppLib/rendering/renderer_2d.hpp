@@ -1,9 +1,13 @@
 #pragma once
 
 #include "../math/umath.hpp"
-#include "mesh_gpu_data.hpp"
 #include "../datastructures/dynamic_array.hpp"
-#include "text_renderer.hpp"
+#include "../datastructures/string.hpp"
+#include "gpu_buffers.hpp"
+#include "rendering_core.hpp"
+
+struct Shader_Program;
+struct Text_Renderer;
 
 struct Geometry_2D_Vertex {
     vec3 pos;
@@ -14,45 +18,46 @@ Geometry_2D_Vertex geometry_2d_vertex_make(vec3 pos, vec3 color);
 
 struct Renderer_2D
 {
-    Mesh_GPU_Data geometry;
-    DynamicArray<Geometry_2D_Vertex> geometry_data;
-    DynamicArray<uint32> index_data;
-    ShaderProgram* shader_2d;
-    TextRenderer* text_renderer;
+    Mesh_GPU_Buffer geometry;
+    Dynamic_Array<Geometry_2D_Vertex> geometry_data;
+    Dynamic_Array<uint32> index_data;
+    Shader_Program* shader_2d;
+    Text_Renderer* text_renderer;
     String string_buffer;
     vec2 scaling_factor;
     float to_pixel_scaling;
+    Pipeline_State pipeline_state;
 };
 
-namespace ALIGNMENT_HORIZONTAL
+enum class Text_Alignment_Horizontal
 {
-    enum ENUM {
-        LEFT, RIGHT, CENTER
-    };
-}
+    LEFT, 
+    RIGHT, 
+    CENTER
+};
 
-namespace ALIGNMENT_VERTICAL
+enum class Text_Alignment_Vertical
 {
-    enum ENUM {
-        BOTTOM, TOP, CENTER
-    };
-}
+    BOTTOM, 
+    TOP, 
+    CENTER
+};
 
-namespace TEXT_WRAPPING_MODE
+enum class Text_Wrapping_Mode
 {
-    enum ENUM {
-        CUTOFF, OVERDRAW, SCALE_DOWN
-    };
-}
+    CUTOFF, 
+    OVERDRAW, 
+    SCALE_DOWN
+};
 
-Renderer_2D renderer_2d_create(OpenGLState* state, FileListener* listener, TextRenderer* text_renderer, int window_width, int window_height);
+Renderer_2D renderer_2D_create(Rendering_Core* core, Text_Renderer* text_renderer, int window_width, int window_height);
 void renderer_2d_destroy(Renderer_2D* renderer);
 
-void renderer_2d_draw(Renderer_2D* renderer, OpenGLState* state);
-void renderer_2d_update_window_size(Renderer_2D* renderer, int window_width, int window_height);
+void renderer_2D_render(Renderer_2D* renderer, Rendering_Core* core);
+void renderer_2D_update_window_size(Renderer_2D* renderer, int window_width, int window_height);
 
-void renderer_2d_draw_rectangle(Renderer_2D* renderer, vec2 pos, vec2 size, vec3 color, float depth);
-void renderer_2d_draw_rect_outline(Renderer_2D* renderer, vec2 pos, vec2 size, vec3 color, float thickness, float depth);
-void renderer_2d_draw_line(Renderer_2D* renderer, vec2 start, vec2 end, vec3 color, float thickness, float depth);
-void renderer_2d_draw_text_in_box(Renderer_2D* renderer, String* text, float text_height, vec3 color, vec2 pos, vec2 size,
-    ALIGNMENT_HORIZONTAL::ENUM align_h, ALIGNMENT_VERTICAL::ENUM align_v, TEXT_WRAPPING_MODE::ENUM wrapping_mode);
+void renderer_2D_add_rectangle(Renderer_2D* renderer, vec2 pos, vec2 size, vec3 color, float depth);
+void renderer_2D_add_rect_outline(Renderer_2D* renderer, vec2 pos, vec2 size, vec3 color, float thickness, float depth);
+void renderer_2D_add_line(Renderer_2D* renderer, vec2 start, vec2 end, vec3 color, float thickness, float depth);
+void renderer_2D_add_text_in_box(Renderer_2D* renderer, String* text, float text_height, vec3 color, vec2 pos, vec2 size,
+    Text_Alignment_Horizontal align_h, Text_Alignment_Vertical align_v, Text_Wrapping_Mode wrapping_mode);

@@ -56,7 +56,7 @@ struct Type_Signature
     // Primitve type
     Primitive_Type primitive_type;
     // Function
-    DynamicArray<Type_Signature*> parameter_types;
+    Dynamic_Array<Type_Signature*> parameter_types;
     Type_Signature* return_type;
     // Array or Pointer
     Type_Signature* child_type;
@@ -64,14 +64,14 @@ struct Type_Signature
     int array_element_count;
     // Struct
     int struct_name_handle;
-    DynamicArray<Struct_Member> member_types;
+    Dynamic_Array<Struct_Member> member_types;
 };
 void type_signature_append_to_string(String* string, Type_Signature* signature);
 
 struct Type_System
 {
     Lexer* lexer;
-    DynamicArray<Type_Signature*> types;
+    Dynamic_Array<Type_Signature*> types;
 
     Type_Signature* error_type;
     Type_Signature* bool_type;
@@ -96,7 +96,7 @@ void type_system_reset_all(Type_System* system);
 Type_Signature* type_system_make_pointer(Type_System* system, Type_Signature* child_type);
 Type_Signature* type_system_make_array_unsized(Type_System* system, Type_Signature* element_type);
 Type_Signature* type_system_make_array_sized(Type_System* system, Type_Signature* element_type, int array_element_count);
-Type_Signature* type_system_make_function(Type_System* system, DynamicArray<Type_Signature*> parameter_types, Type_Signature* return_type);
+Type_Signature* type_system_make_function(Type_System* system, Dynamic_Array<Type_Signature*> parameter_types, Type_Signature* return_type);
 void type_system_print(Type_System* system);
 
 
@@ -124,7 +124,7 @@ struct Symbol
 struct Symbol_Table
 {
     Symbol_Table* parent;
-    DynamicArray<Symbol> symbols;
+    Dynamic_Array<Symbol> symbols;
 };
 
 Symbol_Table symbol_table_create(Symbol_Table* parent);
@@ -196,14 +196,14 @@ struct Hardcoded_Function
 
 struct Semantic_Analyser
 {
-    DynamicArray<Symbol_Table*> symbol_tables;
-    DynamicArray<Semantic_Node_Information> semantic_information;
-    DynamicArray<Compiler_Error> errors;
+    Dynamic_Array<Symbol_Table*> symbol_tables;
+    Dynamic_Array<Semantic_Node_Information> semantic_information;
+    Dynamic_Array<Compiler_Error> errors;
     Array<Hardcoded_Function> hardcoded_functions;
 
     // Temporary stuff needed for analysis
     Compiler* compiler;
-    DynamicArray<Struct_Fill_Out> struct_fill_outs;
+    Dynamic_Array<Struct_Fill_Out> struct_fill_outs;
     Type_Signature* function_return_type;
     int loop_depth;
 

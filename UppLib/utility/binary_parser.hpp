@@ -5,7 +5,7 @@
 
 struct BinaryParser
 {
-    DynamicArray<byte> data;
+    Dynamic_Array<byte> data;
     int current_position;
 };
 

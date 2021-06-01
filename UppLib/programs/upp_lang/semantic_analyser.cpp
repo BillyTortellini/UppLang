@@ -282,7 +282,7 @@ void type_system_add_primitives(Type_System* system)
         size_member.offset = 16;
         size_member.type = system->i32_type;
 
-        DynamicArray<Struct_Member> string_members = dynamic_array_create_empty<Struct_Member>(2);
+        Dynamic_Array<Struct_Member> string_members = dynamic_array_create_empty<Struct_Member>(2);
         dynamic_array_push_back(&string_members, character_buffer_member);
         dynamic_array_push_back(&string_members, size_member);
 
@@ -366,7 +366,7 @@ Type_Signature* type_system_make_array_unsized(Type_System* system, Type_Signatu
     return type_system_make_type(system, result);
 }
 
-Type_Signature* type_system_make_function(Type_System* system, DynamicArray<Type_Signature*> parameter_types, Type_Signature* return_type) 
+Type_Signature* type_system_make_function(Type_System* system, Dynamic_Array<Type_Signature*> parameter_types, Type_Signature* return_type) 
 {
     Type_Signature result;
     result.type = Signature_Type::FUNCTION;
@@ -1004,7 +1004,6 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
         if (!result.has_memory_address) {
             semantic_analyser_log_error(analyser, "Cannot get address of expression!", expression->children[0]);
         }
-        bool unused;
         Type_Signature* result_type = type_system_make_pointer(&analyser->compiler->type_system, result.type);
         analyser->semantic_information[expression_index].expression_result_type = result_type;
         return expression_analysis_result_make(result_type, false);
@@ -1496,7 +1495,7 @@ void semantic_analyser_analyse_function_header(Semantic_Analyser* analyser, Symb
     }
 
     AST_Node* parameter_block = &analyser->compiler->parser.nodes[function->children[0]];
-    DynamicArray<Type_Signature*> parameter_types = dynamic_array_create_empty<Type_Signature*>(parameter_block->children.size);
+    Dynamic_Array<Type_Signature*> parameter_types = dynamic_array_create_empty<Type_Signature*>(parameter_block->children.size);
     for (int i = 0; i < parameter_block->children.size; i++) {
         int parameter_index = parameter_block->children[i];
         AST_Node* parameter = &analyser->compiler->parser.nodes[parameter_index];
@@ -1645,7 +1644,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
     for (int i = 0; i < analyser->hardcoded_functions.size; i++)
     {
         Hardcoded_Function_Type type = analyser->hardcoded_functions[i].type;
-        DynamicArray<Type_Signature*> parameter_types = dynamic_array_create_empty<Type_Signature*>(1);
+        Dynamic_Array<Type_Signature*> parameter_types = dynamic_array_create_empty<Type_Signature*>(1);
         Type_Signature* return_type = analyser->compiler->type_system.void_type;
         int name_handle;
         switch (type)

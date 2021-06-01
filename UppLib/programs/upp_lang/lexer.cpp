@@ -540,10 +540,9 @@ void lexer_parse_string(Lexer* lexer, String* code)
                 index++;
             }
 
-            Text_Slice token_slice = text_slice_make(start_pos, text_position_make(line_number, character_pos+1));
+            Text_Slice token_slice = text_slice_make(start_pos, text_position_make(line_number, character_pos));
             if (!terminated_successfull || invalid_escape_found) 
             {
-                token_slice.end.character -= 1;
                 has_errors = true;
                 dynamic_array_push_back(&lexer->tokens, 
                     token_make_with_slice(Token_Type::ERROR_TOKEN, token_attribute_make_empty(), token_slice,
@@ -825,7 +824,7 @@ void lexer_parse_string(Lexer* lexer, String* code)
         }
         dynamic_array_push_back(&lexer->tokens_with_whitespaces, lexer->tokens[i]);
     }
-    DynamicArray<Token> swap = lexer->tokens_with_whitespaces;
+    Dynamic_Array<Token> swap = lexer->tokens_with_whitespaces;
     lexer->tokens_with_whitespaces = lexer->tokens;
     lexer->tokens = swap;
 }

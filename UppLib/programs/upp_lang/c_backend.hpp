@@ -11,7 +11,7 @@ struct C_Generator
     Compiler* compiler;
     Intermediate_Generator* im_generator;
     String output_string;
-    DynamicArray<int> array_index_stack;
+    Dynamic_Array<int> array_index_stack;
     int current_function_index;
 };
 

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "mesh_gpu_data.hpp"
-#include "opengl_state.hpp"
+#include "gpu_buffers.hpp"
+#include "rendering_core.hpp"
 
-Mesh_GPU_Data mesh_utils_create_quad_2D(OpenGLState* state);
-Mesh_GPU_Data mesh_utils_create_cube(OpenGLState* state, vec3 color);
+Mesh_GPU_Buffer mesh_utils_create_quad_2D(Rendering_Core* core);
+Mesh_GPU_Buffer mesh_utils_create_cube(Rendering_Core* core, vec3 color);

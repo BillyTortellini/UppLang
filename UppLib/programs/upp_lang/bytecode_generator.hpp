@@ -203,9 +203,9 @@ struct Function_Call_Location
 struct Bytecode_Generator
 {
     // Result data
-    DynamicArray<Bytecode_Instruction> instructions;
-    DynamicArray<int> function_locations;
-    DynamicArray<u64> constants_u64;
+    Dynamic_Array<Bytecode_Instruction> instructions;
+    Dynamic_Array<int> function_locations;
+    Dynamic_Array<u64> constants_u64;
 
     int global_data_size;
     int entry_point_index;
@@ -213,14 +213,14 @@ struct Bytecode_Generator
 
     // Data required for generation
     Compiler* compiler;
-    DynamicArray<Function_Call_Location> function_calls;
-    DynamicArray<int> break_instructions_to_fill_out;
-    DynamicArray<int> continue_instructions_to_fill_out;
+    Dynamic_Array<Function_Call_Location> function_calls;
+    Dynamic_Array<int> break_instructions_to_fill_out;
+    Dynamic_Array<int> continue_instructions_to_fill_out;
 
-    DynamicArray<int> parameter_stack_offsets;
-    DynamicArray<int> variable_stack_offsets;
-    DynamicArray<int> intermediate_stack_offsets;
-    DynamicArray<int> global_offsets;
+    Dynamic_Array<int> parameter_stack_offsets;
+    Dynamic_Array<int> variable_stack_offsets;
+    Dynamic_Array<int> intermediate_stack_offsets;
+    Dynamic_Array<int> global_offsets;
     int tmp_stack_offset;
 };
 

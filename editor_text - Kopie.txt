@@ -82,7 +82,6 @@ string_test :: () -> void
     
     string_print_characters(4, x);
     print_string(x);
-    print_string("\nIntermediate String Test\n");
     
     string_destroy(*x);
 }
@@ -420,3 +419,31 @@ fib_rec :: (n: int) -> int
     if (n <= 2) return 1;
     return fib_rec(n-1) + fib_rec(n-2);
 }
+
+/*
+Missing binary statements x++; x--; x+=1; x-=1; x/=1; x*=1;
+Short circuit operation on && and ||
+
+Next Features:
+* Casting/Implicit conversions
+* Strings
+* OS-Calls/Calls to libraries (print, new/delete)
+* Bytecode Debugger
+* Backend (LLVM or C or just x64 assembly)
+* Globals
+
+UppLang small improvements:
+* Just highlight relevant stuff on parser errors
+
+Current UppLang features:
+* Expression parsing + evaluation
+* Variable definition/assignment + return
+* Primitive Type System (Int bool float)
+* Scopes
+* If-Else Flow control
+* While loop with break continue
+* Functions with parameters and return types
+* Pointers/Dereferencing + new/delete
+* Arrays
+* Structs
+*/

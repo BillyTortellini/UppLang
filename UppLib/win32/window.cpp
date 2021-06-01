@@ -16,7 +16,7 @@ struct Window
     HWND hwnd;
     HDC hdc;
     HGLRC opengl_context;
-    WindowState state;
+    Window_State state;
     Input input;
     HCURSOR cursor_default;
 
@@ -310,7 +310,7 @@ LRESULT CALLBACK window_message_callback(HWND hwnd, UINT msg_type, WPARAM wparam
         int new_height = HIWORD(lparam);
 
         // Update window state
-        WindowState* state = &window_for_message_callback->state;
+        Window_State* state = &window_for_message_callback->state;
         if (wparam == SIZE_MINIMIZED) { // Handle Minimization
             state->minimized = true;
             Input* input = &window_for_message_callback->input;
@@ -341,7 +341,7 @@ LRESULT CALLBACK window_message_callback(HWND hwnd, UINT msg_type, WPARAM wparam
         return 0;
     }
     case WM_MOVE: {
-        WindowState* state = &window_for_message_callback->state;
+        Window_State* state = &window_for_message_callback->state;
         state->x = (i16)LOWORD(lparam);
         state->y = (i16)HIWORD(lparam);
         return 0;
@@ -962,7 +962,7 @@ void window_set_size(Window* window, int width, int height) {
     }
 }
 
-WindowState* window_get_window_state(Window* window) {
+Window_State* window_get_window_state(Window* window) {
     return &window->state;
 }
 

@@ -1,9 +1,9 @@
 #version 430
 
-layout (location = 1) in vec2 attribute_position;
-layout (location = 2) in vec2 texture_coordinates;
-layout (location = 3) in float pixel_size;
-layout (location = 4) in vec3 color;
+layout (location = 1) in vec2 a_position;
+layout (location = 2) in vec2 a_uvs;
+layout (location = 9) in vec3 a_color;
+layout (location = 11) in float a_pixel_size;
 
 out vec2 uv_coords;
 out float pixel_ratio;
@@ -11,8 +11,8 @@ out vec3 frag_color;
 
 void main() 
 {
-	gl_Position = vec4(attribute_position, 0, 1);
-	uv_coords = texture_coordinates;
-	pixel_ratio = pixel_size;
-	frag_color = color;
+	gl_Position = vec4(a_position, 0, 1);
+	uv_coords = a_uvs;
+	pixel_ratio = a_pixel_size;
+	frag_color = a_color;
 }

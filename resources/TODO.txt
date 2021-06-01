@@ -1,9 +1,33 @@
 Current Work Item:
 ------------------
- * Binary Expression Instructions should just have a primitive type on which it operates, so I dont need so many cases
- * Maybe bytecode debugger, than I can work a little on the GUI, which i could also use for searching
+ * Window_size changed listener, in text_renderer, gui, renderer_2d, text_editor, code_editor
+ * Framebuffers and Renderpasses need Core-Implementation
+ * CPU Mesh creator with attributes in AoS style
 
+ * Rendering Overhaul, think about shaders, 2D-Rendering, Framebuffers, Images, GUI
+ * 2D-Rendering with:
+    - Rectangles
+    - Circles
+    - Lines
+    - Curves
+    - Triangles, maybe arbitrary polygons
+    - Text
 
+Ideas for change:
+    * Renderstate and openglstate
+    * Uniform buffer for shaders, which holds the interesting information
+    * Renderpasses
+    * Render_Resource_Manager (Meshes, Textures, Framebuffers, Renderpasses, Shaders)
+    * Mesh offline representation
+    * Instead of GLEnum, i should have the things that actually do the things i want
+    * Shaderprogram should remember which uniforms are set, and which arent
+
+There should be one Rendering_Basics struct or something, with:
+    OpenglState      --> Remembers current state, reduces opengl state switching burden
+    FileListener     --> since it is required for shader creation
+    Resource_Manager --> just because it is nice
+    WindowState      --> Dpi, window width, window height, aspect ratio
+    MainRenderPass   --> So I can add additional subpasses to it
 
 Long-Term Goals:
 ----------------
@@ -25,6 +49,7 @@ More Language features to implement:
  * Code-Polymorphism (Template/Generic System)
 
    ------- These features are for convenience, but they are not top priority ------
+ * Using statement
  * Tagged Unions
  * Location-Information (Filename, line_number...)
  * Any-Type and Type access (Varargs in this language, maybe use this for printf)
@@ -44,18 +69,18 @@ More Language features to implement:
 
 Editor features to implement:
 -----------------------------
- * Delete with numbers were correct, but position with a movement up or down is actually a line delete
  * Limit 'f' 'F' 't' 'T' search range, I think jumping with those should not be possible
- * Autocompletion using current symbol table
- * Jump to definition with string search (Maybe Ctrl-F)
  * Search and Replace
  * CTRL-R for replace word --> I would need Shift-R, since control R is already Redo
  * Visual Mode/Blockmode (Multicursor)/Visual Line
+ * Multi-Window support (Multiple Tabs/Vertical or Horizontal splits)
+ * Autocompletion using current symbol table
+ * Jump to definition with string search (Maybe Ctrl-F)
  * Undo/Redo Tree History
  * Command recording (@ stuff with vim, altough this could maybe be done better)
  * Tab for indentation/Ctrl-Tab for no indentation
- * Formating with = should remove unneccessary whitespaces/add them where needed, and should ignore comments
- * Multi-Window support (Multiple Tabs/Vertical or Horizontal splits)
+ * Formating with = should remove unneccessary whitespaces/add them where needed, and should ignore comments.
+    Actually, this should not be hard even without lexer, since we can count the parenthesis, spaces and other stuff...
  * UTF-8 Support?
 
 Editor-Bugs:
@@ -63,6 +88,12 @@ Editor-Bugs:
  * Alt-Gr spamming still cancels commands (win32 nonsense)
  * Undo-Redo cursor position still sucks a little (Hint: Save positions after/before command)
  * Non ASCII chars destroy some motions (Currently disabled) (Program crashes)
+
+ Vision for the Programming Language:
+ ------------------------------------
+  * Compile-Time code evaluation
+  * Code analysis in tandum with Tag-System
+  * Code-Visualizations in Editor
 
 Ideas that need to be tested:
 -----------------------------

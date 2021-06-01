@@ -49,3 +49,4 @@ Compiler compiler_create();
 void compiler_destroy(Compiler* compiler);
 void compiler_compile(Compiler* compiler, String* source_code, bool generate_code);
 void compiler_execute(Compiler* compiler);
+Text_Slice token_range_to_text_slice(Token_Range range, Compiler* compiler);

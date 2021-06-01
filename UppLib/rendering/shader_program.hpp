@@ -6,22 +6,61 @@
 #include "../datastructures/array.hpp"
 #include "../datastructures/dynamic_array.hpp"
 #include "../datastructures/string.hpp"
-#include "../utility/file_listener.hpp"
 #include "../rendering/opengl_function_pointers.hpp"
 
-/*
-    Shader program does the following stuff:
-     * File listening and hot reloading
-     * Handling
-        * Attrib locations, types and names
-        * Uniform locations, types and names
-*/
+struct Rendering_Core;
+struct WatchedFile;
+struct File_Listener;
+
+struct Shader_Variable_Information
+{
+    GLint location;
+    GLenum type;
+    GLsizei size; // Size of array, if variable is array, else 1
+    String name_handle;
+};
+
+struct Shader_Program
+{
+    GLuint program_id;
+    Array<const char*> shader_filepaths;
+    Array<WatchedFile*> watched_files;
+    File_Listener* file_listener;
+
+    Dynamic_Array<Shader_Variable_Information> uniform_informations;
+    Dynamic_Array<Shader_Variable_Information> attribute_informations;
+};
+
+// For shader_program_create to work, the files need to exist, the shader does not need to compile
+Shader_Program* shader_program_create(Rendering_Core* core, const char* filepath);
+Shader_Program* shader_program_create_from_multiple_sources(Rendering_Core* core, std::initializer_list<const char*> shader_filepaths);
+void shader_program_destroy(Shader_Program* program);
+
+struct vec2;
+struct vec3;
+struct vec4;
+struct mat2;
+struct mat3;
+struct mat4;
+bool shader_program_set_uniform(Shader_Program* program, Rendering_Core* core, const char* name_handle, int value);
+bool shader_program_set_uniform(Shader_Program* program, Rendering_Core* core, const char* name_handle, u32 value);
+bool shader_program_set_uniform(Shader_Program* program, Rendering_Core* core, const char* name_handle, float value);
+bool shader_program_set_uniform(Shader_Program* program, Rendering_Core* core, const char* name_handle, const vec2& value);
+bool shader_program_set_uniform(Shader_Program* program, Rendering_Core* core, const char* name_handle, const vec3& value);
+bool shader_program_set_uniform(Shader_Program* program, Rendering_Core* core, const char* name_handle, const vec4& value);
+bool shader_program_set_uniform(Shader_Program* program, Rendering_Core* core, const char* name_handle, const mat2& value);
+bool shader_program_set_uniform(Shader_Program* program, Rendering_Core* core, const char* name_handle, const mat3& value);
+bool shader_program_set_uniform(Shader_Program* program, Rendering_Core* core, const char* name_handle, const mat4& value);
+
+void shader_program_bind(Shader_Program* program, Rendering_Core* core);
+void shader_program_print_variable_information(Shader_Program* program);
+Shader_Variable_Information* shader_program_find_shader_variable_information_by_name(Shader_Program* program, const char* name_handle);
+
 
 /*
 -------------------------------------------------------------------------------
 --- HOW TO DRAW SOMETHING IN OPENGL AND HOW I MAY WRAP IT IN UTIL FUNCTIONS ---
 -------------------------------------------------------------------------------
-
     -> Create shader_program
          * From Shader_files (color.vert, color.frag)
            Set input locations (1, 2 or 3 for a_position, a_uv, a_color, a_normal, a_tangent, a_bitangent)
@@ -82,68 +121,3 @@
     Vertices
 */
 
-namespace DefaultVertexAttributeLocation 
-{
-    enum ENUM
-    {
-        POSITION_3D = 0,
-        POSITION_2D = 1,
-        TEXTURE_COORDINATE_2D = 2,
-        NORMAL = 3,
-        COLOR3 = 4,
-        COLOR4 = 5,
-        TANGENT = 6,
-        BITANGENT = 7,
-
-        MINIMUM_OPENGL_ATTRIBUTE_COUNT = 16,
-    };
-}
-
-struct ShaderVariableInformation
-{
-    GLint location;
-    GLenum type;
-    GLsizei size; // Size of array, if variable is array, else 1
-    String name_handle;
-};
-
-struct ShaderProgram
-{
-    GLuint program_id;
-    Array<const char*> shader_filepaths;
-    Array<WatchedFile*> watched_files;
-    FileListener* file_listener;
-
-    DynamicArray<ShaderVariableInformation> uniform_informations;
-    DynamicArray<ShaderVariableInformation> attribute_informations;
-};
-
-struct ShaderProgram;
-struct OpenGLState;
-
-// For shader_program_create to work, the files need to exist, the shader does not need to compile
-// Hot reloading is done by using the file_listeners interface to search for updates
-Optional<ShaderProgram*> shader_program_create(FileListener* file_listener, std::initializer_list<const char*> shader_filepaths);
-Optional<ShaderProgram*> shader_program_create(FileListener* file_listener, const char* filepath);
-void shader_program_destroy(ShaderProgram* program);
-void shader_program_destroy(Optional<ShaderProgram*> program);
-
-void shader_program_use(ShaderProgram* program, OpenGLState* state);
-void shader_program_print_variable_information(ShaderProgram* program);
-ShaderVariableInformation* shader_program_find_shader_variable_information_by_name(ShaderProgram* program, const char* name_handle);
-bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name_handle, int value);
-bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name_handle, u32 value);
-bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name_handle, float value);
-
-struct vec2;
-struct vec3;
-struct vec4;
-struct mat2;
-struct mat3;
-struct mat4;
-bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name_handle, const vec2& value);
-bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name_handle, const vec3& value);
-bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name_handle, const vec4& value);
-bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name_handle, const mat2& value);
-bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name_handle, const mat3& value);
-bool shader_program_set_uniform(ShaderProgram* program, OpenGLState* state, const char* name_handle, const mat4& value);

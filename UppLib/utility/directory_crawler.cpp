@@ -69,7 +69,7 @@ void directory_crawler_print_all_files(DirectoryCrawler* crawler)
     
 Array<FileInfo> directory_crawler_create_file_infos(DirectoryCrawler* crawler) 
 {
-    DynamicArray<FileInfo> file_infos = dynamic_array_create_empty<FileInfo>(8);
+    Dynamic_Array<FileInfo> file_infos = dynamic_array_create_empty<FileInfo>(8);
 
     HANDLE search_handle;
     WIN32_FIND_DATA found_file_description;
@@ -101,7 +101,7 @@ Array<FileInfo> directory_crawler_create_file_infos(DirectoryCrawler* crawler)
     }
     FindClose(search_handle);
 
-    return dynamic_array_to_array<FileInfo>(&file_infos);
+    return dynamic_array_as_array<FileInfo>(&file_infos);
 }
 
 void directory_crawler_destroy_file_infos(Array<FileInfo>* file_infos) {

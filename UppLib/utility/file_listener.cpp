@@ -15,14 +15,14 @@ struct WatchedFile
     void* userdata;
 };
 
-struct FileListener {
-    DynamicArray<WatchedFile*> files;
+struct File_Listener {
+    Dynamic_Array<WatchedFile*> files;
 };
 
 WatchedFile* watched_file_create(const char* filepath, file_listener_callback_func callback, void* userdata) 
 {
     Optional<u64> last_access = file_io_get_last_write_access_time(filepath);
-    if (last_access.available = false) {
+    if (last_access.available == false) {
         return nullptr;
     }
 
@@ -40,13 +40,13 @@ void watched_file_destroy(WatchedFile* watched_file) {
     delete watched_file;
 }
 
-FileListener* file_listener_create() {
-    FileListener* result = new FileListener();
+File_Listener* file_listener_create() {
+    File_Listener* result = new File_Listener();
     result->files = dynamic_array_create_empty<WatchedFile*>(8);
     return result;
 }
 
-void file_listener_destroy(FileListener* listener) 
+void file_listener_destroy(File_Listener* listener) 
 {
     for (int i = 0; i < listener->files.size; i++) {
         WatchedFile* file = listener->files.data[i];
@@ -55,7 +55,7 @@ void file_listener_destroy(FileListener* listener)
     dynamic_array_destroy<WatchedFile*>(&listener->files);
 }
 
-WatchedFile* file_listener_add_file(FileListener* listener, const char* filepath, file_listener_callback_func callback, void* userdata) 
+WatchedFile* file_listener_add_file(File_Listener* listener, const char* filepath, file_listener_callback_func callback, void* userdata) 
 {
     // Check if file exists/if we can get last access time
     WatchedFile* watched_file = watched_file_create(filepath, callback, userdata);
@@ -67,7 +67,7 @@ WatchedFile* file_listener_add_file(FileListener* listener, const char* filepath
     return watched_file;
 }
 
-bool file_listener_remove_file(FileListener* listener, WatchedFile* file)
+bool file_listener_remove_file(File_Listener* listener, WatchedFile* file)
 {
     for (int i = 0; i < listener->files.size; i++) {
         if (listener->files.data[i] == file) {
@@ -79,7 +79,7 @@ bool file_listener_remove_file(FileListener* listener, WatchedFile* file)
     return false;
 }
 
-void file_listener_check_if_files_changed(FileListener* listener)
+void file_listener_check_if_files_changed(File_Listener* listener)
 {
     for (int i = 0; i < listener->files.size; i++) 
     {

@@ -45,11 +45,11 @@ Array<T> array_create_copy(T* data, int size) {
 }
 
 template<typename T>
-struct DynamicArray;
+struct Dynamic_Array;
 
 template<typename T>
-DynamicArray<T> array_to_dynamic_array(Array<T>* value) {
-    DynamicArray<T> result;
+Dynamic_Array<T> array_to_dynamic_array(Array<T>* value) {
+    Dynamic_Array<T> result;
     result.data = value->data;
     result.size = value->size;
     result.capacity = value->size;
@@ -66,13 +66,13 @@ Array<T> array_create_static(T* data, int size) {
 }
 
 template<typename T>
-Array<byte> array_as_bytes(Array<T>* value) {
-    return array_create_static<byte>((byte*)value->data, value->size * sizeof(T));
+Array<byte> array_create_static_as_bytes(T* data, int size) {
+    return array_as_bytes(&array_create_static(data, size));
 }
 
 template<typename T>
-Array<byte> array_as_bytes_static(T* data, int size) {
-    return array_as_bytes(&array_create_static(data, size));
+Array<byte> array_as_bytes(Array<T>* value) {
+    return array_create_static<byte>((byte*)value->data, value->size * sizeof(T));
 }
 
 template<typename T>

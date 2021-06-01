@@ -5,7 +5,7 @@
 struct String;
 
 struct String_Pool {
-    DynamicArray<String*> pool;
+    Dynamic_Array<String*> pool;
     int in_use_count;
     int expected_capacity;
 };

@@ -99,7 +99,7 @@ struct Intermediate_Instruction
     int false_branch_instruction_end_exclusive;
     // Function call
     int intermediate_function_index;
-    DynamicArray<Data_Access> arguments;
+    Dynamic_Array<Data_Access> arguments;
     Hardcoded_Function_Type hardcoded_function_type;
     // Return thing
     bool return_has_value;
@@ -127,12 +127,12 @@ struct Intermediate_Function
 {
     int name_handle;
     Type_Signature* function_type;
-    DynamicArray<Intermediate_Variable> local_variables;
-    DynamicArray<Type_Signature*> intermediate_results;
-    DynamicArray<Intermediate_Instruction> instructions;
+    Dynamic_Array<Intermediate_Variable> local_variables;
+    Dynamic_Array<Type_Signature*> intermediate_results;
+    Dynamic_Array<Intermediate_Instruction> instructions;
     // I think the next two arent in use right now
-    DynamicArray<int> instruction_to_ast_node_mapping;
-    DynamicArray<int> register_to_ast_mapping;
+    Dynamic_Array<int> instruction_to_ast_node_mapping;
+    Dynamic_Array<int> register_to_ast_mapping;
 };
 
 struct Name_Mapping
@@ -145,14 +145,14 @@ struct Name_Mapping
 struct Intermediate_Generator
 {
     int main_function_index;
-    DynamicArray<Intermediate_Function> functions;
-    DynamicArray<Intermediate_Variable> global_variables;
-    DynamicArray<int> function_to_ast_node_mapping;
+    Dynamic_Array<Intermediate_Function> functions;
+    Dynamic_Array<Intermediate_Variable> global_variables;
+    Dynamic_Array<int> function_to_ast_node_mapping;
 
     // Temporary data for generation
     Compiler* compiler;
     int current_function_index;
-    DynamicArray<Name_Mapping> name_mappings;
+    Dynamic_Array<Name_Mapping> name_mappings;
 };
 
 Intermediate_Generator intermediate_generator_create();
