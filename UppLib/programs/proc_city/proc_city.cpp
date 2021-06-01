@@ -1474,18 +1474,19 @@ void proc_city_main()
     SCOPE_EXIT(rendering_core_destroy(&core));
 
     Input* input = window_get_input(window);
-    Camera_3D camera = camera_3d_make(window_state->width, window_state->height, math_degree_to_radians(90.0f), 0.1f, 1000.0f);
+    Camera_3D* camera = camera_3D_create(&core, math_degree_to_radians(90.0f), 0.1f, 1000.0f);
+    SCOPE_EXIT(camera_3D_destroy(camera, &core));
     Camera_Controller_Arcball controller = camera_controller_arcball_make(vec3(0.0f), 1.0f);
 
     GPU_Buffer camera_uniform_buffer = gpu_buffer_create_empty(sizeof(Camera_3D_Uniform_Data), GPU_Buffer_Type::UNIFORM_BUFFER, GPU_Buffer_Usage::DYNAMIC);
     gpu_buffer_bind_indexed(&camera_uniform_buffer, 0);
     SCOPE_EXIT(gpu_buffer_destroy(&camera_uniform_buffer));
 
-    Text_Renderer* text_renderer = text_renderer_create_from_font_atlas_file(&core, "resources/fonts/glyph_atlas.atlas", window_state->width, window_state->height);
-    SCOPE_EXIT(text_renderer_destroy(text_renderer));
-    Renderer_2D renderer_2d = renderer_2D_create(&core, text_renderer, window_state->width, window_state->height);
-    SCOPE_EXIT(renderer_2d_destroy(&renderer_2d));
-    GUI gui = gui_create(&renderer_2d, window_state, input);
+    Text_Renderer* text_renderer = text_renderer_create_from_font_atlas_file(&core, "resources/fonts/glyph_atlas.atlas");
+    SCOPE_EXIT(text_renderer_destroy(text_renderer, &core));
+    Renderer_2D* renderer_2D = renderer_2D_create(&core, text_renderer);
+    SCOPE_EXIT(renderer_2D_destroy(renderer_2D, &core));
+    GUI gui = gui_create(renderer_2D, input);
     SCOPE_EXIT(gui_destroy(&gui));
 
     glViewport(0, 0, window_state->width, window_state->height);
@@ -1529,19 +1530,16 @@ void proc_city_main()
         // Update
         input_reset(input);
         window_handle_messages(window, false);
-        rendering_core_prepare_frame(&core, (float)now);
-        gui_update(&gui, input, window_state);
+        rendering_core_prepare_frame(&core, camera, (float)now);
+        gui_update(&gui, input, window_state->width, window_state->height);
 
         if (input->key_down[KEY_CODE::ESCAPE]) {
             window_close(window);
         }
         if (input->client_area_resized) {
-            glViewport(0, 0, window_state->width, window_state->height);
-            camera_3d_update_projection_window_size(&camera, window_state->width, window_state->height);
-            text_renderer_update_window_size(text_renderer, window_state->width, window_state->height);
-            renderer_2D_update_window_size(&renderer_2d, window_state->width, window_state->height);
+            rendering_core_window_size_changed(&core, window_state->width, window_state->height);
         }
-        camera_controller_arcball_update(&controller, &camera, input);
+        camera_controller_arcball_update(&controller, camera, input, window_state->width, window_state->height);
 
         static float city_size = 3.0f;
         bool changed = gui_slider(&gui, gui_position_make_on_window_border(&gui, vec2(0.5f, 0.1f), Anchor_2D::TOP_LEFT), &city_size, 3.0f, 20.0f);
@@ -1554,19 +1552,19 @@ void proc_city_main()
         Pipeline_State pipeline_state = pipeline_state_make_default();
         pipeline_state.depth_state.test_type = Depth_Test_Type::TEST_DEPTH;
         pipeline_state.blending_state.blending_enabled = false;
-        rendering_core_updated_pipeline_state(&core, pipeline_state);
+        rendering_core_update_pipeline_state(&core, pipeline_state);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        Camera_3D_Uniform_Data d = camera_3d_uniform_data_make(&camera, (float)now);
+        Camera_3D_Uniform_Data d = camera_3d_uniform_data_make(camera, (float)now);
         gpu_buffer_update(&camera_uniform_buffer, array_create_static_as_bytes(&d, 1)); // Update camera data
 
         // Draw City
-        polygon_2d_draw(&polygon_random, &renderer_2d, vec2(0.0f), 3.0f);
+        polygon_2d_draw(&polygon_random, renderer_2D, vec2(0.0f), 3.0f);
         string_reset(&string);
         string_append_formated(&string, "%d", polygon_random.positions.size);
         gui_label(&gui, gui_position_make(vec2(-0.8f, 0.0f), vec2(0.5f, 0.1f)), string.characters);
         if (gui_button(&gui, gui_position_make_on_window_border(&gui, vec2(0.5f, 0.2f), Anchor_2D::TOP_CENTER), "Random poly")) {
             polygon_2d_fill_random_polygon(&square, 3.0f);
-            polygon_2d_draw(&square, &renderer_2d, vec2(0.0f, 0.0f), 3.0f);
+            polygon_2d_draw(&square, renderer_2D, vec2(0.0f, 0.0f), 3.0f);
             gui_render(&gui, &core);
             window_swap_buffers(window);
 

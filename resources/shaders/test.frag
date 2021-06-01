@@ -1,9 +1,30 @@
 #version 430
 
-uniform float time;
-uniform float aspect_ratio;
-uniform mat4 view_matrix;
-uniform vec3 camera_position;
+layout (std140, binding = 0) uniform Render_Information
+{
+    float viewport_width;
+    float viewport_height;
+    float window_width;
+    float window_height;
+    float monitor_dpi;
+    float current_time_in_seconds;
+} u_render_info;
+
+layout (std140, binding = 1) uniform Camera
+{
+    mat4 view;
+    mat4 inverse_view;
+    mat4 projection;
+    mat4 view_projection;
+
+    vec4 camera_position; // Packed, w = 1.0
+    vec4 camera_direction; // Packed, w = 1.0
+    vec4 camera_up;        // Packed w = 1.0
+    float near_distance;
+    float far_distance;
+    float field_of_view_x;
+    float field_of_view_y;
+} u_camera;
 
 in vec2 uv_coords;
 out vec4 output_color;
@@ -80,13 +101,14 @@ float march_ray(vec3 origin, vec3 direction)
 void main() 
 {
 	vec2 pos = uv_coords * 2.0 - 1.0;
+	float aspect_ratio = u_render_info.viewport_width / u_render_info.viewport_height;
 	pos.x *= aspect_ratio;
 	float inside = smoothstep(0.99, 0.98, length(pos));
 
 	// Calculate ray origin
-	vec3 origin = camera_position;
-	vec3 view_dir = transpose(mat3(view_matrix)) * normalize(vec3(0.0, 0.0, -1.0) + vec3(pos.x, pos.y, 0.0));
-	//vec3 origin = view_projection * vec3(0);
+	vec3 origin = u_camera.camera_position.xyz;
+	mat4 view = mat4(1.0);
+	vec3 view_dir = transpose(mat3(u_camera.view)) * normalize(vec3(0.0, 0.0, -1.0) + vec3(pos.x, pos.y, 0.0));
 
 	float t = march_ray(origin, view_dir);
 	vec3 red = vec3(1.0, 0.0, 0.0);

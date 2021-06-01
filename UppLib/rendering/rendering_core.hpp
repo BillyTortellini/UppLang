@@ -154,9 +154,14 @@ struct Render_Information
 {
     float viewport_width;
     float viewport_height;
+    float window_width;
+    float window_height;
     float monitor_dpi;
     float current_time_in_seconds;
 };
+
+struct Rendering_Core;
+typedef void(*window_size_changed_callback)(void* userdata, Rendering_Core* core);
 
 struct Rendering_Core
 {
@@ -166,13 +171,18 @@ struct Rendering_Core
     Render_Information render_information;
     GPU_Buffer ubo_render_information; // Binding 0
     GPU_Buffer ubo_camera_data;        // Binding 1
+    Dynamic_Array<window_size_changed_callback> window_size_changed_listeners;
+    Dynamic_Array<void*> window_size_changed_listeners_userdata;
 };
 
-Rendering_Core rendering_core_create(int viewport_width, int viewport_height, float monitor_dpi);
+Rendering_Core rendering_core_create(int window_width, int window_height, float monitor_dpi);
 void rendering_core_destroy(Rendering_Core* core);
 
-void rendering_core_prepare_frame(Rendering_Core* core, float current_time);
+void rendering_core_window_size_changed(Rendering_Core* core, int window_width, int window_height);
+void rendering_core_add_window_size_listener(Rendering_Core* core, window_size_changed_callback callback, void* userdata);
+void rendering_core_remove_window_size_listener(Rendering_Core* core, void* userdata);
+void rendering_core_prepare_frame(Rendering_Core* core, Camera_3D* camera, float current_time);
 void rendering_core_update_viewport(Rendering_Core* core, int width, int height);
 void rendering_core_update_3D_Camera_UBO(Rendering_Core* core, Camera_3D* camera);
-void rendering_core_updated_pipeline_state(Rendering_Core* core, Pipeline_State new_state);
+void rendering_core_update_pipeline_state(Rendering_Core* core, Pipeline_State new_state);
 

@@ -12,9 +12,9 @@ enum class Anchor_2D
 
 // Forward Declarations
 struct Input;
-struct Window_State;
 struct Renderer_2D;
 struct Rendering_Core;
+struct Window_State;
 
 struct GUI
 {
@@ -35,13 +35,12 @@ struct GUI
     float current_depth = 0.99f;
 
     Input* input;
-    Window_State* window_state;
     Renderer_2D* renderer_2d;
 };
 
-GUI gui_create(Renderer_2D* renderer_2d, Window_State* window_state, Input* input);
+GUI gui_create(Renderer_2D* renderer_2d, Input* input);
 void gui_destroy(GUI* gui);
-void gui_update(GUI* gui, Input* input, Window_State* window_state);
+void gui_update(GUI* gui, Input* input, int window_width, int window_height);
 void gui_render(GUI* gui, Rendering_Core* core);
 float gui_next_depth(GUI* gui);
 void gui_set_focus(GUI* gui, vec2 pos, vec2 size);

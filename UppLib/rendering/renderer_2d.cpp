@@ -3,35 +3,36 @@
 #include "shader_program.hpp"
 #include "text_renderer.hpp"
 
-void renderer_2D_update_window_size(Renderer_2D* renderer, int window_width, int window_height) 
+void renderer_2D_update_window_size(void* userdata, Rendering_Core* core) 
 {
+    Renderer_2D* renderer = (Renderer_2D*) userdata;
     int smallest_dim = 0;
     vec2& scaling_factor = renderer->scaling_factor;
-    if (window_width > window_height) {
-        scaling_factor.x = (float)window_height / window_width;
+    if (core->render_information.window_width > core->render_information.window_height) {
+        scaling_factor.x = (float)core->render_information.window_height / core->render_information.window_width;
         scaling_factor.y = 1.0f;
-        smallest_dim = window_height;
+        smallest_dim = core->render_information.window_height;
     }
     else {
-        scaling_factor.y = (float)window_width / window_height;
+        scaling_factor.y = (float)core->render_information.window_width / core->render_information.window_height;
         scaling_factor.x = 1.0f;
-        smallest_dim = window_width;
+        smallest_dim = core->render_information.window_width;
     }
     renderer->to_pixel_scaling = 2.0f / (float)smallest_dim;
 }
 
-Renderer_2D renderer_2D_create(Rendering_Core* core, Text_Renderer* text_renderer, int window_width, int window_height)
+Renderer_2D* renderer_2D_create(Rendering_Core* core, Text_Renderer* text_renderer)
 {
-    Renderer_2D result;
-    result.text_renderer = text_renderer;
-    result.geometry_data = dynamic_array_create_empty<Geometry_2D_Vertex>(64);
-    result.index_data = dynamic_array_create_empty<uint32>(64);
-    result.shader_2d = shader_program_create(core, "resources/shaders/geometry_2d.glsl");
+    Renderer_2D* result = new Renderer_2D();
+    result->text_renderer = text_renderer;
+    result->geometry_data = dynamic_array_create_empty<Geometry_2D_Vertex>(64);
+    result->index_data = dynamic_array_create_empty<uint32>(64);
+    result->shader_2d = shader_program_create(core, "resources/shaders/geometry_2d.glsl");
     Vertex_Attribute attributes[] = {
         vertex_attribute_make(Vertex_Attribute_Type::POSITION_3D),
         vertex_attribute_make(Vertex_Attribute_Type::COLOR3),
     };
-    result.geometry = mesh_gpu_buffer_create_with_single_vertex_buffer(
+    result->geometry = mesh_gpu_buffer_create_with_single_vertex_buffer(
         core,
         gpu_buffer_create_empty(sizeof(Geometry_2D_Vertex) * 128, GPU_Buffer_Type::VERTEX_BUFFER, GPU_Buffer_Usage::DYNAMIC),
         array_create_static(attributes, 2),
@@ -39,22 +40,25 @@ Renderer_2D renderer_2D_create(Rendering_Core* core, Text_Renderer* text_rendere
         Mesh_Topology::TRIANGLES,
         0
     );
-    result.string_buffer = string_create_empty(256);
-    renderer_2D_update_window_size(&result, window_width, window_height);
-    result.pipeline_state = pipeline_state_make_default();
-    result.pipeline_state.blending_state.blending_enabled = true;
-    result.pipeline_state.depth_state.test_type = Depth_Test_Type::TEST_DEPTH;
-    result.pipeline_state.culling_state.culling_enabled = true;
+    result->string_buffer = string_create_empty(256);
+    renderer_2D_update_window_size(&result, core);
+    result->pipeline_state = pipeline_state_make_default();
+    result->pipeline_state.blending_state.blending_enabled = true;
+    result->pipeline_state.depth_state.test_type = Depth_Test_Type::TEST_DEPTH;
+    result->pipeline_state.culling_state.culling_enabled = true;
+    rendering_core_add_window_size_listener(core, &renderer_2D_update_window_size, result);
     return result;
 }
 
-void renderer_2d_destroy(Renderer_2D* renderer)
+void renderer_2D_destroy(Renderer_2D* renderer, Rendering_Core* core)
 {
+    rendering_core_remove_window_size_listener(core, renderer);
     dynamic_array_destroy(&renderer->geometry_data);
     dynamic_array_destroy(&renderer->index_data);
     shader_program_destroy(renderer->shader_2d);
     mesh_gpu_buffer_destroy(&renderer->geometry);
     string_destroy(&renderer->string_buffer);
+    delete renderer;
 }
 
 Geometry_2D_Vertex geometry_2d_vertex_make(vec3 pos, vec3 color) {
@@ -67,7 +71,7 @@ Geometry_2D_Vertex geometry_2d_vertex_make(vec3 pos, vec3 color) {
 void renderer_2D_render(Renderer_2D* renderer, Rendering_Core* core)
 {
     // Set state
-    rendering_core_updated_pipeline_state(core, renderer->pipeline_state);
+    rendering_core_update_pipeline_state(core, renderer->pipeline_state);
     glClear(GL_DEPTH_BUFFER_BIT);
     // Upload data
     gpu_buffer_update(&renderer->geometry.vertex_buffers[0].gpu_buffer, array_as_bytes(&dynamic_array_as_array(&renderer->geometry_data)));

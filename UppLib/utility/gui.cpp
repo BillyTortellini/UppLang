@@ -25,13 +25,12 @@ vec2 anchor_to_direction(Anchor_2D anchor)
     return vec2(0.0f);
 }
 
-GUI gui_create(Renderer_2D* renderer_2d, Window_State* window_state, Input* input)
+GUI gui_create(Renderer_2D* renderer_2d, Input* input)
 {
     GUI result;
     result.element_in_focus = false;
     result.draw_in_focus = false;
 
-    result.window_state = window_state;
     result.renderer_2d = renderer_2d;
     result.input = input;
 
@@ -49,13 +48,13 @@ void gui_destroy(GUI* gui)
     string_destroy(&gui->numeric_input_buffer);
 }
 
-void gui_update(GUI* gui, Input* input, Window_State* window_state)
+void gui_update(GUI* gui, Input* input, int window_width, int window_height)
 {
     // Update mouse information
     gui->mouse_pos_last_frame = gui->mouse_pos;
     gui->mouse_down_last_frame = gui->mouse_down_this_frame;
     gui->mouse_down_this_frame = input->mouse_down[MOUSE_KEY_CODE::LEFT];
-    gui->mouse_pos = vec2(input->mouse_x / (float)window_state->width, input->mouse_y / (float)window_state->height) * 2 - vec2(1);
+    gui->mouse_pos = vec2(input->mouse_x / (float)window_width, input->mouse_y / (float)window_height) * 2 - vec2(1);
     gui->mouse_pos.y *= -1;
     gui->mouse_pos = gui->mouse_pos / gui->renderer_2d->scaling_factor;
     gui->current_depth = 0.99f;

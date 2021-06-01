@@ -188,6 +188,6 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
     }
 }
 
-void code_editor_render(Code_Editor* editor, Rendering_Core* core, int width, int height, int dpi, BoundingBox2 editor_box, double time) {
-    text_editor_render(editor->text_editor, core, width, height, dpi, editor_box, time);
+void code_editor_render(Code_Editor* editor, Rendering_Core* core, BoundingBox2 editor_box) {
+    text_editor_render(editor->text_editor, core, editor_box);
 }

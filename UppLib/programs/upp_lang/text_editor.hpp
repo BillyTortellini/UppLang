@@ -212,7 +212,7 @@ void text_editor_destroy(Text_Editor* editor);
 
 void text_editor_handle_key_message(Text_Editor* editor, Key_Message* message);
 void text_editor_update(Text_Editor* editor, Input* input, double time);
-void text_editor_render(Text_Editor* editor, Rendering_Core* core, int width, int height, int dpi, BoundingBox2 editor_box, double time);
+void text_editor_render(Text_Editor* editor, Rendering_Core* core, BoundingBox2 editor_box);
 
 void text_editor_add_highlight(Text_Editor* editor, Text_Highlight highlight, int line_number);
 void text_editor_add_highlight_from_slice(Text_Editor* editor, Text_Slice slice, vec3 text_color, vec4 background_color);

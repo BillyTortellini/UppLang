@@ -147,7 +147,7 @@ void pipeline_state_set_unconditional(Pipeline_State* state)
     glPolygonMode(GL_FRONT_AND_BACK, (GLenum)state->polygon_filling_mode);
 }
 
-void rendering_core_updated_pipeline_state(Rendering_Core* core, Pipeline_State new_state)
+void rendering_core_update_pipeline_state(Rendering_Core* core, Pipeline_State new_state)
 {
     if (core->pipeline_state.blending_state.blending_enabled != new_state.blending_state.blending_enabled)
     {
@@ -232,29 +232,41 @@ void rendering_core_updated_pipeline_state(Rendering_Core* core, Pipeline_State 
     core->pipeline_state = new_state;
 }
 
-Render_Information render_information_make(int render_target_width, int render_target_height, float monitor_dpi, float current_time)
+Render_Information render_information_make(int viewport_width, int viewport_height, int window_width, int window_height, float monitor_dpi, float current_time)
 {
     Render_Information info;
-    info.viewport_width = (float)render_target_width;
-    info.viewport_height = (float)render_target_height;
+    info.viewport_width = (float)viewport_width;
+    info.viewport_height = (float)viewport_height;
+    info.window_width = window_width;
+    info.window_height = window_height;
     info.monitor_dpi = monitor_dpi;
     info.current_time_in_seconds = current_time;
     return info;
 }
 
-Rendering_Core rendering_core_create(int viewport_width, int viewport_height, float monitor_dpi)
+Rendering_Core rendering_core_create(int window_width, int window_height, float monitor_dpi)
 {
     Rendering_Core result;
     result.pipeline_state = pipeline_state_make_default();
     pipeline_state_set_unconditional(&result.pipeline_state);
     result.file_listener = file_listener_create();
     result.opengl_state = opengl_state_create();
-    result.render_information = render_information_make(viewport_width, viewport_height, monitor_dpi, 0.0f);
+
     result.ubo_render_information = gpu_buffer_create_empty(sizeof(Render_Information), GPU_Buffer_Type::UNIFORM_BUFFER, GPU_Buffer_Usage::DYNAMIC);
     gpu_buffer_bind_indexed(&result.ubo_render_information, 0);
     result.ubo_camera_data = gpu_buffer_create_empty(sizeof(Camera_3D_UBO_Data), GPU_Buffer_Type::UNIFORM_BUFFER, GPU_Buffer_Usage::DYNAMIC);
-    gpu_buffer_bind_indexed(&result.ubo_render_information, 1);
-    rendering_core_update_viewport(&result, viewport_width, viewport_height);
+    gpu_buffer_bind_indexed(&result.ubo_camera_data, 1);
+
+    result.render_information.viewport_height = 0;
+    result.render_information.viewport_width = 0;
+    result.render_information.monitor_dpi = monitor_dpi;
+    result.render_information.window_width = window_width;
+    result.render_information.window_height = window_height;
+    rendering_core_update_viewport(&result, window_width, window_height);
+
+    result.window_size_changed_listeners = dynamic_array_create_empty<window_size_changed_callback>(32);
+    result.window_size_changed_listeners_userdata = dynamic_array_create_empty<void*>(32);
+
     return result;
 }
 
@@ -264,6 +276,41 @@ void rendering_core_destroy(Rendering_Core* core)
     gpu_buffer_destroy(&core->ubo_render_information);
     file_listener_destroy(core->file_listener);
     opengl_state_destroy(&core->opengl_state);
+    dynamic_array_destroy(&core->window_size_changed_listeners);
+    dynamic_array_destroy(&core->window_size_changed_listeners_userdata);
+}
+
+void rendering_core_window_size_changed(Rendering_Core* core, int window_width, int window_height)
+{
+    if ((window_width != core->render_information.viewport_width || window_height != core->render_information.viewport_height) &&
+        (window_width != 0 && window_height != 0))
+    {
+        core->render_information.window_width = window_width;
+        core->render_information.window_height = window_height;
+        rendering_core_update_viewport(core, window_width, window_height);
+        for (int i = 0; i < core->window_size_changed_listeners.size; i++) {
+            core->window_size_changed_listeners[i](core->window_size_changed_listeners_userdata[i], core);
+        }
+    }
+}
+
+void rendering_core_add_window_size_listener(Rendering_Core* core, window_size_changed_callback callback, void* userdata)
+{
+    dynamic_array_push_back(&core->window_size_changed_listeners, callback);
+    dynamic_array_push_back(&core->window_size_changed_listeners_userdata, userdata);
+}
+
+void rendering_core_remove_window_size_listener(Rendering_Core* core, void* userdata)
+{
+    int found = -1;
+    for (int i = 0; i < core->window_size_changed_listeners.size; i++) {
+        if (core->window_size_changed_listeners_userdata[i] == userdata) {
+            found = i;
+        }
+    }
+    if (found == -1) panic("Should not happen i guess");
+    dynamic_array_swap_remove(&core->window_size_changed_listeners, found);
+    dynamic_array_swap_remove(&core->window_size_changed_listeners_userdata, found);
 }
 
 void rendering_core_update_3D_Camera_UBO(Rendering_Core* core, Camera_3D* camera)
@@ -272,10 +319,11 @@ void rendering_core_update_3D_Camera_UBO(Rendering_Core* core, Camera_3D* camera
     gpu_buffer_update(&core->ubo_camera_data, array_create_static_as_bytes(&data, 1));
 }
 
-void rendering_core_prepare_frame(Rendering_Core* core, float current_time)
+void rendering_core_prepare_frame(Rendering_Core* core, Camera_3D* camera, float current_time)
 {
     core->render_information.current_time_in_seconds = current_time;
     gpu_buffer_update(&core->ubo_render_information, array_create_static_as_bytes(&core->render_information, 1));
+    rendering_core_update_3D_Camera_UBO(core, camera);
     file_listener_check_if_files_changed(core->file_listener);
 }
 

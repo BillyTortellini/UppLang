@@ -404,9 +404,14 @@ BoundingBox2 text_editor_get_character_bounding_box(Text_Editor* editor, float t
 }
 
 void text_editor_add_highlight_from_slice(Text_Editor* editor, Text_Slice slice, vec3 text_color, vec4 background_color);
-void text_editor_render(Text_Editor* editor, Rendering_Core* core, int width, int height, int dpi, BoundingBox2 editor_region, double time)
+void text_editor_render(Text_Editor* editor, Rendering_Core* core, BoundingBox2 editor_region)
 {
-    rendering_core_updated_pipeline_state(core, editor->pipeline_state);
+    int width = core->render_information.window_width;
+    int height = core->render_information.window_height;
+    int dpi = core->render_information.monitor_dpi;
+    float time = core->render_information.current_time_in_seconds;
+
+    rendering_core_update_pipeline_state(core, editor->pipeline_state);
     float text_height = 2.0f * (editor->line_size_cm) / (height / (float)dpi * 2.54f);
     editor->last_editor_region = editor_region;
     editor->last_text_height = text_height;

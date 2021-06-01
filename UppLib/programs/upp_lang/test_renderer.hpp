@@ -19,18 +19,15 @@ void test_renderer_destroy(Test_Renderer* renderer);
 void test_renderer_update(Test_Renderer* renderer, Input* input);
 void test_renderer_render(Test_Renderer* renderer, Rendering_Core* core);
 
-// Experimentell, how I think i want it to be
+
+
+// Experimental, how I think i want it to be
 struct Framebuffer
 {
     int width, height;
     bool resize_with_window;
-};
-
-struct Render_State
-{
-    // Filler
-    bool depth_test_enabled;
-    int fill_mode;
+    bool has_depth;
+    bool has_stencil;
 };
 
 struct Uniform_Data
@@ -49,12 +46,15 @@ struct Uniform_Data
 struct Draw_Call
 {
     int mesh_data;
+    int draw_call_type;
     Dynamic_Array<Uniform_Data> per_object_uniforms;
 };
 
+struct Render_Pass;
 struct Render_Subpass
 {
-    Render_State state;
+    Render_Pass* parent;
+    int pipeline_state;
     Shader_Program* program;
     Dynamic_Array<Uniform_Data> per_frame_uniforms;
     Dynamic_Array<Draw_Call> draw_calls;

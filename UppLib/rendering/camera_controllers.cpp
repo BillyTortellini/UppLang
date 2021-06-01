@@ -17,7 +17,7 @@ Camera_Controller_Arcball camera_controller_arcball_make(vec3 center, float base
     return result;
 }
 
-void camera_controller_arcball_update(Camera_Controller_Arcball* controller, Camera_3D* camera, Input* input)
+void camera_controller_arcball_update(Camera_Controller_Arcball* controller, Camera_3D* camera, Input* input, int window_width, int window_height)
 {
     // Update sphereCoords
     if (input->mouse_down[MOUSE_KEY_CODE::LEFT]) {
@@ -39,8 +39,8 @@ void camera_controller_arcball_update(Camera_Controller_Arcball* controller, Cam
         view = matrix_transpose(view);
 
         vec3 moveDir = vec3(-(float)input->mouse_delta_x, (float)input->mouse_delta_y, 0);
-        moveDir.x /= (float)camera->width * 0.5f;
-        moveDir.y /= (float)camera->height;
+        moveDir.x /= (float)window_width * 0.5f;
+        moveDir.y /= (float)window_height;
         float speed = 1.0f;
         moveDir = view * moveDir * distance_to_center;
 
@@ -48,7 +48,7 @@ void camera_controller_arcball_update(Camera_Controller_Arcball* controller, Cam
     }
 
     // Update camera
-    camera_3d_update_view(camera, controller->center - view_direction * distance_to_center, view_direction);
+    camera_3D_update_view(camera, controller->center - view_direction * distance_to_center, view_direction);
 }
 
 
@@ -102,5 +102,5 @@ void camera_controller_flying_update(Camera_Controller_Flying* controller, Camer
     camera->position += movement_direction * time_delta;
 
     // Update camera
-    camera_3d_update_view(camera, camera->position, camera->view_direction);
+    camera_3D_update_view(camera, camera->position, camera->view_direction);
 }

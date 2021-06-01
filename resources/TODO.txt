@@ -1,8 +1,12 @@
 Current Work Item:
 ------------------
- * Window_size changed listener, in text_renderer, gui, renderer_2d, text_editor, code_editor
  * Framebuffers and Renderpasses need Core-Implementation
- * CPU Mesh creator with attributes in AoS style
+    - Maybe think about pingponging
+    - Create texture from shaderprogram
+    - Main-Renderpass should render to window, be contained in Rendering_Core
+ * Shader folder for core shaders, rewrite shaders in single glsl file
+ * Rendering_Resource_Manager, having names for renderpasses
+ * CPU Mesh creator with attributes in AoS style (Maybe, not that important, but also not that hard...)
 
  * Rendering Overhaul, think about shaders, 2D-Rendering, Framebuffers, Images, GUI
  * 2D-Rendering with:
@@ -12,22 +16,16 @@ Current Work Item:
     - Curves
     - Triangles, maybe arbitrary polygons
     - Text
+    - Images
+ * Better GUI system
 
 Ideas for change:
-    * Renderstate and openglstate
-    * Uniform buffer for shaders, which holds the interesting information
     * Renderpasses
     * Render_Resource_Manager (Meshes, Textures, Framebuffers, Renderpasses, Shaders)
     * Mesh offline representation
-    * Instead of GLEnum, i should have the things that actually do the things i want
     * Shaderprogram should remember which uniforms are set, and which arent
 
-There should be one Rendering_Basics struct or something, with:
-    OpenglState      --> Remembers current state, reduces opengl state switching burden
-    FileListener     --> since it is required for shader creation
-    Resource_Manager --> just because it is nice
-    WindowState      --> Dpi, window width, window height, aspect ratio
-    MainRenderPass   --> So I can add additional subpasses to it
+
 
 Long-Term Goals:
 ----------------

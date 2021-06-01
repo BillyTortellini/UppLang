@@ -69,15 +69,11 @@ struct Text_Renderer
 
 Text_Renderer* text_renderer_create_from_font_atlas_file(
     Rendering_Core* core,
-    const char* font_filepath,
-    int window_width,
-    int window_height
+    const char* font_filepath
 );
-void text_renderer_destroy(Text_Renderer* renderer);
+void text_renderer_destroy(Text_Renderer* renderer, Rendering_Core* core);
 
 void text_renderer_render(Text_Renderer* renderer, Rendering_Core* core);
-void text_renderer_update_window_size(Text_Renderer* renderer, int new_width, int new_height);
-
 void text_renderer_add_text(Text_Renderer* renderer, String* text, vec2 position, float relative_height, float line_gap_percent);
 Text_Layout* text_renderer_calculate_text_layout(Text_Renderer* renderer, String* text, float relative_height, float line_gap_percent);
 void text_renderer_add_text_from_layout(Text_Renderer* renderer, Text_Layout* text_layout, vec2 position);

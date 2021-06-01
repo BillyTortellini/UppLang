@@ -50,12 +50,10 @@ enum class Text_Wrapping_Mode
     SCALE_DOWN
 };
 
-Renderer_2D renderer_2D_create(Rendering_Core* core, Text_Renderer* text_renderer, int window_width, int window_height);
-void renderer_2d_destroy(Renderer_2D* renderer);
+Renderer_2D* renderer_2D_create(Rendering_Core* core, Text_Renderer* text_renderer);
+void renderer_2D_destroy(Renderer_2D* renderer, Rendering_Core* core);
 
 void renderer_2D_render(Renderer_2D* renderer, Rendering_Core* core);
-void renderer_2D_update_window_size(Renderer_2D* renderer, int window_width, int window_height);
-
 void renderer_2D_add_rectangle(Renderer_2D* renderer, vec2 pos, vec2 size, vec3 color, float depth);
 void renderer_2D_add_rect_outline(Renderer_2D* renderer, vec2 pos, vec2 size, vec3 color, float thickness, float depth);
 void renderer_2D_add_line(Renderer_2D* renderer, vec2 start, vec2 end, vec3 color, float thickness, float depth);

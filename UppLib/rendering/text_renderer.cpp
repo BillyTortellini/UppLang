@@ -15,17 +15,23 @@ void text_layout_destroy(Text_Layout* info) {
     dynamic_array_destroy(&info->character_positions);
 }
 
+void text_renderer_update_window_size(void* userdata, Rendering_Core* core)
+{
+    Text_Renderer* renderer = (Text_Renderer*) userdata;
+    renderer->screen_width = core->render_information.viewport_width;
+    renderer->screen_height = core->render_information.viewport_height;
+}
+
 Text_Renderer* text_renderer_create_from_font_atlas_file(
     Rendering_Core* core,
-    const char* font_filepath,
-    int window_width,
-    int window_height
+    const char* font_filepath
 )
 {
     Text_Renderer* text_renderer = new Text_Renderer();
     text_renderer->text_layout = text_layout_create();
-    text_renderer->screen_width = window_width;
-    text_renderer->screen_height = window_height;
+    text_renderer->screen_width = core->render_information.window_width;
+    text_renderer->screen_height = core->render_information.window_height;
+    rendering_core_add_window_size_listener(core, &text_renderer_update_window_size, text_renderer);
     text_renderer->glyph_atlas = optional_unwrap(glyph_atlas_create_from_atlas_file(font_filepath));
     text_renderer->default_color = vec3(1.0f);
     text_renderer->pipeline_state = pipeline_state_make_default();
@@ -85,8 +91,9 @@ Text_Renderer* text_renderer_create_from_font_atlas_file(
     return text_renderer;
 }
 
-void text_renderer_destroy(Text_Renderer* renderer)
+void text_renderer_destroy(Text_Renderer* renderer, Rendering_Core* core)
 {
+    rendering_core_remove_window_size_listener(core, renderer);
     text_layout_destroy(&renderer->text_layout);
     shader_program_destroy(renderer->bitmap_shader);
     shader_program_destroy(renderer->sdf_shader);
@@ -253,12 +260,6 @@ Text_Layout* text_renderer_calculate_text_layout(
     return &renderer->text_layout;
 }
 
-void text_renderer_update_window_size(Text_Renderer* renderer, int new_width, int new_height)
-{
-    renderer->screen_width = new_width;
-    renderer->screen_height = new_height;
-}
-
 void text_renderer_render(Text_Renderer* renderer, Rendering_Core* core)
 {
     // Update font_mesh
@@ -278,7 +279,7 @@ void text_renderer_render(Text_Renderer* renderer, Rendering_Core* core)
     dynamic_array_reset(&renderer->text_indices);
 
     // Render
-    rendering_core_updated_pipeline_state(core, renderer->pipeline_state);
+    rendering_core_update_pipeline_state(core, renderer->pipeline_state);
     shader_program_set_uniform(renderer->sdf_shader, core, "sampler", texture_2D_bind_to_next_free_unit(&renderer->atlas_sdf_texture, core));
     mesh_gpu_buffer_draw_with_shader_program(&renderer->font_mesh, renderer->sdf_shader, core);
 }

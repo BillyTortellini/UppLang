@@ -73,14 +73,12 @@ void upp_lang_main()
     timing_initialize();
     random_initialize();
 
-    Text_Renderer* text_renderer = text_renderer_create_from_font_atlas_file(
-        &core, "resources/fonts/glyph_atlas.atlas", window_state->width, window_state->height
-    );
-    SCOPE_EXIT(text_renderer_destroy(text_renderer));
+    Text_Renderer* text_renderer = text_renderer_create_from_font_atlas_file(&core, "resources/fonts/glyph_atlas.atlas");
+    SCOPE_EXIT(text_renderer_destroy(text_renderer, &core));
 
-    Renderer_2D renderer_2D = renderer_2D_create(&core, text_renderer, window_state->width, window_state->height);
-    SCOPE_EXIT(renderer_2d_destroy(&renderer_2D));
-    GUI gui = gui_create(&renderer_2D, window_state, window_get_input(window));
+    Renderer_2D* renderer_2D = renderer_2D_create(&core, text_renderer);
+    SCOPE_EXIT(renderer_2D_destroy(renderer_2D, &core));
+    GUI gui = gui_create(renderer_2D, window_get_input(window));
     SCOPE_EXIT(gui_destroy(&gui));
 
     Code_Editor code_editor = code_editor_create(text_renderer, &core);
@@ -95,17 +93,18 @@ void upp_lang_main()
     );
     SCOPE_EXIT(shader_program_destroy(background_shader));
 
-    Camera_3D camera = camera_3d_make(window_state->width, window_state->height, math_degree_to_radians(90), 0.1f, 100.0f);
+    Camera_3D* camera = camera_3D_create(&core, math_degree_to_radians(90), 0.1f, 100.0f);
+    SCOPE_EXIT(camera_3D_destroy(camera, &core));
     Camera_Controller_Arcball camera_controller_arcball;
     {
         window_set_cursor_constrain(window, false);
         window_set_cursor_visibility(window, true);
         window_set_cursor_reset_into_center(window, false);
         camera_controller_arcball = camera_controller_arcball_make(vec3(0.0f), 2.0f);
-        camera.position = vec3(0, 0, 1.0f);
+        camera->position = vec3(0, 0, 1.0f);
     }
 
-    Test_Renderer test_renderer = test_renderer_create(&core, &camera);
+    Test_Renderer test_renderer = test_renderer_create(&core, camera);
     SCOPE_EXIT(test_renderer_destroy(&test_renderer));
 
     // Set Window/Rendering Options
@@ -117,7 +116,6 @@ void upp_lang_main()
 
         opengl_state_set_clear_color(&core.opengl_state, vec4(0.0f));
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        rendering_core_update_viewport(&core, window_state->width, window_state->height);
         window_set_vsync(window, true);
     }
 
@@ -149,42 +147,32 @@ void upp_lang_main()
             if (input->client_area_resized) {
                 Window_State* state = window_get_window_state(window);
                 logg("New window size: %d/%d\n", state->width, state->height);
-                glViewport(0, 0, state->width, state->height);
-                camera_3d_update_projection_window_size(&camera, state->width, state->height);
-                text_renderer_update_window_size(text_renderer, state->width, state->height);
+                rendering_core_window_size_changed(&core, state->width, state->height);
             }
             if (input->key_pressed[KEY_CODE::F11]) {
                 Window_State* state = window_get_window_state(window);
                 window_set_fullscreen(window, !state->fullscreen);
             }
 
-            camera_controller_arcball_update(&camera_controller_arcball, &camera, input);
-            gui_update(&gui, input, window_state);
+            camera_controller_arcball_update(&camera_controller_arcball, camera, input, window_state->width, window_state->height);
+            gui_update(&gui, input, window_state->width, window_state->height);
             code_editor_update(&code_editor, input, timing_current_time_in_seconds());
             test_renderer_update(&test_renderer, input);
         }
 
         // Rendering
         {
-            rendering_core_prepare_frame(&core, timing_current_time_in_seconds());
+            rendering_core_prepare_frame(&core, camera, timing_current_time_in_seconds());
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
             // Draw Background
-            shader_program_set_uniform(background_shader, &core, "time", (float)timing_current_time_in_seconds());
-            shader_program_set_uniform(background_shader, &core, "aspect_ratio", (float)window_state->width / window_state->height);
-            shader_program_set_uniform(background_shader, &core, "view_matrix", camera.view_matrix);
-            shader_program_set_uniform(background_shader, &core, "camera_position", camera.position);
             mesh_gpu_buffer_draw_with_shader_program(&mesh_quad, background_shader, &core);
-            glClear(GL_DEPTH_BUFFER_BIT);
 
             // Text editor
             BoundingBox2 region = bounding_box_2_make_min_max(vec2(-1, -1), vec2(1, 1));
-            code_editor_render(&code_editor, &core, window_state->width, window_state->height, window_state->dpi,
-                region, timing_current_time_in_seconds()
-            );
+            code_editor_render(&code_editor, &core, region);
             //test_renderer_render(&test_renderer, &core);
 
-            // GUI
             //gui_draw(&gui, &opengl_state);
 
             window_swap_buffers(window);
