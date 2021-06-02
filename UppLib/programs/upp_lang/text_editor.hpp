@@ -5,6 +5,7 @@
 #include "../../rendering/gpu_buffers.hpp"
 #include "../../rendering/text_renderer.hpp"
 #include "../../rendering/rendering_core.hpp"
+#include "../../rendering/render_pass.hpp"
 #include "../../win32/input.hpp"
 #include "text.hpp"
 
@@ -186,7 +187,7 @@ struct Text_Editor
     float last_text_height;
     int first_rendered_line;
     int first_rendered_char;
-    Pipeline_State pipeline_state;
+    Render_Pass* render_pass;
 
     // Editor Stuff
     Text_History history;

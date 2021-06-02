@@ -13,6 +13,7 @@
 #include "../../rendering/shader_program.hpp"
 #include "../../utility/bounding_box.hpp"
 #include "../../rendering/renderer_2d.hpp"
+#include "../../rendering/render_pass.hpp"
 #include "../../utility/gui.hpp"
 #include "../../math/scalars.hpp"
 #include "../../utility/random.hpp"
@@ -1473,6 +1474,13 @@ void proc_city_main()
     Rendering_Core core = rendering_core_create(window_state->width, window_state->height, (float)window_state->dpi);
     SCOPE_EXIT(rendering_core_destroy(&core));
 
+    Pipeline_State pipeline_state = pipeline_state_make_default();
+    pipeline_state.depth_state.test_type = Depth_Test_Type::TEST_DEPTH;
+    pipeline_state.blending_state.blending_enabled = false;
+    rendering_core_update_pipeline_state(&core, pipeline_state);
+    Render_Pass* main_render_pass = render_pass_create(nullptr, pipeline_state, true, true, true);
+    SCOPE_EXIT(render_pass_destroy(main_render_pass));
+
     Input* input = window_get_input(window);
     Camera_3D* camera = camera_3D_create(&core, math_degree_to_radians(90.0f), 0.1f, 1000.0f);
     SCOPE_EXIT(camera_3D_destroy(camera, &core));
@@ -1492,9 +1500,8 @@ void proc_city_main()
     glViewport(0, 0, window_state->width, window_state->height);
     glClearColor(0.05f, 0.05f, 0.05f, 0.0f);
 
-
     // City Stuff
-    Shader_Program* city_shader = shader_program_create_from_multiple_sources(&core, { "resources/shaders/city_shader.glsl" });
+    Shader_Program* city_shader = shader_program_create(&core, "resources/shaders/city_shader.glsl");
     SCOPE_EXIT(shader_program_destroy(city_shader));
 
     // Building mesh
@@ -1530,14 +1537,10 @@ void proc_city_main()
         // Update
         input_reset(input);
         window_handle_messages(window, false);
-        rendering_core_prepare_frame(&core, camera, (float)now);
         gui_update(&gui, input, window_state->width, window_state->height);
 
         if (input->key_down[KEY_CODE::ESCAPE]) {
             window_close(window);
-        }
-        if (input->client_area_resized) {
-            rendering_core_window_size_changed(&core, window_state->width, window_state->height);
         }
         camera_controller_arcball_update(&controller, camera, input, window_state->width, window_state->height);
 
@@ -1548,12 +1551,8 @@ void proc_city_main()
         }
 
         // Render
+        rendering_core_prepare_frame(&core, camera, (float)now, window_state->width, window_state->height);
         // Set state
-        Pipeline_State pipeline_state = pipeline_state_make_default();
-        pipeline_state.depth_state.test_type = Depth_Test_Type::TEST_DEPTH;
-        pipeline_state.blending_state.blending_enabled = false;
-        rendering_core_update_pipeline_state(&core, pipeline_state);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         Camera_3D_Uniform_Data d = camera_3d_uniform_data_make(camera, (float)now);
         gpu_buffer_update(&camera_uniform_buffer, array_create_static_as_bytes(&d, 1)); // Update camera data
 
@@ -1579,8 +1578,8 @@ void proc_city_main()
             mat4 model = mat4_make_translation_matrix(vec3(p.position.x, 0.0f, -p.position.y) * 10.0f) *
                 mat4(mat3_make_rotation_matrix_around_y(math_arctangent_2(p.normal_to_street.x, -p.normal_to_street.y))) *
                 mat4(mat3_make_scaling_matrix(vec3(0.1f)));
-            shader_program_set_uniform(city_shader, &core, "u_model", model);
-            mesh_gpu_buffer_draw_with_shader_program(&building_mesh, city_shader, &core);
+            shader_program_set_uniform_mat4(city_shader, "u_model", model);
+            render_pass_add_draw_call(main_render_pass, city_shader, &building_mesh);
         }
 
         gui_render(&gui, &core);

@@ -22,6 +22,7 @@ struct OpenGL_State
 {
     GLint active_program;
     GLint active_vao; // Active Vao
+    GLint active_framebuffer;
     vec4 clear_color;
 
     // Texture handling
@@ -36,6 +37,7 @@ void opengl_state_set_clear_color(OpenGL_State* state, vec4 clear_color);
 
 void opengl_state_bind_program(OpenGL_State* state, GLuint program_id);
 void opengl_state_bind_vao(OpenGL_State* state, GLuint vao);
+void opengl_state_bind_framebuffer(OpenGL_State* state, GLuint framebuffer);
 GLint opengl_state_bind_texture_to_next_free_unit(OpenGL_State* state, Texture_Binding_Type binding_target, GLuint texture_id);
 
 
@@ -178,11 +180,9 @@ struct Rendering_Core
 Rendering_Core rendering_core_create(int window_width, int window_height, float monitor_dpi);
 void rendering_core_destroy(Rendering_Core* core);
 
-void rendering_core_window_size_changed(Rendering_Core* core, int window_width, int window_height);
+void rendering_core_prepare_frame(Rendering_Core* core, Camera_3D* camera, float current_time, int window_width, int window_height);
 void rendering_core_add_window_size_listener(Rendering_Core* core, window_size_changed_callback callback, void* userdata);
 void rendering_core_remove_window_size_listener(Rendering_Core* core, void* userdata);
-void rendering_core_prepare_frame(Rendering_Core* core, Camera_3D* camera, float current_time);
-void rendering_core_update_viewport(Rendering_Core* core, int width, int height);
 void rendering_core_update_3D_Camera_UBO(Rendering_Core* core, Camera_3D* camera);
 void rendering_core_update_pipeline_state(Rendering_Core* core, Pipeline_State new_state);
-
+void rendering_core_update_viewport(Rendering_Core* core, int width, int height);

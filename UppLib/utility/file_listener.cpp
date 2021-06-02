@@ -7,7 +7,7 @@
 #include "../datastructures/dynamic_array.hpp"
 #include "../datastructures/string.hpp"
 
-struct WatchedFile
+struct Watched_File
 {
     String filepath;
     file_listener_callback_func callback;
@@ -16,10 +16,10 @@ struct WatchedFile
 };
 
 struct File_Listener {
-    Dynamic_Array<WatchedFile*> files;
+    Dynamic_Array<Watched_File*> files;
 };
 
-WatchedFile* watched_file_create(const char* filepath, file_listener_callback_func callback, void* userdata) 
+Watched_File* watched_file_create(const char* filepath, file_listener_callback_func callback, void* userdata) 
 {
     Optional<u64> last_access = file_io_get_last_write_access_time(filepath);
     if (last_access.available == false) {
@@ -27,7 +27,7 @@ WatchedFile* watched_file_create(const char* filepath, file_listener_callback_fu
     }
 
     // Add file to file listener list
-    WatchedFile* file = new WatchedFile();
+    Watched_File* file = new Watched_File();
     file->callback = callback;
     file->filepath = string_create(filepath);
     file->last_write_time = last_access.value;
@@ -35,43 +35,43 @@ WatchedFile* watched_file_create(const char* filepath, file_listener_callback_fu
     return file;
 }
 
-void watched_file_destroy(WatchedFile* watched_file) {
+void watched_file_destroy(Watched_File* watched_file) {
     string_destroy(&watched_file->filepath);
     delete watched_file;
 }
 
 File_Listener* file_listener_create() {
     File_Listener* result = new File_Listener();
-    result->files = dynamic_array_create_empty<WatchedFile*>(8);
+    result->files = dynamic_array_create_empty<Watched_File*>(8);
     return result;
 }
 
 void file_listener_destroy(File_Listener* listener) 
 {
     for (int i = 0; i < listener->files.size; i++) {
-        WatchedFile* file = listener->files.data[i];
+        Watched_File* file = listener->files.data[i];
         watched_file_destroy(file);
     }
-    dynamic_array_destroy<WatchedFile*>(&listener->files);
+    dynamic_array_destroy<Watched_File*>(&listener->files);
 }
 
-WatchedFile* file_listener_add_file(File_Listener* listener, const char* filepath, file_listener_callback_func callback, void* userdata) 
+Watched_File* file_listener_add_file(File_Listener* listener, const char* filepath, file_listener_callback_func callback, void* userdata) 
 {
     // Check if file exists/if we can get last access time
-    WatchedFile* watched_file = watched_file_create(filepath, callback, userdata);
+    Watched_File* watched_file = watched_file_create(filepath, callback, userdata);
     if (watched_file == 0) {
         return 0;
     }
-    dynamic_array_push_back<WatchedFile*>(&listener->files, watched_file);
+    dynamic_array_push_back<Watched_File*>(&listener->files, watched_file);
 
     return watched_file;
 }
 
-bool file_listener_remove_file(File_Listener* listener, WatchedFile* file)
+bool file_listener_remove_file(File_Listener* listener, Watched_File* file)
 {
     for (int i = 0; i < listener->files.size; i++) {
         if (listener->files.data[i] == file) {
-            dynamic_array_swap_remove<WatchedFile*>(&listener->files, i);
+            dynamic_array_swap_remove<Watched_File*>(&listener->files, i);
             watched_file_destroy(file);
             return true;
         }
@@ -83,7 +83,7 @@ void file_listener_check_if_files_changed(File_Listener* listener)
 {
     for (int i = 0; i < listener->files.size; i++) 
     {
-        WatchedFile* file = listener->files.data[i];
+        Watched_File* file = listener->files.data[i];
         Optional<u64> newest_write_time = file_io_get_last_write_access_time(file->filepath.characters);
         if (newest_write_time.available)
         {

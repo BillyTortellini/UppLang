@@ -45,6 +45,7 @@
     <ClInclude Include="programs\upp_lang\upp_lang.hpp" />
     <ClInclude Include="rendering\cameras.hpp" />
     <ClInclude Include="rendering\camera_controllers.hpp" />
+    <ClInclude Include="rendering\framebuffer.hpp" />
     <ClInclude Include="rendering\glyph_atlas.hpp" />
     <ClInclude Include="rendering\gpu_buffers.hpp" />
     <ClInclude Include="rendering\mesh_utils.hpp" />
@@ -52,6 +53,7 @@
     <ClInclude Include="rendering\rendering_core.hpp" />
     <ClInclude Include="rendering\opengl_utils.hpp" />
     <ClInclude Include="rendering\renderer_2D.hpp" />
+    <ClInclude Include="rendering\render_pass.hpp" />
     <ClInclude Include="rendering\shader_program.hpp" />
     <ClInclude Include="rendering\texture_2D.hpp" />
     <ClInclude Include="rendering\texture_bitmap.hpp" />
@@ -97,6 +99,7 @@
     <ClCompile Include="programs\upp_lang\upp_lang.cpp" />
     <ClCompile Include="rendering\cameras.cpp" />
     <ClCompile Include="rendering\camera_controllers.cpp" />
+    <ClCompile Include="rendering\framebuffer.cpp" />
     <ClCompile Include="rendering\glyph_atlas.cpp" />
     <ClCompile Include="rendering\gpu_buffers.cpp" />
     <ClCompile Include="rendering\mesh_utils.cpp" />
@@ -104,6 +107,7 @@
     <ClCompile Include="rendering\rendering_core.cpp" />
     <ClCompile Include="rendering\opengl_utils.cpp" />
     <ClCompile Include="rendering\renderer_2D.cpp" />
+    <ClCompile Include="rendering\render_pass.cpp" />
     <ClCompile Include="rendering\shader_program.cpp" />
     <ClCompile Include="rendering\texture_2D.cpp" />
     <ClCompile Include="rendering\texture_bitmap.cpp" />
@@ -125,23 +129,14 @@
     <Text Include="..\resources\TODO.txt" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="..\resources\shaders\city_shader.glsl" />
-    <None Include="..\resources\shaders\color_2d.glsl" />
-    <None Include="..\resources\shaders\constant_color.glsl" />
-    <None Include="..\resources\shaders\cursor.frag" />
-    <None Include="..\resources\shaders\cursor.vert" />
-    <None Include="..\resources\shaders\font_bitmap.frag" />
-    <None Include="..\resources\shaders\font_bitmap.vert" />
-    <None Include="..\resources\shaders\font_sdf.frag" />
-    <None Include="..\resources\shaders\font_sdf.vert" />
-    <None Include="..\resources\shaders\geometry_2d.glsl" />
-    <None Include="..\resources\shaders\image_simple.frag" />
-    <None Include="..\resources\shaders\image_simple.vert" />
-    <None Include="..\resources\shaders\simple.frag" />
-    <None Include="..\resources\shaders\simple.vert" />
-    <None Include="..\resources\shaders\test.frag" />
+    <None Include="..\resources\shaders\core\font_bitmap.glsl" />
+    <None Include="..\resources\shaders\core\font_sdf.glsl" />
+    <None Include="..\resources\shaders\core\geometry_2d.glsl" />
+    <None Include="..\resources\shaders\core\uniform_blocks.glsl" />
+    <None Include="..\resources\shaders\proc_city\city_shader.glsl" />
     <None Include="..\resources\shaders\test.glsl" />
-    <None Include="..\resources\shaders\test.vert" />
+    <None Include="..\resources\shaders\upp_lang\background.glsl" />
+    <None Include="..\resources\shaders\upp_lang\cursor.glsl" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>15.0</VCProjectVersion>

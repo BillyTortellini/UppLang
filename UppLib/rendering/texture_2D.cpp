@@ -125,16 +125,17 @@ int texture_2D_type_pixel_byte_size(Texture_2D_Type type)
     return false;
 }
 
-Texture_2D texture_2D_create_empty(Rendering_Core* core, Texture_2D_Type type, int width, int height, Texture_Sampling_Mode sample_mode)
+Texture_2D* texture_2D_create_empty(Rendering_Core* core, Texture_2D_Type type, int width, int height, Texture_Sampling_Mode sample_mode)
 {
-    Texture_2D result;
-    result.width = width;
-    result.height = height;
-    result.type = type;
-    result.sampling_mode = sample_mode;
+    Texture_2D* result = new Texture_2D();
+    result->is_renderbuffer = false;
+    result->width = width;
+    result->height = height;
+    result->type = type;
+    result->sampling_mode = sample_mode;
 
-    glGenTextures(1, &result.texture_id);
-    opengl_state_bind_texture_to_next_free_unit(&core->opengl_state, Texture_Binding_Type::TEXTURE_2D, result.texture_id);
+    glGenTextures(1, &result->texture_id);
+    opengl_state_bind_texture_to_next_free_unit(&core->opengl_state, Texture_Binding_Type::TEXTURE_2D, result->texture_id);
     glTexImage2D(
         (GLenum) Texture_Binding_Type::TEXTURE_2D, 
         0,
@@ -146,21 +147,36 @@ Texture_2D texture_2D_create_empty(Rendering_Core* core, Texture_2D_Type type, i
         GL_BYTE,
         0
     );
-    result.has_mipmap = false;
-    texture_2D_set_sampling_mode(&result, sample_mode, core);
+    result->has_mipmap = false;
+    texture_2D_set_sampling_mode(result, sample_mode, core);
 
     return result;
 }
 
-Texture_2D texture_2D_create_from_bytes(Rendering_Core* core, Texture_2D_Type type, 
+Texture_2D* texture_2D_create_renderbuffer(Rendering_Core* core, Texture_2D_Type type, int width, int height)
+{
+    Texture_2D* result = new Texture_2D();
+    result->type = type;
+    result->is_renderbuffer = true;
+    result->has_mipmap = false;
+    result->width = width;
+    result->height = height;
+    result->sampling_mode = texture_sampling_mode_make_nearest();
+    glGenRenderbuffers(1, &result->texture_id);
+    glBindRenderbuffer(GL_RENDERBUFFER, result->texture_id);
+    glRenderbufferStorage(GL_RENDERBUFFER, (GLenum)type, width, height);
+    return result;
+}
+
+Texture_2D* texture_2D_create_from_bytes(Rendering_Core* core, Texture_2D_Type type, 
     Array<byte> data, int width, int height, Texture_Sampling_Mode sample_mode)
 {
-    Texture_2D result = texture_2D_create_empty(core, type, width, height, sample_mode);
-    texture_2D_update_texture_data(&result, core, data, sample_mode.minification_mode == Texture_Minification_Mode::TRILINEAR_INTERPOLATION);
+    Texture_2D* result = texture_2D_create_empty(core, type, width, height, sample_mode);
+    texture_2D_update_texture_data(result, core, data, sample_mode.minification_mode == Texture_Minification_Mode::TRILINEAR_INTERPOLATION);
     return result;
 }
 
-Texture_2D texture_2D_create_from_texture_bitmap(Rendering_Core* core, Texture_Bitmap* texture_data, Texture_Sampling_Mode sample_mode)
+Texture_2D* texture_2D_create_from_texture_bitmap(Rendering_Core* core, Texture_Bitmap* texture_data, Texture_Sampling_Mode sample_mode)
 {
     Texture_2D_Type result_type;
     switch (texture_data->channel_count) 
@@ -176,10 +192,14 @@ Texture_2D texture_2D_create_from_texture_bitmap(Rendering_Core* core, Texture_B
 
 void texture_2D_destroy(Texture_2D* texture) {
     glDeleteTextures(1, &texture->texture_id);
+    delete texture;
 }
 
 void texture_2D_update_texture_data(Texture_2D* texture, Rendering_Core* core, Array<byte> data, bool create_mipmap)
 {
+    if (texture->is_renderbuffer) {
+        panic("Cannot update a renderbuffer!");
+    }
     if (texture->type == Texture_2D_Type::DEPTH || texture->type == Texture_2D_Type::DEPTH_STENCIL) {
         panic("Unsupported types for data upload, is definitly possible, but I have to look into that\n");
     }
@@ -236,6 +256,15 @@ void texture_2D_update_texture_data(Texture_2D* texture, Rendering_Core* core, A
 
 void texture_2D_resize(Texture_2D* texture, Rendering_Core* core, int width, int height, bool create_mipmap)
 {
+    if (texture->is_renderbuffer) 
+    {
+        texture->width = width;
+        texture->height = height;
+        glBindRenderbuffer(GL_RENDERBUFFER, texture->texture_id);
+        glRenderbufferStorage(GL_RENDERBUFFER, (GLenum) texture->type, width, height);
+        return;
+    }
+
     opengl_state_bind_texture_to_next_free_unit(&core->opengl_state, Texture_Binding_Type::TEXTURE_2D, texture->texture_id);
     glTexImage2D(
         (GLenum) Texture_Binding_Type::TEXTURE_2D, 
@@ -248,8 +277,8 @@ void texture_2D_resize(Texture_2D* texture, Rendering_Core* core, int width, int
         GL_BYTE,
         0
     );
-    texture->width = 0;
-    texture->height = 0;
+    texture->width = width;
+    texture->height = height;
     texture->has_mipmap = create_mipmap;
     if (create_mipmap) {
         glGenerateMipmap((GLenum)Texture_Binding_Type::TEXTURE_2D);
@@ -257,6 +286,9 @@ void texture_2D_resize(Texture_2D* texture, Rendering_Core* core, int width, int
 }
 
 GLint texture_2D_bind_to_next_free_unit(Texture_2D* texture, Rendering_Core* core) {
+    if (texture->is_renderbuffer) {
+        panic("Cannot bind a renderbuffer, since they are write_only");
+    }
     return opengl_state_bind_texture_to_next_free_unit(&core->opengl_state, Texture_Binding_Type::TEXTURE_2D, texture->texture_id);
 }
 

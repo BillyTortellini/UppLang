@@ -318,34 +318,3 @@ void mesh_gpu_buffer_update_index_buffer(Mesh_GPU_Buffer* mesh, Rendering_Core* 
     gpu_buffer_update(&mesh->index_buffer, array_as_bytes(&data));
     mesh->index_count = data.size;
 }
-
-void mesh_gpu_buffer_draw(Mesh_GPU_Buffer* mesh, Rendering_Core* core) {
-    opengl_state_bind_vao(&core->opengl_state, mesh->vao);
-    glDrawElements((GLenum)mesh->topology, mesh->index_count, GL_UNSIGNED_INT, 0);
-}
-
-void mesh_gpu_buffer_draw_instanced(Mesh_GPU_Buffer* mesh, Rendering_Core* core, int instance_count)
-{
-    opengl_state_bind_vao(&core->opengl_state, mesh->vao);
-    glDrawElementsInstanced((GLenum)mesh->topology, mesh->index_count, GL_UNSIGNED_INT, 0, instance_count);
-}
-
-void mesh_gpu_buffer_draw_with_shader_program(Mesh_GPU_Buffer* mesh, Shader_Program* shader_program, Rendering_Core* core)
-{
-    if (!mesh_gpu_buffer_check_compatability_with_shader(mesh, shader_program)) {
-        return;
-    }
-    // Draw
-    shader_program_bind(shader_program, core);
-    mesh_gpu_buffer_draw(mesh, core);
-}
-
-void mesh_gpu_buffer_draw_with_shader_program_instanced(Mesh_GPU_Buffer* mesh, Shader_Program* shader_program, Rendering_Core* core, int instance_count)
-{
-    if (!mesh_gpu_buffer_check_compatability_with_shader(mesh, shader_program)) {
-        return;
-    }
-    // Draw
-    shader_program_bind(shader_program, core);
-    mesh_gpu_buffer_draw_instanced(mesh, core, instance_count);
-}

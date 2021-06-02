@@ -304,12 +304,12 @@ Text_Editor* text_editor_create(Text_Renderer* text_renderer, Rendering_Core* co
 
     result->renderer = text_renderer;
     result->text_highlights = dynamic_array_create_empty<Dynamic_Array<Text_Highlight>>(32);
-    result->cursor_shader = shader_program_create_from_multiple_sources(core, { "resources/shaders/cursor.frag", "resources/shaders/cursor.vert" });
+    result->cursor_shader = shader_program_create(core, "resources/shaders/upp_lang/cursor.glsl");
     result->cursor_mesh = mesh_utils_create_quad_2D(core);
-    result->pipeline_state = pipeline_state_make_default();
-    result->pipeline_state.depth_state.test_type = Depth_Test_Type::IGNORE_DEPTH;
-    result->pipeline_state.blending_state.blending_enabled = true;
-    result->pipeline_state.culling_state.culling_enabled = true;
+    result->render_pass = render_pass_create(0, pipeline_state_make_default(), false, false, false);
+    result->render_pass->pipeline_state.depth_state.test_type = Depth_Test_Type::IGNORE_DEPTH;
+    result->render_pass->pipeline_state.blending_state.blending_enabled = true;
+    result->render_pass->pipeline_state.culling_state.culling_enabled = true;
     result->line_size_cm = 0.3f;
     result->first_rendered_line = 0;
     result->first_rendered_char = 0;
@@ -352,6 +352,7 @@ void text_editor_destroy(Text_Editor* editor)
     mesh_gpu_buffer_destroy(&editor->cursor_mesh);
     string_destroy(&editor->yanked_string);
     string_destroy(&editor->line_count_buffer);
+    render_pass_destroy(editor->render_pass);
 
     dynamic_array_destroy(&editor->normal_mode_incomplete_command);
     dynamic_array_destroy(&editor->last_insert_mode_inputs);
@@ -384,10 +385,11 @@ void text_editor_reset_highlights(Text_Editor* editor)
 
 void text_editor_draw_bounding_box(Text_Editor* editor, Rendering_Core* core, BoundingBox2 bb, vec4 color)
 {
-    shader_program_set_uniform(editor->cursor_shader, core, "position", bb.min);
-    shader_program_set_uniform(editor->cursor_shader, core, "size", bb.max - bb.min);
-    shader_program_set_uniform(editor->cursor_shader, core, "color", color);
-    mesh_gpu_buffer_draw_with_shader_program(&editor->cursor_mesh, editor->cursor_shader, core);
+    shader_program_set_uniform_vec2(editor->cursor_shader, "position", bb.min);
+    shader_program_set_uniform_vec2(editor->cursor_shader, "size", bb.max - bb.min);
+    shader_program_set_uniform_vec4(editor->cursor_shader, "color", color);
+    render_pass_add_draw_call(editor->render_pass, editor->cursor_shader, &editor->cursor_mesh);
+    render_pass_execute(editor->render_pass, core);
 }
 
 BoundingBox2 text_editor_get_character_bounding_box(Text_Editor* editor, float text_height, int line, int character, BoundingBox2 editor_region)
@@ -411,7 +413,6 @@ void text_editor_render(Text_Editor* editor, Rendering_Core* core, BoundingBox2 
     int dpi = core->render_information.monitor_dpi;
     float time = core->render_information.current_time_in_seconds;
 
-    rendering_core_update_pipeline_state(core, editor->pipeline_state);
     float text_height = 2.0f * (editor->line_size_cm) / (height / (float)dpi * 2.54f);
     editor->last_editor_region = editor_region;
     editor->last_text_height = text_height;

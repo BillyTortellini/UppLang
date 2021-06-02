@@ -1,12 +1,15 @@
 Current Work Item:
 ------------------
- * Framebuffers and Renderpasses need Core-Implementation
-    - Maybe think about pingponging
-    - Create texture from shaderprogram
-    - Main-Renderpass should render to window, be contained in Rendering_Core
- * Shader folder for core shaders, rewrite shaders in single glsl file
+ * Fix Cursor not displaying bug
+ * Rethink Renderpass design, I am not so sure anymore if it is really that usefull
  * Rendering_Resource_Manager, having names for renderpasses
  * CPU Mesh creator with attributes in AoS style (Maybe, not that important, but also not that hard...)
+
+ I need to think WHAT i want from renderpasses and framebuffers:
+    Currently if I want to render to texture this is annoying, since I manually have
+    to bind and unbind framebuffers, call the renderpass and so on.
+    Thats already a good reason, another one being that I want GUI controll over it
+    I also can do state sorting after I have collected all the uniforms
 
  * Rendering Overhaul, think about shaders, 2D-Rendering, Framebuffers, Images, GUI
  * 2D-Rendering with:
@@ -17,7 +20,7 @@ Current Work Item:
     - Triangles, maybe arbitrary polygons
     - Text
     - Images
- * Better GUI system
+ * Extend GUI system (Overlaps, Movable-Windows, Common-Style (size, color...), Focus with Key_Message_Parsing, add Text_Editor), use to visualize Render_Passes
 
 Ideas for change:
     * Renderpasses

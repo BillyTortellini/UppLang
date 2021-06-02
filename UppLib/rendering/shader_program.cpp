@@ -6,6 +6,89 @@
 #include "rendering_core.hpp"
 #include "../utility/file_listener.hpp"
 #include "opengl_utils.hpp"
+#include "texture_2D.hpp"
+
+Uniform_Value uniform_value_make_i32(const char* uniform_name, i32 data)
+{
+    Uniform_Value result;
+    result.uniform_name = uniform_name;
+    result.data_i32 = data;
+    result.type = Uniform_Value_Type::I32;
+    return result;
+}
+Uniform_Value uniform_value_make_u32(const char* uniform_name, u32 data)
+{
+    Uniform_Value result;
+    result.uniform_name = uniform_name;
+    result.data_u32 = data;
+    result.type = Uniform_Value_Type::U32;
+    return result;
+}
+Uniform_Value uniform_value_make_float(const char* uniform_name, float data)
+{
+    Uniform_Value result;
+    result.uniform_name = uniform_name;
+    result.data_float = data;
+    result.type = Uniform_Value_Type::FLOAT;
+    return result;
+}
+Uniform_Value uniform_value_make_texture_2D_binding(const char* uniform_name, Texture_2D* texture)
+{
+    Uniform_Value result;
+    result.uniform_name = uniform_name;
+    result.texture_2D_id = texture->texture_id;
+    result.type = Uniform_Value_Type::TEXTURE_2D_BINDING;
+    return result;
+}
+Uniform_Value uniform_value_make_vec2(const char* uniform_name, vec2 data)
+{
+    Uniform_Value result;
+    result.uniform_name = uniform_name;
+    result.data_vec2 = data;
+    result.type = Uniform_Value_Type::VEC2;
+    return result;
+}
+Uniform_Value uniform_value_make_vec3(const char* uniform_name, vec3 data)
+{
+    Uniform_Value result;
+    result.uniform_name = uniform_name;
+    result.data_vec3 = data;
+    result.type = Uniform_Value_Type::VEC3;
+    return result;
+}
+Uniform_Value uniform_value_make_vec4(const char* uniform_name, vec4 data)
+{
+    Uniform_Value result;
+    result.uniform_name = uniform_name;
+    result.data_vec4 = data;
+    result.type = Uniform_Value_Type::VEC4;
+    return result;
+}
+Uniform_Value uniform_value_make_mat2(const char* uniform_name, mat2 data)
+{
+    Uniform_Value result;
+    result.uniform_name = uniform_name;
+    result.data_mat2 = data;
+    result.type = Uniform_Value_Type::MAT2;
+    return result;
+}
+Uniform_Value uniform_value_make_mat3(const char* uniform_name, mat3 data)
+{
+    Uniform_Value result;
+    result.uniform_name = uniform_name;
+    result.data_mat3 = data;
+    result.type = Uniform_Value_Type::MAT3;
+    return result;
+}
+Uniform_Value uniform_value_make_mat4(const char* uniform_name, mat4 data)
+{
+    Uniform_Value result;
+    result.uniform_name = uniform_name;
+    result.data_mat4 = data;
+    result.type = Uniform_Value_Type::MAT4;
+    return result;
+}
+
 
 void shader_program_retrieve_shader_variable_information(Shader_Program* program)
 {
@@ -97,11 +180,12 @@ Shader_Program* shader_program_create_from_multiple_sources(Rendering_Core* core
     Shader_Program* shader_program = new Shader_Program();
     shader_program->file_listener = core->file_listener;
     shader_program->shader_filepaths = array_create_from_list(shader_filepaths);
+    shader_program->uniform_cache = dynamic_array_create_empty<Uniform_Value>(16);
 
     // Setup file watchers
     {
         int watched_file_count = 0;
-        shader_program->watched_files = array_create_empty<WatchedFile*>(shader_program->shader_filepaths.size);
+        shader_program->watched_files = array_create_empty<Watched_File*>(shader_program->shader_filepaths.size);
         for (int i = 0; i < shader_program->watched_files.size; i++)
         {
             shader_program->watched_files.data[i] = file_listener_add_file(core->file_listener,
@@ -119,6 +203,7 @@ Shader_Program* shader_program_create_from_multiple_sources(Rendering_Core* core
 
             array_destroy<const char*>(&shader_program->shader_filepaths);
             delete shader_program;
+            panic("Could not create shader, could not open filepath or something");
             return 0;
         }
     }
@@ -142,6 +227,7 @@ void shader_program_destroy(Shader_Program* program)
     array_destroy(&program->shader_filepaths);
     dynamic_array_destroy(&program->attribute_informations);
     dynamic_array_destroy(&program->uniform_informations);
+    dynamic_array_destroy(&program->uniform_cache);
     glDeleteProgram(program->program_id);
     delete program;
 }
@@ -190,122 +276,74 @@ Shader_Variable_Information* shader_program_find_shader_variable_information_by_
     return 0;
 }
 
-bool shader_program_set_uniform(Shader_Program* program, Rendering_Core* core, const char* name_handle, int value) 
+void shader_program_set_uniform_i32(Shader_Program* program,const char* name_handle, int value) {
+    dynamic_array_push_back(&program->uniform_cache, uniform_value_make_i32(name_handle, value));
+}
+void shader_program_set_uniform_u32(Shader_Program* program, const char* name_handle, u32 value) {
+    dynamic_array_push_back(&program->uniform_cache, uniform_value_make_u32(name_handle, value));
+}
+void shader_program_set_uniform_texture_2D(Shader_Program* program, const char* name_handle, Texture_2D* texture) {
+    dynamic_array_push_back(&program->uniform_cache, uniform_value_make_texture_2D_binding(name_handle, texture));
+}
+void shader_program_set_uniform_float(Shader_Program* program, const char* name_handle, float value) {
+    dynamic_array_push_back(&program->uniform_cache, uniform_value_make_float(name_handle, value));
+}
+void shader_program_set_uniform_vec2(Shader_Program* program, const char* name_handle, const vec2& value) {
+    dynamic_array_push_back(&program->uniform_cache, uniform_value_make_vec2(name_handle, value));
+}
+void shader_program_set_uniform_vec3(Shader_Program* program, const char* name_handle, const vec3& value) {
+    dynamic_array_push_back(&program->uniform_cache, uniform_value_make_vec3(name_handle, value));
+}
+void shader_program_set_uniform_vec4(Shader_Program* program, const char* name_handle, const vec4& value) {
+    dynamic_array_push_back(&program->uniform_cache, uniform_value_make_vec4(name_handle, value));
+}
+void shader_program_set_uniform_mat2(Shader_Program* program, const char* name_handle, const mat2& value) {
+    dynamic_array_push_back(&program->uniform_cache, uniform_value_make_mat2(name_handle, value));
+}
+void shader_program_set_uniform_mat3(Shader_Program* program, const char* name_handle, const mat3& value) {
+    dynamic_array_push_back(&program->uniform_cache, uniform_value_make_mat3(name_handle, value));
+}
+void shader_program_set_uniform_mat4(Shader_Program* program, const char* name_handle, const mat4& value) {
+    dynamic_array_push_back(&program->uniform_cache, uniform_value_make_mat4(name_handle, value));
+}
+
+bool shader_program_set_uniform_value(Shader_Program* program, Uniform_Value value, Rendering_Core* core)
 {
     shader_program_bind(program, core);
-    Shader_Variable_Information* info = shader_program_find_shader_variable_information_by_name(program, name_handle);
+    Shader_Variable_Information* info = shader_program_find_shader_variable_information_by_name(program, value.uniform_name);
     if (info == nullptr) {
         return false;
     }
-    if ((info->type != GL_INT || info->type == GL_SAMPLER_2D) && info->size != 1) {
-        return false;
+    bool valid;
+    switch (value.type)
+    {
+    case Uniform_Value_Type::I32: valid = info->type != GL_INT || info->type == GL_SAMPLER_2D && info->size == 1; break;
+    case Uniform_Value_Type::U32: valid = info->type != GL_UNSIGNED_INT || info->type == GL_SAMPLER_2D && info->size == 1; break;
+    case Uniform_Value_Type::FLOAT: valid = info->type != GL_FLOAT && info->size != 1; break;
+    case Uniform_Value_Type::VEC2: valid = info->type != GL_FLOAT_VEC2 && info->size != 1; break;
+    case Uniform_Value_Type::VEC3: valid = info->type != GL_FLOAT_VEC3 && info->size != 1; break;
+    case Uniform_Value_Type::VEC4: valid = info->type != GL_FLOAT_VEC4 && info->size != 1; break;
+    case Uniform_Value_Type::MAT2: valid = info->type != GL_FLOAT_MAT2 && info->size != 1; break;
+    case Uniform_Value_Type::MAT3: valid = info->type != GL_FLOAT_MAT3 && info->size != 1; break;
+    case Uniform_Value_Type::MAT4: valid = info->type != GL_FLOAT_MAT4 && info->size != 1; break;
+    case Uniform_Value_Type::TEXTURE_2D_BINDING: valid = info->type != GL_UNSIGNED_INT || info->type == GL_SAMPLER_2D && info->size == 1; break;
     }
-    glUniform1i(info->location, value);
-    return true;
-}
+    if (!valid) return false;
 
-bool shader_program_set_uniform(Shader_Program* program, Rendering_Core* core, const char* name_handle, u32 value)
-{
-    shader_program_bind(program, core);
-    Shader_Variable_Information* info = shader_program_find_shader_variable_information_by_name(program, name_handle);
-    if (info == nullptr) {
-        return false;
+    switch (value.type)
+    {
+    case Uniform_Value_Type::I32: glUniform1i(info->location, value.data_i32); break;
+    case Uniform_Value_Type::U32: glUniform1ui(info->location, value.data_u32); break;
+    case Uniform_Value_Type::FLOAT: glUniform1f(info->location, value.data_float); break;
+    case Uniform_Value_Type::VEC2: glUniform2fv(info->location, 1, (GLfloat*)&value); break;
+    case Uniform_Value_Type::VEC3: glUniform3fv(info->location, 1, (GLfloat*)&value); break;
+    case Uniform_Value_Type::VEC4: glUniform4fv(info->location, 1, (GLfloat*)&value); break;
+    case Uniform_Value_Type::MAT2: glUniformMatrix2fv(info->location, 1, GL_FALSE, (GLfloat*)&value); break;
+    case Uniform_Value_Type::MAT3: glUniformMatrix3fv(info->location, 1, GL_FALSE, (GLfloat*)&value); break;
+    case Uniform_Value_Type::MAT4: glUniformMatrix4fv(info->location, 1, GL_FALSE, (GLfloat*)&value); break;
+    case Uniform_Value_Type::TEXTURE_2D_BINDING: 
+        glUniform1i(info->location, opengl_state_bind_texture_to_next_free_unit(&core->opengl_state, Texture_Binding_Type::TEXTURE_2D, value.texture_2D_id)); 
+        break;
     }
-    if ((info->type != GL_UNSIGNED_INT || info->type == GL_SAMPLER_2D) && info->size != 1) {
-        return false;
-    }
-    glUniform1ui(info->location, value);
-    return true;
-}
-
-bool shader_program_set_uniform(Shader_Program* program, Rendering_Core* core, const char* name_handle, float value)
-{
-    shader_program_bind(program, core);
-    Shader_Variable_Information* info = shader_program_find_shader_variable_information_by_name(program, name_handle);
-    if (info == nullptr) {
-        return false;
-    }
-    if (info->type != GL_FLOAT && info->size != 1) {
-        return false;
-    }
-    glUniform1f(info->location, value);
-    return true;
-}
-
-bool shader_program_set_uniform(Shader_Program* program, Rendering_Core* core, const char* name_handle, const vec2& value) {
-    shader_program_bind(program, core);
-    Shader_Variable_Information* info = shader_program_find_shader_variable_information_by_name(program, name_handle);
-    if (info == nullptr) {
-        return false;
-    }
-    if (info->type != GL_FLOAT_VEC2 && info->size != 1) {
-        return false;
-    }
-    glUniform2fv(info->location, 1, (GLfloat*)&value);
-    return true;
-}
-
-bool shader_program_set_uniform(Shader_Program* program, Rendering_Core* core, const char* name_handle, const vec3& value) {
-    shader_program_bind(program, core);
-    Shader_Variable_Information* info = shader_program_find_shader_variable_information_by_name(program, name_handle);
-    if (info == nullptr) {
-        return false;
-    }
-    if (info->type != GL_FLOAT_VEC3 && info->size != 1) {
-        return false;
-    }
-    glUniform3fv(info->location, 1, (GLfloat*)&value);
-    return true;
-}
-
-bool shader_program_set_uniform(Shader_Program* program, Rendering_Core* core, const char* name_handle, const vec4& value) {
-    shader_program_bind(program, core);
-    Shader_Variable_Information* info = shader_program_find_shader_variable_information_by_name(program, name_handle);
-    if (info == nullptr) {
-        return false;
-    }
-    if (info->type != GL_FLOAT_VEC4 && info->size != 1) {
-        return false;
-    }
-    glUniform4fv(info->location, 1, (GLfloat*)&value);
-    return true;
-}
-
-bool shader_program_set_uniform(Shader_Program* program, Rendering_Core* core, const char* name_handle, const mat2& value) {
-    shader_program_bind(program, core);
-    Shader_Variable_Information* info = shader_program_find_shader_variable_information_by_name(program, name_handle);
-    if (info == nullptr) {
-        return false;
-    }
-    if (info->type != GL_FLOAT_MAT2 && info->size != 1) {
-        return false;
-    }
-    glUniformMatrix2fv(info->location, 1, GL_FALSE, (GLfloat*) &value);
-    return true;
-}
-
-bool shader_program_set_uniform(Shader_Program* program, Rendering_Core* core, const char* name_handle, const mat3& value) {
-    shader_program_bind(program, core);
-    Shader_Variable_Information* info = shader_program_find_shader_variable_information_by_name(program, name_handle);
-    if (info == nullptr) {
-        return false;
-    }
-    if (info->type != GL_FLOAT_MAT3 && info->size != 1) {
-        return false;
-    }
-    glUniformMatrix3fv(info->location, 1, GL_FALSE, (GLfloat*) &value);
-    return true;
-}
-
-bool shader_program_set_uniform(Shader_Program* program, Rendering_Core* core, const char* name_handle, const mat4& value) {
-    shader_program_bind(program, core);
-    Shader_Variable_Information* info = shader_program_find_shader_variable_information_by_name(program, name_handle);
-    if (info == nullptr) {
-        return false;
-    }
-    if (info->type != GL_FLOAT_MAT4 && info->size != 1) {
-        return false;
-    }
-    glUniformMatrix4fv(info->location, 1, GL_FALSE, (GLfloat*) &value);
     return true;
 }

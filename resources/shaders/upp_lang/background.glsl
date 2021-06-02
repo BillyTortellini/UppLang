@@ -1,4 +1,16 @@
-#version 430
+#ifdef VERTEX_SHADER
+
+layout (location = 1) in vec2 position;
+out vec2 uv_coords;
+
+void main() {
+	gl_Position = vec4(position, 0.0, 1.0);
+	uv_coords = position * 0.5 + 0.5;
+}
+
+#endif
+
+#ifdef FRAGMENT_SHADER
 
 layout (std140, binding = 0) uniform Render_Information
 {
@@ -132,3 +144,5 @@ void main()
 	}
 	output_color = vec4(result_color, 1.0);	
 }
+
+#endif

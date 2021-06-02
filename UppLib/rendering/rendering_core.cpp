@@ -9,6 +9,7 @@ OpenGL_State opengl_state_create()
     result.active_program = 0;
     result.active_vao = 0;
     result.clear_color = vec4(0.0f);
+    result.active_framebuffer = 0;
 
     // Initialize texture unit tracking
     int texture_unit_count;
@@ -51,6 +52,14 @@ void opengl_state_bind_vao(OpenGL_State* state, GLuint vao) {
     if (vao != state->active_vao) {
         glBindVertexArray(vao);
         state->active_vao = vao;
+    }
+}
+
+void opengl_state_bind_framebuffer(OpenGL_State* state, GLuint framebuffer)
+{
+    if (state->active_framebuffer != framebuffer) {
+        glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+        state->active_framebuffer = framebuffer;
     }
 }
 
@@ -280,20 +289,6 @@ void rendering_core_destroy(Rendering_Core* core)
     dynamic_array_destroy(&core->window_size_changed_listeners_userdata);
 }
 
-void rendering_core_window_size_changed(Rendering_Core* core, int window_width, int window_height)
-{
-    if ((window_width != core->render_information.viewport_width || window_height != core->render_information.viewport_height) &&
-        (window_width != 0 && window_height != 0))
-    {
-        core->render_information.window_width = window_width;
-        core->render_information.window_height = window_height;
-        rendering_core_update_viewport(core, window_width, window_height);
-        for (int i = 0; i < core->window_size_changed_listeners.size; i++) {
-            core->window_size_changed_listeners[i](core->window_size_changed_listeners_userdata[i], core);
-        }
-    }
-}
-
 void rendering_core_add_window_size_listener(Rendering_Core* core, window_size_changed_callback callback, void* userdata)
 {
     dynamic_array_push_back(&core->window_size_changed_listeners, callback);
@@ -319,12 +314,23 @@ void rendering_core_update_3D_Camera_UBO(Rendering_Core* core, Camera_3D* camera
     gpu_buffer_update(&core->ubo_camera_data, array_create_static_as_bytes(&data, 1));
 }
 
-void rendering_core_prepare_frame(Rendering_Core* core, Camera_3D* camera, float current_time)
+void rendering_core_prepare_frame(Rendering_Core* core, Camera_3D* camera, float current_time, int window_width, int window_height)
 {
+    file_listener_check_if_files_changed(core->file_listener);
+    if ((window_width != core->render_information.window_width || window_height != core->render_information.window_height) &&
+        (window_width != 0 && window_height != 0))
+    {
+        core->render_information.window_width = window_width;
+        core->render_information.window_height = window_height;
+        rendering_core_update_viewport(core, window_width, window_height);
+        for (int i = 0; i < core->window_size_changed_listeners.size; i++) {
+            core->window_size_changed_listeners[i](core->window_size_changed_listeners_userdata[i], core);
+        }
+    }
+
     core->render_information.current_time_in_seconds = current_time;
     gpu_buffer_update(&core->ubo_render_information, array_create_static_as_bytes(&core->render_information, 1));
     rendering_core_update_3D_Camera_UBO(core, camera);
-    file_listener_check_if_files_changed(core->file_listener);
 }
 
 void rendering_core_update_viewport(Rendering_Core* core, int width, int height)

@@ -140,8 +140,3 @@ void mesh_gpu_buffer_destroy(Mesh_GPU_Buffer* mesh);
 int mesh_gpu_buffer_attach_vertex_buffer(Mesh_GPU_Buffer* mesh, Rendering_Core* core, GPU_Buffer vertex_buffer, Array<Vertex_Attribute> informations);
 void mesh_gpu_buffer_update_index_buffer(Mesh_GPU_Buffer* mesh, Rendering_Core* core, Array<uint32> data);
 bool mesh_gpu_buffer_check_compatability_with_shader(Mesh_GPU_Buffer* mesh, Shader_Program* shader_program);
-
-void mesh_gpu_buffer_draw(Mesh_GPU_Buffer* mesh, Rendering_Core* core);
-void mesh_gpu_buffer_draw_with_shader_program(Mesh_GPU_Buffer* mesh, Shader_Program* shader_program, Rendering_Core* core);
-void mesh_gpu_buffer_draw_instanced(Mesh_GPU_Buffer* mesh, Rendering_Core* core, int instance_count);
-void mesh_gpu_buffer_draw_with_shader_program_instanced(Mesh_GPU_Buffer* mesh, Shader_Program* shader_program, Rendering_Core* core, int instance_count);

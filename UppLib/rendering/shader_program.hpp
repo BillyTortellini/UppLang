@@ -7,10 +7,12 @@
 #include "../datastructures/dynamic_array.hpp"
 #include "../datastructures/string.hpp"
 #include "../rendering/opengl_function_pointers.hpp"
+#include "../math/umath.hpp"
 
 struct Rendering_Core;
-struct WatchedFile;
+struct Watched_File;
 struct File_Listener;
+struct Texture_2D;
 
 struct Shader_Variable_Information
 {
@@ -20,13 +22,60 @@ struct Shader_Variable_Information
     String name_handle;
 };
 
+enum class Uniform_Value_Type
+{
+    I32,
+    U32,
+    FLOAT,
+    VEC2,
+    VEC3,
+    VEC4,
+    MAT2,
+    MAT3,
+    MAT4,
+    TEXTURE_2D_BINDING
+};
+
+struct Uniform_Value
+{
+public:
+    Uniform_Value() {};
+    Uniform_Value_Type type;
+    const char* uniform_name;
+    union
+    {
+        i32 data_i32;
+        u32 data_u32;
+        int texture_2D_id;
+        float data_float;
+        vec2 data_vec2;
+        vec3 data_vec3;
+        vec4 data_vec4;
+        mat2 data_mat2;
+        mat3 data_mat3;
+        mat4 data_mat4;
+    };
+};
+
+Uniform_Value uniform_value_make_i32(const char* uniform_name, i32 data);
+Uniform_Value uniform_value_make_u32(const char* uniform_name, u32 data);
+Uniform_Value uniform_value_make_float(const char* uniform_name, float data);
+Uniform_Value uniform_value_make_texture_2D_binding(const char* uniform_name, Texture_2D* texture);
+Uniform_Value uniform_value_make_vec2(const char* uniform_name, vec2 data);
+Uniform_Value uniform_value_make_vec3(const char* uniform_name, vec3 data);
+Uniform_Value uniform_value_make_vec4(const char* uniform_name, vec4 data);
+Uniform_Value uniform_value_make_mat2(const char* uniform_name, mat2 data);
+Uniform_Value uniform_value_make_mat3(const char* uniform_name, mat3 data);
+Uniform_Value uniform_value_make_mat4(const char* uniform_name, mat4 data);
+
 struct Shader_Program
 {
     GLuint program_id;
     Array<const char*> shader_filepaths;
-    Array<WatchedFile*> watched_files;
+    Array<Watched_File*> watched_files;
     File_Listener* file_listener;
 
+    Dynamic_Array<Uniform_Value> uniform_cache;
     Dynamic_Array<Shader_Variable_Information> uniform_informations;
     Dynamic_Array<Shader_Variable_Information> attribute_informations;
 };
@@ -36,21 +85,17 @@ Shader_Program* shader_program_create(Rendering_Core* core, const char* filepath
 Shader_Program* shader_program_create_from_multiple_sources(Rendering_Core* core, std::initializer_list<const char*> shader_filepaths);
 void shader_program_destroy(Shader_Program* program);
 
-struct vec2;
-struct vec3;
-struct vec4;
-struct mat2;
-struct mat3;
-struct mat4;
-bool shader_program_set_uniform(Shader_Program* program, Rendering_Core* core, const char* name_handle, int value);
-bool shader_program_set_uniform(Shader_Program* program, Rendering_Core* core, const char* name_handle, u32 value);
-bool shader_program_set_uniform(Shader_Program* program, Rendering_Core* core, const char* name_handle, float value);
-bool shader_program_set_uniform(Shader_Program* program, Rendering_Core* core, const char* name_handle, const vec2& value);
-bool shader_program_set_uniform(Shader_Program* program, Rendering_Core* core, const char* name_handle, const vec3& value);
-bool shader_program_set_uniform(Shader_Program* program, Rendering_Core* core, const char* name_handle, const vec4& value);
-bool shader_program_set_uniform(Shader_Program* program, Rendering_Core* core, const char* name_handle, const mat2& value);
-bool shader_program_set_uniform(Shader_Program* program, Rendering_Core* core, const char* name_handle, const mat3& value);
-bool shader_program_set_uniform(Shader_Program* program, Rendering_Core* core, const char* name_handle, const mat4& value);
+void shader_program_set_uniform_i32(Shader_Program* program, const char* name_handle, int value);
+void shader_program_set_uniform_u32(Shader_Program* program, const char* name_handle, u32 value);
+void shader_program_set_uniform_texture_2D(Shader_Program* program, const char* name_handle, Texture_2D* texture);
+void shader_program_set_uniform_float(Shader_Program* program, const char* name_handle, float value);
+void shader_program_set_uniform_vec2(Shader_Program* program, const char* name_handle, const vec2& value);
+void shader_program_set_uniform_vec3(Shader_Program* program, const char* name_handle, const vec3& value);
+void shader_program_set_uniform_vec4(Shader_Program* program, const char* name_handle, const vec4& value);
+void shader_program_set_uniform_mat2(Shader_Program* program, const char* name_handle, const mat2& value);
+void shader_program_set_uniform_mat3(Shader_Program* program, const char* name_handle, const mat3& value);
+void shader_program_set_uniform_mat4(Shader_Program* program, const char* name_handle, const mat4& value);
+bool shader_program_set_uniform_value(Shader_Program* program, Uniform_Value value, Rendering_Core* core);
 
 void shader_program_bind(Shader_Program* program, Rendering_Core* core);
 void shader_program_print_variable_information(Shader_Program* program);

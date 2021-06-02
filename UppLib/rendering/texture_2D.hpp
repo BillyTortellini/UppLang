@@ -46,6 +46,7 @@ enum class Texture_2D_Type
 {
     DEPTH = GL_DEPTH_COMPONENT,
     DEPTH_STENCIL = GL_DEPTH_STENCIL,
+    STENCIL = GL_STENCIL_INDEX,
     RED_U8 = GL_RED,
     RED_GREEN_U8 = GL_RG,
     RED_GREEN_BLUE_U8 = GL_RGB,
@@ -73,13 +74,13 @@ struct Texture_2D
     int height;
     Texture_Sampling_Mode sampling_mode;
     bool has_mipmap;
-
-    GLint internal_gpu_format; // GL_RED, GL_RG, GL_RGB, GL_RGBA, GL_DEPTH_COMPONENT, GL_DEPTH_STENCIL, or other (e.g. compressed) formats
+    bool is_renderbuffer;
 };
 
-Texture_2D texture_2D_create_empty(Rendering_Core* core, Texture_2D_Type type, int width, int height, Texture_Sampling_Mode sample_mode);
-Texture_2D texture_2D_create_from_bytes(Rendering_Core* core, Texture_2D_Type type, Array<byte> data, int width, int height, Texture_Sampling_Mode sample_mode);
-Texture_2D texture_2D_create_from_texture_bitmap(Rendering_Core* core, Texture_Bitmap* texture_data, Texture_Sampling_Mode sample_mode);
+Texture_2D* texture_2D_create_empty(Rendering_Core* core, Texture_2D_Type type, int width, int height, Texture_Sampling_Mode sample_mode);
+Texture_2D* texture_2D_create_renderbuffer(Rendering_Core* core, Texture_2D_Type type, int width, int height);
+Texture_2D* texture_2D_create_from_bytes(Rendering_Core* core, Texture_2D_Type type, Array<byte> data, int width, int height, Texture_Sampling_Mode sample_mode);
+Texture_2D* texture_2D_create_from_texture_bitmap(Rendering_Core* core, Texture_Bitmap* texture_data, Texture_Sampling_Mode sample_mode);
 void texture_2D_destroy(Texture_2D* texture);
 
 void texture_2D_update_texture_data(Texture_2D* texture, Rendering_Core* core, Array<byte> data, bool create_mipmap);

@@ -34,10 +34,12 @@ Text_Renderer* text_renderer_create_from_font_atlas_file(
     rendering_core_add_window_size_listener(core, &text_renderer_update_window_size, text_renderer);
     text_renderer->glyph_atlas = optional_unwrap(glyph_atlas_create_from_atlas_file(font_filepath));
     text_renderer->default_color = vec3(1.0f);
-    text_renderer->pipeline_state = pipeline_state_make_default();
-    text_renderer->pipeline_state.depth_state.test_type = Depth_Test_Type::IGNORE_DEPTH;
-    text_renderer->pipeline_state.culling_state.culling_enabled = true;
-    text_renderer->pipeline_state.blending_state.blending_enabled = true;
+    Pipeline_State pipeline_state;
+    pipeline_state = pipeline_state_make_default();
+    pipeline_state.depth_state.test_type = Depth_Test_Type::IGNORE_DEPTH;
+    pipeline_state.culling_state.culling_enabled = true;
+    pipeline_state.blending_state.blending_enabled = true;
+    text_renderer->render_pass = render_pass_create(0, pipeline_state, false, false, false);
 
     // Create Font File
     //text_renderer->glyph_atlas = optional_unwrap(glyph_atlas_create_from_font_file("resources/fonts/consola.ttf", 256, 3200, 32, 16, false));
@@ -47,12 +49,8 @@ Text_Renderer* text_renderer_create_from_font_atlas_file(
     //glyph_atlas_print_glyph_information(&text_renderer->glyph_atlas);
 
     // Initialize shaders
-    text_renderer->bitmap_shader = shader_program_create_from_multiple_sources(
-        core, { "resources/shaders/font_bitmap.frag", "resources/shaders/font_bitmap.vert" }
-    );
-    text_renderer->sdf_shader = shader_program_create_from_multiple_sources(
-        core, { "resources/shaders/font_sdf.frag", "resources/shaders/font_sdf.vert" }
-    );
+    text_renderer->bitmap_shader = shader_program_create(core,  "resources/shaders/core/font_bitmap.glsl");
+    text_renderer->sdf_shader = shader_program_create(core,  "resources/shaders/core/font_sdf.glsl");
 
     // Initialize textures
     text_renderer->atlas_bitmap_texture = texture_2D_create_from_texture_bitmap(
@@ -279,9 +277,9 @@ void text_renderer_render(Text_Renderer* renderer, Rendering_Core* core)
     dynamic_array_reset(&renderer->text_indices);
 
     // Render
-    rendering_core_update_pipeline_state(core, renderer->pipeline_state);
-    shader_program_set_uniform(renderer->sdf_shader, core, "sampler", texture_2D_bind_to_next_free_unit(&renderer->atlas_sdf_texture, core));
-    mesh_gpu_buffer_draw_with_shader_program(&renderer->font_mesh, renderer->sdf_shader, core);
+    shader_program_set_uniform_texture_2D(renderer->sdf_shader, "sampler", renderer->atlas_sdf_texture);
+    render_pass_add_draw_call(renderer->render_pass, renderer->sdf_shader, &renderer->font_mesh);
+    render_pass_execute(renderer->render_pass, core);
 }
 
 float text_renderer_get_cursor_advance(Text_Renderer* renderer, float relative_height)
@@ -292,7 +290,7 @@ float text_renderer_get_cursor_advance(Text_Renderer* renderer, float relative_h
 
 Texture_2D* text_renderer_get_texture(Text_Renderer* renderer)
 {
-    return &renderer->atlas_sdf_texture;
+    return renderer->atlas_sdf_texture;
 }
 
 void text_renderer_set_color(Text_Renderer* renderer, vec3 color) {

@@ -7,6 +7,7 @@
 #include "texture_2D.hpp"
 #include "gpu_buffers.hpp"
 #include "rendering_core.hpp"
+#include "render_pass.hpp"
 
 struct Shader_Program;
 struct String;
@@ -45,8 +46,8 @@ struct Text_Renderer
 {
     // Atlas data
     Glyph_Atlas glyph_atlas;
-    Texture_2D atlas_bitmap_texture;
-    Texture_2D atlas_sdf_texture;
+    Texture_2D* atlas_bitmap_texture;
+    Texture_2D* atlas_sdf_texture;
 
     // Shaders
     Shader_Program* bitmap_shader;
@@ -56,7 +57,7 @@ struct Text_Renderer
     Mesh_GPU_Buffer font_mesh;
     Dynamic_Array<Font_Vertex> text_vertices;
     Dynamic_Array<GLuint> text_indices;
-    Pipeline_State pipeline_state;
+    Render_Pass* render_pass;
 
     // Text positioning cache
     Text_Layout text_layout;

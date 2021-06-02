@@ -82,6 +82,15 @@
     <Filter Include="Source Files\Rendering\2D">
       <UniqueIdentifier>{7f6603e8-926b-4f78-b11c-180695243fda}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Resource Files\Shaders\Core">
+      <UniqueIdentifier>{c37e374d-942d-4eac-b3e0-2437a7a6d6d9}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Resource Files\Shaders\Proc_City">
+      <UniqueIdentifier>{7c92b910-9c21-49a8-9ea1-923e9c6313b4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Resource Files\Shaders\Upp_Lang">
+      <UniqueIdentifier>{b72a4446-85ee-44c4-88a4-1705e56cf350}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="datastructures\array.hpp">
@@ -234,6 +243,12 @@
     <ClInclude Include="rendering\renderer_2D.hpp">
       <Filter>Header Files\Rendering\2D</Filter>
     </ClInclude>
+    <ClInclude Include="rendering\framebuffer.hpp">
+      <Filter>Header Files\Rendering\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="rendering\render_pass.hpp">
+      <Filter>Header Files\Rendering\Core</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="datastructures\array.cpp">
@@ -383,6 +398,12 @@
     <ClCompile Include="rendering\texture_bitmap.cpp">
       <Filter>Source Files\Rendering\Utility</Filter>
     </ClCompile>
+    <ClCompile Include="rendering\framebuffer.cpp">
+      <Filter>Source Files\Rendering\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="rendering\render_pass.cpp">
+      <Filter>Source Files\Rendering\Core</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <Text Include="..\resources\TODO.txt">
@@ -390,56 +411,29 @@
     </Text>
   </ItemGroup>
   <ItemGroup>
-    <None Include="..\resources\shaders\constant_color.glsl">
-      <Filter>Resource Files\Shaders</Filter>
-    </None>
-    <None Include="..\resources\shaders\cursor.frag">
-      <Filter>Resource Files\Shaders</Filter>
-    </None>
-    <None Include="..\resources\shaders\cursor.vert">
-      <Filter>Resource Files\Shaders</Filter>
-    </None>
-    <None Include="..\resources\shaders\font_bitmap.frag">
-      <Filter>Resource Files\Shaders</Filter>
-    </None>
-    <None Include="..\resources\shaders\font_bitmap.vert">
-      <Filter>Resource Files\Shaders</Filter>
-    </None>
-    <None Include="..\resources\shaders\font_sdf.frag">
-      <Filter>Resource Files\Shaders</Filter>
-    </None>
-    <None Include="..\resources\shaders\font_sdf.vert">
-      <Filter>Resource Files\Shaders</Filter>
-    </None>
-    <None Include="..\resources\shaders\image_simple.frag">
-      <Filter>Resource Files\Shaders</Filter>
-    </None>
-    <None Include="..\resources\shaders\image_simple.vert">
-      <Filter>Resource Files\Shaders</Filter>
-    </None>
-    <None Include="..\resources\shaders\simple.frag">
-      <Filter>Resource Files\Shaders</Filter>
-    </None>
-    <None Include="..\resources\shaders\simple.vert">
-      <Filter>Resource Files\Shaders</Filter>
-    </None>
-    <None Include="..\resources\shaders\test.frag">
-      <Filter>Resource Files\Shaders</Filter>
-    </None>
-    <None Include="..\resources\shaders\test.vert">
-      <Filter>Resource Files\Shaders</Filter>
-    </None>
-    <None Include="..\resources\shaders\color_2d.glsl">
-      <Filter>Resource Files\Shaders</Filter>
-    </None>
-    <None Include="..\resources\shaders\geometry_2d.glsl">
-      <Filter>Resource Files\Shaders</Filter>
-    </None>
-    <None Include="..\resources\shaders\city_shader.glsl">
-      <Filter>Resource Files\Shaders</Filter>
-    </None>
     <None Include="..\resources\shaders\test.glsl">
       <Filter>Resource Files\Shaders</Filter>
+    </None>
+    <None Include="..\resources\shaders\core\font_bitmap.glsl">
+      <Filter>Resource Files\Shaders\Core</Filter>
+    </None>
+    <None Include="..\resources\shaders\core\geometry_2d.glsl">
+      <Filter>Resource Files\Shaders\Core</Filter>
+    </None>
+    <None Include="..\resources\shaders\upp_lang\background.glsl">
+      <Filter>Resource Files\Shaders\Upp_Lang</Filter>
+    </None>
+    <None Include="..\resources\shaders\upp_lang\cursor.glsl">
+      <Filter>Resource Files\Shaders\Upp_Lang</Filter>
+    </None>
+    <None Include="..\resources\shaders\proc_city\city_shader.glsl">
+      <Filter>Resource Files\Shaders\Proc_City</Filter>
+    </None>
+    <None Include="..\resources\shaders\core\font_sdf.glsl">
+      <Filter>Resource Files\Shaders\Core</Filter>
+    </None>
+    <None Include="..\resources\shaders\core\uniform_blocks.glsl">
+      <Filter>Resource Files\Shaders\Core</Filter>
     </None>
   </ItemGroup>
 </Project>

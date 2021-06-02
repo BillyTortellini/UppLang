@@ -69,6 +69,9 @@ void upp_lang_main()
     Rendering_Core core = rendering_core_create(window_state->width, window_state->height, window_state->dpi);
     SCOPE_EXIT(rendering_core_destroy(&core));
 
+    Render_Pass* background_pass = render_pass_create(0, pipeline_state_make_default(), true, true, true);
+    SCOPE_EXIT(render_pass_destroy(background_pass));
+
     // Initialize all modules that need globals
     timing_initialize();
     random_initialize();
@@ -88,9 +91,7 @@ void upp_lang_main()
     Mesh_GPU_Buffer mesh_quad = mesh_utils_create_quad_2D(&core);
     SCOPE_EXIT(mesh_gpu_buffer_destroy(&mesh_quad));
 
-    Shader_Program* background_shader = shader_program_create_from_multiple_sources(
-        &core, { "resources/shaders/test.vert", "resources/shaders/test.frag" }
-    );
+    Shader_Program* background_shader = shader_program_create(&core, "resources/shaders/upp_lang/background.glsl");
     SCOPE_EXIT(shader_program_destroy(background_shader));
 
     Camera_3D* camera = camera_3D_create(&core, math_degree_to_radians(90), 0.1f, 100.0f);
@@ -105,7 +106,7 @@ void upp_lang_main()
     }
 
     Test_Renderer test_renderer = test_renderer_create(&core, camera);
-    SCOPE_EXIT(test_renderer_destroy(&test_renderer));
+    SCOPE_EXIT(test_renderer_destroy(&test_renderer, &core));
 
     // Set Window/Rendering Options
     {
@@ -144,11 +145,6 @@ void upp_lang_main()
                 file_io_write_file("editor_text.txt", array_create_static((byte*)output.characters, output.size));
                 break;
             }
-            if (input->client_area_resized) {
-                Window_State* state = window_get_window_state(window);
-                logg("New window size: %d/%d\n", state->width, state->height);
-                rendering_core_window_size_changed(&core, state->width, state->height);
-            }
             if (input->key_pressed[KEY_CODE::F11]) {
                 Window_State* state = window_get_window_state(window);
                 window_set_fullscreen(window, !state->fullscreen);
@@ -162,18 +158,18 @@ void upp_lang_main()
 
         // Rendering
         {
-            rendering_core_prepare_frame(&core, camera, timing_current_time_in_seconds());
+            rendering_core_prepare_frame(&core, camera, timing_current_time_in_seconds(), window_state->width, window_state->height);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
             // Draw Background
-            mesh_gpu_buffer_draw_with_shader_program(&mesh_quad, background_shader, &core);
+            render_pass_add_draw_call(background_pass, background_shader, &mesh_quad);
+            render_pass_execute(background_pass, &core);
 
             // Text editor
             BoundingBox2 region = bounding_box_2_make_min_max(vec2(-1, -1), vec2(1, 1));
             code_editor_render(&code_editor, &core, region);
-            //test_renderer_render(&test_renderer, &core);
 
-            //gui_draw(&gui, &opengl_state);
+            //test_renderer_render(&test_renderer, &core);
 
             window_swap_buffers(window);
         }

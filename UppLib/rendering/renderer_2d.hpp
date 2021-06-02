@@ -5,6 +5,7 @@
 #include "../datastructures/string.hpp"
 #include "gpu_buffers.hpp"
 #include "rendering_core.hpp"
+#include "render_pass.hpp"
 
 struct Shader_Program;
 struct Text_Renderer;
@@ -26,7 +27,7 @@ struct Renderer_2D
     String string_buffer;
     vec2 scaling_factor;
     float to_pixel_scaling;
-    Pipeline_State pipeline_state;
+    Render_Pass* render_pass;
 };
 
 enum class Text_Alignment_Horizontal
