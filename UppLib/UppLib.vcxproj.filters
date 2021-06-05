@@ -247,7 +247,7 @@
       <Filter>Header Files\Rendering\Core</Filter>
     </ClInclude>
     <ClInclude Include="rendering\render_pass.hpp">
-      <Filter>Header Files\Rendering\Core</Filter>
+      <Filter>Header Files\Rendering\Utility</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -402,7 +402,7 @@
       <Filter>Source Files\Rendering\Core</Filter>
     </ClCompile>
     <ClCompile Include="rendering\render_pass.cpp">
-      <Filter>Source Files\Rendering\Core</Filter>
+      <Filter>Source Files\Rendering\Utility</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -434,6 +434,15 @@
     </None>
     <None Include="..\resources\shaders\core\uniform_blocks.glsl">
       <Filter>Resource Files\Shaders\Core</Filter>
+    </None>
+    <None Include="..\resources\shaders\rectangle_2D.glsl">
+      <Filter>Resource Files\Shaders</Filter>
+    </None>
+    <None Include="..\resources\shaders\circle_2D.glsl">
+      <Filter>Resource Files\Shaders</Filter>
+    </None>
+    <None Include="..\resources\shaders\line_2D.glsl">
+      <Filter>Resource Files\Shaders</Filter>
     </None>
   </ItemGroup>
 </Project>

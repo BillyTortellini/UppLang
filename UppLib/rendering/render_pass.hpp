@@ -9,8 +9,8 @@ struct Framebuffer;
 
 enum class Draw_Call_Type
 {
-    INDEXED_DRAW,
-    INSTANCED_INDEXED_DRAW,
+    SINGLE_DRAW,
+    INSTANCED_DRAW,
 };
 
 struct Draw_Call
@@ -39,6 +39,8 @@ struct Render_Pass
 Render_Pass* render_pass_create(Framebuffer* render_target, Pipeline_State pipeline_state, bool clear_color, bool clear_depth, bool clear_stencil);
 void render_pass_destroy(Render_Pass* render_pass);
 
-void render_pass_add_draw_call(Render_Pass* render_pass, Shader_Program* shader, Mesh_GPU_Buffer* mesh);
-void render_pass_add_draw_call_indexed(Render_Pass* render_pass, Shader_Program* shader, Mesh_GPU_Buffer* mesh, int index_count);
+void render_pass_add_draw_call(Render_Pass* render_pass, Shader_Program* shader, Mesh_GPU_Buffer* mesh, std::initializer_list<Uniform_Value> uniforms);
+void render_pass_add_draw_call_instanced(
+    Render_Pass* render_pass, Shader_Program* shader, Mesh_GPU_Buffer* mesh, std::initializer_list<Uniform_Value> uniforms, int instance_count
+);
 void render_pass_execute(Render_Pass* render_pass, Rendering_Core* core);

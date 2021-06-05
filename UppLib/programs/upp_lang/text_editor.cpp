@@ -304,12 +304,8 @@ Text_Editor* text_editor_create(Text_Renderer* text_renderer, Rendering_Core* co
 
     result->renderer = text_renderer;
     result->text_highlights = dynamic_array_create_empty<Dynamic_Array<Text_Highlight>>(32);
-    result->cursor_shader = shader_program_create(core, "resources/shaders/upp_lang/cursor.glsl");
+    result->cursor_shader = shader_program_create(core, {"resources/shaders/upp_lang/cursor.glsl"});
     result->cursor_mesh = mesh_utils_create_quad_2D(core);
-    result->render_pass = render_pass_create(0, pipeline_state_make_default(), false, false, false);
-    result->render_pass->pipeline_state.depth_state.test_type = Depth_Test_Type::IGNORE_DEPTH;
-    result->render_pass->pipeline_state.blending_state.blending_enabled = true;
-    result->render_pass->pipeline_state.culling_state.culling_enabled = true;
     result->line_size_cm = 0.3f;
     result->first_rendered_line = 0;
     result->first_rendered_char = 0;
@@ -352,7 +348,6 @@ void text_editor_destroy(Text_Editor* editor)
     mesh_gpu_buffer_destroy(&editor->cursor_mesh);
     string_destroy(&editor->yanked_string);
     string_destroy(&editor->line_count_buffer);
-    render_pass_destroy(editor->render_pass);
 
     dynamic_array_destroy(&editor->normal_mode_incomplete_command);
     dynamic_array_destroy(&editor->last_insert_mode_inputs);
@@ -383,30 +378,36 @@ void text_editor_reset_highlights(Text_Editor* editor)
     }
 }
 
-void text_editor_draw_bounding_box(Text_Editor* editor, Rendering_Core* core, BoundingBox2 bb, vec4 color)
+void text_editor_draw_bounding_box(Text_Editor* editor, Rendering_Core* core, Bounding_Box2 bb, vec4 color)
 {
-    shader_program_set_uniform_vec2(editor->cursor_shader, "position", bb.min);
-    shader_program_set_uniform_vec2(editor->cursor_shader, "size", bb.max - bb.min);
-    shader_program_set_uniform_vec4(editor->cursor_shader, "color", color);
-    render_pass_add_draw_call(editor->render_pass, editor->cursor_shader, &editor->cursor_mesh);
-    render_pass_execute(editor->render_pass, core);
+    shader_program_draw_mesh
+    (
+        editor->cursor_shader, 
+        &editor->cursor_mesh, 
+        core, 
+        {
+            uniform_value_make_vec2("position", bb.min),
+            uniform_value_make_vec2("size", bb.max - bb.min),
+            uniform_value_make_vec4("color", color)
+        }
+    );
 }
 
-BoundingBox2 text_editor_get_character_bounding_box(Text_Editor* editor, float text_height, int line, int character, BoundingBox2 editor_region)
+Bounding_Box2 text_editor_get_character_bounding_box(Text_Editor* editor, float text_height, int line, int character, Bounding_Box2 editor_region)
 {
     float glyph_advance = text_renderer_get_cursor_advance(editor->renderer, text_height);
-    vec2 cursor_pos = vec2(glyph_advance * (character - editor->first_rendered_char), 0.0f) + 
+    vec2 cursor_pos = vec2(glyph_advance * (character - editor->first_rendered_char), 0.0f) +
         vec2(editor_region.min.x, editor_region.max.y - ((line - editor->first_rendered_line) + 1.0f) * text_height);
     vec2 cursor_size = vec2(glyph_advance, text_height);
 
-    BoundingBox2 result;
+    Bounding_Box2 result;
     result.min = cursor_pos;
     result.max = cursor_pos + cursor_size;
     return result;
 }
 
 void text_editor_add_highlight_from_slice(Text_Editor* editor, Text_Slice slice, vec3 text_color, vec4 background_color);
-void text_editor_render(Text_Editor* editor, Rendering_Core* core, BoundingBox2 editor_region)
+void text_editor_render(Text_Editor* editor, Rendering_Core* core, Bounding_Box2 editor_region)
 {
     int width = core->render_information.window_width;
     int height = core->render_information.window_height;
@@ -453,7 +454,7 @@ void text_editor_render(Text_Editor* editor, Rendering_Core* core, BoundingBox2 
             // Trim line number if we are outside of the text_region
             Text_Layout* layout = text_renderer_calculate_text_layout(editor->renderer, &editor->line_count_buffer, text_height, 1.0f);
             for (int j = layout->character_positions.size - 1; j >= 0; j--) {
-                BoundingBox2 positioned_char = layout->character_positions[j].bounding_box;
+                Bounding_Box2 positioned_char = layout->character_positions[j].bounding_box;
                 positioned_char.min += line_pos;
                 positioned_char.max += line_pos;
                 if (!bounding_box_2_is_other_box_inside(editor_region, positioned_char)) {
@@ -493,11 +494,11 @@ void text_editor_render(Text_Editor* editor, Rendering_Core* core, BoundingBox2 
             Text_Highlight* highlight = &editor->text_highlights.data[i].data[j];
             // Draw text background 
             {
-                BoundingBox2 highlight_start = text_editor_get_character_bounding_box(editor,
+                Bounding_Box2 highlight_start = text_editor_get_character_bounding_box(editor,
                     text_height, i, highlight->character_start, editor_region);
-                BoundingBox2 highlight_end = text_editor_get_character_bounding_box(editor, text_height, i, highlight->character_end - 1,
+                Bounding_Box2 highlight_end = text_editor_get_character_bounding_box(editor, text_height, i, highlight->character_end - 1,
                     editor_region);
-                BoundingBox2 combined = bounding_box_2_combine(highlight_start, highlight_end);
+                Bounding_Box2 combined = bounding_box_2_combine(highlight_start, highlight_end);
                 text_editor_draw_bounding_box(editor, core, combined, highlight->background_color);
             }
             // Set text color
@@ -525,7 +526,7 @@ void text_editor_render(Text_Editor* editor, Rendering_Core* core, BoundingBox2 
         if (editor->last_keymessage_time + inactivity_time_to_cursor_blink < time) {
             show_cursor = math_modulo(time - editor->last_keymessage_time - inactivity_time_to_cursor_blink, blink_length * 2.0) > blink_length;
         }
-        BoundingBox2 cursor_bb = text_editor_get_character_bounding_box(
+        Bounding_Box2 cursor_bb = text_editor_get_character_bounding_box(
             editor, text_height, editor->cursor_position.line, editor->cursor_position.character, editor_region
         );
         // Change cursor height if there are messages to be parsed
@@ -687,7 +688,7 @@ Text_Slice text_slice_get_current_word_slice(Dynamic_Array<String>* text, Text_P
     String whitespace_characters = characters_get_string_whitespaces();
     String operator_characters = characters_get_string_non_identifier_non_whitespace();
     String identifier_characters = characters_get_string_valid_identifier_characters();
-    if (it.character == '\0') 
+    if (it.character == '\0')
         return text_slice_make(pos, pos);
     if (string_contains_character(whitespace_characters, it.character)) return text_slice_make(pos, pos);
     if (string_contains_character(identifier_characters, it.character)) {
@@ -886,7 +887,7 @@ Text_Position movement_evaluate_at_position(Movement movement, Text_Position pos
             }
             break;
         }
-        case Movement_Type::SEARCH_FORWARDS_FOR: 
+        case Movement_Type::SEARCH_FORWARDS_FOR:
         case Movement_Type::SEARCH_FORWARDS_TO:
         {
             if (movement.type == Movement_Type::SEARCH_FORWARDS_FOR) {

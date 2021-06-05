@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../../win32/timing.hpp"
+
 struct Lexer;
 struct Compiler;
 struct AST_Parser;
@@ -43,9 +45,10 @@ struct Compiler
     Bytecode_Generator bytecode_generator;
     Bytecode_Interpreter bytecode_interpreter;
     C_Generator c_generator;
+    Timer* timer;
 };
 
-Compiler compiler_create();
+Compiler compiler_create(Timer* timer);
 void compiler_destroy(Compiler* compiler);
 void compiler_compile(Compiler* compiler, String* source_code, bool generate_code);
 void compiler_execute(Compiler* compiler);

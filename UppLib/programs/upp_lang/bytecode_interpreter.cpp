@@ -201,7 +201,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
             break;
         }
         case Hardcoded_Function_Type::RANDOM_I32: {
-            i32 result = random_next_int();
+            i32 result = 0;
             memory_copy(interpreter->return_register, &result, 4);
             break;
         }

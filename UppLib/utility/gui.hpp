@@ -2,13 +2,8 @@
 
 #include "../math/umath.hpp"
 #include "../datastructures/string.hpp"
-
-enum class Anchor_2D 
-{
-    TOP_LEFT, TOP_CENTER, TOP_RIGHT,
-    BOTTOM_LEFT, BOTTOM_CENTER, BOTTOM_RIGHT,
-    CENTER_LEFT, CENTER_CENTER, CENTER_RIGHT
-};
+#include "../win32/timing.hpp"
+#include "../programs/upp_lang/test_renderer.hpp"
 
 // Forward Declarations
 struct Input;
@@ -35,10 +30,11 @@ struct GUI
     float current_depth = 0.99f;
 
     Input* input;
+    Timer* timer;
     Renderer_2D* renderer_2d;
 };
 
-GUI gui_create(Renderer_2D* renderer_2d, Input* input);
+GUI gui_create(Renderer_2D* renderer_2d, Input* input, Timer* timer);
 void gui_destroy(GUI* gui);
 void gui_update(GUI* gui, Input* input, int window_width, int window_height);
 void gui_render(GUI* gui, Rendering_Core* core);

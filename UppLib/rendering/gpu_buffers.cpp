@@ -152,38 +152,6 @@ Vertex_Attribute vertex_attribute_make_custom(Vertex_Attribute_Data_Type type, G
     return result;
 }
 
-bool bound_vertex_gpu_buffer_contains_shader_variable(Bound_Vertex_GPU_Buffer* vertex_buffer, Shader_Variable_Information* variable_info) 
-{
-    for (int i = 0; i < vertex_buffer->attribute_informations.size; i++) 
-    {
-        Vertex_Attribute* attrib_info = &vertex_buffer->attribute_informations.data[i];
-        bool matches = attrib_info->location == variable_info->location;
-        // Check if data types match
-        {
-            // Check Vectors cause they need special attention
-            if (variable_info->type == GL_FLOAT_VEC2) {
-                matches = matches && (attrib_info->size == 2 && attrib_info->gl_type == GL_FLOAT);
-            }
-            else if (variable_info->type == GL_FLOAT_VEC3) {
-                matches = matches && (attrib_info->size == 3 && attrib_info->gl_type == GL_FLOAT);
-            }
-            else if (variable_info->type == GL_FLOAT_VEC4) {
-                matches = matches && (attrib_info->size == 4 && attrib_info->gl_type == GL_FLOAT);
-            }
-            else {
-                matches = matches && (attrib_info->size == variable_info->size && attrib_info->gl_type == variable_info->type);
-            }
-        }
-        if (matches) {
-            return true;
-        }
-    }
-    return false;
-}
-
-void vertex_gpu_buffer_destroy(Bound_Vertex_GPU_Buffer* vertex_data) {
-}
-
 Mesh_GPU_Buffer mesh_gpu_buffer_create_without_vertex_buffer(
     Rendering_Core* core,
     GPU_Buffer index_buffer,
@@ -284,32 +252,6 @@ int mesh_gpu_buffer_attach_vertex_buffer(Mesh_GPU_Buffer* mesh, Rendering_Core* 
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 
     return mesh->vertex_buffers.size - 1;
-}
-
-bool mesh_gpu_buffer_check_compatability_with_shader(Mesh_GPU_Buffer* mesh, Shader_Program* shader_program)
-{
-    // Check if we fulfill all shader_program attribute inputs
-    for (int i = 0; i < shader_program->attribute_informations.size; i++)
-    {
-        Shader_Variable_Information* variable_info = &shader_program->attribute_informations.data[i];
-        if (variable_info->location == -1) continue; // Skip non-active attributes (Or built in attributes, like gl_VertexID)
-        bool mesh_contains_attribute = false;
-
-        // Loop over all attached vertex buffers and see if it contains the attribute
-        for (int j = 0; j < mesh->vertex_buffers.size; j++)
-        {
-            Bound_Vertex_GPU_Buffer* vertex_buffer = &mesh->vertex_buffers.data[j];
-            if (bound_vertex_gpu_buffer_contains_shader_variable(vertex_buffer, variable_info)) {
-                mesh_contains_attribute = true;
-            }
-        }
-
-        if (!mesh_contains_attribute) {
-            logg("Could not render mesh with shader_program, because it does not contain attribute location %d\n", variable_info->location);
-            return false;
-        }
-    }
-    return true;
 }
 
 void mesh_gpu_buffer_update_index_buffer(Mesh_GPU_Buffer* mesh, Rendering_Core* core, Array<uint32> data)

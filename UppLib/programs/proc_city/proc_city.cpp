@@ -64,6 +64,7 @@ TODO:
         - L-Systems
 
 */
+Random g_random;
 
 struct City_Vertex
 {
@@ -134,7 +135,7 @@ void street_generate_hotspot_points(DynamicArray<vec2>* to_fill, int point_count
 {
     // Generate point_count points
     for (int i = 0; i < point_count; i++) {
-        dynamic_array_push_back(to_fill, vec2(random_next_float(), random_next_float()) * size - size / 2.0f);
+        dynamic_array_push_back(to_fill, vec2(random_next_float(&g_random, ), random_next_float(&g_random, )) * size - size / 2.0f);
     }
     // Remove points that dont fullfill min_distance
     for (int i = 0; i < to_fill->size; i++) {
@@ -284,10 +285,10 @@ void streetnetwork_place_buildings_random(StreetNetwork* network, float radius) 
         for (int j = 0; j < building_count; j++) {
             float alpha = (float)j / building_count;
             vec2 pos = (1.0f - alpha) * a + alpha * b;
-            if (random_next_bool(0.7f)) {
+            if (random_next_bool(&g_random, 0.7f)) {
                 dynamic_array_push_back(&network->buildings, street_buidling_placeholder_make(pos + normal * (radius * 1.2f + 0.1f), radius, -normal));
             }
-            if (random_next_bool(0.7f)) {
+            if (random_next_bool(&g_random, 0.7f)) {
                 dynamic_array_push_back(&network->buildings, street_buidling_placeholder_make(pos - normal * (radius * 1.2f + 0.1f), radius, normal));
             }
             /*
@@ -372,7 +373,7 @@ struct Streetnetwork_Grid_Line_Iterator
 
 Streetnetwork_Grid_Line_Iterator streetnetwork_grid_line_iterator_make(StreetNetwork* network, vec2 a, vec2 b)
 {
-    BoundingBox2 grid_bb = bounding_box_2_make_center_size(vec2(0.0f), vec2(network->grid_width));
+    Bounding_Box2 grid_bb = bounding_box_2_make_center_size(vec2(0.0f), vec2(network->grid_width));
     if (!bounding_box_2_is_point_inside(grid_bb, a) || !bounding_box_2_is_point_inside(grid_bb, b))
         panic("Shit");
 
@@ -393,7 +394,7 @@ bool streetnetwork_grid_line_iterator_has_next(Streetnetwork_Grid_Line_Iterator*
 void streetnetwork_grid_line_iterator_step(Streetnetwork_Grid_Line_Iterator* iterator, StreetNetwork* network)
 {
     vec2 p = iterator->origin + iterator->direction * iterator->t;
-    BoundingBox2 cell_bb;
+    Bounding_Box2 cell_bb;
     cell_bb.min = vec2(iterator->grid_x * (network->grid_width / network->row_count), iterator->grid_y * (network->grid_width / network->row_count));
     cell_bb.max = cell_bb.min + vec2(network->grid_width / network->row_count);
 
@@ -622,7 +623,7 @@ void streetnetwork_generate_seedpoints_for_branches(StreetNetwork* network, floa
         int subdiv_count = (int)(d / split_distance);
         for (int j = 1; j < subdiv_count - 1; j++)
         {
-            if (random_next_bool(fail_percentage)) continue;
+            if (random_next_bool(&g_random, fail_percentage)) continue;
             float alpha = (float)(j) / subdiv_count;
             vec2 pos = (1.0f - alpha) * a + (alpha)*b;
             dynamic_array_push_back(&network->positions, pos);
@@ -630,9 +631,9 @@ void streetnetwork_generate_seedpoints_for_branches(StreetNetwork* network, floa
             network->lines[line_index].end = network->positions.size - 1; // Change end to our new position
             line_index = network->lines.size - 1;
             // Generate seeds
-            if (random_next_bool(0.66f))
+            if (random_next_bool(&g_random, 0.66f))
             {
-                if (random_next_bool(0.5f)) { // left
+                if (random_next_bool(&g_random, 0.5f)) { // left
                     dynamic_array_push_back(&network->open_branches, streetbranch_make(network->positions.size - 1, normal));
                 }
                 else { // right
@@ -716,10 +717,10 @@ void streetnetwork_grow_branches(StreetNetwork* network, float dist, float destr
             else if (d > destroy_start_radius)
             {
                 float percent = ((d - destroy_start_radius) / (max_radius - destroy_start_radius));
-                if (random_next_bool(percent)) continue;
+                if (random_next_bool(&g_random, percent)) continue;
             }
         }
-        float r = random_next_float();
+        float r = random_next_float(&g_random);
         if (r < (terminate_percentage) / sum) {
             //  Terminate
         }
@@ -727,7 +728,7 @@ void streetnetwork_grow_branches(StreetNetwork* network, float dist, float destr
             //else if (true) {
                 // Turn left
             float angle = math_arctangent_2(branch.normal.y, branch.normal.x);
-            angle = angle + (PI / 16.0f + random_next_float() * PI / 16.0f);
+            angle = angle + (PI / 16.0f + random_next_float(&g_random) * PI / 16.0f);
             vec2 normal = vec2(math_cosine(angle), math_sine(angle));
             //normal = branch.normal;
             Optional<int> result = streetnetwork_add_line_between_points_with_collision(
@@ -737,7 +738,7 @@ void streetnetwork_grow_branches(StreetNetwork* network, float dist, float destr
         else if (r < (terminate_percentage + turn_left_percentage + turn_right_percentage) / sum) {
             // Turn right
             float angle = math_arctangent_2(branch.normal.y, branch.normal.x);
-            angle = angle - (PI / 16.0f + random_next_float());
+            angle = angle - (PI / 16.0f + random_next_float(&g_random));
             vec2 normal = vec2(math_cosine(angle), math_sine(angle));
             Optional<int> result = streetnetwork_add_line_between_points_with_collision(
                 network, branch.position_index, a + normal * dist, dist / 0.8f, false);
@@ -789,11 +790,11 @@ void streetnetwork_generate_main_road(StreetNetwork* network, vec2 size, int hot
     while (network->positions.size < hotspot_count && radius < vector_get_minimum_axis(size))
     {
         int step_count_per_radius = 100;
-        float start_angle = random_next_float() * PI * 2.0f;
+        float start_angle = random_next_float(&g_random) * PI * 2.0f;
         for (int i = 0; i < step_count_per_radius; i++)
         {
             float angle = PI * 2.0f * (i / (float)step_count_per_radius) + start_angle;
-            vec2 pos = vec2(math_sine(angle), math_cosine(angle)) * (radius + random_next_float() * base_min_distance);
+            vec2 pos = vec2(math_sine(angle), math_cosine(angle)) * (radius + random_next_float(&g_random) * base_min_distance);
             // Check if the min_distance is satisfied
             bool skip = false;
             for (int j = 0; j < network->positions.size; j++) {
@@ -863,12 +864,12 @@ void street_generate_between_hotspots_random(
     int* start,
     OpenGLState* state)
 {
-    int start_index = random_next_int() % hotspots->size;
+    int start_index = random_next_int(&g_random, ) % hotspots->size;
     *start = start_index;
     vec2 current_point = hotspots->data[start_index];
     vec2 direction;
     {
-        float angle = random_next_float() * PI;
+        float angle = random_next_float(&g_random, ) * PI;
         direction = vec2(math_sine(angle), math_cosine(angle));
     }
 
@@ -1261,7 +1262,7 @@ Building_Vertex building_vertex_make(vec3 pos, vec3 normal, vec2 uv) {
     return result;
 }
 
-BoundingBox2 polygon_2d_get_bounding_box(Polygon2D* polygon) {
+Bounding_Box2 polygon_2d_get_bounding_box(Polygon2D* polygon) {
     vec2 minimum(10000.0f, 100000.0f);
     vec2 maximum(-1000000.0f, -1000000.0f);
     for (int i = 0; i < polygon->positions.size; i++) {
@@ -1279,7 +1280,7 @@ void building_create_from_polygon_2d(Polygon2D* polygon, Dynamic_Array<Building_
     dynamic_array_reset(vertices);
     dynamic_array_reset(indices);
     // Lets go for a stupid uv projection for now, and fix it later (Also different materials/split model in multiple meshes)
-    BoundingBox2 bb = polygon_2d_get_bounding_box(polygon);
+    Bounding_Box2 bb = polygon_2d_get_bounding_box(polygon);
     vec2 center = (bb.min + bb.max) / 2.0f;
     for (int i = 0; i < polygon->positions.size; i++) {
         vec2 a = polygon->positions[i] - center;
@@ -1347,7 +1348,7 @@ Mesh_GPU_Buffer city_building_create_mesh_from_polygon(Polygon2D* polygon, float
 
 void polygon_2d_draw(Polygon2D* polygon, Renderer_2D* renderer, vec2 offset, float size)
 {
-    BoundingBox2 bb = polygon_2d_get_bounding_box(polygon);
+    Bounding_Box2 bb = polygon_2d_get_bounding_box(polygon);
     char buffer[100];
     for (int i = 0; i < polygon->positions.size; i++) {
         vec2 a = (polygon->positions[i]) / (size * 1.3f) + offset;
@@ -1362,7 +1363,7 @@ void polygon_2d_draw(Polygon2D* polygon, Renderer_2D* renderer, vec2 offset, flo
 
 void polygon_2d_draw_scaled(Polygon2D* polygon, Renderer_2D* renderer, vec2 offset)
 {
-    BoundingBox2 bb = polygon_2d_get_bounding_box(polygon);
+    Bounding_Box2 bb = polygon_2d_get_bounding_box(polygon);
     vec2 center = (bb.max + bb.min) / 2.0f;
     float size = vector_get_maximum_axis(bb.max - bb.min);
     char buffer[100];
@@ -1394,10 +1395,10 @@ void polygon_2d_transform(Polygon2D* polygon, mat3 transform) {
 void polygon_2d_fill_random_polygon(Polygon2D* polygon, float radius)
 {
     dynamic_array_reset(&polygon->positions);
-    int count = (random_next_int() % 3) + 3;
+    int count = (random_next_u32(&g_random) % 3) + 3;
     polygon_2d_fill_with_ngon(polygon, radius, count);
-    polygon_2d_transform(polygon, mat3(mat2_make_rotation_matrix(random_next_float() * 2 * PI)));
-    polygon_2d_translate_positions(polygon, (vec2(random_next_float(), random_next_float()) - 0.5f) * radius);
+    polygon_2d_transform(polygon, mat3(mat2_make_rotation_matrix(random_next_float(&g_random) * 2 * PI)));
+    polygon_2d_translate_positions(polygon, (vec2(random_next_float(&g_random), random_next_float(&g_random)) - 0.5f) * radius);
 }
 
 void polygon_2d_fill_random(Polygon2D* polygon, float radius, GUI* gui, Rendering_Core* core, Window* window)
@@ -1405,12 +1406,12 @@ void polygon_2d_fill_random(Polygon2D* polygon, float radius, GUI* gui, Renderin
     Polygon2D addition_shape = polygon_2d_create();
     SCOPE_EXIT(polygon_2d_destroy(&addition_shape));
     dynamic_array_reset(&polygon->positions);
-    int shape_count = (random_next_int() % 3) + 2;
+    int shape_count = (random_next_u32(&g_random) % 3) + 2;
 
     for (int i = 0; i < shape_count; i++) {
-        int count = (random_next_int() % 3) + 3;
+        int count = (random_next_u32(&g_random) % 3) + 3;
         polygon_2d_fill_with_ngon(&addition_shape, radius, count);
-        polygon_2d_translate_positions(&addition_shape, (vec2(random_next_float(), random_next_float()) - 0.5f) * radius);
+        polygon_2d_translate_positions(&addition_shape, (vec2(random_next_float(&g_random), random_next_float(&g_random)) - 0.5f) * radius);
 
         gui_render(gui, core);
         window_swap_buffers(window);
@@ -1468,8 +1469,8 @@ void proc_city_main()
     SCOPE_EXIT(window_destroy(window));
 
     Window_State* window_state = window_get_window_state(window);
-    timing_initialize();
-    random_initialize();
+    g_random = random_make_time_initalized();
+    Timer timer = timer_make();
 
     Rendering_Core core = rendering_core_create(window_state->width, window_state->height, (float)window_state->dpi);
     SCOPE_EXIT(rendering_core_destroy(&core));
@@ -1478,8 +1479,6 @@ void proc_city_main()
     pipeline_state.depth_state.test_type = Depth_Test_Type::TEST_DEPTH;
     pipeline_state.blending_state.blending_enabled = false;
     rendering_core_update_pipeline_state(&core, pipeline_state);
-    Render_Pass* main_render_pass = render_pass_create(nullptr, pipeline_state, true, true, true);
-    SCOPE_EXIT(render_pass_destroy(main_render_pass));
 
     Input* input = window_get_input(window);
     Camera_3D* camera = camera_3D_create(&core, math_degree_to_radians(90.0f), 0.1f, 1000.0f);
@@ -1494,14 +1493,14 @@ void proc_city_main()
     SCOPE_EXIT(text_renderer_destroy(text_renderer, &core));
     Renderer_2D* renderer_2D = renderer_2D_create(&core, text_renderer);
     SCOPE_EXIT(renderer_2D_destroy(renderer_2D, &core));
-    GUI gui = gui_create(renderer_2D, input);
+    GUI gui = gui_create(renderer_2D, input, &timer);
     SCOPE_EXIT(gui_destroy(&gui));
 
     glViewport(0, 0, window_state->width, window_state->height);
     glClearColor(0.05f, 0.05f, 0.05f, 0.0f);
 
     // City Stuff
-    Shader_Program* city_shader = shader_program_create(&core, "resources/shaders/city_shader.glsl");
+    Shader_Program* city_shader = shader_program_create(&core, { "resources/shaders/city_shader.glsl" });
     SCOPE_EXIT(shader_program_destroy(city_shader));
 
     // Building mesh
@@ -1532,7 +1531,7 @@ void proc_city_main()
 
     while (!input->close_request_issued)
     {
-        double now = timing_current_time_in_seconds();
+        double now = timer_current_time_in_seconds(&timer);
 
         // Update
         input_reset(input);
@@ -1551,7 +1550,7 @@ void proc_city_main()
         }
 
         // Render
-        rendering_core_prepare_frame(&core, camera, (float)now, window_state->width, window_state->height);
+        rendering_core_prepare_frame(&core, camera, Framebuffer_Clear_Type::COLOR_AND_DEPTH, (float)now, window_state->width, window_state->height);
         // Set state
         Camera_3D_Uniform_Data d = camera_3d_uniform_data_make(camera, (float)now);
         gpu_buffer_update(&camera_uniform_buffer, array_create_static_as_bytes(&d, 1)); // Update camera data
@@ -1578,15 +1577,14 @@ void proc_city_main()
             mat4 model = mat4_make_translation_matrix(vec3(p.position.x, 0.0f, -p.position.y) * 10.0f) *
                 mat4(mat3_make_rotation_matrix_around_y(math_arctangent_2(p.normal_to_street.x, -p.normal_to_street.y))) *
                 mat4(mat3_make_scaling_matrix(vec3(0.1f)));
-            shader_program_set_uniform_mat4(city_shader, "u_model", model);
-            render_pass_add_draw_call(main_render_pass, city_shader, &building_mesh);
+            shader_program_draw_mesh(city_shader, &building_mesh, &core, { uniform_value_make_mat4("u_model", model) });
         }
 
         gui_render(&gui, &core);
 
         // Present and sleep
         window_swap_buffers(window);
-        timing_sleep_until(now + 1 / 60.0);
+        timer_sleep_until(&timer, now + 1 / 60.0);
     }
 
     logg("what");

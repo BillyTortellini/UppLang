@@ -5,7 +5,6 @@
 #include "../../rendering/gpu_buffers.hpp"
 #include "../../rendering/text_renderer.hpp"
 #include "../../rendering/rendering_core.hpp"
-#include "../../rendering/render_pass.hpp"
 #include "../../win32/input.hpp"
 #include "text.hpp"
 
@@ -183,11 +182,10 @@ struct Text_Editor
     float line_size_cm;
     double last_keymessage_time;
     String line_count_buffer;
-    BoundingBox2 last_editor_region;
+    Bounding_Box2 last_editor_region;
     float last_text_height;
     int first_rendered_line;
     int first_rendered_char;
-    Render_Pass* render_pass;
 
     // Editor Stuff
     Text_History history;
@@ -213,7 +211,7 @@ void text_editor_destroy(Text_Editor* editor);
 
 void text_editor_handle_key_message(Text_Editor* editor, Key_Message* message);
 void text_editor_update(Text_Editor* editor, Input* input, double time);
-void text_editor_render(Text_Editor* editor, Rendering_Core* core, BoundingBox2 editor_box);
+void text_editor_render(Text_Editor* editor, Rendering_Core* core, Bounding_Box2 editor_box);
 
 void text_editor_add_highlight(Text_Editor* editor, Text_Highlight highlight, int line_number);
 void text_editor_add_highlight_from_slice(Text_Editor* editor, Text_Slice slice, vec3 text_color, vec4 background_color);

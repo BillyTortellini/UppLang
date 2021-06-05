@@ -6,31 +6,33 @@
 #include "../utility/utils.hpp"
 #include "windows_helper_functions.hpp"
 
-static i64 timing_performance_frequency;
-static i64 timing_start_time;
-void timing_initialize()
+i64 timing_current_cpu_tick() {
+    return __rdtsc();
+}
+
+Timer timer_make()
 {
-    bool res = QueryPerformanceFrequency((LARGE_INTEGER*) &timing_performance_frequency);    
+    Timer result;
+    bool res = QueryPerformanceFrequency((LARGE_INTEGER*) &result.timing_performance_frequency);    
     if (!res) {
         helper_print_last_error();
         panic("Could not initialize timing");
     };
-    QueryPerformanceCounter((LARGE_INTEGER*)&timing_start_time);
+    QueryPerformanceCounter((LARGE_INTEGER*) &result.timing_start_time);
+    return result;
 }
 
-i64 timing_current_tick() {
-    return __rdtsc();
-}
-
-double timing_current_time_in_seconds() {
+double timer_current_time_in_seconds(Timer* timer)
+{
     i64 now;
     QueryPerformanceCounter((LARGE_INTEGER*)&now);
-    now = now - timing_start_time;
-    return (double)now/timing_performance_frequency;
+    now = now - timer->timing_start_time;
+    return (double)now/timer->timing_performance_frequency;
 }
 
-void timing_sleep_until(double until_in_seconds) {
-    double now_in_seconds = timing_current_time_in_seconds();
+void timer_sleep_until(Timer* timer, double until_in_seconds)
+{
+    double now_in_seconds = timer_current_time_in_seconds(timer);
     double diff = until_in_seconds - now_in_seconds;
     if (diff <= 0.0) return;
 
@@ -46,11 +48,11 @@ void timing_sleep_until(double until_in_seconds) {
 
     // Busy wait until time actually passes
     int sleep_cycles = 0;
-    do { sleep_cycles++; } while (timing_current_time_in_seconds() < until_in_seconds);
+    do { sleep_cycles++; } while (timer_current_time_in_seconds(timer) < until_in_seconds);
 }
 
-void timing_sleep_for(double seconds) {
-    double start = timing_current_time_in_seconds();
-    timing_sleep_until(start + seconds);
+void timer_sleep_for(Timer* timer, double seconds) {
+    double start = timer_current_time_in_seconds(timer);
+    timer_sleep_until(timer, start + seconds);
 }
 

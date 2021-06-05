@@ -7,14 +7,13 @@
 #include "texture_2D.hpp"
 #include "gpu_buffers.hpp"
 #include "rendering_core.hpp"
-#include "render_pass.hpp"
 
 struct Shader_Program;
 struct String;
 
 struct Character_Position
 {
-    BoundingBox2 bounding_box;
+    Bounding_Box2 bounding_box;
     Glyph_Information* glyph_info;
     vec3 color;
 };
@@ -57,7 +56,6 @@ struct Text_Renderer
     Mesh_GPU_Buffer font_mesh;
     Dynamic_Array<Font_Vertex> text_vertices;
     Dynamic_Array<GLuint> text_indices;
-    Render_Pass* render_pass;
 
     // Text positioning cache
     Text_Layout text_layout;

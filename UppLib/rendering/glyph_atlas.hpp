@@ -23,8 +23,11 @@ struct Glyph_Information
 
 struct Glyph_Atlas
 {
+    // Atlas Data
     Texture_Bitmap atlas_bitmap;
     Array<float> atlas_distance_field;
+
+    // Glyph Information
     int ascender;
     int descender;
     int cursor_advance; // For fonts with uniform character width

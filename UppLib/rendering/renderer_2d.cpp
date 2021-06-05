@@ -27,7 +27,7 @@ Renderer_2D* renderer_2D_create(Rendering_Core* core, Text_Renderer* text_render
     result->text_renderer = text_renderer;
     result->geometry_data = dynamic_array_create_empty<Geometry_2D_Vertex>(64);
     result->index_data = dynamic_array_create_empty<uint32>(64);
-    result->shader_2d = shader_program_create(core, "resources/shaders/core/geometry_2d.glsl");
+    result->shader_2d = shader_program_create(core, { "resources/shaders/core/geometry_2d.glsl" });
     Vertex_Attribute attributes[] = {
         vertex_attribute_make(Vertex_Attribute_Type::POSITION_3D),
         vertex_attribute_make(Vertex_Attribute_Type::COLOR3),
@@ -47,7 +47,6 @@ Renderer_2D* renderer_2D_create(Rendering_Core* core, Text_Renderer* text_render
     pipeline_state.blending_state.blending_enabled = true;
     pipeline_state.depth_state.test_type = Depth_Test_Type::TEST_DEPTH;
     pipeline_state.culling_state.culling_enabled = true;
-    result->render_pass = render_pass_create(0, pipeline_state, false, false, false);
     rendering_core_add_window_size_listener(core, &renderer_2D_update_window_size, result);
     return result;
 }
@@ -60,7 +59,6 @@ void renderer_2D_destroy(Renderer_2D* renderer, Rendering_Core* core)
     shader_program_destroy(renderer->shader_2d);
     mesh_gpu_buffer_destroy(&renderer->geometry);
     string_destroy(&renderer->string_buffer);
-    render_pass_destroy(renderer->render_pass);
     delete renderer;
 }
 
@@ -73,16 +71,13 @@ Geometry_2D_Vertex geometry_2d_vertex_make(vec3 pos, vec3 color) {
 
 void renderer_2D_render(Renderer_2D* renderer, Rendering_Core* core)
 {
-    // Set state
-    glClear(GL_DEPTH_BUFFER_BIT);
     // Upload data
     gpu_buffer_update(&renderer->geometry.vertex_buffers[0].gpu_buffer, array_as_bytes(&dynamic_array_as_array(&renderer->geometry_data)));
     mesh_gpu_buffer_update_index_buffer(&renderer->geometry, core, dynamic_array_as_array(&renderer->index_data));
     dynamic_array_reset(&renderer->geometry_data);
     dynamic_array_reset(&renderer->index_data);
     // Render
-    render_pass_add_draw_call(renderer->render_pass, renderer->shader_2d, &renderer->geometry);
-    render_pass_execute(renderer->render_pass, core);
+    shader_program_draw_mesh(renderer->shader_2d, &renderer->geometry, core, {});
     text_renderer_render(renderer->text_renderer, core);
 }
 

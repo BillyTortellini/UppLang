@@ -13,6 +13,7 @@ struct Rendering_Core;
 struct Watched_File;
 struct File_Listener;
 struct Texture_2D;
+struct Mesh_GPU_Buffer;
 
 struct Shader_Variable_Information
 {
@@ -75,31 +76,24 @@ struct Shader_Program
     Array<Watched_File*> watched_files;
     File_Listener* file_listener;
 
-    Dynamic_Array<Uniform_Value> uniform_cache;
     Dynamic_Array<Shader_Variable_Information> uniform_informations;
     Dynamic_Array<Shader_Variable_Information> attribute_informations;
 };
 
 // For shader_program_create to work, the files need to exist, the shader does not need to compile
-Shader_Program* shader_program_create(Rendering_Core* core, const char* filepath);
-Shader_Program* shader_program_create_from_multiple_sources(Rendering_Core* core, std::initializer_list<const char*> shader_filepaths);
+Shader_Program* shader_program_create(Rendering_Core* core, std::initializer_list<const char*> shader_filepaths);
 void shader_program_destroy(Shader_Program* program);
 
-void shader_program_set_uniform_i32(Shader_Program* program, const char* name_handle, int value);
-void shader_program_set_uniform_u32(Shader_Program* program, const char* name_handle, u32 value);
-void shader_program_set_uniform_texture_2D(Shader_Program* program, const char* name_handle, Texture_2D* texture);
-void shader_program_set_uniform_float(Shader_Program* program, const char* name_handle, float value);
-void shader_program_set_uniform_vec2(Shader_Program* program, const char* name_handle, const vec2& value);
-void shader_program_set_uniform_vec3(Shader_Program* program, const char* name_handle, const vec3& value);
-void shader_program_set_uniform_vec4(Shader_Program* program, const char* name_handle, const vec4& value);
-void shader_program_set_uniform_mat2(Shader_Program* program, const char* name_handle, const mat2& value);
-void shader_program_set_uniform_mat3(Shader_Program* program, const char* name_handle, const mat3& value);
-void shader_program_set_uniform_mat4(Shader_Program* program, const char* name_handle, const mat4& value);
+void shader_program_draw_mesh(Shader_Program* program, Mesh_GPU_Buffer* mesh, Rendering_Core* core, std::initializer_list<Uniform_Value> uniforms);
+void shader_program_draw_mesh_instanced(
+    Shader_Program* program, Mesh_GPU_Buffer* mesh, int instance_count, Rendering_Core* core, std::initializer_list<Uniform_Value> uniforms
+);
 bool shader_program_set_uniform_value(Shader_Program* program, Uniform_Value value, Rendering_Core* core);
-
 void shader_program_bind(Shader_Program* program, Rendering_Core* core);
 void shader_program_print_variable_information(Shader_Program* program);
 Shader_Variable_Information* shader_program_find_shader_variable_information_by_name(Shader_Program* program, const char* name_handle);
+bool shader_program_check_compatability_with_mesh(Shader_Program* shader_program, Mesh_GPU_Buffer* mesh);
+
 
 
 /*

@@ -37,7 +37,6 @@ Framebuffer* framebuffer_create_fullscreen(Rendering_Core* core, Framebuffer_Dep
 Framebuffer* framebuffer_create_width_height(Rendering_Core* core, Framebuffer_Depth_Stencil_State depth_stencil_state, int width, int height);
 void framebuffer_destroy(Framebuffer* framebuffer, Rendering_Core* core);
 
-void framebuffer_bind(Framebuffer* framebuffer, Rendering_Core* core);
 void framebuffer_set_depth_attachment(Framebuffer* framebuffer, Rendering_Core* core, Texture_2D* texture, bool destroy_texture_with_framebuffer);
 void framebuffer_add_color_attachment(Framebuffer* framebuffer, Rendering_Core* core, int attachment_index, Texture_2D* texture, bool destroy_texture_with_framebuffer);
 

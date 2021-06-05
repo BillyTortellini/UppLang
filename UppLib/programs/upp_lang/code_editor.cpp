@@ -2,10 +2,10 @@
 
 #include "../../utility/file_io.hpp"
 
-Code_Editor code_editor_create(Text_Renderer* text_renderer, Rendering_Core* core)
+Code_Editor code_editor_create(Text_Renderer* text_renderer, Rendering_Core* core, Timer* timer)
 {
     Code_Editor result;
-    result.compiler = compiler_create();
+    result.compiler = compiler_create(timer);
     result.text_editor = text_editor_create(text_renderer, core);
 
     // Load file into text editor
@@ -188,6 +188,6 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
     }
 }
 
-void code_editor_render(Code_Editor* editor, Rendering_Core* core, BoundingBox2 editor_box) {
+void code_editor_render(Code_Editor* editor, Rendering_Core* core, Bounding_Box2 editor_box) {
     text_editor_render(editor->text_editor, core, editor_box);
 }

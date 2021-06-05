@@ -2,90 +2,127 @@
 
 #include "../../rendering/shader_program.hpp"
 #include "../../rendering/gpu_buffers.hpp"
-#include "../../rendering/cameras.hpp"
 #include "../../math/umath.hpp"
-#include "../../win32/input.hpp"
-#include "../../win32/window.hpp"
-#include "../../rendering/texture_2D.hpp"
 #include "../../rendering/rendering_core.hpp"
-#include "../../rendering/render_pass.hpp"
-#include "../../rendering/framebuffer.hpp"
+#include "../../utility/bounding_box.hpp"
 
-struct Test_Renderer
+/*
+    This class support the following Primitives:
+        * Rectangles
+        * Circles
+        * Lines
+        * Curves
+        * Textures
+        * Triangles?
+
+    But it is not concerned about how these elements are layed out on the screen,
+    the coordinates given are in pixel coordinates of the window size
+*/
+
+struct Mesh_CPU_Buffer_Dynamic
 {
-    Shader_Program* shader;
-    Shader_Program* render_to_texture_shader;
-    Framebuffer* target_framebuffer;
     Mesh_GPU_Buffer mesh;
-    Mesh_GPU_Buffer quad_mesh;
-    Render_Pass* window_pass;
-    Render_Pass* texture_pass;
+    int vertex_count;
+    Dynamic_Array<byte> vertex_buffer;
+    Dynamic_Array<u32> index_buffer;
 };
 
-Test_Renderer test_renderer_create(Rendering_Core* core, Camera_3D* camera);
-void test_renderer_destroy(Test_Renderer* renderer, Rendering_Core* core);
-void test_renderer_update(Test_Renderer* renderer, Input* input);
-void test_renderer_render(Test_Renderer* renderer, Rendering_Core* core);
+Mesh_CPU_Buffer_Dynamic mesh_cpu_buffer_dynamic_create(Rendering_Core* core, int expected_face_count, int vertex_byte_size, Array<Vertex_Attribute> attributes);
+void mesh_cpu_buffer_dynamic_dynamic_destroy(Mesh_CPU_Buffer_Dynamic* buffer);
+void mesh_cpu_buffer_dynamic_add_face(Mesh_CPU_Buffer_Dynamic* buffer, int index_offset_0, int index_offset_1, int index_offset_2);
+void mesh_cpu_buffer_dynamic_upload_data(Mesh_CPU_Buffer_Dynamic* buffer, Rendering_Core* core);
+
+template<typename T>
+void mesh_cpu_buffer_dynamic_add_vertex(Mesh_CPU_Buffer_Dynamic* buffer, T vertex)
+{
+    byte* b = (byte*) &vertex;
+    for (int i = 0; i < sizeof(T); i++) {
+        dynamic_array_push_back(&buffer->vertex_buffer, *b);
+        b = b + 1;
+    }
+    buffer->vertex_count++;
+}
 
 
 
-/*
-    The goal of renderpasses is to make framebuffer bindings and pipeline state changes
-    easy and transparent (Without forgetting bindings, setting viewports, clearing framebuffers, binding default buffer...)
-    Also all rendering utils that don't need to know where to render the data (Text_Renderer, 2D_Renderer, GUI) can use this
+enum class Anchor_2D 
+{
+    TOP_LEFT, TOP_CENTER, TOP_RIGHT,
+    BOTTOM_LEFT, BOTTOM_CENTER, BOTTOM_RIGHT,
+    CENTER_LEFT, CENTER_CENTER, CENTER_RIGHT
+};
+vec2 anchor_to_direction(Anchor_2D anchor);
 
-    Maybe I can also setup the Renderpasses and all the subpasses in a way that I can set them up at program start, 
-    then every frame the draw_calls are added, since all renderers have the subpasses they need to render, or maybe
-    they are in the resource manager or whatever
+struct Vertex_Rectangle
+{
+    vec3 position;
+    vec3 color;
+};
+Vertex_Rectangle vertex_rectangle_make(vec3 pos, vec3 color);
 
-    Currently I think the renderpasses should be as stable as possible, so no new renderpasses added at runtime,
-    Maybe even Draw_Calls should only be created once, so if an object only needs one drawcall
-    I think I want to do different things depending on the object, if i want to pass them renderpass, or a 
+struct Vertex_Circle
+{
+    vec3 position;
+    vec3 color;
+    vec2 uvs;
+    float radius;
+};
+Vertex_Circle vertex_circle_make(vec3 pos, vec3 color, vec2 uvs, float radius);
 
-    Well seems like everything just gets a draw call for a subpass, and the main
-    Loop determines what gets rendered to where
+struct Vertex_Line
+{
+    vec3 position;
+    vec3 color;
+    vec2 uv;
+    float thickness;
+    float length;
+};
+Vertex_Line vertex_line_make(vec3 pos, vec3 color, vec2 uv, float thickness, float length);
 
-    But maybe I want a global renderpasses structure, where the renderpass dependencies are listed (Which renderpass reads from what texture),
-    And renderpasses can be created by all types
+struct Line_Train_Point
+{
+    vec2 position;
+    float thickness;
+};
 
-    Use Cases:
-        Draw Background
-        Text_Editor gets a Text_Instance from Text_Renderer, which has a draw call.
-        
-         - G-Buffer Pass (Position, Normal, Albedo, Specular, Ambient, Roughness...)
-         - Shadow Passes (Cascading Shadow Map)
-         - Lights with Shadow pass
-         - Light Volume pass
-         - Volumetric Light pass
-         - Post-Processing passes
+enum struct Line_Cap
+{
+    FLAT,
+    SQUARE,
+    ROUND
+};
 
-    In Theory I would only need to call update on all objects, and not render, since
-*/
+enum struct Line_Join
+{
+    Round,
+    Bevel,
+    Miter
+};
 
+struct Primitive_Renderer_2D
+{
+    Render_Information* render_info;
+    Shader_Program* shader_rectangles;
+    Shader_Program* shader_circles;
+    Shader_Program* shader_lines;
+    Mesh_CPU_Buffer_Dynamic mesh_rectangles;
+    Mesh_CPU_Buffer_Dynamic mesh_circles;
+    Mesh_CPU_Buffer_Dynamic mesh_lines;
 
+    Dynamic_Array<Line_Train_Point> line_train_points;
+    float line_train_depth;
+    vec3 line_train_color;
+};
 
-/*
-    I also think that seeing all the objects that are drawn would be nice, but for things like that
-    I should just write a system specifically for that.
-    I mean I could force all rendering through a render pass, collect all renderpasses in Rendering_Core,
-    and then render all things in one go...
+Primitive_Renderer_2D* primitive_renderer_2D_create(Rendering_Core* core);
+void primitive_renderer_2D_destroy(Primitive_Renderer_2D* renderer, Rendering_Core* core);
+void primitive_renderer_2D_render(Primitive_Renderer_2D* renderer, Rendering_Core* core);
 
-    One big reason why this may be usefull is because I dont have to manually do the busywork of 
-    calling the rendering functions in the right order, when doing shadows I just have the Rendering_Pass where
-    I can render into when looping over the objects
+void primitive_renderer_2D_add_rectangle(Primitive_Renderer_2D* renderer, vec2 anchor_pos, vec2 size, float depth, Anchor_2D anchor, vec3 color);
+void primitive_renderer_2D_add_circle(Primitive_Renderer_2D* renderer, vec2 center, float radius, float depth, vec3 color);
+void primitive_renderer_2D_add_line(Primitive_Renderer_2D* renderer, vec2 start, vec2 end, Line_Cap start_cap, Line_Cap end_cap, float thickness, float depth, vec3 color);
+void primitive_renderer_2D_start_line_train(Primitive_Renderer_2D* renderer, vec3 color, float depth);
+void primitive_renderer_2D_add_line_train_point(Primitive_Renderer_2D* renderer, vec2 position, float thickness);
+void primitive_renderer_2D_end_line_train(Primitive_Renderer_2D* renderer);
 
-    Also grouping by shader_program may be a nice idea
-
-    The Problem when creating a Rendering_Pipeline is that the order of Draw_Calls is crucial:
-
-    I also want state sorting by:
-        - Render_Target  ... Most expensive, and Order is impossible to change
-        - Pipeline_State ... Not because it is performance sensitive, but because draw call order is given
-        - Textures
-        - Shaders
-        - Meshes
-    With shaders, you cannot really change that much
-
-    Render_Passes could force the setting of the render_target and the pipeline state, also I could do draw call sorting and stupoi
-*/
 

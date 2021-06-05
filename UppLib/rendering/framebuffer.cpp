@@ -86,10 +86,6 @@ Framebuffer* framebuffer_create_fullscreen(Rendering_Core* core, Framebuffer_Dep
     return result;
 }
 
-void framebuffer_bind(Framebuffer* framebuffer, Rendering_Core* core) {
-    opengl_state_bind_framebuffer(&core->opengl_state, framebuffer->framebuffer_id);
-}
-
 void framebuffer_set_depth_attachment(Framebuffer* framebuffer, Rendering_Core* core, Texture_2D* texture, bool destroy_texture_with_framebuffer)
 {
     if (framebuffer->depth_stencil_attachment.destroy_texture) {
@@ -187,3 +183,4 @@ void framebuffer_destroy(Framebuffer* framebuffer, Rendering_Core* core)
     glDeleteFramebuffers(1, &framebuffer->framebuffer_id);
     delete framebuffer;
 }
+

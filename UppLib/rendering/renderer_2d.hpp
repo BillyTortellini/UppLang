@@ -27,7 +27,6 @@ struct Renderer_2D
     String string_buffer;
     vec2 scaling_factor;
     float to_pixel_scaling;
-    Render_Pass* render_pass;
 };
 
 enum class Text_Alignment_Horizontal

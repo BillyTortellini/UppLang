@@ -314,7 +314,7 @@ void rendering_core_update_3D_Camera_UBO(Rendering_Core* core, Camera_3D* camera
     gpu_buffer_update(&core->ubo_camera_data, array_create_static_as_bytes(&data, 1));
 }
 
-void rendering_core_prepare_frame(Rendering_Core* core, Camera_3D* camera, float current_time, int window_width, int window_height)
+void rendering_core_prepare_frame(Rendering_Core* core, Camera_3D* camera, Framebuffer_Clear_Type clear_type, float current_time, int window_width, int window_height)
 {
     file_listener_check_if_files_changed(core->file_listener);
     if ((window_width != core->render_information.window_width || window_height != core->render_information.window_height) &&
@@ -331,6 +331,7 @@ void rendering_core_prepare_frame(Rendering_Core* core, Camera_3D* camera, float
     core->render_information.current_time_in_seconds = current_time;
     gpu_buffer_update(&core->ubo_render_information, array_create_static_as_bytes(&core->render_information, 1));
     rendering_core_update_3D_Camera_UBO(core, camera);
+    rendering_core_bind_framebuffer(core, 0, clear_type);
 }
 
 void rendering_core_update_viewport(Rendering_Core* core, int width, int height)
@@ -343,3 +344,36 @@ void rendering_core_update_viewport(Rendering_Core* core, int width, int height)
         gpu_buffer_update(&core->ubo_render_information, array_create_static_as_bytes(&core->render_information, 1));
     }
 }
+
+void rendering_core_bind_framebuffer(Rendering_Core* core, Framebuffer* framebuffer, Framebuffer_Clear_Type clear_type)
+{
+    if (framebuffer == 0) {
+        rendering_core_update_viewport(core, core->render_information.window_width, core->render_information.window_height);
+        opengl_state_bind_framebuffer(&core->opengl_state, 0);
+    }
+    else {
+        rendering_core_update_viewport(core, framebuffer->width, framebuffer->height);
+        opengl_state_bind_framebuffer(&core->opengl_state, framebuffer->framebuffer_id);
+    }
+    rendering_core_clear_bound_framebuffer(clear_type);
+}
+
+void rendering_core_clear_bound_framebuffer(Framebuffer_Clear_Type clear_type)
+{
+    switch (clear_type) 
+    {
+    case Framebuffer_Clear_Type::NONE:
+        break;
+    case Framebuffer_Clear_Type::COLOR:
+        glClear(GL_COLOR_BUFFER_BIT);
+        break;
+    case Framebuffer_Clear_Type::DEPTH:
+        glClear(GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+        break;
+    case Framebuffer_Clear_Type::COLOR_AND_DEPTH:
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+        break;
+    default: panic("Should not happen");
+    }
+}
+

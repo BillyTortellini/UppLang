@@ -39,7 +39,6 @@ Text_Renderer* text_renderer_create_from_font_atlas_file(
     pipeline_state.depth_state.test_type = Depth_Test_Type::IGNORE_DEPTH;
     pipeline_state.culling_state.culling_enabled = true;
     pipeline_state.blending_state.blending_enabled = true;
-    text_renderer->render_pass = render_pass_create(0, pipeline_state, false, false, false);
 
     // Create Font File
     //text_renderer->glyph_atlas = optional_unwrap(glyph_atlas_create_from_font_file("resources/fonts/consola.ttf", 256, 3200, 32, 16, false));
@@ -49,8 +48,8 @@ Text_Renderer* text_renderer_create_from_font_atlas_file(
     //glyph_atlas_print_glyph_information(&text_renderer->glyph_atlas);
 
     // Initialize shaders
-    text_renderer->bitmap_shader = shader_program_create(core,  "resources/shaders/core/font_bitmap.glsl");
-    text_renderer->sdf_shader = shader_program_create(core,  "resources/shaders/core/font_sdf.glsl");
+    text_renderer->bitmap_shader = shader_program_create(core, { "resources/shaders/core/font_bitmap.glsl" });
+    text_renderer->sdf_shader = shader_program_create(core, { "resources/shaders/core/font_sdf.glsl" } );
 
     // Initialize textures
     text_renderer->atlas_bitmap_texture = texture_2D_create_from_texture_bitmap(
@@ -135,7 +134,7 @@ void text_renderer_add_text_from_layout(
         Character_Position* char_pos = &renderer->text_layout.character_positions[i];
         Glyph_Information* glyph_info = char_pos->glyph_info;
 
-        BoundingBox2 char_box;
+        Bounding_Box2 char_box;
         char_box.min.x =
             char_pos->bounding_box.min.x + position.x +
             glyph_info->bearing_x * scaling_factor.x;
@@ -277,9 +276,7 @@ void text_renderer_render(Text_Renderer* renderer, Rendering_Core* core)
     dynamic_array_reset(&renderer->text_indices);
 
     // Render
-    shader_program_set_uniform_texture_2D(renderer->sdf_shader, "sampler", renderer->atlas_sdf_texture);
-    render_pass_add_draw_call(renderer->render_pass, renderer->sdf_shader, &renderer->font_mesh);
-    render_pass_execute(renderer->render_pass, core);
+    shader_program_draw_mesh(renderer->sdf_shader, &renderer->font_mesh, core, { uniform_value_make_texture_2D_binding("sampler", renderer->atlas_sdf_texture) });
 }
 
 float text_renderer_get_cursor_advance(Text_Renderer* renderer, float relative_height)

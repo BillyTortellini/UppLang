@@ -129,11 +129,14 @@
     <Text Include="..\resources\TODO.txt" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="..\resources\shaders\circle_2D.glsl" />
     <None Include="..\resources\shaders\core\font_bitmap.glsl" />
     <None Include="..\resources\shaders\core\font_sdf.glsl" />
     <None Include="..\resources\shaders\core\geometry_2d.glsl" />
     <None Include="..\resources\shaders\core\uniform_blocks.glsl" />
+    <None Include="..\resources\shaders\line_2D.glsl" />
     <None Include="..\resources\shaders\proc_city\city_shader.glsl" />
+    <None Include="..\resources\shaders\rectangle_2D.glsl" />
     <None Include="..\resources\shaders\test.glsl" />
     <None Include="..\resources\shaders\upp_lang\background.glsl" />
     <None Include="..\resources\shaders\upp_lang\cursor.glsl" />

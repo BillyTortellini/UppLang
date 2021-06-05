@@ -6,6 +6,7 @@
 #include "opengl_function_pointers.hpp"
 #include "gpu_buffers.hpp"
 #include "cameras.hpp"
+#include "framebuffer.hpp"
 
 struct File_Listener;
 
@@ -16,6 +17,14 @@ enum class Texture_Binding_Type
     TEXTURE_3D = GL_TEXTURE_3D,
     CUBE_MAP = GL_TEXTURE_CUBE_MAP,
     TEXTURE_2D_MULTISAMPLED = GL_TEXTURE_2D_MULTISAMPLE,
+};
+
+enum class Framebuffer_Clear_Type
+{
+    NONE,
+    COLOR,
+    DEPTH,
+    COLOR_AND_DEPTH
 };
 
 struct OpenGL_State
@@ -180,9 +189,13 @@ struct Rendering_Core
 Rendering_Core rendering_core_create(int window_width, int window_height, float monitor_dpi);
 void rendering_core_destroy(Rendering_Core* core);
 
-void rendering_core_prepare_frame(Rendering_Core* core, Camera_3D* camera, float current_time, int window_width, int window_height);
-void rendering_core_add_window_size_listener(Rendering_Core* core, window_size_changed_callback callback, void* userdata);
-void rendering_core_remove_window_size_listener(Rendering_Core* core, void* userdata);
+void rendering_core_prepare_frame(Rendering_Core* core, Camera_3D* camera, Framebuffer_Clear_Type clear_type, float current_time, int window_width, int window_height);
+
+void rendering_core_bind_framebuffer(Rendering_Core* core, Framebuffer* framebuffer, Framebuffer_Clear_Type clear_type);
 void rendering_core_update_3D_Camera_UBO(Rendering_Core* core, Camera_3D* camera);
 void rendering_core_update_pipeline_state(Rendering_Core* core, Pipeline_State new_state);
 void rendering_core_update_viewport(Rendering_Core* core, int width, int height);
+void rendering_core_clear_bound_framebuffer(Framebuffer_Clear_Type clear_type);
+
+void rendering_core_add_window_size_listener(Rendering_Core* core, window_size_changed_callback callback, void* userdata);
+void rendering_core_remove_window_size_listener(Rendering_Core* core, void* userdata);

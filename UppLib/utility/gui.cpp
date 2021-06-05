@@ -9,23 +9,7 @@
 #include "../rendering/text_renderer.hpp"
 #include "../win32/timing.hpp"
 
-vec2 anchor_to_direction(Anchor_2D anchor) 
-{
-    switch (anchor) {
-    case Anchor_2D::TOP_LEFT: return vec2(-1.0f, 1.0f);
-    case Anchor_2D::TOP_CENTER: return vec2(0.0f, 1.0f);
-    case Anchor_2D::TOP_RIGHT: return vec2(1.0f, 1.0f);
-    case Anchor_2D::CENTER_LEFT: return vec2(-1.0f, 0.0f);  
-    case Anchor_2D::CENTER_CENTER: return vec2(0.0f, 0.0f);
-    case Anchor_2D::CENTER_RIGHT: return vec2(1.0f, 0.0f);
-    case Anchor_2D::BOTTOM_LEFT: return vec2(-1.0f, -1.0f);
-    case Anchor_2D::BOTTOM_CENTER: return vec2(0.0f, -1.0f);
-    case Anchor_2D::BOTTOM_RIGHT: return vec2(1.0f, -1.0f);
-    }
-    return vec2(0.0f);
-}
-
-GUI gui_create(Renderer_2D* renderer_2d, Input* input)
+GUI gui_create(Renderer_2D* renderer_2d, Input* input, Timer* timer)
 {
     GUI result;
     result.element_in_focus = false;
@@ -33,6 +17,7 @@ GUI gui_create(Renderer_2D* renderer_2d, Input* input)
 
     result.renderer_2d = renderer_2d;
     result.input = input;
+    result.timer = timer;
 
     result.mouse_down_this_frame = false;
     result.mouse_pos = vec2(0.0f);
@@ -139,7 +124,7 @@ GUI_Position gui_position_make_inside(GUI_Position parent, Anchor_2D anchor, vec
 
 bool gui_checkbox(GUI* gui, vec2 pos, vec2 size, bool* value)
 {
-    BoundingBox2 bb = bounding_box_2_make_center_size(pos, size);
+    Bounding_Box2 bb = bounding_box_2_make_center_size(pos, size);
     bool hovered = false;
     bool clicked = false;
     if (bounding_box_2_is_point_inside(bb, gui->mouse_pos)) {
@@ -174,7 +159,7 @@ bool gui_slider(GUI* gui, GUI_Position pos, float* value, float min, float max)
     float normalized = math_clamp((*value - min) / (max - min), 0.0f, 1.0f);
     vec2 slider_pos = pos.pos - vec2(pos.size.x / 2.0f, 0.0f) + vec2(normalized * pos.size.x, 0.0f);
     vec2 slider_size = vec2(0.05f, pos.size.y);
-    BoundingBox2 slider_bb = bounding_box_2_make_center_size(slider_pos, slider_size);
+    Bounding_Box2 slider_bb = bounding_box_2_make_center_size(slider_pos, slider_size);
     
     // TODO: Check if slider was in focus last frame, and drop focus if mouse is not pressed anymore
     bool in_focus = gui_is_in_focus(gui, slider_pos, slider_size);
@@ -263,11 +248,11 @@ bool gui_text_input_string(GUI* gui, String* to_fill, vec2 pos, vec2 size, bool 
         {
             if (!gui->backspace_was_down) {
                 gui->backspace_was_down = true;
-                gui->backspace_down_time = timing_current_time_in_seconds();
+                gui->backspace_down_time = timer_current_time_in_seconds(gui->timer);
             }
             else
             {
-                double now = timing_current_time_in_seconds();
+                double now = timer_current_time_in_seconds(gui->timer);
                 double diff = now - gui->backspace_down_time;
                 const int ticks_per_second = 10;
                 while (diff > 1 / (float)ticks_per_second) {
@@ -371,7 +356,7 @@ bool gui_button(GUI* gui, vec2 pos, vec2 size, const char* text)
     bool clicked = false, hovered = false;
 
     // Check if clicked
-    BoundingBox2 bb = bounding_box_2_make_center_size(pos, size);
+    Bounding_Box2 bb = bounding_box_2_make_center_size(pos, size);
     if (bounding_box_2_is_point_inside(bb, gui->mouse_pos)) {
         if (gui->input->mouse_released[MOUSE_KEY_CODE::LEFT]) {
             clicked = true;

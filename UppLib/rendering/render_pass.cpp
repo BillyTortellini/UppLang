@@ -38,7 +38,7 @@ void render_pass_destroy(Render_Pass* render_pass)
     dynamic_array_destroy(&render_pass->draw_calls_cache);
 }
 
-void render_pass_add_draw_call(Render_Pass* render_pass, Shader_Program* shader, Mesh_GPU_Buffer* mesh)
+void render_pass_add_draw_call(Render_Pass* render_pass, Shader_Program* shader, Mesh_GPU_Buffer* mesh, std::initializer_list<Uniform_Value> uniforms)
 {
     Draw_Call draw_call;
     if (render_pass->draw_calls_cache.size != 0) {
@@ -49,18 +49,19 @@ void render_pass_add_draw_call(Render_Pass* render_pass, Shader_Program* shader,
     else {
         draw_call = draw_call_create();
     }
-    draw_call.draw_call_type = Draw_Call_Type::INDEXED_DRAW;
+    draw_call.draw_call_type = Draw_Call_Type::SINGLE_DRAW;
     draw_call.instance_count = 0;
     draw_call.mesh = mesh;
     draw_call.shader = shader;
-    for (int i = 0; i < shader->uniform_cache.size; i++) {
-        dynamic_array_push_back(&draw_call.uniform_values, shader->uniform_cache[i]);
+    for (auto& uniform : uniforms) {
+        dynamic_array_push_back(&draw_call.uniform_values, uniform);
     }
-    dynamic_array_reset(&shader->uniform_cache);
     dynamic_array_push_back(&render_pass->draw_calls, draw_call);
 }
 
-void render_pass_add_draw_call_indexed(Render_Pass* render_pass, Shader_Program* shader, Mesh_GPU_Buffer* mesh, int index_count)
+void render_pass_add_draw_call_instanced(
+    Render_Pass* render_pass, Shader_Program* shader, Mesh_GPU_Buffer* mesh, std::initializer_list<Uniform_Value> uniforms, int instance_count
+)
 {
     Draw_Call draw_call;
     if (render_pass->draw_calls_cache.size != 0) {
@@ -71,14 +72,13 @@ void render_pass_add_draw_call_indexed(Render_Pass* render_pass, Shader_Program*
     else {
         draw_call = draw_call_create();
     }
-    draw_call.draw_call_type = Draw_Call_Type::INDEXED_DRAW;
+    draw_call.draw_call_type = Draw_Call_Type::INSTANCED_DRAW;
     draw_call.instance_count = 0;
     draw_call.mesh = mesh;
     draw_call.shader = shader;
-    for (int i = 0; i < shader->uniform_cache.size; i++) {
-        dynamic_array_push_back(&draw_call.uniform_values, shader->uniform_cache[i]);
+    for (auto& uniform : uniforms) {
+        dynamic_array_push_back(&draw_call.uniform_values, uniform);
     }
-    dynamic_array_reset(&shader->uniform_cache);
     dynamic_array_push_back(&render_pass->draw_calls, draw_call);
 }
 
@@ -110,23 +110,16 @@ void render_pass_execute(Render_Pass* render_pass, Rendering_Core* core)
     for (int i = 0; i < render_pass->draw_calls.size; i++)
     {
         Draw_Call* call = &render_pass->draw_calls[i];
-        if (!mesh_gpu_buffer_check_compatability_with_shader(call->mesh, call->shader)) {
-            return;
-        }
-
         for (int j = 0; j < call->uniform_values.size; j++) {
             shader_program_set_uniform_value(call->shader, call->uniform_values[j], core);
         }
         dynamic_array_reset(&call->uniform_values);
-        shader_program_bind(call->shader, core);
 
-        if (call->draw_call_type == Draw_Call_Type::INDEXED_DRAW) {
-            opengl_state_bind_vao(&core->opengl_state, call->mesh->vao);
-            glDrawElements((GLenum)call->mesh->topology, call->mesh->index_count, GL_UNSIGNED_INT, 0);
+        if (call->draw_call_type == Draw_Call_Type::SINGLE_DRAW) {
+            shader_program_draw_mesh(call->shader, call->mesh, core, {});
         }
         else {
-            opengl_state_bind_vao(&core->opengl_state, call->mesh->vao);
-            glDrawElementsInstanced((GLenum)call->mesh->topology, call->mesh->index_count, GL_UNSIGNED_INT, 0, call->instance_count);
+            shader_program_draw_mesh_instanced(call->shader, call->mesh, call->instance_count, core, {});
         }
         dynamic_array_push_back(&render_pass->draw_calls_cache, *call);
     }

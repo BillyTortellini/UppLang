@@ -4,9 +4,7 @@
 #include "../datastructures/array.hpp"
 #include "../utility/datatypes.hpp"
 
-struct Shader_Program;
 struct Rendering_Core;
-struct Shader_Variable_Information;
 
 enum class GPU_Buffer_Type
 {
@@ -93,9 +91,6 @@ struct Bound_Vertex_GPU_Buffer
     GPU_Buffer gpu_buffer;
     Array<Vertex_Attribute> attribute_informations;
 };
-bool bound_vertex_gpu_buffer_contains_shader_variable(Bound_Vertex_GPU_Buffer* vertex_buffer, Shader_Variable_Information* variable_info);
-
-
 
 enum class Mesh_Topology
 {
@@ -136,7 +131,5 @@ Mesh_GPU_Buffer mesh_gpu_buffer_create_with_single_vertex_buffer(
 );
 
 void mesh_gpu_buffer_destroy(Mesh_GPU_Buffer* mesh);
-
 int mesh_gpu_buffer_attach_vertex_buffer(Mesh_GPU_Buffer* mesh, Rendering_Core* core, GPU_Buffer vertex_buffer, Array<Vertex_Attribute> informations);
 void mesh_gpu_buffer_update_index_buffer(Mesh_GPU_Buffer* mesh, Rendering_Core* core, Array<uint32> data);
-bool mesh_gpu_buffer_check_compatability_with_shader(Mesh_GPU_Buffer* mesh, Shader_Program* shader_program);

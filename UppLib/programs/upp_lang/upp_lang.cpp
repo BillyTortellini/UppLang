@@ -72,26 +72,24 @@ void upp_lang_main()
     Render_Pass* background_pass = render_pass_create(0, pipeline_state_make_default(), true, true, true);
     SCOPE_EXIT(render_pass_destroy(background_pass));
 
-    // Initialize all modules that need globals
-    timing_initialize();
-    random_initialize();
+    Timer timer = timer_make();
 
     Text_Renderer* text_renderer = text_renderer_create_from_font_atlas_file(&core, "resources/fonts/glyph_atlas.atlas");
     SCOPE_EXIT(text_renderer_destroy(text_renderer, &core));
 
     Renderer_2D* renderer_2D = renderer_2D_create(&core, text_renderer);
     SCOPE_EXIT(renderer_2D_destroy(renderer_2D, &core));
-    GUI gui = gui_create(renderer_2D, window_get_input(window));
+    GUI gui = gui_create(renderer_2D, window_get_input(window), &timer);
     SCOPE_EXIT(gui_destroy(&gui));
 
-    Code_Editor code_editor = code_editor_create(text_renderer, &core);
+    Code_Editor code_editor = code_editor_create(text_renderer, &core, &timer);
     SCOPE_EXIT(code_editor_destroy(&code_editor));
 
     // Background
     Mesh_GPU_Buffer mesh_quad = mesh_utils_create_quad_2D(&core);
     SCOPE_EXIT(mesh_gpu_buffer_destroy(&mesh_quad));
 
-    Shader_Program* background_shader = shader_program_create(&core, "resources/shaders/upp_lang/background.glsl");
+    Shader_Program* background_shader = shader_program_create(&core, { "resources/shaders/upp_lang/background.glsl" });
     SCOPE_EXIT(shader_program_destroy(background_shader));
 
     Camera_3D* camera = camera_3D_create(&core, math_degree_to_radians(90), 0.1f, 100.0f);
@@ -105,8 +103,8 @@ void upp_lang_main()
         camera->position = vec3(0, 0, 1.0f);
     }
 
-    Test_Renderer test_renderer = test_renderer_create(&core, camera);
-    SCOPE_EXIT(test_renderer_destroy(&test_renderer, &core));
+    Primitive_Renderer_2D* primitive_renderer_2D = primitive_renderer_2D_create(&core);
+    SCOPE_EXIT(primitive_renderer_2D_destroy(primitive_renderer_2D, &core));
 
     // Set Window/Rendering Options
     {
@@ -116,16 +114,18 @@ void upp_lang_main()
         window_set_vsync(window, false);
 
         opengl_state_set_clear_color(&core.opengl_state, vec4(0.0f));
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         window_set_vsync(window, true);
     }
+    Pipeline_State pipeline_state = pipeline_state_make_default();
+    pipeline_state.blending_state.blending_enabled = true;
+    rendering_core_update_pipeline_state(&core, pipeline_state);
 
     // Window Loop
-    double time_last_update_start = timing_current_time_in_seconds();
+    double time_last_update_start = timer_current_time_in_seconds(&timer);
     float angle = 0.0f;
     while (true)
     {
-        double time_frame_start = timing_current_time_in_seconds();
+        double time_frame_start = timer_current_time_in_seconds(&timer);
         float time_since_last_update = (float)(time_frame_start - time_last_update_start);
         time_last_update_start = time_frame_start;
 
@@ -152,38 +152,105 @@ void upp_lang_main()
 
             camera_controller_arcball_update(&camera_controller_arcball, camera, input, window_state->width, window_state->height);
             gui_update(&gui, input, window_state->width, window_state->height);
-            code_editor_update(&code_editor, input, timing_current_time_in_seconds());
-            test_renderer_update(&test_renderer, input);
+            code_editor_update(&code_editor, input, timer_current_time_in_seconds(&timer));
+            input_reset(input); // Clear input for next frame
         }
 
         // Rendering
         {
-            rendering_core_prepare_frame(&core, camera, timing_current_time_in_seconds(), window_state->width, window_state->height);
-            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            rendering_core_prepare_frame(
+                &core, camera, Framebuffer_Clear_Type::COLOR_AND_DEPTH, timer_current_time_in_seconds(&timer), window_state->width, window_state->height
+            );
 
             // Draw Background
-            render_pass_add_draw_call(background_pass, background_shader, &mesh_quad);
-            render_pass_execute(background_pass, &core);
+            shader_program_draw_mesh(background_shader, &mesh_quad, &core, {});
 
             // Text editor
-            BoundingBox2 region = bounding_box_2_make_min_max(vec2(-1, -1), vec2(1, 1));
+            Bounding_Box2 region = bounding_box_2_make_min_max(vec2(-1, -1), vec2(1, 1));
             code_editor_render(&code_editor, &core, region);
 
-            //test_renderer_render(&test_renderer, &core);
+            /*
+            primitive_renderer_2D_add_rectangle(primitive_renderer_2D, vec2(600, 300), vec2(50, 200), 0.0f, Anchor_2D::CENTER_CENTER, vec3(1.0f, 0.2f, 0.7f));
+            primitive_renderer_2D_add_circle(primitive_renderer_2D, vec2(400, 400), 200.0f, 0.0f, vec3(0.0f, 1.0f, 0.3f));
+            primitive_renderer_2D_add_circle(primitive_renderer_2D, vec2(500, 500), 150.0f, 0.0f, vec3(0.5f, 1.0f, 0.3f));
+            primitive_renderer_2D_add_circle(primitive_renderer_2D, vec2(700, 400), 50.0f, 0.0f, vec3(1.0f, 0.5f, 1.0f));
+            {
+                float size = -2.0f;
+                float y = 200;
+                float biggerness = 0.3f;
+                for (int i = 0; i < 30; i++) {
+                    primitive_renderer_2D_add_line(primitive_renderer_2D, vec2(500.0f, y), vec2(700.0f, y + 50.0f),
+                        Line_Cap::FLAT, Line_Cap::FLAT,
+                        size, 0.0f, vec3(1.0f));
+                    y = y + math_maximum(5.0f, size * 5.0f);
+                    size = size + biggerness;
+                }
+            }
+            {
+                float size = 1.0f;
+                float y = 200;
+                float biggerness = 0.3f;
+                y += math_sine(core.render_information.current_time_in_seconds) * 30.0f;
+                for (int i = 0; i < 30; i++) {
+                    primitive_renderer_2D_add_line(primitive_renderer_2D, vec2(720.0f, y), vec2(920.0f, y + 50.0f),
+                        Line_Cap::FLAT, Line_Cap::ROUND,
+                        size, 0.0f, vec3(1.0f));
+                    y = y + math_maximum(5.0f, size * 5.0f);
+                    size = size + biggerness;
+                }
+            }
+            {
+                vec2 center = vec2(300, 300);
+                int spokes = 80;
+                float width = 150.0f;
+                float thickness = 1.0f;
+                float t = core.render_information.current_time_in_seconds / 6.0f;
+                for (int i = 0; i < spokes; i++) {
+                    vec2 end = vec2(math_sine(2.0f * PI * ((float)i / spokes) + t), math_cosine(2.0f * PI * ((float)i / spokes) + t)) * width + center;
+                    primitive_renderer_2D_add_line(primitive_renderer_2D, center, end, 
+                        Line_Cap::FLAT, Line_Cap::ROUND,
+                        thickness, 0.0f, vec3(1.0f));
+                }
+            }
+            {
+                vec2 center = vec2(300, 600);
+                int spokes = 20;
+                float width = 150.0f;
+                float thickness = 10.0f;
+                float t = core.render_information.current_time_in_seconds / 3.0f;
+                for (int i = 0; i < spokes; i++) {
+                    vec2 end = vec2(math_sine(2.0f * PI * ((float)i / spokes) + t), math_cosine(2.0f * PI * ((float)i / spokes) + t)) * width + center;
+                    primitive_renderer_2D_add_line(primitive_renderer_2D, center, end, 
+                        Line_Cap::FLAT, Line_Cap::FLAT,
+                        thickness, 0.0f, vec3(1.0f));
+                }
+            }
+
+            {
+                float thickness = 5.0f;
+                primitive_renderer_2D_start_line_train(primitive_renderer_2D, vec3(1.0f), 0.0f);
+                primitive_renderer_2D_add_line_train_point(primitive_renderer_2D, vec2(300, 100), thickness);
+                primitive_renderer_2D_add_line_train_point(primitive_renderer_2D, vec2(400, 100), thickness);
+                primitive_renderer_2D_add_line_train_point(primitive_renderer_2D, vec2(300, 50), thickness);
+                primitive_renderer_2D_add_line_train_point(primitive_renderer_2D, vec2(400, 70), thickness);
+                primitive_renderer_2D_end_line_train(primitive_renderer_2D);
+            }
+
+            primitive_renderer_2D_render(primitive_renderer_2D, &core);
+            */
 
             window_swap_buffers(window);
         }
-        input_reset(input); // Clear input for next frame
 
         // Sleep
         {
-            double time_calculations = timing_current_time_in_seconds() - time_frame_start;
+            double time_calculations = timer_current_time_in_seconds(&timer) - time_frame_start;
             //logg("TSLF: %3.2fms, calculation time: %3.2fms\n", time_since_last_update*1000, time_calculations*1000);
 
             // Sleep
             const int TARGET_FPS = 60;
             const double SECONDS_PER_FRAME = 1.0 / TARGET_FPS;
-            timing_sleep_until(time_frame_start + SECONDS_PER_FRAME);
+            timer_sleep_until(&timer, time_frame_start + SECONDS_PER_FRAME);
         }
     }
 }
