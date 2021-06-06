@@ -74,7 +74,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
                 code_editor_jump_to_definition(editor);
                 continue;
             }
-            else if (msg->character == 's' && msg->key_down) {
+            else if (msg->key_code == KEY_CODE::S && msg->key_down) {
                 String output = string_create_empty(256);
                 SCOPE_EXIT(string_destroy(&output););
                 text_append_to_string(&editor->text_editor->text, &output);

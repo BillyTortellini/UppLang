@@ -284,32 +284,45 @@ Data_Access intermediate_generator_generate_expression_without_casting(Intermedi
     Intermediate_Function* function = &generator->functions[generator->current_function_index];
     AST_Node* expression = &generator->compiler->parser.nodes[expression_index];
     Symbol_Table* table = generator->compiler->analyser.symbol_tables[generator->compiler->analyser.semantic_information[expression_index].symbol_table_index];
+    Semantic_Node_Information* node_info = &generator->compiler->analyser.semantic_information[expression_index];
 
     switch (expression->type)
     {
     case AST_Node_Type::EXPRESSION_FUNCTION_CALL:
     {
-        Symbol* function_symbol = symbol_table_find_symbol_of_type(
-            generator->compiler->analyser.symbol_tables[generator->compiler->analyser.semantic_information[expression_index].symbol_table_index],
-            expression->name_id, Symbol_Type::FUNCTION);
+        Symbol* function_symbol = symbol_table_find_symbol(
+            generator->compiler->analyser.symbol_tables[node_info->symbol_table_index],
+            expression->name_id);
         if (function_symbol == 0) panic("Should not happen, maybe semantic information isnt complete yet!");
 
+
         Intermediate_Instruction instr;
-        // Check if its an hardcoded function
-        bool is_hardcoded = false;
-        for (int i = 0; i < generator->compiler->analyser.hardcoded_functions.size; i++) {
-            if (expression->name_id == generator->compiler->analyser.hardcoded_functions[i].name_handle) {
-                instr.type = Intermediate_Instruction_Type::CALL_HARDCODED_FUNCTION;
-                instr.hardcoded_function_type = generator->compiler->analyser.hardcoded_functions[i].type;
-                is_hardcoded = true;
+        instr.arguments = dynamic_array_create_empty<Data_Access>(expression->children.size);
+
+        if (function_symbol->symbol_type == Symbol_Type::FUNCTION) 
+        {
+            // Check if its an hardcoded function
+            bool is_hardcoded = false;
+            for (int i = 0; i < generator->compiler->analyser.hardcoded_functions.size; i++) {
+                if (expression->name_id == generator->compiler->analyser.hardcoded_functions[i].name_handle) {
+                    instr.type = Intermediate_Instruction_Type::CALL_HARDCODED_FUNCTION;
+                    instr.hardcoded_function_type = generator->compiler->analyser.hardcoded_functions[i].type;
+                    is_hardcoded = true;
+                }
+            }
+            if (!is_hardcoded)
+            {
+                instr.type = Intermediate_Instruction_Type::CALL_FUNCTION;
+                instr.intermediate_function_index = intermediate_generator_find_function_by_name(generator, expression->name_id);
             }
         }
-        if (!is_hardcoded)
-        {
-            instr.type = Intermediate_Instruction_Type::CALL_FUNCTION;
-            instr.intermediate_function_index = intermediate_generator_find_function_by_name(generator, expression->name_id);
+        else if (function_symbol->symbol_type == Symbol_Type::VARIABLE) {
+            instr.type = Intermediate_Instruction_Type::CALL_FUNCTION_POINTER;
+            instr.source1 = data_access_make_by_name(generator, expression->name_id);
         }
-        instr.arguments = dynamic_array_create_empty<Data_Access>(expression->children.size);
+        else {
+            panic("Function call to struct should not happen");
+        }
 
         // Generate argument Expressions
         for (int i = 0; i < expression->children.size; i++) {
@@ -368,11 +381,11 @@ Data_Access intermediate_generator_generate_expression_without_casting(Intermedi
         }
 
         Token& token = generator->compiler->parser.lexer->tokens[generator->compiler->parser.token_mapping[expression_index].start_index];
-        if (token.type == Token_Type::STRING_LITERAL) 
+        if (token.type == Token_Type::STRING_LITERAL)
         {
             // First we need to load the string pointer to .character
             Data_Access string_access = instr.destination;
-            Data_Access char_ptr_access = data_access_create_member_access(generator, string_access, 0, 
+            Data_Access char_ptr_access = data_access_create_member_access(generator, string_access, 0,
                 type_system_make_pointer(&generator->compiler->type_system, generator->compiler->type_system.u8_type)
             );
             Data_Access capacity_access = data_access_create_member_access(generator, string_access, 8, generator->compiler->type_system.i32_type);
@@ -485,6 +498,23 @@ Data_Access intermediate_generator_generate_expression_without_casting(Intermedi
     }
     case AST_Node_Type::EXPRESSION_VARIABLE_READ:
     {
+        if (node_info->expression_result_type->type == Signature_Type::FUNCTION)
+        {
+            Intermediate_Instruction instr;
+            instr.type = Intermediate_Instruction_Type::LOAD_FUNCTION_POINTER;
+            if (force_destination) {
+                instr.destination = destination;
+            }
+            else {
+                instr.destination = intermediate_generator_create_intermediate_result(generator,
+                    type_system_make_pointer(&generator->compiler->type_system, node_info->expression_result_type)
+                );
+            }
+            instr.intermediate_function_index = intermediate_generator_find_function_by_name(generator, expression->name_id);
+            dynamic_array_push_back(&function->instructions, instr);
+            return destination;
+        }
+
         Data_Access access = data_access_make_by_name(generator, expression->name_id);
         if (force_destination) {
             Intermediate_Instruction instr;
@@ -498,6 +528,11 @@ Data_Access intermediate_generator_generate_expression_without_casting(Intermedi
     }
     case AST_Node_Type::EXPRESSION_UNARY_OPERATION_ADDRESS_OF:
     {
+        Semantic_Node_Information* child_info = &generator->compiler->analyser.semantic_information[expression->children[0]];
+        if (child_info->expression_result_type->type == Signature_Type::FUNCTION) {
+            return intermediate_generator_generate_expression(generator, expression->children[0], force_destination, destination);
+        }
+
         Data_Access access = intermediate_generator_generate_expression(generator, expression->children[0], false, data_access_make_empty());
         if (access.is_pointer_access)
         {
@@ -831,7 +866,7 @@ void intermediate_generator_generate_statement(Intermediate_Generator* generator
         dynamic_array_push_back(&function->instructions, i);
         break;
     }
-    case AST_Node_Type::STATEMENT_RETURN: 
+    case AST_Node_Type::STATEMENT_RETURN:
     {
         Intermediate_Instruction i;
         i.type = Intermediate_Instruction_Type::RETURN;
@@ -947,9 +982,9 @@ void intermediate_generator_generate_function_code(Intermediate_Generator* gener
     }
 
     // Generate function code
-    intermediate_generator_generate_statement_block(generator, function->children[2]);
+    intermediate_generator_generate_statement_block(generator, function->children[1]);
 
-    if (generator->compiler->analyser.semantic_information[function_node_index].needs_empty_return_at_end) 
+    if (generator->compiler->analyser.semantic_information[function_node_index].needs_empty_return_at_end)
     {
         Intermediate_Instruction i;
         i.type = Intermediate_Instruction_Type::RETURN;
@@ -1094,35 +1129,41 @@ void data_access_append_to_string(String* string, Data_Access access, int functi
     }
     switch (access.access_type)
     {
-    case Data_Access_Type::GLOBAL_ACCESS:
-        string_append_formated(string, "%s (Global #%d)", 
+    case Data_Access_Type::GLOBAL_ACCESS: {
+        string_append_formated(string, "%s (Global #%d)",
             lexer_identifer_to_string(generator->compiler->parser.lexer, generator->global_variables[access.access_index].name_handle).characters,
             access.access_index
         );
         type = generator->global_variables[access.access_index].type;
         break;
-    case Data_Access_Type::VARIABLE_ACCESS:
-        string_append_formated(string, "%s (Local #%d)", 
+    }
+    case Data_Access_Type::VARIABLE_ACCESS: {
+        string_append_formated(string, "%s (Local #%d)",
             lexer_identifer_to_string(generator->compiler->parser.lexer, function->local_variables[access.access_index].name_handle).characters,
             access.access_index
         );
         type = function->local_variables[access.access_index].type;
         break;
-    case Data_Access_Type::INTERMEDIATE_ACCESS:
+    }
+    case Data_Access_Type::INTERMEDIATE_ACCESS: {
         string_append_formated(string, "Intermediate #%d", access.access_index);
         type = function->intermediate_results[access.access_index];
         break;
-    case Data_Access_Type::PARAMETER_ACCESS:
-        AST_Node* parameter_block_node = 
-            &generator->compiler->parser.nodes[generator->compiler->parser.nodes[generator->function_to_ast_node_mapping[function_index]].children[0]];
-        string_append_formated(string, "%s (Param %d)", 
-            lexer_identifer_to_string(generator->compiler->parser.lexer, 
+    }
+    case Data_Access_Type::PARAMETER_ACCESS: {
+        AST_Node* function_node = &generator->compiler->parser.nodes[generator->function_to_ast_node_mapping[function_index]];
+        AST_Node* signature_node = &generator->compiler->parser.nodes[function_node->children[0]];
+        AST_Node* parameter_block_node = &generator->compiler->parser.nodes[signature_node->children[0]];
+        string_append_formated(string, "%s (Param %d)",
+            lexer_identifer_to_string(generator->compiler->parser.lexer,
                 generator->compiler->parser.nodes[parameter_block_node->children[access.access_index]].name_id
             ).characters,
             access.access_index
         );
         type = function->function_type->parameter_types[access.access_index];
         break;
+    }
+    default: panic("What");
     }
     string_append_formated(string, ": ");
     type_signature_append_to_string(string, type);
@@ -1231,268 +1272,279 @@ void intermediate_instruction_append_to_string(String* string, Intermediate_Inst
     bool append_destination = false;
     bool append_src_1 = false;
 
-        switch (instruction->type)
-        {
-        case Intermediate_Instruction_Type::ADDRESS_OF:
-            string_append_formated(string, "ADDRESS_OF");
-            append_source_destination = true;
-            break;
-        case Intermediate_Instruction_Type::IF_BLOCK:
-            string_append_formated(string, "IF_BLOCK, \n\t\tcond_start: %d, cond_end: %d\n\t\ttrue_start: %d, true_end: %d\n\t\t, false_start: %d, false_end: %d",
-                instruction->condition_calculation_instruction_start, instruction->condition_calculation_instruction_end_exclusive,
-                instruction->true_branch_instruction_start, instruction->true_branch_instruction_end_exclusive,
-                instruction->false_branch_instruction_start, instruction->false_branch_instruction_end_exclusive
-            );
-            string_append_formated(string, "\n\t\tcondition: ");
-            data_access_append_to_string(string, instruction->source1, function_index, generator);
-            break;
-        case Intermediate_Instruction_Type::WHILE_BLOCK:
-            string_append_formated(string, "WHILE_BLOCK, \n\t\tcond_start: %d, cond_end: %d\n\t\ttrue_start: %d, true_end: %d",
-                instruction->condition_calculation_instruction_start, instruction->condition_calculation_instruction_end_exclusive,
-                instruction->true_branch_instruction_start, instruction->true_branch_instruction_end_exclusive
-            );
-            string_append_formated(string, "\n\t\tcondition: ");
-            data_access_append_to_string(string, instruction->source1, function_index, generator);
-            break;
-        case Intermediate_Instruction_Type::CAST_U64_TO_POINTER:
-            string_append_formated(string, "CAST_U64_TO_POINTER, ");
-            type_signature_append_to_string(string, instruction->cast_to);
-            string_append_formated(string, " <-- ");
-            type_signature_append_to_string(string, instruction->cast_from);
-            append_source_destination = true;
-            break;
-        case Intermediate_Instruction_Type::CAST_POINTER_TO_U64:
-            string_append_formated(string, "CAST_POINTER_TO_U64, ");
-            type_signature_append_to_string(string, instruction->cast_to);
-            string_append_formated(string, " <-- ");
-            type_signature_append_to_string(string, instruction->cast_from);
-            append_source_destination = true;
-            break;
-        case Intermediate_Instruction_Type::CAST_PRIMITIVE_TYPES:
-            string_append_formated(string, "CAST_PRIMITIVE_TYPES, ");
-            type_signature_append_to_string(string, instruction->cast_to);
-            string_append_formated(string, " <-- ");
-            type_signature_append_to_string(string, instruction->cast_from);
-            append_source_destination = true;
-            break;
-        case Intermediate_Instruction_Type::CAST_POINTERS:
-            string_append_formated(string, "CAST_POINTERS, ");
-            type_signature_append_to_string(string, instruction->cast_to);
-            string_append_formated(string, " <-- ");
-            type_signature_append_to_string(string, instruction->cast_from);
-            append_source_destination = true;
-            break;
-        case Intermediate_Instruction_Type::CALL_FUNCTION:
-            string_append_formated(string, "CALL_FUNCTION, function_index: %d, \n\t\treturn_data: ", instruction->intermediate_function_index);
-            if (generator->functions[instruction->intermediate_function_index].function_type->return_type != generator->compiler->type_system.void_type) {
-                data_access_append_to_string(string, instruction->destination, function_index, generator);
-            }
-            else {
-                string_append_formated(string, "void");
-            }
-            for (int i = 0; i < instruction->arguments.size; i++) {
-                string_append_formated(string, "\n\t\t#%d: ", i);
-                data_access_append_to_string(string, instruction->arguments[i], function_index, generator);
-            }
-            break;
-        case Intermediate_Instruction_Type::CALL_HARDCODED_FUNCTION:
-            string_append_formated(string, "CALL_HARDCODED_FUNCTION, function_id: %d, \n\t\treturn_data: ", (i32)instruction->hardcoded_function_type);
-            if (generator->compiler->analyser.hardcoded_functions[(int)instruction->hardcoded_function_type].function_type->return_type
-                != generator->compiler->type_system.void_type) {
-                data_access_append_to_string(string, instruction->destination, function_index, generator);
-            }
-            else {
-                string_append_formated(string, "void");
-            }
-            for (int i = 0; i < instruction->arguments.size; i++) {
-                string_append_formated(string, "\n\t\t#%d: ", i);
-                data_access_append_to_string(string, instruction->arguments[i], function_index, generator);
-            }
-            break;
-        case Intermediate_Instruction_Type::RETURN:
-            string_append_formated(string, "RETURN, return_data: ");
-            if (instruction->return_has_value)
-                append_src_1 = true;
-            else {
-                string_append_formated(string, "void");
-            }
-            break;
-        case Intermediate_Instruction_Type::EXIT:
-            string_append_formated(string, "EXIT ");
-            if (instruction->exit_code == Exit_Code::SUCCESS && instruction->return_has_value)
-                append_src_1 = true;
-            exit_code_append_to_string(string, instruction->exit_code);
-            break;
-        case Intermediate_Instruction_Type::BREAK:
-            string_append_formated(string, "BREAK");
-            break;
-        case Intermediate_Instruction_Type::CONTINUE:
-            string_append_formated(string, "CONTINUE");
-            break;
-        case Intermediate_Instruction_Type::CALCULATE_ARRAY_ACCESS_POINTER:
-            string_append_formated(string, "CALCULATE_ARRAY_ACCESS_POINTER, type_size: %d,  ", instruction->constant_i32_value);
-            append_binary = true;
-            break;
-        case Intermediate_Instruction_Type::CALCULATE_MEMBER_ACCESS_POINTER:
-            string_append_formated(string, "CALCULATE_MEMBER_ACCESS_POINTER, offset: %d ", instruction->constant_i32_value);
-            append_source_destination = true;
-            break;
-        case Intermediate_Instruction_Type::MOVE_DATA:
-            string_append_formated(string, "MOVE_DATA");
-            append_source_destination = true;
-            break;
-        case Intermediate_Instruction_Type::LOAD_CONSTANT_F32:
-            string_append_formated(string, "LOAD_CONSTANT_F32, value: %3.2f ", instruction->constant_f32_value);
-            append_destination = true;
-            break;
-        case Intermediate_Instruction_Type::LOAD_STRING_POINTER:
-            string_append_formated(string, "LOAD_STRING_POINTER, value: %s ", instruction->constant_string_value);
-            append_destination = true;
-            break;
-        case Intermediate_Instruction_Type::LOAD_CONSTANT_I32:
-            string_append_formated(string, "LOAD_CONSTANT_I32, value: %d ", instruction->constant_i32_value);
-            append_destination = true;
-            break;
-        case Intermediate_Instruction_Type::LOAD_CONSTANT_BOOL:
-            string_append_formated(string, "LOAD_CONSTANT_BOOL, value: %s ", instruction->constant_bool_value ? "TRUE" : "FALSE");
-            append_destination = true;
-            break;
-        case Intermediate_Instruction_Type::LOAD_NULLPTR:
-            string_append_formated(string, "LOAD_NULLPTR ");
-            append_destination = true;
-            break;
-        case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION:
-            string_append_formated(string, "BINARY_OP_ARITHMETIC_ADDITION");
-            append_binary = true;
-            string_append_formated(string, "_");
-            type_signature_append_to_string(string, instruction->operand_types);
-            string_append_formated(string, " ");
-            break;
-        case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION:
-            string_append_formated(string, "BINARY_OP_ARITHMETIC_SUBTRACTION");
-            append_binary = true;
-            string_append_formated(string, "_");
-            type_signature_append_to_string(string, instruction->operand_types);
-            string_append_formated(string, " ");
-            break;
-        case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION:
-            string_append_formated(string, "BINARY_OP_ARITHMETIC_MULTIPLICATION");
-            append_binary = true;
-            string_append_formated(string, "_");
-            type_signature_append_to_string(string, instruction->operand_types);
-            string_append_formated(string, " ");
-            break;
-        case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION:
-            string_append_formated(string, "BINARY_OP_ARITHMETIC_DIVISION");
-            append_binary = true;
-            string_append_formated(string, "_");
-            type_signature_append_to_string(string, instruction->operand_types);
-            string_append_formated(string, " ");
-            break;
-        case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MODULO:
-            string_append_formated(string, "BINARY_OP_ARITHMETIC_MODULO");
-            append_binary = true;
-            string_append_formated(string, "_");
-            type_signature_append_to_string(string, instruction->operand_types);
-            string_append_formated(string, " ");
-            break;
-        case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL:
-            string_append_formated(string, "BINARY_OP_COMPARISON_EQUAL");
-            append_binary = true;
-            string_append_formated(string, "_");
-            type_signature_append_to_string(string, instruction->operand_types);
-            string_append_formated(string, " ");
-            break;
-        case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL:
-            string_append_formated(string, "BINARY_OP_COMPARISON_NOT_EQUAL");
-            append_binary = true;
-            string_append_formated(string, "_");
-            type_signature_append_to_string(string, instruction->operand_types);
-            string_append_formated(string, " ");
-            break;
-        case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN:
-            string_append_formated(string, "BINARY_OP_COMPARISON_GREATER_THAN");
-            append_binary = true;
-            string_append_formated(string, "_");
-            type_signature_append_to_string(string, instruction->operand_types);
-            string_append_formated(string, " ");
-            break;
-        case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL:
-            string_append_formated(string, "BINARY_OP_COMPARISON_GREATER_EQUAL");
-            append_binary = true;
-            string_append_formated(string, "_");
-            type_signature_append_to_string(string, instruction->operand_types);
-            string_append_formated(string, " ");
-            break;
-        case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN:
-            string_append_formated(string, "BINARY_OP_COMPARISON_LESS_THAN");
-            append_binary = true;
-            string_append_formated(string, "_");
-            type_signature_append_to_string(string, instruction->operand_types);
-            string_append_formated(string, " ");
-            break;
-        case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL:
-            string_append_formated(string, "BINARY_OP_COMPARISON_LESS_EQUAL");
-            append_binary = true;
-            string_append_formated(string, "_");
-            type_signature_append_to_string(string, instruction->operand_types);
-            string_append_formated(string, " ");
-            break;
-        case Intermediate_Instruction_Type::BINARY_OP_BOOLEAN_AND:
-            string_append_formated(string, "BINARY_OP_BOOLEAN_AND");
-            append_binary = true;
-            string_append_formated(string, "_");
-            type_signature_append_to_string(string, instruction->operand_types);
-            string_append_formated(string, " ");
-            break;
-        case Intermediate_Instruction_Type::BINARY_OP_BOOLEAN_OR:
-            string_append_formated(string, "BINARY_OP_BOOLEAN_OR");
-            append_binary = true;
-            string_append_formated(string, "_");
-            type_signature_append_to_string(string, instruction->operand_types);
-            string_append_formated(string, " ");
-            break;
-        case Intermediate_Instruction_Type::UNARY_OP_BOOLEAN_NOT:
-            string_append_formated(string, "UNARY_OP_BOOLEAN_NOT");
-            append_source_destination = true;
-            string_append_formated(string, "_");
-            type_signature_append_to_string(string, instruction->operand_types);
-            string_append_formated(string, " ");
-            break;
-        case Intermediate_Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE:
-            string_append_formated(string, "UNARY_OP_ARITHMETIC_NEGATE");
-            append_source_destination = true;
-            string_append_formated(string, "_");
-            type_signature_append_to_string(string, instruction->operand_types);
-            string_append_formated(string, " ");
-            break;
-        default:
-            logg("Should not fucking happen!");
-            break;
+    switch (instruction->type)
+    {
+    case Intermediate_Instruction_Type::ADDRESS_OF:
+        string_append_formated(string, "ADDRESS_OF");
+        append_source_destination = true;
+        break;
+    case Intermediate_Instruction_Type::IF_BLOCK:
+        string_append_formated(string, "IF_BLOCK, \n\t\tcond_start: %d, cond_end: %d\n\t\ttrue_start: %d, true_end: %d\n\t\t, false_start: %d, false_end: %d",
+            instruction->condition_calculation_instruction_start, instruction->condition_calculation_instruction_end_exclusive,
+            instruction->true_branch_instruction_start, instruction->true_branch_instruction_end_exclusive,
+            instruction->false_branch_instruction_start, instruction->false_branch_instruction_end_exclusive
+        );
+        string_append_formated(string, "\n\t\tcondition: ");
+        data_access_append_to_string(string, instruction->source1, function_index, generator);
+        break;
+    case Intermediate_Instruction_Type::WHILE_BLOCK:
+        string_append_formated(string, "WHILE_BLOCK, \n\t\tcond_start: %d, cond_end: %d\n\t\ttrue_start: %d, true_end: %d",
+            instruction->condition_calculation_instruction_start, instruction->condition_calculation_instruction_end_exclusive,
+            instruction->true_branch_instruction_start, instruction->true_branch_instruction_end_exclusive
+        );
+        string_append_formated(string, "\n\t\tcondition: ");
+        data_access_append_to_string(string, instruction->source1, function_index, generator);
+        break;
+    case Intermediate_Instruction_Type::CAST_U64_TO_POINTER:
+        string_append_formated(string, "CAST_U64_TO_POINTER, ");
+        type_signature_append_to_string(string, instruction->cast_to);
+        string_append_formated(string, " <-- ");
+        type_signature_append_to_string(string, instruction->cast_from);
+        append_source_destination = true;
+        break;
+    case Intermediate_Instruction_Type::CAST_POINTER_TO_U64:
+        string_append_formated(string, "CAST_POINTER_TO_U64, ");
+        type_signature_append_to_string(string, instruction->cast_to);
+        string_append_formated(string, " <-- ");
+        type_signature_append_to_string(string, instruction->cast_from);
+        append_source_destination = true;
+        break;
+    case Intermediate_Instruction_Type::CAST_PRIMITIVE_TYPES:
+        string_append_formated(string, "CAST_PRIMITIVE_TYPES, ");
+        type_signature_append_to_string(string, instruction->cast_to);
+        string_append_formated(string, " <-- ");
+        type_signature_append_to_string(string, instruction->cast_from);
+        append_source_destination = true;
+        break;
+    case Intermediate_Instruction_Type::CAST_POINTERS:
+        string_append_formated(string, "CAST_POINTERS, ");
+        type_signature_append_to_string(string, instruction->cast_to);
+        string_append_formated(string, " <-- ");
+        type_signature_append_to_string(string, instruction->cast_from);
+        append_source_destination = true;
+        break;
+    case Intermediate_Instruction_Type::CALL_FUNCTION_POINTER:
+        string_append_formated(string, "CALL_FUNCTION_POINTER ");
+        for (int i = 0; i < instruction->arguments.size; i++) {
+            string_append_formated(string, "\n\t\t#%d: ", i);
+            data_access_append_to_string(string, instruction->arguments[i], function_index, generator);
         }
+        break;
+    case Intermediate_Instruction_Type::CALL_FUNCTION:
+        string_append_formated(string, "CALL_FUNCTION, function_index: %d, \n\t\treturn_data: ", instruction->intermediate_function_index);
+        if (generator->functions[instruction->intermediate_function_index].function_type->return_type != generator->compiler->type_system.void_type) {
+            data_access_append_to_string(string, instruction->destination, function_index, generator);
+        }
+        else {
+            string_append_formated(string, "void");
+        }
+        for (int i = 0; i < instruction->arguments.size; i++) {
+            string_append_formated(string, "\n\t\t#%d: ", i);
+            data_access_append_to_string(string, instruction->arguments[i], function_index, generator);
+        }
+        break;
+    case Intermediate_Instruction_Type::CALL_HARDCODED_FUNCTION:
+        string_append_formated(string, "CALL_HARDCODED_FUNCTION, function_id: %d, \n\t\treturn_data: ", (i32)instruction->hardcoded_function_type);
+        if (generator->compiler->analyser.hardcoded_functions[(int)instruction->hardcoded_function_type].function_type->return_type
+            != generator->compiler->type_system.void_type) {
+            data_access_append_to_string(string, instruction->destination, function_index, generator);
+        }
+        else {
+            string_append_formated(string, "void");
+        }
+        for (int i = 0; i < instruction->arguments.size; i++) {
+            string_append_formated(string, "\n\t\t#%d: ", i);
+            data_access_append_to_string(string, instruction->arguments[i], function_index, generator);
+        }
+        break;
+    case Intermediate_Instruction_Type::RETURN:
+        string_append_formated(string, "RETURN, return_data: ");
+        if (instruction->return_has_value)
+            append_src_1 = true;
+        else {
+            string_append_formated(string, "void");
+        }
+        break;
+    case Intermediate_Instruction_Type::EXIT:
+        string_append_formated(string, "EXIT ");
+        if (instruction->exit_code == Exit_Code::SUCCESS && instruction->return_has_value)
+            append_src_1 = true;
+        exit_code_append_to_string(string, instruction->exit_code);
+        break;
+    case Intermediate_Instruction_Type::BREAK:
+        string_append_formated(string, "BREAK");
+        break;
+    case Intermediate_Instruction_Type::CONTINUE:
+        string_append_formated(string, "CONTINUE");
+        break;
+    case Intermediate_Instruction_Type::CALCULATE_ARRAY_ACCESS_POINTER:
+        string_append_formated(string, "CALCULATE_ARRAY_ACCESS_POINTER, type_size: %d,  ", instruction->constant_i32_value);
+        append_binary = true;
+        break;
+    case Intermediate_Instruction_Type::CALCULATE_MEMBER_ACCESS_POINTER:
+        string_append_formated(string, "CALCULATE_MEMBER_ACCESS_POINTER, offset: %d ", instruction->constant_i32_value);
+        append_source_destination = true;
+        break;
+    case Intermediate_Instruction_Type::MOVE_DATA:
+        string_append_formated(string, "MOVE_DATA");
+        append_source_destination = true;
+        break;
+    case Intermediate_Instruction_Type::LOAD_CONSTANT_F32:
+        string_append_formated(string, "LOAD_CONSTANT_F32, value: %3.2f ", instruction->constant_f32_value);
+        append_destination = true;
+        break;
+    case Intermediate_Instruction_Type::LOAD_STRING_POINTER:
+        string_append_formated(string, "LOAD_STRING_POINTER, value: %s ", instruction->constant_string_value);
+        append_destination = true;
+        break;
+    case Intermediate_Instruction_Type::LOAD_CONSTANT_I32:
+        string_append_formated(string, "LOAD_CONSTANT_I32, value: %d ", instruction->constant_i32_value);
+        append_destination = true;
+        break;
+    case Intermediate_Instruction_Type::LOAD_CONSTANT_BOOL:
+        string_append_formated(string, "LOAD_CONSTANT_BOOL, value: %s ", instruction->constant_bool_value ? "TRUE" : "FALSE");
+        append_destination = true;
+        break;
+    case Intermediate_Instruction_Type::LOAD_NULLPTR:
+        string_append_formated(string, "LOAD_NULLPTR ");
+        append_destination = true;
+        break;
+    case Intermediate_Instruction_Type::LOAD_FUNCTION_POINTER:
+        string_append_formated(string, "LOAD_FUNCTION_POINTER %d", instruction->intermediate_function_index);
+        append_destination = true;
+        break;
+    case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION:
+        string_append_formated(string, "BINARY_OP_ARITHMETIC_ADDITION");
+        append_binary = true;
+        string_append_formated(string, "_");
+        type_signature_append_to_string(string, instruction->operand_types);
+        string_append_formated(string, " ");
+        break;
+    case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION:
+        string_append_formated(string, "BINARY_OP_ARITHMETIC_SUBTRACTION");
+        append_binary = true;
+        string_append_formated(string, "_");
+        type_signature_append_to_string(string, instruction->operand_types);
+        string_append_formated(string, " ");
+        break;
+    case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION:
+        string_append_formated(string, "BINARY_OP_ARITHMETIC_MULTIPLICATION");
+        append_binary = true;
+        string_append_formated(string, "_");
+        type_signature_append_to_string(string, instruction->operand_types);
+        string_append_formated(string, " ");
+        break;
+    case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION:
+        string_append_formated(string, "BINARY_OP_ARITHMETIC_DIVISION");
+        append_binary = true;
+        string_append_formated(string, "_");
+        type_signature_append_to_string(string, instruction->operand_types);
+        string_append_formated(string, " ");
+        break;
+    case Intermediate_Instruction_Type::BINARY_OP_ARITHMETIC_MODULO:
+        string_append_formated(string, "BINARY_OP_ARITHMETIC_MODULO");
+        append_binary = true;
+        string_append_formated(string, "_");
+        type_signature_append_to_string(string, instruction->operand_types);
+        string_append_formated(string, " ");
+        break;
+    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_EQUAL:
+        string_append_formated(string, "BINARY_OP_COMPARISON_EQUAL");
+        append_binary = true;
+        string_append_formated(string, "_");
+        type_signature_append_to_string(string, instruction->operand_types);
+        string_append_formated(string, " ");
+        break;
+    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL:
+        string_append_formated(string, "BINARY_OP_COMPARISON_NOT_EQUAL");
+        append_binary = true;
+        string_append_formated(string, "_");
+        type_signature_append_to_string(string, instruction->operand_types);
+        string_append_formated(string, " ");
+        break;
+    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN:
+        string_append_formated(string, "BINARY_OP_COMPARISON_GREATER_THAN");
+        append_binary = true;
+        string_append_formated(string, "_");
+        type_signature_append_to_string(string, instruction->operand_types);
+        string_append_formated(string, " ");
+        break;
+    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL:
+        string_append_formated(string, "BINARY_OP_COMPARISON_GREATER_EQUAL");
+        append_binary = true;
+        string_append_formated(string, "_");
+        type_signature_append_to_string(string, instruction->operand_types);
+        string_append_formated(string, " ");
+        break;
+    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN:
+        string_append_formated(string, "BINARY_OP_COMPARISON_LESS_THAN");
+        append_binary = true;
+        string_append_formated(string, "_");
+        type_signature_append_to_string(string, instruction->operand_types);
+        string_append_formated(string, " ");
+        break;
+    case Intermediate_Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL:
+        string_append_formated(string, "BINARY_OP_COMPARISON_LESS_EQUAL");
+        append_binary = true;
+        string_append_formated(string, "_");
+        type_signature_append_to_string(string, instruction->operand_types);
+        string_append_formated(string, " ");
+        break;
+    case Intermediate_Instruction_Type::BINARY_OP_BOOLEAN_AND:
+        string_append_formated(string, "BINARY_OP_BOOLEAN_AND");
+        append_binary = true;
+        string_append_formated(string, "_");
+        type_signature_append_to_string(string, instruction->operand_types);
+        string_append_formated(string, " ");
+        break;
+    case Intermediate_Instruction_Type::BINARY_OP_BOOLEAN_OR:
+        string_append_formated(string, "BINARY_OP_BOOLEAN_OR");
+        append_binary = true;
+        string_append_formated(string, "_");
+        type_signature_append_to_string(string, instruction->operand_types);
+        string_append_formated(string, " ");
+        break;
+    case Intermediate_Instruction_Type::UNARY_OP_BOOLEAN_NOT:
+        string_append_formated(string, "UNARY_OP_BOOLEAN_NOT");
+        append_source_destination = true;
+        string_append_formated(string, "_");
+        type_signature_append_to_string(string, instruction->operand_types);
+        string_append_formated(string, " ");
+        break;
+    case Intermediate_Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE:
+        string_append_formated(string, "UNARY_OP_ARITHMETIC_NEGATE");
+        append_source_destination = true;
+        string_append_formated(string, "_");
+        type_signature_append_to_string(string, instruction->operand_types);
+        string_append_formated(string, " ");
+        break;
+    default:
+        logg("Should not fucking happen!");
+        break;
+    }
 
-        if (append_binary) {
-            string_append_formated(string, "\n\t\tleft = ");
-            data_access_append_to_string(string, instruction->source1, function_index, generator);
-            string_append_formated(string, "\n\t\tright = ");
-            data_access_append_to_string(string, instruction->source2, function_index, generator);
-            string_append_formated(string, "\n\t\tdest = ");
-            data_access_append_to_string(string, instruction->destination, function_index, generator);
-        }
-        if (append_source_destination) {
-            string_append_formated(string, "\n\t\tsrc = ");
-            data_access_append_to_string(string, instruction->source1, function_index, generator);
-            string_append_formated(string, "\n\t\tdest = ");
-            data_access_append_to_string(string, instruction->destination, function_index, generator);
-        }
-        if (append_destination) {
-            string_append_formated(string, "\n\t\tdest = ");
-            data_access_append_to_string(string, instruction->destination, function_index, generator);
-        }
-        if (append_src_1) {
-            string_append_formated(string, "\n\t\tsrc = ");
-            data_access_append_to_string(string, instruction->source1, function_index, generator);
-        }
+    if (append_binary) {
+        string_append_formated(string, "\n\t\tleft = ");
+        data_access_append_to_string(string, instruction->source1, function_index, generator);
+        string_append_formated(string, "\n\t\tright = ");
+        data_access_append_to_string(string, instruction->source2, function_index, generator);
+        string_append_formated(string, "\n\t\tdest = ");
+        data_access_append_to_string(string, instruction->destination, function_index, generator);
+    }
+    if (append_source_destination) {
+        string_append_formated(string, "\n\t\tsrc = ");
+        data_access_append_to_string(string, instruction->source1, function_index, generator);
+        string_append_formated(string, "\n\t\tdest = ");
+        data_access_append_to_string(string, instruction->destination, function_index, generator);
+    }
+    if (append_destination) {
+        string_append_formated(string, "\n\t\tdest = ");
+        data_access_append_to_string(string, instruction->destination, function_index, generator);
+    }
+    if (append_src_1) {
+        string_append_formated(string, "\n\t\tsrc = ");
+        data_access_append_to_string(string, instruction->source1, function_index, generator);
+    }
 }
 
 void intermediate_function_append_to_string(String* string, Intermediate_Generator* generator, int index)

@@ -12,6 +12,9 @@ struct Dynamic_Array
     T* data;
 
     T& operator[](int index){
+        if (index > size || index < 0) {
+            panic("Dynamic_Array out of bounds access");
+        }
         return data[index];
     }
 };

@@ -13,9 +13,12 @@ enum class AST_Node_Type
 {
     ROOT, // Children: functions
     STRUCT, // Children: Variable definitions
-    FUNCTION, // Child 0: parameter_block, Child 1: Return Type, Child 2: Statement_Block
-    PARAMETER_BLOCK, // Children: Parameters
-    PARAMETER, // Child 0: Type
+    FUNCTION, // Child 0: Function_Signature, Child 2: Statement_Block
+    FUNCTION_SIGNATURE, // Child 0: Parameter_Block_Named, Child 1 (optional): Return Type
+    PARAMETER_BLOCK_UNNAMED, // Children: Types
+    PARAMETER_BLOCK_NAMED, // Children: Named_Parameter
+    NAMED_PARAMETER, // Child 0: Type
+    TYPE_FUNCTION_POINTER, // Child 0: Parameter_Block_Unnamed, Child 1 (optional): Return Type
     TYPE_IDENTIFIER, // No Children
     TYPE_POINTER_TO, // Child 0: Type
     TYPE_ARRAY_SIZED, // Child 0: Expression (Compile time available), Child 1: Type

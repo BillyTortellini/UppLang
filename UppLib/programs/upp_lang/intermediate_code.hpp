@@ -22,11 +22,13 @@ enum class Intermediate_Instruction_Type
     LOAD_CONSTANT_BOOL, // Dest
     LOAD_NULLPTR, // Dest
     LOAD_STRING_POINTER, // Dest, constant string value is a char pointer
+    LOAD_FUNCTION_POINTER, // Dest, intermediate function index
 
     IF_BLOCK, // Source 1 is condition, the statement comes before the condition and the blocks
     WHILE_BLOCK, // Source 1 is condition, the statement comes before the condition and the blocks
     CALL_FUNCTION, // Arguments + Destination Register
     CALL_HARDCODED_FUNCTION, // Arguments + Destination Register, i32_value = Hardcoded_Function_Type
+    CALL_FUNCTION_POINTER, // Source 1 is variable
     BREAK, // No additional data
     CONTINUE, // No additional data
     RETURN, // Source 1 is return register

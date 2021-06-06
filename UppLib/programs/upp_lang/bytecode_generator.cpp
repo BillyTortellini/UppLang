@@ -420,6 +420,13 @@ void bytecode_generator_generate_function_instruction_slice(
             bytecode_generator_generate_load_constant_instruction(generator, function_index, instruction_index);
             break;
         }
+        case Intermediate_Instruction_Type::LOAD_FUNCTION_POINTER: {
+            bytecode_generator_add_instruction_with_destination_access(generator,
+                instr->destination, instruction_make_2(Instruction_Type::LOAD_FUNCTION_LOCATION, 0, instr->intermediate_function_index),
+                function_index
+            );
+            break;
+        }
         case Intermediate_Instruction_Type::IF_BLOCK:
         {
             bytecode_generator_generate_function_instruction_slice(
@@ -455,18 +462,23 @@ void bytecode_generator_generate_function_instruction_slice(
         }
         case Intermediate_Instruction_Type::CALL_HARDCODED_FUNCTION:
         case Intermediate_Instruction_Type::CALL_FUNCTION:
+        case Intermediate_Instruction_Type::CALL_FUNCTION_POINTER:
         {
             // Move registers to the right place, then generate call instruction
             int pointer_offset = bytecode_generator_create_temporary_stack_offset(generator, generator->compiler->type_system.void_ptr_type);
             int argument_stack_offset = align_offset_next_multiple(generator->tmp_stack_offset, 16); // I think 16 is the hightest i have
 
-            Type_Signature* function_sig;
+            Type_Signature* function_sig = 0;
             if (instr->type == Intermediate_Instruction_Type::CALL_HARDCODED_FUNCTION) {
                 function_sig = generator->compiler->analyser.hardcoded_functions[(int)instr->hardcoded_function_type].function_type;
             }
-            else {
+            else if (instr->type == Intermediate_Instruction_Type::CALL_FUNCTION) {
                 function_sig = generator->compiler->intermediate_generator.functions[instr->intermediate_function_index].function_type;
             }
+            else if (instr->type == Intermediate_Instruction_Type::CALL_FUNCTION_POINTER) {
+                function_sig = intermediate_generator_get_access_signature(&generator->compiler->intermediate_generator, instr->source1, function_index)->child_type;
+            }
+            else panic("cannot happen");
 
             // Put arguments into the correct place on the stack
             for (int i = 0; i < function_sig->parameter_types.size; i++)
@@ -539,7 +551,7 @@ void bytecode_generator_generate_function_instruction_slice(
                     instruction_make_2(Instruction_Type::CALL_HARDCODED_FUNCTION, (i32)instr->hardcoded_function_type, argument_stack_offset)
                 );
             }
-            else {
+            else if (instr->type == Intermediate_Instruction_Type::CALL_FUNCTION) {
                 bytecode_generator_add_instruction(
                     generator,
                     instruction_make_2(Instruction_Type::CALL, 0, argument_stack_offset)
@@ -549,21 +561,22 @@ void bytecode_generator_generate_function_instruction_slice(
                 call_loc.function_index = instr->intermediate_function_index;
                 dynamic_array_push_back(&generator->function_calls, call_loc);
             }
+            else if (instr->type == Intermediate_Instruction_Type::CALL_FUNCTION_POINTER) {
+                bytecode_generator_add_instruction(
+                    generator,
+                    instruction_make_2(
+                        Instruction_Type::CALL_FUNCTION_POINTER,
+                        bytecode_generator_data_access_to_stack_offset(generator, instr->source1, function_index),
+                        argument_stack_offset
+                    )
+                );
+            }
+            else panic("Cannot happen");
 
             // Load return value to destination
-            Type_Signature* return_type;
-            if (instr->type == Intermediate_Instruction_Type::CALL_HARDCODED_FUNCTION) {
-                Type_Signature* function_type = generator->compiler->analyser.hardcoded_functions[(u32)instr->hardcoded_function_type].function_type;
-                return_type = function_type->return_type;
-            }
-            else {
-                Type_Signature* function_type = generator->compiler->intermediate_generator.functions[instr->intermediate_function_index].function_type;
-                return_type = function_type->return_type;
-            }
-
-            if (return_type != generator->compiler->type_system.void_type)
+            if (function_sig->return_type != generator->compiler->type_system.void_type)
             {
-                Bytecode_Instruction ret_val_instr = instruction_make_2(Instruction_Type::LOAD_RETURN_VALUE, 0, return_type->size_in_bytes);
+                Bytecode_Instruction ret_val_instr = instruction_make_2(Instruction_Type::LOAD_RETURN_VALUE, 0, function_sig->return_type->size_in_bytes);
                 bytecode_generator_add_instruction_with_destination_access(generator, instr->destination, ret_val_instr, function_index);
             }
             break;
@@ -1008,6 +1021,9 @@ void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction 
         case Instruction_Type::LOAD_CONSTANT_I32:
             string_append_formated(string, "LOAD_CONSTANT_I32                 dest=%d, val=%d\n", instruction.op1, instruction.op2);
             break;
+        case Instruction_Type::LOAD_FUNCTION_LOCATION:
+            string_append_formated(string, "LOAD_FUNCTION_LOCATION            dest=%d, val=%d\n", instruction.op1, instruction.op2);
+            break;
         case Instruction_Type::MOVE_STACK_DATA:
             string_append_formated(string, "MOVE_REGISTER                     dest=%d, src=%d, size=%d\n", instruction.op1, instruction.op2, instruction.op3);
             break;
@@ -1053,6 +1069,9 @@ void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction 
         case Instruction_Type::CALL_HARDCODED_FUNCTION:
             string_append_formated(string, "CALL_HARDCODED_FUNCTION           func_ind=%d, stack_offset=%d\n", instruction.op1, instruction.op2);
             break;
+        case Instruction_Type::CALL_FUNCTION_POINTER:
+            string_append_formated(string, "CALL_FUNCTION_POINTER             src=%d, stack_offset=%d\n", instruction.op1, instruction.op2);
+            break;
         case Instruction_Type::RETURN:
             string_append_formated(string, "RETURN                            return_reg=%d, size=%d\n", instruction.op1, instruction.op2);
             break;
@@ -1071,6 +1090,7 @@ void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction 
             break;
         case Instruction_Type::CAST_FLOAT_DIFFERENT_SIZE:
             string_append_formated(string, "CAST_FLOAT_DIFFERENT_SIZE         dst=%d, src=%d, dst_size=%d, src_size=%d\n",
+
                 instruction.op1, instruction.op2, instruction.op3, instruction.op4);
             break;
         case Instruction_Type::CAST_FLOAT_INTEGER:

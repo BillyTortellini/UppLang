@@ -86,6 +86,25 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
 
         return false;
     }
+    case Instruction_Type::CALL_FUNCTION_POINTER: {
+        if (&interpreter->stack[interpreter->stack.size-1] - interpreter->stack_pointer < interpreter->generator->maximum_function_stack_depth) {
+            interpreter->exit_code = Exit_Code::STACK_OVERFLOW;
+            return true;
+        }
+
+        int function_index = (int)*(u64*)(interpreter->stack_pointer + i->op1);
+
+        byte* base_pointer = interpreter->stack_pointer;
+        Bytecode_Instruction* next = interpreter->instruction_pointer + 1;
+        interpreter->stack_pointer = interpreter->stack_pointer + i->op2;
+        *((Bytecode_Instruction**)interpreter->stack_pointer) = next;
+        *(byte**)(interpreter->stack_pointer + 8) = base_pointer;
+
+        interpreter->instruction_pointer = &interpreter->generator->instructions[
+            interpreter->generator->function_locations[function_index]
+        ];
+        return false;
+    }
     case Instruction_Type::RETURN: {
         if (i->op2 > 256) {
             interpreter->exit_code = Exit_Code::RETURN_VALUE_OVERFLOW;
@@ -232,6 +251,9 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         break;
     case Instruction_Type::LOAD_CONSTANT_U64:
         *(u64*)(interpreter->stack_pointer + i->op1) = interpreter->generator->constants_u64[i->op2];
+        break;
+    case Instruction_Type::LOAD_FUNCTION_LOCATION:
+        *(u64*)(interpreter->stack_pointer + i->op1) = (u64)i->op2;
         break;
     case Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE: {
         u64 source_unsigned;

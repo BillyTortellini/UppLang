@@ -1,6 +1,5 @@
 Current Work Item:
 ------------------
- * Function pointers
 
 
 
@@ -16,7 +15,6 @@ Long-Term Goals:
 
 More Language features to implement:
 ------------------------------------
- * Function pointers
  * Defer
  * Enums
  * switch

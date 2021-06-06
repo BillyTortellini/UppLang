@@ -46,6 +46,44 @@ void compiler_compile(Compiler* compiler, String* source_code, bool generate_cod
     double semantic_analysis_start_time = timer_current_time_in_seconds(compiler->timer);
 
     semantic_analyser_analyse(&compiler->analyser, compiler);
+    if (compiler->parser.errors.size == 0 && compiler->analyser.errors.size == 0 && generate_code)
+    {
+        // Generate Intermediate Code
+        intermediate_generator_generate(&compiler->intermediate_generator, compiler);
+        // Generate Bytecode from IM
+        bytecode_generator_generate(&compiler->bytecode_generator, compiler);
+    }
+
+    if (generate_code)
+    {
+        logg("\n\n\n\n\n\n\n\n\n\n\n\n--------SOURCE CODE--------: \n%s\n\n", source_code->characters);
+        logg("\n\n\n\n--------LEXER RESULT--------:\n");
+        //lexer_print(&compiler->lexer);
+
+        logg("\n--------IDENTIFIERS:--------:\n");
+        //lexer_print_identifiers(&compiler->lexer);
+
+        String printed_ast = string_create_empty(256);
+        SCOPE_EXIT(string_destroy(&printed_ast));
+        //ast_parser_append_to_string(&compiler->parser, &printed_ast);
+        logg("\n");
+        logg("--------AST PARSE RESULT--------:\n");
+        logg("\n%s\n", printed_ast.characters);
+
+        logg("--------TYPE SYSTEM RESULT--------:\n");
+        type_system_print(&compiler->type_system);
+        if (compiler->analyser.errors.size == 0 && true)
+        {
+            String result_str = string_create_empty(32);
+            SCOPE_EXIT(string_destroy(&result_str));
+            intermediate_generator_append_to_string(&result_str, &compiler->intermediate_generator);
+            logg("---------INTERMEDIATE_GENERATOR_RESULT----------\n%s\n\n", result_str.characters);
+            string_reset(&result_str);
+            bytecode_generator_append_bytecode_to_string(&compiler->bytecode_generator, &result_str);
+            logg("----------------BYTECODE_GENERATOR RESULT---------------: \n%s\n", result_str.characters);
+        }
+    }
+    /*
     double intermediate_generator_start_time = timer_current_time_in_seconds(compiler->timer);
     double bytecode_generator_start_time = timer_current_time_in_seconds(compiler->timer);
     if (compiler->parser.errors.size == 0 && compiler->analyser.errors.size == 0 && generate_code)
@@ -100,6 +138,7 @@ void compiler_compile(Compiler* compiler, String* source_code, bool generate_cod
         (float)(debug_print_start_time - bytecode_generator_start_time) * 1000.0f,
         (float)(debug_print_end_time - debug_print_start_time) * 1000.0f
     );
+    */
 }
 
 void compiler_execute(Compiler* compiler)
@@ -134,7 +173,7 @@ Text_Slice token_range_to_text_slice(Token_Range range, Compiler* compiler)
     range.end_index = math_clamp(range.end_index, 0, math_maximum(0, compiler->lexer.tokens.size - 1));
     return text_slice_make(
         compiler->lexer.tokens[range.start_index].position.start,
-        compiler->lexer.tokens[range.end_index-1].position.end
+        compiler->lexer.tokens[math_maximum(0, range.end_index - 1)].position.end
     );
 }
 

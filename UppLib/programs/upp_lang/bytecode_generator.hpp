@@ -31,6 +31,7 @@ enum class Instruction_Type
     JUMP_ON_TRUE, // op1 = instruction_index, op2 = cnd_reg
     JUMP_ON_FALSE, // op1 = instruction_index, op2 = cnd_reg
     CALL, // Pushes return address, op1 = instruction_index, op2 = stack_offset for new frame
+    CALL_FUNCTION_POINTER, // op1 = src_reg, op2 = stack_offset for new frame
     CALL_HARDCODED_FUNCTION, // op1 = hardcoded_function_type, op2 = stack_offset for new frame
     RETURN, // Pops return address, op1 = return_value reg, op2 = return_size (Capped at 16 bytes)
     EXIT, // op1 = return_value_register, op2 = return size (Capped at 16), op3 = exit_code
@@ -43,6 +44,7 @@ enum class Instruction_Type
     LOAD_CONSTANT_BOOLEAN, // op1 = dest_reg, op2 = value // Todo: Only works because we dont 64bit constants yet
     LOAD_NULLPTR, // op1 = dest_reg
     LOAD_CONSTANT_U64, // op1 = dest_reg, op2 = constant_index in constant_u64 buffer
+    LOAD_FUNCTION_LOCATION, // op1 = dest_reg, op2 = funciton_index
 
     CAST_INTEGER_DIFFERENT_SIZE, // op1 = dst_reg, op2 = src_reg, op3 = dst_prim_type, op4 = src_prim_type
     CAST_FLOAT_DIFFERENT_SIZE, // op1 = dst_reg, op2 = src_reg, op3 = dst_prim_type, op4 = src_prim_type
@@ -198,6 +200,12 @@ struct Function_Call_Location
 {
     int function_index;
     int call_instruction_location;
+};
+
+struct Load_Function_Pointer_Location
+{
+    int function_index;
+    int instruction_location;
 };
 
 struct Bytecode_Generator

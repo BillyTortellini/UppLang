@@ -636,6 +636,25 @@ Type_Signature* semantic_analyser_analyse_type(Semantic_Analyser* analyser, int 
         }
         return type_system_make_array_unsized(&analyser->compiler->type_system, element_type);
     }
+    case AST_Node_Type::TYPE_FUNCTION_POINTER: 
+    {
+        AST_Node* parameter_block = &analyser->compiler->parser.nodes[type_node->children[0]];
+        Dynamic_Array<Type_Signature*> parameter_types = dynamic_array_create_empty<Type_Signature*>(parameter_block->children.size);
+        for (int i = 0; i < parameter_block->children.size; i++) {
+            int param_type_index = parameter_block->children[i];
+            dynamic_array_push_back(&parameter_types, semantic_analyser_analyse_type(analyser, param_type_index));
+        }
+
+        Type_Signature* return_type;
+        if (type_node->children.size == 2) {
+            return_type = semantic_analyser_analyse_type(analyser, type_node->children[1]);
+        }
+        else {
+            return_type = analyser->compiler->type_system.void_type;
+        }
+        Type_Signature* function_type = type_system_make_function(&analyser->compiler->type_system, parameter_types, return_type);
+        return type_system_make_pointer(&analyser->compiler->type_system, function_type);
+    }
     }
 
     panic("This should not happen, this means that the child was not a type!\n");
@@ -679,7 +698,7 @@ bool semantic_analyser_implicit_cast_possible(Semantic_Analyser* analyser, Type_
         return false;
     }
     // Primitive Casting:
-    if (source->type == Signature_Type::PRIMITIVE && destination->type == Signature_Type::PRIMITIVE) 
+    if (source->type == Signature_Type::PRIMITIVE && destination->type == Signature_Type::PRIMITIVE)
     {
         if (primitive_type_is_integer(source->primitive_type) && primitive_type_is_integer(destination->primitive_type)) {
             if (primitive_type_is_signed(source->primitive_type) != primitive_type_is_signed(destination->primitive_type)) return false;
@@ -729,15 +748,32 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
             return expression_analysis_result_make(analyser->compiler->type_system.error_type, true);
         }
 
-        Symbol* func_symbol = symbol_table_find_symbol_of_type(table, expression->name_id, Symbol_Type::FUNCTION);
-        if (func_symbol == 0) {
-            semantic_analyser_log_error(analyser, "Function call to not defined Function!", expression_index);
-            lexer_print_identifiers(analyser->compiler->parser.lexer);
-            type_system_print(&analyser->compiler->type_system);
-            return expression_analysis_result_make(analyser->compiler->type_system.error_type, true);
+        Type_Signature* signature = 0;
+        Symbol* var_symbol = symbol_table_find_symbol_of_type(table, expression->name_id, Symbol_Type::VARIABLE);
+        if (var_symbol != 0) 
+        {
+            if (var_symbol->type->type != Signature_Type::POINTER) {
+                semantic_analyser_log_error(analyser, "Call to variable is only allowed if it is a function pointer", expression_index);
+                return expression_analysis_result_make(analyser->compiler->type_system.error_type, true);
+            }
+            if (var_symbol->type->child_type->type != Signature_Type::FUNCTION) {
+                semantic_analyser_log_error(analyser, "Call to variable is only allowed if it is a function pointer", expression_index);
+                return expression_analysis_result_make(analyser->compiler->type_system.error_type, true);
+            }
+            signature = var_symbol->type->child_type;
+        }
+        else 
+        {
+            Symbol* func_symbol = symbol_table_find_symbol_of_type(table, expression->name_id, Symbol_Type::FUNCTION);
+            if (func_symbol == 0) {
+                semantic_analyser_log_error(analyser, "Function call to not defined Function!", expression_index);
+                lexer_print_identifiers(analyser->compiler->parser.lexer);
+                type_system_print(&analyser->compiler->type_system);
+                return expression_analysis_result_make(analyser->compiler->type_system.error_type, true);
+            }
+            signature = func_symbol->type;
         }
 
-        Type_Signature* signature = func_symbol->type;
         if (expression->children.size != signature->parameter_types.size) {
             semantic_analyser_log_error(analyser, "Argument size does not match function parameter size!", expression_index);
         }
@@ -761,7 +797,25 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
     case AST_Node_Type::EXPRESSION_VARIABLE_READ:
     {
         Symbol* s = symbol_table_find_symbol_of_type(table, expression->name_id, Symbol_Type::VARIABLE);
-        if (s == 0) {
+        Symbol* func_symbol = symbol_table_find_symbol_of_type(table, expression->name_id, Symbol_Type::FUNCTION);
+        if (s == 0) 
+        {
+            if (func_symbol != 0) 
+            {
+                bool is_hardcoded = false;
+                for (int i = 0; i < analyser->hardcoded_functions.size; i++) {
+                    if (expression->name_id == analyser->hardcoded_functions[i].name_handle) {
+                        is_hardcoded = true;
+                        break;
+                    }
+                }
+                if (is_hardcoded) {
+                    semantic_analyser_log_error(analyser, "Cannot take function pointer of hardcoded function", expression_index);
+                    return expression_analysis_result_make(analyser->compiler->type_system.error_type, true);
+                }
+                analyser->semantic_information[expression_index].expression_result_type = func_symbol->type;
+                return expression_analysis_result_make(func_symbol->type, true);
+            }
             semantic_analyser_log_error(analyser, "Expression variable not defined", expression_index);
             return expression_analysis_result_make(analyser->compiler->type_system.error_type, true);
         }
@@ -884,7 +938,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
         if (type_signature->type == Signature_Type::ERROR_TYPE) {
             return expression_analysis_result_make(analyser->compiler->type_system.error_type, true);;
         }
-        
+
         if (type_signature->type == Signature_Type::POINTER) {
             if (type_signature->child_type->type == Signature_Type::STRUCT) {
                 info->member_access_needs_pointer_dereference = true;
@@ -1436,7 +1490,8 @@ void semantic_analyser_analyse_function(Semantic_Analyser* analyser, Symbol_Tabl
     Symbol_Table* table = semantic_analyser_install_symbol_table(analyser, parent, function_node_index);
 
     // Define parameter variables
-    AST_Node* parameter_block = &analyser->compiler->parser.nodes[function->children[0]];
+    AST_Node* function_signature_node = &analyser->compiler->parser.nodes[function->children[0]];
+    AST_Node* parameter_block = &analyser->compiler->parser.nodes[function_signature_node->children[0]];
     Type_Signature* function_signature = symbol_table_find_symbol_of_type(parent, function->name_id, Symbol_Type::FUNCTION)->type;
     for (int i = 0; i < parameter_block->children.size; i++) {
         semantic_analyser_define_variable(analyser, table, parameter_block->children[i],
@@ -1445,7 +1500,7 @@ void semantic_analyser_analyse_function(Semantic_Analyser* analyser, Symbol_Tabl
 
     analyser->function_return_type = function_signature->return_type;
     analyser->loop_depth = 0;
-    Statement_Analysis_Result result = semantic_analyser_analyse_statement_block(analyser, table, function->children[2]);
+    Statement_Analysis_Result result = semantic_analyser_analyse_statement_block(analyser, table, function->children[1]);
     if (result != Statement_Analysis_Result::RETURN) {
         if (function_signature->return_type == analyser->compiler->type_system.void_type) {
             analyser->semantic_information[function_node_index].needs_empty_return_at_end = true;
@@ -1494,14 +1549,22 @@ void semantic_analyser_analyse_function_header(Semantic_Analyser* analyser, Symb
         return;
     }
 
-    AST_Node* parameter_block = &analyser->compiler->parser.nodes[function->children[0]];
+    AST_Node* function_signature = &analyser->compiler->parser.nodes[function->children[0]];
+    AST_Node* parameter_block = &analyser->compiler->parser.nodes[function_signature->children[0]];
     Dynamic_Array<Type_Signature*> parameter_types = dynamic_array_create_empty<Type_Signature*>(parameter_block->children.size);
     for (int i = 0; i < parameter_block->children.size; i++) {
         int parameter_index = parameter_block->children[i];
         AST_Node* parameter = &analyser->compiler->parser.nodes[parameter_index];
         dynamic_array_push_back(&parameter_types, semantic_analyser_analyse_type(analyser, parameter->children[0]));
     }
-    Type_Signature* return_type = semantic_analyser_analyse_type(analyser, function->children[1]);
+
+    Type_Signature* return_type;
+    if (function_signature->children.size == 2) {
+        return_type = semantic_analyser_analyse_type(analyser, function_signature->children[1]);
+    }
+    else {
+        return_type = analyser->compiler->type_system.void_type;
+    }
     Type_Signature* function_type = type_system_make_function(&analyser->compiler->type_system, parameter_types, return_type);
 
     Symbol s;
@@ -1511,6 +1574,7 @@ void semantic_analyser_analyse_function_header(Semantic_Analyser* analyser, Symb
     s.token_index_definition = analyser->compiler->parser.token_mapping[function_node_index].start_index;
     dynamic_array_push_back(&table->symbols, s);
 
+    analyser->semantic_information[function->children[0]].function_signature = function_type;
     analyser->semantic_information[function_node_index].function_signature = function_type;
 }
 
