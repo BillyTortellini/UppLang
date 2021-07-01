@@ -3,79 +3,79 @@
 #include "../utility/utils.hpp"
 #include "../datastructures/string.hpp"
 
-const char* key_code_to_string(KEY_CODE::ENUM code)
+const char* key_code_to_string(Key_Code code)
 {
     switch (code)
     {
-    case KEY_CODE::UNASSIGNED: return "UNASSIGNED";
-    case KEY_CODE::A: return "A";
-    case KEY_CODE::B: return "B";
-    case KEY_CODE::C: return "C";
-    case KEY_CODE::D: return "D";
-    case KEY_CODE::E: return "E";
-    case KEY_CODE::F: return "F";
-    case KEY_CODE::G: return "G";
-    case KEY_CODE::H: return "H";
-    case KEY_CODE::I: return "I";
-    case KEY_CODE::J: return "J";
-    case KEY_CODE::K: return "K";
-    case KEY_CODE::L: return "L";
-    case KEY_CODE::M: return "M";
-    case KEY_CODE::N: return "N";
-    case KEY_CODE::O: return "O";
-    case KEY_CODE::P: return "P";
-    case KEY_CODE::Q: return "Q";
-    case KEY_CODE::R: return "R";
-    case KEY_CODE::S: return "S";
-    case KEY_CODE::T: return "T";
-    case KEY_CODE::U: return "U";
-    case KEY_CODE::V: return "V";
-    case KEY_CODE::W: return "W";
-    case KEY_CODE::X: return "X";
-    case KEY_CODE::Y: return "Y";
-    case KEY_CODE::Z: return "Z";
-    case KEY_CODE::NUM_1: return "NUM_1";
-    case KEY_CODE::NUM_2: return "NUM_2";
-    case KEY_CODE::NUM_3: return "NUM_3";
-    case KEY_CODE::NUM_4: return "NUM_4";
-    case KEY_CODE::NUM_5: return "NUM_5";
-    case KEY_CODE::NUM_6: return "NUM_6";
-    case KEY_CODE::NUM_7: return "NUM_7";
-    case KEY_CODE::NUM_8: return "NUM_8";
-    case KEY_CODE::NUM_9: return "NUM_9";
-    case KEY_CODE::NUM_0: return "NUM_0";
-    case KEY_CODE::RETURN: return "RETURN";
-    case KEY_CODE::ESCAPE: return "ESCAPE";
-    case KEY_CODE::BACKSPACE: return "BACKSPACE";
-    case KEY_CODE::TAB: return "TAB";
-    case KEY_CODE::SPACE: return "SPACE";
-    case KEY_CODE::SHIFT: return "SHIFT";
-    case KEY_CODE::CTRL: return "CTRL";
-    case KEY_CODE::ALT: return "ALT";
-    case KEY_CODE::F1: return "F1";
-    case KEY_CODE::F2: return "F2";
-    case KEY_CODE::F3: return "F3";
-    case KEY_CODE::F4: return "F4";
-    case KEY_CODE::F5: return "F5";
-    case KEY_CODE::F6: return "F6";
-    case KEY_CODE::F7: return "F7";
-    case KEY_CODE::F8: return "F8";
-    case KEY_CODE::F9: return "F9";
-    case KEY_CODE::F10: return "F10";
-    case KEY_CODE::F11: return "F11";
-    case KEY_CODE::F12: return "F12";
-    case KEY_CODE::LCTRL: return "LCTRL";
-    case KEY_CODE::LSHIFT: return "LSHIFT";
-    case KEY_CODE::LALT: return "LALT";
-    case KEY_CODE::RCTRL: return "RCTRL";
-    case KEY_CODE::RSHIFT: return "RSHIFT";
-    case KEY_CODE::RALT: return "RALT";
+    case Key_Code::UNASSIGNED: return "UNASSIGNED";
+    case Key_Code::A: return "A";
+    case Key_Code::B: return "B";
+    case Key_Code::C: return "C";
+    case Key_Code::D: return "D";
+    case Key_Code::E: return "E";
+    case Key_Code::F: return "F";
+    case Key_Code::G: return "G";
+    case Key_Code::H: return "H";
+    case Key_Code::I: return "I";
+    case Key_Code::J: return "J";
+    case Key_Code::K: return "K";
+    case Key_Code::L: return "L";
+    case Key_Code::M: return "M";
+    case Key_Code::N: return "N";
+    case Key_Code::O: return "O";
+    case Key_Code::P: return "P";
+    case Key_Code::Q: return "Q";
+    case Key_Code::R: return "R";
+    case Key_Code::S: return "S";
+    case Key_Code::T: return "T";
+    case Key_Code::U: return "U";
+    case Key_Code::V: return "V";
+    case Key_Code::W: return "W";
+    case Key_Code::X: return "X";
+    case Key_Code::Y: return "Y";
+    case Key_Code::Z: return "Z";
+    case Key_Code::NUM_1: return "NUM_1";
+    case Key_Code::NUM_2: return "NUM_2";
+    case Key_Code::NUM_3: return "NUM_3";
+    case Key_Code::NUM_4: return "NUM_4";
+    case Key_Code::NUM_5: return "NUM_5";
+    case Key_Code::NUM_6: return "NUM_6";
+    case Key_Code::NUM_7: return "NUM_7";
+    case Key_Code::NUM_8: return "NUM_8";
+    case Key_Code::NUM_9: return "NUM_9";
+    case Key_Code::NUM_0: return "NUM_0";
+    case Key_Code::RETURN: return "RETURN";
+    case Key_Code::ESCAPE: return "ESCAPE";
+    case Key_Code::BACKSPACE: return "BACKSPACE";
+    case Key_Code::TAB: return "TAB";
+    case Key_Code::SPACE: return "SPACE";
+    case Key_Code::SHIFT: return "SHIFT";
+    case Key_Code::CTRL: return "CTRL";
+    case Key_Code::ALT: return "ALT";
+    case Key_Code::F1: return "F1";
+    case Key_Code::F2: return "F2";
+    case Key_Code::F3: return "F3";
+    case Key_Code::F4: return "F4";
+    case Key_Code::F5: return "F5";
+    case Key_Code::F6: return "F6";
+    case Key_Code::F7: return "F7";
+    case Key_Code::F8: return "F8";
+    case Key_Code::F9: return "F9";
+    case Key_Code::F10: return "F10";
+    case Key_Code::F11: return "F11";
+    case Key_Code::F12: return "F12";
+    case Key_Code::LCTRL: return "LCTRL";
+    case Key_Code::LSHIFT: return "LSHIFT";
+    case Key_Code::LALT: return "LALT";
+    case Key_Code::RCTRL: return "RCTRL";
+    case Key_Code::RSHIFT: return "RSHIFT";
+    case Key_Code::RALT: return "RALT";
     }
     panic("invalid enum value!");
     return "WRONG";
 }
 
-Mouse_Message mouse_message_make(MOUSE_KEY_CODE::ENUM key_code, int mouse_x, int mouse_y, bool key_down, bool shift_down, bool alt_down, bool ctrl_down)
+Mouse_Message mouse_message_make(Mouse_Key_Code key_code, int mouse_x, int mouse_y, bool key_down, bool shift_down, bool alt_down, bool ctrl_down)
 {
     Mouse_Message result;
     result.key_code = key_code;
@@ -88,14 +88,14 @@ Mouse_Message mouse_message_make(MOUSE_KEY_CODE::ENUM key_code, int mouse_x, int
     return result;
 }
 
-Mouse_Message mouse_message_make(MOUSE_KEY_CODE::ENUM key_code, bool key_down, Input* input)
+Mouse_Message mouse_message_make(Mouse_Key_Code key_code, bool key_down, Input* input)
 {
     return mouse_message_make(key_code, input->mouse_x, input->mouse_y, key_down,
-        input->key_down[KEY_CODE::SHIFT], input->key_down[KEY_CODE::ALT], input->key_down[KEY_CODE::CTRL]
+        input->key_down[(int)Key_Code::SHIFT], input->key_down[(int)Key_Code::ALT], input->key_down[(int)Key_Code::CTRL]
     );
 }
 
-Key_Message key_message_make(KEY_CODE::ENUM key_code, bool key_down, char c, bool shift_down, bool alt_down, bool ctrl_down)
+Key_Message key_message_make(Key_Code key_code, bool key_down, char c, bool shift_down, bool alt_down, bool ctrl_down)
 {
     Key_Message result;
     result.key_code = key_code;

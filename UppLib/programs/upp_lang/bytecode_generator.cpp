@@ -134,6 +134,7 @@ int bytecode_generator_data_access_to_stack_offset(Bytecode_Generator* generator
     case Data_Access_Type::VARIABLE_ACCESS:
         result_access_offset = generator->variable_stack_offsets[access.access_index];
         break;
+    default: panic("What");
     }
     if (access.is_pointer_access) 
     {

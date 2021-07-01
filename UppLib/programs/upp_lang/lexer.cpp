@@ -5,6 +5,7 @@ bool token_type_is_keyword(Token_Type type)
     switch (type)
     {
     case Token_Type::IF: return true;
+    case Token_Type::MODULE: return true;
     case Token_Type::ELSE: return true;
     case Token_Type::FOR: return true;
     case Token_Type::WHILE: return true;
@@ -29,12 +30,14 @@ const char* token_type_to_string(Token_Type type)
     case Token_Type::FOR: return "FOR";
     case Token_Type::WHILE: return "WHILE";
     case Token_Type::CONTINUE: return "CONTINUE";
+    case Token_Type::MODULE: return "MODULE";
     case Token_Type::STRUCT: return "STRUCT";
     case Token_Type::BREAK: return "BREAK";
     case Token_Type::DOT: return "DOT";
     case Token_Type::NEW: return "NEW";
     case Token_Type::DELETE_TOKEN: return "DELETE";
     case Token_Type::NULLPTR: return "NULLPTR";
+    case Token_Type::DEFER: return "DEFER";
     case Token_Type::COLON: return "COLON";
     case Token_Type::COMMA: return "COMMA";
     case Token_Type::DOUBLE_COLON: return "DOUBLE_COLON";
@@ -278,6 +281,25 @@ Lexer lexer_create()
     lexer.identifiers = dynamic_array_create_empty<String>(1024);
     lexer.tokens = dynamic_array_create_empty<Token>(1024);
     lexer.tokens_with_whitespaces = dynamic_array_create_empty<Token>(1024);
+
+    lexer.keywords = hashtable_create_empty<String, Token_Type>(64, &string_calculate_hash, &string_equals);
+    hashtable_insert_element(&lexer.keywords, string_create_static("if"), Token_Type::IF);
+    hashtable_insert_element(&lexer.keywords, string_create_static("else"), Token_Type::ELSE);
+    hashtable_insert_element(&lexer.keywords, string_create_static("for"), Token_Type::FOR);
+    hashtable_insert_element(&lexer.keywords, string_create_static("while"), Token_Type::WHILE);
+    hashtable_insert_element(&lexer.keywords, string_create_static("continue"), Token_Type::CONTINUE);
+    hashtable_insert_element(&lexer.keywords, string_create_static("break"), Token_Type::BREAK);
+    hashtable_insert_element(&lexer.keywords, string_create_static("return"), Token_Type::RETURN);
+    hashtable_insert_element(&lexer.keywords, string_create_static("struct"), Token_Type::STRUCT);
+    hashtable_insert_element(&lexer.keywords, string_create_static("cast"), Token_Type::CAST);
+    hashtable_insert_element(&lexer.keywords, string_create_static("nullptr"), Token_Type::NULLPTR);
+    hashtable_insert_element(&lexer.keywords, string_create_static("new"), Token_Type::NEW);
+    hashtable_insert_element(&lexer.keywords, string_create_static("delete"), Token_Type::DELETE_TOKEN);
+    hashtable_insert_element(&lexer.keywords, string_create_static("true"), Token_Type::BOOLEAN_LITERAL);
+    hashtable_insert_element(&lexer.keywords, string_create_static("false"), Token_Type::BOOLEAN_LITERAL);
+    hashtable_insert_element(&lexer.keywords, string_create_static("defer"), Token_Type::DEFER);
+    hashtable_insert_element(&lexer.keywords, string_create_static("module"), Token_Type::MODULE);
+
     return lexer;
 }
 
@@ -473,7 +495,7 @@ void lexer_parse_string(Lexer* lexer, String* code)
             character_pos++;
             index++;
             continue;
-        case '\"': 
+        case '\"':
         {
             // Parse String literal
             Text_Position start_pos = text_position_make(line_number, character_pos);
@@ -517,7 +539,7 @@ void lexer_parse_string(Lexer* lexer, String* code)
                     }
                     last_was_escape = false;
                 }
-                else 
+                else
                 {
                     if (code->characters[index] == '\"') {
                         index++;
@@ -527,7 +549,7 @@ void lexer_parse_string(Lexer* lexer, String* code)
                     }
                     last_was_escape = code->characters[index] == '\\';
                     if (!last_was_escape) {
-                        string_append_character(&identifier_string, code->characters[index]); 
+                        string_append_character(&identifier_string, code->characters[index]);
                     }
                 }
                 if (code->characters[index] == '\n') {
@@ -541,10 +563,10 @@ void lexer_parse_string(Lexer* lexer, String* code)
             }
 
             Text_Slice token_slice = text_slice_make(start_pos, text_position_make(line_number, character_pos));
-            if (!terminated_successfull || invalid_escape_found) 
+            if (!terminated_successfull || invalid_escape_found)
             {
                 has_errors = true;
-                dynamic_array_push_back(&lexer->tokens, 
+                dynamic_array_push_back(&lexer->tokens,
                     token_make_with_slice(Token_Type::ERROR_TOKEN, token_attribute_make_empty(), token_slice,
                         index - string_literal_start_index, string_literal_start_index)
                 );
@@ -703,115 +725,19 @@ void lexer_parse_string(Lexer* lexer, String* code)
             identifier_string.characters[identifier_string.size] = 0;
 
             // Check if identifier is a keyword
-            if (string_equals_cstring(&identifier_string, "if")) {
-                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::IF, token_attribute_make_empty(),
-                    line_number, character_pos, identifier_string_length, index));
-                index += identifier_string_length;
-                character_pos += identifier_string_length;
-            }
-            else if (string_equals_cstring(&identifier_string, "else")) {
-                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::ELSE, token_attribute_make_empty(),
-                    line_number, character_pos, identifier_string_length, index));
-                index += identifier_string_length;
-                character_pos += identifier_string_length;
-            }
-            else if (string_equals_cstring(&identifier_string, "for")) {
-                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::FOR, token_attribute_make_empty(),
-                    line_number, character_pos, identifier_string_length, index));
-                index += identifier_string_length;
-                character_pos += identifier_string_length;
-            }
-            else if (string_equals_cstring(&identifier_string, "while")) {
-                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::WHILE, token_attribute_make_empty(),
-                    line_number, character_pos, identifier_string_length, index));
-                index += identifier_string_length;
-                character_pos += identifier_string_length;
-            }
-            else if (string_equals_cstring(&identifier_string, "continue")) {
-                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::CONTINUE, token_attribute_make_empty(),
-                    line_number, character_pos, identifier_string_length, index));
-                index += identifier_string_length;
-                character_pos += identifier_string_length;
-            }
-            else if (string_equals_cstring(&identifier_string, "break")) {
-                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::BREAK, token_attribute_make_empty(),
-                    line_number, character_pos, identifier_string_length, index));
-                index += identifier_string_length;
-                character_pos += identifier_string_length;
-            }
-            else if (string_equals_cstring(&identifier_string, "return")) {
-                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::RETURN, token_attribute_make_empty(),
-                    line_number, character_pos, identifier_string_length, index));
-                index += identifier_string_length;
-                character_pos += identifier_string_length;
-            }
-            else if (string_equals_cstring(&identifier_string, "struct")) {
-                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::STRUCT, token_attribute_make_empty(),
-                    line_number, character_pos, identifier_string_length, index));
-                index += identifier_string_length;
-                character_pos += identifier_string_length;
-            }
-            else if (string_equals_cstring(&identifier_string, "cast")) {
-                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::CAST, token_attribute_make_empty(),
-                    line_number, character_pos, identifier_string_length, index));
-                index += identifier_string_length;
-                character_pos += identifier_string_length;
-            }
-            else if (string_equals_cstring(&identifier_string, "nullptr")) {
-                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::NULLPTR, token_attribute_make_empty(),
-                    line_number, character_pos, identifier_string_length, index));
-                index += identifier_string_length;
-                character_pos += identifier_string_length;
-            }
-            else if (string_equals_cstring(&identifier_string, "new")) {
-                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::NEW, token_attribute_make_empty(),
-                    line_number, character_pos, identifier_string_length, index));
-                index += identifier_string_length;
-                character_pos += identifier_string_length;
-            }
-            else if (string_equals_cstring(&identifier_string, "delete")) {
-                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::DELETE_TOKEN, token_attribute_make_empty(),
-                    line_number, character_pos, identifier_string_length, index));
-                index += identifier_string_length;
-                character_pos += identifier_string_length;
-            }
-            else if (string_equals_cstring(&identifier_string, "true")) {
-                Token_Attribute attribute;
-                attribute.bool_value = true;
-                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::BOOLEAN_LITERAL, attribute,
-                    line_number, character_pos, identifier_string_length, index));
-                index += identifier_string_length;
-                character_pos += identifier_string_length;
-            }
-            else if (string_equals_cstring(&identifier_string, "false")) {
-                Token_Attribute attribute;
-                attribute.bool_value = false;
-                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::BOOLEAN_LITERAL, attribute,
-                    line_number, character_pos, identifier_string_length, index));
-                index += identifier_string_length;
-                character_pos += identifier_string_length;
+            Token_Type* keyword_type = hashtable_find_element(&lexer->keywords, identifier_string);
+            if (keyword_type != nullptr) {
+                dynamic_array_push_back(&lexer->tokens, 
+                    token_make(*keyword_type, token_attribute_make_empty(), line_number, character_pos, identifier_string_length, index));
             }
             else {
-                // Identifier is acutally a identifier, not a keyword
                 Token_Attribute attribute;
-                int* identifier_id = hashtable_find_element(&lexer->identifier_index_lookup_table, identifier_string);
-                if (identifier_id != 0) {
-                    attribute.identifier_number = *identifier_id;
-                }
-                else {
-                    String identifier_string_copy = string_create(identifier_string.characters);
-                    dynamic_array_push_back(&lexer->identifiers, identifier_string_copy);
-                    attribute.identifier_number = lexer->identifiers.size - 1;
-                    // Identifer needs to be added to table
-                    hashtable_insert_element(&lexer->identifier_index_lookup_table, identifier_string_copy, attribute.identifier_number);
-                }
-
-                // Add token
-                dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::IDENTIFIER, attribute,
-                    line_number, character_pos, identifier_string_length, index));
-                index += identifier_string_length;
-                character_pos += identifier_string_length;
+                attribute.identifier_number = lexer_add_or_find_identifier_by_string(lexer, identifier_string);
+                dynamic_array_push_back(&lexer->tokens, 
+                    token_make(Token_Type::IDENTIFIER, attribute, line_number, character_pos, identifier_string_length, index));
             }
+            index += identifier_string_length;
+            character_pos += identifier_string_length;
         }
     }
 
@@ -838,6 +764,7 @@ void lexer_destroy(Lexer* lexer)
     dynamic_array_destroy(&lexer->tokens);
     dynamic_array_destroy(&lexer->tokens_with_whitespaces);
     hashtable_destroy(&lexer->identifier_index_lookup_table);
+    hashtable_destroy(&lexer->keywords);
 }
 
 String lexer_identifer_to_string(Lexer* lexer, int index) {

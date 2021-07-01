@@ -308,7 +308,7 @@ bool shader_program_set_uniform_value(Shader_Program* program, Uniform_Value val
     if (info == nullptr) {
         return false;
     }
-    bool valid;
+    bool valid = false;
     switch (value.type)
     {
     case Uniform_Value_Type::I32: valid = info->type == GL_INT || info->type == GL_SAMPLER_2D && info->size == 1; break;

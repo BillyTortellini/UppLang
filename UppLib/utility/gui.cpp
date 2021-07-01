@@ -38,13 +38,13 @@ void gui_update(GUI* gui, Input* input, int window_width, int window_height)
     // Update mouse information
     gui->mouse_pos_last_frame = gui->mouse_pos;
     gui->mouse_down_last_frame = gui->mouse_down_this_frame;
-    gui->mouse_down_this_frame = input->mouse_down[MOUSE_KEY_CODE::LEFT];
+    gui->mouse_down_this_frame = input->mouse_down[(int)Mouse_Key_Code::LEFT];
     gui->mouse_pos = vec2(input->mouse_x / (float)window_width, input->mouse_y / (float)window_height) * 2 - vec2(1);
     gui->mouse_pos.y *= -1;
     gui->mouse_pos = gui->mouse_pos / gui->renderer_2d->scaling_factor;
     gui->current_depth = 0.99f;
 
-    if (input->mouse_pressed[MOUSE_KEY_CODE::LEFT]) {
+    if (input->mouse_pressed[(int)Mouse_Key_Code::LEFT]) {
         gui->element_in_focus = false;
     }
 }
@@ -128,7 +128,7 @@ bool gui_checkbox(GUI* gui, vec2 pos, vec2 size, bool* value)
     bool hovered = false;
     bool clicked = false;
     if (bounding_box_2_is_point_inside(bb, gui->mouse_pos)) {
-        if (gui->input->mouse_released[MOUSE_KEY_CODE::LEFT]) clicked = true;
+        if (gui->input->mouse_released[(int)Mouse_Key_Code::LEFT]) clicked = true;
         else hovered = true;
     }
 
@@ -220,7 +220,7 @@ bool gui_text_input_string(GUI* gui, String* to_fill, vec2 pos, vec2 size, bool 
     bool text_was_edited = false;
     String* edit_string = only_write_on_enter ? &gui->text_in_edit : to_fill;
     if (!in_focus) {
-        if (gui->input->mouse_pressed[MOUSE_KEY_CODE::LEFT]) {
+        if (gui->input->mouse_pressed[(int)Mouse_Key_Code::LEFT]) {
             if (bounding_box_2_is_point_inside(bounding_box_2_make_center_size(pos, size), gui->mouse_pos)) {
                 gui_set_focus(gui, pos, size);
                 if (only_write_on_enter) {
@@ -244,7 +244,7 @@ bool gui_text_input_string(GUI* gui, String* to_fill, vec2 pos, vec2 size, bool 
     {
         gui->draw_in_focus = true;
         display_string = edit_string;
-        if (gui->input->key_down[KEY_CODE::BACKSPACE])
+        if (gui->input->key_down[(int)Key_Code::BACKSPACE])
         {
             if (!gui->backspace_was_down) {
                 gui->backspace_was_down = true;
@@ -273,7 +273,7 @@ bool gui_text_input_string(GUI* gui, String* to_fill, vec2 pos, vec2 size, bool 
                 string_append_character(edit_string, msg.character);
                 text_was_edited = true;
             }
-            else if (msg.key_down && msg.key_code == KEY_CODE::BACKSPACE) {
+            else if (msg.key_down && msg.key_code == Key_Code::BACKSPACE) {
                 string_remove_character(edit_string, edit_string->size - 1);
                 text_was_edited = true;
             }
@@ -291,7 +291,7 @@ bool gui_text_input_string(GUI* gui, String* to_fill, vec2 pos, vec2 size, bool 
         text_was_edited = false;
     }
 
-    if (gui->input->key_pressed[KEY_CODE::RETURN] && in_focus) {
+    if (gui->input->key_pressed[(int)Key_Code::RETURN] && in_focus) {
         if (only_write_on_enter) {
             string_set_characters(to_fill, gui->text_in_edit.characters);
             string_clear(&gui->text_in_edit);
@@ -358,7 +358,7 @@ bool gui_button(GUI* gui, vec2 pos, vec2 size, const char* text)
     // Check if clicked
     Bounding_Box2 bb = bounding_box_2_make_center_size(pos, size);
     if (bounding_box_2_is_point_inside(bb, gui->mouse_pos)) {
-        if (gui->input->mouse_released[MOUSE_KEY_CODE::LEFT]) {
+        if (gui->input->mouse_released[(int)Mouse_Key_Code::LEFT]) {
             clicked = true;
         }
         else {

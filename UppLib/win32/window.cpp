@@ -48,73 +48,73 @@ byte key_translation_table[KEYBOARD_KEY_COUNT];
 void keyboard_initialize_translation_table()
 {
     for (int i = 0; i < KEYBOARD_KEY_COUNT; i++) {
-        key_translation_table[i] = KEY_CODE::UNASSIGNED;
+        key_translation_table[i] = (byte)Key_Code::UNASSIGNED;
     }
 
-    key_translation_table['A'] = KEY_CODE::A;
-    key_translation_table['B'] = KEY_CODE::B;
-    key_translation_table['C'] = KEY_CODE::C;
-    key_translation_table['D'] = KEY_CODE::D;
-    key_translation_table['E'] = KEY_CODE::E;
-    key_translation_table['F'] = KEY_CODE::F;
-    key_translation_table['G'] = KEY_CODE::G;
-    key_translation_table['H'] = KEY_CODE::H;
-    key_translation_table['I'] = KEY_CODE::I;
-    key_translation_table['J'] = KEY_CODE::J;
-    key_translation_table['K'] = KEY_CODE::K;
-    key_translation_table['L'] = KEY_CODE::L;
-    key_translation_table['M'] = KEY_CODE::M;
-    key_translation_table['N'] = KEY_CODE::N;
-    key_translation_table['O'] = KEY_CODE::O;
-    key_translation_table['P'] = KEY_CODE::P;
-    key_translation_table['Q'] = KEY_CODE::Q;
-    key_translation_table['R'] = KEY_CODE::R;
-    key_translation_table['S'] = KEY_CODE::S;
-    key_translation_table['T'] = KEY_CODE::T;
-    key_translation_table['U'] = KEY_CODE::U;
-    key_translation_table['V'] = KEY_CODE::V;
-    key_translation_table['W'] = KEY_CODE::W;
-    key_translation_table['X'] = KEY_CODE::X;
-    key_translation_table['Y'] = KEY_CODE::Y;
-    key_translation_table['Z'] = KEY_CODE::Z;
+    key_translation_table['A'] = (byte)Key_Code::A;
+    key_translation_table['B'] = (byte)Key_Code::B;
+    key_translation_table['C'] = (byte)Key_Code::C;
+    key_translation_table['D'] = (byte)Key_Code::D;
+    key_translation_table['E'] = (byte)Key_Code::E;
+    key_translation_table['F'] = (byte)Key_Code::F;
+    key_translation_table['G'] = (byte)Key_Code::G;
+    key_translation_table['H'] = (byte)Key_Code::H;
+    key_translation_table['I'] = (byte)Key_Code::I;
+    key_translation_table['J'] = (byte)Key_Code::J;
+    key_translation_table['K'] = (byte)Key_Code::K;
+    key_translation_table['L'] = (byte)Key_Code::L;
+    key_translation_table['M'] = (byte)Key_Code::M;
+    key_translation_table['N'] = (byte)Key_Code::N;
+    key_translation_table['O'] = (byte)Key_Code::O;
+    key_translation_table['P'] = (byte)Key_Code::P;
+    key_translation_table['Q'] = (byte)Key_Code::Q;
+    key_translation_table['R'] = (byte)Key_Code::R;
+    key_translation_table['S'] = (byte)Key_Code::S;
+    key_translation_table['T'] = (byte)Key_Code::T;
+    key_translation_table['U'] = (byte)Key_Code::U;
+    key_translation_table['V'] = (byte)Key_Code::V;
+    key_translation_table['W'] = (byte)Key_Code::W;
+    key_translation_table['X'] = (byte)Key_Code::X;
+    key_translation_table['Y'] = (byte)Key_Code::Y;
+    key_translation_table['Z'] = (byte)Key_Code::Z;
 
-    key_translation_table['1'] = KEY_CODE::NUM_1;
-    key_translation_table['2'] = KEY_CODE::NUM_2;
-    key_translation_table['3'] = KEY_CODE::NUM_3;
-    key_translation_table['4'] = KEY_CODE::NUM_4;
-    key_translation_table['5'] = KEY_CODE::NUM_5;
-    key_translation_table['6'] = KEY_CODE::NUM_6;
-    key_translation_table['7'] = KEY_CODE::NUM_7;
-    key_translation_table['8'] = KEY_CODE::NUM_8;
-    key_translation_table['9'] = KEY_CODE::NUM_9;
-    key_translation_table['0'] = KEY_CODE::NUM_0;
+    key_translation_table['1'] = (byte)Key_Code::NUM_1;
+    key_translation_table['2'] = (byte)Key_Code::NUM_2;
+    key_translation_table['3'] = (byte)Key_Code::NUM_3;
+    key_translation_table['4'] = (byte)Key_Code::NUM_4;
+    key_translation_table['5'] = (byte)Key_Code::NUM_5;
+    key_translation_table['6'] = (byte)Key_Code::NUM_6;
+    key_translation_table['7'] = (byte)Key_Code::NUM_7;
+    key_translation_table['8'] = (byte)Key_Code::NUM_8;
+    key_translation_table['9'] = (byte)Key_Code::NUM_9;
+    key_translation_table['0'] = (byte)Key_Code::NUM_0;
 
-    key_translation_table[VK_F1] = KEY_CODE::F1;
-    key_translation_table[VK_F2] = KEY_CODE::F2;
-    key_translation_table[VK_F3] = KEY_CODE::F3;
-    key_translation_table[VK_F4] = KEY_CODE::F4;
-    key_translation_table[VK_F5] = KEY_CODE::F5;
-    key_translation_table[VK_F6] = KEY_CODE::F6;
-    key_translation_table[VK_F7] = KEY_CODE::F7;
-    key_translation_table[VK_F8] = KEY_CODE::F8;
-    key_translation_table[VK_F9] = KEY_CODE::F9;
-    key_translation_table[VK_F10] = KEY_CODE::F10;
-    key_translation_table[VK_F11] = KEY_CODE::F11;
-    key_translation_table[VK_F12] = KEY_CODE::F12;
+    key_translation_table[VK_F1] = (byte)Key_Code::F1;
+    key_translation_table[VK_F2] = (byte)Key_Code::F2;
+    key_translation_table[VK_F3] = (byte)Key_Code::F3;
+    key_translation_table[VK_F4] = (byte)Key_Code::F4;
+    key_translation_table[VK_F5] = (byte)Key_Code::F5;
+    key_translation_table[VK_F6] = (byte)Key_Code::F6;
+    key_translation_table[VK_F7] = (byte)Key_Code::F7;
+    key_translation_table[VK_F8] = (byte)Key_Code::F8;
+    key_translation_table[VK_F9] = (byte)Key_Code::F9;
+    key_translation_table[VK_F10] = (byte)Key_Code::F10;
+    key_translation_table[VK_F11] = (byte)Key_Code::F11;
+    key_translation_table[VK_F12] = (byte)Key_Code::F12;
 
-    key_translation_table[VK_RETURN] = KEY_CODE::RETURN;
-    key_translation_table[VK_ESCAPE] = KEY_CODE::ESCAPE;
-    key_translation_table[VK_BACK] = KEY_CODE::BACKSPACE;
-    key_translation_table[VK_TAB] = KEY_CODE::TAB;
-    key_translation_table[VK_SPACE] = KEY_CODE::SPACE;
+    key_translation_table[VK_RETURN] = (byte)Key_Code::RETURN;
+    key_translation_table[VK_ESCAPE] = (byte)Key_Code::ESCAPE;
+    key_translation_table[VK_BACK] = (byte)Key_Code::BACKSPACE;
+    key_translation_table[VK_TAB] = (byte)Key_Code::TAB;
+    key_translation_table[VK_SPACE] = (byte)Key_Code::SPACE;
 
-    key_translation_table[VK_LCONTROL] = KEY_CODE::LCTRL;
-    key_translation_table[VK_LSHIFT] = KEY_CODE::LSHIFT;
-    key_translation_table[VK_SHIFT] = KEY_CODE::SHIFT;
-    key_translation_table[VK_CONTROL] = KEY_CODE::CTRL;
-    key_translation_table[VK_MENU] = KEY_CODE::ALT;
-    key_translation_table[VK_RCONTROL] = KEY_CODE::RCTRL;
-    key_translation_table[VK_RSHIFT] = KEY_CODE::RSHIFT;
+    key_translation_table[VK_LCONTROL] = (byte)Key_Code::LCTRL;
+    key_translation_table[VK_LSHIFT] = (byte)Key_Code::LSHIFT;
+    key_translation_table[VK_SHIFT] = (byte)Key_Code::SHIFT;
+    key_translation_table[VK_CONTROL] = (byte)Key_Code::CTRL;
+    key_translation_table[VK_MENU] = (byte)Key_Code::ALT;
+    key_translation_table[VK_RCONTROL] = (byte)Key_Code::RCTRL;
+    key_translation_table[VK_RSHIFT] = (byte)Key_Code::RSHIFT;
     //keyTranslationTable[] = KEY_RALT; 
 }
 
@@ -153,10 +153,10 @@ LRESULT CALLBACK window_message_callback(HWND hwnd, UINT msg_type, WPARAM wparam
         }
         else {
             input_add_key_message(&window_for_message_callback->input,
-                key_message_make(KEY_CODE::UNASSIGNED, false, (char)key,
-                    window_for_message_callback->input.key_down[KEY_CODE::SHIFT],
-                    window_for_message_callback->input.key_down[KEY_CODE::ALT],
-                    window_for_message_callback->input.key_down[KEY_CODE::CTRL]
+                key_message_make(Key_Code::UNASSIGNED, false, (char)key,
+                    window_for_message_callback->input.key_down[(int)Key_Code::SHIFT],
+                    window_for_message_callback->input.key_down[(int)Key_Code::ALT],
+                    window_for_message_callback->input.key_down[(int)Key_Code::CTRL]
                 ));
         }
         break;
@@ -172,10 +172,10 @@ LRESULT CALLBACK window_message_callback(HWND hwnd, UINT msg_type, WPARAM wparam
             window_for_message_callback->input.key_pressed[key_translation_table[key]]++;
         }
         input_add_key_message(&window_for_message_callback->input,
-            key_message_make((KEY_CODE::ENUM)key_translation_table[key], true, 0,
-                window_for_message_callback->input.key_down[KEY_CODE::SHIFT],
-                window_for_message_callback->input.key_down[KEY_CODE::ALT],
-                window_for_message_callback->input.key_down[KEY_CODE::CTRL]
+            key_message_make((Key_Code)key_translation_table[key], true, 0,
+                window_for_message_callback->input.key_down[(int)Key_Code::SHIFT],
+                window_for_message_callback->input.key_down[(int)Key_Code::ALT],
+                window_for_message_callback->input.key_down[(int)Key_Code::CTRL]
             ));
         window_for_message_callback->input.key_down[key_translation_table[key]] = true;
         window_for_message_callback->put_next_char_into_last_key_message = true;
@@ -187,71 +187,71 @@ LRESULT CALLBACK window_message_callback(HWND hwnd, UINT msg_type, WPARAM wparam
         int key = (int)wparam;
         window_for_message_callback->input.key_down[key_translation_table[key]] = false;
         input_add_key_message(&window_for_message_callback->input, 
-            key_message_make((KEY_CODE::ENUM)key_translation_table[key], false, 0,
-                window_for_message_callback->input.key_down[KEY_CODE::SHIFT],
-                window_for_message_callback->input.key_down[KEY_CODE::ALT],
-                window_for_message_callback->input.key_down[KEY_CODE::CTRL]
+            key_message_make((Key_Code)key_translation_table[key], false, 0,
+                window_for_message_callback->input.key_down[(int)Key_Code::SHIFT],
+                window_for_message_callback->input.key_down[(int)Key_Code::ALT],
+                window_for_message_callback->input.key_down[(int)Key_Code::CTRL]
             ));
         window_for_message_callback->put_next_char_into_last_key_message = true;
         break;
     }
     // Mouse input
     case WM_LBUTTONDOWN:
-        window_for_message_callback->input.mouse_pressed[MOUSE_KEY_CODE::LEFT] = true;
+        window_for_message_callback->input.mouse_pressed[(int)Mouse_Key_Code::LEFT] = true;
         input_add_mouse_message(input,
-            mouse_message_make(MOUSE_KEY_CODE::LEFT, true, input)
+            mouse_message_make(Mouse_Key_Code::LEFT, true, input)
         );
-        window_for_message_callback->input.mouse_down[MOUSE_KEY_CODE::LEFT] = true;
+        window_for_message_callback->input.mouse_down[(int)Mouse_Key_Code::LEFT] = true;
         return 0;
     case WM_LBUTTONUP:
-        window_for_message_callback->input.mouse_down[MOUSE_KEY_CODE::LEFT] = false;
-        window_for_message_callback->input.mouse_released[MOUSE_KEY_CODE::LEFT] = true;
+        window_for_message_callback->input.mouse_down[(int)Mouse_Key_Code::LEFT] = false;
+        window_for_message_callback->input.mouse_released[(int)Mouse_Key_Code::LEFT] = true;
         input_add_mouse_message(input,
-            mouse_message_make(MOUSE_KEY_CODE::LEFT, false, input)
+            mouse_message_make(Mouse_Key_Code::LEFT, false, input)
         );
         return 0;
     case WM_MBUTTONDOWN:
-        if (window_for_message_callback->input.mouse_down[MOUSE_KEY_CODE::MIDDLE]) {
-            window_for_message_callback->input.mouse_pressed[MOUSE_KEY_CODE::MIDDLE] = true;
+        if (window_for_message_callback->input.mouse_down[(int)Mouse_Key_Code::MIDDLE]) {
+            window_for_message_callback->input.mouse_pressed[(int)Mouse_Key_Code::MIDDLE] = true;
         }
         input_add_mouse_message(input,
-            mouse_message_make(MOUSE_KEY_CODE::MIDDLE, true, input)
+            mouse_message_make(Mouse_Key_Code::MIDDLE, true, input)
         );
-        window_for_message_callback->input.mouse_down[MOUSE_KEY_CODE::MIDDLE] = true;
+        window_for_message_callback->input.mouse_down[(int)Mouse_Key_Code::MIDDLE] = true;
         return 0;
     case WM_MBUTTONUP:
-        window_for_message_callback->input.mouse_down[MOUSE_KEY_CODE::MIDDLE] = false;
-        if (!window_for_message_callback->input.mouse_down[MOUSE_KEY_CODE::MIDDLE]) {
-            window_for_message_callback->input.mouse_released[MOUSE_KEY_CODE::MIDDLE] = true;
+        window_for_message_callback->input.mouse_down[(int)Mouse_Key_Code::MIDDLE] = false;
+        if (!window_for_message_callback->input.mouse_down[(int)Mouse_Key_Code::MIDDLE]) {
+            window_for_message_callback->input.mouse_released[(int)Mouse_Key_Code::MIDDLE] = true;
         }
         input_add_mouse_message(input,
-            mouse_message_make(MOUSE_KEY_CODE::MIDDLE, false, input)
+            mouse_message_make(Mouse_Key_Code::MIDDLE, false, input)
         );
         return 0;
     case WM_RBUTTONDOWN:
-        if (window_for_message_callback->input.mouse_down[MOUSE_KEY_CODE::RIGHT]) {
-            window_for_message_callback->input.mouse_pressed[MOUSE_KEY_CODE::RIGHT] = true;
+        if (window_for_message_callback->input.mouse_down[(int)Mouse_Key_Code::RIGHT]) {
+            window_for_message_callback->input.mouse_pressed[(int)Mouse_Key_Code::RIGHT] = true;
         }
         input_add_mouse_message(input,
-            mouse_message_make(MOUSE_KEY_CODE::RIGHT, true, input)
+            mouse_message_make(Mouse_Key_Code::RIGHT, true, input)
         );
-        window_for_message_callback->input.mouse_down[MOUSE_KEY_CODE::RIGHT] = true;
+        window_for_message_callback->input.mouse_down[(int)Mouse_Key_Code::RIGHT] = true;
         return 0;
     case WM_RBUTTONUP:
-        if (!window_for_message_callback->input.mouse_down[MOUSE_KEY_CODE::RIGHT]) {
-            window_for_message_callback->input.mouse_released[MOUSE_KEY_CODE::RIGHT] = true;
+        if (!window_for_message_callback->input.mouse_down[(int)Mouse_Key_Code::RIGHT]) {
+            window_for_message_callback->input.mouse_released[(int)Mouse_Key_Code::RIGHT] = true;
         }
         input_add_mouse_message(input,
-            mouse_message_make(MOUSE_KEY_CODE::RIGHT, false, input)
+            mouse_message_make(Mouse_Key_Code::RIGHT, false, input)
         );
-        window_for_message_callback->input.mouse_down[MOUSE_KEY_CODE::RIGHT] = false;
+        window_for_message_callback->input.mouse_down[(int)Mouse_Key_Code::RIGHT] = false;
         return 0;
     case WM_MOUSELEAVE: {
         //logg("MOUSE_LEAVE\n");
         ClipCursor(0);
-        window_for_message_callback->input.mouse_down[MOUSE_KEY_CODE::LEFT] = false;
-        window_for_message_callback->input.mouse_down[MOUSE_KEY_CODE::RIGHT] = false;
-        window_for_message_callback->input.mouse_down[MOUSE_KEY_CODE::MIDDLE] = false;
+        window_for_message_callback->input.mouse_down[(int)Mouse_Key_Code::LEFT] = false;
+        window_for_message_callback->input.mouse_down[(int)Mouse_Key_Code::RIGHT] = false;
+        window_for_message_callback->input.mouse_down[(int)Mouse_Key_Code::MIDDLE] = false;
         break;
     }
     case WM_MOUSEWHEEL:

@@ -1437,22 +1437,22 @@ Parse_Result<Normal_Mode_Command> key_messages_parse_normal_mode_command(Array<K
     }
     if (messages[0].ctrl_down && messages[0].key_down)
     {
-        if (messages[0].key_code == KEY_CODE::R) {
+        if (messages[0].key_code == Key_Code::R) {
             return parse_result_make_success(normal_mode_command_make(Normal_Mode_Command_Type::REDO, repeat_count.result), 1 + repeat_count.key_message_count);
         }
-        else if (messages[0].key_code == KEY_CODE::U) {
+        else if (messages[0].key_code == Key_Code::U) {
             return parse_result_make_success(
                 normal_mode_command_make(Normal_Mode_Command_Type::SCROLL_UPWARDS_HALF_PAGE, 1), 1 + repeat_count.key_message_count);
         }
-        else if (messages[0].key_code == KEY_CODE::D) {
+        else if (messages[0].key_code == Key_Code::D) {
             return parse_result_make_success(
                 normal_mode_command_make(Normal_Mode_Command_Type::SCROLL_DOWNWARDS_HALF_PAGE, 1), 1 + repeat_count.key_message_count);
         }
-        else if (messages[0].key_code == KEY_CODE::O) {
+        else if (messages[0].key_code == Key_Code::O) {
             return parse_result_make_success(
                 normal_mode_command_make(Normal_Mode_Command_Type::GOTO_LAST_JUMP, 1), 1 + repeat_count.key_message_count);
         }
-        else if (messages[0].key_code == KEY_CODE::I) {
+        else if (messages[0].key_code == Key_Code::I) {
             return parse_result_make_success(
                 normal_mode_command_make(Normal_Mode_Command_Type::GOTO_NEXT_JUMP, 1), 1 + repeat_count.key_message_count);
         }
@@ -2060,12 +2060,12 @@ void normal_mode_command_execute(Normal_Mode_Command command, Text_Editor* edito
 void insert_mode_handle_message(Text_Editor* editor, Key_Message* msg)
 {
     bool msg_is_valid_command = true;
-    if (msg->key_code == KEY_CODE::L && msg->ctrl_down) {
+    if (msg->key_code == Key_Code::L && msg->ctrl_down) {
         if (editor->record_insert_mode_inputs) dynamic_array_push_back(&editor->last_insert_mode_inputs, *msg);
         insert_mode_exit(editor);
         return;
     }
-    else if (msg->key_code == KEY_CODE::TAB && msg->key_down)
+    else if (msg->key_code == Key_Code::TAB && msg->key_down)
     {
         text_history_insert_character(&editor->history, editor->cursor_position, ' ');
         editor->cursor_position.character++;
@@ -2074,7 +2074,7 @@ void insert_mode_handle_message(Text_Editor* editor, Key_Message* msg)
             editor->cursor_position.character++;
         }
     }
-    else if (msg->key_code == KEY_CODE::W && msg->key_down && msg->ctrl_down)
+    else if (msg->key_code == Key_Code::W && msg->key_down && msg->ctrl_down)
     {
         if (editor->cursor_position.character == 0) {
             if (editor->cursor_position.line != 0) {
@@ -2115,7 +2115,7 @@ void insert_mode_handle_message(Text_Editor* editor, Key_Message* msg)
             }
         }
     }
-    else if (msg->key_code == KEY_CODE::U && msg->key_down && msg->ctrl_down) {
+    else if (msg->key_code == Key_Code::U && msg->key_down && msg->ctrl_down) {
         Text_Position line_start = editor->cursor_position;
         line_start.character = 0;
         text_history_delete_slice(&editor->history, text_slice_make(line_start, editor->cursor_position));
@@ -2149,7 +2149,7 @@ void insert_mode_handle_message(Text_Editor* editor, Key_Message* msg)
             }
         }
     }
-    else if (msg->key_code == KEY_CODE::RETURN && msg->key_down)
+    else if (msg->key_code == Key_Code::RETURN && msg->key_down)
     {
         int indentation = text_editor_find_line_indentation(editor, editor->cursor_position.line, true);
         text_history_insert_character(&editor->history, editor->cursor_position, '\n');
@@ -2157,7 +2157,7 @@ void insert_mode_handle_message(Text_Editor* editor, Key_Message* msg)
         editor->cursor_position.character = 0;
         text_editor_set_line_indentation(editor, editor->cursor_position.line, indentation);
     }
-    else if (msg->key_code == KEY_CODE::BACKSPACE && msg->key_down)
+    else if (msg->key_code == Key_Code::BACKSPACE && msg->key_down)
     {
         Text_Position prev = text_position_previous(editor->cursor_position, editor->text);
         text_history_delete_character(&editor->history, prev);
@@ -2185,14 +2185,14 @@ void normal_mode_handle_message(Text_Editor* editor, Key_Message* new_message)
 {
     // Filter out special messages
     {
-        if (new_message->key_code == KEY_CODE::L && new_message->ctrl_down && new_message->key_down) {
+        if (new_message->key_code == Key_Code::L && new_message->ctrl_down && new_message->key_down) {
             dynamic_array_reset(&editor->normal_mode_incomplete_command);
             logg("Command canceled!\n");
             return;
         }
         // Filter out messages (Key Up messages + random shift or alt or ctrl clicks)
         if ((new_message->character == 0 && !(new_message->ctrl_down && new_message->key_down)) || !new_message->key_down
-            || new_message->key_code == KEY_CODE::ALT) {
+            || new_message->key_code == Key_Code::ALT) {
             //logg("message filtered\n");
             return;
         }

@@ -9,22 +9,43 @@ struct Lexer;
 struct Token_Range;
 struct Compiler_Error;
 
+/*
+    AST Changes:
+        ROOT
+        MODULE
+        TYPE_IDENTIFIER
+        EXPRESSION_VARIABLE_READ
+        EXPRESSION_FUNCTION_CALL
+
+        ARGUMENTS
+        IDENTIFIER
+        IDENTIFIER_PATH
+
+    So i probably want something that parses name lookups:
+        x : Greeter::Greeting = Greeter:greeting_make(15);
+        Greeter::greet(x);
+*/
+
 enum class AST_Node_Type
 {
-    ROOT, // Children: functions
+    ROOT, // Children: functions, globals, modules or structs
+    MODULE, // Children: functions, globals, modules or structs
     STRUCT, // Children: Variable definitions
     FUNCTION, // Child 0: Function_Signature, Child 2: Statement_Block
     FUNCTION_SIGNATURE, // Child 0: Parameter_Block_Named, Child 1 (optional): Return Type
+    IDENTIFIER, // Name is the identifier ID
+    IDENTIFIER_PATH, // Child 0: Either Identifier or another Identifer Path, name is the namespace name
     PARAMETER_BLOCK_UNNAMED, // Children: Types
     PARAMETER_BLOCK_NAMED, // Children: Named_Parameter
     NAMED_PARAMETER, // Child 0: Type
     TYPE_FUNCTION_POINTER, // Child 0: Parameter_Block_Unnamed, Child 1 (optional): Return Type
-    TYPE_IDENTIFIER, // No Children
+    TYPE_IDENTIFIER, // Child 0: Either Identifer or Identifier Path
     TYPE_POINTER_TO, // Child 0: Type
     TYPE_ARRAY_SIZED, // Child 0: Expression (Compile time available), Child 1: Type
     TYPE_ARRAY_UNSIZED, // Child 0: Type
     STATEMENT_BLOCK, // Children: Statements
     STATEMENT_IF, // Child 0: Condition, Child 1: Statements
+    STATEMENT_DEFER, // Child 0: Statement_Block
     STATEMENT_IF_ELSE, // Child 0: Condition, Child 1: if-Statement_Block, Child 2: Else-Statement-Block
     STATEMENT_WHILE, // Child 0: Condition, Child 1: Statements
     STATEMENT_BREAK, // No Children
@@ -36,11 +57,12 @@ enum class AST_Node_Type
     STATEMENT_VARIABLE_DEFINE_ASSIGN, // Child 0: Type index, Child 1: Value-Expression
     STATEMENT_VARIABLE_DEFINE_INFER, // Child 0: Expression
     STATEMENT_DELETE, // Child =: expression
+    ARGUMENTS, // Children: Expressions
     EXPRESSION_NEW, // Child 0: Type
     EXPRESSION_NEW_ARRAY, // Child 0: Array size expression, Child 1: Type
     EXPRESSION_LITERAL,
-    EXPRESSION_FUNCTION_CALL, // Children: Argument expressions, name_id is name of function to call
-    EXPRESSION_VARIABLE_READ,
+    EXPRESSION_FUNCTION_CALL, // Child 0: Either IDENTIFER_PATH or IDENTIFER, Child 1: ARGUMENTS
+    EXPRESSION_VARIABLE_READ, // Child 0: Either IDENTIFER_PATH or IDENTIFER
     EXPRESSION_ARRAY_ACCESS, // Child 0: Access-to-Expression, Child 1: Index-Expression
     EXPRESSION_MEMBER_ACCESS, // Child 0: left side, name_id is the .what operator a.y.y[5].z
     EXPRESSION_CAST, // Child 0: type, Child 1: Expression

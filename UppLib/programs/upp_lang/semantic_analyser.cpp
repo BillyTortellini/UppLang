@@ -445,7 +445,7 @@ Symbol* symbol_table_find_symbol_by_string(Symbol_Table* table, String* string, 
     return 0;
 }
 
-Symbol* symbol_table_find_symbol_of_type_with_scope_info(Symbol_Table* table, int name_handle, Symbol_Type::ENUM symbol_type, bool* in_current_scope)
+Symbol* symbol_table_find_symbol_of_type_with_scope_info(Symbol_Table* table, int name_handle, Symbol_Type symbol_type, bool* in_current_scope)
 {
     *in_current_scope = false;
     for (int i = 0; i < table->symbols.size; i++) {
@@ -462,7 +462,7 @@ Symbol* symbol_table_find_symbol_of_type_with_scope_info(Symbol_Table* table, in
     return 0;
 }
 
-Symbol* symbol_table_find_symbol_of_type(Symbol_Table* table, int name_handle, Symbol_Type::ENUM symbol_type)
+Symbol* symbol_table_find_symbol_of_type(Symbol_Table* table, int name_handle, Symbol_Type symbol_type)
 {
     bool unused;
     return symbol_table_find_symbol_of_type_with_scope_info(table, name_handle, symbol_type, &unused);
@@ -998,7 +998,6 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
             }
         }
         return expression_analysis_result_make(info->expression_result_type, true);
-        panic("Should not happen");
     }
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_ADDITION:
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_SUBTRACTION:
@@ -1337,6 +1336,10 @@ Statement_Analysis_Result semantic_analyser_analyse_statement(Semantic_Analyser*
         }
         return Statement_Analysis_Result::CONTINUE;
     }
+    case AST_Node_Type::STATEMENT_DEFER: {
+        semantic_analyser_log_error(analyser, "Defer not supported yet!", statement_index);
+        return Statement_Analysis_Result::NO_RETURN;
+    }
     case AST_Node_Type::STATEMENT_EXPRESSION: {
         AST_Node* node = &analyser->compiler->parser.nodes[statement->children[0]];
         if (node->type != AST_Node_Type::EXPRESSION_FUNCTION_CALL) {
@@ -1443,7 +1446,7 @@ Statement_Analysis_Result semantic_analyser_analyse_statement_block(Semantic_Ana
 {
     Symbol_Table* table = semantic_analyser_install_symbol_table(analyser, parent, block_index);
 
-    int result_type_found = false; // Continue or break make 'dead code' returns or other things invalid
+    int result_type_found = false;
     Statement_Analysis_Result result = Statement_Analysis_Result::NO_RETURN;
     AST_Node* block = &analyser->compiler->parser.nodes[block_index];
     for (int i = 0; i < block->children.size; i++)

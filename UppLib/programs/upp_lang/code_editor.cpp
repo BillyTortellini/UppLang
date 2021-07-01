@@ -74,7 +74,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
                 code_editor_jump_to_definition(editor);
                 continue;
             }
-            else if (msg->key_code == KEY_CODE::S && msg->key_down) {
+            else if (msg->key_code == Key_Code::S && msg->key_down) {
                 String output = string_create_empty(256);
                 SCOPE_EXIT(string_destroy(&output););
                 text_append_to_string(&editor->text_editor->text, &output);
@@ -82,7 +82,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
                 logg("Saved text file!\n");
                 continue;
             }
-            else if (msg->key_code == KEY_CODE::F5) {
+            else if (msg->key_code == Key_Code::F5) {
                 continue;
             }
         }
@@ -92,12 +92,12 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
     bool text_changed = editor->text_editor->text_changed;
     text_editor_update(editor->text_editor, input, time);
 
-    if (text_changed || input->key_pressed[KEY_CODE::F5])
+    if (text_changed || input->key_pressed[(int)Key_Code::F5])
     {
         String source_code = string_create_empty(2048);
         SCOPE_EXIT(string_destroy(&source_code));
         text_append_to_string(&editor->text_editor->text, &source_code);
-        if (input->key_pressed[KEY_CODE::F5]) {
+        if (input->key_pressed[(int)Key_Code::F5]) {
             compiler_compile(&editor->compiler, &source_code, true);
             compiler_execute(&editor->compiler);
         }

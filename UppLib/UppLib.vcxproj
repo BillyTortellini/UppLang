@@ -37,6 +37,7 @@
     <ClInclude Include="programs\upp_lang\compiler.hpp" />
     <ClInclude Include="programs\upp_lang\c_backend.hpp" />
     <ClInclude Include="programs\upp_lang\intermediate_code.hpp" />
+    <ClInclude Include="programs\upp_lang\new_ast_parser.hpp" />
     <ClInclude Include="programs\upp_lang\semantic_analyser.hpp" />
     <ClInclude Include="programs\upp_lang\lexer.hpp" />
     <ClInclude Include="programs\upp_lang\test_renderer.hpp" />
@@ -91,6 +92,7 @@
     <ClCompile Include="programs\upp_lang\compiler.cpp" />
     <ClCompile Include="programs\upp_lang\c_backend.cpp" />
     <ClCompile Include="programs\upp_lang\intermediate_code.cpp" />
+    <ClCompile Include="programs\upp_lang\new_ast_parser.cpp" />
     <ClCompile Include="programs\upp_lang\semantic_analyser.cpp" />
     <ClCompile Include="programs\upp_lang\lexer.cpp" />
     <ClCompile Include="programs\upp_lang\test_renderer.cpp" />
@@ -166,6 +168,7 @@
     <UseDebugLibraries>true</UseDebugLibraries>
     <PlatformToolset>v142</PlatformToolset>
     <CharacterSet>MultiByte</CharacterSet>
+    <EnableASAN>false</EnableASAN>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
@@ -195,6 +198,8 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <IncludePath>$(VC_IncludePath);$(SolutionDir)external_libraries\includes\freetype;$(SolutionDir)external_libraries\includes\opengl_spec;$(WindowsSDK_IncludePath);$(SolutionDir)external_libraries\includes\zlib</IncludePath>
     <LibraryPath>$(SolutionDir)external_libraries\binaries;$(LibraryPath)</LibraryPath>
+    <RunCodeAnalysis>true</RunCodeAnalysis>
+    <EnableClangTidyCodeAnalysis>false</EnableClangTidyCodeAnalysis>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <IncludePath>$(VC_IncludePath);$(SolutionDir)external_libraries\includes\freetype;$(SolutionDir)external_libraries\includes\opengl_spec;$(WindowsSDK_IncludePath);$(SolutionDir)external_libraries\includes\zlib</IncludePath>
@@ -215,9 +220,11 @@
       <SDLCheck>true</SDLCheck>
       <ConformanceMode>false</ConformanceMode>
       <LanguageStandard>stdcpp14</LanguageStandard>
+      <DisableSpecificWarnings>26495;4464;4514;4668;26451;4244;%(DisableSpecificWarnings)</DisableSpecificWarnings>
     </ClCompile>
     <Link>
       <AdditionalDependencies>Opengl32.lib;Winmm.lib;freetype.lib;zlibstatic.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalOptions>/ignore:4099 /ignore:4098 %(AdditionalOptions)</AdditionalOptions>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">

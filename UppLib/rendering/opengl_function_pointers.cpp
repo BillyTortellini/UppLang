@@ -13,6 +13,7 @@ void* opengl_get_function_address(const char* name_handle)
     if ((i64)function_address <= 3 || function_address == (void*)-1) { // wglGetProcAddress failed
         if (opengl_module == 0) {
             opengl_module = LoadLibraryA("opengl32.dll");
+            if (opengl_module == 0) panic("Could not load opengl!");
         }
         function_address = GetProcAddress(opengl_module, name_handle);
     }

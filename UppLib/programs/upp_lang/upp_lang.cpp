@@ -135,7 +135,7 @@ void upp_lang_main()
             if (!window_handle_messages(window, false)) {
                 break;
             }
-            if (input->close_request_issued || input->key_pressed[KEY_CODE::ESCAPE]) {
+            if (input->close_request_issued || input->key_pressed[(int)Key_Code::ESCAPE]) {
                 // Close window
                 window_close(window);
                 // Write text editor output to file
@@ -145,7 +145,7 @@ void upp_lang_main()
                 file_io_write_file("editor_text.txt", array_create_static((byte*)output.characters, output.size));
                 break;
             }
-            if (input->key_pressed[KEY_CODE::F11]) {
+            if (input->key_pressed[(int)Key_Code::F11]) {
                 Window_State* state = window_get_window_state(window);
                 window_set_fullscreen(window, !state->fullscreen);
             }

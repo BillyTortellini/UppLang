@@ -20,7 +20,7 @@ Camera_Controller_Arcball camera_controller_arcball_make(vec3 center, float base
 void camera_controller_arcball_update(Camera_Controller_Arcball* controller, Camera_3D* camera, Input* input, int window_width, int window_height)
 {
     // Update sphereCoords
-    if (input->mouse_down[MOUSE_KEY_CODE::LEFT]) {
+    if (input->mouse_down[(int)Mouse_Key_Code::LEFT]) {
         controller->spherical_coordinates -= 
             vec2(input->mouse_normalized_delta_x, input->mouse_normalized_delta_y) * 
             PI * 2.0f * controller->sensitivity_rotation;
@@ -33,7 +33,7 @@ void camera_controller_arcball_update(Camera_Controller_Arcball* controller, Cam
     float distance_to_center = controller->base_distance_to_center * math_power(1.3f, controller->zoom_level);
 
     // Update position correctly
-    if (input->mouse_down[MOUSE_KEY_CODE::RIGHT])
+    if (input->mouse_down[(int)Mouse_Key_Code::RIGHT])
     {
         mat4 view = mat4_make_view_matrix_look_in_direction(vec3(0), camera->view_direction, vec3(0, 1, 0));
         view = matrix_transpose(view);
@@ -76,26 +76,26 @@ void camera_controller_flying_update(Camera_Controller_Flying* controller, Camer
     mat4 view = mat4_make_view_matrix_look_in_direction(vec3(0), camera->view_direction, vec3(0, 1, 0));
     view = matrix_transpose(view);
     vec3 movement_direction = vec3(0);
-    if (input->key_down[KEY_CODE::W]) {
+    if (input->key_down[(int)Key_Code::W]) {
         movement_direction += vec3(0, 0, -1);
     }
-    if (input->key_down[KEY_CODE::A]) {
+    if (input->key_down[(int)Key_Code::A]) {
         movement_direction += vec3(-1, 0, 0);
     }
-    if (input->key_down[KEY_CODE::S]) {
+    if (input->key_down[(int)Key_Code::S]) {
         movement_direction += vec3(0, 0, 1);
     }
-    if (input->key_down[KEY_CODE::D]) {
+    if (input->key_down[(int)Key_Code::D]) {
         movement_direction += vec3(1, 0, 0);
     }
-    if (input->key_down[KEY_CODE::SPACE]) {
+    if (input->key_down[(int)Key_Code::SPACE]) {
         movement_direction += vec3(0, 1, 0);
     }
-    if (input->key_down[KEY_CODE::CTRL]) {
+    if (input->key_down[(int)Key_Code::CTRL]) {
         movement_direction += vec3(0, -1, 0);
     }
     movement_direction *= controller->speed;
-    if (input->key_down[KEY_CODE::SHIFT]) {
+    if (input->key_down[(int)Key_Code::SHIFT]) {
         movement_direction *= controller->speed_boost;
     }
     movement_direction = view * movement_direction;

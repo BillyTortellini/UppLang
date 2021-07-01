@@ -37,50 +37,95 @@ void compiler_destroy(Compiler* compiler)
     c_generator_destroy(&compiler->c_generator);
 }
 
+bool enable_lexing = true;
+bool enable_parsing = true;
+bool enable_analysis = false;
+bool enable_im_gen = false;
+bool enable_bytecode_gen = true;
+bool enable_execution = true;
+bool enable_output = true;
+
+bool output_lexing = false;
+bool output_identifiers = false;
+bool output_ast = true;
+bool output_type_system = false;
+bool output_im = false;
+bool output_bytecode = false;
+
 void compiler_compile(Compiler* compiler, String* source_code, bool generate_code)
 {
+    bool do_lexing = enable_lexing;
+    bool do_parsing = do_lexing && enable_parsing;
+    bool do_analysis = do_parsing && enable_analysis;
+    bool do_im_gen = do_analysis && enable_im_gen && generate_code;
+    bool do_bytecode_gen = do_im_gen && enable_bytecode_gen;
+
     double lexer_start_time = timer_current_time_in_seconds(compiler->timer);
-    lexer_parse_string(&compiler->lexer, source_code);
+    if (do_lexing) {
+        lexer_parse_string(&compiler->lexer, source_code);
+    }
     double parser_start_time = timer_current_time_in_seconds(compiler->timer);
-    ast_parser_parse(&compiler->parser, &compiler->lexer);
+    if (do_parsing) {
+        ast_parser_parse(&compiler->parser, &compiler->lexer);
+    }
     double semantic_analysis_start_time = timer_current_time_in_seconds(compiler->timer);
 
-    semantic_analyser_analyse(&compiler->analyser, compiler);
-    if (compiler->parser.errors.size == 0 && compiler->analyser.errors.size == 0 && generate_code)
-    {
-        // Generate Intermediate Code
-        intermediate_generator_generate(&compiler->intermediate_generator, compiler);
-        // Generate Bytecode from IM
-        bytecode_generator_generate(&compiler->bytecode_generator, compiler);
+    if (do_analysis) {
+        semantic_analyser_analyse(&compiler->analyser, compiler);
+    }
+    if (do_im_gen) {
+        if (compiler->parser.errors.size == 0 && compiler->analyser.errors.size == 0)
+        {
+            // Generate Intermediate Code
+            intermediate_generator_generate(&compiler->intermediate_generator, compiler);
+            // Generate Bytecode from IM
+            if (do_bytecode_gen) {
+                bytecode_generator_generate(&compiler->bytecode_generator, compiler);
+            }
+        }
     }
 
-    if (generate_code)
+    if (enable_output && generate_code)
     {
-        logg("\n\n\n\n\n\n\n\n\n\n\n\n--------SOURCE CODE--------: \n%s\n\n", source_code->characters);
-        logg("\n\n\n\n--------LEXER RESULT--------:\n");
-        //lexer_print(&compiler->lexer);
+        //logg("\n\n\n\n\n\n\n\n\n\n\n\n--------SOURCE CODE--------: \n%s\n\n", source_code->characters);
+        if (do_lexing) {
+            if (output_lexing) {
+                logg("\n\n\n\n--------LEXER RESULT--------:\n");
+                lexer_print(&compiler->lexer);
+            }
+            if (output_identifiers) {
+                logg("\n--------IDENTIFIERS:--------:\n");
+                lexer_print_identifiers(&compiler->lexer);
+            }
+        }
 
-        logg("\n--------IDENTIFIERS:--------:\n");
-        //lexer_print_identifiers(&compiler->lexer);
+        if (do_parsing && output_ast)
+        { 
+            String printed_ast = string_create_empty(256);
+            SCOPE_EXIT(string_destroy(&printed_ast));
+            ast_parser_append_to_string(&compiler->parser, &printed_ast);
+            logg("\n");
+            logg("--------AST PARSE RESULT--------:\n");
+            logg("\n%s\n", printed_ast.characters);
+        }
 
-        String printed_ast = string_create_empty(256);
-        SCOPE_EXIT(string_destroy(&printed_ast));
-        //ast_parser_append_to_string(&compiler->parser, &printed_ast);
-        logg("\n");
-        logg("--------AST PARSE RESULT--------:\n");
-        logg("\n%s\n", printed_ast.characters);
-
-        logg("--------TYPE SYSTEM RESULT--------:\n");
-        type_system_print(&compiler->type_system);
+        if (do_analysis && output_type_system) {
+            logg("--------TYPE SYSTEM RESULT--------:\n");
+            type_system_print(&compiler->type_system);
+        }
         if (compiler->analyser.errors.size == 0 && true)
         {
             String result_str = string_create_empty(32);
             SCOPE_EXIT(string_destroy(&result_str));
-            intermediate_generator_append_to_string(&result_str, &compiler->intermediate_generator);
-            logg("---------INTERMEDIATE_GENERATOR_RESULT----------\n%s\n\n", result_str.characters);
-            string_reset(&result_str);
-            bytecode_generator_append_bytecode_to_string(&compiler->bytecode_generator, &result_str);
-            logg("----------------BYTECODE_GENERATOR RESULT---------------: \n%s\n", result_str.characters);
+            if (do_im_gen && output_im) {
+                intermediate_generator_append_to_string(&result_str, &compiler->intermediate_generator);
+                logg("---------INTERMEDIATE_GENERATOR_RESULT----------\n%s\n\n", result_str.characters);
+                string_reset(&result_str);
+            }
+            if (do_bytecode_gen && output_bytecode) {
+                bytecode_generator_append_bytecode_to_string(&compiler->bytecode_generator, &result_str);
+                logg("----------------BYTECODE_GENERATOR RESULT---------------: \n%s\n", result_str.characters);
+            }
         }
     }
     /*
@@ -143,8 +188,16 @@ void compiler_compile(Compiler* compiler, String* source_code, bool generate_cod
 
 void compiler_execute(Compiler* compiler)
 {
+    bool do_execution =
+        enable_lexing &&
+        enable_parsing &&
+        enable_analysis &&
+        enable_im_gen &&
+        enable_bytecode_gen &&
+        enable_execution;
+
     // Execute
-    if (compiler->parser.errors.size == 0 && compiler->analyser.errors.size == 0 && true)
+    if (compiler->parser.errors.size == 0 && compiler->analyser.errors.size == 0 && do_execution)
     {
         double bytecode_start = timer_current_time_in_seconds(compiler->timer);
         bytecode_interpreter_execute_main(&compiler->bytecode_interpreter, compiler);

@@ -92,7 +92,7 @@ struct Type_System
 
 Type_System type_system_create(Lexer* lexer);
 void type_system_destroy(Type_System* system);
-void type_system_reset_all(Type_System* system);
+void type_system_reset_all(Type_System* system, Lexer* lexer);
 Type_Signature* type_system_make_pointer(Type_System* system, Type_Signature* child_type);
 Type_Signature* type_system_make_array_unsized(Type_System* system, Type_Signature* element_type);
 Type_Signature* type_system_make_array_sized(Type_System* system, Type_Signature* element_type, int array_element_count);
@@ -103,20 +103,17 @@ void type_system_print(Type_System* system);
 
 
 
-namespace Symbol_Type
+enum class Symbol_Type
 {
-    enum ENUM
-    {
-        VARIABLE,
-        FUNCTION,
-        TYPE, // Used to map identifiers to types (E.g. "float" to type f32, struct identifier to struct type)
-    };
+    VARIABLE,
+    FUNCTION,
+    TYPE, // Used to map identifiers to types (E.g. "float" to type f32, struct identifier to struct type)
 };
 
 struct Symbol
 {
     int name_handle;
-    Symbol_Type::ENUM symbol_type; // Required since functions, variables and Types could have the same type? TODO: Check this
+    Symbol_Type symbol_type; // Required since functions, variables and Types could have the same type? TODO: Check this
     Type_Signature* type;
     int token_index_definition;
 };
@@ -131,7 +128,7 @@ Symbol_Table symbol_table_create(Symbol_Table* parent);
 void symbol_table_destroy(Symbol_Table* table);
 Symbol* symbol_table_find_symbol(Symbol_Table* table, int name_handle);
 Symbol* symbol_table_find_symbol_by_string(Symbol_Table* table, String* string, Lexer* lexer);
-Symbol* symbol_table_find_symbol_of_type(Symbol_Table* table, int name_handle, Symbol_Type::ENUM symbol_type);
+Symbol* symbol_table_find_symbol_of_type(Symbol_Table* table, int name_handle, Symbol_Type symbol_type);
 void symbol_table_append_to_string(String* string, Symbol_Table* table, Lexer* lexer, bool print_root);
 
 

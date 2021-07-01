@@ -256,8 +256,8 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         *(u64*)(interpreter->stack_pointer + i->op1) = (u64)i->op2;
         break;
     case Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE: {
-        u64 source_unsigned;
-        i64 source_signed;
+        u64 source_unsigned = 0;
+        i64 source_signed = 0;
         bool source_is_signed = false;
         switch ((Primitive_Type)i->op4) {
         case Primitive_Type::SIGNED_INT_8: source_is_signed = true; source_signed = *(i8*)(interpreter->stack_pointer + i->op2); break;
@@ -284,7 +284,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         break;
     }
     case Instruction_Type::CAST_FLOAT_DIFFERENT_SIZE: {
-        double source;
+        double source = 0.0;
         switch ((Primitive_Type)i->op4) {
         case Primitive_Type::FLOAT_32: source = *(float*)(interpreter->stack_pointer + i->op2); break;
         case Primitive_Type::FLOAT_64: source = *(double*)(interpreter->stack_pointer + i->op2); break;
@@ -298,7 +298,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         break;
     }
     case Instruction_Type::CAST_FLOAT_INTEGER: {
-        double source;
+        double source = 0.0;
         switch ((Primitive_Type)i->op4) {
         case Primitive_Type::FLOAT_32: source = *(float*)(interpreter->stack_pointer + i->op2); break;
         case Primitive_Type::FLOAT_64: source = *(double*)(interpreter->stack_pointer + i->op2); break;
@@ -586,7 +586,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         *(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) != *(i32*)(interpreter->stack_pointer + i->op3);
         break;
     case Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_I32:
-        *(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) > * (u32*)(interpreter->stack_pointer + i->op3);
+        *(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) > * (i32*)(interpreter->stack_pointer + i->op3);
         break;
     case Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_I32:
         *(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) >= *(i32*)(interpreter->stack_pointer + i->op3);
@@ -624,7 +624,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         *(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) != *(i64*)(interpreter->stack_pointer + i->op3);
         break;
     case Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_I64:
-        *(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) > * (u64*)(interpreter->stack_pointer + i->op3);
+        *(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) > * (i64*)(interpreter->stack_pointer + i->op3);
         break;
     case Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_I64:
         *(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) >= *(i64*)(interpreter->stack_pointer + i->op3);

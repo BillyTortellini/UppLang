@@ -10,6 +10,7 @@ enum class Token_Type
     // Keywords
     IF,
     ELSE,
+    MODULE,
     FOR,
     WHILE,
     CONTINUE,
@@ -20,6 +21,7 @@ enum class Token_Type
     DELETE_TOKEN,
     CAST,
     NULLPTR,
+    DEFER,
     // Delimiters
     DOT,        // .
     COLON,      // :
@@ -89,6 +91,7 @@ struct Lexer
 {
     Dynamic_Array<String> identifiers;
     Hashtable<String, int> identifier_index_lookup_table;
+    Hashtable<String, Token_Type> keywords;
     Dynamic_Array<Token> tokens;
     Dynamic_Array<Token> tokens_with_whitespaces;
 };

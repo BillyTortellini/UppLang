@@ -12,7 +12,7 @@
 #include "../../rendering/text_renderer.hpp"
 #include "../../rendering/shader_program.hpp"
 #include "../../utility/bounding_box.hpp"
-#include "../../rendering/renderer_2d.hpp"
+#include "../../rendering/renderer_2D.hpp"
 #include "../../rendering/render_pass.hpp"
 #include "../../utility/gui.hpp"
 #include "../../math/scalars.hpp"
@@ -1538,7 +1538,7 @@ void proc_city_main()
         window_handle_messages(window, false);
         gui_update(&gui, input, window_state->width, window_state->height);
 
-        if (input->key_down[KEY_CODE::ESCAPE]) {
+        if (input->key_down[(int)Key_Code::ESCAPE]) {
             window_close(window);
         }
         camera_controller_arcball_update(&controller, camera, input, window_state->width, window_state->height);

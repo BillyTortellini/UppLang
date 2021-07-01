@@ -137,6 +137,7 @@ struct Intermediate_Function
     Dynamic_Array<int> register_to_ast_mapping;
 };
 
+// Maps variable names to Data-Accesses
 struct Name_Mapping
 {
     int name_handle;
