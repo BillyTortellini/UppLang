@@ -19,23 +19,87 @@
 
 #include "../../math/umath.hpp"
 #include "../../datastructures/hashtable.hpp"
+#include "../../datastructures/hashset.hpp"
+#include "../../utility/hash_functions.hpp"
 
 #include "code_editor.hpp"
 #include "Test_Renderer.hpp"
 
-u64 int_hash(int* i) {
-    return (u64)(*i * 17);
+struct Dummy
+{
+    int valX;
+    int valY;
+    bool alive;
+};
+
+Dummy dummy_make(int x, int y, bool alive)
+{
+    Dummy result;
+    result.valX = x;
+    result.valY = y;
+    result.alive = alive;
+    return result;
 }
-bool int_equals(int* a, int* b) {
-    return (*a == *b);
+
+u64 dummy_hash(Dummy* a) {
+    return hash_memory(array_create_static<byte>((byte*)a, sizeof(Dummy)));
+}
+
+bool dummy_compare(Dummy* a, Dummy* b) {
+    return a->valX == b->valX && a->valY == b->valY && a->alive == b->alive;
+}
+
+Dummy dummy_make_random(Random* random)
+{
+    return dummy_make(
+        (int)random_next_u32(random) % 20034,
+        (int)random_next_u32(random) % 20034,
+        random_next_bool(random, 0.15f)
+    );
+}
+
+void dummy_print(Dummy* d) {
+    u64 hash = dummy_hash(d);
+    logg("Dummy {valx: %d, valy: %d, alive: %s} hash: %x\n", d->valX, d->valY, d->alive ? "true" : "false", hash);
 }
 
 void test_things()
 {
+    Random random = random_make_time_initalized();
+    // Hashset tests
+    {
+        Hashset<Dummy> set;
+        set = hashset_create_empty<Dummy>(32, dummy_hash, &dummy_compare);
+        SCOPE_EXIT(hashset_destroy(&set));
+
+        Dynamic_Array<Dummy> added = dynamic_array_create_empty<Dummy>(64);
+        SCOPE_EXIT(dynamic_array_destroy(&added));
+        for (int i = 0; i < 100000; i++)
+        {
+            Dummy d = dummy_make_random(&random);
+            bool inserted = hashset_insert_element(&set, d);
+            //dummy_print(&d);
+            if (inserted && random_next_bool(&random, 0.4f)) {
+                dynamic_array_push_back(&added, d);
+            }
+        }
+
+        for (int i = 0; i < added.size; i++) {
+            Dummy d = added[i];
+            if (!hashset_contains(&set, d)) {
+                logg("Dummy not found: ");
+                dummy_print(&d);
+                bool inside = hashset_contains(&set, d);
+                panic("Hashset should contain this dummy");
+            }
+        }
+    }
+
+    // Hashtable tests
     {
         for (int i = 0; i < 200; i++)
         {
-            Hashtable<int, const char*> table = hashtable_create_empty<int, const char*>(3, &int_hash, &int_equals);
+            Hashtable<int, const char*> table = hashtable_create_empty<int, const char*>(3, &hash_i32, &equals_i32);
             hashtable_insert_element(&table, 7, "Hello there\n");
             for (int j = 0; j < 32; j++) {
                 hashtable_insert_element(&table, j * 472, "Hello there\n");
@@ -45,7 +109,7 @@ void test_things()
             hashtable_destroy(&table);
         }
 
-        Hashtable<int, const char*> table = hashtable_create_empty<int, const char*>(3, &int_hash, &int_equals);
+        Hashtable<int, const char*> table = hashtable_create_empty<int, const char*>(3, &hash_i32, &equals_i32);
         SCOPE_EXIT(hashtable_destroy(&table));
         hashtable_insert_element(&table, 1, "Hi what");
         hashtable_insert_element(&table, 2, "Hello there\n");
@@ -62,6 +126,8 @@ void test_things()
 
 void upp_lang_main()
 {
+    //test_things();
+
     Window* window = window_create("Test", 0);
     SCOPE_EXIT(window_destroy(window));
     Window_State* window_state = window_get_window_state(window);
@@ -207,7 +273,7 @@ void upp_lang_main()
                 float t = core.render_information.current_time_in_seconds / 6.0f;
                 for (int i = 0; i < spokes; i++) {
                     vec2 end = vec2(math_sine(2.0f * PI * ((float)i / spokes) + t), math_cosine(2.0f * PI * ((float)i / spokes) + t)) * width + center;
-                    primitive_renderer_2D_add_line(primitive_renderer_2D, center, end, 
+                    primitive_renderer_2D_add_line(primitive_renderer_2D, center, end,
                         Line_Cap::FLAT, Line_Cap::ROUND,
                         thickness, 0.0f, vec3(1.0f));
                 }
@@ -220,7 +286,7 @@ void upp_lang_main()
                 float t = core.render_information.current_time_in_seconds / 3.0f;
                 for (int i = 0; i < spokes; i++) {
                     vec2 end = vec2(math_sine(2.0f * PI * ((float)i / spokes) + t), math_cosine(2.0f * PI * ((float)i / spokes) + t)) * width + center;
-                    primitive_renderer_2D_add_line(primitive_renderer_2D, center, end, 
+                    primitive_renderer_2D_add_line(primitive_renderer_2D, center, end,
                         Line_Cap::FLAT, Line_Cap::FLAT,
                         thickness, 0.0f, vec3(1.0f));
                 }

@@ -39,7 +39,7 @@ void compiler_destroy(Compiler* compiler)
 
 bool enable_lexing = true;
 bool enable_parsing = true;
-bool enable_analysis = false;
+bool enable_analysis = true;
 bool enable_im_gen = false;
 bool enable_bytecode_gen = true;
 bool enable_execution = true;
@@ -56,7 +56,7 @@ void compiler_compile(Compiler* compiler, String* source_code, bool generate_cod
 {
     bool do_lexing = enable_lexing;
     bool do_parsing = do_lexing && enable_parsing;
-    bool do_analysis = do_parsing && enable_analysis;
+    bool do_analysis = do_parsing && enable_analysis && generate_code;
     bool do_im_gen = do_analysis && enable_im_gen && generate_code;
     bool do_bytecode_gen = do_im_gen && enable_bytecode_gen;
 

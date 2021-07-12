@@ -3,15 +3,9 @@
 #include "../../datastructures/dynamic_array.hpp"
 #include "../../datastructures/string.hpp"
 #include "semantic_analyser.hpp"
+#include "semantic_analyser.hpp"
 struct Compiler;
 
-enum class Exit_Code
-{
-    SUCCESS,
-    OUT_OF_BOUNDS, 
-    STACK_OVERFLOW,
-    RETURN_VALUE_OVERFLOW,
-};
 void exit_code_append_to_string(String* string, Exit_Code code);
 
 enum class Intermediate_Instruction_Type
@@ -102,7 +96,7 @@ struct Intermediate_Instruction
     // Function call
     int intermediate_function_index;
     Dynamic_Array<Data_Access> arguments;
-    Hardcoded_Function_Type hardcoded_function_type;
+    IR_Hardcoded_Function_Type hardcoded_function_type;
     // Return thing
     bool return_has_value;
     // Exit instruction

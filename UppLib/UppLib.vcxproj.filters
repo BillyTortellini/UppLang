@@ -246,11 +246,14 @@
     <ClInclude Include="rendering\render_pass.hpp">
       <Filter>Header Files\Rendering\Utility</Filter>
     </ClInclude>
-    <ClInclude Include="programs\upp_lang\new_ast_parser.hpp">
-      <Filter>Header Files\Programs\Upp_Lang</Filter>
-    </ClInclude>
     <ClInclude Include="programs\upp_lang\ast_parser.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
+    </ClInclude>
+    <ClInclude Include="utility\hash_functions.hpp">
+      <Filter>Header Files\Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="datastructures\hashset.hpp">
+      <Filter>Header Files\Datastructures</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -258,9 +261,6 @@
       <Filter>Source Files\Datastructures</Filter>
     </ClCompile>
     <ClCompile Include="datastructures\dynamic_array.cpp">
-      <Filter>Source Files\Datastructures</Filter>
-    </ClCompile>
-    <ClCompile Include="datastructures\hashtable.cpp">
       <Filter>Source Files\Datastructures</Filter>
     </ClCompile>
     <ClCompile Include="datastructures\string.cpp">
@@ -407,8 +407,11 @@
     <ClCompile Include="rendering\render_pass.cpp">
       <Filter>Source Files\Rendering\Utility</Filter>
     </ClCompile>
-    <ClCompile Include="programs\upp_lang\new_ast_parser.cpp">
-      <Filter>Source Files\Programs\Upp_Lang</Filter>
+    <ClCompile Include="utility\hash_functions.cpp">
+      <Filter>Source Files\Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="datastructures\hashset.cpp">
+      <Filter>Source Files\Datastructures</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

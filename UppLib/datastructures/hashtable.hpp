@@ -2,10 +2,7 @@
 
 #include "../utility/datatypes.hpp"
 #include "array.hpp"
-
-int hashtable_find_next_suitable_prime_size(int capacity);
-
-const float HASHTABLE_RESIZE_PERCENTAGE = 0.8f;
+#include "hashset.hpp"
 
 template <typename K, typename V>
 struct Hashtable_Entry
@@ -44,6 +41,8 @@ Hashtable_Iterator<K,V> hashtable_iterator_create(Hashtable<K,V>* table) {
         if (table->entries[i].valid) {
             result.current_entry = &table->entries[i];
             result.current_entry_index = i;
+            result.key = &result.current_entry->key;
+            result.value = &result.current_entry->value;
             return result;
         }
     }
@@ -65,6 +64,8 @@ void hashtable_iterator_next(Hashtable_Iterator<K, V>* iterator)
 
     if (iterator->current_entry->next != 0) {
         iterator->current_entry = iterator->current_entry->next;
+        iterator->key = &iterator->current_entry->key;
+        iterator->value = &iterator->current_entry->value;
         return;
     }
     for (int i = iterator->current_entry_index + 1; i < iterator->table->entries.size; i++) {
@@ -72,6 +73,8 @@ void hashtable_iterator_next(Hashtable_Iterator<K, V>* iterator)
         if (table->entries[i].valid) {
             iterator->current_entry = &table->entries[i];
             iterator->current_entry_index = i;
+            iterator->key = &iterator->current_entry->key;
+            iterator->value = &iterator->current_entry->value;
             return;
         }
     }
@@ -85,7 +88,7 @@ Hashtable<K, V> hashtable_create_empty(int capacity, u64(*hash_function)(K*), bo
 {
     Hashtable<K, V> result;
     result.element_count = 0;
-    result.entries = array_create_empty<Hashtable_Entry<K, V>>(hashtable_find_next_suitable_prime_size(capacity));
+    result.entries = array_create_empty<Hashtable_Entry<K, V>>(primes_find_next_suitable_for_set_size(capacity));
     for (int i = 0; i < result.entries.size; i++) {
         result.entries[i].valid = false;
         result.entries[i].next = 0;
@@ -152,7 +155,7 @@ void hashtable_reserve(Hashtable<K, V>* table, int capacity)
     if (table->entries.size > capacity) {
         return;
     }
-    int new_capacity = hashtable_find_next_suitable_prime_size(capacity);
+    int new_capacity = primes_find_next_suitable_for_set_size(capacity);
     Hashtable<K, V> new_table = hashtable_create_empty<K, V>(new_capacity, table->hash_function, table->equals_function);
     Hashtable_Iterator<K, V> iterator = hashtable_iterator_create(table);
     while (hashtable_iterator_has_next(&iterator)) {
@@ -168,7 +171,7 @@ void hashtable_reserve(Hashtable<K, V>* table, int capacity)
 template <typename K, typename V>
 bool hashtable_insert_element(Hashtable<K, V>* table, K key, V value)
 {
-    if ((float)(table->element_count + 1) / table->entries.size > HASHTABLE_RESIZE_PERCENTAGE) {
+    if ((float)(table->element_count + 1) / table->entries.size > HASHSET_RESIZE_PERCENTAGE) {
         hashtable_reserve(table, table->element_count + 1);
     }
 

@@ -471,7 +471,7 @@ void bytecode_generator_generate_function_instruction_slice(
 
             Type_Signature* function_sig = 0;
             if (instr->type == Intermediate_Instruction_Type::CALL_HARDCODED_FUNCTION) {
-                function_sig = generator->compiler->analyser.hardcoded_functions[(int)instr->hardcoded_function_type].function_type;
+                function_sig = generator->compiler->analyser.program->hardcoded_functions[(int)instr->hardcoded_function_type]->signature;
             }
             else if (instr->type == Intermediate_Instruction_Type::CALL_FUNCTION) {
                 function_sig = generator->compiler->intermediate_generator.functions[instr->intermediate_function_index].function_type;

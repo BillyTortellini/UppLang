@@ -45,6 +45,7 @@ void code_editor_jump_to_definition(Code_Editor* editor)
     AST_Node_Index closest_node_index = ast_parser_get_closest_node_to_text_position(
         &editor->compiler.parser, editor->text_editor->cursor_position, editor->text_editor->text
     );
+    /*
     int symbol_table_index = editor->compiler.analyser.semantic_information[closest_node_index].symbol_table_index;
     Symbol_Table* symbol_table = editor->compiler.analyser.symbol_tables[symbol_table_index];
     if (symbol_table != 0) {
@@ -60,6 +61,7 @@ void code_editor_jump_to_definition(Code_Editor* editor)
             text_editor_clamp_cursor(editor->text_editor);
         }
     }
+    */
 }
 
 void code_editor_update(Code_Editor* editor, Input* input, double time)
@@ -142,6 +144,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
                 if (nearest_node->type == AST_Node_Type::STRUCT) {
                     color = TYPE_COLOR;
                 }
+                /*
                 if (editor->compiler.analyser.symbol_tables.size != 0)
                 {
                     Symbol_Table* table = editor->compiler.analyser.symbol_tables[
@@ -163,6 +166,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
                         }
                     }
                 }
+                */
                 text_editor_add_highlight_from_slice(editor->text_editor, t.position, color, BG_COLOR);
             }
         }

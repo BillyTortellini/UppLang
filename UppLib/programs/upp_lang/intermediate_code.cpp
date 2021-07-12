@@ -281,6 +281,7 @@ Data_Access intermediate_generator_generate_expression(Intermediate_Generator* g
 Data_Access intermediate_generator_generate_expression_without_casting(Intermediate_Generator* generator, int expression_index,
     bool force_destination, Data_Access destination)
 {
+    /*
     Intermediate_Function* function = &generator->functions[generator->current_function_index];
     AST_Node* expression = &generator->compiler->parser.nodes[expression_index];
     Symbol_Table* table = generator->compiler->analyser.symbol_tables[generator->compiler->analyser.semantic_information[expression_index].symbol_table_index];
@@ -809,22 +810,27 @@ Data_Access intermediate_generator_generate_expression_without_casting(Intermedi
     }
 
     panic("Shit this is not something that should happen!\n");
+    */
     return data_access_make_empty();
 }
 
 Data_Access intermediate_generator_generate_expression(Intermediate_Generator* generator, int expression_index,
     bool force_destination, Data_Access destination)
 {
+    /*
     Semantic_Node_Information* info = &generator->compiler->analyser.semantic_information[expression_index];
     if (!info->needs_casting_to_cast_type) return intermediate_generator_generate_expression_without_casting(generator, expression_index, force_destination, destination);
 
     Data_Access source_access = intermediate_generator_generate_expression_without_casting(generator, expression_index, false, data_access_make_empty());
     return intermediate_generator_generate_cast(generator, source_access, info->expression_result_type, info->cast_result_type, force_destination, destination);
+    */
+    return data_access_make_empty();
 }
 
 void intermediate_generator_generate_statement_block(Intermediate_Generator* generator, int block_index);
 void intermediate_generator_generate_statement(Intermediate_Generator* generator, int statement_index)
 {
+    /*
     Intermediate_Function* function = &generator->functions[generator->current_function_index];
     Semantic_Node_Information* info = &generator->compiler->analyser.semantic_information[statement_index];
 
@@ -935,10 +941,12 @@ void intermediate_generator_generate_statement(Intermediate_Generator* generator
     }
 
     return;
+    */
 }
 
 void intermediate_generator_generate_statement_block(Intermediate_Generator* generator, int block_index)
 {
+    /*
     AST_Node* block = &generator->compiler->parser.nodes[block_index];
     int size_rollback = generator->name_mappings.size;
 
@@ -957,10 +965,12 @@ void intermediate_generator_generate_statement_block(Intermediate_Generator* gen
         intermediate_generator_generate_statement(generator, block->children[i]);
     }
     dynamic_array_rollback_to_size(&generator->name_mappings, size_rollback);
+    */
 }
 
 void intermediate_generator_generate_function_code(Intermediate_Generator* generator, int function_index)
 {
+    /*
     generator->current_function_index = function_index;
     Intermediate_Function* im_function = &generator->functions[function_index];
     int function_node_index = generator->function_to_ast_node_mapping[function_index];
@@ -997,6 +1007,7 @@ void intermediate_generator_generate_function_code(Intermediate_Generator* gener
     }
 
     dynamic_array_rollback_to_size(&generator->name_mappings, size_rollback);
+    */
 }
 
 void intermediate_instruction_destroy(Intermediate_Instruction* instruction)
@@ -1061,6 +1072,7 @@ void intermediate_generator_destroy(Intermediate_Generator* generator)
 
 void intermediate_generator_generate(Intermediate_Generator* generator, Compiler* compiler)
 {
+    /*
     // TODO: Do reset better, kinda tricky because of intermediate functions
     intermediate_generator_destroy(generator);
     *generator = intermediate_generator_create();
@@ -1118,6 +1130,7 @@ void intermediate_generator_generate(Intermediate_Generator* generator, Compiler
     for (int i = 0; i < generator->functions.size; i++) {
         intermediate_generator_generate_function_code(generator, i);
     }
+    */
 }
 
 void data_access_append_to_string(String* string, Data_Access access, int function_index, Intermediate_Generator* generator)
@@ -1345,6 +1358,7 @@ void intermediate_instruction_append_to_string(String* string, Intermediate_Inst
         break;
     case Intermediate_Instruction_Type::CALL_HARDCODED_FUNCTION:
         string_append_formated(string, "CALL_HARDCODED_FUNCTION, function_id: %d, \n\t\treturn_data: ", (i32)instruction->hardcoded_function_type);
+        /*
         if (generator->compiler->analyser.hardcoded_functions[(int)instruction->hardcoded_function_type].function_type->return_type
             != generator->compiler->type_system.void_type) {
             data_access_append_to_string(string, instruction->destination, function_index, generator);
@@ -1356,6 +1370,7 @@ void intermediate_instruction_append_to_string(String* string, Intermediate_Inst
             string_append_formated(string, "\n\t\t#%d: ", i);
             data_access_append_to_string(string, instruction->arguments[i], function_index, generator);
         }
+        */
         break;
     case Intermediate_Instruction_Type::RETURN:
         string_append_formated(string, "RETURN, return_data: ");

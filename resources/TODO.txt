@@ -1,5 +1,6 @@
 Current Work Item:
 ------------------
+Write programming mantras
  * Modules
 
 module List
@@ -25,8 +26,8 @@ Long-Term Goals:
 More Language features to implement:
 ------------------------------------
  * Modules
- * Tag-System (For constant values, but also other stuff)
  * Code-Polymorphism (Template/Generic System)
+ * Tag-System (For constant values, but also other stuff)
 
    ------- These features are for convenience, but they are not top priority ------
  * Enums

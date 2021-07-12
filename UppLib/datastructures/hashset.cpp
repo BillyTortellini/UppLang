@@ -1,4 +1,5 @@
-#include "hashtable.hpp"
+#include "hashset.hpp"
+
 int valid_primes[] = {
     11,
     23,
@@ -18,9 +19,12 @@ int valid_primes[] = {
     411527,
     823117,
     1646237,
+    7990481,
+    34254761,
+    936162379,
 };
 
-int hashtable_find_next_suitable_prime_size(int capacity)
+int primes_find_next_suitable_for_set_size(int capacity)
 {
     for (int i = 0; i < sizeof(valid_primes) / sizeof(int); i++) {
         if (valid_primes[i] >= capacity) {

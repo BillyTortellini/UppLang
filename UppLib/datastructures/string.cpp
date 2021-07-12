@@ -47,15 +47,6 @@ String string_create_substring(String* string, int start_index, int end_index)
     return result;
 }
 
-u64 string_calculate_hash(String* string)
-{
-    u64 hash = 0;
-    for (int i = 0; i < string->size; i++) {
-        hash = (hash + string->characters[i]) * 18181979;
-    }
-    return hash;
-}
-
 bool string_equals(String* s1, String* s2)
 {
     if (s1->size != s2->size) { return false; }

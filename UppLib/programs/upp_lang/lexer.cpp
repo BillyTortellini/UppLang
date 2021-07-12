@@ -1,5 +1,7 @@
 #include "lexer.hpp"
 
+#include "../../utility/hash_functions.hpp"
+
 bool token_type_is_keyword(Token_Type type)
 {
     switch (type)
@@ -277,12 +279,12 @@ int lexer_add_or_find_identifier_by_string(Lexer* lexer, String identifier)
 Lexer lexer_create()
 {
     Lexer lexer;
-    lexer.identifier_index_lookup_table = hashtable_create_empty<String, int>(2048, &string_calculate_hash, &string_equals);
+    lexer.identifier_index_lookup_table = hashtable_create_empty<String, int>(2048, &hash_string, &string_equals);
     lexer.identifiers = dynamic_array_create_empty<String>(1024);
     lexer.tokens = dynamic_array_create_empty<Token>(1024);
     lexer.tokens_with_whitespaces = dynamic_array_create_empty<Token>(1024);
 
-    lexer.keywords = hashtable_create_empty<String, Token_Type>(64, &string_calculate_hash, &string_equals);
+    lexer.keywords = hashtable_create_empty<String, Token_Type>(64, &hash_string, &string_equals);
     hashtable_insert_element(&lexer.keywords, string_create_static("if"), Token_Type::IF);
     hashtable_insert_element(&lexer.keywords, string_create_static("else"), Token_Type::ELSE);
     hashtable_insert_element(&lexer.keywords, string_create_static("for"), Token_Type::FOR);

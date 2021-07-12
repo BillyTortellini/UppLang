@@ -126,7 +126,8 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
     }
     case Instruction_Type::CALL_HARDCODED_FUNCTION: 
     {
-        Hardcoded_Function_Type type = (Hardcoded_Function_Type)i->op1;
+        /*
+        IR_Hardcoded_Function_Type type = (IR_Hardcoded_Function_Type)i->op1;
         Type_Signature* function_sig = interpreter->compiler->analyser.hardcoded_functions[i->op1].function_type;
         byte* argument_start;
         {
@@ -143,27 +144,27 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         memory_set_bytes(&interpreter->return_register[0], 256, 0);
         switch (type)
         {
-        case Hardcoded_Function_Type::MALLOC_SIZE_I32: {
+        case IR_Hardcoded_Function_Type::MALLOC_SIZE_I32: {
             i32 size = *(i32*)argument_start;
             void* alloc_data = malloc(size);
             memory_copy(interpreter->return_register, &alloc_data, 8);
             break;
         }
-        case Hardcoded_Function_Type::FREE_POINTER: {
+        case IR_Hardcoded_Function_Type::FREE_POINTER: {
             void* free_data = *(void**)argument_start;
             free(free_data);
             break;
         }
-        case Hardcoded_Function_Type::PRINT_I32: {
+        case IR_Hardcoded_Function_Type::PRINT_I32: {
             logg("%d", *(i32*)(argument_start)); break;
         }
-        case Hardcoded_Function_Type::PRINT_F32: {
+        case IR_Hardcoded_Function_Type::PRINT_F32: {
             logg("%3.2f", *(f32*)(argument_start)); break;
         }
-        case Hardcoded_Function_Type::PRINT_BOOL: {
+        case IR_Hardcoded_Function_Type::PRINT_BOOL: {
             logg("%s", *(argument_start) == 0 ? "FALSE" : "TRUE"); break;
         }
-        case Hardcoded_Function_Type::PRINT_STRING: {
+        case IR_Hardcoded_Function_Type::PRINT_STRING: {
             //byte* argument_start = interpreter->stack_pointer + i->op2 - 24;
             char* str = *(char**)argument_start;
             int size = *(int*)(argument_start + 16);
@@ -175,10 +176,10 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
             logg("%s", buffer);
             break;
         }
-        case Hardcoded_Function_Type::PRINT_LINE: {
+        case IR_Hardcoded_Function_Type::PRINT_LINE: {
             logg("\n"); break;
         }
-        case Hardcoded_Function_Type::READ_I32: {
+        case IR_Hardcoded_Function_Type::READ_I32: {
             logg("Please input an i32: ");
             i32 num;
             std::cin >> num;
@@ -190,7 +191,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
             memory_copy(interpreter->return_register, &num, 4);
             break;
         }
-        case Hardcoded_Function_Type::READ_F32: {
+        case IR_Hardcoded_Function_Type::READ_F32: {
             logg("Please input an f32: ");
             f32 num;
             std::cin >> num;
@@ -202,7 +203,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
             memory_copy(interpreter->return_register, &num, 4);
             break;
         }
-        case Hardcoded_Function_Type::READ_BOOL: {
+        case IR_Hardcoded_Function_Type::READ_BOOL: {
             logg("Please input an bool (As int): ");
             i32 num;
             std::cin >> num;
@@ -219,13 +220,14 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
             }
             break;
         }
-        case Hardcoded_Function_Type::RANDOM_I32: {
+        case IR_Hardcoded_Function_Type::RANDOM_I32: {
             i32 result = 0;
             memory_copy(interpreter->return_register, &result, 4);
             break;
         }
         default: {panic("What"); }
         }
+        */
         break;
     }
     case Instruction_Type::LOAD_RETURN_VALUE:

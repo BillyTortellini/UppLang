@@ -545,6 +545,7 @@ void c_generator_generate_function_instruction_slice(
 
 void c_generator_generate(C_Generator* generator, Compiler* compiler)
 {
+    /*
     generator->compiler = compiler;
     generator->im_generator = &compiler->intermediate_generator;
     string_reset(&generator->output_string);
@@ -593,7 +594,6 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
         generator->current_function_index = i;
         c_generator_generate_function_header(generator, i);
         string_append_formated(&generator->output_string, "\n{\n");
-        /*
         for (int j = 0; j < im_generator->functions[i].registers.size; j++)
         {
             Intermediate_Register* reg = &im_generator->functions[i].registers[j];
@@ -605,7 +605,6 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
         }
         c_generator_generate_function_instruction_slice(generator, 1, true, 0, im_generator->functions[i].instructions.size);
         string_append_formated(&generator->output_string, "\n}\n");
-        */
     }
 
     // Create real main function
@@ -613,6 +612,7 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
 
     // Compile
     file_io_write_file("backend/main.cpp", array_create_static((byte*)generator->output_string.characters, generator->output_string.size));
+    */
 
     //const char* cmd_setup_compiler_vars = "\"P:\\Programme\\Visual Studio Community 2019\\VC\\Auxiliary\\Build\\vcvars64.bat\"";
     //system(cmd_setup_compiler_vars);

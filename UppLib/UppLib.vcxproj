@@ -21,6 +21,7 @@
   <ItemGroup>
     <ClInclude Include="datastructures\array.hpp" />
     <ClInclude Include="datastructures\dynamic_array.hpp" />
+    <ClInclude Include="datastructures\hashset.hpp" />
     <ClInclude Include="datastructures\hashtable.hpp" />
     <ClInclude Include="datastructures\string.hpp" />
     <ClInclude Include="datastructures\string_pool.hpp" />
@@ -37,7 +38,6 @@
     <ClInclude Include="programs\upp_lang\compiler.hpp" />
     <ClInclude Include="programs\upp_lang\c_backend.hpp" />
     <ClInclude Include="programs\upp_lang\intermediate_code.hpp" />
-    <ClInclude Include="programs\upp_lang\new_ast_parser.hpp" />
     <ClInclude Include="programs\upp_lang\semantic_analyser.hpp" />
     <ClInclude Include="programs\upp_lang\lexer.hpp" />
     <ClInclude Include="programs\upp_lang\test_renderer.hpp" />
@@ -66,6 +66,7 @@
     <ClInclude Include="utility\file_io.hpp" />
     <ClInclude Include="utility\file_listener.hpp" />
     <ClInclude Include="utility\gui.hpp" />
+    <ClInclude Include="utility\hash_functions.hpp" />
     <ClInclude Include="utility\random.hpp" />
     <ClInclude Include="utility\utils.hpp" />
     <ClInclude Include="win32\input.hpp" />
@@ -76,7 +77,7 @@
   <ItemGroup>
     <ClCompile Include="datastructures\array.cpp" />
     <ClCompile Include="datastructures\dynamic_array.cpp" />
-    <ClCompile Include="datastructures\hashtable.cpp" />
+    <ClCompile Include="datastructures\hashset.cpp" />
     <ClCompile Include="datastructures\string.cpp" />
     <ClCompile Include="datastructures\string_pool.cpp" />
     <ClCompile Include="main.cpp" />
@@ -92,7 +93,6 @@
     <ClCompile Include="programs\upp_lang\compiler.cpp" />
     <ClCompile Include="programs\upp_lang\c_backend.cpp" />
     <ClCompile Include="programs\upp_lang\intermediate_code.cpp" />
-    <ClCompile Include="programs\upp_lang\new_ast_parser.cpp" />
     <ClCompile Include="programs\upp_lang\semantic_analyser.cpp" />
     <ClCompile Include="programs\upp_lang\lexer.cpp" />
     <ClCompile Include="programs\upp_lang\test_renderer.cpp" />
@@ -120,6 +120,7 @@
     <ClCompile Include="utility\file_io.cpp" />
     <ClCompile Include="utility\file_listener.cpp" />
     <ClCompile Include="utility\gui.cpp" />
+    <ClCompile Include="utility\hash_functions.cpp" />
     <ClCompile Include="utility\random.cpp" />
     <ClCompile Include="utility\utils.cpp" />
     <ClCompile Include="win32\input.cpp" />

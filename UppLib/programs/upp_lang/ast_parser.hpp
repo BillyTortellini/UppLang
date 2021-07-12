@@ -31,7 +31,7 @@ enum class AST_Node_Type
     ROOT, // Children: functions, globals, modules or structs
     MODULE, // Children: functions, globals, modules or structs
     STRUCT, // Children: Variable definitions
-    FUNCTION, // Child 0: Function_Signature, Child 2: Statement_Block
+    FUNCTION, // Child 0: Function_Signature, Child 1: Statement_Block
     FUNCTION_SIGNATURE, // Child 0: Parameter_Block_Named, Child 1 (optional): Return Type
     IDENTIFIER, // Name is the identifier ID
     IDENTIFIER_PATH, // Child 0: Either Identifier or another Identifer Path, name is the namespace name
