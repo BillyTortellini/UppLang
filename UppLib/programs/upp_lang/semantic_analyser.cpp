@@ -477,21 +477,24 @@ void symbol_table_append_to_string_with_parent_info(String* string, Symbol_Table
         switch (s->symbol_type)
         {
         case Symbol_Type::VARIABLE:
-            string_append_formated(string, "Variable");
+            string_append_formated(string, "Variable" );
             type_signature_append_to_string(string, ir_data_access_get_type(&s->options.variable_access));
             break;
         case Symbol_Type::TYPE:
-            string_append_formated(string, "Type");
+            string_append_formated(string, "Type" );
             type_signature_append_to_string(string, s->options.data_type);
             break;
         case Symbol_Type::FUNCTION: 
-            string_append_formated(string, "Function"); break;
+            string_append_formated(string, "Function" );
             type_signature_append_to_string(string, s->options.function->function_type);
+            break;
         case Symbol_Type::HARDCODED_FUNCTION: 
-            string_append_formated(string, "Hardcoded Function"); break;
-            type_signature_append_to_string(string, s->options.data_type);
+            string_append_formated(string, "Hardcoded Function ");
+            type_signature_append_to_string(string, s->options.hardcoded_function->signature);
+            break;
         case Symbol_Type::MODULE: 
             string_append_formated(string, "Module"); break;
+        default: panic("What");
         }
 
         string_append_formated(string, "\n");
@@ -538,7 +541,7 @@ Type_Signature* ir_data_access_get_type(IR_Data_Access* access)
         sig = access->option.definition_block->registers[access->index];
         break;
     case IR_Data_Access_Type::PARAMETER:
-        sig = access->option.definition_block->function->function_type->parameter_types[access->index];
+        sig = access->option.function->function_type->parameter_types[access->index];
         break;
     default: panic("Hey!");
     }
@@ -749,34 +752,12 @@ Symbol_Table* semantic_analyser_create_symbol_table(Semantic_Analyser* analyser,
 
 void semantic_analyser_define_type(Semantic_Analyser* analyser, Symbol_Table* table, int name_id, Type_Signature* type, int definition_node_index)
 {
-    Symbol* sym = symbol_table_find_symbol_of_type(table, name_id, Symbol_Type::TYPE);
-    if (sym != 0) {
-        semantic_analyser_log_error(analyser, "Type already defined!", definition_node_index);
-        return;
-    }
-
     Symbol s;
     s.symbol_type = Symbol_Type::TYPE;
     s.options.data_type = type;
     s.name_handle = name_id;
     s.definition_node_index = definition_node_index;
-    dynamic_array_push_back(&table->symbols, s);
-}
-
-void semantic_analyser_define_module(Semantic_Analyser* analyser, Symbol_Table* table, int name_id, Symbol_Table* module_table, int definition_node_index)
-{
-    Symbol* sym = symbol_table_find_symbol_of_type(table, name_id, Symbol_Type::MODULE);
-    if (sym != 0) {
-        semantic_analyser_log_error(analyser, "Module already defined!", definition_node_index);
-        return;
-    }
-
-    Symbol s;
-    s.symbol_type = Symbol_Type::MODULE;
-    s.options.module_table = module_table;
-    s.name_handle = name_id;
-    s.definition_node_index = definition_node_index;
-    dynamic_array_push_back(&table->symbols, s);
+    symbol_table_define_symbol(table, analyser, s);
 }
 
 Type_Signature* semantic_analyser_analyse_type(Semantic_Analyser* analyser, Symbol_Table* table, int type_node_index)
@@ -965,6 +946,7 @@ void semantic_analyser_destroy(Semantic_Analyser* analyser)
 Expression_Analysis_Result semantic_analyser_analyse_expression
 (Semantic_Analyser* analyser, Symbol_Table* symbol_table, int expression_index, IR_Code_Block* code_block, bool write_to_access, IR_Data_Access* access);
 
+void ir_data_access_change_type(IR_Data_Access access, Type_Signature* new_type);
 void semantic_analyser_analyse_variable_creation_statements(Semantic_Analyser* analyser, Symbol_Table* symbol_table, int statement_index, IR_Code_Block* code_block)
 {
     AST_Node* statement = &analyser->compiler->parser.nodes[statement_index];
@@ -1031,7 +1013,7 @@ void semantic_analyser_analyse_variable_creation_statements(Semantic_Analyser* a
         }
 
         Expression_Analysis_Result expr_result = semantic_analyser_analyse_expression(
-            analyser, symbol_table, statement->children[1], definition_block, true, &var_symbol.options.variable_access
+            analyser, symbol_table, statement->children[1], definition_block, false, &var_symbol.options.variable_access
         );
         if (!expr_result.error_occured) {
             if (expr_result.type != var_type) {
@@ -1067,21 +1049,17 @@ void semantic_analyser_analyse_variable_creation_statements(Semantic_Analyser* a
         }
 
         Expression_Analysis_Result expr_result = semantic_analyser_analyse_expression(
-            analyser, symbol_table, statement->children[0], definition_block, true, &var_symbol.options.variable_access
+            analyser, symbol_table, statement->children[0], definition_block, false, &var_symbol.options.variable_access
         );
         Type_Signature* var_type = analyser->compiler->type_system.error_type;
         if (!expr_result.error_occured) {
+            var_type = expr_result.type;
             if (var_type == analyser->compiler->type_system.void_type) {
                 semantic_analyser_log_error(analyser, "Trying to create variable as void type", statement_index);
+                var_type = analyser->compiler->type_system.error_type;
             }
         }
-
-        if (code_block == 0) {
-            analyser->program->globals[analyser->program->globals.size - 1] = var_type;
-        }
-        else {
-            code_block->registers[code_block->registers.size - 1] = var_type;
-        }
+        ir_data_access_change_type(var_symbol.options.variable_access, var_type);
         symbol_table_define_symbol(symbol_table, analyser, var_symbol);
         break;
     }
@@ -1096,12 +1074,17 @@ void semantic_analyser_find_definitions(Semantic_Analyser* analyser, Symbol_Tabl
     AST_Node* module_node = &analyser->compiler->parser.nodes[node_index];
 
     Symbol_Table* module_table;
-    if (parent_table->parent != 0) {
+    if (module_node->type != AST_Node_Type::ROOT) {
         module_table = semantic_analyser_create_symbol_table(analyser, parent_table, node_index);
-        semantic_analyser_define_module(analyser, parent_table, module_node->name_id, module_table, node_index);
+        Symbol sym;
+        sym.symbol_type = Symbol_Type::MODULE;
+        sym.definition_node_index = node_index;
+        sym.name_handle = module_node->name_id;
+        sym.options.module_table = module_table;
+        symbol_table_define_symbol(parent_table, analyser, sym);
     }
     else {
-        module_table = parent_table;
+        module_table = analyser->root_table;
     }
 
     for (int i = 0; i < module_node->children.size; i++)
@@ -1231,8 +1214,27 @@ IR_Data_Access ir_data_access_create_constant_i32(Semantic_Analyser* analyser, i
     return ir_data_access_create_constant_access(analyser->program, analyser->compiler->type_system.i32_type, array_create_static<byte>((byte*)&value, sizeof(i32)));
 }
 
-void ir_code_block_change_last_register_type(IR_Code_Block* block, Type_Signature* signature) {
-    block->registers[block->registers.size - 1] = signature;
+void ir_data_access_change_type(IR_Data_Access access, Type_Signature* new_type) {
+    switch (access.type)
+    {
+    case IR_Data_Access_Type::CONSTANT: {
+        panic("Does not work");
+        break;
+    }
+    case IR_Data_Access_Type::GLOBAL_DATA: {
+        access.option.program->globals[access.index] = new_type;
+        break;
+    }
+    case IR_Data_Access_Type::REGISTER: {
+        access.option.definition_block->registers[access.index] = new_type;
+        break;
+    }
+    case IR_Data_Access_Type::PARAMETER: {
+        access.option.function->function_type->parameter_types[access.index] = new_type;
+        break;
+    }
+    default: panic("Hey");
+    }
 }
 
 IR_Data_Access ir_data_access_dereference_pointer(IR_Code_Block* block, IR_Data_Access pointer_access)
@@ -1261,8 +1263,8 @@ IR_Data_Access ir_data_access_dereference_pointer(IR_Code_Block* block, IR_Data_
     }
 }
 
-Expression_Analysis_Result semantic_analyser_analyse_expression
-(Semantic_Analyser* analyser, Symbol_Table* symbol_table, int expression_index, IR_Code_Block* code_block, bool write_to_access, IR_Data_Access* access)
+Expression_Analysis_Result semantic_analyser_analyse_expression(
+    Semantic_Analyser* analyser, Symbol_Table* symbol_table, int expression_index, IR_Code_Block* code_block, bool create_temporary_access, IR_Data_Access* access)
 {
     AST_Node* expression_node = &analyser->compiler->parser.nodes[expression_index];
     Type_System* type_system = &analyser->compiler->type_system;
@@ -1327,24 +1329,23 @@ Expression_Analysis_Result semantic_analyser_analyse_expression
             }
         }
 
-        if (!write_to_access) {
+        if (create_temporary_access) {
             *access = ir_data_access_create_intermediate(code_block, signature->return_type);
-            call_instruction.options.call.destination = *access;
         }
         call_instruction.options.call.destination = *access;
 
-        if (expression_node->children.size != signature->parameter_types.size) {
+        int arguments_node_index = expression_node->children[1];
+        AST_Node* arguments_node = &analyser->compiler->parser.nodes[arguments_node_index];
+        if (arguments_node->children.size != signature->parameter_types.size) {
             semantic_analyser_log_error(analyser, "Argument size does not match function parameter size!", expression_index);
             return expression_analysis_result_make(signature->return_type, false);
         }
 
-        bool error_occured = false;
-        int arguments_node_index = expression_node->children[1];
-        AST_Node* arguments_node = &analyser->compiler->parser.nodes[arguments_node_index];
         call_instruction.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(arguments_node->children.size);
+        bool error_occured = false;
         for (int i = 0; i < signature->parameter_types.size && i < arguments_node->children.size; i++)
         {
-            IR_Data_Access argument_access = ir_data_access_create_intermediate(code_block, analyser->compiler->type_system.error_type);
+            IR_Data_Access argument_access;
             Expression_Analysis_Result expr_result = semantic_analyser_analyse_expression(
                 analyser, symbol_table, arguments_node->children[i], code_block, true, &argument_access
             );
@@ -1353,8 +1354,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression
             }
             else if (expr_result.type != signature->parameter_types[i])
             {
-                ir_code_block_change_last_register_type(code_block, expr_result.type);
-                IR_Data_Access casted_argument = ir_data_access_create_intermediate(code_block, expr_result.type);
+                IR_Data_Access casted_argument = ir_data_access_create_intermediate(code_block, signature->parameter_types[i]);
                 if (semantic_analyser_cast_implicit_if_possible(analyser, code_block, argument_access, casted_argument)) {
                     dynamic_array_push_back(&call_instruction.options.call.arguments, casted_argument);
                 }
@@ -1376,15 +1376,15 @@ Expression_Analysis_Result semantic_analyser_analyse_expression
             return expression_analysis_result_make_error();
         }
 
-        if (!write_to_access) {
+        if (create_temporary_access) {
+            *access = symbol->options.variable_access;
+        }
+        else {
             IR_Instruction move_instr;
             move_instr.type = IR_Instruction_Type::MOVE;
             move_instr.options.move.destination = *access;
             move_instr.options.move.source = symbol->options.variable_access;
             dynamic_array_push_back(&code_block->instructions, move_instr);
-        }
-        else {
-            *access = symbol->options.variable_access;
         }
 
         return expression_analysis_result_make(ir_data_access_get_type(&symbol->options.variable_access), true);
@@ -1398,7 +1398,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression
 
         IR_Data_Access source_access;
         Expression_Analysis_Result expr_result = semantic_analyser_analyse_expression(
-            analyser, symbol_table, expression_node->children[1], code_block, false, &source_access
+            analyser, symbol_table, expression_node->children[1], code_block, true, &source_access
         );
         if (expr_result.error_occured) {
             return expression_analysis_result_make_error();
@@ -1447,7 +1447,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression
             IR_Instruction cast_instr;
             cast_instr.type = IR_Instruction_Type::CAST;
             cast_instr.options.cast.source = source_access;
-            if (!write_to_access) {
+            if (create_temporary_access) {
                 *access = ir_data_access_create_intermediate(code_block, cast_destination_type);
             }
             cast_instr.options.cast.destination = *access;
@@ -1503,15 +1503,15 @@ Expression_Analysis_Result semantic_analyser_analyse_expression
             panic("Should not happen!");
         }
 
-        if (!write_to_access) {
+        if (create_temporary_access) {
+            *access = literal_access;
+        }
+        else {
             IR_Instruction move_instr;
             move_instr.type = IR_Instruction_Type::MOVE;
             move_instr.options.move.destination = *access;
             move_instr.options.move.source = literal_access;
             dynamic_array_push_back(&code_block->instructions, move_instr);
-        }
-        else {
-            *access = literal_access;
         }
 
         return expression_analysis_result_make(ir_data_access_get_type(&literal_access), false);
@@ -1533,9 +1533,8 @@ Expression_Analysis_Result semantic_analyser_analyse_expression
         instruction.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
         instruction.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(1);
         dynamic_array_push_back(&instruction.options.call.arguments, ir_data_access_create_constant_i32(analyser, result_type->size_in_bytes));
-        if (!write_to_access) {
+        if (create_temporary_access) {
             *access = ir_data_access_create_intermediate(code_block, result_type);
-            instruction.options.call.destination = *access;
         }
         instruction.options.call.destination = *access;
         instruction.options.call.options.hardcoded = analyser->program->hardcoded_functions[(int)IR_Hardcoded_Function_Type::MALLOC_SIZE_I32];
@@ -1579,9 +1578,8 @@ Expression_Analysis_Result semantic_analyser_analyse_expression
         instruction.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
         instruction.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(1);
         dynamic_array_push_back(&instruction.options.call.arguments, array_memory_size_access);
-        if (!write_to_access) {
+        if (create_temporary_access) {
             *access = ir_data_access_create_intermediate(code_block, array_type);
-            instruction.options.call.destination = *access;
         }
         instruction.options.call.destination = *access;
         instruction.options.call.options.hardcoded = analyser->program->hardcoded_functions[(int)IR_Hardcoded_Function_Type::MALLOC_SIZE_I32];
@@ -1623,7 +1621,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression
         );
         dynamic_array_push_back(&code_block->instructions, instruction);
 
-        if (write_to_access) {
+        if (create_temporary_access) {
             *access = instruction.options.address_of.destination;
             access->is_memory_access = true;
         }
@@ -1641,7 +1639,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression
     {
         IR_Data_Access expr_access;
         Expression_Analysis_Result access_expr_result = semantic_analyser_analyse_expression(
-            analyser, symbol_table, expression_node->children[0], code_block, false, &expr_access
+            analyser, symbol_table, expression_node->children[0], code_block, true, &expr_access
         );
         if (access_expr_result.error_occured) {
             return expression_analysis_result_make_error();
@@ -1707,13 +1705,10 @@ Expression_Analysis_Result semantic_analyser_analyse_expression
                     IR_Instruction move_instr;
                     move_instr.type = IR_Instruction_Type::MOVE;
                     move_instr.options.move.source = ir_data_access_create_constant_i32(analyser, type_signature->array_element_count);
-                    if (write_to_access) {
-                        move_instr.options.move.destination = *access;
+                    if (create_temporary_access) {
+                        *access = ir_data_access_create_intermediate(code_block, analyser->compiler->type_system.i32_type);
                     }
-                    else {
-                        move_instr.options.move.destination = ir_data_access_create_intermediate(code_block, analyser->compiler->type_system.i32_type);
-                        *access = move_instr.options.move.destination;
-                    }
+                    move_instr.options.move.destination = *access;
                     dynamic_array_push_back(&code_block->instructions, move_instr);
                     return expression_analysis_result_make(analyser->compiler->type_system.i32_type, false);
                 }
@@ -1724,13 +1719,10 @@ Expression_Analysis_Result semantic_analyser_analyse_expression
                     address_of_instr.type = IR_Instruction_Type::ADDRESS_OF;
                     address_of_instr.options.address_of.type = IR_Instruction_Address_Of_Type::DATA;
                     address_of_instr.options.address_of.source = access_instr.options.address_of.source;
-                    if (write_to_access) {
-                        address_of_instr.options.address_of.destination = *access;
+                    if (create_temporary_access) {
+                        *access = ir_data_access_create_intermediate(code_block, member_type);
                     }
-                    else {
-                        address_of_instr.options.address_of.destination = ir_data_access_create_intermediate(code_block, member_type);
-                        *access = address_of_instr.options.address_of.destination;
-                    }
+                    address_of_instr.options.address_of.destination = *access;
                     dynamic_array_push_back(&code_block->instructions, address_of_instr);
                     return expression_analysis_result_make(member_type, false);
                 }
@@ -1745,17 +1737,17 @@ Expression_Analysis_Result semantic_analyser_analyse_expression
         access_instr.options.address_of.destination = ir_data_access_create_intermediate(code_block, type_system_make_pointer(type_system, member_type));
         dynamic_array_push_back(&code_block->instructions, access_instr);
 
-        if (write_to_access) {
+        if (create_temporary_access) {
+            *access = access_instr.options.address_of.destination;
+            access->is_memory_access = true;
+        }
+        else {
             IR_Instruction move_instr;
             move_instr.type = IR_Instruction_Type::MOVE;
             move_instr.options.move.source = access_instr.options.address_of.destination;
             move_instr.options.move.source.is_memory_access = true;
             move_instr.options.move.destination = *access;
             dynamic_array_push_back(&code_block->instructions, move_instr);
-        }
-        else {
-            *access = access_instr.options.address_of.destination;
-            access->is_memory_access = true;
         }
 
         return expression_analysis_result_make(member_type, true);
@@ -1764,7 +1756,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression
     {
         IR_Data_Access operand_access;
         Expression_Analysis_Result operand_result = semantic_analyser_analyse_expression(
-            analyser, symbol_table, expression_node->children[0], code_block, false, &operand_access
+            analyser, symbol_table, expression_node->children[0], code_block, true, &operand_access
         );
         if (operand_result.error_occured) {
             return expression_analysis_result_make(type_system->bool_type, false);
@@ -1777,13 +1769,10 @@ Expression_Analysis_Result semantic_analyser_analyse_expression
         not_instr.type = IR_Instruction_Type::UNARY_OP;
         not_instr.options.unary_op.source = operand_access;
         not_instr.options.unary_op.type = IR_Instruction_Unary_OP_Type::NOT;
-        if (write_to_access) {
-            not_instr.options.unary_op.destination = *access;
+        if (create_temporary_access) {
+            *access = ir_data_access_create_intermediate(code_block, type_system->bool_type);
         }
-        else {
-            not_instr.options.unary_op.destination = ir_data_access_create_intermediate(code_block, type_system->bool_type);
-            *access = not_instr.options.unary_op.destination;
-        }
+        not_instr.options.unary_op.destination = *access;
         dynamic_array_push_back(&code_block->instructions, not_instr);
         return expression_analysis_result_make(type_system->bool_type, false);
     }
@@ -1791,7 +1780,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression
     {
         IR_Data_Access operand_access;
         Expression_Analysis_Result operand_result = semantic_analyser_analyse_expression(
-            analyser, symbol_table, expression_node->children[0], code_block, false, &operand_access
+            analyser, symbol_table, expression_node->children[0], code_block, true, &operand_access
         );
         if (operand_result.error_occured) {
             return expression_analysis_result_make_error();
@@ -1818,43 +1807,54 @@ Expression_Analysis_Result semantic_analyser_analyse_expression
         negate_instr.type = IR_Instruction_Type::UNARY_OP;
         negate_instr.options.unary_op.source = operand_access;
         negate_instr.options.unary_op.type = IR_Instruction_Unary_OP_Type::NEGATE;
-        if (write_to_access) {
-            negate_instr.options.unary_op.destination = *access;
+        if (create_temporary_access) {
+            *access = ir_data_access_create_intermediate(code_block, operand_result.type);
         }
-        else {
-            negate_instr.options.unary_op.destination = ir_data_access_create_intermediate(code_block, operand_result.type);
-            *access = negate_instr.options.unary_op.destination;
-        }
+        negate_instr.options.unary_op.destination = *access;
         dynamic_array_push_back(&code_block->instructions, negate_instr);
         return expression_analysis_result_make(operand_result.type, false);
     }
     case AST_Node_Type::EXPRESSION_UNARY_OPERATION_ADDRESS_OF:
     {
-        IR_Data_Access expr_access;
-        Expression_Analysis_Result result = semantic_analyser_analyse_expression(
-            analyser, symbol_table, expression_node->children[0], code_block, false, &expr_access
-        );
-        if (result.error_occured) {
+        Type_Signature* pointer_type;
+        IR_Instruction address_of_instr;
+        address_of_instr.type = IR_Instruction_Type::ADDRESS_OF;
+        AST_Node* child_node = &analyser->compiler->parser.nodes[expression_node->children[0]];
+        if (child_node->type == AST_Node_Type::EXPRESSION_VARIABLE_READ) 
+        {
+            Symbol* variable_symbol = symbol_table_find_symbol_of_identifer_node(
+                symbol_table, Symbol_Type::VARIABLE, &analyser->compiler->parser, child_node->children[0]
+            );
+            if (variable_symbol != 0) {
+                address_of_instr.options.address_of.type = IR_Instruction_Address_Of_Type::DATA;
+                address_of_instr.options.address_of.source = variable_symbol->options.variable_access;
+                pointer_type = type_system_make_pointer(type_system, ir_data_access_get_type(&variable_symbol->options.variable_access));
+            }
+            else 
+            {
+                Symbol* function_symbol = symbol_table_find_symbol_of_identifer_node(
+                    symbol_table, Symbol_Type::FUNCTION, &analyser->compiler->parser, child_node->children[0]
+                );
+                if (function_symbol != 0) {
+                    address_of_instr.options.address_of.type = IR_Instruction_Address_Of_Type::FUNCTION;
+                    address_of_instr.options.address_of.options.function = function_symbol->options.function;
+                    pointer_type = type_system_make_pointer(type_system, function_symbol->options.function->function_type);
+                }
+                else {
+                    semantic_analyser_log_error(analyser, "Identifier is neither function nor variable/parameter, so address of is not working", expression_index);
+                    return expression_analysis_result_make_error(); 
+                }
+            }
+        }
+        else {
+            semantic_analyser_log_error(analyser, "Address of only works on variables, parameters or functions!", expression_index);
             return expression_analysis_result_make_error();
         }
 
-        Type_Signature* pointer_type = type_system_make_pointer(type_system, result.type);
-        if (!result.has_memory_address) {
-            semantic_analyser_log_error(analyser, "Expression does not have a memory address!", expression_node->children[0]);
-            return expression_analysis_result_make(pointer_type, false);
-        }
-
-        IR_Instruction address_of_instr;
-        address_of_instr.type = IR_Instruction_Type::ADDRESS_OF;
-        address_of_instr.options.address_of.type = IR_Instruction_Address_Of_Type::DATA;
-        address_of_instr.options.address_of.source = expr_access;
-        if (write_to_access) {
-            address_of_instr.options.address_of.destination = *access;
-        }
-        else {
+        if (create_temporary_access) {
             *access = ir_data_access_create_intermediate(code_block, pointer_type);
-            address_of_instr.options.address_of.destination = *access;
         }
+        address_of_instr.options.address_of.destination = *access;
         dynamic_array_push_back(&code_block->instructions, address_of_instr);
         return expression_analysis_result_make(pointer_type, false);
     }
@@ -1862,7 +1862,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression
     {
         IR_Data_Access pointer_access;
         Expression_Analysis_Result result = semantic_analyser_analyse_expression(
-            analyser, symbol_table, expression_node->children[0], code_block, false, &pointer_access
+            analyser, symbol_table, expression_node->children[0], code_block, true, &pointer_access
         );
         if (result.error_occured) {
             return expression_analysis_result_make_error();
@@ -1875,15 +1875,15 @@ Expression_Analysis_Result semantic_analyser_analyse_expression
         }
 
         IR_Data_Access result_access = ir_data_access_dereference_pointer(code_block, pointer_access);;
-        if (write_to_access) {
+        if (create_temporary_access) {
+            *access = result_access;
+        }
+        else {
             IR_Instruction move_instr;
             move_instr.type = IR_Instruction_Type::MOVE;
             move_instr.options.move.destination = *access;
             move_instr.options.move.source = result_access;
             dynamic_array_push_back(&code_block->instructions, move_instr);
-        }
-        else {
-            *access = result_access;
         }
 
         return expression_analysis_result_make(signature->child_type, true);
@@ -1951,10 +1951,10 @@ Expression_Analysis_Result semantic_analyser_analyse_expression
         IR_Data_Access left_access;
         IR_Data_Access right_access;
         Expression_Analysis_Result left_expr_result = semantic_analyser_analyse_expression(
-            analyser, symbol_table, expression_node->children[0], code_block, false, &left_access
+            analyser, symbol_table, expression_node->children[0], code_block, true, &left_access
         );
         Expression_Analysis_Result right_expr_result = semantic_analyser_analyse_expression(
-            analyser, symbol_table, expression_node->children[1], code_block, false, &right_access
+            analyser, symbol_table, expression_node->children[1], code_block, true, &right_access
         );
         if (left_expr_result.error_occured || right_expr_result.error_occured) {
             return expression_analysis_result_make_error();
@@ -2077,13 +2077,10 @@ Expression_Analysis_Result semantic_analyser_analyse_expression
         binary_op_instr.options.binary_op.type = binary_op_type;
         binary_op_instr.options.binary_op.operand_left = left_access;
         binary_op_instr.options.binary_op.operand_right = right_access;
-        if (write_to_access) {
-            binary_op_instr.options.binary_op.destination = *access;
-        }
-        else {
+        if (create_temporary_access) {
             *access = ir_data_access_create_intermediate(code_block, result_type);
-            binary_op_instr.options.binary_op.destination = *access;
         }
+        binary_op_instr.options.binary_op.destination = *access;
         dynamic_array_push_back(&code_block->instructions, binary_op_instr);
 
         return expression_analysis_result_make(result_type, false);
@@ -2122,7 +2119,7 @@ Statement_Analysis_Result semantic_analyser_analyse_statement(
             {
                 return_instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_DATA;
                 Expression_Analysis_Result expr_result = semantic_analyser_analyse_expression(
-                    analyser, symbol_table, statement_node->children[0], code_block, false, &return_instr.options.return_instr.options.return_value
+                    analyser, symbol_table, statement_node->children[0], code_block, true, &return_instr.options.return_instr.options.return_value
                 );
                 if (!expr_result.error_occured) {
                     if (expr_result.type == analyser->compiler->type_system.void_type) {
@@ -2166,7 +2163,7 @@ Statement_Analysis_Result semantic_analyser_analyse_statement(
             return Statement_Analysis_Result::NO_RETURN;
         }
         IR_Data_Access temp;
-        semantic_analyser_analyse_expression(analyser, symbol_table, statement_node->children[0], code_block, false, &temp);
+        semantic_analyser_analyse_expression(analyser, symbol_table, statement_node->children[0], code_block, true, &temp);
         return Statement_Analysis_Result::NO_RETURN;
     }
     case AST_Node_Type::STATEMENT_BLOCK: {
@@ -2184,7 +2181,7 @@ Statement_Analysis_Result semantic_analyser_analyse_statement(
         IR_Instruction if_instruction;
         if_instruction.type = IR_Instruction_Type::IF;
         Expression_Analysis_Result expression_result = semantic_analyser_analyse_expression(
-            analyser, symbol_table, statement_node->children[0], code_block, false, &if_instruction.options.if_instr.condition
+            analyser, symbol_table, statement_node->children[0], code_block, true, &if_instruction.options.if_instr.condition
         );
         if (!expression_result.error_occured) {
             if (expression_result.type != analyser->compiler->type_system.bool_type) {
@@ -2195,17 +2192,17 @@ Statement_Analysis_Result semantic_analyser_analyse_statement(
         if_instruction.options.if_instr.true_branch = ir_code_block_create(code_block->function);
         if_instruction.options.if_instr.false_branch = ir_code_block_create(code_block->function);
         Statement_Analysis_Result true_branch_result = semantic_analyser_analyse_statement_block(
-            analyser, symbol_table, statement_node->children[0], if_instruction.options.if_instr.true_branch
+            analyser, symbol_table, statement_node->children[1], if_instruction.options.if_instr.true_branch
         );
         dynamic_array_push_back(&code_block->instructions, if_instruction);
-        return true_branch_result;
+        return Statement_Analysis_Result::NO_RETURN;
     }
     case AST_Node_Type::STATEMENT_IF_ELSE:
     {
         IR_Instruction if_instruction;
         if_instruction.type = IR_Instruction_Type::IF;
         Expression_Analysis_Result expression_result = semantic_analyser_analyse_expression(
-            analyser, symbol_table, statement_node->children[0], code_block, false, &if_instruction.options.if_instr.condition
+            analyser, symbol_table, statement_node->children[0], code_block, true, &if_instruction.options.if_instr.condition
         );
         if (!expression_result.error_occured) {
             if (expression_result.type != analyser->compiler->type_system.bool_type) {
@@ -2231,7 +2228,7 @@ Statement_Analysis_Result semantic_analyser_analyse_statement(
         IR_Instruction while_instruction;
         while_instruction.type = IR_Instruction_Type::WHILE;
         Expression_Analysis_Result expression_result = semantic_analyser_analyse_expression(
-            analyser, symbol_table, statement_node->children[0], code_block, false, &while_instruction.options.while_instr.condition
+            analyser, symbol_table, statement_node->children[0], code_block, true, &while_instruction.options.while_instr.condition
         );
         if (!expression_result.error_occured) {
             if (expression_result.type != analyser->compiler->type_system.bool_type) {
@@ -2262,7 +2259,7 @@ Statement_Analysis_Result semantic_analyser_analyse_statement(
     {
         IR_Data_Access delete_access;
         Expression_Analysis_Result expr_result = semantic_analyser_analyse_expression(
-            analyser, symbol_table, statement_node->children[0], code_block, false, &delete_access
+            analyser, symbol_table, statement_node->children[0], code_block, true, &delete_access
         );
         if (expr_result.error_occured) {
             return Statement_Analysis_Result::NO_RETURN;
@@ -2302,7 +2299,7 @@ Statement_Analysis_Result semantic_analyser_analyse_statement(
     {
         IR_Data_Access left_access;
         Expression_Analysis_Result left_result = semantic_analyser_analyse_expression(
-            analyser, symbol_table, statement_node->children[0], code_block, false, &left_access
+            analyser, symbol_table, statement_node->children[0], code_block, true, &left_access
         );
         if (left_result.error_occured) {
             return Statement_Analysis_Result::NO_RETURN;
@@ -2310,7 +2307,7 @@ Statement_Analysis_Result semantic_analyser_analyse_statement(
 
         IR_Data_Access right_access;
         Expression_Analysis_Result right_result = semantic_analyser_analyse_expression(
-            analyser, symbol_table, statement_node->children[1], code_block, false, &right_access
+            analyser, symbol_table, statement_node->children[1], code_block, true, &right_access
         );
         if (right_result.error_occured) {
             return Statement_Analysis_Result::NO_RETURN;

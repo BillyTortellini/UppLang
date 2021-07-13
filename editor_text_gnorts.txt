@@ -1,0 +1,13 @@
+main :: ()
+{
+    Greeter::greet(15);
+}
+
+module Greeter
+{
+    greet :: (x: int)
+    {
+        print_string("Gnorts, Mr. Alien!");
+    }
+}
+

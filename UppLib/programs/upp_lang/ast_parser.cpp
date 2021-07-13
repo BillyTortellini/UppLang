@@ -1464,6 +1464,7 @@ bool ast_parser_parse_module(AST_Parser* parser, int parent)
     }
     parser->index += 3;
     int node_index = ast_parser_get_next_node_index(parser, parent);
+    parser->nodes[node_index].name_id = parser->lexer->tokens[parser->index - 2].attribute.identifier_number;
     parser->nodes[node_index].type = AST_Node_Type::MODULE;
 
     while (parser->index < parser->lexer->tokens.size)

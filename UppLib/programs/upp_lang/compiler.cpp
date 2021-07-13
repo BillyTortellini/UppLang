@@ -48,7 +48,7 @@ bool enable_output = true;
 bool output_lexing = false;
 bool output_identifiers = false;
 bool output_ast = true;
-bool output_type_system = false;
+bool output_type_system = true;
 bool output_im = false;
 bool output_bytecode = false;
 
@@ -56,7 +56,7 @@ void compiler_compile(Compiler* compiler, String* source_code, bool generate_cod
 {
     bool do_lexing = enable_lexing;
     bool do_parsing = do_lexing && enable_parsing;
-    bool do_analysis = do_parsing && enable_analysis && generate_code;
+    bool do_analysis = do_parsing && enable_analysis;
     bool do_im_gen = do_analysis && enable_im_gen && generate_code;
     bool do_bytecode_gen = do_im_gen && enable_bytecode_gen;
 
@@ -112,6 +112,11 @@ void compiler_compile(Compiler* compiler, String* source_code, bool generate_cod
         if (do_analysis && output_type_system) {
             logg("--------TYPE SYSTEM RESULT--------:\n");
             type_system_print(&compiler->type_system);
+            logg("--------ROOT TABLE RESULT---------\n");
+            String root_table = string_create_empty(1024);
+            SCOPE_EXIT(string_destroy(&root_table));
+            symbol_table_append_to_string(&root_table, compiler->analyser.root_table, &compiler->lexer, true);
+            logg("%s", root_table.characters);
         }
         if (compiler->analyser.errors.size == 0 && true)
         {
