@@ -47,7 +47,7 @@ bool enable_output = true;
 
 bool output_lexing = false;
 bool output_identifiers = false;
-bool output_ast = true;
+bool output_ast = false;
 bool output_type_system = true;
 bool output_im = false;
 bool output_bytecode = false;
@@ -117,7 +117,13 @@ void compiler_compile(Compiler* compiler, String* source_code, bool generate_cod
             SCOPE_EXIT(string_destroy(&root_table));
             symbol_table_append_to_string(&root_table, compiler->analyser.root_table, &compiler->lexer, true);
             logg("%s", root_table.characters);
+
+            logg("--------PROGRAM---------\n");
+            string_reset(&root_table);
+            ir_program_append_to_string(compiler->analyser.program, &root_table);
+            logg("%s", root_table.characters);
         }
+
         if (compiler->analyser.errors.size == 0 && true)
         {
             String result_str = string_create_empty(32);

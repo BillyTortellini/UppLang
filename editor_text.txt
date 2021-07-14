@@ -1,6 +1,5 @@
 main :: () -> void 
 {
-    /*
     scope_test();
     struct_test();
     array_test();
@@ -9,7 +8,6 @@ main :: () -> void
     global_test();
     string_test();
     function_ptr_test();
-    */
 }
 
 int_add :: (a: int, b: int) -> int { return a + b; }
@@ -257,6 +255,25 @@ cast_test :: () -> void
     }
 }
 
+array_bubble_sort :: (a: []int) -> void
+{
+    i := 0;
+    while (i < a.size)
+    {
+        j := i + 1;
+        while (j < a.size) 
+        {
+            if (a[j] < a[i]) {
+                swap := a[i];
+                a[i] = a[j];
+                a[j] = swap;
+            }
+            j = j+1;
+        }
+        i = i+1;
+    }
+}
+
 array_fill_random :: (array: []int, max: int) -> void
 {
     i := 0;
@@ -368,24 +385,6 @@ array_test :: () -> void
     array_print(a2);
 }
 
-array_bubble_sort :: (a: []int) -> void
-{
-    i := 0;
-    while (i < a.size)
-    {
-        j := i + 1;
-        while (j < a.size) 
-        {
-            if (a[j] < a[i]) {
-                swap := a[i];
-                a[i] = a[j];
-                a[j] = swap;
-            }
-            j = j+1;
-        }
-        i = i+1;
-    }
-}
 
 array_set_even_constant :: (array: []int, c: int) -> void
 {

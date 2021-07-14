@@ -411,6 +411,7 @@ struct IR_Program
     IR_Constant_Pool constant_pool;
     IR_Function* entry_function;
 };
+void ir_program_append_to_string(IR_Program* program, String* string);
 
 /*
     Semantic Analyser
