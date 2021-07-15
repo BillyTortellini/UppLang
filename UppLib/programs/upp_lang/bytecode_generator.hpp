@@ -2,6 +2,8 @@
 
 #include "../../datastructures/dynamic_array.hpp"
 #include "../../datastructures/string.hpp"
+#include "../../datastructures/hashtable.hpp"
+#include "semantic_analyser.hpp"
 
 struct Compiler;
 
@@ -24,26 +26,22 @@ enum class Instruction_Type
     MEMORY_COPY, // op1 = dest_address_reg, op2 = src_address_reg, op3 = size
     READ_GLOBAL, // op1 = dest_address_reg, op2 = global offset, op3 = size
     WRITE_GLOBAL, // op1 = dest_global offset, op2 = src_reg, op3 = size
+    READ_CONSTANT, // op1 = dest_reg, op2 = constant offset, op3 = constant size
     U64_ADD_CONSTANT_I32, // op1 = dest_reg, op2 = constant offset
     U64_MULTIPLY_ADD_I32, // op1 = dest_reg, op2 = base_reg, op3 = index_reg, op4 = size
 
     JUMP, // op1 = instruction_index
     JUMP_ON_TRUE, // op1 = instruction_index, op2 = cnd_reg
     JUMP_ON_FALSE, // op1 = instruction_index, op2 = cnd_reg
-    CALL, // Pushes return address, op1 = instruction_index, op2 = stack_offset for new frame
+    CALL_FUNCTION, // Pushes return address, op1 = instruction_index, op2 = stack_offset for new frame
     CALL_FUNCTION_POINTER, // op1 = src_reg, op2 = stack_offset for new frame
     CALL_HARDCODED_FUNCTION, // op1 = hardcoded_function_type, op2 = stack_offset for new frame
     RETURN, // Pops return address, op1 = return_value reg, op2 = return_size (Capped at 16 bytes)
-    EXIT, // op1 = return_value_register, op2 = return size (Capped at 16), op3 = exit_code
+    EXIT, // op1 = exit_code
 
     LOAD_RETURN_VALUE, // op1 = dst_reg, op2 = size
     LOAD_REGISTER_ADDRESS, // op1 = dest_reg, op2 = register_to_load
     LOAD_GLOBAL_ADDRESS, // op1 = dest_reg, op2 = global offset
-    LOAD_CONSTANT_F32, // op1 = dest_reg, op2 = value // Todo: Only works because we dont 64bit constants yet
-    LOAD_CONSTANT_I32, // op1 = dest_reg, op2 = value // Todo: Only works because we dont 64bit constants yet
-    LOAD_CONSTANT_BOOLEAN, // op1 = dest_reg, op2 = value // Todo: Only works because we dont 64bit constants yet
-    LOAD_NULLPTR, // op1 = dest_reg
-    LOAD_CONSTANT_U64, // op1 = dest_reg, op2 = constant_index in constant_u64 buffer
     LOAD_FUNCTION_LOCATION, // op1 = dest_reg, op2 = funciton_index
 
     CAST_INTEGER_DIFFERENT_SIZE, // op1 = dst_reg, op2 = src_reg, op3 = dst_prim_type, op4 = src_prim_type
@@ -196,40 +194,35 @@ struct Bytecode_Instruction
     int op4;
 };
 
-struct Function_Call_Location
+struct Function_Reference
 {
-    int function_index;
-    int call_instruction_location;
-};
-
-struct Load_Function_Pointer_Location
-{
-    int function_index;
-    int instruction_location;
+    IR_Function* function;
+    int instruction_index;
 };
 
 struct Bytecode_Generator
 {
     // Result data
     Dynamic_Array<Bytecode_Instruction> instructions;
-    Dynamic_Array<int> function_locations;
-    Dynamic_Array<u64> constants_u64;
+    Hashtable<IR_Function*, int> function_locations;
+
+    // Program Information
+    Dynamic_Array<Dynamic_Array<int>> stack_offsets;
+    Hashtable<IR_Code_Block*, int> code_block_register_stack_offset_index;
+    Hashtable<IR_Function*, int> function_parameter_stack_offset_index;
+    Dynamic_Array<int> global_data_offsets;
 
     int global_data_size;
     int entry_point_index;
     int maximum_function_stack_depth;
 
     // Data required for generation
+    IR_Program* ir_program;
     Compiler* compiler;
-    Dynamic_Array<Function_Call_Location> function_calls;
-    Dynamic_Array<int> break_instructions_to_fill_out;
-    Dynamic_Array<int> continue_instructions_to_fill_out;
-
-    Dynamic_Array<int> parameter_stack_offsets;
-    Dynamic_Array<int> variable_stack_offsets;
-    Dynamic_Array<int> intermediate_stack_offsets;
-    Dynamic_Array<int> global_offsets;
-    int tmp_stack_offset;
+    Dynamic_Array<Function_Reference> fill_out_calls;
+    Dynamic_Array<int> fill_out_breaks;
+    Dynamic_Array<int> fill_out_continues;
+    int current_stack_offset;
 };
 
 Bytecode_Generator bytecode_generator_create();
@@ -237,6 +230,5 @@ void bytecode_generator_destroy(Bytecode_Generator* generator);
 void bytecode_generator_generate(Bytecode_Generator* generator, Compiler* compiler);
 void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction instruction);
 void bytecode_generator_append_bytecode_to_string(Bytecode_Generator* generator, String* string);
-void bytecode_generator_calculate_function_variable_and_parameter_offsets(Bytecode_Generator* generator, int function_index);
 
 int align_offset_next_multiple(int offset, int alignment);

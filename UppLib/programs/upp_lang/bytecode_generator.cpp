@@ -1,6 +1,7 @@
 #include "bytecode_generator.hpp"
 
 #include "compiler.hpp"
+#include "../../utility/hash_functions.hpp"
 
 int align_offset_next_multiple(int offset, int alignment) 
 {
@@ -15,32 +16,42 @@ int align_offset_next_multiple(int offset, int alignment)
 Bytecode_Generator bytecode_generator_create()
 {
     Bytecode_Generator result;
+    // Code
     result.instructions = dynamic_array_create_empty<Bytecode_Instruction>(64);
-    result.break_instructions_to_fill_out = dynamic_array_create_empty<int>(64);
-    result.continue_instructions_to_fill_out = dynamic_array_create_empty<int>(64);
-    result.function_locations = dynamic_array_create_empty<int>(64);
-    result.function_calls = dynamic_array_create_empty<Function_Call_Location>(64);
-    result.variable_stack_offsets = dynamic_array_create_empty<int>(256);
-    result.parameter_stack_offsets = dynamic_array_create_empty<int>(256);
-    result.global_offsets = dynamic_array_create_empty<int>(256);
-    result.intermediate_stack_offsets = dynamic_array_create_empty<int>(256);
-    result.constants_u64 = dynamic_array_create_empty<u64>(256);
-    result.maximum_function_stack_depth = 0;
+
+    // Code Information
+    result.function_locations = hashtable_create_pointer_empty<IR_Function*, int>(64);
+    result.function_parameter_stack_offset_index = hashtable_create_pointer_empty<IR_Function*, int>(64);
+    result.code_block_register_stack_offset_index = hashtable_create_pointer_empty<IR_Code_Block*, int>(64);
+    result.stack_offsets = dynamic_array_create_empty<Dynamic_Array<int>>(64);
+    result.global_data_offsets = dynamic_array_create_empty<int>(256);
+
+    // Fill outs
+    result.fill_out_breaks = dynamic_array_create_empty<int>(64);
+    result.fill_out_continues = dynamic_array_create_empty<int>(64);
+    result.fill_out_calls = dynamic_array_create_empty<Function_Reference>(64);
     return result;
 }
 
 void bytecode_generator_destroy(Bytecode_Generator* generator)
 {
+    // Code
     dynamic_array_destroy(&generator->instructions);
-    dynamic_array_destroy(&generator->break_instructions_to_fill_out);
-    dynamic_array_destroy(&generator->continue_instructions_to_fill_out);
-    dynamic_array_destroy(&generator->function_calls);
-    dynamic_array_destroy(&generator->function_locations);
-    dynamic_array_destroy(&generator->variable_stack_offsets);
-    dynamic_array_destroy(&generator->global_offsets);
-    dynamic_array_destroy(&generator->intermediate_stack_offsets);
-    dynamic_array_destroy(&generator->parameter_stack_offsets);
-    dynamic_array_destroy(&generator->constants_u64);
+
+    // Code Information
+    hashtable_destroy(&generator->function_locations);
+    hashtable_destroy(&generator->function_parameter_stack_offset_index);
+    hashtable_destroy(&generator->code_block_register_stack_offset_index);
+    dynamic_array_destroy(&generator->global_data_offsets);
+    for (int i = 0; i < generator->stack_offsets.size; i++) {
+        dynamic_array_destroy(&generator->stack_offsets[i]);
+    }
+    dynamic_array_destroy(&generator->stack_offsets);
+
+    // Fill outs
+    dynamic_array_destroy(&generator->fill_out_breaks);
+    dynamic_array_destroy(&generator->fill_out_continues);
+    dynamic_array_destroy(&generator->fill_out_calls);
 } 
 
 Bytecode_Instruction instruction_make_0(Instruction_Type type) {
@@ -90,85 +101,98 @@ int bytecode_generator_add_instruction(Bytecode_Generator* generator, Bytecode_I
 
 int bytecode_generator_create_temporary_stack_offset(Bytecode_Generator* generator, Type_Signature* type) 
 {
-    generator->tmp_stack_offset = align_offset_next_multiple(generator->tmp_stack_offset, type->alignment_in_bytes);
-    int result = generator->tmp_stack_offset;
-    generator->tmp_stack_offset += type->size_in_bytes;
+    generator->current_stack_offset = align_offset_next_multiple(generator->current_stack_offset, type->alignment_in_bytes);
+    int result = generator->current_stack_offset;
+    generator->current_stack_offset += type->size_in_bytes;
     return result;
 }
 
-int bytecode_generator_get_data_access_offset(Bytecode_Generator* generator, Data_Access access)
+int bytecode_generator_data_access_to_stack_offset(Bytecode_Generator* generator, IR_Data_Access access)
 {
-    switch (access.access_type)
-    {
-    case Data_Access_Type::GLOBAL_ACCESS:
-        return generator->global_offsets[access.access_index];
-    case Data_Access_Type::INTERMEDIATE_ACCESS:
-        return generator->intermediate_stack_offsets[access.access_index];
-    case Data_Access_Type::PARAMETER_ACCESS:
-        return generator->parameter_stack_offsets[access.access_index];
-    case Data_Access_Type::VARIABLE_ACCESS:
-        return generator->variable_stack_offsets[access.access_index];
-    }
-    panic("Should not happen");
-    return 0;
-}
+    Type_Signature* access_type = ir_data_access_get_type(&access);
 
-int bytecode_generator_data_access_to_stack_offset(Bytecode_Generator* generator, Data_Access access, int function_index)
-{
-    Type_Signature* access_type = intermediate_generator_get_access_signature(&generator->compiler->intermediate_generator, access, function_index);
-    int result_access_offset;
-    switch (access.access_type)
+    int stack_offset = 0;
+    switch (access.type)
     {
-    case Data_Access_Type::GLOBAL_ACCESS:
-        result_access_offset = bytecode_generator_create_temporary_stack_offset(generator, access_type);
-        bytecode_generator_add_instruction(generator,
-            instruction_make_3(Instruction_Type::READ_GLOBAL, result_access_offset, generator->global_offsets[access.access_index], access_type->size_in_bytes)
-        );
+    case IR_Data_Access_Type::CONSTANT: {
+        Bytecode_Instruction load_instruction;
+        load_instruction.instruction_type = Instruction_Type::READ_CONSTANT;
+        load_instruction.op2 = access.index;
+        if (access.is_memory_access) {
+            load_instruction.op1 = bytecode_generator_create_temporary_stack_offset(generator, generator->compiler->type_system.void_ptr_type);
+            load_instruction.op3 = 8;
+        }
+        else {
+            load_instruction.op1 = bytecode_generator_create_temporary_stack_offset(generator, access_type);
+            load_instruction.op3 = access_type->size_in_bytes;
+        }
+        stack_offset = load_instruction.op1;
+        bytecode_generator_add_instruction(generator, load_instruction);
         break;
-    case Data_Access_Type::INTERMEDIATE_ACCESS:
-        result_access_offset = generator->intermediate_stack_offsets[access.access_index];
-        break;
-    case Data_Access_Type::PARAMETER_ACCESS:
-        result_access_offset = generator->parameter_stack_offsets[access.access_index];
-        break;
-    case Data_Access_Type::VARIABLE_ACCESS:
-        result_access_offset = generator->variable_stack_offsets[access.access_index];
-        break;
-    default: panic("What");
     }
-    if (access.is_pointer_access) 
+    case IR_Data_Access_Type::GLOBAL_DATA: {
+        Bytecode_Instruction load_instruction;
+        load_instruction.instruction_type = Instruction_Type::READ_GLOBAL;
+        load_instruction.op2 = access.index;
+        if (access.is_memory_access) {
+            load_instruction.op1 = bytecode_generator_create_temporary_stack_offset(generator, generator->compiler->type_system.void_ptr_type);
+            load_instruction.op3 = 8;
+        }
+        else {
+            load_instruction.op1 = bytecode_generator_create_temporary_stack_offset(generator, access_type);
+            load_instruction.op3 = access_type->size_in_bytes;
+        }
+        stack_offset = load_instruction.op1;
+        bytecode_generator_add_instruction(generator, load_instruction);
+        break;
+    }
+    case IR_Data_Access_Type::PARAMETER: {
+        Dynamic_Array<int>* parameter_offsets = &generator->stack_offsets[
+            *hashtable_find_element(&generator->function_parameter_stack_offset_index, access.option.function)
+        ];
+        stack_offset = parameter_offsets->data[access.index];
+        break;
+    }
+    case IR_Data_Access_Type::REGISTER: {
+        Dynamic_Array<int>* register_offsets = &generator->stack_offsets[
+            *hashtable_find_element(&generator->code_block_register_stack_offset_index, access.option.definition_block)
+        ];
+        stack_offset = register_offsets->data[access.index];
+        break;
+    }
+    default: panic("Should not happen");
+    }
+
+    if (access.is_memory_access)
     {
-        Type_Signature* type = access_type->child_type;
-        int result_offset = bytecode_generator_create_temporary_stack_offset(generator, type);
+        int result_offset = bytecode_generator_create_temporary_stack_offset(generator, access_type);
         bytecode_generator_add_instruction(
             generator,
             instruction_make_3(
                 Instruction_Type::READ_MEMORY,
                 result_offset,
-                result_access_offset,
-                type->size_in_bytes
+                stack_offset,
+                access_type->size_in_bytes
             )
         );
         return result_offset;
     }
     else {
-        return result_access_offset;
+        return stack_offset;
     }
 }
 
-int bytecode_generator_add_instruction_with_destination_access(Bytecode_Generator* generator, 
-    Data_Access destination, Bytecode_Instruction instr, int function_index
-)
+int bytecode_generator_add_instruction_with_destination_access(Bytecode_Generator* generator, IR_Data_Access destination, Bytecode_Instruction instr)
 {
-    if (destination.is_pointer_access)
+    Type_Signature* type = ir_data_access_get_type(&destination);
+    if (destination.is_memory_access)
     {
-        Type_Signature* type = intermediate_generator_get_access_signature(&generator->compiler->intermediate_generator, destination, function_index)->child_type;
         int source_reg_offset = bytecode_generator_create_temporary_stack_offset(generator, type);
         instr.op1 = source_reg_offset;
         int instruction_index = bytecode_generator_add_instruction(generator, instr);
 
-        destination.is_pointer_access = false;
-        int pointer_stack_offset = bytecode_generator_data_access_to_stack_offset(generator, destination, function_index);
+        destination.is_memory_access = false;
+        int pointer_stack_offset = bytecode_generator_data_access_to_stack_offset(generator, destination);
 
         bytecode_generator_add_instruction(
             generator,
@@ -183,9 +207,12 @@ int bytecode_generator_add_instruction_with_destination_access(Bytecode_Generato
     }
     else
     {
-        if (destination.access_type == Data_Access_Type::GLOBAL_ACCESS)
+        switch (destination.type)
         {
-            Type_Signature* type = intermediate_generator_get_access_signature(&generator->compiler->intermediate_generator, destination, function_index);
+        case IR_Data_Access_Type::CONSTANT:
+            panic("No writes to constant value");
+            break;
+        case IR_Data_Access_Type::GLOBAL_DATA: {
             int source_reg_offset = bytecode_generator_create_temporary_stack_offset(generator, type);
             instr.op1 = source_reg_offset;
             int instruction_index = bytecode_generator_add_instruction(generator, instr);
@@ -193,86 +220,394 @@ int bytecode_generator_add_instruction_with_destination_access(Bytecode_Generato
                 generator,
                 instruction_make_3(
                     Instruction_Type::WRITE_GLOBAL,
-                    generator->global_offsets[destination.access_index],
+                    generator->global_data_offsets[destination.index],
                     source_reg_offset,
                     type->size_in_bytes
                 )
             );
             return instruction_index;
         }
-        else {
-            instr.op1 = bytecode_generator_data_access_to_stack_offset(generator, destination, function_index);
+        case IR_Data_Access_Type::PARAMETER:
+            instr.op1 = bytecode_generator_data_access_to_stack_offset(generator, destination);
+            return bytecode_generator_add_instruction(generator, instr);
+        case IR_Data_Access_Type::REGISTER:
+            instr.op1 = bytecode_generator_data_access_to_stack_offset(generator, destination);
             return bytecode_generator_add_instruction(generator, instr);
         }
     }
 }
 
-void bytecode_generator_move_accesses(Bytecode_Generator* generator, Data_Access destination, Data_Access source, int function_index)
+void bytecode_generator_move_accesses(Bytecode_Generator* generator, IR_Data_Access destination, IR_Data_Access source)
 {
-    Intermediate_Function* function = &generator->compiler->intermediate_generator.functions[function_index];
     int move_byte_size;
-    if (destination.is_pointer_access) {
-        move_byte_size = intermediate_generator_get_access_signature(&generator->compiler->intermediate_generator, destination, function_index)->child_type->size_in_bytes;
+    if (destination.is_memory_access) {
+        move_byte_size = 8;
     }
     else {
-        move_byte_size = intermediate_generator_get_access_signature(&generator->compiler->intermediate_generator, destination, function_index)->size_in_bytes;
+        move_byte_size = ir_data_access_get_type(&destination)->size_in_bytes;
     }
 
-    int source_offset = bytecode_generator_data_access_to_stack_offset(generator, source, function_index);
+    int source_offset = bytecode_generator_data_access_to_stack_offset(generator, source);
     Bytecode_Instruction instr = instruction_make_3(Instruction_Type::MOVE_STACK_DATA, 0, source_offset, move_byte_size);
-    bytecode_generator_add_instruction_with_destination_access(generator, destination, instr, function_index);
+    bytecode_generator_add_instruction_with_destination_access(generator, destination, instr);
 }
 
-void bytecode_generator_generate_load_constant_instruction(Bytecode_Generator* generator, int function_index, int instruction_index)
+void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Code_Block* code_block)
 {
-    Intermediate_Function* function = &generator->compiler->intermediate_generator.functions[function_index];
-    Intermediate_Instruction* instruction = &function->instructions[instruction_index];
-
-    Instruction_Type result_type;
-    int result_data;
-    int result_size;
-    if (instruction->type == Intermediate_Instruction_Type::LOAD_CONSTANT_F32) {
-        result_type = Instruction_Type::LOAD_CONSTANT_F32;
-        result_data = *((int*)&instruction->constant_f32_value);
-        result_size = 4;
-    }
-    else if (instruction->type == Intermediate_Instruction_Type::LOAD_CONSTANT_I32) {
-        result_type = Instruction_Type::LOAD_CONSTANT_I32;
-        result_data = instruction->constant_i32_value;
-        result_size = 4;
-    }
-    else if (instruction->type == Intermediate_Instruction_Type::LOAD_CONSTANT_BOOL) {
-        result_type = Instruction_Type::LOAD_CONSTANT_BOOLEAN;
-        result_data = instruction->constant_bool_value ? 1 : 0;
-        result_size = 1;
-    }
-    else if (instruction->type == Intermediate_Instruction_Type::LOAD_NULLPTR) {
-        result_type = Instruction_Type::LOAD_NULLPTR;
-        result_data = 0;
-        result_size = 8;
-    }
-    else if (instruction->type == Intermediate_Instruction_Type::LOAD_STRING_POINTER) {
-        result_type = Instruction_Type::LOAD_CONSTANT_U64;
-        u64 char_ptr = (u64) instruction->constant_string_value;
-        dynamic_array_push_back(&generator->constants_u64, char_ptr);
-        result_data = generator->constants_u64.size - 1;
-        result_size = 8;
-    }
-    else panic("not implemented yet?!?");
-
-    bytecode_generator_add_instruction_with_destination_access(generator, instruction->destination, instruction_make_2(result_type, 0, result_data), function_index);
-}
-
-void bytecode_generator_generate_function_instruction_slice(
-    Bytecode_Generator* generator, int function_index, int instruction_start_index, int instruction_end_index_exclusive
-)
-{
-    Intermediate_Function* function = &generator->compiler->intermediate_generator.functions[function_index];
-    for (int instruction_index = instruction_start_index;
-        instruction_index < function->instructions.size && instruction_index < instruction_end_index_exclusive;
-        instruction_index++)
+    // Generate Stack offsets
+    int rewind_stack_offset = generator->current_stack_offset;
+    SCOPE_EXIT(generator->current_stack_offset = rewind_stack_offset);
     {
-        Intermediate_Instruction* instr = &function->instructions[instruction_index];
+        Dynamic_Array<int> register_stack_offsets = dynamic_array_create_empty<int>(code_block->registers.size);
+        generator->current_stack_offset = stack_offsets_calculate(&code_block->registers, &register_stack_offsets, generator->current_stack_offset);
+        dynamic_array_push_back(&generator->stack_offsets, register_stack_offsets);
+        hashtable_insert_element(&generator->code_block_register_stack_offset_index, code_block, generator->stack_offsets.size - 1);
+    }
+
+    // Generate instructions
+    for (int i = 0; i < code_block->instructions.size; i++)
+    {
+        IR_Instruction* instr = &code_block->instructions[i];
+
+        switch (instr->type)
+        {
+        case IR_Instruction_Type::FUNCTION_CALL:
+        {
+            IR_Instruction_Call* call = &instr->options.call;
+            Type_Signature* function_sig = 0;
+            switch (call->call_type)
+            {
+            case IR_Instruction_Call_Type::FUNCTION_CALL:
+                function_sig = call->options.function->function_type;
+                break;
+            case IR_Instruction_Call_Type::FUNCTION_POINTER_CALL:
+                function_sig = ir_data_access_get_type(&call->options.pointer_access);
+                break;
+            case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
+                function_sig = call->options.hardcoded->signature;
+                break;
+            default: panic("Error");
+            }
+
+            // Put arguments into the correct place on the stack
+            int pointer_offset = bytecode_generator_create_temporary_stack_offset(generator, generator->compiler->type_system.void_ptr_type);
+            int argument_stack_offset = align_offset_next_multiple(generator->current_stack_offset, 16); // I think 16 is the hightest i have
+            for (int i = 0; i < function_sig->parameter_types.size; i++)
+            {
+                Type_Signature* parameter_sig = function_sig->parameter_types[i];
+                argument_stack_offset = align_offset_next_multiple(argument_stack_offset, parameter_sig->alignment_in_bytes);
+                IR_Data_Access* argument_access = &call->arguments[i];
+
+                Bytecode_Instruction load_instruction;
+                if (argument_access->is_memory_access) {
+                    load_instruction.op1 = pointer_offset;
+                    load_instruction.op3 = 8;
+                }
+                else {
+                    load_instruction.op1 = argument_stack_offset;
+                    load_instruction.op3 = parameter_sig->size_in_bytes;
+                }
+                switch (argument_access->type)
+                {
+                case IR_Data_Access_Type::CONSTANT: {
+                    load_instruction.instruction_type = Instruction_Type::READ_CONSTANT;
+                    load_instruction.op2 = argument_access->index;
+                    break;
+                }
+                case IR_Data_Access_Type::GLOBAL_DATA: {
+                    load_instruction.instruction_type = Instruction_Type::READ_GLOBAL;
+                    load_instruction.op2 = argument_access->index;
+                    break;
+                }
+                case IR_Data_Access_Type::PARAMETER: {
+                    load_instruction.instruction_type = Instruction_Type::MOVE_STACK_DATA;
+                    Dynamic_Array<int>* parameter_offsets = &generator->stack_offsets[
+                        *hashtable_find_element(&generator->function_parameter_stack_offset_index, code_block->function)
+                    ];
+                    load_instruction.op2 = parameter_offsets->data[argument_access->index];
+                    break;
+                }
+                case IR_Data_Access_Type::REGISTER: {
+                    load_instruction.instruction_type = Instruction_Type::MOVE_STACK_DATA;
+                    Dynamic_Array<int>* register_offsets = &generator->stack_offsets[
+                        *hashtable_find_element(&generator->code_block_register_stack_offset_index, code_block)
+                    ];
+                    load_instruction.op2 = register_offsets->data[argument_access->index];
+                    break;
+                }
+                default: panic("Should not happen");
+                }
+                bytecode_generator_add_instruction(generator, load_instruction);
+                if (argument_access->is_memory_access) {
+                    bytecode_generator_add_instruction(
+                        generator,
+                        instruction_make_3(
+                            Instruction_Type::READ_MEMORY,
+                            argument_stack_offset,
+                            pointer_offset,
+                            parameter_sig->size_in_bytes
+                        )
+                    );
+                }
+
+                argument_stack_offset += parameter_sig->size_in_bytes;
+            }
+
+            // Align argument_stack_offset for return pointer
+            argument_stack_offset = align_offset_next_multiple(argument_stack_offset, 8);
+            switch (call->call_type)
+            {
+            case IR_Instruction_Call_Type::FUNCTION_CALL: {
+                Function_Reference call_ref;
+                call_ref.function = call->options.function;
+                call_ref.instruction_index = bytecode_generator_add_instruction(generator,
+                    instruction_make_2(Instruction_Type::CALL_FUNCTION, 0, argument_stack_offset)
+                );
+                dynamic_array_push_back(&generator->fill_out_calls, call_ref);
+                break;
+            }
+            case IR_Instruction_Call_Type::FUNCTION_POINTER_CALL: {
+                bytecode_generator_add_instruction(
+                    generator,
+                    instruction_make_2(
+                        Instruction_Type::CALL_FUNCTION_POINTER,
+                        bytecode_generator_data_access_to_stack_offset(generator, call->options.pointer_access),
+                        argument_stack_offset
+                    )
+                );
+                break;
+            }
+            case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
+                bytecode_generator_add_instruction(generator,
+                    instruction_make_2(Instruction_Type::CALL_HARDCODED_FUNCTION, (i32)call->options.hardcoded->type, argument_stack_offset)
+                );
+                break;
+            default: panic("Error");
+            }
+
+            // Load return value to destination
+            if (function_sig->return_type != generator->compiler->type_system.void_type){
+                bytecode_generator_add_instruction_with_destination_access(
+                    generator, call->destination, instruction_make_2(Instruction_Type::LOAD_RETURN_VALUE, 0, function_sig->return_type->size_in_bytes)
+                );
+            }
+            break;
+        }
+        case IR_Instruction_Type::IF:
+        {
+            const int PLACEHOLDER = 0;
+            IR_Instruction_If* if_instr = &instr->options.if_instr;
+            int condition_stack_offset = bytecode_generator_data_access_to_stack_offset(generator, if_instr->condition);
+            int jmp_to_else_instr_index = bytecode_generator_add_instruction(
+                generator,
+                instruction_make_2(Instruction_Type::JUMP_ON_FALSE, PLACEHOLDER, condition_stack_offset)
+            );
+            bytecode_generator_generate_code_block(generator, if_instr->true_branch);
+            int jmp_over_else_instruction_index = bytecode_generator_add_instruction(
+                generator,
+                instruction_make_1(Instruction_Type::JUMP, PLACEHOLDER)
+            );
+            generator->instructions[jmp_to_else_instr_index].op1 = generator->instructions.size;
+            bytecode_generator_generate_code_block(generator, if_instr->false_branch);
+            generator->instructions[jmp_over_else_instruction_index].op1 = generator->instructions.size;
+            break;
+        }
+        case IR_Instruction_Type::WHILE:
+        {
+            const int PLACEHOLDER = 0;
+            IR_Instruction_While* while_instr = &instr->options.while_instr;
+            int condition_evaluation_start = generator->instructions.size;
+            bytecode_generator_generate_code_block(generator, while_instr->condition_code);
+            int condition_stack_offset = bytecode_generator_data_access_to_stack_offset(generator, while_instr->condition_access);
+            int jmp_to_end_instruction_index = bytecode_generator_add_instruction(
+                generator,
+                instruction_make_2(Instruction_Type::JUMP_ON_FALSE, PLACEHOLDER, condition_stack_offset)
+            );
+            bytecode_generator_generate_code_block(generator, while_instr->code);
+            bytecode_generator_add_instruction(
+                generator,
+                instruction_make_1(Instruction_Type::JUMP, condition_evaluation_start)
+            );
+            generator->instructions[jmp_to_end_instruction_index].op1 = generator->instructions.size;
+
+            for (int i = 0; i < generator->fill_out_breaks.size; i++) {
+                generator->instructions[generator->fill_out_breaks[i]].op1 = generator->instructions.size;
+            }
+            for (int i = 0; i < generator->fill_out_continues.size; i++) {
+                generator->instructions[generator->fill_out_breaks[i]].op1 = condition_evaluation_start;
+            }
+            dynamic_array_reset(&generator->fill_out_breaks);
+            dynamic_array_reset(&generator->fill_out_continues);
+            break;
+        }
+        case IR_Instruction_Type::BLOCK:
+            bytecode_generator_generate_code_block(generator, instr->options.block);
+            break;
+        case IR_Instruction_Type::BREAK: {
+            int break_jump = bytecode_generator_add_instruction(
+                generator,
+                instruction_make_1(Instruction_Type::JUMP, 0)
+            );
+            dynamic_array_push_back(&generator->fill_out_breaks, break_jump);
+            break;
+        }
+        case IR_Instruction_Type::CONTINUE: {
+            int continue_jump = bytecode_generator_add_instruction(
+                generator,
+                instruction_make_1(Instruction_Type::JUMP, 0)
+            );
+            dynamic_array_push_back(&generator->fill_out_continues, continue_jump);
+            break;
+        }
+        case IR_Instruction_Type::RETURN: 
+        {
+            IR_Instruction_Return* return_instr = &instr->options.return_instr;
+
+            switch (return_instr->type)
+            {
+            case IR_Instruction_Return_Type::EXIT: {
+                bytecode_generator_add_instruction(generator,
+                    instruction_make_1(Instruction_Type::EXIT, (int)return_instr->options.exit_code)
+                );
+                break;
+            }
+            case IR_Instruction_Return_Type::RETURN_DATA: {
+                Type_Signature* return_sig = ir_data_access_get_type(&return_instr->options.return_value);
+                bytecode_generator_add_instruction(
+                    generator,
+                    instruction_make_2(Instruction_Type::RETURN,
+                        bytecode_generator_data_access_to_stack_offset(generator, return_instr->options.return_value),
+                        return_sig->size_in_bytes
+                    )
+                );
+                break;
+            }
+            case IR_Instruction_Return_Type::RETURN_EMPTY:
+                bytecode_generator_add_instruction(
+                    generator,
+                    instruction_make_2(Instruction_Type::RETURN, 0, 0)
+                );
+                break;
+            }
+            break;
+        }
+        case IR_Instruction_Type::MOVE: {
+            bytecode_generator_move_accesses(generator, instr->options.move.destination, instr->options.move.source);
+            break;
+        }
+        case IR_Instruction_Type::CAST:
+        case IR_Instruction_Type::ADDRESS_OF:
+        case IR_Instruction_Type::UNARY_OP:
+        case IR_Instruction_Type::BINARY_OP:
+        case Intermediate_Instruction_Type::LOAD_FUNCTION_POINTER: {
+            bytecode_generator_add_instruction_with_destination_access(generator,
+                instr->destination, instruction_make_2(Instruction_Type::LOAD_FUNCTION_LOCATION, 0, instr->intermediate_function_index),
+                function_index
+            );
+            break;
+        }
+        case Intermediate_Instruction_Type::CAST_POINTERS:
+        case Intermediate_Instruction_Type::CAST_U64_TO_POINTER:
+        case Intermediate_Instruction_Type::CAST_POINTER_TO_U64:
+        {
+            bytecode_generator_move_accesses(generator, instr->destination, instr->source1, function_index);
+            break;
+        }
+        case Intermediate_Instruction_Type::CAST_PRIMITIVE_TYPES:
+        {
+            Instruction_Type cast_type;
+            if (primitive_type_is_integer(instr->cast_from->primitive_type) && primitive_type_is_integer(instr->cast_to->primitive_type)) {
+                cast_type = Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE;
+            }
+            else if (primitive_type_is_float(instr->cast_from->primitive_type) && primitive_type_is_float(instr->cast_to->primitive_type)) {
+                cast_type = Instruction_Type::CAST_FLOAT_DIFFERENT_SIZE;
+            }
+            else if (primitive_type_is_float(instr->cast_from->primitive_type) && primitive_type_is_integer(instr->cast_to->primitive_type)) {
+                cast_type = Instruction_Type::CAST_FLOAT_INTEGER;
+            }
+            else if (primitive_type_is_integer(instr->cast_from->primitive_type) && primitive_type_is_float(instr->cast_to->primitive_type)) {
+                cast_type = Instruction_Type::CAST_INTEGER_FLOAT;
+            }
+            else panic("Should not happen!");
+
+            bytecode_generator_add_instruction_with_destination_access(generator, instr->destination,
+                instruction_make_4(
+                    cast_type, 0,
+                    bytecode_generator_data_access_to_stack_offset(generator, instr->source1, function_index),
+                    (int)instr->cast_to->primitive_type, (int)instr->cast_from->primitive_type
+                ),
+                function_index
+            );
+            break;
+        }
+        case Intermediate_Instruction_Type::ADDRESS_OF:
+        {
+            Bytecode_Instruction load_instr;
+            if (instr->source1.access_type == Data_Access_Type::GLOBAL_ACCESS) {
+                load_instr.instruction_type = Instruction_Type::LOAD_GLOBAL_ADDRESS;
+            }
+            else {
+                load_instr.instruction_type = Instruction_Type::LOAD_REGISTER_ADDRESS;
+            }
+            load_instr.op2 = bytecode_generator_get_data_access_offset(generator, instr->source1);
+            bytecode_generator_add_instruction_with_destination_access(generator, instr->destination, load_instr, function_index);
+            break;
+        }
+        case Intermediate_Instruction_Type::CALCULATE_MEMBER_ACCESS_POINTER:
+        {
+            int register_address_reg;
+            if (instr->source1.is_pointer_access) {
+                Data_Access copy = instr->source1;
+                copy.is_pointer_access = false;
+                register_address_reg = bytecode_generator_data_access_to_stack_offset(generator, copy, function_index);
+            }
+            else
+            {
+                Instruction_Type instr_type;
+                if (instr->source1.access_type == Data_Access_Type::GLOBAL_ACCESS) {
+                    instr_type = Instruction_Type::LOAD_GLOBAL_ADDRESS;
+                }
+                else {
+                    instr_type = Instruction_Type::LOAD_REGISTER_ADDRESS;
+                }
+                register_address_reg = bytecode_generator_create_temporary_stack_offset(generator, generator->compiler->type_system.void_ptr_type);
+                bytecode_generator_add_instruction(
+                    generator,
+                    instruction_make_2(
+                        instr_type,
+                        register_address_reg,
+                        bytecode_generator_get_data_access_offset(generator, instr->source1)
+                    )
+                );
+            }
+
+            bytecode_generator_add_instruction_with_destination_access(generator, instr->destination,
+                instruction_make_3(
+                    Instruction_Type::U64_ADD_CONSTANT_I32,
+                    0,
+                    register_address_reg,
+                    instr->constant_i32_value
+                ),
+                function_index
+            );
+            break;
+        }
+        case Intermediate_Instruction_Type::CALCULATE_ARRAY_ACCESS_POINTER:
+        {
+            int base_pointer_offset = bytecode_generator_data_access_to_stack_offset(generator, instr->source1, function_index);
+            int index_offset = bytecode_generator_data_access_to_stack_offset(generator, instr->source2, function_index);
+            bytecode_generator_add_instruction_with_destination_access(generator, instr->destination,
+                instruction_make_4(
+                    Instruction_Type::U64_MULTIPLY_ADD_I32,
+                    0,
+                    base_pointer_offset,
+                    index_offset,
+                    instr->constant_i32_value
+                ), function_index
+            );
+            break;
+        }
+        }
 
         // Binary operations
         if (intermediate_instruction_type_is_binary_operation(instr->type))
@@ -406,464 +741,97 @@ void bytecode_generator_generate_function_instruction_slice(
             continue;
         }
 
-        switch (instr->type)
-        {
-        case Intermediate_Instruction_Type::MOVE_DATA:
-        {
-            bytecode_generator_move_accesses(generator, instr->destination, instr->source1, function_index);
-            break;
-        }
-        case Intermediate_Instruction_Type::LOAD_CONSTANT_F32:
-        case Intermediate_Instruction_Type::LOAD_CONSTANT_I32:
-        case Intermediate_Instruction_Type::LOAD_NULLPTR:
-        case Intermediate_Instruction_Type::LOAD_STRING_POINTER:
-        case Intermediate_Instruction_Type::LOAD_CONSTANT_BOOL: {
-            bytecode_generator_generate_load_constant_instruction(generator, function_index, instruction_index);
-            break;
-        }
-        case Intermediate_Instruction_Type::LOAD_FUNCTION_POINTER: {
-            bytecode_generator_add_instruction_with_destination_access(generator,
-                instr->destination, instruction_make_2(Instruction_Type::LOAD_FUNCTION_LOCATION, 0, instr->intermediate_function_index),
-                function_index
-            );
-            break;
-        }
-        case Intermediate_Instruction_Type::IF_BLOCK:
-        {
-            bytecode_generator_generate_function_instruction_slice(
-                generator, function_index, instr->condition_calculation_instruction_start, instr->condition_calculation_instruction_end_exclusive
-            );
-            int condition_stack_offset = bytecode_generator_data_access_to_stack_offset(generator, instr->source1, function_index);
-            int jmp_instruction_index = bytecode_generator_add_instruction(
-                generator,
-                instruction_make_2(Instruction_Type::JUMP_ON_FALSE, 0, condition_stack_offset)
-            );
-            bytecode_generator_generate_function_instruction_slice(
-                generator, function_index, instr->true_branch_instruction_start, instr->true_branch_instruction_end_exclusive
-            );
-            instruction_index = instr->true_branch_instruction_end_exclusive - 1;
-            if (instr->false_branch_instruction_end_exclusive != instr->false_branch_instruction_start)
-            {
-                instruction_index = instr->false_branch_instruction_end_exclusive - 1;
-                int jmp_over_else_instruction_index = bytecode_generator_add_instruction(
-                    generator,
-                    instruction_make_1(Instruction_Type::JUMP, 0)
-                );
-                generator->instructions[jmp_instruction_index].op1 = generator->instructions.size;
-                bytecode_generator_generate_function_instruction_slice(
-                    generator, function_index, instr->false_branch_instruction_start, instr->false_branch_instruction_end_exclusive
-                );
-                generator->instructions[jmp_over_else_instruction_index].op1 = generator->instructions.size;
-            }
-            else {
-                generator->instructions[jmp_instruction_index].op1 = generator->instructions.size;
-            }
-
-            break;
-        }
-        case Intermediate_Instruction_Type::CALL_HARDCODED_FUNCTION:
-        case Intermediate_Instruction_Type::CALL_FUNCTION:
-        case Intermediate_Instruction_Type::CALL_FUNCTION_POINTER:
-        {
-            // Move registers to the right place, then generate call instruction
-            int pointer_offset = bytecode_generator_create_temporary_stack_offset(generator, generator->compiler->type_system.void_ptr_type);
-            int argument_stack_offset = align_offset_next_multiple(generator->tmp_stack_offset, 16); // I think 16 is the hightest i have
-
-            Type_Signature* function_sig = 0;
-            if (instr->type == Intermediate_Instruction_Type::CALL_HARDCODED_FUNCTION) {
-                function_sig = generator->compiler->analyser.program->hardcoded_functions[(int)instr->hardcoded_function_type]->signature;
-            }
-            else if (instr->type == Intermediate_Instruction_Type::CALL_FUNCTION) {
-                function_sig = generator->compiler->intermediate_generator.functions[instr->intermediate_function_index].function_type;
-            }
-            else if (instr->type == Intermediate_Instruction_Type::CALL_FUNCTION_POINTER) {
-                function_sig = intermediate_generator_get_access_signature(&generator->compiler->intermediate_generator, instr->source1, function_index)->child_type;
-            }
-            else panic("cannot happen");
-
-            // Put arguments into the correct place on the stack
-            for (int i = 0; i < function_sig->parameter_types.size; i++)
-            {
-                Type_Signature* parameter_sig = function_sig->parameter_types[i];
-                argument_stack_offset = align_offset_next_multiple(argument_stack_offset, parameter_sig->alignment_in_bytes);
-                Data_Access* arg = &instr->arguments[i];
-
-                if (arg->access_type != Data_Access_Type::GLOBAL_ACCESS)
-                {
-                    Instruction_Type instr_type;
-                    if (arg->is_pointer_access) {
-                        instr_type = Instruction_Type::READ_MEMORY;
-                    }
-                    else {
-                        instr_type = Instruction_Type::MOVE_STACK_DATA;
-                    }
-                    bytecode_generator_add_instruction(
-                        generator,
-                        instruction_make_3(
-                            instr_type,
-                            argument_stack_offset,
-                            bytecode_generator_get_data_access_offset(generator, *arg),
-                            parameter_sig->size_in_bytes
-                        )
-                    );
-                }
-                else
-                {
-                    if (arg->is_pointer_access)
-                    {
-                        bytecode_generator_add_instruction(generator,
-                            instruction_make_3(
-                                Instruction_Type::READ_GLOBAL,
-                                pointer_offset,
-                                generator->global_offsets[arg->access_index],
-                                8
-                            )
-                        );
-                        bytecode_generator_add_instruction(
-                            generator,
-                            instruction_make_3(
-                                Instruction_Type::READ_MEMORY,
-                                argument_stack_offset,
-                                pointer_offset,
-                                parameter_sig->size_in_bytes
-                            )
-                        );
-                    }
-                    else {
-                        bytecode_generator_add_instruction(generator,
-                            instruction_make_3(
-                                Instruction_Type::READ_GLOBAL,
-                                argument_stack_offset,
-                                generator->global_offsets[arg->access_index],
-                                parameter_sig->size_in_bytes
-                            )
-                        );
-                    }
-                }
-
-                argument_stack_offset += parameter_sig->size_in_bytes;
-            }
-
-            // Align argument_stack_offset for return pointer
-            argument_stack_offset = align_offset_next_multiple(argument_stack_offset, 8);
-            if (instr->type == Intermediate_Instruction_Type::CALL_HARDCODED_FUNCTION) {
-                bytecode_generator_add_instruction(
-                    generator,
-                    instruction_make_2(Instruction_Type::CALL_HARDCODED_FUNCTION, (i32)instr->hardcoded_function_type, argument_stack_offset)
-                );
-            }
-            else if (instr->type == Intermediate_Instruction_Type::CALL_FUNCTION) {
-                bytecode_generator_add_instruction(
-                    generator,
-                    instruction_make_2(Instruction_Type::CALL, 0, argument_stack_offset)
-                );
-                Function_Call_Location call_loc;
-                call_loc.call_instruction_location = generator->instructions.size - 1;
-                call_loc.function_index = instr->intermediate_function_index;
-                dynamic_array_push_back(&generator->function_calls, call_loc);
-            }
-            else if (instr->type == Intermediate_Instruction_Type::CALL_FUNCTION_POINTER) {
-                bytecode_generator_add_instruction(
-                    generator,
-                    instruction_make_2(
-                        Instruction_Type::CALL_FUNCTION_POINTER,
-                        bytecode_generator_data_access_to_stack_offset(generator, instr->source1, function_index),
-                        argument_stack_offset
-                    )
-                );
-            }
-            else panic("Cannot happen");
-
-            // Load return value to destination
-            if (function_sig->return_type != generator->compiler->type_system.void_type)
-            {
-                Bytecode_Instruction ret_val_instr = instruction_make_2(Instruction_Type::LOAD_RETURN_VALUE, 0, function_sig->return_type->size_in_bytes);
-                bytecode_generator_add_instruction_with_destination_access(generator, instr->destination, ret_val_instr, function_index);
-            }
-            break;
-        }
-        case Intermediate_Instruction_Type::RETURN:
-        case Intermediate_Instruction_Type::EXIT:
-        {
-            Type_Signature* return_sig = generator->compiler->intermediate_generator.functions[function_index].function_type->return_type;
-            int return_data_stack_offset = 0;
-            if (instr->return_has_value) {
-                return_data_stack_offset = bytecode_generator_data_access_to_stack_offset(generator, instr->source1, function_index);
-            }
-
-            if (instr->type == Intermediate_Instruction_Type::EXIT) {
-                bytecode_generator_add_instruction(
-                    generator,
-                    instruction_make_3(Instruction_Type::EXIT, return_data_stack_offset, return_sig->size_in_bytes, (i32)instr->exit_code)
-                );
-            }
-            else {
-                bytecode_generator_add_instruction(
-                    generator,
-                    instruction_make_2(Instruction_Type::RETURN, return_data_stack_offset, return_sig->size_in_bytes)
-                );
-            }
-            break;
-        }
-        case Intermediate_Instruction_Type::WHILE_BLOCK:
-        {
-            instruction_index = instr->true_branch_instruction_end_exclusive - 1;
-            int check_condition_instruction_index = generator->instructions.size;
-            bytecode_generator_generate_function_instruction_slice(
-                generator, function_index, instr->condition_calculation_instruction_start, instr->condition_calculation_instruction_end_exclusive
-            );
-            int condition_stack_offset = bytecode_generator_data_access_to_stack_offset(generator, instr->source1, function_index);
-            int jmp_instruction_index = bytecode_generator_add_instruction(
-                generator,
-                instruction_make_2(Instruction_Type::JUMP_ON_FALSE, 0, condition_stack_offset)
-            );
-            bytecode_generator_generate_function_instruction_slice(
-                generator, function_index, instr->true_branch_instruction_start, instr->true_branch_instruction_end_exclusive
-            );
-            bytecode_generator_add_instruction(
-                generator,
-                instruction_make_1(Instruction_Type::JUMP, check_condition_instruction_index)
-            );
-            generator->instructions[jmp_instruction_index].op1 = generator->instructions.size;
-
-            for (int i = 0; i < generator->break_instructions_to_fill_out.size; i++) {
-                generator->instructions[generator->break_instructions_to_fill_out[i]].op1 = generator->instructions.size;
-            }
-            for (int i = 0; i < generator->continue_instructions_to_fill_out.size; i++) {
-                generator->instructions[generator->break_instructions_to_fill_out[i]].op1 = check_condition_instruction_index;
-            }
-            dynamic_array_reset(&generator->break_instructions_to_fill_out);
-            dynamic_array_reset(&generator->continue_instructions_to_fill_out);
-
-            break;
-        }
-        case Intermediate_Instruction_Type::BREAK: {
-            int break_jump = bytecode_generator_add_instruction(
-                generator,
-                instruction_make_1(Instruction_Type::JUMP, 0)
-            );
-            dynamic_array_push_back(&generator->break_instructions_to_fill_out, break_jump);
-            break;
-        }
-        case Intermediate_Instruction_Type::CONTINUE: {
-            int continue_jump = bytecode_generator_add_instruction(
-                generator,
-                instruction_make_1(Instruction_Type::JUMP, 0)
-            );
-            dynamic_array_push_back(&generator->continue_instructions_to_fill_out, continue_jump);
-            break;
-        }
-        case Intermediate_Instruction_Type::CAST_POINTERS:
-        case Intermediate_Instruction_Type::CAST_U64_TO_POINTER:
-        case Intermediate_Instruction_Type::CAST_POINTER_TO_U64:
-        {
-            bytecode_generator_move_accesses(generator, instr->destination, instr->source1, function_index);
-            break;
-        }
-        case Intermediate_Instruction_Type::CAST_PRIMITIVE_TYPES:
-        {
-            Instruction_Type cast_type;
-            if (primitive_type_is_integer(instr->cast_from->primitive_type) && primitive_type_is_integer(instr->cast_to->primitive_type)) {
-                cast_type = Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE;
-            }
-            else if (primitive_type_is_float(instr->cast_from->primitive_type) && primitive_type_is_float(instr->cast_to->primitive_type)) {
-                cast_type = Instruction_Type::CAST_FLOAT_DIFFERENT_SIZE;
-            }
-            else if (primitive_type_is_float(instr->cast_from->primitive_type) && primitive_type_is_integer(instr->cast_to->primitive_type)) {
-                cast_type = Instruction_Type::CAST_FLOAT_INTEGER;
-            }
-            else if (primitive_type_is_integer(instr->cast_from->primitive_type) && primitive_type_is_float(instr->cast_to->primitive_type)) {
-                cast_type = Instruction_Type::CAST_INTEGER_FLOAT;
-            }
-            else panic("Should not happen!");
-
-            bytecode_generator_add_instruction_with_destination_access(generator, instr->destination,
-                instruction_make_4(
-                    cast_type, 0,
-                    bytecode_generator_data_access_to_stack_offset(generator, instr->source1, function_index),
-                    (int)instr->cast_to->primitive_type, (int)instr->cast_from->primitive_type
-                ),
-                function_index
-            );
-            break;
-        }
-        case Intermediate_Instruction_Type::ADDRESS_OF:
-        {
-            Bytecode_Instruction load_instr;
-            if (instr->source1.access_type == Data_Access_Type::GLOBAL_ACCESS) {
-                load_instr.instruction_type = Instruction_Type::LOAD_GLOBAL_ADDRESS;
-            }
-            else {
-                load_instr.instruction_type = Instruction_Type::LOAD_REGISTER_ADDRESS;
-            }
-            load_instr.op2 = bytecode_generator_get_data_access_offset(generator, instr->source1);
-            bytecode_generator_add_instruction_with_destination_access(generator, instr->destination, load_instr, function_index);
-            break;
-        }
-        case Intermediate_Instruction_Type::CALCULATE_MEMBER_ACCESS_POINTER:
-        {
-            int register_address_reg;
-            if (instr->source1.is_pointer_access) {
-                Data_Access copy = instr->source1;
-                copy.is_pointer_access = false;
-                register_address_reg = bytecode_generator_data_access_to_stack_offset(generator, copy, function_index);
-            }
-            else
-            {
-                Instruction_Type instr_type;
-                if (instr->source1.access_type == Data_Access_Type::GLOBAL_ACCESS) {
-                    instr_type = Instruction_Type::LOAD_GLOBAL_ADDRESS;
-                }
-                else {
-                    instr_type = Instruction_Type::LOAD_REGISTER_ADDRESS;
-                }
-                register_address_reg = bytecode_generator_create_temporary_stack_offset(generator, generator->compiler->type_system.void_ptr_type);
-                bytecode_generator_add_instruction(
-                    generator,
-                    instruction_make_2(
-                        instr_type,
-                        register_address_reg,
-                        bytecode_generator_get_data_access_offset(generator, instr->source1)
-                    )
-                );
-            }
-
-            bytecode_generator_add_instruction_with_destination_access(generator, instr->destination,
-                instruction_make_3(
-                    Instruction_Type::U64_ADD_CONSTANT_I32,
-                    0,
-                    register_address_reg,
-                    instr->constant_i32_value
-                ),
-                function_index
-            );
-            break;
-        }
-        case Intermediate_Instruction_Type::CALCULATE_ARRAY_ACCESS_POINTER:
-        {
-            int base_pointer_offset = bytecode_generator_data_access_to_stack_offset(generator, instr->source1, function_index);
-            int index_offset = bytecode_generator_data_access_to_stack_offset(generator, instr->source2, function_index);
-            bytecode_generator_add_instruction_with_destination_access(generator, instr->destination,
-                instruction_make_4(
-                    Instruction_Type::U64_MULTIPLY_ADD_I32,
-                    0,
-                    base_pointer_offset,
-                    index_offset,
-                    instr->constant_i32_value
-                ), function_index
-            );
-            break;
-        }
-        }
     }
 }
 
-void bytecode_generator_calculate_function_variable_and_parameter_offsets(Bytecode_Generator* generator, int function_index)
+int stack_offsets_calculate(Dynamic_Array<Type_Signature*>* types, Dynamic_Array<int>* offsets, int start_byte_offset)
 {
-    Intermediate_Function* function = &generator->compiler->intermediate_generator.functions[function_index];
-    // Set parameter stack locations
+    int stack_offset = start_byte_offset;
+    for (int i = 0; i < types->size; i++)
     {
-        dynamic_array_reset(&generator->parameter_stack_offsets);
-        int stack_size_of_parameters = 0;
-        Type_Signature* function_signature = generator->compiler->intermediate_generator.functions[function_index].function_type;
-        dynamic_array_reserve(&generator->parameter_stack_offsets, function_signature->parameter_types.size);
-
-        for (int i = 0; i < function_signature->parameter_types.size; i++)
-        {
-            Type_Signature* param_sig = function_signature->parameter_types[i];
-            stack_size_of_parameters = align_offset_next_multiple(stack_size_of_parameters, param_sig->alignment_in_bytes);
-            dynamic_array_push_back(&generator->parameter_stack_offsets, stack_size_of_parameters);
-            stack_size_of_parameters += param_sig->size_in_bytes;
-        }
-        // Adjust for pointer alignment of return address
-        stack_size_of_parameters = align_offset_next_multiple(stack_size_of_parameters, 8);
-        for (int i = 0; i < generator->parameter_stack_offsets.size; i++) {
-            generator->parameter_stack_offsets[i] = generator->parameter_stack_offsets[i] - stack_size_of_parameters;
-        }
+        Type_Signature* signature = types->data[i];
+        stack_offset = align_offset_next_multiple(stack_offset, signature->alignment_in_bytes);
+        dynamic_array_push_back(offsets, stack_offset);
+        stack_offset += signature->size_in_bytes;
     }
 
-    // Set variable stack locations
-    int stack_offset = 16;
-    {
-        dynamic_array_reset(&generator->variable_stack_offsets);
-        dynamic_array_reserve(&generator->variable_stack_offsets, function->local_variables.size);
-        for (int i = 0; i < function->local_variables.size; i++)
-        {
-            Type_Signature* type_sig = function->local_variables[i].type;
-            stack_offset = align_offset_next_multiple(stack_offset, type_sig->alignment_in_bytes);
-            dynamic_array_push_back(&generator->variable_stack_offsets, stack_offset);
-            stack_offset += type_sig->size_in_bytes;
-        }
-    }
-
-    // Set intermediate results stack offsets
-    {
-        dynamic_array_reset(&generator->intermediate_stack_offsets);
-        dynamic_array_reserve(&generator->intermediate_stack_offsets, function->intermediate_results.size);
-        for (int i = 0; i < function->intermediate_results.size; i++)
-        {
-            Type_Signature* type_sig = function->intermediate_results[i];
-            stack_offset = align_offset_next_multiple(stack_offset, type_sig->alignment_in_bytes);
-            dynamic_array_push_back(&generator->intermediate_stack_offsets, stack_offset);
-            stack_offset += type_sig->size_in_bytes;
-        }
-    }
-    generator->tmp_stack_offset = stack_offset;
+    return stack_offset;
 }
 
-void bytecode_generator_generate_function_code(Bytecode_Generator* generator, int function_index)
+void bytecode_generator_generate_function_code(Bytecode_Generator* generator, IR_Function* function)
 {
-    Intermediate_Function* function = &generator->compiler->intermediate_generator.functions[function_index];
-    generator->function_locations[function_index] = generator->instructions.size;
+    // Generate parameter offsets
+    Dynamic_Array<int> parameter_offsets = dynamic_array_create_empty<int>(function->function_type->parameter_types.size);
+    {
+        int parameter_stack_size = stack_offsets_calculate(&function->function_type->parameter_types, &parameter_offsets, 0);
+        // Adjust stack_offsets since parameter offsets are negative
+        parameter_stack_size = align_offset_next_multiple(parameter_stack_size, 8); // Adjust for pointer alignment of return address
+        for (int i = 0; i < parameter_offsets.size; i++) {
+            parameter_offsets[i] -= parameter_stack_size;
+        }
+        generator->current_stack_offset = 16;
+    }
 
-    bytecode_generator_calculate_function_variable_and_parameter_offsets(generator, function_index);
-    bytecode_generator_generate_function_instruction_slice(generator, function_index, 0, function->instructions.size);
-    if (generator->tmp_stack_offset > generator->maximum_function_stack_depth) {
-        generator->maximum_function_stack_depth = generator->tmp_stack_offset;
+    // Register function
+    hashtable_insert_element(&generator->function_locations, function, generator->instructions.size);
+    dynamic_array_push_back(&generator->stack_offsets, parameter_offsets);
+    hashtable_insert_element(&generator->function_parameter_stack_offset_index, function, generator->stack_offsets.size - 1);
+
+    // Generate code
+    bytecode_generator_generate_code_block(generator, function->code);
+    if (generator->current_stack_offset > generator->maximum_function_stack_depth) {
+        generator->maximum_function_stack_depth = generator->current_stack_offset;
     }
 }
 
 void bytecode_generator_generate(Bytecode_Generator* generator, Compiler* compiler)
 {
+    generator->ir_program = compiler->analyser.program;
     generator->compiler = compiler;
-    dynamic_array_reset(&generator->instructions);
-    dynamic_array_reset(&generator->break_instructions_to_fill_out);
-    dynamic_array_reset(&generator->continue_instructions_to_fill_out);
-    dynamic_array_reset(&generator->function_calls);
-    dynamic_array_reset(&generator->function_locations);
-    dynamic_array_reset(&generator->variable_stack_offsets);
-    dynamic_array_reset(&generator->global_offsets);
-    dynamic_array_reset(&generator->parameter_stack_offsets);
-    dynamic_array_reset(&generator->intermediate_stack_offsets);
-    dynamic_array_reset(&generator->constants_u64);
-
-    dynamic_array_reserve(&generator->function_locations, generator->compiler->intermediate_generator.functions.size);
-    while (generator->function_locations.size < generator->compiler->intermediate_generator.functions.size) {
-        dynamic_array_push_back(&generator->function_locations, 0);
+    // Reset previous code
+    {
+        dynamic_array_reset(&generator->instructions);
+        // Reset information
+        hashtable_reset(&generator->code_block_register_stack_offset_index);
+        hashtable_reset(&generator->function_parameter_stack_offset_index);
+        dynamic_array_reset(&generator->global_data_offsets);
+        for (int i = 0; i < generator->stack_offsets.size; i++) {
+            dynamic_array_destroy(&generator->stack_offsets[i]);
+        }
+        dynamic_array_reset(&generator->stack_offsets);
+        // Reset fill outs
+        dynamic_array_reset(&generator->fill_out_breaks);
+        dynamic_array_reset(&generator->fill_out_continues);
+        dynamic_array_reset(&generator->fill_out_calls);
     }
 
+    // Generate global data offsets
     generator->global_data_size = 0;
-    dynamic_array_reserve(&generator->global_offsets, generator->compiler->intermediate_generator.global_variables.size);
-    for (int i = 0; i < compiler->intermediate_generator.global_variables.size; i++) {
-        Type_Signature* signature = compiler->intermediate_generator.global_variables[i].type;
+    dynamic_array_reserve(&generator->global_data_offsets, generator->ir_program->globals.size);
+    for (int i = 0; i < generator->ir_program->globals.size; i++) {
+        Type_Signature* signature = generator->ir_program->globals[i];
         generator->global_data_size = align_offset_next_multiple(generator->global_data_size, signature->alignment_in_bytes);
-        dynamic_array_push_back(&generator->global_offsets, generator->global_data_size);
+        dynamic_array_push_back(&generator->global_data_offsets, generator->global_data_size);
         generator->global_data_size += signature->size_in_bytes;
     }
 
     // Generate code for all functions
-    for (int i = 0; i < compiler->intermediate_generator.functions.size; i++) {
-        bytecode_generator_generate_function_code(generator, i);
+    for (int i = 0; i < generator->ir_program->functions.size; i++) {
+        bytecode_generator_generate_function_code(generator, generator->ir_program->functions[i]);
     }
 
     // Fill out all function calls
-    for (int i = 0; i < generator->function_calls.size; i++) {
-        Function_Call_Location& call_loc = generator->function_calls[i];
-        generator->instructions[call_loc.call_instruction_location].op1 = generator->function_locations[call_loc.function_index];
+    for (int i = 0; i < generator->fill_out_calls.size; i++) {
+        Function_Reference& call_loc = generator->fill_out_calls[i];
+        int* location = hashtable_find_element(&generator->function_locations, call_loc.function);
+        assert(location != 0, "Should not happen");
+        generator->instructions[call_loc.instruction_index].op1 = *location;
     }
 
-    generator->entry_point_index = generator->function_locations[generator->compiler->intermediate_generator.main_function_index];
+    generator->entry_point_index = *hashtable_find_element(&generator->function_locations, generator->ir_program->entry_function);
 }
+
+
 
 bool instruction_type_is_binary_op(Instruction_Type type) {
     return type >= Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U8 && type <= Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_POINTER;
@@ -920,7 +888,7 @@ void instruction_type_binary_op_append_to_string(String* string, Instruction_Typ
 
     if (type >= Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U8 && type <= Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_I64)
     {
-        int type_index =  (int) type - (int) Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U8;
+        int type_index = (int)type - (int)Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U8;
         int data_type_index = type_index / 11;
         int operation_type_index = type_index % 11;
 
@@ -939,7 +907,7 @@ void instruction_type_binary_op_append_to_string(String* string, Instruction_Typ
     }
     else if (type >= Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_F32 && type <= Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_F64)
     {
-        int type_index =  (int)type - (int)Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_F32;
+        int type_index = (int)type - (int)Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_F32;
         int data_type_index = type_index / 10;
         int operation_type_index = type_index % 10;
         const char* data_types[] = {
@@ -947,7 +915,7 @@ void instruction_type_binary_op_append_to_string(String* string, Instruction_Typ
             "F64",
         };
     }
-    else 
+    else
     {
         switch (type)
         {
@@ -1064,7 +1032,7 @@ void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction 
         case Instruction_Type::JUMP_ON_FALSE:
             string_append_formated(string, "JUMP_ON_FALSE                     dest=%d, cond=%d\n", instruction.op1, instruction.op2);
             break;
-        case Instruction_Type::CALL:
+        case Instruction_Type::CALL_FUNCTION:
             string_append_formated(string, "CALL                              dest=%d, stack_offset=%d\n", instruction.op1, instruction.op2);
             break;
         case Instruction_Type::CALL_HARDCODED_FUNCTION:
@@ -1112,11 +1080,13 @@ void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction 
 void bytecode_generator_append_bytecode_to_string(Bytecode_Generator* generator, String* string)
 {
     string_append_formated(string, "Functions:\n");
+    /*
     for (int i = 0; i < generator->function_locations.size; i++) {
         string_append_formated(string, "\t%d: %d\n",
             i, generator->function_locations[i]
         );
     }
+    */
     string_append_formated(string, "Global size: %d\n\n", generator->global_data_size);
     string_append_formated(string, "Code: \n");
 

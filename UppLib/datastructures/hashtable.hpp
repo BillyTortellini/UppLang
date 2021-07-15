@@ -3,6 +3,7 @@
 #include "../utility/datatypes.hpp"
 #include "array.hpp"
 #include "hashset.hpp"
+#include "../utility/hash_functions.hpp"
 
 template <typename K, typename V>
 struct Hashtable_Entry
@@ -96,6 +97,16 @@ Hashtable<K, V> hashtable_create_empty(int capacity, u64(*hash_function)(K*), bo
     result.hash_function = hash_function;
     result.equals_function = equals_function;
     return result;
+}
+
+template <typename K, typename V>
+Hashtable<K, V> hashtable_create_pointer_empty(int capacity) 
+{
+    return hashtable_create_empty<K, V>(
+        capacity,
+        [](K** key) -> u64 {return hash_pointer((void**)key); },
+        [](K** a, K** b) -> bool { return a == b; }
+    );
 }
 
 template <typename K, typename V>

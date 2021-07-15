@@ -187,7 +187,8 @@ struct IR_Instruction_If
 
 struct IR_Instruction_While
 {
-    IR_Data_Access condition;
+    IR_Code_Block* condition_code;
+    IR_Data_Access condition_access;
     IR_Code_Block* code;
 };
 

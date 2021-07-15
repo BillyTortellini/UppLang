@@ -72,7 +72,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
             return false;
         }
         break;
-    case Instruction_Type::CALL: {
+    case Instruction_Type::CALL_FUNCTION: {
         if (&interpreter->stack[interpreter->stack.size-1] - interpreter->stack_pointer < interpreter->generator->maximum_function_stack_depth) {
             interpreter->exit_code = Exit_Code::STACK_OVERFLOW;
             return true;
@@ -920,7 +920,7 @@ void bytecode_interpreter_print_state(Bytecode_Interpreter* interpreter)
     }
     if (current_function_index == -1) panic("Should not happen!\n");
 
-    bytecode_generator_calculate_function_variable_and_parameter_offsets(interpreter->generator, current_function_index);
+    bytecode_generator_calculate_function_parameter_offsets(interpreter->generator, current_function_index);
     Intermediate_Function* func = &interpreter->compiler->intermediate_generator.functions[current_function_index];
     logg("\n\n\n\n---------------------- CURRENT STATE ----------------------\n");
     logg("Current Function: %s\n", lexer_identifer_to_string(&interpreter->compiler->lexer, func->name_handle).characters);

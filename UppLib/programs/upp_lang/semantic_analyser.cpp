@@ -587,6 +587,7 @@ void ir_instruction_destroy(IR_Instruction* instruction)
     }
     case IR_Instruction_Type::WHILE: {
         ir_code_block_destroy(instruction->options.while_instr.code);
+        ir_code_block_destroy(instruction->options.while_instr.condition_code);
         break;
     }
     case IR_Instruction_Type::BLOCK: {
@@ -2456,8 +2457,10 @@ Statement_Analysis_Result semantic_analyser_analyse_statement(
     {
         IR_Instruction while_instruction;
         while_instruction.type = IR_Instruction_Type::WHILE;
+        while_instruction.options.while_instr.condition_code = ir_code_block_create(code_block->function);
         Expression_Analysis_Result expression_result = semantic_analyser_analyse_expression(
-            analyser, symbol_table, statement_node->children[0], code_block, true, &while_instruction.options.while_instr.condition
+            analyser, symbol_table, statement_node->children[0], while_instruction.options.while_instr.condition_code, 
+            true, &while_instruction.options.while_instr.condition_access
         );
         if (!expression_result.error_occured) {
             if (expression_result.type != analyser->compiler->type_system.bool_type) {
