@@ -67,7 +67,20 @@ struct Type_Signature
     Dynamic_Array<Struct_Member> member_types;
 };
 void type_signature_append_to_string(String* string, Type_Signature* signature);
+void type_signature_print_value(Type_Signature* type, byte* value_ptr);
 
+/*
+    Basic Data types Documentation:
+        Sized Array:
+            Is a block of memory of the given size, meaning [2]int are 2 ints
+        Unsized Array:
+            Is a pointer to a given datatype + i32 size, size 16 Byte (At some point we want u64 size), alignment 8 Byte
+        String:
+            Is almost the same as a dynamic array, currently NULL-Terminated:
+             * character_buffer: Unsized Array with the actual buffer size
+             * size: Character count
+             Size: 20 byte (When u64 size it will be 24), alignment: 8 Byte
+*/
 struct Type_System
 {
     Lexer* lexer;
@@ -227,6 +240,7 @@ enum class Exit_Code
     STACK_OVERFLOW,
     RETURN_VALUE_OVERFLOW,
 };
+void exit_code_append_to_string(String* string, Exit_Code code);
 
 struct IR_Instruction_Return
 {
@@ -397,6 +411,7 @@ enum class IR_Hardcoded_Function_Type
 
     HARDCODED_FUNCTION_COUNT, // Should always be last element
 };
+void ir_hardcoded_function_type_append_to_string(String* string, IR_Hardcoded_Function_Type hardcoded);
 
 struct IR_Hardcoded_Function
 {
@@ -412,7 +427,8 @@ struct IR_Program
     IR_Constant_Pool constant_pool;
     IR_Function* entry_function;
 };
-void ir_program_append_to_string(IR_Program* program, String* string);
+struct Semantic_Analyser;
+void ir_program_append_to_string(IR_Program* program, String* string, Semantic_Analyser* analyser);
 
 /*
     Semantic Analyser

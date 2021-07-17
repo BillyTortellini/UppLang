@@ -1,6 +1,5 @@
 main :: () -> void 
 {
-    /*
     scope_test();
     struct_test();
     array_test();
@@ -8,8 +7,7 @@ main :: () -> void
     cast_test(); 
     global_test();
     string_test();
-    */
-    //function_ptr_test();
+    function_ptr_test();
 }
 
 int_add :: (a: int, b: int) -> int { return a + b; }
@@ -21,7 +19,6 @@ function_ptr_test :: ()
     binop: (int, int) -> int;
     
     binop = *int_add;
-    /*
     result := binop(5, 5);
     print_i32(result);
     print_line();
@@ -40,10 +37,9 @@ function_ptr_test :: ()
     result = test_op(5, 5);
     print_i32(result);
     print_line();
-    */
 }
 
-/*
+
 string_create :: (str: String) -> String
 {
     result: String;
@@ -456,4 +452,3 @@ fib_rec :: (n: int) -> int
     if (n <= 2) return 1;
     return fib_rec(n-1) + fib_rec(n-2);
 }
-*/

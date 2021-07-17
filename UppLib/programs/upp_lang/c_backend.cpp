@@ -107,7 +107,7 @@ void c_generator_generate_register_name(C_Generator* generator, int register_ind
     */
 }
 
-void c_generator_generate_data_access(C_Generator* generator, Data_Access access)
+void c_generator_generate_data_access(C_Generator* generator, IR_Data_Access access)
 {
     /*
     if (access.type == Data_Access_Type::MEMORY_ACCESS) {

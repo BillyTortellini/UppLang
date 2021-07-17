@@ -30,7 +30,6 @@ struct Compiler;
 #include "lexer.hpp"
 #include "ast_parser.hpp"
 #include "semantic_analyser.hpp"
-#include "intermediate_code.hpp"
 #include "bytecode_generator.hpp"
 #include "bytecode_interpreter.hpp"
 #include "c_backend.hpp"
@@ -41,7 +40,6 @@ struct Compiler
     AST_Parser parser;
     Type_System type_system;
     Semantic_Analyser analyser;
-    Intermediate_Generator intermediate_generator;
     Bytecode_Generator bytecode_generator;
     Bytecode_Interpreter bytecode_interpreter;
     C_Generator c_generator;

@@ -37,7 +37,6 @@
     <ClInclude Include="programs\upp_lang\code_editor.hpp" />
     <ClInclude Include="programs\upp_lang\compiler.hpp" />
     <ClInclude Include="programs\upp_lang\c_backend.hpp" />
-    <ClInclude Include="programs\upp_lang\intermediate_code.hpp" />
     <ClInclude Include="programs\upp_lang\semantic_analyser.hpp" />
     <ClInclude Include="programs\upp_lang\lexer.hpp" />
     <ClInclude Include="programs\upp_lang\test_renderer.hpp" />
@@ -92,7 +91,6 @@
     <ClCompile Include="programs\upp_lang\code_editor.cpp" />
     <ClCompile Include="programs\upp_lang\compiler.cpp" />
     <ClCompile Include="programs\upp_lang\c_backend.cpp" />
-    <ClCompile Include="programs\upp_lang\intermediate_code.cpp" />
     <ClCompile Include="programs\upp_lang\semantic_analyser.cpp" />
     <ClCompile Include="programs\upp_lang\lexer.cpp" />
     <ClCompile Include="programs\upp_lang\test_renderer.cpp" />

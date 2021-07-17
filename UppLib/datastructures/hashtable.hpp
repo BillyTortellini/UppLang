@@ -104,8 +104,8 @@ Hashtable<K, V> hashtable_create_pointer_empty(int capacity)
 {
     return hashtable_create_empty<K, V>(
         capacity,
-        [](K** key) -> u64 {return hash_pointer((void**)key); },
-        [](K** a, K** b) -> bool { return a == b; }
+        [](K* key) -> u64 {return hash_pointer((void**)&key); },
+        [](K* a, K* b) -> bool { return a == b; }
     );
 }
 

@@ -45,6 +45,9 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
     case Instruction_Type::MEMORY_COPY:
         memory_copy(*(void**)(interpreter->stack_pointer + i->op1), *(void**)(interpreter->stack_pointer + i->op2), i->op3);
         break;
+    case Instruction_Type::READ_CONSTANT:
+        memory_copy(interpreter->stack_pointer + i->op1, interpreter->compiler->analyser.program->constant_pool.constant_memory.data + i->op2, i->op3);
+        break;
     case Instruction_Type::U64_ADD_CONSTANT_I32:
         *(u64*)(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) + (i->op3);
         break;
@@ -92,17 +95,14 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
             return true;
         }
 
-        int function_index = (int)*(u64*)(interpreter->stack_pointer + i->op1);
-
         byte* base_pointer = interpreter->stack_pointer;
         Bytecode_Instruction* next = interpreter->instruction_pointer + 1;
         interpreter->stack_pointer = interpreter->stack_pointer + i->op2;
         *((Bytecode_Instruction**)interpreter->stack_pointer) = next;
         *(byte**)(interpreter->stack_pointer + 8) = base_pointer;
 
-        interpreter->instruction_pointer = &interpreter->generator->instructions[
-            interpreter->generator->function_locations[function_index]
-        ];
+        int next_instr = *(i32*)(interpreter->stack_pointer + i->op1);
+        interpreter->instruction_pointer = &interpreter->generator->instructions[next_instr];
         return false;
     }
     case Instruction_Type::RETURN: {
@@ -126,9 +126,8 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
     }
     case Instruction_Type::CALL_HARDCODED_FUNCTION: 
     {
-        /*
-        IR_Hardcoded_Function_Type type = (IR_Hardcoded_Function_Type)i->op1;
-        Type_Signature* function_sig = interpreter->compiler->analyser.hardcoded_functions[i->op1].function_type;
+        IR_Hardcoded_Function_Type hardcoded_type = (IR_Hardcoded_Function_Type)i->op1;
+        Type_Signature* function_sig = interpreter->compiler->analyser.program->hardcoded_functions[i->op1]->signature;
         byte* argument_start;
         {
             int start_offset = 0;
@@ -142,7 +141,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         }
         // Argument start only works if the argument type is of size 8, and only if the function has one argument
         memory_set_bytes(&interpreter->return_register[0], 256, 0);
-        switch (type)
+        switch (hardcoded_type)
         {
         case IR_Hardcoded_Function_Type::MALLOC_SIZE_I32: {
             i32 size = *(i32*)argument_start;
@@ -227,7 +226,6 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         }
         default: {panic("What"); }
         }
-        */
         break;
     }
     case Instruction_Type::LOAD_RETURN_VALUE:
@@ -238,21 +236,6 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         break;
     case Instruction_Type::LOAD_GLOBAL_ADDRESS:
         *(void**)(interpreter->stack_pointer + i->op1) = (void*)(interpreter->globals.data + i->op2);
-        break;
-    case Instruction_Type::LOAD_CONSTANT_F32:
-        *(f32*)(interpreter->stack_pointer + i->op1) = *((f32*)&i->op2);
-        break;
-    case Instruction_Type::LOAD_CONSTANT_I32:
-        *(i32*)(interpreter->stack_pointer + i->op1) = i->op2;
-        break;
-    case Instruction_Type::LOAD_NULLPTR:
-        *(void**)(interpreter->stack_pointer + i->op1) = nullptr;
-        break;
-    case Instruction_Type::LOAD_CONSTANT_BOOLEAN:
-        *(interpreter->stack_pointer + i->op1) = (byte)i->op2;
-        break;
-    case Instruction_Type::LOAD_CONSTANT_U64:
-        *(u64*)(interpreter->stack_pointer + i->op1) = interpreter->generator->constants_u64[i->op2];
         break;
     case Instruction_Type::LOAD_FUNCTION_LOCATION:
         *(u64*)(interpreter->stack_pointer + i->op1) = (u64)i->op2;
@@ -348,562 +331,478 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
     --- BINARY_OPERATIONS ---
     -------------------------
     */
-
-    // U8
-    case Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U8:
-        *(u8*)(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) + *(u8*)(interpreter->stack_pointer + i->op3);
+    case Instruction_Type::BINARY_OP_ADDITION:
+        switch ((Primitive_Type)i->op4)
+        {
+        case Primitive_Type::BOOLEAN:
+            panic("What");
+            break;
+        case Primitive_Type::SIGNED_INT_8:
+            *(i8*)(interpreter->stack_pointer + i->op1) = *(i8*)(interpreter->stack_pointer + i->op2) + *(i8*)(interpreter->stack_pointer + i->op3);
+            break;
+        case Primitive_Type::SIGNED_INT_16:
+            *(i16*)(interpreter->stack_pointer + i->op1) = *(i16*)(interpreter->stack_pointer + i->op2) + *(i16*)(interpreter->stack_pointer + i->op3);
+            break;
+        case Primitive_Type::SIGNED_INT_32:
+            *(i32*)(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) + *(i32*)(interpreter->stack_pointer + i->op3);
+            break;
+        case Primitive_Type::SIGNED_INT_64:
+            *(i64*)(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) + *(i64*)(interpreter->stack_pointer + i->op3);
+            break;
+        case Primitive_Type::UNSIGNED_INT_8:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) + *(u8*)(interpreter->stack_pointer + i->op3);
+            break;
+        case Primitive_Type::UNSIGNED_INT_16:
+            *(u16*)(interpreter->stack_pointer + i->op1) = *(u16*)(interpreter->stack_pointer + i->op2) + *(u16*)(interpreter->stack_pointer + i->op3);
+            break;
+        case Primitive_Type::UNSIGNED_INT_32:
+            *(u32*)(interpreter->stack_pointer + i->op1) = *(u32*)(interpreter->stack_pointer + i->op2) + *(u32*)(interpreter->stack_pointer + i->op3);
+            break;
+        case Primitive_Type::UNSIGNED_INT_64:
+            *(u64*)(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) + *(u64*)(interpreter->stack_pointer + i->op3);
+            break;
+        case Primitive_Type::FLOAT_32:
+            *(f32*)(interpreter->stack_pointer + i->op1) = *(f32*)(interpreter->stack_pointer + i->op2) + *(f32*)(interpreter->stack_pointer + i->op3);
+            break;
+        case Primitive_Type::FLOAT_64:
+            *(f64*)(interpreter->stack_pointer + i->op1) = *(f64*)(interpreter->stack_pointer + i->op2) + *(f64*)(interpreter->stack_pointer + i->op3);
+            break;
+        }
+        break;
+    case Instruction_Type::BINARY_OP_SUBTRACTION:
+        switch ((Primitive_Type)i->op4)
+        {
+        case Primitive_Type::BOOLEAN:
+            panic("What");
+            break;
+        case Primitive_Type::SIGNED_INT_8:
+            *(i8*)(interpreter->stack_pointer + i->op1) = *(i8*)(interpreter->stack_pointer + i->op2) - *(i8*)(interpreter->stack_pointer + i->op3);
+            break;
+        case Primitive_Type::SIGNED_INT_16:
+            *(i16*)(interpreter->stack_pointer + i->op1) = *(i16*)(interpreter->stack_pointer + i->op2) - *(i16*)(interpreter->stack_pointer + i->op3);
+            break;
+        case Primitive_Type::SIGNED_INT_32:
+            *(i32*)(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) - *(i32*)(interpreter->stack_pointer + i->op3);
+            break;
+        case Primitive_Type::SIGNED_INT_64:
+            *(i64*)(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) - *(i64*)(interpreter->stack_pointer + i->op3);
+            break;
+        case Primitive_Type::UNSIGNED_INT_8:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) - *(u8*)(interpreter->stack_pointer + i->op3);
+            break;
+        case Primitive_Type::UNSIGNED_INT_16:
+            *(u16*)(interpreter->stack_pointer + i->op1) = *(u16*)(interpreter->stack_pointer + i->op2) - *(u16*)(interpreter->stack_pointer + i->op3);
+            break;
+        case Primitive_Type::UNSIGNED_INT_32:
+            *(u32*)(interpreter->stack_pointer + i->op1) = *(u32*)(interpreter->stack_pointer + i->op2) - *(u32*)(interpreter->stack_pointer + i->op3);
+            break;
+        case Primitive_Type::UNSIGNED_INT_64:
+            *(u64*)(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) - *(u64*)(interpreter->stack_pointer + i->op3);
+            break;
+        case Primitive_Type::FLOAT_32:
+            *(f32*)(interpreter->stack_pointer + i->op1) = *(f32*)(interpreter->stack_pointer + i->op2) - *(f32*)(interpreter->stack_pointer + i->op3);
+            break;
+        case Primitive_Type::FLOAT_64:
+            *(f64*)(interpreter->stack_pointer + i->op1) = *(f64*)(interpreter->stack_pointer + i->op2) - *(f64*)(interpreter->stack_pointer + i->op3);
+            break;
+        }
+        break;
+    case Instruction_Type::BINARY_OP_MULTIPLICATION:
+        switch ((Primitive_Type)i->op4)
+        {
+        case Primitive_Type::BOOLEAN:
+            panic("What");
+            break;
+        case Primitive_Type::SIGNED_INT_8:
+            *(i8*)(interpreter->stack_pointer + i->op1) = *(i8*)(interpreter->stack_pointer + i->op2) * *(i8*)(interpreter->stack_pointer + i->op3);
+            break;
+        case Primitive_Type::SIGNED_INT_16:
+            *(i16*)(interpreter->stack_pointer + i->op1) = *(i16*)(interpreter->stack_pointer + i->op2) * *(i16*)(interpreter->stack_pointer + i->op3);
+            break;
+        case Primitive_Type::SIGNED_INT_32:
+            *(i32*)(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) * *(i32*)(interpreter->stack_pointer + i->op3);
+            break;
+        case Primitive_Type::SIGNED_INT_64:
+            *(i64*)(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) * *(i64*)(interpreter->stack_pointer + i->op3);
+            break;
+        case Primitive_Type::UNSIGNED_INT_8:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) * *(u8*)(interpreter->stack_pointer + i->op3);
+            break;
+        case Primitive_Type::UNSIGNED_INT_16:
+            *(u16*)(interpreter->stack_pointer + i->op1) = *(u16*)(interpreter->stack_pointer + i->op2) * *(u16*)(interpreter->stack_pointer + i->op3);
+            break;
+        case Primitive_Type::UNSIGNED_INT_32:
+            *(u32*)(interpreter->stack_pointer + i->op1) = *(u32*)(interpreter->stack_pointer + i->op2) * *(u32*)(interpreter->stack_pointer + i->op3);
+            break;
+        case Primitive_Type::UNSIGNED_INT_64:
+            *(u64*)(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) * *(u64*)(interpreter->stack_pointer + i->op3);
+            break;
+        case Primitive_Type::FLOAT_32:
+            *(f32*)(interpreter->stack_pointer + i->op1) = *(f32*)(interpreter->stack_pointer + i->op2) * *(f32*)(interpreter->stack_pointer + i->op3);
+            break;
+        case Primitive_Type::FLOAT_64:
+            *(f64*)(interpreter->stack_pointer + i->op1) = *(f64*)(interpreter->stack_pointer + i->op2) * *(f64*)(interpreter->stack_pointer + i->op3);
+            break;
+        }
+        break;
+    case Instruction_Type::BINARY_OP_DIVISION:
+        switch ((Primitive_Type)i->op4)
+        {
+        case Primitive_Type::BOOLEAN:
+            panic("What");
+            break;
+        case Primitive_Type::SIGNED_INT_8:
+            *(i8*)(interpreter->stack_pointer + i->op1) = *(i8*)(interpreter->stack_pointer + i->op2) / *(i8*)(interpreter->stack_pointer + i->op3);
+            break;
+        case Primitive_Type::SIGNED_INT_16:
+            *(i16*)(interpreter->stack_pointer + i->op1) = *(i16*)(interpreter->stack_pointer + i->op2) / *(i16*)(interpreter->stack_pointer + i->op3);
+            break;
+        case Primitive_Type::SIGNED_INT_32:
+            *(i32*)(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) / *(i32*)(interpreter->stack_pointer + i->op3);
+            break;
+        case Primitive_Type::SIGNED_INT_64:
+            *(i64*)(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) / *(i64*)(interpreter->stack_pointer + i->op3);
+            break;
+        case Primitive_Type::UNSIGNED_INT_8:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) / *(u8*)(interpreter->stack_pointer + i->op3);
+            break;
+        case Primitive_Type::UNSIGNED_INT_16:
+            *(u16*)(interpreter->stack_pointer + i->op1) = *(u16*)(interpreter->stack_pointer + i->op2) / *(u16*)(interpreter->stack_pointer + i->op3);
+            break;
+        case Primitive_Type::UNSIGNED_INT_32:
+            *(u32*)(interpreter->stack_pointer + i->op1) = *(u32*)(interpreter->stack_pointer + i->op2) / *(u32*)(interpreter->stack_pointer + i->op3);
+            break;
+        case Primitive_Type::UNSIGNED_INT_64:
+            *(u64*)(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) / *(u64*)(interpreter->stack_pointer + i->op3);
+            break;
+        case Primitive_Type::FLOAT_32:
+            *(f32*)(interpreter->stack_pointer + i->op1) = *(f32*)(interpreter->stack_pointer + i->op2) / *(f32*)(interpreter->stack_pointer + i->op3);
+            break;
+        case Primitive_Type::FLOAT_64:
+            *(f64*)(interpreter->stack_pointer + i->op1) = *(f64*)(interpreter->stack_pointer + i->op2) / *(f64*)(interpreter->stack_pointer + i->op3);
+            break;
+        }
+        break;
+    case Instruction_Type::BINARY_OP_EQUAL:
+        switch ((Primitive_Type)i->op4)
+        {
+        case Primitive_Type::BOOLEAN:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) == *(u8*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::SIGNED_INT_8:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(i8*)(interpreter->stack_pointer + i->op2) == *(i8*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::SIGNED_INT_16:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(i16*)(interpreter->stack_pointer + i->op2) == *(i16*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::SIGNED_INT_32:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) == *(i32*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::SIGNED_INT_64:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) == *(i64*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::UNSIGNED_INT_8:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) == *(u8*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::UNSIGNED_INT_16:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(u16*)(interpreter->stack_pointer + i->op2) == *(u16*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::UNSIGNED_INT_32:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(u32*)(interpreter->stack_pointer + i->op2) == *(u32*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::UNSIGNED_INT_64:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) == *(u64*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::FLOAT_32:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(f32*)(interpreter->stack_pointer + i->op2) == *(f32*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::FLOAT_64:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(f64*)(interpreter->stack_pointer + i->op2) == *(f64*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        }
+        break;
+    case Instruction_Type::BINARY_OP_NOT_EQUAL:
+        switch ((Primitive_Type)i->op4)
+        {
+        case Primitive_Type::BOOLEAN:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) != *(u8*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::SIGNED_INT_8:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(i8*)(interpreter->stack_pointer + i->op2) != *(i8*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::SIGNED_INT_16:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(i16*)(interpreter->stack_pointer + i->op2) != *(i16*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::SIGNED_INT_32:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) != *(i32*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::SIGNED_INT_64:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) != *(i64*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::UNSIGNED_INT_8:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) != *(u8*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::UNSIGNED_INT_16:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(u16*)(interpreter->stack_pointer + i->op2) != *(u16*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::UNSIGNED_INT_32:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(u32*)(interpreter->stack_pointer + i->op2) != *(u32*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::UNSIGNED_INT_64:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) != *(u64*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::FLOAT_32:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(f32*)(interpreter->stack_pointer + i->op2) != *(f32*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::FLOAT_64:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(f64*)(interpreter->stack_pointer + i->op2) != *(f64*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        }
+        break;
+    case Instruction_Type::BINARY_OP_GREATER_THAN:
+        switch ((Primitive_Type)i->op4)
+        {
+        case Primitive_Type::BOOLEAN:
+            panic("what");
+            break;
+        case Primitive_Type::SIGNED_INT_8:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(i8*)(interpreter->stack_pointer + i->op2) > *(i8*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::SIGNED_INT_16:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(i16*)(interpreter->stack_pointer + i->op2) > *(i16*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::SIGNED_INT_32:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) > *(i32*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::SIGNED_INT_64:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) > *(i64*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::UNSIGNED_INT_8:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) > *(u8*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::UNSIGNED_INT_16:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(u16*)(interpreter->stack_pointer + i->op2) > *(u16*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::UNSIGNED_INT_32:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(u32*)(interpreter->stack_pointer + i->op2) > *(u32*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::UNSIGNED_INT_64:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) > *(u64*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::FLOAT_32:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(f32*)(interpreter->stack_pointer + i->op2) > *(f32*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::FLOAT_64:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(f64*)(interpreter->stack_pointer + i->op2) > *(f64*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        }
+        break;
+    case Instruction_Type::BINARY_OP_GREATER_EQUAL:
+        switch ((Primitive_Type)i->op4)
+        {
+        case Primitive_Type::BOOLEAN:
+            panic("what");
+            break;
+        case Primitive_Type::SIGNED_INT_8:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(i8*)(interpreter->stack_pointer + i->op2) >= *(i8*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::SIGNED_INT_16:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(i16*)(interpreter->stack_pointer + i->op2) >= *(i16*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::SIGNED_INT_32:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) >= *(i32*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::SIGNED_INT_64:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) >= *(i64*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::UNSIGNED_INT_8:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) >= *(u8*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::UNSIGNED_INT_16:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(u16*)(interpreter->stack_pointer + i->op2) >= *(u16*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::UNSIGNED_INT_32:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(u32*)(interpreter->stack_pointer + i->op2) >= *(u32*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::UNSIGNED_INT_64:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) >= *(u64*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::FLOAT_32:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(f32*)(interpreter->stack_pointer + i->op2) >= *(f32*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::FLOAT_64:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(f64*)(interpreter->stack_pointer + i->op2) >= *(f64*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        }
+        break;
+    case Instruction_Type::BINARY_OP_LESS_THAN:
+        switch ((Primitive_Type)i->op4)
+        {
+        case Primitive_Type::BOOLEAN:
+            panic("what");
+            break;
+        case Primitive_Type::SIGNED_INT_8:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(i8*)(interpreter->stack_pointer + i->op2) < *(i8*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::SIGNED_INT_16:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(i16*)(interpreter->stack_pointer + i->op2) < *(i16*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::SIGNED_INT_32:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) < *(i32*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::SIGNED_INT_64:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) < *(i64*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::UNSIGNED_INT_8:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) < *(u8*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::UNSIGNED_INT_16:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(u16*)(interpreter->stack_pointer + i->op2) < *(u16*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::UNSIGNED_INT_32:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(u32*)(interpreter->stack_pointer + i->op2) < *(u32*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::UNSIGNED_INT_64:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) < *(u64*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::FLOAT_32:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(f32*)(interpreter->stack_pointer + i->op2) < *(f32*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::FLOAT_64:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(f64*)(interpreter->stack_pointer + i->op2) < *(f64*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        }
+        break;
+    case Instruction_Type::BINARY_OP_LESS_EQUAL:
+        switch ((Primitive_Type)i->op4)
+        {
+        case Primitive_Type::BOOLEAN:
+            panic("what");
+            break;
+        case Primitive_Type::SIGNED_INT_8:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(i8*)(interpreter->stack_pointer + i->op2) <= *(i8*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::SIGNED_INT_16:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(i16*)(interpreter->stack_pointer + i->op2) <= *(i16*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::SIGNED_INT_32:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) <= *(i32*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::SIGNED_INT_64:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) <= *(i64*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::UNSIGNED_INT_8:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) <= *(u8*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::UNSIGNED_INT_16:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(u16*)(interpreter->stack_pointer + i->op2) <= *(u16*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::UNSIGNED_INT_32:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(u32*)(interpreter->stack_pointer + i->op2) <= *(u32*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::UNSIGNED_INT_64:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) <= *(u64*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::FLOAT_32:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(f32*)(interpreter->stack_pointer + i->op2) <= *(f32*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::FLOAT_64:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(f64*)(interpreter->stack_pointer + i->op2) <= *(f64*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        }
+        break;
+    case Instruction_Type::BINARY_OP_MODULO:
+        switch ((Primitive_Type)i->op4)
+        {
+        case Primitive_Type::BOOLEAN:
+            panic("what");
+            break;
+        case Primitive_Type::SIGNED_INT_8:
+            *(i8*)(interpreter->stack_pointer + i->op1) = *(i8*)(interpreter->stack_pointer + i->op2) % *(i8*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::SIGNED_INT_16:
+            *(i16*)(interpreter->stack_pointer + i->op1) = *(i16*)(interpreter->stack_pointer + i->op2) % *(i16*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::SIGNED_INT_32:
+            *(i32*)(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) % *(i32*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::SIGNED_INT_64:
+            *(i64*)(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) % *(i64*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::UNSIGNED_INT_8:
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) % *(u8*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::UNSIGNED_INT_16:
+            *(u16*)(interpreter->stack_pointer + i->op1) = *(u16*)(interpreter->stack_pointer + i->op2) % *(u16*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::UNSIGNED_INT_32:
+            *(u32*)(interpreter->stack_pointer + i->op1) = *(u32*)(interpreter->stack_pointer + i->op2) % *(u32*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::UNSIGNED_INT_64:
+            *(u64*)(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) % *(u64*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            break;
+        case Primitive_Type::FLOAT_32:
+            panic("what");
+            break;
+        case Primitive_Type::FLOAT_64:
+            panic("what");
+            break;
+        }
+        break;
+    case Instruction_Type::BINARY_OP_AND:
+        *(bool*)(interpreter->stack_pointer + i->op1) = *(bool*)(interpreter->stack_pointer + i->op2) && *(bool*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::BINARY_OP_OR:
+        *(bool*)(interpreter->stack_pointer + i->op1) = *(bool*)(interpreter->stack_pointer + i->op2) || *(bool*)(interpreter->stack_pointer + i->op3);
+        break;
+    case Instruction_Type::UNARY_OP_NEGATE:
+        switch ((Primitive_Type)i->op3)
+        {
+        case Primitive_Type::BOOLEAN:
+            panic("What");
+            break;
+        case Primitive_Type::SIGNED_INT_8:
+            *(i8*)(interpreter->stack_pointer + i->op1) = - *(i8*)(interpreter->stack_pointer + i->op2);
+            break;
+        case Primitive_Type::SIGNED_INT_16:
+            *(i16*)(interpreter->stack_pointer + i->op1) = -*(i16*)(interpreter->stack_pointer + i->op2);
+            break;
+        case Primitive_Type::SIGNED_INT_32:
+            *(i32*)(interpreter->stack_pointer + i->op1) = - *(i32*)(interpreter->stack_pointer + i->op2);
+            break;
+        case Primitive_Type::SIGNED_INT_64:
+            *(i64*)(interpreter->stack_pointer + i->op1) = - *(i64*)(interpreter->stack_pointer + i->op2);
+            break;
+        case Primitive_Type::UNSIGNED_INT_8:
+        case Primitive_Type::UNSIGNED_INT_16:
+        case Primitive_Type::UNSIGNED_INT_32:
+        case Primitive_Type::UNSIGNED_INT_64:
+            panic("Should not happen?");
+            break;
+        case Primitive_Type::FLOAT_32:
+            *(f32*)(interpreter->stack_pointer + i->op1) = - *(f32*)(interpreter->stack_pointer + i->op2);
+            break;
+        case Primitive_Type::FLOAT_64:
+            *(f64*)(interpreter->stack_pointer + i->op1) = - *(f64*)(interpreter->stack_pointer + i->op2);
+            break;
+        }
+        break;
+    case Instruction_Type::UNARY_OP_NOT:
+        *(bool*)(interpreter->stack_pointer + i->op1) = !*(bool*)(interpreter->stack_pointer + i->op2);
         break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_U8:
-        *(u8*)(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) - *(u8*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_U8:
-        *(u8*)(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) * *(u8*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_U8:
-        *(u8*)(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) / *(u8*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_U8:
-        *(u8*)(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) % *(u8*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_EQUAL_U8:
-        *(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) == *(u8*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_U8:
-        *(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) != *(u8*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_U8:
-        *(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) > * (u8*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_U8:
-        *(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) >= *(u8*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_U8:
-        *(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) < *(u8*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_U8:
-        *(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) <= *(u8*)(interpreter->stack_pointer + i->op3);
-        break;
-
-        // U16
-    case Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U16:
-        *(u16*)(interpreter->stack_pointer + i->op1) = *(u16*)(interpreter->stack_pointer + i->op2) + *(u16*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_U16:
-        *(u16*)(interpreter->stack_pointer + i->op1) = *(u16*)(interpreter->stack_pointer + i->op2) - *(u16*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_U16:
-        *(u16*)(interpreter->stack_pointer + i->op1) = *(u16*)(interpreter->stack_pointer + i->op2) * *(u16*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_U16:
-        *(u16*)(interpreter->stack_pointer + i->op1) = *(u16*)(interpreter->stack_pointer + i->op2) / *(u16*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_U16:
-        *(u16*)(interpreter->stack_pointer + i->op1) = *(u16*)(interpreter->stack_pointer + i->op2) % *(u16*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_EQUAL_U16:
-        *(interpreter->stack_pointer + i->op1) = *(u16*)(interpreter->stack_pointer + i->op2) == *(u16*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_U16:
-        *(interpreter->stack_pointer + i->op1) = *(u16*)(interpreter->stack_pointer + i->op2) != *(u16*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_U16:
-        *(interpreter->stack_pointer + i->op1) = *(u16*)(interpreter->stack_pointer + i->op2) > * (u16*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_U16:
-        *(interpreter->stack_pointer + i->op1) = *(u16*)(interpreter->stack_pointer + i->op2) >= *(u16*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_U16:
-        *(interpreter->stack_pointer + i->op1) = *(u16*)(interpreter->stack_pointer + i->op2) < *(u16*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_U16:
-        *(interpreter->stack_pointer + i->op1) = *(u16*)(interpreter->stack_pointer + i->op2) <= *(u16*)(interpreter->stack_pointer + i->op3);
-        break;
-
-        // U32
-    case Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U32:
-        *(u32*)(interpreter->stack_pointer + i->op1) = *(u32*)(interpreter->stack_pointer + i->op2) + *(u32*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_U32:
-        *(u32*)(interpreter->stack_pointer + i->op1) = *(u32*)(interpreter->stack_pointer + i->op2) - *(u32*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_U32:
-        *(u32*)(interpreter->stack_pointer + i->op1) = *(u32*)(interpreter->stack_pointer + i->op2) * *(u32*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_U32:
-        *(u32*)(interpreter->stack_pointer + i->op1) = *(u32*)(interpreter->stack_pointer + i->op2) / *(u32*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_U32:
-        *(u32*)(interpreter->stack_pointer + i->op1) = *(u32*)(interpreter->stack_pointer + i->op2) % *(u32*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_EQUAL_U32:
-        *(interpreter->stack_pointer + i->op1) = *(u32*)(interpreter->stack_pointer + i->op2) == *(u32*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_U32:
-        *(interpreter->stack_pointer + i->op1) = *(u32*)(interpreter->stack_pointer + i->op2) != *(u32*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_U32:
-        *(interpreter->stack_pointer + i->op1) = *(u32*)(interpreter->stack_pointer + i->op2) > * (u32*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_U32:
-        *(interpreter->stack_pointer + i->op1) = *(u32*)(interpreter->stack_pointer + i->op2) >= *(u32*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_U32:
-        *(interpreter->stack_pointer + i->op1) = *(u32*)(interpreter->stack_pointer + i->op2) < *(u32*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_U32:
-        *(interpreter->stack_pointer + i->op1) = *(u32*)(interpreter->stack_pointer + i->op2) <= *(u32*)(interpreter->stack_pointer + i->op3);
-        break;
-
-        // U64
-    case Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_U64:
-        *(u64*)(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) + *(u64*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_U64:
-        *(u64*)(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) - *(u64*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_U64:
-        *(u64*)(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) * *(u64*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_U64:
-        *(u64*)(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) / *(u64*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_U64:
-        *(u64*)(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) % *(u64*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_EQUAL_U64:
-        *(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) == *(u64*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_U64:
-        *(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) != *(u64*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_U64:
-        *(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) > * (u64*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_U64:
-        *(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) >= *(u64*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_U64:
-        *(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) < *(u64*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_U64:
-        *(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) <= *(u64*)(interpreter->stack_pointer + i->op3);
-        break;
-
-        // U8
-    case Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I8:
-        *(i8*)(interpreter->stack_pointer + i->op1) = *(i8*)(interpreter->stack_pointer + i->op2) + *(i8*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_I8:
-        *(i8*)(interpreter->stack_pointer + i->op1) = *(i8*)(interpreter->stack_pointer + i->op2) - *(i8*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_I8:
-        *(i8*)(interpreter->stack_pointer + i->op1) = *(i8*)(interpreter->stack_pointer + i->op2) * *(i8*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_I8:
-        *(i8*)(interpreter->stack_pointer + i->op1) = *(i8*)(interpreter->stack_pointer + i->op2) / *(i8*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_I8:
-        *(i8*)(interpreter->stack_pointer + i->op1) = *(i8*)(interpreter->stack_pointer + i->op2) % *(i8*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_EQUAL_I8:
-        *(interpreter->stack_pointer + i->op1) = *(i8*)(interpreter->stack_pointer + i->op2) == *(i8*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_I8:
-        *(interpreter->stack_pointer + i->op1) = *(i8*)(interpreter->stack_pointer + i->op2) != *(i8*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_I8:
-        *(interpreter->stack_pointer + i->op1) = *(i8*)(interpreter->stack_pointer + i->op2) > * (u8*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_I8:
-        *(interpreter->stack_pointer + i->op1) = *(i8*)(interpreter->stack_pointer + i->op2) >= *(i8*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_I8:
-        *(interpreter->stack_pointer + i->op1) = *(i8*)(interpreter->stack_pointer + i->op2) < *(i8*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_I8:
-        *(interpreter->stack_pointer + i->op1) = *(i8*)(interpreter->stack_pointer + i->op2) <= *(i8*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I8:
-        *(i8*)(interpreter->stack_pointer + i->op1) = -(*(i8*)(interpreter->stack_pointer + i->op2));
-        break;
-
-        // U16
-    case Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I16:
-        *(i16*)(interpreter->stack_pointer + i->op1) = *(i16*)(interpreter->stack_pointer + i->op2) + *(i16*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_I16:
-        *(i16*)(interpreter->stack_pointer + i->op1) = *(i16*)(interpreter->stack_pointer + i->op2) - *(i16*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_I16:
-        *(i16*)(interpreter->stack_pointer + i->op1) = *(i16*)(interpreter->stack_pointer + i->op2) * *(i16*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_I16:
-        *(i16*)(interpreter->stack_pointer + i->op1) = *(i16*)(interpreter->stack_pointer + i->op2) / *(i16*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_I16:
-        *(i16*)(interpreter->stack_pointer + i->op1) = *(i16*)(interpreter->stack_pointer + i->op2) % *(i16*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_EQUAL_I16:
-        *(interpreter->stack_pointer + i->op1) = *(i16*)(interpreter->stack_pointer + i->op2) == *(i16*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_I16:
-        *(interpreter->stack_pointer + i->op1) = *(i16*)(interpreter->stack_pointer + i->op2) != *(i16*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_I16:
-        *(interpreter->stack_pointer + i->op1) = *(i16*)(interpreter->stack_pointer + i->op2) > * (u16*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_I16:
-        *(interpreter->stack_pointer + i->op1) = *(i16*)(interpreter->stack_pointer + i->op2) >= *(i16*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_I16:
-        *(interpreter->stack_pointer + i->op1) = *(i16*)(interpreter->stack_pointer + i->op2) < *(i16*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_I16:
-        *(interpreter->stack_pointer + i->op1) = *(i16*)(interpreter->stack_pointer + i->op2) <= *(i16*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I16:
-        *(i16*)(interpreter->stack_pointer + i->op1) = -(*(i16*)(interpreter->stack_pointer + i->op2));
-        break;
-
-        // U32
-    case Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32:
-        *(i32*)(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) + *(i32*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_I32:
-        *(i32*)(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) - *(i32*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_I32:
-        *(i32*)(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) * *(i32*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_I32:
-        *(i32*)(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) / *(i32*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_I32:
-        *(i32*)(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) % *(i32*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_EQUAL_I32:
-        *(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) == *(i32*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_I32:
-        *(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) != *(i32*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_I32:
-        *(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) > * (i32*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_I32:
-        *(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) >= *(i32*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_I32:
-        *(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) < *(i32*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_I32:
-        *(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) <= *(i32*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I32:
-        *(i32*)(interpreter->stack_pointer + i->op1) = -(*(i32*)(interpreter->stack_pointer + i->op2));
-        break;
-
-        // U64
-    case Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I64:
-        *(i64*)(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) + *(i64*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_I64:
-        *(i64*)(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) - *(i64*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_I64:
-        *(i64*)(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) * *(i64*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_I64:
-        *(i64*)(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) / *(i64*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_MODULO_I64:
-        *(i64*)(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) % *(i64*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_EQUAL_I64:
-        *(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) == *(i64*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_I64:
-        *(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) != *(i64*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_I64:
-        *(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) > * (i64*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_I64:
-        *(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) >= *(i64*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_I64:
-        *(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) < *(i64*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_I64:
-        *(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) <= *(i64*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I64:
-        *(i64*)(interpreter->stack_pointer + i->op1) = -(*(i64*)(interpreter->stack_pointer + i->op2));
-        break;
-
-        // F32
-    case Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_F32:
-        *(f32*)(interpreter->stack_pointer + i->op1) = *(f32*)(interpreter->stack_pointer + i->op2) + *(f32*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_F32:
-        *(f32*)(interpreter->stack_pointer + i->op1) = *(f32*)(interpreter->stack_pointer + i->op2) - *(f32*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_F32:
-        *(f32*)(interpreter->stack_pointer + i->op1) = *(f32*)(interpreter->stack_pointer + i->op2) * *(f32*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_F32:
-        *(f32*)(interpreter->stack_pointer + i->op1) = *(f32*)(interpreter->stack_pointer + i->op2) / *(f32*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_EQUAL_F32:
-        *(interpreter->stack_pointer + i->op1) = *(f32*)(interpreter->stack_pointer + i->op2) == *(f32*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_F32:
-        *(interpreter->stack_pointer + i->op1) = *(f32*)(interpreter->stack_pointer + i->op2) != *(f32*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_F32:
-        *(interpreter->stack_pointer + i->op1) = *(f32*)(interpreter->stack_pointer + i->op2) > * (f32*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_F32:
-        *(interpreter->stack_pointer + i->op1) = *(f32*)(interpreter->stack_pointer + i->op2) >= *(f32*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_F32:
-        *(interpreter->stack_pointer + i->op1) = *(f32*)(interpreter->stack_pointer + i->op2) < *(f32*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_F32:
-        *(interpreter->stack_pointer + i->op1) = *(f32*)(interpreter->stack_pointer + i->op2) <= *(f32*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_F32:
-        *(f32*)(interpreter->stack_pointer + i->op1) = -(*(f32*)(interpreter->stack_pointer + i->op2));
-        break;
-
-        // F64
-    case Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_F64:
-        *(f64*)(interpreter->stack_pointer + i->op1) = *(f64*)(interpreter->stack_pointer + i->op2) + *(f64*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_SUBTRACTION_F64:
-        *(f64*)(interpreter->stack_pointer + i->op1) = *(f64*)(interpreter->stack_pointer + i->op2) - *(f64*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_MULTIPLICATION_F64:
-        *(f64*)(interpreter->stack_pointer + i->op1) = *(f64*)(interpreter->stack_pointer + i->op2) * *(f64*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_ARITHMETIC_DIVISION_F64:
-        *(f64*)(interpreter->stack_pointer + i->op1) = *(f64*)(interpreter->stack_pointer + i->op2) / *(f64*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_EQUAL_F64:
-        *(interpreter->stack_pointer + i->op1) = *(f64*)(interpreter->stack_pointer + i->op2) == *(f64*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_F64:
-        *(interpreter->stack_pointer + i->op1) = *(f64*)(interpreter->stack_pointer + i->op2) != *(f64*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_THAN_F64:
-        *(interpreter->stack_pointer + i->op1) = *(f64*)(interpreter->stack_pointer + i->op2) > * (f64*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_GREATER_EQUAL_F64:
-        *(interpreter->stack_pointer + i->op1) = *(f64*)(interpreter->stack_pointer + i->op2) >= *(f64*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_LESS_THAN_F64:
-        *(interpreter->stack_pointer + i->op1) = *(f64*)(interpreter->stack_pointer + i->op2) < *(f64*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_LESS_EQUAL_F64:
-        *(interpreter->stack_pointer + i->op1) = *(f64*)(interpreter->stack_pointer + i->op2) <= *(f64*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_F64:
-        *(f64*)(interpreter->stack_pointer + i->op1) = -(*(f64*)(interpreter->stack_pointer + i->op2));
-        break;
-
-    case Instruction_Type::BINARY_OP_COMPARISON_EQUAL_POINTER:
-        *(interpreter->stack_pointer + i->op1) = *(void**)(interpreter->stack_pointer + i->op2) == *(void**)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_POINTER:
-        *(interpreter->stack_pointer + i->op1) = *(void**)(interpreter->stack_pointer + i->op2) != *(void**)(interpreter->stack_pointer + i->op3);
-        break;
-
-    case Instruction_Type::BINARY_OP_COMPARISON_EQUAL_BOOL:
-        *(interpreter->stack_pointer + i->op1) = *(bool*)(interpreter->stack_pointer + i->op2) == *(bool*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_COMPARISON_NOT_EQUAL_BOOL:
-        *(interpreter->stack_pointer + i->op1) = *(bool*)(interpreter->stack_pointer + i->op2) != *(bool*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_BOOLEAN_AND:
-        *(interpreter->stack_pointer + i->op1) = *(bool*)(interpreter->stack_pointer + i->op2) && *(bool*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::BINARY_OP_BOOLEAN_OR:
-        *(interpreter->stack_pointer + i->op1) = *(bool*)(interpreter->stack_pointer + i->op2) || *(bool*)(interpreter->stack_pointer + i->op3);
-        break;
-    case Instruction_Type::UNARY_OP_BOOLEAN_NOT:
-        *(interpreter->stack_pointer + i->op1) = !(*(bool*)(interpreter->stack_pointer + i->op2));
-        break;
-
     default: {
         panic("Should not happen!\n");
         return true;
     }
     }
 
-    // Debug output
-    if (false)
-    {
-        int start = (int)Instruction_Type::BINARY_OP_ARITHMETIC_ADDITION_I32;
-        int end = (int)Instruction_Type::UNARY_OP_BOOLEAN_NOT;
-        int index = (int)i->instruction_type;
-        if (index >= start && index <= end)
-        {
-            int counter = interpreter->instruction_pointer - interpreter->generator->instructions.data;
-            bool unary = i->instruction_type == Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_F32 ||
-                i->instruction_type == Instruction_Type::UNARY_OP_ARITHMETIC_NEGATE_I32 ||
-                i->instruction_type == Instruction_Type::UNARY_OP_BOOLEAN_NOT;
-            logg("%d Stack index: %d\n", counter, (int)(interpreter->stack_pointer - interpreter->stack.data));
-            logg("%d dest = %6d / %3.2f / %s\n",
-                counter,
-                *(int*)(interpreter->stack_pointer + i->op1),
-                *(float*)(interpreter->stack_pointer + i->op1),
-                (*(bool*)(interpreter->stack_pointer + i->op1)) ? "True" : "False");
-            logg("%d src1 = %6d / %3.2f / %s\n",
-                counter,
-                *(int*)(interpreter->stack_pointer + i->op2),
-                *(float*)(interpreter->stack_pointer + i->op2),
-                (*(bool*)(interpreter->stack_pointer + i->op2)) ? "True" : "False");
-            if (!unary) {
-                logg("%d src2 = %6d / %3.2f / %s\n",
-                    counter,
-                    *(int*)(interpreter->stack_pointer + i->op3),
-                    *(float*)(interpreter->stack_pointer + i->op3),
-                    (*(bool*)(interpreter->stack_pointer + i->op3)) ? "True" : "False");
-            }
-        }
-    }
-
     interpreter->instruction_pointer = &interpreter->instruction_pointer[1];
     return false;
 }
 
-void type_signature_print_value(Type_Signature* type, byte* value_ptr)
-{
-    switch (type->type)
-    {
-    case Signature_Type::FUNCTION:
-    case Signature_Type::VOID_TYPE:
-    case Signature_Type::ERROR_TYPE:
-    case Signature_Type::ARRAY_SIZED:
-    {
-        logg("[%d]: ", type->array_element_count);
-        if (type->array_element_count > 4) {
-            logg("...");
-            return;
-        }
-        for (int i = 0; i < type->array_element_count; i++) {
-            byte* element_ptr = value_ptr + (i * type->child_type->size_in_bytes);
-            type_signature_print_value(type->child_type, element_ptr);
-            logg(", ");
-        }
-        break;
-    }
-    case Signature_Type::ARRAY_UNSIZED:
-    {
-        byte* data_ptr = *((byte**)value_ptr);
-        int element_count = *((int*)(value_ptr + 8));
-        logg("ptr: %p  [%d]: ", data_ptr, element_count);
-        if (element_count > 4) {
-            logg("...");
-            return;
-        }
-        for (int i = 0; i < element_count; i++) {
-            byte* element_ptr = data_ptr + (i * type->child_type->size_in_bytes);
-            type_signature_print_value(type->child_type, element_ptr);
-            logg(", ");
-        }
-        break;
-    }
-    case Signature_Type::POINTER:
-    {
-        byte* data_ptr = *((byte**)value_ptr);
-        if (data_ptr == 0) {
-            logg("nullpointer");
-            return;
-        }
-        logg("Ptr %p", data_ptr);
-        break;
-    }
-    case Signature_Type::STRUCT:
-    {
-        logg("Struct: {");
-        for (int i = 0; i < type->member_types.size; i++) {
-            Struct_Member* mem = &type->member_types[i];
-            byte* mem_ptr = value_ptr + mem->offset;
-            type_signature_print_value(mem->type, mem_ptr);
-            logg(", ");
-        }
-        logg("}");
-        break;
-    }
-    case Signature_Type::PRIMITIVE:
-    {
-        switch (type->primitive_type)
-        {
-        case Primitive_Type::BOOLEAN: {
-            bool val = *(bool*)value_ptr;
-            logg("%s", val ? "TRUE" : "FALSE");
-            break;
-        }
-        case Primitive_Type::SIGNED_INT_8: {
-            int val = (i32) * (i8*)value_ptr;
-            logg("%d", val);
-            break;
-        }
-        case Primitive_Type::SIGNED_INT_16: {
-            int val = (i32) * (i16*)value_ptr;
-            logg("%d", val);
-            break;
-        }
-        case Primitive_Type::SIGNED_INT_32: {
-            int val = (i32) * (i32*)value_ptr;
-            logg("%d", val);
-            break;
-        }
-        case Primitive_Type::SIGNED_INT_64: {
-            int val = (i32) * (i64*)value_ptr;
-            logg("%d", val);
-            break;
-        }
-        case Primitive_Type::UNSIGNED_INT_8: {
-            int val = (i32) * (u8*)value_ptr;
-            logg("%d", val);
-            break;
-        }
-        case Primitive_Type::UNSIGNED_INT_16: {
-            int val = (i32) * (u16*)value_ptr;
-            logg("%d", val);
-            break;
-        }
-        case Primitive_Type::UNSIGNED_INT_32: {
-            int val = (i32) * (u32*)value_ptr;
-            logg("%d", val);
-            break;
-        }
-        case Primitive_Type::UNSIGNED_INT_64: {
-            int val = (i32) * (u64*)value_ptr;
-            logg("%d", val);
-            break;
-        }
-        case Primitive_Type::FLOAT_32: {
-            float val = *(float*)value_ptr;
-            logg("%3.2f", val);
-            break;
-        }
-        case Primitive_Type::FLOAT_64: {
-            double val = *(double*)value_ptr;
-            logg("%3.2f", val);
-            break;
-        }
-        }
-        break;
-    }
-    }
-
-}
-
 void bytecode_interpreter_print_state(Bytecode_Interpreter* interpreter)
 {
+    /*
     int current_instruction_index = interpreter->instruction_pointer - interpreter->generator->instructions.data;
     int current_function_index = -1;
     for (int i = 0; i < interpreter->generator->function_locations.size; i++)
@@ -920,8 +819,6 @@ void bytecode_interpreter_print_state(Bytecode_Interpreter* interpreter)
     }
     if (current_function_index == -1) panic("Should not happen!\n");
 
-    bytecode_generator_calculate_function_parameter_offsets(interpreter->generator, current_function_index);
-    Intermediate_Function* func = &interpreter->compiler->intermediate_generator.functions[current_function_index];
     logg("\n\n\n\n---------------------- CURRENT STATE ----------------------\n");
     logg("Current Function: %s\n", lexer_identifer_to_string(&interpreter->compiler->lexer, func->name_handle).characters);
     logg("Current Stack offset: %d\n", interpreter->stack.data - interpreter->stack_pointer);
@@ -932,6 +829,7 @@ void bytecode_interpreter_print_state(Bytecode_Interpreter* interpreter)
         bytecode_instruction_append_to_string(&tmp, interpreter->generator->instructions[current_instruction_index]);
         logg("Instruction: %s\n", tmp.characters);
     }
+    */
     /*
     for (int i = 0; i < func->registers.size; i++)
     {
@@ -973,7 +871,6 @@ void bytecode_interpreter_execute_main(Bytecode_Interpreter* interpreter, Compil
         interpreter->globals = array_create_empty<byte>(interpreter->generator->global_data_size);
     }
     int current_instruction_index = interpreter->instruction_pointer - interpreter->generator->instructions.data;
-
 
     while (true) {
         //bytecode_interpreter_print_state(interpreter);

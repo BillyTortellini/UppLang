@@ -2,7 +2,7 @@
 
 #include "../../datastructures/array.hpp"
 #include "../../utility/datatypes.hpp"
-#include "intermediate_code.hpp"
+#include "semantic_analyser.hpp"
 
 struct Compiler;
 struct Bytecode_Generator;

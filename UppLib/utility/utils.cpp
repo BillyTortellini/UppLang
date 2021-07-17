@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <cstdarg>
 #include <cstring>
+#include <Windows.h>
 
 /*
     LOGGER
@@ -124,4 +125,12 @@ void memory_copy(void* destination, void* source, u64 size) {
 
 void memory_set_bytes(void* destination, u64 size, byte value) {
     memset(destination, value, size);
+}
+
+bool memory_is_readable(void* destination, u64 read_size)
+{
+    if (IsBadReadPtr(destination, read_size)) { return false; }
+    else {
+        return true;
+    }
 }

@@ -20,7 +20,6 @@ Compiler compiler_create(Timer* timer)
     result.analyser = semantic_analyser_create();
     result.bytecode_generator = bytecode_generator_create();
     result.bytecode_interpreter = bytecode_intepreter_create();
-    result.intermediate_generator = intermediate_generator_create();
     result.c_generator = c_generator_create();
     return result;
 }
@@ -33,58 +32,57 @@ void compiler_destroy(Compiler* compiler)
     semantic_analyser_destroy(&compiler->analyser);
     bytecode_generator_destroy(&compiler->bytecode_generator);
     bytecode_interpreter_destroy(&compiler->bytecode_interpreter);
-    intermediate_generator_destroy(&compiler->intermediate_generator);
     c_generator_destroy(&compiler->c_generator);
 }
 
 bool enable_lexing = true;
 bool enable_parsing = true;
 bool enable_analysis = true;
-bool enable_im_gen = false;
-bool enable_bytecode_gen = true;
+bool enable_bytecode_gen = false;
 bool enable_execution = true;
 bool enable_output = true;
 
 bool output_lexing = false;
 bool output_identifiers = false;
 bool output_ast = false;
-bool output_type_system = true;
-bool output_im = false;
-bool output_bytecode = false;
+bool output_type_system = false;
+bool output_root_table = false;
+bool output_im = true;
+bool output_bytecode = true;
+bool output_timing = true;
 
 void compiler_compile(Compiler* compiler, String* source_code, bool generate_code)
 {
     bool do_lexing = enable_lexing;
     bool do_parsing = do_lexing && enable_parsing;
     bool do_analysis = do_parsing && enable_analysis;
-    bool do_im_gen = do_analysis && enable_im_gen && generate_code;
-    bool do_bytecode_gen = do_im_gen && enable_bytecode_gen;
+    bool do_bytecode_gen = do_analysis && enable_bytecode_gen;
 
-    double lexer_start_time = timer_current_time_in_seconds(compiler->timer);
+    double time_start_lexing = timer_current_time_in_seconds(compiler->timer);
     if (do_lexing) {
         lexer_parse_string(&compiler->lexer, source_code);
     }
-    double parser_start_time = timer_current_time_in_seconds(compiler->timer);
+    double time_end_lexing = timer_current_time_in_seconds(compiler->timer);
+
+    double time_start_parsing = timer_current_time_in_seconds(compiler->timer);
     if (do_parsing) {
         ast_parser_parse(&compiler->parser, &compiler->lexer);
     }
-    double semantic_analysis_start_time = timer_current_time_in_seconds(compiler->timer);
+    double time_end_parsing = timer_current_time_in_seconds(compiler->timer);
 
+    double time_start_analysis = timer_current_time_in_seconds(compiler->timer);
     if (do_analysis) {
         semantic_analyser_analyse(&compiler->analyser, compiler);
     }
-    if (do_im_gen) {
-        if (compiler->parser.errors.size == 0 && compiler->analyser.errors.size == 0)
-        {
-            // Generate Intermediate Code
-            intermediate_generator_generate(&compiler->intermediate_generator, compiler);
-            // Generate Bytecode from IM
-            if (do_bytecode_gen) {
-                bytecode_generator_generate(&compiler->bytecode_generator, compiler);
-            }
-        }
-    }
+    double time_end_analysis = timer_current_time_in_seconds(compiler->timer);
 
+    double time_start_codegen = timer_current_time_in_seconds(compiler->timer);
+    if (do_bytecode_gen && compiler->parser.errors.size == 0 && compiler->analyser.errors.size == 0) {
+        bytecode_generator_generate(&compiler->bytecode_generator, compiler);
+    }
+    double time_end_codegen = timer_current_time_in_seconds(compiler->timer);
+
+    double time_start_output = timer_current_time_in_seconds(compiler->timer);
     if (enable_output && generate_code)
     {
         //logg("\n\n\n\n\n\n\n\n\n\n\n\n--------SOURCE CODE--------: \n%s\n\n", source_code->characters);
@@ -100,7 +98,7 @@ void compiler_compile(Compiler* compiler, String* source_code, bool generate_cod
         }
 
         if (do_parsing && output_ast)
-        { 
+        {
             String printed_ast = string_create_empty(256);
             SCOPE_EXIT(string_destroy(&printed_ast));
             ast_parser_append_to_string(&compiler->parser, &printed_ast);
@@ -110,91 +108,62 @@ void compiler_compile(Compiler* compiler, String* source_code, bool generate_cod
         }
 
         if (do_analysis && output_type_system) {
-            logg("--------TYPE SYSTEM RESULT--------:\n");
+            logg("\n--------TYPE SYSTEM RESULT--------:\n");
             type_system_print(&compiler->type_system);
-            logg("--------ROOT TABLE RESULT---------\n");
+        }
+
+        if (do_analysis && output_root_table)
+        {
+            logg("\n--------ROOT TABLE RESULT---------\n");
             String root_table = string_create_empty(1024);
             SCOPE_EXIT(string_destroy(&root_table));
             symbol_table_append_to_string(&root_table, compiler->analyser.root_table, &compiler->lexer, true);
             logg("%s", root_table.characters);
-
-            logg("--------PROGRAM---------\n");
-            string_reset(&root_table);
-            ir_program_append_to_string(compiler->analyser.program, &root_table);
-            logg("%s", root_table.characters);
         }
 
-        if (compiler->analyser.errors.size == 0 && true)
+        if (compiler->analyser.errors.size == 0 && compiler->parser.errors.size == 0)
         {
-            String result_str = string_create_empty(32);
-            SCOPE_EXIT(string_destroy(&result_str));
-            if (do_im_gen && output_im) {
-                intermediate_generator_append_to_string(&result_str, &compiler->intermediate_generator);
-                logg("---------INTERMEDIATE_GENERATOR_RESULT----------\n%s\n\n", result_str.characters);
-                string_reset(&result_str);
+            if (do_analysis && output_im)
+            {
+                logg("\n--------IR_PROGRAM---------\n");
+                String tmp = string_create_empty(1024);
+                SCOPE_EXIT(string_destroy(&tmp));
+                ir_program_append_to_string(compiler->analyser.program, &tmp, &compiler->analyser);
+                logg("%s", tmp.characters);
             }
-            if (do_bytecode_gen && output_bytecode) {
-                bytecode_generator_append_bytecode_to_string(&compiler->bytecode_generator, &result_str);
-                logg("----------------BYTECODE_GENERATOR RESULT---------------: \n%s\n", result_str.characters);
+
+            if (do_bytecode_gen && output_bytecode)
+            {
+                String result_str = string_create_empty(32);
+                SCOPE_EXIT(string_destroy(&result_str));
+                if (do_bytecode_gen && output_bytecode) {
+                    bytecode_generator_append_bytecode_to_string(&compiler->bytecode_generator, &result_str);
+                    logg("\n----------------BYTECODE_GENERATOR RESULT---------------: \n%s\n", result_str.characters);
+                }
             }
         }
     }
-    /*
-    double intermediate_generator_start_time = timer_current_time_in_seconds(compiler->timer);
-    double bytecode_generator_start_time = timer_current_time_in_seconds(compiler->timer);
-    if (compiler->parser.errors.size == 0 && compiler->analyser.errors.size == 0 && generate_code)
+    double time_end_output = timer_current_time_in_seconds(compiler->timer);
+
+    if (enable_output && output_timing && generate_code)
     {
-        // Generate Intermediate Code
-        intermediate_generator_generate(&compiler->intermediate_generator, compiler);
-        bytecode_generator_start_time = timer_current_time_in_seconds(compiler->timer);
-        // Generate Bytecode from IM
-        bytecode_generator_generate(&compiler->bytecode_generator, compiler);
-    }
-
-    double debug_print_start_time = timer_current_time_in_seconds(compiler->timer);
-    // Debug Print
-    if (generate_code && false)
-    {
-        logg("\n\n\n\n\n\n\n\n\n\n\n\n--------SOURCE CODE--------: \n%s\n\n", source_code->characters);
-        logg("\n\n\n\n--------LEXER RESULT--------:\n");
-        lexer_print(&compiler->lexer);
-
-        logg("\n--------IDENTIFIERS:--------:\n");
-        lexer_print_identifiers(&compiler->lexer);
-
-        String printed_ast = string_create_empty(256);
-        SCOPE_EXIT(string_destroy(&printed_ast));
-        ast_parser_append_to_string(&compiler->parser, &printed_ast);
-        logg("\n");
-        logg("--------AST PARSE RESULT--------:\n");
-        logg("\n%s\n", printed_ast.characters);
-
-        logg("--------TYPE SYSTEM RESULT--------:\n");
-        type_system_print(&compiler->type_system);
-        if (compiler->analyser.errors.size == 0 && true)
-        {
-            String result_str = string_create_empty(32);
-            SCOPE_EXIT(string_destroy(&result_str));
-            intermediate_generator_append_to_string(&result_str, &compiler->intermediate_generator);
-            logg("---------INTERMEDIATE_GENERATOR_RESULT----------\n%s\n\n", result_str.characters);
-            string_reset(&result_str);
-
-            bytecode_generator_append_bytecode_to_string(&compiler->bytecode_generator, &result_str);
-            logg("----------------BYTECODE_GENERATOR RESULT---------------: \n%s\n", result_str.characters);
+        logg("\n--------- TIMINGS -----------\n");
+        if (enable_lexing) {
+            logg("lexing       ... %3.2fms\n", (time_end_lexing - time_start_lexing) * 1000);
+        }
+        if (enable_parsing) {
+            logg("parsing      ... %3.2fms\n", (time_end_parsing - time_start_parsing) * 1000);
+        }
+        if (enable_analysis) {
+            logg("analysis     ... %3.2fms\n", (time_end_analysis - time_start_analysis) * 1000);
+        }
+        if (enable_bytecode_gen) {
+            logg("bytecode_gen ... %3.2fms\n", (time_end_codegen - time_start_codegen) * 1000);
+        }
+        if (enable_output) {
+            logg("output       ... %3.2fms\n", (time_end_output - time_start_output) * 1000);
         }
     }
-
-    double debug_print_end_time = timer_current_time_in_seconds(compiler->timer);
-    logg(
-        "--------- TIMINGS -----------\nlexer time: \t%3.2fms\nparser time: \t%3.2fms\nanalyser time: %3.2fms\nintermediate time: %3.2fms\nbytecode time: %3.2fms\ndebug print: %3.2fms\n",
-        (float)(parser_start_time - lexer_start_time) * 1000.0f,
-        (float)(semantic_analysis_start_time - parser_start_time) * 1000.0f,
-        (float)(intermediate_generator_start_time - semantic_analysis_start_time) * 1000.0f,
-        (float)(bytecode_generator_start_time - intermediate_generator_start_time) * 1000.0f,
-        (float)(debug_print_start_time - bytecode_generator_start_time) * 1000.0f,
-        (float)(debug_print_end_time - debug_print_start_time) * 1000.0f
-    );
-    */
 }
 
 void compiler_execute(Compiler* compiler)
@@ -203,7 +172,6 @@ void compiler_execute(Compiler* compiler)
         enable_lexing &&
         enable_parsing &&
         enable_analysis &&
-        enable_im_gen &&
         enable_bytecode_gen &&
         enable_execution;
 

@@ -201,6 +201,152 @@ void type_signature_append_to_string_with_children(String* string, Type_Signatur
     }
 }
 
+void type_signature_append_value_to_string(Type_Signature* type, byte* value_ptr, String* string)
+{
+    if (!memory_is_readable(value_ptr, type->size_in_bytes)) {
+        string_append_formated(string, "Memory not readable");
+    }
+
+    switch (type->type)
+    {
+    case Signature_Type::FUNCTION:
+        break;
+    case Signature_Type::VOID_TYPE:
+        break;
+    case Signature_Type::ERROR_TYPE:
+        break;
+    case Signature_Type::ARRAY_SIZED:
+    {
+        string_append_formated(string, "[#%d ", type->array_element_count);
+        if (type->array_element_count > 4) {
+            string_append_formated(string, " ...]");
+            return;
+        }
+        for (int i = 0; i < type->array_element_count; i++) {
+            byte* element_ptr = value_ptr + (i * type->child_type->size_in_bytes);
+            type_signature_append_value_to_string(type->child_type, element_ptr, string);
+            string_append_formated(string, ", ");
+        }
+        string_append_formated(string, "]");
+        break;
+    }
+    case Signature_Type::ARRAY_UNSIZED:
+    {
+        byte* data_ptr = *((byte**)value_ptr);
+        int element_count = *((int*)(value_ptr + 8));
+        string_append_formated(string, "[#%d ", element_count);
+        if (!memory_is_readable(data_ptr, element_count * type->child_type->size_in_bytes)) {
+            string_append_formated(string, "Memory not readable");
+        }
+        else {
+            if (element_count > 4) {
+                string_append_formated(string, " ...]");
+                return;
+            }
+            for (int i = 0; i < element_count; i++) {
+                byte* element_ptr = data_ptr + (i * type->child_type->size_in_bytes);
+                type_signature_append_value_to_string(type->child_type, element_ptr, string);
+                string_append_formated(string, ", ");
+            }
+            string_append_formated(string, "]");
+        }
+        break;
+    }
+    case Signature_Type::POINTER:
+    {
+        byte* data_ptr = *((byte**)value_ptr);
+        if (data_ptr == 0) {
+            string_append_formated(string, "nullptr");
+            return;
+        }
+        string_append_formated(string, "Ptr %p", data_ptr);
+        if (!memory_is_readable(data_ptr, type->child_type->size_in_bytes)) {
+            string_append_formated(string, "(UNREADABLE)");
+        }
+        break;
+    }
+    case Signature_Type::STRUCT:
+    {
+        string_append_formated(string, "Struct: {");
+        for (int i = 0; i < type->member_types.size; i++) {
+            Struct_Member* mem = &type->member_types[i];
+            byte* mem_ptr = value_ptr + mem->offset;
+            if (memory_is_readable(mem_ptr, mem->type->size_in_bytes)) {
+                type_signature_append_value_to_string(mem->type, mem_ptr, string);
+            }
+            else {
+                string_append_formated(string, "UNREADABLE");
+            }
+            string_append_formated(string, ", ");
+        }
+        string_append_formated(string, "}");
+        break;
+    }
+    case Signature_Type::PRIMITIVE:
+    {
+        switch (type->primitive_type)
+        {
+        case Primitive_Type::BOOLEAN: {
+            bool val = *(bool*)value_ptr;
+            string_append_formated(string, "%s", val ? "TRUE" : "FALSE");
+            break;
+        }
+        case Primitive_Type::SIGNED_INT_8: {
+            int val = (i32) * (i8*)value_ptr;
+            string_append_formated(string, "%d", val);
+            break;
+        }
+        case Primitive_Type::SIGNED_INT_16: {
+            int val = (i32) * (i16*)value_ptr;
+            string_append_formated(string, "%d", val);
+            break;
+        }
+        case Primitive_Type::SIGNED_INT_32: {
+            int val = (i32) * (i32*)value_ptr;
+            string_append_formated(string, "%d", val);
+            break;
+        }
+        case Primitive_Type::SIGNED_INT_64: {
+            int val = (i32) * (i64*)value_ptr;
+            string_append_formated(string, "%d", val);
+            break;
+        }
+        case Primitive_Type::UNSIGNED_INT_8: {
+            int val = (i32) * (u8*)value_ptr;
+            string_append_formated(string, "%d", val);
+            break;
+        }
+        case Primitive_Type::UNSIGNED_INT_16: {
+            int val = (i32) * (u16*)value_ptr;
+            string_append_formated(string, "%d", val);
+            break;
+        }
+        case Primitive_Type::UNSIGNED_INT_32: {
+            int val = (i32) * (u32*)value_ptr;
+            string_append_formated(string, "%d", val);
+            break;
+        }
+        case Primitive_Type::UNSIGNED_INT_64: {
+            int val = (i32) * (u64*)value_ptr;
+            string_append_formated(string, "%d", val);
+            break;
+        }
+        case Primitive_Type::FLOAT_32: {
+            float val = *(float*)value_ptr;
+            string_append_formated(string, "%3.2f", val);
+            break;
+        }
+        case Primitive_Type::FLOAT_64: {
+            double val = *(double*)value_ptr;
+            string_append_formated(string, "%3.2f", val);
+            break;
+        }
+        }
+        break;
+    }
+    }
+}
+
 void type_signature_append_to_string(String* string, Type_Signature* signature)
 {
     type_signature_append_to_string_with_children(string, signature, true);
@@ -224,17 +370,17 @@ void type_system_add_primitives(Type_System* system)
     system->void_ptr_type = new Type_Signature();
 
     *system->bool_type = type_signature_make_primitive(Primitive_Type::BOOLEAN);
-    *system->i8_type   = type_signature_make_primitive(Primitive_Type::SIGNED_INT_8);
-    *system->i16_type  = type_signature_make_primitive(Primitive_Type::SIGNED_INT_16);
-    *system->i32_type  = type_signature_make_primitive(Primitive_Type::SIGNED_INT_32);
-    *system->i64_type  = type_signature_make_primitive(Primitive_Type::SIGNED_INT_64);
-    *system->u8_type   = type_signature_make_primitive(Primitive_Type::UNSIGNED_INT_8);
-    *system->u16_type  = type_signature_make_primitive(Primitive_Type::UNSIGNED_INT_16);
-    *system->u32_type  = type_signature_make_primitive(Primitive_Type::UNSIGNED_INT_32);
-    *system->u64_type  = type_signature_make_primitive(Primitive_Type::UNSIGNED_INT_64);
-    *system->f32_type  = type_signature_make_primitive(Primitive_Type::FLOAT_32);
-    *system->f64_type  = type_signature_make_primitive(Primitive_Type::FLOAT_64);
-    *system->error_type  = type_signature_make_error();
+    *system->i8_type = type_signature_make_primitive(Primitive_Type::SIGNED_INT_8);
+    *system->i16_type = type_signature_make_primitive(Primitive_Type::SIGNED_INT_16);
+    *system->i32_type = type_signature_make_primitive(Primitive_Type::SIGNED_INT_32);
+    *system->i64_type = type_signature_make_primitive(Primitive_Type::SIGNED_INT_64);
+    *system->u8_type = type_signature_make_primitive(Primitive_Type::UNSIGNED_INT_8);
+    *system->u16_type = type_signature_make_primitive(Primitive_Type::UNSIGNED_INT_16);
+    *system->u32_type = type_signature_make_primitive(Primitive_Type::UNSIGNED_INT_32);
+    *system->u64_type = type_signature_make_primitive(Primitive_Type::UNSIGNED_INT_64);
+    *system->f32_type = type_signature_make_primitive(Primitive_Type::FLOAT_32);
+    *system->f64_type = type_signature_make_primitive(Primitive_Type::FLOAT_64);
+    *system->error_type = type_signature_make_error();
     system->void_type->type = Signature_Type::VOID_TYPE;
     system->void_type->size_in_bytes = 0;
     system->void_type->alignment_in_bytes = 1;
@@ -323,7 +469,7 @@ Type_Signature* type_system_make_type(Type_System* system, Type_Signature signat
     return new_sig;
 }
 
-Type_Signature* type_system_make_pointer(Type_System* system, Type_Signature* child_type) 
+Type_Signature* type_system_make_pointer(Type_System* system, Type_Signature* child_type)
 {
     Type_Signature result;
     result.type = Signature_Type::POINTER;
@@ -333,7 +479,7 @@ Type_Signature* type_system_make_pointer(Type_System* system, Type_Signature* ch
     return type_system_make_type(system, result);
 }
 
-Type_Signature* type_system_make_array_sized(Type_System* system, Type_Signature* element_type, int array_element_count) 
+Type_Signature* type_system_make_array_sized(Type_System* system, Type_Signature* element_type, int array_element_count)
 {
     Type_Signature result;
     result.type = Signature_Type::ARRAY_SIZED;
@@ -344,7 +490,7 @@ Type_Signature* type_system_make_array_sized(Type_System* system, Type_Signature
     return type_system_make_type(system, result);
 }
 
-Type_Signature* type_system_make_array_unsized(Type_System* system, Type_Signature* element_type) 
+Type_Signature* type_system_make_array_unsized(Type_System* system, Type_Signature* element_type)
 {
     Type_Signature result;
     result.type = Signature_Type::ARRAY_UNSIZED;
@@ -354,7 +500,7 @@ Type_Signature* type_system_make_array_unsized(Type_System* system, Type_Signatu
     return type_system_make_type(system, result);
 }
 
-Type_Signature* type_system_make_function(Type_System* system, Dynamic_Array<Type_Signature*> parameter_types, Type_Signature* return_type) 
+Type_Signature* type_system_make_function(Type_System* system, Dynamic_Array<Type_Signature*> parameter_types, Type_Signature* return_type)
 {
     Type_Signature result;
     result.type = Signature_Type::FUNCTION;
@@ -492,22 +638,22 @@ void symbol_table_append_to_string_with_parent_info(String* string, Symbol_Table
         switch (s->symbol_type)
         {
         case Symbol_Type::VARIABLE:
-            string_append_formated(string, "Variable" );
+            string_append_formated(string, "Variable");
             type_signature_append_to_string(string, ir_data_access_get_type(&s->options.variable_access));
             break;
         case Symbol_Type::TYPE:
-            string_append_formated(string, "Type" );
+            string_append_formated(string, "Type");
             type_signature_append_to_string(string, s->options.data_type);
             break;
-        case Symbol_Type::FUNCTION: 
-            string_append_formated(string, "Function" );
+        case Symbol_Type::FUNCTION:
+            string_append_formated(string, "Function");
             type_signature_append_to_string(string, s->options.function->function_type);
             break;
-        case Symbol_Type::HARDCODED_FUNCTION: 
+        case Symbol_Type::HARDCODED_FUNCTION:
             string_append_formated(string, "Hardcoded Function ");
             type_signature_append_to_string(string, s->options.hardcoded_function->signature);
             break;
-        case Symbol_Type::MODULE: 
+        case Symbol_Type::MODULE:
             string_append_formated(string, "Module"); break;
         default: panic("What");
         }
@@ -545,6 +691,67 @@ void symbol_table_define_symbol(Symbol_Table* table, Semantic_Analyser* analyser
 /*
     IR PROGRAM
 */
+
+void exit_code_append_to_string(String* string, Exit_Code code)
+{
+    switch (code)
+    {
+    case Exit_Code::OUT_OF_BOUNDS:
+        string_append_formated(string, "OUT_OF_BOUNDS");
+        break;
+    case Exit_Code::RETURN_VALUE_OVERFLOW:
+        string_append_formated(string, "RETURN_VALUE_OVERFLOW");
+        break;
+    case Exit_Code::STACK_OVERFLOW:
+        string_append_formated(string, "STACK_OVERFLOW");
+        break;
+    case Exit_Code::SUCCESS:
+        string_append_formated(string, "SUCCESS");
+        break;
+    default: panic("Hey");
+    }
+}
+
+void ir_hardcoded_function_type_append_to_string(String* string, IR_Hardcoded_Function_Type hardcoded)
+{
+    switch (hardcoded)
+    {
+    case IR_Hardcoded_Function_Type::PRINT_I32:
+        string_append_formated(string, "PRINT_I32");
+        break;
+    case IR_Hardcoded_Function_Type::PRINT_F32:
+        string_append_formated(string, "PRINT_F32");
+        break;
+    case IR_Hardcoded_Function_Type::PRINT_BOOL:
+        string_append_formated(string, "PRINT_BOOL");
+        break;
+    case IR_Hardcoded_Function_Type::PRINT_LINE:
+        string_append_formated(string, "PRINT_LINE");
+        break;
+    case IR_Hardcoded_Function_Type::PRINT_STRING:
+        string_append_formated(string, "PRINT_STRING");
+        break;
+    case IR_Hardcoded_Function_Type::READ_I32:
+        string_append_formated(string, "READ_I32");
+        break;
+    case IR_Hardcoded_Function_Type::READ_F32:
+        string_append_formated(string, "READ_F32");
+        break;
+    case IR_Hardcoded_Function_Type::READ_BOOL:
+        string_append_formated(string, "READ_BOOL");
+        break;
+    case IR_Hardcoded_Function_Type::RANDOM_I32:
+        string_append_formated(string, "RANDOM_I32");
+        break;
+    case IR_Hardcoded_Function_Type::MALLOC_SIZE_I32:
+        string_append_formated(string, "MALLOC_SIZE_I32");
+        break;
+    case IR_Hardcoded_Function_Type::FREE_POINTER:
+        string_append_formated(string, "FREE_POINTER");
+        break;
+    default: panic("Should not happen");
+    }
+}
 
 Type_Signature* ir_data_access_get_type(IR_Data_Access* access)
 {
@@ -706,7 +913,7 @@ IR_Program* ir_program_create(Type_System* type_system)
     return result;
 }
 
-void ir_program_destroy(IR_Program* program) 
+void ir_program_destroy(IR_Program* program)
 {
     dynamic_array_destroy(&program->constant_pool.constants);
     dynamic_array_destroy(&program->constant_pool.constant_memory);
@@ -724,23 +931,71 @@ void ir_program_destroy(IR_Program* program)
 
 void ir_data_access_append_to_string(IR_Data_Access* access, String* string)
 {
-
+    switch (access->type)
+    {
+    case IR_Data_Access_Type::CONSTANT: {
+        IR_Constant* constant = &access->option.program->constant_pool.constants[access->index];
+        string_append_formated(string, "Constant #%d ", access->index);
+        type_signature_append_to_string(string, constant->type);
+        string_append_formated(string, " ", access->index);
+        type_signature_append_value_to_string(constant->type, &access->option.program->constant_pool.constant_memory[constant->offset], string);
+        break;
+    }
+    case IR_Data_Access_Type::GLOBAL_DATA: {
+        Type_Signature* sig = access->option.program->globals[access->index];
+        string_append_formated(string, "Global #%d, type: ", access->index);
+        type_signature_append_to_string(string, sig);
+        break;
+    }
+    case IR_Data_Access_Type::PARAMETER: {
+        Type_Signature* sig = access->option.function->function_type->parameter_types[access->index];
+        string_append_formated(string, "Param #%d, type: ", access->index);
+        type_signature_append_to_string(string, sig);
+        break;
+    }
+    case IR_Data_Access_Type::REGISTER: {
+        Type_Signature* sig = access->option.definition_block->registers[access->index];
+        string_append_formated(string, "Register #%d, type: ", access->index);
+        type_signature_append_to_string(string, sig);
+        break;
+    }
+    }
 }
 
-void ir_code_block_append_to_string(IR_Code_Block* code_block, String* string, int indentation);
-void ir_instruction_append_to_string(IR_Instruction* instruction, String* string, int indentation)
-{
+void indent_string(String* string, int indentation) {
     for (int i = 0; i < indentation; i++) {
-        string_append_formated(string, "\t");
+        string_append_formated(string, "    ");
     }
+}
+
+void ir_code_block_append_to_string(IR_Code_Block* code_block, String* string, int indentation, Semantic_Analyser* analyser);
+void ir_instruction_append_to_string(IR_Instruction* instruction, String* string, int indentation, Semantic_Analyser* analyser)
+{
+    Type_System* type_system = &analyser->compiler->type_system;
+    indent_string(string, indentation);
     switch (instruction->type)
     {
-    case IR_Instruction_Type::ADDRESS_OF: {
-        string_append_formated(string, "ADDRESS_OF ");
-        switch (instruction->options.address_of.type)
+    case IR_Instruction_Type::ADDRESS_OF: 
+    {
+        IR_Instruction_Address_Of* address_of = &instruction->options.address_of;
+        string_append_formated(string, "ADDRESS_OF\n");
+        indent_string(string, indentation + 1);
+        if (address_of->type != IR_Instruction_Address_Of_Type::FUNCTION) {
+            string_append_formated(string, "src: ");
+            ir_data_access_append_to_string(&address_of->source, string);
+            string_append_formated(string, "\n");
+            indent_string(string, indentation + 1);
+        }
+        string_append_formated(string, "dst: ");
+        ir_data_access_append_to_string(&address_of->destination, string);
+        string_append_formated(string, "\n");
+        indent_string(string, indentation + 1);
+        string_append_formated(string, "type: ");
+        switch (address_of->type)
         {
         case IR_Instruction_Address_Of_Type::ARRAY_ELEMENT:
-            string_append_formated(string, "ARRAY_ELEMENT");
+            string_append_formated(string, "ARRAY_ELEMENT index: ");
+            ir_data_access_append_to_string(&address_of->options.index_access, string);
             break;
         case IR_Instruction_Address_Of_Type::DATA:
             string_append_formated(string, "DATA");
@@ -749,149 +1004,286 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
             string_append_formated(string, "FUNCTION");
             break;
         case IR_Instruction_Address_Of_Type::STRUCT_MEMBER:
-            string_append_formated(string, "STRUCT_MEMBER");
+            string_append_formated(string, "STRUCT_MEMBER, offset: %d, type: ", address_of->options.member.offset);
+            type_signature_append_to_string(string, address_of->options.member.type);
             break;
         }
         break;
     }
-    case IR_Instruction_Type::BINARY_OP:{
+    case IR_Instruction_Type::BINARY_OP: 
+    {
         string_append_formated(string, "BINARY_OP ");
         switch (instruction->options.binary_op.type)
         {
-            case IR_Instruction_Binary_OP_Type::ADDITION:
-                string_append_formated(string, "ADDITION");
-                break;
-            case IR_Instruction_Binary_OP_Type::AND:
-                string_append_formated(string, "AND");
-                break;
-            case IR_Instruction_Binary_OP_Type::DIVISION:
-                string_append_formated(string, "DIVISION");
-                break;
-            case IR_Instruction_Binary_OP_Type::EQUAL:
-                string_append_formated(string, "EQUAL");
-                break;
-            case IR_Instruction_Binary_OP_Type::GREATER_EQUAL:
-                string_append_formated(string, "GREATER_EQUAL");
-                break;
-            case IR_Instruction_Binary_OP_Type::GREATER_THAN:
-                string_append_formated(string, "GREATER_THAN");
-                break;
-            case IR_Instruction_Binary_OP_Type::LESS_EQUAL:
-                string_append_formated(string, "LESS_EQUAL");
-                break;
-            case IR_Instruction_Binary_OP_Type::LESS_THAN:
-                string_append_formated(string, "LESS_THAN ");
-                break;
-            case IR_Instruction_Binary_OP_Type::MODULO:
-                string_append_formated(string, "MODULO");
-                break;
-            case IR_Instruction_Binary_OP_Type::MULTIPLICATION:
-                string_append_formated(string, "MULTIPLICATION ");
-                break;
-            case IR_Instruction_Binary_OP_Type::NOT_EQUAL:
-                string_append_formated(string, "NOT_EQUAL");
-                break;
-            case IR_Instruction_Binary_OP_Type::OR:
-                string_append_formated(string, "OR ");
-                break;
-            case IR_Instruction_Binary_OP_Type::SUBTRACTION:
-                string_append_formated(string, "SUBTRACTION");
-                break;
+        case IR_Instruction_Binary_OP_Type::ADDITION:
+            string_append_formated(string, "ADDITION");
+            break;
+        case IR_Instruction_Binary_OP_Type::AND:
+            string_append_formated(string, "AND");
+            break;
+        case IR_Instruction_Binary_OP_Type::DIVISION:
+            string_append_formated(string, "DIVISION");
+            break;
+        case IR_Instruction_Binary_OP_Type::EQUAL:
+            string_append_formated(string, "EQUAL");
+            break;
+        case IR_Instruction_Binary_OP_Type::GREATER_EQUAL:
+            string_append_formated(string, "GREATER_EQUAL");
+            break;
+        case IR_Instruction_Binary_OP_Type::GREATER_THAN:
+            string_append_formated(string, "GREATER_THAN");
+            break;
+        case IR_Instruction_Binary_OP_Type::LESS_EQUAL:
+            string_append_formated(string, "LESS_EQUAL");
+            break;
+        case IR_Instruction_Binary_OP_Type::LESS_THAN:
+            string_append_formated(string, "LESS_THAN ");
+            break;
+        case IR_Instruction_Binary_OP_Type::MODULO:
+            string_append_formated(string, "MODULO");
+            break;
+        case IR_Instruction_Binary_OP_Type::MULTIPLICATION:
+            string_append_formated(string, "MULTIPLICATION ");
+            break;
+        case IR_Instruction_Binary_OP_Type::NOT_EQUAL:
+            string_append_formated(string, "NOT_EQUAL");
+            break;
+        case IR_Instruction_Binary_OP_Type::OR:
+            string_append_formated(string, "OR ");
+            break;
+        case IR_Instruction_Binary_OP_Type::SUBTRACTION:
+            string_append_formated(string, "SUBTRACTION");
+            break;
         }
+
+        string_append_formated(string, "\n");
+        indent_string(string, indentation + 1);
+        string_append_formated(string, "left: ");
+        ir_data_access_append_to_string(&instruction->options.binary_op.operand_left, string);
+        string_append_formated(string, "\n");
+        indent_string(string, indentation + 1);
+        string_append_formated(string, "right: ");
+        ir_data_access_append_to_string(&instruction->options.binary_op.operand_right, string);
+        string_append_formated(string, "\n");
+        indent_string(string, indentation + 1);
+        string_append_formated(string, "dst: ");
+        ir_data_access_append_to_string(&instruction->options.binary_op.destination, string);
         break;
     }
-    case IR_Instruction_Type::BLOCK:{
+    case IR_Instruction_Type::BLOCK: {
         string_append_formated(string, "BLOCK\n");
-        ir_code_block_append_to_string(instruction->options.block, string, indentation + 1);
+        ir_code_block_append_to_string(instruction->options.block, string, indentation + 1, analyser);
         break;
     }
-    case IR_Instruction_Type::BREAK:{
+    case IR_Instruction_Type::BREAK: {
         string_append_formated(string, "BREAK");
         break;
     }
-    case IR_Instruction_Type::CONTINUE:{
+    case IR_Instruction_Type::CONTINUE: {
         string_append_formated(string, "CONTINUE");
         break;
     }
-    case IR_Instruction_Type::CAST:{
-        string_append_formated(string, "CAST");
-        break;
-    }
-    case IR_Instruction_Type::FUNCTION_CALL:{
-        string_append_formated(string, "FUNCTION_CALL");
-        break;
-    }
-    case IR_Instruction_Type::IF:{
-        string_append_formated(string, "IF\n");
-        ir_code_block_append_to_string(instruction->options.if_instr.true_branch, string, indentation + 1);
-        for (int j = 0; j < indentation; j++) {
-            string_append_formated(string, "\t");
+    case IR_Instruction_Type::CAST: 
+    {
+        IR_Instruction_Cast* cast = &instruction->options.cast;
+        string_append_formated(string, "CAST ");
+        switch (cast->type)
+        {
+        case IR_Instruction_Cast_Type::ARRAY_SIZED_TO_UNSIZED:
+            string_append_formated(string, "ARRAY_SIZED_TO_UNSIZED");
+            break;
+        case IR_Instruction_Cast_Type::POINTERS:
+            string_append_formated(string, "POINTERS");
+            break;
+        case IR_Instruction_Cast_Type::POINTER_TO_U64:
+            string_append_formated(string, "POINTER_TO_U64");
+            break;
+        case IR_Instruction_Cast_Type::PRIMITIVE_TYPES:
+            string_append_formated(string, "PRIMITIVE_TYPES");
+            break;
+        case IR_Instruction_Cast_Type::U64_TO_POINTER:
+            string_append_formated(string, "U64_TO_POINTER");
+            break;
         }
+
+        string_append_formated(string, "\n");
+        indent_string(string, indentation + 1);
+        string_append_formated(string, "src: ");
+        ir_data_access_append_to_string(&cast->source, string);
+        string_append_formated(string, "\n");
+        indent_string(string, indentation + 1);
+        string_append_formated(string, "dst: ");
+        ir_data_access_append_to_string(&cast->destination, string);
+        break;
+    }
+    case IR_Instruction_Type::FUNCTION_CALL: 
+    {
+        IR_Instruction_Call* call = &instruction->options.call;
+        string_append_formated(string, "FUNCTION_CALL\n");
+        indent_string(string, indentation + 1);
+
+        Type_Signature* function_sig;
+        switch (call->call_type)
+        {
+        case IR_Instruction_Call_Type::FUNCTION_CALL:
+            function_sig = call->options.function->function_type;
+            break;
+        case IR_Instruction_Call_Type::FUNCTION_POINTER_CALL:
+            function_sig = ir_data_access_get_type(&call->options.pointer_access)->child_type;
+            break;
+        case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
+            function_sig = call->options.hardcoded->signature;
+            break;
+        default: 
+            panic("Hey");
+            return;
+        }
+        if (function_sig->return_type != type_system->void_type) {
+            string_append_formated(string, "dst: ");
+            ir_data_access_append_to_string(&call->destination, string);
+            string_append_formated(string, "\n");
+            indent_string(string, indentation + 1);
+        }
+        string_append_formated(string, "args: (%d)\n", call->arguments.size);
+        for (int i = 0; i < call->arguments.size; i++) {
+            indent_string(string, indentation + 2);
+            ir_data_access_append_to_string(&call->arguments[i], string);
+            string_append_formated(string, "\n");
+        }
+
+        indent_string(string, indentation+1);
+        string_append_formated(string, "Call-Type: ");
+        switch (call->call_type)
+        {
+        case IR_Instruction_Call_Type::FUNCTION_CALL:
+            string_append_formated(string, "FUNCTION (later)");
+            break;
+        case IR_Instruction_Call_Type::FUNCTION_POINTER_CALL:
+            string_append_formated(string, "FUNCTION_POINTER_CALL, access: ");
+            ir_data_access_append_to_string(&call->options.pointer_access, string);
+            break;
+        case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
+            string_append_formated(string, "HARDCODED_FUNCTION_CALL, type: ");
+            ir_hardcoded_function_type_append_to_string(string, call->options.hardcoded->type);
+            break;
+        }
+        break;
+    }
+    case IR_Instruction_Type::IF: {
+        string_append_formated(string, "IF ");
+        ir_data_access_append_to_string(&instruction->options.if_instr.condition, string);
+        string_append_formated(string, "\n");
+        ir_code_block_append_to_string(instruction->options.if_instr.true_branch, string, indentation + 1, analyser);
+        indent_string(string, indentation);
         string_append_formated(string, "ELSE\n");
-        ir_code_block_append_to_string(instruction->options.if_instr.true_branch, string, indentation + 1);
+        ir_code_block_append_to_string(instruction->options.if_instr.true_branch, string, indentation + 1, analyser);
         break;
     }
-    case IR_Instruction_Type::MOVE:{
-        string_append_formated(string, "MOVE");
+    case IR_Instruction_Type::MOVE: {
+        string_append_formated(string, "MOVE\n");
+        indent_string(string, indentation+1);
+        string_append_formated(string, "src: ");
+        ir_data_access_append_to_string(&instruction->options.move.source, string);
+        string_append_formated(string, "\n");
+        indent_string(string, indentation+1);
+        string_append_formated(string, "dst: ");
+        ir_data_access_append_to_string(&instruction->options.move.destination, string);
         break;
     }
-    case IR_Instruction_Type::WHILE:{
+    case IR_Instruction_Type::WHILE: {
         string_append_formated(string, "WHILE\n");
-        ir_code_block_append_to_string(instruction->options.while_instr.code, string, indentation + 1);
+        indent_string(string, indentation + 1);
+        string_append_formated(string, "Condition code: \n");
+        ir_code_block_append_to_string(instruction->options.while_instr.condition_code, string, indentation + 2, analyser);
+        string_append_formated(string, "\n");
+        string_append_formated(string, "Condition access: ");
+        ir_data_access_append_to_string(&instruction->options.while_instr.condition_access, string);
+        string_append_formated(string, "\n");
+        indent_string(string, indentation + 1);
+        string_append_formated(string, "Body: \n");
+        ir_code_block_append_to_string(instruction->options.while_instr.code, string, indentation + 2, analyser);
         break;
     }
-    case IR_Instruction_Type::RETURN:{
-        string_append_formated(string, "RETURN");
+    case IR_Instruction_Type::RETURN: {
+        IR_Instruction_Return* return_instr = &instruction->options.return_instr;
+        switch (return_instr->type)
+        {
+        case IR_Instruction_Return_Type::EXIT:
+            string_append_formated(string, "EXIT ");
+            exit_code_append_to_string(string, return_instr->options.exit_code);
+            break;
+        case IR_Instruction_Return_Type::RETURN_DATA:
+            string_append_formated(string, "RETURN ");
+            ir_data_access_append_to_string(&return_instr->options.return_value, string);
+            break;
+        case IR_Instruction_Return_Type::RETURN_EMPTY:
+            string_append_formated(string, "RETURN");
+            break;
+        }
         break;
     }
-    case IR_Instruction_Type::UNARY_OP:{
-        string_append_formated(string, "UNARY_OP");
+    case IR_Instruction_Type::UNARY_OP: 
+    {
+        string_append_formated(string, "Unary_OP ");
+        switch (instruction->options.unary_op.type)
+        {
+        case IR_Instruction_Unary_OP_Type::NEGATE:
+            string_append_formated(string, "NEGATE");
+            break;
+        case IR_Instruction_Unary_OP_Type::NOT:
+            string_append_formated(string, "NOT");
+            break;
+        }
+
+        string_append_formated(string, "\n");
+        indent_string(string, indentation + 1);
+        string_append_formated(string, "dst: ");
+        ir_data_access_append_to_string(&instruction->options.unary_op.destination, string);
+        string_append_formated(string, "\n");
+        indent_string(string, indentation + 1);
+        string_append_formated(string, "operand: ");
+        ir_data_access_append_to_string(&instruction->options.unary_op.source, string);
         break;
     }
+    default: panic("What");
     }
 }
 
-void ir_code_block_append_to_string(IR_Code_Block* code_block, String* string, int indentation)
+void ir_code_block_append_to_string(IR_Code_Block* code_block, String* string, int indentation, Semantic_Analyser* analyser)
 {
-    for (int i = 0; i < indentation; i++) {
-        string_append_formated(string, "\t");
-    }
+    indent_string(string, indentation);
     string_append_formated(string, "Registers:\n");
     for (int i = 0; i < code_block->registers.size; i++) {
-        for (int j = 0; j < indentation+1; j++) {
-            string_append_formated(string, "\t");
-        }
+        indent_string(string, indentation+1);
         string_append_formated(string, "#%d: ", i);
         type_signature_append_to_string(string, code_block->registers[i]);
         string_append_formated(string, "\n");
     }
-    for (int j = 0; j < indentation; j++) {
-        string_append_formated(string, "\t");
-    }
+    indent_string(string, indentation);
     string_append_formated(string, "Instructions:\n");
     for (int i = 0; i < code_block->instructions.size; i++) {
-        ir_instruction_append_to_string(&code_block->instructions[i], string, indentation + 1);
+        ir_instruction_append_to_string(&code_block->instructions[i], string, indentation + 1, analyser);
         string_append_formated(string, "\n");
     }
 }
 
-void ir_function_append_to_string(IR_Function* function, String* string, int indentation)
+void ir_function_append_to_string(IR_Function* function, String* string, int indentation, Semantic_Analyser* analyser)
 {
-    for (int i = 0; i < indentation; i++) {
-        string_append_formated(string, "\tFunction-Type:");
-    }
+    indent_string(string, indentation);
+    string_append_formated(string, "Function-Type:");
     type_signature_append_to_string(string, function->function_type);
     string_append_formated(string, "\n");
-    ir_code_block_append_to_string(function->code, string, indentation);
+    ir_code_block_append_to_string(function->code, string, indentation, analyser);
 }
 
-void ir_program_append_to_string(IR_Program* program, String* string)
+void ir_program_append_to_string(IR_Program* program, String* string, Semantic_Analyser* analyser)
 {
-    string_append_formated(string, "Program Dump:\n-----------------");
+    string_append_formated(string, "Program Dump:\n-----------------\n");
     for (int i = 0; i < program->functions.size; i++)
     {
-        string_append_formated(string, "Function #%d", i);
-        ir_function_append_to_string(program->functions[i], string, 0);
+        string_append_formated(string, "Function #%d ", i);
+        ir_function_append_to_string(program->functions[i], string, 0, analyser);
+        string_append_formated(string, "\n");
     }
 }
 
@@ -1397,6 +1789,10 @@ IR_Data_Access ir_data_access_create_constant_access(IR_Program* program, Type_S
     constant.offset = program->constant_pool.constant_memory.size;
     dynamic_array_push_back(&program->constant_pool.constants, constant);
 
+    for (int i = 0; i < bytes.size; i++) {
+        dynamic_array_push_back(&program->constant_pool.constant_memory, bytes[i]);
+    }
+
     IR_Data_Access access;
     access.type = IR_Data_Access_Type::CONSTANT;
     access.index = program->constant_pool.constants.size - 1;
@@ -1551,6 +1947,9 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
                     error_occured = true;
                     semantic_analyser_log_error(analyser, "Argument type does not match function parameter type", expression_index);
                 }
+            }
+            else {
+                dynamic_array_push_back(&call_instruction.options.call.arguments, argument_access);
             }
         }
 
@@ -2040,7 +2439,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
         // Special Case, see Expression_Variable_Read how this works
         if (expr_result.type->type == Signature_Type::FUNCTION)
         {
-            if (!create_temporary_access) {
+            if (create_temporary_access) {
                 *access = expr_access;
             }
             else {
@@ -2048,8 +2447,8 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
                 IR_Instruction* function_access_instr = &code_block->instructions[code_block->instructions.size - 1];
                 function_access_instr->options.address_of.destination = *access;
                 dynamic_array_rollback_to_size(&code_block->registers, code_block->registers.size - 1);
-                return expression_analysis_result_make(pointer_type, false);
             }
+            return expression_analysis_result_make(pointer_type, false);
         }
 
         pointer_type = type_system_make_pointer(type_system, expr_result.type);
@@ -2459,7 +2858,7 @@ Statement_Analysis_Result semantic_analyser_analyse_statement(
         while_instruction.type = IR_Instruction_Type::WHILE;
         while_instruction.options.while_instr.condition_code = ir_code_block_create(code_block->function);
         Expression_Analysis_Result expression_result = semantic_analyser_analyse_expression(
-            analyser, symbol_table, statement_node->children[0], while_instruction.options.while_instr.condition_code, 
+            analyser, symbol_table, statement_node->children[0], while_instruction.options.while_instr.condition_code,
             true, &while_instruction.options.while_instr.condition_access
         );
         if (!expression_result.error_occured) {
@@ -2557,6 +2956,13 @@ Statement_Analysis_Result semantic_analyser_analyse_statement(
             if (!semantic_analyser_cast_implicit_if_possible(analyser, code_block, right_access, left_access)) {
                 semantic_analyser_log_error(analyser, "Cannot assign, types are incompatible", statement_index);
             }
+        }
+        else {
+            IR_Instruction move_instr;
+            move_instr.type = IR_Instruction_Type::MOVE;
+            move_instr.options.move.source = right_access;
+            move_instr.options.move.destination = left_access;
+            dynamic_array_push_back(&code_block->instructions, move_instr);
         }
         return Statement_Analysis_Result::NO_RETURN;
     }
@@ -2916,7 +3322,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
             analyser, item.function_symbol_table, function_node->children[1], item.function->code
         );
 
-        if (block_result == Statement_Analysis_Result::NO_RETURN )
+        if (block_result == Statement_Analysis_Result::NO_RETURN)
         {
             if (item.function->function_type->return_type == analyser->compiler->type_system.void_type) {
                 IR_Instruction return_instr;

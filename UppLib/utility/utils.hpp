@@ -79,3 +79,4 @@ Optional<T> optional_make_success(T value) {
 */
 void memory_copy(void* destination, void* source, u64 size);
 void memory_set_bytes(void* destination, u64 size, byte value);
+bool memory_is_readable(void* destination, u64 read_size);
