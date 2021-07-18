@@ -1537,7 +1537,6 @@ void ir_data_access_change_type(IR_Data_Access access, Type_Signature* new_type)
 void semantic_analyser_analyse_variable_creation_statements(Semantic_Analyser* analyser, Symbol_Table* symbol_table, int statement_index, IR_Code_Block* code_block)
 {
     AST_Node* statement = &analyser->compiler->parser.nodes[statement_index];
-    IR_Code_Block* global_initialize_block = analyser->program->entry_function->code;
     switch (statement->type)
     {
     case AST_Node_Type::STATEMENT_VARIABLE_DEFINITION:
@@ -1583,7 +1582,7 @@ void semantic_analyser_analyse_variable_creation_statements(Semantic_Analyser* a
         var_symbol.definition_node_index = statement_index;
         IR_Code_Block* definition_block = 0;
         if (code_block == 0) {
-            definition_block = global_initialize_block;
+            definition_block = analyser->program->entry_function->code;
             dynamic_array_push_back(&analyser->program->globals, var_type);
             var_symbol.options.variable_access.index = analyser->program->globals.size - 1;
             var_symbol.options.variable_access.is_memory_access = false;
@@ -1619,7 +1618,7 @@ void semantic_analyser_analyse_variable_creation_statements(Semantic_Analyser* a
         var_symbol.definition_node_index = statement_index;
         IR_Code_Block* definition_block = 0;
         if (code_block == 0) {
-            definition_block = global_initialize_block;
+            definition_block = analyser->program->entry_function->code;
             dynamic_array_push_back(&analyser->program->globals, analyser->compiler->type_system.error_type);
             var_symbol.options.variable_access.index = analyser->program->globals.size - 1;
             var_symbol.options.variable_access.is_memory_access = false;

@@ -1,5 +1,13 @@
+add :: (a: int, b: int) -> int
+{
+    return a + b;
+}
+
 main :: () -> void 
 {
+    a := 5; 
+    b := 7;
+    c := add(a, b);
     /*
     scope_test();
     struct_test();
@@ -21,12 +29,12 @@ function_ptr_test :: ()
     binop: (int, int) -> int;
     
     binop = *int_add;
-    /*
     result := binop(5, 5);
     print_i32(result);
     print_line();
     
     binop = *int_sub;
+    /*
     result = binop(5, 5);
     print_i32(result);
     print_line();
@@ -42,6 +50,8 @@ function_ptr_test :: ()
     print_line();
     */
 }
+/*
+*/
 
 /*
 string_create :: (str: String) -> String

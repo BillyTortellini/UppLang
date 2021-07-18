@@ -104,14 +104,15 @@ Hashtable<K, V> hashtable_create_pointer_empty(int capacity)
 {
     return hashtable_create_empty<K, V>(
         capacity,
-        [](K* key) -> u64 {return hash_pointer((void**)&key); },
-        [](K* a, K* b) -> bool { return a == b; }
+        [](K* key) -> u64 {return hash_pointer(*key); },
+        [](K* a, K* b) -> bool { return (*a) == (*b); }
     );
 }
 
 template <typename K, typename V>
 void hashtable_reset(Hashtable<K, V>* table)
 {
+    table->element_count = 0;
     for (int i = 0; i < table->entries.size; i++) {
         Hashtable_Entry<K,V>* entry = &table->entries[i];
         entry->valid = false;

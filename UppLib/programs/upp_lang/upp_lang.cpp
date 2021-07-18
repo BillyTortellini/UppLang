@@ -95,6 +95,27 @@ void test_things()
         }
     }
 
+    // Pointer tests
+    {
+        int a = 17;
+        int b = 32;
+        int c = 1005;
+        int* ap = &a;
+        int* bp = &b;
+        int* cp = &c;
+
+        Hashtable<int*, const char*> table = hashtable_create_pointer_empty<int*, const char*>(16);
+        SCOPE_EXIT(hashtable_destroy(&table));
+
+        hashtable_insert_element(&table, ap, "A");
+        hashtable_insert_element(&table, bp, "B");
+        hashtable_insert_element(&table, cp, "C");
+
+        const char** b_res = hashtable_find_element(&table, bp);
+        const char** a_res = hashtable_find_element(&table, ap);
+        const char** c_res = hashtable_find_element(&table, cp);
+    }
+
     // Hashtable tests
     {
         for (int i = 0; i < 200; i++)

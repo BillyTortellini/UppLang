@@ -149,9 +149,8 @@ int bytecode_generator_data_access_to_stack_offset(Bytecode_Generator* generator
         break;
     }
     case IR_Data_Access_Type::PARAMETER: {
-        Dynamic_Array<int>* parameter_offsets = &generator->stack_offsets[
-            *hashtable_find_element(&generator->function_parameter_stack_offset_index, access.option.function)
-        ];
+        int* stack_offset_index = hashtable_find_element(&generator->function_parameter_stack_offset_index, access.option.function);
+        Dynamic_Array<int>* parameter_offsets = &generator->stack_offsets[*stack_offset_index];
         stack_offset = parameter_offsets->data[access.index];
         break;
     }
@@ -389,7 +388,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 function_sig = call->options.function->function_type;
                 break;
             case IR_Instruction_Call_Type::FUNCTION_POINTER_CALL:
-                function_sig = ir_data_access_get_type(&call->options.pointer_access);
+                function_sig = ir_data_access_get_type(&call->options.pointer_access)->child_type;
                 break;
             case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
                 function_sig = call->options.hardcoded->signature;
@@ -804,21 +803,20 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
 void bytecode_generator_generate_function_code(Bytecode_Generator* generator, IR_Function* function)
 {
     // Generate parameter offsets
-    Dynamic_Array<int> parameter_offsets = dynamic_array_create_empty<int>(function->function_type->parameter_types.size);
     {
-        int parameter_stack_size = stack_offsets_calculate(&function->function_type->parameter_types, &parameter_offsets, 0);
+        int stack_offset_index = *hashtable_find_element(&generator->function_parameter_stack_offset_index, function);
+        Dynamic_Array<int>* parameter_offsets = &generator->stack_offsets[stack_offset_index];
+        int parameter_stack_size = stack_offsets_calculate(&function->function_type->parameter_types, parameter_offsets, 0);
         // Adjust stack_offsets since parameter offsets are negative
         parameter_stack_size = align_offset_next_multiple(parameter_stack_size, 8); // Adjust for pointer alignment of return address
-        for (int i = 0; i < parameter_offsets.size; i++) {
-            parameter_offsets[i] -= parameter_stack_size;
+        for (int i = 0; i < parameter_offsets->size; i++) {
+            parameter_offsets->data[i] -= parameter_stack_size;
         }
         generator->current_stack_offset = 16;
     }
 
     // Register function
     hashtable_insert_element(&generator->function_locations, function, generator->instructions.size);
-    dynamic_array_push_back(&generator->stack_offsets, parameter_offsets);
-    hashtable_insert_element(&generator->function_parameter_stack_offset_index, function, generator->stack_offsets.size - 1);
 
     // Generate code
     bytecode_generator_generate_code_block(generator, function->code);
@@ -835,6 +833,7 @@ void bytecode_generator_generate(Bytecode_Generator* generator, Compiler* compil
     {
         dynamic_array_reset(&generator->instructions);
         // Reset information
+        hashtable_reset(&generator->function_locations);
         hashtable_reset(&generator->code_block_register_stack_offset_index);
         hashtable_reset(&generator->function_parameter_stack_offset_index);
         dynamic_array_reset(&generator->global_data_offsets);
@@ -860,6 +859,13 @@ void bytecode_generator_generate(Bytecode_Generator* generator, Compiler* compil
     }
 
     // Generate code for all functions
+    for (int i = 0; i < generator->ir_program->functions.size; i++) {
+        Dynamic_Array<int> parameter_stack_offsets = dynamic_array_create_empty<int>(16);
+        dynamic_array_push_back(&generator->stack_offsets, parameter_stack_offsets);
+        hashtable_insert_element(&generator->function_parameter_stack_offset_index,
+            generator->ir_program->functions[i], generator->stack_offsets.size - 1
+        );
+    }
     for (int i = 0; i < generator->ir_program->functions.size; i++) {
         bytecode_generator_generate_function_code(generator, generator->ir_program->functions[i]);
     }
@@ -1059,11 +1065,13 @@ void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction 
 
 void bytecode_generator_append_bytecode_to_string(Bytecode_Generator* generator, String* string)
 {
-    string_append_formated(string, "Functions:\n");
+    string_append_formated(string, "Function starts:\n");
     {
         Hashtable_Iterator<IR_Function*, int> function_iter = hashtable_iterator_create(&generator->function_locations);
+        int i = 0;
         while (hashtable_iterator_has_next(&function_iter)) {
-            string_append_formated(string, "\t%d: %d\n", function_iter.key, function_iter.value);
+            string_append_formated(string, "\t%d: %d\n", i, *function_iter.value);
+            i++;
             hashtable_iterator_next(&function_iter);
         }
     }
@@ -1074,6 +1082,7 @@ void bytecode_generator_append_bytecode_to_string(Bytecode_Generator* generator,
         Bytecode_Instruction& instruction = generator->instructions[i];
         string_append_formated(string, "%4d: ", i);
         bytecode_instruction_append_to_string(string, generator->instructions[i]);
+        string_append_formated(string, "\n");
     }
 }
 

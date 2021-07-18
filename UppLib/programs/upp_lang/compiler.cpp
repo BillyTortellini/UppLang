@@ -38,7 +38,7 @@ void compiler_destroy(Compiler* compiler)
 bool enable_lexing = true;
 bool enable_parsing = true;
 bool enable_analysis = true;
-bool enable_bytecode_gen = false;
+bool enable_bytecode_gen = true;
 bool enable_execution = true;
 bool enable_output = true;
 
@@ -183,7 +183,8 @@ void compiler_execute(Compiler* compiler)
         double bytecode_end = timer_current_time_in_seconds(compiler->timer);
         float bytecode_time = (bytecode_end - bytecode_start);
         if (compiler->bytecode_interpreter.exit_code == Exit_Code::SUCCESS) {
-            logg("Bytecode interpreter result: %d (%2.5f seconds)\n", *(int*)(byte*)&compiler->bytecode_interpreter.return_register[0], bytecode_time);
+            logg("Interpreter: Exit SUCCESS");
+            //logg("Bytecode interpreter result: %d (%2.5f seconds)\n", *(int*)(byte*)&compiler->bytecode_interpreter.return_register[0], bytecode_time);
         }
         else {
             String tmp = string_create_empty(128);
