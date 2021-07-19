@@ -729,8 +729,17 @@ void lexer_parse_string(Lexer* lexer, String* code)
             // Check if identifier is a keyword
             Token_Type* keyword_type = hashtable_find_element(&lexer->keywords, identifier_string);
             if (keyword_type != nullptr) {
+                Token_Attribute attrib = token_attribute_make_empty();
+                if (*keyword_type == Token_Type::BOOLEAN_LITERAL) {
+                    if (string_equals(&identifier_string, &string_create_static("true"))) {
+                        attrib.bool_value = 1;
+                    }
+                    else {
+                        attrib.bool_value = 0;
+                    }
+                }
                 dynamic_array_push_back(&lexer->tokens, 
-                    token_make(*keyword_type, token_attribute_make_empty(), line_number, character_pos, identifier_string_length, index));
+                    token_make(*keyword_type, attrib, line_number, character_pos, identifier_string_length, index));
             }
             else {
                 Token_Attribute attribute;

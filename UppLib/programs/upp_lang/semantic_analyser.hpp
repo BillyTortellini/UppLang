@@ -447,6 +447,7 @@ struct Semantic_Analyser
     Dynamic_Array<Symbol_Table*> symbol_tables;
     Hashtable<int, Symbol_Table*> ast_to_symbol_table;
     Dynamic_Array<Compiler_Error> errors;
+    IR_Function* global_init_function;
 
     // Temporary stuff needed for analysis
     Compiler* compiler;

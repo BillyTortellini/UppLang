@@ -2,6 +2,7 @@
 
 #include "../../datastructures/array.hpp"
 #include "../../utility/datatypes.hpp"
+#include "../../utility/random.hpp"
 #include "semantic_analyser.hpp"
 
 struct Compiler;
@@ -18,6 +19,7 @@ struct Bytecode_Interpreter
     Array<byte> globals;
     byte* stack_pointer;
     Exit_Code exit_code;
+    Random random;
 };
 
 Bytecode_Interpreter bytecode_intepreter_create();

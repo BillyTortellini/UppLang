@@ -1,23 +1,15 @@
-add :: (a: int, b: int) -> int
-{
-    return a + b;
-}
-
 main :: () -> void 
 {
-    a := 5; 
-    b := 7;
-    c := add(a, b);
-    /*
-    scope_test();
-    struct_test();
-    array_test();
+    //array_test();
     memory_test();
-    cast_test(); 
-    global_test();
+    /*
     string_test();
+    global_test();
+    scope_test();
+    cast_test(); 
+    function_ptr_test();
+    struct_test();
     */
-    //function_ptr_test();
 }
 
 int_add :: (a: int, b: int) -> int { return a + b; }
@@ -34,7 +26,6 @@ function_ptr_test :: ()
     print_line();
     
     binop = *int_sub;
-    /*
     result = binop(5, 5);
     print_i32(result);
     print_line();
@@ -48,12 +39,8 @@ function_ptr_test :: ()
     result = test_op(5, 5);
     print_i32(result);
     print_line();
-    */
 }
-/*
-*/
 
-/*
 string_create :: (str: String) -> String
 {
     result: String;
@@ -269,36 +256,6 @@ cast_test :: () -> void
     }
 }
 
-array_bubble_sort :: (a: []int) -> void
-{
-    i := 0;
-    while (i < a.size)
-    {
-        j := i + 1;
-        while (j < a.size) 
-        {
-            if (a[j] < a[i]) {
-                swap := a[i];
-                a[i] = a[j];
-                a[j] = swap;
-            }
-            j = j+1;
-        }
-        i = i+1;
-    }
-}
-
-array_fill_random :: (array: []int, max: int) -> void
-{
-    i := 0;
-    while (i < array.size)
-    {
-        array[i] = random_i32(); // % max;
-        if (array[i] < 0) array[i] = -array[i];
-        array[i] = array[i] % max;
-        i = i+1;
-    }
-}
 
 memory_test :: () -> void
 {
@@ -375,6 +332,42 @@ struct_test :: () -> void
     print_line();
 }
 
+array_bubble_sort :: (a: []int) -> void
+{
+    i := 0;
+    while (i < a.size)
+    {
+        j := i + 1;
+        while (j < a.size) 
+        {
+            if (a[j] < a[i]) {
+                print_string("Swapping: ");
+                print_i32(i);
+                print_string(" ");
+                print_i32(j);
+                print_string("\n");
+                swap := a[i];
+                a[i] = a[j];
+                a[j] = swap;
+            }
+            j = j+1;
+        }
+        i = i+1;
+    }
+}
+
+array_fill_random :: (array: []int, max: int) -> void
+{
+    i := 0;
+    while (i < array.size)
+    {
+        array[i] = random_i32(); // % max;
+        if (array[i] < 0) array[i] = -array[i];
+        array[i] = array[i] % max;
+        i = i+1;
+    }
+}
+
 array_test :: () -> void
 {
     array: [30]int;
@@ -394,11 +387,10 @@ array_test :: () -> void
     a2.data = arr2.data;
     array_fill_random(a2, a2.size);
     //array_fill_from_console(a2);
-    array_bubble_sort(a2);
-    array_set_even_constant(a2, 420); 
+    //array_bubble_sort(a2);
+    //array_set_even_constant(a2, 420); 
     array_print(a2);
 }
-
 
 array_set_even_constant :: (array: []int, c: int) -> void
 {
@@ -466,4 +458,3 @@ fib_rec :: (n: int) -> int
     if (n <= 2) return 1;
     return fib_rec(n-1) + fib_rec(n-2);
 }
-*/

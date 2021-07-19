@@ -9,6 +9,7 @@ Bytecode_Interpreter bytecode_intepreter_create()
     Bytecode_Interpreter result;
     result.stack = array_create_empty<byte>(8192);
     result.globals.data = 0;
+    result.random = random_make_time_initalized();
     return result;
 }
 
@@ -95,14 +96,21 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
             return true;
         }
 
+        Bytecode_Instruction* jmp_to_instr = *(Bytecode_Instruction**)(interpreter->stack_pointer + i->op1);
+        if (jmp_to_instr < interpreter->generator->instructions.data ||
+            jmp_to_instr > &interpreter->generator->instructions.data[interpreter->generator->instructions.size]) {
+            interpreter->exit_code = Exit_Code::RETURN_VALUE_OVERFLOW;
+            return true;
+        }
+
         byte* base_pointer = interpreter->stack_pointer;
         Bytecode_Instruction* next = interpreter->instruction_pointer + 1;
         interpreter->stack_pointer = interpreter->stack_pointer + i->op2;
         *((Bytecode_Instruction**)interpreter->stack_pointer) = next;
         *(byte**)(interpreter->stack_pointer + 8) = base_pointer;
 
-        int next_instr = *(i32*)(interpreter->stack_pointer + i->op1);
-        interpreter->instruction_pointer = &interpreter->generator->instructions[next_instr];
+        interpreter->instruction_pointer = jmp_to_instr;
+
         return false;
     }
     case Instruction_Type::RETURN: {
@@ -154,6 +162,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         case IR_Hardcoded_Function_Type::FREE_POINTER: {
             void* free_data = *(void**)argument_start;
             free(free_data);
+            *(void**)argument_start = (void*)1;
             break;
         }
         case IR_Hardcoded_Function_Type::PRINT_I32: {
@@ -222,7 +231,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
             break;
         }
         case IR_Hardcoded_Function_Type::RANDOM_I32: {
-            i32 result = 0;
+            i32 result = random_next_u32(&interpreter->random);
             memory_copy(interpreter->return_register, &result, 4);
             break;
         }
@@ -240,7 +249,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         *(void**)(interpreter->stack_pointer + i->op1) = (void*)(interpreter->globals.data + i->op2);
         break;
     case Instruction_Type::LOAD_FUNCTION_LOCATION:
-        *(u64*)(interpreter->stack_pointer + i->op1) = (u64)i->op2;
+        *(Bytecode_Instruction**)(interpreter->stack_pointer + i->op1) = (Bytecode_Instruction*)&interpreter->generator->instructions[i->op2];
         break;
     case Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE: {
         u64 source_unsigned = 0;
@@ -720,28 +729,28 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
             panic("what");
             break;
         case Primitive_Type::SIGNED_INT_8:
-            *(i8*)(interpreter->stack_pointer + i->op1) = *(i8*)(interpreter->stack_pointer + i->op2) % *(i8*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            *(i8*)(interpreter->stack_pointer + i->op1) = *(i8*)(interpreter->stack_pointer + i->op2) % *(i8*)(interpreter->stack_pointer + i->op3);
             break;
         case Primitive_Type::SIGNED_INT_16:
-            *(i16*)(interpreter->stack_pointer + i->op1) = *(i16*)(interpreter->stack_pointer + i->op2) % *(i16*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            *(i16*)(interpreter->stack_pointer + i->op1) = *(i16*)(interpreter->stack_pointer + i->op2) % *(i16*)(interpreter->stack_pointer + i->op3);
             break;
         case Primitive_Type::SIGNED_INT_32:
-            *(i32*)(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) % *(i32*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            *(i32*)(interpreter->stack_pointer + i->op1) = *(i32*)(interpreter->stack_pointer + i->op2) % *(i32*)(interpreter->stack_pointer + i->op3);
             break;
         case Primitive_Type::SIGNED_INT_64:
-            *(i64*)(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) % *(i64*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            *(i64*)(interpreter->stack_pointer + i->op1) = *(i64*)(interpreter->stack_pointer + i->op2) % *(i64*)(interpreter->stack_pointer + i->op3);
             break;
         case Primitive_Type::UNSIGNED_INT_8:
-            *(u8*)(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) % *(u8*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            *(u8*)(interpreter->stack_pointer + i->op1) = *(u8*)(interpreter->stack_pointer + i->op2) % *(u8*)(interpreter->stack_pointer + i->op3);
             break;
         case Primitive_Type::UNSIGNED_INT_16:
-            *(u16*)(interpreter->stack_pointer + i->op1) = *(u16*)(interpreter->stack_pointer + i->op2) % *(u16*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            *(u16*)(interpreter->stack_pointer + i->op1) = *(u16*)(interpreter->stack_pointer + i->op2) % *(u16*)(interpreter->stack_pointer + i->op3) ;
             break;
         case Primitive_Type::UNSIGNED_INT_32:
-            *(u32*)(interpreter->stack_pointer + i->op1) = *(u32*)(interpreter->stack_pointer + i->op2) % *(u32*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            *(u32*)(interpreter->stack_pointer + i->op1) = *(u32*)(interpreter->stack_pointer + i->op2) % *(u32*)(interpreter->stack_pointer + i->op3) ;
             break;
         case Primitive_Type::UNSIGNED_INT_64:
-            *(u64*)(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) % *(u64*)(interpreter->stack_pointer + i->op3) ? 1 : 0;
+            *(u64*)(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) % *(u64*)(interpreter->stack_pointer + i->op3) ;
             break;
         case Primitive_Type::FLOAT_32:
             panic("what");

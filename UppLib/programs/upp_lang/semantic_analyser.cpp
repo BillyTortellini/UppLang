@@ -960,6 +960,10 @@ void ir_data_access_append_to_string(IR_Data_Access* access, String* string)
         break;
     }
     }
+
+    if (access->is_memory_access) {
+        string_append_formated(string, " MEMORY_ACCESS");
+    }
 }
 
 void indent_string(String* string, int indentation) {
@@ -1582,7 +1586,7 @@ void semantic_analyser_analyse_variable_creation_statements(Semantic_Analyser* a
         var_symbol.definition_node_index = statement_index;
         IR_Code_Block* definition_block = 0;
         if (code_block == 0) {
-            definition_block = analyser->program->entry_function->code;
+            definition_block = analyser->global_init_function->code;
             dynamic_array_push_back(&analyser->program->globals, var_type);
             var_symbol.options.variable_access.index = analyser->program->globals.size - 1;
             var_symbol.options.variable_access.is_memory_access = false;
@@ -1618,7 +1622,7 @@ void semantic_analyser_analyse_variable_creation_statements(Semantic_Analyser* a
         var_symbol.definition_node_index = statement_index;
         IR_Code_Block* definition_block = 0;
         if (code_block == 0) {
-            definition_block = analyser->program->entry_function->code;
+            definition_block = analyser->global_init_function->code;
             dynamic_array_push_back(&analyser->program->globals, analyser->compiler->type_system.error_type);
             var_symbol.options.variable_access.index = analyser->program->globals.size - 1;
             var_symbol.options.variable_access.is_memory_access = false;
@@ -1800,8 +1804,9 @@ IR_Data_Access ir_data_access_create_constant_access(IR_Program* program, Type_S
     return access;
 }
 
-IR_Data_Access ir_data_access_create_constant_i32(Semantic_Analyser* analyser, i32 value) {
-    return ir_data_access_create_constant_access(analyser->program, analyser->compiler->type_system.i32_type, array_create_static<byte>((byte*)&value, sizeof(i32)));
+IR_Data_Access ir_data_access_create_constant_i32(Semantic_Analyser* analyser, i32 value)
+{
+    return ir_data_access_create_constant_access(analyser->program, analyser->compiler->type_system.i32_type, array_create_static((byte*)&value, 4));
 }
 
 void ir_data_access_change_type(IR_Data_Access access, Type_Signature* new_type) {
@@ -2161,9 +2166,28 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
             semantic_analyser_log_error(analyser, "Cannot apply new to void type!", expression_index);
             return expression_analysis_result_make_error();
         }
-        IR_Data_Access index_access;
+
+        if (create_temporary_access) {
+            *access = ir_data_access_create_intermediate(code_block, array_type);
+        }
+        IR_Data_Access array_size_access = ir_data_access_create_intermediate(code_block, 
+            type_system_make_pointer(type_system, type_system->i32_type)
+        );
+        {
+            IR_Instruction resut_size_instr;
+            resut_size_instr.type = IR_Instruction_Type::ADDRESS_OF;
+            resut_size_instr.options.address_of.type = IR_Instruction_Address_Of_Type::STRUCT_MEMBER;
+            resut_size_instr.options.address_of.source = *access;
+            resut_size_instr.options.address_of.destination = array_size_access;
+            resut_size_instr.options.address_of.options.member.name_handle = analyser->token_index_size;
+            resut_size_instr.options.address_of.options.member.offset = 8;
+            resut_size_instr.options.address_of.options.member.type = type_system->i32_type;
+            dynamic_array_push_back(&code_block->instructions, resut_size_instr);
+            array_size_access.is_memory_access = true;
+        }
+
         Expression_Analysis_Result index_result = semantic_analyser_analyse_expression(
-            analyser, symbol_table, expression_node->children[0], code_block, true, &index_access);
+            analyser, symbol_table, expression_node->children[0], code_block, false, &array_size_access);
         if (index_result.error_occured) {
             return expression_analysis_result_make(array_type, false);
         }
@@ -2174,22 +2198,36 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
 
         IR_Instruction size_calculation_instr;
         size_calculation_instr.type = IR_Instruction_Type::BINARY_OP;
-        size_calculation_instr.options.binary_op.operand_left = index_access;
+        size_calculation_instr.options.binary_op.type = IR_Instruction_Binary_OP_Type::MULTIPLICATION;
+        size_calculation_instr.options.binary_op.operand_left = array_size_access;
         int element_in_array_size = math_round_next_multiple(element_type->size_in_bytes, element_type->alignment_in_bytes);
         size_calculation_instr.options.binary_op.operand_right = ir_data_access_create_constant_i32(analyser, element_in_array_size);
         IR_Data_Access array_memory_size_access = ir_data_access_create_intermediate(code_block, analyser->compiler->type_system.i32_type);
         size_calculation_instr.options.binary_op.destination = array_memory_size_access;
         dynamic_array_push_back(&code_block->instructions, size_calculation_instr);
 
+        IR_Data_Access array_data_access = ir_data_access_create_intermediate(code_block, 
+            type_system_make_pointer(type_system, type_system_make_pointer(type_system, element_type))
+        );
+        {
+            IR_Instruction instr_pointer_access;
+            instr_pointer_access.type = IR_Instruction_Type::ADDRESS_OF;
+            instr_pointer_access.options.address_of.type = IR_Instruction_Address_Of_Type::STRUCT_MEMBER;
+            instr_pointer_access.options.address_of.source = *access;
+            instr_pointer_access.options.address_of.destination = array_data_access;
+            instr_pointer_access.options.address_of.options.member.name_handle = analyser->token_index_data;
+            instr_pointer_access.options.address_of.options.member.offset = 0;
+            instr_pointer_access.options.address_of.options.member.type = type_system_make_pointer(type_system, element_type);
+            dynamic_array_push_back(&code_block->instructions, instr_pointer_access);
+            array_data_access.is_memory_access = true;
+        }
+
         IR_Instruction instruction;
         instruction.type = IR_Instruction_Type::FUNCTION_CALL;
         instruction.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
         instruction.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(1);
         dynamic_array_push_back(&instruction.options.call.arguments, array_memory_size_access);
-        if (create_temporary_access) {
-            *access = ir_data_access_create_intermediate(code_block, array_type);
-        }
-        instruction.options.call.destination = *access;
+        instruction.options.call.destination = array_data_access;
         instruction.options.call.options.hardcoded = analyser->program->hardcoded_functions[(int)IR_Hardcoded_Function_Type::MALLOC_SIZE_I32];
         dynamic_array_push_back(&code_block->instructions, instruction);
 
@@ -2906,18 +2944,23 @@ Statement_Analysis_Result semantic_analyser_analyse_statement(
         delete_instr.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
         delete_instr.options.call.destination = {};
         delete_instr.options.call.options.hardcoded = analyser->program->hardcoded_functions[(int)IR_Hardcoded_Function_Type::FREE_POINTER];
-        if (delete_type->type == Signature_Type::ARRAY_UNSIZED) {
+        if (delete_type->type == Signature_Type::ARRAY_UNSIZED) 
+        {
             IR_Instruction address_instr;
             address_instr.type = IR_Instruction_Type::ADDRESS_OF;
             address_instr.options.address_of.type = IR_Instruction_Address_Of_Type::STRUCT_MEMBER;
             address_instr.options.address_of.source = delete_access;
             Type_Signature* pointer_sig = type_system_make_pointer(&analyser->compiler->type_system, expr_result.type->child_type);
-            address_instr.options.address_of.destination = ir_data_access_create_intermediate(code_block, pointer_sig);
+            IR_Data_Access array_data_access = ir_data_access_create_intermediate(code_block,
+                type_system_make_pointer(&analyser->compiler->type_system, pointer_sig)
+            );
+            address_instr.options.address_of.destination = array_data_access;
             address_instr.options.address_of.options.member.name_handle = analyser->token_index_data;
             address_instr.options.address_of.options.member.offset = 0;
             address_instr.options.address_of.options.member.type = pointer_sig;
             dynamic_array_push_back(&code_block->instructions, address_instr);
-            dynamic_array_push_back(&delete_instr.options.call.arguments, address_instr.options.address_of.destination);
+            array_data_access.is_memory_access = true;
+            dynamic_array_push_back(&delete_instr.options.call.arguments, array_data_access);
         }
         else {
             dynamic_array_push_back(&delete_instr.options.call.arguments, delete_access);
@@ -3304,11 +3347,20 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
     }
 
     // Analyse Globals
+    analyser->global_init_function = ir_function_create(analyser->program,
+        type_system_make_function(&analyser->compiler->type_system, dynamic_array_create_empty<Type_Signature*>(1), analyser->compiler->type_system.void_type)
+    );
     for (int i = 0; i < analyser->location_globals.size; i++)
     {
         AST_Top_Level_Node_Location location = analyser->location_globals[i];
         AST_Node* node = &nodes->data[location.node_index];
         semantic_analyser_analyse_variable_creation_statements(analyser, location.table, location.node_index, 0);
+    }
+    {
+        IR_Instruction return_instr;
+        return_instr.type = IR_Instruction_Type::RETURN;
+        return_instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_EMPTY;
+        dynamic_array_push_back(&analyser->global_init_function->code->instructions, return_instr);
     }
 
     // Create function code
@@ -3317,6 +3369,15 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
         Queued_Function item = queued_functions[i];
         analyser->loop_depth = 0;
         AST_Node* function_node = &nodes->data[item.node_index];
+        if (item.function == analyser->program->entry_function) {
+            IR_Instruction call_instr;
+            call_instr.type = IR_Instruction_Type::FUNCTION_CALL;
+            call_instr.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(1);
+            call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
+            call_instr.options.call.options.function = analyser->global_init_function;
+            dynamic_array_push_back(&item.function->code->instructions, call_instr);
+        }
+
         Statement_Analysis_Result block_result = semantic_analyser_analyse_statement_block(
             analyser, item.function_symbol_table, function_node->children[1], item.function->code
         );
