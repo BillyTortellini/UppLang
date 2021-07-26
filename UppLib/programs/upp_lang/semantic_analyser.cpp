@@ -1337,7 +1337,9 @@ Symbol_Table* semantic_analyser_create_symbol_table(Semantic_Analyser* analyser,
     table->symbols = dynamic_array_create_empty<Symbol>(8);
     table->ast_node_index = node_index;
     dynamic_array_push_back(&analyser->symbol_tables, table);
-    hashtable_insert_element(&analyser->ast_to_symbol_table, node_index, table);
+    if (!analyser->inside_defer) {
+        hashtable_insert_element(&analyser->ast_to_symbol_table, node_index, table);
+    }
     return table;
 }
 
@@ -1510,6 +1512,7 @@ Semantic_Analyser semantic_analyser_create()
 {
     Semantic_Analyser result;
     result.symbol_tables = dynamic_array_create_empty<Symbol_Table*>(64);
+    result.active_defer_statements = dynamic_array_create_empty<int>(64);
     result.location_functions = dynamic_array_create_empty<AST_Top_Level_Node_Location>(64);
     result.location_globals = dynamic_array_create_empty<AST_Top_Level_Node_Location>(64);
     result.location_structs = dynamic_array_create_empty<AST_Top_Level_Node_Location>(64);
@@ -1526,6 +1529,7 @@ void semantic_analyser_destroy(Semantic_Analyser* analyser)
         dynamic_array_destroy(&table->symbols);
         delete analyser->symbol_tables[i];
     }
+    dynamic_array_destroy(&analyser->active_defer_statements);
     dynamic_array_destroy(&analyser->symbol_tables);
     dynamic_array_destroy(&analyser->location_functions);
     dynamic_array_destroy(&analyser->location_structs);
@@ -2275,6 +2279,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
             IR_Instruction move_instr;
             move_instr.type = IR_Instruction_Type::MOVE;
             move_instr.options.move.source = instruction.options.address_of.destination;
+            move_instr.options.move.source.is_memory_access = true;
             move_instr.options.move.destination = *access;
             dynamic_array_push_back(&code_block->instructions, move_instr);
         }
@@ -2759,6 +2764,23 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
 Statement_Analysis_Result semantic_analyser_analyse_statement_block
 (Semantic_Analyser* analyser, Symbol_Table* parent_table, int block_index, IR_Code_Block* code_block);
 
+void semantic_analyser_analyse_active_defers(Semantic_Analyser* analyser, IR_Code_Block* code_block, Symbol_Table* symbol_table)
+{
+    assert(!analyser->inside_defer, "No nested defers!");
+    analyser->inside_defer = true;
+    int reset_loop_depth = analyser->loop_depth;
+    for (int i = analyser->active_defer_statements.size - 1; i >= 0;  i--) {
+        int defer_block_index = analyser->active_defer_statements[i];
+        Statement_Analysis_Result result = semantic_analyser_analyse_statement_block(analyser, symbol_table, defer_block_index, code_block);
+        if (result != Statement_Analysis_Result::NO_RETURN) {
+            semantic_analyser_log_error(analyser, "Defer must not contain return, continue or breaks!", defer_block_index);
+        }
+    }
+    dynamic_array_reset(&analyser->active_defer_statements);
+    analyser->inside_defer = false;
+    analyser->loop_depth = reset_loop_depth;
+}
+
 Statement_Analysis_Result semantic_analyser_analyse_statement(
     Semantic_Analyser* analyser, Symbol_Table* symbol_table, int statement_index, IR_Code_Block* code_block)
 {
@@ -2800,6 +2822,14 @@ Statement_Analysis_Result semantic_analyser_analyse_statement(
         if (return_type != code_block->function->function_type->return_type) {
             semantic_analyser_log_error(analyser, "Return type does not match function return type", statement_index);
         }
+
+        if (analyser->inside_defer) {
+            semantic_analyser_log_error(analyser, "Cannot return inside defer statement", statement_index);
+        }
+        else {
+            semantic_analyser_analyse_active_defers(analyser, code_block, symbol_table);
+        }
+
         dynamic_array_push_back(&code_block->instructions, return_instr);
         return Statement_Analysis_Result::RETURN;
     }
@@ -2808,6 +2838,14 @@ Statement_Analysis_Result semantic_analyser_analyse_statement(
             semantic_analyser_log_error(analyser, "Break not inside loop!", statement_index);
             return Statement_Analysis_Result::NO_RETURN;
         }
+
+        if (!analyser->inside_defer) {
+            semantic_analyser_analyse_active_defers(analyser, code_block, symbol_table);
+        }
+
+        IR_Instruction break_instr;
+        break_instr.type = IR_Instruction_Type::BREAK;
+        dynamic_array_push_back(&code_block->instructions, break_instr);
         return Statement_Analysis_Result::BREAK;
     }
     case AST_Node_Type::STATEMENT_CONTINUE: {
@@ -2815,10 +2853,23 @@ Statement_Analysis_Result semantic_analyser_analyse_statement(
             semantic_analyser_log_error(analyser, "Continue not inside loop!", statement_index);
             return Statement_Analysis_Result::NO_RETURN;
         }
+
+        if (!analyser->inside_defer) {
+            semantic_analyser_analyse_active_defers(analyser, code_block, symbol_table);
+        }
+
+        IR_Instruction continue_instr;
+        continue_instr.type = IR_Instruction_Type::CONTINUE;
+        dynamic_array_push_back(&code_block->instructions, continue_instr);
         return Statement_Analysis_Result::CONTINUE;
     }
     case AST_Node_Type::STATEMENT_DEFER: {
-        semantic_analyser_log_error(analyser, "Defer not supported yet!", statement_index);
+        if (analyser->inside_defer) {
+            semantic_analyser_log_error(analyser, "Cannot have nested defers!", statement_index);
+        }
+        else {
+            dynamic_array_push_back(&analyser->active_defer_statements, statement_node->children[0]);
+        }
         return Statement_Analysis_Result::NO_RETURN;
     }
     case AST_Node_Type::STATEMENT_EXPRESSION:
@@ -2944,7 +2995,7 @@ Statement_Analysis_Result semantic_analyser_analyse_statement(
         delete_instr.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
         delete_instr.options.call.destination = {};
         delete_instr.options.call.options.hardcoded = analyser->program->hardcoded_functions[(int)IR_Hardcoded_Function_Type::FREE_POINTER];
-        if (delete_type->type == Signature_Type::ARRAY_UNSIZED) 
+        if (delete_type->type == Signature_Type::ARRAY_UNSIZED)
         {
             IR_Instruction address_instr;
             address_instr.type = IR_Instruction_Type::ADDRESS_OF;
@@ -3067,25 +3118,34 @@ Statement_Analysis_Result semantic_analyser_analyse_statement_block
         }
     }
 
+    // Analyse defers
+    if (!analyser->inside_defer) {
+        semantic_analyser_analyse_active_defers(analyser, code_block, block_table);
+    }
+
     return result;
 }
 
 void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
 {
-    analyser->compiler = compiler;
-    for (int i = 0; i < analyser->symbol_tables.size; i++) {
-        Symbol_Table* table = analyser->symbol_tables[i];
-        dynamic_array_destroy(&table->symbols);
-        delete analyser->symbol_tables[i];
+    // Reset analyser data
+    {
+        analyser->compiler = compiler;
+        for (int i = 0; i < analyser->symbol_tables.size; i++) {
+            Symbol_Table* table = analyser->symbol_tables[i];
+            dynamic_array_destroy(&table->symbols);
+            delete analyser->symbol_tables[i];
+        }
+        type_system_reset_all(&analyser->compiler->type_system, &analyser->compiler->lexer);
+        dynamic_array_reset(&analyser->symbol_tables);
+        dynamic_array_reset(&analyser->errors);
+        dynamic_array_reset(&analyser->location_functions);
+        dynamic_array_reset(&analyser->location_globals);
+        dynamic_array_reset(&analyser->location_structs);
+        hashtable_reset(&analyser->ast_to_symbol_table);
     }
-    type_system_reset_all(&analyser->compiler->type_system, &analyser->compiler->lexer);
-    dynamic_array_reset(&analyser->symbol_tables);
-    dynamic_array_reset(&analyser->errors);
-    dynamic_array_reset(&analyser->location_functions);
-    dynamic_array_reset(&analyser->location_globals);
-    dynamic_array_reset(&analyser->location_structs);
-    hashtable_reset(&analyser->ast_to_symbol_table);
 
+    analyser->inside_defer = false;
     analyser->root_table = semantic_analyser_create_symbol_table(analyser, nullptr, 0);
     if (analyser->program != 0) {
         ir_program_destroy(analyser->program);
@@ -3347,20 +3407,22 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
     }
 
     // Analyse Globals
-    analyser->global_init_function = ir_function_create(analyser->program,
-        type_system_make_function(&analyser->compiler->type_system, dynamic_array_create_empty<Type_Signature*>(1), analyser->compiler->type_system.void_type)
-    );
-    for (int i = 0; i < analyser->location_globals.size; i++)
     {
-        AST_Top_Level_Node_Location location = analyser->location_globals[i];
-        AST_Node* node = &nodes->data[location.node_index];
-        semantic_analyser_analyse_variable_creation_statements(analyser, location.table, location.node_index, 0);
-    }
-    {
-        IR_Instruction return_instr;
-        return_instr.type = IR_Instruction_Type::RETURN;
-        return_instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_EMPTY;
-        dynamic_array_push_back(&analyser->global_init_function->code->instructions, return_instr);
+        analyser->global_init_function = ir_function_create(analyser->program,
+            type_system_make_function(&analyser->compiler->type_system, dynamic_array_create_empty<Type_Signature*>(1), analyser->compiler->type_system.void_type)
+        );
+        for (int i = 0; i < analyser->location_globals.size; i++)
+        {
+            AST_Top_Level_Node_Location location = analyser->location_globals[i];
+            AST_Node* node = &nodes->data[location.node_index];
+            semantic_analyser_analyse_variable_creation_statements(analyser, location.table, location.node_index, 0);
+        }
+        {
+            IR_Instruction return_instr;
+            return_instr.type = IR_Instruction_Type::RETURN;
+            return_instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_EMPTY;
+            dynamic_array_push_back(&analyser->global_init_function->code->instructions, return_instr);
+        }
     }
 
     // Create function code

@@ -4,6 +4,19 @@
 #include "../../datastructures/dynamic_array.hpp"
 #include "../../datastructures/hashtable.hpp"
 
+/*
+    Defers need to be executed after:
+        * Statement block exits
+        * Continue, Return or Breaks
+
+    Defer Rules:
+        No Returns, Continues or Breaks inside a defer
+        No nested defers
+
+    Reset loop depth in defer
+*/
+
+
 struct Compiler;
 struct Lexer;
 struct Compiler_Error;
@@ -236,7 +249,7 @@ enum class IR_Instruction_Return_Type
 enum class Exit_Code
 {
     SUCCESS,
-    OUT_OF_BOUNDS, 
+    OUT_OF_BOUNDS,
     STACK_OVERFLOW,
     RETURN_VALUE_OVERFLOW,
 };
@@ -315,7 +328,7 @@ enum class IR_Instruction_Address_Of_Type
 {
     DATA,
     FUNCTION,
-    STRUCT_MEMBER, 
+    STRUCT_MEMBER,
     ARRAY_ELEMENT
 };
 
@@ -451,6 +464,8 @@ struct Semantic_Analyser
 
     // Temporary stuff needed for analysis
     Compiler* compiler;
+    Dynamic_Array<int> active_defer_statements;
+    bool inside_defer;
     Dynamic_Array<AST_Top_Level_Node_Location> location_functions;
     Dynamic_Array<AST_Top_Level_Node_Location> location_structs;
     Dynamic_Array<AST_Top_Level_Node_Location> location_globals;

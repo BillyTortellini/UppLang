@@ -1,7 +1,8 @@
 Current Work Item:
 ------------------
-Write programming mantras
- * Modules
+ * defer
+ * Code-Polymorphism (Template/Generic System)
+ * Enums, Switch/Match and Unions
 
 module List
 {
@@ -25,15 +26,9 @@ Long-Term Goals:
 
 More Language features to implement:
 ------------------------------------
- * Modules
- * Code-Polymorphism (Template/Generic System)
  * Tag-System (For constant values, but also other stuff)
 
    ------- These features are for convenience, but they are not top priority ------
- * Enums
- * switch
- * Unions
- * defer
  * Any-Type and Type access (Varargs in this language, maybe use this for printf)
  * Macro-System
  * Iterators

@@ -1,8 +1,8 @@
 main :: () -> void 
 {
-    //array_test();
-    memory_test();
     /*
+    array_test();
+    memory_test();
     string_test();
     global_test();
     scope_test();
@@ -10,6 +10,119 @@ main :: () -> void
     function_ptr_test();
     struct_test();
     */
+    module_test();
+    defer_test();
+}
+
+defer_test :: ()
+{
+    print_string("DEFER TEST\n-----------\n");
+    print_string("Should be in correct order:");
+    {
+        defer print_string(" * 6");
+        print_string(" * 1");
+        defer print_string(" * 5");
+        print_string(" * 2");
+        defer print_string(" * 4");
+        print_string(" * 3");
+    }
+    
+    {
+        print_string("\nShould be true: ");
+        cond := true;
+        defer print_bool(cond);
+    }
+    
+    {
+        print_string("\nShould be false: ");
+        defer {
+            cond := false;
+            print_bool(cond);
+        }
+    }
+        
+    print_line();
+}
+
+module Math
+{
+    Vector3 :: struct 
+    {
+        x: float;
+        y: float;
+        z: float;
+    }
+    
+    vector3_make:: (x: float, y: float, z: float) -> Vector3
+    {
+        result: Vector3;
+        result.x = x;
+        result.y = y;
+        result.z = z;
+        return result;
+    }
+  
+    vector3_print :: (v: Vector3) {
+        print_f32(v.x);
+        print_string(" ");
+        print_f32(v.y);
+        print_string(" ");
+        print_f32(v.z);
+        print_string("\n");
+    }
+    
+    addition :: (a: int, b: int) -> int {return a + b;} 
+    multiplication :: (a: int, b: int) -> int {return a * b;} 
+    
+    module TestA
+    {
+        greet :: () { print_string("Greetings, stranger!\n"); }
+    }
+    module TestB
+    {
+        greet :: () { print_string("Hello there, General Kenobi!\n"); }
+    }
+}
+
+module Globals
+{
+    alive: bool = false;
+    counter := 15;
+    module TestA {
+        fps: float;
+    }
+    module TestB {
+        fps: float;
+    }
+}
+
+module_test :: ()
+{
+    // Structs and functions
+    x := Math::addition(5, 7);
+    y := Math::multiplication(5, 7);
+    vec := Math::vector3_make(x, y, 0);
+    Math::vector3_print(vec);
+    
+    // Overlapping symbols
+    Math::TestA::greet();
+    Math::TestB::greet();
+    
+    // Global variables in 
+    print_string("Should be true: ");
+    print_bool(Globals::alive);
+    print_string("\nShould be 15: ");
+    print_i32(Globals::counter);
+    Globals::counter = 17 * 30;
+    print_string("\nShould be 17*30: ");
+    print_i32(Globals::counter);
+    Globals::TestA::fps = 30.0;
+    Globals::TestB::fps = 60.0;
+    print_string("\nShould be 30.0: ");
+    print_f32(Globals::TestA::fps);
+    print_string("\nShould be 60.0: ");
+    print_f32(Globals::TestB::fps);
+    print_string("\n");
 }
 
 int_add :: (a: int, b: int) -> int { return a + b; }
@@ -275,6 +388,7 @@ scope_test :: () -> void
         x: int = 17;
         a = x;
     }
+    print_string("Should be 17: ");
     print_i32(a);
     print_line();
 }
@@ -341,11 +455,6 @@ array_bubble_sort :: (a: []int) -> void
         while (j < a.size) 
         {
             if (a[j] < a[i]) {
-                print_string("Swapping: ");
-                print_i32(i);
-                print_string(" ");
-                print_i32(j);
-                print_string("\n");
                 swap := a[i];
                 a[i] = a[j];
                 a[j] = swap;
@@ -387,8 +496,8 @@ array_test :: () -> void
     a2.data = arr2.data;
     array_fill_random(a2, a2.size);
     //array_fill_from_console(a2);
-    //array_bubble_sort(a2);
-    //array_set_even_constant(a2, 420); 
+    array_bubble_sort(a2);
+    array_set_even_constant(a2, 420); 
     array_print(a2);
 }
 
@@ -424,7 +533,6 @@ array_fill_from_console :: (array: []int) -> void
         i = i + 1;
     }
 }
-
 
 even :: (a: int) -> bool 
 {

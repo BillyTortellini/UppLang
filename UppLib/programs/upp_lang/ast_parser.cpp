@@ -169,7 +169,7 @@ int ast_parser_find_next_line_start_token(AST_Parser* parser)
     return i;
 }
 
-int ast_parser_find_parenthesis_ending(AST_Parser* parser, Token_Type open_type, Token_Type closed_type)
+int ast_parser_find_parenthesis_ending(AST_Parser* parser, int start_index, Token_Type open_type, Token_Type closed_type)
 {
     int i = parser->index;
     int depth = 0;
@@ -1260,7 +1260,7 @@ bool ast_parser_parse_statement_block(AST_Parser* parser, AST_Node_Index parent_
         ast_parser_checkpoint_reset(checkpoint);
         // Error handling, goto next ; or next line or end of {} block
         int next_semi = ast_parser_find_next_token_type(parser, Token_Type::SEMICOLON);
-        int next_closing_braces = ast_parser_find_parenthesis_ending(parser, Token_Type::OPEN_BRACES, Token_Type::CLOSED_BRACES);
+        int next_closing_braces = ast_parser_find_parenthesis_ending(parser, parser->index, Token_Type::OPEN_BRACES, Token_Type::CLOSED_BRACES);
         int next_line = ast_parser_find_next_line_start_token(parser);
         if (next_line < next_semi && next_line < next_closing_braces) {
             ast_parser_log_error(parser, "Could not parse statement", token_range_make(parser->index, next_line - 1));
@@ -1355,7 +1355,7 @@ bool ast_parser_parse_parameter_block(AST_Parser* parser, AST_Node_Index parent_
             ast_parser_checkpoint_reset(recoverable_checkpoint);
             // Error handling: find next ), or next Comma, or next  report error and do further error handling
             int next_closed_braces = ast_parser_find_next_token_type(parser, Token_Type::CLOSED_BRACES);
-            int next_closed_parenthesis = ast_parser_find_parenthesis_ending(parser, Token_Type::OPEN_PARENTHESIS, Token_Type::CLOSED_PARENTHESIS);
+            int next_closed_parenthesis = ast_parser_find_parenthesis_ending(parser, parser->index, Token_Type::OPEN_PARENTHESIS, Token_Type::CLOSED_PARENTHESIS);
             int next_comma = ast_parser_find_next_token_type(parser, Token_Type::COMMA);
             if (next_comma < next_closed_parenthesis && next_comma < next_closed_braces) {
                 ast_parser_log_error(parser, "Could not parse function parameter", token_range_make(parser->index, next_comma));
@@ -1481,18 +1481,32 @@ bool ast_parser_parse_module(AST_Parser* parser, int parent)
         if (ast_parser_parse_struct(parser, node_index)) {
             continue;
         }
+        if (ast_parser_parse_module(parser, node_index)) {
+            continue;
+        }
         if (ast_parser_parse_variable_creation_statement(parser, node_index)) {
             continue;
         }
 
         // TODO: Better error handling: Skip through each line (not in parenthesis) and try parsing again function or struct
-        int next_closing_braces = ast_parser_find_parenthesis_ending(parser, Token_Type::OPEN_BRACES, Token_Type::CLOSED_BRACES);
-        ast_parser_checkpoint_reset(start_checkpoint);
-        ast_parser_log_error(parser, "Could not parse module", token_range_make(parser->index, next_closing_braces));
+        ast_parser_checkpoint_reset(checkpoint);
+        int module_end_braces = ast_parser_find_parenthesis_ending(
+            parser, start_checkpoint.rewind_token_index + 2, Token_Type::OPEN_BRACES, Token_Type::CLOSED_BRACES
+        );
+        int next_closing_braces = ast_parser_find_parenthesis_ending(parser, parser->index, Token_Type::OPEN_BRACES, Token_Type::CLOSED_BRACES);
+        ast_parser_log_error(parser, "Could not parse module member", token_range_make(parser->index, next_closing_braces));
         parser->index = next_closing_braces + 1;
+        if (next_closing_braces == module_end_braces) {
+            break;
+        }
     }
     parser->token_mapping[node_index].start_index = start_checkpoint.rewind_token_index;
-    parser->token_mapping[node_index].end_index = parser->index;
+    parser->token_mapping[node_index].end_index = math_clamp(parser->index, 0, parser->lexer->tokens.size);
+
+    if (parser->token_mapping[node_index].start_index == parser->token_mapping[node_index].end_index)
+    {
+        logg("Well what the fuck");
+    }
 
     return true;
 }
@@ -1531,7 +1545,7 @@ void ast_parser_parse_root(AST_Parser* parser)
         }
 
         // TODO: Better error handling: Skip through each line (not in parenthesis) and try parsing function or struct
-        int next_closing_braces = ast_parser_find_parenthesis_ending(parser, Token_Type::OPEN_BRACES, Token_Type::CLOSED_BRACES);
+        int next_closing_braces = ast_parser_find_parenthesis_ending(parser, parser->index, Token_Type::OPEN_BRACES, Token_Type::CLOSED_BRACES);
         ast_parser_checkpoint_reset(checkpoint);
         ast_parser_log_error(parser, "Could not parse function", token_range_make(parser->index, next_closing_braces));
         parser->index = next_closing_braces + 1;
@@ -1781,6 +1795,10 @@ void ast_parser_check_sanity(AST_Parser* parser)
             break;
         case AST_Node_Type::STATEMENT_BREAK:
         case AST_Node_Type::STATEMENT_CONTINUE:
+            if (node->children.size != 0) {
+                panic("Should not happen");
+            }
+            break;
         case AST_Node_Type::TYPE_IDENTIFIER: {
             if (node->children.size != 1) {
                 panic("Should not happen");
@@ -1995,7 +2013,6 @@ void ast_parser_parse(AST_Parser* parser, Lexer* lexer)
     }
     dynamic_array_rollback_to_size(&parser->nodes, parser->next_free_node);
     dynamic_array_rollback_to_size(&parser->token_mapping, parser->next_free_node);
-
     ast_parser_check_sanity(parser);
 }
 
@@ -2225,67 +2242,3 @@ void ast_parser_append_to_string(AST_Parser* parser, String* string) {
     ast_node_append_to_string(parser, 0, string, 0);
 }
 
-int ast_parser_get_closest_node_to_text_position(AST_Parser* parser, Text_Position pos, Dynamic_Array<String> text)
-{
-    int closest_index = 0;
-    AST_Node* closest = &parser->nodes[0];
-    while (true)
-    {
-        bool continue_search = true;
-        for (int i = 0; i < closest->children.size && continue_search; i++)
-        {
-            int child_index = closest->children[i];
-            Token* token_start, * token_end;
-            {
-                int min = 0;
-                int max = parser->lexer->tokens.size;
-                int start_index = parser->token_mapping[child_index].start_index;
-                int end_index = parser->token_mapping[child_index].end_index;
-                if (start_index == -1 || end_index == -1) continue;
-                start_index = math_clamp(start_index, min, max);
-                end_index = math_clamp(end_index, min, max);
-                token_start = &parser->lexer->tokens[start_index];
-                token_end = &parser->lexer->tokens[end_index - 1];
-            }
-
-            Text_Slice node_slice = text_slice_make(token_start->position.start, token_end->position.end);
-            if (text_slice_contains_position(node_slice, pos, text)) {
-                closest_index = child_index;
-                closest = &parser->nodes[closest_index];
-                continue_search = false;
-            }
-        }
-        if (continue_search) break;
-    }
-    return closest_index;
-
-    /*
-    AST_Node_Index min_node_index = 0;
-    int min_slice_size = 10000;
-    for (int i = 0; i < parser->token_mapping.size; i++)
-    {
-        int min = 0;
-        int max = parser->lexer->tokens.size - 1;
-        int start_index = parser->token_mapping[i].start_index;
-        int end_index = parser->token_mapping[i].end_index;
-        if (start_index == -1 || end_index == -1) continue;
-        start_index = math_clamp(start_index, min, max);
-        end_index = math_clamp(end_index, min, max);
-        Token* token_start = &parser->lexer->tokens[start_index];
-        Token* token_end = &parser->lexer->tokens[end_index - 1];
-        Text_Slice node_slice = text_slice_make(token_start->position.start, token_end->position.end);
-
-        if (text_slice_contains_position(node_slice, pos, text))
-        {
-            int slice_size;
-            if (node_slice.start.line == node_slice.end.line) slice_size = node_slice.end.character - node_slice.start.character;
-            else slice_size = (node_slice.end.line - node_slice.start.line) * 100;
-            if (slice_size <= min_slice_size) {
-                min_slice_size = slice_size;
-                min_node_index = i;
-            }
-        }
-    }
-    return min_node_index;
-    */
-}
