@@ -1,18 +1,115 @@
+NOTES:
+------
+ * List does not work, there are memory errors but there shouldn't be
+ * Defer does not seem to work --> Needs fixing
+ * implicit casting in binary op does also not seem to work
+
 Current Work Item:
 ------------------
- * defer
  * Code-Polymorphism (Template/Generic System)
- * Enums, Switch/Match and Unions
 
-module List
+How to do polymorphism, 
+ * Motivation: Containers, Vectors + Matrices
+    - Dynamic_Array
+    - Hashset
+
+Lets start with the simplest possible Polymorphism:
+
+Declaration:
+module Holder<T: Type>
 {
-    List :: struct
+    struct Node
     {
-    };
+        value: T;
+    }
 }
 
-Module needs to be in AST
-Then I need to rework the symbol table
+Usage:
+node_i32: Holder<i32>::Node;
+node_i32.value = 15;
+node_bool: Holder<bool>::Node;
+node_bool.value = false;
+
+How to parse this:
+    When i come across the declaration, I need to store the symbol
+
+Questions:
+    Can polymorphic modules hold other polymorphic modules?
+        - Probably, 
+
+
+
+
+
+add :: (a: $T, b: T)
+{
+    res: T;
+    res = a + b;
+    return res;
+}
+
+module Vector<T: Type, dimensions: int>
+{
+    Vector :: struct {
+        coordinates: [dimensions] T;  
+    }
+
+    make :: (coords: [dimensions]T) -> Vector {
+        Vector result;
+        result.coordinates = coords;
+        return result;
+    }
+}
+
+dir := Vector::make([f32: 1.0, 0.0, 3.0]);
+up := Vector<f32, 3>::make(0.0);
+up.coordinates[0] = 5;
+
+alias Vector<f32, 3> Vector3;
+alias Vector3::coordinates[0] x;
+alias Vector3::coordinates[0] y;
+alias Vector3::coordinates[0] z;
+
+v : Vector3;
+v.x = 0;
+v.y = 0;
+v.z = 0;
+
+module Dynamic_Array<x: int, T: Type>
+{
+    Dynamic_Array :: struct
+    {
+        content: []T;
+        length
+    }
+
+    length  --> 
+    size    --> may be confused with bytes
+    count   --> does not really imply the size
+
+    create :: (initial_capacity: u64) -> Dynamic_Array
+    {
+        Dynamic_Array result;
+        result.content
+    }
+
+    destroy :: (arr: Dynamic_Array) {
+        delete arr.content;
+    }
+
+    operator[] :: (arr: *Dynamic_Array, index: u64) {
+        return arr.content[index];
+    }
+}
+
+// I want to call methods like this:
+fill_outs := Dynamic_Array<5, int>::create_empty(32);
+Dynamic_Array::destroy<5, int>(fill_outs);
+
+Question:
+---------
+ * How to reference templated methods?
+
 
 
 Long-Term Goals:
@@ -26,6 +123,7 @@ Long-Term Goals:
 
 More Language features to implement:
 ------------------------------------
+ * Enums, Switch/Match and Unions
  * Tag-System (For constant values, but also other stuff)
 
    ------- These features are for convenience, but they are not top priority ------

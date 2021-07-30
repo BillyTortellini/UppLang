@@ -66,7 +66,7 @@ struct Type_Signature
     Signature_Type type;
     int size_in_bytes;
     int alignment_in_bytes;
-    // Primitve type
+    // Primitive type
     Primitive_Type primitive_type;
     // Function
     Dynamic_Array<Type_Signature*> parameter_types;
@@ -80,7 +80,7 @@ struct Type_Signature
     Dynamic_Array<Struct_Member> member_types;
 };
 void type_signature_append_to_string(String* string, Type_Signature* signature);
-void type_signature_print_value(Type_Signature* type, byte* value_ptr);
+void type_signature_append_value_to_string(Type_Signature* type, byte* value_ptr, String* string);
 
 /*
     Basic Data types Documentation:
@@ -160,14 +160,12 @@ struct IR_Data_Access;
 struct IR_Hardcoded_Function;
 enum class Symbol_Type
 {
-    MODULE,
     FUNCTION,
     HARDCODED_FUNCTION,
-    TYPE, // Structs or others (Future)
+    TYPE, // Structs or others (Not implemented yet, would be Enums, Tagged Enums, Unions...)
     VARIABLE,
 };
 
-struct Symbol_Table;
 struct Symbol
 {
     Symbol_Type symbol_type;
@@ -180,18 +178,22 @@ struct Symbol
         IR_Data_Access variable_access; // Variables/Parameters
         Type_Signature* data_type; // Structs
         IR_Hardcoded_Function* hardcoded_function; // Hardcoded function
-        Symbol_Table* module_table; // Modules
     } options;
 };
 
+struct Symbol_Table;
 struct Symbol_Table
 {
     Symbol_Table* parent;
-    Dynamic_Array<Symbol> symbols;
-    int ast_node_index;
+    Hashtable<int, Symbol> symbols;
+    Hashtable<int, Symbol_Table*> modules;
 };
 
-Symbol* symbol_table_find_symbol(Symbol_Table* table, int name_handle);
+struct Semantic_Analyser;
+Symbol_Table* symbol_table_create(Semantic_Analyser* analyser, Symbol_Table* parent, int node_index, bool inside_defer);
+void symbol_table_destroy(Symbol_Table* symbol_table);
+
+Symbol* symbol_table_find_symbol(Symbol_Table* table, int name_handle, bool only_current_scope);
 Symbol* symbol_table_find_symbol_by_string(Symbol_Table* table, String* string, Lexer* lexer);
 Symbol* symbol_table_find_symbol_of_type(Symbol_Table* table, int name_handle, Symbol_Type symbol_type);
 void symbol_table_append_to_string(String* string, Symbol_Table* table, Lexer* lexer, bool print_root);
@@ -246,21 +248,21 @@ enum class IR_Instruction_Return_Type
     RETURN_DATA,
 };
 
-enum class Exit_Code
+enum class IR_Exit_Code
 {
     SUCCESS,
     OUT_OF_BOUNDS,
     STACK_OVERFLOW,
     RETURN_VALUE_OVERFLOW,
 };
-void exit_code_append_to_string(String* string, Exit_Code code);
+void ir_exit_code_append_to_string(String* string, IR_Exit_Code code);
 
 struct IR_Instruction_Return
 {
     IR_Instruction_Return_Type type;
     union
     {
-        Exit_Code exit_code;
+        IR_Exit_Code exit_code;
         IR_Data_Access return_value;
     } options;
 };
@@ -443,9 +445,78 @@ struct IR_Program
 struct Semantic_Analyser;
 void ir_program_append_to_string(IR_Program* program, String* string, Semantic_Analyser* analyser);
 
+
+
 /*
     Semantic Analyser
 */
+
+enum class Analysis_Workload_Type
+{
+    FUNCTION_HEADER,
+    CODE_BLOCK,
+    STRUCT_HEADER, // Struct is defined as a type, after header analysis members are not ready and size+alignment is 0
+    STRUCT_BODY,
+    SIZED_ARRAY_SIZE, 
+    GLOBAL,
+};
+
+struct Analysis_Workload_Code_Block
+{
+    IR_Code_Block* code_block;
+    int current_child_index;
+    bool inside_defer;
+    Dynamic_Array<int> active_defer_statements;
+    bool requires_return;
+    bool inside_loop;
+    bool check_last_instruction_result;
+};
+
+struct Analysis_Workload_Struct_Body
+{
+    Type_Signature* struct_signature;
+    int current_child_index;
+    int offset;
+    int alignment;
+    bool inside_defer;
+};
+
+struct Analysis_Workload
+{
+    Analysis_Workload_Type type;
+    Symbol_Table* symbol_table;
+    int node_index;
+    union
+    {
+        Analysis_Workload_Code_Block code_block;
+        Analysis_Workload_Struct_Body struct_body;
+        Type_Signature* sized_array_type;
+    } options;
+};
+
+enum class Workload_Dependency_Type
+{
+    IDENTIFER_NOT_FOUND,
+    TYPE_SIZE_UNKNOWN, // Either of Sized_Array or Struct
+    CODE_BLOCK_NOT_FINISHED,
+};
+
+struct Workload_Dependency
+{
+    Workload_Dependency_Type type;
+    int node_index;
+    union {
+        Type_Signature* type_signature;
+        IR_Code_Block* code_block;
+        Symbol_Table* symbol_table;
+    } options;
+};
+
+struct Waiting_Workload
+{
+    Analysis_Workload workload;
+    Workload_Dependency dependency;
+};
 
 struct AST_Top_Level_Node_Location
 {
@@ -453,31 +524,34 @@ struct AST_Top_Level_Node_Location
     int node_index;
 };
 
+enum class Statement_Analysis_Result
+{
+    NO_RETURN,
+    RETURN,
+    CONTINUE,
+    BREAK
+};
+
 struct Semantic_Analyser
 {
+    // Result
     IR_Program* program;
+    Dynamic_Array<Compiler_Error> errors;
+
     Symbol_Table* root_table;
     Dynamic_Array<Symbol_Table*> symbol_tables;
     Hashtable<int, Symbol_Table*> ast_to_symbol_table;
-    Dynamic_Array<Compiler_Error> errors;
-    IR_Function* global_init_function;
 
     // Temporary stuff needed for analysis
     Compiler* compiler;
-    Dynamic_Array<int> active_defer_statements;
-    bool inside_defer;
-    Dynamic_Array<AST_Top_Level_Node_Location> location_functions;
-    Dynamic_Array<AST_Top_Level_Node_Location> location_structs;
-    Dynamic_Array<AST_Top_Level_Node_Location> location_globals;
-    //Type_Signature* function_return_type;
-    int loop_depth;
+    IR_Function* global_init_function;
+    Hashtable<IR_Code_Block*, Statement_Analysis_Result> finished_code_blocks;
+    Dynamic_Array<Analysis_Workload> active_workloads;
+    Dynamic_Array<Waiting_Workload> waiting_workload;
 
     int token_index_size;
     int token_index_data;
     int token_index_main;
-
-    //Dynamic_Array<Struct_Fill_Out> struct_fill_outs;
-    //Dynamic_Array<Semantic_Node_Information> semantic_information;
 };
 
 Semantic_Analyser semantic_analyser_create();

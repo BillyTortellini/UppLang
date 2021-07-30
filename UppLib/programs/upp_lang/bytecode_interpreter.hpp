@@ -18,7 +18,7 @@ struct Bytecode_Interpreter
     Array<byte> stack;
     Array<byte> globals;
     byte* stack_pointer;
-    Exit_Code exit_code;
+    IR_Exit_Code exit_code;
     Random random;
 };
 

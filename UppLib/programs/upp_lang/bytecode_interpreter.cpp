@@ -55,7 +55,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
     case Instruction_Type::U64_MULTIPLY_ADD_I32: {
         u64 offset = (u64)((*(u32*)(interpreter->stack_pointer + i->op3)) * (u64)i->op4);
         if ((i32)offset < 0) {
-            interpreter->exit_code = Exit_Code::OUT_OF_BOUNDS;
+            interpreter->exit_code = IR_Exit_Code::OUT_OF_BOUNDS;
             return true;
         }
         *(u64**)(interpreter->stack_pointer + i->op1) = (u64*)(*(byte**)(interpreter->stack_pointer + i->op2) + offset);
@@ -78,7 +78,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         break;
     case Instruction_Type::CALL_FUNCTION: {
         if (&interpreter->stack[interpreter->stack.size-1] - interpreter->stack_pointer < interpreter->generator->maximum_function_stack_depth) {
-            interpreter->exit_code = Exit_Code::STACK_OVERFLOW;
+            interpreter->exit_code = IR_Exit_Code::STACK_OVERFLOW;
             return true;
         }
         byte* base_pointer = interpreter->stack_pointer;
@@ -92,14 +92,14 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
     }
     case Instruction_Type::CALL_FUNCTION_POINTER: {
         if (&interpreter->stack[interpreter->stack.size-1] - interpreter->stack_pointer < interpreter->generator->maximum_function_stack_depth) {
-            interpreter->exit_code = Exit_Code::STACK_OVERFLOW;
+            interpreter->exit_code = IR_Exit_Code::STACK_OVERFLOW;
             return true;
         }
 
         Bytecode_Instruction* jmp_to_instr = *(Bytecode_Instruction**)(interpreter->stack_pointer + i->op1);
         if (jmp_to_instr < interpreter->generator->instructions.data ||
             jmp_to_instr > &interpreter->generator->instructions.data[interpreter->generator->instructions.size]) {
-            interpreter->exit_code = Exit_Code::RETURN_VALUE_OVERFLOW;
+            interpreter->exit_code = IR_Exit_Code::RETURN_VALUE_OVERFLOW;
             return true;
         }
 
@@ -115,7 +115,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
     }
     case Instruction_Type::RETURN: {
         if (i->op2 > 256) {
-            interpreter->exit_code = Exit_Code::RETURN_VALUE_OVERFLOW;
+            interpreter->exit_code = IR_Exit_Code::RETURN_VALUE_OVERFLOW;
             return true;
         }
         memory_copy(interpreter->return_register, interpreter->stack_pointer + i->op1, i->op2);
@@ -126,7 +126,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         return false;
     }
     case Instruction_Type::EXIT: {
-        interpreter->exit_code = (Exit_Code) i->op1;
+        interpreter->exit_code = (IR_Exit_Code) i->op1;
         /*
         if (interpreter->exit_code == Exit_Code::SUCCESS) {
             memory_copy(&interpreter->return_register[0], interpreter->stack_pointer + i->op1, i->op2);

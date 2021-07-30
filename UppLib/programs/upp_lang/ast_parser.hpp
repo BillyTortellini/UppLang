@@ -10,26 +10,16 @@ struct Token_Range;
 struct Compiler_Error;
 
 /*
-    AST Changes:
-        ROOT
-        MODULE
-        TYPE_IDENTIFIER
-        EXPRESSION_VARIABLE_READ
-        EXPRESSION_FUNCTION_CALL
-
-        ARGUMENTS
-        IDENTIFIER
-        IDENTIFIER_PATH
-
-    So i probably want something that parses name lookups:
-        x : Greeter::Greeting = Greeter:greeting_make(15);
-        Greeter::greet(x);
+    MODULE_TEMPLATED
+    DEFINITIONS
 */
 
 enum class AST_Node_Type
 {
-    ROOT, // Children: functions, globals, modules or structs
-    MODULE, // Children: functions, globals, modules or structs
+    ROOT, // Child 0: Definitions
+    DEFINITIONS, // Children: functions, globals, modules or structs 
+    MODULE, // Child 0: Definitions
+    MODULE_TEMPLATED, // Children 0 - (size-2): IDENTIFIER (Template Param names), Children (size-1): DEFINITIONS
     STRUCT, // Children: Variable definitions
     FUNCTION, // Child 0: Function_Signature, Child 1: Statement_Block
     FUNCTION_SIGNATURE, // Child 0: Parameter_Block_Named, Child 1 (optional): Return Type

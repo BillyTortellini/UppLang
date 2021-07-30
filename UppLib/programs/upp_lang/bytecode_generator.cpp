@@ -289,12 +289,17 @@ int bytecode_generator_add_instruction_and_set_destination(Bytecode_Generator* g
 void bytecode_generator_move_accesses(Bytecode_Generator* generator, IR_Data_Access destination, IR_Data_Access source)
 {
     int move_byte_size;
+    Type_Signature* move_type = ir_data_access_get_type(&destination);
+    move_byte_size = move_type->size_in_bytes;
+    /*
     if (destination.is_memory_access) {
+        //move_byte_size = move_type->child_type->size_in_bytes;
         move_byte_size = 8;
     }
     else {
-        move_byte_size = ir_data_access_get_type(&destination)->size_in_bytes;
+        move_byte_size = move_type->size_in_bytes;
     }
+    */
 
     int source_offset = bytecode_generator_data_access_to_stack_offset(generator, source);
     Bytecode_Instruction instr = instruction_make_3(Instruction_Type::MOVE_STACK_DATA, 0, source_offset, move_byte_size);
@@ -968,7 +973,7 @@ void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction 
         break;
     case Instruction_Type::EXIT:
         string_append_formated(string, "EXIT                         exit-code: ");
-        exit_code_append_to_string(string, (Exit_Code)i.op1);
+        ir_exit_code_append_to_string(string, (IR_Exit_Code)i.op1);
         break;
     case Instruction_Type::LOAD_RETURN_VALUE:
         string_append_formated(string, "LOAD_RETURN_VALUE            dst: %d, size: %d", i.op1, i.op2);

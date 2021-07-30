@@ -1,568 +1,76 @@
-main :: () -> void 
+module List
 {
-    /*
-    array_test();
-    memory_test();
-    string_test();
-    global_test();
-    scope_test();
-    cast_test(); 
-    function_ptr_test();
-    struct_test();
-    */
-    module_test();
-    defer_test();
-}
-
-defer_test :: ()
-{
-    print_string("DEFER TEST\n-----------\n");
-    print_string("Should be in correct order:");
+    List_Node :: struct
     {
-        defer print_string(" * 6");
-        print_string(" * 1");
-        defer print_string(" * 5");
-        print_string(" * 2");
-        defer print_string(" * 4");
-        print_string(" * 3");
+        value: int;
+        next: *List_Node;
     }
-    
+
+    List :: struct
     {
-        print_string("\nShould be true: ");
-        cond := true;
-        defer print_bool(cond);
+        head: *List_Node;
     }
     
+    print :: (list: *List)
     {
-        print_string("\nShould be false: ");
-        defer {
-            cond := false;
-            print_bool(cond);
-        }
-    }
-        
-    print_line();
-}
-
-module Math
-{
-    Vector3 :: struct 
-    {
-        x: float;
-        y: float;
-        z: float;
-    }
-    
-    vector3_make:: (x: float, y: float, z: float) -> Vector3
-    {
-        result: Vector3;
-        result.x = x;
-        result.y = y;
-        result.z = z;
-        return result;
-    }
-  
-    vector3_print :: (v: Vector3) {
-        print_f32(v.x);
-        print_string(" ");
-        print_f32(v.y);
-        print_string(" ");
-        print_f32(v.z);
-        print_string("\n");
-    }
-    
-    addition :: (a: int, b: int) -> int {return a + b;} 
-    multiplication :: (a: int, b: int) -> int {return a * b;} 
-    
-    module TestA
-    {
-        greet :: () { print_string("Greetings, stranger!\n"); }
-    }
-    module TestB
-    {
-        greet :: () { print_string("Hello there, General Kenobi!\n"); }
-    }
-}
-
-module Globals
-{
-    alive: bool = false;
-    counter := 15;
-    module TestA {
-        fps: float;
-    }
-    module TestB {
-        fps: float;
-    }
-}
-
-module_test :: ()
-{
-    // Structs and functions
-    x := Math::addition(5, 7);
-    y := Math::multiplication(5, 7);
-    vec := Math::vector3_make(x, y, 0);
-    Math::vector3_print(vec);
-    
-    // Overlapping symbols
-    Math::TestA::greet();
-    Math::TestB::greet();
-    
-    // Global variables in 
-    print_string("Should be true: ");
-    print_bool(Globals::alive);
-    print_string("\nShould be 15: ");
-    print_i32(Globals::counter);
-    Globals::counter = 17 * 30;
-    print_string("\nShould be 17*30: ");
-    print_i32(Globals::counter);
-    Globals::TestA::fps = 30.0;
-    Globals::TestB::fps = 60.0;
-    print_string("\nShould be 30.0: ");
-    print_f32(Globals::TestA::fps);
-    print_string("\nShould be 60.0: ");
-    print_f32(Globals::TestB::fps);
-    print_string("\n");
-}
-
-int_add :: (a: int, b: int) -> int { return a + b; }
-int_sub:: (a: int, b: int) -> int { return a - b; }
-int_mul:: (a: int, b: int) -> int { return a * b; }
-
-function_ptr_test :: ()
-{
-    binop: (int, int) -> int;
-    
-    binop = *int_add;
-    result := binop(5, 5);
-    print_i32(result);
-    print_line();
-    
-    binop = *int_sub;
-    result = binop(5, 5);
-    print_i32(result);
-    print_line();
-    
-    binop = *int_mul;
-    result = binop(5, 5);
-    print_i32(result);
-    print_line();
-    
-    test_op := *int_add;
-    result = test_op(5, 5);
-    print_i32(result);
-    print_line();
-}
-
-string_create :: (str: String) -> String
-{
-    result: String;
-    result.character_buffer = new [str.size]u8;
-    result.size = str.size;
-    i := 0;
-    while i < str.size {
-        result.character_buffer[i] = str.character_buffer[i];
-        i = i+1;
-    }
-    return result;
-}
-
-string_reserve :: (str: *String, n: int) -> void
-{
-    if str.character_buffer.size >= n return;
-    new_buffer := new [n]u8;
-    i := 0;
-    while i < str.size {
-        new_buffer[i] = str.character_buffer[i];
-        i = i+1;
-    }
-    delete str.character_buffer;
-    str.character_buffer = new_buffer;
-}
-
-string_double :: (str: *String) -> void
-{
-    string_reserve(str, str.size * 2);
-    i := 0;
-    while i < str.size {
-        str.character_buffer[i + str.size] = str.character_buffer[i];
-        i = i+1;
-    }
-    str.size = str.size * 2;
-}
-
-string_create_empty :: (initial_capacity: int) -> String
-{
-    result: String;
-    result.character_buffer = new [initial_capacity]u8;
-    result.size = 0;
-    return result;
-}
-
-string_destroy :: (str: *String) -> void 
-{
-    delete str.character_buffer;
-    str.character_buffer.size = 0;
-    str.character_buffer.data = nullptr;
-    str.size = 0;
-}
-
-string_print_characters :: (max: int, x: String) -> void
-{
-    i := 0;
-    while i < x.size && i < max {
-        print_i32(cast<i32> x.character_buffer[i]);
-        print_line();
-        i = i+1;
-    }
-}
-
-string_test :: () -> void
-{
-    x := "Hallo\nLol Lol Lol\n";
-    x = string_create(x);
-    string_double(*x);
-    string_double(*x);
-    string_double(*x);
-    
-    string_print_characters(4, x);
-    print_string(x);
-    print_string("\nIntermediate String Test\n");
-    
-    string_destroy(*x);
-}
-
-
-global_x: int;
-global_y: i32 = 5;
-global_z := 7;
-global_w := fib_rec(10);
-global_player : Player;
-global_pointer: *int;
-
-global_test :: () -> void
-{
-    // Test initialization and access
-    {
-        global_x = 3;
-        global_z = global_x + global_y + global_z;
-        global_player = player_make(5, true, 7);
-        print_i32(global_x);
-        print_line();
-        print_i32(global_y);
-        print_line();
-        print_i32(global_z);
-        print_line();
-        print_i32(global_w);
-        print_line();
-        print_i32(global_player.level);
-        print_line();
-    }
-    // Test pointers to globals
-    {
-        xp := *global_x;
-        &xp = 19;
-        print_i32(global_x);
-        print_line();
-        
-        y: int = 7;
-        global_pointer = *y;
-        &global_pointer = 90;
-        print_i32(y);
-        print_line();
-    }
-}
-
-add :: (a: i64, b: i64) -> i64 {
-    return a + b;
-}
-
-cast_test :: () -> void
-{
-    {
-        f: f32 = 5.68;    
-        b: f64 = cast<f64> -2.3;
-        f = f + cast<f32>b;
-        a := cast<int> f;
-        print_i32(a);
-        print_line();
-        print_f32(f);
-        print_line();
-    }
-    
-    {
-        a: [2]int;
-    
-        ap := *a[0];
-        &ap = 7;
-    
-        addr := cast<u64>ap;
-        addr = addr + cast<u64>4;
-        ap = cast<*int>addr;
-    
-        &ap = 5;
-    
-        print_i32(a[0]);
-        print_line();
-        print_i32(a[1]);
-        print_line();
-    }
-    {
-        a := 0;
-        a_addr := cast<u64> *a;
-        b0 := cast<*byte> (a_addr + cast<u64> 0);
-        b1 := cast<*byte> (a_addr + cast<u64> 1);
-        b2 := cast<*byte> (a_addr + cast<u64> 2);
-        b3 := cast<*byte> (a_addr + cast<u64> 3);
-        
-        &b0 = cast<byte> 0;
-        &b1 = cast<byte> 0;
-        &b2 = cast<byte> 1;
-        &b3 = cast<byte> 0;
-        
-        print_i32(a);
-        print_line();
-    }
-    {
-        a: [20]int;
-        b: []int = cast<[]int> a;
-    
-        array_fill_random(b, 100);
-        array_bubble_sort(b);
-    }
-    {
-        a := 5;
-        ap: *int = *a;
-    
-        b: *void = cast<*void> ap;
-        c: *int = cast<*int> b;
-        &c = 3;
-    
-        x: int = 100;
-        d := cast<*void>*x;
-    
-        print_bool(d == b);
-        print_line();
-        print_i32(a);
-        print_line();
-    }
-    
-    {
-        a: *void = nullptr;
-        if (cast<u64>0 == cast<u64>a) {
-            print_line();
-            print_line();
-            print_i32(420);
-            print_line();
-            print_line();
-        }
-        else {
-            print_i32(69);
-            print_line();
-        }
-    }
-    
-    {
-        a := add(32, 5);
-        print_f32(cast<i32>a);
-        print_line();
-    }
-}
-
-
-memory_test :: () -> void
-{
-    size := 30;
-    a: []int = new [size]int;
-    array_fill_random(a, 100);
-    array_bubble_sort(a);
-    array_print(a);
-    delete a;
-}
-
-scope_test :: () -> void
-{
-    a: int = 0;
-    x: int = 5;
-    {
-        x: int = 17;
-        a = x;
-    }
-    print_string("Should be 17: ");
-    print_i32(a);
-    print_line();
-}
-
-Player :: struct
-{
-    age: int;
-    alive: bool;
-    level: int;
-}
-
-player_level_up :: (player: *Player) -> void
-{
-    (&player).level = (&player).level + 1;
-}
-
-player_make :: (age: int, alive: bool, level: int) -> Player
-{
-    player: Player;
-    player.age = age;
-    player.alive = alive;
-    player.level = level;
-    return player;
-}
-
-player_kill :: (killer: *Player, victim: *Player) -> void
-{
-    if !(&victim).alive return;
-    (&victim).alive = false;
-    (&killer).level = (&killer).level + (&victim).level;
-}
-
-struct_test :: () -> void
-{
-    // Test struct return
-    p1 := player_make(69, true, 12);
-    p2 := player_make(77, true, 3);
-
-    // Test struct pointers
-    player_level_up(*p1);
-    player_kill(*p1, *p2);
-
-    print_line();
-    print_i32(p1.level);
-    print_line();
-    
-    // Test pointers to struct members
-    lp := *p1.level;
-    ap := *p1.alive;
-    &lp = -1;
-    &ap = false;
-    print_i32(p1.level);
-    print_line();
-    print_bool(p1.alive);
-    print_line();
-}
-
-array_bubble_sort :: (a: []int) -> void
-{
-    i := 0;
-    while (i < a.size)
-    {
-        j := i + 1;
-        while (j < a.size) 
+        node := list.head;
+        print_string("List: ");
+        while node != nullptr
         {
-            if (a[j] < a[i]) {
-                swap := a[i];
-                a[i] = a[j];
-                a[j] = swap;
-            }
-            j = j+1;
+            print_i32(node.value);
+            print_string(" ");
+            node = node.next;
         }
-        i = i+1;
-    }
-}
-
-array_fill_random :: (array: []int, max: int) -> void
-{
-    i := 0;
-    while (i < array.size)
-    {
-        array[i] = random_i32(); // % max;
-        if (array[i] < 0) array[i] = -array[i];
-        array[i] = array[i] % max;
-        i = i+1;
-    }
-}
-
-array_test :: () -> void
-{
-    array: [30]int;
-    i := 0;
-    while (i < array.size)
-    {
-        array[i] = i;
-        i = i+1;
-    }
-    a: []int;
-    a.data = array.data;
-    a.size = array.size;
-
-    arr2: [20]int;
-    a2: []int;
-    a2.size = arr2.size;
-    a2.data = arr2.data;
-    array_fill_random(a2, a2.size);
-    //array_fill_from_console(a2);
-    array_bubble_sort(a2);
-    array_set_even_constant(a2, 420); 
-    array_print(a2);
-}
-
-array_set_even_constant :: (array: []int, c: int) -> void
-{
-    i := 0;
-    while (i < array.size)
-    {
-        if even(array[i]) {
-            array[i] = c;
-        }
-        i = i+1;
-    }
-}
-
-array_print :: (array: []int) -> void
-{
-    i := 0;
-    print_line();
-    while (i < array.size) {
-        print_i32(array[i]);
         print_line();
-        i = i+1;
     }
-}
-
-array_fill_from_console :: (array: []int) -> void
-{
-    i := 0;
-    while (i < array.size)
+    
+    add :: (list: *List, value: int)
     {
-        array[i] = read_i32();
-        i = i + 1;
+        if list.head == nullptr
+        {
+            print_string("Adding Head");
+            list.head = new List_Node;
+            list.head.value = value;
+            list.head.next = nullptr;
+            return;
+        }
+        print_string("Adding node\n");
+        node := list.head;
+        while node.next != nullptr {
+            print_string("  next\n");
+            node = node.next;
+        }
+        node.next = new List_Node;
+        node.next.next = nullptr;
+        node.next.value = value;
+    }
+
+    create :: () -> List
+    {
+        list: List;
+        list.head = nullptr;
+        return list;
+    }
+    
+    destroy :: (list: *List)
+    {
+        node := list.head;
+        while node != nullptr
+        {
+            tmp := node;
+            node = node.next;
+            print_string("Deltet\n");
+            delete tmp;
+        }
     }
 }
 
-even :: (a: int) -> bool 
+main :: ()
 {
-    return a % 2 == 0;
-}
-
-mul_add :: (a: int, b: int, c: int) -> int
-{
-    return a * b + c;
-}
-
-sum_first :: (n: int) -> int
-{
-    i := 0;
-    sum := 0;
-    while (i < 1000) {
-        i = i+1;
-        sum = sum + i;
-    } 
-    return sum;
-}
-
-fact_rec :: (n: int) -> int
-{
-    if (n <= 2) return n; 
-    return fact_rec(n-1) * n;
-}
-
-fib_rec :: (n: int) -> int
-{
-    if (n <= 2) return 1;
-    return fib_rec(n-1) + fib_rec(n-2);
+    list := List::create();
+    List::add(*list, 1);
+    List::add(*list, 2);
+    //List::add(*list, 3);
+    //List::print(*list);
+    List::destroy(*list);
 }

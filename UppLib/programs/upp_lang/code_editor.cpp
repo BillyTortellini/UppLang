@@ -49,7 +49,7 @@ int code_editor_get_closest_node_to_text_position(Code_Editor* editor, Text_Posi
                 start_index = math_clamp(start_index, min, max);
                 end_index = math_clamp(end_index, min, max);
                 token_start = &parser->lexer->tokens[start_index];
-                token_end = &parser->lexer->tokens[end_index - 1];
+                token_end = &parser->lexer->tokens[math_maximum(0, end_index - 1)];
             }
 
             Text_Slice node_slice = text_slice_make(token_start->position.start, token_end->position.end);
@@ -80,7 +80,8 @@ Symbol_Table* code_editor_find_symbol_table_of_text_position(Code_Editor* editor
                 break;
             }
             if (current_node_index == 0) {
-                panic("Should not happen, since root table should be here");
+                //panic("Should not happen, since root table should be here");
+                return 0;
                 break;
             }
             current_node_index = current_node->parent;
@@ -129,13 +130,13 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
     {
         Key_Message* msg = &input->key_messages[i];
         // Filter out messages not meant for editor
-        if (editor->text_editor->mode == Text_Editor_Mode::NORMAL)
+        if (editor->text_editor->mode == Text_Editor_Mode::NORMAL && editor->text_editor->normal_mode_incomplete_command.size == 0)
         {
             if (msg->character == '*' && msg->key_down) {
                 code_editor_jump_to_definition(editor);
                 continue;
             }
-            else if (msg->key_code == Key_Code::S && msg->key_down) {
+            else if (msg->key_code == Key_Code::S && msg->key_down || msg->key_code == Key_Code::F5) {
                 String output = string_create_empty(256);
                 SCOPE_EXIT(string_destroy(&output););
                 text_append_to_string(&editor->text_editor->text, &output);
@@ -222,7 +223,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
                 Symbol_Table* symbol_table = code_editor_find_symbol_table_of_text_position(editor, t.position.start);
                 if (symbol_table != 0)
                 {
-                    Symbol* symbol = symbol_table_find_symbol(symbol_table, t.attribute.identifier_number);
+                    Symbol* symbol = symbol_table_find_symbol(symbol_table, t.attribute.identifier_number, false);
                     if (symbol != 0)
                     {
                         if (symbol->symbol_type == Symbol_Type::TYPE) {

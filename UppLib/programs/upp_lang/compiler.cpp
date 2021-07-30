@@ -56,7 +56,7 @@ void compiler_compile(Compiler* compiler, String* source_code, bool generate_cod
     bool do_lexing = enable_lexing;
     bool do_parsing = do_lexing && enable_parsing;
     bool do_analysis = do_parsing && enable_analysis;
-    bool do_bytecode_gen = do_analysis && enable_bytecode_gen;
+    bool do_bytecode_gen = do_analysis && enable_bytecode_gen && generate_code;
 
     double time_start_lexing = timer_current_time_in_seconds(compiler->timer);
     if (do_lexing) {
@@ -182,14 +182,14 @@ void compiler_execute(Compiler* compiler)
         bytecode_interpreter_execute_main(&compiler->bytecode_interpreter, compiler);
         double bytecode_end = timer_current_time_in_seconds(compiler->timer);
         float bytecode_time = (bytecode_end - bytecode_start);
-        if (compiler->bytecode_interpreter.exit_code == Exit_Code::SUCCESS) {
+        if (compiler->bytecode_interpreter.exit_code == IR_Exit_Code::SUCCESS) {
             logg("Interpreter: Exit SUCCESS");
             //logg("Bytecode interpreter result: %d (%2.5f seconds)\n", *(int*)(byte*)&compiler->bytecode_interpreter.return_register[0], bytecode_time);
         }
         else {
             String tmp = string_create_empty(128);
             SCOPE_EXIT(string_destroy(&tmp));
-            exit_code_append_to_string(&tmp, compiler->bytecode_interpreter.exit_code);
+            ir_exit_code_append_to_string(&tmp, compiler->bytecode_interpreter.exit_code);
             logg("Bytecode interpreter error: %s\n", tmp.characters);
         }
 
