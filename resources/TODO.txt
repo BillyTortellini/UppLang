@@ -1,8 +1,5 @@
 NOTES:
 ------
- * List does not work, there are memory errors but there shouldn't be
- * Defer does not seem to work --> Needs fixing
- * implicit casting in binary op does also not seem to work
 
 Current Work Item:
 ------------------

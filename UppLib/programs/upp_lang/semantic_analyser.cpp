@@ -5,6 +5,7 @@
 #include "../../utility/hash_functions.hpp"
 #include "../../datastructures/hashset.hpp"
 
+bool PRINT_DEPENDENCIES = false;
 /*
     TYPE_SIGNATURE
 */
@@ -901,7 +902,7 @@ void ir_program_destroy(IR_Program * program)
     delete program;
 }
 
-void ir_data_access_append_to_string(IR_Data_Access * access, String * string)
+void ir_data_access_append_to_string(IR_Data_Access* access, String* string, IR_Code_Block* current_block)
 {
     switch (access->type)
     {
@@ -929,6 +930,9 @@ void ir_data_access_append_to_string(IR_Data_Access * access, String * string)
         Type_Signature* sig = access->option.definition_block->registers[access->index];
         string_append_formated(string, "Register #%d, type: ", access->index);
         type_signature_append_to_string(string, sig);
+        if (access->option.definition_block != current_block) {
+            string_append_formated(string, " (Not local)", access->index);
+        }
         break;
     }
     }
@@ -945,7 +949,7 @@ void indent_string(String * string, int indentation) {
 }
 
 void ir_code_block_append_to_string(IR_Code_Block * code_block, String * string, int indentation, Semantic_Analyser * analyser);
-void ir_instruction_append_to_string(IR_Instruction * instruction, String * string, int indentation, Semantic_Analyser * analyser)
+void ir_instruction_append_to_string(IR_Instruction * instruction, String * string, int indentation, Semantic_Analyser * analyser, IR_Code_Block* code_block)
 {
     Type_System* type_system = &analyser->compiler->type_system;
     indent_string(string, indentation);
@@ -958,12 +962,12 @@ void ir_instruction_append_to_string(IR_Instruction * instruction, String * stri
         indent_string(string, indentation + 1);
         if (address_of->type != IR_Instruction_Address_Of_Type::FUNCTION) {
             string_append_formated(string, "src: ");
-            ir_data_access_append_to_string(&address_of->source, string);
+            ir_data_access_append_to_string(&address_of->source, string, code_block);
             string_append_formated(string, "\n");
             indent_string(string, indentation + 1);
         }
         string_append_formated(string, "dst: ");
-        ir_data_access_append_to_string(&address_of->destination, string);
+        ir_data_access_append_to_string(&address_of->destination, string, code_block);
         string_append_formated(string, "\n");
         indent_string(string, indentation + 1);
         string_append_formated(string, "type: ");
@@ -971,7 +975,7 @@ void ir_instruction_append_to_string(IR_Instruction * instruction, String * stri
         {
         case IR_Instruction_Address_Of_Type::ARRAY_ELEMENT:
             string_append_formated(string, "ARRAY_ELEMENT index: ");
-            ir_data_access_append_to_string(&address_of->options.index_access, string);
+            ir_data_access_append_to_string(&address_of->options.index_access, string, code_block);
             break;
         case IR_Instruction_Address_Of_Type::DATA:
             string_append_formated(string, "DATA");
@@ -1035,15 +1039,15 @@ void ir_instruction_append_to_string(IR_Instruction * instruction, String * stri
         string_append_formated(string, "\n");
         indent_string(string, indentation + 1);
         string_append_formated(string, "left: ");
-        ir_data_access_append_to_string(&instruction->options.binary_op.operand_left, string);
+        ir_data_access_append_to_string(&instruction->options.binary_op.operand_left, string, code_block);
         string_append_formated(string, "\n");
         indent_string(string, indentation + 1);
         string_append_formated(string, "right: ");
-        ir_data_access_append_to_string(&instruction->options.binary_op.operand_right, string);
+        ir_data_access_append_to_string(&instruction->options.binary_op.operand_right, string, code_block);
         string_append_formated(string, "\n");
         indent_string(string, indentation + 1);
         string_append_formated(string, "dst: ");
-        ir_data_access_append_to_string(&instruction->options.binary_op.destination, string);
+        ir_data_access_append_to_string(&instruction->options.binary_op.destination, string, code_block);
         break;
     }
     case IR_Instruction_Type::BLOCK: {
@@ -1085,11 +1089,11 @@ void ir_instruction_append_to_string(IR_Instruction * instruction, String * stri
         string_append_formated(string, "\n");
         indent_string(string, indentation + 1);
         string_append_formated(string, "src: ");
-        ir_data_access_append_to_string(&cast->source, string);
+        ir_data_access_append_to_string(&cast->source, string, code_block);
         string_append_formated(string, "\n");
         indent_string(string, indentation + 1);
         string_append_formated(string, "dst: ");
-        ir_data_access_append_to_string(&cast->destination, string);
+        ir_data_access_append_to_string(&cast->destination, string, code_block);
         break;
     }
     case IR_Instruction_Type::FUNCTION_CALL:
@@ -1116,14 +1120,14 @@ void ir_instruction_append_to_string(IR_Instruction * instruction, String * stri
         }
         if (function_sig->return_type != type_system->void_type) {
             string_append_formated(string, "dst: ");
-            ir_data_access_append_to_string(&call->destination, string);
+            ir_data_access_append_to_string(&call->destination, string, code_block);
             string_append_formated(string, "\n");
             indent_string(string, indentation + 1);
         }
         string_append_formated(string, "args: (%d)\n", call->arguments.size);
         for (int i = 0; i < call->arguments.size; i++) {
             indent_string(string, indentation + 2);
-            ir_data_access_append_to_string(&call->arguments[i], string);
+            ir_data_access_append_to_string(&call->arguments[i], string, code_block);
             string_append_formated(string, "\n");
         }
 
@@ -1136,7 +1140,7 @@ void ir_instruction_append_to_string(IR_Instruction * instruction, String * stri
             break;
         case IR_Instruction_Call_Type::FUNCTION_POINTER_CALL:
             string_append_formated(string, "FUNCTION_POINTER_CALL, access: ");
-            ir_data_access_append_to_string(&call->options.pointer_access, string);
+            ir_data_access_append_to_string(&call->options.pointer_access, string, code_block);
             break;
         case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
             string_append_formated(string, "HARDCODED_FUNCTION_CALL, type: ");
@@ -1147,7 +1151,7 @@ void ir_instruction_append_to_string(IR_Instruction * instruction, String * stri
     }
     case IR_Instruction_Type::IF: {
         string_append_formated(string, "IF ");
-        ir_data_access_append_to_string(&instruction->options.if_instr.condition, string);
+        ir_data_access_append_to_string(&instruction->options.if_instr.condition, string, code_block);
         string_append_formated(string, "\n");
         ir_code_block_append_to_string(instruction->options.if_instr.true_branch, string, indentation + 1, analyser);
         indent_string(string, indentation);
@@ -1159,11 +1163,11 @@ void ir_instruction_append_to_string(IR_Instruction * instruction, String * stri
         string_append_formated(string, "MOVE\n");
         indent_string(string, indentation + 1);
         string_append_formated(string, "src: ");
-        ir_data_access_append_to_string(&instruction->options.move.source, string);
+        ir_data_access_append_to_string(&instruction->options.move.source, string, code_block);
         string_append_formated(string, "\n");
         indent_string(string, indentation + 1);
         string_append_formated(string, "dst: ");
-        ir_data_access_append_to_string(&instruction->options.move.destination, string);
+        ir_data_access_append_to_string(&instruction->options.move.destination, string, code_block);
         break;
     }
     case IR_Instruction_Type::WHILE: {
@@ -1171,9 +1175,9 @@ void ir_instruction_append_to_string(IR_Instruction * instruction, String * stri
         indent_string(string, indentation + 1);
         string_append_formated(string, "Condition code: \n");
         ir_code_block_append_to_string(instruction->options.while_instr.condition_code, string, indentation + 2, analyser);
-        string_append_formated(string, "\n");
+        indent_string(string, indentation + 1);
         string_append_formated(string, "Condition access: ");
-        ir_data_access_append_to_string(&instruction->options.while_instr.condition_access, string);
+        ir_data_access_append_to_string(&instruction->options.while_instr.condition_access, string, code_block);
         string_append_formated(string, "\n");
         indent_string(string, indentation + 1);
         string_append_formated(string, "Body: \n");
@@ -1190,7 +1194,7 @@ void ir_instruction_append_to_string(IR_Instruction * instruction, String * stri
             break;
         case IR_Instruction_Return_Type::RETURN_DATA:
             string_append_formated(string, "RETURN ");
-            ir_data_access_append_to_string(&return_instr->options.return_value, string);
+            ir_data_access_append_to_string(&return_instr->options.return_value, string, code_block);
             break;
         case IR_Instruction_Return_Type::RETURN_EMPTY:
             string_append_formated(string, "RETURN");
@@ -1214,11 +1218,11 @@ void ir_instruction_append_to_string(IR_Instruction * instruction, String * stri
         string_append_formated(string, "\n");
         indent_string(string, indentation + 1);
         string_append_formated(string, "dst: ");
-        ir_data_access_append_to_string(&instruction->options.unary_op.destination, string);
+        ir_data_access_append_to_string(&instruction->options.unary_op.destination, string, code_block);
         string_append_formated(string, "\n");
         indent_string(string, indentation + 1);
         string_append_formated(string, "operand: ");
-        ir_data_access_append_to_string(&instruction->options.unary_op.source, string);
+        ir_data_access_append_to_string(&instruction->options.unary_op.source, string, code_block);
         break;
     }
     default: panic("What");
@@ -1238,7 +1242,7 @@ void ir_code_block_append_to_string(IR_Code_Block * code_block, String * string,
     indent_string(string, indentation);
     string_append_formated(string, "Instructions:\n");
     for (int i = 0; i < code_block->instructions.size; i++) {
-        ir_instruction_append_to_string(&code_block->instructions[i], string, indentation + 1, analyser);
+        ir_instruction_append_to_string(&code_block->instructions[i], string, indentation + 1, analyser, code_block);
         string_append_formated(string, "\n");
     }
 }
@@ -2035,7 +2039,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
         instruction.type = IR_Instruction_Type::FUNCTION_CALL;
         instruction.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
         instruction.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(1);
-        dynamic_array_push_back(&instruction.options.call.arguments, ir_data_access_create_constant_i32(analyser, result_type->size_in_bytes));
+        dynamic_array_push_back(&instruction.options.call.arguments, ir_data_access_create_constant_i32(analyser, new_type->size_in_bytes));
         if (create_temporary_access) {
             *access = ir_data_access_create_intermediate(code_block, result_type);
         }
@@ -2557,29 +2561,8 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
         Type_Signature* left_type = left_expr_result.options.success.result_type;
         Type_Signature* right_type = right_expr_result.options.success.result_type;
         Type_Signature* operand_type = left_type;
-        if (left_expr_result.type != right_expr_result.type)
+        if (left_type != right_type)
         {
-            bool cast_possible = false;
-            switch (expression_node->type)
-            {
-            case AST_Node_Type::EXPRESSION_BINARY_OPERATION_ADDITION:
-            case AST_Node_Type::EXPRESSION_BINARY_OPERATION_SUBTRACTION:
-            case AST_Node_Type::EXPRESSION_BINARY_OPERATION_DIVISION:
-            case AST_Node_Type::EXPRESSION_BINARY_OPERATION_MULTIPLICATION:
-            case AST_Node_Type::EXPRESSION_BINARY_OPERATION_MODULO:
-            case AST_Node_Type::EXPRESSION_BINARY_OPERATION_LESS:
-            case AST_Node_Type::EXPRESSION_BINARY_OPERATION_LESS_OR_EQUAL:
-            case AST_Node_Type::EXPRESSION_BINARY_OPERATION_GREATER:
-            case AST_Node_Type::EXPRESSION_BINARY_OPERATION_GREATER_OR_EQUAL:
-                cast_possible = true;
-                break;
-            default: cast_possible = false;
-            }
-
-            if (!cast_possible) {
-                semantic_analyser_log_error(analyser, "Left and right of binary operation do not match", expression_index);
-                return expression_analysis_result_make_error();
-            }
             IR_Data_Access casted_access = ir_data_access_create_intermediate(code_block, right_type);
             bool left_to_right_worked = false;
             if (semantic_analyser_cast_implicit_if_possible(analyser, code_block, left_access, casted_access)) {
@@ -2922,12 +2905,36 @@ void semantic_analyser_find_workloads_recursively(Semantic_Analyser* analyser, S
     }
 }
 
-void workload_code_block_work_through_defers(Semantic_Analyser* analyser, Analysis_Workload* workload)
+enum class Defer_Resolve_Depth
+{
+    WHOLE_FUNCTION,
+    LOCAL_BLOCK,
+    LOOP_EXIT
+};
+
+void workload_code_block_work_through_defers(Semantic_Analyser* analyser, Analysis_Workload* workload, Defer_Resolve_Depth resolve_depth)
 {
     assert(workload->type == Analysis_Workload_Type::CODE_BLOCK, "Wrong type budyd");
     Analysis_Workload_Code_Block* block_workload = &workload->options.code_block;
     for (int i = block_workload->active_defer_statements.size - 1; i >= 0; i--)
     {
+        bool end_loop = false;
+        switch (resolve_depth)
+        {
+        case Defer_Resolve_Depth::WHOLE_FUNCTION:
+            end_loop = false;
+            break;
+        case Defer_Resolve_Depth::LOCAL_BLOCK: {
+            end_loop = i < block_workload->local_block_defer_depth;
+            break;
+        }
+        case Defer_Resolve_Depth::LOOP_EXIT: {
+            end_loop = i < block_workload->surrounding_loop_defer_depth;
+            break;
+        }
+        default: panic("what");
+        }
+
         IR_Code_Block* defer_block = ir_code_block_create(block_workload->code_block->function);
         Analysis_Workload defer_workload;
         defer_workload.type = Analysis_Workload_Type::CODE_BLOCK;
@@ -2937,6 +2944,8 @@ void workload_code_block_work_through_defers(Semantic_Analyser* analyser, Analys
         defer_workload.options.code_block.code_block = defer_block;
         defer_workload.options.code_block.current_child_index = 0;
         defer_workload.options.code_block.inside_defer = true;
+        defer_workload.options.code_block.local_block_defer_depth = 0;
+        defer_workload.options.code_block.surrounding_loop_defer_depth = 0;
         defer_workload.options.code_block.inside_loop = false; // Defers cannot break out of loops, I guess
         defer_workload.options.code_block.requires_return = false;
         defer_workload.options.code_block.check_last_instruction_result = false;
@@ -2947,6 +2956,7 @@ void workload_code_block_work_through_defers(Semantic_Analyser* analyser, Analys
         block_instr.options.block = defer_block;
         dynamic_array_push_back(&block_workload->code_block->instructions, block_instr);
     }
+    dynamic_array_reset(&block_workload->active_defer_statements);
 }
 
 Analysis_Workload analysis_workload_make_code_block(Semantic_Analyser* analyser, int block_index, IR_Code_Block* code_block, Analysis_Workload* current_work)
@@ -2965,6 +2975,8 @@ Analysis_Workload analysis_workload_make_code_block(Semantic_Analyser* analyser,
     new_workload.options.code_block.current_child_index = 0;
     new_workload.options.code_block.inside_defer = block_workload->inside_defer;
     new_workload.options.code_block.inside_loop = block_workload->inside_loop;
+    new_workload.options.code_block.local_block_defer_depth = block_workload->active_defer_statements.size;
+    new_workload.options.code_block.surrounding_loop_defer_depth = current_work->options.code_block.surrounding_loop_defer_depth;
     new_workload.options.code_block.requires_return = false;
     new_workload.options.code_block.check_last_instruction_result = false;
     return new_workload;
@@ -3295,6 +3307,8 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                 body_workload.options.code_block.current_child_index = 0;
                 body_workload.options.code_block.active_defer_statements = dynamic_array_create_empty<int>(4);
                 body_workload.options.code_block.inside_defer = false;
+                body_workload.options.code_block.local_block_defer_depth = 0;
+                body_workload.options.code_block.surrounding_loop_defer_depth = 0;
                 body_workload.options.code_block.inside_loop = false;
                 body_workload.options.code_block.requires_return = true;
                 body_workload.options.code_block.check_last_instruction_result = false;
@@ -3404,9 +3418,10 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                             );
                             switch (expr_result.type)
                             {
-                            case Expression_Analysis_Result_Type::SUCCESS:
+                            case Expression_Analysis_Result_Type::SUCCESS: {
                                 return_type = expr_result.options.success.result_type;
                                 break;
+                            }
                             case Expression_Analysis_Result_Type::DEPENDENCY:
                                 found_dependency = expr_result.options.dependency;
                                 found_workload_dependency = true;
@@ -3426,7 +3441,19 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                         semantic_analyser_log_error(analyser, "Cannot return inside defer statement", statement_index);
                     }
                     else {
-                        workload_code_block_work_through_defers(analyser, &workload);
+                        if (workload.options.code_block.active_defer_statements.size != 0 && statement_node->children.size != 0) {
+                            // Return value needs to be saved in another register before being returned, because defers could otherwise change the values afterwards
+                            IR_Data_Access tmp = ir_data_access_create_intermediate(
+                                block_workload->code_block, ir_data_access_get_type(&return_instr.options.return_instr.options.return_value)
+                            );
+                            IR_Instruction move_instr;
+                            move_instr.type = IR_Instruction_Type::MOVE;
+                            move_instr.options.move.destination = tmp;
+                            move_instr.options.move.source = return_instr.options.return_instr.options.return_value;
+                            dynamic_array_push_back(&workload.options.code_block.code_block->instructions, move_instr);
+                            return_instr.options.return_instr.options.return_value = tmp;
+                        }
+                        workload_code_block_work_through_defers(analyser, &workload, Defer_Resolve_Depth::WHOLE_FUNCTION);
                     }
 
                     dynamic_array_push_back(&block_workload->code_block->instructions, return_instr);
@@ -3438,7 +3465,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                         semantic_analyser_log_error(analyser, "Break not inside loop!", statement_index);
                     }
                     if (!block_workload->inside_defer) {
-                        workload_code_block_work_through_defers(analyser, &workload);
+                        workload_code_block_work_through_defers(analyser, &workload, Defer_Resolve_Depth::LOOP_EXIT);
                     }
 
                     IR_Instruction break_instr;
@@ -3453,7 +3480,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                         semantic_analyser_log_error(analyser, "Continue not inside loop!", statement_index);
                     }
                     if (!block_workload->inside_defer) {
-                        workload_code_block_work_through_defers(analyser, &workload);
+                        workload_code_block_work_through_defers(analyser, &workload, Defer_Resolve_Depth::LOOP_EXIT);
                     }
 
                     IR_Instruction continue_instr;
@@ -3620,6 +3647,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                     Analysis_Workload while_body_workload = analysis_workload_make_code_block(analyser, statement_node->children[1],
                         while_instruction.options.while_instr.code, &workload
                     );
+                    while_body_workload.options.code_block.surrounding_loop_defer_depth = block_workload->active_defer_statements.size;
                     dynamic_array_push_back(&analyser->active_workloads, while_body_workload);
 
                     found_workload_dependency = true;
@@ -3751,7 +3779,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                         semantic_analyser_log_error(analyser, "Left side of assignment cannot be assigned to, does not have a memory address", statement_index);
                         break;
                     }
-                    if (left_result.type != right_result.type) {
+                    if (left_type != right_type) {
                         if (!semantic_analyser_cast_implicit_if_possible(analyser, block_workload->code_block, right_access, left_access)) {
                             semantic_analyser_log_error(analyser, "Cannot assign, types are incompatible", statement_index);
                         }
@@ -3793,6 +3821,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
             {
                 if (block_workload->code_block->function->function_type->return_type == analyser->compiler->type_system.void_type)
                 {
+                    workload_code_block_work_through_defers(analyser, &workload, Defer_Resolve_Depth::WHOLE_FUNCTION);
                     IR_Instruction return_instr;
                     return_instr.type = IR_Instruction_Type::RETURN;
                     if (block_workload->code_block->function == analyser->program->entry_function) {
@@ -3808,6 +3837,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                     semantic_analyser_log_error(analyser, "No return found in function!", workload.node_index);
                 }
             }
+            workload_code_block_work_through_defers(analyser, &workload, Defer_Resolve_Depth::LOCAL_BLOCK);
             hashtable_insert_element(&analyser->finished_code_blocks, block_workload->code_block, statement_result);
             break;
         }
@@ -3884,6 +3914,11 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                 workload.options.struct_body.alignment = math_maximum(workload.options.struct_body.alignment, member_type->alignment_in_bytes);
                 workload.options.struct_body.offset = math_round_next_multiple(workload.options.struct_body.offset, member_type->alignment_in_bytes);
 
+                for (int j = 0; j < struct_signature->member_types.size; j++) {
+                    if (struct_signature->member_types[j].name_handle == member_definition_node->name_id) {
+                        semantic_analyser_log_error(analyser, "Struct member already exists", struct_node->children[i]);
+                    }
+                }
                 Struct_Member member;
                 member.name_handle = member_definition_node->name_id;
                 member.offset = workload.options.struct_body.offset;
@@ -3912,24 +3947,30 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
             waiting.dependency = found_dependency;
             dynamic_array_push_back(&analyser->waiting_workload, waiting);
 
-            String output = string_create_empty(256);
-            SCOPE_EXIT(string_destroy(&output));
-            string_append_formated(&output, "DEPENDENCY: ");
-            workload_dependency_append_to_string(&waiting.dependency, &output, analyser);
-            string_append_formated(&output, "   |||   Workload: ");
-            analysis_workload_append_to_string(&workload, &output, analyser);
-            string_append_formated(&output, "\n");
-            logg(output.characters);
+            if (PRINT_DEPENDENCIES)
+            {
+                String output = string_create_empty(256);
+                SCOPE_EXIT(string_destroy(&output));
+                string_append_formated(&output, "DEPENDENCY: ");
+                workload_dependency_append_to_string(&waiting.dependency, &output, analyser);
+                string_append_formated(&output, "   |||   Workload: ");
+                analysis_workload_append_to_string(&workload, &output, analyser);
+                string_append_formated(&output, "\n");
+                logg(output.characters);
+            }
         }
-        else 
+        else
         {
             // Workload finished
-            String output = string_create_empty(256);
-            SCOPE_EXIT(string_destroy(&output));
-            string_append_formated(&output, "FINISHED: ");
-            analysis_workload_append_to_string(&workload, &output, analyser);
-            string_append_formated(&output, "\n");
-            logg(output.characters);
+            if (PRINT_DEPENDENCIES)
+            {
+                String output = string_create_empty(256);
+                SCOPE_EXIT(string_destroy(&output));
+                string_append_formated(&output, "FINISHED: ");
+                analysis_workload_append_to_string(&workload, &output, analyser);
+                string_append_formated(&output, "\n");
+                logg(output.characters);
+            }
 
             switch (workload.type)
             {
@@ -3977,16 +4018,19 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                 }
                 }
 
-                if (dependency_resolved) 
+                if (dependency_resolved)
                 {
-                    String output = string_create_empty(256);
-                    SCOPE_EXIT(string_destroy(&output));
-                    string_append_formated(&output, "RESOLVED: ");
-                    workload_dependency_append_to_string(&waiting->dependency, &output, analyser);
-                    string_append_formated(&output, "   |||   Workload: ");
-                    analysis_workload_append_to_string(&waiting->workload, &output, analyser);
-                    string_append_formated(&output, "\n");
-                    logg(output.characters);
+                    if (PRINT_DEPENDENCIES)
+                    {
+                        String output = string_create_empty(256);
+                        SCOPE_EXIT(string_destroy(&output));
+                        string_append_formated(&output, "RESOLVED: ");
+                        workload_dependency_append_to_string(&waiting->dependency, &output, analyser);
+                        string_append_formated(&output, "   |||   Workload: ");
+                        analysis_workload_append_to_string(&waiting->workload, &output, analyser);
+                        string_append_formated(&output, "\n");
+                        logg(output.characters);
+                    }
 
                     dynamic_array_push_back(&analyser->active_workloads, waiting->workload);
                     dynamic_array_swap_remove(&analyser->waiting_workload, i);
@@ -3998,13 +4042,13 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
 
     // Add return for global init function
     {
-        IR_Instruction return_instr;
-        return_instr.type = IR_Instruction_Type::RETURN;
-        return_instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_EMPTY;
-        dynamic_array_push_back(&analyser->global_init_function->code->instructions, return_instr);
-        if (analyser->program->entry_function == 0) {
-            semantic_analyser_log_error(analyser, "Main function not defined!", math_maximum(0, analyser->compiler->parser.nodes.size - 1));
-        }
+    IR_Instruction return_instr;
+    return_instr.type = IR_Instruction_Type::RETURN;
+    return_instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_EMPTY;
+    dynamic_array_push_back(&analyser->global_init_function->code->instructions, return_instr);
+    if (analyser->program->entry_function == 0) {
+        semantic_analyser_log_error(analyser, "Main function not defined!", math_maximum(0, analyser->compiler->parser.nodes.size - 1));
+    }
     }
 
 

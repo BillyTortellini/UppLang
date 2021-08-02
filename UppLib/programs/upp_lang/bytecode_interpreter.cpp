@@ -156,17 +156,20 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         case IR_Hardcoded_Function_Type::MALLOC_SIZE_I32: {
             i32 size = *(i32*)argument_start;
             void* alloc_data = malloc(size);
+            //logg("Allocated memory size: %5d, pointer: %p\n", size, alloc_data);
             memory_copy(interpreter->return_register, &alloc_data, 8);
             break;
         }
         case IR_Hardcoded_Function_Type::FREE_POINTER: {
             void* free_data = *(void**)argument_start;
+            //logg("Interpreter Free pointer: %p\n", free_data);
             free(free_data);
             *(void**)argument_start = (void*)1;
             break;
         }
         case IR_Hardcoded_Function_Type::PRINT_I32: {
-            logg("%d", *(i32*)(argument_start)); break;
+            i32 value = *(i32*)(argument_start);
+            logg("%d", value); break;
         }
         case IR_Hardcoded_Function_Type::PRINT_F32: {
             logg("%3.2f", *(f32*)(argument_start)); break;

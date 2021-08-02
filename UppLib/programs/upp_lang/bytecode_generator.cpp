@@ -434,7 +434,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 case IR_Data_Access_Type::PARAMETER: {
                     load_instruction.instruction_type = Instruction_Type::MOVE_STACK_DATA;
                     Dynamic_Array<int>* parameter_offsets = &generator->stack_offsets[
-                        *hashtable_find_element(&generator->function_parameter_stack_offset_index, code_block->function)
+                        *hashtable_find_element(&generator->function_parameter_stack_offset_index, argument_access->option.function)
                     ];
                     load_instruction.op2 = parameter_offsets->data[argument_access->index];
                     break;
@@ -442,7 +442,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 case IR_Data_Access_Type::REGISTER: {
                     load_instruction.instruction_type = Instruction_Type::MOVE_STACK_DATA;
                     Dynamic_Array<int>* register_offsets = &generator->stack_offsets[
-                        *hashtable_find_element(&generator->code_block_register_stack_offset_index, code_block)
+                        *hashtable_find_element(&generator->code_block_register_stack_offset_index, argument_access->option.definition_block)
                     ];
                     load_instruction.op2 = register_offsets->data[argument_access->index];
                     break;

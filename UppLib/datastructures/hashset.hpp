@@ -134,6 +134,9 @@ void hashset_destroy(Hashset<T>* set)
 }
 
 template <typename T>
+void hashset_reserve(Hashset<T>* set, int capacity);
+
+template <typename T>
 bool hashset_contains(Hashset<T>* set, T elem)
 {
     u64 hash = set->hash_function(&elem);
@@ -147,24 +150,6 @@ bool hashset_contains(Hashset<T>* set, T elem)
         entry = entry->next;
     }
     return false;
-}
-
-template <typename T>
-void hashset_reserve(Hashset<T>* set, int capacity) 
-{
-    if (set->entries.size > capacity) {
-        return;
-    }
-    int new_capacity = primes_find_next_suitable_for_set_size(capacity);
-    Hashset<T> new_set = hashset_create_empty<T>(new_capacity, set->hash_function, set->equals_function);
-    Hashset_Iterator<T> iterator = hashset_iterator_create(set);
-    while (hashset_iterator_has_next(&iterator)) {
-        hashset_insert_element<T>(&new_set, *iterator.value);
-        hashset_iterator_next(&iterator);
-    }
-    // Destroy old set data
-    hashset_destroy(set);
-    *set = new_set;
 }
 
 // Returns true if element was inserted, else false (If value already exists)
@@ -203,6 +188,24 @@ bool hashset_insert_element(Hashset<T>* set, T value)
     }
 
     return false;
+}
+
+template <typename T>
+void hashset_reserve(Hashset<T>* set, int capacity) 
+{
+    if (set->entries.size > capacity) {
+        return;
+    }
+    int new_capacity = primes_find_next_suitable_for_set_size(capacity);
+    Hashset<T> new_set = hashset_create_empty<T>(new_capacity, set->hash_function, set->equals_function);
+    Hashset_Iterator<T> iterator = hashset_iterator_create(set);
+    while (hashset_iterator_has_next(&iterator)) {
+        hashset_insert_element<T>(&new_set, *iterator.value);
+        hashset_iterator_next(&iterator);
+    }
+    // Destroy old set data
+    hashset_destroy(set);
+    *set = new_set;
 }
 
 // Returns true if the element was removed, otherwise false (Value was not in set)

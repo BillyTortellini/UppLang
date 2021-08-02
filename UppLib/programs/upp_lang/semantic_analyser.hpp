@@ -466,6 +466,8 @@ struct Analysis_Workload_Code_Block
     IR_Code_Block* code_block;
     int current_child_index;
     bool inside_defer;
+    int local_block_defer_depth;
+    int surrounding_loop_defer_depth;
     Dynamic_Array<int> active_defer_statements;
     bool requires_return;
     bool inside_loop;
