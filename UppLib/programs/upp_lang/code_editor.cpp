@@ -208,7 +208,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
                 text_editor_add_highlight_from_slice(editor->text_editor, t.position, STRING_LITERAL_COLOR, BG_COLOR);
             else if (t.type == Token_Type::ERROR_TOKEN)
                 text_editor_add_highlight_from_slice(editor->text_editor, t.position, ERROR_TOKEN_COLOR, BG_COLOR);
-            else if (t.type == Token_Type::IDENTIFIER)
+            else if (t.type == Token_Type::IDENTIFIER_NAME)
             {
                 AST_Node_Index nearest_node_index = code_editor_get_closest_node_to_text_position(editor, t.position.start);
                 AST_Node* nearest_node = &editor->compiler.parser.nodes[nearest_node_index];

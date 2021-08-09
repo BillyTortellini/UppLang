@@ -62,7 +62,7 @@ enum class Token_Type
     BOOLEAN_LITERAL,
     STRING_LITERAL,
     // Other important stuff
-    IDENTIFIER,
+    IDENTIFIER_NAME,
     COMMENT,
     WHITESPACE, // Tabs and spaces
     NEW_LINE, // \n

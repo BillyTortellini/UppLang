@@ -21,6 +21,7 @@ struct Dynamic_Array
 
 template <typename T>
 Dynamic_Array<T> dynamic_array_create_empty(int capacity) {
+    capacity = math_maximum(capacity, 1);
     Dynamic_Array<T> result;
     result.capacity = capacity;
     result.size = 0;

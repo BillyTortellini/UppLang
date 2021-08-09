@@ -74,7 +74,7 @@ const char* token_type_to_string(Token_Type type)
     case Token_Type::FLOAT_LITERAL: return "FLOAT_LITERAL";
     case Token_Type::BOOLEAN_LITERAL: return "BOOLEAN_LITERAL";
     case Token_Type::STRING_LITERAL: return "STRING_LITERAL";
-    case Token_Type::IDENTIFIER: return "IDENTIFIER";
+    case Token_Type::IDENTIFIER_NAME: return "IDENTIFIER";
     case Token_Type::ERROR_TOKEN: return "ERROR_TOKE";
     case Token_Type::COMMENT: return "COMMENT";
     case Token_Type::WHITESPACE: return "WHITESPACE";
@@ -746,7 +746,7 @@ void lexer_parse_string(Lexer* lexer, String* code)
                 Token_Attribute attribute;
                 attribute.identifier_number = lexer_add_or_find_identifier_by_string(lexer, identifier_string);
                 dynamic_array_push_back(&lexer->tokens, 
-                    token_make(Token_Type::IDENTIFIER, attribute, line_number, character_pos, identifier_string_length, index));
+                    token_make(Token_Type::IDENTIFIER_NAME, attribute, line_number, character_pos, identifier_string_length, index));
             }
             index += identifier_string_length;
             character_pos += identifier_string_length;
@@ -794,7 +794,7 @@ void lexer_print(Lexer* lexer)
         string_append_formated(&msg, "\t %s (Line %d, Pos %d, size: %d)",
             token_type_to_string(token.type), token.position.start.line, token.position.start.character,
             math_maximum(token.position.end.character - token.position.start.character, 0));
-        if (token.type == Token_Type::IDENTIFIER) {
+        if (token.type == Token_Type::IDENTIFIER_NAME) {
             string_append_formated(&msg, " = %s", lexer->identifiers.data[token.attribute.identifier_number].characters);
         }
         else if (token.type == Token_Type::INTEGER_LITERAL) {

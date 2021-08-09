@@ -49,6 +49,7 @@ enum class Signature_Type
     STRUCT,
     ARRAY_SIZED, // Array with known size, like [5]int
     ARRAY_UNSIZED, // With unknown size, int[]
+    TEMPLATE_TYPE,
     ERROR_TYPE,
     // Future: Enum and Unions
 };
@@ -78,6 +79,8 @@ struct Type_Signature
     // Struct
     int struct_name_handle;
     Dynamic_Array<Struct_Member> member_types;
+    // Template
+    int template_name;
 };
 void type_signature_append_to_string(String* string, Type_Signature* signature);
 void type_signature_append_value_to_string(Type_Signature* type, byte* value_ptr, String* string);
@@ -121,7 +124,6 @@ void type_system_destroy(Type_System* system);
 void type_system_reset_all(Type_System* system, Lexer* lexer);
 Type_Signature* type_system_make_pointer(Type_System* system, Type_Signature* child_type);
 Type_Signature* type_system_make_array_unsized(Type_System* system, Type_Signature* element_type);
-Type_Signature* type_system_make_array_sized(Type_System* system, Type_Signature* element_type, int array_element_count);
 Type_Signature* type_system_make_function(Type_System* system, Dynamic_Array<Type_Signature*> parameter_types, Type_Signature* return_type);
 void type_system_print(Type_System* system);
 
@@ -166,27 +168,46 @@ enum class Symbol_Type
     VARIABLE,
 };
 
+union Symbol_Options
+{
+    IR_Function* function; // Functions
+    IR_Data_Access variable_access; // Variables/Parameters
+    Type_Signature* data_type; // Structs
+    IR_Hardcoded_Function* hardcoded_function; // Hardcoded function
+};
+
+struct Symbol_Template_Instance
+{
+    Dynamic_Array<Type_Signature*> template_arguments;
+    Symbol_Options options;
+    bool instanciated;
+};
+
 struct Symbol
 {
     Symbol_Type symbol_type;
     int name_handle;
     int definition_node_index;
+    bool is_templated;
     // Symbol Data
-    union
-    {
-        IR_Function* function; // Functions
-        IR_Data_Access variable_access; // Variables/Parameters
-        Type_Signature* data_type; // Structs
-        IR_Hardcoded_Function* hardcoded_function; // Hardcoded function
-    } options;
+    Symbol_Options options;
+    Dynamic_Array<int> template_parameter_names;
+    Dynamic_Array<Symbol_Template_Instance> template_instances;
 };
 
 struct Symbol_Table;
+struct Symbol_Table_Module
+{
+    bool is_templated;
+    Dynamic_Array<int> template_parameter_names;
+    Symbol_Table* module_table;
+};
+
 struct Symbol_Table
 {
     Symbol_Table* parent;
     Hashtable<int, Symbol> symbols;
-    Hashtable<int, Symbol_Table*> modules;
+    Hashtable<int, Symbol_Table_Module> modules;
 };
 
 struct Semantic_Analyser;
@@ -195,7 +216,6 @@ void symbol_table_destroy(Symbol_Table* symbol_table);
 
 Symbol* symbol_table_find_symbol(Symbol_Table* table, int name_handle, bool only_current_scope);
 Symbol* symbol_table_find_symbol_by_string(Symbol_Table* table, String* string, Lexer* lexer);
-Symbol* symbol_table_find_symbol_of_type(Symbol_Table* table, int name_handle, Symbol_Type symbol_type);
 void symbol_table_append_to_string(String* string, Symbol_Table* table, Lexer* lexer, bool print_root);
 
 
@@ -455,9 +475,8 @@ enum class Analysis_Workload_Type
 {
     FUNCTION_HEADER,
     CODE_BLOCK,
-    STRUCT_HEADER, // Struct is defined as a type, after header analysis members are not ready and size+alignment is 0
     STRUCT_BODY,
-    SIZED_ARRAY_SIZE, 
+    SIZED_ARRAY_SIZE,
     GLOBAL,
 };
 
@@ -480,7 +499,12 @@ struct Analysis_Workload_Struct_Body
     int current_child_index;
     int offset;
     int alignment;
-    bool inside_defer;
+
+    // For templating stuff
+    Symbol_Table* type_lookup_table;
+    bool is_template_instance;
+    int symbol_name_id;
+    int symbol_instance_index;
 };
 
 struct Analysis_Workload
@@ -490,8 +514,8 @@ struct Analysis_Workload
     int node_index;
     union
     {
-        Analysis_Workload_Code_Block code_block;
         Analysis_Workload_Struct_Body struct_body;
+        Analysis_Workload_Code_Block code_block;
         Type_Signature* sized_array_type;
     } options;
 };
@@ -501,6 +525,21 @@ enum class Workload_Dependency_Type
     IDENTIFER_NOT_FOUND,
     TYPE_SIZE_UNKNOWN, // Either of Sized_Array or Struct
     CODE_BLOCK_NOT_FINISHED,
+    TEMPLATE_INSTANCE_NOT_FINISHED,
+};
+
+struct Workload_Dependency_Template_Instance_Not_Finished
+{
+    Symbol_Table* symbol_table;
+    int symbol_name_id;
+    int instance_index;
+};
+
+struct Workload_Dependency_Identifier_Not_Found
+{
+    Symbol_Table* symbol_table;
+    bool current_scope_only;
+    Dynamic_Array<Type_Signature*> template_parameter_names;
 };
 
 struct Workload_Dependency
@@ -510,7 +549,8 @@ struct Workload_Dependency
     union {
         Type_Signature* type_signature;
         IR_Code_Block* code_block;
-        Symbol_Table* symbol_table;
+        Workload_Dependency_Identifier_Not_Found identifier_not_found;
+        Workload_Dependency_Template_Instance_Not_Finished template_not_finished;
     } options;
 };
 

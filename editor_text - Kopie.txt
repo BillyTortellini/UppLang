@@ -1,6 +1,5 @@
 main :: () -> void 
 {
-    /*
     array_test();
     memory_test();
     string_test();
@@ -9,10 +8,87 @@ main :: () -> void
     cast_test(); 
     function_ptr_test();
     struct_test();
-    */
     module_test();
     defer_test();
+    list_test();
 }
+
+list_test :: ()
+{
+    list := List::create();
+    i := 0;
+    while i < 100
+    {
+        List::add(*list, i);
+        i = i + 1;
+    }
+    List::print(*list);
+    List::destroy(*list);
+}
+
+module List
+{
+    List_Node :: struct
+    {
+        value: int;
+        next: *List_Node;
+    }
+
+    List :: struct
+    {
+        head: *List_Node;
+    }
+    
+    print :: (list: *List)
+    {
+        node := list.head;
+        print_string("List: ");
+        while node != nullptr
+        {
+            print_i32(node.value);
+            print_string(" ");
+            node = node.next;
+        }
+        print_line();
+    }
+    
+    add :: (list: *List, value: int)
+    {
+        if list.head == nullptr
+        {
+            list.head = new List_Node;
+            list.head.value = value;
+            list.head.next = nullptr;
+            return;
+        }
+        node := list.head;
+        while node.next != nullptr {
+            node = node.next;
+        }
+        node.next = new List_Node;
+        node.next.next = nullptr;
+        node.next.value = value;
+    }
+
+    create :: () -> List
+    {
+        list: List;
+        list.head = nullptr;
+        return list;
+    }
+    
+    destroy :: (list: *List)
+    {
+        node := list.head;
+        while node != nullptr
+        {
+            tmp := node;
+            node = node.next;
+            delete tmp;
+        }
+    }
+}
+
 
 defer_test :: ()
 {
@@ -273,7 +349,7 @@ global_test :: () -> void
     }
 }
 
-add :: (a: i64, b: i64) -> i64 {
+add_i64 :: (a: i64, b: i64) -> i64 {
     return a + b;
 }
 
@@ -363,7 +439,7 @@ cast_test :: () -> void
     }
     
     {
-        a := add(32, 5);
+        a := add_i64(32, 5);
         print_f32(cast<i32>a);
         print_line();
     }

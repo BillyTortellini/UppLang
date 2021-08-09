@@ -48,8 +48,8 @@ bool output_ast = false;
 bool output_type_system = false;
 bool output_root_table = false;
 bool output_im = false;
-bool output_bytecode = false;
-bool output_timing = true;
+bool output_bytecode = true;
+bool output_timing = false;
 
 void compiler_compile(Compiler* compiler, String* source_code, bool generate_code)
 {
@@ -72,7 +72,9 @@ void compiler_compile(Compiler* compiler, String* source_code, bool generate_cod
 
     double time_start_analysis = timer_current_time_in_seconds(compiler->timer);
     if (do_analysis) {
+        logg("SEMANTIC_ANALYSIS_START\n----------------------\n");
         semantic_analyser_analyse(&compiler->analyser, compiler);
+        logg("----------------------------\n");
     }
     double time_end_analysis = timer_current_time_in_seconds(compiler->timer);
 

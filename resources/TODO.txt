@@ -1,5 +1,27 @@
 NOTES:
 ------
+Trying to resolve template arguments when analysing the templates (Without instanciation) will not work,
+becase if another templated thing is encountered inside the template, it will fail.
+
+Also, a "simple" switch of all referenced template types in a struct requires also visiting all used types, meaning:
+    * Array Sized
+    * Array Unsized
+    * Pointers
+    * Other templated nodes
+
+My current believe is that reanalysing the ast with the correct template parameters is the solution,
+which means I need to think about the 
+    * Static-Template Analysis
+    * Template instanciation (Reanalysis of AST)
+    * Template referencing
+
+Some thoughts to consider:
+    * Functions created while analysing the template must later be deleted, and may not be referenced by 
+        functions that also will be deleted.
+    * Modules transfer their template parameters on all members, making some things harder
+    * Global variables in Templated-Modules should be treated as such
+
+
 
 Current Work Item:
 ------------------
@@ -11,6 +33,10 @@ How to do polymorphism,
     - Hashset
 
 Lets start with the simplest possible Polymorphism:
+A module with one Type-Argument
+
+To be fair I want type-arguments and value arguments,
+where value arguments need to be compile-time known
 
 Declaration:
 module Holder<T: Type>
@@ -21,18 +47,38 @@ module Holder<T: Type>
     }
 }
 
+A polymorphic Type can only be written or read from, and only T can be written
+to it, and only T is received from it
+
 Usage:
 node_i32: Holder<i32>::Node;
 node_i32.value = 15;
 node_bool: Holder<bool>::Node;
 node_bool.value = false;
 
-How to parse this:
-    When i come across the declaration, I need to store the symbol
+Implementation Plan:
+    * Parse templated modules
+    * Generate normal Code with this, but maybe flag the functions or something to delete them later
+    * See further
+
+How to compile this:
+    When i come across the definition, I need to store the module in the symbol table.
+    Then I need to analyse the template
+
+    When i come across a usage of this template, I need to 
+        * Check if the argument types are finished,
+        * Check if the template is already instantiated with these arguments
+        * If not, create a workload and a dependency
+        * If it is, just lookup the required things in the symbol table
+
+    How to instantiate a template?
+        * Splitting Analysis and Code-Gen, after Analysis I would know exactly which functions I would need
+        * Generate IR-Code with Template types, and when instanciating swap the IR-Type in the Instructions
+        * Reanalyse the AST for each specific Template-Instance
 
 Questions:
     Can polymorphic modules hold other polymorphic modules?
-        - Probably, 
+        - Probably, but maybe I should disable this for now
 
 
 
@@ -80,9 +126,10 @@ module Dynamic_Array<x: int, T: Type>
         length
     }
 
-    length  --> 
-    size    --> may be confused with bytes
-    count   --> does not really imply the size
+    length        --> 
+    size          --> may be confused with bytes
+    count         --> does not really imply the size
+    element_count --> pretty long
 
     create :: (initial_capacity: u64) -> Dynamic_Array
     {
@@ -120,6 +167,8 @@ Long-Term Goals:
 
 More Language features to implement:
 ------------------------------------
+ * Global variable initialization order may be currently quite stupid
+ * Compile time code execution, for types and array indices and stuff
  * Enums, Switch/Match and Unions
  * Tag-System (For constant values, but also other stuff)
 

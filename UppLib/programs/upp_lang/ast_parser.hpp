@@ -9,22 +9,20 @@ struct Lexer;
 struct Token_Range;
 struct Compiler_Error;
 
-/*
-    MODULE_TEMPLATED
-    DEFINITIONS
-*/
-
 enum class AST_Node_Type
 {
     ROOT, // Child 0: Definitions
     DEFINITIONS, // Children: functions, globals, modules or structs 
     MODULE, // Child 0: Definitions
-    MODULE_TEMPLATED, // Children 0 - (size-2): IDENTIFIER (Template Param names), Children (size-1): DEFINITIONS
+    MODULE_TEMPLATED, // Child 0: Parameter_Block_Unnamed, Child 1: DEFINITIONS
+    TEMPLATE_PARAMETERS, // Children: IDENTIFIER_NAME
     STRUCT, // Children: Variable definitions
     FUNCTION, // Child 0: Function_Signature, Child 1: Statement_Block
     FUNCTION_SIGNATURE, // Child 0: Parameter_Block_Named, Child 1 (optional): Return Type
-    IDENTIFIER, // Name is the identifier ID
-    IDENTIFIER_PATH, // Child 0: Either Identifier or another Identifer Path, name is the namespace name
+    IDENTIFIER_NAME, // name_id defined
+    IDENTIFIER_NAME_TEMPLATED, // Child 0: Parameter_Block_Unnamed
+    IDENTIFIER_PATH, // Child 0: Identifier-Type, name_id defined
+    IDENTIFIER_PATH_TEMPLATED, // Child 0: Parameter_Block_Unnamed, Child 1: Identifier
     PARAMETER_BLOCK_UNNAMED, // Children: Types
     PARAMETER_BLOCK_NAMED, // Children: Named_Parameter
     NAMED_PARAMETER, // Child 0: Type
@@ -51,8 +49,8 @@ enum class AST_Node_Type
     EXPRESSION_NEW, // Child 0: Type
     EXPRESSION_NEW_ARRAY, // Child 0: Array size expression, Child 1: Type
     EXPRESSION_LITERAL,
-    EXPRESSION_FUNCTION_CALL, // Child 0: Either IDENTIFER_PATH or IDENTIFER, Child 1: ARGUMENTS
-    EXPRESSION_VARIABLE_READ, // Child 0: Either IDENTIFER_PATH or IDENTIFER
+    EXPRESSION_FUNCTION_CALL, // Child 0: Identifier, Child 1: ARGUMENTS
+    EXPRESSION_VARIABLE_READ, // Child 0: Identifier
     EXPRESSION_ARRAY_ACCESS, // Child 0: Access-to-Expression, Child 1: Index-Expression
     EXPRESSION_MEMBER_ACCESS, // Child 0: left side, name_id is the .what operator a.y.y[5].z
     EXPRESSION_CAST, // Child 0: type, Child 1: Expression

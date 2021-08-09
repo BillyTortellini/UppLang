@@ -5,7 +5,7 @@
 #include "../../utility/hash_functions.hpp"
 #include "../../datastructures/hashset.hpp"
 
-bool PRINT_DEPENDENCIES = false;
+bool PRINT_DEPENDENCIES = true;
 /*
     TYPE_SIGNATURE
 */
@@ -133,6 +133,9 @@ void type_signature_append_to_string_with_children(String* string, Type_Signatur
 {
     switch (signature->type)
     {
+    case Signature_Type::TEMPLATE_TYPE:
+        string_append_formated(string, "TEMPLATE_TYPE");
+        break;
     case Signature_Type::VOID_TYPE:
         string_append_formated(string, "VOID");
         break;
@@ -191,6 +194,8 @@ void type_signature_append_value_to_string(Type_Signature* type, byte* value_ptr
     case Signature_Type::VOID_TYPE:
         break;
     case Signature_Type::ERROR_TYPE:
+        break;
+    case Signature_Type::TEMPLATE_TYPE:
         break;
     case Signature_Type::ARRAY_SIZED:
     {
@@ -321,6 +326,7 @@ void type_signature_append_value_to_string(Type_Signature* type, byte* value_ptr
         }
         break;
     }
+    default: panic("HEY");
     }
 }
 
@@ -455,6 +461,7 @@ Type_Signature* type_system_register_type(Type_System* system, Type_Signature si
                 case Signature_Type::PRIMITIVE: are_equal = sig1->primitive_type == sig2->primitive_type; break;
                 case Signature_Type::POINTER: are_equal = sig1->child_type == sig2->child_type; break;
                 case Signature_Type::STRUCT: are_equal = false; break;
+                case Signature_Type::TEMPLATE_TYPE: are_equal = false; break;
                 case Signature_Type::ARRAY_SIZED: are_equal = sig1->child_type == sig2->child_type && sig1->array_element_count == sig2->array_element_count; break;
                 case Signature_Type::ARRAY_UNSIZED: are_equal = sig1->child_type == sig2->child_type; break;
                 case Signature_Type::FUNCTION: {
@@ -540,23 +547,51 @@ void type_system_print(Type_System * system)
     Symbol Table
 */
 
-Symbol_Table* symbol_table_create(Semantic_Analyser* analyser, Symbol_Table* parent, int node_index, bool inside_defer)
+Symbol_Table* symbol_table_create(Semantic_Analyser* analyser, Symbol_Table* parent, int node_index, bool register_in_ast_mapping)
 {
     Symbol_Table* table = new Symbol_Table();
     table->parent = parent;
-    table->modules = hashtable_create_empty<int, Symbol_Table*>(4, &hash_i32, equals_i32);
+    table->modules = hashtable_create_empty<int, Symbol_Table_Module>(4, &hash_i32, equals_i32);
     table->symbols = hashtable_create_empty<int, Symbol>(4, &hash_i32, equals_i32);
     dynamic_array_push_back(&analyser->symbol_tables, table);
-    if (!inside_defer) {
+    if (register_in_ast_mapping) {
         hashtable_insert_element(&analyser->ast_to_symbol_table, node_index, table);
     }
     return table;
 }
 
+void symbol_destroy(Symbol* symbol)
+{
+    if (symbol->is_templated) {
+        dynamic_array_destroy(&symbol->template_parameter_names);
+        for (int i = 0; i < symbol->template_instances.size; i++) {
+            dynamic_array_destroy(&symbol->template_instances[i].template_arguments);
+        }
+        dynamic_array_destroy(&symbol->template_instances);
+    }
+}
+
 void symbol_table_destroy(Symbol_Table* symbol_table)
 {
-    hashtable_destroy(&symbol_table->modules);
-    hashtable_destroy(&symbol_table->symbols);
+    {
+        Hashtable_Iterator<int, Symbol_Table_Module> it = hashtable_iterator_create(&symbol_table->modules);
+        while (hashtable_iterator_has_next(&it)) {
+            Symbol_Table_Module* table_module = it.value;
+            if (table_module->is_templated) {
+                dynamic_array_destroy(&table_module->template_parameter_names);
+            }
+            hashtable_iterator_next(&it);
+        }
+        hashtable_destroy(&symbol_table->modules);
+    }
+    {
+        Hashtable_Iterator<int, Symbol> it = hashtable_iterator_create(&symbol_table->symbols);
+        while (hashtable_iterator_has_next(&it)) {
+            symbol_destroy(it.value);
+            hashtable_iterator_next(&it);
+        }
+        hashtable_destroy(&symbol_table->symbols);
+    }
     delete symbol_table;
 }
 
@@ -578,31 +613,7 @@ Symbol* symbol_table_find_symbol_by_string(Symbol_Table* table, String* string, 
     }
 }
 
-Symbol* symbol_table_find_symbol_of_identifer_node(Symbol_Table* table, AST_Parser* parser, int node_index, bool only_current_scope)
-{
-    AST_Node* node = &parser->nodes[node_index];
-    assert(node->type == AST_Node_Type::IDENTIFIER || node->type == AST_Node_Type::IDENTIFIER_PATH, "Cannot lookup non identifer code");
-
-    if (node->type == AST_Node_Type::IDENTIFIER) {
-        return symbol_table_find_symbol(table, node->name_id, only_current_scope);
-    }
-    else 
-    {
-        Symbol_Table** module_table = hashtable_find_element(&table->modules, node->name_id);
-        if (module_table == 0) {
-            if (table->parent != 0 && !only_current_scope) {
-                return symbol_table_find_symbol_of_identifer_node(table->parent, parser, node_index, false);
-            }
-            return 0;
-        }
-        else {
-            return symbol_table_find_symbol_of_identifer_node(*module_table, parser, node->children[0], true);
-        }
-    }
-    return 0;
-}
-
-void symbol_table_append_to_string_with_parent_info(String * string, Symbol_Table * table, Lexer * lexer, bool is_parent, bool print_root)
+void symbol_table_append_to_string_with_parent_info(String* string, Symbol_Table* table, Lexer* lexer, bool is_parent, bool print_root)
 {
     if (!print_root && table->parent == 0) return;
     if (!is_parent) {
@@ -644,19 +655,23 @@ void symbol_table_append_to_string_with_parent_info(String * string, Symbol_Tabl
     }
 }
 
-void symbol_table_append_to_string(String* string, Symbol_Table * table, Lexer * lexer, bool print_root) {
+void symbol_table_append_to_string(String* string, Symbol_Table* table, Lexer* lexer, bool print_root) {
     symbol_table_append_to_string_with_parent_info(string, table, lexer, false, print_root);
 }
 
 void semantic_analyser_log_error(Semantic_Analyser* analyser, const char* msg, int node_index);
 void symbol_table_define_symbol(Symbol_Table* table, Semantic_Analyser* analyser, Symbol symbol, bool shadowing_enabled)
 {
+    if (symbol.name_handle < 0) {
+        panic("Hey");
+    }
     Symbol* found_symbol = symbol_table_find_symbol(table, symbol.name_handle, shadowing_enabled);
     if (found_symbol == 0) {
         hashtable_insert_element(&table->symbols, symbol.name_handle, symbol);
         return;
     }
     semantic_analyser_log_error(analyser, "Symbol already defined", symbol.definition_node_index);
+    symbol_destroy(&symbol);
 }
 
 
@@ -665,7 +680,7 @@ void symbol_table_define_symbol(Symbol_Table* table, Semantic_Analyser* analyser
     IR PROGRAM
 */
 
-void ir_exit_code_append_to_string(String * string, IR_Exit_Code code)
+void ir_exit_code_append_to_string(String* string, IR_Exit_Code code)
 {
     switch (code)
     {
@@ -685,7 +700,7 @@ void ir_exit_code_append_to_string(String * string, IR_Exit_Code code)
     }
 }
 
-void ir_hardcoded_function_type_append_to_string(String * string, IR_Hardcoded_Function_Type hardcoded)
+void ir_hardcoded_function_type_append_to_string(String* string, IR_Hardcoded_Function_Type hardcoded)
 {
     switch (hardcoded)
     {
@@ -726,7 +741,7 @@ void ir_hardcoded_function_type_append_to_string(String * string, IR_Hardcoded_F
     }
 }
 
-Type_Signature* ir_data_access_get_type(IR_Data_Access * access)
+Type_Signature* ir_data_access_get_type(IR_Data_Access* access)
 {
     Type_Signature* sig = 0;
     switch (access->type)
@@ -751,8 +766,8 @@ Type_Signature* ir_data_access_get_type(IR_Data_Access * access)
     return sig;
 }
 
-void ir_code_block_destroy(IR_Code_Block * block);
-void ir_instruction_destroy(IR_Instruction * instruction)
+void ir_code_block_destroy(IR_Code_Block* block);
+void ir_instruction_destroy(IR_Instruction* instruction)
 {
     switch (instruction->type)
     {
@@ -787,7 +802,7 @@ void ir_instruction_destroy(IR_Instruction * instruction)
     }
 }
 
-IR_Code_Block* ir_code_block_create(IR_Function * function)
+IR_Code_Block* ir_code_block_create(IR_Function* function)
 {
     IR_Code_Block* block = new IR_Code_Block();
     block->function = function;
@@ -796,7 +811,7 @@ IR_Code_Block* ir_code_block_create(IR_Function * function)
     return block;
 }
 
-void ir_code_block_destroy(IR_Code_Block * block)
+void ir_code_block_destroy(IR_Code_Block* block)
 {
     for (int i = 0; i < block->instructions.size; i++) {
         ir_instruction_destroy(&block->instructions[i]);
@@ -806,7 +821,7 @@ void ir_code_block_destroy(IR_Code_Block * block)
     delete block;
 }
 
-IR_Function* ir_function_create(IR_Program * program, Type_Signature * signature)
+IR_Function* ir_function_create(IR_Program* program, Type_Signature* signature)
 {
     IR_Function* function = new IR_Function();
     function->code = ir_code_block_create(function);
@@ -816,13 +831,13 @@ IR_Function* ir_function_create(IR_Program * program, Type_Signature * signature
     return function;
 }
 
-void ir_function_destroy(IR_Function * function)
+void ir_function_destroy(IR_Function* function)
 {
     ir_code_block_destroy(function->code);
     delete function;
 }
 
-IR_Program* ir_program_create(Type_System * type_system)
+IR_Program* ir_program_create(Type_System* type_system)
 {
     IR_Program* result = new IR_Program();
     result->constant_pool.constants = dynamic_array_create_empty<IR_Constant>(128);
@@ -886,7 +901,7 @@ IR_Program* ir_program_create(Type_System * type_system)
     return result;
 }
 
-void ir_program_destroy(IR_Program * program)
+void ir_program_destroy(IR_Program* program)
 {
     dynamic_array_destroy(&program->constant_pool.constants);
     dynamic_array_destroy(&program->constant_pool.constant_memory);
@@ -942,14 +957,14 @@ void ir_data_access_append_to_string(IR_Data_Access* access, String* string, IR_
     }
 }
 
-void indent_string(String * string, int indentation) {
+void indent_string(String* string, int indentation) {
     for (int i = 0; i < indentation; i++) {
         string_append_formated(string, "    ");
     }
 }
 
-void ir_code_block_append_to_string(IR_Code_Block * code_block, String * string, int indentation, Semantic_Analyser * analyser);
-void ir_instruction_append_to_string(IR_Instruction * instruction, String * string, int indentation, Semantic_Analyser * analyser, IR_Code_Block* code_block)
+void ir_code_block_append_to_string(IR_Code_Block* code_block, String* string, int indentation, Semantic_Analyser* analyser);
+void ir_instruction_append_to_string(IR_Instruction* instruction, String* string, int indentation, Semantic_Analyser* analyser, IR_Code_Block* code_block)
 {
     Type_System* type_system = &analyser->compiler->type_system;
     indent_string(string, indentation);
@@ -1229,7 +1244,7 @@ void ir_instruction_append_to_string(IR_Instruction * instruction, String * stri
     }
 }
 
-void ir_code_block_append_to_string(IR_Code_Block * code_block, String * string, int indentation, Semantic_Analyser * analyser)
+void ir_code_block_append_to_string(IR_Code_Block* code_block, String* string, int indentation, Semantic_Analyser* analyser)
 {
     indent_string(string, indentation);
     string_append_formated(string, "Registers:\n");
@@ -1247,7 +1262,7 @@ void ir_code_block_append_to_string(IR_Code_Block * code_block, String * string,
     }
 }
 
-void ir_function_append_to_string(IR_Function * function, String * string, int indentation, Semantic_Analyser * analyser)
+void ir_function_append_to_string(IR_Function* function, String* string, int indentation, Semantic_Analyser* analyser)
 {
     indent_string(string, indentation);
     string_append_formated(string, "Function-Type:");
@@ -1256,7 +1271,7 @@ void ir_function_append_to_string(IR_Function * function, String * string, int i
     ir_code_block_append_to_string(function->code, string, indentation, analyser);
 }
 
-void ir_program_append_to_string(IR_Program * program, String * string, Semantic_Analyser * analyser)
+void ir_program_append_to_string(IR_Program* program, String* string, Semantic_Analyser* analyser)
 {
     string_append_formated(string, "Program Dump:\n-----------------\n");
     for (int i = 0; i < program->functions.size; i++)
@@ -1267,7 +1282,7 @@ void ir_program_append_to_string(IR_Program * program, String * string, Semantic
     }
 }
 
-void ir_data_access_change_type(IR_Data_Access access, Type_Signature* new_type) 
+void ir_data_access_change_type(IR_Data_Access access, Type_Signature* new_type)
 {
     switch (access.type)
     {
@@ -1370,6 +1385,53 @@ IR_Data_Access ir_data_access_dereference_pointer(IR_Code_Block* block, IR_Data_
 /*
     SEMANTIC ANALYSER
 */
+enum class Analysis_Result_Type
+{
+    SUCCESS,
+    ERROR_OCCURED,
+    DEPENDENCY
+};
+
+struct Type_Analysis_Result
+{
+    Analysis_Result_Type type;
+    union {
+        Type_Signature* result_type;
+        Workload_Dependency dependency;
+    } options;
+};
+
+struct Expression_Analysis_Result_Success
+{
+    bool has_memory_address;
+    Type_Signature* result_type;
+};
+
+struct Expression_Analysis_Result
+{
+    Analysis_Result_Type type;
+    union
+    {
+        Expression_Analysis_Result_Success success;
+        Workload_Dependency dependency;
+    } options;
+};
+
+struct Variable_Creation_Analysis_Result
+{
+    Analysis_Result_Type type;
+    Workload_Dependency dependency;
+};
+
+struct Identifier_Analysis_Result
+{
+    Analysis_Result_Type type;
+    union
+    {
+        Symbol symbol;
+        Workload_Dependency dependency;
+    } options;
+};
 
 Workload_Dependency workload_dependency_make_code_block_finished(IR_Code_Block* code_block, int node_index)
 {
@@ -1389,16 +1451,20 @@ Workload_Dependency workload_dependency_make_type_size_unknown(Type_Signature* t
     return dependency;
 }
 
-Workload_Dependency workload_dependency_make_symbol_not_defined(Symbol_Table* symbol_table, int identifier_or_path_node_index)
+Workload_Dependency workload_dependency_make_identifier_not_found(
+    Symbol_Table* symbol_table, int identifier_or_path_node_index, bool current_scope_only,
+    Dynamic_Array<Type_Signature*> template_parameter_names)
 {
     Workload_Dependency dependency;
     dependency.type = Workload_Dependency_Type::IDENTIFER_NOT_FOUND;
     dependency.node_index = identifier_or_path_node_index;
-    dependency.options.symbol_table = symbol_table;
+    dependency.options.identifier_not_found.current_scope_only = current_scope_only;
+    dependency.options.identifier_not_found.symbol_table = symbol_table;
+    dependency.options.identifier_not_found.template_parameter_names = dynamic_array_create_copy(template_parameter_names.data, template_parameter_names.size);
     return dependency;
 }
 
-void semantic_analyser_log_error(Semantic_Analyser * analyser, const char* msg, int node_index)
+void semantic_analyser_log_error(Semantic_Analyser* analyser, const char* msg, int node_index)
 {
     Compiler_Error error;
     error.message = msg;
@@ -1406,7 +1472,7 @@ void semantic_analyser_log_error(Semantic_Analyser * analyser, const char* msg, 
     dynamic_array_push_back(&analyser->errors, error);
 }
 
-void semantic_analyser_log_error_node_range(Semantic_Analyser * analyser, const char* msg, int node_start_index, int node_end_index)
+void semantic_analyser_log_error_node_range(Semantic_Analyser* analyser, const char* msg, int node_start_index, int node_end_index)
 {
     Compiler_Error error;
     error.message = msg;
@@ -1415,65 +1481,407 @@ void semantic_analyser_log_error_node_range(Semantic_Analyser * analyser, const 
     dynamic_array_push_back(&analyser->errors, error);
 }
 
-void semantic_analyser_define_type(Semantic_Analyser * analyser, Symbol_Table * table, int name_id, Type_Signature * type, int definition_node_index)
+void semantic_analyser_define_type_symbol(Semantic_Analyser* analyser, Symbol_Table* table, int name_id, Type_Signature* type, int definition_node_index)
 {
     Symbol s;
     s.symbol_type = Symbol_Type::TYPE;
+    s.is_templated = false;
     s.options.data_type = type;
     s.name_handle = name_id;
     s.definition_node_index = definition_node_index;
     symbol_table_define_symbol(table, analyser, s, false);
 }
 
-enum class Expression_Analysis_Result_Type
+Identifier_Analysis_Result semantic_analyser_instanciate_template(Semantic_Analyser* analyser, Symbol_Table* table, Symbol* symbol,
+    Dynamic_Array<Type_Signature*> template_arguments, int instance_node_index)
 {
-    SUCCESS, // Result type could be evaluated, code may have been generated (There could still have been errors, but analysis can continue)
-    ERROR_OCCURED, // Result type is not available
-    DEPENDENCY // Cannot determine expression result yet, needs to wait for a dependency
-};
+    assert(symbol->is_templated, "HEY");
+    // Check if dependencies match
+    if (symbol->template_parameter_names.size != template_arguments.size) {
+        semantic_analyser_log_error(analyser, "Symbol template argument count do not match", instance_node_index);
+        Identifier_Analysis_Result result;
+        result.type = Analysis_Result_Type::ERROR_OCCURED;
+        return result;
+    }
 
-struct Expression_Analysis_Result_Success
-{
-    bool has_memory_address;
-    Type_Signature* result_type;
-};
+    // Arguments must have size calculated (Prevents Templates circulary creating new templates, e.g. Struct Node with member x: Node<Node<T>>)
+    for (int i = 0; i < template_arguments.size; i++) {
+        if (template_arguments[i]->size_in_bytes == 0 && template_arguments[i]->alignment_in_bytes == 0) {
+            Identifier_Analysis_Result result;
+            result.type = Analysis_Result_Type::DEPENDENCY;
+            result.options.dependency = workload_dependency_make_type_size_unknown(template_arguments[i], instance_node_index);
+            return result;
+        }
+    }
 
-struct Expression_Analysis_Result
-{
-    Expression_Analysis_Result_Type type;
-    union
+    // Search for already instanciated template
+    Symbol_Template_Instance* found_instance = 0;
+    int found_instance_index = 0;
+    for (int i = 0; i < symbol->template_instances.size; i++)
     {
-        Expression_Analysis_Result_Success success;
+        Symbol_Template_Instance* instance = &symbol->template_instances[i];
+        bool matches = true;
+        for (int j = 0; j < instance->template_arguments.size; j++) {
+            if (instance->template_arguments[j] != template_arguments[j]) {
+                matches = false;
+                break;
+            }
+        }
+        if (matches) {
+            found_instance = instance;
+            found_instance_index = i;
+            break;
+        }
+    }
+
+    // Instanciate template if necessary
+    if (found_instance == 0)
+    {
+        {
+            String tmp = string_create_empty(64);
+            SCOPE_EXIT(string_destroy(&tmp));
+            string_append_formated(&tmp, "No instance of template found, instanciating: %s<", 
+                lexer_identifer_to_string(&analyser->compiler->lexer, symbol->name_handle).characters);
+            for (int i = 0; i < template_arguments.size; i++) {
+                type_signature_append_to_string(&tmp, template_arguments[i]);
+                if (i != template_arguments.size - 1) {
+                    string_append_formated(&tmp, ", ");
+                }
+            }
+            string_append_formated(&tmp, ">\n");
+            logg("%s", tmp.characters);
+        }
+        // Find original symbol definition table
+        Symbol_Table* symbol_definition_table = 0;
+        {
+            int node_index = symbol->definition_node_index;
+            AST_Node* node = &analyser->compiler->parser.nodes[node_index];
+            while (true)
+            {
+                Symbol_Table** table = hashtable_find_element(&analyser->ast_to_symbol_table, node_index);
+                if (table != 0) {
+                    symbol_definition_table = *table;
+                    break;
+                }
+                if (node->parent == -1) {
+                    break;
+                }
+                node_index = node->parent;
+                node = &analyser->compiler->parser.nodes[node_index];
+            }
+            assert(symbol_definition_table != 0, "HEY");
+            Symbol* assert_sym = symbol_table_find_symbol(symbol_definition_table, symbol->name_handle, true);
+            assert(assert_sym != 0, "HEY");
+        }
+
+        // Create instance template table, where templates are filled out
+        Symbol_Table* template_instance_table = symbol_table_create(analyser, symbol_definition_table, symbol->definition_node_index, false);
+        for (int i = 0; i < symbol->template_parameter_names.size; i++)
+        {
+            Symbol template_symbol;
+            template_symbol.symbol_type = Symbol_Type::TYPE;
+            template_symbol.name_handle = symbol->template_parameter_names[i];
+            template_symbol.definition_node_index = instance_node_index;
+            template_symbol.is_templated = false;
+            template_symbol.options.data_type = template_arguments[i];
+            symbol_table_define_symbol(template_instance_table, analyser, template_symbol, true);
+        }
+
+        // Create Instance;
+        Symbol_Template_Instance instance;
+        instance.instanciated = false;
+        instance.template_arguments = dynamic_array_create_copy(template_arguments.data, template_arguments.size);
+        dynamic_array_push_back(&symbol->template_instances, instance);
+        found_instance = &symbol->template_instances[symbol->template_instances.size - 1];
+        found_instance_index = symbol->template_instances.size - 1;
+
+        // Create workload
+        switch (symbol->symbol_type)
+        {
+        case Symbol_Type::VARIABLE:
+        case Symbol_Type::HARDCODED_FUNCTION:
+        case Symbol_Type::FUNCTION: {
+            semantic_analyser_log_error(analyser, "Only struct template instanciation supported yet!", instance_node_index);
+            Identifier_Analysis_Result result;
+            result.type = Analysis_Result_Type::ERROR_OCCURED;
+            return result;
+        }
+        case Symbol_Type::TYPE:
+        {
+            if (symbol->options.data_type->type != Signature_Type::STRUCT) {
+                panic("Should not happen");
+            }
+
+            AST_Node* struct_node = &analyser->compiler->parser.nodes[symbol->definition_node_index];
+            Type_Signature* struct_instance_signature;
+            {
+                Type_Signature struct_sig;
+                struct_sig.type = Signature_Type::STRUCT;
+                struct_sig.member_types = dynamic_array_create_empty<Struct_Member>(struct_node->children.size);
+                struct_sig.alignment_in_bytes = 0;
+                struct_sig.size_in_bytes = 0;
+                struct_sig.struct_name_handle = struct_node->name_id;
+                struct_instance_signature = type_system_register_type(&analyser->compiler->type_system, struct_sig);
+            }
+            found_instance->instanciated = true;
+            found_instance->options.data_type = struct_instance_signature;
+
+            Analysis_Workload workload;
+            workload.node_index = symbol->definition_node_index;
+            workload.symbol_table = symbol_definition_table;
+            workload.type = Analysis_Workload_Type::STRUCT_BODY;
+            workload.options.struct_body.struct_signature = struct_instance_signature;
+            workload.options.struct_body.type_lookup_table = template_instance_table;
+            workload.options.struct_body.offset = 0;
+            workload.options.struct_body.alignment = 0;
+            workload.options.struct_body.current_child_index = 0;
+            workload.options.struct_body.is_template_instance = true;
+            workload.options.struct_body.symbol_instance_index = found_instance_index;
+            workload.options.struct_body.symbol_name_id = symbol->name_handle;
+            dynamic_array_push_back(&analyser->active_workloads, workload);
+            break;
+        }
+        default: panic("Hey"); break;
+        }
+    }
+
+    // Create dependency if template is not finished
+    if (!found_instance->instanciated)
+    {
         Workload_Dependency dependency;
-    } options;
-};
+        dependency.node_index = instance_node_index;
+        dependency.type = Workload_Dependency_Type::TEMPLATE_INSTANCE_NOT_FINISHED;
+        dependency.options.template_not_finished.instance_index = found_instance_index;
+        dependency.options.template_not_finished.symbol_name_id = symbol->name_handle;
+        dependency.options.template_not_finished.symbol_table = table;
 
-enum class Type_Analysis_Result_Type
-{
-    SUCCESS,
-    ERROR_OCCURED,
-    DEPENDENCY
-};
+        Identifier_Analysis_Result result;
+        result.type = Analysis_Result_Type::DEPENDENCY;
+        result.options.dependency = dependency;
+        return result;
+    }
 
-struct Type_Analysis_Result
-{
-    Type_Analysis_Result_Type type;
-    union {
-        Type_Signature* result_type;
-        Workload_Dependency dependency;
-    } options;
-};
+    // Create success
+    Identifier_Analysis_Result result;
+    result.type = Analysis_Result_Type::SUCCESS;
+    result.options.symbol = *symbol;
+    result.options.symbol.is_templated = false;
+    result.options.symbol.template_instances.data = 0;
+    result.options.symbol.options = found_instance->options;
+    return result;
+}
 
-struct Variable_Creation_Analysis_Result
+Type_Analysis_Result semantic_analyser_analyse_type(Semantic_Analyser * analyser, Symbol_Table * table, int type_node_index);
+Identifier_Analysis_Result semantic_analyser_analyse_identifier_node_with_template_arguments(
+    Semantic_Analyser * analyser, Symbol_Table * table, AST_Parser * parser, int node_index, bool only_current_scope,
+    Dynamic_Array<Type_Signature*> template_arguments)
 {
-    bool was_successfull; // If false, there is a dependency
-    Workload_Dependency dependency;
-};
+    AST_Node* node = &parser->nodes[node_index];
+    assert(node->type == AST_Node_Type::IDENTIFIER_NAME ||
+        node->type == AST_Node_Type::IDENTIFIER_PATH ||
+        node->type == AST_Node_Type::IDENTIFIER_NAME_TEMPLATED ||
+        node->type == AST_Node_Type::IDENTIFIER_PATH_TEMPLATED, "Cannot lookup symbol of non identifer node");
+
+    switch (node->type)
+    {
+    case AST_Node_Type::IDENTIFIER_NAME:
+    {
+        Symbol* symbol = symbol_table_find_symbol(table, node->name_id, only_current_scope);
+        if (symbol == 0) {
+            Identifier_Analysis_Result result;
+            result.type = Analysis_Result_Type::DEPENDENCY;
+            result.options.dependency = workload_dependency_make_identifier_not_found(table, node_index, only_current_scope, template_arguments);
+            return result;
+        }
+        if (symbol->is_templated) {
+            return semantic_analyser_instanciate_template(analyser, table, symbol, template_arguments, node_index);
+        }
+        Identifier_Analysis_Result result;
+        result.type = Analysis_Result_Type::SUCCESS;
+        result.options.symbol = *symbol;
+        return result;
+    }
+    case AST_Node_Type::IDENTIFIER_PATH:
+    {
+        Symbol_Table_Module* table_module = hashtable_find_element(&table->modules, node->name_id);
+        if (table_module == 0) {
+            if (table->parent != 0 && !only_current_scope) {
+                return semantic_analyser_analyse_identifier_node_with_template_arguments(
+                    analyser, table->parent, parser, node_index, false, template_arguments
+                );
+            }
+            Identifier_Analysis_Result result;
+            result.type = Analysis_Result_Type::DEPENDENCY;
+            result.options.dependency = workload_dependency_make_identifier_not_found(table, node_index, only_current_scope, template_arguments);
+            return result;
+        }
+        else {
+            if (table_module->is_templated) {
+                semantic_analyser_log_error(analyser, "Identifier path requires template arguments, no implicit resolution yet", node_index);
+                Identifier_Analysis_Result result;
+                result.type = Analysis_Result_Type::ERROR_OCCURED;
+                return result;
+            }
+            return semantic_analyser_analyse_identifier_node_with_template_arguments(
+                analyser, table_module->module_table, parser, node->children[0], true, template_arguments
+            );
+        }
+        break;
+    }
+    case AST_Node_Type::IDENTIFIER_NAME_TEMPLATED: {
+        // Find Symbol
+        Symbol* symbol = symbol_table_find_symbol(table, node->name_id, only_current_scope);
+        if (symbol == 0) {
+            Identifier_Analysis_Result result;
+            result.type = Analysis_Result_Type::DEPENDENCY;
+            result.options.dependency = workload_dependency_make_identifier_not_found(table, node_index, only_current_scope, template_arguments);
+            return result;
+        }
+
+        // Check if templated
+        if (!symbol->is_templated) {
+            semantic_analyser_log_error(analyser, "Symbol is not templated, arguments are unnecessary", node_index);
+            Identifier_Analysis_Result result;
+            result.type = Analysis_Result_Type::ERROR_OCCURED;
+            return result;
+        }
+
+        // Create parameters array if not already created
+        bool delete_parameter = false;
+        if (template_arguments.data == 0) {
+            delete_parameter = true;
+            template_arguments = dynamic_array_create_empty<Type_Signature*>(2);
+        }
+        SCOPE_EXIT(
+            if (delete_parameter) dynamic_array_destroy(&template_arguments);
+        );
+
+        // Analyse arguments, add to parameters
+        AST_Node* unnamed_parameter_node = &analyser->compiler->parser.nodes[node->children[0]];
+        if (unnamed_parameter_node->children.size != symbol->template_parameter_names.size) {
+            semantic_analyser_log_error(analyser, "Symbol parameter size does not match argument size", node_index);
+            Identifier_Analysis_Result result;
+            result.type = Analysis_Result_Type::ERROR_OCCURED;
+            return result;
+        }
+        for (int i = 0; i < unnamed_parameter_node->children.size; i++)
+        {
+            Type_Analysis_Result type_result = semantic_analyser_analyse_type(analyser, table, unnamed_parameter_node->children[i]);
+            switch (type_result.type)
+            {
+            case Analysis_Result_Type::SUCCESS:
+                dynamic_array_push_back(&template_arguments, type_result.options.result_type);
+                break;
+            case Analysis_Result_Type::DEPENDENCY: {
+                Identifier_Analysis_Result result;
+                result.type = Analysis_Result_Type::DEPENDENCY;
+                result.options.dependency = type_result.options.dependency;
+                return result;
+            }
+            case Analysis_Result_Type::ERROR_OCCURED: {
+                Identifier_Analysis_Result result;
+                result.type = Analysis_Result_Type::ERROR_OCCURED;
+                return result;
+            }
+            }
+        }
+
+        // Instanciate if necessary
+        return semantic_analyser_instanciate_template(analyser, table, symbol, template_arguments, node_index);
+    }
+    case AST_Node_Type::IDENTIFIER_PATH_TEMPLATED:
+    {
+        Symbol_Table_Module* table_module = hashtable_find_element(&table->modules, node->name_id);
+        if (table_module == 0) {
+            if (table->parent != 0 && !only_current_scope) {
+                return semantic_analyser_analyse_identifier_node_with_template_arguments(
+                    analyser, table->parent, parser, node_index, false, template_arguments
+                );
+            }
+            Identifier_Analysis_Result result;
+            result.type = Analysis_Result_Type::DEPENDENCY;
+            result.options.dependency = workload_dependency_make_identifier_not_found(table, node_index, only_current_scope, template_arguments);
+            return result;
+        }
+        else
+        {
+            if (!table_module->is_templated) {
+                semantic_analyser_log_error(analyser, "Module is not templated, arguments are unnecessary", node_index);
+                Identifier_Analysis_Result result;
+                result.type = Analysis_Result_Type::ERROR_OCCURED;
+                return result;
+            }
+
+            bool delete_parameter = false;
+            if (template_arguments.data == 0) {
+                delete_parameter = true;
+                template_arguments = dynamic_array_create_empty<Type_Signature*>(2);
+            }
+            SCOPE_EXIT(
+                if (delete_parameter) dynamic_array_destroy(&template_arguments);
+            );
+
+            // Analyse template arguments
+            AST_Node* unnamed_parameter_node = &analyser->compiler->parser.nodes[node->children[0]];
+            if (unnamed_parameter_node->children.size != table_module->template_parameter_names.size) {
+                semantic_analyser_log_error(analyser, "Template Module parameter size does not match argument size", node_index);
+                Identifier_Analysis_Result result;
+                result.type = Analysis_Result_Type::ERROR_OCCURED;
+                return result;
+            }
+            for (int i = 0; i < unnamed_parameter_node->children.size; i++)
+            {
+                Type_Analysis_Result type_result = semantic_analyser_analyse_type(analyser, table, unnamed_parameter_node->children[i]);
+                switch (type_result.type)
+                {
+                case Analysis_Result_Type::SUCCESS:
+                    dynamic_array_push_back(&template_arguments, type_result.options.result_type);
+                    break;
+                case Analysis_Result_Type::DEPENDENCY: {
+                    Identifier_Analysis_Result result;
+                    result.type = Analysis_Result_Type::DEPENDENCY;
+                    result.options.dependency = type_result.options.dependency;
+                    return result;
+                }
+                case Analysis_Result_Type::ERROR_OCCURED: {
+                    Identifier_Analysis_Result result;
+                    result.type = Analysis_Result_Type::ERROR_OCCURED;
+                    return result;
+                }
+                }
+            }
+
+            return semantic_analyser_analyse_identifier_node_with_template_arguments(
+                analyser, table_module->module_table, parser, node->children[1], true, template_arguments
+            );
+        }
+        break;
+    }
+    }
+
+    panic("Should not happen");
+    Identifier_Analysis_Result result;
+    result.type = Analysis_Result_Type::ERROR_OCCURED;
+    return result;
+}
+
+Identifier_Analysis_Result semantic_analyser_analyse_identifier_node(
+    Semantic_Analyser* analyser, Symbol_Table* table, AST_Parser* parser, int node_index, bool only_current_scope)
+{
+    Dynamic_Array<Type_Signature*> template_arguments;
+    template_arguments.data = 0;
+    template_arguments.size = 0;
+    template_arguments.capacity = 0;
+    return semantic_analyser_analyse_identifier_node_with_template_arguments(
+        analyser, table, parser, node_index, only_current_scope,
+        template_arguments
+    );
+}
 
 Type_Analysis_Result type_analysis_result_make_success(Type_Signature* result_type)
 {
     Type_Analysis_Result result;
-    result.type = Type_Analysis_Result_Type::SUCCESS;
+    result.type = Analysis_Result_Type::SUCCESS;
     result.options.result_type = result_type;
     return result;
 }
@@ -1481,7 +1889,7 @@ Type_Analysis_Result type_analysis_result_make_success(Type_Signature* result_ty
 Type_Analysis_Result type_analysis_result_make_error()
 {
     Type_Analysis_Result result;
-    result.type = Type_Analysis_Result_Type::ERROR_OCCURED;
+    result.type = Analysis_Result_Type::ERROR_OCCURED;
     return result;
 }
 
@@ -1492,13 +1900,29 @@ Type_Analysis_Result semantic_analyser_analyse_type(Semantic_Analyser* analyser,
     {
     case AST_Node_Type::TYPE_IDENTIFIER:
     {
-        Symbol* symbol = symbol_table_find_symbol_of_identifer_node(table, &analyser->compiler->parser, type_node->children[0], false);
-        if (symbol == 0) {
+        Symbol* symbol = 0;
+        Identifier_Analysis_Result identifier_result =
+            semantic_analyser_analyse_identifier_node(analyser, table, &analyser->compiler->parser, type_node->children[0], false);
+        switch (identifier_result.type)
+        {
+        case Analysis_Result_Type::SUCCESS:
+            symbol = &identifier_result.options.symbol;
+            break;
+        case Analysis_Result_Type::DEPENDENCY: {
             Type_Analysis_Result result;
-            result.type = Type_Analysis_Result_Type::DEPENDENCY;
-            result.options.dependency = workload_dependency_make_symbol_not_defined(table, type_node->children[0]);
+            result.type = Analysis_Result_Type::DEPENDENCY;
+            result.options.dependency = identifier_result.options.dependency;
             return result;
         }
+        case Analysis_Result_Type::ERROR_OCCURED: {
+            return type_analysis_result_make_error();
+        }
+        default: {
+            panic("What");
+            return type_analysis_result_make_error();
+        }
+        }
+
         if (symbol->symbol_type == Symbol_Type::TYPE) {
             if (symbol->options.data_type == analyser->compiler->type_system.error_type) {
                 return type_analysis_result_make_error();
@@ -1511,7 +1935,7 @@ Type_Analysis_Result semantic_analyser_analyse_type(Semantic_Analyser* analyser,
     }
     case AST_Node_Type::TYPE_POINTER_TO: {
         Type_Analysis_Result result = semantic_analyser_analyse_type(analyser, table, type_node->children[0]);
-        if (result.type == Type_Analysis_Result_Type::SUCCESS) {
+        if (result.type == Analysis_Result_Type::SUCCESS) {
             return type_analysis_result_make_success(type_system_make_pointer(&analyser->compiler->type_system, result.options.result_type));
         }
         else {
@@ -1534,7 +1958,7 @@ Type_Analysis_Result semantic_analyser_analyse_type(Semantic_Analyser* analyser,
         }
 
         Type_Analysis_Result element_result = semantic_analyser_analyse_type(analyser, table, type_node->children[1]);
-        if (element_result.type != Type_Analysis_Result_Type::SUCCESS) {
+        if (element_result.type != Analysis_Result_Type::SUCCESS) {
             return element_result;
         }
 
@@ -1575,7 +1999,7 @@ Type_Analysis_Result semantic_analyser_analyse_type(Semantic_Analyser* analyser,
     }
     case AST_Node_Type::TYPE_ARRAY_UNSIZED: {
         Type_Analysis_Result element_result = semantic_analyser_analyse_type(analyser, table, type_node->children[0]);
-        if (element_result.type != Type_Analysis_Result_Type::SUCCESS) {
+        if (element_result.type != Analysis_Result_Type::SUCCESS) {
             return element_result;
         }
 
@@ -1592,7 +2016,7 @@ Type_Analysis_Result semantic_analyser_analyse_type(Semantic_Analyser* analyser,
         if (type_node->children.size == 2)
         {
             Type_Analysis_Result return_type_result = semantic_analyser_analyse_type(analyser, table, type_node->children[1]);
-            if (return_type_result.type != Type_Analysis_Result_Type::SUCCESS) {
+            if (return_type_result.type != Analysis_Result_Type::SUCCESS) {
                 return return_type_result;
             }
             return_type = return_type_result.options.result_type;
@@ -1607,7 +2031,7 @@ Type_Analysis_Result semantic_analyser_analyse_type(Semantic_Analyser* analyser,
         {
             int param_type_index = parameter_block->children[i];
             Type_Analysis_Result param_result = semantic_analyser_analyse_type(analyser, table, param_type_index);
-            if (param_result.type != Type_Analysis_Result_Type::SUCCESS) {
+            if (param_result.type != Analysis_Result_Type::SUCCESS) {
                 dynamic_array_destroy(&parameter_types);
                 return param_result;
             }
@@ -1626,7 +2050,7 @@ Type_Analysis_Result semantic_analyser_analyse_type(Semantic_Analyser* analyser,
 Expression_Analysis_Result expression_analysis_result_make_success(Type_Signature* expression_result, bool has_memory_address)
 {
     Expression_Analysis_Result result;
-    result.type = Expression_Analysis_Result_Type::SUCCESS;
+    result.type = Analysis_Result_Type::SUCCESS;
     result.options.success.has_memory_address = has_memory_address;
     result.options.success.result_type = expression_result;
     return result;
@@ -1635,14 +2059,14 @@ Expression_Analysis_Result expression_analysis_result_make_success(Type_Signatur
 Expression_Analysis_Result expression_analysis_result_make_error()
 {
     Expression_Analysis_Result result;
-    result.type = Expression_Analysis_Result_Type::ERROR_OCCURED;
+    result.type = Analysis_Result_Type::ERROR_OCCURED;
     return result;
 }
 
 Expression_Analysis_Result expression_analysis_result_make_dependency(Workload_Dependency dependency)
 {
     Expression_Analysis_Result result;
-    result.type = Expression_Analysis_Result_Type::DEPENDENCY;
+    result.type = Analysis_Result_Type::DEPENDENCY;
     result.options.dependency = dependency;
     return result;
 }
@@ -1740,14 +2164,22 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
         IR_Instruction call_instruction;
         call_instruction.type = IR_Instruction_Type::FUNCTION_CALL;
 
-        Type_Signature* signature = 0;
-        Symbol* symbol = symbol_table_find_symbol_of_identifer_node(
-            symbol_table, &analyser->compiler->parser, expression_node->children[0], false
+        Identifier_Analysis_Result function_identifier_result = semantic_analyser_analyse_identifier_node(
+            analyser, symbol_table, &analyser->compiler->parser, expression_node->children[0], false
         );
-        if (symbol == 0) {
-            return expression_analysis_result_make_dependency(workload_dependency_make_symbol_not_defined(symbol_table, expression_node->children[0]));
+        switch (function_identifier_result.type)
+        {
+        case Analysis_Result_Type::DEPENDENCY: {
+            return expression_analysis_result_make_dependency(function_identifier_result.options.dependency);
+        }
+        case Analysis_Result_Type::ERROR_OCCURED:
+            return expression_analysis_result_make_error();
+        case Analysis_Result_Type::SUCCESS:
+            break;
         }
 
+        Type_Signature* signature = 0;
+        Symbol* symbol = &function_identifier_result.options.symbol;
         if (symbol->symbol_type == Symbol_Type::VARIABLE)
         {
             Type_Signature* var_type = ir_data_access_get_type(&symbol->options.variable_access);
@@ -1809,14 +2241,14 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
             );
             switch (expr_result.type)
             {
-            case Expression_Analysis_Result_Type::DEPENDENCY: {
+            case Analysis_Result_Type::DEPENDENCY: {
                 rollback_on_exit = true;
                 return expr_result;
             }
-            case Expression_Analysis_Result_Type::ERROR_OCCURED: {
+            case Analysis_Result_Type::ERROR_OCCURED: {
                 break;
             }
-            case Expression_Analysis_Result_Type::SUCCESS: {
+            case Analysis_Result_Type::SUCCESS: {
                 if (expr_result.options.success.result_type != signature->parameter_types[i])
                 {
                     IR_Data_Access casted_argument = ir_data_access_create_intermediate(code_block, signature->parameter_types[i]);
@@ -1839,9 +2271,17 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
     }
     case AST_Node_Type::EXPRESSION_VARIABLE_READ:
     {
-        Symbol* symbol = symbol_table_find_symbol_of_identifer_node(symbol_table, &analyser->compiler->parser, expression_node->children[0], false);
-        if (symbol == 0) {
-            return expression_analysis_result_make_dependency(workload_dependency_make_symbol_not_defined(symbol_table, expression_node->children[0]));
+        Symbol* symbol;
+        Identifier_Analysis_Result variable_identifier =
+            semantic_analyser_analyse_identifier_node(analyser, symbol_table, &analyser->compiler->parser, expression_node->children[0], false);
+        switch (variable_identifier.type) {
+        case Analysis_Result_Type::SUCCESS:
+            symbol = &variable_identifier.options.symbol;
+            break;
+        case Analysis_Result_Type::DEPENDENCY:
+            return expression_analysis_result_make_dependency(variable_identifier.options.dependency);
+        case Analysis_Result_Type::ERROR_OCCURED:
+            return expression_analysis_result_make_error();
         }
 
         if (symbol->symbol_type == Symbol_Type::VARIABLE)
@@ -1882,12 +2322,12 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
     case AST_Node_Type::EXPRESSION_CAST:
     {
         Type_Analysis_Result cast_destination_result = semantic_analyser_analyse_type(analyser, symbol_table, expression_node->children[0]);
-        if (cast_destination_result.type != Type_Analysis_Result_Type::SUCCESS)
+        if (cast_destination_result.type != Analysis_Result_Type::SUCCESS)
         {
-            if (cast_destination_result.type == Type_Analysis_Result_Type::ERROR_OCCURED) {
+            if (cast_destination_result.type == Analysis_Result_Type::ERROR_OCCURED) {
                 return expression_analysis_result_make_error();
             }
-            if (cast_destination_result.type == Type_Analysis_Result_Type::DEPENDENCY) {
+            if (cast_destination_result.type == Analysis_Result_Type::DEPENDENCY) {
                 return expression_analysis_result_make_dependency(cast_destination_result.options.dependency);
             }
             panic("Should not happen");
@@ -1898,7 +2338,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
         Expression_Analysis_Result expr_result = semantic_analyser_analyse_expression(
             analyser, symbol_table, expression_node->children[1], code_block, true, &source_access
         );
-        if (expr_result.type != Expression_Analysis_Result_Type::SUCCESS) {
+        if (expr_result.type != Analysis_Result_Type::SUCCESS) {
             rollback_on_exit = true;
             return expr_result;
         }
@@ -2017,12 +2457,12 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
     case AST_Node_Type::EXPRESSION_NEW:
     {
         Type_Analysis_Result new_type_result = semantic_analyser_analyse_type(analyser, symbol_table, expression_node->children[0]);
-        if (new_type_result.type != Type_Analysis_Result_Type::SUCCESS)
+        if (new_type_result.type != Analysis_Result_Type::SUCCESS)
         {
-            if (new_type_result.type == Type_Analysis_Result_Type::ERROR_OCCURED) {
+            if (new_type_result.type == Analysis_Result_Type::ERROR_OCCURED) {
                 return expression_analysis_result_make_error();
             }
-            if (new_type_result.type == Type_Analysis_Result_Type::DEPENDENCY) {
+            if (new_type_result.type == Analysis_Result_Type::DEPENDENCY) {
                 return expression_analysis_result_make_dependency(new_type_result.options.dependency);
             }
             panic("Should not happen");
@@ -2052,12 +2492,12 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
     case AST_Node_Type::EXPRESSION_NEW_ARRAY:
     {
         Type_Analysis_Result element_type_result = semantic_analyser_analyse_type(analyser, symbol_table, expression_node->children[1]);
-        if (element_type_result.type != Type_Analysis_Result_Type::SUCCESS)
+        if (element_type_result.type != Analysis_Result_Type::SUCCESS)
         {
-            if (element_type_result.type == Type_Analysis_Result_Type::ERROR_OCCURED) {
+            if (element_type_result.type == Analysis_Result_Type::ERROR_OCCURED) {
                 return expression_analysis_result_make_error();
             }
-            if (element_type_result.type == Type_Analysis_Result_Type::DEPENDENCY) {
+            if (element_type_result.type == Analysis_Result_Type::DEPENDENCY) {
                 return expression_analysis_result_make_dependency(element_type_result.options.dependency);
             }
             panic("Should not happen");
@@ -2091,7 +2531,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
 
         Expression_Analysis_Result index_result = semantic_analyser_analyse_expression(
             analyser, symbol_table, expression_node->children[0], code_block, false, &array_size_access);
-        if (index_result.type != Expression_Analysis_Result_Type::SUCCESS) {
+        if (index_result.type != Analysis_Result_Type::SUCCESS) {
             rollback_on_exit = true;
             return index_result;
         }
@@ -2142,7 +2582,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
         IR_Data_Access array_expr_access;
         Expression_Analysis_Result array_access_expr_result = semantic_analyser_analyse_expression(
             analyser, symbol_table, expression_node->children[0], code_block, true, &array_expr_access);
-        if (array_access_expr_result.type != Expression_Analysis_Result_Type::SUCCESS) {
+        if (array_access_expr_result.type != Analysis_Result_Type::SUCCESS) {
             rollback_on_exit = true;
             return array_access_expr_result;
         }
@@ -2156,7 +2596,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
         IR_Data_Access index_access;
         Expression_Analysis_Result index_expr_result = semantic_analyser_analyse_expression(
             analyser, symbol_table, expression_node->children[1], code_block, true, &index_access);
-        if (index_expr_result.type != Expression_Analysis_Result_Type::SUCCESS) {
+        if (index_expr_result.type != Analysis_Result_Type::SUCCESS) {
             rollback_on_exit = true;
             return index_expr_result;
         }
@@ -2196,7 +2636,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
         Expression_Analysis_Result access_expr_result = semantic_analyser_analyse_expression(
             analyser, symbol_table, expression_node->children[0], code_block, true, &expr_access
         );
-        if (access_expr_result.type != Expression_Analysis_Result_Type::SUCCESS) {
+        if (access_expr_result.type != Analysis_Result_Type::SUCCESS) {
             rollback_on_exit = true;
             return access_expr_result;
         }
@@ -2322,11 +2762,11 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
         Expression_Analysis_Result operand_result = semantic_analyser_analyse_expression(
             analyser, symbol_table, expression_node->children[0], code_block, true, &operand_access
         );
-        if (operand_result.type != Expression_Analysis_Result_Type::SUCCESS) {
-            if (operand_result.type == Expression_Analysis_Result_Type::ERROR_OCCURED) {
+        if (operand_result.type != Analysis_Result_Type::SUCCESS) {
+            if (operand_result.type == Analysis_Result_Type::ERROR_OCCURED) {
                 return expression_analysis_result_make_success(type_system->bool_type, false);
             }
-            if (operand_result.type == Expression_Analysis_Result_Type::DEPENDENCY) {
+            if (operand_result.type == Analysis_Result_Type::DEPENDENCY) {
                 return operand_result;
             }
             panic("Should not happen");
@@ -2354,7 +2794,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
         Expression_Analysis_Result operand_result = semantic_analyser_analyse_expression(
             analyser, symbol_table, expression_node->children[0], code_block, true, &operand_access
         );
-        if (operand_result.type != Expression_Analysis_Result_Type::SUCCESS) {
+        if (operand_result.type != Analysis_Result_Type::SUCCESS) {
             return operand_result;
         }
 
@@ -2399,9 +2839,12 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
         Expression_Analysis_Result expr_result = semantic_analyser_analyse_expression(
             analyser, symbol_table, expression_node->children[0], code_block, true, &expr_access
         );
-        if (expr_result.type != Expression_Analysis_Result_Type::SUCCESS) {
+        if (expr_result.type != Analysis_Result_Type::SUCCESS) {
             rollback_on_exit = true;
             return expr_result;
+        }
+        if (!expr_result.options.success.has_memory_address) {
+            semantic_analyser_log_error(analyser, "Tried taking the address of something with no memory address", expression_index);
         }
         Type_Signature* pointer_type = type_system_make_pointer(type_system, expr_result.options.success.result_type);
         // Special Case, see Expression_Variable_Read how this works
@@ -2454,7 +2897,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
         Expression_Analysis_Result result = semantic_analyser_analyse_expression(
             analyser, symbol_table, expression_node->children[0], code_block, true, &pointer_access
         );
-        if (result.type != Expression_Analysis_Result_Type::SUCCESS) {
+        if (result.type != Analysis_Result_Type::SUCCESS) {
             rollback_on_exit = true;
             return result;
         }
@@ -2545,14 +2988,14 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
         Expression_Analysis_Result left_expr_result = semantic_analyser_analyse_expression(
             analyser, symbol_table, expression_node->children[0], code_block, true, &left_access
         );
-        if (left_expr_result.type != Expression_Analysis_Result_Type::SUCCESS) {
+        if (left_expr_result.type != Analysis_Result_Type::SUCCESS) {
             rollback_on_exit = true;
             return left_expr_result;
         }
         Expression_Analysis_Result right_expr_result = semantic_analyser_analyse_expression(
             analyser, symbol_table, expression_node->children[1], code_block, true, &right_access
         );
-        if (right_expr_result.type != Expression_Analysis_Result_Type::SUCCESS) {
+        if (right_expr_result.type != Analysis_Result_Type::SUCCESS) {
             rollback_on_exit = true;
             return right_expr_result;
         }
@@ -2723,19 +3166,19 @@ Variable_Creation_Analysis_Result semantic_analyser_analyse_variable_creation_st
         Type_Analysis_Result definition_result = semantic_analyser_analyse_type(analyser, symbol_table, type_node_index);
         switch (definition_result.type)
         {
-        case Type_Analysis_Result_Type::SUCCESS:
+        case Analysis_Result_Type::SUCCESS:
             definition_type = definition_result.options.result_type;
             if (definition_type == analyser->compiler->type_system.void_type) {
                 semantic_analyser_log_error(analyser, "Cannot create variable of void type", statement_index);
                 definition_type = analyser->compiler->type_system.error_type;
             }
             break;
-        case Type_Analysis_Result_Type::ERROR_OCCURED:
+        case Analysis_Result_Type::ERROR_OCCURED:
             definition_type = analyser->compiler->type_system.error_type;
             break;
-        case Type_Analysis_Result_Type::DEPENDENCY: {
+        case Analysis_Result_Type::DEPENDENCY: {
             Variable_Creation_Analysis_Result result;
-            result.was_successfull = false;
+            result.type = Analysis_Result_Type::DEPENDENCY;
             result.dependency = definition_result.options.dependency;
             return result;
         }
@@ -2769,19 +3212,19 @@ Variable_Creation_Analysis_Result semantic_analyser_analyse_variable_creation_st
         );
         switch (expr_result.type)
         {
-        case Expression_Analysis_Result_Type::SUCCESS:
+        case Analysis_Result_Type::SUCCESS:
             infered_type = expr_result.options.success.result_type;
             if (infered_type == analyser->compiler->type_system.void_type) {
                 semantic_analyser_log_error(analyser, "Cannot assign void to variable", statement_index);
                 definition_type = analyser->compiler->type_system.error_type;
             }
             break;
-        case Expression_Analysis_Result_Type::ERROR_OCCURED:
+        case Analysis_Result_Type::ERROR_OCCURED:
             infered_type = analyser->compiler->type_system.error_type;
             break;
-        case Expression_Analysis_Result_Type::DEPENDENCY: {
+        case Analysis_Result_Type::DEPENDENCY: {
             Variable_Creation_Analysis_Result result;
-            result.was_successfull = false;
+            result.type = Analysis_Result_Type::DEPENDENCY;
             result.dependency = expr_result.options.dependency;
             if (is_global) {
                 dynamic_array_rollback_to_size(&code_block->function->program->globals, rollback_data_access_index);
@@ -2819,12 +3262,13 @@ Variable_Creation_Analysis_Result semantic_analyser_analyse_variable_creation_st
     Symbol var_symbol;
     var_symbol.symbol_type = Symbol_Type::VARIABLE;
     var_symbol.name_handle = statement->name_id;
+    var_symbol.is_templated = false;
     var_symbol.definition_node_index = statement_index;
     var_symbol.options.variable_access = variable_access;
     symbol_table_define_symbol(symbol_table, analyser, var_symbol, true);
 
     Variable_Creation_Analysis_Result result;
-    result.was_successfull = true;
+    result.type = Analysis_Result_Type::SUCCESS;
     return result;
 }
 
@@ -2838,30 +3282,69 @@ void semantic_analyser_find_workloads_recursively(Semantic_Analyser* analyser, S
 
     Symbol_Table* symbol_table = 0;
     AST_Node* definitions_node;
-    if (node->type == AST_Node_Type::ROOT) {
-        symbol_table = analyser->root_table;
-        definitions_node = &analyser->compiler->parser.nodes[node->children[0]];
-    }
-    else if (node->type == AST_Node_Type::MODULE)
+    bool inside_template = false;
+    Dynamic_Array<int> template_parameter_names;
     {
-        if (hashtable_find_element(&parent_table->modules, node->name_id) != 0) {
-            semantic_analyser_log_error(analyser, "Module name already in use", node_index);
-            return;
+        if (node->type == AST_Node_Type::ROOT) {
+            symbol_table = analyser->root_table;
+            definitions_node = &analyser->compiler->parser.nodes[node->children[0]];
         }
-        symbol_table = symbol_table_create(analyser, parent_table, node_index, false);
-        hashtable_insert_element(&parent_table->modules, node->name_id, symbol_table);
-        definitions_node = &analyser->compiler->parser.nodes[node->children[0]];
-    }
-    else if (node->type == AST_Node_Type::MODULE_TEMPLATED)
-    {
-        semantic_analyser_log_error(analyser, "Cannot analyse templates yet!", node_index);
-        return;
-    }
-    else {
-        panic("Cannot happen");
-        definitions_node = 0;
+        else if (node->type == AST_Node_Type::MODULE)
+        {
+            if (hashtable_find_element(&parent_table->modules, node->name_id) != 0) {
+                semantic_analyser_log_error(analyser, "Module name already in use", node_index);
+                return;
+            }
+            symbol_table = symbol_table_create(analyser, parent_table, node_index, true);
+            Symbol_Table_Module table_module;
+            table_module.is_templated = false;
+            table_module.module_table = symbol_table;
+            hashtable_insert_element(&parent_table->modules, node->name_id, table_module);
+            definitions_node = &analyser->compiler->parser.nodes[node->children[0]];
+        }
+        else if (node->type == AST_Node_Type::MODULE_TEMPLATED)
+        {
+            inside_template = true;
+            definitions_node = &analyser->compiler->parser.nodes[node->children[1]];
+            if (hashtable_find_element(&parent_table->modules, node->name_id) != 0) {
+                semantic_analyser_log_error(analyser, "Templated Module name already in use", node_index);
+                return;
+            }
+            symbol_table = symbol_table_create(analyser, parent_table, node_index, true);
+
+            AST_Node* template_parameter_node = &analyser->compiler->parser.nodes[node->children[0]];
+            template_parameter_names = dynamic_array_create_empty<int>(template_parameter_node->children.size);
+            for (int i = 0; i < template_parameter_node->children.size; i++)
+            {
+                AST_Node* identifier_node = &analyser->compiler->parser.nodes[template_parameter_node->children[i]];
+                Symbol symbol;
+                symbol.symbol_type = Symbol_Type::TYPE;
+                symbol.name_handle = identifier_node->name_id;
+                symbol.definition_node_index = node->children[i];
+                symbol.is_templated = false;
+                Type_Signature template_type;
+                template_type.type = Signature_Type::TEMPLATE_TYPE;
+                template_type.size_in_bytes = 1;
+                template_type.alignment_in_bytes = 1;
+                template_type.template_name = identifier_node->name_id;
+                symbol.options.data_type = type_system_register_type(&analyser->compiler->type_system, template_type);
+                dynamic_array_push_back(&template_parameter_names, symbol.name_handle);
+                symbol_table_define_symbol(symbol_table, analyser, symbol, false);
+            }
+
+            Symbol_Table_Module table_module;
+            table_module.is_templated = true;
+            table_module.module_table = symbol_table;
+            table_module.template_parameter_names = template_parameter_names;
+            hashtable_insert_element(&parent_table->modules, node->name_id, table_module);
+        }
+        else {
+            panic("Cannot happen");
+            definitions_node = 0;
+        }
     }
 
+    assert(definitions_node->type == AST_Node_Type::DEFINITIONS, "HEY");
     for (int i = 0; i < definitions_node->children.size; i++)
     {
         int child_index = definitions_node->children[i];
@@ -2869,12 +3352,24 @@ void semantic_analyser_find_workloads_recursively(Semantic_Analyser* analyser, S
         switch (top_level_node->type)
         {
         case AST_Node_Type::MODULE:
+            if (inside_template) {
+                semantic_analyser_log_error(analyser, "No modules inside templated modules yet!", node_index);
+                continue;
+            }
             semantic_analyser_find_workloads_recursively(analyser, symbol_table, child_index);
             break;
         case AST_Node_Type::MODULE_TEMPLATED:
-            semantic_analyser_log_error(analyser, "Cannot analyse templates yet!", node_index);
-            continue;
+            if (inside_template) {
+                semantic_analyser_log_error(analyser, "No modules inside templated modules yet!", node_index);
+                continue;
+            }
+            semantic_analyser_find_workloads_recursively(analyser, symbol_table, child_index);
+            break;
         case AST_Node_Type::FUNCTION: {
+            if (inside_template) {
+                semantic_analyser_log_error(analyser, "No functions inside templated modules yet!", node_index);
+                continue;
+            }
             Analysis_Workload workload;
             workload.symbol_table = symbol_table;
             workload.type = Analysis_Workload_Type::FUNCTION_HEADER;
@@ -2882,17 +3377,63 @@ void semantic_analyser_find_workloads_recursively(Semantic_Analyser* analyser, S
             dynamic_array_push_back(&analyser->active_workloads, workload);
             break;
         }
-        case AST_Node_Type::STRUCT: {
-            Analysis_Workload workload;
-            workload.symbol_table = symbol_table;
-            workload.type = Analysis_Workload_Type::STRUCT_HEADER;
-            workload.node_index = child_index;
-            dynamic_array_push_back(&analyser->active_workloads, workload);
+        case AST_Node_Type::STRUCT:
+        {
+            AST_Node* struct_node = top_level_node;
+            Type_Signature* signature;
+            {
+                Type_Signature struct_sig;
+                struct_sig.type = Signature_Type::STRUCT;
+                struct_sig.member_types = dynamic_array_create_empty<Struct_Member>(struct_node->children.size);
+                struct_sig.alignment_in_bytes = 0;
+                struct_sig.size_in_bytes = 0;
+                struct_sig.struct_name_handle = struct_node->name_id;
+                signature = type_system_register_type(&analyser->compiler->type_system, struct_sig);
+            }
+            {
+                Symbol s;
+                s.symbol_type = Symbol_Type::TYPE;
+                s.options.data_type = signature;
+                s.name_handle = struct_node->name_id;
+                s.definition_node_index = child_index;
+                s.is_templated = inside_template;
+                if (inside_template) {
+                    s.template_instances = dynamic_array_create_empty<Symbol_Template_Instance>(2);
+                    s.template_parameter_names = dynamic_array_create_copy(
+                        template_parameter_names.data, template_parameter_names.size
+                    );
+                }
+                symbol_table_define_symbol(symbol_table, analyser, s, false);
+            }
+
+            if (struct_node->children.size == 0) {
+                semantic_analyser_log_error(analyser, "Struct cannot have 0 members", child_index);
+                break;
+            }
+
+            // Prepare struct body workload
+            {
+                Analysis_Workload body_workload;
+                body_workload.node_index = child_index;
+                body_workload.symbol_table = symbol_table;
+                body_workload.type = Analysis_Workload_Type::STRUCT_BODY;
+                body_workload.options.struct_body.struct_signature = signature;
+                body_workload.options.struct_body.current_child_index = 0;
+                body_workload.options.struct_body.type_lookup_table = symbol_table;
+                body_workload.options.struct_body.offset = 0;
+                body_workload.options.struct_body.alignment = 0;
+                body_workload.options.struct_body.is_template_instance = false;
+                dynamic_array_push_back(&analyser->active_workloads, body_workload);
+            }
             break;
         }
         case AST_Node_Type::STATEMENT_VARIABLE_DEFINE_ASSIGN:
         case AST_Node_Type::STATEMENT_VARIABLE_DEFINE_INFER:
         case AST_Node_Type::STATEMENT_VARIABLE_DEFINITION: {
+            if (inside_template) {
+                semantic_analyser_log_error(analyser, "No globals inside templated modules yet!", node_index);
+                continue;
+            }
             Analysis_Workload workload;
             workload.symbol_table = symbol_table;
             workload.type = Analysis_Workload_Type::GLOBAL;
@@ -2939,7 +3480,7 @@ void workload_code_block_work_through_defers(Semantic_Analyser* analyser, Analys
         Analysis_Workload defer_workload;
         defer_workload.type = Analysis_Workload_Type::CODE_BLOCK;
         defer_workload.node_index = block_workload->active_defer_statements[i];
-        defer_workload.symbol_table = symbol_table_create(analyser, workload->symbol_table, defer_workload.node_index, true);
+        defer_workload.symbol_table = symbol_table_create(analyser, workload->symbol_table, defer_workload.node_index, false);
         defer_workload.options.code_block.active_defer_statements = dynamic_array_create_empty<int>(4);
         defer_workload.options.code_block.code_block = defer_block;
         defer_workload.options.code_block.current_child_index = 0;
@@ -2965,7 +3506,7 @@ Analysis_Workload analysis_workload_make_code_block(Semantic_Analyser* analyser,
     Analysis_Workload_Code_Block* block_workload = &current_work->options.code_block;
     Analysis_Workload new_workload;
     new_workload.node_index = block_index;
-    new_workload.symbol_table = symbol_table_create(analyser, current_work->symbol_table, block_index, block_workload->inside_defer);
+    new_workload.symbol_table = symbol_table_create(analyser, current_work->symbol_table, block_index, !block_workload->inside_defer);
     new_workload.type = Analysis_Workload_Type::CODE_BLOCK;
     new_workload.options.code_block.active_defer_statements = dynamic_array_create_empty<int>(block_workload->active_defer_statements.size + 1);
     for (int i = 0; i < block_workload->active_defer_statements.size; i++) {
@@ -2991,13 +3532,13 @@ void analysis_workload_append_to_string(Analysis_Workload* workload, String* str
         break;
     }
     case Analysis_Workload_Type::FUNCTION_HEADER: {
-        string_append_formated(string, "Function Header, name: %s", 
+        string_append_formated(string, "Function Header, name: %s",
             lexer_identifer_to_string(&analyser->compiler->lexer, analyser->compiler->parser.nodes[workload->node_index].name_id).characters
         );
         break;
     }
     case Analysis_Workload_Type::GLOBAL: {
-        string_append_formated(string, "Global Variable, name: %s", 
+        string_append_formated(string, "Global Variable, name: %s",
             lexer_identifer_to_string(&analyser->compiler->lexer, analyser->compiler->parser.nodes[workload->node_index].name_id).characters
         );
         break;
@@ -3007,29 +3548,45 @@ void analysis_workload_append_to_string(Analysis_Workload* workload, String* str
         break;
     }
     case Analysis_Workload_Type::STRUCT_BODY: {
-        string_append_formated(string, "Struct Body, name: %s", 
+        string_append_formated(string, "Struct Body, name: %s",
             lexer_identifer_to_string(&analyser->compiler->lexer, workload->options.struct_body.struct_signature->struct_name_handle).characters
         );
+        if (workload->options.struct_body.is_template_instance) {
+            string_append_formated(string, "<");
+            Symbol* symbol = symbol_table_find_symbol(workload->symbol_table, workload->options.struct_body.symbol_name_id, false);
+            Symbol_Template_Instance* instance = &symbol->template_instances[workload->options.struct_body.symbol_instance_index];
+            for (int i = 0; i < instance->template_arguments.size; i++) {
+                type_signature_append_to_string(string, instance->template_arguments[i]);
+                if (i != instance->template_arguments.size-1) {
+                    string_append_formated(string, ", ");
+                }
+            }
+            string_append_formated(string, ">");
+        }
         break;
     }
-    case Analysis_Workload_Type::STRUCT_HEADER:
-        string_append_formated(string, "Struct Header, name: %s", 
-            lexer_identifer_to_string(&analyser->compiler->lexer, analyser->compiler->parser.nodes[workload->node_index].name_id).characters
-        );
-        break;
+    default: panic("Hey");
     }
 }
 
 void identifer_or_path_append_to_string(int node_index, Semantic_Analyser* analyser, String* string)
 {
     AST_Node* node = &analyser->compiler->parser.nodes[node_index];
-    assert(node->type == AST_Node_Type::IDENTIFIER || node->type == AST_Node_Type::IDENTIFIER_PATH, "hEY");
-    while (node->type != AST_Node_Type::IDENTIFIER)
+    assert(node->type == AST_Node_Type::IDENTIFIER_NAME ||
+        node->type == AST_Node_Type::IDENTIFIER_PATH ||
+        node->type == AST_Node_Type::IDENTIFIER_NAME_TEMPLATED ||
+        node->type == AST_Node_Type::IDENTIFIER_PATH_TEMPLATED, "hEY");
+    while (node->type != AST_Node_Type::IDENTIFIER_NAME && node->type != AST_Node_Type::IDENTIFIER_NAME_TEMPLATED)
     {
         string_append_formated(string, "%s::", lexer_identifer_to_string(&analyser->compiler->lexer, node->name_id).characters);
-        node = &analyser->compiler->parser.nodes[node->children[0]];
+        if (node->type == AST_Node_Type::IDENTIFIER_PATH) {
+            node = &analyser->compiler->parser.nodes[node->children[0]];
+        }
+        else {
+            node = &analyser->compiler->parser.nodes[node->children[1]];
+        }
     }
-    if (node->type == AST_Node_Type::IDENTIFIER) {
+    if (node->type == AST_Node_Type::IDENTIFIER_NAME) {
         string_append_formated(string, "%s", lexer_identifer_to_string(&analyser->compiler->lexer, node->name_id).characters);
     }
 }
@@ -3047,8 +3604,29 @@ void workload_dependency_append_to_string(Workload_Dependency* dependency, Strin
         string_append_formated(string, "\"");
         break;
     case Workload_Dependency_Type::TYPE_SIZE_UNKNOWN:
-        string_append_formated(string, "Type size unknown");
+        string_append_formated(string, "Type size unknown ");
+        type_signature_append_to_string(string, dependency->options.type_signature);
         break;
+    case Workload_Dependency_Type::TEMPLATE_INSTANCE_NOT_FINISHED: {
+        string_append_formated(string, "Template Instance not finished: ");
+        Symbol* s = symbol_table_find_symbol(dependency->options.template_not_finished.symbol_table, dependency->options.template_not_finished.symbol_name_id, false);
+        assert(s != 0, "HEY");
+        assert(s->is_templated, "HEY");
+        assert(s->symbol_type == Symbol_Type::TYPE, "Hey");
+        assert(s->options.data_type->type == Signature_Type::STRUCT, "hey");
+        string_append_formated(string, lexer_identifer_to_string(&analyser->compiler->lexer, s->options.data_type->struct_name_handle).characters);
+        string_append_formated(string, "<");
+        Symbol_Template_Instance* instance = &s->template_instances[dependency->options.template_not_finished.instance_index];
+        for (int i = 0; i < instance->template_arguments.size; i++) {
+            type_signature_append_to_string(string, instance->template_arguments[i]);
+            if (i != instance->template_arguments.size - 1) {
+                string_append_formated(string, ", ");
+            }
+        }
+        string_append_formated(string, ">");
+        break;
+    }
+    default: panic("hey");
     }
 }
 
@@ -3068,7 +3646,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
         hashtable_reset(&analyser->finished_code_blocks);
         hashtable_reset(&analyser->ast_to_symbol_table);
 
-        analyser->root_table = symbol_table_create(analyser, nullptr, 0, false);
+        analyser->root_table = symbol_table_create(analyser, nullptr, 0, true);
         if (analyser->program != 0) {
             ir_program_destroy(analyser->program);
         }
@@ -3101,22 +3679,22 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
         int void_token_index = lexer_add_or_find_identifier_by_string(compiler->parser.lexer, string_create_static("void"));
         int string_token_index = lexer_add_or_find_identifier_by_string(compiler->parser.lexer, string_create_static("String"));
 
-        semantic_analyser_define_type(analyser, analyser->root_table, int_token_index, analyser->compiler->type_system.i32_type, -1);
-        semantic_analyser_define_type(analyser, analyser->root_table, bool_token_index, analyser->compiler->type_system.bool_type, -1);
-        semantic_analyser_define_type(analyser, analyser->root_table, float_token_index, analyser->compiler->type_system.f32_type, -1);
-        semantic_analyser_define_type(analyser, analyser->root_table, f32_token_index, analyser->compiler->type_system.f32_type, -1);
-        semantic_analyser_define_type(analyser, analyser->root_table, f64_token_index, analyser->compiler->type_system.f64_type, -1);
-        semantic_analyser_define_type(analyser, analyser->root_table, u8_token_index, analyser->compiler->type_system.u8_type, -1);
-        semantic_analyser_define_type(analyser, analyser->root_table, byte_token_index, analyser->compiler->type_system.u8_type, -1);
-        semantic_analyser_define_type(analyser, analyser->root_table, u16_token_index, analyser->compiler->type_system.u16_type, -1);
-        semantic_analyser_define_type(analyser, analyser->root_table, u32_token_index, analyser->compiler->type_system.u32_type, -1);
-        semantic_analyser_define_type(analyser, analyser->root_table, u64_token_index, analyser->compiler->type_system.u64_type, -1);
-        semantic_analyser_define_type(analyser, analyser->root_table, i8_token_index, analyser->compiler->type_system.i8_type, -1);
-        semantic_analyser_define_type(analyser, analyser->root_table, i16_token_index, analyser->compiler->type_system.i16_type, -1);
-        semantic_analyser_define_type(analyser, analyser->root_table, i32_token_index, analyser->compiler->type_system.i32_type, -1);
-        semantic_analyser_define_type(analyser, analyser->root_table, i64_token_index, analyser->compiler->type_system.i64_type, -1);
-        semantic_analyser_define_type(analyser, analyser->root_table, void_token_index, analyser->compiler->type_system.void_type, -1);
-        semantic_analyser_define_type(analyser, analyser->root_table, string_token_index, analyser->compiler->type_system.string_type, -1);
+        semantic_analyser_define_type_symbol(analyser, analyser->root_table, int_token_index, analyser->compiler->type_system.i32_type, -1);
+        semantic_analyser_define_type_symbol(analyser, analyser->root_table, bool_token_index, analyser->compiler->type_system.bool_type, -1);
+        semantic_analyser_define_type_symbol(analyser, analyser->root_table, float_token_index, analyser->compiler->type_system.f32_type, -1);
+        semantic_analyser_define_type_symbol(analyser, analyser->root_table, f32_token_index, analyser->compiler->type_system.f32_type, -1);
+        semantic_analyser_define_type_symbol(analyser, analyser->root_table, f64_token_index, analyser->compiler->type_system.f64_type, -1);
+        semantic_analyser_define_type_symbol(analyser, analyser->root_table, u8_token_index, analyser->compiler->type_system.u8_type, -1);
+        semantic_analyser_define_type_symbol(analyser, analyser->root_table, byte_token_index, analyser->compiler->type_system.u8_type, -1);
+        semantic_analyser_define_type_symbol(analyser, analyser->root_table, u16_token_index, analyser->compiler->type_system.u16_type, -1);
+        semantic_analyser_define_type_symbol(analyser, analyser->root_table, u32_token_index, analyser->compiler->type_system.u32_type, -1);
+        semantic_analyser_define_type_symbol(analyser, analyser->root_table, u64_token_index, analyser->compiler->type_system.u64_type, -1);
+        semantic_analyser_define_type_symbol(analyser, analyser->root_table, i8_token_index, analyser->compiler->type_system.i8_type, -1);
+        semantic_analyser_define_type_symbol(analyser, analyser->root_table, i16_token_index, analyser->compiler->type_system.i16_type, -1);
+        semantic_analyser_define_type_symbol(analyser, analyser->root_table, i32_token_index, analyser->compiler->type_system.i32_type, -1);
+        semantic_analyser_define_type_symbol(analyser, analyser->root_table, i64_token_index, analyser->compiler->type_system.i64_type, -1);
+        semantic_analyser_define_type_symbol(analyser, analyser->root_table, void_token_index, analyser->compiler->type_system.void_type, -1);
+        semantic_analyser_define_type_symbol(analyser, analyser->root_table, string_token_index, analyser->compiler->type_system.string_type, -1);
 
         analyser->token_index_size = lexer_add_or_find_identifier_by_string(compiler->parser.lexer, string_create_static("size"));
         analyser->token_index_data = lexer_add_or_find_identifier_by_string(compiler->parser.lexer, string_create_static("data"));
@@ -3129,6 +3707,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
         IR_Hardcoded_Function* hardcoded = analyser->program->hardcoded_functions[i];
         Symbol symbol;
         symbol.definition_node_index = -1;
+        symbol.is_templated = false;
         symbol.options.hardcoded_function = hardcoded;
         symbol.symbol_type = Symbol_Type::HARDCODED_FUNCTION;
         switch (hardcoded->type)
@@ -3188,6 +3767,16 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
         Analysis_Workload workload = analyser->active_workloads[analyser->active_workloads.size - 1];
         dynamic_array_swap_remove(&analyser->active_workloads, analyser->active_workloads.size - 1);
 
+        if (PRINT_DEPENDENCIES)
+        {
+            String output = string_create_empty(256);
+            SCOPE_EXIT(string_destroy(&output));
+            string_append_formated(&output, "WORKING ON: ");
+            analysis_workload_append_to_string(&workload, &output, analyser);
+            string_append_formated(&output, "\n");
+            logg(output.characters);
+        }
+
         bool found_workload_dependency = false;
         Workload_Dependency found_dependency;
 
@@ -3218,10 +3807,10 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                 if (signature_node->children.size == 2)
                 {
                     Type_Analysis_Result return_type_result = semantic_analyser_analyse_type(analyser, workload.symbol_table, signature_node->children[1]);
-                    if (return_type_result.type == Type_Analysis_Result_Type::SUCCESS) {
+                    if (return_type_result.type == Analysis_Result_Type::SUCCESS) {
                         return_type = return_type_result.options.result_type;
                     }
-                    else if (return_type_result.type == Type_Analysis_Result_Type::ERROR_OCCURED) {
+                    else if (return_type_result.type == Analysis_Result_Type::ERROR_OCCURED) {
                         return_type = analyser->compiler->type_system.error_type;
                     }
                     else {
@@ -3240,10 +3829,10 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                     int parameter_index = parameter_block->children[i];
                     AST_Node* parameter = &analyser->compiler->parser.nodes[parameter_index];
                     Type_Analysis_Result param_type_result = semantic_analyser_analyse_type(analyser, workload.symbol_table, parameter->children[0]);
-                    if (param_type_result.type == Type_Analysis_Result_Type::SUCCESS) {
+                    if (param_type_result.type == Analysis_Result_Type::SUCCESS) {
                         dynamic_array_push_back(&parameter_types, param_type_result.options.result_type);
                     }
-                    else if (param_type_result.type == Type_Analysis_Result_Type::ERROR_OCCURED) {
+                    else if (param_type_result.type == Analysis_Result_Type::ERROR_OCCURED) {
                         dynamic_array_push_back(&parameter_types, analyser->compiler->type_system.error_type);
                     }
                     else {
@@ -3261,12 +3850,13 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
 
             // Create function
             IR_Function* function = ir_function_create(analyser->program, function_type);
-            Symbol_Table* function_table = symbol_table_create(analyser, workload.symbol_table, workload.node_index, false);
+            Symbol_Table* function_table = symbol_table_create(analyser, workload.symbol_table, workload.node_index, true);
             {
                 Symbol function_symbol;
                 function_symbol.definition_node_index = workload.node_index;
                 function_symbol.name_handle = function_node->name_id;
                 function_symbol.options.function = function;
+                function_symbol.is_templated = false;
                 function_symbol.symbol_type = Symbol_Type::FUNCTION;
                 symbol_table_define_symbol(workload.symbol_table, analyser, function_symbol, false);
                 if (function_node->name_id == analyser->token_index_main) {
@@ -3287,6 +3877,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
 
                     Symbol symbol;
                     symbol.definition_node_index = parameter_index;
+                    symbol.is_templated = false;
                     symbol.name_handle = parameter->name_id;
                     symbol.symbol_type = Symbol_Type::VARIABLE;
                     symbol.options.variable_access.index = i;
@@ -3321,7 +3912,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
             Variable_Creation_Analysis_Result result = semantic_analyser_analyse_variable_creation_statements(analyser,
                 workload.symbol_table, workload.node_index, analyser->global_init_function->code, true
             );
-            if (!result.was_successfull) {
+            if (result.type == Analysis_Result_Type::DEPENDENCY) {
                 found_workload_dependency = true;
                 found_dependency = result.dependency;
             }
@@ -3418,15 +4009,15 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                             );
                             switch (expr_result.type)
                             {
-                            case Expression_Analysis_Result_Type::SUCCESS: {
+                            case Analysis_Result_Type::SUCCESS: {
                                 return_type = expr_result.options.success.result_type;
                                 break;
                             }
-                            case Expression_Analysis_Result_Type::DEPENDENCY:
+                            case Analysis_Result_Type::DEPENDENCY:
                                 found_dependency = expr_result.options.dependency;
                                 found_workload_dependency = true;
                                 break;
-                            case Expression_Analysis_Result_Type::ERROR_OCCURED:
+                            case Analysis_Result_Type::ERROR_OCCURED:
                                 continue;
                             }
                         }
@@ -3510,7 +4101,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                     Expression_Analysis_Result result = semantic_analyser_analyse_expression(
                         analyser, workload.symbol_table, statement_node->children[0], block_workload->code_block, true, &temp
                     );
-                    if (result.type == Expression_Analysis_Result_Type::DEPENDENCY) {
+                    if (result.type == Analysis_Result_Type::DEPENDENCY) {
                         found_workload_dependency = true;
                         found_dependency = result.options.dependency;
                     }
@@ -3540,16 +4131,16 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                     );
                     switch (expression_result.type)
                     {
-                    case Expression_Analysis_Result_Type::SUCCESS:
+                    case Analysis_Result_Type::SUCCESS:
                         if (expression_result.options.success.result_type != analyser->compiler->type_system.bool_type) {
                             semantic_analyser_log_error(analyser, "If condition must be boolean value", statement_index);
                         }
                         break;
-                    case Expression_Analysis_Result_Type::DEPENDENCY:
+                    case Analysis_Result_Type::DEPENDENCY:
                         found_workload_dependency = true;
                         found_dependency = expression_result.options.dependency;
                         break;
-                    case Expression_Analysis_Result_Type::ERROR_OCCURED:
+                    case Analysis_Result_Type::ERROR_OCCURED:
                         break;
                     default: panic("what");
                     }
@@ -3575,16 +4166,16 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                     );
                     switch (expression_result.type)
                     {
-                    case Expression_Analysis_Result_Type::SUCCESS:
+                    case Analysis_Result_Type::SUCCESS:
                         if (expression_result.options.success.result_type != analyser->compiler->type_system.bool_type) {
                             semantic_analyser_log_error(analyser, "If condition must be boolean value", statement_index);
                         }
                         break;
-                    case Expression_Analysis_Result_Type::DEPENDENCY:
+                    case Analysis_Result_Type::DEPENDENCY:
                         found_workload_dependency = true;
                         found_dependency = expression_result.options.dependency;
                         break;
-                    case Expression_Analysis_Result_Type::ERROR_OCCURED:
+                    case Analysis_Result_Type::ERROR_OCCURED:
                         break;
                     default: panic("what");
                     }
@@ -3624,16 +4215,16 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                     );
                     switch (expression_result.type)
                     {
-                    case Expression_Analysis_Result_Type::SUCCESS:
+                    case Analysis_Result_Type::SUCCESS:
                         if (expression_result.options.success.result_type != analyser->compiler->type_system.bool_type) {
                             semantic_analyser_log_error(analyser, "While condition must be boolean value", statement_index);
                         }
                         break;
-                    case Expression_Analysis_Result_Type::DEPENDENCY:
+                    case Analysis_Result_Type::DEPENDENCY:
                         found_workload_dependency = true;
                         found_dependency = expression_result.options.dependency;
                         break;
-                    case Expression_Analysis_Result_Type::ERROR_OCCURED:
+                    case Analysis_Result_Type::ERROR_OCCURED:
                         break;
                     default: panic("what");
                     }
@@ -3667,7 +4258,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                     Type_Signature* delete_type = expr_result.options.success.result_type;
                     switch (expr_result.type)
                     {
-                    case Expression_Analysis_Result_Type::SUCCESS:
+                    case Analysis_Result_Type::SUCCESS:
                     {
                         delete_type = expr_result.options.success.result_type;
                         if (delete_type->type != Signature_Type::POINTER && delete_type->type != Signature_Type::ARRAY_UNSIZED) {
@@ -3677,11 +4268,11 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                         break;
                     }
                     break;
-                    case Expression_Analysis_Result_Type::DEPENDENCY:
+                    case Analysis_Result_Type::DEPENDENCY:
                         found_workload_dependency = true;
                         found_dependency = expr_result.options.dependency;
                         break;
-                    case Expression_Analysis_Result_Type::ERROR_OCCURED:
+                    case Analysis_Result_Type::ERROR_OCCURED:
                         error_occured = true;
                         break;
                     default: panic("what");
@@ -3732,14 +4323,14 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                     Type_Signature* left_type;
                     switch (left_result.type)
                     {
-                    case Expression_Analysis_Result_Type::SUCCESS:
+                    case Analysis_Result_Type::SUCCESS:
                         left_type = left_result.options.success.result_type;
                         break;
-                    case Expression_Analysis_Result_Type::DEPENDENCY:
+                    case Analysis_Result_Type::DEPENDENCY:
                         found_workload_dependency = true;
                         found_dependency = left_result.options.dependency;
                         break;
-                    case Expression_Analysis_Result_Type::ERROR_OCCURED:
+                    case Analysis_Result_Type::ERROR_OCCURED:
                         error_occured = true;
                         break;
                     default: panic("what");
@@ -3755,14 +4346,14 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                     Type_Signature* right_type = 0;
                     switch (right_result.type)
                     {
-                    case Expression_Analysis_Result_Type::SUCCESS:
+                    case Analysis_Result_Type::SUCCESS:
                         right_type = right_result.options.success.result_type;
                         break;
-                    case Expression_Analysis_Result_Type::DEPENDENCY:
+                    case Analysis_Result_Type::DEPENDENCY:
                         found_workload_dependency = true;
                         found_dependency = right_result.options.dependency;
                         break;
-                    case Expression_Analysis_Result_Type::ERROR_OCCURED:
+                    case Analysis_Result_Type::ERROR_OCCURED:
                         error_occured = true;
                         break;
                     default: panic("what");
@@ -3799,7 +4390,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                     Variable_Creation_Analysis_Result result = semantic_analyser_analyse_variable_creation_statements(
                         analyser, workload.symbol_table, statement_index, block_workload->code_block, false
                     );
-                    if (!result.was_successfull) {
+                    if (result.type == Analysis_Result_Type::DEPENDENCY) {
                         found_workload_dependency = true;
                         found_dependency = result.dependency;
                     }
@@ -3841,41 +4432,6 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
             hashtable_insert_element(&analyser->finished_code_blocks, block_workload->code_block, statement_result);
             break;
         }
-        case Analysis_Workload_Type::STRUCT_HEADER:
-        {
-            AST_Node* struct_node = &nodes->data[workload.node_index];
-
-            Type_Signature* signature;
-            {
-                Type_Signature struct_sig;
-                struct_sig.type = Signature_Type::STRUCT;
-                struct_sig.member_types = dynamic_array_create_empty<Struct_Member>(4);
-                struct_sig.alignment_in_bytes = 0;
-                struct_sig.size_in_bytes = 0;
-                struct_sig.struct_name_handle = struct_node->name_id;
-                signature = type_system_register_type(&analyser->compiler->type_system, struct_sig);
-            }
-            semantic_analyser_define_type(analyser, workload.symbol_table, struct_node->name_id, signature, workload.node_index);
-
-            if (struct_node->children.size == 0) {
-                semantic_analyser_log_error(analyser, "Struct cannot have 0 members", workload.node_index);
-                break;
-            }
-
-            // Prepare struct body workload
-            {
-                Analysis_Workload body_workload;
-                body_workload.node_index = workload.node_index;
-                body_workload.symbol_table = workload.symbol_table;
-                body_workload.type = Analysis_Workload_Type::STRUCT_BODY;
-                body_workload.options.struct_body.struct_signature = signature;
-                body_workload.options.struct_body.current_child_index = 0;
-                body_workload.options.struct_body.offset = 0;
-                body_workload.options.struct_body.alignment = 0;
-                dynamic_array_push_back(&analyser->active_workloads, body_workload);
-            }
-            break;
-        }
         case Analysis_Workload_Type::STRUCT_BODY:
         {
             AST_Node* struct_node = &nodes->data[workload.node_index];
@@ -3887,22 +4443,24 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
             for (int i = workload.options.struct_body.current_child_index; i < struct_node->children.size; i++)
             {
                 AST_Node* member_definition_node = &(*nodes)[struct_node->children[i]]; // 
-                Type_Analysis_Result member_result = semantic_analyser_analyse_type(analyser, workload.symbol_table, member_definition_node->children[0]);
+                Type_Analysis_Result member_result = semantic_analyser_analyse_type(
+                    analyser, workload.options.struct_body.type_lookup_table, member_definition_node->children[0]
+                );
                 Type_Signature* member_type = 0;
                 switch (member_result.type)
                 {
-                case Type_Analysis_Result_Type::SUCCESS:
+                case Analysis_Result_Type::SUCCESS:
                     member_type = member_result.options.result_type;
                     if (member_type->alignment_in_bytes == 0 && member_type->size_in_bytes == 0) {
                         found_workload_dependency = true;
                         found_dependency = workload_dependency_make_type_size_unknown(member_type, struct_node->children[i]);
                     }
                     break;
-                case Type_Analysis_Result_Type::DEPENDENCY:
+                case Analysis_Result_Type::DEPENDENCY:
                     found_workload_dependency = true;
                     found_dependency = member_result.options.dependency;
                     break;
-                case Type_Analysis_Result_Type::ERROR_OCCURED:
+                case Analysis_Result_Type::ERROR_OCCURED:
                     member_type = analyser->compiler->type_system.error_type;
                     break;
                 default: panic("HEY");
@@ -3934,6 +4492,12 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
 
             struct_signature->size_in_bytes = workload.options.struct_body.offset;
             struct_signature->alignment_in_bytes = workload.options.struct_body.alignment;
+            if (workload.options.struct_body.is_template_instance) {
+                Symbol* struct_symbol = symbol_table_find_symbol(workload.symbol_table, workload.options.struct_body.symbol_name_id, true);
+                assert(struct_symbol != 0, "hey");
+                struct_symbol->template_instances[workload.options.struct_body.symbol_instance_index].instanciated = true;
+                struct_symbol->template_instances[workload.options.struct_body.symbol_instance_index].options.data_type = workload.options.struct_body.struct_signature;
+            }
 
             break;
         }
@@ -3941,7 +4505,8 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
         }
 
         // Finish Workload
-        if (found_workload_dependency) {
+        if (found_workload_dependency)
+        {
             Waiting_Workload waiting;
             waiting.workload = workload;
             waiting.dependency = found_dependency;
@@ -3972,10 +4537,10 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                 logg(output.characters);
             }
 
+            // Destroy Workload
             switch (workload.type)
             {
             case Analysis_Workload_Type::FUNCTION_HEADER:
-            case Analysis_Workload_Type::STRUCT_HEADER:
             case Analysis_Workload_Type::STRUCT_BODY:
             case Analysis_Workload_Type::GLOBAL:
             case Analysis_Workload_Type::SIZED_ARRAY_SIZE:
@@ -3988,12 +4553,14 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
         }
 
         // Check if dependencies have been resolved
-        if (analyser->active_workloads.size == 0) {
+        if (analyser->active_workloads.size == 0)
+        {
             // TODO: We would probably want a message system at some point, which resolves these things automatically
             for (int i = 0; i < analyser->waiting_workload.size; i++)
             {
                 Waiting_Workload* waiting = &analyser->waiting_workload[i];
                 bool dependency_resolved = false;
+                bool error_occured = false;
                 // Check if dependency is resolved
                 switch (waiting->dependency.type)
                 {
@@ -4002,12 +4569,27 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                     dependency_resolved = result != 0;
                     break;
                 }
-                case Workload_Dependency_Type::IDENTIFER_NOT_FOUND: {
-                    Symbol* symbol = symbol_table_find_symbol_of_identifer_node(
-                        waiting->dependency.options.symbol_table,
-                        &analyser->compiler->parser, waiting->dependency.node_index, false
+                case Workload_Dependency_Type::IDENTIFER_NOT_FOUND:
+                {
+                    Identifier_Analysis_Result result = semantic_analyser_analyse_identifier_node_with_template_arguments(
+                        analyser,
+                        waiting->dependency.options.identifier_not_found.symbol_table,
+                        &analyser->compiler->parser, waiting->dependency.node_index, waiting->dependency.options.identifier_not_found.current_scope_only,
+                        waiting->dependency.options.identifier_not_found.template_parameter_names
                     );
-                    dependency_resolved = symbol != 0;
+                    switch (result.type)
+                    {
+                    case Analysis_Result_Type::SUCCESS:
+                        dependency_resolved = true;
+                        break;
+                    case Analysis_Result_Type::DEPENDENCY:
+                        waiting->dependency = result.options.dependency;
+                        break;
+                    case Analysis_Result_Type::ERROR_OCCURED:
+                        dependency_resolved = true;
+                        error_occured = true;
+                        break;
+                    }
                     break;
                 }
                 case Workload_Dependency_Type::TYPE_SIZE_UNKNOWN: {
@@ -4015,12 +4597,22 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                         waiting->dependency.options.type_signature->size_in_bytes != 0) {
                         dependency_resolved = true;
                     }
+                    break;
                 }
+                case Workload_Dependency_Type::TEMPLATE_INSTANCE_NOT_FINISHED: {
+                    Symbol* symbol = symbol_table_find_symbol(waiting->dependency.options.template_not_finished.symbol_table,
+                        waiting->dependency.options.template_not_finished.symbol_name_id, false);
+                    assert(symbol != 0, "Hey");
+                    Symbol_Template_Instance* instance = &symbol->template_instances[waiting->dependency.options.template_not_finished.instance_index];
+                    dependency_resolved = instance->instanciated;
+                    break;
+                }
+                default: panic("Hey"); break;
                 }
 
                 if (dependency_resolved)
                 {
-                    if (PRINT_DEPENDENCIES)
+                    if (PRINT_DEPENDENCIES && !error_occured)
                     {
                         String output = string_create_empty(256);
                         SCOPE_EXIT(string_destroy(&output));
@@ -4032,7 +4624,22 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                         logg(output.characters);
                     }
 
-                    dynamic_array_push_back(&analyser->active_workloads, waiting->workload);
+                    if (!error_occured)
+                    {
+                        dynamic_array_push_back(&analyser->active_workloads, waiting->workload);
+                        // Clean up Dependency
+                        switch (waiting->dependency.type)
+                        {
+                        case Workload_Dependency_Type::CODE_BLOCK_NOT_FINISHED:
+                        case Workload_Dependency_Type::TEMPLATE_INSTANCE_NOT_FINISHED:
+                        case Workload_Dependency_Type::TYPE_SIZE_UNKNOWN:
+                            break;
+                        case Workload_Dependency_Type::IDENTIFER_NOT_FOUND:
+                            dynamic_array_destroy(&waiting->dependency.options.identifier_not_found.template_parameter_names);
+                            break;
+                        default: panic("What");
+                        }
+                    }
                     dynamic_array_swap_remove(&analyser->waiting_workload, i);
                     i = i - 1;
                 }
@@ -4042,24 +4649,30 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
 
     // Add return for global init function
     {
-    IR_Instruction return_instr;
-    return_instr.type = IR_Instruction_Type::RETURN;
-    return_instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_EMPTY;
-    dynamic_array_push_back(&analyser->global_init_function->code->instructions, return_instr);
-    if (analyser->program->entry_function == 0) {
-        semantic_analyser_log_error(analyser, "Main function not defined!", math_maximum(0, analyser->compiler->parser.nodes.size - 1));
-    }
+        IR_Instruction return_instr;
+        return_instr.type = IR_Instruction_Type::RETURN;
+        return_instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_EMPTY;
+        dynamic_array_push_back(&analyser->global_init_function->code->instructions, return_instr);
+        if (analyser->program->entry_function == 0) {
+            semantic_analyser_log_error(analyser, "Main function not defined!", math_maximum(0, analyser->compiler->parser.nodes.size - 1));
+        }
     }
 
 
     // Log unresolved dependency errors
     if (analyser->errors.size == 0 && analyser->waiting_workload.size != 0)
     {
-        for (int i = 0; i < analyser->waiting_workload.size; i++) {
+        for (int i = 0; i < analyser->waiting_workload.size; i++)
+        {
             Workload_Dependency* dependency = &analyser->waiting_workload[i].dependency;
             switch (dependency->type)
             {
+            case Workload_Dependency_Type::TEMPLATE_INSTANCE_NOT_FINISHED: {
+                semantic_analyser_log_error(analyser, "Cannot instanciate template", dependency->node_index);
+                break;
+            }
             case Workload_Dependency_Type::CODE_BLOCK_NOT_FINISHED: {
+                semantic_analyser_log_error(analyser, "Cannot finish code block", dependency->node_index);
                 break;
             }
             case Workload_Dependency_Type::IDENTIFER_NOT_FOUND:
@@ -4068,6 +4681,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
             case Workload_Dependency_Type::TYPE_SIZE_UNKNOWN:
                 semantic_analyser_log_error(analyser, "Could not determine type size", dependency->node_index);
                 break;
+            default: panic("Hey"); break;
             }
         }
     }
