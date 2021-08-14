@@ -39,6 +39,7 @@ bool enable_lexing = true;
 bool enable_parsing = true;
 bool enable_analysis = true;
 bool enable_bytecode_gen = true;
+bool enable_c_generation = true;
 bool enable_execution = true;
 bool enable_output = true;
 
@@ -57,6 +58,7 @@ void compiler_compile(Compiler* compiler, String* source_code, bool generate_cod
     bool do_parsing = do_lexing && enable_parsing;
     bool do_analysis = do_parsing && enable_analysis;
     bool do_bytecode_gen = do_analysis && enable_bytecode_gen && generate_code;
+    bool do_c_generation = do_analysis && enable_c_generation && generate_code;
 
     double time_start_lexing = timer_current_time_in_seconds(compiler->timer);
     if (do_lexing) {
@@ -83,6 +85,12 @@ void compiler_compile(Compiler* compiler, String* source_code, bool generate_cod
         bytecode_generator_generate(&compiler->bytecode_generator, compiler);
     }
     double time_end_codegen = timer_current_time_in_seconds(compiler->timer);
+
+    double time_start_c_gen = timer_current_time_in_seconds(compiler->timer);
+    if (do_c_generation && compiler->parser.errors.size == 0 && compiler->analyser.errors.size == 0) {
+        c_generator_generate(&compiler->c_generator, compiler);
+    }
+    double time_end_c_gen = timer_current_time_in_seconds(compiler->timer);
 
     double time_start_output = timer_current_time_in_seconds(compiler->timer);
     if (enable_output && generate_code)
@@ -165,6 +173,9 @@ void compiler_compile(Compiler* compiler, String* source_code, bool generate_cod
         if (enable_output) {
             logg("output       ... %3.2fms\n", (time_end_output - time_start_output) * 1000);
         }
+        if (enable_c_generation) {
+            logg("output       ... %3.2fms\n", (time_end_c_gen - time_start_c_gen) * 1000);
+        }
     }
 }
 
@@ -185,7 +196,7 @@ void compiler_execute(Compiler* compiler)
         double bytecode_end = timer_current_time_in_seconds(compiler->timer);
         float bytecode_time = (bytecode_end - bytecode_start);
         if (compiler->bytecode_interpreter.exit_code == IR_Exit_Code::SUCCESS) {
-            logg("Interpreter: Exit SUCCESS");
+            logg("Interpreter: Exit SUCCESS\n");
             //logg("Bytecode interpreter result: %d (%2.5f seconds)\n", *(int*)(byte*)&compiler->bytecode_interpreter.return_register[0], bytecode_time);
         }
         else {

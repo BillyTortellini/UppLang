@@ -127,6 +127,7 @@
     <ClCompile Include="win32\windows_helper_functions.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <Text Include="..\resources\Examples.txt" />
     <Text Include="..\resources\TODO.txt" />
   </ItemGroup>
   <ItemGroup>

@@ -40,6 +40,9 @@ Dynamic_Array<T> dynamic_array_create_copy(T* data, int size) {
 template <typename T>
 void dynamic_array_destroy(Dynamic_Array<T>* array) {
     delete[] array->data;
+    array->data = 0;
+    array->size = 0;
+    array->capacity = 0;
 }
 
 template <typename T>

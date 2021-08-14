@@ -412,6 +412,9 @@
     <Text Include="..\resources\TODO.txt">
       <Filter>Resource Files</Filter>
     </Text>
+    <Text Include="..\resources\Examples.txt">
+      <Filter>Resource Files</Filter>
+    </Text>
   </ItemGroup>
   <ItemGroup>
     <None Include="..\resources\shaders\test.glsl">

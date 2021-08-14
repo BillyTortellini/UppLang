@@ -1,38 +1,93 @@
-module Test<T>
+/*
+module Dynamic_Array<T>
 {
-    Holder :: struct
+    Dynamic_Array :: struct
     {
-        value: T;
+        buffer: []T;
+        size: i32;
     }
     
-    Node :: struct
+    create_empty :: (initial_capacity: int) -> Dynamic_Array<T>
     {
-        node: *Node<T>;
-        x: Holder<T>;
+        result: Dynamic_Array<T>;
+        result.buffer = new [initial_capacity]T;
+        result.size = 0;
+        return result;
+    }
+    
+    destroy :: (array: *Dynamic_Array<T>) 
+    {
+        delete array.buffer;
+        array.buffer.data = nullptr;
+        array.buffer.size = 0;
+        array.size = 0;
+    }
+    
+    array_copy :: (destination: []T, source: []T) 
+    {
+        if (destination.size != source.size) {
+            return;
+        }
+        i := 0;
+        while i < source.size {
+            destination[i] = source[i];
+            i = i + 1;
+        }
+    }
+    
+    reserve :: (array: *Dynamic_Array<T>, required: i32) 
+    {
+        if array.buffer.size < required 
+        {
+            new_capacity := array.buffer.size;
+            while new_capacity < required {
+                new_capacity = new_capacity * 2;
+            }
+            new_buffer := new [new_capacity]T;
+            array_copy<T>(new_buffer, array.buffer);
+            delete array.buffer;
+            array.buffer = new_buffer;
+        }
+    }
+    
+    push_back :: (array: *Dynamic_Array<T>, value: T) {
+        array.size = array.size + 1;
+        reserve<T>(array, array.size);
+        array.buffer[array.size-1] = value;
+        
+        print_string("Pushing back: ");
+        ip: *int = cast<*i32>(*value);
+        print_i32(&ip);
+        print_line();
     }
 }
 
 main :: ()
 {
+    arr := Dynamic_Array<int>::create_empty(16);
+    defer Dynamic_Array<int>::destroy(*arr);
+    
+    Dynamic_Array<int>::push_back(*arr, 5);
+    Dynamic_Array<int>::push_back(*arr, 6);
+    Dynamic_Array<int>::push_back(*arr, 7);
+    
+    i := 0;
+    end := arr.size;
+    while i < end
     {
-        x: Test<int>::Holder;
-        x.value = 69;
-        print_i32(x.value);
-        print_line();
-    
-        z: Test<int>::Holder;
-        z = x;
-    
-        y: Test<*int>::Holder;
-        y.value = *z.value;
-        print_i32(&y.value);
-        print_line();
-    
-        test: Test<Test<*int>::Holder>::Holder;
-        test.value = y;
-        print_i32(&test.value.value);
-        print_line();
+        print_i32(arr.buffer[i]);
+        if i != arr.size-1 {
+            print_string(", ");
+        }
+        i = i+1;
     }
-    
-    defer print_line();
+    print_line();
+}
+*/
+
+main :: ()
+{
+    x := "Hello World\n";
+    //print_i32(69);
+    print_string(x);
 }

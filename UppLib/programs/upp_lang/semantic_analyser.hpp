@@ -507,6 +507,16 @@ struct Analysis_Workload_Struct_Body
     int symbol_instance_index;
 };
 
+struct Analysis_Workload_Function_Header
+{
+    Symbol_Table* type_lookup_table;
+    bool is_template_instance;
+    int symbol_name_id;
+    int symbol_instance_index;
+    bool is_template_analysis;
+    Dynamic_Array<int> template_parameter_names;
+};
+
 struct Analysis_Workload
 {
     Analysis_Workload_Type type;
@@ -517,6 +527,7 @@ struct Analysis_Workload
         Analysis_Workload_Struct_Body struct_body;
         Analysis_Workload_Code_Block code_block;
         Type_Signature* sized_array_type;
+        Analysis_Workload_Function_Header function_header;
     } options;
 };
 

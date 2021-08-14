@@ -5,6 +5,17 @@
 #include <iostream>
 #include <ctime>
 
+
+Upp_String upp_create_static_string(u8* data, i32 size) {
+	Upp_String result; result.character_buffer.data = data; result.character_buffer.size = 0; result.size = size; return result;
+}
+
+void print_string(Upp_String str)
+{
+	printf("%s", str.character_buffer.data);
+	return;
+}
+
 void print_i32(i32 x) 
 {
 	printf("%d", x);
