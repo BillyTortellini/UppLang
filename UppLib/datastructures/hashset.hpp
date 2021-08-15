@@ -97,6 +97,16 @@ Hashset<T> hashset_create_empty(int capacity, u64(*hash_function)(T*), bool(*equ
     return result;
 }
 
+template <typename K>
+Hashset<K> hashset_create_pointer_empty(int capacity) 
+{
+    return hashset_create_empty<K>(
+        capacity,
+        [](K* key) -> u64 {return hash_pointer(*key); },
+        [](K* a, K* b) -> bool { return (*a) == (*b); }
+    );
+}
+
 template <typename T>
 void hashset_reset(Hashset<T>* set)
 {

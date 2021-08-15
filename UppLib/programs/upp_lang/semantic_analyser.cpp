@@ -2501,19 +2501,27 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
             semantic_analyser_log_error(analyser, "Cannot apply new to void type!", expression_index);
             return expression_analysis_result_make_error();
         }
-        Type_Signature* result_type = type_system_make_pointer(&analyser->compiler->type_system, new_type);
 
         IR_Instruction instruction;
         instruction.type = IR_Instruction_Type::FUNCTION_CALL;
         instruction.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
         instruction.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(1);
         dynamic_array_push_back(&instruction.options.call.arguments, ir_data_access_create_constant_i32(analyser, new_type->size_in_bytes));
+        instruction.options.call.destination = ir_data_access_create_intermediate(code_block, analyser->compiler->type_system.void_ptr_type);
+        instruction.options.call.options.hardcoded = analyser->program->hardcoded_functions[(int)IR_Hardcoded_Function_Type::MALLOC_SIZE_I32];
+        dynamic_array_push_back(&code_block->instructions, instruction);
+
+        Type_Signature* result_type = type_system_make_pointer(&analyser->compiler->type_system, new_type);
+        // Cast to given type
+        IR_Instruction cast_instr;
+        cast_instr.type = IR_Instruction_Type::CAST;
+        cast_instr.options.cast.type = IR_Instruction_Cast_Type::POINTERS;
         if (create_temporary_access) {
             *access = ir_data_access_create_intermediate(code_block, result_type);
         }
-        instruction.options.call.destination = *access;
-        instruction.options.call.options.hardcoded = analyser->program->hardcoded_functions[(int)IR_Hardcoded_Function_Type::MALLOC_SIZE_I32];
-        dynamic_array_push_back(&code_block->instructions, instruction);
+        cast_instr.options.cast.destination = *access;
+        cast_instr.options.cast.source = instruction.options.call.destination;
+        dynamic_array_push_back(&code_block->instructions, cast_instr);
 
         return expression_analysis_result_make_success(result_type, false);
     }
@@ -2599,9 +2607,17 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
         instruction.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
         instruction.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(1);
         dynamic_array_push_back(&instruction.options.call.arguments, array_memory_size_access);
-        instruction.options.call.destination = array_data_access;
+        instruction.options.call.destination = ir_data_access_create_intermediate(code_block, analyser->compiler->type_system.void_ptr_type);
         instruction.options.call.options.hardcoded = analyser->program->hardcoded_functions[(int)IR_Hardcoded_Function_Type::MALLOC_SIZE_I32];
         dynamic_array_push_back(&code_block->instructions, instruction);
+
+        // Cast to given type
+        IR_Instruction cast_instr;
+        cast_instr.type = IR_Instruction_Type::CAST;
+        cast_instr.options.cast.type = IR_Instruction_Cast_Type::POINTERS;
+        cast_instr.options.cast.destination = array_data_access;
+        cast_instr.options.cast.source = instruction.options.call.destination;
+        dynamic_array_push_back(&code_block->instructions, cast_instr);
 
         return expression_analysis_result_make_success(array_type, false);
     }

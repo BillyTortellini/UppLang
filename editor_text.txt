@@ -1,4 +1,3 @@
-/*
 module Dynamic_Array<T>
 {
     Dynamic_Array :: struct
@@ -50,7 +49,8 @@ module Dynamic_Array<T>
         }
     }
     
-    push_back :: (array: *Dynamic_Array<T>, value: T) {
+    push_back :: (array: *Dynamic_Array<T>, value: T) 
+    {
         array.size = array.size + 1;
         reserve<T>(array, array.size);
         array.buffer[array.size-1] = value;
@@ -82,12 +82,4 @@ main :: ()
         i = i+1;
     }
     print_line();
-}
-*/
-
-main :: ()
-{
-    x := "Hello World\n";
-    //print_i32(69);
-    print_string(x);
 }

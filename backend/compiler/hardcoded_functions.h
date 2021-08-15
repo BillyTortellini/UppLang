@@ -2,6 +2,7 @@
 
 #include "datatypes.h"
 
+typedef int TEMPLATE_TYPE;
 struct Unsized_Array_U8 {u8* data; i32 size; i32 padding;};
 struct Upp_String {Unsized_Array_U8 character_buffer; i32 size;};
 Upp_String upp_create_static_string(u8* data, i32 size);

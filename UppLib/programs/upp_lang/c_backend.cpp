@@ -47,6 +47,13 @@ void delete_string_data(int* integer, String* value)
     string_destroy(value);
 }
 
+void string_add_indentation(String* str, int indentation)
+{
+    for (int i = 0; i < indentation; i++) {
+        string_append_formated(str, "    ");
+    }
+}
+
 void c_generator_destroy(C_Generator* generator)
 {
     string_destroy(&generator->section_string_data);
@@ -103,7 +110,7 @@ void c_generator_output_type_reference(C_Generator* generator, String* output, T
         string_append_formated(&generator->section_struct_prototypes, "struct %s;\n", type_name.characters);
         string_append_formated(&tmp, "struct %s {\n    ", type_name.characters);
         c_generator_output_type_reference(generator, &tmp, type->child_type);
-        string_append_formated(&tmp, "* data;\n   i32 size; i32 padding;\n}\n\n");
+        string_append_formated(&tmp, "* data;\n    i32 size; i32 padding;\n};\n\n");
         string_append_formated(&generator->section_struct_implementations, tmp.characters);
         break;
     }
@@ -176,11 +183,12 @@ void c_generator_output_type_reference(C_Generator* generator, String* output, T
         string_append_formated(&type_name, "struct_%d", generator->name_counter);
         generator->name_counter++;
         string_append_formated(&generator->section_struct_prototypes, "struct %s;\n", type_name.characters);
-        string_append_formated(&tmp, "struct %s {\n    ", type_name.characters);
+        string_append_formated(&tmp, "struct %s {\n", type_name.characters);
         for (int i = 0; i < type->member_types.size; i++) {
             Struct_Member* member = &type->member_types[i];
+            string_add_indentation(&tmp, 1);
             c_generator_output_type_reference(generator, &tmp, member->type);
-            string_append_formated(&tmp, " %s;\n    ", lexer_identifer_to_string(&generator->compiler->lexer, member->name_handle).characters);
+            string_append_formated(&tmp, " %s;\n", lexer_identifer_to_string(&generator->compiler->lexer, member->name_handle).characters);
         }
         string_append_formated(&tmp, "};\n\n");
         string_append_formated(&generator->section_struct_implementations, tmp.characters);
@@ -190,7 +198,8 @@ void c_generator_output_type_reference(C_Generator* generator, String* output, T
         string_append_formated(&type_name, "void");
         break;
     case Signature_Type::TEMPLATE_TYPE:
-        string_append_formated(&type_name, "%s", lexer_identifer_to_string(&generator->compiler->lexer, type->template_name).characters);
+        //string_append_formated(&type_name, "%s", lexer_identifer_to_string(&generator->compiler->lexer, type->template_name).characters);
+        string_append_formated(&type_name, "TEMPLATE_TYPE");
         break;
     default: panic("Hey");
     }
@@ -315,23 +324,21 @@ void c_generator_output_data_access(C_Generator* generator, String* output, IR_D
     return;
 }
 
-void string_add_indentation(String* str, int indentation)
-{
-    for (int i = 0; i < indentation; i++) {
-        string_append_formated(str, "  ");
-    }
-}
-
 void c_generator_output_code_block(C_Generator* generator, String* output, IR_Code_Block* code_block, int indentation_level, bool registers_in_same_scope)
 {
-    string_add_indentation(output, indentation_level);
     if (!registers_in_same_scope)
     {
+        string_add_indentation(output, indentation_level);
         string_append_formated(output, "{\n");
-        string_add_indentation(output, indentation_level + 1);
     }
     // Create Register variables
     for (int i = 0; i < code_block->registers.size; i++) {
+        if (registers_in_same_scope) {
+            string_add_indentation(output, indentation_level);
+        }
+        else {
+            string_add_indentation(output, indentation_level + 1);
+        }
         Type_Signature* sig = code_block->registers[i];
         c_generator_output_type_reference(generator, output, sig);
         string_append_formated(output, " ");
@@ -342,9 +349,9 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
         access.option.definition_block = code_block;
         c_generator_output_data_access(generator, output, access);
         string_append_formated(output, ";\n");
-        string_add_indentation(output, indentation_level + 1);
     }
     if (registers_in_same_scope) {
+        string_add_indentation(output, indentation_level);
         string_append_formated(output, "{\n");
     }
 
@@ -455,12 +462,12 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
         {
             IR_Instruction_While* while_instr = &instr->options.while_instr;
             string_append_formated(output, "while(true){\n");
-            c_generator_output_code_block(generator, output, while_instr->condition_code, indentation_level + 1, true);
+            c_generator_output_code_block(generator, output, while_instr->condition_code, indentation_level + 2, true);
             string_add_indentation(output, indentation_level + 2);
-            string_append_formated(output, "if(");
+            string_append_formated(output, "if(!(");
             c_generator_output_data_access(generator, output, while_instr->condition_access);
-            string_append_formated(output, ") break;\n");
-            c_generator_output_code_block(generator, output, while_instr->code, indentation_level + 1, false);
+            string_append_formated(output, ")) break;\n");
+            c_generator_output_code_block(generator, output, while_instr->code, indentation_level + 2, false);
             string_add_indentation(output, indentation_level + 1);
             string_append_formated(output, "}\n");
             break;
@@ -630,6 +637,7 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
         }
     }
 
+    string_add_indentation(output, indentation_level);
     string_append_formated(output, "}\n");
 }
 
@@ -678,7 +686,7 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
 
             string_append_formated(&generator->section_string_data, "u8* string_%d = (u8*) R\"Upp(%s)Upp\";\n", generator->name_counter, string_data);
             String str = string_create_empty(size);
-            string_append_formated(&str, "upp_create_static_string(string_%d, %d);", generator->name_counter, size);
+            string_append_formated(&str, "upp_create_static_string(string_%d, %d)", generator->name_counter, size);
             hashtable_insert_element(&generator->translation_string_data_to_name, i, str);
             generator->name_counter++;
         }
@@ -749,7 +757,7 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
             }
         }
         string_append_formated(&generator->section_function_implementations, ")\n");
-        c_generator_output_code_block(generator, &generator->section_function_implementations, function->code, 1, false);
+        c_generator_output_code_block(generator, &generator->section_function_implementations, function->code, 0, false);
         string_append_formated(&generator->section_function_implementations, "\n");
     }
 
@@ -765,15 +773,23 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
     String source_code = string_create_empty(4096);
     SCOPE_EXIT(string_destroy(&source_code));
 
+    string_append_formated(&source_code, "/* INTRODUCTION\n----------------*/\n");
     string_append_string(&source_code, &section_introduction);
+    string_append_formated(&source_code, "\n/* STRING_DATA\n----------------*/\n");
     string_append_string(&source_code, &generator->section_string_data);
     // TODO: The following three (Defining custom data are probably wrong, since there are dependencies that need to be fulfilled)
+    string_append_formated(&source_code, "\n/* STRUCT_PROTOTYPES\n----------------*/\n");
     string_append_string(&source_code, &generator->section_struct_prototypes);
+    string_append_formated(&source_code, "\n/* STRUCT_IMPLEMENTATIONS\n----------------*/\n");
     string_append_string(&source_code, &generator->section_struct_implementations);
+    string_append_formated(&source_code, "\n/* TYPE_DECLARATIONS\n------------------*/\n");
     string_append_string(&source_code, &generator->section_type_declarations); // Function pointers
     // Afterwards its correct again
+    string_append_formated(&source_code, "\n/* GLOBALS\n------------------*/\n");
     string_append_string(&source_code, &generator->section_globals);
+    string_append_formated(&source_code, "\n/* FUNCTION PROTOTYPES\n------------------*/\n");
     string_append_string(&source_code, &generator->section_function_prototypes);
+    string_append_formated(&source_code, "\n/* FUNCTION IMPLEMENTATIONS\n------------------*/\n");
     string_append_string(&source_code, &generator->section_function_implementations);
 
     // Write to file
