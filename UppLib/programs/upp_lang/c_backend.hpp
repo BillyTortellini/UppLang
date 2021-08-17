@@ -10,6 +10,14 @@ struct Type_Signature;
 struct IR_Function;
 struct IR_Code_Block;
 
+struct C_Type_Definition_Dependency
+{
+    Dynamic_Array<int> outgoing_dependencies;
+    Dynamic_Array<int> incoming_dependencies;
+    Type_Signature* signature;
+    int dependency_count;
+};
+
 struct C_Generator
 {
     Compiler* compiler;
@@ -22,6 +30,9 @@ struct C_Generator
     String section_globals;
     String section_function_implementations;
     int name_counter;
+
+    Hashtable<Type_Signature*, int> type_to_dependency_mapping;
+    Dynamic_Array<C_Type_Definition_Dependency> type_dependencies;
 
     Hashtable<Type_Signature*, String> translation_type_to_name;
     Hashtable<IR_Function*, String> translation_function_to_name;

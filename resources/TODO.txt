@@ -18,9 +18,6 @@ Current 'vague' Goals:
 
 Next Up:
 --------
- * Flag functions and Type_Signatures of Template types
- * Finish C-Compilation (Struct and function pointer dependencies)
- * Fixing Bugs (Probably), compiling test-cases into C
  * Calling other C-Functions from C 
  * Calling C-Functions from Bytecode (Dyncall)
 

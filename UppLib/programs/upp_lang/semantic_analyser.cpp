@@ -2281,7 +2281,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
                 {
                     IR_Data_Access casted_argument = ir_data_access_create_intermediate(code_block, signature->parameter_types[i]);
                     if (semantic_analyser_cast_implicit_if_possible(analyser, code_block, argument_access, casted_argument)) {
-                        dynamic_array_push_back(&call_instruction.options.call.arguments, casted_argument);
+                        argument_access = casted_argument;
                     }
                     else {
                         semantic_analyser_log_error(analyser, "Argument type does not match function parameter type", expression_index);
@@ -2761,17 +2761,26 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
                 }
                 else
                 {
-                    member_type = type_system_make_pointer(&analyser->compiler->type_system, type_signature->child_type);
+                    Type_Signature* array_ptr_type = type_system_make_pointer(&analyser->compiler->type_system, type_signature);
                     IR_Instruction address_of_instr;
                     address_of_instr.type = IR_Instruction_Type::ADDRESS_OF;
                     address_of_instr.options.address_of.type = IR_Instruction_Address_Of_Type::DATA;
                     address_of_instr.options.address_of.source = access_instr.options.address_of.source;
-                    if (create_temporary_access) {
-                        *access = ir_data_access_create_intermediate(code_block, member_type);
-                    }
-                    address_of_instr.options.address_of.destination = *access;
+                    address_of_instr.options.address_of.destination = ir_data_access_create_intermediate(code_block, array_ptr_type);
                     dynamic_array_push_back(&code_block->instructions, address_of_instr);
-                    return expression_analysis_result_make_success(member_type, false);
+
+                    Type_Signature* base_ptr_type = type_system_make_pointer(&analyser->compiler->type_system, type_signature->child_type);
+                    IR_Instruction cast_instr;
+                    cast_instr.type = IR_Instruction_Type::CAST;
+                    cast_instr.options.cast.source = address_of_instr.options.address_of.destination;
+                    if (create_temporary_access) {
+                        *access = ir_data_access_create_intermediate(code_block, base_ptr_type);
+                    }
+                    cast_instr.options.cast.destination = *access;
+                    cast_instr.options.cast.type = IR_Instruction_Cast_Type::POINTERS;
+                    dynamic_array_push_back(&code_block->instructions, cast_instr);
+
+                    return expression_analysis_result_make_success(base_ptr_type, false);
                 }
             }
         }
@@ -2887,9 +2896,6 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
             rollback_on_exit = true;
             return expr_result;
         }
-        if (!expr_result.options.success.has_memory_address) {
-            semantic_analyser_log_error(analyser, "Tried taking the address of something with no memory address", expression_index);
-        }
         Type_Signature* pointer_type = type_system_make_pointer(type_system, expr_result.options.success.result_type);
         // Special Case, see Expression_Variable_Read how this works
         if (pointer_type->child_type->type == Signature_Type::FUNCTION)
@@ -2906,6 +2912,9 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
             return expression_analysis_result_make_success(pointer_type, false);
         }
 
+        if (!expr_result.options.success.has_memory_address) {
+            semantic_analyser_log_error(analyser, "Tried taking the address of something with no memory address", expression_index);
+        }
         if (expr_access.is_memory_access)
         {
             if (create_temporary_access) {

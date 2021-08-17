@@ -12,7 +12,7 @@ Upp_String upp_create_static_string(u8* data, i32 size) {
 
 void print_string(Upp_String str)
 {
-	printf("%s", str.character_buffer.data);
+	printf("%.*s", str.size, str.character_buffer.data);
 	return;
 }
 

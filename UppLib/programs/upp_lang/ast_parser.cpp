@@ -241,7 +241,8 @@ Type_Node can be TYPE_IDENTIFIER, or TYPE_POINTER_TO with one child
 bool ast_parser_parse_expression(AST_Parser* parser, int parent_index);
 bool ast_parser_parse_type(AST_Parser* parser, AST_Node_Index parent);
 bool ast_parser_parse_parameter_block(
-    AST_Parser* parser, AST_Node_Index parent_index, bool is_named_parameter_block, Token_Type open_parenthesis_type, Token_Type closed_parenthesis_type);
+    AST_Parser* parser, AST_Node_Index parent_index, bool is_named_parameter_block, Token_Type open_parenthesis_type, Token_Type closed_parenthesis_type,
+    bool log_error);
 
 bool ast_parser_parse_identifier_or_path(AST_Parser* parser, AST_Node_Index parent)
 {
@@ -256,7 +257,7 @@ bool ast_parser_parse_identifier_or_path(AST_Parser* parser, AST_Node_Index pare
     parser->index++;
 
     bool is_template_analysis = false;
-    if (ast_parser_parse_parameter_block(parser, node_index, false, Token_Type::COMPARISON_LESS, Token_Type::COMPARISON_GREATER)) {
+    if (ast_parser_parse_parameter_block(parser, node_index, false, Token_Type::COMPARISON_LESS, Token_Type::COMPARISON_GREATER, false)) {
         is_template_analysis = true;
     }
 
@@ -299,7 +300,7 @@ bool ast_parser_parse_function_signature(AST_Parser* parser, AST_Node_Index pare
     if (ast_parser_test_next_token(parser, Token_Type::OPEN_PARENTHESIS))
     {
         parser->nodes[node_index].type = AST_Node_Type::FUNCTION_SIGNATURE;
-        if (!ast_parser_parse_parameter_block(parser, node_index, true, Token_Type::OPEN_PARENTHESIS, Token_Type::CLOSED_PARENTHESIS)) {
+        if (!ast_parser_parse_parameter_block(parser, node_index, true, Token_Type::OPEN_PARENTHESIS, Token_Type::CLOSED_PARENTHESIS, true)) {
             ast_parser_checkpoint_reset(checkpoint);
             return false;
         }
@@ -328,7 +329,7 @@ bool ast_parser_parse_type_function_pointer(AST_Parser* parser, AST_Node_Index p
     if (ast_parser_test_next_token(parser, Token_Type::OPEN_PARENTHESIS))
     {
         parser->nodes[node_index].type = AST_Node_Type::TYPE_FUNCTION_POINTER;
-        if (!ast_parser_parse_parameter_block(parser, node_index, false, Token_Type::OPEN_PARENTHESIS, Token_Type::CLOSED_PARENTHESIS)) {
+        if (!ast_parser_parse_parameter_block(parser, node_index, false, Token_Type::OPEN_PARENTHESIS, Token_Type::CLOSED_PARENTHESIS, true)) {
             ast_parser_checkpoint_reset(checkpoint);
             return false;
         }
@@ -1386,7 +1387,7 @@ bool ast_parser_parse_enclosed_list(AST_Parser* parser, int parent_index, Token_
 }
 
 bool ast_parser_parse_parameter_block(
-    AST_Parser* parser, AST_Node_Index parent_index, bool is_named_parameter_block, Token_Type open_parenthesis_type, Token_Type closed_parenthesis_type)
+    AST_Parser* parser, AST_Node_Index parent_index, bool is_named_parameter_block, Token_Type open_parenthesis_type, Token_Type closed_parenthesis_type, bool log_errors)
 {
     AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, parent_index);
     int block_index = ast_parser_get_next_node_index(parser, parent_index);
@@ -1452,6 +1453,10 @@ bool ast_parser_parse_parameter_block(
 
         if (!success)
         {
+            if (!log_errors) {
+                ast_parser_checkpoint_reset(checkpoint);
+                return false;
+            }
             ast_parser_checkpoint_reset(recoverable_checkpoint);
             // Error handling: find next ), or next Comma, or next  report error and do further error handling
             int next_closed_braces = ast_parser_find_next_token_type(parser, Token_Type::CLOSED_BRACES);
@@ -1479,32 +1484,6 @@ bool ast_parser_parse_parameter_block(
     return false;
 }
 
-bool ast_parser_parse_struct_members(AST_Parser* parser, AST_Node_Index parent_index)
-{
-    while (!ast_parser_test_next_token(parser, Token_Type::CLOSED_BRACES))
-    {
-        AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, parent_index);
-        bool success = ast_parser_parse_single_variable_definition(parser, parent_index);
-        // Do error handling here (Goto next semicolon or Closed Braces)
-        if (!success)
-        {
-            ast_parser_checkpoint_reset(checkpoint);
-            int next_semicolon = ast_parser_find_next_token_type(parser, Token_Type::SEMICOLON);
-            int next_closing_braces = ast_parser_find_next_token_type(parser, Token_Type::CLOSED_BRACES);
-            if (next_semicolon < next_closing_braces) {
-                ast_parser_log_error(parser, "Variable definition invalid!", token_range_make(checkpoint.rewind_token_index, next_semicolon));
-                parser->index = next_semicolon + 1;
-                continue;
-            }
-            ast_parser_log_error(parser, "Variable definition invalid!", token_range_make(checkpoint.rewind_token_index, next_closing_braces));
-            parser->index = next_closing_braces;
-            break;
-        }
-    }
-
-    return true;
-}
-
 bool ast_parser_parse_struct(AST_Parser* parser, AST_Node_Index parent_index)
 {
     AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, parent_index);
@@ -1518,7 +1497,27 @@ bool ast_parser_parse_struct(AST_Parser* parser, AST_Node_Index parent_index)
     }
     parser->nodes[node_index].name_id = parser->lexer->tokens[parser->index].attribute.identifier_number;
     parser->index += 4;
-    ast_parser_parse_struct_members(parser, node_index);
+
+    while (!ast_parser_test_next_token(parser, Token_Type::CLOSED_BRACES))
+    {
+        AST_Parser_Checkpoint member_checkpoint = ast_parser_checkpoint_make(parser, node_index);
+        bool success = ast_parser_parse_single_variable_definition(parser, node_index);
+        // Do error handling here (Goto next semicolon or Closed Braces)
+        if (!success)
+        {
+            ast_parser_checkpoint_reset(member_checkpoint);
+            int next_semicolon = ast_parser_find_next_token_type(parser, Token_Type::SEMICOLON);
+            int next_closing_braces = ast_parser_find_next_token_type(parser, Token_Type::CLOSED_BRACES);
+            if (next_semicolon < next_closing_braces) {
+                ast_parser_log_error(parser, "Variable definition invalid!", token_range_make(member_checkpoint.rewind_token_index, next_semicolon));
+                parser->index = next_semicolon + 1;
+                continue;
+            }
+            ast_parser_log_error(parser, "Variable definition invalid!", token_range_make(checkpoint.rewind_token_index, next_closing_braces));
+            parser->index = next_closing_braces;
+            break;
+        }
+    }
 
     if (ast_parser_test_next_token(parser, Token_Type::CLOSED_BRACES)) {
         parser->index++;
