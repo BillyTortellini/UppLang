@@ -20,6 +20,7 @@ bool token_type_is_keyword(Token_Type type)
     case Token_Type::DELETE_TOKEN: return true;
     case Token_Type::BOOLEAN_LITERAL: return true;
     case Token_Type::CAST: return true;
+    case Token_Type::EXTERN: return true;
     }
     return false;
 }
@@ -33,6 +34,7 @@ const char* token_type_to_string(Token_Type type)
     case Token_Type::FOR: return "FOR";
     case Token_Type::WHILE: return "WHILE";
     case Token_Type::CONTINUE: return "CONTINUE";
+    case Token_Type::EXTERN: return "EXTERN";
     case Token_Type::MODULE: return "MODULE";
     case Token_Type::STRUCT: return "STRUCT";
     case Token_Type::BREAK: return "BREAK";
@@ -53,6 +55,7 @@ const char* token_type_to_string(Token_Type type)
     case Token_Type::CLOSED_BRACES: return "CLOSED_CURLY_BRACKET";
     case Token_Type::OPEN_BRACKETS: return "OPEN_SQUARE_BRACKET";
     case Token_Type::CLOSED_BRACKETS: return "CLOSED_SQUARE_BRACKET";
+    case Token_Type::HASHTAG: return "#";
     case Token_Type::OP_ASSIGNMENT: return "OP_ASSIGNMENT";
     case Token_Type::OP_PLUS: return "OP_PLUS";
     case Token_Type::OP_MINUS: return "OP_MINUS";
@@ -302,8 +305,54 @@ Lexer lexer_create()
     hashtable_insert_element(&lexer.keywords, string_create_static("false"), Token_Type::BOOLEAN_LITERAL);
     hashtable_insert_element(&lexer.keywords, string_create_static("defer"), Token_Type::DEFER);
     hashtable_insert_element(&lexer.keywords, string_create_static("module"), Token_Type::MODULE);
+    hashtable_insert_element(&lexer.keywords, string_create_static("extern"), Token_Type::EXTERN);
 
     return lexer;
+}
+
+enum class Number_Base
+{
+    DECIMAL = 10,
+    OCTAL = 8,
+    HEXADECIMAL = 16
+};
+
+int number_base_character_to_value(Number_Base base, int character)
+{
+    if (base == Number_Base::DECIMAL || base == Number_Base::OCTAL) {
+        return character - '0';
+    }
+    else if (base == Number_Base::HEXADECIMAL) 
+    {
+        if (character >= '0' && character <= '9') {
+            return character - '0';
+        }
+        else if (character >= 'a' && character <= 'f') {
+            return character - 'a';
+
+        }
+        else if (character >= 'A' && character <= 'F') {
+            return character - 'A';
+        }
+    }
+    panic("Invalid base/character");
+    return 0;
+}
+
+bool number_base_is_valid_character(Number_Base base, int character)
+{
+    if (base == Number_Base::DECIMAL) {
+        return character >= '0' && character <= '9';
+    }
+    else if (base == Number_Base::OCTAL)
+    {
+        return character >= '0' && character <= '7';
+    }
+    else if (base == Number_Base::HEXADECIMAL) {
+        return (character >= '0' && character <= '9') || (character >= 'a' && character <= 'f') || (character >= 'A' && character <= 'F');
+    }
+    panic("Invalid base");
+    return false;
 }
 
 void lexer_parse_string(Lexer* lexer, String* code)
@@ -340,6 +389,11 @@ void lexer_parse_string(Lexer* lexer, String* code)
             // Check for single symbols
         case '.':
             dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::DOT, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            character_pos++;
+            index++;
+            continue;
+        case '#':
+            dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::HASHTAG, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
@@ -597,12 +651,38 @@ void lexer_parse_string(Lexer* lexer, String* code)
 
         // Constants, Identifier and Keywords
         // Parse Numbers
-        if (current_character >= '0' && current_character <= '9')
+        Number_Base base = Number_Base::DECIMAL;
+        if (current_character == '0') 
+        {
+            if (number_base_is_valid_character(Number_Base::OCTAL, next_character)) 
+            {
+                index += 1;
+                character_pos += 1;
+                base = Number_Base::OCTAL;
+            }
+            else if (next_character == 'x' || next_character == 'X')
+            {
+                base = Number_Base::HEXADECIMAL;
+                index += 2;
+                character_pos += 2;
+            }
+            if (index < code->size) {
+                current_character = code->characters[index];
+            }
+            else {
+                break;
+            }
+            next_character = -1;
+            if (index + 1 < code->size) {
+                next_character = code->characters[index + 1];
+            }
+        }
+        if (number_base_is_valid_character(base, current_character))
         {
             int pre_comma_start_index = index;
             int pre_comma_end_index = index;
             // Parse number characters
-            while (pre_comma_end_index < code->size && code->characters[pre_comma_end_index] >= '0' && code->characters[pre_comma_end_index] <= '9') {
+            while (pre_comma_end_index < code->size && number_base_is_valid_character(base, code->characters[pre_comma_end_index])) {
                 pre_comma_end_index++;
             }
             pre_comma_end_index--;
@@ -620,7 +700,7 @@ void lexer_parse_string(Lexer* lexer, String* code)
                 else {
                     post_comma_end_index = post_comma_start_index;
                     while (post_comma_end_index < code->size &&
-                        code->characters[post_comma_end_index] >= '0' && code->characters[post_comma_end_index] <= '9') {
+                        number_base_is_valid_character(base, code->characters[post_comma_end_index])) {
                         post_comma_end_index++;
                     }
                     post_comma_end_index--;
@@ -628,17 +708,18 @@ void lexer_parse_string(Lexer* lexer, String* code)
             }
 
             int int_value = 0;
+            int base_value = (int)base;
             for (int i = pre_comma_start_index; i <= pre_comma_end_index; i++) {
-                int num_value = code->characters[i] - '0'; // 0 to 9
-                int_value = (int_value * 10) + num_value;
+                int num_value = number_base_character_to_value(base, code->characters[i]);
+                int_value = (int_value * base_value) + num_value;
             }
             if (comma_exists)
             {
                 // Calculate float value
                 float fractional_value = 0.0f;
-                float multiplier = 0.1f;
+                float multiplier = 1.0f / base_value;
                 for (int i = post_comma_start_index; i <= post_comma_end_index; i++) {
-                    int num_value = code->characters[i] - '0'; // 0 to 9
+                    int num_value = number_base_character_to_value(base, code->characters[i]);
                     fractional_value += num_value * multiplier;
                     multiplier *= 0.1f;
                 }
@@ -672,7 +753,7 @@ void lexer_parse_string(Lexer* lexer, String* code)
         }
 
         // Identifiers, keywords or error
-        if (!character_is_letter(code->characters[index]))
+        if (!(character_is_letter(code->characters[index]) || character_is_digit(code->characters[index]) || code->characters[index] == '_'))
         {
             // Error, parse till next Delimiter
             int error_end_index = index;
@@ -739,13 +820,13 @@ void lexer_parse_string(Lexer* lexer, String* code)
                         attrib.bool_value = 0;
                     }
                 }
-                dynamic_array_push_back(&lexer->tokens, 
+                dynamic_array_push_back(&lexer->tokens,
                     token_make(*keyword_type, attrib, line_number, character_pos, identifier_string_length, index));
             }
             else {
                 Token_Attribute attribute;
                 attribute.identifier_number = lexer_add_or_find_identifier_by_string(lexer, identifier_string);
-                dynamic_array_push_back(&lexer->tokens, 
+                dynamic_array_push_back(&lexer->tokens,
                     token_make(Token_Type::IDENTIFIER_NAME, attribute, line_number, character_pos, identifier_string_length, index));
             }
             index += identifier_string_length;

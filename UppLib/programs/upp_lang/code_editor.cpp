@@ -137,36 +137,51 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
                 continue;
             }
             else if (msg->key_code == Key_Code::S && msg->key_down || msg->key_code == Key_Code::F5) {
-                String output = string_create_empty(256);
-                SCOPE_EXIT(string_destroy(&output););
-                text_append_to_string(&editor->text_editor->text, &output);
-                file_io_write_file("editor_text.txt", array_create_static((byte*)output.characters, output.size));
-                logg("Saved text file!\n");
                 continue;
             }
-            else if (msg->key_code == Key_Code::F5) {
+            else if (msg->key_code == Key_Code::F6 && msg->key_down) {
+                continue;
+            }
+            else if (msg->key_code == Key_Code::B && msg->ctrl_down && msg->key_down) {
                 continue;
             }
         }
         text_editor_handle_key_message(editor->text_editor, msg);
     }
 
+    bool save_text_file = input->key_pressed[(int)Key_Code::S];
+    bool shortcut_build = false;
+    bool shortcut_execute = false;
+    if (input->key_pressed[(int)Key_Code::F5]) {
+        shortcut_build = true;
+        shortcut_execute = true;
+    }
+    if (input->key_pressed[(int)Key_Code::F6]) {
+        shortcut_execute = true;
+    }
+    if (input->key_pressed[(int)Key_Code::B] && input->key_down[(int)Key_Code::CTRL]) {
+        shortcut_build = true;
+        save_text_file = true;
+    }
+
+    if (save_text_file) {
+        String output = string_create_empty(256);
+        SCOPE_EXIT(string_destroy(&output););
+        text_append_to_string(&editor->text_editor->text, &output);
+        file_io_write_file("editor_text.txt", array_create_static((byte*)output.characters, output.size));
+        logg("Saved text file!\n");
+    }
+
     bool text_changed = editor->text_editor->text_changed;
     text_editor_update(editor->text_editor, input, time);
 
     // Compile
-    if (text_changed || input->key_pressed[(int)Key_Code::F5])
+    if (text_changed || shortcut_build)
     {
         String source_code = string_create_empty(2048);
         SCOPE_EXIT(string_destroy(&source_code));
         text_append_to_string(&editor->text_editor->text, &source_code);
-        if (input->key_pressed[(int)Key_Code::F5]) {
-            compiler_compile(&editor->compiler, &source_code, true);
-            compiler_execute(&editor->compiler);
-        }
-        else {
-            compiler_compile(&editor->compiler, &source_code, false);
-        }
+        compiler_compile(&editor->compiler, &source_code, shortcut_build);
 
         // Print errors
         if (editor->compiler.parser.errors.size > 0 || editor->compiler.analyser.errors.size > 0) {
@@ -182,6 +197,11 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
                 logg("Semantic Error: %s\n", e.message);
             }
         }
+    }
+
+    // Execute
+    if (shortcut_execute) {
+        compiler_execute(&editor->compiler);
     }
 
     // Do syntax highlighting
@@ -246,7 +266,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
         for (int i = 0; i < editor->compiler.parser.errors.size; i++) {
             Compiler_Error e = editor->compiler.parser.errors[i];
             e.range.end_index += 1;
-            e.range.end_index = math_minimum(editor->compiler.lexer.tokens.size - 1, e.range.end_index);
+            e.range.end_index = math_minimum(editor->compiler.lexer.tokens.size-1, e.range.end_index);
             text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(e.range, &editor->compiler), vec3(1.0f), vec4(1.0f, 0.0f, 0.0f, 0.3f));
         }
         if (editor->compiler.parser.errors.size == 0) {
@@ -259,7 +279,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
 
     // Highlight current node index
     {
-        node_cursor_index = math_modulo((int)(time*10.0), editor->compiler.parser.nodes.size);
+        node_cursor_index = math_modulo((int)(time * 10.0), editor->compiler.parser.nodes.size);
         /*
         node_cursor_index = ast_parser_get_closest_node_to_text_position(
             &editor->compiler.parser, editor->text_editor->cursor_position, editor->text_editor->text

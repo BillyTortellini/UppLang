@@ -22,6 +22,7 @@ enum class Token_Type
     CAST,
     NULLPTR,
     DEFER,
+    EXTERN,
     // Delimiters
     DOT,        // .
     COLON,      // :
@@ -36,6 +37,7 @@ enum class Token_Type
     DOUBLE_COLON,   // ::
     INFER_ASSIGN, // :=
     ARROW,        // ->
+    HASHTAG,      // #
     // Operations
     OP_ASSIGNMENT, // =
     OP_PLUS, // +

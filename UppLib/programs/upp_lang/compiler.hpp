@@ -11,6 +11,7 @@ struct Intermediate_Generator;
 struct Bytecode_Generator;
 struct Bytecode_Interpreter;
 struct C_Generator;
+struct C_Compiler;
 
 struct Token_Range
 {
@@ -43,6 +44,7 @@ struct Compiler
     Bytecode_Generator bytecode_generator;
     Bytecode_Interpreter bytecode_interpreter;
     C_Generator c_generator;
+    C_Compiler c_compiler;
     Timer* timer;
 };
 

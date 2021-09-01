@@ -613,8 +613,9 @@ Symbol* symbol_table_find_symbol_by_string(Symbol_Table* table, String* string, 
     }
 }
 
-void symbol_table_append_to_string_with_parent_info(String* string, Symbol_Table* table, Lexer* lexer, bool is_parent, bool print_root)
+void symbol_table_append_to_string_with_parent_info(String* string, Symbol_Table* table, Semantic_Analyser* analyser, bool is_parent, bool print_root)
 {
+    Lexer* lexer = &analyser->compiler->lexer;
     if (!print_root && table->parent == 0) return;
     if (!is_parent) {
         string_append_formated(string, "Symbols: \n");
@@ -645,18 +646,22 @@ void symbol_table_append_to_string_with_parent_info(String* string, Symbol_Table
             string_append_formated(string, "Hardcoded Function ");
             type_signature_append_to_string(string, s->options.hardcoded_function->signature);
             break;
+        case Symbol_Type::EXTERN_FUNCTION:
+            string_append_formated(string, "Extern function ");
+            type_signature_append_to_string(string, analyser->program->extern_functions[s->options.extern_function_index].function_type);
+            break;
         default: panic("What");
         }
         string_append_formated(string, "\n");
         hashtable_iterator_next(&iter);
     }
     if (table->parent != 0) {
-        symbol_table_append_to_string_with_parent_info(string, table->parent, lexer, true, print_root);
+        symbol_table_append_to_string_with_parent_info(string, table->parent, analyser, true, print_root);
     }
 }
 
-void symbol_table_append_to_string(String* string, Symbol_Table* table, Lexer* lexer, bool print_root) {
-    symbol_table_append_to_string_with_parent_info(string, table, lexer, false, print_root);
+void symbol_table_append_to_string(String* string, Symbol_Table* table, Semantic_Analyser* analyser, bool print_root) {
+    symbol_table_append_to_string_with_parent_info(string, table, analyser, false, print_root);
 }
 
 void semantic_analyser_log_error(Semantic_Analyser* analyser, const char* msg, int node_index);
@@ -845,6 +850,7 @@ IR_Program* ir_program_create(Type_System* type_system)
     result->entry_function = 0;
     result->functions = dynamic_array_create_empty<IR_Function*>(64);
     result->globals = dynamic_array_create_empty<Type_Signature*>(64);
+    result->extern_functions = dynamic_array_create_empty<IR_Extern_Function>(32);
 
     result->hardcoded_functions = dynamic_array_create_empty<IR_Hardcoded_Function*>((int)IR_Hardcoded_Function_Type::HARDCODED_FUNCTION_COUNT);
     for (int i = 0; i < (int)IR_Hardcoded_Function_Type::HARDCODED_FUNCTION_COUNT; i++)
@@ -906,6 +912,7 @@ void ir_program_destroy(IR_Program* program)
     dynamic_array_destroy(&program->constant_pool.constants);
     dynamic_array_destroy(&program->constant_pool.constant_memory);
     dynamic_array_destroy(&program->globals);
+    dynamic_array_destroy(&program->extern_functions);
     for (int i = 0; i < program->functions.size; i++) {
         ir_function_destroy(program->functions[i]);
     }
@@ -1129,6 +1136,9 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
         case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
             function_sig = call->options.hardcoded->signature;
             break;
+        case IR_Instruction_Call_Type::EXTERN_FUNCTION_CALL:
+            function_sig = analyser->program->extern_functions[call->options.extern_function_index].function_type;
+            break;
         default:
             panic("Hey");
             return;
@@ -1160,6 +1170,10 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
         case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
             string_append_formated(string, "HARDCODED_FUNCTION_CALL, type: ");
             ir_hardcoded_function_type_append_to_string(string, call->options.hardcoded->type);
+            break;
+        case IR_Instruction_Call_Type::EXTERN_FUNCTION_CALL:
+            string_append_formated(string, "EXTERN_FUNCTION_CALL, type: ");
+            type_signature_append_to_string(string, analyser->program->extern_functions[call->options.extern_function_index].function_type);
             break;
         }
         break;
@@ -1578,7 +1592,7 @@ Identifier_Analysis_Result semantic_analyser_instanciate_template(Semantic_Analy
                 string_append_formated(&tmp, "Not found identifier: ");
                 string_append_formated(&tmp, lexer_identifer_to_string(&analyser->compiler->lexer, symbol->name_handle).characters);
                 string_append_formated(&tmp, "\n");
-                symbol_table_append_to_string_with_parent_info(&tmp, symbol_definition_table, &analyser->compiler->lexer, false, false);
+                symbol_table_append_to_string_with_parent_info(&tmp, symbol_definition_table, analyser, false, false);
                 logg("%s\n", tmp.characters);
             }
             assert(assert_sym != 0, "HEY");
@@ -1616,6 +1630,7 @@ Identifier_Analysis_Result semantic_analyser_instanciate_template(Semantic_Analy
             result.type = Analysis_Result_Type::ERROR_OCCURED;
             return result;
         }
+        case Symbol_Type::EXTERN_FUNCTION:
         case Symbol_Type::HARDCODED_FUNCTION: {
             panic("What");
             break;
@@ -2238,6 +2253,11 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
             call_instruction.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
             call_instruction.options.call.options.hardcoded = symbol->options.hardcoded_function;
         }
+        else if (symbol->symbol_type == Symbol_Type::EXTERN_FUNCTION) {
+            signature = analyser->program->extern_functions[symbol->options.extern_function_index].function_type;
+            call_instruction.options.call.call_type = IR_Instruction_Call_Type::EXTERN_FUNCTION_CALL;
+            call_instruction.options.call.options.extern_function_index = symbol->options.extern_function_index;
+        }
         else {
             semantic_analyser_log_error(analyser, "Call to identifer which is not a function/function pointer", expression_index);
             return expression_analysis_result_make_error();
@@ -2553,15 +2573,15 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
             type_system_make_pointer(type_system, type_system->i32_type)
         );
         {
-            IR_Instruction resut_size_instr;
-            resut_size_instr.type = IR_Instruction_Type::ADDRESS_OF;
-            resut_size_instr.options.address_of.type = IR_Instruction_Address_Of_Type::STRUCT_MEMBER;
-            resut_size_instr.options.address_of.source = *access;
-            resut_size_instr.options.address_of.destination = array_size_access;
-            resut_size_instr.options.address_of.options.member.name_handle = analyser->token_index_size;
-            resut_size_instr.options.address_of.options.member.offset = 8;
-            resut_size_instr.options.address_of.options.member.type = type_system->i32_type;
-            dynamic_array_push_back(&code_block->instructions, resut_size_instr);
+            IR_Instruction result_size_instr;
+            result_size_instr.type = IR_Instruction_Type::ADDRESS_OF;
+            result_size_instr.options.address_of.type = IR_Instruction_Address_Of_Type::STRUCT_MEMBER;
+            result_size_instr.options.address_of.source = *access;
+            result_size_instr.options.address_of.destination = array_size_access;
+            result_size_instr.options.address_of.options.member.name_handle = analyser->token_index_size;
+            result_size_instr.options.address_of.options.member.offset = 8;
+            result_size_instr.options.address_of.options.member.type = type_system->i32_type;
+            dynamic_array_push_back(&code_block->instructions, result_size_instr);
             array_size_access.is_memory_access = true;
         }
 
@@ -3418,6 +3438,20 @@ void semantic_analyser_find_workloads_recursively(Semantic_Analyser* analyser, S
             }
             semantic_analyser_find_workloads_recursively(analyser, symbol_table, child_index);
             break;
+        case AST_Node_Type::EXTERN_FUNCTION_DECLARATION: 
+        {
+            if (inside_template) {
+                semantic_analyser_log_error(analyser, "Cannot have extern function declarations inside template!\n", child_index);
+                break;
+            }
+            // Create Workload
+            Analysis_Workload workload;
+            workload.type = Analysis_Workload_Type::EXTERN_FUNCTION_DECLARATION;
+            workload.node_index = child_index;
+            workload.symbol_table = symbol_table;
+            dynamic_array_push_back(&analyser->active_workloads, workload);
+            break;
+        }
         case AST_Node_Type::FUNCTION: 
         {
             Analysis_Workload workload;
@@ -3589,6 +3623,7 @@ void analysis_workload_destroy(Analysis_Workload* workload)
     case Analysis_Workload_Type::STRUCT_BODY:
     case Analysis_Workload_Type::GLOBAL:
     case Analysis_Workload_Type::SIZED_ARRAY_SIZE:
+    case Analysis_Workload_Type::EXTERN_FUNCTION_DECLARATION:
         break;
     case Analysis_Workload_Type::FUNCTION_HEADER:
         if (workload->options.function_header.is_template_analysis) {
@@ -3654,6 +3689,12 @@ void analysis_workload_append_to_string(Analysis_Workload* workload, String* str
     }
     case Analysis_Workload_Type::SIZED_ARRAY_SIZE: {
         string_append_formated(string, "Sized Array");
+        break;
+    }
+    case Analysis_Workload_Type::EXTERN_FUNCTION_DECLARATION: {
+        string_append_formated(string, "Extern function declaration, name: %s",
+            lexer_identifer_to_string(&analyser->compiler->lexer, analyser->compiler->parser.nodes[workload->node_index].name_id).characters
+        );
         break;
     }
     case Analysis_Workload_Type::STRUCT_BODY: {
@@ -3740,6 +3781,11 @@ void workload_dependency_append_to_string(Workload_Dependency* dependency, Strin
 
 void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
 {
+    if (PRINT_DEPENDENCIES) {
+        logg("SEMANTIC_ANALYSER_DEPENDECIES:\n-----------------------------\n");
+    }
+    SCOPE_EXIT(if (PRINT_DEPENDENCIES) logg("------------------------------------\n"););
+
     // Reset analyser data
     {
         analyser->compiler = compiler;
@@ -4053,6 +4099,48 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
             if (result.type == Analysis_Result_Type::DEPENDENCY) {
                 found_workload_dependency = true;
                 found_dependency = result.dependency;
+            }
+            break;
+        }
+        case Analysis_Workload_Type::EXTERN_FUNCTION_DECLARATION:
+        {
+            AST_Node* extern_node = &(*nodes)[workload.node_index];
+            int name_id = extern_node->name_id;
+            for (int i = 0; i < analyser->program->extern_functions.size; i++) {
+                if (analyser->program->extern_functions[i].name_id == name_id) {
+                    semantic_analyser_log_error(analyser, "Extern function with this name already defined!\n", workload.node_index);
+                    break;
+                }
+            }
+
+            Type_Analysis_Result result = semantic_analyser_analyse_type(analyser, workload.symbol_table, extern_node->children[0]);
+            switch (result.type)
+            {
+            case Analysis_Result_Type::SUCCESS: 
+            {
+                if (result.options.result_type->type != Signature_Type::POINTER && result.options.result_type->child_type->type != Signature_Type::FUNCTION) {
+                    semantic_analyser_log_error(analyser, "Extern symbol type must be a funciton type!", workload.node_index);
+                    break;
+                }
+                IR_Extern_Function extern_fn;
+                extern_fn.name_id = extern_node->name_id;
+                extern_fn.function_type = result.options.result_type->child_type;
+                dynamic_array_push_back(&analyser->program->extern_functions, extern_fn);
+                Symbol sym;
+                sym.symbol_type = Symbol_Type::EXTERN_FUNCTION;
+                sym.name_handle = extern_fn.name_id;
+                sym.is_templated = false;
+                sym.options.extern_function_index = analyser->program->extern_functions.size - 1;
+                sym.definition_node_index = workload.node_index;
+                symbol_table_define_symbol(workload.symbol_table, analyser, sym, false);
+                break;
+            }
+            case Analysis_Result_Type::DEPENDENCY:
+                found_workload_dependency = true;
+                found_dependency = result.options.dependency;
+                break;
+            case Analysis_Result_Type::ERROR_OCCURED:
+                break;
             }
             break;
         }

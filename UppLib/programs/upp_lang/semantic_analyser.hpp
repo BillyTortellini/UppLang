@@ -166,6 +166,7 @@ enum class Symbol_Type
     HARDCODED_FUNCTION,
     TYPE, // Structs or others (Not implemented yet, would be Enums, Tagged Enums, Unions...)
     VARIABLE,
+    EXTERN_FUNCTION
 };
 
 union Symbol_Options
@@ -174,6 +175,7 @@ union Symbol_Options
     IR_Data_Access variable_access; // Variables/Parameters
     Type_Signature* data_type; // Structs
     IR_Hardcoded_Function* hardcoded_function; // Hardcoded function
+    int extern_function_index;
 };
 
 struct Symbol_Template_Instance
@@ -189,8 +191,8 @@ struct Symbol
     int name_handle;
     int definition_node_index;
     bool is_templated;
-    // Symbol Data
     Symbol_Options options;
+    // Template Data
     Dynamic_Array<int> template_parameter_names;
     Dynamic_Array<Symbol_Template_Instance> template_instances;
 };
@@ -216,7 +218,8 @@ void symbol_table_destroy(Symbol_Table* symbol_table);
 
 Symbol* symbol_table_find_symbol(Symbol_Table* table, int name_handle, bool only_current_scope);
 Symbol* symbol_table_find_symbol_by_string(Symbol_Table* table, String* string, Lexer* lexer);
-void symbol_table_append_to_string(String* string, Symbol_Table* table, Lexer* lexer, bool print_root);
+void symbol_table_append_to_string(String* string, Symbol_Table* table, Semantic_Analyser* analyser, bool print_root);
+
 
 
 // Instructions
@@ -245,6 +248,7 @@ enum class IR_Instruction_Call_Type
     FUNCTION_CALL,
     FUNCTION_POINTER_CALL,
     HARDCODED_FUNCTION_CALL,
+    EXTERN_FUNCTION_CALL,
 };
 
 struct IR_Function;
@@ -256,6 +260,7 @@ struct IR_Instruction_Call
         IR_Function* function;
         IR_Data_Access pointer_access;
         IR_Hardcoded_Function* hardcoded;
+        int extern_function_index;
     } options;
     Dynamic_Array<IR_Data_Access> arguments;
     IR_Data_Access destination;
@@ -454,10 +459,17 @@ struct IR_Hardcoded_Function
     Type_Signature* signature;
 };
 
+struct IR_Extern_Function
+{
+    int name_id;
+    Type_Signature* function_type;
+};
+
 struct IR_Program
 {
     Dynamic_Array<IR_Function*> functions;
     Dynamic_Array<IR_Hardcoded_Function*> hardcoded_functions;
+    Dynamic_Array<IR_Extern_Function> extern_functions;
     Dynamic_Array<Type_Signature*> globals; // Global initialization needs to be done in the main function
     IR_Constant_Pool constant_pool;
     IR_Function* entry_function;
@@ -478,6 +490,7 @@ enum class Analysis_Workload_Type
     STRUCT_BODY,
     SIZED_ARRAY_SIZE,
     GLOBAL,
+    EXTERN_FUNCTION_DECLARATION
 };
 
 struct Analysis_Workload_Code_Block

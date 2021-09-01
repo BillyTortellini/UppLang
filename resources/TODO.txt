@@ -1,25 +1,46 @@
 NOTES:
 ------
-Current 'vague' Goals:
- * Determine what Goals are:
-    C-Compilation, having 'actual' Programs
-    Bytecode C execution
-    Debugger
-    Language-Features
-    Syntax-Guided editor
- * Get to C-Compilation as fast as possible
- * Allow calling to C-Functions
- * Setup Project-like system, so I can work on multiple things, maybe do simple test system
- * Design unsure language features
-    - Templated modules?
-    - Operator overloading
-    - Tag-System/Analysis System
-    - Constant values
+ * extern Interface:
+    - Parsing C-Header Files
+        ~ To do this 100% correct, I would to get the Infos from some C/C++ Compiler like Clang or MSV
+          which is annoying, since these tools are quite complicated
+        ~ The other method would be to parse the headers myself, using the output from msvc after preprocessing.
+    - Adding extern sources in code
+    - Calling C-Functions from bytecode
+ * Debugger
+    - Debug program in Visual studio
+    - Output custom PDB files
+    - Create own Debugger
+ * Improve Language:
+    - Compile time code-evaluation
+    - Enums, structs, unions, switches
+    - Tag-System + Static Analyis
+ * Improve Editor:
+    - Multiple projects
+    - Code-Completion
+    - Search and Replace
+
+Calling C-Functions:
+--------------------
+What sources can functions come from?
+    - C Standard Library (Standard headers)
+    - Static Libraries (.lib)
+    - Dynamic Libraries  (.dll + .lib)
+    - Obj-Files
+    - Source Files (Need to be compiled into .obj first)
 
 Next Up:
 --------
- * Calling other C-Functions from C 
+ * Some way to parse header files and convert the functions/structs into UppLang
+ * Adding Compilation-Sources inside the program (Libs, Dlls, Source-Files, Standard-Headers)
  * Calling C-Functions from Bytecode (Dyncall)
+ * Maybe try to tackle the syntax guided parser?
+
+
+
+---------------------------
+------ ISSUE TRACKER ------
+---------------------------
 
 Issues:
 -------
@@ -44,7 +65,6 @@ More Language features to implement:
  * Compile time code execution, for types and array indices and stuff
  * Enums, Switch/Match and Unions
  * Tag-System (For constant values, but also other stuff)
-
    ------- These features are for convenience, but they are not top priority ------
  * Any-Type and Type access (Varargs in this language, maybe use this for printf)
  * Macro-System
@@ -65,11 +85,11 @@ More Language features to implement:
 
 Editor features to implement:
 -----------------------------
+ * Code-Completion using current symbol table
  * Search and Replace
  * CTRL-R for replace word --> I would need Shift-R, since control R is already Redo
  * Visual Mode/Blockmode (Multicursor)/Visual Line
  * Multi-Window support (Multiple Tabs/Vertical or Horizontal splits, Tabs with shift-Tab)
- * Autocompletion using current symbol table
  * Jump to definition with string search (Maybe Ctrl-F)
  * Undo/Redo Tree History
  * Command recording (@ stuff with vim, altough this could maybe be done better)
@@ -86,7 +106,7 @@ Editor-Bugs:
 
  Vision for the Programming Language:
  ------------------------------------
-  * Compile-Time code evaluation
+  * Compile-Time code execution
   * Code analysis in tandum with Tag-System
   * Code-Visualizations in Editor
 
@@ -100,14 +120,14 @@ Ideas that need to be tested:
  * Non-Destructive Code-Editing for larger modules
 
  * Tag for not used anymore for variables
+ * Compiler supported Dynamic-Array type
  * Hot-Reloading Code
- * Incremental Builds
  * Stack-Analysis for Debug information (Or others? E.g. logging)
- * Differentiate break_loop, break_switch
+ * Differentiate break_loop, break_switch, maybe break_scope
  * Redirect debug output to application window
  * Error-Handling with the most recent build of the language
 
-Improvements that should be made (When I have time):
+Code Improvements that should be made (When I have time):
 ----------------------------------------------------
 Proper Error Handling in parser and semantic analyser, with error codes and highlighting things in editor.
 Also with differentiation between errors and Warnings
@@ -119,32 +139,3 @@ Intermediate Code should keep positional information, so should the bytecode (Wi
 Improved Parser-Error handling. (Function-Parsing Error handling should check each following line if it is a function)
 
 At some point the editor should not render at 60 FPS, but rather update when necessary.
-
-Open Questions:
----------------
-How does the syntax for array initialization look like?
-    C:
-        int x[] = {1, 2, 3, 4, 5}; 
-    UppLang:
-        x: []int = [1, 2, 3, 4, 5]; // Could this be a potential problem with array access? -> Dont really think so
-
-How do i implement dynamic arrays?
-I think it would be nice? if the language would know about these
-    x: [..]int;
-    new [5]int;
-Check out Jonathan Blows streams to check what hes doing
-
-At which stage does metaprogramming/template instances/automatic code generation happen?
-I currently almost think that I need another AST-Tree for this, since
-I dont think I want to manipulate code on the Intermediate Representation level, due to
-the Access things and the expression evaluation things and all this kinda complicated stuff.
-
-This generally concerns me for defer, templates and macros, since doing this on an AST-Level
-seems a lot simpler (This isn't confirmed yet). I could also split variable definitions in two things
-(Currently define, define-assign, define-infer) and add implicit conversions or return statements when necessary.
-Thought: I think templates can ONLY be done on the AST-Level, since the Intermediate Representation already has
-exact instructions for binary operators and other stuff.
-
-
-
-

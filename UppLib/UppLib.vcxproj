@@ -196,14 +196,14 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>$(VC_IncludePath);$(SolutionDir)external_libraries\includes\freetype;$(SolutionDir)external_libraries\includes\opengl_spec;$(WindowsSDK_IncludePath);$(SolutionDir)external_libraries\includes\zlib</IncludePath>
-    <LibraryPath>$(SolutionDir)external_libraries\binaries;$(LibraryPath)</LibraryPath>
+    <IncludePath>$(VC_IncludePath);$(SolutionDir)external_libraries\includes\freetype;$(SolutionDir)external_libraries\includes\opengl_spec;$(WindowsSDK_IncludePath);$(SolutionDir)external_libraries\includes\zlib;P:\Programme\LLVM\include</IncludePath>
+    <LibraryPath>P:\Programme\LLVM\lib;$(SolutionDir)external_libraries\binaries;$(LibraryPath)</LibraryPath>
     <RunCodeAnalysis>true</RunCodeAnalysis>
     <EnableClangTidyCodeAnalysis>false</EnableClangTidyCodeAnalysis>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <IncludePath>$(VC_IncludePath);$(SolutionDir)external_libraries\includes\freetype;$(SolutionDir)external_libraries\includes\opengl_spec;$(WindowsSDK_IncludePath);$(SolutionDir)external_libraries\includes\zlib</IncludePath>
-    <LibraryPath>$(SolutionDir)external_libraries\binaries;$(LibraryPath)</LibraryPath>
+    <IncludePath>$(VC_IncludePath);$(SolutionDir)external_libraries\includes\freetype;$(SolutionDir)external_libraries\includes\opengl_spec;$(WindowsSDK_IncludePath);$(SolutionDir)external_libraries\includes\zlib;P:\Programme\LLVM\include</IncludePath>
+    <LibraryPath>P:\Programme\LLVM\lib;$(SolutionDir)external_libraries\binaries;$(LibraryPath)</LibraryPath>
     <RunCodeAnalysis>true</RunCodeAnalysis>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
@@ -224,7 +224,7 @@
       <DisableSpecificWarnings>26495;4464;4514;4668;26451;4244;%(DisableSpecificWarnings)</DisableSpecificWarnings>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>Opengl32.lib;Winmm.lib;freetype.lib;zlibstatic.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>Opengl32.lib;Winmm.lib;freetype.lib;zlibstatic.lib;libclang.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalOptions>/ignore:4099 /ignore:4098 %(AdditionalOptions)</AdditionalOptions>
     </Link>
   </ItemDefinitionGroup>
@@ -255,7 +255,7 @@
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <AdditionalDependencies>Opengl32.lib;Winmm.lib;freetype.lib;zlibstatic.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>Opengl32.lib;Winmm.lib;freetype.lib;zlibstatic.lib;libclang.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <SubSystem>Console</SubSystem>
     </Link>
   </ItemDefinitionGroup>

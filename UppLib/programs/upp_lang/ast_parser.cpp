@@ -1556,6 +1556,31 @@ bool ast_parser_parse_function(AST_Parser* parser, AST_Node_Index parent_index)
     return true;
 }
 
+bool ast_parser_parse_extern_function_declaration(AST_Parser* parser, int parent)
+{
+    if (!ast_parser_test_next_3_tokens(parser, Token_Type::EXTERN, Token_Type::IDENTIFIER_NAME, Token_Type::DOUBLE_COLON)) {
+        return false;
+    }
+
+    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, parent);
+    AST_Node_Index node_index = ast_parser_get_next_node_index(parser, parent);
+    parser->nodes[node_index].type = AST_Node_Type::EXTERN_FUNCTION_DECLARATION;
+    parser->nodes[node_index].name_id = parser->lexer->tokens[parser->index + 1].attribute.identifier_number;
+    parser->index += 3;
+
+    if (!ast_parser_parse_type(parser, node_index)) {
+        ast_parser_checkpoint_reset(checkpoint);
+        return false;
+    }
+    if (!ast_parser_test_next_token(parser, Token_Type::SEMICOLON)) {
+        ast_parser_checkpoint_reset(checkpoint);
+        return false;
+    }
+    parser->index += 1;
+    parser->token_mapping[node_index] = token_range_make(checkpoint.rewind_token_index, parser->index);
+    return true;
+}
+
 bool ast_parser_parse_module(AST_Parser* parser, int parent);
 bool ast_parser_parse_definitions(AST_Parser* parser, int parent)
 {
@@ -1580,6 +1605,9 @@ bool ast_parser_parse_definitions(AST_Parser* parser, int parent)
             continue;
         }
         if (ast_parser_parse_variable_creation_statement(parser, node_index)) {
+            continue;
+        }
+        if (ast_parser_parse_extern_function_declaration(parser, node_index)) {
             continue;
         }
 
@@ -1761,6 +1789,7 @@ void ast_parser_check_sanity(AST_Parser* parser)
                 AST_Node_Type child_type = parser->nodes[node->children[i]].type;
                 if (child_type != AST_Node_Type::FUNCTION &&
                     child_type != AST_Node_Type::STRUCT &&
+                    child_type != AST_Node_Type::EXTERN_FUNCTION_DECLARATION &&
                     child_type != AST_Node_Type::MODULE &&
                     child_type != AST_Node_Type::MODULE_TEMPLATED &&
                     child_type != AST_Node_Type::STATEMENT_VARIABLE_DEFINE_ASSIGN &&
@@ -1777,6 +1806,14 @@ void ast_parser_check_sanity(AST_Parser* parser)
                 if (child_type != AST_Node_Type::STATEMENT_VARIABLE_DEFINITION) {
                     panic("Should not happen");
                 }
+            }
+            break;
+        case AST_Node_Type::EXTERN_FUNCTION_DECLARATION:
+            if (node->children.size != 1) {
+                panic("Should not happen");
+            }
+            if (!ast_node_type_is_type(parser->nodes[node->children[0]].type)) {
+                panic("Should not happen");
             }
             break;
         case AST_Node_Type::IDENTIFIER_NAME:
@@ -2200,6 +2237,7 @@ String ast_node_type_to_string(AST_Node_Type type)
     case AST_Node_Type::MODULE_TEMPLATED: return string_create_static("MODULE_TEMPLATED");
     case AST_Node_Type::TEMPLATE_PARAMETERS: return string_create_static("TEMPLATE_PARAMETERS");
     case AST_Node_Type::MODULE: return string_create_static("MODULE");
+    case AST_Node_Type::EXTERN_FUNCTION_DECLARATION: return string_create_static("EXTERN_FUNCTION_DECLARATION");
     case AST_Node_Type::FUNCTION: return string_create_static("FUNCTION");
     case AST_Node_Type::IDENTIFIER_NAME: return string_create_static("IDENTIFIER_NAME");
     case AST_Node_Type::IDENTIFIER_PATH: return string_create_static("IDENTIFIER_PATH");

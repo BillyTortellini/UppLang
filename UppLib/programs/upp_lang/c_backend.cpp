@@ -8,6 +8,266 @@
 #include "../../utility/hash_functions.hpp"
 #include "semantic_analyser.hpp"
 
+C_Compiler c_compiler_create()
+{
+    C_Compiler result;
+    result.source_files = dynamic_array_create_empty<String>(4);
+    result.initialized = true;
+    result.last_compile_successfull = false;
+    // Load system vars (Required to use cl.exe and link.exe)
+    {
+        Optional<String> file_content = file_io_load_text_file("backend/misc/env_vars.txt");
+        SCOPE_EXIT(file_io_unload_text_file(&file_content));
+        String env_var = string_create_empty(64);
+        String var_value = string_create_empty(64);
+        SCOPE_EXIT(string_destroy(&env_var));
+        SCOPE_EXIT(string_destroy(&var_value));
+
+        if (file_content.available)
+        {
+            String string = file_content.value;
+            // Each line contains a name, and is separated by \n
+            int i = 0;
+            bool parsing_name = true;
+            while (i < string.size)
+            {
+                SCOPE_EXIT(i++);
+                char c = string.characters[i];
+                if (parsing_name) 
+                {
+                    if (c == '=') {
+                        parsing_name = false;
+                    }
+                    else {
+                        string_append_character(&env_var, c);
+                    }
+                }
+                else {
+                    if (c == '\r') continue;
+                    if (c == '\n') {
+                        //printf("Var name: %s = %s\n", env_var.characters, var_value.characters);
+                        SetEnvironmentVariableA(env_var.characters, var_value.characters);
+                        string_reset(&env_var);
+                        string_reset(&var_value);
+                        parsing_name = true;
+                    }
+                    else {
+                        string_append_character(&var_value, c);
+                    }
+                }
+            }
+        }
+        else {
+            result.initialized = false;
+        }
+    }
+
+    return result;
+}
+void c_compiler_destroy(C_Compiler* compiler)
+{
+    for (int i = 0; i < compiler->source_files.size; i++) {
+        string_destroy(&compiler->source_files[i]);
+    }
+    dynamic_array_destroy(&compiler->source_files);
+}
+
+void c_compiler_add_source_file(C_Compiler* compiler, String file_name)
+{
+    String str = string_create(file_name.characters);
+    dynamic_array_push_back(&compiler->source_files, str);
+}
+
+bool c_compiler_compile(C_Compiler* compiler)
+{
+    if (!compiler->initialized) {
+        logg("Compiler initialization failed!\n");
+        return false;
+    }
+    if (compiler->source_files.size == 0) {
+        return false;
+    }
+    SCOPE_EXIT(
+        for (int i = 0; i < compiler->source_files.size; i++) {
+            string_destroy(&compiler->source_files[i]);
+        }
+        dynamic_array_reset(&compiler->source_files);
+    );
+
+    // Create compilation command
+    String command = string_create_empty(128);
+    SCOPE_EXIT(string_destroy(&command));
+    {
+        const char* compiler_options = "/EHsc /Zi /Fdbackend/build /Fobackend/build/";
+        const char* linker_options = "/OUT:backend/build/main.exe /PDB:backend/build/main.pdb";
+        string_append_formated(&command, "\"cl\" ");
+        string_append_formated(&command, compiler_options);
+        string_append_formated(&command, " ");
+        for (int i = 0; i < compiler->source_files.size; i++) {
+            string_append_formated(&command, compiler->source_files[i].characters);
+            string_append_formated(&command, " ");
+        }
+        string_append_formated(&command, "/link ");
+        string_append_formated(&command, linker_options);
+    }
+
+    // Start Process for compilation
+    {
+        HANDLE handle_stdout_read = 0;
+        HANDLE handle_stdout_write = 0;
+        HANDLE handle_stdin_read = 0;
+        HANDLE handle_stdin_write = 0;
+        SCOPE_EXIT(if (handle_stdout_read != 0) { CloseHandle(handle_stdout_read); handle_stdout_read = 0; });
+        SCOPE_EXIT(if (handle_stdout_write != 0) { CloseHandle(handle_stdout_write); handle_stdout_write = 0; });
+        SCOPE_EXIT(if (handle_stdin_read != 0) { CloseHandle(handle_stdin_read); handle_stdin_read = 0; });
+        SCOPE_EXIT(if (handle_stdin_write != 0) { CloseHandle(handle_stdin_write); handle_stdin_write = 0; });
+        {
+            SECURITY_ATTRIBUTES security_attributes;
+            security_attributes.nLength = sizeof(security_attributes);
+            security_attributes.bInheritHandle = true;
+            security_attributes.lpSecurityDescriptor = NULL;
+
+            bool success = true;
+            if (!CreatePipe(&handle_stdout_read, &handle_stdout_write, &security_attributes, 0)) {
+                logg("Pipe problem");
+                success = false;
+            }
+            if (success && !SetHandleInformation(handle_stdout_read, HANDLE_FLAG_INHERIT, 0)) {
+                logg("Pipe problem");
+                success = false;
+            }
+            if (!CreatePipe(&handle_stdin_read, &handle_stdin_write, &security_attributes, 0)) {
+                logg("Pipe problem");
+                success = false;
+            }
+            if (success && !SetHandleInformation(handle_stdin_read, HANDLE_FLAG_INHERIT, 0)) {
+                logg("Pipe problem");
+                success = false;
+            }
+            if (!success) {
+                logg("Pipe problem was detected");
+                return false;
+            }
+        }
+
+        STARTUPINFO start_info;
+        ZeroMemory(&start_info, sizeof(start_info));
+        start_info.cb = sizeof(start_info);
+        start_info.dwFlags |= STARTF_USESTDHANDLES;
+        start_info.hStdError = handle_stdout_write;
+        start_info.hStdOutput = handle_stdout_write;
+        start_info.hStdInput = handle_stdin_read;
+
+        PROCESS_INFORMATION process_info;
+        ZeroMemory(&process_info, sizeof(process_info));
+
+        bool success = CreateProcessA(
+            0,
+            command.characters,
+            NULL, // Security Stuff
+            NULL, // Primary thread security stuff
+            TRUE, // Inherit handles
+            0, // Creation flags
+            0, // Use Parents environment (But it may just be copied)
+            0, // Use Parents directory
+            &start_info,
+            &process_info
+        );
+        if (!success) {
+            logg("ERROR with CreateProcessA\n");
+            helper_print_last_error();
+            compiler->last_compile_successfull = false;
+            return false;
+        }
+
+        SCOPE_EXIT(
+            CloseHandle(process_info.hProcess);
+            CloseHandle(process_info.hThread);
+        );
+
+        // Close child pipes
+        CloseHandle(handle_stdout_write);
+        handle_stdout_write = 0;
+        CloseHandle(handle_stdin_read);
+        handle_stdin_read = 0;
+        // Close parent unused pipes
+        CloseHandle(handle_stdin_write);
+        handle_stdin_write = 0;
+
+        // Read from child
+        char buffer[1024];
+        DWORD read_bytes = 0;
+        String msvc_output = string_create_empty(1024);
+        SCOPE_EXIT(string_destroy(&msvc_output));
+        while (true)
+        {
+            success = ReadFile(handle_stdout_read, buffer, 1024, &read_bytes, NULL);
+            if (!success || read_bytes == 0) break;
+            string_append_character_array(&msvc_output, array_create_static(buffer, read_bytes));
+        }
+        CloseHandle(handle_stdout_read);
+        handle_stdout_read = 0;
+
+        success = true;
+        WaitForSingleObject(process_info.hProcess, INFINITE);
+        DWORD exit_code = 0;
+        if (GetExitCodeProcess(process_info.hProcess, &exit_code) == FALSE) {
+            success = false;
+            logg("Could not get exit code?\n");
+            compiler->last_compile_successfull = false;
+        }
+
+        if (success && exit_code != 0) {
+            logg("ERROR OUTPUT: \n%s\n", msvc_output.characters);
+            panic("Normally this should compile fine\n");
+        }
+        else {
+            logg("Compiled Successfully!\n");
+        }
+    }
+
+    compiler->last_compile_successfull = true;
+    return true;
+}
+
+void c_compiler_execute(C_Compiler* compiler)
+{
+    if (!compiler->initialized) {
+        return;
+    }
+    if (!compiler->last_compile_successfull) {
+        logg("C_Compiler did not execute, since last compile was not successfull");
+        return;
+    }
+
+    STARTUPINFO start_info;
+    ZeroMemory(&start_info, sizeof(start_info));
+    start_info.cb = sizeof(start_info);
+
+    PROCESS_INFORMATION process_info;
+    ZeroMemory(&process_info, sizeof(process_info));
+
+    bool success = CreateProcessA(
+        0,
+        "\"backend/build/main.exe\"",
+        NULL, // Security Stuff
+        NULL, // Primary thread security stuff
+        FALSE, // Inherit handles
+        0, // Creation flags
+        0, // Use Parents environment (But it may just be copied)
+        0, // Use Parents directory
+        &start_info,
+        &process_info
+    );
+    if (!success) {
+        logg("ERROR with CreateProcessA\n");
+        helper_print_last_error();
+        return;
+    }
+    CloseHandle(process_info.hProcess);
+    CloseHandle(process_info.hThread);
+}
+
 C_Generator c_generator_create()
 {
     C_Generator result;
@@ -145,9 +405,9 @@ void c_generator_register_type_name(C_Generator* generator, Type_Signature* type
     case Signature_Type::FUNCTION: {
         return;
     }
-    case Signature_Type::POINTER: 
+    case Signature_Type::POINTER:
     {
-        if (type->child_type->type == Signature_Type::FUNCTION) 
+        if (type->child_type->type == Signature_Type::FUNCTION)
         {
             Type_Signature* function_type = type->child_type;
             string_append_formated(&type_name, "function_ptr_type_%d", generator->name_counter);
@@ -406,6 +666,10 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
             case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
                 function_sig = call->options.hardcoded->signature;
                 break;
+            case IR_Instruction_Call_Type::EXTERN_FUNCTION_CALL:
+                function_sig = generator->program->extern_functions[call->options.extern_function_index].function_type;
+                break;
+            default: panic("hey");
             }
             if (function_sig->return_type != generator->compiler->type_system.void_type) {
                 c_generator_output_data_access(generator, output, call->destination);
@@ -422,6 +686,11 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
             }
             case IR_Instruction_Call_Type::FUNCTION_POINTER_CALL: {
                 c_generator_output_data_access(generator, output, call->options.pointer_access);
+                break;
+            }
+            case IR_Instruction_Call_Type::EXTERN_FUNCTION_CALL: {
+                IR_Extern_Function* extern_fn = &generator->program->extern_functions[call->options.extern_function_index];
+                string_append_formated(output, lexer_identifer_to_string(&generator->compiler->lexer, extern_fn->name_id).characters);
                 break;
             }
             case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL: {
@@ -740,6 +1009,23 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
         }
     }
 
+    // Create extern function prototypes
+    for (int i = 0; i < generator->program->extern_functions.size; i++)
+    {
+        IR_Extern_Function* function = &generator->program->extern_functions[i];
+        Type_Signature* function_signature = function->function_type;
+        c_generator_output_type_reference(generator, &generator->section_function_prototypes, function_signature->return_type);
+        string_append_formated(&generator->section_function_prototypes, " %s(", lexer_identifer_to_string(&generator->compiler->lexer, function->name_id).characters);
+        for (int j = 0; j < function->function_type->parameter_types.size; j++) {
+            Type_Signature* param_type = function->function_type->parameter_types[j];
+            c_generator_output_type_reference(generator, &generator->section_function_prototypes, param_type);
+            if (j != function->function_type->parameter_types.size - 1) {
+                string_append_formated(&generator->section_function_prototypes, ", ");
+            }
+        }
+        string_append_formated(&generator->section_function_prototypes, ");\n");
+    }
+
     // Create function prototypes
     for (int i = 0; i < generator->program->functions.size; i++)
     {
@@ -847,7 +1133,7 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
             assert(dependency->dependency_count == 0, "Should not be in queue");
 
             // Decrease dependency count of incoming dependencies
-            for (int i = 0; i < dependency->incoming_dependencies.size; i++) 
+            for (int i = 0; i < dependency->incoming_dependencies.size; i++)
             {
                 int incoming_index = dependency->incoming_dependencies[i];
                 C_Type_Definition_Dependency* dependant = &generator->type_dependencies[incoming_index];
@@ -911,7 +1197,7 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
     String source_code = string_create_empty(4096);
     SCOPE_EXIT(string_destroy(&source_code));
     {
-        String section_introduction = string_create_static("#pragma once\n#include <cstdlib>\n#include \"compiler/hardcoded_functions.h\"\n#include \"compiler/datatypes.h\"\n\n");
+        String section_introduction = string_create_static("#pragma once\n#include <cstdlib>\n#include \"../hardcoded/hardcoded_functions.h\"\n#include \"../hardcoded/datatypes.h\"\n\n");
         string_append_formated(&source_code, "/* INTRODUCTION\n----------------*/\n");
         string_append_string(&source_code, &section_introduction);
         string_append_formated(&source_code, "\n/* STRING_DATA\n----------------*/\n");
@@ -931,7 +1217,40 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
     }
 
     // Write to file
-    file_io_write_file("backend/main.cpp", array_create_static((byte*)source_code.characters, source_code.size));
+    file_io_write_file("backend/src/main.cpp", array_create_static((byte*)source_code.characters, source_code.size));
+
+    // Compile with MSVC Compiler
+    /*
+        1. Search for a way to compile the cpp code
+        2. Search for a way to execute the .exe file
+
+        It seems like I want one of the following commands for compiler invocation
+         * ShellExecute
+         * system
+         * CreateProcess
+
+        My requirement:
+         * Only use vcvars64 once (Which only seems to set up environment variables) once,
+           since it takes a fucking long time to execute it (Longer than actually building the source files).
+         * Ability to read output of the cl and link commands, to check for errors
+
+        How do I set the environment variables
+         * Setting with SetEnvironmentVariable
+            - Hardcoded the copy-pasted values into the c code and set them
+            - Write the output of SET (With correct vars) into a text file, read that file and execute the given commands
+            - Maybe write a script that does this at program start
+         * Setting by invocating vcvars64.bat
+
+        ENVIRONMENT VARIABLES ANALYSIS
+        ------------------------------
+        From Docs the following variables are used:
+            * CL      contains command-line arguments for the compiler (cl.exe), which are prepended
+            * _CL_    same as above, only that the arguments are appended
+            * INCLUDE points to the include subdirectory of visual studio
+            * LIBPATH specifies multiple directories containing metadata
+
+        There are a lot of things set, using a diff tool online.
+    */
 
     //const char* cmd_setup_compiler_vars = "\"P:\\Programme\\Visual Studio Community 2019\\VC\\Auxiliary\\Build\\vcvars64.bat\"";
     //system(cmd_setup_compiler_vars);
