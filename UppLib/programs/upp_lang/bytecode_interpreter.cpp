@@ -834,7 +834,7 @@ void bytecode_interpreter_print_state(Bytecode_Interpreter* interpreter)
     if (current_function_index == -1) panic("Should not happen!\n");
 
     logg("\n\n\n\n---------------------- CURRENT STATE ----------------------\n");
-    logg("Current Function: %s\n", lexer_identifer_to_string(&interpreter->compiler->lexer, func->name_handle).characters);
+    logg("Current Function: %s\n", identifier_pool_index_to_string(&interpreter->compiler->lexer, func->name_handle).characters);
     logg("Current Stack offset: %d\n", interpreter->stack.data - interpreter->stack_pointer);
     logg("Instruction Index: %d\n", current_instruction_index);
     {
@@ -856,7 +856,7 @@ void bytecode_interpreter_print_state(Bytecode_Interpreter* interpreter)
         }
         else if (reg->type == Intermediate_Register_Type::VARIABLE) {
             logg("Variable %s (Offset %d): ",
-                lexer_identifer_to_string(interpreter->generator->im_generator->analyser->parser->lexer, reg->name_id).characters,
+                identifier_pool_index_to_string(interpreter->generator->im_generator->analyser->parser->lexer, reg->name_id).characters,
                 stack_offset
             );
         }

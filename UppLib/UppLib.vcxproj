@@ -37,6 +37,7 @@
     <ClInclude Include="programs\upp_lang\code_editor.hpp" />
     <ClInclude Include="programs\upp_lang\compiler.hpp" />
     <ClInclude Include="programs\upp_lang\c_backend.hpp" />
+    <ClInclude Include="programs\upp_lang\c_importer.hpp" />
     <ClInclude Include="programs\upp_lang\semantic_analyser.hpp" />
     <ClInclude Include="programs\upp_lang\lexer.hpp" />
     <ClInclude Include="programs\upp_lang\test_renderer.hpp" />
@@ -69,6 +70,7 @@
     <ClInclude Include="utility\random.hpp" />
     <ClInclude Include="utility\utils.hpp" />
     <ClInclude Include="win32\input.hpp" />
+    <ClInclude Include="win32\process.hpp" />
     <ClInclude Include="win32\timing.hpp" />
     <ClInclude Include="win32\window.hpp" />
     <ClInclude Include="win32\windows_helper_functions.hpp" />
@@ -91,6 +93,7 @@
     <ClCompile Include="programs\upp_lang\code_editor.cpp" />
     <ClCompile Include="programs\upp_lang\compiler.cpp" />
     <ClCompile Include="programs\upp_lang\c_backend.cpp" />
+    <ClCompile Include="programs\upp_lang\c_importer.cpp" />
     <ClCompile Include="programs\upp_lang\semantic_analyser.cpp" />
     <ClCompile Include="programs\upp_lang\lexer.cpp" />
     <ClCompile Include="programs\upp_lang\test_renderer.cpp" />
@@ -122,6 +125,7 @@
     <ClCompile Include="utility\random.cpp" />
     <ClCompile Include="utility\utils.cpp" />
     <ClCompile Include="win32\input.cpp" />
+    <ClCompile Include="win32\process.cpp" />
     <ClCompile Include="win32\timing.cpp" />
     <ClCompile Include="win32\window.cpp" />
     <ClCompile Include="win32\windows_helper_functions.cpp" />

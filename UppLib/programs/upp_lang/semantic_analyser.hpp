@@ -169,13 +169,19 @@ enum class Symbol_Type
     EXTERN_FUNCTION
 };
 
+struct Extern_Function_Identifier
+{
+    Type_Signature* function_signature;
+    int name_id;
+};
+
 union Symbol_Options
 {
     IR_Function* function; // Functions
     IR_Data_Access variable_access; // Variables/Parameters
     Type_Signature* data_type; // Structs
     IR_Hardcoded_Function* hardcoded_function; // Hardcoded function
-    int extern_function_index;
+    Extern_Function_Identifier extern_function;
 };
 
 struct Symbol_Template_Instance
@@ -217,8 +223,9 @@ Symbol_Table* symbol_table_create(Semantic_Analyser* analyser, Symbol_Table* par
 void symbol_table_destroy(Symbol_Table* symbol_table);
 
 Symbol* symbol_table_find_symbol(Symbol_Table* table, int name_handle, bool only_current_scope);
-Symbol* symbol_table_find_symbol_by_string(Symbol_Table* table, String* string, Lexer* lexer);
 void symbol_table_append_to_string(String* string, Symbol_Table* table, Semantic_Analyser* analyser, bool print_root);
+struct Identifier_Pool;
+Symbol* symbol_table_find_symbol_by_string(Symbol_Table* table, String* string, Identifier_Pool* pool);
 
 
 
@@ -260,7 +267,7 @@ struct IR_Instruction_Call
         IR_Function* function;
         IR_Data_Access pointer_access;
         IR_Hardcoded_Function* hardcoded;
-        int extern_function_index;
+        Extern_Function_Identifier extern_function;
     } options;
     Dynamic_Array<IR_Data_Access> arguments;
     IR_Data_Access destination;
@@ -459,20 +466,27 @@ struct IR_Hardcoded_Function
     Type_Signature* signature;
 };
 
-struct IR_Extern_Function
+struct Extern_Program_Sources
 {
-    int name_id;
-    Type_Signature* function_type;
+    /*
+    TODO:
+        - DLLs
+        - LIBs
+    */
+    Dynamic_Array<int> headers_to_include;
+    Dynamic_Array<int> source_files_to_compile;
+    Dynamic_Array<Extern_Function_Identifier> extern_functions;
+    Hashset<Type_Signature*> extern_type_signatures;
 };
 
 struct IR_Program
 {
     Dynamic_Array<IR_Function*> functions;
     Dynamic_Array<IR_Hardcoded_Function*> hardcoded_functions;
-    Dynamic_Array<IR_Extern_Function> extern_functions;
     Dynamic_Array<Type_Signature*> globals; // Global initialization needs to be done in the main function
     IR_Constant_Pool constant_pool;
     IR_Function* entry_function;
+    Extern_Program_Sources extern_program_sources;
 };
 struct Semantic_Analyser;
 void ir_program_append_to_string(IR_Program* program, String* string, Semantic_Analyser* analyser);
@@ -490,7 +504,8 @@ enum class Analysis_Workload_Type
     STRUCT_BODY,
     SIZED_ARRAY_SIZE,
     GLOBAL,
-    EXTERN_FUNCTION_DECLARATION
+    EXTERN_FUNCTION_DECLARATION,
+    EXTERN_HEADER_IMPORT
 };
 
 struct Analysis_Workload_Code_Block

@@ -108,7 +108,7 @@ void code_editor_jump_to_definition(Code_Editor* editor)
     Symbol_Table* nearest_table = code_editor_find_symbol_table_of_text_position(editor, editor->text_editor->cursor_position);
     if (nearest_table != 0)
     {
-        Symbol* s = symbol_table_find_symbol_by_string(nearest_table, &search_name, &editor->compiler.lexer);
+        Symbol* s = symbol_table_find_symbol_by_string(nearest_table, &search_name, editor->compiler.identifier_pool);
         if (s != 0 && s->definition_node_index != -1) {
             Token* token = &editor->compiler.lexer.tokens[editor->compiler.parser.token_mapping[s->definition_node_index].start_index];
             Text_Position result_pos = token->position.start;

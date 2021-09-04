@@ -195,9 +195,9 @@ void upp_lang_main()
 
     // Set Window/Rendering Options
     {
-        //window_set_size(window, 600, 600);
-        window_set_position(window, -1234, 96);
-        window_set_fullscreen(window, true);
+        window_set_size(window, 800, 600);
+        //window_set_position(window, -1234, 96);
+        //window_set_fullscreen(window, true);
         window_set_vsync(window, false);
 
         opengl_state_set_clear_color(&core.opengl_state, vec4(0.0f));

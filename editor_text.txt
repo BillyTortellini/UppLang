@@ -1,11 +1,27 @@
 extern hello_world :: () -> void;
 
+module Win32
+{
+    extern "Windows.h" {HWND CreateWindowExA}
+    extern "cstdio"{}
+}
+
 main :: ()
 {
     i := 0;
     while i < 100
     {
         hello_world();
-        i = i+5;
+        i = i+1;
     }
+    
+    window_handle: Win32::HWND;
+    class_name := "MyClass";
+    name_ptr : *i8 = cast<*i8>(class_name.character_buffer.data);
+    
+    window_handle = Win32::CreateWindowExA(
+        cast<u32>(0), name_ptr, name_ptr, cast<u32>(0),
+        0, 0, 800, 600,
+        nullptr, nullptr, nullptr, nullptr 
+    );
 }

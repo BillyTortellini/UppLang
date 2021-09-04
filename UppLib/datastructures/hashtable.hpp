@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../utility/datatypes.hpp"
+#include "../utility/utils.hpp"
 #include "array.hpp"
 #include "hashset.hpp"
 #include "../utility/hash_functions.hpp"
@@ -171,6 +172,31 @@ V* hashtable_find_element(Hashtable<K, V>* table, K key)
 }
 
 template <typename K, typename V>
+struct Key_Value_Reference
+{
+    K* key;
+    V* value;
+};
+
+template <typename K, typename V>
+Optional<Key_Value_Reference<K, V>> hashtable_find_element_key_and_value(Hashtable<K, V>* table, K key)
+{
+    u64 hash = table->hash_function(&key);
+    int entry_index = hash % table->entries.size;
+    Hashtable_Entry<K,V>* entry = &table->entries.data[entry_index];
+    while (entry != 0 && entry->valid) {
+        if (table->equals_function(&entry->key, &key)) {
+            Key_Value_Reference<K, V> ref;
+            ref.key = &entry->key;
+            ref.value = &entry->value;
+            return optional_make_success(ref);;
+        }
+        entry = entry->next;
+    }
+    return optional_make_failure<Key_Value_Reference<K, V>>();
+}
+
+template <typename K, typename V>
 void hashtable_reserve(Hashtable<K, V>* table, int capacity) 
 {
     if (table->entries.size > capacity) {
@@ -227,3 +253,43 @@ bool hashtable_insert_element(Hashtable<K, V>* table, K key, V value)
 
     return false;
 }
+
+// Returns true if the element was removed, otherwise false (Value was not in set)
+template <typename K, typename V>
+bool hashtable_remove_element(Hashtable<K, V>* table, K key)
+{
+    u64 hash = table->hash_function(&key);
+    int entry_index = (hash % table->entries.size);
+    Hashtable_Entry<K, V>* entry = &(table->entries.data[entry_index]);
+    if (!entry->valid) {
+        return false;
+    }
+
+    if (table->equals_function(&entry->key, &key)) {
+        entry->valid = false;
+        if (entry->next != 0) {
+            table->entries[entry_index] = *entry->next;
+            table->entries[entry_index].valid = true;
+            delete entry->next;
+        }
+        return true;
+    }
+
+    Hashtable_Entry<K, V>* next = entry->next;
+    while (next != 0)
+    {
+        if (table->equals_function(&next->key, &key)) {
+            *entry = *next;
+            delete next;
+            entry->valid = true;
+            return true;
+        }
+        else {
+            entry = next;
+            next = next->next;
+        }
+    }
+
+    return false;
+}
+

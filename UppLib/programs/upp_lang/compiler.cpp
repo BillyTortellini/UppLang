@@ -1,6 +1,54 @@
 #include "compiler.hpp"
 #include "../../win32/timing.hpp"
 
+Identifier_Pool identifier_pool_create()
+{
+    Identifier_Pool result;
+    result.identifiers = dynamic_array_create_empty<String>(128);
+    result.identifier_index_lookup_table = hashtable_create_empty<String, int>(128, hash_string, string_equals);
+    return result;
+}
+
+void identifier_pool_destroy(Identifier_Pool* pool)
+{
+    for (int i = 0; i < pool->identifiers.size; i++) {
+        string_destroy(&pool->identifiers[i]);
+    }
+    dynamic_array_destroy(&pool->identifiers);
+    hashtable_destroy(&pool->identifier_index_lookup_table);
+}
+
+int identifier_pool_add_or_find_identifier_by_string(Identifier_Pool* lexer, String identifier)
+{
+    int* identifier_id = hashtable_find_element(&lexer->identifier_index_lookup_table, identifier);
+    if (identifier_id != 0) {
+        return *identifier_id;
+    }
+    else {
+        String identifier_string_copy = string_create(identifier.characters);
+        dynamic_array_push_back(&lexer->identifiers, identifier_string_copy);
+        int index = lexer->identifiers.size - 1;
+        hashtable_insert_element(&lexer->identifier_index_lookup_table, identifier_string_copy, index);
+        return index;
+    }
+}
+
+void identifier_pool_print(Identifier_Pool* pool)
+{
+    String msg = string_create_empty(256);
+    SCOPE_EXIT(string_destroy(&msg));
+    string_append_formated(&msg, "Identifiers: ");
+    for (int i = 0; i < pool->identifiers.size; i++) {
+        string_append_formated(&msg, "\n\t%d: %s", i, pool->identifiers[i].characters);
+    }
+    string_append_formated(&msg, "\n");
+    logg("%s", msg.characters);
+}
+
+String identifier_pool_index_to_string(Identifier_Pool* pool, int index) {
+    return pool->identifiers[index];
+}
+
 Token_Range token_range_make(int start_index, int end_index)
 {
     Token_Range result;
@@ -13,15 +61,17 @@ Compiler compiler_create(Timer* timer)
 {
     Compiler result;
     result.timer = timer;
-    result.lexer = lexer_create();
+    result.identifier_pool = new Identifier_Pool();
+    *result.identifier_pool = identifier_pool_create();
+    result.lexer = lexer_create(result.identifier_pool);
     result.parser = ast_parser_create();
-    result.lexer = lexer_create();
     result.type_system = type_system_create(&result.lexer);
     result.analyser = semantic_analyser_create();
     result.bytecode_generator = bytecode_generator_create();
     result.bytecode_interpreter = bytecode_intepreter_create();
     result.c_generator = c_generator_create();
     result.c_compiler = c_compiler_create();
+    result.c_importer = c_importer_create(result.identifier_pool);
     return result;
 }
 
@@ -35,6 +85,9 @@ void compiler_destroy(Compiler* compiler)
     bytecode_interpreter_destroy(&compiler->bytecode_interpreter);
     c_generator_destroy(&compiler->c_generator);
     c_compiler_destroy(&compiler->c_compiler);
+    c_importer_destroy(&compiler->c_importer);
+    identifier_pool_destroy(compiler->identifier_pool);
+    delete compiler->identifier_pool;
 }
 
 bool enable_lexing = true;
@@ -118,7 +171,7 @@ void compiler_compile(Compiler* compiler, String* source_code, bool generate_cod
             }
             if (output_identifiers) {
                 logg("\n--------IDENTIFIERS:--------:\n");
-                lexer_print_identifiers(&compiler->lexer);
+                identifier_pool_print(compiler->identifier_pool);
             }
         }
 

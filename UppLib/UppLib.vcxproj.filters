@@ -252,6 +252,12 @@
     <ClInclude Include="datastructures\hashset.hpp">
       <Filter>Header Files\Datastructures</Filter>
     </ClInclude>
+    <ClInclude Include="programs\upp_lang\c_importer.hpp">
+      <Filter>Header Files\Programs\Upp_Lang</Filter>
+    </ClInclude>
+    <ClInclude Include="win32\process.hpp">
+      <Filter>Header Files\Win32</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="datastructures\array.cpp">
@@ -406,6 +412,12 @@
     </ClCompile>
     <ClCompile Include="datastructures\hashset.cpp">
       <Filter>Source Files\Datastructures</Filter>
+    </ClCompile>
+    <ClCompile Include="programs\upp_lang\c_importer.cpp">
+      <Filter>Source Files\Programs\Upp_Lang</Filter>
+    </ClCompile>
+    <ClCompile Include="win32\process.cpp">
+      <Filter>Source Files\Win32</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

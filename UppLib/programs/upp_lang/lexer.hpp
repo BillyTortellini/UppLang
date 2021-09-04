@@ -89,10 +89,10 @@ struct Token
     int source_code_index;
 };
 
+struct Identifier_Pool;
 struct Lexer
 {
-    Dynamic_Array<String> identifiers;
-    Hashtable<String, int> identifier_index_lookup_table;
+    Identifier_Pool* identifier_pool;
     Hashtable<String, Token_Type> keywords;
     Dynamic_Array<Token> tokens;
     Dynamic_Array<Token> tokens_with_whitespaces;
@@ -101,12 +101,7 @@ struct Lexer
 bool token_type_is_keyword(Token_Type type);
 const char* token_type_to_string(Token_Type type);
 
-Lexer lexer_create();
+Lexer lexer_create(Identifier_Pool* identifier_pool);
 void lexer_destroy(Lexer* result);
 void lexer_parse_string(Lexer* lexer, String* code);
-
-String lexer_identifer_to_string(Lexer* Lexer, int index);
-int lexer_add_or_find_identifier_by_string(Lexer* Lexer, String identifier);
-
 void lexer_print(Lexer* result);
-void lexer_print_identifiers(Lexer* lexer);

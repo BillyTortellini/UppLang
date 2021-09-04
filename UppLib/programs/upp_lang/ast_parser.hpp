@@ -14,6 +14,7 @@ enum class AST_Node_Type
     ROOT, // Child 0: Definitions
     DEFINITIONS, // Children: functions, globals, modules, structs or extern function declaration
     EXTERN_FUNCTION_DECLARATION, // name_id: function name Child 0: Type
+    EXTERN_HEADER_IMPORT, // name_id: header name, Children: IDENTIFIER_NAME
     MODULE, // Child 0: Definitions
     MODULE_TEMPLATED, // Child 0: Parameter_Block_Unnamed, Child 1: DEFINITIONS
     TEMPLATE_PARAMETERS, // Children: IDENTIFIER_NAME

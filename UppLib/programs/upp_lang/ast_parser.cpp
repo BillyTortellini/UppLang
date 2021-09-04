@@ -1558,15 +1558,49 @@ bool ast_parser_parse_function(AST_Parser* parser, AST_Node_Index parent_index)
 
 bool ast_parser_parse_extern_function_declaration(AST_Parser* parser, int parent)
 {
-    if (!ast_parser_test_next_3_tokens(parser, Token_Type::EXTERN, Token_Type::IDENTIFIER_NAME, Token_Type::DOUBLE_COLON)) {
+    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, parent);
+    if (!ast_parser_test_next_token(parser, Token_Type::EXTERN)) {
+        return false;
+    }
+    parser->index++;
+    if (ast_parser_test_next_2_tokens(parser, Token_Type::STRING_LITERAL, Token_Type::OPEN_BRACES)) 
+    {
+        AST_Node_Index node_index = ast_parser_get_next_node_index(parser, parent);
+        parser->nodes[node_index].type = AST_Node_Type::EXTERN_HEADER_IMPORT;
+        parser->nodes[node_index].name_id = parser->lexer->tokens[parser->index].attribute.identifier_number;
+        parser->index += 2;
+        while (true)
+        {
+            if (ast_parser_test_next_token(parser, Token_Type::IDENTIFIER_NAME)) {
+                AST_Node_Index child_index = ast_parser_get_next_node_index(parser, node_index);
+                parser->nodes[child_index].type = AST_Node_Type::IDENTIFIER_NAME;
+                parser->nodes[child_index].name_id = parser->lexer->tokens[parser->index].attribute.identifier_number;
+                parser->token_mapping[child_index] = token_range_make(parser->index, parser->index+1);
+                parser->index++;
+            }
+            else if (ast_parser_test_next_token(parser, Token_Type::CLOSED_BRACES)) {
+                parser->index++;
+                break;
+            }
+            else {
+                ast_parser_checkpoint_reset(checkpoint);
+                return false;
+            }
+        }
+
+        parser->token_mapping[node_index] = token_range_make(checkpoint.rewind_token_index, parser->index);
+        return true;
+    }
+
+    if (!ast_parser_test_next_2_tokens(parser, Token_Type::IDENTIFIER_NAME, Token_Type::DOUBLE_COLON)) {
+        ast_parser_checkpoint_reset(checkpoint);
         return false;
     }
 
-    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, parent);
     AST_Node_Index node_index = ast_parser_get_next_node_index(parser, parent);
     parser->nodes[node_index].type = AST_Node_Type::EXTERN_FUNCTION_DECLARATION;
-    parser->nodes[node_index].name_id = parser->lexer->tokens[parser->index + 1].attribute.identifier_number;
-    parser->index += 3;
+    parser->nodes[node_index].name_id = parser->lexer->tokens[parser->index].attribute.identifier_number;
+    parser->index += 2;
 
     if (!ast_parser_parse_type(parser, node_index)) {
         ast_parser_checkpoint_reset(checkpoint);
@@ -1790,6 +1824,7 @@ void ast_parser_check_sanity(AST_Parser* parser)
                 if (child_type != AST_Node_Type::FUNCTION &&
                     child_type != AST_Node_Type::STRUCT &&
                     child_type != AST_Node_Type::EXTERN_FUNCTION_DECLARATION &&
+                    child_type != AST_Node_Type::EXTERN_HEADER_IMPORT &&
                     child_type != AST_Node_Type::MODULE &&
                     child_type != AST_Node_Type::MODULE_TEMPLATED &&
                     child_type != AST_Node_Type::STATEMENT_VARIABLE_DEFINE_ASSIGN &&
@@ -1816,6 +1851,15 @@ void ast_parser_check_sanity(AST_Parser* parser)
                 panic("Should not happen");
             }
             break;
+        case AST_Node_Type::EXTERN_HEADER_IMPORT: {
+            for (int i = 0; i < node->children.size; i++) {
+                AST_Node_Type child_type = parser->nodes[node->children[i]].type;
+                if (child_type != AST_Node_Type::IDENTIFIER_NAME) {
+                    panic("Should not happen");
+                }
+            }
+            break;
+        }
         case AST_Node_Type::IDENTIFIER_NAME:
             if (node->children.size != 0) {
                 panic("Should not happen");
@@ -2238,6 +2282,7 @@ String ast_node_type_to_string(AST_Node_Type type)
     case AST_Node_Type::TEMPLATE_PARAMETERS: return string_create_static("TEMPLATE_PARAMETERS");
     case AST_Node_Type::MODULE: return string_create_static("MODULE");
     case AST_Node_Type::EXTERN_FUNCTION_DECLARATION: return string_create_static("EXTERN_FUNCTION_DECLARATION");
+    case AST_Node_Type::EXTERN_HEADER_IMPORT: return string_create_static("EXTERN_HEADER_IMPORT");
     case AST_Node_Type::FUNCTION: return string_create_static("FUNCTION");
     case AST_Node_Type::IDENTIFIER_NAME: return string_create_static("IDENTIFIER_NAME");
     case AST_Node_Type::IDENTIFIER_PATH: return string_create_static("IDENTIFIER_PATH");
@@ -2316,7 +2361,7 @@ bool ast_node_type_is_type(AST_Node_Type type) {
 
 void ast_node_identifer_or_path_append_to_string(AST_Parser* parser, AST_Node_Index index, String* string)
 {
-    string_append(string, lexer_identifer_to_string(parser->lexer, parser->nodes[index].name_id).characters);
+    string_append(string, identifier_pool_index_to_string(parser->lexer->identifier_pool, parser->nodes[index].name_id).characters);
     if (parser->nodes[index].type == AST_Node_Type::IDENTIFIER_PATH) {
         string_append(string, "::");
         ast_node_identifer_or_path_append_to_string(parser, parser->nodes[index].children[0], string);
@@ -2352,7 +2397,7 @@ void ast_node_expression_append_to_string(AST_Parser* parser, AST_Node_Index nod
         case Token_Type::INTEGER_LITERAL: string_append_formated(string, "%d", t.attribute.integer_value); break;
         case Token_Type::FLOAT_LITERAL: string_append_formated(string, "%3.2f", t.attribute.float_value); break;
         case Token_Type::STRING_LITERAL: string_append_formated(string, "\"%s\"",
-            lexer_identifer_to_string(parser->lexer, t.attribute.identifier_number).characters); break;
+            identifier_pool_index_to_string(parser->lexer->identifier_pool, t.attribute.identifier_number).characters); break;
         }
         return;
     case AST_Node_Type::EXPRESSION_FUNCTION_CALL:
@@ -2370,7 +2415,7 @@ void ast_node_expression_append_to_string(AST_Parser* parser, AST_Node_Index nod
         return;
     case AST_Node_Type::EXPRESSION_MEMBER_ACCESS:
         ast_node_expression_append_to_string(parser, node->children[0], string);
-        string_append_formated(string, ".%s", lexer_identifer_to_string(parser->lexer, node->name_id).characters);
+        string_append_formated(string, ".%s", identifier_pool_index_to_string(parser->lexer->identifier_pool, node->name_id).characters);
         return;
     case AST_Node_Type::EXPRESSION_CAST:
         string_append_formated(string, "cast(...)");

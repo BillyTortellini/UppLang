@@ -1,6 +1,7 @@
 #include "lexer.hpp"
 
 #include "../../utility/hash_functions.hpp"
+#include "compiler.hpp"
 
 bool token_type_is_keyword(Token_Type type)
 {
@@ -264,27 +265,10 @@ bool character_is_letter(int c) {
         (c >= 'A' && c <= 'Z');
 }
 
-int lexer_add_or_find_identifier_by_string(Lexer* lexer, String identifier) 
-{
-    // Identifier is a keyword
-    int* identifier_id = hashtable_find_element(&lexer->identifier_index_lookup_table, identifier);
-    if (identifier_id != 0) {
-        return *identifier_id;
-    }
-    else {
-        String identifier_string_copy = string_create(identifier.characters);
-        dynamic_array_push_back(&lexer->identifiers, identifier_string_copy);
-        int index = lexer->identifiers.size - 1;
-        hashtable_insert_element(&lexer->identifier_index_lookup_table, identifier_string_copy, index);
-        return index;
-    }
-}
-
-Lexer lexer_create()
+Lexer lexer_create(Identifier_Pool* pool)
 {
     Lexer lexer;
-    lexer.identifier_index_lookup_table = hashtable_create_empty<String, int>(2048, &hash_string, &string_equals);
-    lexer.identifiers = dynamic_array_create_empty<String>(1024);
+    lexer.identifier_pool = pool;
     lexer.tokens = dynamic_array_create_empty<Token>(1024);
     lexer.tokens_with_whitespaces = dynamic_array_create_empty<Token>(1024);
 
@@ -362,8 +346,6 @@ void lexer_parse_string(Lexer* lexer, String* code)
 
     dynamic_array_reset(&lexer->tokens);
     dynamic_array_reset(&lexer->tokens_with_whitespaces);
-    dynamic_array_reset(&lexer->identifiers);
-    hashtable_reset(&lexer->identifier_index_lookup_table);
 
     int index = 0;
     int character_pos = 0;
@@ -387,6 +369,11 @@ void lexer_parse_string(Lexer* lexer, String* code)
         switch (current_character)
         {
             // Check for single symbols
+        case '\f': {
+            character_pos++;
+            index++;
+            continue;
+        }
         case '.':
             dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::DOT, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
@@ -632,17 +619,7 @@ void lexer_parse_string(Lexer* lexer, String* code)
 
             // Add Token
             Token_Attribute attribute;
-            int* identifier_id = hashtable_find_element(&lexer->identifier_index_lookup_table, identifier_string);
-            if (identifier_id != 0) {
-                attribute.identifier_number = *identifier_id;
-            }
-            else {
-                String identifier_string_copy = string_create(identifier_string.characters);
-                dynamic_array_push_back(&lexer->identifiers, identifier_string_copy);
-                attribute.identifier_number = lexer->identifiers.size - 1;
-                hashtable_insert_element(&lexer->identifier_index_lookup_table, identifier_string_copy, attribute.identifier_number);
-            }
-
+            attribute.identifier_number = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, identifier_string);
             dynamic_array_push_back(&lexer->tokens, token_make_with_slice(Token_Type::STRING_LITERAL, attribute,
                 token_slice, index - string_literal_start_index, string_literal_start_index));
             continue;
@@ -825,7 +802,7 @@ void lexer_parse_string(Lexer* lexer, String* code)
             }
             else {
                 Token_Attribute attribute;
-                attribute.identifier_number = lexer_add_or_find_identifier_by_string(lexer, identifier_string);
+                attribute.identifier_number = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, identifier_string);
                 dynamic_array_push_back(&lexer->tokens,
                     token_make(Token_Type::IDENTIFIER_NAME, attribute, line_number, character_pos, identifier_string_length, index));
             }
@@ -850,18 +827,9 @@ void lexer_parse_string(Lexer* lexer, String* code)
 
 void lexer_destroy(Lexer* lexer)
 {
-    for (int i = 0; i < lexer->identifiers.size; i++) {
-        string_destroy(&lexer->identifiers[i]);
-    }
-    dynamic_array_destroy(&lexer->identifiers);
     dynamic_array_destroy(&lexer->tokens);
     dynamic_array_destroy(&lexer->tokens_with_whitespaces);
-    hashtable_destroy(&lexer->identifier_index_lookup_table);
     hashtable_destroy(&lexer->keywords);
-}
-
-String lexer_identifer_to_string(Lexer* lexer, int index) {
-    return lexer->identifiers[index];
 }
 
 void lexer_print(Lexer* lexer)
@@ -876,7 +844,7 @@ void lexer_print(Lexer* lexer)
             token_type_to_string(token.type), token.position.start.line, token.position.start.character,
             math_maximum(token.position.end.character - token.position.start.character, 0));
         if (token.type == Token_Type::IDENTIFIER_NAME) {
-            string_append_formated(&msg, " = %s", lexer->identifiers.data[token.attribute.identifier_number].characters);
+            string_append_formated(&msg, " = %s", identifier_pool_index_to_string(lexer->identifier_pool, token.attribute.identifier_number).characters);
         }
         else if (token.type == Token_Type::INTEGER_LITERAL) {
             string_append_formated(&msg, " = %d", token.attribute.integer_value);
@@ -884,16 +852,4 @@ void lexer_print(Lexer* lexer)
         string_append_formated(&msg, "\n");
     }
     logg("\n%s\n", msg.characters);
-}
-
-void lexer_print_identifiers(Lexer* lexer)
-{
-    String msg = string_create_empty(256);
-    SCOPE_EXIT(string_destroy(&msg));
-    string_append_formated(&msg, "Identifiers: ");
-    for (int i = 0; i < lexer->identifiers.size; i++) {
-        string_append_formated(&msg, "\n\t%d: %s", i, lexer->identifiers[i].characters);
-    }
-    string_append_formated(&msg, "\n");
-    logg("%s", msg.characters);
 }

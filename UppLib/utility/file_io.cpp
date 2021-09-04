@@ -112,6 +112,13 @@ bool file_io_is_directory(const char* filepath)
     return (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
 }
 
+u64 file_io_get_current_file_time()
+{
+    FILETIME time;
+    GetSystemTimeAsFileTime(&time);
+    return (((u64)time.dwHighDateTime) << 32) | (time.dwLowDateTime);
+}
+
 Optional<u64> file_io_get_last_write_access_time(const char* filepath) 
 {
     Optional<u64> result;

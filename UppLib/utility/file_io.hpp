@@ -16,5 +16,6 @@ bool file_io_check_if_file_exists(const char* filepath);
 
 bool file_io_is_directory(const char* filepath);
 Optional<u64> file_io_get_last_write_access_time(const char* filepath);
+u64 file_io_get_current_file_time();
 
 bool file_io_write_file(const char* filepath, Array<byte> data);

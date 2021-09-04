@@ -127,6 +127,13 @@ void string_reserve(String* string, int new_capacity) {
     if (string->capacity >= new_capacity) {
         return;
     }
+    else {
+        int cap = math_maximum(1, string->capacity);
+        while (cap < new_capacity) {
+            cap = cap * 2;
+        }
+        new_capacity = cap;
+    }
     char* resized_buffer = new char[new_capacity];
     strcpy_s(resized_buffer, new_capacity, string->characters);
     delete[] string->characters;
@@ -216,9 +223,11 @@ void string_append_formated(String* string, const char* format, ...)
         logg("Shit?\n");
     }
     string->size = string->size + message_length;
+    /*
     if (string->size != strlen(string->characters)) {
         logg("shit??\n");
     }
+    */
     va_end(args);
 }
 

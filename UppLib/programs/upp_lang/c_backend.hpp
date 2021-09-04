@@ -3,6 +3,7 @@
 #include "../../datastructures/dynamic_array.hpp"
 #include "../../datastructures/string.hpp"
 #include "../../datastructures/hashtable.hpp"
+#include "../../datastructures/hashset.hpp"
 
 struct C_Compiler
 {
@@ -15,7 +16,7 @@ C_Compiler c_compiler_create();
 void c_compiler_destroy(C_Compiler* compiler);
 
 void c_compiler_add_source_file(C_Compiler* compiler, String file_name);
-bool c_compiler_compile(C_Compiler* compiler);
+void c_compiler_compile(C_Compiler* compiler);
 void c_compiler_execute(C_Compiler* compiler);
 
 

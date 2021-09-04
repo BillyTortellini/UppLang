@@ -396,12 +396,12 @@ void type_system_add_primitives(Type_System* system)
 
     {
         Struct_Member character_buffer_member;
-        character_buffer_member.name_handle = lexer_add_or_find_identifier_by_string(system->lexer, string_create_static("character_buffer"));
+        character_buffer_member.name_handle = identifier_pool_add_or_find_identifier_by_string(system->lexer->identifier_pool, string_create_static("character_buffer"));
         character_buffer_member.offset = 0;
         character_buffer_member.type = type_system_make_array_unsized(system, system->u8_type);
 
         Struct_Member size_member;
-        size_member.name_handle = lexer_add_or_find_identifier_by_string(system->lexer, string_create_static("size"));
+        size_member.name_handle = identifier_pool_add_or_find_identifier_by_string(system->lexer->identifier_pool, string_create_static("size"));
         size_member.offset = 16;
         size_member.type = system->i32_type;
 
@@ -414,7 +414,7 @@ void type_system_add_primitives(Type_System* system)
         system->string_type->alignment_in_bytes = 8;
         system->string_type->size_in_bytes = 20;
         system->string_type->member_types = string_members;
-        system->string_type->struct_name_handle = lexer_add_or_find_identifier_by_string(system->lexer, string_create_static("String"));
+        system->string_type->struct_name_handle = identifier_pool_add_or_find_identifier_by_string(system->lexer->identifier_pool, string_create_static("String"));
         dynamic_array_push_back(&system->types, system->string_type);
     }
 }
@@ -604,9 +604,9 @@ Symbol* symbol_table_find_symbol(Symbol_Table* table, int name_handle, bool only
     return symbol;
 }
 
-Symbol* symbol_table_find_symbol_by_string(Symbol_Table* table, String* string, Lexer* lexer)
+Symbol* symbol_table_find_symbol_by_string(Symbol_Table* table, String* string, Identifier_Pool* pool)
 {
-    int* index = hashtable_find_element(&lexer->identifier_index_lookup_table, *string);
+    int* index = hashtable_find_element(&pool->identifier_index_lookup_table, *string);
     if (index == 0) return 0;
     else {
         return symbol_table_find_symbol(table, *index, false);
@@ -627,7 +627,7 @@ void symbol_table_append_to_string_with_parent_info(String* string, Symbol_Table
         if (is_parent) {
             string_append_formated(string, "\t");
         }
-        string_append_formated(string, "\t%s ", lexer_identifer_to_string(lexer, s->name_handle).characters);
+        string_append_formated(string, "\t%s ", identifier_pool_index_to_string(lexer->identifier_pool, s->name_handle).characters);
         switch (s->symbol_type)
         {
         case Symbol_Type::VARIABLE:
@@ -648,7 +648,7 @@ void symbol_table_append_to_string_with_parent_info(String* string, Symbol_Table
             break;
         case Symbol_Type::EXTERN_FUNCTION:
             string_append_formated(string, "Extern function ");
-            type_signature_append_to_string(string, analyser->program->extern_functions[s->options.extern_function_index].function_type);
+            type_signature_append_to_string(string, s->options.extern_function.function_signature);
             break;
         default: panic("What");
         }
@@ -842,6 +842,24 @@ void ir_function_destroy(IR_Function* function)
     delete function;
 }
 
+Extern_Program_Sources extern_program_sources_create()
+{
+    Extern_Program_Sources result;
+    result.extern_functions = dynamic_array_create_empty<Extern_Function_Identifier>(8);
+    result.headers_to_include = dynamic_array_create_empty<int>(8);
+    result.source_files_to_compile = dynamic_array_create_empty<int>(8);
+    result.extern_type_signatures = hashset_create_pointer_empty<Type_Signature*>(8);
+    return result;
+}
+
+void extern_program_sources_destroy(Extern_Program_Sources* sources)
+{
+    dynamic_array_destroy(&sources->extern_functions);
+    dynamic_array_destroy(&sources->headers_to_include);
+    dynamic_array_destroy(&sources->source_files_to_compile);
+    hashset_destroy(&sources->extern_type_signatures);
+}
+
 IR_Program* ir_program_create(Type_System* type_system)
 {
     IR_Program* result = new IR_Program();
@@ -850,7 +868,7 @@ IR_Program* ir_program_create(Type_System* type_system)
     result->entry_function = 0;
     result->functions = dynamic_array_create_empty<IR_Function*>(64);
     result->globals = dynamic_array_create_empty<Type_Signature*>(64);
-    result->extern_functions = dynamic_array_create_empty<IR_Extern_Function>(32);
+    result->extern_program_sources = extern_program_sources_create();
 
     result->hardcoded_functions = dynamic_array_create_empty<IR_Hardcoded_Function*>((int)IR_Hardcoded_Function_Type::HARDCODED_FUNCTION_COUNT);
     for (int i = 0; i < (int)IR_Hardcoded_Function_Type::HARDCODED_FUNCTION_COUNT; i++)
@@ -912,7 +930,7 @@ void ir_program_destroy(IR_Program* program)
     dynamic_array_destroy(&program->constant_pool.constants);
     dynamic_array_destroy(&program->constant_pool.constant_memory);
     dynamic_array_destroy(&program->globals);
-    dynamic_array_destroy(&program->extern_functions);
+    extern_program_sources_destroy(&program->extern_program_sources);
     for (int i = 0; i < program->functions.size; i++) {
         ir_function_destroy(program->functions[i]);
     }
@@ -1137,7 +1155,7 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
             function_sig = call->options.hardcoded->signature;
             break;
         case IR_Instruction_Call_Type::EXTERN_FUNCTION_CALL:
-            function_sig = analyser->program->extern_functions[call->options.extern_function_index].function_type;
+            function_sig = call->options.extern_function.function_signature;
             break;
         default:
             panic("Hey");
@@ -1173,7 +1191,7 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
             break;
         case IR_Instruction_Call_Type::EXTERN_FUNCTION_CALL:
             string_append_formated(string, "EXTERN_FUNCTION_CALL, type: ");
-            type_signature_append_to_string(string, analyser->program->extern_functions[call->options.extern_function_index].function_type);
+            type_signature_append_to_string(string, call->options.extern_function.function_signature);
             break;
         }
         break;
@@ -1556,7 +1574,7 @@ Identifier_Analysis_Result semantic_analyser_instanciate_template(Semantic_Analy
             String tmp = string_create_empty(64);
             SCOPE_EXIT(string_destroy(&tmp));
             string_append_formated(&tmp, "No instance of template found, instanciating: %s<", 
-                lexer_identifer_to_string(&analyser->compiler->lexer, symbol->name_handle).characters);
+                identifier_pool_index_to_string(analyser->compiler->identifier_pool, symbol->name_handle).characters);
             for (int i = 0; i < template_arguments.size; i++) {
                 type_signature_append_to_string(&tmp, template_arguments[i]);
                 if (i != template_arguments.size - 1) {
@@ -1590,7 +1608,7 @@ Identifier_Analysis_Result semantic_analyser_instanciate_template(Semantic_Analy
                 String tmp = string_create_empty(256);
                 SCOPE_EXIT(string_destroy(&tmp));
                 string_append_formated(&tmp, "Not found identifier: ");
-                string_append_formated(&tmp, lexer_identifer_to_string(&analyser->compiler->lexer, symbol->name_handle).characters);
+                string_append_formated(&tmp, identifier_pool_index_to_string(analyser->compiler->identifier_pool, symbol->name_handle).characters);
                 string_append_formated(&tmp, "\n");
                 symbol_table_append_to_string_with_parent_info(&tmp, symbol_definition_table, analyser, false, false);
                 logg("%s\n", tmp.characters);
@@ -2254,9 +2272,9 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
             call_instruction.options.call.options.hardcoded = symbol->options.hardcoded_function;
         }
         else if (symbol->symbol_type == Symbol_Type::EXTERN_FUNCTION) {
-            signature = analyser->program->extern_functions[symbol->options.extern_function_index].function_type;
+            signature = symbol->options.extern_function.function_signature;
             call_instruction.options.call.call_type = IR_Instruction_Call_Type::EXTERN_FUNCTION_CALL;
-            call_instruction.options.call.options.extern_function_index = symbol->options.extern_function_index;
+            call_instruction.options.call.options.extern_function = symbol->options.extern_function;
         }
         else {
             semantic_analyser_log_error(analyser, "Call to identifer which is not a function/function pointer", expression_index);
@@ -2473,7 +2491,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
         else if (token->type == Token_Type::STRING_LITERAL)
         {
             // TODO: Check this
-            String string = lexer_identifer_to_string(&analyser->compiler->lexer, token->attribute.identifier_number);
+            String string = identifier_pool_index_to_string(analyser->compiler->identifier_pool, token->attribute.identifier_number);
             byte string_data[20];
             char** character_buffer_data_ptr = (char**)&string_data[0];
             int* character_buffer_size_ptr = (int*)&string_data[8];
@@ -3452,6 +3470,20 @@ void semantic_analyser_find_workloads_recursively(Semantic_Analyser* analyser, S
             dynamic_array_push_back(&analyser->active_workloads, workload);
             break;
         }
+        case AST_Node_Type::EXTERN_HEADER_IMPORT: 
+        {
+            if (inside_template) {
+                semantic_analyser_log_error(analyser, "Cannot have extern header import inside template!\n", child_index);
+                break;
+            }
+            // Create Workload
+            Analysis_Workload workload;
+            workload.type = Analysis_Workload_Type::EXTERN_HEADER_IMPORT;
+            workload.node_index = child_index;
+            workload.symbol_table = symbol_table;
+            dynamic_array_push_back(&analyser->active_workloads, workload);
+            break;
+        }
         case AST_Node_Type::FUNCTION: 
         {
             Analysis_Workload workload;
@@ -3624,6 +3656,7 @@ void analysis_workload_destroy(Analysis_Workload* workload)
     case Analysis_Workload_Type::GLOBAL:
     case Analysis_Workload_Type::SIZED_ARRAY_SIZE:
     case Analysis_Workload_Type::EXTERN_FUNCTION_DECLARATION:
+    case Analysis_Workload_Type::EXTERN_HEADER_IMPORT:
         break;
     case Analysis_Workload_Type::FUNCTION_HEADER:
         if (workload->options.function_header.is_template_analysis) {
@@ -3664,7 +3697,7 @@ void analysis_workload_append_to_string(Analysis_Workload* workload, String* str
     }
     case Analysis_Workload_Type::FUNCTION_HEADER: {
         string_append_formated(string, "Function Header, name: %s",
-            lexer_identifer_to_string(&analyser->compiler->lexer, analyser->compiler->parser.nodes[workload->node_index].name_id).characters
+            identifier_pool_index_to_string(analyser->compiler->identifier_pool, analyser->compiler->parser.nodes[workload->node_index].name_id).characters
         );
         if (workload->options.function_header.is_template_instance) {
             string_append_formated(string, "<");
@@ -3683,7 +3716,7 @@ void analysis_workload_append_to_string(Analysis_Workload* workload, String* str
     }
     case Analysis_Workload_Type::GLOBAL: {
         string_append_formated(string, "Global Variable, name: %s",
-            lexer_identifer_to_string(&analyser->compiler->lexer, analyser->compiler->parser.nodes[workload->node_index].name_id).characters
+            identifier_pool_index_to_string(analyser->compiler->identifier_pool, analyser->compiler->parser.nodes[workload->node_index].name_id).characters
         );
         break;
     }
@@ -3691,15 +3724,21 @@ void analysis_workload_append_to_string(Analysis_Workload* workload, String* str
         string_append_formated(string, "Sized Array");
         break;
     }
+    case Analysis_Workload_Type::EXTERN_HEADER_IMPORT: {
+        string_append_formated(string, "Extern header import, name: %s",
+            identifier_pool_index_to_string(analyser->compiler->identifier_pool, analyser->compiler->parser.nodes[workload->node_index].name_id).characters
+        );
+        break;
+    }
     case Analysis_Workload_Type::EXTERN_FUNCTION_DECLARATION: {
         string_append_formated(string, "Extern function declaration, name: %s",
-            lexer_identifer_to_string(&analyser->compiler->lexer, analyser->compiler->parser.nodes[workload->node_index].name_id).characters
+            identifier_pool_index_to_string(analyser->compiler->identifier_pool, analyser->compiler->parser.nodes[workload->node_index].name_id).characters
         );
         break;
     }
     case Analysis_Workload_Type::STRUCT_BODY: {
         string_append_formated(string, "Struct Body, name: %s",
-            lexer_identifer_to_string(&analyser->compiler->lexer, workload->options.struct_body.struct_signature->struct_name_handle).characters
+            identifier_pool_index_to_string(analyser->compiler->identifier_pool, workload->options.struct_body.struct_signature->struct_name_handle).characters
         );
         if (workload->options.struct_body.is_template_instance) {
             string_append_formated(string, "<");
@@ -3728,7 +3767,7 @@ void identifer_or_path_append_to_string(int node_index, Semantic_Analyser* analy
         node->type == AST_Node_Type::IDENTIFIER_PATH_TEMPLATED, "hEY");
     while (node->type != AST_Node_Type::IDENTIFIER_NAME && node->type != AST_Node_Type::IDENTIFIER_NAME_TEMPLATED)
     {
-        string_append_formated(string, "%s::", lexer_identifer_to_string(&analyser->compiler->lexer, node->name_id).characters);
+        string_append_formated(string, "%s::", identifier_pool_index_to_string(analyser->compiler->identifier_pool, node->name_id).characters);
         if (node->type == AST_Node_Type::IDENTIFIER_PATH) {
             node = &analyser->compiler->parser.nodes[node->children[0]];
         }
@@ -3737,7 +3776,7 @@ void identifer_or_path_append_to_string(int node_index, Semantic_Analyser* analy
         }
     }
     if (node->type == AST_Node_Type::IDENTIFIER_NAME) {
-        string_append_formated(string, "%s", lexer_identifer_to_string(&analyser->compiler->lexer, node->name_id).characters);
+        string_append_formated(string, "%s", identifier_pool_index_to_string(analyser->compiler->identifier_pool, node->name_id).characters);
     }
 }
 
@@ -3764,7 +3803,7 @@ void workload_dependency_append_to_string(Workload_Dependency* dependency, Strin
         assert(s->is_templated, "HEY");
         assert(s->symbol_type == Symbol_Type::FUNCTION || s->symbol_type == Symbol_Type::TYPE, "HEY");
         Symbol_Template_Instance* instance = &s->template_instances[dependency->options.template_not_finished.instance_index];
-        string_append_formated(string, lexer_identifer_to_string(&analyser->compiler->lexer, s->name_handle).characters);
+        string_append_formated(string, identifier_pool_index_to_string(analyser->compiler->identifier_pool, s->name_handle).characters);
         string_append_formated(string, "<");
         for (int i = 0; i < instance->template_arguments.size; i++) {
             type_signature_append_to_string(string, instance->template_arguments[i]);
@@ -3777,6 +3816,150 @@ void workload_dependency_append_to_string(Workload_Dependency* dependency, Strin
     }
     default: panic("hey");
     }
+}
+
+Type_Signature* import_c_type(Semantic_Analyser* analyser, C_Import_Type* type, Hashtable<C_Import_Type*, Type_Signature*>* type_conversions)
+{
+    {
+        Type_Signature** converted = hashtable_find_element(type_conversions, type);
+        if (converted != 0) {
+            return *converted;
+        }
+    }
+    Type_Signature signature;
+    signature.size_in_bytes = type->byte_size;
+    signature.alignment_in_bytes = type->alignment;
+    Type_Signature* result_type = 0;
+    switch (type->type)
+    {
+    case C_Import_Type_Type::ARRAY: {
+        signature.type = Signature_Type::ARRAY_SIZED;
+        signature.array_element_count = type->array.array_size;
+        signature.child_type = import_c_type(analyser, type->array.element_type, type_conversions);
+        result_type = type_system_register_type(&analyser->compiler->type_system, signature);
+        break;
+    }
+    case C_Import_Type_Type::POINTER: {
+        signature.type = Signature_Type::POINTER;
+        signature.child_type = import_c_type(analyser, type->array.element_type, type_conversions);
+        result_type = type_system_register_type(&analyser->compiler->type_system, signature);
+        break;
+    }
+    case C_Import_Type_Type::PRIMITIVE: {
+        switch (type->primitive)
+        {
+        case C_Import_Primitive::VOID_TYPE:
+            result_type = analyser->compiler->type_system.void_type;
+            break;
+        case C_Import_Primitive::BOOL:
+            result_type = analyser->compiler->type_system.bool_type;
+            break;
+        case C_Import_Primitive::CHAR: {
+            if (((u8)type->qualifiers & (u8)C_Type_Qualifiers::UNSIGNED) != 0) {
+                result_type = analyser->compiler->type_system.u8_type;
+            }
+            else {
+                result_type = analyser->compiler->type_system.i8_type;
+            }
+            break;
+        }
+        case C_Import_Primitive::DOUBLE:
+            result_type = analyser->compiler->type_system.f64_type;
+            break;
+        case C_Import_Primitive::FLOAT:
+            result_type = analyser->compiler->type_system.f32_type;
+            break;
+        case C_Import_Primitive::INT:
+            if (((u8)type->qualifiers & (u8)C_Type_Qualifiers::UNSIGNED) != 0) {
+                result_type = analyser->compiler->type_system.u32_type;
+            }
+            else {
+                result_type = analyser->compiler->type_system.i32_type;
+            }
+            break;
+        case C_Import_Primitive::LONG:
+            if (((u8)type->qualifiers & (u8)C_Type_Qualifiers::UNSIGNED) != 0) {
+                result_type =  analyser->compiler->type_system.u32_type;
+            }
+            else {
+                result_type = analyser->compiler->type_system.i32_type;
+            }
+            break;
+        case C_Import_Primitive::LONG_DOUBLE:
+            result_type = analyser->compiler->type_system.f64_type;
+            break;
+        case C_Import_Primitive::LONG_LONG:
+            if (((u8)type->qualifiers & (u8)C_Type_Qualifiers::UNSIGNED) != 0) {
+                result_type = analyser->compiler->type_system.u64_type;
+            }
+            else {
+                result_type = analyser->compiler->type_system.i64_type;
+            }
+            break;
+        case C_Import_Primitive::SHORT:
+            if (((u8)type->qualifiers & (u8)C_Type_Qualifiers::UNSIGNED) != 0) {
+                result_type = analyser->compiler->type_system.u16_type;
+            }
+            else {
+                result_type = analyser->compiler->type_system.i16_type;
+            }
+            break;
+        default: panic("WHAT");
+        }
+        break;
+    }
+    case C_Import_Type_Type::ENUM: {
+        result_type = analyser->compiler->type_system.i32_type;
+        break;
+    }
+    case C_Import_Type_Type::ERROR_TYPE: {
+        signature.type = Signature_Type::ARRAY_SIZED;
+        signature.child_type = analyser->compiler->type_system.u8_type;
+        signature.array_element_count = type->byte_size;
+        result_type = type_system_register_type(&analyser->compiler->type_system, signature);
+        break;
+    }
+    case C_Import_Type_Type::STRUCTURE:
+    {
+        signature.type = Signature_Type::STRUCT;
+        if (type->structure.is_anonymous) {
+            signature.struct_name_handle = identifier_pool_add_or_find_identifier_by_string(analyser->compiler->identifier_pool, string_create_static("__c_anon"));
+        }
+        else {
+            signature.struct_name_handle = type->structure.name_id;
+        }
+        signature.member_types = dynamic_array_create_empty<Struct_Member>(type->structure.members.size);
+        if (!type->structure.contains_bitfield)
+        {
+            for (int i = 0; i < type->structure.members.size; i++) {
+                C_Import_Structure_Member* mem = &type->structure.members[i];
+                Struct_Member member;
+                member.name_handle = mem->name_id;
+                member.offset = mem->offset;
+                member.type = import_c_type(analyser, mem->type, type_conversions);
+                dynamic_array_push_back(&signature.member_types, member);
+            }
+        }
+        result_type = type_system_register_type(&analyser->compiler->type_system, signature);
+        break;
+    }
+    case C_Import_Type_Type::FUNCTION_SIGNATURE:
+    {
+        signature.type = Signature_Type::FUNCTION;
+        signature.return_type = import_c_type(analyser, type->function_signature.return_type, type_conversions);
+        signature.parameter_types = dynamic_array_create_empty<Type_Signature*>(type->function_signature.parameters.size);
+        for (int i = 0; i < type->function_signature.parameters.size; i++) {
+            dynamic_array_push_back(&signature.parameter_types, import_c_type(analyser, type->function_signature.parameters[i].type, type_conversions));
+        }
+        result_type = type_system_register_type(&analyser->compiler->type_system, signature);
+        break;
+    }
+    default: panic("WHAT");
+    }
+
+    assert(result_type != 0, "HEY");
+    hashtable_insert_element(type_conversions, type, result_type);
+    return result_type;
 }
 
 void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
@@ -3816,22 +3999,22 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
 
     // Add symbols for basic datatypes
     {
-        int int_token_index = lexer_add_or_find_identifier_by_string(compiler->parser.lexer, string_create_static("int"));
-        int bool_token_index = lexer_add_or_find_identifier_by_string(compiler->parser.lexer, string_create_static("bool"));
-        int float_token_index = lexer_add_or_find_identifier_by_string(compiler->parser.lexer, string_create_static("float"));
-        int u8_token_index = lexer_add_or_find_identifier_by_string(compiler->parser.lexer, string_create_static("u8"));
-        int u16_token_index = lexer_add_or_find_identifier_by_string(compiler->parser.lexer, string_create_static("u16"));
-        int u32_token_index = lexer_add_or_find_identifier_by_string(compiler->parser.lexer, string_create_static("u32"));
-        int u64_token_index = lexer_add_or_find_identifier_by_string(compiler->parser.lexer, string_create_static("u64"));
-        int i8_token_index = lexer_add_or_find_identifier_by_string(compiler->parser.lexer, string_create_static("i8"));
-        int i16_token_index = lexer_add_or_find_identifier_by_string(compiler->parser.lexer, string_create_static("i16"));
-        int i32_token_index = lexer_add_or_find_identifier_by_string(compiler->parser.lexer, string_create_static("i32"));
-        int i64_token_index = lexer_add_or_find_identifier_by_string(compiler->parser.lexer, string_create_static("i64"));
-        int f64_token_index = lexer_add_or_find_identifier_by_string(compiler->parser.lexer, string_create_static("f64"));
-        int f32_token_index = lexer_add_or_find_identifier_by_string(compiler->parser.lexer, string_create_static("f32"));
-        int byte_token_index = lexer_add_or_find_identifier_by_string(compiler->parser.lexer, string_create_static("byte"));
-        int void_token_index = lexer_add_or_find_identifier_by_string(compiler->parser.lexer, string_create_static("void"));
-        int string_token_index = lexer_add_or_find_identifier_by_string(compiler->parser.lexer, string_create_static("String"));
+        int int_token_index = identifier_pool_add_or_find_identifier_by_string(compiler->identifier_pool, string_create_static("int"));
+        int bool_token_index = identifier_pool_add_or_find_identifier_by_string(compiler->identifier_pool, string_create_static("bool"));
+        int float_token_index = identifier_pool_add_or_find_identifier_by_string(compiler->identifier_pool, string_create_static("float"));
+        int u8_token_index = identifier_pool_add_or_find_identifier_by_string(compiler->identifier_pool, string_create_static("u8"));
+        int u16_token_index = identifier_pool_add_or_find_identifier_by_string(compiler->identifier_pool, string_create_static("u16"));
+        int u32_token_index = identifier_pool_add_or_find_identifier_by_string(compiler->identifier_pool, string_create_static("u32"));
+        int u64_token_index = identifier_pool_add_or_find_identifier_by_string(compiler->identifier_pool, string_create_static("u64"));
+        int i8_token_index = identifier_pool_add_or_find_identifier_by_string(compiler->identifier_pool, string_create_static("i8"));
+        int i16_token_index = identifier_pool_add_or_find_identifier_by_string(compiler->identifier_pool, string_create_static("i16"));
+        int i32_token_index = identifier_pool_add_or_find_identifier_by_string(compiler->identifier_pool, string_create_static("i32"));
+        int i64_token_index = identifier_pool_add_or_find_identifier_by_string(compiler->identifier_pool, string_create_static("i64"));
+        int f64_token_index = identifier_pool_add_or_find_identifier_by_string(compiler->identifier_pool, string_create_static("f64"));
+        int f32_token_index = identifier_pool_add_or_find_identifier_by_string(compiler->identifier_pool, string_create_static("f32"));
+        int byte_token_index = identifier_pool_add_or_find_identifier_by_string(compiler->identifier_pool, string_create_static("byte"));
+        int void_token_index = identifier_pool_add_or_find_identifier_by_string(compiler->identifier_pool, string_create_static("void"));
+        int string_token_index = identifier_pool_add_or_find_identifier_by_string(compiler->identifier_pool, string_create_static("String"));
 
         semantic_analyser_define_type_symbol(analyser, analyser->root_table, int_token_index, analyser->compiler->type_system.i32_type, -1);
         semantic_analyser_define_type_symbol(analyser, analyser->root_table, bool_token_index, analyser->compiler->type_system.bool_type, -1);
@@ -3850,9 +4033,9 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
         semantic_analyser_define_type_symbol(analyser, analyser->root_table, void_token_index, analyser->compiler->type_system.void_type, -1);
         semantic_analyser_define_type_symbol(analyser, analyser->root_table, string_token_index, analyser->compiler->type_system.string_type, -1);
 
-        analyser->token_index_size = lexer_add_or_find_identifier_by_string(compiler->parser.lexer, string_create_static("size"));
-        analyser->token_index_data = lexer_add_or_find_identifier_by_string(compiler->parser.lexer, string_create_static("data"));
-        analyser->token_index_main = lexer_add_or_find_identifier_by_string(compiler->parser.lexer, string_create_static("main"));
+        analyser->token_index_size = identifier_pool_add_or_find_identifier_by_string(compiler->identifier_pool, string_create_static("size"));
+        analyser->token_index_data = identifier_pool_add_or_find_identifier_by_string(compiler->identifier_pool, string_create_static("data"));
+        analyser->token_index_main = identifier_pool_add_or_find_identifier_by_string(compiler->identifier_pool, string_create_static("main"));
     }
 
     // Initialize hardcoded_function types and symbols
@@ -3867,39 +4050,39 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
         switch (hardcoded->type)
         {
         case IR_Hardcoded_Function_Type::PRINT_I32: {
-            symbol.name_handle = lexer_add_or_find_identifier_by_string(analyser->compiler->parser.lexer, string_create_static("print_i32"));
+            symbol.name_handle = identifier_pool_add_or_find_identifier_by_string(analyser->compiler->identifier_pool, string_create_static("print_i32"));
             break;
         }
         case IR_Hardcoded_Function_Type::PRINT_F32: {
-            symbol.name_handle = lexer_add_or_find_identifier_by_string(analyser->compiler->parser.lexer, string_create_static("print_f32"));
+            symbol.name_handle = identifier_pool_add_or_find_identifier_by_string(analyser->compiler->identifier_pool, string_create_static("print_f32"));
             break;
         }
         case IR_Hardcoded_Function_Type::PRINT_BOOL: {
-            symbol.name_handle = lexer_add_or_find_identifier_by_string(analyser->compiler->parser.lexer, string_create_static("print_bool"));
+            symbol.name_handle = identifier_pool_add_or_find_identifier_by_string(analyser->compiler->identifier_pool, string_create_static("print_bool"));
             break;
         }
         case IR_Hardcoded_Function_Type::PRINT_STRING: {
-            symbol.name_handle = lexer_add_or_find_identifier_by_string(analyser->compiler->parser.lexer, string_create_static("print_string"));
+            symbol.name_handle = identifier_pool_add_or_find_identifier_by_string(analyser->compiler->identifier_pool, string_create_static("print_string"));
             break;
         }
         case IR_Hardcoded_Function_Type::PRINT_LINE: {
-            symbol.name_handle = lexer_add_or_find_identifier_by_string(analyser->compiler->parser.lexer, string_create_static("print_line"));
+            symbol.name_handle = identifier_pool_add_or_find_identifier_by_string(analyser->compiler->identifier_pool, string_create_static("print_line"));
             break;
         }
         case IR_Hardcoded_Function_Type::READ_I32: {
-            symbol.name_handle = lexer_add_or_find_identifier_by_string(analyser->compiler->parser.lexer, string_create_static("read_i32"));
+            symbol.name_handle = identifier_pool_add_or_find_identifier_by_string(analyser->compiler->identifier_pool, string_create_static("read_i32"));
             break;
         }
         case IR_Hardcoded_Function_Type::READ_F32: {
-            symbol.name_handle = lexer_add_or_find_identifier_by_string(analyser->compiler->parser.lexer, string_create_static("read_f32"));
+            symbol.name_handle = identifier_pool_add_or_find_identifier_by_string(analyser->compiler->identifier_pool, string_create_static("read_f32"));
             break;
         }
         case IR_Hardcoded_Function_Type::READ_BOOL: {
-            symbol.name_handle = lexer_add_or_find_identifier_by_string(analyser->compiler->parser.lexer, string_create_static("read_bool"));
+            symbol.name_handle = identifier_pool_add_or_find_identifier_by_string(analyser->compiler->identifier_pool, string_create_static("read_bool"));
             break;
         }
         case IR_Hardcoded_Function_Type::RANDOM_I32: {
-            symbol.name_handle = lexer_add_or_find_identifier_by_string(analyser->compiler->parser.lexer, string_create_static("random_i32"));
+            symbol.name_handle = identifier_pool_add_or_find_identifier_by_string(analyser->compiler->identifier_pool, string_create_static("random_i32"));
             break;
         }
         case IR_Hardcoded_Function_Type::MALLOC_SIZE_I32:
@@ -4102,35 +4285,115 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
             }
             break;
         }
+        case Analysis_Workload_Type::EXTERN_HEADER_IMPORT:
+        {
+            AST_Node* extern_node = &(*nodes)[workload.node_index];
+            int header_name_id = extern_node->name_id;
+            String header_name = identifier_pool_index_to_string(analyser->compiler->identifier_pool, header_name_id);
+            Optional<C_Import_Package> package = c_importer_import_header(&analyser->compiler->c_importer, header_name);
+            if (package.available)
+            {
+                // TODO: Import all identifiers given by node_children!
+                logg("Importing header successfull: %s\n", header_name.characters);
+                dynamic_array_push_back(&analyser->program->extern_program_sources.headers_to_include, header_name_id);
+                Hashtable<C_Import_Type*, Type_Signature*> type_conversion_table = hashtable_create_pointer_empty<C_Import_Type*, Type_Signature*>(256);
+                SCOPE_EXIT(hashtable_destroy(&type_conversion_table));
+                for (int i = 0; i < extern_node->children.size; i++)
+                {
+                    int import_id = (*nodes)[extern_node->children[i]].name_id;
+                    C_Import_Symbol* import_symbol = hashtable_find_element(&package.value.symbol_table.symbols, import_id);
+                    if (import_symbol == 0) {
+                        semantic_analyser_log_error(analyser, "Importing C-Symbol failed failed!\n", extern_node->children[i]);
+                        continue;
+                    }
+
+                    Symbol sym;
+                    sym.definition_node_index = extern_node->children[i];
+                    sym.is_templated = false;
+                    sym.name_handle = import_id;
+                    switch (import_symbol->type)
+                    {
+                    case C_Import_Symbol_Type::TYPE:
+                    {
+                        sym.symbol_type = Symbol_Type::TYPE;
+                        sym.options.data_type = import_c_type(analyser, import_symbol->data_type, &type_conversion_table);
+                        symbol_table_define_symbol(workload.symbol_table, analyser, sym, false);
+                        hashset_insert_element(&analyser->program->extern_program_sources.extern_type_signatures, sym.options.data_type);
+                        break;
+                    }
+                    case C_Import_Symbol_Type::FUNCTION: {
+                        Extern_Function_Identifier extern_fn;
+                        extern_fn.name_id = import_id;
+                        extern_fn.function_signature = import_c_type(analyser, import_symbol->data_type, &type_conversion_table);
+                        assert(extern_fn.function_signature->type == Signature_Type::FUNCTION, "HEY");
+                        sym.symbol_type = Symbol_Type::EXTERN_FUNCTION;
+                        sym.options.extern_function = extern_fn;
+                        symbol_table_define_symbol(workload.symbol_table, analyser, sym, false);
+                        break;
+                    }
+                    case C_Import_Symbol_Type::GLOBAL_VARIABLE: {
+                        semantic_analyser_log_error(analyser, "Global variable import not implemented yet!\n", extern_node->children[i]);
+                        break;
+                    }
+                    default: panic("hey");
+                    }
+                }
+
+                // Import all used type names
+                auto iter = hashtable_iterator_create(&package.value.symbol_table.symbols);
+                while (hashtable_iterator_has_next(&iter)) 
+                {
+                    int name_id = *iter.key;
+                    if (symbol_table_find_symbol(workload.symbol_table, name_id, true) != 0) {
+                        hashtable_iterator_next(&iter);
+                        continue;
+                    }
+                    C_Import_Symbol* import_sym = iter.value;
+                    if (import_sym->type == C_Import_Symbol_Type::TYPE)
+                    {
+                        Type_Signature** signature = hashtable_find_element(&type_conversion_table, import_sym->data_type);
+                        if (signature != 0)
+                        {
+                            Symbol sym;
+                            sym.symbol_type = Symbol_Type::TYPE;
+                            sym.is_templated = false;
+                            sym.name_handle = name_id;
+                            sym.options.data_type = *signature;
+                            sym.definition_node_index = workload.node_index;
+                            symbol_table_define_symbol(workload.symbol_table, analyser, sym, false);
+                            hashset_insert_element(&analyser->program->extern_program_sources.extern_type_signatures, sym.options.data_type);
+                        }
+                    }
+                    hashtable_iterator_next(&iter);
+                }
+            }
+            else {
+                semantic_analyser_log_error(analyser, "Importing header failed!\n", workload.node_index);
+            }
+            break;
+        }
         case Analysis_Workload_Type::EXTERN_FUNCTION_DECLARATION:
         {
             AST_Node* extern_node = &(*nodes)[workload.node_index];
             int name_id = extern_node->name_id;
-            for (int i = 0; i < analyser->program->extern_functions.size; i++) {
-                if (analyser->program->extern_functions[i].name_id == name_id) {
-                    semantic_analyser_log_error(analyser, "Extern function with this name already defined!\n", workload.node_index);
-                    break;
-                }
-            }
-
             Type_Analysis_Result result = semantic_analyser_analyse_type(analyser, workload.symbol_table, extern_node->children[0]);
             switch (result.type)
             {
-            case Analysis_Result_Type::SUCCESS: 
+            case Analysis_Result_Type::SUCCESS:
             {
                 if (result.options.result_type->type != Signature_Type::POINTER && result.options.result_type->child_type->type != Signature_Type::FUNCTION) {
                     semantic_analyser_log_error(analyser, "Extern symbol type must be a funciton type!", workload.node_index);
                     break;
                 }
-                IR_Extern_Function extern_fn;
+                Extern_Function_Identifier extern_fn;
                 extern_fn.name_id = extern_node->name_id;
-                extern_fn.function_type = result.options.result_type->child_type;
-                dynamic_array_push_back(&analyser->program->extern_functions, extern_fn);
+                extern_fn.function_signature = result.options.result_type->child_type;
+                dynamic_array_push_back(&analyser->program->extern_program_sources.extern_functions, extern_fn);
                 Symbol sym;
                 sym.symbol_type = Symbol_Type::EXTERN_FUNCTION;
                 sym.name_handle = extern_fn.name_id;
                 sym.is_templated = false;
-                sym.options.extern_function_index = analyser->program->extern_functions.size - 1;
+                sym.options.extern_function = extern_fn;
                 sym.definition_node_index = workload.node_index;
                 symbol_table_define_symbol(workload.symbol_table, analyser, sym, false);
                 break;
@@ -4855,13 +5118,13 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
 
     // Add return for global init function
     {
-        IR_Instruction return_instr;
-        return_instr.type = IR_Instruction_Type::RETURN;
-        return_instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_EMPTY;
-        dynamic_array_push_back(&analyser->global_init_function->code->instructions, return_instr);
-        if (analyser->program->entry_function == 0) {
-            semantic_analyser_log_error(analyser, "Main function not defined!", math_maximum(0, analyser->compiler->parser.nodes.size - 1));
-        }
+    IR_Instruction return_instr;
+    return_instr.type = IR_Instruction_Type::RETURN;
+    return_instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_EMPTY;
+    dynamic_array_push_back(&analyser->global_init_function->code->instructions, return_instr);
+    if (analyser->program->entry_function == 0) {
+        semantic_analyser_log_error(analyser, "Main function not defined!", math_maximum(0, analyser->compiler->parser.nodes.size - 1));
+    }
     }
 
 
