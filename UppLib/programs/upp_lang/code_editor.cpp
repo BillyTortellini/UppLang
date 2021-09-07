@@ -191,10 +191,16 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
             Compiler_Error e = editor->compiler.parser.errors[i];
             logg("Parse Error: %s\n", e.message);
         }
-        if (editor->compiler.parser.errors.size == 0) {
-            for (int i = 0; i < editor->compiler.analyser.errors.size; i++) {
-                Compiler_Error e = editor->compiler.analyser.errors[i];
-                logg("Semantic Error: %s\n", e.message);
+        if (editor->compiler.parser.errors.size == 0) 
+        {
+            String tmp = string_create_empty(256);
+            SCOPE_EXIT(string_destroy(&tmp));
+            for (int i = 0; i < editor->compiler.analyser.errors.size; i++) 
+            {
+                Semantic_Error e = editor->compiler.analyser.errors[i];
+                semantic_error_append_to_string(&editor->compiler.analyser, e, &tmp);
+                logg("Semantic Error: %s\n", tmp.characters);
+                string_reset(&tmp);
             }
         }
     }
@@ -271,8 +277,8 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
         }
         if (editor->compiler.parser.errors.size == 0) {
             for (int i = 0; i < editor->compiler.analyser.errors.size; i++) {
-                Compiler_Error e = editor->compiler.analyser.errors[i];
-                text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(e.range, &editor->compiler), vec3(1.0f), vec4(1.0f, 0.0f, 0.0f, 0.3f));
+                Semantic_Error e = editor->compiler.analyser.errors[i];
+                //text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(e.range, &editor->compiler), vec3(1.0f), vec4(1.0f, 0.0f, 0.0f, 0.3f));
             }
         }
     }

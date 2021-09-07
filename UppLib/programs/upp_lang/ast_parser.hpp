@@ -14,6 +14,7 @@ enum class AST_Node_Type
     ROOT, // Child 0: Definitions
     DEFINITIONS, // Children: functions, globals, modules, structs or extern function declaration
     EXTERN_FUNCTION_DECLARATION, // name_id: function name Child 0: Type
+    EXTERN_LIB_IMPORT, // name_id: lib filename
     EXTERN_HEADER_IMPORT, // name_id: header name, Children: IDENTIFIER_NAME
     MODULE, // Child 0: Definitions
     MODULE_TEMPLATED, // Child 0: Parameter_Block_Unnamed, Child 1: DEFINITIONS
@@ -76,6 +77,7 @@ enum class AST_Node_Type
     UNDEFINED, // Just for debugging
 };
 
+bool ast_node_type_is_identifier_node(AST_Node_Type type);
 bool ast_node_type_is_binary_expression(AST_Node_Type type);
 bool ast_node_type_is_unary_expression(AST_Node_Type type);
 bool ast_node_type_is_expression(AST_Node_Type type);
@@ -100,6 +102,8 @@ struct AST_Parser
     Lexer* lexer;
     int index;
     AST_Node_Index next_free_node;
+
+    int identifier_lib;
 };
 
 struct AST_Parser_Checkpoint

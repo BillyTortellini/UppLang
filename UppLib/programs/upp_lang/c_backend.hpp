@@ -8,6 +8,7 @@
 struct C_Compiler
 {
     Dynamic_Array<String> source_files;
+    Dynamic_Array<String> lib_files;
     bool initialized;
     bool last_compile_successfull;
 };
@@ -16,6 +17,7 @@ C_Compiler c_compiler_create();
 void c_compiler_destroy(C_Compiler* compiler);
 
 void c_compiler_add_source_file(C_Compiler* compiler, String file_name);
+void c_compiler_add_lib_file(C_Compiler* compiler, String file_name);
 void c_compiler_compile(C_Compiler* compiler);
 void c_compiler_execute(C_Compiler* compiler);
 

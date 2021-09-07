@@ -82,7 +82,8 @@ struct Type_Signature
     // Template
     int template_name;
 };
-void type_signature_append_to_string(String* string, Type_Signature* signature);
+struct Semantic_Analyser;
+void type_signature_append_to_string(String* string, Type_Signature* signature, Semantic_Analyser* analyser);
 void type_signature_append_value_to_string(Type_Signature* type, byte* value_ptr, String* string);
 
 /*
@@ -125,7 +126,8 @@ void type_system_reset_all(Type_System* system, Lexer* lexer);
 Type_Signature* type_system_make_pointer(Type_System* system, Type_Signature* child_type);
 Type_Signature* type_system_make_array_unsized(Type_System* system, Type_Signature* element_type);
 Type_Signature* type_system_make_function(Type_System* system, Dynamic_Array<Type_Signature*> parameter_types, Type_Signature* return_type);
-void type_system_print(Type_System* system);
+struct Semantic_Analyser;
+void type_system_print(Type_System* system, Semantic_Analyser* analyser);
 
 
 
@@ -362,6 +364,7 @@ enum class IR_Instruction_Address_Of_Type
 {
     DATA,
     FUNCTION,
+    EXTERN_FUNCTION,
     STRUCT_MEMBER,
     ARRAY_ELEMENT
 };
@@ -373,6 +376,7 @@ struct IR_Instruction_Address_Of
     IR_Data_Access source;
     union {
         IR_Function* function;
+        Extern_Function_Identifier extern_function;
         Struct_Member member;
         IR_Data_Access index_access;
     } options;
@@ -475,8 +479,9 @@ struct Extern_Program_Sources
     */
     Dynamic_Array<int> headers_to_include;
     Dynamic_Array<int> source_files_to_compile;
+    Dynamic_Array<int> lib_files;
     Dynamic_Array<Extern_Function_Identifier> extern_functions;
-    Hashset<Type_Signature*> extern_type_signatures;
+    Hashtable<Type_Signature*, int> extern_type_signatures; // Extern types to name id, e.g. HWND should not create its own structure, but use name HWND as type
 };
 
 struct IR_Program
@@ -613,11 +618,127 @@ enum class Statement_Analysis_Result
     BREAK
 };
 
+
+
+/*
+ERRORS
+*/
+
+enum class Expected_Type_Classes
+{
+    PRIMITIVE,
+    INTEGERS,
+    FLOATS,
+    POINTERS,
+    ARRAYS,
+    FUNCTION_POINTER,
+    SPECIFIC_TYPE,
+};
+
+enum class Semantic_Error_Type
+{
+    TEMPLATE_ARGUMENTS_INVALID_COUNT,
+    TEMPLATE_ARGUMENTS_NOT_ON_TEMPLATE,
+    TEMPLATE_ARGUMENTS_REQUIRED,
+
+    EXTERN_HEADER_DOES_NOT_CONTAIN_SYMBOL, // Error_node = is identifier_node
+    EXTERN_HEADER_PARSING_FAILED, // Error_node = EXTERN_HEADER_IMPORT
+
+    INVALID_TYPE_VOID_USAGE,
+    INVALID_TYPE_FUNCTION_CALL_EXPECTED_FUNCTION_POINTER, // Expression
+    INVALID_TYPE_FUNCTION_IMPORT_EXPECTED_FUNCTION_POINTER,
+    INVALID_TYPE_ARGUMENT_TYPE_MISMATCH,
+    INVALID_TYPE_ARRAY_ACCESS, // x: int; x[5];
+    INVALID_TYPE_ARRAY_ACCESS_INDEX, // x: int; x[5];
+    INVALID_TYPE_ARRAY_ALLOCATION_SIZE, // new [false]int;
+    INVALID_TYPE_ARRAY_SIZE, // x: [bool]int;
+    INVALID_TYPE_ON_MEMBER_ACCESS,
+    INVALID_TYPE_IF_CONDITION,
+    INVALID_TYPE_WHILE_CONDITION,
+    INVALID_TYPE_UNARY_OPERATOR,
+    INVALID_TYPE_BINARY_OPERATOR,
+    INVALID_TYPE_ASSIGNMENT,
+    INVALID_TYPE_RETURN,
+    INVALID_TYPE_DELETE,
+
+    SYMBOL_EXPECTED_FUNCTION_OR_VARIABLE_ON_FUNCTION_CALL,
+    SYMBOL_EXPECTED_TYPE_ON_TYPE_IDENTIFIER,
+    SYMBOL_EXPECTED_VARIABLE_OR_FUNCTION_ON_VARIABLE_READ,
+
+    SYMBOL_TABLE_UNRESOLVED_SYMBOL,
+    SYMBOL_TABLE_SYMBOL_ALREADY_DEFINED,
+    SYMBOL_TABLE_MODULE_ALREADY_DEFINED,
+
+    FUNCTION_CALL_ARGUMENT_SIZE_MISMATCH,
+
+    EXPRESSION_INVALID_CAST,
+    EXPRESSION_MEMBER_NOT_FOUND,
+    EXPRESSION_ADDRESS_OF_REQUIRES_MEMORY_ADDRESS,
+    EXPRESSION_BINARY_OP_TYPES_MUST_MATCH,
+    EXPRESSION_STATEMENT_MUST_BE_FUNCTION_CALL,
+
+    OTHERS_STRUCT_MUST_CONTAIN_MEMBER,
+    OTHERS_STRUCT_MEMBER_ALREADY_DEFINED,
+    OTHERS_WHILE_ONLY_RUNS_ONCE,
+    OTHERS_WHILE_ALWAYS_RETURNS,
+    OTHERS_WHILE_NEVER_STOPS,
+    OTHERS_STATEMENT_UNREACHABLE,
+    OTHERS_DEFER_NO_RETURNS_ALLOWED,
+    OTHERS_BREAK_NOT_INSIDE_LOOP,
+    OTHERS_CONTINUE_NOT_INSIDE_LOOP,
+    OTHERS_MISSING_RETURN_STATEMENT,
+    OTHERS_UNFINISHED_WORKLOAD_TEMPLATE_INSTANCE,
+    OTHERS_UNFINISHED_WORKLOAD_CODE_BLOCK,
+    OTHERS_UNFINISHED_WORKLOAD_TYPE_SIZE,
+    OTHERS_MAIN_CANNOT_BE_TEMPLATED,
+    OTHERS_MAIN_NOT_DEFINED,
+    OTHERS_NO_CALLING_TO_MAIN,
+    OTHERS_ASSIGNMENT_REQUIRES_MEMORY_ADDRESS,
+
+    MISSING_FEATURE_TEMPLATED_GLOBALS,
+    MISSING_FEATURE_NON_INTEGER_ARRAY_SIZE_EVALUATION,
+    MISSING_FEATURE_NESTED_TEMPLATED_MODULES,
+    MISSING_FEATURE_EXTERN_IMPORT_IN_TEMPLATED_MODULES,
+    MISSING_FEATURE_EXTERN_GLOBAL_IMPORT,
+    MISSING_FEATURE_NESTED_DEFERS
+};
+
+/*
+    What info do i need for better error messages?
+        - Symbol table on template messages
+*/
+struct Semantic_Error
+{
+    Semantic_Error_Type type;
+    int error_node_index;
+
+    // Information
+    struct {
+        int expected;
+        int given;
+    } invalid_argument_count;
+    Symbol_Table* symbol_table;
+    int name_id;
+    int identifier_node_index;
+    Type_Signature* given_type;
+    Type_Signature* expected_type;
+    Type_Signature* function_type;
+    Type_Signature* binary_op_left_type;
+    Type_Signature* binary_op_right_type;
+};
+
+void semantic_error_append_to_string(Semantic_Analyser* analyser, Semantic_Error e, String* string);
+
+
+
+
+
+
 struct Semantic_Analyser
 {
     // Result
     IR_Program* program;
-    Dynamic_Array<Compiler_Error> errors;
+    Dynamic_Array<Semantic_Error> errors;
 
     Symbol_Table* root_table;
     Dynamic_Array<Symbol_Table*> symbol_tables;

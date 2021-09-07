@@ -13,6 +13,7 @@ C_Compiler c_compiler_create()
 {
     C_Compiler result;
     result.source_files = dynamic_array_create_empty<String>(4);
+    result.lib_files = dynamic_array_create_empty<String>(4);
     result.initialized = true;
     result.last_compile_successfull = false;
     // Load system vars (Required to use cl.exe and link.exe)
@@ -71,12 +72,22 @@ void c_compiler_destroy(C_Compiler* compiler)
         string_destroy(&compiler->source_files[i]);
     }
     dynamic_array_destroy(&compiler->source_files);
+    for (int i = 0; i < compiler->lib_files.size; i++) {
+        string_destroy(&compiler->lib_files[i]);
+    }
+    dynamic_array_destroy(&compiler->lib_files);
 }
 
 void c_compiler_add_source_file(C_Compiler* compiler, String file_name)
 {
     String str = string_create(file_name.characters);
     dynamic_array_push_back(&compiler->source_files, str);
+}
+
+void c_compiler_add_lib_file(C_Compiler* compiler, String file_name)
+{
+    String str = string_create(file_name.characters);
+    dynamic_array_push_back(&compiler->lib_files, str);
 }
 
 void c_compiler_compile(C_Compiler* compiler)
@@ -94,6 +105,12 @@ void c_compiler_compile(C_Compiler* compiler)
         }
         dynamic_array_reset(&compiler->source_files);
     );
+    SCOPE_EXIT(
+        for (int i = 0; i < compiler->lib_files.size; i++) {
+            string_destroy(&compiler->lib_files[i]);
+        }
+        dynamic_array_reset(&compiler->lib_files);
+    );
 
     // Create compilation command
     String command = string_create_empty(128);
@@ -110,6 +127,11 @@ void c_compiler_compile(C_Compiler* compiler)
         }
         string_append_formated(&command, "/link ");
         string_append_formated(&command, linker_options);
+        string_append_formated(&command, " ");
+        for (int i = 0; i < compiler->lib_files.size; i++) {
+            string_append_formated(&command, compiler->lib_files[i].characters);
+            string_append_formated(&command, " ");
+        }
     }
 
     Optional<Process_Result> result = process_start(command);
@@ -230,6 +252,14 @@ void c_generator_register_type_name(C_Generator* generator, Type_Signature* type
         return;
     }
 
+    int* extern_name_id = hashtable_find_element(&generator->program->extern_program_sources.extern_type_signatures, type);
+    if (extern_name_id != 0) {
+        String type_name = string_create_empty(32);
+        string_append_formated(&type_name, identifier_pool_index_to_string(generator->compiler->identifier_pool, *extern_name_id).characters);
+        hashtable_insert_element(&generator->translation_type_to_name, type, type_name);
+        return;
+    }
+
     String tmp = string_create_empty(256);
     SCOPE_EXIT(string_destroy(&tmp));
     String type_name = string_create_empty(32);
@@ -272,7 +302,8 @@ void c_generator_register_type_name(C_Generator* generator, Type_Signature* type
         panic("Should not happen in c_backend!");
         break;
     case Signature_Type::FUNCTION: {
-        return;
+        string_append_formated(&type_name, "_ERROR_FUNCTION_TYPE_NAME");
+        break;
     }
     case Signature_Type::POINTER:
     {
@@ -481,6 +512,13 @@ void c_generator_output_data_access(C_Generator* generator, String* output, IR_D
     return;
 }
 
+void c_generator_output_cast(C_Generator* generator, String* output, IR_Data_Access access)
+{
+    string_append_formated(output, "(");
+    c_generator_output_type_reference(generator, output, ir_data_access_get_type(&access));
+    string_append_formated(output, ") ");
+}
+
 void c_generator_output_code_block(C_Generator* generator, String* output, IR_Code_Block* code_block, int indentation_level, bool registers_in_same_scope)
 {
     if (!registers_in_same_scope)
@@ -543,6 +581,7 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
             if (function_sig->return_type != generator->compiler->type_system.void_type) {
                 c_generator_output_data_access(generator, output, call->destination);
                 string_append_formated(output, " = ");
+                c_generator_output_cast(generator, output, call->destination);
             }
 
             switch (call->call_type)
@@ -605,7 +644,9 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
             default: panic("What");
             }
             string_append_formated(output, "(");
-            for (int j = 0; j < call->arguments.size; j++) {
+            for (int j = 0; j < call->arguments.size; j++) 
+            {
+                // Add cast (Implemented because of signed char/char difference in C)
                 c_generator_output_data_access(generator, output, call->arguments[j]);
                 if (j != call->arguments.size - 1) {
                     string_append_formated(output, ", ");
@@ -663,6 +704,7 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
             }
             case IR_Instruction_Return_Type::RETURN_DATA: {
                 string_append_formated(output, "return ");
+                c_generator_output_cast(generator, output, return_instr->options.return_value);
                 c_generator_output_data_access(generator, output, return_instr->options.return_value);
                 string_append_formated(output, ";\n");
                 break;
@@ -678,6 +720,7 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
         case IR_Instruction_Type::MOVE: {
             c_generator_output_data_access(generator, output, instr->options.move.destination);
             string_append_formated(output, " = ");
+            c_generator_output_cast(generator, output, instr->options.move.destination);
             c_generator_output_data_access(generator, output, instr->options.move.source);
             string_append_formated(output, ";\n");
             break;
@@ -703,9 +746,8 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
             case IR_Instruction_Cast_Type::U64_TO_POINTER:
             case IR_Instruction_Cast_Type::POINTERS: {
                 c_generator_output_data_access(generator, output, cast->destination);
-                string_append_formated(output, " = (");
-                c_generator_output_type_reference(generator, output, ir_data_access_get_type(&cast->destination));
-                string_append_formated(output, ")");
+                string_append_formated(output, " = ");
+                c_generator_output_cast(generator, output, cast->destination);
                 c_generator_output_data_access(generator, output, cast->source);
                 string_append_formated(output, ";\n");
                 break;
@@ -718,6 +760,7 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
             IR_Instruction_Address_Of* addr_of = &instr->options.address_of;
             c_generator_output_data_access(generator, output, addr_of->destination);
             string_append_formated(output, " = ");
+            c_generator_output_cast(generator, output, addr_of->destination);
             switch (addr_of->type)
             {
             case IR_Instruction_Address_Of_Type::ARRAY_ELEMENT: {
@@ -744,6 +787,12 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
                 string_append_formated(output, "&(");
                 c_generator_output_data_access(generator, output, addr_of->source);
                 string_append_formated(output, ").%s;\n", identifier_pool_index_to_string(generator->compiler->identifier_pool, addr_of->options.member.name_handle).characters);
+                break;
+            }
+            case IR_Instruction_Address_Of_Type::EXTERN_FUNCTION: {
+                string_append_formated(output, "&%s;\n", 
+                    identifier_pool_index_to_string(generator->compiler->identifier_pool, addr_of->options.extern_function.name_id).characters
+                );
                 break;
             }
             default: panic("What");
@@ -866,7 +915,6 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
     for (int i = 0; i < generator->compiler->type_system.types.size; i++) {
         Type_Signature* type = generator->compiler->type_system.types[i];
         if (type == generator->compiler->type_system.error_type) continue;
-        if (hashset_contains(&generator->program->extern_program_sources.extern_type_signatures, type)) continue;
         c_generator_register_type_name(generator, generator->compiler->type_system.types[i]);
     }
 
@@ -1063,6 +1111,7 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
         string_append_formated(&generator->section_function_implementations, "\nint main(int argc, char** argv) {random_initialize(); %s(); return 0;}\n", main_fn_name->characters);
     }
 
+    // Handle extern data
     String section_extern_includes = string_create_empty(2048);
     SCOPE_EXIT(string_destroy(&section_extern_includes));
     {
@@ -1072,6 +1121,11 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
             string_append_formated(&section_extern_includes, "#include <%s>\n", header_name.characters);
         }
         string_append_formated(&section_extern_includes, "\n");
+    }
+    for (int i = 0; i < generator->program->extern_program_sources.lib_files.size; i++) {
+        String header_name = identifier_pool_index_to_string(generator->compiler->identifier_pool,
+            generator->program->extern_program_sources.lib_files[i]);
+        c_compiler_add_lib_file(&generator->compiler->c_compiler, header_name);
     }
 
     // Combine sections into one program

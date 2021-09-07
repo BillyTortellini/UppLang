@@ -1562,7 +1562,8 @@ bool ast_parser_parse_extern_function_declaration(AST_Parser* parser, int parent
     if (!ast_parser_test_next_token(parser, Token_Type::EXTERN)) {
         return false;
     }
-    parser->index++;
+    parser->index += 1;
+    
     if (ast_parser_test_next_2_tokens(parser, Token_Type::STRING_LITERAL, Token_Type::OPEN_BRACES)) 
     {
         AST_Node_Index node_index = ast_parser_get_next_node_index(parser, parent);
@@ -1588,6 +1589,21 @@ bool ast_parser_parse_extern_function_declaration(AST_Parser* parser, int parent
             }
         }
 
+        parser->token_mapping[node_index] = token_range_make(checkpoint.rewind_token_index, parser->index);
+        return true;
+    }
+
+    if (ast_parser_test_next_3_tokens(parser, Token_Type::IDENTIFIER_NAME, Token_Type::STRING_LITERAL, Token_Type::SEMICOLON)) {
+        int id1 = parser->lexer->tokens[parser->index].attribute.identifier_number;
+        int id2 = parser->lexer->tokens[parser->index + 1].attribute.identifier_number;
+        if (id1 != parser->identifier_lib) {
+            ast_parser_checkpoint_reset(checkpoint);
+            return false;
+        }
+        AST_Node_Index node_index = ast_parser_get_next_node_index(parser, parent);
+        parser->nodes[node_index].type = AST_Node_Type::EXTERN_LIB_IMPORT;
+        parser->nodes[node_index].name_id = id2;
+        parser->index += 3;
         parser->token_mapping[node_index] = token_range_make(checkpoint.rewind_token_index, parser->index);
         return true;
     }
@@ -1824,6 +1840,7 @@ void ast_parser_check_sanity(AST_Parser* parser)
                 if (child_type != AST_Node_Type::FUNCTION &&
                     child_type != AST_Node_Type::STRUCT &&
                     child_type != AST_Node_Type::EXTERN_FUNCTION_DECLARATION &&
+                    child_type != AST_Node_Type::EXTERN_LIB_IMPORT &&
                     child_type != AST_Node_Type::EXTERN_HEADER_IMPORT &&
                     child_type != AST_Node_Type::MODULE &&
                     child_type != AST_Node_Type::MODULE_TEMPLATED &&
@@ -1860,6 +1877,7 @@ void ast_parser_check_sanity(AST_Parser* parser)
             }
             break;
         }
+        case AST_Node_Type::EXTERN_LIB_IMPORT:
         case AST_Node_Type::IDENTIFIER_NAME:
             if (node->children.size != 0) {
                 panic("Should not happen");
@@ -2246,6 +2264,7 @@ void ast_parser_parse(AST_Parser* parser, Lexer* lexer)
     parser->index = 0;
     parser->next_free_node = 0;
     parser->lexer = lexer;
+    parser->identifier_lib = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("lib"));
     dynamic_array_reset(&parser->errors);
     for (int i = 0; i < parser->nodes.size; i++) {
         dynamic_array_destroy(&parser->nodes[i].children);
@@ -2282,6 +2301,7 @@ String ast_node_type_to_string(AST_Node_Type type)
     case AST_Node_Type::TEMPLATE_PARAMETERS: return string_create_static("TEMPLATE_PARAMETERS");
     case AST_Node_Type::MODULE: return string_create_static("MODULE");
     case AST_Node_Type::EXTERN_FUNCTION_DECLARATION: return string_create_static("EXTERN_FUNCTION_DECLARATION");
+    case AST_Node_Type::EXTERN_LIB_IMPORT: return string_create_static("EXTERN_LIB_IMPORT");
     case AST_Node_Type::EXTERN_HEADER_IMPORT: return string_create_static("EXTERN_HEADER_IMPORT");
     case AST_Node_Type::FUNCTION: return string_create_static("FUNCTION");
     case AST_Node_Type::IDENTIFIER_NAME: return string_create_static("IDENTIFIER_NAME");
@@ -2343,6 +2363,9 @@ String ast_node_type_to_string(AST_Node_Type type)
     return string_create_static("SHOULD NOT FUCKING HAPPEN MOTHERFUCKER");
 }
 
+bool ast_node_type_is_identifier_node(AST_Node_Type type) {
+    return type >= AST_Node_Type::IDENTIFIER_NAME && type <= AST_Node_Type::IDENTIFIER_PATH_TEMPLATED;
+}
 bool ast_node_type_is_binary_expression(AST_Node_Type type) {
     return type >= AST_Node_Type::EXPRESSION_BINARY_OPERATION_ADDITION && type <= AST_Node_Type::EXPRESSION_BINARY_OPERATION_GREATER_OR_EQUAL;
 }

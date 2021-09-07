@@ -1,12 +1,10 @@
 NOTES:
 ------
- * extern Interface:
-    - Parsing C-Header Files
-        ~ To do this 100% correct, I would to get the Infos from some C/C++ Compiler like Clang or MSV
-          which is annoying, since these tools are quite complicated
-        ~ The other method would be to parse the headers myself, using the output from msvc after preprocessing.
-    - Adding extern sources in code
-    - Calling C-Functions from bytecode
+ * Next stuff:
+    - Better error-messages from semantic_analyser/parser
+    - Code_Completion
+    - sizeof required for window creation
+    - auto-cast keyword
  * Debugger
     - Debug program in Visual studio
     - Output custom PDB files

@@ -187,7 +187,7 @@ void compiler_compile(Compiler* compiler, String* source_code, bool generate_cod
 
         if (do_analysis && output_type_system) {
             logg("\n--------TYPE SYSTEM RESULT--------:\n");
-            type_system_print(&compiler->type_system);
+            type_system_print(&compiler->type_system, &compiler->analyser);
         }
 
         if (do_analysis && output_root_table)
