@@ -10,6 +10,10 @@ struct Code_Editor
 {
     Text_Editor* text_editor;
     Compiler compiler;
+
+    bool show_context_info;
+    String context_info;
+    vec2 context_info_pos;
 };
 
 Code_Editor code_editor_create(Text_Renderer* text_renderer, Rendering_Core* core, Timer* timer);

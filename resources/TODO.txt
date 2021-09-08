@@ -1,7 +1,12 @@
+Context Design:
+ - Show function signature if above function call
+ - Show Symbol type if above identifier
+
 NOTES:
 ------
  * Next stuff:
-    - Better error-messages from semantic_analyser/parser
+    - Show surrounding context (e.g. Error messages in error context, function signature in function call, type of variables...)
+    - Jump to definition fix
     - Code_Completion
     - sizeof required for window creation
     - auto-cast keyword

@@ -42,11 +42,10 @@ Renderer_2D* renderer_2D_create(Rendering_Core* core, Text_Renderer* text_render
     );
     result->string_buffer = string_create_empty(256);
     renderer_2D_update_window_size(&result, core);
-    Pipeline_State pipeline_state;
-    pipeline_state = pipeline_state_make_default();
-    pipeline_state.blending_state.blending_enabled = true;
-    pipeline_state.depth_state.test_type = Depth_Test_Type::TEST_DEPTH;
-    pipeline_state.culling_state.culling_enabled = true;
+    result->pipeline_state = pipeline_state_make_default();
+    result->pipeline_state.blending_state.blending_enabled = true;
+    result->pipeline_state.depth_state.test_type = Depth_Test_Type::IGNORE_DEPTH;
+    result->pipeline_state.culling_state.culling_enabled = false;
     rendering_core_add_window_size_listener(core, &renderer_2D_update_window_size, result);
     return result;
 }
@@ -77,6 +76,7 @@ void renderer_2D_render(Renderer_2D* renderer, Rendering_Core* core)
     dynamic_array_reset(&renderer->geometry_data);
     dynamic_array_reset(&renderer->index_data);
     // Render
+    rendering_core_update_pipeline_state(core, renderer->pipeline_state);
     shader_program_draw_mesh(renderer->shader_2d, &renderer->geometry, core, {});
     text_renderer_render(renderer->text_renderer, core);
 }

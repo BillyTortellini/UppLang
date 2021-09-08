@@ -196,6 +196,12 @@ int ast_parser_find_parenthesis_ending(AST_Parser* parser, int start_index, Toke
 
 void ast_parser_log_error(AST_Parser* parser, const char* msg, Token_Range range)
 {
+    if (parser->errors.size > 0) {
+        Compiler_Error last_error = parser->errors[parser->errors.size - 1];
+        if (last_error.range.start_index <= range.start_index || last_error.range.end_index >= range.start_index) {
+            return; // Skip nested errors
+        }
+    }
     Compiler_Error error;
     error.message = msg;
     error.range = range;
@@ -257,7 +263,7 @@ bool ast_parser_parse_identifier_or_path(AST_Parser* parser, AST_Node_Index pare
     parser->index++;
 
     bool is_template_analysis = false;
-    if (ast_parser_parse_parameter_block(parser, node_index, false, Token_Type::COMPARISON_LESS, Token_Type::COMPARISON_GREATER, false)) {
+    if (ast_parser_parse_parameter_block(parser, node_index, false, Token_Type::COMPARISON_LESS, Token_Type::COMPARISON_GREATER, true)) {
         is_template_analysis = true;
     }
 
@@ -1152,7 +1158,7 @@ bool ast_parser_parse_statement(AST_Parser* parser, AST_Node_Index parent_index)
             parser->token_mapping[node_index] = token_range_make(checkpoint.rewind_token_index, parser->index);
             return true;
         }
-        ast_parser_log_error(parser, "Invalid expression after defer keyword", token_range_make(checkpoint.rewind_token_index, parser->index));
+        ast_parser_log_error(parser, "Invalid statement after defer keyword", token_range_make(checkpoint.rewind_token_index, parser->index));
         ast_parser_checkpoint_reset(checkpoint);
         return false;
     }
@@ -1294,16 +1300,16 @@ bool ast_parser_parse_statement_block(AST_Parser* parser, AST_Node_Index parent_
         int next_closing_braces = ast_parser_find_parenthesis_ending(parser, parser->index, Token_Type::OPEN_BRACES, Token_Type::CLOSED_BRACES, &unused);
         int next_line = ast_parser_find_next_line_start_token(parser);
         if (next_line < next_semi && next_line < next_closing_braces) {
-            ast_parser_log_error(parser, "Could not parse statement", token_range_make(parser->index, next_line - 1));
+            ast_parser_log_error(parser, "Could not parse statement", token_range_make(parser->index, next_line));
             parser->index = next_line;
             continue;
         }
         if (next_semi < next_closing_braces) {
-            ast_parser_log_error(parser, "Could not parse statement", token_range_make(parser->index, next_semi));
+            ast_parser_log_error(parser, "Could not parse statement", token_range_make(parser->index, next_semi + 1));
             parser->index = next_semi + 1;
             continue;
         }
-        ast_parser_log_error(parser, "Could not parse statement", token_range_make(parser->index, next_closing_braces));
+        ast_parser_log_error(parser, "Could not parse statement", token_range_make(parser->index, next_closing_braces + 1));
         parser->index = next_closing_braces;
     }
     parser->index++;
@@ -1454,6 +1460,7 @@ bool ast_parser_parse_parameter_block(
         if (!success)
         {
             if (!log_errors) {
+                // This is necessary in the case of identifier paths, since <> are also Comparison operators
                 ast_parser_checkpoint_reset(checkpoint);
                 return false;
             }
@@ -1509,7 +1516,7 @@ bool ast_parser_parse_struct(AST_Parser* parser, AST_Node_Index parent_index)
             int next_semicolon = ast_parser_find_next_token_type(parser, Token_Type::SEMICOLON);
             int next_closing_braces = ast_parser_find_next_token_type(parser, Token_Type::CLOSED_BRACES);
             if (next_semicolon < next_closing_braces) {
-                ast_parser_log_error(parser, "Variable definition invalid!", token_range_make(member_checkpoint.rewind_token_index, next_semicolon));
+                ast_parser_log_error(parser, "Variable definition invalid!", token_range_make(member_checkpoint.rewind_token_index, next_semicolon + 1));
                 parser->index = next_semicolon + 1;
                 continue;
             }
@@ -1662,16 +1669,14 @@ bool ast_parser_parse_definitions(AST_Parser* parser, int parent)
         }
 
         ast_parser_checkpoint_reset(checkpoint);
-        bool braces_terminated_properly;
+        bool exit_braces_found;
         int next_closing_braces = ast_parser_find_parenthesis_ending(
-            parser, checkpoint.rewind_token_index, Token_Type::OPEN_BRACES, Token_Type::CLOSED_BRACES, &braces_terminated_properly
+            parser, checkpoint.rewind_token_index, Token_Type::OPEN_BRACES, Token_Type::CLOSED_BRACES, &exit_braces_found
         );
-        ast_parser_log_error(parser, "Could not parse Definitions", token_range_make(parser->index, next_closing_braces));
+        ast_parser_log_error(parser, "Could not parse Definitions", token_range_make(parser->index, next_closing_braces+1));
 
-        if (braces_terminated_properly) {
-            parser->index = next_closing_braces + 1;
-        }
-        else {
+        parser->index = next_closing_braces + 1;
+        if (exit_braces_found) {
             break;
         }
     }

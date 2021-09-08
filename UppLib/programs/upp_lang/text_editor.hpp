@@ -218,6 +218,8 @@ void text_editor_add_highlight_from_slice(Text_Editor* editor, Text_Slice slice,
 void text_editor_reset_highlights(Text_Editor* editor);
 void text_editor_record_jump(Text_Editor* editor, Text_Position start, Text_Position end);
 void text_editor_clamp_cursor(Text_Editor* editor);
+Bounding_Box2 text_editor_get_character_bounding_box(Text_Editor* editor, Text_Position pos);
+void text_editor_draw_bounding_box(Text_Editor* editor, Rendering_Core* core, Bounding_Box2 bb, vec4 color);
 
 
 

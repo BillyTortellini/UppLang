@@ -24,6 +24,7 @@ struct Renderer_2D
     Dynamic_Array<uint32> index_data;
     Shader_Program* shader_2d;
     Text_Renderer* text_renderer;
+    Pipeline_State pipeline_state;
     String string_buffer;
     vec2 scaling_factor;
     float to_pixel_scaling;

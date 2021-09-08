@@ -211,7 +211,7 @@ Text_Layout* text_renderer_calculate_text_layout(
     float max_cursor_x = 0.0f;
     float cursor_x = 0.0f;
     //float cursor_y = -atlas->descender * scaling_factor.y;
-    float cursor_y = 0.0f;
+    float cursor_y = -relative_height;
 
     dynamic_array_reset(&renderer->text_layout.character_positions);
     for (int i = 0; i < text->size; i++)
@@ -249,8 +249,8 @@ Text_Layout* text_renderer_calculate_text_layout(
 
     // Push up all character, so that all y coordinates are > 0
     for (int i = 0; i < renderer->text_layout.character_positions.size; i++) {
-        renderer->text_layout.character_positions[i].bounding_box.min.y += cursor_y;
-        renderer->text_layout.character_positions[i].bounding_box.max.y += cursor_y;
+        renderer->text_layout.character_positions[i].bounding_box.min.y -= cursor_y;
+        renderer->text_layout.character_positions[i].bounding_box.max.y -= cursor_y;
     }
 
     renderer->text_layout.size = vec2(max_cursor_x, -cursor_y);

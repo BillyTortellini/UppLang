@@ -727,7 +727,9 @@ struct Semantic_Error
     Type_Signature* binary_op_right_type;
 };
 
+struct Token_Range;
 void semantic_error_append_to_string(Semantic_Analyser* analyser, Semantic_Error e, String* string);
+void semantic_error_get_error_location(Semantic_Analyser* analyser, Semantic_Error error, Dynamic_Array<Token_Range>* locations);
 
 
 
@@ -759,3 +761,25 @@ struct Semantic_Analyser
 Semantic_Analyser semantic_analyser_create();
 void semantic_analyser_destroy(Semantic_Analyser* analyser);
 void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler);
+
+enum class Analysis_Result_Type
+{
+    SUCCESS,
+    ERROR_OCCURED,
+    DEPENDENCY
+};
+
+struct Identifier_Analysis_Result
+{
+    Analysis_Result_Type type;
+    union
+    {
+        Symbol symbol;
+        Workload_Dependency dependency;
+    } options;
+};
+
+struct AST_Parser;
+Identifier_Analysis_Result semantic_analyser_analyse_identifier_node(
+    Semantic_Analyser* analyser, Symbol_Table* table, AST_Parser* parser, int node_index, bool only_current_scope);
+void symbol_append_to_string(Symbol* symbol, String* string, Semantic_Analyser* analyser);

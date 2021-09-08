@@ -292,13 +292,27 @@ void compiler_execute(Compiler* compiler)
 
 Text_Slice token_range_to_text_slice(Token_Range range, Compiler* compiler)
 {
+    assert(range.start_index >= 0 && range.start_index <= compiler->lexer.tokens.size, "HEY");
+    assert(range.end_index >= 0 && range.end_index <= compiler->lexer.tokens.size+1, "HEY");
+    assert(range.end_index >= range.start_index, "HEY");
+    if (range.end_index > compiler->lexer.tokens.size) {
+        range.end_index = compiler->lexer.tokens.size;
+    }
     if (compiler->lexer.tokens.size == 0) {
         return text_slice_make(text_position_make(0, 0), text_position_make(0, 0));
     }
-    range.end_index = math_clamp(range.end_index, 0, math_maximum(0, compiler->lexer.tokens.size - 1));
+
+    range.end_index = math_clamp(range.end_index, 0, math_maximum(0, compiler->lexer.tokens.size));
+    if (range.end_index == range.start_index) {
+        return text_slice_make(
+            compiler->lexer.tokens[range.start_index].position.start,
+            compiler->lexer.tokens[range.start_index].position.end
+        );
+    }
+
     return text_slice_make(
         compiler->lexer.tokens[range.start_index].position.start,
-        compiler->lexer.tokens[range.end_index].position.end
+        compiler->lexer.tokens[range.end_index - 1].position.end
     );
 }
 

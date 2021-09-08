@@ -393,12 +393,12 @@ void text_editor_draw_bounding_box(Text_Editor* editor, Rendering_Core* core, Bo
     );
 }
 
-Bounding_Box2 text_editor_get_character_bounding_box(Text_Editor* editor, float text_height, int line, int character, Bounding_Box2 editor_region)
+Bounding_Box2 text_editor_get_character_bounding_box(Text_Editor* editor, Text_Position pos)
 {
-    float glyph_advance = text_renderer_get_cursor_advance(editor->renderer, text_height);
-    vec2 cursor_pos = vec2(glyph_advance * (character - editor->first_rendered_char), 0.0f) +
-        vec2(editor_region.min.x, editor_region.max.y - ((line - editor->first_rendered_line) + 1.0f) * text_height);
-    vec2 cursor_size = vec2(glyph_advance, text_height);
+    float glyph_advance = text_renderer_get_cursor_advance(editor->renderer, editor->last_text_height);
+    vec2 cursor_pos = vec2(glyph_advance * (pos.character - editor->first_rendered_char), 0.0f) +
+        vec2(editor->last_editor_region.min.x, editor->last_editor_region.max.y - ((pos.line - editor->first_rendered_line) + 1.0f) * editor->last_text_height);
+    vec2 cursor_size = vec2(glyph_advance, editor->last_text_height);
 
     Bounding_Box2 result;
     result.min = cursor_pos;
@@ -415,9 +415,6 @@ void text_editor_render(Text_Editor* editor, Rendering_Core* core, Bounding_Box2
     float time = core->render_information.current_time_in_seconds;
 
     float text_height = 2.0f * (editor->line_size_cm) / (height / (float)dpi * 2.54f);
-    editor->last_editor_region = editor_region;
-    editor->last_text_height = text_height;
-
     // Calculate minimum and maximum line in viewport
     int max_line_count = (editor_region.max.y - editor_region.min.y) / text_height;
     if (editor->cursor_position.line < editor->first_rendered_line) {
@@ -469,6 +466,8 @@ void text_editor_render(Text_Editor* editor, Rendering_Core* core, Bounding_Box2
         }
         editor_region.min.x += text_renderer_calculate_text_width(editor->renderer, line_number_char_count + 1, text_height);
     }
+    editor->last_editor_region = editor_region;
+    editor->last_text_height = text_height;
 
     // Calculate the first and last character to be drawn in any line (Viewport)
     int max_character_count = (editor_region.max.x - editor_region.min.x) / text_renderer_get_cursor_advance(editor->renderer, text_height);
@@ -494,10 +493,8 @@ void text_editor_render(Text_Editor* editor, Rendering_Core* core, Bounding_Box2
             Text_Highlight* highlight = &editor->text_highlights.data[i].data[j];
             // Draw text background 
             {
-                Bounding_Box2 highlight_start = text_editor_get_character_bounding_box(editor,
-                    text_height, i, highlight->character_start, editor_region);
-                Bounding_Box2 highlight_end = text_editor_get_character_bounding_box(editor, text_height, i, highlight->character_end - 1,
-                    editor_region);
+                Bounding_Box2 highlight_start = text_editor_get_character_bounding_box(editor, text_position_make(i, highlight->character_start));
+                Bounding_Box2 highlight_end = text_editor_get_character_bounding_box(editor, text_position_make(i, highlight->character_end - 1));
                 Bounding_Box2 combined = bounding_box_2_combine(highlight_start, highlight_end);
                 text_editor_draw_bounding_box(editor, core, combined, highlight->background_color);
             }
@@ -526,9 +523,7 @@ void text_editor_render(Text_Editor* editor, Rendering_Core* core, Bounding_Box2
         if (editor->last_keymessage_time + inactivity_time_to_cursor_blink < time) {
             show_cursor = math_modulo(time - editor->last_keymessage_time - inactivity_time_to_cursor_blink, blink_length * 2.0) > blink_length;
         }
-        Bounding_Box2 cursor_bb = text_editor_get_character_bounding_box(
-            editor, text_height, editor->cursor_position.line, editor->cursor_position.character, editor_region
-        );
+        Bounding_Box2 cursor_bb = text_editor_get_character_bounding_box(editor, editor->cursor_position);
         // Change cursor height if there are messages to be parsed
         float cursor_height = text_height;
         if (editor->mode == Text_Editor_Mode::NORMAL && editor->normal_mode_incomplete_command.size != 0) cursor_height *= 0.5f;

@@ -77,17 +77,28 @@ main :: ()
     window_class.lpszClassName = class_name;
     window_class.hCursor = nullptr;
     window_class.hInstance = instance_handle;
+    window_class.cbClsExtra = 0;
+    window_class.cbWndExtra = 0;
+    window_class.hIcon = nullptr;
+    window_class.hbrBackground = nullptr;
+    window_class.lpszMenuName = nullptr;
+    
     if Win32::RegisterClassA(*window_class) == cast<u32>0 
     {
         print_string("Register Class failed!\n");
         print_last_error();
         return;
     }
-    print_string("Register Class success!");
+    print_string("Register Class success!\n");
     
     window_handle := Win32::CreateWindowExA(
-        cast<u32>0, cstr("MyClass"), cstr("WndName"), cast<u32>0,
+        cast<u32>0, class_name, cstr("WndName"), cast<u32>0,
         0, 0, 800, 600,
         nullptr, nullptr, nullptr, nullptr 
     );
+    if (window_handle != nullptr) {
+        print_string("Window creation success");
+    }
 }
+
+

@@ -1433,13 +1433,6 @@ IR_Data_Access ir_data_access_dereference_pointer(IR_Code_Block* block, IR_Data_
 /*
     SEMANTIC ANALYSER
 */
-enum class Analysis_Result_Type
-{
-    SUCCESS,
-    ERROR_OCCURED,
-    DEPENDENCY
-};
-
 struct Type_Analysis_Result
 {
     Analysis_Result_Type type;
@@ -1469,16 +1462,6 @@ struct Variable_Creation_Analysis_Result
 {
     Analysis_Result_Type type;
     Workload_Dependency dependency;
-};
-
-struct Identifier_Analysis_Result
-{
-    Analysis_Result_Type type;
-    union
-    {
-        Symbol symbol;
-        Workload_Dependency dependency;
-    } options;
 };
 
 Workload_Dependency workload_dependency_make_code_block_finished(IR_Code_Block* code_block, int node_index)
@@ -2305,7 +2288,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
                 Semantic_Error error;
                 error.type = Semantic_Error_Type::INVALID_TYPE_FUNCTION_CALL_EXPECTED_FUNCTION_POINTER;
                 error.given_type = var_type;
-                error.error_node_index = expression_index;
+                error.error_node_index = expression_node->children[0];
                 semantic_analyser_log_error_new(analyser, error);
                 return expression_analysis_result_make_error();
             }
@@ -3981,6 +3964,274 @@ void analysis_workload_append_to_string(Analysis_Workload* workload, String* str
     }
 }
 
+void semantic_error_get_error_location(Semantic_Analyser* analyser, Semantic_Error error, Dynamic_Array<Token_Range>* locations)
+{
+    Dynamic_Array<Token_Range> token_mapping = analyser->compiler->parser.token_mapping;
+    switch (error.type)
+    {
+    case Semantic_Error_Type::TEMPLATE_ARGUMENTS_INVALID_COUNT: 
+    case Semantic_Error_Type::TEMPLATE_ARGUMENTS_NOT_ON_TEMPLATE: {
+        AST_Node* identifier_node = &analyser->compiler->parser.nodes[error.identifier_node_index];
+        assert(identifier_node->type == AST_Node_Type::IDENTIFIER_NAME_TEMPLATED || identifier_node->type == AST_Node_Type::IDENTIFIER_PATH_TEMPLATED, "What");
+        Token_Range unnamed_block_range = analyser->compiler->parser.token_mapping[identifier_node->children[0]];
+        dynamic_array_push_back(locations, token_range_make(unnamed_block_range.start_index, unnamed_block_range.start_index + 1));
+        dynamic_array_push_back(locations, token_range_make(unnamed_block_range.end_index-1, unnamed_block_range.end_index));
+        break;
+    }
+    case Semantic_Error_Type::TEMPLATE_ARGUMENTS_REQUIRED: {
+        dynamic_array_push_back(locations, token_mapping[error.identifier_node_index]);
+        break;
+    }
+    case Semantic_Error_Type::EXTERN_HEADER_DOES_NOT_CONTAIN_SYMBOL: {
+        dynamic_array_push_back(locations, token_mapping[error.error_node_index]);
+        break;
+    }
+    case Semantic_Error_Type::EXTERN_HEADER_PARSING_FAILED:  {
+        Token_Range extern_header_node = token_mapping[error.error_node_index];
+        dynamic_array_push_back(locations, token_range_make(extern_header_node.start_index + 1, extern_header_node.start_index + 2));
+        break;
+    }
+    case Semantic_Error_Type::INVALID_TYPE_VOID_USAGE: {
+        dynamic_array_push_back(locations, token_mapping[error.error_node_index]);
+        break;
+    }
+    case Semantic_Error_Type::INVALID_TYPE_FUNCTION_CALL_EXPECTED_FUNCTION_POINTER: {
+        dynamic_array_push_back(locations, token_mapping[error.error_node_index]);
+        break;
+    }
+    case Semantic_Error_Type::INVALID_TYPE_FUNCTION_IMPORT_EXPECTED_FUNCTION_POINTER: {
+        dynamic_array_push_back(locations, token_mapping[error.error_node_index]);
+        break;
+    }
+    case Semantic_Error_Type::INVALID_TYPE_ARGUMENT_TYPE_MISMATCH: {
+        dynamic_array_push_back(locations, token_mapping[error.error_node_index]);
+        break;
+    }
+    case Semantic_Error_Type::INVALID_TYPE_ARRAY_ACCESS: {
+        dynamic_array_push_back(locations, token_mapping[error.error_node_index]);
+        break;
+    }
+    case Semantic_Error_Type::INVALID_TYPE_ARRAY_ACCESS_INDEX: {
+        dynamic_array_push_back(locations, token_mapping[error.error_node_index]);
+        break;
+    }
+    case Semantic_Error_Type::INVALID_TYPE_ARRAY_ALLOCATION_SIZE: {
+        dynamic_array_push_back(locations, token_mapping[error.error_node_index]);
+        break;
+    }
+    case Semantic_Error_Type::INVALID_TYPE_ARRAY_SIZE: {
+        dynamic_array_push_back(locations, token_mapping[error.error_node_index]);
+        break;
+    }
+    case Semantic_Error_Type::INVALID_TYPE_ON_MEMBER_ACCESS: {
+        AST_Node* member_access_node = &analyser->compiler->parser.nodes[error.error_node_index];
+        assert(member_access_node->type == AST_Node_Type::EXPRESSION_MEMBER_ACCESS, "What");
+        Token_Range range = token_mapping[member_access_node->children[0]];
+        dynamic_array_push_back(locations, token_range_make(range.end_index, range.end_index+1));
+        break;
+    }
+    case Semantic_Error_Type::INVALID_TYPE_IF_CONDITION: {
+        dynamic_array_push_back(locations, token_mapping[error.error_node_index]);
+        break;
+    }
+    case Semantic_Error_Type::INVALID_TYPE_WHILE_CONDITION: {
+        dynamic_array_push_back(locations, token_mapping[error.error_node_index]);
+        break;
+    }
+    case Semantic_Error_Type::INVALID_TYPE_UNARY_OPERATOR: {
+        Token_Range range = token_mapping[error.error_node_index];
+        dynamic_array_push_back(locations, token_range_make(range.start_index, range.start_index+1));
+        break;
+    }
+    case Semantic_Error_Type::INVALID_TYPE_BINARY_OPERATOR: {
+        AST_Node* binary_op_node = &analyser->compiler->parser.nodes[error.error_node_index];
+        assert(ast_node_type_is_binary_expression(binary_op_node->type), "HEY");
+        Token_Range range = token_mapping[binary_op_node->children[0]];
+        dynamic_array_push_back(locations, token_range_make(range.end_index, range.end_index+1));
+        break;
+    }
+    case Semantic_Error_Type::INVALID_TYPE_ASSIGNMENT: {
+        AST_Node* assign_node = &analyser->compiler->parser.nodes[error.error_node_index];
+        assert(assign_node->type == AST_Node_Type::STATEMENT_ASSIGNMENT || assign_node->type == AST_Node_Type::STATEMENT_VARIABLE_DEFINE_ASSIGN, "hey");
+        Token_Range range = token_mapping[assign_node->children[0]];
+        dynamic_array_push_back(locations, token_range_make(range.end_index, range.end_index+1));
+        break;
+    }
+    case Semantic_Error_Type::INVALID_TYPE_RETURN: {
+        Token_Range range = token_mapping[error.error_node_index];
+        dynamic_array_push_back(locations, token_range_make(range.start_index, range.start_index+1));
+        break;
+    }
+    case Semantic_Error_Type::INVALID_TYPE_DELETE: {
+        Token_Range range = token_mapping[error.error_node_index];
+        dynamic_array_push_back(locations, token_range_make(range.start_index, range.start_index+1));
+        break;
+    }
+    case Semantic_Error_Type::SYMBOL_EXPECTED_FUNCTION_OR_VARIABLE_ON_FUNCTION_CALL: {
+        dynamic_array_push_back(locations, token_mapping[error.identifier_node_index]);
+        break;
+    }
+    case Semantic_Error_Type::SYMBOL_EXPECTED_TYPE_ON_TYPE_IDENTIFIER: {
+        dynamic_array_push_back(locations, token_mapping[error.identifier_node_index]);
+        break;
+    }
+    case Semantic_Error_Type::SYMBOL_EXPECTED_VARIABLE_OR_FUNCTION_ON_VARIABLE_READ:{
+        dynamic_array_push_back(locations, token_mapping[error.identifier_node_index]);
+        break;
+    }
+    case Semantic_Error_Type::SYMBOL_TABLE_UNRESOLVED_SYMBOL:{
+        dynamic_array_push_back(locations, token_mapping[error.identifier_node_index]);
+        break;
+    }
+    case Semantic_Error_Type::SYMBOL_TABLE_SYMBOL_ALREADY_DEFINED: {
+        dynamic_array_push_back(locations, token_mapping[error.error_node_index]);
+        break;
+    }
+    case Semantic_Error_Type::SYMBOL_TABLE_MODULE_ALREADY_DEFINED: {
+        dynamic_array_push_back(locations, token_mapping[error.error_node_index]);
+        break;
+    }
+    case Semantic_Error_Type::FUNCTION_CALL_ARGUMENT_SIZE_MISMATCH: {
+        AST_Node* expression_node = &analyser->compiler->parser.nodes[error.error_node_index];
+        assert(expression_node->type == AST_Node_Type::EXPRESSION_FUNCTION_CALL, "What");
+        Token_Range arguments_range = analyser->compiler->parser.token_mapping[expression_node->children[1]];
+        dynamic_array_push_back(locations, token_range_make(arguments_range.start_index, arguments_range.start_index + 1));
+        dynamic_array_push_back(locations, token_range_make(arguments_range.end_index-1, arguments_range.end_index));
+        break;
+    }
+    case Semantic_Error_Type::EXPRESSION_INVALID_CAST: {
+        Token_Range range = token_mapping[error.error_node_index];
+        dynamic_array_push_back(locations, token_range_make(range.start_index, range.start_index+1));
+        break;
+    }
+    case Semantic_Error_Type::EXPRESSION_MEMBER_NOT_FOUND: {
+        AST_Node* member_access_node = &analyser->compiler->parser.nodes[error.error_node_index];
+        assert(member_access_node->type == AST_Node_Type::EXPRESSION_MEMBER_ACCESS, "What");
+        Token_Range range = token_mapping[member_access_node->children[0]];
+        dynamic_array_push_back(locations, token_range_make(range.end_index, range.end_index+1));
+        break;
+    }
+    case Semantic_Error_Type::EXPRESSION_ADDRESS_OF_REQUIRES_MEMORY_ADDRESS: {
+        Token_Range range = token_mapping[error.error_node_index];
+        dynamic_array_push_back(locations, token_range_make(range.start_index, range.start_index+1));
+        break;
+    }
+    case Semantic_Error_Type::EXPRESSION_BINARY_OP_TYPES_MUST_MATCH: {
+        AST_Node* binary_op_node = &analyser->compiler->parser.nodes[error.error_node_index];
+        assert(ast_node_type_is_binary_expression(binary_op_node->type), "HEY");
+        Token_Range range = token_mapping[binary_op_node->children[0]];
+        dynamic_array_push_back(locations, token_range_make(range.end_index, range.end_index+1));
+        break;
+    }
+    case Semantic_Error_Type::EXPRESSION_STATEMENT_MUST_BE_FUNCTION_CALL: {
+        dynamic_array_push_back(locations, token_mapping[error.error_node_index]);
+        break;
+    }
+    case Semantic_Error_Type::OTHERS_STRUCT_MUST_CONTAIN_MEMBER: {
+        Token_Range range = token_mapping[error.error_node_index];
+        dynamic_array_push_back(locations, token_range_make(range.start_index, range.start_index+1));
+        break;
+    }
+    case Semantic_Error_Type::OTHERS_STRUCT_MEMBER_ALREADY_DEFINED: {
+        Token_Range range = token_mapping[error.error_node_index];
+        dynamic_array_push_back(locations, token_range_make(range.start_index, range.start_index+1));
+        break;
+    }
+    case Semantic_Error_Type::OTHERS_WHILE_ONLY_RUNS_ONCE:
+    case Semantic_Error_Type::OTHERS_WHILE_ALWAYS_RETURNS:
+    case Semantic_Error_Type::OTHERS_WHILE_NEVER_STOPS: {
+        Token_Range range = token_mapping[error.error_node_index];
+        dynamic_array_push_back(locations, token_range_make(range.start_index, range.start_index+1));
+        break;
+    }
+    case Semantic_Error_Type::OTHERS_STATEMENT_UNREACHABLE: {
+        dynamic_array_push_back(locations, token_mapping[error.error_node_index]);
+        break;
+    }
+    case Semantic_Error_Type::OTHERS_DEFER_NO_RETURNS_ALLOWED:  {
+        Token_Range range = token_mapping[error.error_node_index];
+        dynamic_array_push_back(locations, token_range_make(range.start_index, range.start_index+1));
+        break;
+    }
+    case Semantic_Error_Type::OTHERS_BREAK_NOT_INSIDE_LOOP: {
+        Token_Range range = token_mapping[error.error_node_index];
+        dynamic_array_push_back(locations, token_range_make(range.start_index, range.start_index+1));
+        break;
+    }
+    case Semantic_Error_Type::OTHERS_CONTINUE_NOT_INSIDE_LOOP: {
+        Token_Range range = token_mapping[error.error_node_index];
+        dynamic_array_push_back(locations, token_range_make(range.start_index, range.start_index+1));
+        break;
+    }
+    case Semantic_Error_Type::OTHERS_MISSING_RETURN_STATEMENT:  {
+        Token_Range range = token_mapping[error.error_node_index];
+        dynamic_array_push_back(locations, token_range_make(range.end_index-1, range.end_index));
+        break;
+    }
+    case Semantic_Error_Type::OTHERS_UNFINISHED_WORKLOAD_TEMPLATE_INSTANCE:  {
+        dynamic_array_push_back(locations, token_mapping[error.error_node_index]);
+        break;
+    }
+    case Semantic_Error_Type::OTHERS_UNFINISHED_WORKLOAD_CODE_BLOCK:  {
+        dynamic_array_push_back(locations, token_mapping[error.error_node_index]);
+        break;
+    }
+    case Semantic_Error_Type::OTHERS_UNFINISHED_WORKLOAD_TYPE_SIZE:  {
+        dynamic_array_push_back(locations, token_mapping[error.error_node_index]);
+        break;
+    }
+    case Semantic_Error_Type::OTHERS_MAIN_CANNOT_BE_TEMPLATED: {
+        Token_Range range = token_mapping[error.error_node_index];
+        dynamic_array_push_back(locations, token_range_make(range.start_index, range.start_index+1));
+        break;
+    }
+    case Semantic_Error_Type::OTHERS_MAIN_NOT_DEFINED: {
+        break;
+    }
+    case Semantic_Error_Type::OTHERS_NO_CALLING_TO_MAIN:  {
+        Token_Range range = token_mapping[error.error_node_index];
+        dynamic_array_push_back(locations, token_range_make(range.start_index, range.start_index+1));
+        break;
+    }
+    case Semantic_Error_Type::OTHERS_ASSIGNMENT_REQUIRES_MEMORY_ADDRESS:  {
+        Token_Range range = token_mapping[error.error_node_index];
+        dynamic_array_push_back(locations, token_range_make(range.start_index, range.start_index+1));
+        break;
+    }
+    case Semantic_Error_Type::MISSING_FEATURE_TEMPLATED_GLOBALS: {
+        Token_Range range = token_mapping[error.error_node_index];
+        dynamic_array_push_back(locations, range);
+        break;
+    }
+    case Semantic_Error_Type::MISSING_FEATURE_NON_INTEGER_ARRAY_SIZE_EVALUATION: {
+        Token_Range range = token_mapping[error.error_node_index];
+        dynamic_array_push_back(locations, range);
+        break;
+    }
+    case Semantic_Error_Type::MISSING_FEATURE_NESTED_TEMPLATED_MODULES: {
+        Token_Range range = token_mapping[error.error_node_index];
+        dynamic_array_push_back(locations, range);
+        break;
+    }
+    case Semantic_Error_Type::MISSING_FEATURE_EXTERN_IMPORT_IN_TEMPLATED_MODULES: {
+        Token_Range range = token_mapping[error.error_node_index];
+        dynamic_array_push_back(locations, range);
+        break;
+    }
+    case Semantic_Error_Type::MISSING_FEATURE_EXTERN_GLOBAL_IMPORT: {
+        Token_Range range = token_mapping[error.error_node_index];
+        dynamic_array_push_back(locations, range);
+        break;
+    }
+    case Semantic_Error_Type::MISSING_FEATURE_NESTED_DEFERS: {
+        Token_Range range = token_mapping[error.error_node_index];
+        dynamic_array_push_back(locations, token_range_make(range.start_index, range.start_index+1));
+        break;
+    }
+    default: panic("hey");
+    }
+}
+
 void semantic_error_append_to_string(Semantic_Analyser* analyser, Semantic_Error e, String* string)
 {
     bool print_symbol_by_name_id = false;
@@ -3994,6 +4245,9 @@ void semantic_error_append_to_string(Semantic_Analyser* analyser, Semantic_Error
     bool print_struct_members = false;
     bool print_identifier_node = false;
     bool print_member_access_name_id = false;
+
+    int rollback_index = analyser->errors.size;
+    SCOPE_EXIT(dynamic_array_rollback_to_size(&analyser->errors, rollback_index));
 
     switch (e.type)
     {
@@ -4029,7 +4283,7 @@ void semantic_error_append_to_string(Semantic_Analyser* analyser, Semantic_Error
         print_given_type = true;
         break;
     case Semantic_Error_Type::INVALID_TYPE_ARGUMENT_TYPE_MISMATCH:
-        string_append_formated(string, "Arguments type does not match function parameter type");
+        string_append_formated(string, "Argument type does not match function parameter type");
         print_given_type = true;
         print_expected_type = true;
         break;
@@ -4211,52 +4465,52 @@ void semantic_error_append_to_string(Semantic_Analyser* analyser, Semantic_Error
     {
         Symbol* symbol = symbol_table_find_symbol(e.symbol_table, e.name_id, false);
         if (symbol != 0) {
-            string_append_formated(string, "\n\tSymbol: ");
+            string_append_formated(string, "\n  Symbol: ");
             symbol_append_to_string(symbol, string, analyser);
         }
     }
-    if (print_symbol_by_identifier_node) 
+    if (print_symbol_by_identifier_node)
     {
         Identifier_Analysis_Result result = semantic_analyser_analyse_identifier_node(analyser, e.symbol_table, &analyser->compiler->parser, e.identifier_node_index, false);
         if (result.type == Analysis_Result_Type::SUCCESS) {
-            string_append_formated(string, "\n\tSymbol: ");
+            string_append_formated(string, "\n  Symbol: ");
             symbol_append_to_string(&result.options.symbol, string, analyser);
         }
     }
     if (print_given_type) {
-        string_append_formated(string, "\n\tGiven Type:    ");
+        string_append_formated(string, "\n  Given Type:    ");
         type_signature_append_to_string(string, e.given_type, analyser);
     }
     if (print_expected_type) {
-        string_append_formated(string, "\n\tExpected Type: ");
+        string_append_formated(string, "\n  Expected Type: ");
         type_signature_append_to_string(string, e.expected_type, analyser);
     }
     if (print_function_type) {
-        string_append_formated(string, "\n\tFunction Type: ");
+        string_append_formated(string, "\n  Function Type: ");
         type_signature_append_to_string(string, e.function_type, analyser);
     }
     if (print_binary_type) {
-        string_append_formated(string, "\n\tLeft Operand type:  ");
+        string_append_formated(string, "\n  Left Operand type:  ");
         type_signature_append_to_string(string, e.binary_op_left_type, analyser);
-        string_append_formated(string, "\n\tRight Operand type: ");
+        string_append_formated(string, "\n  Right Operand type: ");
         type_signature_append_to_string(string, e.binary_op_right_type, analyser);
     }
     if (print_required_argument_count) {
-        string_append_formated(string, "\n\tGiven argument count: %d, required: %d", e.invalid_argument_count.given, e.invalid_argument_count.expected);
+        string_append_formated(string, "\n  Given argument count: %d, required: %d", e.invalid_argument_count.given, e.invalid_argument_count.expected);
     }
     if (print_name_id) {
-        string_append_formated(string, "\n\tName: %s", identifier_pool_index_to_string(analyser->compiler->identifier_pool, e.name_id).characters);
+        string_append_formated(string, "\n  Name: %s", identifier_pool_index_to_string(analyser->compiler->identifier_pool, e.name_id).characters);
     }
     if (print_member_access_name_id) {
         AST_Node* node = &analyser->compiler->parser.nodes[e.error_node_index];
         assert(node->type == AST_Node_Type::EXPRESSION_MEMBER_ACCESS, "BAllern");
-        string_append_formated(string, "\n\tAccessed member name: %s", 
+        string_append_formated(string, "\n  Accessed member name: %s",
             identifier_pool_index_to_string(analyser->compiler->identifier_pool, node->name_id).characters
         );
     }
-    if (print_struct_members) 
+    if (print_struct_members)
     {
-        string_append_formated(string, "\n\tAvailable struct members: %s");
+        string_append_formated(string, "\n  Available struct members: %s");
         assert(e.given_type->type == Signature_Type::STRUCT, "HEY");
         for (int i = 0; i < e.given_type->member_types.size; i++) {
             Struct_Member* member = &e.given_type->member_types[i];
@@ -4267,7 +4521,7 @@ void semantic_error_append_to_string(Semantic_Analyser* analyser, Semantic_Error
     }
     if (print_identifier_node)
     {
-        string_append_formated(string, "\n\tIdentifier node: ");
+        string_append_formated(string, "\n  Identifier node: ");
         AST_Node* node = &analyser->compiler->parser.nodes[e.identifier_node_index];
         while (node->parent >= 0) {
             AST_Node* parent = &analyser->compiler->parser.nodes[node->parent];
@@ -4843,7 +5097,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                         Semantic_Error error;
                         error.type = Semantic_Error_Type::EXTERN_HEADER_DOES_NOT_CONTAIN_SYMBOL;
                         error.name_id = import_id;
-                        error.error_node_index = workload.node_index;
+                        error.error_node_index = extern_node->children[i];
                         semantic_analyser_log_error_new(analyser, error);
                         continue;
                     }
@@ -4935,7 +5189,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                 if (result.options.result_type->type != Signature_Type::POINTER && result.options.result_type->child_type->type != Signature_Type::FUNCTION) {
                     Semantic_Error error;
                     error.type = Semantic_Error_Type::INVALID_TYPE_FUNCTION_IMPORT_EXPECTED_FUNCTION_POINTER;
-                    error.error_node_index = workload.node_index;
+                    error.error_node_index = extern_node->children[0];
                     semantic_analyser_log_error_new(analyser, error);
                     break;
                 }
@@ -5210,7 +5464,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                         if (expression_result.options.success.result_type != analyser->compiler->type_system.bool_type) {
                             Semantic_Error error;
                             error.type = Semantic_Error_Type::INVALID_TYPE_IF_CONDITION;
-                            error.error_node_index = statement_index;
+                            error.error_node_index = statement_node->children[0];
                             semantic_analyser_log_error_new(analyser, error);
                         }
                         break;
@@ -5248,7 +5502,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                         if (expression_result.options.success.result_type != analyser->compiler->type_system.bool_type) {
                             Semantic_Error error;
                             error.type = Semantic_Error_Type::INVALID_TYPE_IF_CONDITION;
-                            error.error_node_index = statement_index;
+                            error.error_node_index = statement_node->children[0];
                             semantic_analyser_log_error_new(analyser, error);
                         }
                         break;
@@ -5300,7 +5554,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                         if (expression_result.options.success.result_type != analyser->compiler->type_system.bool_type) {
                             Semantic_Error error;
                             error.type = Semantic_Error_Type::INVALID_TYPE_WHILE_CONDITION;
-                            error.error_node_index = statement_index;
+                            error.error_node_index = statement_node->children[0];
                             semantic_analyser_log_error_new(analyser, error);
                         }
                         break;
@@ -5468,6 +5722,8 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                             Semantic_Error error;
                             error.type = Semantic_Error_Type::INVALID_TYPE_ASSIGNMENT;
                             error.error_node_index = statement_index;
+                            error.given_type = right_type;
+                            error.expected_type = left_type;
                             semantic_analyser_log_error_new(analyser, error);
                         }
                     }
