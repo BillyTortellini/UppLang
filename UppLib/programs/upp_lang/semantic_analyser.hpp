@@ -16,6 +16,211 @@
     Reset loop depth in defer
 */
 
+struct ModTree_Identifier
+{
+    int name_id;
+    Optional<Dynamic_Array<ModTree_Identifier>> template_arguments;
+    Optional<ModTree_Identifier*> child;
+    Symbol* resolved_symbol;
+};
+
+enum class ModTree_Binary_Operation_Type
+{
+    ADDITION,
+    SUBTRACTION,
+    DIVISION,
+    MULTIPLICATION,
+    MODULO,
+    AND,
+    OR,
+    EQUAL,
+    NOT_EQUAL,
+    LESS,
+    LESS_OR_EQUAL,
+    GREATER,
+    GREATER_OR_EQUAL,
+};
+
+enum class ModTree_Unary_Operation_Type
+{
+    NEGATE,
+    LOGICAL_NOT,
+    ADDRESS_OF,
+    DEREFERENCE,
+};
+
+enum class ModTree_Expression_Type
+{
+    BINARY_OPERATION,
+    UNARY_OPERATION,
+    NEW_ALLOCATION,
+    LITERAL_READ,
+    FUNCTION_CALL,
+    VARIABLE_READ,
+    ARRAY_ACCESS,
+    MEMBER_ACCESS,
+    CAST,
+};
+
+struct ModTree_Expression
+{
+    ModTree_Expression_Type expression_type;
+    Type_Signature* result_type;
+    union 
+    {
+        struct 
+        {
+            ModTree_Binary_Operation_Type operation_type;
+            ModTree_Expression* left_operand;
+            ModTree_Expression* right_operand;
+        } binary_operation;
+        struct 
+        {
+            ModTree_Binary_Operation_Type operation_type;
+            ModTree_Expression* operand;
+        } unary_operation;
+        struct
+        {
+            Type_Signature* allocation_type;
+            Optional<ModTree_Expression*> array_size_expression;
+        } new_allocation;
+        struct {
+            int literal_token_index;
+        } literal_read;
+        struct {
+            ModTree_Identifier* identifier;
+            Dynamic_Array<ModTree_Expression*> arguments;
+        } function_call;
+        struct {
+            ModTree_Identifier* identifier;
+        } variable_read;
+        struct {
+            ModTree_Expression* array_expression;
+            ModTree_Expression* index_expression;
+        } array_access;
+        struct {
+            ModTree_Expression* structure_expression;
+            int member_index;
+            int member_name_id;
+        } member_access;
+        struct {
+            ModTree_Expression* cast_argument;
+        } cast;
+    } options;
+};
+
+struct ModTree_Variable_Definition
+{
+    int name_id;
+    Optional<Type_Signature*> defined_type;
+    Optional<ModTree_Expression*> initialize_expression;
+};
+
+enum class ModTree_Statement_Type
+{
+    BLOCK,
+    IF, 
+    WHILE, 
+    BREAK,
+    CONTINUE,
+    RETURN,
+    EXPRESSION,
+    ASSIGNMENT,
+    VARIABLE_DEFINITION,
+    DELETION,
+};
+
+struct ModTree_Block;
+struct ModTree_Statement
+{
+    ModTree_Statement_Type type;
+    union
+    {
+        ModTree_Block* block;
+        struct {
+            ModTree_Expression* condition;
+            ModTree_Block* if_block;
+            ModTree_Block* else_block;
+        } if_statement;
+        struct {
+            ModTree_Expression* condition;
+            ModTree_Block* while_block;
+        } while_statement;
+        struct {
+            Optional<ModTree_Expression*> return_value;
+        } return_statement;
+        struct {
+            ModTree_Expression* expression;
+        } expression_statement;
+        struct {
+            ModTree_Expression* destination;
+            ModTree_Expression* source;
+        } assignment;
+        struct {
+            ModTree_Expression* expression;
+        } deletion;
+        ModTree_Variable_Definition* variable_definition;
+    } options;
+};
+
+struct ModTree_Block
+{
+    Dynamic_Array<ModTree_Statement*> statements;
+};
+
+struct ModTree_Member
+{
+    int name_id;
+    Type_Signature* type;
+};
+
+struct ModTree_Structure
+{
+    int name_id;
+    Dynamic_Array<ModTree_Member*> members;
+};
+
+struct ModTree_Node;
+struct ModTree_Module
+{
+    int module_name;
+    Dynamic_Array<ModTree_Node*> children;
+    Symbol_Table* module_table;
+};
+
+struct ModTree_Parameter
+{
+    int name_id;
+    Type_Signature* type;
+};
+
+struct ModTree_Function
+{
+    int name_id;
+    Type_Signature* return_type;
+    Dynamic_Array<ModTree_Parameter> parameters;
+};
+
+enum class ModTree_Node_Type
+{
+    MODULE,
+    STRUCT,
+    FUNCTION,
+    GLOBAL,
+};
+
+struct ModTree_Node
+{
+    ModTree_Node_Type type;
+    union
+    {
+        ModTree_Module* module;
+        ModTree_Structure* structure;
+        ModTree_Variable_Definition* definition;
+        ModTree_Function* function;
+    } options;
+};
+
 
 struct Compiler;
 struct Lexer;
@@ -85,6 +290,14 @@ struct Type_Signature
 struct Semantic_Analyser;
 void type_signature_append_to_string(String* string, Type_Signature* signature, Semantic_Analyser* analyser);
 void type_signature_append_value_to_string(Type_Signature* type, byte* value_ptr, String* string);
+
+struct Upp_String
+{
+    char* character_buffer_data;
+    i32 character_buffer_size;
+    i32 _padding;
+    i32 size;
+};
 
 /*
     Basic Data types Documentation:
@@ -198,9 +411,9 @@ struct Symbol
     Symbol_Type symbol_type;
     int name_handle;
     int definition_node_index;
-    bool is_templated;
     Symbol_Options options;
     // Template Data
+    bool is_templated;
     Dynamic_Array<int> template_parameter_names;
     Dynamic_Array<Symbol_Template_Instance> template_instances;
 };
@@ -752,6 +965,7 @@ struct Semantic_Analyser
     Hashtable<IR_Code_Block*, Statement_Analysis_Result> finished_code_blocks;
     Dynamic_Array<Analysis_Workload> active_workloads;
     Dynamic_Array<Waiting_Workload> waiting_workload;
+    Dynamic_Array<void*> known_expression_values;
 
     int token_index_size;
     int token_index_data;

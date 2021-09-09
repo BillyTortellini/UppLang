@@ -458,7 +458,7 @@ bool ast_parser_parse_argument_block(AST_Parser* parser, AST_Node_Index parent_i
     return true;
 }
 
-bool ast_parser_parse_expression(AST_Parser* parser, AST_Node_Index parent_index);
+bool ast_parser_parse_expression(AST_Parser* parser, int parent_index);
 AST_Node_Index ast_parser_parse_expression_no_parents(AST_Parser* parser);
 
 AST_Node_Index ast_parser_parse_member_access(AST_Parser* parser, int access_to_index)
@@ -923,13 +923,11 @@ int ast_parser_parse_expression_priority(AST_Parser* parser, AST_Node_Index node
         parser->nodes[right_operand_index].parent = operator_node;
         dynamic_array_push_back(&parser->nodes[operator_node].children, right_operand_index);
         parser->nodes[operator_node].type = first_op_type;
-        /*
         parser->token_mapping[operator_node] = token_range_make(
             parser->token_mapping[parser->nodes[operator_node].children[0]].start_index,
             parser->token_mapping[parser->nodes[operator_node].children[1]].end_index
         );
-        */
-        parser->token_mapping[operator_node] = token_range_make(first_op_index, first_op_index + 1);
+        //parser->token_mapping[operator_node] = token_range_make(first_op_index, first_op_index + 1);
 
         node_index = operator_node;
         if (!second_op_exists) break;
@@ -2264,6 +2262,24 @@ void ast_parser_check_sanity(AST_Parser* parser)
     }
 }
 
+Token_Range adjust_token_range(AST_Parser* parser, int node_index)
+{
+    AST_Node* node = &parser->nodes[node_index];
+    Token_Range range = parser->token_mapping[node_index];
+    for (int i = 0; i < node->children.size; i++)
+    {
+        Token_Range child_range = adjust_token_range(parser, node->children[i]);
+        if (child_range.start_index < range.start_index) {
+            range.start_index = child_range.start_index;
+        }
+        if (child_range.end_index > range.end_index) {
+            range.end_index = child_range.end_index;
+        }
+    }
+    parser->token_mapping[node_index] = range;
+    return range;
+}
+
 void ast_parser_parse(AST_Parser* parser, Lexer* lexer)
 {
     parser->index = 0;
@@ -2284,6 +2300,9 @@ void ast_parser_parse(AST_Parser* parser, Lexer* lexer)
     dynamic_array_rollback_to_size(&parser->nodes, parser->next_free_node);
     dynamic_array_rollback_to_size(&parser->token_mapping, parser->next_free_node);
     ast_parser_check_sanity(parser);
+
+    // Cleanup token mapping, this is just a test
+    adjust_token_range(parser, 0);
 }
 
 void ast_parser_destroy(AST_Parser* parser)

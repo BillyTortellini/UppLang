@@ -1,19 +1,34 @@
-Context Design:
- - Show function signature if above function call
- - Show Symbol type if above identifier
+Tactics:
+--------
+ 1. Sized arrays with integers
+ 2. Value for Unary operators
+ 3. Value for Binary operators
+ 4. Value for variables
+ 5. Replace types with expressions
+
+Next Up:
+--------
+ * Compile time code execution + Templates
+ * Macros + Iterators
+
+Features TODO:
+    - Function overhaul: Multiple return values, Named return values
+    - Lambdas, Struct/Function definitions inside code-blocks
+    - Symbol Tables: Using Modules/Structs, importing Symbol-References into current scope
+    - Integer/Float literal overhaul using correct Type depending on Context, 
+    - Type introspection (Size, Alignment, Members...), Any-Type
+    - Array initializiation syntax
+    - Location information (Unique Location, file/line number), Stack-Introspection
+    - Tag-System (const-tag + static analyser)
+    - Unions and Enums, some type of switch
 
 NOTES:
 ------
  * Next stuff:
-    - Show surrounding context (e.g. Error messages in error context, function signature in function call, type of variables...)
-    - Jump to definition fix
+    - Jump to definition fix --> A separate analysis/code generation phase would be nice
     - Code_Completion
     - sizeof required for window creation
     - auto-cast keyword
- * Debugger
-    - Debug program in Visual studio
-    - Output custom PDB files
-    - Create own Debugger
  * Improve Language:
     - Compile time code-evaluation
     - Enums, structs, unions, switches
@@ -23,22 +38,16 @@ NOTES:
     - Code-Completion
     - Search and Replace
 
-Calling C-Functions:
---------------------
-What sources can functions come from?
-    - C Standard Library (Standard headers)
-    - Static Libraries (.lib)
-    - Dynamic Libraries  (.dll + .lib)
-    - Obj-Files
-    - Source Files (Need to be compiled into .obj first)
 
-Next Up:
---------
- * Some way to parse header files and convert the functions/structs into UppLang
- * Adding Compilation-Sources inside the program (Libs, Dlls, Source-Files, Standard-Headers)
- * Calling C-Functions from Bytecode (Dyncall)
- * Maybe try to tackle the syntax guided parser?
-
+Metaprogramming features:
+-------------------------
+ * Templates (Types for Containers, Functions/Values for algorithms and interfaces)
+ * Macro System (Iterators, Scope_Break, Variable_Define, Code_Insertion... lots of convenience functions)
+ * Defer
+ * Conditional Compilation #if
+ * Currying
+ * AST-Manipulation (Compile time Execution)
+ * Generating source-code (Compile time Execution)
 
 
 ---------------------------
@@ -56,12 +65,11 @@ Issues:
 
 Long-Term Goals:
 ----------------
- * Calling C-Functions in Bytecode (Look into dyncall)
- * C-Backend
- * Calling C-Functions in the C-Backend (Maybe with Clang for header file parsing)
  * Debugger
- * More language features
- * More Editor features
+ * Language features (Union/Enum, match, Macros, Compile-Time Execution)
+ * Editor features (Search and replace, jump to definition, show context info, refactoring, Code LOD)
+ * Maybe implementing Syntax guided Editor
+ * Test suite (Now works with the better error system)
 
 More Language features to implement:
 ------------------------------------
@@ -83,6 +91,7 @@ More Language features to implement:
  * Literal overhaul (What is a float, what isnt...)
  * Syntax for fixed array initialization [int :: 1, 2, 3, 4, 5]
  * Loop statements, maybe loop over array syntax
+ * Break/Continue overhaul (Something like: exit_loop, continue_loop, exit_switch, exit loop_iter)
  * Function return value overhaul: Multiple return values or no return value should be possible
  * Variation for simple Dynamic dispatch  (Like interfaces in OO..., similar to dynamic in Rust)
 
@@ -110,7 +119,7 @@ Editor-Bugs:
  Vision for the Programming Language:
  ------------------------------------
   * Compile-Time code execution
-  * Code analysis in tandum with Tag-System
+  * Static-Analysis in tandum with Tag-System
   * Code-Visualizations in Editor
 
 Ideas that need to be tested:
@@ -132,8 +141,7 @@ Ideas that need to be tested:
 
 Code Improvements that should be made (When I have time):
 ----------------------------------------------------
-Proper Error Handling in parser and semantic analyser, with error codes and highlighting things in editor.
-Also with differentiation between errors and Warnings
+Differentiation between errors and Warnings
 
 Maybe we could also use String* for names, since then I only need to compare string pointers, and not actually strings.
 This would also make debuggin so much easier, since we would see the names of things.
@@ -142,3 +150,8 @@ Intermediate Code should keep positional information, so should the bytecode (Wi
 Improved Parser-Error handling. (Function-Parsing Error handling should check each following line if it is a function)
 
 At some point the editor should not render at 60 FPS, but rather update when necessary.
+Asynchronous Editor-Compiler architecture, lexing/parse/analysing in background when code gets bigger
+
+
+
+

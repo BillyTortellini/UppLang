@@ -1,3 +1,17 @@
+/*
+main :: ()
+{
+    xy := 15;
+    
+    if xy % 2 == 0 {
+        print_string("EVEN");
+    }
+    else {
+        print_string("ODD");
+    }
+}
+*/
+
 extern hello_world :: () -> void;
 
 module Win32
@@ -100,5 +114,4 @@ main :: ()
         print_string("Window creation success");
     }
 }
-
 

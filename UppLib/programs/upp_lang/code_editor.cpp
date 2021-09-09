@@ -405,23 +405,39 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
     }
 
     // Highlight current node index
+    /*
     if (editor->compiler.parser.errors.size == 0 && editor->compiler.analyser.errors.size == 0)
     {
-        //int node_cursor_index = math_modulo((int)(time * 10.0), editor->compiler.parser.nodes.size);
-        /*
+        int node_cursor_index = code_editor_get_closest_node_to_text_position(editor, editor->text_editor->cursor_position);
+        text_editor_add_highlight_from_slice(
+            editor->text_editor,
+            token_range_to_text_slice(editor->compiler.parser.token_mapping[node_cursor_index], &editor->compiler),
+            vec3(1.0f), vec4(vec3(0.3f), 1.0f)
+        );
         AST_Node* node = &editor->compiler.parser.nodes[node_cursor_index];
         Token* token_start = &editor->compiler.lexer.tokens[editor->compiler.parser.token_mapping[node_cursor_index].start_index];
         editor->show_context_info = true;
         editor->context_info_pos = text_editor_get_character_bounding_box(editor->text_editor, token_start->position.start).min;
         string_reset(&editor->context_info);
         string_append_formated(&editor->context_info, "%s", ast_node_type_to_string(node->type).characters);
-        */
+
+        Optional<int> next_token_index = code_editor_get_closest_token_to_text_position(editor, editor->text_editor->cursor_position);
+        if (next_token_index.available)
+        {
+            string_append_formated(&editor->context_info, "\n");
+            for (int i = next_token_index.value; i < editor->compiler.lexer.tokens.size && i < next_token_index.value + 5; i++) {
+                Token* t = &editor->compiler.lexer.tokens[i];
+                string_append_formated(&editor->context_info, token_type_to_string(t->type));
+                string_append_formated(&editor->context_info, " ");
+            }
+        }
+        editor->show_context_info = false;
+
 
         //node cursor_index = code_editor_get_closest_node_to_text_position(editor, editor->text_editor->cursor_position);
         //node_cursor_index = ast_parser_get_closest_node_to_text_position(
             //&editor->compiler.parser, editor->text_editor->cursor_position, editor->text_editor->text
         //);
-        /*
         if (input->key_pressed[(int)Key_Code::M]) {
             node_cursor_index++;
         }
@@ -433,8 +449,11 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
             token_range_to_text_slice(editor->compiler.parser.token_mapping[node_cursor_index], &editor->compiler),
             vec3(1.0f), vec4(0.2f, 0.4f, 0.2f, 1.0f)
         );
-        */
     }
+    else {
+        editor->show_context_info = false;
+    }
+        */
 }
 
 void code_editor_render(Code_Editor* editor, Rendering_Core* core, Bounding_Box2 editor_box)

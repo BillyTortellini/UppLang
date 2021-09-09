@@ -158,8 +158,14 @@ void type_signature_append_to_string_with_children(String* string, Type_Signatur
         String s = primitive_type_to_string(signature->primitive_type);
         string_append_string(string, &s);
         break;
-    case Signature_Type::STRUCT:
-        string_append_formated(string, "STRUCT {");
+    case Signature_Type::STRUCT: 
+    {
+        if (signature->struct_name_handle >= 0 && signature->struct_name_handle < analyser->compiler->identifier_pool->identifiers.size) {
+            string_append_formated(string, identifier_pool_index_to_string(analyser->compiler->identifier_pool, signature->struct_name_handle).characters);
+        }
+        else {
+            string_append_formated(string, "STRUCT");
+        }
         if (print_child)
         {
             string_append_formated(string, "{");
@@ -172,6 +178,7 @@ void type_signature_append_to_string_with_children(String* string, Type_Signatur
             string_append_formated(string, "}");
         }
         break;
+    }
     case Signature_Type::FUNCTION:
         string_append_formated(string, "(");
         for (int i = 0; i < signature->parameter_types.size; i++) {
@@ -1446,6 +1453,7 @@ struct Expression_Analysis_Result_Success
 {
     bool has_memory_address;
     Type_Signature* result_type;
+    void* value;
 };
 
 struct Expression_Analysis_Result
@@ -2146,12 +2154,13 @@ Type_Analysis_Result semantic_analyser_analyse_type(Semantic_Analyser* analyser,
     return type_analysis_result_make_error();
 }
 
-Expression_Analysis_Result expression_analysis_result_make_success(Type_Signature* expression_result, bool has_memory_address)
+Expression_Analysis_Result expression_analysis_result_make_success(Type_Signature* expression_result, bool has_memory_address, void* value)
 {
     Expression_Analysis_Result result;
     result.type = Analysis_Result_Type::SUCCESS;
     result.options.success.has_memory_address = has_memory_address;
     result.options.success.result_type = expression_result;
+    result.options.success.value = value;
     return result;
 }
 
@@ -2351,7 +2360,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
             error.error_node_index = expression_index;
             semantic_analyser_log_error_new(analyser, error);
             rollback_on_exit = true;
-            return expression_analysis_result_make_success(signature->return_type, false);
+            return expression_analysis_result_make_success(signature->return_type, false, nullptr);
         }
 
         call_instruction.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(arguments_node->children.size);
@@ -2401,7 +2410,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
             }
             }
         }
-        return expression_analysis_result_make_success(signature->return_type, false);
+        return expression_analysis_result_make_success(signature->return_type, false, nullptr);
     }
     case AST_Node_Type::EXPRESSION_VARIABLE_READ:
     {
@@ -2430,7 +2439,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
                 move_instr.options.move.source = symbol->options.variable_access;
                 dynamic_array_push_back(&code_block->instructions, move_instr);
             }
-            return expression_analysis_result_make_success(ir_data_access_get_type(&symbol->options.variable_access), true);
+            return expression_analysis_result_make_success(ir_data_access_get_type(&symbol->options.variable_access), true, nullptr);
         }
         else if (symbol->symbol_type == Symbol_Type::FUNCTION || symbol->symbol_type == Symbol_Type::EXTERN_FUNCTION)
         {
@@ -2453,7 +2462,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
             address_of_instr.options.address_of.destination = *access;
             dynamic_array_push_back(&code_block->instructions, address_of_instr);
             // !! INFO: Here we return just the function as the type, not the function pointer
-            return expression_analysis_result_make_success(result_type->child_type, false);
+            return expression_analysis_result_make_success(result_type->child_type, false, nullptr);
         }
         else {
             Semantic_Error error;
@@ -2547,37 +2556,52 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
             semantic_analyser_log_error_new(analyser, error);
             rollback_on_exit = true;
         }
-        return expression_analysis_result_make_success(cast_destination_type, false);
+        return expression_analysis_result_make_success(cast_destination_type, false, nullptr);
     }
     case AST_Node_Type::EXPRESSION_LITERAL:
     {
         Token* token = &analyser->compiler->lexer.tokens[analyser->compiler->parser.token_mapping[expression_index].start_index];
         IR_Data_Access literal_access;
         Type_System* type_system = &analyser->compiler->type_system;
+        void* value_ptr;
         if (token->type == Token_Type::BOOLEAN_LITERAL) {
-            byte value = token->attribute.bool_value == 0 ? 0 : 1;
+            byte* value = new byte;
+            value_ptr = value;
+            *value = token->attribute.bool_value == 0 ? 0 : 1;
             literal_access = ir_data_access_create_constant_access(
-                analyser->program, type_system->bool_type, array_create_static<byte>(&value, sizeof(bool)));
+                analyser->program, type_system->bool_type, array_create_static<byte>(value, sizeof(bool)));
         }
         else if (token->type == Token_Type::INTEGER_LITERAL) {
-            int value = token->attribute.integer_value;
+            int* value = new int;
+            value_ptr = value;
+            *value = token->attribute.integer_value;
             literal_access = ir_data_access_create_constant_access(
-                analyser->program, type_system->i32_type, array_create_static<byte>((byte*)&value, sizeof(int)));
+                analyser->program, type_system->i32_type, array_create_static<byte>((byte*)value, sizeof(int)));
         }
         else if (token->type == Token_Type::FLOAT_LITERAL) {
-            float value = token->attribute.float_value;
+            float* value = new float;
+            value_ptr = value;
+            *value = token->attribute.float_value;
             literal_access = ir_data_access_create_constant_access(
-                analyser->program, type_system->f32_type, array_create_static<byte>((byte*)&value, sizeof(float)));
+                analyser->program, type_system->f32_type, array_create_static<byte>((byte*)value, sizeof(float)));
         }
         else if (token->type == Token_Type::NULLPTR) {
-            void* value = nullptr;
+            void** value = new void*;
+            value_ptr = value;
+            *value = nullptr;
             literal_access = ir_data_access_create_constant_access(
-                analyser->program, type_system->void_ptr_type, array_create_static<byte>((byte*)&value, sizeof(void*)));
+                analyser->program, type_system->void_ptr_type, array_create_static<byte>((byte*)value, sizeof(void*)));
         }
         else if (token->type == Token_Type::STRING_LITERAL)
         {
-            // TODO: Check this
             String string = identifier_pool_index_to_string(analyser->compiler->identifier_pool, token->attribute.identifier_number);
+            Upp_String* upp_string = new Upp_String;
+            upp_string->character_buffer_data = string.characters;
+            upp_string->character_buffer_size = string.capacity;
+            upp_string->size = string.size;
+            value_ptr = upp_string;
+
+            /*
             byte string_data[20];
             char** character_buffer_data_ptr = (char**)&string_data[0];
             int* character_buffer_size_ptr = (int*)&string_data[8];
@@ -2585,9 +2609,10 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
             *character_buffer_data_ptr = string.characters;
             *character_buffer_size_ptr = string.capacity;
             *string_size_ptr = string.size;
+            */
 
             literal_access = ir_data_access_create_constant_access(
-                analyser->program, type_system->string_type, array_create_static<byte>(string_data, 20));
+                analyser->program, type_system->string_type, array_create_static<byte>((byte*)upp_string, sizeof(Upp_String)));
         }
         else {
             panic("Should not happen!");
@@ -2604,7 +2629,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
             dynamic_array_push_back(&code_block->instructions, move_instr);
         }
 
-        return expression_analysis_result_make_success(ir_data_access_get_type(&literal_access), false);
+        return expression_analysis_result_make_success(ir_data_access_get_type(&literal_access), false, value_ptr);
     }
     case AST_Node_Type::EXPRESSION_NEW:
     {
@@ -2650,7 +2675,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
         cast_instr.options.cast.source = instruction.options.call.destination;
         dynamic_array_push_back(&code_block->instructions, cast_instr);
 
-        return expression_analysis_result_make_success(result_type, false);
+        return expression_analysis_result_make_success(result_type, false, nullptr);
     }
     case AST_Node_Type::EXPRESSION_NEW_ARRAY:
     {
@@ -2708,7 +2733,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
             error.expected_type = analyser->compiler->type_system.i32_type;
             error.error_node_index = expression_node->children[0];
             semantic_analyser_log_error_new(analyser, error);
-            return expression_analysis_result_make_success(array_type, false);
+            return expression_analysis_result_make_success(array_type, false, nullptr);
         }
 
         IR_Instruction size_calculation_instr;
@@ -2754,7 +2779,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
         cast_instr.options.cast.source = instruction.options.call.destination;
         dynamic_array_push_back(&code_block->instructions, cast_instr);
 
-        return expression_analysis_result_make_success(array_type, false);
+        return expression_analysis_result_make_success(array_type, false, nullptr);
     }
     case AST_Node_Type::EXPRESSION_ARRAY_ACCESS:
     {
@@ -2790,7 +2815,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
             error.type = Semantic_Error_Type::INVALID_TYPE_ARRAY_ACCESS_INDEX;
             error.error_node_index = expression_node->children[1];
             semantic_analyser_log_error_new(analyser, error);
-            return expression_analysis_result_make_success(access_signature->child_type, true);
+            return expression_analysis_result_make_success(access_signature->child_type, true, nullptr);
         }
 
         IR_Instruction instruction;
@@ -2816,7 +2841,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
             dynamic_array_push_back(&code_block->instructions, move_instr);
         }
 
-        return expression_analysis_result_make_success(access_signature->child_type, true);
+        return expression_analysis_result_make_success(access_signature->child_type, true, nullptr);
     }
     case AST_Node_Type::EXPRESSION_MEMBER_ACCESS:
     {
@@ -2909,7 +2934,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
                     }
                     move_instr.options.move.destination = *access;
                     dynamic_array_push_back(&code_block->instructions, move_instr);
-                    return expression_analysis_result_make_success(analyser->compiler->type_system.i32_type, false);
+                    return expression_analysis_result_make_success(analyser->compiler->type_system.i32_type, false, nullptr);
                 }
                 else
                 {
@@ -2932,7 +2957,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
                     cast_instr.options.cast.type = IR_Instruction_Cast_Type::POINTERS;
                     dynamic_array_push_back(&code_block->instructions, cast_instr);
 
-                    return expression_analysis_result_make_success(base_ptr_type, false);
+                    return expression_analysis_result_make_success(base_ptr_type, false, nullptr);
                 }
             }
         }
@@ -2963,7 +2988,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
             dynamic_array_push_back(&code_block->instructions, move_instr);
         }
 
-        return expression_analysis_result_make_success(member_type, true);
+        return expression_analysis_result_make_success(member_type, true, nullptr);
     }
     case AST_Node_Type::EXPRESSION_UNARY_OPERATION_NOT:
     {
@@ -2973,7 +2998,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
         );
         if (operand_result.type != Analysis_Result_Type::SUCCESS) {
             if (operand_result.type == Analysis_Result_Type::ERROR_OCCURED) {
-                return expression_analysis_result_make_success(type_system->bool_type, false);
+                return expression_analysis_result_make_success(type_system->bool_type, false, nullptr);
             }
             if (operand_result.type == Analysis_Result_Type::DEPENDENCY) {
                 return operand_result;
@@ -2987,7 +3012,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
             error.error_node_index = expression_index;
             semantic_analyser_log_error_new(analyser, error);
             rollback_on_exit = true;
-            return expression_analysis_result_make_success(type_system->bool_type, false);
+            return expression_analysis_result_make_success(type_system->bool_type, false, nullptr);
         }
 
         IR_Instruction not_instr;
@@ -2999,7 +3024,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
         }
         not_instr.options.unary_op.destination = *access;
         dynamic_array_push_back(&code_block->instructions, not_instr);
-        return expression_analysis_result_make_success(type_system->bool_type, false);
+        return expression_analysis_result_make_success(type_system->bool_type, false, nullptr);
     }
     case AST_Node_Type::EXPRESSION_UNARY_OPERATION_NEGATE:
     {
@@ -3054,7 +3079,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
         }
         negate_instr.options.unary_op.destination = *access;
         dynamic_array_push_back(&code_block->instructions, negate_instr);
-        return expression_analysis_result_make_success(operand_type, false);
+        return expression_analysis_result_make_success(operand_type, false, nullptr);
     }
     case AST_Node_Type::EXPRESSION_UNARY_OPERATION_ADDRESS_OF:
     {
@@ -3081,7 +3106,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
                 function_access_instr->options.address_of.destination = *access;
                 dynamic_array_rollback_to_size(&code_block->registers, code_block->registers.size - 1);
             }
-            return expression_analysis_result_make_success(pointer_type, false);
+            return expression_analysis_result_make_success(pointer_type, false, nullptr);
         }
 
         if (!expr_result.options.success.has_memory_address) {
@@ -3095,7 +3120,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
             if (create_temporary_access) {
                 *access = expr_access;
                 access->is_memory_access = false;
-                return expression_analysis_result_make_success(pointer_type, false);
+                return expression_analysis_result_make_success(pointer_type, false, nullptr);
             }
             else {
                 IR_Instruction move_instr;
@@ -3104,7 +3129,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
                 move_instr.options.move.source.is_memory_access = false;
                 move_instr.options.move.destination = *access;
                 dynamic_array_push_back(&code_block->instructions, move_instr);
-                return expression_analysis_result_make_success(pointer_type, false);
+                return expression_analysis_result_make_success(pointer_type, false, nullptr);
             }
         }
 
@@ -3117,7 +3142,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
         }
         address_of_instr.options.address_of.destination = *access;
         dynamic_array_push_back(&code_block->instructions, address_of_instr);
-        return expression_analysis_result_make_success(pointer_type, false);
+        return expression_analysis_result_make_success(pointer_type, false, nullptr);
     }
     case AST_Node_Type::EXPRESSION_UNARY_OPERATION_DEREFERENCE:
     {
@@ -3153,7 +3178,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
             dynamic_array_push_back(&code_block->instructions, move_instr);
         }
 
-        return expression_analysis_result_make_success(signature->child_type, true);
+        return expression_analysis_result_make_success(signature->child_type, true, nullptr);
     }
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_ADDITION:
         is_binary_op = true;
@@ -3363,7 +3388,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(
         binary_op_instr.options.binary_op.destination = *access;
         dynamic_array_push_back(&code_block->instructions, binary_op_instr);
 
-        return expression_analysis_result_make_success(result_type, false);
+        return expression_analysis_result_make_success(result_type, false, nullptr);
     }
 
     panic("Should not happen");
@@ -4764,6 +4789,10 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
             symbol_table_destroy(analyser->symbol_tables[i]);
         }
         dynamic_array_reset(&analyser->symbol_tables);
+        for (int i = 0; i < analyser->known_expression_values.size; i++) {
+            delete analyser->known_expression_values[i];
+        }
+        dynamic_array_reset(&analyser->known_expression_values);
         dynamic_array_reset(&analyser->errors);
         dynamic_array_reset(&analyser->active_workloads);
         dynamic_array_reset(&analyser->waiting_workload);
@@ -6019,6 +6048,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
             }
             case Workload_Dependency_Type::IDENTIFER_NOT_FOUND:
                 error.type = Semantic_Error_Type::SYMBOL_TABLE_UNRESOLVED_SYMBOL;
+                error.error_node_index = dependency->node_index;
                 error.identifier_node_index = dependency->node_index;
                 break;
             case Workload_Dependency_Type::TYPE_SIZE_UNKNOWN:
@@ -6041,8 +6071,9 @@ Semantic_Analyser semantic_analyser_create()
     result.symbol_tables = dynamic_array_create_empty<Symbol_Table*>(64);
     result.active_workloads = dynamic_array_create_empty<Analysis_Workload>(64);
     result.waiting_workload = dynamic_array_create_empty<Waiting_Workload>(64);
-    result.finished_code_blocks = hashtable_create_pointer_empty<IR_Code_Block*, Statement_Analysis_Result>(64);
     result.errors = dynamic_array_create_empty<Semantic_Error>(64);
+    result.known_expression_values = dynamic_array_create_empty<void*>(32);
+    result.finished_code_blocks = hashtable_create_pointer_empty<IR_Code_Block*, Statement_Analysis_Result>(64);
     result.ast_to_symbol_table = hashtable_create_empty<int, Symbol_Table*>(256, &hash_i32, &equals_i32);
     result.program = 0;
     return result;
@@ -6053,8 +6084,12 @@ void semantic_analyser_destroy(Semantic_Analyser* analyser)
     for (int i = 0; i < analyser->symbol_tables.size; i++) {
         symbol_table_destroy(analyser->symbol_tables[i]);
     }
-    dynamic_array_destroy(&analyser->errors);
     dynamic_array_destroy(&analyser->symbol_tables);
+    for (int i = 0; i < analyser->known_expression_values.size; i++) {
+        delete analyser->known_expression_values[i];
+    }
+    dynamic_array_destroy(&analyser->known_expression_values);
+    dynamic_array_destroy(&analyser->errors);
     dynamic_array_destroy(&analyser->active_workloads);
     dynamic_array_destroy(&analyser->waiting_workload);
     hashtable_destroy(&analyser->ast_to_symbol_table);
