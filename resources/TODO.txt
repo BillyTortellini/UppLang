@@ -1,3 +1,26 @@
+Ideas that just come to mind:
+-----------------------------
+PrintF Debugging could be replaced with memory visualizer
+'Destructors' could be generated with metaprogramming, simple initializors too
+Differentiate States and Tags in the language
+Functions may just be compile time known function pointers?
+Should we have compile-time known arguments?
+Hardcoded functions should be removed at some point
+Context struct could live in thread-local memory
+Auto cast keyword
+Delete IR_Code, just use modtree for translation
+Syntax guided editor
+Are stacked pointers a reasonable idea (**int)? Where would i use them
+Maybe have struct type signature differentiate having a symbol (For struct name and member names) and a signature
+Automated parameter deduction (Like macros taking names from outer scope)
+
+Replace string_identifier with String*
+Replace Semantic error identifier lookup with Symbol*
+Maybe think about making initializers helpers for expressions/statements?
+Const expression evaluation maybe after creation?
+Maybe move constant pool out of modtree
+
+
 Tactics:
 --------
  1. Sized arrays with integers
@@ -9,7 +32,7 @@ Tactics:
 Next Up:
 --------
  * Compile time code execution + Templates
- * Macros + Iterators
+ * Tags and static analyser
 
 Features TODO:
     - Function overhaul: Multiple return values, Named return values
@@ -44,7 +67,7 @@ Metaprogramming features:
  * Templates (Types for Containers, Functions/Values for algorithms and interfaces)
  * Macro System (Iterators, Scope_Break, Variable_Define, Code_Insertion... lots of convenience functions)
  * Defer
- * Conditional Compilation #if
+ * #if (Conditional Compilation)
  * Currying
  * AST-Manipulation (Compile time Execution)
  * Generating source-code (Compile time Execution)
@@ -141,10 +164,11 @@ Ideas that need to be tested:
 
 Code Improvements that should be made (When I have time):
 ----------------------------------------------------
+Use String* for string pooling, not identifiers.
+Hashing type signatures for lookup, not array search.
+
 Differentiation between errors and Warnings
 
-Maybe we could also use String* for names, since then I only need to compare string pointers, and not actually strings.
-This would also make debuggin so much easier, since we would see the names of things.
 
 Intermediate Code should keep positional information, so should the bytecode (Will be necessary for the debugger)
 Improved Parser-Error handling. (Function-Parsing Error handling should check each following line if it is a function)

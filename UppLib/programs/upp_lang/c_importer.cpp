@@ -1699,9 +1699,9 @@ Optional<C_Import_Package> c_importer_parse_header(const char* file_name, Identi
     String source_code = text_file_opt.value;
 
     // Run lexer over file
-    Lexer lexer = lexer_create(pool);
+    Lexer lexer = lexer_create();
     SCOPE_EXIT(lexer_destroy(&lexer));
-    lexer_parse_string(&lexer, &source_code);
+    lexer_parse_string(&lexer, &source_code, pool);
 
     //logg("Lexing finished, Stats:\nIdentifier Count: #%d\nToken Count: #%d\n Whitespace-Token Count: %d\n",
         //lexer.identifiers.size, lexer.tokens.size, lexer.tokens_with_whitespaces.size - lexer.tokens.size);
@@ -1845,8 +1845,9 @@ Optional<C_Import_Package> c_importer_parse_header(const char* file_name, Identi
     return optional_make_success(package);
 }
 
-Optional<C_Import_Package> c_importer_import_header(C_Importer* importer, String header_name)
+Optional<C_Import_Package> c_importer_import_header(C_Importer* importer, String header_name, Identifier_Pool* pool)
 {
+    importer->identifier_pool = pool;
     // Look in cache for file
     auto cache_elem = hashtable_find_element(&importer->cache, header_name);
     if (cache_elem != 0) {
@@ -1866,11 +1867,10 @@ Optional<C_Import_Package> c_importer_import_header(C_Importer* importer, String
     }
 }
 
-C_Importer c_importer_create(Identifier_Pool* pool)
+C_Importer c_importer_create()
 {
     C_Importer importer;
     importer.cache = hashtable_create_empty<String, C_Import_Package>(64, hash_string, string_equals);
-    importer.identifier_pool = pool;
     return importer;
 
     /*

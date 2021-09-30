@@ -142,8 +142,8 @@ struct C_Importer
     Hashtable<String, C_Import_Package> cache;
 };
 
-C_Importer c_importer_create(Identifier_Pool* pool);
+C_Importer c_importer_create();
 void c_importer_destroy(C_Importer* importer);
-Optional<C_Import_Package> c_importer_import_header(C_Importer* importer, String header_name);
+Optional<C_Import_Package> c_importer_import_header(C_Importer* importer, String header_name, Identifier_Pool* identifier_pool);
 
 

@@ -103,9 +103,9 @@ int bytecode_generator_add_instruction(Bytecode_Generator* generator, Bytecode_I
 
 int bytecode_generator_create_temporary_stack_offset(Bytecode_Generator* generator, Type_Signature* type) 
 {
-    generator->current_stack_offset = align_offset_next_multiple(generator->current_stack_offset, type->alignment_in_bytes);
+    generator->current_stack_offset = align_offset_next_multiple(generator->current_stack_offset, type->alignment);
     int result = generator->current_stack_offset;
-    generator->current_stack_offset += type->size_in_bytes;
+    generator->current_stack_offset += type->size;
     return result;
 }
 
@@ -119,14 +119,14 @@ int bytecode_generator_data_access_to_stack_offset(Bytecode_Generator* generator
     case IR_Data_Access_Type::CONSTANT: {
         Bytecode_Instruction load_instruction;
         load_instruction.instruction_type = Instruction_Type::READ_CONSTANT;
-        load_instruction.op2 = generator->ir_program->constant_pool.constants[access.index].offset;
+        load_instruction.op2 = generator->compiler->constant_pool.constants[access.index].offset;
         if (access.is_memory_access) {
             load_instruction.op1 = bytecode_generator_create_temporary_stack_offset(generator, generator->compiler->type_system.void_ptr_type);
             load_instruction.op3 = 8;
         }
         else {
             load_instruction.op1 = bytecode_generator_create_temporary_stack_offset(generator, access_type);
-            load_instruction.op3 = access_type->size_in_bytes;
+            load_instruction.op3 = access_type->size;
         }
         stack_offset = load_instruction.op1;
         bytecode_generator_add_instruction(generator, load_instruction);
@@ -142,7 +142,7 @@ int bytecode_generator_data_access_to_stack_offset(Bytecode_Generator* generator
         }
         else {
             load_instruction.op1 = bytecode_generator_create_temporary_stack_offset(generator, access_type);
-            load_instruction.op3 = access_type->size_in_bytes;
+            load_instruction.op3 = access_type->size;
         }
         stack_offset = load_instruction.op1;
         bytecode_generator_add_instruction(generator, load_instruction);
@@ -173,7 +173,7 @@ int bytecode_generator_data_access_to_stack_offset(Bytecode_Generator* generator
                 Instruction_Type::READ_MEMORY,
                 result_offset,
                 stack_offset,
-                access_type->size_in_bytes
+                access_type->size
             )
         );
         return result_offset;
@@ -189,7 +189,7 @@ void bytecode_generator_write_stack_offset_to_destination(Bytecode_Generator* ge
     {
         destination.is_memory_access = false;
         int pointer_offset = bytecode_generator_data_access_to_stack_offset(generator, destination);
-        bytecode_generator_add_instruction(generator, instruction_make_3(Instruction_Type::WRITE_MEMORY, pointer_offset, stack_offset, type->size_in_bytes));
+        bytecode_generator_add_instruction(generator, instruction_make_3(Instruction_Type::WRITE_MEMORY, pointer_offset, stack_offset, type->size));
         return;
     }
     else
@@ -206,7 +206,7 @@ void bytecode_generator_write_stack_offset_to_destination(Bytecode_Generator* ge
                     Instruction_Type::WRITE_GLOBAL,
                     generator->global_data_offsets[destination.index],
                     stack_offset,
-                    type->size_in_bytes
+                    type->size
                 )
             );
             return;
@@ -219,7 +219,7 @@ void bytecode_generator_write_stack_offset_to_destination(Bytecode_Generator* ge
                     Instruction_Type::MOVE_STACK_DATA,
                     bytecode_generator_data_access_to_stack_offset(generator, destination),
                     stack_offset,
-                    type->size_in_bytes
+                    type->size
                 )
             );
             return;
@@ -247,7 +247,7 @@ int bytecode_generator_add_instruction_and_set_destination(Bytecode_Generator* g
                 Instruction_Type::WRITE_MEMORY,
                 pointer_stack_offset,
                 source_reg_offset,
-                type->size_in_bytes
+                type->size
             )
         );
         return instruction_index;
@@ -269,7 +269,7 @@ int bytecode_generator_add_instruction_and_set_destination(Bytecode_Generator* g
                     Instruction_Type::WRITE_GLOBAL,
                     generator->global_data_offsets[destination.index],
                     source_reg_offset,
-                    type->size_in_bytes
+                    type->size
                 )
             );
             return instruction_index;
@@ -290,14 +290,14 @@ void bytecode_generator_move_accesses(Bytecode_Generator* generator, IR_Data_Acc
 {
     int move_byte_size;
     Type_Signature* move_type = ir_data_access_get_type(&destination);
-    move_byte_size = move_type->size_in_bytes;
+    move_byte_size = move_type->size;
     /*
     if (destination.is_memory_access) {
-        //move_byte_size = move_type->child_type->size_in_bytes;
+        //move_byte_size = move_type->child_type->size;
         move_byte_size = 8;
     }
     else {
-        move_byte_size = move_type->size_in_bytes;
+        move_byte_size = move_type->size;
     }
     */
 
@@ -355,12 +355,78 @@ int stack_offsets_calculate(Dynamic_Array<Type_Signature*>* types, Dynamic_Array
     for (int i = 0; i < types->size; i++)
     {
         Type_Signature* signature = types->data[i];
-        stack_offset = align_offset_next_multiple(stack_offset, signature->alignment_in_bytes);
+        stack_offset = align_offset_next_multiple(stack_offset, signature->alignment);
         dynamic_array_push_back(offsets, stack_offset);
-        stack_offset += signature->size_in_bytes;
+        stack_offset += signature->size;
     }
 
     return stack_offset;
+}
+
+Bytecode_Type primitive_to_bytecode_type(Type_Signature* primitive)
+{
+    assert(primitive->type == Signature_Type::PRIMITIVE, "HEY");
+    Bytecode_Type result;
+    switch (primitive->options.primitive.type)
+    {
+    case Primitive_Type::INTEGER: {
+        switch (primitive->size) {
+        case 1: result = Bytecode_Type::INT8; break;
+        case 2: result = Bytecode_Type::INT16; break;
+        case 4: result = Bytecode_Type::INT32; break;
+        case 8: result = Bytecode_Type::INT64; break;
+        default: panic("HEY");
+        }
+        if (!primitive->options.primitive.is_signed) {
+            result = (Bytecode_Type)((int)result + 4);
+        }
+        break;
+    }
+    case Primitive_Type::FLOAT: {
+        if (primitive->size == 4) {
+            result = Bytecode_Type::FLOAT32; break;
+        }
+        else if (primitive->size == 8) {
+            result = Bytecode_Type::FLOAT64; break;
+        }
+        else panic("HEY");
+        break;
+    }
+    case Primitive_Type::BOOLEAN: result = Bytecode_Type::BOOL; break;
+    default: panic("HEY");
+    }
+    return result;
+}
+
+const char* bytecode_type_as_string(Bytecode_Type type) 
+{
+    switch (type)
+    {
+    case Bytecode_Type::BOOL:
+        return "BOOL";
+    case Bytecode_Type::FLOAT32:
+        return "FLOAT32";
+    case Bytecode_Type::FLOAT64:
+        return "FLOAT64";
+    case Bytecode_Type::INT8:
+        return "INT8";
+    case Bytecode_Type::INT16:
+        return "INT16";
+    case Bytecode_Type::INT32:
+        return "INT32";
+    case Bytecode_Type::INT64:
+        return "INT64";
+    case Bytecode_Type::UINT8:
+        return "UINT8";
+    case Bytecode_Type::UINT16:
+        return "UINT16";
+    case Bytecode_Type::UINT32:
+        return "UINT32";
+    case Bytecode_Type::UINT64:
+        return "UINT64";
+    default: panic("HEY");
+    }
+    return "ERROR";
 }
 
 void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Code_Block* code_block)
@@ -393,10 +459,13 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 function_sig = call->options.function->function_type;
                 break;
             case IR_Instruction_Call_Type::FUNCTION_POINTER_CALL:
-                function_sig = ir_data_access_get_type(&call->options.pointer_access)->child_type;
+                function_sig = ir_data_access_get_type(&call->options.pointer_access)->options.pointer_child;
                 break;
             case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
-                function_sig = call->options.hardcoded->signature;
+                function_sig = call->options.hardcoded.signature;
+                break;
+            case IR_Instruction_Call_Type::EXTERN_FUNCTION_CALL:
+                function_sig = call->options.extern_function.function_signature;
                 break;
             default: panic("Error");
             }
@@ -404,10 +473,10 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             // Put arguments into the correct place on the stack
             int pointer_offset = bytecode_generator_create_temporary_stack_offset(generator, generator->compiler->type_system.void_ptr_type);
             int argument_stack_offset = align_offset_next_multiple(generator->current_stack_offset, 16); // I think 16 is the hightest i have
-            for (int i = 0; i < function_sig->parameter_types.size; i++)
+            for (int i = 0; i < function_sig->options.function.parameter_types.size; i++)
             {
-                Type_Signature* parameter_sig = function_sig->parameter_types[i];
-                argument_stack_offset = align_offset_next_multiple(argument_stack_offset, parameter_sig->alignment_in_bytes);
+                Type_Signature* parameter_sig = function_sig->options.function.parameter_types[i];
+                argument_stack_offset = align_offset_next_multiple(argument_stack_offset, parameter_sig->alignment);
                 IR_Data_Access* argument_access = &call->arguments[i];
 
                 Bytecode_Instruction load_instruction;
@@ -417,13 +486,13 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 }
                 else {
                     load_instruction.op1 = argument_stack_offset;
-                    load_instruction.op3 = parameter_sig->size_in_bytes;
+                    load_instruction.op3 = parameter_sig->size;
                 }
                 switch (argument_access->type)
                 {
                 case IR_Data_Access_Type::CONSTANT: {
                     load_instruction.instruction_type = Instruction_Type::READ_CONSTANT;
-                    load_instruction.op2 = generator->ir_program->constant_pool.constants[argument_access->index].offset;
+                    load_instruction.op2 = generator->compiler->constant_pool.constants[argument_access->index].offset;
                     break;
                 }
                 case IR_Data_Access_Type::GLOBAL_DATA: {
@@ -457,12 +526,12 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                             Instruction_Type::READ_MEMORY,
                             argument_stack_offset,
                             pointer_offset,
-                            parameter_sig->size_in_bytes
+                            parameter_sig->size
                         )
                     );
                 }
 
-                argument_stack_offset += parameter_sig->size_in_bytes;
+                argument_stack_offset += parameter_sig->size;
             }
 
             // Align argument_stack_offset for return pointer
@@ -491,17 +560,22 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             }
             case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
                 bytecode_generator_add_instruction(generator,
-                    instruction_make_2(Instruction_Type::CALL_HARDCODED_FUNCTION, (i32)call->options.hardcoded->type, argument_stack_offset)
+                    instruction_make_2(Instruction_Type::CALL_HARDCODED_FUNCTION, (i32)call->options.hardcoded.type, argument_stack_offset)
+                );
+                break;
+            case IR_Instruction_Call_Type::EXTERN_FUNCTION_CALL:
+                bytecode_generator_add_instruction(generator,
+                    instruction_make_1(Instruction_Type::EXIT, (int)Exit_Code::EXTERN_FUNCTION_CALL_NOT_IMPLEMENTED)
                 );
                 break;
             default: panic("Error");
             }
 
             // Load return value to destination
-            if (function_sig->return_type != generator->compiler->type_system.void_type) {
+            if (function_sig->options.function.return_type != generator->compiler->type_system.void_type) {
                 bytecode_generator_add_instruction_and_set_destination(
                     generator, call->destination,
-                    instruction_make_2(Instruction_Type::LOAD_RETURN_VALUE, PLACEHOLDER, function_sig->return_type->size_in_bytes)
+                    instruction_make_2(Instruction_Type::LOAD_RETURN_VALUE, PLACEHOLDER, function_sig->options.function.return_type->size)
                 );
             }
             break;
@@ -589,7 +663,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                     generator,
                     instruction_make_2(Instruction_Type::RETURN,
                         bytecode_generator_data_access_to_stack_offset(generator, return_instr->options.return_value),
-                        return_sig->size_in_bytes
+                        return_sig->size
                     )
                 );
                 break;
@@ -612,45 +686,44 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             IR_Instruction_Cast* cast = &instr->options.cast;
             switch (cast->type)
             {
-            case IR_Instruction_Cast_Type::POINTERS:
-            case IR_Instruction_Cast_Type::POINTER_TO_U64:
-            case IR_Instruction_Cast_Type::U64_TO_POINTER: {
+            case ModTree_Cast_Type::POINTERS:
+            case ModTree_Cast_Type::POINTER_TO_U64:
+            case ModTree_Cast_Type::U64_TO_POINTER: {
                 bytecode_generator_move_accesses(generator, cast->destination, cast->source);
                 break;
             }
-            case IR_Instruction_Cast_Type::PRIMITIVE_TYPES:
+            case ModTree_Cast_Type::INTEGERS:
+            case ModTree_Cast_Type::FLOATS:
+            case ModTree_Cast_Type::FLOAT_TO_INT:
+            case ModTree_Cast_Type::INT_TO_FLOAT:
             {
                 Type_Signature* cast_source = ir_data_access_get_type(&cast->source);
                 Type_Signature* cast_destination = ir_data_access_get_type(&cast->destination);
-                assert(cast_source->type == Signature_Type::PRIMITIVE && cast_destination->type == Signature_Type::PRIMITIVE, "Wrong types");
-
-                Instruction_Type cast_type;
-                if (primitive_type_is_integer(cast_source->primitive_type) && primitive_type_is_integer(cast_destination->primitive_type)) {
-                    cast_type = Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE;
+                Instruction_Type instr_type;
+                if (cast->type == ModTree_Cast_Type::INTEGERS) {
+                    instr_type = Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE;
                 }
-                else if (primitive_type_is_float(cast_source->primitive_type) && primitive_type_is_float(cast_destination->primitive_type)) {
-                    cast_type = Instruction_Type::CAST_FLOAT_DIFFERENT_SIZE;
+                else if (cast->type == ModTree_Cast_Type::FLOATS) {
+                    instr_type = Instruction_Type::CAST_FLOAT_DIFFERENT_SIZE;
                 }
-                else if (primitive_type_is_float(cast_source->primitive_type) && primitive_type_is_integer(cast_destination->primitive_type)) {
-                    cast_type = Instruction_Type::CAST_FLOAT_INTEGER;
+                else if (cast->type == ModTree_Cast_Type::FLOAT_TO_INT) {
+                    instr_type = Instruction_Type::CAST_FLOAT_INTEGER;
                 }
-                else if (primitive_type_is_integer(cast_source->primitive_type) && primitive_type_is_float(cast_destination->primitive_type)) {
-                    cast_type = Instruction_Type::CAST_INTEGER_FLOAT;
+                else if (cast->type == ModTree_Cast_Type::INT_TO_FLOAT) {
+                    instr_type = Instruction_Type::CAST_INTEGER_FLOAT;
                 }
-                else panic("Should not happen!");
-
                 bytecode_generator_add_instruction_and_set_destination(
                     generator,
                     cast->destination,
                     instruction_make_4(
-                        cast_type, PLACEHOLDER,
+                        instr_type, PLACEHOLDER,
                         bytecode_generator_data_access_to_stack_offset(generator, cast->source),
-                        (int)cast_destination->primitive_type, (int)cast_source->primitive_type
+                        (int)primitive_to_bytecode_type(cast_destination), (int)primitive_to_bytecode_type(cast_source)
                     )
                 );
                 break;
             }
-            case IR_Instruction_Cast_Type::ARRAY_SIZED_TO_UNSIZED: 
+            case ModTree_Cast_Type::ARRAY_SIZED_TO_UNSIZED:
             {
                 int sized_ptr_offset = bytecode_generator_get_pointer_to_access(generator, cast->source);
                 int unsized_ptr_offset = bytecode_generator_get_pointer_to_access(generator, cast->destination);
@@ -662,11 +735,11 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 ));
 
                 Type_Signature* array_sized_type = ir_data_access_get_type(&cast->source);
-                int offset = generator->ir_program->constant_pool.constant_memory.size;
-                i32* size = &array_sized_type->array_element_count;
+                int offset = generator->compiler->constant_pool.buffer.size;
+                i32* size = &array_sized_type->options.array.element_count;
                 byte* data_ptr = (byte*)size;
                 for (int i = 0; i < 4; i++) {
-                    dynamic_array_push_back(&generator->ir_program->constant_pool.constant_memory, data_ptr[i]);
+                    dynamic_array_push_back(&generator->compiler->constant_pool.buffer, data_ptr[i]);
                 }
                 int const_val_offset = bytecode_generator_create_temporary_stack_offset(generator, generator->compiler->type_system.i32_type);
                 bytecode_generator_add_instruction(generator,
@@ -732,7 +805,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                         PLACEHOLDER,
                         base_pointer_offset,
                         index_offset,
-                        math_round_next_multiple(array_type->child_type->size_in_bytes, array_type->child_type->alignment_in_bytes)
+                        math_round_next_multiple(array_type->options.array.element_type->size, array_type->options.array.element_type->alignment)
                     )
                 );
                 break;
@@ -746,54 +819,53 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             Bytecode_Instruction instr;
             switch (binary_op->type)
             {
-            case IR_Instruction_Binary_OP_Type::ADDITION:
+            case ModTree_Binary_Operation_Type::ADDITION:
                 instr.instruction_type = Instruction_Type::BINARY_OP_ADDITION;
                 break;
-            case IR_Instruction_Binary_OP_Type::AND:
+            case ModTree_Binary_Operation_Type::AND:
                 instr.instruction_type = Instruction_Type::BINARY_OP_AND;
                 break;
-            case IR_Instruction_Binary_OP_Type::DIVISION:
+            case ModTree_Binary_Operation_Type::DIVISION:
                 instr.instruction_type = Instruction_Type::BINARY_OP_DIVISION;
                 break;
-            case IR_Instruction_Binary_OP_Type::EQUAL:
+            case ModTree_Binary_Operation_Type::EQUAL:
                 instr.instruction_type = Instruction_Type::BINARY_OP_EQUAL;
                 break;
-            case IR_Instruction_Binary_OP_Type::GREATER_EQUAL:
+            case ModTree_Binary_Operation_Type::GREATER:
                 instr.instruction_type = Instruction_Type::BINARY_OP_GREATER_EQUAL;
                 break;
-            case IR_Instruction_Binary_OP_Type::GREATER_THAN:
+            case ModTree_Binary_Operation_Type::GREATER_OR_EQUAL:
                 instr.instruction_type = Instruction_Type::BINARY_OP_GREATER_THAN;
                 break;
-            case IR_Instruction_Binary_OP_Type::LESS_EQUAL:
+            case ModTree_Binary_Operation_Type::LESS:
                 instr.instruction_type = Instruction_Type::BINARY_OP_LESS_EQUAL;
                 break;
-            case IR_Instruction_Binary_OP_Type::LESS_THAN:
+            case ModTree_Binary_Operation_Type::LESS_OR_EQUAL:
                 instr.instruction_type = Instruction_Type::BINARY_OP_LESS_THAN;
                 break;
-            case IR_Instruction_Binary_OP_Type::MODULO:
+            case ModTree_Binary_Operation_Type::MODULO:
                 instr.instruction_type = Instruction_Type::BINARY_OP_MODULO;
                 break;
-            case IR_Instruction_Binary_OP_Type::MULTIPLICATION:
+            case ModTree_Binary_Operation_Type::MULTIPLICATION:
                 instr.instruction_type = Instruction_Type::BINARY_OP_MULTIPLICATION;
                 break;
-            case IR_Instruction_Binary_OP_Type::NOT_EQUAL:
+            case ModTree_Binary_Operation_Type::NOT_EQUAL:
                 instr.instruction_type = Instruction_Type::BINARY_OP_NOT_EQUAL;
                 break;
-            case IR_Instruction_Binary_OP_Type::OR:
+            case ModTree_Binary_Operation_Type::OR:
                 instr.instruction_type = Instruction_Type::BINARY_OP_OR;
                 break;
-            case IR_Instruction_Binary_OP_Type::SUBTRACTION:
+            case ModTree_Binary_Operation_Type::SUBTRACTION:
                 instr.instruction_type = Instruction_Type::BINARY_OP_SUBTRACTION;
                 break;
             }
 
             Type_Signature* operand_types = ir_data_access_get_type(&binary_op->operand_left);
             if (operand_types->type == Signature_Type::POINTER) {
-                instr.op4 = (int)Primitive_Type::UNSIGNED_INT_64;
+                instr.op4 = (int)Bytecode_Type::INT64;
             }
             else {
-                assert(operand_types->type == Signature_Type::PRIMITIVE, "Should not happen");
-                instr.op4 = (int)operand_types->primitive_type;
+                instr.op4 = (int)primitive_to_bytecode_type(operand_types);
             }
             instr.op2 = bytecode_generator_data_access_to_stack_offset(generator, binary_op->operand_left);
             instr.op3 = bytecode_generator_data_access_to_stack_offset(generator, binary_op->operand_right);
@@ -816,7 +888,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
 
             Type_Signature* operand_type = ir_data_access_get_type(&unary_op->source);
             assert(operand_type->type == Signature_Type::PRIMITIVE, "Should not happen");
-            instr.op3 = (int)operand_type->primitive_type;
+            instr.op4 = (int)primitive_to_bytecode_type(operand_type);
             instr.op2 = bytecode_generator_data_access_to_stack_offset(generator, unary_op->source);
             bytecode_generator_add_instruction_and_set_destination(generator, unary_op->destination, instr);
             break;
@@ -831,7 +903,7 @@ void bytecode_generator_generate_function_code(Bytecode_Generator* generator, IR
     {
         int stack_offset_index = *hashtable_find_element(&generator->function_parameter_stack_offset_index, function);
         Dynamic_Array<int>* parameter_offsets = &generator->stack_offsets[stack_offset_index];
-        int parameter_stack_size = stack_offsets_calculate(&function->function_type->parameter_types, parameter_offsets, 0);
+        int parameter_stack_size = stack_offsets_calculate(&function->function_type->options.function.parameter_types, parameter_offsets, 0);
         // Adjust stack_offsets since parameter offsets are negative
         parameter_stack_size = align_offset_next_multiple(parameter_stack_size, 8); // Adjust for pointer alignment of return address
         for (int i = 0; i < parameter_offsets->size; i++) {
@@ -852,7 +924,7 @@ void bytecode_generator_generate_function_code(Bytecode_Generator* generator, IR
 
 void bytecode_generator_generate(Bytecode_Generator* generator, Compiler* compiler)
 {
-    generator->ir_program = compiler->analyser.program;
+    generator->ir_program = compiler->ir_generator.program;
     generator->compiler = compiler;
     // Reset previous code
     {
@@ -878,9 +950,9 @@ void bytecode_generator_generate(Bytecode_Generator* generator, Compiler* compil
     dynamic_array_reserve(&generator->global_data_offsets, generator->ir_program->globals.size);
     for (int i = 0; i < generator->ir_program->globals.size; i++) {
         Type_Signature* signature = generator->ir_program->globals[i];
-        generator->global_data_size = align_offset_next_multiple(generator->global_data_size, signature->alignment_in_bytes);
+        generator->global_data_size = align_offset_next_multiple(generator->global_data_size, signature->alignment);
         dynamic_array_push_back(&generator->global_data_offsets, generator->global_data_size);
-        generator->global_data_size += signature->size_in_bytes;
+        generator->global_data_size += signature->size;
     }
 
     // Generate code for all functions
@@ -965,7 +1037,7 @@ void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction 
         break;
     case Instruction_Type::CALL_HARDCODED_FUNCTION:
         string_append_formated(string, "CALL_HARDCODED_FUNCTION      hardcoded_func_type:");
-        ir_hardcoded_function_type_append_to_string(string, (IR_Hardcoded_Function_Type)i.op1);
+        hardcoded_function_type_append_to_string(string, (Hardcoded_Function_Type)i.op1);
         string_append_formated(string, ", arg-start-offset: %d", i.op2);
         break;
     case Instruction_Type::RETURN:
@@ -973,7 +1045,7 @@ void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction 
         break;
     case Instruction_Type::EXIT:
         string_append_formated(string, "EXIT                         exit-code: ");
-        ir_exit_code_append_to_string(string, (IR_Exit_Code)i.op1);
+        exit_code_append_to_string(string, (Exit_Code)i.op1);
         break;
     case Instruction_Type::LOAD_RETURN_VALUE:
         string_append_formated(string, "LOAD_RETURN_VALUE            dst: %d, size: %d", i.op1, i.op2);
@@ -989,97 +1061,97 @@ void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction 
         break;
     case Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE:
         string_append_formated(string, "CAST_INTEGER_DIFFERENT_SIZE  dst: %d, src: %d, dst-primitive-type: %s, src-primitive-type: %s",
-            i.op1, i.op2, primitive_type_to_string((Primitive_Type)i.op3).characters, primitive_type_to_string((Primitive_Type)i.op4)
+            i.op1, i.op2, bytecode_type_as_string((Bytecode_Type)i.op3), bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
     case Instruction_Type::CAST_FLOAT_DIFFERENT_SIZE:
         string_append_formated(string, "CAST_FLOAT_DIFFERENT_SIZE    dst: %d, src: %d, dst-primitive-type: %s, src-primitive-type: %s",
-            i.op1, i.op2, primitive_type_to_string((Primitive_Type)i.op3).characters, primitive_type_to_string((Primitive_Type)i.op4)
+            i.op1, i.op2, bytecode_type_as_string((Bytecode_Type)i.op3), bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
     case Instruction_Type::CAST_FLOAT_INTEGER:
         string_append_formated(string, "CAST_FLOAT_INTEGER           dst: %d, src: %d, dst-primitive-type: %s, src-primitive-type: %s",
-            i.op1, i.op2, primitive_type_to_string((Primitive_Type)i.op3).characters, primitive_type_to_string((Primitive_Type)i.op4)
+            i.op1, i.op2, bytecode_type_as_string((Bytecode_Type)i.op3), bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
     case Instruction_Type::CAST_INTEGER_FLOAT:
         string_append_formated(string, "CAST_INTEGER_FLOAT           dst: %d, src: %d, dst-primitive-type: %s, src-primitive-type: %s",
-            i.op1, i.op2, primitive_type_to_string((Primitive_Type)i.op3).characters, primitive_type_to_string((Primitive_Type)i.op4)
+            i.op1, i.op2, bytecode_type_as_string((Bytecode_Type)i.op3), bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
     case Instruction_Type::BINARY_OP_ADDITION:
         string_append_formated(string, "BINARY_OP_ADDITION           dst: %d, left: %d, right: %d, type: %s",
-            i.op1, i.op2, i.op3, primitive_type_to_string((Primitive_Type)i.op4).characters
+            i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
     case Instruction_Type::BINARY_OP_SUBTRACTION:
         string_append_formated(string, "BINARY_OP_SUBTRACTION        dst: %d, left: %d, right: %d, type: %s",
-            i.op1, i.op2, i.op3, primitive_type_to_string((Primitive_Type)i.op4).characters
+            i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
     case Instruction_Type::BINARY_OP_MULTIPLICATION:
         string_append_formated(string, "BINARY_OP_MULTIPLICATION     dst: %d, left: %d, right: %d, type: %s",
-            i.op1, i.op2, i.op3, primitive_type_to_string((Primitive_Type)i.op4).characters
+            i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
     case Instruction_Type::BINARY_OP_DIVISION:
         string_append_formated(string, "BINARY_OP_DIVISION           dst %d, left: %d, right: %d, type: %s",
-            i.op1, i.op2, i.op3, primitive_type_to_string((Primitive_Type)i.op4).characters
+            i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
     case Instruction_Type::BINARY_OP_EQUAL:
         string_append_formated(string, "BINARY_OP_EQUAL              dst: %d, left: %d, right: %d, type: %s",
-            i.op1, i.op2, i.op3, primitive_type_to_string((Primitive_Type)i.op4).characters
+            i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
     case Instruction_Type::BINARY_OP_NOT_EQUAL:
         string_append_formated(string, "BINARY_OP_NOT_EQUAL          dst: %d, left: %d, right: %d, type: %s",
-            i.op1, i.op2, i.op3, primitive_type_to_string((Primitive_Type)i.op4).characters
+            i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
     case Instruction_Type::BINARY_OP_GREATER_THAN:
         string_append_formated(string, "BINARY_OP_GREATER_THAN       dst: %d, left: %d, right: %d, type: %s",
-            i.op1, i.op2, i.op3, primitive_type_to_string((Primitive_Type)i.op4).characters
+            i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
     case Instruction_Type::BINARY_OP_GREATER_EQUAL:
         string_append_formated(string, "BINARY_OP_GREATER_EQUAL      dst: %d, left: %d, right: %d, type: %s",
-            i.op1, i.op2, i.op3, primitive_type_to_string((Primitive_Type)i.op4).characters
+            i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
     case Instruction_Type::BINARY_OP_LESS_THAN:
         string_append_formated(string, "BINARY_OP_LESS_THAN          dst: %d, left: %d, right: %d, type: %s",
-            i.op1, i.op2, i.op3, primitive_type_to_string((Primitive_Type)i.op4).characters
+            i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
     case Instruction_Type::BINARY_OP_LESS_EQUAL:
         string_append_formated(string, "BINARY_OP_LESS_EQUAL         dst: %d, left: %d, right: %d, type: %s",
-            i.op1, i.op2, i.op3, primitive_type_to_string((Primitive_Type)i.op4).characters
+            i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
     case Instruction_Type::BINARY_OP_MODULO:
         string_append_formated(string, "BINARY_OP_MODULO             dst: %d, left: %d, right: %d, type: %s",
-            i.op1, i.op2, i.op3, primitive_type_to_string((Primitive_Type)i.op4).characters
+            i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
     case Instruction_Type::BINARY_OP_AND:
         string_append_formated(string, "BINARY_OP_AND                dst: %d, left: %d, right: %d, type: %s",
-            i.op1, i.op2, i.op3, primitive_type_to_string((Primitive_Type)i.op4).characters
+            i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
     case Instruction_Type::BINARY_OP_OR:
         string_append_formated(string, "BINARY_OP_OR                 dst: %d, left: %d, right: %d, type: %s",
-            i.op1, i.op2, i.op3, primitive_type_to_string((Primitive_Type)i.op4).characters
+            i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
     case Instruction_Type::UNARY_OP_NEGATE:
         string_append_formated(string, "UNARY_OP_NEGATE              dst: %d, src: %d, type: %s",
-            i.op1, i.op2, primitive_type_to_string((Primitive_Type)i.op3).characters
+            i.op1, i.op2, bytecode_type_as_string((Bytecode_Type)i.op3)
         );
         break;
     case Instruction_Type::UNARY_OP_NOT:
         string_append_formated(string, "UNARY_OP_NOT                 dst: %d, src: %d, type: %s",
-            i.op1, i.op2, primitive_type_to_string((Primitive_Type)i.op3).characters
+            i.op1, i.op2, bytecode_type_as_string((Bytecode_Type)i.op3)
         );
         break;
     default:

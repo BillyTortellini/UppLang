@@ -230,7 +230,7 @@ void c_generator_destroy(C_Generator* generator)
 }
 
 const char* c_generator_id_to_string(C_Generator* generator, int name_handle) {
-    return identifier_pool_index_to_string(generator->compiler->identifier_pool, name_handle).characters;
+    return identifier_pool_index_to_string(&generator->compiler->identifier_pool, name_handle).characters;
 }
 
 void c_generator_register_type_name(C_Generator* generator, Type_Signature* type);
@@ -252,10 +252,10 @@ void c_generator_register_type_name(C_Generator* generator, Type_Signature* type
         return;
     }
 
-    int* extern_name_id = hashtable_find_element(&generator->program->extern_program_sources.extern_type_signatures, type);
+    int* extern_name_id = hashtable_find_element(&generator->compiler->extern_sources.extern_type_signatures, type);
     if (extern_name_id != 0) {
         String type_name = string_create_empty(32);
-        string_append_formated(&type_name, identifier_pool_index_to_string(generator->compiler->identifier_pool, *extern_name_id).characters);
+        string_append_formated(&type_name, identifier_pool_index_to_string(&generator->compiler->identifier_pool, *extern_name_id).characters);
         hashtable_insert_element(&generator->translation_type_to_name, type, type_name);
         return;
     }
@@ -270,7 +270,7 @@ void c_generator_register_type_name(C_Generator* generator, Type_Signature* type
         generator->name_counter++;
         string_append_formated(&generator->section_struct_prototypes, "struct %s;\n", type_name.characters);
 
-        if (type->child_type->type == Signature_Type::STRUCT || type->child_type->type == Signature_Type::ARRAY_SIZED)
+        if (type->options.array.element_type->type == Signature_Type::STRUCT || type->options.array.element_type->type == Signature_Type::ARRAY_SIZED)
         {
             C_Type_Definition_Dependency dependant;
             dependant.signature = type;
@@ -281,8 +281,8 @@ void c_generator_register_type_name(C_Generator* generator, Type_Signature* type
         else
         {
             string_append_formated(&tmp, "struct %s {\n    ", type_name.characters);
-            c_generator_output_type_reference(generator, &tmp, type->child_type);
-            string_append_formated(&tmp, " data[%d];\n};\n\n", type->array_element_count);
+            c_generator_output_type_reference(generator, &tmp, type->options.array.element_type);
+            string_append_formated(&tmp, " data[%d];\n};\n\n", type->options.array.element_count);
             string_append_formated(&generator->section_struct_implementations, tmp.characters);
         }
         break;
@@ -293,7 +293,7 @@ void c_generator_register_type_name(C_Generator* generator, Type_Signature* type
         string_append_formated(&generator->section_struct_prototypes, "struct %s;\n", type_name.characters);
 
         string_append_formated(&tmp, "struct %s {\n    ", type_name.characters);
-        c_generator_output_type_reference(generator, &tmp, type->child_type);
+        c_generator_output_type_reference(generator, &tmp, type->options.array.element_type);
         string_append_formated(&tmp, "* data;\n    i32 size; i32 padding;\n};\n\n");
         string_append_formated(&generator->section_struct_implementations, tmp.characters);
         break;
@@ -307,17 +307,17 @@ void c_generator_register_type_name(C_Generator* generator, Type_Signature* type
     }
     case Signature_Type::POINTER:
     {
-        if (type->child_type->type == Signature_Type::FUNCTION)
+        if (type->options.pointer_child->type == Signature_Type::FUNCTION)
         {
-            Type_Signature* function_type = type->child_type;
+            Type_Signature* function_type = type->options.pointer_child;
             string_append_formated(&type_name, "function_ptr_type_%d", generator->name_counter);
             generator->name_counter++;
             string_append_formated(&tmp, "typedef ");
-            c_generator_output_type_reference(generator, &tmp, function_type->return_type);
+            c_generator_output_type_reference(generator, &tmp, function_type->options.function.return_type);
             string_append_formated(&tmp, " (*%s)(", type_name.characters);
-            for (int i = 0; i < function_type->parameter_types.size; i++) {
-                c_generator_output_type_reference(generator, &tmp, function_type->parameter_types[i]);
-                if (i != function_type->parameter_types.size - 1) {
+            for (int i = 0; i < function_type->options.function.parameter_types.size; i++) {
+                c_generator_output_type_reference(generator, &tmp, function_type->options.function.parameter_types[i]);
+                if (i != function_type->options.function.parameter_types.size - 1) {
                     string_append_formated(&tmp, ", ");
                 }
             }
@@ -325,46 +325,36 @@ void c_generator_register_type_name(C_Generator* generator, Type_Signature* type
             string_append_formated(&generator->section_type_declarations, tmp.characters);
         }
         else {
-            c_generator_output_type_reference(generator, &type_name, type->child_type);
+            c_generator_output_type_reference(generator, &type_name, type->options.pointer_child);
             string_append_formated(&type_name, "*");
         }
         break;
     }
-    case Signature_Type::PRIMITIVE: {
-        switch (type->primitive_type)
+    case Signature_Type::PRIMITIVE: 
+    {
+        switch (type->options.primitive.type)
         {
         case Primitive_Type::BOOLEAN:
             string_append_formated(&type_name, "bool");
             break;
-        case Primitive_Type::FLOAT_32:
-            string_append_formated(&type_name, "f32");
+        case Primitive_Type::INTEGER:
+            switch (type->size)
+            {
+            case 1: string_append_formated(&type_name, type->options.primitive.is_signed ? "i8" : "u8"); break;
+            case 2: string_append_formated(&type_name, type->options.primitive.is_signed ? "i16" : "u16"); break;
+            case 4: string_append_formated(&type_name, type->options.primitive.is_signed ? "i32" : "u32"); break;
+            case 8: string_append_formated(&type_name, type->options.primitive.is_signed ? "i64" : "u64"); break;
+            default: panic("HEY");
+            }
+            
             break;
-        case Primitive_Type::FLOAT_64:
-            string_append_formated(&type_name, "f64");
-            break;
-        case Primitive_Type::SIGNED_INT_8:
-            string_append_formated(&type_name, "i8");
-            break;
-        case Primitive_Type::SIGNED_INT_16:
-            string_append_formated(&type_name, "i16");
-            break;
-        case Primitive_Type::SIGNED_INT_32:
-            string_append_formated(&type_name, "i32");
-            break;
-        case Primitive_Type::SIGNED_INT_64:
-            string_append_formated(&type_name, "i64");
-            break;
-        case Primitive_Type::UNSIGNED_INT_8:
-            string_append_formated(&type_name, "u8");
-            break;
-        case Primitive_Type::UNSIGNED_INT_16:
-            string_append_formated(&type_name, "u16");
-            break;
-        case Primitive_Type::UNSIGNED_INT_32:
-            string_append_formated(&type_name, "u32");
-            break;
-        case Primitive_Type::UNSIGNED_INT_64:
-            string_append_formated(&type_name, "u64");
+        case Primitive_Type::FLOAT:
+            switch (type->size)
+            {
+            case 4: string_append_formated(&type_name, "f32"); break;
+            case 8: string_append_formated(&type_name, "f64"); break;
+            default: panic("HEY");
+            }
             break;
         default: panic("What");
         }
@@ -432,71 +422,18 @@ void c_generator_output_data_access(C_Generator* generator, String* output, IR_D
     }
     case IR_Data_Access_Type::CONSTANT:
     {
-        IR_Constant* constant = &generator->program->constant_pool.constants[access.index];
+        Upp_Constant* constant = &generator->compiler->constant_pool.constants[access.index];
         Type_Signature* signature = constant->type;
-        void* raw_data = &generator->program->constant_pool.constant_memory[constant->offset];
-        if (signature->type == Signature_Type::PRIMITIVE)
-        {
-            switch (signature->primitive_type)
-            {
-            case Primitive_Type::BOOLEAN: {
-                if (*(bool*)raw_data) {
-                    string_append_formated(output, "true");
-                }
-                else {
-                    string_append_formated(output, "false");
-                }
-                break;
-            }
-            case Primitive_Type::FLOAT_32: {
-                string_append_formated(output, "%f", *(f32*)raw_data);
-                break;
-            }
-            case Primitive_Type::FLOAT_64: {
-                string_append_formated(output, "%f", *(f64*)raw_data);
-                break;
-            }
-            case Primitive_Type::SIGNED_INT_8: {
-                string_append_formated(output, "%d", *(i8*)raw_data);
-                break;
-            }
-            case Primitive_Type::SIGNED_INT_16: {
-                string_append_formated(output, "%d", *(i16*)raw_data);
-                break;
-            }
-            case Primitive_Type::SIGNED_INT_32: {
-                string_append_formated(output, "%d", *(i32*)raw_data);
-                break;
-            }
-            case Primitive_Type::SIGNED_INT_64: {
-                string_append_formated(output, "%d", *(i64*)raw_data);
-                break;
-            }
-            case Primitive_Type::UNSIGNED_INT_8: {
-                string_append_formated(output, "%d", *(u8*)raw_data);
-                break;
-            }
-            case Primitive_Type::UNSIGNED_INT_16: {
-                string_append_formated(output, "%d", *(u16*)raw_data);
-                break;
-            }
-            case Primitive_Type::UNSIGNED_INT_32: {
-                string_append_formated(output, "%d", *(u32*)raw_data);
-                break;
-            }
-            case Primitive_Type::UNSIGNED_INT_64: {
-                string_append_formated(output, "%d", *(u64*)raw_data);
-                break;
-            }
-            default: panic("HEy");
-            }
+        void* raw_data = &generator->compiler->constant_pool.buffer[constant->offset];
+        if (signature->type == Signature_Type::PRIMITIVE) {
+            type_signature_append_value_to_string(signature, (byte*)raw_data, output);
         }
         else if (signature == generator->compiler->type_system.string_type) {
             String* string_access_str = hashtable_find_element(&generator->translation_string_data_to_name, access.index);
             assert(string_access_str != 0, "Should not happen");
             string_append_formated(output, string_access_str->characters);
         }
-        else if (signature->type == Signature_Type::POINTER && signature->child_type->type == Signature_Type::VOID_TYPE) {
+        else if (signature->type == Signature_Type::POINTER && signature->options.pointer_child->type == Signature_Type::VOID_TYPE) {
             string_append_formated(output, "nullptr");
         }
         else {
@@ -568,17 +505,17 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
                 function_sig = call->options.function->function_type;
                 break;
             case IR_Instruction_Call_Type::FUNCTION_POINTER_CALL:
-                function_sig = ir_data_access_get_type(&call->options.pointer_access)->child_type;
+                function_sig = ir_data_access_get_type(&call->options.pointer_access)->options.pointer_child;
                 break;
             case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
-                function_sig = call->options.hardcoded->signature;
+                function_sig = call->options.hardcoded.signature;
                 break;
             case IR_Instruction_Call_Type::EXTERN_FUNCTION_CALL:
                 function_sig = call->options.extern_function.function_signature;
                 break;
             default: panic("hey");
             }
-            if (function_sig->return_type != generator->compiler->type_system.void_type) {
+            if (function_sig->options.function.return_type != generator->compiler->type_system.void_type) {
                 c_generator_output_data_access(generator, output, call->destination);
                 string_append_formated(output, " = ");
                 c_generator_output_cast(generator, output, call->destination);
@@ -597,44 +534,44 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
                 break;
             }
             case IR_Instruction_Call_Type::EXTERN_FUNCTION_CALL: {
-                string_append_formated(output, 
-                    identifier_pool_index_to_string(generator->compiler->identifier_pool, call->options.extern_function.name_id).characters);
+                string_append_formated(output,
+                    identifier_pool_index_to_string(&generator->compiler->identifier_pool, call->options.extern_function.name_id).characters);
                 break;
             }
             case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL: {
-                switch (call->options.hardcoded->type)
+                switch (call->options.hardcoded.type)
                 {
-                case IR_Hardcoded_Function_Type::PRINT_I32:
+                case Hardcoded_Function_Type::PRINT_I32:
                     string_append_formated(output, "print_i32");
                     break;
-                case IR_Hardcoded_Function_Type::PRINT_F32:
+                case Hardcoded_Function_Type::PRINT_F32:
                     string_append_formated(output, "print_f32");
                     break;
-                case IR_Hardcoded_Function_Type::PRINT_BOOL:
+                case Hardcoded_Function_Type::PRINT_BOOL:
                     string_append_formated(output, "print_bool");
                     break;
-                case IR_Hardcoded_Function_Type::PRINT_LINE:
+                case Hardcoded_Function_Type::PRINT_LINE:
                     string_append_formated(output, "print_line");
                     break;
-                case IR_Hardcoded_Function_Type::PRINT_STRING:
+                case Hardcoded_Function_Type::PRINT_STRING:
                     string_append_formated(output, "print_string");
                     break;
-                case IR_Hardcoded_Function_Type::READ_I32:
+                case Hardcoded_Function_Type::READ_I32:
                     string_append_formated(output, "read_i32");
                     break;
-                case IR_Hardcoded_Function_Type::READ_F32:
+                case Hardcoded_Function_Type::READ_F32:
                     string_append_formated(output, "read_f32");
                     break;
-                case IR_Hardcoded_Function_Type::READ_BOOL:
+                case Hardcoded_Function_Type::READ_BOOL:
                     string_append_formated(output, "read_bool");
                     break;
-                case IR_Hardcoded_Function_Type::RANDOM_I32:
+                case Hardcoded_Function_Type::RANDOM_I32:
                     string_append_formated(output, "random_i32");
                     break;
-                case IR_Hardcoded_Function_Type::MALLOC_SIZE_I32:
+                case Hardcoded_Function_Type::MALLOC_SIZE_I32:
                     string_append_formated(output, "malloc_size_i32");
                     break;
-                case IR_Hardcoded_Function_Type::FREE_POINTER:
+                case Hardcoded_Function_Type::FREE_POINTER:
                     string_append_formated(output, "free_pointer");
                     break;
                 default: panic("What");
@@ -644,7 +581,7 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
             default: panic("What");
             }
             string_append_formated(output, "(");
-            for (int j = 0; j < call->arguments.size; j++) 
+            for (int j = 0; j < call->arguments.size; j++)
             {
                 // Add cast (Implemented because of signed char/char difference in C)
                 c_generator_output_data_access(generator, output, call->arguments[j]);
@@ -730,7 +667,7 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
             IR_Instruction_Cast* cast = &instr->options.cast;
             switch (cast->type)
             {
-            case IR_Instruction_Cast_Type::ARRAY_SIZED_TO_UNSIZED: {
+            case ModTree_Cast_Type::ARRAY_SIZED_TO_UNSIZED: {
                 assert(ir_data_access_get_type(&cast->source)->type == Signature_Type::ARRAY_SIZED, "HEy");
                 c_generator_output_data_access(generator, output, cast->destination);
                 string_append_formated(output, ".data = &(");
@@ -738,13 +675,16 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
                 string_append_formated(output, ".data[0]);\n");
                 string_add_indentation(output, indentation_level + 1);
                 c_generator_output_data_access(generator, output, cast->destination);
-                string_append_formated(output, ".size = %d;\n", ir_data_access_get_type(&cast->source)->array_element_count);
+                string_append_formated(output, ".size = %d;\n", ir_data_access_get_type(&cast->source)->options.array.element_count);
                 break;
             }
-            case IR_Instruction_Cast_Type::PRIMITIVE_TYPES:
-            case IR_Instruction_Cast_Type::POINTER_TO_U64:
-            case IR_Instruction_Cast_Type::U64_TO_POINTER:
-            case IR_Instruction_Cast_Type::POINTERS: {
+            case ModTree_Cast_Type::INTEGERS:
+            case ModTree_Cast_Type::FLOATS:
+            case ModTree_Cast_Type::FLOAT_TO_INT:
+            case ModTree_Cast_Type::INT_TO_FLOAT:
+            case ModTree_Cast_Type::POINTER_TO_U64:
+            case ModTree_Cast_Type::U64_TO_POINTER:
+            case ModTree_Cast_Type::POINTERS: {
                 c_generator_output_data_access(generator, output, cast->destination);
                 string_append_formated(output, " = ");
                 c_generator_output_cast(generator, output, cast->destination);
@@ -786,12 +726,14 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
             case IR_Instruction_Address_Of_Type::STRUCT_MEMBER: {
                 string_append_formated(output, "&(");
                 c_generator_output_data_access(generator, output, addr_of->source);
-                string_append_formated(output, ").%s;\n", identifier_pool_index_to_string(generator->compiler->identifier_pool, addr_of->options.member.name_handle).characters);
+                string_append_formated(output, ").%s;\n", 
+                    identifier_pool_index_to_string(&generator->compiler->identifier_pool, addr_of->options.member.name_handle).characters
+                );
                 break;
             }
             case IR_Instruction_Address_Of_Type::EXTERN_FUNCTION: {
-                string_append_formated(output, "&%s;\n", 
-                    identifier_pool_index_to_string(generator->compiler->identifier_pool, addr_of->options.extern_function.name_id).characters
+                string_append_formated(output, "&%s;\n",
+                    identifier_pool_index_to_string(&generator->compiler->identifier_pool, addr_of->options.extern_function.name_id).characters
                 );
                 break;
             }
@@ -830,19 +772,19 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
             const char* binary_str = "";
             switch (binary->type)
             {
-            case IR_Instruction_Binary_OP_Type::ADDITION: binary_str = "+"; break;
-            case IR_Instruction_Binary_OP_Type::AND: binary_str = "&&"; break;
-            case IR_Instruction_Binary_OP_Type::DIVISION: binary_str = "/"; break;
-            case IR_Instruction_Binary_OP_Type::EQUAL: binary_str = "=="; break;
-            case IR_Instruction_Binary_OP_Type::GREATER_EQUAL: binary_str = ">="; break;
-            case IR_Instruction_Binary_OP_Type::GREATER_THAN: binary_str = ">"; break;
-            case IR_Instruction_Binary_OP_Type::LESS_EQUAL: binary_str = "<="; break;
-            case IR_Instruction_Binary_OP_Type::LESS_THAN: binary_str = "<"; break;
-            case IR_Instruction_Binary_OP_Type::MODULO: binary_str = "%"; break;
-            case IR_Instruction_Binary_OP_Type::MULTIPLICATION: binary_str = "*"; break;
-            case IR_Instruction_Binary_OP_Type::NOT_EQUAL: binary_str = "!="; break;
-            case IR_Instruction_Binary_OP_Type::OR: binary_str = "||"; break;
-            case IR_Instruction_Binary_OP_Type::SUBTRACTION: binary_str = "-"; break;
+            case ModTree_Binary_Operation_Type::ADDITION: binary_str = "+"; break;
+            case ModTree_Binary_Operation_Type::AND: binary_str = "&&"; break;
+            case ModTree_Binary_Operation_Type::DIVISION: binary_str = "/"; break;
+            case ModTree_Binary_Operation_Type::EQUAL: binary_str = "=="; break;
+            case ModTree_Binary_Operation_Type::GREATER_OR_EQUAL: binary_str = ">="; break;
+            case ModTree_Binary_Operation_Type::GREATER: binary_str = ">"; break;
+            case ModTree_Binary_Operation_Type::LESS_OR_EQUAL: binary_str = "<="; break;
+            case ModTree_Binary_Operation_Type::LESS: binary_str = "<"; break;
+            case ModTree_Binary_Operation_Type::MODULO: binary_str = "%"; break;
+            case ModTree_Binary_Operation_Type::MULTIPLICATION: binary_str = "*"; break;
+            case ModTree_Binary_Operation_Type::NOT_EQUAL: binary_str = "!="; break;
+            case ModTree_Binary_Operation_Type::OR: binary_str = "||"; break;
+            case ModTree_Binary_Operation_Type::SUBTRACTION: binary_str = "-"; break;
             default: panic("Hey");
             }
             string_append_formated(output, "%s ", binary_str);
@@ -863,7 +805,7 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
     // Reset generator data 
     {
         generator->compiler = compiler;
-        generator->program = compiler->analyser.program;
+        generator->program = compiler->ir_generator.program;
         string_reset(&generator->section_function_implementations);
         string_reset(&generator->section_function_prototypes);
         string_reset(&generator->section_type_declarations);
@@ -892,12 +834,12 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
         String str_str = string_create("Upp_String");
         hashtable_insert_element(&generator->translation_type_to_name, generator->compiler->type_system.string_type, str_str);
     }
-    for (int i = 0; i < generator->program->constant_pool.constants.size; i++)
+    for (int i = 0; i < generator->compiler->constant_pool.constants.size; i++)
     {
-        IR_Constant* constant = &generator->program->constant_pool.constants[i];
+        Upp_Constant* constant = &generator->compiler->constant_pool.constants[i];
         if (constant->type == generator->compiler->type_system.string_type)
         {
-            void* raw_data = &generator->program->constant_pool.constant_memory[constant->offset];
+            void* raw_data = &generator->compiler->constant_pool.buffer[constant->offset];
             char* string_data = *(char**)raw_data;
             i32 capacity = *(i32*)((byte*)raw_data + 8);
             i32 size = *(i32*)((byte*)raw_data + 16);
@@ -928,16 +870,18 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
     }
 
     // Create extern function prototypes
-    for (int i = 0; i < generator->program->extern_program_sources.extern_functions.size; i++)
+    for (int i = 0; i < generator->compiler->extern_sources.extern_functions.size; i++)
     {
-        Extern_Function_Identifier* function = &generator->program->extern_program_sources.extern_functions[i];
+        Extern_Function_Identifier* function = &generator->compiler->extern_sources.extern_functions[i];
         Type_Signature* function_signature = function->function_signature;
-        c_generator_output_type_reference(generator, &generator->section_function_prototypes, function_signature->return_type);
-        string_append_formated(&generator->section_function_prototypes, " %s(", identifier_pool_index_to_string(generator->compiler->identifier_pool, function->name_id).characters);
-        for (int j = 0; j < function->function_signature->parameter_types.size; j++) {
-            Type_Signature* param_type = function->function_signature->parameter_types[j];
+        c_generator_output_type_reference(generator, &generator->section_function_prototypes, function_signature->options.function.return_type);
+        string_append_formated(&generator->section_function_prototypes, " %s(", 
+            identifier_pool_index_to_string(&generator->compiler->identifier_pool, function->name_id).characters
+        );
+        for (int j = 0; j < function->function_signature->options.function.parameter_types.size; j++) {
+            Type_Signature* param_type = function->function_signature->options.function.parameter_types[j];
             c_generator_output_type_reference(generator, &generator->section_function_prototypes, param_type);
-            if (j != function->function_signature->parameter_types.size - 1) {
+            if (j != function->function_signature->options.function.parameter_types.size - 1) {
                 string_append_formated(&generator->section_function_prototypes, ", ");
             }
         }
@@ -949,7 +893,7 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
     {
         IR_Function* function = generator->program->functions[i];
         Type_Signature* function_signature = function->function_type;
-        c_generator_output_type_reference(generator, &generator->section_function_prototypes, function_signature->return_type);
+        c_generator_output_type_reference(generator, &generator->section_function_prototypes, function_signature->options.function.return_type);
         string_append_formated(&generator->section_function_prototypes, " ");
         {
             String function_name = string_create_empty(16);
@@ -960,10 +904,10 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
         }
 
         string_append_formated(&generator->section_function_prototypes, "(");
-        for (int j = 0; j < function->function_type->parameter_types.size; j++) {
-            Type_Signature* param_type = function->function_type->parameter_types[j];
+        for (int j = 0; j < function->function_type->options.function.parameter_types.size; j++) {
+            Type_Signature* param_type = function->function_type->options.function.parameter_types[j];
             c_generator_output_type_reference(generator, &generator->section_function_prototypes, param_type);
-            if (j != function->function_type->parameter_types.size - 1) {
+            if (j != function->function_type->options.function.parameter_types.size - 1) {
                 string_append_formated(&generator->section_function_prototypes, ", ");
             }
         }
@@ -976,7 +920,7 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
         IR_Function* function = generator->program->functions[i];
         Type_Signature* function_signature = function->function_type;
 
-        c_generator_output_type_reference(generator, &generator->section_function_implementations, function_signature->return_type);
+        c_generator_output_type_reference(generator, &generator->section_function_implementations, function_signature->options.function.return_type);
         string_append_formated(&generator->section_function_implementations, " ");
         // In C functions look like: return_type function_name ( Param_Type param_name, ...) { Body }
         {
@@ -985,8 +929,8 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
             string_append_formated(&generator->section_function_implementations, function_name->characters);
         }
         string_append_formated(&generator->section_function_implementations, "(");
-        for (int j = 0; j < function->function_type->parameter_types.size; j++) {
-            Type_Signature* param_type = function->function_type->parameter_types[j];
+        for (int j = 0; j < function->function_type->options.function.parameter_types.size; j++) {
+            Type_Signature* param_type = function->function_type->options.function.parameter_types[j];
             c_generator_output_type_reference(generator, &generator->section_function_implementations, param_type);
             string_append_formated(&generator->section_function_implementations, " ");
             IR_Data_Access access;
@@ -995,7 +939,7 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
             access.index = j;
             access.option.function = function;
             c_generator_output_data_access(generator, &generator->section_function_implementations, access);
-            if (j != function->function_type->parameter_types.size - 1) {
+            if (j != function->function_type->options.function.parameter_types.size - 1) {
                 string_append_formated(&generator->section_function_implementations, ", ");
             }
         }
@@ -1012,9 +956,9 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
             C_Type_Definition_Dependency* dependency = &generator->type_dependencies[i];
             if (dependency->signature->type == Signature_Type::STRUCT)
             {
-                for (int j = 0; j < dependency->signature->member_types.size; j++)
+                for (int j = 0; j < dependency->signature->options.structure.members.size; j++)
                 {
-                    Struct_Member* member = &dependency->signature->member_types[j];
+                    Struct_Member* member = &dependency->signature->options.structure.members[j];
                     int* dependent_index = hashtable_find_element(&generator->type_to_dependency_mapping, member->type);
                     if (dependent_index == 0) continue;
                     dynamic_array_push_back(&dependency->outgoing_dependencies, *dependent_index);
@@ -1023,7 +967,7 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
             }
             else if (dependency->signature->type == Signature_Type::ARRAY_SIZED)
             {
-                int* dependent_index = hashtable_find_element(&generator->type_to_dependency_mapping, dependency->signature->child_type);
+                int* dependent_index = hashtable_find_element(&generator->type_to_dependency_mapping, dependency->signature->options.array.element_type);
                 if (dependent_index == 0) continue;
                 dynamic_array_push_back(&dependency->outgoing_dependencies, *dependent_index);
                 dynamic_array_push_back(&generator->type_dependencies[*dependent_index].incoming_dependencies, i);
@@ -1068,20 +1012,20 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
             if (dependency->signature->type == Signature_Type::STRUCT)
             {
                 string_append_formated(&generator->section_struct_implementations, "struct %s {\n", type_name->characters);
-                for (int i = 0; i < dependency->signature->member_types.size; i++) {
-                    Struct_Member* member = &dependency->signature->member_types[i];
+                for (int i = 0; i < dependency->signature->options.structure.members.size; i++) {
+                    Struct_Member* member = &dependency->signature->options.structure.members[i];
                     string_add_indentation(&generator->section_struct_implementations, 1);
                     c_generator_output_type_reference(generator, &generator->section_struct_implementations, member->type);
                     string_append_formated(&generator->section_struct_implementations, " %s;\n",
-                        identifier_pool_index_to_string(generator->compiler->identifier_pool, member->name_handle).characters
+                        identifier_pool_index_to_string(&generator->compiler->identifier_pool, member->name_handle).characters
                     );
                 }
                 string_append_formated(&generator->section_struct_implementations, "};\n\n");
             }
             else if (dependency->signature->type == Signature_Type::ARRAY_SIZED) {
                 string_append_formated(&generator->section_struct_implementations, "struct %s {\n    ", type_name->characters);
-                c_generator_output_type_reference(generator, &generator->section_struct_implementations, dependency->signature->child_type);
-                string_append_formated(&generator->section_struct_implementations, " data[%d];\n};\n\n", dependency->signature->array_element_count);
+                c_generator_output_type_reference(generator, &generator->section_struct_implementations, dependency->signature->options.array.element_type);
+                string_append_formated(&generator->section_struct_implementations, " data[%d];\n};\n\n", dependency->signature->options.array.element_count);
             }
             else { panic("hwat"); }
         }
@@ -1115,16 +1059,16 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
     String section_extern_includes = string_create_empty(2048);
     SCOPE_EXIT(string_destroy(&section_extern_includes));
     {
-        for (int i = 0; i < generator->program->extern_program_sources.headers_to_include.size; i++) {
-            String header_name = identifier_pool_index_to_string(generator->compiler->identifier_pool,
-                generator->program->extern_program_sources.headers_to_include[i]);
+        for (int i = 0; i < generator->compiler->extern_sources.headers_to_include.size; i++) {
+            String header_name = identifier_pool_index_to_string(&generator->compiler->identifier_pool,
+                generator->compiler->extern_sources.headers_to_include[i]);
             string_append_formated(&section_extern_includes, "#include <%s>\n", header_name.characters);
         }
         string_append_formated(&section_extern_includes, "\n");
     }
-    for (int i = 0; i < generator->program->extern_program_sources.lib_files.size; i++) {
-        String header_name = identifier_pool_index_to_string(generator->compiler->identifier_pool,
-            generator->program->extern_program_sources.lib_files[i]);
+    for (int i = 0; i < generator->compiler->extern_sources.lib_files.size; i++) {
+        String header_name = identifier_pool_index_to_string(&generator->compiler->identifier_pool,
+            generator->compiler->extern_sources.lib_files[i]);
         c_compiler_add_lib_file(&generator->compiler->c_compiler, header_name);
     }
 

@@ -8,17 +8,18 @@
 struct Compiler;
 struct Bytecode_Generator;
 struct Bytecode_Instruction;
+struct Constant_Pool;
 
 struct Bytecode_Interpreter
 {
-    Compiler* compiler;
     Bytecode_Generator* generator;
+    Constant_Pool* constant_pool;
     Bytecode_Instruction* instruction_pointer;
     byte return_register[256];
     Array<byte> stack;
     Array<byte> globals;
     byte* stack_pointer;
-    IR_Exit_Code exit_code;
+    Exit_Code exit_code;
     Random random;
 };
 

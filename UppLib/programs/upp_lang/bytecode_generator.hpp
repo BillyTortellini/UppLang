@@ -6,6 +6,9 @@
 #include "semantic_analyser.hpp"
 
 struct Compiler;
+struct IR_Function;
+struct IR_Code_Block;
+struct IR_Program;
 
 /*
     Runtime system has:
@@ -17,6 +20,21 @@ struct Compiler;
     A Stack-Frame looks like this:
     [Param0] [Param1] [ParamX...] [Return_Address] [Old_Stack_Pointer] [Reg0] [Reg1] [Reg2] [Regs...]
 */
+
+enum class Bytecode_Type
+{
+    INT8,
+    INT16,
+    INT32,
+    INT64,
+    UINT8,
+    UINT16,
+    UINT32,
+    UINT64,
+    FLOAT32,
+    FLOAT64,
+    BOOL,
+};
 
 enum class Instruction_Type
 {
@@ -44,12 +62,12 @@ enum class Instruction_Type
     LOAD_GLOBAL_ADDRESS, // op1 = dest_reg, op2 = global offset
     LOAD_FUNCTION_LOCATION, // op1 = dest_reg, op2 = funciton_index
 
-    CAST_INTEGER_DIFFERENT_SIZE, // op1 = dst_reg, op2 = src_reg, op3 = dst_prim_type, op4 = src_prim_type
-    CAST_FLOAT_DIFFERENT_SIZE, // op1 = dst_reg, op2 = src_reg, op3 = dst_prim_type, op4 = src_prim_type
-    CAST_FLOAT_INTEGER, // op1 = dst_reg, op2 = src_reg, op3 = dst_prim_type, op4 = src_prim_type
-    CAST_INTEGER_FLOAT, // op1 = dst_reg, op2 = src_reg, op3 = dst_prim_type, op4 = src_prim_type
+    CAST_INTEGER_DIFFERENT_SIZE, // op1 = dst_reg, op2 = src_reg, op3 = dst_type, op4 = src_type
+    CAST_FLOAT_DIFFERENT_SIZE, // op1 = dst_reg, op2 = src_reg, op3 = dst_type, op4 = src_type
+    CAST_FLOAT_INTEGER, // op1 = dst_reg, op2 = src_reg, op3 = dst_type, op4 = src_type
+    CAST_INTEGER_FLOAT, // op1 = dst_reg, op2 = src_reg, op3 = dst_type, op4 = src_type
 
-    // Binary operations work the following: op1 = dest_byte_offset, op2 = left_byte_offset, op3 = right_byte_offset, op4 = primitve_type
+    // Binary operations work the following: op1 = dest_byte_offset, op2 = left_byte_offset, op3 = right_byte_offset, op4 = bytecode_type
     BINARY_OP_ADDITION,
     BINARY_OP_SUBTRACTION,
     BINARY_OP_MULTIPLICATION,
@@ -64,7 +82,7 @@ enum class Instruction_Type
     BINARY_OP_AND,
     BINARY_OP_OR,
 
-    // Unary operations work the following: op1 = dest_byte_offset, op2 = operand_offset, op3 = primitive_type
+    // Unary operations work the following: op1 = dest_byte_offset, op2 = operand_offset, op3 = bytecode_type
     UNARY_OP_NEGATE,
     UNARY_OP_NOT
 };

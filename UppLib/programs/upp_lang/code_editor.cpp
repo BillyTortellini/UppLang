@@ -128,7 +128,7 @@ void code_editor_jump_to_definition(Code_Editor* editor)
     Symbol_Table* nearest_table = code_editor_find_symbol_table_of_text_position(editor, editor->text_editor->cursor_position);
     if (nearest_table != 0)
     {
-        Symbol* s = symbol_table_find_symbol_by_string(nearest_table, &search_name, editor->compiler.identifier_pool);
+        Symbol* s = symbol_table_find_symbol_by_string(nearest_table, &search_name, &editor->compiler.identifier_pool);
         if (s != 0 && s->definition_node_index != -1) {
             Token* token = &editor->compiler.lexer.tokens[editor->compiler.parser.token_mapping[s->definition_node_index].start_index];
             Text_Position result_pos = token->position.start;
@@ -271,15 +271,15 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
                     Symbol* symbol = symbol_table_find_symbol(symbol_table, t.attribute.identifier_number, false);
                     if (symbol != 0)
                     {
-                        if (symbol->symbol_type == Symbol_Type::TYPE) {
-                            if (symbol->options.data_type->type == Signature_Type::PRIMITIVE) {
+                        if (symbol->type == Symbol_Type::TYPE) {
+                            if (symbol->options.type->type == Signature_Type::PRIMITIVE) {
                                 color = PRIMITIVE_TYPE_COLOR;
                             }
                             else {
                                 color = TYPE_COLOR;
                             }
                         }
-                        else if (symbol->symbol_type == Symbol_Type::VARIABLE) {
+                        else if (symbol->type == Symbol_Type::VARIABLE) {
                             color = VARIABLE_COLOR;
                         }
                     }
@@ -344,6 +344,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
         // Search if we are in a function call
         if (search_context)
         {
+            /*
             int node_cursor_index = code_editor_get_closest_node_to_text_position(editor, editor->text_editor->cursor_position);
             int i = node_cursor_index;
             while (i != 0)
@@ -369,11 +370,13 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
                 }
                 i = node->parent;
             }
+            */
         }
 
         // Search if we are above an identifier, identifier_path, type_identifier, expression_variable_read
         if (search_context)
         {
+            /*
             int node_cursor_index = code_editor_get_closest_node_to_text_position(editor, editor->text_editor->cursor_position);
             AST_Node* node = &editor->compiler.parser.nodes[node_cursor_index];
             int index = node_cursor_index;
@@ -397,6 +400,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
                     symbol_append_to_string(&result.options.symbol, &editor->context_info, &editor->compiler.analyser);
                 }
             }
+            */
         }
 
         if (search_context) {

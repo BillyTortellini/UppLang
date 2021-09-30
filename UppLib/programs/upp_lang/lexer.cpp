@@ -265,10 +265,9 @@ bool character_is_letter(int c) {
         (c >= 'A' && c <= 'Z');
 }
 
-Lexer lexer_create(Identifier_Pool* pool)
+Lexer lexer_create()
 {
     Lexer lexer;
-    lexer.identifier_pool = pool;
     lexer.tokens = dynamic_array_create_empty<Token>(1024);
     lexer.tokens_with_whitespaces = dynamic_array_create_empty<Token>(1024);
 
@@ -339,8 +338,9 @@ bool number_base_is_valid_character(Number_Base base, int character)
     return false;
 }
 
-void lexer_parse_string(Lexer* lexer, String* code)
+void lexer_parse_string(Lexer* lexer, String* code, Identifier_Pool* identifier_pool)
 {
+    lexer->identifier_pool = identifier_pool;
     String identifier_string = string_create_empty(256);
     SCOPE_EXIT(string_destroy(&identifier_string));
 

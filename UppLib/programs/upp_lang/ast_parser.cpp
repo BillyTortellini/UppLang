@@ -263,7 +263,7 @@ bool ast_parser_parse_identifier_or_path(AST_Parser* parser, AST_Node_Index pare
     parser->index++;
 
     bool is_template_analysis = false;
-    if (ast_parser_parse_parameter_block(parser, node_index, false, Token_Type::COMPARISON_LESS, Token_Type::COMPARISON_GREATER, true)) {
+    if (ast_parser_parse_parameter_block(parser, node_index, false, Token_Type::COMPARISON_LESS, Token_Type::COMPARISON_GREATER, false)) {
         is_template_analysis = true;
     }
 

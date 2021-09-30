@@ -101,7 +101,7 @@ struct Lexer
 bool token_type_is_keyword(Token_Type type);
 const char* token_type_to_string(Token_Type type);
 
-Lexer lexer_create(Identifier_Pool* identifier_pool);
+Lexer lexer_create();
 void lexer_destroy(Lexer* result);
-void lexer_parse_string(Lexer* lexer, String* code);
+void lexer_parse_string(Lexer* lexer, String* code, Identifier_Pool* identifier_pool);
 void lexer_print(Lexer* result);
