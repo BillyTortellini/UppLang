@@ -32,8 +32,8 @@ enum class AST_Node_Type
     TYPE_FUNCTION_POINTER, // Child 0: Parameter_Block_Unnamed, Child 1 (optional): Return Type
     TYPE_IDENTIFIER, // Child 0: Either Identifer or Identifier Path
     TYPE_POINTER_TO, // Child 0: Type
-    TYPE_ARRAY_SIZED, // Child 0: Expression (Compile time available), Child 1: Type
-    TYPE_ARRAY_UNSIZED, // Child 0: Type
+    TYPE_ARRAY, // Child 0: Expression (Compile time available), Child 1: Type
+    TYPE_SLICE, // Child 0: Type
     STATEMENT_BLOCK, // Children: Statements
     STATEMENT_IF, // Child 0: Condition, Child 1: Statements
     STATEMENT_DEFER, // Child 0: Statement_Block

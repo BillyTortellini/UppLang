@@ -31,11 +31,11 @@ void type_signature_append_to_string_with_children(String* string, Type_Signatur
     case Signature_Type::VOID_TYPE:
         string_append_formated(string, "VOID");
         break;
-    case Signature_Type::ARRAY_SIZED:
+    case Signature_Type::ARRAY:
         string_append_formated(string, "[%d]", signature->options.array.element_count);
         type_signature_append_to_string_with_children(string, signature->options.array.element_type, print_child, identifier_pool);
         break;
-    case Signature_Type::ARRAY_UNSIZED:
+    case Signature_Type::SLICE:
         string_append_formated(string, "[]");
         type_signature_append_to_string_with_children(string, signature->options.array.element_type, print_child, identifier_pool);
         break;
@@ -103,7 +103,7 @@ void type_signature_append_value_to_string(Type_Signature* type, byte* value_ptr
         break;
     case Signature_Type::TEMPLATE_TYPE:
         break;
-    case Signature_Type::ARRAY_SIZED:
+    case Signature_Type::ARRAY:
     {
         string_append_formated(string, "[#%d ", type->options.array.element_count);
         if (type->options.array.element_count > 4) {
@@ -118,7 +118,7 @@ void type_signature_append_value_to_string(Type_Signature* type, byte* value_ptr
         string_append_formated(string, "]");
         break;
     }
-    case Signature_Type::ARRAY_UNSIZED:
+    case Signature_Type::SLICE:
     {
         byte* data_ptr = *((byte**)value_ptr);
         int element_count = *((int*)(value_ptr + 8));
@@ -295,7 +295,7 @@ void type_system_add_primitives(Type_System* system, Identifier_Pool* pool)
         Struct_Member character_buffer_member;
         character_buffer_member.name_handle = identifier_pool_add_or_find_identifier_by_string(pool, string_create_static("character_buffer"));
         character_buffer_member.offset = 0;
-        character_buffer_member.type = type_system_make_array_unsized(system, system->u8_type);
+        character_buffer_member.type = type_system_make_slice(system, system->u8_type);
 
         Struct_Member size_member;
         size_member.name_handle = identifier_pool_add_or_find_identifier_by_string(pool, string_create_static("size"));
@@ -314,6 +314,9 @@ void type_system_add_primitives(Type_System* system, Identifier_Pool* pool)
         system->string_type->options.structure.name = identifier_pool_add_or_find_identifier_by_string(pool, string_create_static("String"));
         dynamic_array_push_back(&system->types, system->string_type);
     }
+
+    system->id_data = identifier_pool_add_or_find_identifier_by_string(pool, string_create_static("data"));
+    system->id_size = identifier_pool_add_or_find_identifier_by_string(pool, string_create_static("size"));
 }
 
 Type_System type_system_create()
@@ -356,9 +359,9 @@ Type_Signature* type_system_register_type(Type_System* system, Type_Signature si
                 case Signature_Type::POINTER: are_equal = sig1->options.pointer_child == sig2->options.pointer_child; break;
                 case Signature_Type::STRUCT: are_equal = false; break;
                 case Signature_Type::TEMPLATE_TYPE: are_equal = false; break;
-                case Signature_Type::ARRAY_SIZED: are_equal = sig1->options.array.element_type == sig2->options.array.element_type && 
+                case Signature_Type::ARRAY: are_equal = sig1->options.array.element_type == sig2->options.array.element_type && 
                     sig1->options.array.element_count == sig2->options.array.element_count; break;
-                case Signature_Type::ARRAY_UNSIZED: are_equal = sig1->options.array.element_type == sig2->options.array.element_type; break;
+                case Signature_Type::SLICE: are_equal = sig1->options.array.element_type == sig2->options.array.element_type; break;
                 case Signature_Type::FUNCTION: 
                 {
                     are_equal = true;
@@ -401,13 +404,19 @@ Type_Signature* type_system_make_pointer(Type_System* system, Type_Signature* ch
 }
 
 
-Type_Signature* type_system_make_array_unsized(Type_System* system, Type_Signature* element_type)
+Type_Signature* type_system_make_slice(Type_System* system, Type_Signature* element_type)
 {
     Type_Signature result;
-    result.type = Signature_Type::ARRAY_UNSIZED;
-    result.options.array.element_type = element_type;
+    result.type = Signature_Type::SLICE;
     result.alignment = 8;
     result.size = 16;
+    result.options.slice.element_type = element_type;
+    result.options.slice.data_member.name_handle = system->id_data;
+    result.options.slice.data_member.type = type_system_make_pointer(system, element_type);
+    result.options.slice.data_member.offset = 0;
+    result.options.slice.size_member.name_handle = system->id_size;
+    result.options.slice.size_member.type = system->i32_type;
+    result.options.slice.size_member.offset = 8;
     return type_system_register_type(system, result);
 }
 

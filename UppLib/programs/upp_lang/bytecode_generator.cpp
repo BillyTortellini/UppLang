@@ -788,10 +788,10 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             {
                 Type_Signature* array_type = ir_data_access_get_type(&address_of->source);
                 int base_pointer_offset;
-                if (array_type->type == Signature_Type::ARRAY_SIZED) {
+                if (array_type->type == Signature_Type::ARRAY) {
                     base_pointer_offset = bytecode_generator_get_pointer_to_access(generator, address_of->source);
                 }
-                else if (array_type->type == Signature_Type::ARRAY_UNSIZED) {
+                else if (array_type->type == Signature_Type::SLICE) {
                     base_pointer_offset = bytecode_generator_data_access_to_stack_offset(generator, address_of->source);
                 }
                 else {
@@ -832,16 +832,16 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 instr.instruction_type = Instruction_Type::BINARY_OP_EQUAL;
                 break;
             case ModTree_Binary_Operation_Type::GREATER:
-                instr.instruction_type = Instruction_Type::BINARY_OP_GREATER_EQUAL;
-                break;
-            case ModTree_Binary_Operation_Type::GREATER_OR_EQUAL:
                 instr.instruction_type = Instruction_Type::BINARY_OP_GREATER_THAN;
                 break;
+            case ModTree_Binary_Operation_Type::GREATER_OR_EQUAL:
+                instr.instruction_type = Instruction_Type::BINARY_OP_GREATER_EQUAL;
+                break;
             case ModTree_Binary_Operation_Type::LESS:
-                instr.instruction_type = Instruction_Type::BINARY_OP_LESS_EQUAL;
+                instr.instruction_type = Instruction_Type::BINARY_OP_LESS_THAN;
                 break;
             case ModTree_Binary_Operation_Type::LESS_OR_EQUAL:
-                instr.instruction_type = Instruction_Type::BINARY_OP_LESS_THAN;
+                instr.instruction_type = Instruction_Type::BINARY_OP_LESS_EQUAL;
                 break;
             case ModTree_Binary_Operation_Type::MODULO:
                 instr.instruction_type = Instruction_Type::BINARY_OP_MODULO;
@@ -888,7 +888,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
 
             Type_Signature* operand_type = ir_data_access_get_type(&unary_op->source);
             assert(operand_type->type == Signature_Type::PRIMITIVE, "Should not happen");
-            instr.op4 = (int)primitive_to_bytecode_type(operand_type);
+            instr.op3 = (int)primitive_to_bytecode_type(operand_type);
             instr.op2 = bytecode_generator_data_access_to_stack_offset(generator, unary_op->source);
             bytecode_generator_add_instruction_and_set_destination(generator, unary_op->destination, instr);
             break;

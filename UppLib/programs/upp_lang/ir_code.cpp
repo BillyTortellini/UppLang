@@ -517,6 +517,20 @@ IR_Data_Access ir_data_access_create_intermediate(IR_Code_Block* block, Type_Sig
     return access;
 }
 
+IR_Data_Access ir_data_access_create_member(IR_Generator* generator, IR_Code_Block* block, IR_Data_Access struct_access, Struct_Member member)
+{
+    IR_Instruction member_instr;
+    member_instr.type = IR_Instruction_Type::ADDRESS_OF;
+    member_instr.options.address_of.type = IR_Instruction_Address_Of_Type::STRUCT_MEMBER;
+    member_instr.options.address_of.options.member = member;
+    member_instr.options.address_of.source = struct_access;
+    member_instr.options.address_of.destination = ir_data_access_create_intermediate(block, type_system_make_pointer(generator->type_system, member.type));
+    dynamic_array_push_back(&block->instructions, member_instr);
+
+    member_instr.options.address_of.destination.is_memory_access = true;
+    return member_instr.options.address_of.destination;
+}
+
 IR_Generator ir_generator_create()
 {
     IR_Generator generator;
@@ -598,6 +612,9 @@ IR_Data_Access ir_generator_generate_expression(IR_Generator* generator, IR_Code
             instr.type = IR_Instruction_Type::MOVE;
             instr.options.move.destination = ptr_access;
             instr.options.move.source = access;
+            if ((int)access.type < 0 || (int)access.type > 6) {
+                panic("HEY");
+            }
             dynamic_array_push_back(&ir_block->instructions, instr);
 
             ptr_access.is_memory_access = true;
@@ -720,29 +737,54 @@ IR_Data_Access ir_generator_generate_expression(IR_Generator* generator, IR_Code
     case ModTree_Expression_Type::NEW_ALLOCATION:
     {
         // FUTURE: At some point this will access the Context struct for the alloc function, and then call it
-        IR_Instruction instr;
-        instr.type = IR_Instruction_Type::FUNCTION_CALL;
-        instr.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
-        instr.options.call.options.hardcoded.type = Hardcoded_Function_Type::MALLOC_SIZE_I32;
-        instr.options.call.options.hardcoded.signature = generator->compiler->analyser.malloc_function->signature;
-        instr.options.call.destination = ir_data_access_create_intermediate(ir_block, expression->result_type);
-        instr.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(1);
-
-        IR_Data_Access size_access = ir_data_access_create_constant_i32(generator, expression->options.new_allocation.allocation_size);;
         if (expression->options.new_allocation.element_count.available)
         {
+            assert(expression->result_type->type == Signature_Type::SLICE, "HEY");
+            IR_Data_Access array_access = ir_data_access_create_intermediate(ir_block, expression->result_type); // Array
+            IR_Data_Access array_data_access = ir_data_access_create_member(generator, ir_block, array_access, expression->result_type->options.slice.data_member);
+            IR_Data_Access array_size_access = ir_data_access_create_member(generator, ir_block, array_access, expression->result_type->options.slice.size_member);
+
+            IR_Instruction move_instr;
+            move_instr.type = IR_Instruction_Type::MOVE;
+            move_instr.options.move.source = ir_generator_generate_expression(generator, ir_block, expression->options.new_allocation.element_count.value);
+            move_instr.options.move.destination = array_size_access;
+            dynamic_array_push_back(&ir_block->instructions, move_instr);
+
             IR_Instruction mult_instr;
             mult_instr.type = IR_Instruction_Type::BINARY_OP;
             mult_instr.options.binary_op.type = ModTree_Binary_Operation_Type::MULTIPLICATION;
             mult_instr.options.binary_op.destination = ir_data_access_create_intermediate(ir_block, generator->type_system->i32_type);
-            mult_instr.options.binary_op.operand_left = size_access;
-            mult_instr.options.binary_op.operand_right = ir_generator_generate_expression(generator, ir_block, expression->options.new_allocation.element_count.value);
+            mult_instr.options.binary_op.operand_left =  ir_data_access_create_constant_i32(generator, expression->options.new_allocation.allocation_size);
+            mult_instr.options.binary_op.operand_right = array_size_access;
             dynamic_array_push_back(&ir_block->instructions, mult_instr);
-            size_access = mult_instr.options.binary_op.destination;
+
+            IR_Instruction alloc_instr;
+            alloc_instr.type = IR_Instruction_Type::FUNCTION_CALL;
+            alloc_instr.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
+            alloc_instr.options.call.options.hardcoded.type = Hardcoded_Function_Type::MALLOC_SIZE_I32;
+            alloc_instr.options.call.options.hardcoded.signature = generator->compiler->analyser.malloc_function->signature;
+            alloc_instr.options.call.destination = array_data_access;
+            alloc_instr.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(1);
+            dynamic_array_push_back(&alloc_instr.options.call.arguments, mult_instr.options.binary_op.destination);
+            dynamic_array_push_back(&ir_block->instructions, alloc_instr);
+            return array_access;
         }
-        dynamic_array_push_back(&instr.options.call.arguments, size_access);
-        dynamic_array_push_back(&ir_block->instructions, instr);
-        return instr.options.address_of.destination;
+        else
+        {
+            IR_Instruction alloc_instr;
+            alloc_instr.type = IR_Instruction_Type::FUNCTION_CALL;
+            alloc_instr.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
+            alloc_instr.options.call.options.hardcoded.type = Hardcoded_Function_Type::MALLOC_SIZE_I32;
+            alloc_instr.options.call.options.hardcoded.signature = generator->compiler->analyser.malloc_function->signature;
+            alloc_instr.options.call.destination = ir_data_access_create_intermediate(ir_block, expression->result_type);
+            alloc_instr.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(1);
+            dynamic_array_push_back(&alloc_instr.options.call.arguments, ir_data_access_create_constant_i32(generator, expression->options.new_allocation.allocation_size));
+            dynamic_array_push_back(&ir_block->instructions, alloc_instr);
+            return alloc_instr.options.call.destination;
+        }
+
+        panic("Unreachable");
+        break;
     }
     case ModTree_Expression_Type::CAST: {
         IR_Instruction instr;
@@ -856,6 +898,9 @@ void ir_generator_generate_block(IR_Generator* generator, IR_Code_Block* ir_bloc
             instr.type = IR_Instruction_Type::MOVE;
             instr.options.move.source = ir_generator_generate_expression(generator, ir_block, statement->options.assignment.source);
             instr.options.move.destination = ir_generator_generate_expression(generator, ir_block, statement->options.assignment.destination);
+            if ((int)instr.options.move.source.type < 0 || (int)instr.options.move.source.type > 6) {
+                panic("HEY");
+            }
             dynamic_array_push_back(&ir_block->instructions, instr);
             break;
         }

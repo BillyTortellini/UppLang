@@ -10,12 +10,6 @@
 /*
     As a learning experience, I am going to generate ir-code from the built modtree now
 
-    1. Build modtree while analysing
-    2. Remove IR Code generation (Maybe move to other file for the time being?)
-    3. Generate IR Code from Modtree
-    4. Continue working on compile-time code execution/templates
-    5. Macros
-
     What can differentiate ModTree from IR_Code?
         Module Hierarchy:          Keep    vs. Flatten
         Resolve Identifiers to:    Symbols vs. Structures (Functions, Data_Accesses...)
@@ -34,9 +28,6 @@
 
     ModTree Problems:
         Expressions cannot resolve sized_array to array cast to just statements
-        Function pointers are kinda shitty
-
-    TODO: Things that expect functions to be availabe need to check if signature != 0
 */
 
 struct Type_Signature;
@@ -624,3 +615,4 @@ struct AST_Parser;
 void symbol_append_to_string(Symbol* symbol, String* string, Semantic_Analyser* analyser);
 void hardcoded_function_type_append_to_string(String* string, Hardcoded_Function_Type hardcoded);
 void exit_code_append_to_string(String* string, Exit_Code code);
+Identifier_Analysis_Result semantic_analyser_analyse_identifier_node(Semantic_Analyser* analyser, Symbol_Table* table, int node_index, bool only_current_scope);

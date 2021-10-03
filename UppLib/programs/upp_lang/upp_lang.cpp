@@ -238,10 +238,12 @@ void upp_lang_main()
             }
 
             camera_controller_arcball_update(&camera_controller_arcball, camera, input, window_state->width, window_state->height);
-            gui_update(&gui, input, window_state->width, window_state->height);
+            //gui_update(&gui, input, window_state->width, window_state->height);
             code_editor_update(&code_editor, input, timer_current_time_in_seconds(&timer));
             input_reset(input); // Clear input for next frame
         }
+
+        double time_input_end = timer_current_time_in_seconds(&timer);
 
         // Rendering
         {
@@ -329,10 +331,17 @@ void upp_lang_main()
             window_swap_buffers(window);
         }
 
+        double time_render_end = timer_current_time_in_seconds(&timer);
+
         // Sleep
         {
             double time_calculations = timer_current_time_in_seconds(&timer) - time_frame_start;
-            //logg("TSLF: %3.2fms, calculation time: %3.2fms\n", time_since_last_update*1000, time_calculations*1000);
+            /*
+            logg("FRAME_TIMING:\n---------------\n");
+            logg("input        ... %3.2fms\n", 1000.0f * (float)(time_input_end - time_frame_start));
+            logg("render       ... %3.2fms\n", 1000.0f * (float)(time_render_end - time_input_end));
+            logg("TSLF: %3.2fms, calculation time: %3.2fms\n", time_since_last_update*1000, time_calculations*1000);
+            */
 
             // Sleep
             const int TARGET_FPS = 60;

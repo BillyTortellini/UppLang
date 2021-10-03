@@ -9,17 +9,17 @@ bool enable_analysis = true;
 bool enable_ir_gen = true;
 bool enable_bytecode_gen = true;
 bool enable_c_generation = true;
-bool enable_c_compilation = true;
+bool enable_c_compilation = false;
 bool enable_output = true;
 bool enable_execution = true;
-bool execute_binary = true;
+bool execute_binary = false;
 
 bool output_lexing = false;
 bool output_identifiers = false;
 bool output_ast = false;
 bool output_type_system = false;
 bool output_root_table = false;
-bool output_ir = true;
+bool output_ir = false;
 bool output_bytecode = false;
 bool output_timing = true;
 

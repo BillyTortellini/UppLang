@@ -4,21 +4,38 @@ PrintF Debugging could be replaced with memory visualizer
 'Destructors' could be generated with metaprogramming, simple initializors too
 Differentiate States and Tags in the language
 Functions may just be compile time known function pointers?
-Should we have compile-time known arguments?
+Should we have compile-time known arguments, are they the same as template args?
 Hardcoded functions should be removed at some point
 Context struct could live in thread-local memory
-Auto cast keyword
+Auto cast keyword would be nice and easy
 Delete IR_Code, just use modtree for translation
-Syntax guided editor
+Syntax guided editor would be cool I guess
 Are stacked pointers a reasonable idea (**int)? Where would i use them
 Maybe have struct type signature differentiate having a symbol (For struct name and member names) and a signature
 Automated parameter deduction (Like macros taking names from outer scope)
 
-Replace string_identifier with String*
-Replace Semantic error identifier lookup with Symbol*
+Code Ideas:
+-----------
 Maybe think about making initializers helpers for expressions/statements?
 Const expression evaluation maybe after creation?
-Maybe move constant pool out of modtree
+Symbol template infos add info if symbol is templated
+Symbols should keep track of references (Where they are used)
+Redo template syntax, only allow on functions/structs
+
+
+
+
+
+TODO NOW:
+---------
+Module highlighting
+Replace string_identifier with String*
+Function pointers are only accessible in variables, not in expressions.
+Load other text files with #load
+Create automatic test cases
+
+
+
 
 
 Tactics:
@@ -27,7 +44,7 @@ Tactics:
  2. Value for Unary operators
  3. Value for Binary operators
  4. Value for variables
- 5. Replace types with expressions
+ 5. Bake for function execution
 
 Next Up:
 --------

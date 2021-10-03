@@ -383,7 +383,7 @@ bool ast_parser_parse_type(AST_Parser* parser, AST_Node_Index parent)
     if (ast_parser_test_next_token(parser, Token_Type::OPEN_BRACKETS))
     {
         parser->index++;
-        parser->nodes[node_index].type = AST_Node_Type::TYPE_ARRAY_UNSIZED;
+        parser->nodes[node_index].type = AST_Node_Type::TYPE_SLICE;
         if (ast_parser_test_next_token(parser, Token_Type::CLOSED_BRACKETS)) {
             parser->index++;
             if (!ast_parser_parse_type(parser, node_index)) {
@@ -394,7 +394,7 @@ bool ast_parser_parse_type(AST_Parser* parser, AST_Node_Index parent)
             return true;
         }
 
-        parser->nodes[node_index].type = AST_Node_Type::TYPE_ARRAY_SIZED;
+        parser->nodes[node_index].type = AST_Node_Type::TYPE_ARRAY;
         if (!ast_parser_parse_expression(parser, node_index)) {
             ast_parser_checkpoint_reset(checkpoint);
             return false;
@@ -1978,7 +1978,7 @@ void ast_parser_check_sanity(AST_Parser* parser)
                 }
             }
             break;
-        case AST_Node_Type::TYPE_ARRAY_UNSIZED:
+        case AST_Node_Type::TYPE_SLICE:
         case AST_Node_Type::TYPE_POINTER_TO:
         case AST_Node_Type::NAMED_PARAMETER:
             if (node->children.size != 1) {
@@ -1988,7 +1988,7 @@ void ast_parser_check_sanity(AST_Parser* parser)
                 panic("Should not happen");
             }
             break;
-        case AST_Node_Type::TYPE_ARRAY_SIZED:
+        case AST_Node_Type::TYPE_ARRAY:
             if (node->children.size != 2) {
                 panic("Should not happen");
             }
@@ -2337,8 +2337,8 @@ String ast_node_type_to_string(AST_Node_Type type)
     case AST_Node_Type::TYPE_FUNCTION_POINTER: return string_create_static("TYPE_FUNCTION_POINTER");
     case AST_Node_Type::TYPE_IDENTIFIER: return string_create_static("TYPE_IDENTIFIER");
     case AST_Node_Type::TYPE_POINTER_TO: return string_create_static("TYPE_POINTER_TO");
-    case AST_Node_Type::TYPE_ARRAY_SIZED: return string_create_static("TYPE_ARRAY_SIZED");
-    case AST_Node_Type::TYPE_ARRAY_UNSIZED: return string_create_static("TYPE_ARRAY_UNSIZED");
+    case AST_Node_Type::TYPE_ARRAY: return string_create_static("TYPE_ARRAY");
+    case AST_Node_Type::TYPE_SLICE: return string_create_static("TYPE_SLICE");
     case AST_Node_Type::PARAMETER_BLOCK_UNNAMED: return string_create_static("PARAMETER_BLOCK_UNNAMED");
     case AST_Node_Type::PARAMETER_BLOCK_NAMED: return string_create_static("PARAMETER_BLOCK_NAMED");
     case AST_Node_Type::NAMED_PARAMETER: return string_create_static("PARAMETER");
@@ -2403,7 +2403,7 @@ bool ast_node_type_is_statement(AST_Node_Type type) {
     return type >= AST_Node_Type::STATEMENT_BLOCK && type <= AST_Node_Type::STATEMENT_DELETE;
 }
 bool ast_node_type_is_type(AST_Node_Type type) {
-    return type >= AST_Node_Type::FUNCTION_SIGNATURE && type <= AST_Node_Type::TYPE_ARRAY_UNSIZED;
+    return type >= AST_Node_Type::FUNCTION_SIGNATURE && type <= AST_Node_Type::TYPE_SLICE;
 }
 
 void ast_node_identifer_or_path_append_to_string(AST_Parser* parser, AST_Node_Index index, String* string)

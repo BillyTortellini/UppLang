@@ -3,6 +3,19 @@
 #include "../../utility/file_io.hpp"
 #include "../../rendering/renderer_2D.hpp"
 
+vec3 KEYWORD_COLOR = vec3(0.65f, 0.4f, 0.8f);
+vec3 COMMENT_COLOR = vec3(0.0f, 1.0f, 0.0f);
+vec3 FUNCTION_COLOR = vec3(0.7f, 0.7f, 0.4f);
+vec3 MODULE_COLOR = vec3(0.3f, 0.6f, 0.7f);
+vec3 IDENTIFIER_FALLBACK_COLOR = vec3(0.7f, 0.7f, 1.0f);
+vec3 TEXT_COLOR = vec3(1.0f);
+vec3 VARIABLE_COLOR = vec3(0.5f, 0.5f, 0.8f);
+vec3 TYPE_COLOR = vec3(0.4f, 0.9f, 0.9f);
+vec3 PRIMITIVE_TYPE_COLOR = vec3(0.1f, 0.3f, 1.0f);
+vec3 STRING_LITERAL_COLOR = vec3(0.85f, 0.65f, 0.0f);
+vec4 BG_COLOR = vec4(0);
+vec4 ERROR_BG_COLOR = vec4(0.7f, 0.0f, 0.0f, 1.0f);
+
 Code_Editor code_editor_create(Text_Renderer* text_renderer, Rendering_Core* core, Timer* timer)
 {
     Code_Editor result;
@@ -142,8 +155,123 @@ void code_editor_jump_to_definition(Code_Editor* editor)
     }
 }
 
+void highlight_identifiers(Code_Editor* editor, int ast_node_index, Symbol_Table* symbol_table)
+{
+    AST_Node* node = &editor->compiler.parser.nodes[ast_node_index];
+    Token_Range node_range = editor->compiler.parser.token_mapping[ast_node_index];
+
+    // Variables definition, module def, funciton def, parameters
+    if (node->type == AST_Node_Type::MODULE || node->type == AST_Node_Type::MODULE_TEMPLATED) {
+        Token_Range r = node_range;
+        r.start_index += 1;
+        r.end_index = r.start_index + 1;
+        text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, &editor->compiler), MODULE_COLOR, BG_COLOR);
+    }
+    else if (node->type == AST_Node_Type::STRUCT) {
+        Token_Range r = node_range;
+        r.end_index = r.start_index + 1;
+        text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, &editor->compiler), TYPE_COLOR, BG_COLOR);
+    }
+    else if (node->type == AST_Node_Type::STATEMENT_VARIABLE_DEFINE_ASSIGN ||
+        node->type == AST_Node_Type::STATEMENT_VARIABLE_DEFINE_INFER ||
+        node->type == AST_Node_Type::STATEMENT_VARIABLE_DEFINITION) 
+    {
+        Token_Range r = node_range;
+        r.end_index = r.start_index + 1;
+        text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, &editor->compiler), VARIABLE_COLOR, BG_COLOR);
+    }
+    else if (node->type == AST_Node_Type::FUNCTION) {
+        Token_Range r = node_range;
+        r.end_index = r.start_index + 1;
+        text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, &editor->compiler), FUNCTION_COLOR, BG_COLOR);
+    }
+    else if (node->type == AST_Node_Type::NAMED_PARAMETER) {
+        Token_Range r = node_range;
+        r.end_index = r.start_index + 1;
+        text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, &editor->compiler), VARIABLE_COLOR, BG_COLOR);
+    }
+    else if (ast_node_type_is_identifier_node(node->type))
+    {
+        Identifier_Analysis_Result result = semantic_analyser_analyse_identifier_node(&editor->compiler.analyser, symbol_table, ast_node_index, false);
+        switch (result.type)
+        {
+        case Analysis_Result_Type::SUCCESS:
+        {
+            while (node != 0)
+            {
+                int child_index = -1;
+                if (node->type == AST_Node_Type::IDENTIFIER_PATH || node->type == AST_Node_Type::IDENTIFIER_PATH_TEMPLATED)
+                {
+                    // Highlight module name
+                    Token_Range r = node_range;
+                    r.end_index = r.start_index + 1;
+                    text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, &editor->compiler), MODULE_COLOR, BG_COLOR);
+                    child_index = node->children[0];
+                }
+                else
+                {
+                    // Highlight identifier name
+                    Symbol* symbol = result.options.symbol;
+                    vec3 color = IDENTIFIER_FALLBACK_COLOR;
+                    switch (symbol->type)
+                    {
+                    case Symbol_Type::FUNCTION: color = FUNCTION_COLOR; break;
+                    case Symbol_Type::MODULE: color = MODULE_COLOR; break;
+                    case Symbol_Type::TYPE: color = TYPE_COLOR; break;
+                    case Symbol_Type::VARIABLE: color = VARIABLE_COLOR; break;
+                    default: panic("HEY");
+                    }
+                    Token_Range r = node_range;
+                    r.end_index = r.start_index + 1;
+                    text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, &editor->compiler), color, BG_COLOR);
+                }
+
+                if (node->type == AST_Node_Type::IDENTIFIER_NAME_TEMPLATED || node->type == AST_Node_Type::IDENTIFIER_PATH_TEMPLATED) 
+                {
+                    // Highlight template params
+                    if (node->type == AST_Node_Type::IDENTIFIER_NAME_TEMPLATED) {
+                        highlight_identifiers(editor, node->children[0], symbol_table);
+                    }
+                    else {
+                        highlight_identifiers(editor, node->children[1], symbol_table);
+                    }
+                }
+
+                if (child_index == -1) {
+                    node = 0;
+                }
+                else {
+                    node_range = editor->compiler.parser.token_mapping[child_index];
+                    node = &editor->compiler.parser.nodes[child_index];
+                }
+            }
+            break;
+        }
+        case Analysis_Result_Type::ERROR_OCCURED:
+            break;
+        case Analysis_Result_Type::DEPENDENCY:
+            break;
+        default: panic("HEY");
+        }
+
+        return;
+    }
+
+    Symbol_Table** new_table = hashtable_find_element(&editor->compiler.analyser.ast_to_symbol_table, ast_node_index);
+    if (new_table != 0) {
+        symbol_table = *new_table;
+    }
+    for (int i = 0; i < node->children.size; i++) {
+        highlight_identifiers(editor, node->children[i], symbol_table);
+    }
+}
+
 void code_editor_update(Code_Editor* editor, Input* input, double time)
 {
+    Timer* timer = editor->compiler.timer;
+    bool timing_enabled = false;
+    double time_update_start = timer_current_time_in_seconds(timer);
+
     // Execute editor commands
     for (int i = 0; i < input->key_messages.size; i++)
     {
@@ -229,19 +357,11 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
         compiler_execute(&editor->compiler);
     }
 
+    double time_input_read_end = timer_current_time_in_seconds(timer);
+
     // Do syntax highlighting
     {
         text_editor_reset_highlights(editor->text_editor);
-        vec3 KEYWORD_COLOR = vec3(0.65f, 0.4f, 0.8f);
-        vec3 COMMENT_COLOR = vec3(0.0f, 1.0f, 0.0f);
-        vec3 FUNCTION_COLOR = vec3(0.7f, 0.7f, 0.4f);
-        vec3 IDENTIFIER_FALLBACK_COLOR = vec3(0.7f, 0.7f, 1.0f);
-        vec3 VARIABLE_COLOR = vec3(0.5f, 0.5f, 0.8f);
-        vec3 TYPE_COLOR = vec3(0.4f, 0.9f, 0.9f);
-        vec3 PRIMITIVE_TYPE_COLOR = vec3(0.1f, 0.3f, 1.0f);
-        vec3 STRING_LITERAL_COLOR = vec3(0.85f, 0.65f, 0.0f);
-        vec3 ERROR_TOKEN_COLOR = vec3(1.0f, 0.0f, 0.0f);
-        vec4 BG_COLOR = vec4(0);
         for (int i = 0; i < editor->compiler.lexer.tokens_with_whitespaces.size; i++)
         {
             Token t = editor->compiler.lexer.tokens_with_whitespaces[i];
@@ -252,47 +372,18 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
             else if (t.type == Token_Type::STRING_LITERAL)
                 text_editor_add_highlight_from_slice(editor->text_editor, t.position, STRING_LITERAL_COLOR, BG_COLOR);
             else if (t.type == Token_Type::ERROR_TOKEN)
-                text_editor_add_highlight_from_slice(editor->text_editor, t.position, ERROR_TOKEN_COLOR, BG_COLOR);
-            else if (t.type == Token_Type::IDENTIFIER_NAME)
-            {
-                AST_Node_Index nearest_node_index = code_editor_get_closest_node_to_text_position(editor, t.position.start);
-                AST_Node* nearest_node = &editor->compiler.parser.nodes[nearest_node_index];
-                vec3 color = IDENTIFIER_FALLBACK_COLOR;
-                if (nearest_node->type == AST_Node_Type::EXPRESSION_FUNCTION_CALL ||
-                    nearest_node->type == AST_Node_Type::FUNCTION) {
-                    color = FUNCTION_COLOR;
-                }
-                if (nearest_node->type == AST_Node_Type::STRUCT) {
-                    color = TYPE_COLOR;
-                }
-                Symbol_Table* symbol_table = code_editor_find_symbol_table_of_text_position(editor, t.position.start);
-                if (symbol_table != 0)
-                {
-                    Symbol* symbol = symbol_table_find_symbol(symbol_table, t.attribute.identifier_number, false);
-                    if (symbol != 0)
-                    {
-                        if (symbol->type == Symbol_Type::TYPE) {
-                            if (symbol->options.type->type == Signature_Type::PRIMITIVE) {
-                                color = PRIMITIVE_TYPE_COLOR;
-                            }
-                            else {
-                                color = TYPE_COLOR;
-                            }
-                        }
-                        else if (symbol->type == Symbol_Type::VARIABLE) {
-                            color = VARIABLE_COLOR;
-                        }
-                    }
-                }
-                text_editor_add_highlight_from_slice(editor->text_editor, t.position, color, BG_COLOR);
-            }
+                text_editor_add_highlight_from_slice(editor->text_editor, t.position, TEXT_COLOR, ERROR_BG_COLOR);
         }
+
+        highlight_identifiers(editor, 0, editor->compiler.analyser.program->root_module->symbol_table);
 
         for (int i = 0; i < editor->compiler.parser.errors.size; i++) {
             Compiler_Error e = editor->compiler.parser.errors[i];
-            text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(e.range, &editor->compiler), vec3(1.0f), vec4(1.0f, 0.0f, 0.0f, 0.3f));
+            text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(e.range, &editor->compiler), TEXT_COLOR, ERROR_BG_COLOR);
         }
     }
+
+    double time_syntax_end = timer_current_time_in_seconds(timer);
 
     // Do context highlighting
     {
@@ -406,6 +497,16 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
         if (search_context) {
             editor->show_context_info = false;
         }
+    }
+
+    double time_context_end = timer_current_time_in_seconds(timer);
+
+    if (timing_enabled) {
+        logg("EDITOR_TIMING:\n---------------\n");
+        logg(" input        ... %3.2fms\n", 1000.0f * (float)(time_input_read_end - time_update_start));
+        logg(" syntax       ... %3.2fms\n", 1000.0f * (float)(time_syntax_end - time_input_read_end));
+        logg(" context      ... %3.2fms\n", 1000.0f * (float)(time_context_end - time_syntax_end));
+        logg(" sum          ... %3.2fms\n", 1000.0f * (float)(time_context_end - time_update_start));
     }
 
     // Highlight current node index

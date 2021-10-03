@@ -265,12 +265,12 @@ void c_generator_register_type_name(C_Generator* generator, Type_Signature* type
     String type_name = string_create_empty(32);
     switch (type->type)
     {
-    case Signature_Type::ARRAY_SIZED: {
+    case Signature_Type::ARRAY: {
         string_append_formated(&type_name, "Array_Sized_%d", generator->name_counter);
         generator->name_counter++;
         string_append_formated(&generator->section_struct_prototypes, "struct %s;\n", type_name.characters);
 
-        if (type->options.array.element_type->type == Signature_Type::STRUCT || type->options.array.element_type->type == Signature_Type::ARRAY_SIZED)
+        if (type->options.array.element_type->type == Signature_Type::STRUCT || type->options.array.element_type->type == Signature_Type::ARRAY)
         {
             C_Type_Definition_Dependency dependant;
             dependant.signature = type;
@@ -287,7 +287,7 @@ void c_generator_register_type_name(C_Generator* generator, Type_Signature* type
         }
         break;
     }
-    case Signature_Type::ARRAY_UNSIZED: {
+    case Signature_Type::SLICE: {
         string_append_formated(&type_name, "Array_Unsized_%d", generator->name_counter);
         generator->name_counter++;
         string_append_formated(&generator->section_struct_prototypes, "struct %s;\n", type_name.characters);
@@ -423,17 +423,63 @@ void c_generator_output_data_access(C_Generator* generator, String* output, IR_D
     case IR_Data_Access_Type::CONSTANT:
     {
         Upp_Constant* constant = &generator->compiler->constant_pool.constants[access.index];
-        Type_Signature* signature = constant->type;
+        Type_Signature* type = constant->type;
         void* raw_data = &generator->compiler->constant_pool.buffer[constant->offset];
-        if (signature->type == Signature_Type::PRIMITIVE) {
-            type_signature_append_value_to_string(signature, (byte*)raw_data, output);
+        if (type->type == Signature_Type::PRIMITIVE) 
+        {
+            switch (type->options.primitive.type)
+            {
+            case Primitive_Type::BOOLEAN: {
+                bool val = *(bool*)raw_data;
+                string_append_formated(output, "%s", val ? "true" : "false");
+                break;
+            }
+            case Primitive_Type::INTEGER: {
+                int value = 0;
+                if (type->options.primitive.is_signed)
+                {
+                    switch (type->size)
+                    {
+                    case 1: value = (i32) * (i8*)raw_data; break;
+                    case 2: value = (i32) * (i16*)raw_data; break;
+                    case 4: value = (i32) * (i32*)raw_data; break;
+                    case 8: value = (i32) * (i64*)raw_data; break;
+                    default: panic("HEY");
+                    }
+                }
+                else
+                {
+                    switch (type->size)
+                    {
+                    case 1: value = (i32) * (u8*)raw_data; break;
+                    case 2: value = (i32) * (u16*)raw_data; break;
+                    case 4: value = (i32) * (u32*)raw_data; break;
+                    case 8: value = (i32) * (u64*)raw_data; break;
+                    default: panic("HEY");
+                    }
+                }
+                string_append_formated(output, "%d", value);
+                break;
+            }
+            case Primitive_Type::FLOAT: {
+                if (type->size == 4) {
+                    string_append_formated(output, "%3.2f", *(float*)raw_data);
+                }
+                else if (type->size == 8) {
+                    string_append_formated(output, "%3.2f", *(float*)raw_data);
+                }
+                else panic("HEY");
+                break;
+            }
+            default: panic("HEY");
+            }
         }
-        else if (signature == generator->compiler->type_system.string_type) {
+        else if (type == generator->compiler->type_system.string_type) {
             String* string_access_str = hashtable_find_element(&generator->translation_string_data_to_name, access.index);
             assert(string_access_str != 0, "Should not happen");
             string_append_formated(output, string_access_str->characters);
         }
-        else if (signature->type == Signature_Type::POINTER && signature->options.pointer_child->type == Signature_Type::VOID_TYPE) {
+        else if (type->type == Signature_Type::POINTER && type->options.pointer_child->type == Signature_Type::VOID_TYPE && *(void**)raw_data == nullptr) {
             string_append_formated(output, "nullptr");
         }
         else {
@@ -668,7 +714,7 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
             switch (cast->type)
             {
             case ModTree_Cast_Type::ARRAY_SIZED_TO_UNSIZED: {
-                assert(ir_data_access_get_type(&cast->source)->type == Signature_Type::ARRAY_SIZED, "HEy");
+                assert(ir_data_access_get_type(&cast->source)->type == Signature_Type::ARRAY, "HEy");
                 c_generator_output_data_access(generator, output, cast->destination);
                 string_append_formated(output, ".data = &(");
                 c_generator_output_data_access(generator, output, cast->source);
@@ -726,7 +772,7 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
             case IR_Instruction_Address_Of_Type::STRUCT_MEMBER: {
                 string_append_formated(output, "&(");
                 c_generator_output_data_access(generator, output, addr_of->source);
-                string_append_formated(output, ").%s;\n", 
+                string_append_formated(output, ").%s;\n",
                     identifier_pool_index_to_string(&generator->compiler->identifier_pool, addr_of->options.member.name_handle).characters
                 );
                 break;
@@ -829,7 +875,7 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
     // Create String Data code
     {
         String str = string_create("Unsized_Array_U8");
-        Type_Signature* sig = type_system_make_array_unsized(&generator->compiler->type_system, generator->compiler->type_system.u8_type);
+        Type_Signature* sig = type_system_make_slice(&generator->compiler->type_system, generator->compiler->type_system.u8_type);
         hashtable_insert_element(&generator->translation_type_to_name, sig, str);
         String str_str = string_create("Upp_String");
         hashtable_insert_element(&generator->translation_type_to_name, generator->compiler->type_system.string_type, str_str);
@@ -875,7 +921,7 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
         Extern_Function_Identifier* function = &generator->compiler->extern_sources.extern_functions[i];
         Type_Signature* function_signature = function->function_signature;
         c_generator_output_type_reference(generator, &generator->section_function_prototypes, function_signature->options.function.return_type);
-        string_append_formated(&generator->section_function_prototypes, " %s(", 
+        string_append_formated(&generator->section_function_prototypes, " %s(",
             identifier_pool_index_to_string(&generator->compiler->identifier_pool, function->name_id).characters
         );
         for (int j = 0; j < function->function_signature->options.function.parameter_types.size; j++) {
@@ -965,7 +1011,7 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
                     dynamic_array_push_back(&generator->type_dependencies[*dependent_index].incoming_dependencies, i);
                 }
             }
-            else if (dependency->signature->type == Signature_Type::ARRAY_SIZED)
+            else if (dependency->signature->type == Signature_Type::ARRAY)
             {
                 int* dependent_index = hashtable_find_element(&generator->type_to_dependency_mapping, dependency->signature->options.array.element_type);
                 if (dependent_index == 0) continue;
@@ -1022,7 +1068,7 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
                 }
                 string_append_formated(&generator->section_struct_implementations, "};\n\n");
             }
-            else if (dependency->signature->type == Signature_Type::ARRAY_SIZED) {
+            else if (dependency->signature->type == Signature_Type::ARRAY) {
                 string_append_formated(&generator->section_struct_implementations, "struct %s {\n    ", type_name->characters);
                 c_generator_output_type_reference(generator, &generator->section_struct_implementations, dependency->signature->options.array.element_type);
                 string_append_formated(&generator->section_struct_implementations, " data[%d];\n};\n\n", dependency->signature->options.array.element_count);
