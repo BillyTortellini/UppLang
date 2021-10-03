@@ -34,6 +34,6 @@ struct Type_Signature;
 struct Extern_Function_Identifier
 {
     Type_Signature* function_signature;
-    int name_id;
+    String* id;
 };
 

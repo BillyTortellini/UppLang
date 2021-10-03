@@ -848,7 +848,7 @@ void bytecode_interpreter_print_state(Bytecode_Interpreter* interpreter)
         }
         else if (reg->type == Intermediate_Register_Type::VARIABLE) {
             logg("Variable %s (Offset %d): ",
-                identifier_pool_index_to_string(interpreter->generator->im_generator->analyser->parser->lexer, reg->name_id).characters,
+                identifier_pool_index_to_string(interpreter->generator->im_generator->analyser->parser->lexer, reg->id).characters,
                 stack_offset
             );
         }

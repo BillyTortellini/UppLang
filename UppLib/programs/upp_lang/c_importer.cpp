@@ -10,7 +10,7 @@
 
 struct C_Variable_Instance
 {
-    int name_id;
+    String* id;
     C_Import_Type* type;
 };
 
@@ -23,7 +23,7 @@ struct C_Variable_Definition
 C_Import_Package c_import_package_create()
 {
     C_Import_Package result;
-    result.symbol_table.symbols = hashtable_create_empty<int, C_Import_Symbol>(64, hash_i32, equals_i32);
+    result.symbol_table.symbols = hashtable_create_pointer_empty<String*, C_Import_Symbol>(64);
     result.type_system.registered_types = dynamic_array_create_empty<C_Import_Type*>(64);
 
     C_Import_Type* error_prototype = new C_Import_Type;
@@ -127,42 +127,42 @@ struct Header_Parser
     int index;
     String source_code;
 
-    int identifier_typedef;
-    int identifier_unaligned;
-    int identifier_inline;
-    int identifier_inline_alt;
-    int identifier_ptr32;
-    int identifier_ptr64;
-    int identifier_force_inline;
-    int identifier_static;
-    int identifier_enum;
-    int identifier_union;
-    int identifier_wchar_t;
-    int identifier_wchar_t_alt;
-    int identifier_int8;
-    int identifier_int16;
-    int identifier_int32;
-    int identifier_int64;
-    int identifier_bool;
-    int identifier_char;
-    int identifier_short;
-    int identifier_int;
-    int identifier_long;
-    int identifier_float;
-    int identifier_double;
-    int identifier_void;
-    int identifier_signed;
-    int identifier_unsigned;
-    int identifier_const;
-    int identifier_volatile;
-    int identifier_restrict;
-    int identifier_atomic;
-    int identifier_call_conv_cdecl;
-    int identifier_call_conv_clrcall;
-    int identifier_call_conv_stdcall;
-    int identifier_call_conv_fastcall;
-    int identifier_call_conv_thiscall;
-    int identifier_call_conv_vectorcall;
+    String* identifier_typedef;
+    String* identifier_unaligned;
+    String* identifier_inline;
+    String* identifier_inline_alt;
+    String* identifier_ptr32;
+    String* identifier_ptr64;
+    String* identifier_force_inline;
+    String* identifier_static;
+    String* identifier_enum;
+    String* identifier_union;
+    String* identifier_wchar_t;
+    String* identifier_wchar_t_alt;
+    String* identifier_int8;
+    String* identifier_int16;
+    String* identifier_int32;
+    String* identifier_int64;
+    String* identifier_bool;
+    String* identifier_char;
+    String* identifier_short;
+    String* identifier_int;
+    String* identifier_long;
+    String* identifier_float;
+    String* identifier_double;
+    String* identifier_void;
+    String* identifier_signed;
+    String* identifier_unsigned;
+    String* identifier_const;
+    String* identifier_volatile;
+    String* identifier_restrict;
+    String* identifier_atomic;
+    String* identifier_call_conv_cdecl;
+    String* identifier_call_conv_clrcall;
+    String* identifier_call_conv_stdcall;
+    String* identifier_call_conv_fastcall;
+    String* identifier_call_conv_thiscall;
+    String* identifier_call_conv_vectorcall;
 };
 
 void print_tokens_till_newline(Dynamic_Array<Token> tokens, String source, int token_index);
@@ -173,50 +173,50 @@ Header_Parser header_parser_create(Lexer* lexer, String source_code)
     result.lexer = lexer;
     result.index = 0;
     result.source_code = source_code;
-    result.identifier_typedef = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("typedef"));
-    result.identifier_unaligned = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("__unaligned"));
-    result.identifier_ptr32 = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("__ptr32"));
-    result.identifier_ptr64 = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("__ptr64"));
-    result.identifier_inline = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("inline"));
-    result.identifier_inline_alt = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("__inline"));
-    result.identifier_force_inline = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("__forceinline"));
-    result.identifier_static = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("static"));
-    result.identifier_enum = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("enum"));
-    result.identifier_union = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("union"));
-    result.identifier_char = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("char"));
-    result.identifier_short = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("short"));
-    result.identifier_int = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("int"));
-    result.identifier_wchar_t = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("wchar_t"));
-    result.identifier_wchar_t_alt = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("__wchar_t"));
-    result.identifier_int8 = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("__int8"));
-    result.identifier_int16 = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("__int16"));
-    result.identifier_int32 = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("__int32"));
-    result.identifier_int64 = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("__int64"));
-    result.identifier_long = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("long"));
-    result.identifier_float = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("float"));
-    result.identifier_double = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("double"));
-    result.identifier_signed = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("signed"));
-    result.identifier_bool = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("bool"));
-    result.identifier_void = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("void"));
-    result.identifier_unsigned = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("unsigned"));
-    result.identifier_const = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("const"));
-    result.identifier_volatile = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("volatile"));
-    result.identifier_restrict = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("restrict"));
-    result.identifier_atomic = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("atomic"));
+    result.identifier_typedef = identifier_pool_add(lexer->identifier_pool, string_create_static("typedef"));
+    result.identifier_unaligned = identifier_pool_add(lexer->identifier_pool, string_create_static("__unaligned"));
+    result.identifier_ptr32 = identifier_pool_add(lexer->identifier_pool, string_create_static("__ptr32"));
+    result.identifier_ptr64 = identifier_pool_add(lexer->identifier_pool, string_create_static("__ptr64"));
+    result.identifier_inline = identifier_pool_add(lexer->identifier_pool, string_create_static("inline"));
+    result.identifier_inline_alt = identifier_pool_add(lexer->identifier_pool, string_create_static("__inline"));
+    result.identifier_force_inline = identifier_pool_add(lexer->identifier_pool, string_create_static("__forceinline"));
+    result.identifier_static = identifier_pool_add(lexer->identifier_pool, string_create_static("static"));
+    result.identifier_enum = identifier_pool_add(lexer->identifier_pool, string_create_static("enum"));
+    result.identifier_union = identifier_pool_add(lexer->identifier_pool, string_create_static("union"));
+    result.identifier_char = identifier_pool_add(lexer->identifier_pool, string_create_static("char"));
+    result.identifier_short = identifier_pool_add(lexer->identifier_pool, string_create_static("short"));
+    result.identifier_int = identifier_pool_add(lexer->identifier_pool, string_create_static("int"));
+    result.identifier_wchar_t = identifier_pool_add(lexer->identifier_pool, string_create_static("wchar_t"));
+    result.identifier_wchar_t_alt = identifier_pool_add(lexer->identifier_pool, string_create_static("__wchar_t"));
+    result.identifier_int8 = identifier_pool_add(lexer->identifier_pool, string_create_static("__int8"));
+    result.identifier_int16 = identifier_pool_add(lexer->identifier_pool, string_create_static("__int16"));
+    result.identifier_int32 = identifier_pool_add(lexer->identifier_pool, string_create_static("__int32"));
+    result.identifier_int64 = identifier_pool_add(lexer->identifier_pool, string_create_static("__int64"));
+    result.identifier_long = identifier_pool_add(lexer->identifier_pool, string_create_static("long"));
+    result.identifier_float = identifier_pool_add(lexer->identifier_pool, string_create_static("float"));
+    result.identifier_double = identifier_pool_add(lexer->identifier_pool, string_create_static("double"));
+    result.identifier_signed = identifier_pool_add(lexer->identifier_pool, string_create_static("signed"));
+    result.identifier_bool = identifier_pool_add(lexer->identifier_pool, string_create_static("bool"));
+    result.identifier_void = identifier_pool_add(lexer->identifier_pool, string_create_static("void"));
+    result.identifier_unsigned = identifier_pool_add(lexer->identifier_pool, string_create_static("unsigned"));
+    result.identifier_const = identifier_pool_add(lexer->identifier_pool, string_create_static("const"));
+    result.identifier_volatile = identifier_pool_add(lexer->identifier_pool, string_create_static("volatile"));
+    result.identifier_restrict = identifier_pool_add(lexer->identifier_pool, string_create_static("restrict"));
+    result.identifier_atomic = identifier_pool_add(lexer->identifier_pool, string_create_static("atomic"));
 
-    result.identifier_call_conv_cdecl = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("__cdecl"));
-    result.identifier_call_conv_clrcall = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("__clrcall"));
-    result.identifier_call_conv_fastcall = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("__stdcall"));
-    result.identifier_call_conv_stdcall = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("__fastcall"));
-    result.identifier_call_conv_thiscall = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("__thiscall"));
-    result.identifier_call_conv_vectorcall = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("__vectorcall"));
+    result.identifier_call_conv_cdecl = identifier_pool_add(lexer->identifier_pool, string_create_static("__cdecl"));
+    result.identifier_call_conv_clrcall = identifier_pool_add(lexer->identifier_pool, string_create_static("__clrcall"));
+    result.identifier_call_conv_fastcall = identifier_pool_add(lexer->identifier_pool, string_create_static("__stdcall"));
+    result.identifier_call_conv_stdcall = identifier_pool_add(lexer->identifier_pool, string_create_static("__fastcall"));
+    result.identifier_call_conv_thiscall = identifier_pool_add(lexer->identifier_pool, string_create_static("__thiscall"));
+    result.identifier_call_conv_vectorcall = identifier_pool_add(lexer->identifier_pool, string_create_static("__vectorcall"));
 
     // Create new tokens array, where lines starting with # are removed, and __pragma and __declspec compiler stuff is removed
     result.tokens = dynamic_array_create_empty<Token>(lexer->tokens.size);
 
-    int identifier_pragma_underscore = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("__pragma"));
-    int identifier_declspec = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("__declspec"));
-    int identifier_static_assert = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("static_assert"));
+    String* identifier_pragma_underscore = identifier_pool_add(lexer->identifier_pool, string_create_static("__pragma"));
+    String* identifier_declspec = identifier_pool_add(lexer->identifier_pool, string_create_static("__declspec"));
+    String* identifier_static_assert = identifier_pool_add(lexer->identifier_pool, string_create_static("static_assert"));
     int last_line_index = -1;
     for (int i = 0; i < lexer->tokens.size; i++)
     {
@@ -238,9 +238,9 @@ Header_Parser header_parser_create(Lexer* lexer, String source_code)
 
         if (token->type == Token_Type::IDENTIFIER_NAME)
         {
-            if (token->attribute.identifier_number == identifier_pragma_underscore || 
-                token->attribute.identifier_number == identifier_declspec || 
-                token->attribute.identifier_number == identifier_static_assert) 
+            if (token->attribute.id == identifier_pragma_underscore || 
+                token->attribute.id == identifier_declspec || 
+                token->attribute.id == identifier_static_assert) 
             {
                 // Skip everything afterwards if followed by a (
                 i += 1;
@@ -271,14 +271,14 @@ Header_Parser header_parser_create(Lexer* lexer, String source_code)
                 continue;
             }
             // Skip specific tokens
-            if (token->attribute.identifier_number == result.identifier_call_conv_cdecl ||
-                token->attribute.identifier_number == result.identifier_ptr32 ||
-                token->attribute.identifier_number == result.identifier_ptr64 ||
-                token->attribute.identifier_number == result.identifier_call_conv_clrcall ||
-                token->attribute.identifier_number == result.identifier_call_conv_fastcall ||
-                token->attribute.identifier_number == result.identifier_call_conv_stdcall ||
-                token->attribute.identifier_number == result.identifier_call_conv_thiscall ||
-                token->attribute.identifier_number == result.identifier_call_conv_vectorcall) {
+            if (token->attribute.id == result.identifier_call_conv_cdecl ||
+                token->attribute.id == result.identifier_ptr32 ||
+                token->attribute.id == result.identifier_ptr64 ||
+                token->attribute.id == result.identifier_call_conv_clrcall ||
+                token->attribute.id == result.identifier_call_conv_fastcall ||
+                token->attribute.id == result.identifier_call_conv_stdcall ||
+                token->attribute.id == result.identifier_call_conv_thiscall ||
+                token->attribute.id == result.identifier_call_conv_vectorcall) {
                 continue;
             }
         }
@@ -344,10 +344,10 @@ bool header_parser_test_next_token_5(Header_Parser* parser, Token_Type t1, Token
         parser->tokens[parser->index + 4].type == t5;
 }
 
-bool header_parser_next_is_identifier(Header_Parser* parser, int identifier_index)
+bool header_parser_next_is_identifier(Header_Parser* parser, String* id)
 {
     if (parser->index >= parser->tokens.size) return false;
-    return parser->tokens[parser->index].type == Token_Type::IDENTIFIER_NAME && parser->tokens[parser->index].attribute.identifier_number == identifier_index;
+    return parser->tokens[parser->index].type == Token_Type::IDENTIFIER_NAME && parser->tokens[parser->index].attribute.id == id;
 }
 
 void print_tokens_till_newline_token_style(Dynamic_Array<Token> tokens, String source, int token_index, Lexer* lexer)
@@ -364,10 +364,10 @@ void print_tokens_till_newline_token_style(Dynamic_Array<Token> tokens, String s
         switch (token->type)
         {
         case Token_Type::IDENTIFIER_NAME:
-            string_append_formated(&str, identifier_pool_index_to_string(lexer->identifier_pool, token->attribute.identifier_number).characters);
+            string_append_formated(&str, token->attribute.id->characters);
             break;
         case Token_Type::STRING_LITERAL:
-            string_append_formated(&str, "\"%s\"", identifier_pool_index_to_string(lexer->identifier_pool, token->attribute.identifier_number).characters);
+            string_append_formated(&str, "\"%s\"",  token->attribute.id->characters);
             break;
         case Token_Type::BOOLEAN_LITERAL:
             string_append_formated(&str, "%s", token->attribute.bool_value ? "TRUE": "FALSE");
@@ -413,7 +413,7 @@ C_Type_Qualifiers header_parser_parse_type_qualifiers(Header_Parser* parser)
 {
     u8 result = 0;
     while (parser->index < parser->tokens.size && parser->tokens[parser->index].type == Token_Type::IDENTIFIER_NAME) {
-        int id = parser->tokens[parser->index].attribute.identifier_number;
+        String* id = parser->tokens[parser->index].attribute.id;
         if (id == parser->identifier_atomic) {
             result = result | (u8)C_Type_Qualifiers::ATOMIC;
         }
@@ -448,7 +448,7 @@ Optional<C_Import_Type*> header_parser_parse_primitive_type(Header_Parser* parse
     C_Import_Type prototype;
     prototype.qualifiers = qualifiers;
     prototype.type = C_Import_Type_Type::PRIMITIVE;
-    int identifier = parser->tokens[parser->index].attribute.identifier_number;
+    String* identifier = parser->tokens[parser->index].attribute.id;
     if (identifier == parser->identifier_long)
     {
         parser->index++;
@@ -564,10 +564,10 @@ void checkpoint_rewind(Checkpoint point) {
     point.parser->index = point.rewind_token_index;
 }
 
-void c_import_symbol_table_define_symbol(C_Import_Symbol_Table* table, C_Import_Symbol symbol, int name_id)
+void c_import_symbol_table_define_symbol(C_Import_Symbol_Table* table, C_Import_Symbol symbol, String* id)
 {
     // The only time somy symbol should do shadowing if if its a typdef right after a definition, so the types should match
-    C_Import_Symbol* old_sym = hashtable_find_element(&table->symbols, name_id);
+    C_Import_Symbol* old_sym = hashtable_find_element(&table->symbols, id);
     if (old_sym != 0)
     {
         if (old_sym->data_type != symbol.data_type) {
@@ -576,7 +576,7 @@ void c_import_symbol_table_define_symbol(C_Import_Symbol_Table* table, C_Import_
         *old_sym = symbol;
     }
     else {
-        hashtable_insert_element(&table->symbols, name_id, symbol);
+        hashtable_insert_element(&table->symbols, id, symbol);
     }
 }
 
@@ -610,13 +610,13 @@ Optional<C_Import_Type*> header_parser_parse_structure(Header_Parser* parser, C_
     // Check if we need to continue parsing
     C_Import_Type* structure_type = 0;
     {
-        int name_id;
+        String* id;
         bool has_name = false;
         bool has_definition = false;
         if (header_parser_test_next_token(parser, Token_Type::IDENTIFIER_NAME))
         {
             has_name = true;
-            name_id = parser->tokens[parser->index].attribute.identifier_number;
+            id = parser->tokens[parser->index].attribute.id;
             parser->index++;
         }
         if (header_parser_test_next_token(parser, Token_Type::OPEN_BRACES))
@@ -632,13 +632,13 @@ Optional<C_Import_Type*> header_parser_parse_structure(Header_Parser* parser, C_
 
         if (prototype.type == C_Import_Type_Type::ENUM) {
             prototype.enumeration.is_anonymous = !has_name;
-            prototype.enumeration.name_id = has_name ? name_id : -1;
+            prototype.enumeration.id = has_name ? id : nullptr;
             prototype.byte_size = 4;
             prototype.alignment = 4;
         }
         else {
             prototype.structure.is_anonymous = !has_name;
-            prototype.structure.name_id = has_name ? name_id : -1;
+            prototype.structure.id = has_name ? id : nullptr;
             prototype.structure.contains_bitfield = false;
             prototype.byte_size = 0;
             prototype.alignment = 0;
@@ -646,7 +646,7 @@ Optional<C_Import_Type*> header_parser_parse_structure(Header_Parser* parser, C_
 
         if (has_name && register_structure_tags)
         {
-            C_Import_Symbol* symbol = hashtable_find_element(&parser->result_package.symbol_table.symbols, name_id);
+            C_Import_Symbol* symbol = hashtable_find_element(&parser->result_package.symbol_table.symbols, id);
             if (symbol == 0)
             {
                 if (prototype.type == C_Import_Type_Type::ENUM) {
@@ -660,7 +660,7 @@ Optional<C_Import_Type*> header_parser_parse_structure(Header_Parser* parser, C_
                 C_Import_Symbol def_sym;
                 def_sym.type = C_Import_Symbol_Type::TYPE;
                 def_sym.data_type = structure_type;
-                c_import_symbol_table_define_symbol(&parser->result_package.symbol_table, def_sym, name_id);
+                c_import_symbol_table_define_symbol(&parser->result_package.symbol_table, def_sym, id);
 
                 /*
                 {
@@ -713,7 +713,7 @@ Optional<C_Import_Type*> header_parser_parse_structure(Header_Parser* parser, C_
             if (header_parser_test_next_token_2(parser, Token_Type::IDENTIFIER_NAME, Token_Type::OP_ASSIGNMENT))
             {
                 C_Import_Enum_Member member;
-                member.name_id = parser->tokens[parser->index].attribute.identifier_number;
+                member.id = parser->tokens[parser->index].attribute.id;
                 parser->index += 2;
                 if (header_parser_test_next_token(parser, Token_Type::INTEGER_LITERAL))
                 {
@@ -729,12 +729,12 @@ Optional<C_Import_Type*> header_parser_parse_structure(Header_Parser* parser, C_
                 }
                 else if (header_parser_test_next_token(parser, Token_Type::IDENTIFIER_NAME))
                 {
-                    int ref_name = parser->tokens[parser->index].attribute.identifier_number;
+                    String* ref_name = parser->tokens[parser->index].attribute.id;
                     parser->index++;
                     bool found = false;
                     int found_value = 0;
                     for (int i = 0; i < structure_type->enumeration.members.size; i++) {
-                        if (structure_type->enumeration.members[i].name_id == ref_name) {
+                        if (structure_type->enumeration.members[i].id == ref_name) {
                             found = true;
                             found_value = structure_type->enumeration.members[i].value;
                             break;
@@ -758,7 +758,7 @@ Optional<C_Import_Type*> header_parser_parse_structure(Header_Parser* parser, C_
             }
             else if (header_parser_test_next_token(parser, Token_Type::IDENTIFIER_NAME)) {
                 C_Import_Enum_Member member;
-                member.name_id = parser->tokens[parser->index].attribute.identifier_number;
+                member.id = parser->tokens[parser->index].attribute.id;
                 member.value = enum_counter;
                 enum_counter++;
                 dynamic_array_push_back(&structure_type->enumeration.members, member);
@@ -801,7 +801,7 @@ Optional<C_Import_Type*> header_parser_parse_structure(Header_Parser* parser, C_
                         C_Import_Structure_Member new_member;
                         new_member.offset = structure_type->byte_size + member->offset;
                         new_member.type = member->type;
-                        new_member.name_id = member->name_id;
+                        new_member.id = member->id;
                         dynamic_array_push_back(&structure_type->structure.members, new_member);
                     }
                     structure_type->byte_size += member_var.value.base_type->byte_size;
@@ -814,7 +814,7 @@ Optional<C_Import_Type*> header_parser_parse_structure(Header_Parser* parser, C_
                 {
                     C_Variable_Instance* instance = &member_var.value.instances[i];
                     C_Import_Structure_Member member;
-                    member.name_id = instance->name_id;
+                    member.id = instance->id;
                     member.type = instance->type;
                     //assert(member.type->byte_size != 0 && member.type->alignment != 0, "Member type must be complete!");
                     if (member.type->byte_size != 0 && member.type->alignment != 0)
@@ -864,9 +864,9 @@ Optional<C_Import_Type*> header_parser_parse_type(Header_Parser* parser, bool re
         if (!result.available) {
             if (header_parser_test_next_token(parser, Token_Type::IDENTIFIER_NAME))
             {
-                int name_id = parser->tokens[parser->index].attribute.identifier_number;
+                String* id = parser->tokens[parser->index].attribute.id;
                 parser->index++;
-                C_Import_Symbol* symbol = hashtable_find_element(&parser->result_package.symbol_table.symbols, name_id);
+                C_Import_Symbol* symbol = hashtable_find_element(&parser->result_package.symbol_table.symbols, id);
                 if (symbol == 0) {
                     // This should not happen
                     //print_tokens_till_newline(parser->tokens, parser->source_code, parser->index);
@@ -1083,7 +1083,7 @@ Optional<Dynamic_Array<C_Import_Parameter>> header_parser_parse_parameters(Heade
         param.has_name = false;
         if (header_parser_test_next_token(parser, Token_Type::IDENTIFIER_NAME)) {
             param.has_name = true;
-            param.name_id = parser->tokens[parser->index].attribute.identifier_number;
+            param.id = parser->tokens[parser->index].attribute.id;
             parser->index++;
         }
         type = header_parser_parse_array_suffix(parser, type);
@@ -1149,7 +1149,7 @@ Optional<C_Variable_Definition> header_parser_parse_variable_definition(Header_P
             success = false;
             return optional_make_failure<C_Variable_Definition>();
         }
-        int name_id = parser->tokens[parser->index].attribute.identifier_number;
+        String* id = parser->tokens[parser->index].attribute.id;
         parser->index += 2;
 
         Optional<Dynamic_Array<C_Import_Parameter>> params = header_parser_parse_parameters(parser);
@@ -1176,7 +1176,7 @@ Optional<C_Variable_Definition> header_parser_parse_variable_definition(Header_P
         C_Import_Type* ptr_type = c_import_type_system_register_type(&parser->result_package.type_system, ptr_prototype);
 
         C_Variable_Instance instance;
-        instance.name_id = name_id;
+        instance.id = id;
         instance.type = ptr_type;
         dynamic_array_push_back(&result.instances, instance);
         return optional_make_success(result);
@@ -1198,7 +1198,7 @@ Optional<C_Variable_Definition> header_parser_parse_variable_definition(Header_P
             // Parse instance name
             if (header_parser_test_next_token(parser, Token_Type::IDENTIFIER_NAME))
             {
-                instance.name_id = parser->tokens[parser->index].attribute.identifier_number;
+                instance.id = parser->tokens[parser->index].attribute.id;
                 parser->index++;
             }
             else {
@@ -1319,7 +1319,7 @@ void c_import_type_append_to_string(C_Import_Type* type, String* string, int ind
             string_append_formated(string, "STRUCT");
         }
         if (!type->structure.is_anonymous) {
-            string_append_formated(string, " %s", identifier_pool_index_to_string(parser->lexer->identifier_pool, type->structure.name_id).characters);
+            string_append_formated(string, " %s", type->structure.id->characters);
         }
         if (print_array_members)
         {
@@ -1331,7 +1331,7 @@ void c_import_type_append_to_string(C_Import_Type* type, String* string, int ind
             {
                 C_Import_Structure_Member* member = &type->structure.members[i];
                 c_import_type_append_to_string(member->type, string, indentation + 1, parser, false);
-                string_append_formated(string, "%s\n", identifier_pool_index_to_string(parser->lexer->identifier_pool, member->name_id).characters);
+                string_append_formated(string, "%s\n",  member->id->characters);
             }
             string_indent(string, indentation);
             string_append_formated(string, "}");
@@ -1341,15 +1341,12 @@ void c_import_type_append_to_string(C_Import_Type* type, String* string, int ind
     case C_Import_Type_Type::ENUM: {
         string_append_formated(string, "ENUM ");
         if (!type->enumeration.is_anonymous) {
-            string_append_formated(string, " %s", identifier_pool_index_to_string(parser->lexer->identifier_pool, type->enumeration.name_id).characters);
+            string_append_formated(string, " %s", type->enumeration.id->characters);
         }
         string_append_formated(string, " {");
         for (int i = 0; i < type->enumeration.members.size; i++) {
             C_Import_Enum_Member* member = &type->enumeration.members[i];
-            string_append_formated(string, "%s = %d, ",
-                identifier_pool_index_to_string(parser->lexer->identifier_pool, member->name_id).characters,
-                member->value
-            );
+            string_append_formated(string, "%s = %d, ", member->id->characters, member->value);
         }
         string_append_formated(string, "}");
         break;
@@ -1361,7 +1358,7 @@ void c_import_type_append_to_string(C_Import_Type* type, String* string, int ind
         for (int i = 0; i < type->function_signature.parameters.size; i++) {
             C_Import_Parameter* parameter = &type->function_signature.parameters[i];
             if (parameter->has_name) {
-                string_append_formated(string, "%s: ", identifier_pool_index_to_string(parser->lexer->identifier_pool, parameter->name_id).characters);
+                string_append_formated(string, "%s: ", parameter->id->characters);
             }
             c_import_type_append_to_string(parameter->type, string, indentation + 2, parser, print_array_members);
         }
@@ -1491,14 +1488,14 @@ bool header_parser_parse_known_structure(Header_Parser* parser)
                 symbol.type = C_Import_Symbol_Type::FUNCTION;
             }
             symbol.data_type = registered_function;
-            c_import_symbol_table_define_symbol(&parser->result_package.symbol_table, symbol, var_def.instances[0].name_id);
+            c_import_symbol_table_define_symbol(&parser->result_package.symbol_table, symbol, var_def.instances[0].id);
 
             {
                 /*
                 String str = string_create_empty(256);
                 SCOPE_EXIT(string_destroy(&str));
                 string_append_formated(&str, "%s: ", is_typedef ? "typedef " : "function ");
-                string_append_formated(&str, "%s = ", identifier_pool_index_to_string(parser->lexer, var_def.instances[0].name_id).characters);
+                string_append_formated(&str, "%s = ", identifier_pool_index_to_string(parser->lexer, var_def.instances[0].id).characters);
                 c_import_type_append_to_string(registered_function, &str, 0, parser, true);
                 logg("%s\n", str.characters);
                 */
@@ -1522,14 +1519,14 @@ bool header_parser_parse_known_structure(Header_Parser* parser)
                 symbol.type = C_Import_Symbol_Type::GLOBAL_VARIABLE;
             }
             symbol.data_type = instance->type;
-            c_import_symbol_table_define_symbol(&parser->result_package.symbol_table, symbol, instance->name_id);
+            c_import_symbol_table_define_symbol(&parser->result_package.symbol_table, symbol, instance->id);
 
             {
                 /*
                 String str = string_create_empty(256);
                 SCOPE_EXIT(string_destroy(&str));
                 string_append_formated(&str, "%s: ", is_typedef ? "typedef " : "global: ");
-                string_append_formated(&str, "%s = ", identifier_pool_index_to_string(parser->lexer, instance->name_id).characters);
+                string_append_formated(&str, "%s = ", identifier_pool_index_to_string(parser->lexer, instance->id).characters);
                 c_import_type_append_to_string(symbol.data_type, &str, 0, parser, true);
                 logg("%s\n", str.characters);
                 */
@@ -1554,13 +1551,13 @@ void header_parser_parse(Header_Parser* parser)
     printf("\n");
     */
 
-    int identifier_extern_c = identifier_pool_add_or_find_identifier_by_string(parser->lexer->identifier_pool, string_create_static("C"));
-    int identifier_extern_cpp = identifier_pool_add_or_find_identifier_by_string(parser->lexer->identifier_pool, string_create_static("C++"));
+    String* identifier_extern_c = identifier_pool_add(parser->lexer->identifier_pool, string_create_static("C"));
+    String* identifier_extern_cpp = identifier_pool_add(parser->lexer->identifier_pool, string_create_static("C++"));
     while (parser->index + 2 < parser->tokens.size)
     {
         Token* t1 = &parser->tokens[parser->index];
         Token* t2 = &parser->tokens[parser->index + 1];
-        if (t1->type == Token_Type::EXTERN && t2->type == Token_Type::STRING_LITERAL && t2->attribute.identifier_number == identifier_extern_cpp)
+        if (t1->type == Token_Type::EXTERN && t2->type == Token_Type::STRING_LITERAL && t2->attribute.id == identifier_extern_cpp)
         {
             /*
             logg("Henlo %d \n", parser->index);
@@ -1620,7 +1617,7 @@ void header_parser_parse(Header_Parser* parser)
                     //if (t1->position.start.line != current_line) break;
                 }
             }
-            if (t1->type == Token_Type::EXTERN && t2->type == Token_Type::STRING_LITERAL && t2->attribute.identifier_number == identifier_extern_c)
+            if (t1->type == Token_Type::EXTERN && t2->type == Token_Type::STRING_LITERAL && t2->attribute.id == identifier_extern_c)
             {
                 if (t3->type == Token_Type::OPEN_BRACES) {
                     parser->index += 3;
@@ -1737,14 +1734,14 @@ Optional<C_Import_Package> c_importer_parse_header(const char* file_name, Identi
                 last_time = now;
             }
             C_Import_Symbol* symbol = iter.value;
-            String symbol_name = identifier_pool_index_to_string(lexer.identifier_pool, *iter.key);
+            String* symbol_name = *iter.key;
             if (symbol->type == C_Import_Symbol_Type::TYPE) {
                 if (symbol->data_type->type == C_Import_Type_Type::ENUM || symbol->data_type->type == C_Import_Type_Type::STRUCTURE) {
                     if (symbol->data_type->byte_size != 0 || symbol->data_type->alignment != 0) {
                         string_append_formated(
                             &output_program,
                             "    printf(\"%%zd\\n%%zd\\n\", sizeof(%s), alignof(%s));\n",
-                            symbol_name.characters, symbol_name.characters
+                            symbol_name->characters, symbol_name->characters
                         );
                         dynamic_array_push_back(&destinations, print_destination_make(true, false, false, symbol, 0));
                         dynamic_array_push_back(&destinations, print_destination_make(false, true, false, symbol, 0));
@@ -1757,8 +1754,8 @@ Optional<C_Import_Package> c_importer_parse_header(const char* file_name, Identi
                             string_append_formated(
                                 &output_program,
                                 "    printf(\"%%zd\\n\", myoffsetof(%s, %s));\n",
-                                symbol_name.characters,
-                                identifier_pool_index_to_string(lexer.identifier_pool, member->name_id).characters
+                                symbol_name->characters,
+                                member->id->characters
                             );
                             dynamic_array_push_back(&destinations, print_destination_make(false, false, true, 0, member));
                         }
@@ -1773,7 +1770,7 @@ Optional<C_Import_Package> c_importer_parse_header(const char* file_name, Identi
                 else {
                     string_append_formated(&found_symbols, "Global: ");
                 }
-                string_append_formated(&found_symbols, " %s\n", identifier_pool_index_to_string(lexer.identifier_pool, *iter.key).characters);
+                string_append_formated(&found_symbols, " %s\n", (*iter.key)->characters);
             }
             hashtable_iterator_next(&iter);
         }

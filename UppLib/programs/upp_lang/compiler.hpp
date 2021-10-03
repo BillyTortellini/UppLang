@@ -41,22 +41,20 @@ struct Extern_Sources
         - DLLs
         - LIBs
     */
-    Dynamic_Array<int> headers_to_include;
-    Dynamic_Array<int> source_files_to_compile;
-    Dynamic_Array<int> lib_files;
+    Dynamic_Array<String*> headers_to_include;
+    Dynamic_Array<String*> source_files_to_compile;
+    Dynamic_Array<String*> lib_files;
     Dynamic_Array<Extern_Function_Identifier> extern_functions;
-    Hashtable<Type_Signature*, int> extern_type_signatures; // Extern types to name id, e.g. HWND should not create its own structure, but use name HWND as type
+    Hashtable<Type_Signature*, String*> extern_type_signatures; // Extern types to name id, e.g. HWND should not create its own structure, but use name HWND as type
 };
 
 struct Identifier_Pool
 {
-    Dynamic_Array<String> identifiers;
-    Hashtable<String, int> identifier_index_lookup_table;
+    Hashtable<String, String*> identifier_lookup_table;
 };
 Identifier_Pool identifier_pool_create();
 void identifier_pool_destroy(Identifier_Pool* pool);
-int identifier_pool_add_or_find_identifier_by_string(Identifier_Pool* lexer, String identifier);
-String identifier_pool_index_to_string(Identifier_Pool* Lexer, int index);
+String* identifier_pool_add(Identifier_Pool* lexer, String identifier);
 void identifier_pool_print(Identifier_Pool* pool);
 
 struct Token_Range

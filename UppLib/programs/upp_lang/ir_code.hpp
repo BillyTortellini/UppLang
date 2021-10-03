@@ -239,7 +239,7 @@ void ir_generator_generate(IR_Generator* generator, Compiler* compiler);
 IR_Program* ir_program_create(Type_System* type_system);
 void ir_program_destroy(IR_Program* program);
 
-void ir_program_append_to_string(IR_Program* program, String* string, Identifier_Pool* pool);
+void ir_program_append_to_string(IR_Program* program, String* string);
 Type_Signature* ir_data_access_get_type(IR_Data_Access* access);
 
 

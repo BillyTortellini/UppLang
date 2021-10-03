@@ -21,7 +21,7 @@ Type_Signature type_signature_make_primitive(Primitive_Type type, int size, bool
     return result;
 }
 
-void type_signature_append_to_string_with_children(String* string, Type_Signature* signature, bool print_child, Identifier_Pool* identifier_pool)
+void type_signature_append_to_string_with_children(String* string, Type_Signature* signature, bool print_child)
 {
     switch (signature->type)
     {
@@ -33,18 +33,18 @@ void type_signature_append_to_string_with_children(String* string, Type_Signatur
         break;
     case Signature_Type::ARRAY:
         string_append_formated(string, "[%d]", signature->options.array.element_count);
-        type_signature_append_to_string_with_children(string, signature->options.array.element_type, print_child, identifier_pool);
+        type_signature_append_to_string_with_children(string, signature->options.array.element_type, print_child);
         break;
     case Signature_Type::SLICE:
         string_append_formated(string, "[]");
-        type_signature_append_to_string_with_children(string, signature->options.array.element_type, print_child, identifier_pool);
+        type_signature_append_to_string_with_children(string, signature->options.array.element_type, print_child);
         break;
     case Signature_Type::ERROR_TYPE:
         string_append_formated(string, "ERROR-Type");
         break;
     case Signature_Type::POINTER:
         string_append_formated(string, "*");
-        type_signature_append_to_string_with_children(string, signature->options.pointer_child, print_child, identifier_pool);
+        type_signature_append_to_string_with_children(string, signature->options.pointer_child, print_child);
         break;
     case Signature_Type::PRIMITIVE:
         switch (signature->options.primitive.type) 
@@ -57,13 +57,13 @@ void type_signature_append_to_string_with_children(String* string, Type_Signatur
         break;
     case Signature_Type::STRUCT:
     {
-        assert(signature->options.structure.name >= 0 && signature->options.structure.name < identifier_pool->identifiers.size, "HEY");
-        string_append_formated(string, identifier_pool_index_to_string(identifier_pool, signature->options.structure.name).characters);
+        assert(signature->options.structure.id != 0, "HEY");
+        string_append_formated(string, signature->options.structure.id->characters);
         if (print_child)
         {
             string_append_formated(string, "{");
             for (int i = 0; i < signature->options.structure.members.size && print_child; i++) {
-                type_signature_append_to_string_with_children(string, signature->options.structure.members[i].type, false, identifier_pool);
+                type_signature_append_to_string_with_children(string, signature->options.structure.members[i].type, false);
                 if (i != signature->options.structure.members.size - 1) {
                     string_append_formated(string, ", ");
                 }
@@ -75,13 +75,13 @@ void type_signature_append_to_string_with_children(String* string, Type_Signatur
     case Signature_Type::FUNCTION:
         string_append_formated(string, "(");
         for (int i = 0; i < signature->options.function.parameter_types.size; i++) {
-            type_signature_append_to_string_with_children(string, signature->options.function.parameter_types[i], print_child, identifier_pool);
+            type_signature_append_to_string_with_children(string, signature->options.function.parameter_types[i], print_child);
             if (i != signature->options.function.parameter_types.size - 1) {
                 string_append_formated(string, ", ");
             }
         }
         string_append_formated(string, ") -> ");
-        type_signature_append_to_string_with_children(string, signature->options.function.return_type, print_child, identifier_pool);
+        type_signature_append_to_string_with_children(string, signature->options.function.return_type, print_child);
         break;
     default: panic("Fugg");
     }
@@ -224,8 +224,8 @@ void type_signature_append_value_to_string(Type_Signature* type, byte* value_ptr
     }
 }
 
-void type_signature_append_to_string(String* string, Type_Signature* signature, Identifier_Pool* identifier_pool) {
-    type_signature_append_to_string_with_children(string, signature, false, identifier_pool);
+void type_signature_append_to_string(String* string, Type_Signature* signature) {
+    type_signature_append_to_string_with_children(string, signature, false);
 }
 
 
@@ -293,12 +293,12 @@ void type_system_add_primitives(Type_System* system, Identifier_Pool* pool)
 
     {
         Struct_Member character_buffer_member;
-        character_buffer_member.name_handle = identifier_pool_add_or_find_identifier_by_string(pool, string_create_static("character_buffer"));
+        character_buffer_member.id = identifier_pool_add(pool, string_create_static("character_buffer"));
         character_buffer_member.offset = 0;
         character_buffer_member.type = type_system_make_slice(system, system->u8_type);
 
         Struct_Member size_member;
-        size_member.name_handle = identifier_pool_add_or_find_identifier_by_string(pool, string_create_static("size"));
+        size_member.id = identifier_pool_add(pool, string_create_static("size"));
         size_member.offset = 16;
         size_member.type = system->i32_type;
 
@@ -311,12 +311,12 @@ void type_system_add_primitives(Type_System* system, Identifier_Pool* pool)
         system->string_type->alignment = 8;
         system->string_type->size = 20;
         system->string_type->options.structure.members = string_members;
-        system->string_type->options.structure.name = identifier_pool_add_or_find_identifier_by_string(pool, string_create_static("String"));
+        system->string_type->options.structure.id = identifier_pool_add(pool, string_create_static("String"));
         dynamic_array_push_back(&system->types, system->string_type);
     }
 
-    system->id_data = identifier_pool_add_or_find_identifier_by_string(pool, string_create_static("data"));
-    system->id_size = identifier_pool_add_or_find_identifier_by_string(pool, string_create_static("size"));
+    system->id_data = identifier_pool_add(pool, string_create_static("data"));
+    system->id_size = identifier_pool_add(pool, string_create_static("size"));
 }
 
 Type_System type_system_create()
@@ -411,10 +411,10 @@ Type_Signature* type_system_make_slice(Type_System* system, Type_Signature* elem
     result.alignment = 8;
     result.size = 16;
     result.options.slice.element_type = element_type;
-    result.options.slice.data_member.name_handle = system->id_data;
+    result.options.slice.data_member.id = system->id_data;
     result.options.slice.data_member.type = type_system_make_pointer(system, element_type);
     result.options.slice.data_member.offset = 0;
-    result.options.slice.size_member.name_handle = system->id_size;
+    result.options.slice.size_member.id = system->id_size;
     result.options.slice.size_member.type = system->i32_type;
     result.options.slice.size_member.offset = 8;
     return type_system_register_type(system, result);
@@ -431,7 +431,7 @@ Type_Signature* type_system_make_function(Type_System* system, Dynamic_Array<Typ
     return type_system_register_type(system, result);
 }
 
-void type_system_print(Type_System* system, Identifier_Pool* pool)
+void type_system_print(Type_System* system)
 {
     String msg = string_create_empty(256);
     SCOPE_EXIT(string_destroy(&msg));
@@ -440,7 +440,7 @@ void type_system_print(Type_System* system, Identifier_Pool* pool)
     {
         Type_Signature* type = system->types[i];
         string_append_formated(&msg, "\n\t%d: ", i);
-        type_signature_append_to_string(&msg, type, pool);
+        type_signature_append_to_string(&msg, type);
         string_append_formated(&msg, " size: %d, alignment: %d", type->size, type->alignment);
     }
     string_append_formated(&msg, "\n");

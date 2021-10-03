@@ -37,7 +37,7 @@ struct C_Import_Type_Array
 
 struct C_Import_Structure_Member
 {
-    int name_id;
+    String* id;
     int offset;
     C_Import_Type* type;
 };
@@ -46,21 +46,21 @@ struct C_Import_Type_Structure
 {
     bool is_union;
     bool is_anonymous;
-    int name_id;
+    String* id;
     bool contains_bitfield;
     Dynamic_Array<C_Import_Structure_Member> members;
 };
 
 struct C_Import_Enum_Member
 {
-    int name_id;
+    String* id;
     int value;
 };
 
 struct C_Import_Type_Enum
 {
     bool is_anonymous;
-    int name_id;
+    String* id;
     Dynamic_Array<C_Import_Enum_Member> members;
 };
 
@@ -68,7 +68,7 @@ struct C_Import_Parameter
 {
     C_Import_Type* type;
     bool has_name;
-    int name_id;
+    String* id;
 };
 
 struct C_Import_Type_Function_Signature
@@ -126,7 +126,7 @@ struct C_Import_Symbol
 
 struct C_Import_Symbol_Table
 {
-    Hashtable<int, C_Import_Symbol> symbols;
+    Hashtable<String*, C_Import_Symbol> symbols;
 };
 
 struct C_Import_Package

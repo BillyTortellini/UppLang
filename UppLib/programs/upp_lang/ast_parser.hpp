@@ -13,18 +13,18 @@ enum class AST_Node_Type
 {
     ROOT, // Child 0: Definitions
     DEFINITIONS, // Children: functions, globals, modules, structs or extern function declaration
-    EXTERN_FUNCTION_DECLARATION, // name_id: function name Child 0: Type
-    EXTERN_LIB_IMPORT, // name_id: lib filename
-    EXTERN_HEADER_IMPORT, // name_id: header name, Children: IDENTIFIER_NAME
+    EXTERN_FUNCTION_DECLARATION, // id: function name Child 0: Type
+    EXTERN_LIB_IMPORT, // id: lib filename
+    EXTERN_HEADER_IMPORT, // id: header name, Children: IDENTIFIER_NAME
     MODULE, // Child 0: Definitions
     MODULE_TEMPLATED, // Child 0: Parameter_Block_Unnamed, Child 1: DEFINITIONS
     TEMPLATE_PARAMETERS, // Children: IDENTIFIER_NAME
     STRUCT, // Children: Variable definitions
     FUNCTION, // Child 0: Function_Signature, Child 1: Statement_Block
     FUNCTION_SIGNATURE, // Child 0: Parameter_Block_Named, Child 1 (optional): Return Type
-    IDENTIFIER_NAME, // name_id defined
+    IDENTIFIER_NAME, // id defined
     IDENTIFIER_NAME_TEMPLATED, // Child 0: Parameter_Block_Unnamed
-    IDENTIFIER_PATH, // Child 0: Identifier-Type, name_id defined
+    IDENTIFIER_PATH, // Child 0: Identifier-Type, id defined
     IDENTIFIER_PATH_TEMPLATED, // Child 0: Parameter_Block_Unnamed, Child 1: Identifier
     PARAMETER_BLOCK_UNNAMED, // Children: Types
     PARAMETER_BLOCK_NAMED, // Children: Named_Parameter
@@ -44,7 +44,7 @@ enum class AST_Node_Type
     STATEMENT_RETURN, // Child 0: Return-Expression
     STATEMENT_EXPRESSION, // Child 0: Expression
     STATEMENT_ASSIGNMENT, // Child 0: Destination-Expression, Child 1: Value-Expression
-    STATEMENT_VARIABLE_DEFINITION, // Child 0: Type index, name_id
+    STATEMENT_VARIABLE_DEFINITION, // Child 0: Type index, id
     STATEMENT_VARIABLE_DEFINE_ASSIGN, // Child 0: Type index, Child 1: Value-Expression
     STATEMENT_VARIABLE_DEFINE_INFER, // Child 0: Expression
     STATEMENT_DELETE, // Child =: expression
@@ -55,7 +55,7 @@ enum class AST_Node_Type
     EXPRESSION_FUNCTION_CALL, // Child 0: Identifier, Child 1: ARGUMENTS
     EXPRESSION_VARIABLE_READ, // Child 0: Identifier
     EXPRESSION_ARRAY_ACCESS, // Child 0: Access-to-Expression, Child 1: Index-Expression
-    EXPRESSION_MEMBER_ACCESS, // Child 0: left side, name_id is the .what operator a.y.y[5].z
+    EXPRESSION_MEMBER_ACCESS, // Child 0: left side, id is the .what operator a.y.y[5].z
     EXPRESSION_CAST, // Child 0: type, Child 1: Expression
     EXPRESSION_BINARY_OPERATION_ADDITION,
     EXPRESSION_BINARY_OPERATION_SUBTRACTION,
@@ -91,7 +91,7 @@ struct AST_Node
     AST_Node_Index parent;
     Dynamic_Array<AST_Node_Index> children;
     // Node information
-    int name_id; // Multipurpose: variable read, write, function name, function call
+    String* id; // Multipurpose: variable read, write, function name, function call, module name
 };
 
 struct AST_Parser
@@ -103,7 +103,7 @@ struct AST_Parser
     int index;
     AST_Node_Index next_free_node;
 
-    int identifier_lib;
+    String* id_lib;
 };
 
 struct AST_Parser_Checkpoint

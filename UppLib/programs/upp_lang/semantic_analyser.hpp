@@ -8,26 +8,17 @@
 #include "compiler_misc.hpp"
 
 /*
-    As a learning experience, I am going to generate ir-code from the built modtree now
-
     What can differentiate ModTree from IR_Code?
         Module Hierarchy:          Keep    vs. Flatten
         Resolve Identifiers to:    Symbols vs. Structures (Functions, Data_Accesses...)
         Variable Definitions:      Keep Position vs. in Block vs. In Function
         Expression Results:        As Tree       vs. Flatten (In Registers)
-        Data Access:               Through expressions vs. Data_Access structure
+        Data Access:               Through expressions vs. Data_Access structure (Resolves expression evaluation order)
 
     Problem:
         Symbol tables are registered in templated context, since code_block does not know if templated
 
-        2 Symbol tables for template instancing is probably bad, because for structures 
-        the type-names of the members must always refer to the same types, even when instancing,
-        so I probably have to undo that at some point
-
-        Function call does not take expressions but rather identifiers, so we cannot call members that are funciton pointers
-
-    ModTree Problems:
-        Expressions cannot resolve sized_array to array cast to just statements
+        Function call does not take expressions but rather identifiers, so we cannot call members that are function pointers
 */
 
 struct Type_Signature;
@@ -302,7 +293,7 @@ struct Symbol_Template_Instance
 struct Symbol_Template_Data
 {
     bool is_templated;
-    Dynamic_Array<int> parameter_names;
+    Dynamic_Array<String*> parameter_names;
     Dynamic_Array<Symbol_Template_Instance*> instances;
 };
 
@@ -312,7 +303,7 @@ struct Symbol
     Symbol_Options options;
 
     // Infos
-    int name_handle;
+    String* id;
     Symbol_Table* symbol_table; // Is 0 if the symbol is a template instance
     int definition_node_index;
 
@@ -323,7 +314,7 @@ struct Symbol
 struct Symbol_Table
 {
     Symbol_Table* parent;
-    Hashtable<int, Symbol*> symbols;
+    Hashtable<String*, Symbol*> symbols;
 };
 
 struct Semantic_Analyser;
@@ -531,7 +522,7 @@ struct Semantic_Error
         int given;
     } invalid_argument_count;
 
-    int name_id;
+    String* id;
     Symbol* symbol;
     Type_Signature* given_type;
     Type_Signature* expected_type;
@@ -602,9 +593,9 @@ struct Semantic_Analyser
     Dynamic_Array<Waiting_Workload> waiting_workload;
     Dynamic_Array<void*> known_expression_values;
 
-    int token_index_size;
-    int token_index_data;
-    int token_index_main;
+    String* id_size;
+    String* id_data;
+    String* id_main;
 };
 
 Semantic_Analyser semantic_analyser_create();
@@ -612,7 +603,7 @@ void semantic_analyser_destroy(Semantic_Analyser* analyser);
 void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler);
 
 struct AST_Parser;
-void symbol_append_to_string(Symbol* symbol, String* string, Semantic_Analyser* analyser);
+void symbol_append_to_string(Symbol* symbol, String* string);
 void hardcoded_function_type_append_to_string(String* string, Hardcoded_Function_Type hardcoded);
 void exit_code_append_to_string(String* string, Exit_Code code);
 Identifier_Analysis_Result semantic_analyser_analyse_identifier_node(Semantic_Analyser* analyser, Symbol_Table* table, int node_index, bool only_current_scope);

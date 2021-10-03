@@ -31,7 +31,7 @@ struct Struct_Member
 {
     Type_Signature* type;
     int offset;
-    int name_handle;
+    String* id;
 };
 
 struct Type_Signature
@@ -61,13 +61,13 @@ struct Type_Signature
         } slice;
         struct {
             Dynamic_Array<Struct_Member> members;
-            int name;
+            String* id;
         } structure;
-        int template_name;
+        String* template_id;
     } options;
 };
 struct Semantic_Analyser;
-void type_signature_append_to_string(String* string, Type_Signature* signature, Identifier_Pool* identifier_pool);
+void type_signature_append_to_string(String* string, Type_Signature* signature);
 void type_signature_append_value_to_string(Type_Signature* type, byte* value_ptr, String* string);
 
 // An array as it is currently defiend in the upp-language
@@ -106,8 +106,8 @@ struct Type_System
     Type_Signature* void_ptr_type;
     Type_Signature* string_type;
 
-    int id_data;
-    int id_size;
+    String* id_data;
+    String* id_size;
 };
 
 Type_System type_system_create();
@@ -119,4 +119,4 @@ Type_Signature* type_system_register_type(Type_System* system, Type_Signature si
 Type_Signature* type_system_make_pointer(Type_System* system, Type_Signature* child_type);
 Type_Signature* type_system_make_slice(Type_System* system, Type_Signature* element_type);
 Type_Signature* type_system_make_function(Type_System* system, Dynamic_Array<Type_Signature*> parameter_types, Type_Signature* return_type);
-void type_system_print(Type_System* system, Identifier_Pool* pool);
+void type_system_print(Type_System* system);

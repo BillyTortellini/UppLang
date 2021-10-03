@@ -259,7 +259,7 @@ bool ast_parser_parse_identifier_or_path(AST_Parser* parser, AST_Node_Index pare
         ast_parser_checkpoint_reset(checkpoint);
         return false;
     }
-    parser->nodes[node_index].name_id = parser->lexer->tokens[parser->index].attribute.identifier_number;
+    parser->nodes[node_index].id = parser->lexer->tokens[parser->index].attribute.id;
     parser->index++;
 
     bool is_template_analysis = false;
@@ -469,7 +469,7 @@ AST_Node_Index ast_parser_parse_member_access(AST_Parser* parser, int access_to_
     {
         int new_node_index = ast_parser_get_next_node_index_no_parent(parser);
         parser->nodes[new_node_index].type = AST_Node_Type::EXPRESSION_MEMBER_ACCESS;
-        parser->nodes[new_node_index].name_id = parser->lexer->tokens[parser->index + 1].attribute.identifier_number;
+        parser->nodes[new_node_index].id = parser->lexer->tokens[parser->index + 1].attribute.id;
         parser->token_mapping[new_node_index] = token_range_make(parser->index, parser->index + 2);
         parser->index += 2;
         ast_parser_add_parent_child_connection(parser, new_node_index, node_index);
@@ -487,7 +487,7 @@ AST_Node_Index ast_parser_parse_variable_read(AST_Parser* parser)
         return -1;
     }
     parser->nodes[node_index].type = AST_Node_Type::EXPRESSION_VARIABLE_READ;
-    parser->nodes[node_index].name_id = parser->lexer->tokens[parser->index].attribute.identifier_number;
+    parser->nodes[node_index].id = parser->lexer->tokens[parser->index].attribute.id;
     parser->token_mapping[node_index] = token_range_make(checkpoint.rewind_token_index, parser->index);
     return node_index;
 }
@@ -1041,7 +1041,7 @@ bool ast_parser_parse_single_variable_definition(AST_Parser* parser, AST_Node_In
         }
         if (ast_parser_test_next_token(parser, Token_Type::SEMICOLON)) {
             parser->nodes[node_index].type = AST_Node_Type::STATEMENT_VARIABLE_DEFINITION;
-            parser->nodes[node_index].name_id = parser->lexer->tokens[checkpoint.rewind_token_index].attribute.identifier_number;
+            parser->nodes[node_index].id = parser->lexer->tokens[checkpoint.rewind_token_index].attribute.id;
             parser->index += 1;
             parser->token_mapping[node_index] = token_range_make(checkpoint.rewind_token_index, parser->index);
             return true;
@@ -1070,7 +1070,7 @@ bool ast_parser_parse_variable_creation_statement(AST_Parser* parser, AST_Node_I
         if (ast_parser_test_next_token(parser, Token_Type::OP_ASSIGNMENT))
         {
             parser->nodes[node_index].type = AST_Node_Type::STATEMENT_VARIABLE_DEFINE_ASSIGN;
-            parser->nodes[node_index].name_id = parser->lexer->tokens[checkpoint.rewind_token_index].attribute.identifier_number;
+            parser->nodes[node_index].id = parser->lexer->tokens[checkpoint.rewind_token_index].attribute.id;
             parser->index += 1;
             if (!ast_parser_parse_expression(parser, node_index)) {
                 ast_parser_checkpoint_reset(checkpoint);
@@ -1093,7 +1093,7 @@ bool ast_parser_parse_variable_creation_statement(AST_Parser* parser, AST_Node_I
     if (ast_parser_test_next_2_tokens(parser, Token_Type::IDENTIFIER_NAME, Token_Type::INFER_ASSIGN))
     {
         parser->nodes[node_index].type = AST_Node_Type::STATEMENT_VARIABLE_DEFINE_INFER;
-        parser->nodes[node_index].name_id = parser->lexer->tokens[parser->index].attribute.identifier_number;
+        parser->nodes[node_index].id = parser->lexer->tokens[parser->index].attribute.id;
         parser->index += 2;
         if (!ast_parser_parse_expression(parser, node_index)) {
             ast_parser_checkpoint_reset(checkpoint);
@@ -1429,7 +1429,7 @@ bool ast_parser_parse_parameter_block(
                 if (success)
                 {
                     parser->nodes[parameter_index].type = AST_Node_Type::NAMED_PARAMETER;
-                    parser->nodes[parameter_index].name_id = parser->lexer->tokens[recoverable_checkpoint.rewind_token_index].attribute.identifier_number;
+                    parser->nodes[parameter_index].id = parser->lexer->tokens[recoverable_checkpoint.rewind_token_index].attribute.id;
                     parser->token_mapping[parameter_index].start_index = recoverable_checkpoint.rewind_token_index;
                     parser->token_mapping[parameter_index].end_index = parser->index;
                 }
@@ -1500,7 +1500,7 @@ bool ast_parser_parse_struct(AST_Parser* parser, AST_Node_Index parent_index)
         ast_parser_checkpoint_reset(checkpoint);
         return false;
     }
-    parser->nodes[node_index].name_id = parser->lexer->tokens[parser->index].attribute.identifier_number;
+    parser->nodes[node_index].id = parser->lexer->tokens[parser->index].attribute.id;
     parser->index += 4;
 
     while (!ast_parser_test_next_token(parser, Token_Type::CLOSED_BRACES))
@@ -1544,7 +1544,7 @@ bool ast_parser_parse_function(AST_Parser* parser, AST_Node_Index parent_index)
         ast_parser_checkpoint_reset(checkpoint);
         return false;
     }
-    parser->nodes[node_index].name_id = parser->lexer->tokens[parser->index].attribute.identifier_number;
+    parser->nodes[node_index].id = parser->lexer->tokens[parser->index].attribute.id;
     parser->index += 2;
 
     if (!ast_parser_parse_function_signature(parser, node_index)) {
@@ -1573,14 +1573,14 @@ bool ast_parser_parse_extern_function_declaration(AST_Parser* parser, int parent
     {
         AST_Node_Index node_index = ast_parser_get_next_node_index(parser, parent);
         parser->nodes[node_index].type = AST_Node_Type::EXTERN_HEADER_IMPORT;
-        parser->nodes[node_index].name_id = parser->lexer->tokens[parser->index].attribute.identifier_number;
+        parser->nodes[node_index].id = parser->lexer->tokens[parser->index].attribute.id;
         parser->index += 2;
         while (true)
         {
             if (ast_parser_test_next_token(parser, Token_Type::IDENTIFIER_NAME)) {
                 AST_Node_Index child_index = ast_parser_get_next_node_index(parser, node_index);
                 parser->nodes[child_index].type = AST_Node_Type::IDENTIFIER_NAME;
-                parser->nodes[child_index].name_id = parser->lexer->tokens[parser->index].attribute.identifier_number;
+                parser->nodes[child_index].id = parser->lexer->tokens[parser->index].attribute.id;
                 parser->token_mapping[child_index] = token_range_make(parser->index, parser->index+1);
                 parser->index++;
             }
@@ -1598,16 +1598,17 @@ bool ast_parser_parse_extern_function_declaration(AST_Parser* parser, int parent
         return true;
     }
 
-    if (ast_parser_test_next_3_tokens(parser, Token_Type::IDENTIFIER_NAME, Token_Type::STRING_LITERAL, Token_Type::SEMICOLON)) {
-        int id1 = parser->lexer->tokens[parser->index].attribute.identifier_number;
-        int id2 = parser->lexer->tokens[parser->index + 1].attribute.identifier_number;
-        if (id1 != parser->identifier_lib) {
+    if (ast_parser_test_next_3_tokens(parser, Token_Type::IDENTIFIER_NAME, Token_Type::STRING_LITERAL, Token_Type::SEMICOLON)) 
+    {
+        String* id1 = parser->lexer->tokens[parser->index].attribute.id;
+        String* id2 = parser->lexer->tokens[parser->index + 1].attribute.id;
+        if (id1 != parser->id_lib) {
             ast_parser_checkpoint_reset(checkpoint);
             return false;
         }
         AST_Node_Index node_index = ast_parser_get_next_node_index(parser, parent);
         parser->nodes[node_index].type = AST_Node_Type::EXTERN_LIB_IMPORT;
-        parser->nodes[node_index].name_id = id2;
+        parser->nodes[node_index].id = id2;
         parser->index += 3;
         parser->token_mapping[node_index] = token_range_make(checkpoint.rewind_token_index, parser->index);
         return true;
@@ -1620,7 +1621,7 @@ bool ast_parser_parse_extern_function_declaration(AST_Parser* parser, int parent
 
     AST_Node_Index node_index = ast_parser_get_next_node_index(parser, parent);
     parser->nodes[node_index].type = AST_Node_Type::EXTERN_FUNCTION_DECLARATION;
-    parser->nodes[node_index].name_id = parser->lexer->tokens[parser->index].attribute.identifier_number;
+    parser->nodes[node_index].id = parser->lexer->tokens[parser->index].attribute.id;
     parser->index += 2;
 
     if (!ast_parser_parse_type(parser, node_index)) {
@@ -1693,7 +1694,7 @@ bool ast_parser_parse_module(AST_Parser* parser, int parent)
     parser->index += 2;
 
     int node_index = ast_parser_get_next_node_index(parser, parent);
-    parser->nodes[node_index].name_id = parser->lexer->tokens[parser->index - 1].attribute.identifier_number;
+    parser->nodes[node_index].id = parser->lexer->tokens[parser->index - 1].attribute.id;
     parser->nodes[node_index].type = AST_Node_Type::MODULE;
 
     bool is_template_analysis = ast_parser_parse_enclosed_list(
@@ -1704,7 +1705,7 @@ bool ast_parser_parse_module(AST_Parser* parser, int parent)
             }
             int node_index = ast_parser_get_next_node_index(parser, parent_index);
             parser->nodes[node_index].type = AST_Node_Type::IDENTIFIER_NAME;
-            parser->nodes[node_index].name_id = parser->lexer->tokens[parser->index].attribute.identifier_number;
+            parser->nodes[node_index].id = parser->lexer->tokens[parser->index].attribute.id;
             parser->token_mapping[node_index] = token_range_make(parser->index, parser->index + 1);
             parser->index++;
             return true;
@@ -2285,7 +2286,7 @@ void ast_parser_parse(AST_Parser* parser, Lexer* lexer)
     parser->index = 0;
     parser->next_free_node = 0;
     parser->lexer = lexer;
-    parser->identifier_lib = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, string_create_static("lib"));
+    parser->id_lib = identifier_pool_add(lexer->identifier_pool, string_create_static("lib"));
     dynamic_array_reset(&parser->errors);
     for (int i = 0; i < parser->nodes.size; i++) {
         dynamic_array_destroy(&parser->nodes[i].children);
@@ -2408,7 +2409,7 @@ bool ast_node_type_is_type(AST_Node_Type type) {
 
 void ast_node_identifer_or_path_append_to_string(AST_Parser* parser, AST_Node_Index index, String* string)
 {
-    string_append(string, identifier_pool_index_to_string(parser->lexer->identifier_pool, parser->nodes[index].name_id).characters);
+    string_append(string, parser->nodes[index].id->characters);
     if (parser->nodes[index].type == AST_Node_Type::IDENTIFIER_PATH) {
         string_append(string, "::");
         ast_node_identifer_or_path_append_to_string(parser, parser->nodes[index].children[0], string);
@@ -2443,8 +2444,7 @@ void ast_node_expression_append_to_string(AST_Parser* parser, AST_Node_Index nod
         case Token_Type::BOOLEAN_LITERAL: string_append_formated(string, t.attribute.bool_value ? "TRUE" : "FALSE"); break;
         case Token_Type::INTEGER_LITERAL: string_append_formated(string, "%d", t.attribute.integer_value); break;
         case Token_Type::FLOAT_LITERAL: string_append_formated(string, "%3.2f", t.attribute.float_value); break;
-        case Token_Type::STRING_LITERAL: string_append_formated(string, "\"%s\"",
-            identifier_pool_index_to_string(parser->lexer->identifier_pool, t.attribute.identifier_number).characters); break;
+        case Token_Type::STRING_LITERAL: string_append_formated(string, "\"%s\"", t.attribute.id->characters); break;
         }
         return;
     case AST_Node_Type::EXPRESSION_FUNCTION_CALL:
@@ -2462,7 +2462,7 @@ void ast_node_expression_append_to_string(AST_Parser* parser, AST_Node_Index nod
         return;
     case AST_Node_Type::EXPRESSION_MEMBER_ACCESS:
         ast_node_expression_append_to_string(parser, node->children[0], string);
-        string_append_formated(string, ".%s", identifier_pool_index_to_string(parser->lexer->identifier_pool, node->name_id).characters);
+        string_append_formated(string, ".%s", node->id->characters);
         return;
     case AST_Node_Type::EXPRESSION_CAST:
         string_append_formated(string, "cast(...)");

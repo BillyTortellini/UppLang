@@ -61,10 +61,10 @@ Extern_Sources extern_sources_create()
 {
     Extern_Sources result;
     result.extern_functions = dynamic_array_create_empty<Extern_Function_Identifier>(8);
-    result.headers_to_include = dynamic_array_create_empty<int>(8);
-    result.source_files_to_compile = dynamic_array_create_empty<int>(8);
-    result.lib_files = dynamic_array_create_empty<int>(8);
-    result.extern_type_signatures = hashtable_create_pointer_empty<Type_Signature*, int>(8);
+    result.headers_to_include = dynamic_array_create_empty<String*>(8);
+    result.source_files_to_compile = dynamic_array_create_empty<String*>(8);
+    result.lib_files = dynamic_array_create_empty<String*>(8);
+    result.extern_type_signatures = hashtable_create_pointer_empty<Type_Signature*, String*>(8);
     return result;
 }
 
@@ -80,32 +80,33 @@ void extern_sources_destroy(Extern_Sources* sources)
 Identifier_Pool identifier_pool_create()
 {
     Identifier_Pool result;
-    result.identifiers = dynamic_array_create_empty<String>(128);
-    result.identifier_index_lookup_table = hashtable_create_empty<String, int>(128, hash_string, string_equals);
+    result.identifier_lookup_table = hashtable_create_empty<String, String*>(128, hash_string, string_equals);
     return result;
 }
 
 void identifier_pool_destroy(Identifier_Pool* pool)
 {
-    for (int i = 0; i < pool->identifiers.size; i++) {
-        string_destroy(&pool->identifiers[i]);
+    auto iter = hashtable_iterator_create(&pool->identifier_lookup_table);
+    while (hashtable_iterator_has_next(&iter)) {
+        String* str = *iter.value;
+        string_destroy(str);
+        delete str;
+        hashtable_iterator_next(&iter);
     }
-    dynamic_array_destroy(&pool->identifiers);
-    hashtable_destroy(&pool->identifier_index_lookup_table);
+    hashtable_destroy(&pool->identifier_lookup_table);
 }
 
-int identifier_pool_add_or_find_identifier_by_string(Identifier_Pool* lexer, String identifier)
+String* identifier_pool_add(Identifier_Pool* lexer, String identifier)
 {
-    int* identifier_id = hashtable_find_element(&lexer->identifier_index_lookup_table, identifier);
-    if (identifier_id != 0) {
-        return *identifier_id;
+    String** found = hashtable_find_element(&lexer->identifier_lookup_table, identifier);
+    if (found != 0) {
+        return *found;
     }
     else {
-        String identifier_string_copy = string_create(identifier.characters);
-        dynamic_array_push_back(&lexer->identifiers, identifier_string_copy);
-        int index = lexer->identifiers.size - 1;
-        hashtable_insert_element(&lexer->identifier_index_lookup_table, identifier_string_copy, index);
-        return index;
+        String* copy = new String;
+        *copy = string_create(identifier.characters);
+        hashtable_insert_element(&lexer->identifier_lookup_table, *copy, copy);
+        return copy;
     }
 }
 
@@ -114,15 +115,17 @@ void identifier_pool_print(Identifier_Pool* pool)
     String msg = string_create_empty(256);
     SCOPE_EXIT(string_destroy(&msg));
     string_append_formated(&msg, "Identifiers: ");
-    for (int i = 0; i < pool->identifiers.size; i++) {
-        string_append_formated(&msg, "\n\t%d: %s", i, pool->identifiers[i].characters);
+
+    auto iter = hashtable_iterator_create(&pool->identifier_lookup_table);
+    int i = 0;
+    while (hashtable_iterator_has_next(&iter)) {
+        String* str = *iter.value;
+        string_append_formated(&msg, "\n\t%d: %s", i, str->characters);
+        hashtable_iterator_next(&iter);
+        i++;
     }
     string_append_formated(&msg, "\n");
     logg("%s", msg.characters);
-}
-
-String identifier_pool_index_to_string(Identifier_Pool* pool, int index) {
-    return pool->identifiers[index];
 }
 
 Token_Range token_range_make(int start_index, int end_index)
@@ -268,7 +271,7 @@ void compiler_compile(Compiler* compiler, String* source_code, bool generate_cod
 
         if (do_analysis && output_type_system) {
             logg("\n--------TYPE SYSTEM RESULT--------:\n");
-            type_system_print(&compiler->type_system, &compiler->identifier_pool);
+            type_system_print(&compiler->type_system);
         }
 
         if (do_analysis && output_root_table)
@@ -287,7 +290,7 @@ void compiler_compile(Compiler* compiler, String* source_code, bool generate_cod
                 logg("\n--------IR_PROGRAM---------\n");
                 String tmp = string_create_empty(1024);
                 SCOPE_EXIT(string_destroy(&tmp));
-                ir_program_append_to_string(compiler->ir_generator.program, &tmp, &compiler->identifier_pool);
+                ir_program_append_to_string(compiler->ir_generator.program, &tmp);
                 logg("%s", tmp.characters);
             }
 
@@ -354,7 +357,7 @@ void compiler_execute(Compiler* compiler)
         if (execute_binary) {
             c_compiler_execute(&compiler->c_compiler);
         }
-        else 
+        else
         {
             double bytecode_start = timer_current_time_in_seconds(compiler->timer);
             bytecode_interpreter_execute_main(&compiler->bytecode_interpreter, compiler);
@@ -377,7 +380,7 @@ void compiler_execute(Compiler* compiler)
 Text_Slice token_range_to_text_slice(Token_Range range, Compiler* compiler)
 {
     assert(range.start_index >= 0 && range.start_index <= compiler->lexer.tokens.size, "HEY");
-    assert(range.end_index >= 0 && range.end_index <= compiler->lexer.tokens.size+1, "HEY");
+    assert(range.end_index >= 0 && range.end_index <= compiler->lexer.tokens.size + 1, "HEY");
     assert(range.end_index >= range.start_index, "HEY");
     if (range.end_index > compiler->lexer.tokens.size) {
         range.end_index = compiler->lexer.tokens.size;

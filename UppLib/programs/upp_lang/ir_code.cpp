@@ -116,14 +116,14 @@ void ir_program_destroy(IR_Program* program)
     delete program;
 }
 
-void ir_data_access_append_to_string(IR_Data_Access* access, String* string, IR_Code_Block* current_block, Identifier_Pool* pool)
+void ir_data_access_append_to_string(IR_Data_Access* access, String* string, IR_Code_Block* current_block)
 {
     switch (access->type)
     {
     case IR_Data_Access_Type::CONSTANT: {
         Upp_Constant* constant = &access->option.constant_pool->constants[access->index];
         string_append_formated(string, "Constant #%d ", access->index);
-        type_signature_append_to_string(string, constant->type, pool);
+        type_signature_append_to_string(string, constant->type);
         string_append_formated(string, " ", access->index);
         type_signature_append_value_to_string(constant->type, &access->option.constant_pool->buffer[constant->offset], string);
         break;
@@ -131,19 +131,19 @@ void ir_data_access_append_to_string(IR_Data_Access* access, String* string, IR_
     case IR_Data_Access_Type::GLOBAL_DATA: {
         Type_Signature* sig = access->option.program->globals[access->index];
         string_append_formated(string, "Global #%d, type: ", access->index);
-        type_signature_append_to_string(string, sig, pool);
+        type_signature_append_to_string(string, sig);
         break;
     }
     case IR_Data_Access_Type::PARAMETER: {
         Type_Signature* sig = access->option.function->function_type->options.function.parameter_types[access->index];
         string_append_formated(string, "Param #%d, type: ", access->index);
-        type_signature_append_to_string(string, sig, pool);
+        type_signature_append_to_string(string, sig);
         break;
     }
     case IR_Data_Access_Type::REGISTER: {
         Type_Signature* sig = access->option.definition_block->registers[access->index];
         string_append_formated(string, "Register #%d, type: ", access->index);
-        type_signature_append_to_string(string, sig, pool);
+        type_signature_append_to_string(string, sig);
         if (access->option.definition_block != current_block) {
             string_append_formated(string, " (Not local)", access->index);
         }
@@ -162,8 +162,8 @@ void indent_string(String* string, int indentation) {
     }
 }
 
-void ir_code_block_append_to_string(IR_Code_Block* code_block, String* string, int indentation, Identifier_Pool* pool);
-void ir_instruction_append_to_string(IR_Instruction* instruction, String* string, int indentation, Identifier_Pool* pool, IR_Code_Block* code_block)
+void ir_code_block_append_to_string(IR_Code_Block* code_block, String* string, int indentation);
+void ir_instruction_append_to_string(IR_Instruction* instruction, String* string, int indentation, IR_Code_Block* code_block)
 {
     indent_string(string, indentation);
     switch (instruction->type)
@@ -175,12 +175,12 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
         indent_string(string, indentation + 1);
         if (address_of->type != IR_Instruction_Address_Of_Type::FUNCTION) {
             string_append_formated(string, "src: ");
-            ir_data_access_append_to_string(&address_of->source, string, code_block, pool);
+            ir_data_access_append_to_string(&address_of->source, string, code_block);
             string_append_formated(string, "\n");
             indent_string(string, indentation + 1);
         }
         string_append_formated(string, "dst: ");
-        ir_data_access_append_to_string(&address_of->destination, string, code_block, pool);
+        ir_data_access_append_to_string(&address_of->destination, string, code_block);
         string_append_formated(string, "\n");
         indent_string(string, indentation + 1);
         string_append_formated(string, "type: ");
@@ -188,7 +188,7 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
         {
         case IR_Instruction_Address_Of_Type::ARRAY_ELEMENT:
             string_append_formated(string, "ARRAY_ELEMENT index: ");
-            ir_data_access_append_to_string(&address_of->options.index_access, string, code_block, pool);
+            ir_data_access_append_to_string(&address_of->options.index_access, string, code_block);
             break;
         case IR_Instruction_Address_Of_Type::DATA:
             string_append_formated(string, "DATA");
@@ -198,7 +198,7 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
             break;
         case IR_Instruction_Address_Of_Type::STRUCT_MEMBER:
             string_append_formated(string, "STRUCT_MEMBER, offset: %d, type: ", address_of->options.member.offset);
-            type_signature_append_to_string(string, address_of->options.member.type, pool);
+            type_signature_append_to_string(string, address_of->options.member.type);
             break;
         }
         break;
@@ -252,20 +252,20 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
         string_append_formated(string, "\n");
         indent_string(string, indentation + 1);
         string_append_formated(string, "left: ");
-        ir_data_access_append_to_string(&instruction->options.binary_op.operand_left, string, code_block, pool);
+        ir_data_access_append_to_string(&instruction->options.binary_op.operand_left, string, code_block);
         string_append_formated(string, "\n");
         indent_string(string, indentation + 1);
         string_append_formated(string, "right: ");
-        ir_data_access_append_to_string(&instruction->options.binary_op.operand_right, string, code_block, pool);
+        ir_data_access_append_to_string(&instruction->options.binary_op.operand_right, string, code_block);
         string_append_formated(string, "\n");
         indent_string(string, indentation + 1);
         string_append_formated(string, "dst: ");
-        ir_data_access_append_to_string(&instruction->options.binary_op.destination, string, code_block, pool);
+        ir_data_access_append_to_string(&instruction->options.binary_op.destination, string, code_block);
         break;
     }
     case IR_Instruction_Type::BLOCK: {
         string_append_formated(string, "BLOCK\n");
-        ir_code_block_append_to_string(instruction->options.block, string, indentation + 1, pool);
+        ir_code_block_append_to_string(instruction->options.block, string, indentation + 1);
         break;
     }
     case IR_Instruction_Type::BREAK: {
@@ -312,11 +312,11 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
         string_append_formated(string, "\n");
         indent_string(string, indentation + 1);
         string_append_formated(string, "src: ");
-        ir_data_access_append_to_string(&cast->source, string, code_block, pool);
+        ir_data_access_append_to_string(&cast->source, string, code_block);
         string_append_formated(string, "\n");
         indent_string(string, indentation + 1);
         string_append_formated(string, "dst: ");
-        ir_data_access_append_to_string(&cast->destination, string, code_block, pool);
+        ir_data_access_append_to_string(&cast->destination, string, code_block);
         break;
     }
     case IR_Instruction_Type::FUNCTION_CALL:
@@ -347,7 +347,7 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
         if (function_sig != 0) {
             if (function_sig->options.function.return_type->type != Signature_Type::VOID_TYPE) {
                 string_append_formated(string, "dst: ");
-                ir_data_access_append_to_string(&call->destination, string, code_block, pool);
+                ir_data_access_append_to_string(&call->destination, string, code_block);
                 string_append_formated(string, "\n");
                 indent_string(string, indentation + 1);
             }
@@ -355,7 +355,7 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
         string_append_formated(string, "args: (%d)\n", call->arguments.size);
         for (int i = 0; i < call->arguments.size; i++) {
             indent_string(string, indentation + 2);
-            ir_data_access_append_to_string(&call->arguments[i], string, code_block, pool);
+            ir_data_access_append_to_string(&call->arguments[i], string, code_block);
             string_append_formated(string, "\n");
         }
 
@@ -368,7 +368,7 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
             break;
         case IR_Instruction_Call_Type::FUNCTION_POINTER_CALL:
             string_append_formated(string, "FUNCTION_POINTER_CALL, access: ");
-            ir_data_access_append_to_string(&call->options.pointer_access, string, code_block, pool);
+            ir_data_access_append_to_string(&call->options.pointer_access, string, code_block);
             break;
         case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
             string_append_formated(string, "HARDCODED_FUNCTION_CALL, type: ");
@@ -376,44 +376,44 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
             break;
         case IR_Instruction_Call_Type::EXTERN_FUNCTION_CALL:
             string_append_formated(string, "EXTERN_FUNCTION_CALL, type: ");
-            type_signature_append_to_string(string, call->options.extern_function.function_signature, pool);
+            type_signature_append_to_string(string, call->options.extern_function.function_signature);
             break;
         }
         break;
     }
     case IR_Instruction_Type::IF: {
         string_append_formated(string, "IF ");
-        ir_data_access_append_to_string(&instruction->options.if_instr.condition, string, code_block, pool);
+        ir_data_access_append_to_string(&instruction->options.if_instr.condition, string, code_block);
         string_append_formated(string, "\n");
-        ir_code_block_append_to_string(instruction->options.if_instr.true_branch, string, indentation + 1, pool);
+        ir_code_block_append_to_string(instruction->options.if_instr.true_branch, string, indentation + 1);
         indent_string(string, indentation);
         string_append_formated(string, "ELSE\n");
-        ir_code_block_append_to_string(instruction->options.if_instr.true_branch, string, indentation + 1, pool);
+        ir_code_block_append_to_string(instruction->options.if_instr.true_branch, string, indentation + 1);
         break;
     }
     case IR_Instruction_Type::MOVE: {
         string_append_formated(string, "MOVE\n");
         indent_string(string, indentation + 1);
         string_append_formated(string, "src: ");
-        ir_data_access_append_to_string(&instruction->options.move.source, string, code_block, pool);
+        ir_data_access_append_to_string(&instruction->options.move.source, string, code_block);
         string_append_formated(string, "\n");
         indent_string(string, indentation + 1);
         string_append_formated(string, "dst: ");
-        ir_data_access_append_to_string(&instruction->options.move.destination, string, code_block, pool);
+        ir_data_access_append_to_string(&instruction->options.move.destination, string, code_block);
         break;
     }
     case IR_Instruction_Type::WHILE: {
         string_append_formated(string, "WHILE\n");
         indent_string(string, indentation + 1);
         string_append_formated(string, "Condition code: \n");
-        ir_code_block_append_to_string(instruction->options.while_instr.condition_code, string, indentation + 2, pool);
+        ir_code_block_append_to_string(instruction->options.while_instr.condition_code, string, indentation + 2);
         indent_string(string, indentation + 1);
         string_append_formated(string, "Condition access: ");
-        ir_data_access_append_to_string(&instruction->options.while_instr.condition_access, string, code_block, pool);
+        ir_data_access_append_to_string(&instruction->options.while_instr.condition_access, string, code_block);
         string_append_formated(string, "\n");
         indent_string(string, indentation + 1);
         string_append_formated(string, "Body: \n");
-        ir_code_block_append_to_string(instruction->options.while_instr.code, string, indentation + 2, pool);
+        ir_code_block_append_to_string(instruction->options.while_instr.code, string, indentation + 2);
         break;
     }
     case IR_Instruction_Type::RETURN: {
@@ -426,7 +426,7 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
             break;
         case IR_Instruction_Return_Type::RETURN_DATA:
             string_append_formated(string, "RETURN ");
-            ir_data_access_append_to_string(&return_instr->options.return_value, string, code_block, pool);
+            ir_data_access_append_to_string(&return_instr->options.return_value, string, code_block);
             break;
         case IR_Instruction_Return_Type::RETURN_EMPTY:
             string_append_formated(string, "RETURN");
@@ -450,51 +450,51 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
         string_append_formated(string, "\n");
         indent_string(string, indentation + 1);
         string_append_formated(string, "dst: ");
-        ir_data_access_append_to_string(&instruction->options.unary_op.destination, string, code_block, pool);
+        ir_data_access_append_to_string(&instruction->options.unary_op.destination, string, code_block);
         string_append_formated(string, "\n");
         indent_string(string, indentation + 1);
         string_append_formated(string, "operand: ");
-        ir_data_access_append_to_string(&instruction->options.unary_op.source, string, code_block, pool);
+        ir_data_access_append_to_string(&instruction->options.unary_op.source, string, code_block);
         break;
     }
     default: panic("What");
     }
 }
 
-void ir_code_block_append_to_string(IR_Code_Block* code_block, String* string, int indentation, Identifier_Pool* pool)
+void ir_code_block_append_to_string(IR_Code_Block* code_block, String* string, int indentation)
 {
     indent_string(string, indentation);
     string_append_formated(string, "Registers:\n");
     for (int i = 0; i < code_block->registers.size; i++) {
         indent_string(string, indentation + 1);
         string_append_formated(string, "#%d: ", i);
-        type_signature_append_to_string(string, code_block->registers[i], pool);
+        type_signature_append_to_string(string, code_block->registers[i]);
         string_append_formated(string, "\n");
     }
     indent_string(string, indentation);
     string_append_formated(string, "Instructions:\n");
     for (int i = 0; i < code_block->instructions.size; i++) {
-        ir_instruction_append_to_string(&code_block->instructions[i], string, indentation + 1, pool, code_block);
+        ir_instruction_append_to_string(&code_block->instructions[i], string, indentation + 1, code_block);
         string_append_formated(string, "\n");
     }
 }
 
-void ir_function_append_to_string(IR_Function* function, String* string, int indentation, Identifier_Pool* pool)
+void ir_function_append_to_string(IR_Function* function, String* string, int indentation)
 {
     indent_string(string, indentation);
     string_append_formated(string, "Function-Type:");
-    type_signature_append_to_string(string, function->function_type, pool);
+    type_signature_append_to_string(string, function->function_type);
     string_append_formated(string, "\n");
-    ir_code_block_append_to_string(function->code, string, indentation, pool);
+    ir_code_block_append_to_string(function->code, string, indentation);
 }
 
-void ir_program_append_to_string(IR_Program* program, String* string, Identifier_Pool* pool)
+void ir_program_append_to_string(IR_Program* program, String* string)
 {
     string_append_formated(string, "Program Dump:\n-----------------\n");
     for (int i = 0; i < program->functions.size; i++)
     {
         string_append_formated(string, "Function #%d ", i);
-        ir_function_append_to_string(program->functions[i], string, 0, pool);
+        ir_function_append_to_string(program->functions[i], string, 0);
         string_append_formated(string, "\n");
     }
 }
@@ -917,18 +917,14 @@ void ir_generator_generate_block(IR_Generator* generator, IR_Code_Block* ir_bloc
             IR_Data_Access delete_access = ir_generator_generate_expression(generator, ir_block, statement->options.deletion.expression);
             if (statement->options.deletion.is_array)
             {
-                Type_Signature* pointer_type = type_system_make_pointer(
-                    generator->type_system, statement->options.deletion.expression->result_type->options.array.element_type
-                );
-
+                assert(statement->options.deletion.expression->result_type->type == Signature_Type::SLICE, "HEY");
+                Type_Signature* pointer_type = statement->options.deletion.expression->result_type->options.slice.data_member.type;
                 IR_Instruction instr;
                 instr.type = IR_Instruction_Type::ADDRESS_OF;
                 instr.options.address_of.destination = ir_data_access_create_intermediate(ir_block, pointer_type);
                 instr.options.address_of.type = IR_Instruction_Address_Of_Type::STRUCT_MEMBER;
                 instr.options.address_of.source = delete_access;
-                instr.options.address_of.options.member.name_handle = generator->compiler->analyser.token_index_data;
-                instr.options.address_of.options.member.offset = 0;
-                instr.options.address_of.options.member.type = pointer_type;
+                instr.options.address_of.options.member = statement->options.deletion.expression->result_type->options.slice.data_member;
                 dynamic_array_push_back(&ir_block->instructions, instr);
 
                 instr.options.address_of.destination.is_memory_access = true;

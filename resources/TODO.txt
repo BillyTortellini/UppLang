@@ -25,11 +25,8 @@ Redo template syntax, only allow on functions/structs
 
 
 
-
 TODO NOW:
 ---------
-Module highlighting
-Replace string_identifier with String*
 Function pointers are only accessible in variables, not in expressions.
 Load other text files with #load
 Create automatic test cases

@@ -619,7 +619,7 @@ void lexer_parse_string(Lexer* lexer, String* code, Identifier_Pool* identifier_
 
             // Add Token
             Token_Attribute attribute;
-            attribute.identifier_number = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, identifier_string);
+            attribute.id = identifier_pool_add(lexer->identifier_pool, identifier_string);
             dynamic_array_push_back(&lexer->tokens, token_make_with_slice(Token_Type::STRING_LITERAL, attribute,
                 token_slice, index - string_literal_start_index, string_literal_start_index));
             continue;
@@ -802,7 +802,7 @@ void lexer_parse_string(Lexer* lexer, String* code, Identifier_Pool* identifier_
             }
             else {
                 Token_Attribute attribute;
-                attribute.identifier_number = identifier_pool_add_or_find_identifier_by_string(lexer->identifier_pool, identifier_string);
+                attribute.id = identifier_pool_add(lexer->identifier_pool, identifier_string);
                 dynamic_array_push_back(&lexer->tokens,
                     token_make(Token_Type::IDENTIFIER_NAME, attribute, line_number, character_pos, identifier_string_length, index));
             }
@@ -844,7 +844,7 @@ void lexer_print(Lexer* lexer)
             token_type_to_string(token.type), token.position.start.line, token.position.start.character,
             math_maximum(token.position.end.character - token.position.start.character, 0));
         if (token.type == Token_Type::IDENTIFIER_NAME) {
-            string_append_formated(&msg, " = %s", identifier_pool_index_to_string(lexer->identifier_pool, token.attribute.identifier_number).characters);
+            string_append_formated(&msg, " = %s", token.attribute.id->characters);
         }
         else if (token.type == Token_Type::INTEGER_LITERAL) {
             string_append_formated(&msg, " = %d", token.attribute.integer_value);

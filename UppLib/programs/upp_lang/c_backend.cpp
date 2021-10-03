@@ -229,10 +229,6 @@ void c_generator_destroy(C_Generator* generator)
     dynamic_array_destroy(&generator->type_dependencies);
 }
 
-const char* c_generator_id_to_string(C_Generator* generator, int name_handle) {
-    return identifier_pool_index_to_string(&generator->compiler->identifier_pool, name_handle).characters;
-}
-
 void c_generator_register_type_name(C_Generator* generator, Type_Signature* type);
 void c_generator_output_type_reference(C_Generator* generator, String* output, Type_Signature* type)
 {
@@ -252,10 +248,10 @@ void c_generator_register_type_name(C_Generator* generator, Type_Signature* type
         return;
     }
 
-    int* extern_name_id = hashtable_find_element(&generator->compiler->extern_sources.extern_type_signatures, type);
+    String** extern_name_id = hashtable_find_element(&generator->compiler->extern_sources.extern_type_signatures, type);
     if (extern_name_id != 0) {
         String type_name = string_create_empty(32);
-        string_append_formated(&type_name, identifier_pool_index_to_string(&generator->compiler->identifier_pool, *extern_name_id).characters);
+        string_append_formated(&type_name, (*extern_name_id)->characters);
         hashtable_insert_element(&generator->translation_type_to_name, type, type_name);
         return;
     }
@@ -580,8 +576,7 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
                 break;
             }
             case IR_Instruction_Call_Type::EXTERN_FUNCTION_CALL: {
-                string_append_formated(output,
-                    identifier_pool_index_to_string(&generator->compiler->identifier_pool, call->options.extern_function.name_id).characters);
+                string_append_formated(output, call->options.extern_function.id->characters);
                 break;
             }
             case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL: {
@@ -772,15 +767,11 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
             case IR_Instruction_Address_Of_Type::STRUCT_MEMBER: {
                 string_append_formated(output, "&(");
                 c_generator_output_data_access(generator, output, addr_of->source);
-                string_append_formated(output, ").%s;\n",
-                    identifier_pool_index_to_string(&generator->compiler->identifier_pool, addr_of->options.member.name_handle).characters
-                );
+                string_append_formated(output, ").%s;\n", addr_of->options.member.id->characters);
                 break;
             }
             case IR_Instruction_Address_Of_Type::EXTERN_FUNCTION: {
-                string_append_formated(output, "&%s;\n",
-                    identifier_pool_index_to_string(&generator->compiler->identifier_pool, addr_of->options.extern_function.name_id).characters
-                );
+                string_append_formated(output, "&%s;\n", addr_of->options.extern_function.id->characters);
                 break;
             }
             default: panic("What");
@@ -921,9 +912,7 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
         Extern_Function_Identifier* function = &generator->compiler->extern_sources.extern_functions[i];
         Type_Signature* function_signature = function->function_signature;
         c_generator_output_type_reference(generator, &generator->section_function_prototypes, function_signature->options.function.return_type);
-        string_append_formated(&generator->section_function_prototypes, " %s(",
-            identifier_pool_index_to_string(&generator->compiler->identifier_pool, function->name_id).characters
-        );
+        string_append_formated(&generator->section_function_prototypes, " %s(", function->id->characters);
         for (int j = 0; j < function->function_signature->options.function.parameter_types.size; j++) {
             Type_Signature* param_type = function->function_signature->options.function.parameter_types[j];
             c_generator_output_type_reference(generator, &generator->section_function_prototypes, param_type);
@@ -1062,9 +1051,7 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
                     Struct_Member* member = &dependency->signature->options.structure.members[i];
                     string_add_indentation(&generator->section_struct_implementations, 1);
                     c_generator_output_type_reference(generator, &generator->section_struct_implementations, member->type);
-                    string_append_formated(&generator->section_struct_implementations, " %s;\n",
-                        identifier_pool_index_to_string(&generator->compiler->identifier_pool, member->name_handle).characters
-                    );
+                    string_append_formated(&generator->section_struct_implementations, " %s;\n", member->id->characters);
                 }
                 string_append_formated(&generator->section_struct_implementations, "};\n\n");
             }
@@ -1106,16 +1093,12 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
     SCOPE_EXIT(string_destroy(&section_extern_includes));
     {
         for (int i = 0; i < generator->compiler->extern_sources.headers_to_include.size; i++) {
-            String header_name = identifier_pool_index_to_string(&generator->compiler->identifier_pool,
-                generator->compiler->extern_sources.headers_to_include[i]);
-            string_append_formated(&section_extern_includes, "#include <%s>\n", header_name.characters);
+            string_append_formated(&section_extern_includes, "#include <%s>\n", generator->compiler->extern_sources.headers_to_include[i]->characters);
         }
         string_append_formated(&section_extern_includes, "\n");
     }
     for (int i = 0; i < generator->compiler->extern_sources.lib_files.size; i++) {
-        String header_name = identifier_pool_index_to_string(&generator->compiler->identifier_pool,
-            generator->compiler->extern_sources.lib_files[i]);
-        c_compiler_add_lib_file(&generator->compiler->c_compiler, header_name);
+        c_compiler_add_lib_file(&generator->compiler->c_compiler, *generator->compiler->extern_sources.lib_files[i]);
     }
 
     // Combine sections into one program

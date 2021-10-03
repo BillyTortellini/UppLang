@@ -189,7 +189,7 @@ Symbol_Table* symbol_table_create(Semantic_Analyser* analyser, Symbol_Table* par
 {
     Symbol_Table* table = new Symbol_Table();
     table->parent = parent;
-    table->symbols = hashtable_create_empty<int, Symbol*>(4, &hash_i32, equals_i32);
+    table->symbols = hashtable_create_pointer_empty<String*, Symbol*>(4);
     dynamic_array_push_back(&analyser->symbol_tables, table);
     if (register_in_ast_mapping) {
         hashtable_insert_element(&analyser->ast_to_symbol_table, node_index, table);
@@ -214,7 +214,7 @@ void symbol_destroy(Symbol* symbol)
 
 void symbol_table_destroy(Symbol_Table* symbol_table)
 {
-    Hashtable_Iterator<int, Symbol*> it = hashtable_iterator_create(&symbol_table->symbols);
+    auto it = hashtable_iterator_create(&symbol_table->symbols);
     while (hashtable_iterator_has_next(&it)) {
         Symbol* symbol = *it.value;
         symbol_destroy(symbol);
@@ -226,12 +226,12 @@ void symbol_table_destroy(Symbol_Table* symbol_table)
     delete symbol_table;
 }
 
-Symbol* symbol_table_find_symbol(Symbol_Table* table, int name_handle, bool only_current_scope)
+Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool only_current_scope)
 {
-    Symbol** found = hashtable_find_element(&table->symbols, name_handle);
+    Symbol** found = hashtable_find_element(&table->symbols, id);
     if (found == 0 ) {
         if (!only_current_scope && table->parent != 0) {
-            return symbol_table_find_symbol(table->parent, name_handle, only_current_scope);
+            return symbol_table_find_symbol(table->parent, id, only_current_scope);
         }
         return nullptr;
     }
@@ -240,25 +240,25 @@ Symbol* symbol_table_find_symbol(Symbol_Table* table, int name_handle, bool only
 
 Symbol* symbol_table_find_symbol_by_string(Symbol_Table* table, String* string, Identifier_Pool* pool)
 {
-    int* index = hashtable_find_element(&pool->identifier_index_lookup_table, *string);
-    if (index == 0) return 0;
+    String** id = hashtable_find_element(&pool->identifier_lookup_table, *string);
+    if (id == 0) return 0;
     else {
-        return symbol_table_find_symbol(table, *index, false);
+        return symbol_table_find_symbol(table, *id, false);
     }
 }
 
-void symbol_append_to_string(Symbol* symbol, String* string, Semantic_Analyser* analyser)
+void symbol_append_to_string(Symbol* symbol, String* string)
 {
-    string_append_formated(string, "%s ", identifier_pool_index_to_string(&analyser->compiler->identifier_pool, symbol->name_handle).characters);
+    string_append_formated(string, "%s ", symbol->id->characters);
     switch (symbol->type)
     {
     case Symbol_Type::VARIABLE:
         string_append_formated(string, "Variable");
-        type_signature_append_to_string(string, symbol->options.variable->data_type, &analyser->compiler->identifier_pool);
+        type_signature_append_to_string(string, symbol->options.variable->data_type);
         break;
     case Symbol_Type::TYPE:
         string_append_formated(string, "Type");
-        type_signature_append_to_string(string, symbol->options.type, &analyser->compiler->identifier_pool);
+        type_signature_append_to_string(string, symbol->options.type);
         break;
     case Symbol_Type::FUNCTION:
         switch (symbol->options.function->function_type) {
@@ -266,7 +266,7 @@ void symbol_append_to_string(Symbol* symbol, String* string, Semantic_Analyser* 
         case ModTree_Function_Type::EXTERN_FUNCTION: string_append_formated(string, "Extern Function "); break;
         case ModTree_Function_Type::HARDCODED_FUNCTION: string_append_formated(string, "Hardcoded Function "); break;
         }
-        type_signature_append_to_string(string, symbol->options.function->signature, &analyser->compiler->identifier_pool);
+        type_signature_append_to_string(string, symbol->options.function->signature);
         break;
     case Symbol_Type::MODULE:
         string_append_formated(string, "Module");
@@ -282,14 +282,14 @@ void symbol_table_append_to_string_with_parent_info(String* string, Symbol_Table
     if (!is_parent) {
         string_append_formated(string, "Symbols: \n");
     }
-    Hashtable_Iterator<int, Symbol*> iter = hashtable_iterator_create(&table->symbols);
+    auto iter = hashtable_iterator_create(&table->symbols);
     while (hashtable_iterator_has_next(&iter))
     {
         Symbol* s = *iter.value;
         if (is_parent) {
             string_append_formated(string, "\t");
         }
-        symbol_append_to_string(s, string, analyser);
+        symbol_append_to_string(s, string);
         string_append_formated(string, "\n");
         hashtable_iterator_next(&iter);
     }
@@ -305,23 +305,21 @@ void symbol_table_append_to_string(String* string, Symbol_Table* table, Semantic
 void semantic_analyser_log_error(Semantic_Analyser* analyser, Semantic_Error error);
 Symbol* symbol_table_define_symbol(Symbol symbol, Semantic_Analyser* analyser)
 {
-    if (symbol.name_handle < 0) {
-        panic("Hey");
-    }
+    assert(symbol.id != 0, "HEY");
 
     if (PRINT_DEPENDENCIES) {
-        logg("Defining symbol: %s\n", identifier_pool_index_to_string(&analyser->compiler->identifier_pool, symbol.name_handle).characters);
+        logg("Defining symbol: %s\n", symbol.id->characters);
     }
 
     // Check if already defined in same scope
-    Symbol* found_symbol = symbol_table_find_symbol(symbol.symbol_table, symbol.name_handle, true);
+    Symbol* found_symbol = symbol_table_find_symbol(symbol.symbol_table, symbol.id, true);
     if (found_symbol != 0) 
     {
         // Two symbols with the same name in one scope is not possible without Overloading
         Semantic_Error error;
         error.type = Semantic_Error_Type::SYMBOL_TABLE_SYMBOL_ALREADY_DEFINED;
         error.error_node_index = symbol.definition_node_index;
-        error.name_id = symbol.name_handle;
+        error.id = symbol.id;
         error.symbol = found_symbol;
         semantic_analyser_log_error(analyser, error);
         symbol_destroy(&symbol);
@@ -329,7 +327,7 @@ Symbol* symbol_table_define_symbol(Symbol symbol, Semantic_Analyser* analyser)
     }
 
     // Check if already defined in outer scopes
-    found_symbol = symbol_table_find_symbol(symbol.symbol_table, symbol.name_handle, false);
+    found_symbol = symbol_table_find_symbol(symbol.symbol_table, symbol.id, false);
     if (found_symbol != 0)
     {
         bool shadowing_allowed = false;
@@ -362,7 +360,7 @@ Symbol* symbol_table_define_symbol(Symbol symbol, Semantic_Analyser* analyser)
             Semantic_Error error;
             error.type = Semantic_Error_Type::SYMBOL_TABLE_SYMBOL_ALREADY_DEFINED;
             error.error_node_index = symbol.definition_node_index;
-            error.name_id = symbol.name_handle;
+            error.id = symbol.id;
             error.symbol = found_symbol;
             semantic_analyser_log_error(analyser, error);
             symbol_destroy(&symbol);
@@ -372,7 +370,7 @@ Symbol* symbol_table_define_symbol(Symbol symbol, Semantic_Analyser* analyser)
 
     Symbol* new_sym = new Symbol;
     *new_sym = symbol;
-    hashtable_insert_element(&symbol.symbol_table->symbols, symbol.name_handle, new_sym);
+    hashtable_insert_element(&symbol.symbol_table->symbols, symbol.id, new_sym);
     return new_sym;
 }
 
@@ -432,13 +430,13 @@ void semantic_analyser_log_error(Semantic_Analyser* analyser, Semantic_Error err
     dynamic_array_push_back(&analyser->errors, error);
 }
 
-void semantic_analyser_define_type_symbol(Semantic_Analyser* analyser, Symbol_Table* table, int name_id, Type_Signature* type, int definition_node_index)
+void semantic_analyser_define_type_symbol(Semantic_Analyser* analyser, Symbol_Table* table, String* id, Type_Signature* type, int definition_node_index)
 {
     Symbol s;
     s.type = Symbol_Type::TYPE;
     s.template_data.is_templated = false;
     s.options.type = type;
-    s.name_handle = name_id;
+    s.id = id;
     s.definition_node_index = definition_node_index;
     s.symbol_table = table;
     symbol_table_define_symbol(s, analyser);
@@ -548,10 +546,9 @@ Identifier_Analysis_Result semantic_analyser_instanciate_template(Semantic_Analy
         {
             String tmp = string_create_empty(64);
             SCOPE_EXIT(string_destroy(&tmp));
-            string_append_formated(&tmp, "No instance of template found, instanciating: %s<",
-                identifier_pool_index_to_string(&analyser->compiler->identifier_pool, symbol->name_handle).characters);
+            string_append_formated(&tmp, "No instance of template found, instanciating: %s<", symbol->id->characters);
             for (int i = 0; i < template_arguments.size; i++) {
-                type_signature_append_to_string(&tmp, template_arguments[i], &analyser->compiler->identifier_pool);
+                type_signature_append_to_string(&tmp, template_arguments[i]);
                 if (i != template_arguments.size - 1) {
                     string_append_formated(&tmp, ", ");
                 }
@@ -575,7 +572,7 @@ Identifier_Analysis_Result semantic_analyser_instanciate_template(Semantic_Analy
             {
                 Symbol template_symbol;
                 template_symbol.type = Symbol_Type::TYPE;
-                template_symbol.name_handle = symbol->template_data.parameter_names[i];
+                template_symbol.id = symbol->template_data.parameter_names[i];
                 template_symbol.definition_node_index = instance_node_index;
                 template_symbol.template_data.is_templated = false;
                 template_symbol.options.type = template_arguments[i];
@@ -640,7 +637,7 @@ Identifier_Analysis_Result semantic_analyser_instanciate_template(Semantic_Analy
                 Type_Signature struct_sig;
                 struct_sig.type = Signature_Type::STRUCT;
                 struct_sig.options.structure.members = dynamic_array_create_empty<Struct_Member>(struct_node->children.size);
-                struct_sig.options.structure.name = struct_node->name_id;
+                struct_sig.options.structure.id = struct_node->id;
                 struct_sig.alignment = 0;
                 struct_sig.size = 0;
                 struct_instance_signature = type_system_register_type(&analyser->compiler->type_system, struct_sig);
@@ -684,7 +681,7 @@ Identifier_Analysis_Result semantic_analyser_analyse_identifier_node_with_templa
     bool is_path = node->type == AST_Node_Type::IDENTIFIER_PATH || node->type == AST_Node_Type::IDENTIFIER_PATH_TEMPLATED;
     bool is_templated = node->type == AST_Node_Type::IDENTIFIER_NAME_TEMPLATED || node->type == AST_Node_Type::IDENTIFIER_PATH_TEMPLATED;
 
-    Symbol* symbol = symbol_table_find_symbol(table, node->name_id, only_current_scope);
+    Symbol* symbol = symbol_table_find_symbol(table, node->id, only_current_scope);
     if (symbol == 0)
     {
         Identifier_Analysis_Result result;
@@ -1381,10 +1378,10 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
         }
         else if (token->type == Token_Type::STRING_LITERAL)
         {
-            String string = identifier_pool_index_to_string(&analyser->compiler->identifier_pool, token->attribute.identifier_number);
-            string_buffer.character_buffer_data = string.characters;
-            string_buffer.character_buffer_size = string.capacity;
-            string_buffer.size = string.size;
+            String* string = token->attribute.id;
+            string_buffer.character_buffer_data = string->characters;
+            string_buffer.character_buffer_size = string->capacity;
+            string_buffer.size = string->size;
 
             literal_type = type_system->string_type;
             value_ptr = &string_buffer;
@@ -1543,7 +1540,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
             Struct_Member* found = 0;
             for (int i = 0; i < struct_signature->options.structure.members.size; i++) {
                 Struct_Member* member = &struct_signature->options.structure.members[i];
-                if (member->name_handle == expression_node->name_id) {
+                if (member->id == expression_node->id) {
                     found = member;
                 }
             }
@@ -1575,8 +1572,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
         }
         else if (struct_signature->type == Signature_Type::ARRAY || struct_signature->type == Signature_Type::SLICE)
         {
-            bool is_sized_array = struct_signature->type == Signature_Type::ARRAY;
-            if (expression_node->name_id != analyser->token_index_size && expression_node->name_id != analyser->token_index_data) {
+            if (expression_node->id != analyser->id_size && expression_node->id != analyser->id_data) {
                 Semantic_Error error;
                 error.type = Semantic_Error_Type::EXPRESSION_MEMBER_NOT_FOUND;
                 error.given_type = struct_signature;
@@ -1586,9 +1582,9 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
                 return expression_analysis_result_make_error();
             }
 
-            if (is_sized_array)
+            if (struct_signature->type == Signature_Type::ARRAY)
             {
-                if (expression_node->name_id == analyser->token_index_size)
+                if (expression_node->id == analyser->id_size)
                 {
                     Expression_Analysis_Result result;
                     result.type = Analysis_Result_Type::SUCCESS;
@@ -1614,22 +1610,15 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
                 result.has_memory_address = access_expr->has_memory_address;
                 result.value = 0;
                 result.options.member_access.structure_expression = access_expr;
-                if (expression_node->name_id == analyser->token_index_size)
-                {
-                    result.result_type = analyser->compiler->type_system.i32_type;
-                    result.options.member_access.member.name_handle = analyser->token_index_size;
-                    result.options.member_access.member.offset = 8;
-                    result.options.member_access.member.type = result.result_type;
-                    return expression_analysis_result_make_success(result);
+                if (expression_node->id == analyser->id_size) {
+                    result.options.member_access.member = struct_signature->options.slice.size_member;
                 }
                 else
                 {
-                    result.result_type = type_system_make_pointer(&analyser->compiler->type_system, struct_signature->options.array.element_type);
-                    result.options.member_access.member.name_handle = analyser->token_index_data;
-                    result.options.member_access.member.offset = 0;
-                    result.options.member_access.member.type = result.result_type;
-                    return expression_analysis_result_make_success(result);
+                    result.options.member_access.member = struct_signature->options.slice.data_member;
                 }
+                result.result_type = result.options.member_access.member.type;
+                return expression_analysis_result_make_success(result);
             }
         }
         else
@@ -2096,7 +2085,7 @@ Variable_Creation_Analysis_Result semantic_analyser_analyse_variable_creation_no
 
     Symbol var_symbol;
     var_symbol.type = Symbol_Type::VARIABLE;
-    var_symbol.name_handle = var_node->name_id;
+    var_symbol.id = var_node->id;
     var_symbol.template_data.is_templated = false;
     var_symbol.definition_node_index = statement_index;
     var_symbol.symbol_table = symbol_table;
@@ -2181,7 +2170,7 @@ void semantic_analyser_analyse_module_recursively(Semantic_Analyser* analyser, M
 
     AST_Node* definitions_node = &analyser->compiler->parser.nodes[node->children[0]];
     bool inside_template = false;
-    Dynamic_Array<int> template_parameter_names;
+    Dynamic_Array<String*> template_parameter_names;
 
     ModTree_Module* module;
     if (node->type == AST_Node_Type::ROOT) {
@@ -2193,7 +2182,7 @@ void semantic_analyser_analyse_module_recursively(Semantic_Analyser* analyser, M
         // Create symbol
         Symbol symbol;
         symbol.definition_node_index = node_index;
-        symbol.name_handle = node->name_id;
+        symbol.id = node->id;
         symbol.type = Symbol_Type::MODULE;
         symbol.symbol_table = parent_table;
         symbol.options.module = module;
@@ -2208,7 +2197,7 @@ void semantic_analyser_analyse_module_recursively(Semantic_Analyser* analyser, M
             AST_Node* template_parameter_node = &analyser->compiler->parser.nodes[node->children[0]];
 
             symbol.template_data.is_templated = true;
-            symbol.template_data.parameter_names = dynamic_array_create_empty<int>(template_parameter_node->children.size);
+            symbol.template_data.parameter_names = dynamic_array_create_empty<String*>(template_parameter_node->children.size);
             symbol.template_data.instances = dynamic_array_create_empty<Symbol_Template_Instance*>(1);
 
             for (int i = 0; i < template_parameter_node->children.size; i++)
@@ -2216,7 +2205,7 @@ void semantic_analyser_analyse_module_recursively(Semantic_Analyser* analyser, M
                 AST_Node* identifier_node = &analyser->compiler->parser.nodes[template_parameter_node->children[i]];
                 Symbol template_symbol;
                 template_symbol.type = Symbol_Type::TYPE;
-                template_symbol.name_handle = identifier_node->name_id;
+                template_symbol.id = identifier_node->id;
                 template_symbol.definition_node_index = node->children[i];
                 template_symbol.template_data.is_templated = false;
                 template_symbol.symbol_table = module->symbol_table;
@@ -2224,9 +2213,9 @@ void semantic_analyser_analyse_module_recursively(Semantic_Analyser* analyser, M
                 template_type.type = Signature_Type::TEMPLATE_TYPE;
                 template_type.size = 1;
                 template_type.alignment = 1;
-                template_type.options.template_name = identifier_node->name_id;
+                template_type.options.template_id = identifier_node->id;
                 template_symbol.options.type = type_system_register_type(&analyser->compiler->type_system, template_type);
-                dynamic_array_push_back(&symbol.template_data.parameter_names, template_symbol.name_handle);
+                dynamic_array_push_back(&symbol.template_data.parameter_names, template_symbol.id);
                 symbol_table_define_symbol(template_symbol, analyser);
             }
             template_parameter_names = symbol.template_data.parameter_names;
@@ -2299,7 +2288,7 @@ void semantic_analyser_analyse_module_recursively(Semantic_Analyser* analyser, M
                 semantic_analyser_log_error(analyser, error);
                 break;
             }
-            dynamic_array_push_back(&analyser->compiler->extern_sources.lib_files, top_level_node->name_id);
+            dynamic_array_push_back(&analyser->compiler->extern_sources.lib_files, top_level_node->id);
             break;
         }
         case AST_Node_Type::FUNCTION:
@@ -2314,7 +2303,7 @@ void semantic_analyser_analyse_module_recursively(Semantic_Analyser* analyser, M
 
                 Symbol func_sym;
                 func_sym.definition_node_index = child_index;
-                func_sym.name_handle = function_node->name_id;
+                func_sym.id = function_node->id;
                 func_sym.symbol_table = module->symbol_table;
                 func_sym.options.function = function;
                 func_sym.type = Symbol_Type::FUNCTION;
@@ -2357,7 +2346,7 @@ void semantic_analyser_analyse_module_recursively(Semantic_Analyser* analyser, M
                 struct_sig.size = 0;
                 struct_sig.type = Signature_Type::STRUCT;
                 struct_sig.options.structure.members = dynamic_array_create_empty<Struct_Member>(struct_node->children.size);
-                struct_sig.options.structure.name = struct_node->name_id;
+                struct_sig.options.structure.id = struct_node->id;
                 signature = type_system_register_type(&analyser->compiler->type_system, struct_sig);
             }
             // Define Symbol
@@ -2365,7 +2354,7 @@ void semantic_analyser_analyse_module_recursively(Semantic_Analyser* analyser, M
                 Symbol s;
                 s.type = Symbol_Type::TYPE;
                 s.options.type = signature;
-                s.name_handle = struct_node->name_id;
+                s.id = struct_node->id;
                 s.definition_node_index = child_index;
                 s.symbol_table = module->symbol_table;
                 s.template_data.is_templated = inside_template;
@@ -2565,43 +2554,43 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
 
     // Add symbols for basic datatypes
     {
-        int int_token_index = identifier_pool_add_or_find_identifier_by_string(&compiler->identifier_pool, string_create_static("int"));
-        int bool_token_index = identifier_pool_add_or_find_identifier_by_string(&compiler->identifier_pool, string_create_static("bool"));
-        int float_token_index = identifier_pool_add_or_find_identifier_by_string(&compiler->identifier_pool, string_create_static("float"));
-        int u8_token_index = identifier_pool_add_or_find_identifier_by_string(&compiler->identifier_pool, string_create_static("u8"));
-        int u16_token_index = identifier_pool_add_or_find_identifier_by_string(&compiler->identifier_pool, string_create_static("u16"));
-        int u32_token_index = identifier_pool_add_or_find_identifier_by_string(&compiler->identifier_pool, string_create_static("u32"));
-        int u64_token_index = identifier_pool_add_or_find_identifier_by_string(&compiler->identifier_pool, string_create_static("u64"));
-        int i8_token_index = identifier_pool_add_or_find_identifier_by_string(&compiler->identifier_pool, string_create_static("i8"));
-        int i16_token_index = identifier_pool_add_or_find_identifier_by_string(&compiler->identifier_pool, string_create_static("i16"));
-        int i32_token_index = identifier_pool_add_or_find_identifier_by_string(&compiler->identifier_pool, string_create_static("i32"));
-        int i64_token_index = identifier_pool_add_or_find_identifier_by_string(&compiler->identifier_pool, string_create_static("i64"));
-        int f64_token_index = identifier_pool_add_or_find_identifier_by_string(&compiler->identifier_pool, string_create_static("f64"));
-        int f32_token_index = identifier_pool_add_or_find_identifier_by_string(&compiler->identifier_pool, string_create_static("f32"));
-        int byte_token_index = identifier_pool_add_or_find_identifier_by_string(&compiler->identifier_pool, string_create_static("byte"));
-        int void_token_index = identifier_pool_add_or_find_identifier_by_string(&compiler->identifier_pool, string_create_static("void"));
-        int string_token_index = identifier_pool_add_or_find_identifier_by_string(&compiler->identifier_pool, string_create_static("String"));
+        String* id_int = identifier_pool_add(&compiler->identifier_pool, string_create_static("int"));
+        String* id_bool = identifier_pool_add(&compiler->identifier_pool, string_create_static("bool"));
+        String* id_float = identifier_pool_add(&compiler->identifier_pool, string_create_static("float"));
+        String* id_u8 = identifier_pool_add(&compiler->identifier_pool, string_create_static("u8"));
+        String* id_u16 = identifier_pool_add(&compiler->identifier_pool, string_create_static("u16"));
+        String* id_u32 = identifier_pool_add(&compiler->identifier_pool, string_create_static("u32"));
+        String* id_u64 = identifier_pool_add(&compiler->identifier_pool, string_create_static("u64"));
+        String* id_i8 = identifier_pool_add(&compiler->identifier_pool, string_create_static("i8"));
+        String* id_i16 = identifier_pool_add(&compiler->identifier_pool, string_create_static("i16"));
+        String* id_i32 = identifier_pool_add(&compiler->identifier_pool, string_create_static("i32"));
+        String* id_i64 = identifier_pool_add(&compiler->identifier_pool, string_create_static("i64"));
+        String* id_f64 = identifier_pool_add(&compiler->identifier_pool, string_create_static("f64"));
+        String* id_f32 = identifier_pool_add(&compiler->identifier_pool, string_create_static("f32"));
+        String* id_byte = identifier_pool_add(&compiler->identifier_pool, string_create_static("byte"));
+        String* id_void = identifier_pool_add(&compiler->identifier_pool, string_create_static("void"));
+        String* id_string = identifier_pool_add(&compiler->identifier_pool, string_create_static("String"));
 
-        semantic_analyser_define_type_symbol(analyser, base_table, int_token_index, analyser->compiler->type_system.i32_type, -1);
-        semantic_analyser_define_type_symbol(analyser, base_table, bool_token_index, analyser->compiler->type_system.bool_type, -1);
-        semantic_analyser_define_type_symbol(analyser, base_table, float_token_index, analyser->compiler->type_system.f32_type, -1);
-        semantic_analyser_define_type_symbol(analyser, base_table, f32_token_index, analyser->compiler->type_system.f32_type, -1);
-        semantic_analyser_define_type_symbol(analyser, base_table, f64_token_index, analyser->compiler->type_system.f64_type, -1);
-        semantic_analyser_define_type_symbol(analyser, base_table, u8_token_index, analyser->compiler->type_system.u8_type, -1);
-        semantic_analyser_define_type_symbol(analyser, base_table, byte_token_index, analyser->compiler->type_system.u8_type, -1);
-        semantic_analyser_define_type_symbol(analyser, base_table, u16_token_index, analyser->compiler->type_system.u16_type, -1);
-        semantic_analyser_define_type_symbol(analyser, base_table, u32_token_index, analyser->compiler->type_system.u32_type, -1);
-        semantic_analyser_define_type_symbol(analyser, base_table, u64_token_index, analyser->compiler->type_system.u64_type, -1);
-        semantic_analyser_define_type_symbol(analyser, base_table, i8_token_index, analyser->compiler->type_system.i8_type, -1);
-        semantic_analyser_define_type_symbol(analyser, base_table, i16_token_index, analyser->compiler->type_system.i16_type, -1);
-        semantic_analyser_define_type_symbol(analyser, base_table, i32_token_index, analyser->compiler->type_system.i32_type, -1);
-        semantic_analyser_define_type_symbol(analyser, base_table, i64_token_index, analyser->compiler->type_system.i64_type, -1);
-        semantic_analyser_define_type_symbol(analyser, base_table, void_token_index, analyser->compiler->type_system.void_type, -1);
-        semantic_analyser_define_type_symbol(analyser, base_table, string_token_index, analyser->compiler->type_system.string_type, -1);
+        semantic_analyser_define_type_symbol(analyser, base_table, id_int, analyser->compiler->type_system.i32_type, -1);
+        semantic_analyser_define_type_symbol(analyser, base_table, id_bool, analyser->compiler->type_system.bool_type, -1);
+        semantic_analyser_define_type_symbol(analyser, base_table, id_float, analyser->compiler->type_system.f32_type, -1);
+        semantic_analyser_define_type_symbol(analyser, base_table, id_f32, analyser->compiler->type_system.f32_type, -1);
+        semantic_analyser_define_type_symbol(analyser, base_table, id_f64, analyser->compiler->type_system.f64_type, -1);
+        semantic_analyser_define_type_symbol(analyser, base_table, id_u8, analyser->compiler->type_system.u8_type, -1);
+        semantic_analyser_define_type_symbol(analyser, base_table, id_byte, analyser->compiler->type_system.u8_type, -1);
+        semantic_analyser_define_type_symbol(analyser, base_table, id_u16, analyser->compiler->type_system.u16_type, -1);
+        semantic_analyser_define_type_symbol(analyser, base_table, id_u32, analyser->compiler->type_system.u32_type, -1);
+        semantic_analyser_define_type_symbol(analyser, base_table, id_u64, analyser->compiler->type_system.u64_type, -1);
+        semantic_analyser_define_type_symbol(analyser, base_table, id_i8, analyser->compiler->type_system.i8_type, -1);
+        semantic_analyser_define_type_symbol(analyser, base_table, id_i16, analyser->compiler->type_system.i16_type, -1);
+        semantic_analyser_define_type_symbol(analyser, base_table, id_i32, analyser->compiler->type_system.i32_type, -1);
+        semantic_analyser_define_type_symbol(analyser, base_table, id_i64, analyser->compiler->type_system.i64_type, -1);
+        semantic_analyser_define_type_symbol(analyser, base_table, id_void, analyser->compiler->type_system.void_type, -1);
+        semantic_analyser_define_type_symbol(analyser, base_table, id_string, analyser->compiler->type_system.string_type, -1);
 
-        analyser->token_index_size = identifier_pool_add_or_find_identifier_by_string(&compiler->identifier_pool, string_create_static("size"));
-        analyser->token_index_data = identifier_pool_add_or_find_identifier_by_string(&compiler->identifier_pool, string_create_static("data"));
-        analyser->token_index_main = identifier_pool_add_or_find_identifier_by_string(&compiler->identifier_pool, string_create_static("main"));
+        analyser->id_size = identifier_pool_add(&compiler->identifier_pool, string_create_static("size"));
+        analyser->id_data = identifier_pool_add(&compiler->identifier_pool, string_create_static("data"));
+        analyser->id_main = identifier_pool_add(&compiler->identifier_pool, string_create_static("main"));
     }
 
     // Initialize hardcoded_functions
@@ -2621,50 +2610,50 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
         // Find signature
         Dynamic_Array<Type_Signature*> parameters = dynamic_array_create_empty<Type_Signature*>(2);
         Type_Signature* return_type = type_system->void_type;
-        int name_handle = -1;
+        String* name_handle = 0;
         switch (type)
         {
         case Hardcoded_Function_Type::PRINT_I32: {
-            name_handle = identifier_pool_add_or_find_identifier_by_string(&analyser->compiler->identifier_pool, string_create_static("print_i32"));
+            name_handle = identifier_pool_add(&analyser->compiler->identifier_pool, string_create_static("print_i32"));
             dynamic_array_push_back(&parameters, type_system->i32_type);
             break;
         }
         case Hardcoded_Function_Type::PRINT_F32: {
-            name_handle = identifier_pool_add_or_find_identifier_by_string(&analyser->compiler->identifier_pool, string_create_static("print_f32"));
+            name_handle = identifier_pool_add(&analyser->compiler->identifier_pool, string_create_static("print_f32"));
             dynamic_array_push_back(&parameters, type_system->f32_type);
             break;
         }
         case Hardcoded_Function_Type::PRINT_BOOL: {
-            name_handle = identifier_pool_add_or_find_identifier_by_string(&analyser->compiler->identifier_pool, string_create_static("print_bool"));
+            name_handle = identifier_pool_add(&analyser->compiler->identifier_pool, string_create_static("print_bool"));
             dynamic_array_push_back(&parameters, type_system->bool_type);
             break;
         }
         case Hardcoded_Function_Type::PRINT_STRING: {
-            name_handle = identifier_pool_add_or_find_identifier_by_string(&analyser->compiler->identifier_pool, string_create_static("print_string"));
+            name_handle = identifier_pool_add(&analyser->compiler->identifier_pool, string_create_static("print_string"));
             dynamic_array_push_back(&parameters, type_system->string_type);
             break;
         }
         case Hardcoded_Function_Type::PRINT_LINE: {
-            name_handle = identifier_pool_add_or_find_identifier_by_string(&analyser->compiler->identifier_pool, string_create_static("print_line"));
+            name_handle = identifier_pool_add(&analyser->compiler->identifier_pool, string_create_static("print_line"));
             break;
         }
         case Hardcoded_Function_Type::READ_I32: {
-            name_handle = identifier_pool_add_or_find_identifier_by_string(&analyser->compiler->identifier_pool, string_create_static("read_i32"));
+            name_handle = identifier_pool_add(&analyser->compiler->identifier_pool, string_create_static("read_i32"));
             return_type = type_system->i32_type;
             break;
         }
         case Hardcoded_Function_Type::READ_F32: {
-            name_handle = identifier_pool_add_or_find_identifier_by_string(&analyser->compiler->identifier_pool, string_create_static("read_f32"));
+            name_handle = identifier_pool_add(&analyser->compiler->identifier_pool, string_create_static("read_f32"));
             return_type = type_system->f32_type;
             break;
         }
         case Hardcoded_Function_Type::READ_BOOL: {
-            name_handle = identifier_pool_add_or_find_identifier_by_string(&analyser->compiler->identifier_pool, string_create_static("read_bool"));
+            name_handle = identifier_pool_add(&analyser->compiler->identifier_pool, string_create_static("read_bool"));
             return_type = type_system->bool_type;
             break;
         }
         case Hardcoded_Function_Type::RANDOM_I32: {
-            name_handle = identifier_pool_add_or_find_identifier_by_string(&analyser->compiler->identifier_pool, string_create_static("random_i32"));
+            name_handle = identifier_pool_add(&analyser->compiler->identifier_pool, string_create_static("random_i32"));
             return_type = type_system->i32_type;
             break;
         }
@@ -2684,12 +2673,12 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
         hardcoded_function->signature = type_system_make_function(type_system, parameters, return_type);
 
         // Define symbol
-        if (name_handle != -1)
+        if (name_handle != 0)
         {
             Symbol def;
             def.type = Symbol_Type::FUNCTION;
             def.definition_node_index = -1;
-            def.name_handle = name_handle;
+            def.id = name_handle;
             def.symbol_table = base_table;
             def.template_data.is_templated = false;
             def.options.function = hardcoded_function;
@@ -2757,7 +2746,6 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
         case Analysis_Workload_Type::FUNCTION_HEADER:
         {
             assert(workload.options.function_header.function->signature == 0, "Function already analysed!");
-            int function_name = analyser->compiler->parser.nodes[workload.node_index].name_id;
             ModTree_Function* function = workload.options.function_header.function;
             AST_Node* function_node = &(*nodes)[workload.node_index];
             AST_Node* signature_node = &(*nodes)[function_node->children[0]];
@@ -2826,7 +2814,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
             dynamic_array_push_back(&analyser->active_workloads, body_workload);
 
             // Check for main function
-            if (function_node->name_id == analyser->token_index_main)
+            if (function_node->id == analyser->id_main)
             {
                 if (function->symbol != 0 && function->symbol->template_data.is_templated) {
                     Semantic_Error error;
@@ -2876,23 +2864,22 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
         case Analysis_Workload_Type::EXTERN_HEADER_IMPORT:
         {
             AST_Node* extern_node = &(*nodes)[workload.node_index];
-            int header_name_id = extern_node->name_id;
-            String header_name = identifier_pool_index_to_string(&analyser->compiler->identifier_pool, header_name_id);
-            Optional<C_Import_Package> package = c_importer_import_header(&analyser->compiler->c_importer, header_name, &analyser->compiler->identifier_pool);
+            String* header_name_id = extern_node->id;
+            Optional<C_Import_Package> package = c_importer_import_header(&analyser->compiler->c_importer, *header_name_id, &analyser->compiler->identifier_pool);
             if (package.available)
             {
-                logg("Importing header successfull: %s\n", header_name.characters);
+                logg("Importing header successfull: %s\n", header_name_id->characters);
                 dynamic_array_push_back(&analyser->compiler->extern_sources.headers_to_include, header_name_id);
                 Hashtable<C_Import_Type*, Type_Signature*> type_conversion_table = hashtable_create_pointer_empty<C_Import_Type*, Type_Signature*>(256);
                 SCOPE_EXIT(hashtable_destroy(&type_conversion_table));
                 for (int i = 0; i < extern_node->children.size; i++)
                 {
-                    int import_id = (*nodes)[extern_node->children[i]].name_id;
+                    String* import_id = (*nodes)[extern_node->children[i]].id;
                     C_Import_Symbol* import_symbol = hashtable_find_element(&package.value.symbol_table.symbols, import_id);
                     if (import_symbol == 0) {
                         Semantic_Error error;
                         error.type = Semantic_Error_Type::EXTERN_HEADER_DOES_NOT_CONTAIN_SYMBOL;
-                        error.name_id = import_id;
+                        error.id = import_id;
                         error.error_node_index = extern_node->children[i];
                         semantic_analyser_log_error(analyser, error);
                         continue;
@@ -2901,7 +2888,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                     Symbol sym;
                     sym.definition_node_index = extern_node->children[i];
                     sym.template_data.is_templated = false;
-                    sym.name_handle = import_id;
+                    sym.id = import_id;
                     sym.symbol_table = workload.symbol_table;
                     switch (import_symbol->type)
                     {
@@ -2911,7 +2898,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                         sym.options.type = import_c_type(analyser, import_symbol->data_type, &type_conversion_table);
                         symbol_table_define_symbol(sym, analyser);
                         if (sym.options.type->type == Signature_Type::STRUCT) {
-                            hashtable_insert_element(&analyser->compiler->extern_sources.extern_type_signatures, sym.options.type, sym.name_handle);
+                            hashtable_insert_element(&analyser->compiler->extern_sources.extern_type_signatures, sym.options.type, sym.id);
                         }
                         break;
                     }
@@ -2920,7 +2907,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                         ModTree_Function* extern_fn = new ModTree_Function;
                         extern_fn->parent_module = workload.options.definition_module;
                         extern_fn->function_type = ModTree_Function_Type::EXTERN_FUNCTION;
-                        extern_fn->options.extern_function.name_id = import_id;
+                        extern_fn->options.extern_function.id = import_id;
                         extern_fn->signature = import_c_type(analyser, import_symbol->data_type, &type_conversion_table);
                         extern_fn->options.extern_function.function_signature = extern_fn->signature;
                         assert(extern_fn->signature->type == Signature_Type::FUNCTION, "HEY");
@@ -2946,8 +2933,8 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                 auto iter = hashtable_iterator_create(&package.value.symbol_table.symbols);
                 while (hashtable_iterator_has_next(&iter))
                 {
-                    int name_id = *iter.key;
-                    if (symbol_table_find_symbol(workload.symbol_table, name_id, true) != 0) {
+                    String* id = *iter.key;
+                    if (symbol_table_find_symbol(workload.symbol_table, id, true) != 0) {
                         hashtable_iterator_next(&iter);
                         continue;
                     }
@@ -2960,13 +2947,13 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                             Symbol sym;
                             sym.type = Symbol_Type::TYPE;
                             sym.template_data.is_templated = false;
-                            sym.name_handle = name_id;
+                            sym.id = id;
                             sym.definition_node_index = workload.node_index;
                             sym.symbol_table = workload.symbol_table;
                             sym.options.type = *signature;
                             symbol_table_define_symbol(sym, analyser);
                             if (sym.options.type->type == Signature_Type::STRUCT) {
-                                hashtable_insert_element(&analyser->compiler->extern_sources.extern_type_signatures, sym.options.type, sym.name_handle);
+                                hashtable_insert_element(&analyser->compiler->extern_sources.extern_type_signatures, sym.options.type, sym.id);
                             }
                         }
                     }
@@ -2984,7 +2971,6 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
         case Analysis_Workload_Type::EXTERN_FUNCTION_DECLARATION:
         {
             AST_Node* extern_node = &(*nodes)[workload.node_index];
-            int name_id = extern_node->name_id;
             Type_Analysis_Result result = semantic_analyser_analyse_type(analyser, workload.symbol_table, extern_node->children[0]);
             switch (result.type)
             {
@@ -3002,7 +2988,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                 ModTree_Function* extern_fn = new ModTree_Function;
                 extern_fn->parent_module = workload.options.definition_module;
                 extern_fn->function_type = ModTree_Function_Type::EXTERN_FUNCTION;
-                extern_fn->options.extern_function.name_id = extern_node->name_id;
+                extern_fn->options.extern_function.id = extern_node->id;
                 extern_fn->signature = result.options.result_type->options.pointer_child;
                 extern_fn->options.extern_function.function_signature = extern_fn->signature;
                 assert(extern_fn->signature->type == Signature_Type::FUNCTION, "HEY");
@@ -3012,7 +2998,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                 Symbol sym;
                 sym.type = Symbol_Type::FUNCTION;
                 sym.definition_node_index = workload.node_index;
-                sym.name_handle = extern_fn->options.extern_function.name_id;
+                sym.id = extern_fn->options.extern_function.id;
                 sym.template_data.is_templated = false;
                 sym.options.function = extern_fn;
                 sym.symbol_table = workload.symbol_table;
@@ -3677,16 +3663,16 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                 workload.options.struct_body.offset = math_round_next_multiple(workload.options.struct_body.offset, member_type->alignment);
 
                 for (int j = 0; j < struct_signature->options.structure.members.size; j++) {
-                    if (struct_signature->options.structure.members[j].name_handle == member_definition_node->name_id) {
+                    if (struct_signature->options.structure.members[j].id == member_definition_node->id) {
                         Semantic_Error error;
                         error.type = Semantic_Error_Type::OTHERS_STRUCT_MEMBER_ALREADY_DEFINED;
-                        error.name_id = member_definition_node->name_id;
+                        error.id = member_definition_node->id;
                         error.error_node_index = struct_node->children[i];
                         semantic_analyser_log_error(analyser, error);
                     }
                 }
                 Struct_Member member;
-                member.name_handle = member_definition_node->name_id;
+                member.id = member_definition_node->id;
                 member.offset = workload.options.struct_body.offset;
                 member.type = member_type;
                 dynamic_array_push_back(&struct_signature->options.structure.members, member);
@@ -3929,15 +3915,11 @@ void analysis_workload_append_to_string(Analysis_Workload* workload, String* str
         break;
     }
     case Analysis_Workload_Type::FUNCTION_HEADER: {
-        string_append_formated(string, "Function Header, name: %s",
-            identifier_pool_index_to_string(&analyser->compiler->identifier_pool, analyser->compiler->parser.nodes[workload->node_index].name_id).characters
-        );
+        string_append_formated(string, "Function Header, name: %s", analyser->compiler->parser.nodes[workload->node_index].id->characters);
         break;
     }
     case Analysis_Workload_Type::GLOBAL: {
-        string_append_formated(string, "Global Variable, name: %s",
-            identifier_pool_index_to_string(&analyser->compiler->identifier_pool, analyser->compiler->parser.nodes[workload->node_index].name_id).characters
-        );
+        string_append_formated(string, "Global Variable, name: %s", analyser->compiler->parser.nodes[workload->node_index].id->characters);
         break;
     }
     case Analysis_Workload_Type::SIZED_ARRAY_SIZE: {
@@ -3945,21 +3927,15 @@ void analysis_workload_append_to_string(Analysis_Workload* workload, String* str
         break;
     }
     case Analysis_Workload_Type::EXTERN_HEADER_IMPORT: {
-        string_append_formated(string, "Extern header import, name: %s",
-            identifier_pool_index_to_string(&analyser->compiler->identifier_pool, analyser->compiler->parser.nodes[workload->node_index].name_id).characters
-        );
+        string_append_formated(string, "Extern header import, name: %s", analyser->compiler->parser.nodes[workload->node_index].id->characters);
         break;
     }
     case Analysis_Workload_Type::EXTERN_FUNCTION_DECLARATION: {
-        string_append_formated(string, "Extern function declaration, name: %s",
-            identifier_pool_index_to_string(&analyser->compiler->identifier_pool, analyser->compiler->parser.nodes[workload->node_index].name_id).characters
-        );
+        string_append_formated(string, "Extern function declaration, name: %s", analyser->compiler->parser.nodes[workload->node_index].id->characters);
         break;
     }
     case Analysis_Workload_Type::STRUCT_BODY: {
-        string_append_formated(string, "Struct Body, name: %s",
-            identifier_pool_index_to_string(&analyser->compiler->identifier_pool, workload->options.struct_body.struct_signature->options.structure.name).characters
-        );
+        string_append_formated(string, "Struct Body, name: %s", workload->options.struct_body.struct_signature->options.structure.id->characters);
         break;
     }
     default: panic("Hey");
@@ -4474,38 +4450,36 @@ void semantic_error_append_to_string(Semantic_Analyser* analyser, Semantic_Error
 
     if (print_symbol) {
         string_append_formated(string, "\n  Symbol: ");
-        symbol_append_to_string(e.symbol, string, analyser);
+        symbol_append_to_string(e.symbol, string);
     }
     if (print_given_type) {
         string_append_formated(string, "\n  Given Type:    ");
-        type_signature_append_to_string(string, e.given_type, &analyser->compiler->identifier_pool);
+        type_signature_append_to_string(string, e.given_type);
     }
     if (print_expected_type) {
         string_append_formated(string, "\n  Expected Type: ");
-        type_signature_append_to_string(string, e.expected_type, &analyser->compiler->identifier_pool);
+        type_signature_append_to_string(string, e.expected_type);
     }
     if (print_function_type) {
         string_append_formated(string, "\n  Function Type: ");
-        type_signature_append_to_string(string, e.function_type, &analyser->compiler->identifier_pool);
+        type_signature_append_to_string(string, e.function_type);
     }
     if (print_binary_type) {
         string_append_formated(string, "\n  Left Operand type:  ");
-        type_signature_append_to_string(string, e.binary_op_left_type, &analyser->compiler->identifier_pool);
+        type_signature_append_to_string(string, e.binary_op_left_type);
         string_append_formated(string, "\n  Right Operand type: ");
-        type_signature_append_to_string(string, e.binary_op_right_type, &analyser->compiler->identifier_pool);
+        type_signature_append_to_string(string, e.binary_op_right_type);
     }
     if (print_required_argument_count) {
         string_append_formated(string, "\n  Given argument count: %d, required: %d", e.invalid_argument_count.given, e.invalid_argument_count.expected);
     }
     if (print_name_id) {
-        string_append_formated(string, "\n  Name: %s", identifier_pool_index_to_string(&analyser->compiler->identifier_pool, e.name_id).characters);
+        string_append_formated(string, "\n  Name: %s", e.id->characters);
     }
     if (print_member_access_name_id) {
         AST_Node* node = &analyser->compiler->parser.nodes[e.error_node_index];
         assert(node->type == AST_Node_Type::EXPRESSION_MEMBER_ACCESS, "BAllern");
-        string_append_formated(string, "\n  Accessed member name: %s",
-            identifier_pool_index_to_string(&analyser->compiler->identifier_pool, node->name_id).characters
-        );
+        string_append_formated(string, "\n  Accessed member name: %s", node->id->characters);
     }
     if (print_struct_members)
     {
@@ -4513,9 +4487,7 @@ void semantic_error_append_to_string(Semantic_Analyser* analyser, Semantic_Error
         assert(e.given_type->type == Signature_Type::STRUCT, "HEY");
         for (int i = 0; i < e.given_type->options.structure.members.size; i++) {
             Struct_Member* member = &e.given_type->options.structure.members[i];
-            string_append_formated(string, "\n\t\t%s",
-                identifier_pool_index_to_string(&analyser->compiler->identifier_pool, member->name_handle).characters
-            );
+            string_append_formated(string, "\n\t\t%s", member->id->characters);
         }
     }
 }
@@ -4529,7 +4501,7 @@ void identifer_or_path_append_to_string(int node_index, Semantic_Analyser* analy
         node->type == AST_Node_Type::IDENTIFIER_PATH_TEMPLATED, "hEY");
     while (node->type != AST_Node_Type::IDENTIFIER_NAME && node->type != AST_Node_Type::IDENTIFIER_NAME_TEMPLATED)
     {
-        string_append_formated(string, "%s::", identifier_pool_index_to_string(&analyser->compiler->identifier_pool, node->name_id).characters);
+        string_append_formated(string, "%s::", node->id->characters);
         if (node->type == AST_Node_Type::IDENTIFIER_PATH) {
             node = &analyser->compiler->parser.nodes[node->children[0]];
         }
@@ -4538,7 +4510,7 @@ void identifer_or_path_append_to_string(int node_index, Semantic_Analyser* analy
         }
     }
     if (node->type == AST_Node_Type::IDENTIFIER_NAME) {
-        string_append_formated(string, "%s", identifier_pool_index_to_string(&analyser->compiler->identifier_pool, node->name_id).characters);
+        string_append_formated(string, "%s", node->id->characters);
     }
 }
 
@@ -4556,13 +4528,13 @@ void workload_dependency_append_to_string(Workload_Dependency* dependency, Strin
         break;
     case Workload_Dependency_Type::TYPE_SIZE_UNKNOWN:
         string_append_formated(string, "Type size unknown ");
-        type_signature_append_to_string(string, dependency->options.type_signature, &analyser->compiler->identifier_pool);
+        type_signature_append_to_string(string, dependency->options.type_signature);
         break;
     case Workload_Dependency_Type::FUNCTION_HEADER_NOT_ANALYSED: {
         string_append_formated(string, "Function Header not analysed, ");
         Symbol* s = dependency->options.function_header_not_analysed->symbol;
         assert(s != 0, "Should not happen i think");
-        string_append_formated(string, identifier_pool_index_to_string(&analyser->compiler->identifier_pool, s->name_handle).characters);
+        string_append_formated(string, s->id->characters);
         break;
     }
     default: panic("hey");
@@ -4674,10 +4646,10 @@ Type_Signature* import_c_type(Semantic_Analyser* analyser, C_Import_Type* type, 
     {
         signature.type = Signature_Type::STRUCT;
         if (type->structure.is_anonymous) {
-            signature.options.structure.name = identifier_pool_add_or_find_identifier_by_string(&analyser->compiler->identifier_pool, string_create_static("__c_anon"));
+            signature.options.structure.id = identifier_pool_add(&analyser->compiler->identifier_pool, string_create_static("__c_anon"));
         }
         else {
-            signature.options.structure.name = type->structure.name_id;
+            signature.options.structure.id = type->structure.id;
         }
         signature.options.structure.members = dynamic_array_create_empty<Struct_Member>(type->structure.members.size);
         if (!type->structure.contains_bitfield)
@@ -4685,7 +4657,7 @@ Type_Signature* import_c_type(Semantic_Analyser* analyser, C_Import_Type* type, 
             for (int i = 0; i < type->structure.members.size; i++) {
                 C_Import_Structure_Member* mem = &type->structure.members[i];
                 Struct_Member member;
-                member.name_handle = mem->name_id;
+                member.id = mem->id;
                 member.offset = mem->offset;
                 member.type = import_c_type(analyser, mem->type, type_conversions);
                 dynamic_array_push_back(&signature.options.structure.members, member);

@@ -77,7 +77,7 @@ union Token_Attribute
     int integer_value;
     float float_value;
     bool bool_value;
-    int identifier_number;
+    String* id;
 };
 
 struct Token
