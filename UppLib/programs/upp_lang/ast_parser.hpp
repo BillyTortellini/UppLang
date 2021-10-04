@@ -4,6 +4,11 @@
 #include "lexer.hpp"
 #include "text.hpp"
 
+/*
+    Todo:
+    Single-Statement expression for new is bullcrap
+*/
+
 struct Compiler;
 struct Lexer;
 struct Token_Range;
@@ -52,7 +57,7 @@ enum class AST_Node_Type
     EXPRESSION_NEW, // Child 0: Type
     EXPRESSION_NEW_ARRAY, // Child 0: Array size expression, Child 1: Type
     EXPRESSION_LITERAL,
-    EXPRESSION_FUNCTION_CALL, // Child 0: Identifier, Child 1: ARGUMENTS
+    EXPRESSION_FUNCTION_CALL, // Child 0: Expression, Child 1: ARGUMENTS
     EXPRESSION_VARIABLE_READ, // Child 0: Identifier
     EXPRESSION_ARRAY_ACCESS, // Child 0: Access-to-Expression, Child 1: Index-Expression
     EXPRESSION_MEMBER_ACCESS, // Child 0: left side, id is the .what operator a.y.y[5].z

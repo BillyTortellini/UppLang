@@ -30,6 +30,9 @@ void modtree_expression_destroy(ModTree_Expression* expression)
             modtree_expression_destroy(expression->options.function_call.arguments[i]);
         }
         dynamic_array_destroy(&expression->options.function_call.arguments);
+        if (expression->options.function_call.is_pointer_call) {
+            modtree_expression_destroy(expression->options.function_call.pointer_expression);
+        }
         break;
     case ModTree_Expression_Type::VARIABLE_READ:
         break;
@@ -1115,76 +1118,51 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
     {
     case AST_Node_Type::EXPRESSION_FUNCTION_CALL:
     {
+        Expression_Analysis_Result identifier_expr_result = semantic_analyser_analyse_expression(
+            analyser, symbol_table, expression_node->children[0]
+        );
+        if (identifier_expr_result.type != Analysis_Result_Type::SUCCESS) {
+            return identifier_expr_result;
+        }
+        SCOPE_EXIT(if (error_exit && identifier_expr_result.options.expression != 0) modtree_expression_destroy(identifier_expr_result.options.expression););
+
         ModTree_Expression expression;
         expression.expression_type = ModTree_Expression_Type::FUNCTION_CALL;
         expression.value = 0;
         expression.has_memory_address = false;
-
-        Identifier_Analysis_Result function_identifier_result = semantic_analyser_analyse_identifier_node(
-            analyser, symbol_table, expression_node->children[0], false
-        );
-        switch (function_identifier_result.type)
+        Type_Signature* signature = identifier_expr_result.options.expression->result_type;
+        if (signature->type == Signature_Type::FUNCTION) 
         {
-        case Analysis_Result_Type::DEPENDENCY: {
-            return expression_analysis_result_make_dependency(function_identifier_result.options.dependency);
-        }
-        case Analysis_Result_Type::ERROR_OCCURED:
-            return expression_analysis_result_make_error();
-        case Analysis_Result_Type::SUCCESS:
-            break;
-        }
-
-        Type_Signature* signature = 0;
-        Symbol* symbol = function_identifier_result.options.symbol;
-        switch (symbol->type)
-        {
-        case Symbol_Type::VARIABLE:
-        {
-            Type_Signature* var_type = symbol->options.variable->data_type;
-            if (!(var_type->type == Signature_Type::POINTER && var_type->options.pointer_child->type == Signature_Type::FUNCTION)) {
-                Semantic_Error error;
-                error.type = Semantic_Error_Type::INVALID_TYPE_FUNCTION_CALL_EXPECTED_FUNCTION_POINTER;
-                error.given_type = var_type;
-                error.error_node_index = expression_node->children[0];
-                semantic_analyser_log_error(analyser, error);
-                return expression_analysis_result_make_error();
-            }
-            signature = var_type->options.pointer_child;
-            expression.options.function_call.is_pointer_call = true;
-            expression.options.function_call.pointer_variable = symbol->options.variable;
-            break;
-        }
-        case Symbol_Type::FUNCTION:
-        {
-            if (symbol->options.function == analyser->program->entry_function) {
+            // See Expression_Variable_Read for how we differentiate between Function pointer calls and function calls
+            expression.options.function_call.is_pointer_call = false;
+            expression.options.function_call.function = identifier_expr_result.options.expression->options.function_pointer_read;
+            modtree_expression_destroy(identifier_expr_result.options.expression);
+            identifier_expr_result.options.expression = 0;
+            if (expression.options.function_call.function == analyser->program->entry_function) {
                 Semantic_Error error;
                 error.type = Semantic_Error_Type::OTHERS_NO_CALLING_TO_MAIN;
                 error.error_node_index = expression_index;
                 semantic_analyser_log_error(analyser, error);
                 return expression_analysis_result_make_error();
             }
-
-            signature = symbol->options.function->signature;
-            expression.options.function_call.is_pointer_call = false;
-            expression.options.function_call.function = symbol->options.function;
-            break;
         }
-        case Symbol_Type::TYPE:
-        {
+        else if (signature->type == Signature_Type::POINTER && signature->options.pointer_child->type == Signature_Type::FUNCTION) {
+            expression.options.function_call.is_pointer_call = true;
+            expression.options.function_call.pointer_expression = identifier_expr_result.options.expression;
+            signature = signature->options.pointer_child;
+        }
+        else {
             Semantic_Error error;
-            error.type = Semantic_Error_Type::SYMBOL_EXPECTED_FUNCTION_OR_VARIABLE_ON_FUNCTION_CALL;
-            error.symbol = symbol;
+            error.type = Semantic_Error_Type::INVALID_TYPE_FUNCTION_CALL;
+            error.given_type = expression.options.function_call.pointer_expression->result_type;
             error.error_node_index = expression_node->children[0];
             semantic_analyser_log_error(analyser, error);
             return expression_analysis_result_make_error();
         }
-        default: panic("HEY");
-        }
         expression.result_type = signature->options.function.return_type;
 
         // Analyse arguments
-        int arguments_node_index = expression_node->children[1];
-        AST_Node* arguments_node = &analyser->compiler->parser.nodes[arguments_node_index];
+        AST_Node* arguments_node = &analyser->compiler->parser.nodes[expression_node->children[1]];
         if (arguments_node->children.size != signature->options.function.parameter_types.size) {
             Semantic_Error error;
             error.type = Semantic_Error_Type::FUNCTION_CALL_ARGUMENT_SIZE_MISMATCH;
@@ -1225,7 +1203,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
                 }
                 else {
                     Semantic_Error error;
-                    error.type = Semantic_Error_Type::INVALID_TYPE_ARGUMENT_TYPE_MISMATCH;
+                    error.type = Semantic_Error_Type::INVALID_TYPE_ARGUMENT;
                     error.function_type = signature;
                     error.given_type = success->result_type;
                     error.expected_type = signature->options.function.parameter_types[i];
@@ -1272,16 +1250,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
         }
         else if (symbol->type == Symbol_Type::FUNCTION)
         {
-            if (symbol->options.function->function_type == ModTree_Function_Type::HARDCODED_FUNCTION)
-            {
-                Semantic_Error error;
-                error.type = Semantic_Error_Type::OTHERS_CANNOT_TAKE_ADDRESS_OF_HARDCODED_FUNCTION;
-                error.symbol = symbol;
-                error.error_node_index = expression_index;
-                semantic_analyser_log_error(analyser, error);
-            }
-
-            // This works in tandum with Address-Of
+            // This works in tandum with Address-Of and Function Calls
             expression.expression_type = ModTree_Expression_Type::VARIABLE_READ;
             expression.has_memory_address = false;
             expression.options.function_pointer_read = symbol->options.function;
@@ -1724,7 +1693,15 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
             return expression_analysis_result_make_error();
         }
         // Function pointer read, check Variable read for details
-        if (operand->result_type->type == Signature_Type::FUNCTION) {
+        if (operand->result_type->type == Signature_Type::FUNCTION) 
+        {
+            if (operand->options.function_pointer_read->function_type == ModTree_Function_Type::HARDCODED_FUNCTION)
+            {
+                Semantic_Error error;
+                error.type = Semantic_Error_Type::OTHERS_CANNOT_TAKE_ADDRESS_OF_HARDCODED_FUNCTION;
+                error.error_node_index = expression_index;
+                semantic_analyser_log_error(analyser, error);
+            }
             operand->expression_type = ModTree_Expression_Type::FUNCTION_POINTER_READ;
             operand->result_type = type_system_make_pointer(&analyser->compiler->type_system, operand->result_type);
             Expression_Analysis_Result result;
@@ -3862,11 +3839,11 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
 
     if (timing_print) {
         logg("ANALYSIS_TIMING:\n---------------\n");
-        logg(" reset        ... %3.2fms\n", 1000.0f*(float)(time_init_end - time_init_start));
-        logg(" module_rec   ... %3.2fms\n", 1000.0f*(float)(time_module_recursiv_end - time_init_end));
-        logg(" workloads    ... %3.2fms\n", 1000.0f*(float)(time_workloads_end - time_module_recursiv_end));
-        logg(" error_report ... %3.2fms\n", 1000.0f*(float)(time_error_report_end - time_workloads_end));
-        logg(" sum          ... %3.2fms\n", 1000.0f*(float)(time_error_report_end - time_init_start));
+        logg(" reset        ... %3.2fms\n", 1000.0f * (float)(time_init_end - time_init_start));
+        logg(" module_rec   ... %3.2fms\n", 1000.0f * (float)(time_module_recursiv_end - time_init_end));
+        logg(" workloads    ... %3.2fms\n", 1000.0f * (float)(time_workloads_end - time_module_recursiv_end));
+        logg(" error_report ... %3.2fms\n", 1000.0f * (float)(time_error_report_end - time_workloads_end));
+        logg(" sum          ... %3.2fms\n", 1000.0f * (float)(time_error_report_end - time_init_start));
     }
 }
 
@@ -3973,7 +3950,7 @@ void semantic_error_get_error_location(Semantic_Analyser* analyser, Semantic_Err
         dynamic_array_push_back(locations, token_mapping[error.error_node_index]);
         break;
     }
-    case Semantic_Error_Type::INVALID_TYPE_FUNCTION_CALL_EXPECTED_FUNCTION_POINTER: {
+    case Semantic_Error_Type::INVALID_TYPE_FUNCTION_CALL: {
         dynamic_array_push_back(locations, token_mapping[error.error_node_index]);
         break;
     }
@@ -3981,7 +3958,7 @@ void semantic_error_get_error_location(Semantic_Analyser* analyser, Semantic_Err
         dynamic_array_push_back(locations, token_mapping[error.error_node_index]);
         break;
     }
-    case Semantic_Error_Type::INVALID_TYPE_ARGUMENT_TYPE_MISMATCH: {
+    case Semantic_Error_Type::INVALID_TYPE_ARGUMENT: {
         dynamic_array_push_back(locations, token_mapping[error.error_node_index]);
         break;
     }
@@ -4032,7 +4009,7 @@ void semantic_error_get_error_location(Semantic_Analyser* analyser, Semantic_Err
         AST_Node* assign_node = &analyser->compiler->parser.nodes[error.error_node_index];
         assert(assign_node->type == AST_Node_Type::STATEMENT_ASSIGNMENT ||
             assign_node->type == AST_Node_Type::STATEMENT_VARIABLE_DEFINE_ASSIGN ||
-            assign_node->type == AST_Node_Type::NAMED_PARAMETER,  "hey");
+            assign_node->type == AST_Node_Type::NAMED_PARAMETER, "hey");
         Token_Range range = token_mapping[assign_node->children[0]];
         dynamic_array_push_back(locations, token_range_make(range.end_index, range.end_index + 1));
         break;
@@ -4045,10 +4022,6 @@ void semantic_error_get_error_location(Semantic_Analyser* analyser, Semantic_Err
     case Semantic_Error_Type::INVALID_TYPE_DELETE: {
         Token_Range range = token_mapping[error.error_node_index];
         dynamic_array_push_back(locations, token_range_make(range.start_index, range.start_index + 1));
-        break;
-    }
-    case Semantic_Error_Type::SYMBOL_EXPECTED_FUNCTION_OR_VARIABLE_ON_FUNCTION_CALL: {
-        dynamic_array_push_back(locations, token_mapping[error.error_node_index]);
         break;
     }
     case Semantic_Error_Type::SYMBOL_EXPECTED_TYPE_ON_TYPE_IDENTIFIER: {
@@ -4171,6 +4144,10 @@ void semantic_error_get_error_location(Semantic_Analyser* analyser, Semantic_Err
     case Semantic_Error_Type::OTHERS_MAIN_UNEXPECTED_SIGNATURE: {
         break;
     }
+    case Semantic_Error_Type::OTHERS_CANNOT_TAKE_ADDRESS_OF_HARDCODED_FUNCTION:
+        Token_Range range = token_mapping[error.error_node_index];
+        dynamic_array_push_back(locations, token_range_make(range.start_index, range.start_index + 1));
+        break;
     case Semantic_Error_Type::OTHERS_NO_CALLING_TO_MAIN: {
         Token_Range range = token_mapping[error.error_node_index];
         dynamic_array_push_back(locations, token_range_make(range.start_index, range.start_index + 1));
@@ -4256,7 +4233,7 @@ void semantic_error_append_to_string(Semantic_Analyser* analyser, Semantic_Error
     case Semantic_Error_Type::INVALID_TYPE_VOID_USAGE:
         string_append_formated(string, "Invalid use of void type");
         break;
-    case Semantic_Error_Type::INVALID_TYPE_FUNCTION_CALL_EXPECTED_FUNCTION_POINTER:
+    case Semantic_Error_Type::INVALID_TYPE_FUNCTION_CALL:
         string_append_formated(string, "Expected function pointer type on function call");
         print_given_type = true;
         break;
@@ -4264,7 +4241,7 @@ void semantic_error_append_to_string(Semantic_Analyser* analyser, Semantic_Error
         string_append_formated(string, "Expected function type on function import");
         print_given_type = true;
         break;
-    case Semantic_Error_Type::INVALID_TYPE_ARGUMENT_TYPE_MISMATCH:
+    case Semantic_Error_Type::INVALID_TYPE_ARGUMENT:
         string_append_formated(string, "Argument type does not match function parameter type");
         print_given_type = true;
         print_expected_type = true;
@@ -4318,10 +4295,6 @@ void semantic_error_append_to_string(Semantic_Analyser* analyser, Semantic_Error
     case Semantic_Error_Type::INVALID_TYPE_DELETE:
         string_append_formated(string, "Only pointer or unsized array types can be deleted");
         print_given_type = true;
-        break;
-    case Semantic_Error_Type::SYMBOL_EXPECTED_FUNCTION_OR_VARIABLE_ON_FUNCTION_CALL:
-        string_append_formated(string, "Expected Variable or Function symbol for function call");
-        print_symbol = true;
         break;
     case Semantic_Error_Type::SYMBOL_EXPECTED_TYPE_ON_TYPE_IDENTIFIER:
         string_append_formated(string, "Expected Type symbol");
@@ -4423,6 +4396,9 @@ void semantic_error_append_to_string(Semantic_Analyser* analyser, Semantic_Error
         break;
     case Semantic_Error_Type::OTHERS_NO_CALLING_TO_MAIN:
         string_append_formated(string, "Cannot call main function again");
+        break;
+    case Semantic_Error_Type::OTHERS_CANNOT_TAKE_ADDRESS_OF_HARDCODED_FUNCTION:
+        string_append_formated(string, "Cannot take address of hardcoded function");
         break;
     case Semantic_Error_Type::OTHERS_ASSIGNMENT_REQUIRES_MEMORY_ADDRESS:
         string_append_formated(string, "Left side of assignment does not have a memory address");

@@ -110,7 +110,7 @@ struct ModTree_Expression
         } literal_read;
         struct {
             bool is_pointer_call;
-            ModTree_Variable* pointer_variable;
+            ModTree_Expression* pointer_expression;
             ModTree_Function* function;
             Dynamic_Array<ModTree_Expression*> arguments;
         } function_call;
@@ -450,9 +450,9 @@ enum class Semantic_Error_Type
     EXTERN_HEADER_PARSING_FAILED, // Error_node = EXTERN_HEADER_IMPORT
 
     INVALID_TYPE_VOID_USAGE,
-    INVALID_TYPE_FUNCTION_CALL_EXPECTED_FUNCTION_POINTER, // Expression
+    INVALID_TYPE_FUNCTION_CALL, // Expression
     INVALID_TYPE_FUNCTION_IMPORT_EXPECTED_FUNCTION_POINTER,
-    INVALID_TYPE_ARGUMENT_TYPE_MISMATCH,
+    INVALID_TYPE_ARGUMENT,
     INVALID_TYPE_ARRAY_ACCESS, // x: int; x[5];
     INVALID_TYPE_ARRAY_ACCESS_INDEX, // x: int; x[5];
     INVALID_TYPE_ARRAY_ALLOCATION_SIZE, // new [false]int;
@@ -466,7 +466,6 @@ enum class Semantic_Error_Type
     INVALID_TYPE_RETURN,
     INVALID_TYPE_DELETE,
 
-    SYMBOL_EXPECTED_FUNCTION_OR_VARIABLE_ON_FUNCTION_CALL,
     SYMBOL_EXPECTED_TYPE_ON_TYPE_IDENTIFIER,
     SYMBOL_EXPECTED_VARIABLE_OR_FUNCTION_ON_VARIABLE_READ,
 

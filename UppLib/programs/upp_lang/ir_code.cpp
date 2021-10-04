@@ -658,7 +658,7 @@ IR_Data_Access ir_generator_generate_expression(IR_Generator* generator, IR_Code
         call_instr.options.call.destination = ir_data_access_create_intermediate(ir_block, expression->result_type);
         if (expression->options.function_call.is_pointer_call) {
             call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_POINTER_CALL;
-            call_instr.options.call.options.pointer_access = *hashtable_find_element(&generator->variable_mapping, expression->options.function_call.pointer_variable);
+            call_instr.options.call.options.pointer_access = ir_generator_generate_expression(generator, ir_block, expression->options.function_call.pointer_expression);
         }
         else
         {

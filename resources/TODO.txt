@@ -21,6 +21,7 @@ Const expression evaluation maybe after creation?
 Symbol template infos add info if symbol is templated
 Symbols should keep track of references (Where they are used)
 Redo template syntax, only allow on functions/structs
+Rename nullptr to null
 
 
 
@@ -30,6 +31,7 @@ TODO NOW:
 Function pointers are only accessible in variables, not in expressions.
 Load other text files with #load
 Create automatic test cases
+Compile time known expressions for array size, see below
 
 
 

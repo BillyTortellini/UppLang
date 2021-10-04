@@ -375,7 +375,9 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
                 text_editor_add_highlight_from_slice(editor->text_editor, t.position, TEXT_COLOR, ERROR_BG_COLOR);
         }
 
-        highlight_identifiers(editor, 0, editor->compiler.analyser.program->root_module->symbol_table);
+        if (editor->compiler.analyser.program != 0 && editor->compiler.analyser.program->root_module != 0) {
+            highlight_identifiers(editor, 0, editor->compiler.analyser.program->root_module->symbol_table);
+        }
 
         for (int i = 0; i < editor->compiler.parser.errors.size; i++) {
             Compiler_Error e = editor->compiler.parser.errors[i];
