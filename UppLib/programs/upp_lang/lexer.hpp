@@ -95,7 +95,7 @@ struct Lexer
     Identifier_Pool* identifier_pool;
     Hashtable<String, Token_Type> keywords;
     Dynamic_Array<Token> tokens;
-    Dynamic_Array<Token> tokens_with_whitespaces;
+    Dynamic_Array<Token> tokens_with_decoration; // Includes comments and whitespaces
 };
 
 bool token_type_is_keyword(Token_Type type);
@@ -103,5 +103,5 @@ const char* token_type_to_string(Token_Type type);
 
 Lexer lexer_create();
 void lexer_destroy(Lexer* result);
-void lexer_parse_string(Lexer* lexer, String* code, Identifier_Pool* identifier_pool);
+void lexer_lex(Lexer* lexer, String* code, Identifier_Pool* identifier_pool);
 void lexer_print(Lexer* result);

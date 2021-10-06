@@ -82,6 +82,32 @@ struct Compiler_Error
 #include "type_system.hpp"
 #include "ir_code.hpp"
 
+enum class Code_Origin_Type
+{
+    MAIN_PROJECT,
+    LOADED_FILE,
+    GENERATED
+};
+
+struct Code_Origin
+{
+    Code_Origin_Type type;
+    String* id_filename; // May be null, otherwise pointer to string in identifier_pool
+};
+
+struct Code_Source
+{
+    Code_Origin origin;
+    String* source_code;
+    // Lexer result
+    Dynamic_Array<Token> tokens;
+    Dynamic_Array<Token> tokens_with_decoration;
+    // Parser result
+    Dynamic_Array<AST_Node> nodes;
+    Dynamic_Array<Token_Range> token_mapping;
+    Dynamic_Array<Compiler_Error> parse_errors;
+};
+
 struct Compiler
 {
     Identifier_Pool identifier_pool;
@@ -104,8 +130,10 @@ struct Compiler
 
 Compiler compiler_create(Timer* timer);
 void compiler_destroy(Compiler* compiler);
+
 void compiler_compile(Compiler* compiler, String* source_code, bool generate_code);
 void compiler_execute(Compiler* compiler);
+void compiler_add_source_code(Compiler* compiler, String* source_code, Code_Origin origin); // Takes ownership of source_code
 
 Text_Slice token_range_to_text_slice(Token_Range range, Compiler* compiler);
 void exit_code_append_to_string(String* string, Exit_Code code);

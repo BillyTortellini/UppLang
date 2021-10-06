@@ -3,32 +3,43 @@ Ideas that just come to mind:
 PrintF Debugging could be replaced with memory visualizer
 'Destructors' could be generated with metaprogramming, simple initializors too
 Differentiate States and Tags in the language
-Functions may just be compile time known function pointers?
 Should we have compile-time known arguments, are they the same as template args?
-Hardcoded functions should be removed at some point
 Context struct could live in thread-local memory
 Auto cast keyword would be nice and easy
-Delete IR_Code, just use modtree for translation
 Syntax guided editor would be cool I guess
 Are stacked pointers a reasonable idea (**int)? Where would i use them
-Maybe have struct type signature differentiate having a symbol (For struct name and member names) and a signature
 Automated parameter deduction (Like macros taking names from outer scope)
 
 Code Ideas:
 -----------
-Maybe think about making initializers helpers for expressions/statements?
-Const expression evaluation maybe after creation?
+Type_System should maybe do more, like templates, parameter names, struct names
 Symbol template infos add info if symbol is templated
 Symbols should keep track of references (Where they are used)
+Maybe think about making initializers helpers for expressions/statements?
+Const expression evaluation maybe after creation?
 Redo template syntax, only allow on functions/structs
-Rename nullptr to null
+Delete IR_Code, just use modtree for translation
+Functions may just be compile time known function pointers?
+Hardcoded functions should be removed at some point
 
 
+First: Do below
+Parser: Create block-allocator, use AST_Node* instead of indices, get rid of children array, create iterator
+    Use block allocator in type system and for Code_Source and maybe symbol tables and maybe expressions and statements...
+
+Second: Load files
+
+Compiler has list of code sources and loaded files
+Code Source contains:
+    original string
+    Tokens
+    AST
+    Source-Information (From file/Filename, was main, generated)
+    
 
 
 TODO NOW:
 ---------
-Function pointers are only accessible in variables, not in expressions.
 Load other text files with #load
 Create automatic test cases
 Compile time known expressions for array size, see below

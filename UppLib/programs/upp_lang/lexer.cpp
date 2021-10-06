@@ -42,7 +42,7 @@ const char* token_type_to_string(Token_Type type)
     case Token_Type::DOT: return "DOT";
     case Token_Type::NEW: return "NEW";
     case Token_Type::DELETE_TOKEN: return "DELETE";
-    case Token_Type::NULLPTR: return "NULLPTR";
+    case Token_Type::NULLPTR: return "NULL";
     case Token_Type::DEFER: return "DEFER";
     case Token_Type::COLON: return "COLON";
     case Token_Type::COMMA: return "COMMA";
@@ -269,7 +269,7 @@ Lexer lexer_create()
 {
     Lexer lexer;
     lexer.tokens = dynamic_array_create_empty<Token>(1024);
-    lexer.tokens_with_whitespaces = dynamic_array_create_empty<Token>(1024);
+    lexer.tokens_with_decoration = dynamic_array_create_empty<Token>(1024);
 
     lexer.keywords = hashtable_create_empty<String, Token_Type>(64, &hash_string, &string_equals);
     hashtable_insert_element(&lexer.keywords, string_create_static("if"), Token_Type::IF);
@@ -281,7 +281,7 @@ Lexer lexer_create()
     hashtable_insert_element(&lexer.keywords, string_create_static("return"), Token_Type::RETURN);
     hashtable_insert_element(&lexer.keywords, string_create_static("struct"), Token_Type::STRUCT);
     hashtable_insert_element(&lexer.keywords, string_create_static("cast"), Token_Type::CAST);
-    hashtable_insert_element(&lexer.keywords, string_create_static("nullptr"), Token_Type::NULLPTR);
+    hashtable_insert_element(&lexer.keywords, string_create_static("null"), Token_Type::NULLPTR);
     hashtable_insert_element(&lexer.keywords, string_create_static("new"), Token_Type::NEW);
     hashtable_insert_element(&lexer.keywords, string_create_static("delete"), Token_Type::DELETE_TOKEN);
     hashtable_insert_element(&lexer.keywords, string_create_static("true"), Token_Type::BOOLEAN_LITERAL);
@@ -338,14 +338,14 @@ bool number_base_is_valid_character(Number_Base base, int character)
     return false;
 }
 
-void lexer_parse_string(Lexer* lexer, String* code, Identifier_Pool* identifier_pool)
+void lexer_lex(Lexer* lexer, String* code, Identifier_Pool* identifier_pool)
 {
     lexer->identifier_pool = identifier_pool;
     String identifier_string = string_create_empty(256);
     SCOPE_EXIT(string_destroy(&identifier_string));
 
     dynamic_array_reset(&lexer->tokens);
-    dynamic_array_reset(&lexer->tokens_with_whitespaces);
+    dynamic_array_reset(&lexer->tokens_with_decoration);
 
     int index = 0;
     int character_pos = 0;
@@ -818,17 +818,17 @@ void lexer_parse_string(Lexer* lexer, String* code, Identifier_Pool* identifier_
             lexer->tokens[i].type == Token_Type::COMMENT) {
             continue;
         }
-        dynamic_array_push_back(&lexer->tokens_with_whitespaces, lexer->tokens[i]);
+        dynamic_array_push_back(&lexer->tokens_with_decoration, lexer->tokens[i]);
     }
-    Dynamic_Array<Token> swap = lexer->tokens_with_whitespaces;
-    lexer->tokens_with_whitespaces = lexer->tokens;
+    Dynamic_Array<Token> swap = lexer->tokens_with_decoration;
+    lexer->tokens_with_decoration = lexer->tokens;
     lexer->tokens = swap;
 }
 
 void lexer_destroy(Lexer* lexer)
 {
     dynamic_array_destroy(&lexer->tokens);
-    dynamic_array_destroy(&lexer->tokens_with_whitespaces);
+    dynamic_array_destroy(&lexer->tokens_with_decoration);
     hashtable_destroy(&lexer->keywords);
 }
 
@@ -837,9 +837,9 @@ void lexer_print(Lexer* lexer)
     String msg = string_create_empty(256);
     SCOPE_EXIT(string_destroy(&msg));
     string_append_formated(&msg, "Tokens: \n");
-    for (int i = 0; i < lexer->tokens_with_whitespaces.size; i++)
+    for (int i = 0; i < lexer->tokens_with_decoration.size; i++)
     {
-        Token token = lexer->tokens_with_whitespaces[i];
+        Token token = lexer->tokens_with_decoration[i];
         string_append_formated(&msg, "\t %s (Line %d, Pos %d, size: %d)",
             token_type_to_string(token.type), token.position.start.line, token.position.start.character,
             math_maximum(token.position.end.character - token.position.start.character, 0));

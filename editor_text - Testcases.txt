@@ -33,7 +33,7 @@ module Dynamic_Array<T>
     destroy :: (array: *Dynamic_Array<T>) 
     {
         delete array.buffer;
-        array.buffer.data = nullptr;
+        array.buffer.data = null;
         array.buffer.size = 0;
         array.size = 0;
     }
@@ -177,7 +177,7 @@ module List
     {
         node := list.head;
         print_string("List: ");
-        while node != nullptr
+        while node != null
         {
             print_i32(node.value);
             print_string(" ");
@@ -188,33 +188,33 @@ module List
     
     add :: (list: *List, value: int)
     {
-        if list.head == nullptr
+        if list.head == null
         {
             list.head = new List_Node;
             list.head.value = value;
-            list.head.next = nullptr;
+            list.head.next = null;
             return;
         }
         node := list.head;
-        while node.next != nullptr {
+        while node.next != null {
             node = node.next;
         }
         node.next = new List_Node;
-        node.next.next = nullptr;
+        node.next.next = null;
         node.next.value = value;
     }
 
     create :: () -> List
     {
         list: List;
-        list.head = nullptr;
+        list.head = null;
         return list;
     }
     
     destroy :: (list: *List)
     {
         node := list.head;
-        while node != nullptr
+        while node != null
         {
             tmp := node;
             node = node.next;
@@ -412,7 +412,7 @@ string_destroy :: (str: *String) -> void
 {
     delete str.character_buffer;
     str.character_buffer.size = 0;
-    str.character_buffer.data = nullptr;
+    str.character_buffer.data = null;
     str.size = 0;
 }
 
@@ -557,7 +557,7 @@ cast_test :: () -> void
     }
     
     {
-        a: *void = nullptr;
+        a: *void = null;
         if (cast<u64>0 == cast<u64>a) {
             print_line();
             print_line();

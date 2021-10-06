@@ -1333,9 +1333,24 @@ bool ast_parser_parse_function(AST_Parser* parser, AST_Node_Index parent_index)
     return true;
 }
 
-bool ast_parser_parse_extern_function_declaration(AST_Parser* parser, int parent)
+bool ast_parser_parse_extern_source_declarations(AST_Parser* parser, int parent)
 {
     AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, parent);
+
+    if (ast_parser_test_next_token(parser, Token_Type::IDENTIFIER_NAME)) {
+        if (parser->lexer->tokens[parser->index].attribute.id = parser->id_load) {
+            parser->index++;
+            if (ast_parser_test_next_2_tokens(parser, Token_Type::STRING_LITERAL, Token_Type::SEMICOLON)) {
+                AST_Node_Index node_index = ast_parser_get_next_node_index(parser, parent);
+                parser->nodes[node_index].type = AST_Node_Type::LOAD_FILE;
+                parser->nodes[node_index].id = parser->lexer->tokens[parser->index].attribute.id;
+                return true;
+            }
+            ast_parser_checkpoint_reset(checkpoint);
+            return false;
+        }
+    }
+
     if (!ast_parser_test_next_token(parser, Token_Type::EXTERN)) {
         return false;
     }
@@ -1435,7 +1450,7 @@ bool ast_parser_parse_definitions(AST_Parser* parser, int parent)
         if (ast_parser_parse_variable_creation_statement(parser, node_index)) {
             continue;
         }
-        if (ast_parser_parse_extern_function_declaration(parser, node_index)) {
+        if (ast_parser_parse_extern_source_declarations(parser, node_index)) {
             continue;
         }
 
@@ -1618,6 +1633,7 @@ void ast_parser_check_sanity(AST_Parser* parser)
                     child_type != AST_Node_Type::EXTERN_FUNCTION_DECLARATION &&
                     child_type != AST_Node_Type::EXTERN_LIB_IMPORT &&
                     child_type != AST_Node_Type::EXTERN_HEADER_IMPORT &&
+                    child_type != AST_Node_Type::LOAD_FILE &&
                     child_type != AST_Node_Type::MODULE &&
                     child_type != AST_Node_Type::MODULE_TEMPLATED &&
                     child_type != AST_Node_Type::STATEMENT_VARIABLE_DEFINE_ASSIGN &&
@@ -1653,6 +1669,7 @@ void ast_parser_check_sanity(AST_Parser* parser)
             }
             break;
         }
+        case AST_Node_Type::LOAD_FILE:
         case AST_Node_Type::EXTERN_LIB_IMPORT:
         case AST_Node_Type::IDENTIFIER_NAME:
             if (node->children.size != 0) {
@@ -2051,10 +2068,12 @@ Token_Range adjust_token_range(AST_Parser* parser, int node_index)
 
 void ast_parser_parse(AST_Parser* parser, Lexer* lexer)
 {
+    // Reset parser data
     parser->index = 0;
     parser->next_free_node = 0;
     parser->lexer = lexer;
     parser->id_lib = identifier_pool_add(lexer->identifier_pool, string_create_static("lib"));
+    parser->id_load = identifier_pool_add(lexer->identifier_pool, string_create_static("load"));
     dynamic_array_reset(&parser->errors);
     for (int i = 0; i < parser->nodes.size; i++) {
         dynamic_array_destroy(&parser->nodes[i].children);
@@ -2062,15 +2081,20 @@ void ast_parser_parse(AST_Parser* parser, Lexer* lexer)
     dynamic_array_reset(&parser->nodes);
     dynamic_array_reset(&parser->token_mapping);
 
+    // Parse
     ast_parser_parse_root(parser);
+
+    // Cleanup allocated, but unused nodes
     for (int i = parser->next_free_node; i < parser->nodes.size; i++) {
         dynamic_array_destroy(&parser->nodes[i].children);
     }
     dynamic_array_rollback_to_size(&parser->nodes, parser->next_free_node);
     dynamic_array_rollback_to_size(&parser->token_mapping, parser->next_free_node);
+
+    // Check sanity
     ast_parser_check_sanity(parser);
 
-    // Cleanup token mapping, this is just a test
+    // Cleanup token mapping, which I am still not sure if it is necessary
     adjust_token_range(parser, 0);
 }
 
@@ -2096,6 +2120,7 @@ String ast_node_type_to_string(AST_Node_Type type)
     case AST_Node_Type::EXTERN_FUNCTION_DECLARATION: return string_create_static("EXTERN_FUNCTION_DECLARATION");
     case AST_Node_Type::EXTERN_LIB_IMPORT: return string_create_static("EXTERN_LIB_IMPORT");
     case AST_Node_Type::EXTERN_HEADER_IMPORT: return string_create_static("EXTERN_HEADER_IMPORT");
+    case AST_Node_Type::LOAD_FILE: return string_create_static("LOAD_FILE");
     case AST_Node_Type::FUNCTION: return string_create_static("FUNCTION");
     case AST_Node_Type::IDENTIFIER_NAME: return string_create_static("IDENTIFIER_NAME");
     case AST_Node_Type::IDENTIFIER_PATH: return string_create_static("IDENTIFIER_PATH");

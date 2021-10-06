@@ -21,6 +21,7 @@ enum class AST_Node_Type
     EXTERN_FUNCTION_DECLARATION, // id: function name Child 0: Type
     EXTERN_LIB_IMPORT, // id: lib filename
     EXTERN_HEADER_IMPORT, // id: header name, Children: IDENTIFIER_NAME
+    LOAD_FILE, // id: filename
     MODULE, // Child 0: Definitions
     MODULE_TEMPLATED, // Child 0: Parameter_Block_Unnamed, Child 1: DEFINITIONS
     TEMPLATE_PARAMETERS, // Children: IDENTIFIER_NAME
@@ -109,6 +110,7 @@ struct AST_Parser
     AST_Node_Index next_free_node;
 
     String* id_lib;
+    String* id_load;
 };
 
 struct AST_Parser_Checkpoint

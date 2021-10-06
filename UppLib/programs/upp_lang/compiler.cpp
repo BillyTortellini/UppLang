@@ -9,7 +9,7 @@ bool enable_analysis = true;
 bool enable_ir_gen = true;
 bool enable_bytecode_gen = true;
 bool enable_c_generation = false;
-bool enable_c_compilation = false;
+bool enable_c_compilation = true;
 bool enable_output = true;
 bool enable_execution = true;
 bool execute_binary = false;
@@ -25,6 +25,113 @@ bool output_timing = true;
 
 
 
+/*
+HELPERS
+*/
+
+Token_Range token_range_make(int start_index, int end_index)
+{
+    Token_Range result;
+    result.start_index = start_index;
+    result.end_index = end_index;
+    return result;
+}
+
+Text_Slice token_range_to_text_slice(Token_Range range, Compiler* compiler)
+{
+    assert(range.start_index >= 0 && range.start_index <= compiler->lexer.tokens.size, "HEY");
+    assert(range.end_index >= 0 && range.end_index <= compiler->lexer.tokens.size + 1, "HEY");
+    assert(range.end_index >= range.start_index, "HEY");
+    if (range.end_index > compiler->lexer.tokens.size) {
+        range.end_index = compiler->lexer.tokens.size;
+    }
+    if (compiler->lexer.tokens.size == 0) {
+        return text_slice_make(text_position_make(0, 0), text_position_make(0, 0));
+    }
+
+    range.end_index = math_clamp(range.end_index, 0, math_maximum(0, compiler->lexer.tokens.size));
+    if (range.end_index == range.start_index) {
+        return text_slice_make(
+            compiler->lexer.tokens[range.start_index].position.start,
+            compiler->lexer.tokens[range.start_index].position.end
+        );
+    }
+
+    return text_slice_make(
+        compiler->lexer.tokens[range.start_index].position.start,
+        compiler->lexer.tokens[range.end_index - 1].position.end
+    );
+}
+
+void exit_code_append_to_string(String* string, Exit_Code code)
+{
+    switch (code)
+    {
+    case Exit_Code::OUT_OF_BOUNDS:
+        string_append_formated(string, "OUT_OF_BOUNDS");
+        break;
+    case Exit_Code::RETURN_VALUE_OVERFLOW:
+        string_append_formated(string, "RETURN_VALUE_OVERFLOW");
+        break;
+    case Exit_Code::STACK_OVERFLOW:
+        string_append_formated(string, "STACK_OVERFLOW");
+        break;
+    case Exit_Code::SUCCESS:
+        string_append_formated(string, "SUCCESS");
+        break;
+    case Exit_Code::EXTERN_FUNCTION_CALL_NOT_IMPLEMENTED:
+        string_append_formated(string, "EXTERN_FUNCTION_CALL_NOT_IMPLEMENTED");
+        break;
+    default: panic("Hey");
+    }
+}
+
+void hardcoded_function_type_append_to_string(String* string, Hardcoded_Function_Type hardcoded)
+{
+    switch (hardcoded)
+    {
+    case Hardcoded_Function_Type::PRINT_I32:
+        string_append_formated(string, "PRINT_I32");
+        break;
+    case Hardcoded_Function_Type::PRINT_F32:
+        string_append_formated(string, "PRINT_F32");
+        break;
+    case Hardcoded_Function_Type::PRINT_BOOL:
+        string_append_formated(string, "PRINT_BOOL");
+        break;
+    case Hardcoded_Function_Type::PRINT_LINE:
+        string_append_formated(string, "PRINT_LINE");
+        break;
+    case Hardcoded_Function_Type::PRINT_STRING:
+        string_append_formated(string, "PRINT_STRING");
+        break;
+    case Hardcoded_Function_Type::READ_I32:
+        string_append_formated(string, "READ_I32");
+        break;
+    case Hardcoded_Function_Type::READ_F32:
+        string_append_formated(string, "READ_F32");
+        break;
+    case Hardcoded_Function_Type::READ_BOOL:
+        string_append_formated(string, "READ_BOOL");
+        break;
+    case Hardcoded_Function_Type::RANDOM_I32:
+        string_append_formated(string, "RANDOM_I32");
+        break;
+    case Hardcoded_Function_Type::MALLOC_SIZE_I32:
+        string_append_formated(string, "MALLOC_SIZE_I32");
+        break;
+    case Hardcoded_Function_Type::FREE_POINTER:
+        string_append_formated(string, "FREE_POINTER");
+        break;
+    default: panic("Should not happen");
+    }
+}
+
+
+
+/*
+    COMPILER MEMBERS
+*/
 Constant_Pool constant_pool_create()
 {
     Constant_Pool result;
@@ -77,6 +184,8 @@ void extern_sources_destroy(Extern_Sources* sources)
     hashtable_destroy(&sources->extern_type_signatures);
 }
 
+
+
 Identifier_Pool identifier_pool_create()
 {
     Identifier_Pool result;
@@ -128,14 +237,11 @@ void identifier_pool_print(Identifier_Pool* pool)
     logg("%s", msg.characters);
 }
 
-Token_Range token_range_make(int start_index, int end_index)
-{
-    Token_Range result;
-    result.start_index = start_index;
-    result.end_index = end_index;
-    return result;
-}
 
+
+/*
+COMPILER
+*/
 Compiler compiler_create(Timer* timer)
 {
     Compiler result;
@@ -194,7 +300,7 @@ void compiler_compile(Compiler* compiler, String* source_code, bool generate_cod
 
     double time_start_lexing = timer_current_time_in_seconds(compiler->timer);
     if (do_lexing) {
-        lexer_parse_string(&compiler->lexer, source_code, &compiler->identifier_pool);
+        lexer_lex(&compiler->lexer, source_code, &compiler->identifier_pool);
     }
     double time_end_lexing = timer_current_time_in_seconds(compiler->timer);
 
@@ -377,92 +483,42 @@ void compiler_execute(Compiler* compiler)
     }
 }
 
-Text_Slice token_range_to_text_slice(Token_Range range, Compiler* compiler)
+// TODO: Call this function at some point
+void compiler_add_source_code(Compiler* compiler, String* source_code, Code_Origin origin)
 {
-    assert(range.start_index >= 0 && range.start_index <= compiler->lexer.tokens.size, "HEY");
-    assert(range.end_index >= 0 && range.end_index <= compiler->lexer.tokens.size + 1, "HEY");
-    assert(range.end_index >= range.start_index, "HEY");
-    if (range.end_index > compiler->lexer.tokens.size) {
-        range.end_index = compiler->lexer.tokens.size;
-    }
-    if (compiler->lexer.tokens.size == 0) {
-        return text_slice_make(text_position_make(0, 0), text_position_make(0, 0));
-    }
+    bool do_lexing = enable_lexing;
+    bool do_parsing = do_lexing && enable_parsing;
+    bool do_analysis = do_parsing && enable_analysis;
 
-    range.end_index = math_clamp(range.end_index, 0, math_maximum(0, compiler->lexer.tokens.size));
-    if (range.end_index == range.start_index) {
-        return text_slice_make(
-            compiler->lexer.tokens[range.start_index].position.start,
-            compiler->lexer.tokens[range.start_index].position.end
-        );
+    Code_Source source;
+    source.origin = origin;
+    source.source_code = source_code;
+
+    if (do_lexing) {
+        lexer_lex(&compiler->lexer, source_code, &compiler->identifier_pool);
+        source.tokens = compiler->lexer.tokens;
+        source.tokens_with_decoration = compiler->lexer.tokens_with_decoration;
+        compiler->lexer.tokens = dynamic_array_create_empty<Token>(source.tokens.size);
+        compiler->lexer.tokens_with_decoration = dynamic_array_create_empty<Token>(source.tokens_with_decoration.size);
     }
 
-    return text_slice_make(
-        compiler->lexer.tokens[range.start_index].position.start,
-        compiler->lexer.tokens[range.end_index - 1].position.end
-    );
-}
+    if (do_parsing) {
+        ast_parser_parse(&compiler->parser, &compiler->lexer);
+        source.parse_errors = compiler->parser.errors;
+        source.nodes = compiler->parser.nodes;
+        source.token_mapping = compiler->parser.token_mapping;
+        compiler->parser.errors = dynamic_array_create_empty<Compiler_Error>(source.parse_errors.size);
+        compiler->parser.nodes = dynamic_array_create_empty<AST_Node>(source.nodes.size);
+        compiler->parser.token_mapping = dynamic_array_create_empty<Token_Range>(source.token_mapping.size);
+    }
 
-void exit_code_append_to_string(String* string, Exit_Code code)
-{
-    switch (code)
+    if (do_analysis) 
     {
-    case Exit_Code::OUT_OF_BOUNDS:
-        string_append_formated(string, "OUT_OF_BOUNDS");
-        break;
-    case Exit_Code::RETURN_VALUE_OVERFLOW:
-        string_append_formated(string, "RETURN_VALUE_OVERFLOW");
-        break;
-    case Exit_Code::STACK_OVERFLOW:
-        string_append_formated(string, "STACK_OVERFLOW");
-        break;
-    case Exit_Code::SUCCESS:
-        string_append_formated(string, "SUCCESS");
-        break;
-    case Exit_Code::EXTERN_FUNCTION_CALL_NOT_IMPLEMENTED:
-        string_append_formated(string, "EXTERN_FUNCTION_CALL_NOT_IMPLEMENTED");
-        break;
-    default: panic("Hey");
+        // Add analysis workload
+        semantic_analyser_analyse(&compiler->analyser, compiler);
     }
+
+    // Check for errors
+    bool error_free = compiler->parser.errors.size == 0 && compiler->analyser.errors.size == 0;
 }
 
-void hardcoded_function_type_append_to_string(String* string, Hardcoded_Function_Type hardcoded)
-{
-    switch (hardcoded)
-    {
-    case Hardcoded_Function_Type::PRINT_I32:
-        string_append_formated(string, "PRINT_I32");
-        break;
-    case Hardcoded_Function_Type::PRINT_F32:
-        string_append_formated(string, "PRINT_F32");
-        break;
-    case Hardcoded_Function_Type::PRINT_BOOL:
-        string_append_formated(string, "PRINT_BOOL");
-        break;
-    case Hardcoded_Function_Type::PRINT_LINE:
-        string_append_formated(string, "PRINT_LINE");
-        break;
-    case Hardcoded_Function_Type::PRINT_STRING:
-        string_append_formated(string, "PRINT_STRING");
-        break;
-    case Hardcoded_Function_Type::READ_I32:
-        string_append_formated(string, "READ_I32");
-        break;
-    case Hardcoded_Function_Type::READ_F32:
-        string_append_formated(string, "READ_F32");
-        break;
-    case Hardcoded_Function_Type::READ_BOOL:
-        string_append_formated(string, "READ_BOOL");
-        break;
-    case Hardcoded_Function_Type::RANDOM_I32:
-        string_append_formated(string, "RANDOM_I32");
-        break;
-    case Hardcoded_Function_Type::MALLOC_SIZE_I32:
-        string_append_formated(string, "MALLOC_SIZE_I32");
-        break;
-    case Hardcoded_Function_Type::FREE_POINTER:
-        string_append_formated(string, "FREE_POINTER");
-        break;
-    default: panic("Should not happen");
-    }
-}

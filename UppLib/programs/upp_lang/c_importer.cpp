@@ -1698,10 +1698,10 @@ Optional<C_Import_Package> c_importer_parse_header(const char* file_name, Identi
     // Run lexer over file
     Lexer lexer = lexer_create();
     SCOPE_EXIT(lexer_destroy(&lexer));
-    lexer_parse_string(&lexer, &source_code, pool);
+    lexer_lex(&lexer, &source_code, pool);
 
     //logg("Lexing finished, Stats:\nIdentifier Count: #%d\nToken Count: #%d\n Whitespace-Token Count: %d\n",
-        //lexer.identifiers.size, lexer.tokens.size, lexer.tokens_with_whitespaces.size - lexer.tokens.size);
+        //lexer.identifiers.size, lexer.tokens.size, lexer.tokens_with_decoration.size - lexer.tokens.size);
 
     C_Import_Package package;
     {

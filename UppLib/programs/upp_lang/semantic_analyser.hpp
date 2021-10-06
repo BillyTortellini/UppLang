@@ -201,7 +201,7 @@ struct ModTree_Variable_Origin
     ModTree_Variable_Origin_Type type;
     union
     {
-        ModTree_Module* definition_module;
+        ModTree_Module* parent_module;
         ModTree_Block* local_block;
         struct {
             ModTree_Function* function;
@@ -318,11 +318,11 @@ struct Symbol_Table
 };
 
 struct Semantic_Analyser;
-Symbol_Table* symbol_table_create(Semantic_Analyser* analyser, Symbol_Table* parent, int node_index, bool inside_defer);
+Symbol_Table* symbol_table_create(Semantic_Analyser* analyser, Symbol_Table* parent, Optional<int> node_index);
 void symbol_table_destroy(Symbol_Table* symbol_table);
 
-Symbol* symbol_table_find_symbol(Symbol_Table* table, int name_handle, bool only_current_scope);
 void symbol_table_append_to_string(String* string, Symbol_Table* table, Semantic_Analyser* analyser, bool print_root);
+Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool only_current_scope);
 struct Identifier_Pool;
 Symbol* symbol_table_find_symbol_by_string(Symbol_Table* table, String* string, Identifier_Pool* pool);
 
@@ -333,21 +333,37 @@ Symbol* symbol_table_find_symbol_by_string(Symbol_Table* table, String* string, 
 /*
     WORKLOADS
 */
-enum class Analysis_Workload_Type
+struct Analysis_Workload_Extern_Function {
+    ModTree_Module* parent_module;
+    int node_index;
+};
+
+struct Analysis_Workload_Extern_Header {
+    ModTree_Module* parent_module;
+    int node_index;
+};
+
+struct Analysis_Workload_Module_Analysis {
+    ModTree_Module* parent_module;
+    int node_index;
+};
+
+struct Analysis_Workload_Array_Size {
+    Type_Signature* array_signature;
+};
+
+struct Analysis_Workload_Global
 {
-    FUNCTION_HEADER,
-    CODE_BLOCK,
-    STRUCT_BODY,
-    SIZED_ARRAY_SIZE,
-    GLOBAL,
-    EXTERN_FUNCTION_DECLARATION,
-    EXTERN_HEADER_IMPORT
+    ModTree_Module* parent_module;
+    int global_node_index;
 };
 
 struct Analysis_Workload_Code_Block
 {
     ModTree_Block* block;
-    int current_child_index;
+    // Source
+    int block_node_index;
+    int current_statement_index;
     // Defer infos
     bool inside_defer;
     int local_block_defer_depth;
@@ -362,7 +378,11 @@ struct Analysis_Workload_Code_Block
 struct Analysis_Workload_Struct_Body
 {
     Type_Signature* struct_signature;
-    int current_child_index;
+    Symbol_Table* symbol_table;
+
+    int struct_node_index;
+    int current_member_index;
+
     int offset;
     int alignment;
 };
@@ -370,21 +390,38 @@ struct Analysis_Workload_Struct_Body
 struct Analysis_Workload_Function_Header
 {
     ModTree_Function* function;
+    Symbol_Table* symbol_table;
+
+    int function_node_index;
     int next_parameter_index;
+};
+
+enum class Analysis_Workload_Type
+{
+    FUNCTION_HEADER,
+    CODE_BLOCK,
+    STRUCT_BODY,
+    GLOBAL,
+    ARRAY_SIZE,
+
+    MODULE_ANALYSIS,
+    EXTERN_FUNCTION_DECLARATION,
+    EXTERN_HEADER_IMPORT
 };
 
 struct Analysis_Workload
 {
     Analysis_Workload_Type type;
-    Symbol_Table* symbol_table;
-    int node_index;
     union
     {
         Analysis_Workload_Struct_Body struct_body;
         Analysis_Workload_Code_Block code_block;
-        Type_Signature* sized_array_type;
         Analysis_Workload_Function_Header function_header;
-        ModTree_Module* definition_module;
+        Analysis_Workload_Global global;
+        Analysis_Workload_Array_Size array_size;
+        Analysis_Workload_Module_Analysis module_analysis;
+        Analysis_Workload_Extern_Header extern_header;
+        Analysis_Workload_Extern_Function extern_function;
     } options;
 };
 
@@ -466,6 +503,7 @@ enum class Semantic_Error_Type
     INVALID_TYPE_RETURN,
     INVALID_TYPE_DELETE,
 
+    SYMBOL_EXPECTED_MODUL_IN_IDENTIFIER_PATH,
     SYMBOL_EXPECTED_TYPE_ON_TYPE_IDENTIFIER,
     SYMBOL_EXPECTED_VARIABLE_OR_FUNCTION_ON_VARIABLE_READ,
 

@@ -362,9 +362,9 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
     // Do syntax highlighting
     {
         text_editor_reset_highlights(editor->text_editor);
-        for (int i = 0; i < editor->compiler.lexer.tokens_with_whitespaces.size; i++)
+        for (int i = 0; i < editor->compiler.lexer.tokens_with_decoration.size; i++)
         {
-            Token t = editor->compiler.lexer.tokens_with_whitespaces[i];
+            Token t = editor->compiler.lexer.tokens_with_decoration[i];
             if (t.type == Token_Type::COMMENT)
                 text_editor_add_highlight_from_slice(editor->text_editor, t.position, COMMENT_COLOR, BG_COLOR);
             else if (token_type_is_keyword(t.type))
