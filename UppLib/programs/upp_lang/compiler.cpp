@@ -503,6 +503,7 @@ void compiler_add_source_code(Compiler* compiler, String* source_code, Code_Orig
     }
 
     if (do_parsing) {
+        /*
         ast_parser_parse(&compiler->parser, &compiler->lexer);
         source.parse_errors = compiler->parser.errors;
         source.nodes = compiler->parser.nodes;
@@ -510,6 +511,7 @@ void compiler_add_source_code(Compiler* compiler, String* source_code, Code_Orig
         compiler->parser.errors = dynamic_array_create_empty<Compiler_Error>(source.parse_errors.size);
         compiler->parser.nodes = dynamic_array_create_empty<AST_Node>(source.nodes.size);
         compiler->parser.token_mapping = dynamic_array_create_empty<Token_Range>(source.token_mapping.size);
+        */
     }
 
     if (do_analysis) 

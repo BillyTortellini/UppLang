@@ -8,7 +8,9 @@ Context struct could live in thread-local memory
 Auto cast keyword would be nice and easy
 Syntax guided editor would be cool I guess
 Are stacked pointers a reasonable idea (**int)? Where would i use them
+Always cast to appropriate pointer type/take reference, but have special syntax for taking memory/pointer assignments
 Automated parameter deduction (Like macros taking names from outer scope)
+Automated module/Enum scope finding (node->type == .UNDEFINED)
 
 Code Ideas:
 -----------
@@ -23,6 +25,7 @@ Functions may just be compile time known function pointers?
 Hardcoded functions should be removed at some point
 
 
+Create growing stack allocator for ast_parser, change parser structure
 First: Do below
 Parser: Create block-allocator, use AST_Node* instead of indices, get rid of children array, create iterator
     Use block allocator in type system and for Code_Source and maybe symbol tables and maybe expressions and statements...

@@ -29,6 +29,7 @@ struct ModTree_Block;
 struct ModTree_Module;
 struct ModTree_Function;
 struct ModTree_Variable;
+struct AST_Node;
 
 /*
     MODTREE
@@ -305,7 +306,7 @@ struct Symbol
     // Infos
     String* id;
     Symbol_Table* symbol_table; // Is 0 if the symbol is a template instance
-    int definition_node_index;
+    AST_Node* definition_node;
 
     // Template Data
     Symbol_Template_Data template_data;
@@ -318,7 +319,8 @@ struct Symbol_Table
 };
 
 struct Semantic_Analyser;
-Symbol_Table* symbol_table_create(Semantic_Analyser* analyser, Symbol_Table* parent, Optional<int> node_index);
+struct AST_Node;
+Symbol_Table* symbol_table_create(Semantic_Analyser* analyser, Symbol_Table* parent, AST_Node* node);
 void symbol_table_destroy(Symbol_Table* symbol_table);
 
 void symbol_table_append_to_string(String* string, Symbol_Table* table, Semantic_Analyser* analyser, bool print_root);
@@ -335,17 +337,17 @@ Symbol* symbol_table_find_symbol_by_string(Symbol_Table* table, String* string, 
 */
 struct Analysis_Workload_Extern_Function {
     ModTree_Module* parent_module;
-    int node_index;
+    AST_Node* node;
 };
 
 struct Analysis_Workload_Extern_Header {
     ModTree_Module* parent_module;
-    int node_index;
+    AST_Node* node;
 };
 
 struct Analysis_Workload_Module_Analysis {
     ModTree_Module* parent_module;
-    int node_index;
+    AST_Node* node;
 };
 
 struct Analysis_Workload_Array_Size {
@@ -355,20 +357,19 @@ struct Analysis_Workload_Array_Size {
 struct Analysis_Workload_Global
 {
     ModTree_Module* parent_module;
-    int global_node_index;
+    AST_Node* node;
 };
 
 struct Analysis_Workload_Code_Block
 {
     ModTree_Block* block;
     // Source
-    int block_node_index;
-    int current_statement_index;
+    AST_Node* current_statement_node;
     // Defer infos
     bool inside_defer;
     int local_block_defer_depth;
     int surrounding_loop_defer_depth;
-    Dynamic_Array<int> active_defer_statements;
+    Dynamic_Array<AST_Node*> active_defer_statements;
     // Context infos
     bool requires_return;
     bool inside_loop;
@@ -379,9 +380,7 @@ struct Analysis_Workload_Struct_Body
 {
     Type_Signature* struct_signature;
     Symbol_Table* symbol_table;
-
-    int struct_node_index;
-    int current_member_index;
+    AST_Node* current_member_node;
 
     int offset;
     int alignment;
@@ -392,8 +391,8 @@ struct Analysis_Workload_Function_Header
     ModTree_Function* function;
     Symbol_Table* symbol_table;
 
-    int function_node_index;
-    int next_parameter_index;
+    AST_Node* function_node;
+    AST_Node* next_parameter_node;
 };
 
 enum class Analysis_Workload_Type
@@ -442,7 +441,7 @@ struct Workload_Dependency_Identifier_Not_Found
 struct Workload_Dependency
 {
     Workload_Dependency_Type type;
-    int node_index;
+    AST_Node* node;
     union {
         Type_Signature* type_signature;
         ModTree_Block* code_block;
@@ -551,7 +550,7 @@ enum class Semantic_Error_Type
 struct Semantic_Error
 {
     Semantic_Error_Type type;
-    int error_node_index;
+    AST_Node* error_node;
 
     // Information
     struct {
@@ -613,7 +612,7 @@ struct Semantic_Analyser
     Dynamic_Array<Semantic_Error> errors;
 
     Dynamic_Array<Symbol_Table*> symbol_tables;
-    Hashtable<int, Symbol_Table*> ast_to_symbol_table;
+    Hashtable<AST_Node*, Symbol_Table*> ast_to_symbol_table;
 
     // ModTree stuff
     ModTree_Program* program;
@@ -643,4 +642,4 @@ struct AST_Parser;
 void symbol_append_to_string(Symbol* symbol, String* string);
 void hardcoded_function_type_append_to_string(String* string, Hardcoded_Function_Type hardcoded);
 void exit_code_append_to_string(String* string, Exit_Code code);
-Identifier_Analysis_Result semantic_analyser_analyse_identifier_node(Semantic_Analyser* analyser, Symbol_Table* table, int node_index, bool only_current_scope);
+Identifier_Analysis_Result semantic_analyser_analyse_identifier_node(Semantic_Analyser* analyser, Symbol_Table* table, AST_Node* node, bool only_current_scope);

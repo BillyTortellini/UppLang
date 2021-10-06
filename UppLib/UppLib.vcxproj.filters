@@ -267,6 +267,12 @@
     <ClInclude Include="programs\upp_lang\compiler_misc.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
     </ClInclude>
+    <ClInclude Include="datastructures\block_allocator.hpp">
+      <Filter>Header Files\Datastructures</Filter>
+    </ClInclude>
+    <ClInclude Include="datastructures\stack_allocator.hpp">
+      <Filter>Header Files\Datastructures</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="datastructures\array.cpp">
@@ -433,6 +439,9 @@
     </ClCompile>
     <ClCompile Include="programs\upp_lang\type_system.cpp">
       <Filter>Source Files\Programs\Upp_Lang</Filter>
+    </ClCompile>
+    <ClCompile Include="datastructures\stack_allocator.cpp">
+      <Filter>Source Files\Datastructures</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

@@ -20,9 +20,11 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="datastructures\array.hpp" />
+    <ClInclude Include="datastructures\block_allocator.hpp" />
     <ClInclude Include="datastructures\dynamic_array.hpp" />
     <ClInclude Include="datastructures\hashset.hpp" />
     <ClInclude Include="datastructures\hashtable.hpp" />
+    <ClInclude Include="datastructures\stack_allocator.hpp" />
     <ClInclude Include="datastructures\string.hpp" />
     <ClInclude Include="datastructures\string_pool.hpp" />
     <ClInclude Include="math\matrices.hpp" />
@@ -82,6 +84,7 @@
     <ClCompile Include="datastructures\array.cpp" />
     <ClCompile Include="datastructures\dynamic_array.cpp" />
     <ClCompile Include="datastructures\hashset.cpp" />
+    <ClCompile Include="datastructures\stack_allocator.cpp" />
     <ClCompile Include="datastructures\string.cpp" />
     <ClCompile Include="datastructures\string_pool.cpp" />
     <ClCompile Include="main.cpp" />

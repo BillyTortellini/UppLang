@@ -57,11 +57,6 @@ void identifier_pool_destroy(Identifier_Pool* pool);
 String* identifier_pool_add(Identifier_Pool* lexer, String identifier);
 void identifier_pool_print(Identifier_Pool* pool);
 
-struct Token_Range
-{
-    int start_index;
-    int end_index;
-};
 Token_Range token_range_make(int start_index, int end_index);
 
 struct Compiler_Error

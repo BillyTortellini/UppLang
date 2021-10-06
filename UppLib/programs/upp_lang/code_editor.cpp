@@ -59,23 +59,22 @@ Optional<int> code_editor_get_closest_token_to_text_position(Code_Editor* editor
     return optional_make_failure<int>();
 }
 
-int code_editor_get_closest_node_to_text_position(Code_Editor* editor, Text_Position pos)
+AST_Node* code_editor_get_closest_node_to_text_position(Code_Editor* editor, Text_Position pos)
 {
     AST_Parser* parser = &editor->compiler.parser;
-    int closest_index = 0;
-    AST_Node* closest = &parser->nodes[0];
+    AST_Node* closest = parser->root_node;
     while (true)
     {
         bool continue_search = true;
-        for (int i = 0; i < closest->children.size && continue_search; i++)
+        AST_Node* child = closest->child_start;
+        while (child != 0 && continue_search)
         {
-            int child_index = closest->children[i];
-            Token* token_start, * token_end;
+            Token* token_start, *token_end;
             {
                 int min = 0;
                 int max = parser->lexer->tokens.size;
-                int start_index = parser->token_mapping[child_index].start_index;
-                int end_index = parser->token_mapping[child_index].end_index;
+                int start_index = child->token_range.start_index;
+                int end_index = child->token_range.end_index;
                 if (start_index == -1 || end_index == -1) continue;
                 start_index = math_clamp(start_index, min, max);
                 end_index = math_clamp(end_index, min, max);
@@ -85,65 +84,53 @@ int code_editor_get_closest_node_to_text_position(Code_Editor* editor, Text_Posi
 
             Text_Slice node_slice = text_slice_make(token_start->position.start, token_end->position.end);
             if (text_slice_contains_position(node_slice, pos, editor->text_editor->text)) {
-                closest_index = child_index;
-                closest = &parser->nodes[closest_index];
+                closest = child;
                 continue_search = false;
             }
         }
         if (continue_search) break;
     }
-    return closest_index;
+    return closest;
 }
 
-Symbol_Table* code_editor_find_symbol_table_of_node_index(Code_Editor* editor, int node_index)
+Symbol_Table* code_editor_find_symbol_table_of_node(Code_Editor* editor, AST_Node* node)
 {
     Symbol_Table* nearest_table = nullptr;
-    int current_node_index = node_index;
-    AST_Node* current_node = &editor->compiler.parser.nodes[current_node_index];
-    while (current_node != nullptr)
+    while (node != nullptr)
     {
-        Symbol_Table** table = hashtable_find_element(&editor->compiler.analyser.ast_to_symbol_table, current_node_index);
+        Symbol_Table** table = hashtable_find_element(&editor->compiler.analyser.ast_to_symbol_table, node);
         if (table != 0) {
-            nearest_table = *table;
-            break;
+            return *table;
         }
-        if (current_node_index == 0) {
-            //panic("Should not happen, since root table should be here");
-            return 0;
-            break;
-        }
-        current_node_index = current_node->parent;
-        current_node = &editor->compiler.parser.nodes[current_node_index];
+        node = node->parent;
     }
-    return nearest_table;
+    return 0;
 }
 
 Symbol_Table* code_editor_find_symbol_table_of_text_position(Code_Editor* editor, Text_Position pos)
 {
-    AST_Node_Index closest_node_index = code_editor_get_closest_node_to_text_position(editor, pos);
-    return code_editor_find_symbol_table_of_node_index(editor, closest_node_index);
+    AST_Node* closest_node = code_editor_get_closest_node_to_text_position(editor, pos);
+    return code_editor_find_symbol_table_of_node(editor, closest_node);
 }
 
 void code_editor_jump_to_definition(Code_Editor* editor)
 {
-    if (editor->compiler.parser.errors.size != 0 || editor->compiler.analyser.errors.size != 0) return;
-    // Check if we are on a word, and extract if possible
-    Motion m;
-    m.contains_edges = false;
-    m.repeat_count = 1;
-    m.motion_type = Motion_Type::WORD;
-    Text_Slice result = motion_evaluate_at_position(m, editor->text_editor->cursor_position, editor->text_editor);
-    if (text_position_are_equal(result.start, result.end)) return;
-    String search_name = string_create_empty(32);
-    SCOPE_EXIT(string_destroy(&search_name));
-    text_append_slice_to_string(editor->text_editor->text, result, &search_name);
+    AST_Node* closest_node = code_editor_get_closest_node_to_text_position(editor, editor->text_editor->cursor_position);
+    if (!ast_node_type_is_identifier_node(closest_node->type)) {
+        return;
+    }
+    while (ast_node_type_is_identifier_node(closest_node->parent->type)) {
+        closest_node = closest_node->parent;
+    }
 
-    Symbol_Table* nearest_table = code_editor_find_symbol_table_of_text_position(editor, editor->text_editor->cursor_position);
+    Symbol_Table* nearest_table = code_editor_find_symbol_table_of_node(editor, closest_node);
     if (nearest_table != 0)
     {
-        Symbol* s = symbol_table_find_symbol_by_string(nearest_table, &search_name, &editor->compiler.identifier_pool);
-        if (s != 0 && s->definition_node_index != -1) {
-            Token* token = &editor->compiler.lexer.tokens[editor->compiler.parser.token_mapping[s->definition_node_index].start_index];
+        Identifier_Analysis_Result result = semantic_analyser_analyse_identifier_node(&editor->compiler.analyser, nearest_table, closest_node, false);
+        if (result.type != Analysis_Result_Type::SUCCESS) return;
+        Symbol* symbol = result.options.symbol;
+        if (symbol->definition_node != 0) {
+            Token* token = &editor->compiler.lexer.tokens[symbol->definition_node->token_range.start_index];
             Text_Position result_pos = token->position.start;
             if (math_absolute(result_pos.line - editor->text_editor->cursor_position.line) > 5) {
                 text_editor_record_jump(editor->text_editor, editor->text_editor->cursor_position, result_pos);
@@ -155,11 +142,9 @@ void code_editor_jump_to_definition(Code_Editor* editor)
     }
 }
 
-void highlight_identifiers(Code_Editor* editor, int ast_node_index, Symbol_Table* symbol_table)
+void highlight_identifiers(Code_Editor* editor, AST_Node* node, Symbol_Table* symbol_table)
 {
-    AST_Node* node = &editor->compiler.parser.nodes[ast_node_index];
-    Token_Range node_range = editor->compiler.parser.token_mapping[ast_node_index];
-
+    Token_Range node_range = node->token_range;
     // Variables definition, module def, funciton def, parameters
     if (node->type == AST_Node_Type::MODULE || node->type == AST_Node_Type::MODULE_TEMPLATED) {
         Token_Range r = node_range;
@@ -192,21 +177,21 @@ void highlight_identifiers(Code_Editor* editor, int ast_node_index, Symbol_Table
     }
     else if (ast_node_type_is_identifier_node(node->type))
     {
-        Identifier_Analysis_Result result = semantic_analyser_analyse_identifier_node(&editor->compiler.analyser, symbol_table, ast_node_index, false);
+        Identifier_Analysis_Result result = semantic_analyser_analyse_identifier_node(&editor->compiler.analyser, symbol_table, node, false);
         switch (result.type)
         {
         case Analysis_Result_Type::SUCCESS:
         {
             while (node != 0)
             {
-                int child_index = -1;
+                AST_Node* child_node = 0;
                 if (node->type == AST_Node_Type::IDENTIFIER_PATH || node->type == AST_Node_Type::IDENTIFIER_PATH_TEMPLATED)
                 {
                     // Highlight module name
                     Token_Range r = node_range;
                     r.end_index = r.start_index + 1;
                     text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, &editor->compiler), MODULE_COLOR, BG_COLOR);
-                    child_index = node->children[0];
+                    child_node = node->type == AST_Node_Type::IDENTIFIER_PATH ? node->child_start : node->child_start->neighbor;
                 }
                 else
                 {
@@ -230,19 +215,19 @@ void highlight_identifiers(Code_Editor* editor, int ast_node_index, Symbol_Table
                 {
                     // Highlight template params
                     if (node->type == AST_Node_Type::IDENTIFIER_NAME_TEMPLATED) {
-                        highlight_identifiers(editor, node->children[0], symbol_table);
+                        highlight_identifiers(editor, node->child_start, symbol_table);
                     }
                     else {
-                        highlight_identifiers(editor, node->children[1], symbol_table);
+                        highlight_identifiers(editor, node->child_start->neighbor, symbol_table);
                     }
                 }
 
-                if (child_index == -1) {
+                if (child_node == 0) {
                     node = 0;
                 }
                 else {
-                    node_range = editor->compiler.parser.token_mapping[child_index];
-                    node = &editor->compiler.parser.nodes[child_index];
+                    node_range = child_node->token_range;
+                    node = child_node;
                 }
             }
             break;
@@ -257,12 +242,14 @@ void highlight_identifiers(Code_Editor* editor, int ast_node_index, Symbol_Table
         return;
     }
 
-    Symbol_Table** new_table = hashtable_find_element(&editor->compiler.analyser.ast_to_symbol_table, ast_node_index);
+    Symbol_Table** new_table = hashtable_find_element(&editor->compiler.analyser.ast_to_symbol_table, node);
     if (new_table != 0) {
         symbol_table = *new_table;
     }
-    for (int i = 0; i < node->children.size; i++) {
-        highlight_identifiers(editor, node->children[i], symbol_table);
+    AST_Node* child = node->child_start;
+    while (child != 0) {
+        highlight_identifiers(editor, child, symbol_table);
+        child = child->neighbor;
     }
 }
 
@@ -445,7 +432,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
                 AST_Node* node = &editor->compiler.parser.nodes[i];
                 if (node->type == AST_Node_Type::EXPRESSION_FUNCTION_CALL)
                 {
-                    Symbol_Table* table = code_editor_find_symbol_table_of_node_index(editor, i);
+                    Symbol_Table* table = code_editor_find_symbol_table_of_node(editor, i);
                     int rewind_index = editor->compiler.analyser.errors.size;
                     SCOPE_EXIT(dynamic_array_rollback_to_size(&editor->compiler.analyser.errors, rewind_index));
                     int identifier_node_index = node->children[0];

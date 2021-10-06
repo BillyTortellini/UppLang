@@ -1,13 +1,10 @@
 #pragma once
 
 #include "../../datastructures/dynamic_array.hpp"
+#include "../../datastructures/stack_allocator.hpp"
 #include "lexer.hpp"
 #include "text.hpp"
-
-/*
-    Todo:
-    Single-Statement expression for new is bullcrap
-*/
+#include "compiler_misc.hpp"
 
 struct Compiler;
 struct Lexer;
@@ -90,24 +87,28 @@ bool ast_node_type_is_expression(AST_Node_Type type);
 bool ast_node_type_is_statement(AST_Node_Type type);
 bool ast_node_type_is_type(AST_Node_Type type);
 
-typedef int AST_Node_Index;
 struct AST_Node
 {
     AST_Node_Type type; 
-    AST_Node_Index parent;
-    Dynamic_Array<AST_Node_Index> children;
+    AST_Node* parent;
+    AST_Node* neighbor;
+    AST_Node* child_start;
+    AST_Node* child_end;
+    int child_count;
     // Node information
     String* id; // Multipurpose: variable read, write, function name, function call, module name
+    Token_Range token_range;
 };
 
 struct AST_Parser
 {
-    Dynamic_Array<AST_Node> nodes;
-    Dynamic_Array<Token_Range> token_mapping;
+    Stack_Allocator allocator;
+    AST_Node* last_allocated_node;
+    AST_Node* root_node;
     Dynamic_Array<Compiler_Error> errors;
+
     Lexer* lexer;
     int index;
-    AST_Node_Index next_free_node;
 
     String* id_lib;
     String* id_load;
@@ -116,10 +117,11 @@ struct AST_Parser
 struct AST_Parser_Checkpoint
 {
     AST_Parser* parser;
-    AST_Node_Index parent_index;
+    AST_Node* last_successfull;
+    AST_Node* last_child;
     int parent_child_count;
     int rewind_token_index;
-    int next_free_node_index;
+    Stack_Checkpoint stack_checkpoint;
 };
 
 AST_Parser ast_parser_create();

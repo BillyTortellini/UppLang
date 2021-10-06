@@ -4,6 +4,12 @@
 #include "../../datastructures/hashtable.hpp"
 #include "../../datastructures/string.hpp"
 
+struct Token_Range
+{
+    int start_index;
+    int end_index;
+};
+
 enum class Hardcoded_Function_Type
 {
     PRINT_I32,
