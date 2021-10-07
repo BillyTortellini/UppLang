@@ -16,7 +16,7 @@ bool execute_binary = false;
 
 bool output_lexing = false;
 bool output_identifiers = false;
-bool output_ast = true;
+bool output_ast = false;
 bool output_type_system = false;
 bool output_root_table = false;
 bool output_ir = false;

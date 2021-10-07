@@ -26,7 +26,7 @@ Code_Editor code_editor_create(Text_Renderer* text_renderer, Rendering_Core* cor
     result.context_info_pos = vec2(0.0f);
 
     // Load file into text editor
-    Optional<String> content = file_io_load_text_file("editor_text.txt");
+    Optional<String> content = file_io_load_text_file("upp_code/editor_text.txt");
     if (content.available) {
         SCOPE_EXIT(string_destroy(&content.value););
         text_set_string(&result.text_editor->text, &content.value);
@@ -302,7 +302,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
         String output = string_create_empty(256);
         SCOPE_EXIT(string_destroy(&output););
         text_append_to_string(&editor->text_editor->text, &output);
-        file_io_write_file("editor_text.txt", array_create_static((byte*)output.characters, output.size));
+        file_io_write_file("upp_code/editor_text.txt", array_create_static((byte*)output.characters, output.size));
         logg("Saved text file!\n");
     }
 

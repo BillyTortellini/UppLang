@@ -285,7 +285,7 @@ void upp_lang_main()
                 String output = string_create_empty(256);
                 SCOPE_EXIT(string_destroy(&output););
                 text_append_to_string(&code_editor.text_editor->text, &output);
-                file_io_write_file("editor_text.txt", array_create_static((byte*)output.characters, output.size));
+                file_io_write_file("upp_code/editor_text.txt", array_create_static((byte*)output.characters, output.size));
                 break;
             }
             if (input->key_pressed[(int)Key_Code::F11]) {

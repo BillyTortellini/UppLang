@@ -6,7 +6,7 @@
 #include "compiler.hpp"
 #include "type_system.hpp"
 
-bool PRINT_DEPENDENCIES = true;
+bool PRINT_DEPENDENCIES = false;
 
 /*
 MOD_TREE

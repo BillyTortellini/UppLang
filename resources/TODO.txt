@@ -24,12 +24,6 @@ Delete IR_Code, just use modtree for translation
 Functions may just be compile time known function pointers?
 Hardcoded functions should be removed at some point
 
-
-Create growing stack allocator for ast_parser, change parser structure
-First: Do below
-Parser: Create block-allocator, use AST_Node* instead of indices, get rid of children array, create iterator
-    Use block allocator in type system and for Code_Source and maybe symbol tables and maybe expressions and statements...
-
 Second: Load files
 
 Compiler has list of code sources and loaded files
