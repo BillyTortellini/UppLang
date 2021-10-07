@@ -63,7 +63,7 @@ Dummy dummy_make_random(Random* random)
 
 void dummy_print(Dummy* d) {
     u64 hash = dummy_hash(d);
-    logg("Dummy {valx: %d, valy: %d, alive: %s} hash: %x\n", d->valX, d->valY, d->alive ? "true" : "false", hash);
+    logg("Dummy {valx: %d, valy: %d, alive: %s} hash: %x, ptr: %p\n", d->valX, d->valY, d->alive ? "true" : "false", hash, d);
 }
 
 void test_things()
@@ -94,17 +94,26 @@ void test_things()
 
     // Stack allocator
     {
-        Stack_Allocator stack = stack_allocator_create_empty(256);
+        Stack_Allocator stack = stack_allocator_create_empty(32);
         SCOPE_EXIT(stack_allocator_destroy(&stack));
 
-        const int count = 200;
+        const int count = 10;
         Dummy* dummies[count];
 
-        for (int loops = 0; loops < 100; loops++) 
+        for (int loops = 0; loops < 1; loops++) 
         {
             for (int i = 0; i < count; i++) {
-                dummies[i] = stack_allocator_allocate<Dummy>(&stack);
-                *dummies[i] = dummy_make_random(&random);
+                Dummy* d = stack_allocator_allocate<Dummy>(&stack);
+                dummies[i] = d;
+                *d= dummy_make_random(&random);
+                d->valX = i;
+                d->valY = i * 2;
+                dummy_print(d);
+            }
+
+            logg("\nPrinting:\n");
+            for (int i = 0; i < count; i++) {
+                dummy_print(dummies[i]);
             }
 
             // Deallocate all
@@ -194,6 +203,8 @@ void test_things()
 
 void upp_lang_main()
 {
+    //test_things();
+
     Window* window = window_create("Test", 0);
     SCOPE_EXIT(window_destroy(window));
     Window_State* window_state = window_get_window_state(window);

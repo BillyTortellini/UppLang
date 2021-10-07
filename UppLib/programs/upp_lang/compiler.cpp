@@ -16,7 +16,7 @@ bool execute_binary = false;
 
 bool output_lexing = false;
 bool output_identifiers = false;
-bool output_ast = false;
+bool output_ast = true;
 bool output_type_system = false;
 bool output_root_table = false;
 bool output_ir = false;
@@ -449,6 +449,7 @@ void compiler_execute(Compiler* compiler)
         enable_lexing &&
         enable_parsing &&
         enable_analysis &&
+        enable_ir_gen &&
         enable_execution;
     if (execute_binary) {
         do_execution = do_execution && enable_c_compilation;

@@ -19,12 +19,7 @@ int count = 0;
 AST_Node* ast_parser_make_node_no_parent(AST_Parser* parser)
 {
     count++;
-    logg("Make node %d\n", count);
-    if (count == 12) {
-        logg("LOG\n");
-    }
     AST_Node* node = stack_allocator_allocate<AST_Node>(&parser->allocator);
-    parser->last_allocated_node = node;
     node->type = AST_Node_Type::UNDEFINED;
     node->child_count = 0;
     node->child_start = 0;
@@ -33,6 +28,7 @@ AST_Node* ast_parser_make_node_no_parent(AST_Parser* parser)
     node->parent = 0;
     node->id = 0;
     node->token_range = token_range_make(-1, -1);
+    node->alloc_index = count;
     return node;
 }
 
@@ -49,6 +45,7 @@ void ast_node_add_child(AST_Node* parent, AST_Node* child)
         parent->child_end = child;
         if (parent->child_end == parent->child_end->neighbor) panic("WHAT");
     }
+    child->parent = parent;
     parent->child_count++;
 }
 
@@ -59,20 +56,25 @@ AST_Node* ast_parser_make_node_child(AST_Parser* parser, AST_Node* parent)
     return node;
 }
 
-AST_Parser_Checkpoint ast_parser_checkpoint_make_node(AST_Parser* parser, AST_Node* node)
+AST_Parser_Checkpoint ast_parser_checkpoint_make(AST_Parser* parser, AST_Node* node)
 {
     AST_Parser_Checkpoint result;
     result.parser = parser;
-    result.last_successfull = node;
-    result.last_child = result.last_successfull->child_end;
-    result.parent_child_count = result.last_successfull->child_count;
+    result.node = node;
+    if (node == 0) {
+        result.last_child = 0;
+        result.node_child_count = 0;
+    }
+    else {
+        result.node_child_count = node->child_count;
+        result.last_child = node->child_end;
+        if (node->child_count == 0) {
+            assert(node->child_start == 0 && node->child_end == 0, "");
+        }
+    }
     result.rewind_token_index = parser->index;
     result.stack_checkpoint = stack_checkpoint_make(&parser->allocator);
     return result;
-}
-
-AST_Parser_Checkpoint ast_parser_checkpoint_make(AST_Parser* parser) {
-    return ast_parser_checkpoint_make_node(parser, parser->last_allocated_node);
 }
 
 void check_node_parent(AST_Node* node)
@@ -92,18 +94,22 @@ void check_node_parent(AST_Node* node)
 void ast_parser_checkpoint_reset(AST_Parser_Checkpoint checkpoint) 
 {
     checkpoint.parser->index = checkpoint.rewind_token_index;
+    if (checkpoint.node != 0) 
+    {
+        if (checkpoint.node_child_count != 0) {
+            checkpoint.last_child->neighbor = 0;
+            checkpoint.node->child_end = checkpoint.last_child;
+            checkpoint.node->child_count = checkpoint.node_child_count;
+        }
+        else {
+            checkpoint.node->child_count = 0;
+            checkpoint.node->child_start = 0;
+            checkpoint.node->child_end = 0;
+        }
+    }
+
     stack_checkpoint_rewind(checkpoint.stack_checkpoint);
-    if (checkpoint.last_child != 0) {
-        checkpoint.last_child->neighbor = 0;
-        checkpoint.last_successfull->child_end = checkpoint.last_child;
-        checkpoint.last_successfull->child_count = checkpoint.parent_child_count;
-    }
-    else {
-        checkpoint.last_successfull->child_start = 0;
-        checkpoint.last_successfull->child_end = 0;
-        checkpoint.last_successfull->child_count = 0;
-    }
-    check_node_parent(checkpoint.last_successfull);
+    check_node_parent(checkpoint.node);
 }
 
 bool ast_parser_test_next_token(AST_Parser* parser, Token_Type type)
@@ -150,7 +156,7 @@ bool ast_parser_test_next_4_tokens(AST_Parser* parser, Token_Type type1, Token_T
     if (parser->lexer->tokens[parser->index].type == type1 &&
         parser->lexer->tokens[parser->index + 1].type == type2 &&
         parser->lexer->tokens[parser->index + 2].type == type3 &&
-        parser->lexer->tokens[parser->index + 3].type == type4) 
+        parser->lexer->tokens[parser->index + 3].type == type4)
     {
         return true;
     }
@@ -173,7 +179,7 @@ bool ast_parser_test_next_5_tokens(AST_Parser* parser, Token_Type type1, Token_T
     return false;
 }
 
-int ast_parser_find_next_token_type(AST_Parser* parser, Token_Type type) 
+int ast_parser_find_next_token_type(AST_Parser* parser, Token_Type type)
 {
     int index = parser->index;
     while (index < parser->lexer->tokens.size)
@@ -245,7 +251,7 @@ bool ast_parser_parse_parameter_block(
 
 bool ast_parser_parse_identifier_or_path(AST_Parser* parser, AST_Node* parent)
 {
-    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser);
+    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, parent);
     AST_Node* node = ast_parser_make_node_child(parser, parent);
 
     if (!ast_parser_test_next_token(parser, Token_Type::IDENTIFIER_NAME)) {
@@ -260,7 +266,7 @@ bool ast_parser_parse_identifier_or_path(AST_Parser* parser, AST_Node* parent)
         is_template_analysis = true;
     }
 
-    if (ast_parser_test_next_token(parser, Token_Type::DOUBLE_COLON)) 
+    if (ast_parser_test_next_token(parser, Token_Type::DOUBLE_COLON))
     {
         parser->index++;
         if (is_template_analysis) {
@@ -293,7 +299,7 @@ bool ast_parser_parse_identifier_or_path(AST_Parser* parser, AST_Node* parent)
 
 bool ast_parser_parse_function_signature(AST_Parser* parser, AST_Node* parent)
 {
-    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser);
+    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, parent);
     AST_Node* node = ast_parser_make_node_child(parser, parent);
 
     if (ast_parser_test_next_token(parser, Token_Type::OPEN_PARENTHESIS))
@@ -322,7 +328,7 @@ bool ast_parser_parse_function_signature(AST_Parser* parser, AST_Node* parent)
 
 bool ast_parser_parse_type(AST_Parser* parser, AST_Node* parent)
 {
-    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser);
+    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, parent);
     AST_Node* node = ast_parser_make_node_child(parser, parent);
 
     if (ast_parser_test_next_token(parser, Token_Type::OPEN_PARENTHESIS))
@@ -396,10 +402,10 @@ bool ast_parser_parse_type(AST_Parser* parser, AST_Node* parent)
     return false;
 }
 
-bool ast_parser_parse_argument_block(AST_Parser* parser, AST_Node* parent_index)
+bool ast_parser_parse_argument_block(AST_Parser* parser, AST_Node* parent)
 {
-    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser);
-    AST_Node* node = ast_parser_make_node_child(parser, parent_index);
+    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, parent);
+    AST_Node* node = ast_parser_make_node_child(parser, parent);
     node->type = AST_Node_Type::ARGUMENTS;
 
     if (!ast_parser_test_next_token(parser, Token_Type::OPEN_PARENTHESIS)) {
@@ -438,7 +444,7 @@ bool ast_parser_parse_argument_block(AST_Parser* parser, AST_Node* parent_index)
     return true;
 }
 
-bool ast_parser_parse_expression(AST_Parser* parser, int parent_index);
+bool ast_parser_parse_expression(AST_Parser* parser, AST_Node* parent);
 AST_Node* ast_parser_parse_expression_no_parents(AST_Parser* parser);
 AST_Node* ast_parser_parse_expression_single_value(AST_Parser* parser)
 {
@@ -454,11 +460,11 @@ AST_Node* ast_parser_parse_expression_single_value(AST_Parser* parser)
             Lit    true         X
             Read   a            X
         Post-Ops
-            Mem    a.           
+            Mem    a.
             Array  a[]
             Call   a()
     */
-    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser);
+    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, 0);
 
     // Parse operand
     AST_Node* node = 0;
@@ -731,7 +737,7 @@ AST_Node* ast_parser_parse_binary_expression(AST_Parser* parser, AST_Node* node,
     int max_priority = 999;
     while (true)
     {
-        AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make_node(parser, node);
+        AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, node);
 
         int first_op_priority;
         int first_op_index = parser->index;
@@ -784,7 +790,7 @@ AST_Node* ast_parser_parse_binary_expression(AST_Parser* parser, AST_Node* node,
 
 AST_Node* ast_parser_parse_expression_no_parents(AST_Parser* parser)
 {
-    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser);
+    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, 0);
     AST_Node* single_value_node = ast_parser_parse_expression_single_value(parser);
     if (single_value_node == 0) {
         ast_parser_checkpoint_reset(checkpoint);
@@ -809,7 +815,7 @@ bool ast_parser_parse_single_statement_or_block(AST_Parser* parser, AST_Node* pa
         return true;
     }
 
-    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser);
+    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, parent);
     AST_Node* node = ast_parser_make_node_child(parser, parent);
     if (!ast_parser_parse_statement(parser, node)) {
         ast_parser_checkpoint_reset(checkpoint);
@@ -823,7 +829,7 @@ bool ast_parser_parse_single_statement_or_block(AST_Parser* parser, AST_Node* pa
 
 bool ast_parser_parse_single_variable_definition(AST_Parser* parser, AST_Node* parent)
 {
-    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser);
+    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, parent);
     AST_Node* node = ast_parser_make_node_child(parser, parent);
     if (ast_parser_test_next_2_tokens(parser, Token_Type::IDENTIFIER_NAME, Token_Type::COLON))
     {
@@ -850,7 +856,7 @@ bool ast_parser_parse_variable_creation_statement(AST_Parser* parser, AST_Node* 
         return true;
     }
 
-    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser);
+    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, parent_node);
     AST_Node* node = ast_parser_make_node_child(parser, parent_node);
 
     if (ast_parser_test_next_2_tokens(parser, Token_Type::IDENTIFIER_NAME, Token_Type::COLON))
@@ -916,7 +922,7 @@ bool ast_parser_parse_statement(AST_Parser* parser, AST_Node* parent)
         return true;
     }
 
-    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser);
+    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, parent);
     AST_Node* node = ast_parser_make_node_child(parser, parent);
 
     if (ast_parser_parse_expression(parser, node))
@@ -1063,7 +1069,7 @@ bool ast_parser_parse_statement(AST_Parser* parser, AST_Node* parent)
 bool ast_parser_parse_statement_block(AST_Parser* parser, AST_Node* parent)
 {
     int start_token_index = parser->index;
-    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser);
+    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, parent);
     AST_Node* node = ast_parser_make_node_child(parser, parent);
 
     node->type = AST_Node_Type::STATEMENT_BLOCK;
@@ -1080,7 +1086,7 @@ bool ast_parser_parse_statement_block(AST_Parser* parser, AST_Node* parent)
             ast_parser_checkpoint_reset(checkpoint);
             return false;
         }
-        checkpoint = ast_parser_checkpoint_make(parser);
+        checkpoint = ast_parser_checkpoint_make(parser, parent);
         if (ast_parser_parse_statement(parser, node)) {
             continue;
         }
@@ -1119,7 +1125,7 @@ typedef bool(*ast_parsing_function)(AST_Parser* parser, AST_Node* parent);
 bool ast_parser_parse_enclosed_list(AST_Parser* parser, AST_Node* parent, Token_Type seperator_token, ast_parsing_function parse_func, bool empty_valid,
     Token_Type enclosure_start, Token_Type enclosure_end, AST_Node_Type list_node_type)
 {
-    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser);
+    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, parent);
     AST_Node* node = ast_parser_make_node_child(parser, parent);
     node->type = list_node_type;
     if (!ast_parser_test_next_token(parser, enclosure_start)) {
@@ -1131,7 +1137,7 @@ bool ast_parser_parse_enclosed_list(AST_Parser* parser, AST_Node* parent, Token_
     bool first_time = true;
     while (true)
     {
-        AST_Parser_Checkpoint recoverable_checkpoint = ast_parser_checkpoint_make(parser);
+        AST_Parser_Checkpoint recoverable_checkpoint = ast_parser_checkpoint_make(parser, node);
         if (parse_func(parser, node))
         {
             first_time = false;
@@ -1186,7 +1192,7 @@ bool ast_parser_parse_enclosed_list(AST_Parser* parser, AST_Node* parent, Token_
 bool ast_parser_parse_parameter_block(
     AST_Parser* parser, AST_Node* parent, bool is_named_parameter_block, Token_Type open_parenthesis_type, Token_Type closed_parenthesis_type, bool log_errors)
 {
-    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser);
+    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, parent);
     AST_Node* node = ast_parser_make_node_child(parser, parent);
 
     if (is_named_parameter_block) {
@@ -1209,7 +1215,7 @@ bool ast_parser_parse_parameter_block(
 
     while (true)
     {
-        AST_Parser_Checkpoint recoverable_checkpoint = ast_parser_checkpoint_make(parser);
+        AST_Parser_Checkpoint recoverable_checkpoint = ast_parser_checkpoint_make(parser, node);
         bool success = true;
         if (is_named_parameter_block)
         {
@@ -1283,7 +1289,7 @@ bool ast_parser_parse_parameter_block(
 
 bool ast_parser_parse_struct(AST_Parser* parser, AST_Node* parent)
 {
-    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser);
+    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, parent);
     AST_Node* node = ast_parser_make_node_child(parser, parent);
     node->type = AST_Node_Type::STRUCT;
 
@@ -1297,7 +1303,7 @@ bool ast_parser_parse_struct(AST_Parser* parser, AST_Node* parent)
 
     while (!ast_parser_test_next_token(parser, Token_Type::CLOSED_BRACES))
     {
-        AST_Parser_Checkpoint member_checkpoint = ast_parser_checkpoint_make_node(parser, node);
+        AST_Parser_Checkpoint member_checkpoint = ast_parser_checkpoint_make(parser, node);
         bool success = ast_parser_parse_single_variable_definition(parser, node);
         // Do error handling here (Goto next semicolon or Closed Braces)
         if (!success)
@@ -1327,7 +1333,7 @@ bool ast_parser_parse_struct(AST_Parser* parser, AST_Node* parent)
 
 bool ast_parser_parse_function(AST_Parser* parser, AST_Node* parent)
 {
-    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser);
+    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, parent);
     AST_Node* node = ast_parser_make_node_child(parser, parent);
     node->type = AST_Node_Type::FUNCTION;
 
@@ -1355,7 +1361,7 @@ bool ast_parser_parse_function(AST_Parser* parser, AST_Node* parent)
 
 bool ast_parser_parse_extern_source_declarations(AST_Parser* parser, AST_Node* parent)
 {
-    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser);
+    AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, parent);
 
     if (ast_parser_test_next_token(parser, Token_Type::IDENTIFIER_NAME)) {
         if (parser->lexer->tokens[parser->index].attribute.id = parser->id_load) {
@@ -1428,7 +1434,7 @@ bool ast_parser_parse_extern_source_declarations(AST_Parser* parser, AST_Node* p
 
     AST_Node* node = ast_parser_make_node_child(parser, parent);
     node->type = AST_Node_Type::EXTERN_FUNCTION_DECLARATION;
-    node->id= parser->lexer->tokens[parser->index].attribute.id;
+    node->id = parser->lexer->tokens[parser->index].attribute.id;
     parser->index += 2;
 
     if (!ast_parser_parse_type(parser, node)) {
@@ -1457,7 +1463,7 @@ bool ast_parser_parse_definitions(AST_Parser* parser, AST_Node* parent)
             break;
         }
 
-        AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser);
+        AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, node);
         if (ast_parser_parse_function(parser, node)) {
             continue;
         }
@@ -1494,7 +1500,7 @@ bool ast_parser_parse_definitions(AST_Parser* parser, AST_Node* parent)
 
 bool ast_parser_parse_module(AST_Parser* parser, AST_Node* parent)
 {
-    AST_Parser_Checkpoint start_checkpoint = ast_parser_checkpoint_make(parser);
+    AST_Parser_Checkpoint start_checkpoint = ast_parser_checkpoint_make(parser, parent);
     if (!ast_parser_test_next_2_tokens(parser, Token_Type::MODULE, Token_Type::IDENTIFIER_NAME)) {
         return false;
     }
@@ -1556,385 +1562,392 @@ void ast_parser_parse_root(AST_Parser* parser)
 
 void ast_parser_check_sanity(AST_Parser* parser, AST_Node* node)
 {
-    if (node->child_start != 0) {
-        int count = 0;
-        AST_Node* child = node->child_start;
-        while (child != 0) {
-            count++;
-            if (count == node->child_count) {
-                assert(node->child_end == child, "");
-            }
-            child = child->neighbor;
-        }
-        assert(count == node->child_count, "");
-        ast_parser_check_sanity(parser, node->child_start);
-    }
-    if (node->neighbor != 0) {
-        ast_parser_check_sanity(parser, node->neighbor);
-    }
-
-    // Check parent indices
-    if (node->parent != 0) {
-        assert(node->type == AST_Node_Type::ROOT, "HEY");
-    }
-
-    // Check if token mappings arent 0 sized
-    if (parser->lexer->tokens.size != 0)
+    while (node != 0)
     {
-        int start = node->token_range.start_index;
-        int end = node->token_range.end_index;
-        if (start < 0 || end < 0 || start >= parser->lexer->tokens.size || end > parser->lexer->tokens.size) {
-            logg("Should not happen: range: %d-%d\n", start, end);
-            panic("Should not happen!");
+        SCOPE_EXIT(node = node->neighbor;);
+
+        // Verify child count and parent relation
+        if (node->child_start != 0) 
+        {
+            int count = 0;
+            AST_Node* child = node->child_start;
+            while (child != 0) 
+            {
+                assert(child->parent == node, "HEY");
+                count++;
+                if (count == node->child_count) {
+                    assert(node->child_end == child, "");
+                }
+                child = child->neighbor;
+                ast_parser_check_sanity(parser, child);
+            }
+            assert(count == node->child_count, "");
         }
-        if (start == end) {
-            if (node->type != AST_Node_Type::ROOT && node->type != AST_Node_Type::DEFINITIONS) {
+
+        // Check parent indices
+        if (node->parent == 0) {
+            assert(node->type == AST_Node_Type::ROOT, "HEY");
+        }
+
+        // Check if token mappings are only 0 if Definitions or Root
+        if (parser->lexer->tokens.size != 0)
+        {
+            int start = node->token_range.start_index;
+            int end = node->token_range.end_index;
+            if (start < 0 || end < 0 || start >= parser->lexer->tokens.size || end > parser->lexer->tokens.size) {
                 logg("Should not happen: range: %d-%d\n", start, end);
-                logg("Node_Type::%s\n", ast_node_type_to_string(node->type).characters);
                 panic("Should not happen!");
             }
+            if (start == end) {
+                if (node->type != AST_Node_Type::ROOT && node->type != AST_Node_Type::DEFINITIONS) {
+                    logg("Should not happen: range: %d-%d\n", start, end);
+                    logg("Node_Type::%s\n", ast_node_type_to_string(node->type).characters);
+                    panic("Should not happen!");
+                }
+            }
         }
-    }
 
-    AST_Node* child = node->child_start;
-    switch (node->type)
-    {
-    case AST_Node_Type::ROOT:
-    case AST_Node_Type::MODULE:
-        assert(node->child_count == 1, "");
-        assert(child->type == AST_Node_Type::DEFINITIONS, "");
-        break;
-    case AST_Node_Type::MODULE_TEMPLATED:
-        assert(node->child_count == 2, "");
-        assert(child->type == AST_Node_Type::TEMPLATE_PARAMETERS, "");
-        assert(child->neighbor->type == AST_Node_Type::DEFINITIONS, "");
-        break;
-    case AST_Node_Type::DEFINITIONS:
-        while (child != 0)
+        // Check if child types are allowed for given node type
+        AST_Node* child = node->child_start;
+        switch (node->type)
         {
-            AST_Node_Type child_type = child->type;
-            assert(child_type == AST_Node_Type::FUNCTION ||
-                child_type == AST_Node_Type::STRUCT ||
-                child_type == AST_Node_Type::EXTERN_FUNCTION_DECLARATION ||
-                child_type == AST_Node_Type::EXTERN_LIB_IMPORT ||
-                child_type == AST_Node_Type::EXTERN_HEADER_IMPORT ||
-                child_type == AST_Node_Type::LOAD_FILE ||
-                child_type == AST_Node_Type::MODULE ||
-                child_type == AST_Node_Type::MODULE_TEMPLATED ||
-                child_type == AST_Node_Type::STATEMENT_VARIABLE_DEFINE_ASSIGN ||
-                child_type == AST_Node_Type::STATEMENT_VARIABLE_DEFINITION ||
-                child_type == AST_Node_Type::STATEMENT_VARIABLE_DEFINE_INFER, "");
-            child = child->neighbor;
-        }
-        break;
-    case AST_Node_Type::STRUCT:
-        while (child != 0) {
-            assert(child->type == AST_Node_Type::STATEMENT_VARIABLE_DEFINITION, "");
-            child = child->neighbor;
-        }
-        break;
-    case AST_Node_Type::EXTERN_FUNCTION_DECLARATION:
-        assert(node->child_count == 1, "");
-        assert(ast_node_type_is_type(child->type), "");
-        break;
-    case AST_Node_Type::EXTERN_HEADER_IMPORT: {
-        while (child != 0) {
-            assert(child->type == AST_Node_Type::IDENTIFIER_NAME, "");
-            child = child->neighbor;
-        }
-        break;
-    }
-    case AST_Node_Type::LOAD_FILE:
-    case AST_Node_Type::EXTERN_LIB_IMPORT:
-    case AST_Node_Type::IDENTIFIER_NAME:
-        assert(node->child_count != 0, "");
-        break;
-    case AST_Node_Type::IDENTIFIER_NAME_TEMPLATED:
-        assert(node->child_count == 1, "");
-        if (child->type != AST_Node_Type::PARAMETER_BLOCK_UNNAMED) {
-            panic("Should not happen");
-        }
-        break;
-    case AST_Node_Type::IDENTIFIER_PATH:
-        assert(node->child_count == 1, "");
-        if (child->type != AST_Node_Type::IDENTIFIER_NAME &&
-            child->type != AST_Node_Type::IDENTIFIER_PATH &&
-            child->type != AST_Node_Type::IDENTIFIER_NAME_TEMPLATED &&
-            child->type != AST_Node_Type::IDENTIFIER_PATH_TEMPLATED) {
-            panic("Should not happen");
-        }
-        break;
-    case AST_Node_Type::IDENTIFIER_PATH_TEMPLATED:
-        assert(node->child_count == 2, "");
-        if (child->type != AST_Node_Type::PARAMETER_BLOCK_UNNAMED) {
-            panic("Should not happen");
-        }
-        if (child->neighbor->type != AST_Node_Type::IDENTIFIER_NAME &&
-            child->neighbor->type != AST_Node_Type::IDENTIFIER_PATH &&
-            child->neighbor->type != AST_Node_Type::IDENTIFIER_NAME_TEMPLATED &&
-            child->neighbor->type != AST_Node_Type::IDENTIFIER_PATH_TEMPLATED) {
-            panic("Should not happen");
-        }
-        break;
-    case AST_Node_Type::FUNCTION:
-        assert(node->child_count == 2, "");
-        if (child->type != AST_Node_Type::FUNCTION_SIGNATURE ||
-            child->neighbor->type != AST_Node_Type::STATEMENT_BLOCK) {
-            panic("Should not happen");
-        }
-        break;
-    case AST_Node_Type::PARAMETER_BLOCK_NAMED:
-        while (child != 0) {
-            assert(child->type == AST_Node_Type::NAMED_PARAMETER, "");
-            child = child->neighbor;
-        }
-        break;
-    case AST_Node_Type::PARAMETER_BLOCK_UNNAMED:
-        while (child != 0) {
+        case AST_Node_Type::ROOT:
+        case AST_Node_Type::MODULE:
+            assert(node->child_count == 1, "");
+            assert(child->type == AST_Node_Type::DEFINITIONS, "");
+            break;
+        case AST_Node_Type::MODULE_TEMPLATED:
+            assert(node->child_count == 2, "");
+            assert(child->type == AST_Node_Type::TEMPLATE_PARAMETERS, "");
+            assert(child->neighbor->type == AST_Node_Type::DEFINITIONS, "");
+            break;
+        case AST_Node_Type::DEFINITIONS:
+            while (child != 0)
+            {
+                AST_Node_Type child_type = child->type;
+                assert(child_type == AST_Node_Type::FUNCTION ||
+                    child_type == AST_Node_Type::STRUCT ||
+                    child_type == AST_Node_Type::EXTERN_FUNCTION_DECLARATION ||
+                    child_type == AST_Node_Type::EXTERN_LIB_IMPORT ||
+                    child_type == AST_Node_Type::EXTERN_HEADER_IMPORT ||
+                    child_type == AST_Node_Type::LOAD_FILE ||
+                    child_type == AST_Node_Type::MODULE ||
+                    child_type == AST_Node_Type::MODULE_TEMPLATED ||
+                    child_type == AST_Node_Type::STATEMENT_VARIABLE_DEFINE_ASSIGN ||
+                    child_type == AST_Node_Type::STATEMENT_VARIABLE_DEFINITION ||
+                    child_type == AST_Node_Type::STATEMENT_VARIABLE_DEFINE_INFER, "");
+                child = child->neighbor;
+            }
+            break;
+        case AST_Node_Type::STRUCT:
+            while (child != 0) {
+                assert(child->type == AST_Node_Type::STATEMENT_VARIABLE_DEFINITION, "");
+                child = child->neighbor;
+            }
+            break;
+        case AST_Node_Type::EXTERN_FUNCTION_DECLARATION:
+            assert(node->child_count == 1, "");
             assert(ast_node_type_is_type(child->type), "");
-            child = child->neighbor;
+            break;
+        case AST_Node_Type::EXTERN_HEADER_IMPORT: {
+            while (child != 0) {
+                assert(child->type == AST_Node_Type::IDENTIFIER_NAME, "");
+                child = child->neighbor;
+            }
+            break;
         }
-        break;
-    case AST_Node_Type::FUNCTION_SIGNATURE:
-        assert(node->child_count == 1 || node->child_count != 2, "");
-        assert(child->type == AST_Node_Type::PARAMETER_BLOCK_NAMED, "");
-        if (node->child_count == 2) {
-            assert(ast_node_type_is_type(node->neighbor->type), "");
+        case AST_Node_Type::LOAD_FILE:
+        case AST_Node_Type::EXTERN_LIB_IMPORT:
+        case AST_Node_Type::IDENTIFIER_NAME:
+            assert(node->child_count != 0, "");
+            break;
+        case AST_Node_Type::IDENTIFIER_NAME_TEMPLATED:
+            assert(node->child_count == 1, "");
+            if (child->type != AST_Node_Type::PARAMETER_BLOCK_UNNAMED) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::IDENTIFIER_PATH:
+            assert(node->child_count == 1, "");
+            if (child->type != AST_Node_Type::IDENTIFIER_NAME &&
+                child->type != AST_Node_Type::IDENTIFIER_PATH &&
+                child->type != AST_Node_Type::IDENTIFIER_NAME_TEMPLATED &&
+                child->type != AST_Node_Type::IDENTIFIER_PATH_TEMPLATED) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::IDENTIFIER_PATH_TEMPLATED:
+            assert(node->child_count == 2, "");
+            if (child->type != AST_Node_Type::PARAMETER_BLOCK_UNNAMED) {
+                panic("Should not happen");
+            }
+            if (child->neighbor->type != AST_Node_Type::IDENTIFIER_NAME &&
+                child->neighbor->type != AST_Node_Type::IDENTIFIER_PATH &&
+                child->neighbor->type != AST_Node_Type::IDENTIFIER_NAME_TEMPLATED &&
+                child->neighbor->type != AST_Node_Type::IDENTIFIER_PATH_TEMPLATED) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::FUNCTION:
+            assert(node->child_count == 2, "");
+            if (child->type != AST_Node_Type::FUNCTION_SIGNATURE ||
+                child->neighbor->type != AST_Node_Type::STATEMENT_BLOCK) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::PARAMETER_BLOCK_NAMED:
+            while (child != 0) {
+                assert(child->type == AST_Node_Type::NAMED_PARAMETER, "");
+                child = child->neighbor;
+            }
+            break;
+        case AST_Node_Type::PARAMETER_BLOCK_UNNAMED:
+            while (child != 0) {
+                assert(ast_node_type_is_type(child->type), "");
+                child = child->neighbor;
+            }
+            break;
+        case AST_Node_Type::FUNCTION_SIGNATURE:
+            assert(node->child_count == 1 || node->child_count != 2, "");
+            assert(child->type == AST_Node_Type::PARAMETER_BLOCK_NAMED, "");
+            if (node->child_count == 2) {
+                assert(ast_node_type_is_type(node->neighbor->type), "");
+            }
+            break;
+        case AST_Node_Type::TYPE_FUNCTION_POINTER:
+            assert(node->child_count == 1 || node->child_count != 2, "");
+            assert(child->type == AST_Node_Type::PARAMETER_BLOCK_UNNAMED, "");
+            if (node->child_count == 2) {
+                assert(ast_node_type_is_type(node->neighbor->type), "");
+            }
+            break;
+        case AST_Node_Type::TYPE_SLICE:
+        case AST_Node_Type::TYPE_POINTER_TO:
+        case AST_Node_Type::NAMED_PARAMETER:
+            assert(node->child_count == 1, "");
+            if (!ast_node_type_is_type(child->type)) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::TYPE_ARRAY:
+            assert(node->child_count == 2, "");
+            if (!ast_node_type_is_expression(child->type)) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::STATEMENT_BLOCK:
+            while (child != 0) {
+                assert(ast_node_type_is_statement(child->type), "");
+                child = child->neighbor;
+            }
+            break;
+        case AST_Node_Type::STATEMENT_WHILE:
+        case AST_Node_Type::STATEMENT_IF:
+            assert(node->child_count == 2, "");
+            if (!ast_node_type_is_expression(child->type)) {
+                panic("Should not happen");
+            }
+            if (child->neighbor->type != AST_Node_Type::STATEMENT_BLOCK) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::STATEMENT_IF_ELSE:
+            assert(node->child_count == 3, "");
+            if (!ast_node_type_is_expression(child->type)) {
+                panic("Should not happen");
+            }
+            if (child->neighbor->type != AST_Node_Type::STATEMENT_BLOCK) {
+                panic("Should not happen");
+            }
+            if (child->neighbor->neighbor->type != AST_Node_Type::STATEMENT_BLOCK) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::STATEMENT_DEFER:
+            assert(node->child_count == 1, "");
+            if (child->type != AST_Node_Type::STATEMENT_BLOCK) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::STATEMENT_BREAK:
+        case AST_Node_Type::STATEMENT_CONTINUE:
+            assert(node->child_count == 0, "");
+            break;
+        case AST_Node_Type::TYPE_IDENTIFIER: {
+            assert(node->child_count == 1, "");
+            AST_Node_Type child_type = child->type;
+            if (child_type != AST_Node_Type::IDENTIFIER_NAME &&
+                child_type != AST_Node_Type::IDENTIFIER_PATH &&
+                child_type != AST_Node_Type::IDENTIFIER_NAME_TEMPLATED &&
+                child_type != AST_Node_Type::IDENTIFIER_PATH_TEMPLATED
+                ) {
+                panic("Should not happen");
+            }
+            break;
         }
-        break;
-    case AST_Node_Type::TYPE_FUNCTION_POINTER:
-        assert(node->child_count == 1 || node->child_count != 2, "");
-        assert(child->type == AST_Node_Type::PARAMETER_BLOCK_UNNAMED, "");
-        if (node->child_count == 2) {
-            assert(ast_node_type_is_type(node->neighbor->type), "");
+        case AST_Node_Type::STATEMENT_EXPRESSION:
+        case AST_Node_Type::STATEMENT_RETURN:
+            if (node->child_count == 0) return;
+            assert(node->child_count == 1, "");
+            if (!ast_node_type_is_expression(child->type)) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::STATEMENT_ASSIGNMENT:
+            assert(node->child_count == 2, "");
+            if (!ast_node_type_is_expression(child->type)) {
+                panic("Should not happen");
+            }
+            if (!ast_node_type_is_expression(child->neighbor->type)) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::STATEMENT_VARIABLE_DEFINITION:
+            assert(node->child_count == 1, "");
+            if (!ast_node_type_is_type(child->type)) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::STATEMENT_VARIABLE_DEFINE_ASSIGN:
+            assert(node->child_count == 2, "");
+            if (!ast_node_type_is_type(child->type)) {
+                panic("Should not happen");
+            }
+            if (!ast_node_type_is_expression(child->neighbor->type)) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::STATEMENT_VARIABLE_DEFINE_INFER:
+            assert(node->child_count == 1, "");
+            if (!ast_node_type_is_expression(child->type)) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::STATEMENT_DELETE:
+            assert(node->child_count == 1, "");
+            if (!ast_node_type_is_expression(child->type)) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::ARGUMENTS: {
+            while (child != 0) {
+                assert(ast_node_type_is_expression(child->type), "");
+                child = child->neighbor;
+            }
+            break;
         }
-        break;
-    case AST_Node_Type::TYPE_SLICE:
-    case AST_Node_Type::TYPE_POINTER_TO:
-    case AST_Node_Type::NAMED_PARAMETER:
-        assert(node->child_count == 1, "");
-        if (!ast_node_type_is_type(child->type)) {
-            panic("Should not happen");
+        case AST_Node_Type::TEMPLATE_PARAMETERS: {
+            if (node->child_count == 0) {
+                panic("Should not happen");
+            }
+            while (child != 0) {
+                assert(child->type == AST_Node_Type::IDENTIFIER_NAME, "");
+                child = child->neighbor;
+            }
+            break;
         }
-        break;
-    case AST_Node_Type::TYPE_ARRAY:
-        assert(node->child_count == 2, "");
-        if (!ast_node_type_is_expression(child->type)) {
-            panic("Should not happen");
+        case AST_Node_Type::EXPRESSION_NEW:
+            assert(node->child_count == 1, "");
+            if (!ast_node_type_is_type(child->type)) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::EXPRESSION_NEW_ARRAY:
+            assert(node->child_count == 2, "");
+            if (!ast_node_type_is_expression(child->type)) {
+                panic("Should not happen");
+            }
+            if (!ast_node_type_is_type(child->neighbor->type)) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::EXPRESSION_LITERAL:
+            assert(node->child_count == 0, "");
+            break;
+        case AST_Node_Type::EXPRESSION_FUNCTION_CALL:
+        {
+            assert(node->child_count == 2, "");
+            AST_Node_Type child_type_0 = child->type;
+            AST_Node_Type child_type_1 = child->neighbor->type;
+            if (!ast_node_type_is_expression(child_type_0)) {
+                panic("Should not happen");
+            }
+            if (child_type_1 != AST_Node_Type::ARGUMENTS) {
+                panic("Should not happen");
+            }
+            break;
         }
-        break;
-    case AST_Node_Type::STATEMENT_BLOCK:
-        while (child != 0) {
-            assert(ast_node_type_is_statement(child->type), "");
-            child = child->neighbor;
+        case AST_Node_Type::EXPRESSION_VARIABLE_READ:
+            assert(node->child_count == 1, "");
+            if (child->type != AST_Node_Type::IDENTIFIER_NAME &&
+                child->type != AST_Node_Type::IDENTIFIER_PATH &&
+                child->type != AST_Node_Type::IDENTIFIER_PATH_TEMPLATED &&
+                child->type != AST_Node_Type::IDENTIFIER_NAME_TEMPLATED
+                ) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::EXPRESSION_ARRAY_ACCESS:
+            assert(node->child_count == 2, "");
+            if (!ast_node_type_is_expression(child->type)) {
+                panic("Should not happen");
+            }
+            if (!ast_node_type_is_expression(child->neighbor->type)) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::EXPRESSION_MEMBER_ACCESS:
+            assert(node->child_count == 1, "");
+            if (!ast_node_type_is_expression(child->type)) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::EXPRESSION_CAST:
+            assert(node->child_count == 2, "");
+            if (!ast_node_type_is_type(child->type)) {
+                panic("Should not happen");
+            }
+            if (!ast_node_type_is_expression(child->neighbor->type)) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::EXPRESSION_BINARY_OPERATION_ADDITION:
+        case AST_Node_Type::EXPRESSION_BINARY_OPERATION_SUBTRACTION:
+        case AST_Node_Type::EXPRESSION_BINARY_OPERATION_DIVISION:
+        case AST_Node_Type::EXPRESSION_BINARY_OPERATION_MULTIPLICATION:
+        case AST_Node_Type::EXPRESSION_BINARY_OPERATION_MODULO:
+        case AST_Node_Type::EXPRESSION_BINARY_OPERATION_AND:
+        case AST_Node_Type::EXPRESSION_BINARY_OPERATION_OR:
+        case AST_Node_Type::EXPRESSION_BINARY_OPERATION_EQUAL:
+        case AST_Node_Type::EXPRESSION_BINARY_OPERATION_NOT_EQUAL:
+        case AST_Node_Type::EXPRESSION_BINARY_OPERATION_LESS:
+        case AST_Node_Type::EXPRESSION_BINARY_OPERATION_LESS_OR_EQUAL:
+        case AST_Node_Type::EXPRESSION_BINARY_OPERATION_GREATER:
+        case AST_Node_Type::EXPRESSION_BINARY_OPERATION_GREATER_OR_EQUAL:
+            assert(node->child_count == 2, "");
+            if (!ast_node_type_is_expression(child->type)) {
+                panic("Should not happen");
+            }
+            if (!ast_node_type_is_expression(child->neighbor->type)) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::EXPRESSION_UNARY_OPERATION_NEGATE:
+        case AST_Node_Type::EXPRESSION_UNARY_OPERATION_NOT:
+        case AST_Node_Type::EXPRESSION_UNARY_OPERATION_ADDRESS_OF:
+        case AST_Node_Type::EXPRESSION_UNARY_OPERATION_DEREFERENCE:
+            assert(node->child_count == 1, "");
+            if (!ast_node_type_is_expression(child->type)) {
+                panic("Should not happen");
+            }
+            break;
+        case AST_Node_Type::UNDEFINED:
+            panic("Should not happen!");
+            break;
+        default:
+            panic("Should not happen!");
+            break;
         }
-        break;
-    case AST_Node_Type::STATEMENT_WHILE:
-    case AST_Node_Type::STATEMENT_IF:
-        assert(node->child_count == 2, "");
-        if (!ast_node_type_is_expression(child->type)) {
-            panic("Should not happen");
-        }
-        if (child->neighbor->type != AST_Node_Type::STATEMENT_BLOCK) {
-            panic("Should not happen");
-        }
-        break;
-    case AST_Node_Type::STATEMENT_IF_ELSE:
-        assert(node->child_count == 3, "");
-        if (!ast_node_type_is_expression(child->type)) {
-            panic("Should not happen");
-        }
-        if (child->neighbor->type != AST_Node_Type::STATEMENT_BLOCK) {
-            panic("Should not happen");
-        }
-        if (child->neighbor->neighbor->type != AST_Node_Type::STATEMENT_BLOCK) {
-            panic("Should not happen");
-        }
-        break;
-    case AST_Node_Type::STATEMENT_DEFER:
-        assert(node->child_count == 1, "");
-        if (child->type != AST_Node_Type::STATEMENT_BLOCK) {
-            panic("Should not happen");
-        }
-        break;
-    case AST_Node_Type::STATEMENT_BREAK:
-    case AST_Node_Type::STATEMENT_CONTINUE:
-        assert(node->child_count == 0, "");
-        break;
-    case AST_Node_Type::TYPE_IDENTIFIER: {
-        assert(node->child_count == 1, "");
-        AST_Node_Type child_type = child->type;
-        if (child_type != AST_Node_Type::IDENTIFIER_NAME &&
-            child_type != AST_Node_Type::IDENTIFIER_PATH &&
-            child_type != AST_Node_Type::IDENTIFIER_NAME_TEMPLATED &&
-            child_type != AST_Node_Type::IDENTIFIER_PATH_TEMPLATED
-            ) {
-            panic("Should not happen");
-        }
-        break;
-    }
-    case AST_Node_Type::STATEMENT_EXPRESSION:
-    case AST_Node_Type::STATEMENT_RETURN:
-        if (node->child_count == 0) return;
-        assert(node->child_count == 1, "");
-        if (!ast_node_type_is_expression(child->type)) {
-            panic("Should not happen");
-        }
-        break;
-    case AST_Node_Type::STATEMENT_ASSIGNMENT:
-        assert(node->child_count == 2, "");
-        if (!ast_node_type_is_expression(child->type)) {
-            panic("Should not happen");
-        }
-        if (!ast_node_type_is_expression(child->neighbor->type)) {
-            panic("Should not happen");
-        }
-        break;
-    case AST_Node_Type::STATEMENT_VARIABLE_DEFINITION:
-        assert(node->child_count == 1, "");
-        if (!ast_node_type_is_type(child->type)) {
-            panic("Should not happen");
-        }
-        break;
-    case AST_Node_Type::STATEMENT_VARIABLE_DEFINE_ASSIGN:
-        assert(node->child_count == 2, "");
-        if (!ast_node_type_is_type(child->type)) {
-            panic("Should not happen");
-        }
-        if (!ast_node_type_is_expression(child->neighbor->type)) {
-            panic("Should not happen");
-        }
-        break;
-    case AST_Node_Type::STATEMENT_VARIABLE_DEFINE_INFER:
-        assert(node->child_count == 1, "");
-        if (!ast_node_type_is_expression(child->type)) {
-            panic("Should not happen");
-        }
-        break;
-    case AST_Node_Type::STATEMENT_DELETE:
-        assert(node->child_count == 1, "");
-        if (!ast_node_type_is_expression(child->type)) {
-            panic("Should not happen");
-        }
-        break;
-    case AST_Node_Type::ARGUMENTS: {
-        while (child != 0) {
-            assert(ast_node_type_is_expression(child->type), "");
-            child = child->neighbor;
-        }
-        break;
-    }
-    case AST_Node_Type::TEMPLATE_PARAMETERS: {
-        if (node->child_count == 0) {
-            panic("Should not happen");
-        }
-        while (child != 0) {
-            assert(child->type == AST_Node_Type::IDENTIFIER_NAME, "");
-            child = child->neighbor;
-        }
-        break;
-    }
-    case AST_Node_Type::EXPRESSION_NEW:
-        assert(node->child_count == 1, "");
-        if (!ast_node_type_is_type(child->type)) {
-            panic("Should not happen");
-        }
-        break;
-    case AST_Node_Type::EXPRESSION_NEW_ARRAY:
-        assert(node->child_count == 2, "");
-        if (!ast_node_type_is_expression(child->type)) {
-            panic("Should not happen");
-        }
-        if (!ast_node_type_is_type(child->neighbor->type)) {
-            panic("Should not happen");
-        }
-        break;
-    case AST_Node_Type::EXPRESSION_LITERAL:
-        assert(node->child_count == 0, "");
-        break;
-    case AST_Node_Type::EXPRESSION_FUNCTION_CALL:
-    {
-        assert(node->child_count == 2, "");
-        AST_Node_Type child_type_0 = child->type;
-        AST_Node_Type child_type_1 = child->neighbor->type;
-        if (!ast_node_type_is_expression(child_type_0)) {
-            panic("Should not happen");
-        }
-        if (child_type_1 != AST_Node_Type::ARGUMENTS) {
-            panic("Should not happen");
-        }
-        break;
-    }
-    case AST_Node_Type::EXPRESSION_VARIABLE_READ:
-        assert(node->child_count == 1, "");
-        if (child->type != AST_Node_Type::IDENTIFIER_NAME &&
-            child->type != AST_Node_Type::IDENTIFIER_PATH &&
-            child->type != AST_Node_Type::IDENTIFIER_PATH_TEMPLATED &&
-            child->type != AST_Node_Type::IDENTIFIER_NAME_TEMPLATED
-            ) {
-            panic("Should not happen");
-        }
-        break;
-    case AST_Node_Type::EXPRESSION_ARRAY_ACCESS:
-        assert(node->child_count == 2, "");
-        if (!ast_node_type_is_expression(child->type)) {
-            panic("Should not happen");
-        }
-        if (!ast_node_type_is_expression(child->neighbor->type)) {
-            panic("Should not happen");
-        }
-        break;
-    case AST_Node_Type::EXPRESSION_MEMBER_ACCESS:
-        assert(node->child_count == 1, "");
-        if (!ast_node_type_is_expression(child->type)) {
-            panic("Should not happen");
-        }
-        break;
-    case AST_Node_Type::EXPRESSION_CAST:
-        assert(node->child_count == 2, "");
-        if (!ast_node_type_is_type(child->type)) {
-            panic("Should not happen");
-        }
-        if (!ast_node_type_is_expression(child->neighbor->type)) {
-            panic("Should not happen");
-        }
-        break;
-    case AST_Node_Type::EXPRESSION_BINARY_OPERATION_ADDITION:
-    case AST_Node_Type::EXPRESSION_BINARY_OPERATION_SUBTRACTION:
-    case AST_Node_Type::EXPRESSION_BINARY_OPERATION_DIVISION:
-    case AST_Node_Type::EXPRESSION_BINARY_OPERATION_MULTIPLICATION:
-    case AST_Node_Type::EXPRESSION_BINARY_OPERATION_MODULO:
-    case AST_Node_Type::EXPRESSION_BINARY_OPERATION_AND:
-    case AST_Node_Type::EXPRESSION_BINARY_OPERATION_OR:
-    case AST_Node_Type::EXPRESSION_BINARY_OPERATION_EQUAL:
-    case AST_Node_Type::EXPRESSION_BINARY_OPERATION_NOT_EQUAL:
-    case AST_Node_Type::EXPRESSION_BINARY_OPERATION_LESS:
-    case AST_Node_Type::EXPRESSION_BINARY_OPERATION_LESS_OR_EQUAL:
-    case AST_Node_Type::EXPRESSION_BINARY_OPERATION_GREATER:
-    case AST_Node_Type::EXPRESSION_BINARY_OPERATION_GREATER_OR_EQUAL:
-        assert(node->child_count == 2, "");
-        if (!ast_node_type_is_expression(child->type)) {
-            panic("Should not happen");
-        }
-        if (!ast_node_type_is_expression(child->neighbor->type)) {
-            panic("Should not happen");
-        }
-        break;
-    case AST_Node_Type::EXPRESSION_UNARY_OPERATION_NEGATE:
-    case AST_Node_Type::EXPRESSION_UNARY_OPERATION_NOT:
-    case AST_Node_Type::EXPRESSION_UNARY_OPERATION_ADDRESS_OF:
-    case AST_Node_Type::EXPRESSION_UNARY_OPERATION_DEREFERENCE:
-        assert(node->child_count == 1, "");
-        if (!ast_node_type_is_expression(child->type)) {
-            panic("Should not happen");
-        }
-        break;
-    case AST_Node_Type::UNDEFINED:
-        panic("Should not happen!");
-        break;
-    default:
-        panic("Should not happen!");
-        break;
     }
 }
 
@@ -1959,10 +1972,10 @@ Token_Range adjust_token_range(AST_Parser* parser, AST_Node* node)
 
 void ast_parser_parse(AST_Parser* parser, Lexer* lexer)
 {
+    count = 0; // Debugging
     // Reset parser data
     parser->lexer = lexer;
     parser->index = 0;
-    parser->last_allocated_node = 0;
     stack_allocator_reset(&parser->allocator);
     parser->id_lib = identifier_pool_add(lexer->identifier_pool, string_create_static("lib"));
     parser->id_load = identifier_pool_add(lexer->identifier_pool, string_create_static("load"));
@@ -1976,7 +1989,7 @@ void ast_parser_parse(AST_Parser* parser, Lexer* lexer)
     ast_parser_check_sanity(parser, parser->root_node);
 
     // Cleanup token mapping, which I am still not sure if it is necessary
-    adjust_token_range(parser, 0);
+    adjust_token_range(parser, parser->root_node);
 }
 
 AST_Parser ast_parser_create()
@@ -2189,7 +2202,7 @@ void ast_node_append_to_string(AST_Parser* parser, AST_Node* node, String* strin
     for (int j = 0; j < indentation_lvl; j++) {
         string_append_formated(string, "  ");
     }
-    string_append_formated(string, "#%d ", node);
+    string_append_formated(string, "#%d ", node->alloc_index);
     String type_str = ast_node_type_to_string(node->type);
     string_append_string(string, &type_str);
     if (ast_node_type_is_expression(node->type)) {
@@ -2219,6 +2232,6 @@ void ast_node_append_to_string(AST_Parser* parser, AST_Node* node, String* strin
 }
 
 void ast_parser_append_to_string(AST_Parser* parser, String* string) {
-    ast_node_append_to_string(parser, 0, string, 0);
+    ast_node_append_to_string(parser, parser->root_node, string, 0);
 }
 

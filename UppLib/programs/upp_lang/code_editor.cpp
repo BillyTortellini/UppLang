@@ -363,7 +363,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
         }
 
         if (editor->compiler.analyser.program != 0 && editor->compiler.analyser.program->root_module != 0) {
-            highlight_identifiers(editor, 0, editor->compiler.analyser.program->root_module->symbol_table);
+            highlight_identifiers(editor, editor->compiler.parser.root_node, editor->compiler.analyser.program->root_module->symbol_table);
         }
 
         for (int i = 0; i < editor->compiler.parser.errors.size; i++) {

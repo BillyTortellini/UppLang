@@ -364,6 +364,7 @@ struct Analysis_Workload_Code_Block
 {
     ModTree_Block* block;
     // Source
+    AST_Node* block_node;
     AST_Node* current_statement_node;
     // Defer infos
     bool inside_defer;
@@ -373,7 +374,8 @@ struct Analysis_Workload_Code_Block
     // Context infos
     bool requires_return;
     bool inside_loop;
-    bool check_last_instruction_result;
+    ModTree_Statement* statement_to_check;
+    AST_Node* statement_to_check_node;
 };
 
 struct Analysis_Workload_Struct_Body

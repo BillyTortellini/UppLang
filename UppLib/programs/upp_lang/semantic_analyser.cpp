@@ -6,7 +6,7 @@
 #include "compiler.hpp"
 #include "type_system.hpp"
 
-bool PRINT_DEPENDENCIES = false;
+bool PRINT_DEPENDENCIES = true;
 
 /*
 MOD_TREE
@@ -2464,13 +2464,15 @@ void workload_code_block_work_through_defers(Semantic_Analyser* analyser, Analys
         defer_workload.type = Analysis_Workload_Type::CODE_BLOCK;
         defer_workload.options.code_block.active_defer_statements = dynamic_array_create_empty<AST_Node*>(1);
         defer_workload.options.code_block.block = block_stmt->options.block;
+        defer_workload.options.code_block.block_node = block_node;
         defer_workload.options.code_block.current_statement_node = block_node->child_start;
         defer_workload.options.code_block.inside_defer = true;
         defer_workload.options.code_block.local_block_defer_depth = 0;
         defer_workload.options.code_block.surrounding_loop_defer_depth = 0;
         defer_workload.options.code_block.inside_loop = false; // Defers cannot break out of loops, I guess
         defer_workload.options.code_block.requires_return = false;
-        defer_workload.options.code_block.check_last_instruction_result = false;
+        defer_workload.options.code_block.statement_to_check = 0;
+        defer_workload.options.code_block.statement_to_check_node = 0;
         dynamic_array_push_back(&analyser->active_workloads, defer_workload);
     }
     dynamic_array_reset(&workload->active_defer_statements);
@@ -2488,13 +2490,15 @@ Analysis_Workload analysis_workload_make_code_block(Semantic_Analyser* analyser,
         dynamic_array_push_back(&new_workload.options.code_block.active_defer_statements, block_workload->active_defer_statements[i]);
     }
     new_workload.options.code_block.block = block;
+    new_workload.options.code_block.block_node = block_node;
     new_workload.options.code_block.current_statement_node = block_node->child_start;
     new_workload.options.code_block.inside_defer = block_workload->inside_defer;
     new_workload.options.code_block.inside_loop = block_workload->inside_loop;
     new_workload.options.code_block.local_block_defer_depth = block_workload->active_defer_statements.size;
     new_workload.options.code_block.surrounding_loop_defer_depth = current_work->options.code_block.surrounding_loop_defer_depth;
     new_workload.options.code_block.requires_return = false;
-    new_workload.options.code_block.check_last_instruction_result = false;
+    new_workload.options.code_block.statement_to_check = 0;
+    new_workload.options.code_block.statement_to_check_node = 0;
     return new_workload;
 }
 
@@ -2709,7 +2713,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
     double time_init_end = timer_current_time_in_seconds(compiler->timer);
 
     // Find all workloads: TODO: Maybe create Workload-Type for this task
-    semantic_analyser_analyse_module(analyser, 0, base_table, 0);
+    semantic_analyser_analyse_module(analyser, 0, base_table, analyser->compiler->parser.root_node);
 
     double time_module_recursiv_end = timer_current_time_in_seconds(compiler->timer);
 
@@ -2808,6 +2812,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
             Analysis_Workload body_workload;
             body_workload.type = Analysis_Workload_Type::CODE_BLOCK;
             body_workload.options.code_block.block = function->options.function.body;
+            body_workload.options.code_block.block_node = body_node;
             body_workload.options.code_block.current_statement_node = body_node->child_start;
             body_workload.options.code_block.active_defer_statements = dynamic_array_create_empty<AST_Node*>(4);
             body_workload.options.code_block.inside_defer = false;
@@ -2815,7 +2820,8 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
             body_workload.options.code_block.surrounding_loop_defer_depth = 0;
             body_workload.options.code_block.inside_loop = false;
             body_workload.options.code_block.requires_return = true;
-            body_workload.options.code_block.check_last_instruction_result = false;
+            body_workload.options.code_block.statement_to_check = 0;
+            body_workload.options.code_block.statement_to_check_node = 0;
             dynamic_array_push_back(&analyser->active_workloads, body_workload);
 
             // Check for main function
@@ -3033,9 +3039,9 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
             Statement_Analysis_Result statement_result = Statement_Analysis_Result::NO_RETURN;
 
             // Check last block finish result
-            if (block_workload->check_last_instruction_result)
+            if (block_workload->statement_to_check != 0)
             {
-                ModTree_Statement* last_statement = block_workload->block->statements[block_workload->block->statements.size - 1];
+                ModTree_Statement* last_statement = block_workload->statement_to_check;
                 if (last_statement->type == ModTree_Statement_Type::BLOCK)
                 {
                     Statement_Analysis_Result* result_optional = hashtable_find_element(&analyser->finished_code_blocks, last_statement->options.block);
@@ -3064,40 +3070,37 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                 {
                     Statement_Analysis_Result* body_result = hashtable_find_element(&analyser->finished_code_blocks, last_statement->options.while_statement.while_block);
                     assert(body_result != 0, "Should not happen");
-                    AST_Node* error_node = block_workload->current_statement_node->parent->child_start;
-                    while (error_node->neighbor != block_workload->current_statement_node) {
-                        error_node = error_node->neighbor;
-                    }
                     if (*body_result == Statement_Analysis_Result::RETURN) {
                         Semantic_Error error;
                         error.type = Semantic_Error_Type::OTHERS_WHILE_ALWAYS_RETURNS;
-                        error.error_node = error_node;
+                        error.error_node = block_workload->statement_to_check_node;
                         semantic_analyser_log_error(analyser, error);
                     }
                     else if (*body_result == Statement_Analysis_Result::CONTINUE) {
                         Semantic_Error error;
                         error.type = Semantic_Error_Type::OTHERS_WHILE_NEVER_STOPS;
-                        error.error_node = error_node;
+                        error.error_node = block_workload->statement_to_check_node;
                         semantic_analyser_log_error(analyser, error);
                     }
                     else if (*body_result == Statement_Analysis_Result::BREAK) {
                         Semantic_Error error;
                         error.type = Semantic_Error_Type::OTHERS_WHILE_ONLY_RUNS_ONCE;
-                        error.error_node = error_node;
+                        error.error_node = block_workload->statement_to_check_node;
                         semantic_analyser_log_error(analyser, error);
                     }
                 }
                 else {
+                    logg("Block node %d, statement node %d\n", block_workload->current_statement_node->parent->alloc_index, block_workload->current_statement_node->alloc_index);
                     panic("Hey, should not happen!");
                 }
             }
-            block_workload->check_last_instruction_result = false;
+            block_workload->statement_to_check = 0;
 
             // Analyse Block
-            AST_Node* block_node = block_workload->current_statement_node->parent;
             AST_Node* statement_node = block_workload->current_statement_node;
-            while (statement_node != 0)
+            while (statement_node != 0 && !found_workload_dependency)
             {
+                SCOPE_EXIT(if(!found_workload_dependency) statement_node = statement_node->neighbor;);
                 block_workload->current_statement_node = statement_node;
                 if (statement_result != Statement_Analysis_Result::NO_RETURN) {
                     Semantic_Error error;
@@ -3303,7 +3306,8 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
 
                     Analysis_Workload new_workload = analysis_workload_make_code_block(analyser, statement_node, block, &workload);
                     dynamic_array_push_back(&analyser->active_workloads, new_workload);
-                    block_workload->check_last_instruction_result = true;
+                    block_workload->statement_to_check = block_stmt;
+                    block_workload->statement_to_check_node = statement_node;
                     found_workload_dependency = true;
                     found_dependency = workload_dependency_make_code_block_finished(block, statement_node);
                     block_workload->current_statement_node = statement_node->neighbor;
@@ -3377,10 +3381,15 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
 
                         found_workload_dependency = true;
                         found_dependency = workload_dependency_make_code_block_finished(if_statement.options.if_statement.else_block, else_block);
-                        block_workload->check_last_instruction_result = true;
-                    block_workload->current_statement_node = statement_node->neighbor;
+                        block_workload->current_statement_node = statement_node->neighbor;
+
+                        dynamic_array_push_back(&block_workload->block->statements, new ModTree_Statement(if_statement));
+                        block_workload->statement_to_check = block_workload->block->statements[block_workload->block->statements.size-1];
+                        block_workload->statement_to_check_node = statement_node;
                     }
-                    dynamic_array_push_back(&block_workload->block->statements, new ModTree_Statement(if_statement));
+                    else {
+                        dynamic_array_push_back(&block_workload->block->statements, new ModTree_Statement(if_statement));
+                    }
                     break;
                 }
                 case AST_Node_Type::STATEMENT_WHILE:
@@ -3427,14 +3436,15 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                     while_body_workload.options.code_block.surrounding_loop_defer_depth = block_workload->active_defer_statements.size;
                     dynamic_array_push_back(&analyser->active_workloads, while_body_workload);
 
+                    dynamic_array_push_back(&block_workload->block->statements, new ModTree_Statement(while_statement));
+                    block_workload->statement_to_check = block_workload->block->statements[block_workload->block->statements.size - 1];
+                    block_workload->statement_to_check_node = statement_node;
                     found_workload_dependency = true;
                     found_dependency = workload_dependency_make_code_block_finished(
                         while_statement.options.while_statement.while_block, statement_node->child_start->neighbor
                     );
-                    block_workload->check_last_instruction_result = true;
                     block_workload->current_statement_node = statement_node->neighbor;
 
-                    dynamic_array_push_back(&block_workload->block->statements, new ModTree_Statement(while_statement));
                     break;
                 }
                 case AST_Node_Type::STATEMENT_DELETE:
@@ -3630,7 +3640,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                 else {
                     Semantic_Error error;
                     error.type = Semantic_Error_Type::OTHERS_MISSING_RETURN_STATEMENT;
-                    error.error_node = block_node;
+                    error.error_node = block_workload->block_node;
                     semantic_analyser_log_error(analyser, error);
                 }
             }
@@ -4071,6 +4081,10 @@ void semantic_error_get_error_location(Semantic_Analyser* analyser, Semantic_Err
         dynamic_array_push_back(locations, error.error_node->token_range);
         break;
     }
+    case Semantic_Error_Type::SYMBOL_EXPECTED_MODUL_IN_IDENTIFIER_PATH: {
+        dynamic_array_push_back(locations, error.error_node->token_range);
+        break;
+    }
     case Semantic_Error_Type::SYMBOL_TABLE_UNRESOLVED_SYMBOL: {
         dynamic_array_push_back(locations, error.error_node->token_range);
         break;
@@ -4341,6 +4355,10 @@ void semantic_error_append_to_string(Semantic_Analyser* analyser, Semantic_Error
         break;
     case Semantic_Error_Type::SYMBOL_EXPECTED_VARIABLE_OR_FUNCTION_ON_VARIABLE_READ:
         string_append_formated(string, "Expected Variable or Function symbol for Variable read");
+        print_symbol = true;
+        break;
+    case Semantic_Error_Type::SYMBOL_EXPECTED_MODUL_IN_IDENTIFIER_PATH: 
+        string_append_formated(string, "Expected module in indentifier path");
         print_symbol = true;
         break;
     case Semantic_Error_Type::SYMBOL_TABLE_UNRESOLVED_SYMBOL:

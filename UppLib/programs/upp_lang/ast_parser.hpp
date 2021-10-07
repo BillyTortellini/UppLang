@@ -98,12 +98,14 @@ struct AST_Node
     // Node information
     String* id; // Multipurpose: variable read, write, function name, function call, module name
     Token_Range token_range;
+
+    // DEBUGGING
+    int alloc_index;
 };
 
 struct AST_Parser
 {
     Stack_Allocator allocator;
-    AST_Node* last_allocated_node;
     AST_Node* root_node;
     Dynamic_Array<Compiler_Error> errors;
 
@@ -117,10 +119,12 @@ struct AST_Parser
 struct AST_Parser_Checkpoint
 {
     AST_Parser* parser;
-    AST_Node* last_successfull;
-    AST_Node* last_child;
-    int parent_child_count;
     int rewind_token_index;
+
+    AST_Node* node;
+    AST_Node* last_child;
+    int node_child_count;
+
     Stack_Checkpoint stack_checkpoint;
 };
 
