@@ -870,7 +870,7 @@ Optional<C_Import_Type*> header_parser_parse_type(Header_Parser* parser, bool re
                 if (symbol == 0) {
                     // This should not happen
                     //print_tokens_till_newline(parser->tokens, parser->source_code, parser->index);
-                    //print_tokens_till_newline_token_style(parser->tokens, parser->source_code, parser->index, parser->lexer);
+                    //print_tokens_till_newline_token_style(parser->tokens, parser->source_code, parser->index, parser->code_source);
                     return optional_make_success(parser->result_package.type_system.error_type);
                     //return optional_make_failure<C_Import_Type*>();
                      //panic("Check if this happens, otherwise return failure");
@@ -1495,7 +1495,7 @@ bool header_parser_parse_known_structure(Header_Parser* parser)
                 String str = string_create_empty(256);
                 SCOPE_EXIT(string_destroy(&str));
                 string_append_formated(&str, "%s: ", is_typedef ? "typedef " : "function ");
-                string_append_formated(&str, "%s = ", identifier_pool_index_to_string(parser->lexer, var_def.instances[0].id).characters);
+                string_append_formated(&str, "%s = ", identifier_pool_index_to_string(parser->code_source, var_def.instances[0].id).characters);
                 c_import_type_append_to_string(registered_function, &str, 0, parser, true);
                 logg("%s\n", str.characters);
                 */
@@ -1526,7 +1526,7 @@ bool header_parser_parse_known_structure(Header_Parser* parser)
                 String str = string_create_empty(256);
                 SCOPE_EXIT(string_destroy(&str));
                 string_append_formated(&str, "%s: ", is_typedef ? "typedef " : "global: ");
-                string_append_formated(&str, "%s = ", identifier_pool_index_to_string(parser->lexer, instance->id).characters);
+                string_append_formated(&str, "%s = ", identifier_pool_index_to_string(parser->code_source, instance->id).characters);
                 c_import_type_append_to_string(symbol.data_type, &str, 0, parser, true);
                 logg("%s\n", str.characters);
                 */
@@ -1695,13 +1695,13 @@ Optional<C_Import_Package> c_importer_parse_header(const char* file_name, Identi
     }
     String source_code = text_file_opt.value;
 
-    // Run lexer over file
+    // Run code_source over file
     Lexer lexer = lexer_create();
     SCOPE_EXIT(lexer_destroy(&lexer));
     lexer_lex(&lexer, &source_code, pool);
 
     //logg("Lexing finished, Stats:\nIdentifier Count: #%d\nToken Count: #%d\n Whitespace-Token Count: %d\n",
-        //lexer.identifiers.size, lexer.tokens.size, lexer.tokens_with_decoration.size - lexer.tokens.size);
+        //code_source.identifiers.size, code_source.tokens.size, code_source.tokens_with_decoration.size - code_source.tokens.size);
 
     C_Import_Package package;
     {

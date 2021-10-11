@@ -11,6 +11,7 @@ Are stacked pointers a reasonable idea (**int)? Where would i use them
 Always cast to appropriate pointer type/take reference, but have special syntax for taking memory/pointer assignments
 Automated parameter deduction (Like macros taking names from outer scope)
 Automated module/Enum scope finding (node->type == .UNDEFINED)
+break continue with identifiers, named scopes, break to named scope
 
 Code Ideas:
 -----------
@@ -23,23 +24,19 @@ Redo template syntax, only allow on functions/structs
 Delete IR_Code, just use modtree for translation
 Functions may just be compile time known function pointers?
 Hardcoded functions should be removed at some point
+AST_Node only really needs type and child information for processing, parent and tokenrange could be in another array and multiple structures could exist for this
 
-Second: Load files
 
-Compiler has list of code sources and loaded files
-Code Source contains:
-    original string
-    Tokens
-    AST
-    Source-Information (From file/Filename, was main, generated)
-    
 
 
 TODO NOW:
 ---------
-Load other text files with #load
-Create automatic test cases
+A testcase where each character is types one by one, every time compiled, and the
+compiler must not crash
+
 Compile time known expressions for array size, see below
+Type-Information in Language
+
 
 
 

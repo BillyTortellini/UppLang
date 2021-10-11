@@ -54,7 +54,7 @@ struct Identifier_Pool
 };
 Identifier_Pool identifier_pool_create();
 void identifier_pool_destroy(Identifier_Pool* pool);
-String* identifier_pool_add(Identifier_Pool* lexer, String identifier);
+String* identifier_pool_add(Identifier_Pool* pool, String identifier);
 void identifier_pool_print(Identifier_Pool* pool);
 
 Token_Range token_range_make(int start_index, int end_index);
@@ -88,19 +88,18 @@ struct Code_Origin
 {
     Code_Origin_Type type;
     String* id_filename; // May be null, otherwise pointer to string in identifier_pool
+    AST_Node* load_node;
 };
 
 struct Code_Source
 {
     Code_Origin origin;
-    String* source_code;
+    String source_code;
     // Lexer result
     Dynamic_Array<Token> tokens;
     Dynamic_Array<Token> tokens_with_decoration;
     // Parser result
-    Dynamic_Array<AST_Node> nodes;
-    Dynamic_Array<Token_Range> token_mapping;
-    Dynamic_Array<Compiler_Error> parse_errors;
+    AST_Node* root_node;
 };
 
 struct Compiler
@@ -120,16 +119,22 @@ struct Compiler
     C_Compiler c_compiler;
     C_Importer c_importer;
 
+    Dynamic_Array<Code_Source*> code_sources;
+    Code_Source* main_source;
     Timer* timer;
+
+    bool generate_code;
 };
 
 Compiler compiler_create(Timer* timer);
 void compiler_destroy(Compiler* compiler);
 
-void compiler_compile(Compiler* compiler, String* source_code, bool generate_code);
-void compiler_execute(Compiler* compiler);
-void compiler_add_source_code(Compiler* compiler, String* source_code, Code_Origin origin); // Takes ownership of source_code
+void compiler_compile(Compiler* compiler, String source_code, bool generate_code);
+Exit_Code compiler_execute(Compiler* compiler);
+void compiler_add_source_code(Compiler* compiler, String source_code, Code_Origin origin); // Takes ownership of source_code
 
 Text_Slice token_range_to_text_slice(Token_Range range, Compiler* compiler);
 void exit_code_append_to_string(String* string, Exit_Code code);
 void hardcoded_function_type_append_to_string(String* string, Hardcoded_Function_Type hardcoded);
+Code_Source* compiler_ast_node_to_code_source(Compiler* compiler, AST_Node* node);
+void compiler_run_testcases(Timer* timer);

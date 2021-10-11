@@ -983,7 +983,10 @@ void bytecode_generator_generate(Bytecode_Generator* generator, Compiler* compil
         generator->instructions[call_loc.instruction_index].op2 = *location;
     }
 
-    generator->entry_point_index = *hashtable_find_element(&generator->function_locations, generator->ir_program->entry_function);
+    int* entry_found = hashtable_find_element(&generator->function_locations, generator->ir_program->entry_function);
+    assert(entry_found != 0, "");
+    generator->entry_point_index = *entry_found;
+    assert(generator->entry_point_index > 0 && generator->entry_point_index < generator->instructions.size, "");
 }
 
 

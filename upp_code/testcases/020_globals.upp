@@ -1,0 +1,39 @@
+Player :: struct
+{
+	name: String;
+	level: int;
+	alive: bool;
+}
+
+init_fn :: () -> int {
+	return 15 + 20 * 2;
+}
+
+// Global initialization order is currently just bad
+global_x: int;
+global_y: i32 = 5;
+global_w := init_fn();
+global_player: Player;
+global_pointer: *int;
+
+main :: ()
+{
+	// Test globals
+	global_x = 15 + global_y;
+	assert(global_x == 20);
+	assert(global_w == 55);
+	
+	global_player.name = "Fred";
+	global_player.level = 15;
+	global_player.alive = true;
+	assert(global_player.level == 15);
+	assert(global_player.alive == true);
+	
+	// Test pointers to globals
+	ptr: *int = *global_x;
+	&ptr = 30;
+	assert(global_x == 30);
+	global_pointer = ptr;
+	&global_pointer = 15;
+	assert(&ptr == 15);
+}

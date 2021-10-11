@@ -1,0 +1,12 @@
+main :: ()
+{
+	a: int= 15;
+	ap: *int = *a;
+	app: **int = *ap;
+	appp: ***int = *app;
+	
+	assert(&&&appp == 15);
+	
+	//&&app = &ap + 5;
+	//assert(&&&appp == 20);
+}

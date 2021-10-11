@@ -4,6 +4,7 @@
 #include "../../datastructures/string.hpp"
 #include "../../datastructures/hashtable.hpp"
 #include "../../datastructures/hashset.hpp"
+#include "compiler_misc.hpp"
 
 struct C_Compiler
 {
@@ -19,7 +20,7 @@ void c_compiler_destroy(C_Compiler* compiler);
 void c_compiler_add_source_file(C_Compiler* compiler, String file_name);
 void c_compiler_add_lib_file(C_Compiler* compiler, String file_name);
 void c_compiler_compile(C_Compiler* compiler);
-void c_compiler_execute(C_Compiler* compiler);
+Exit_Code c_compiler_execute(C_Compiler* compiler);
 
 
 

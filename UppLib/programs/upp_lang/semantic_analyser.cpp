@@ -5,6 +5,7 @@
 #include "../../datastructures/hashset.hpp"
 #include "compiler.hpp"
 #include "type_system.hpp"
+#include "../../utility/file_io.hpp"
 
 bool PRINT_DEPENDENCIES = false;
 
@@ -280,7 +281,6 @@ void symbol_append_to_string(Symbol* symbol, String* string)
 
 void symbol_table_append_to_string_with_parent_info(String* string, Symbol_Table* table, Semantic_Analyser* analyser, bool is_parent, bool print_root)
 {
-    Lexer* lexer = &analyser->compiler->lexer;
     if (!print_root && table->parent == 0) return;
     if (!is_parent) {
         string_append_formated(string, "Symbols: \n");
@@ -896,7 +896,7 @@ Type_Analysis_Result semantic_analyser_analyse_type(Semantic_Analyser* analyser,
             semantic_analyser_log_error(analyser, error);
             return type_analysis_result_make_error();
         }
-        Token literal_token = analyser->compiler->lexer.tokens[node_array_size->token_range.start_index];
+        Token literal_token = *node_array_size->literal_token;
         if (literal_token.type != Token_Type::INTEGER_LITERAL) {
             Semantic_Error error;
             error.type = Semantic_Error_Type::MISSING_FEATURE_NON_INTEGER_ARRAY_SIZE_EVALUATION;
@@ -1336,7 +1336,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
     }
     case AST_Node_Type::EXPRESSION_LITERAL:
     {
-        Token* token = &analyser->compiler->lexer.tokens[expression_node->token_range.start_index];
+        Token* token = expression_node->literal_token;
         Type_System* type_system = &analyser->compiler->type_system;
         void* value_ptr;
         Type_Signature* literal_type;
@@ -2102,7 +2102,7 @@ Variable_Creation_Analysis_Result semantic_analyser_analyse_variable_creation_no
     if (type_is_given)
     {
         variable->data_type = definition_type;
-        if (needs_expression_evaluation && definition_type != infered_type)
+        if (needs_expression_evaluation && definition_type != infered_type && infered_type != analyser->compiler->type_system.error_type)
         {
             ModTree_Expression* casted_expr = semantic_analyser_cast_implicit_if_possible(analyser, init_expression, definition_type);
             if (casted_expr == 0) {
@@ -2273,21 +2273,26 @@ void semantic_analyser_analyse_module(Semantic_Analyser* analyser, ModTree_Modul
         }
         case AST_Node_Type::LOAD_FILE:
         {
-            /*
-            What does the computer need to do:
-                Load the file (If not already done)
-                Lex content, create new tokens
-                Parse, using new tokens, create new ast
-                Analyse ast, use new ast, but in existing Modtree
+            if (hashset_contains(&analyser->loaded_filenames, top_level_node->id)) {
+                break; 
+            }
+            hashset_insert_element(&analyser->loaded_filenames, top_level_node->id);
 
-            How to fit this in the code organization
-                Lexer generates a lexer result
-                AST generates an ast result
-                Compiler has function: Add source
-                    Does lexing and parsing on the source
-                    Adds workload to analyser
-                
-            */
+            Optional<String> file_content = file_io_load_text_file(top_level_node->id->characters);
+            if (file_content.available)
+            {
+                String content = file_content.value;
+                Code_Origin origin;
+                origin.type = Code_Origin_Type::LOADED_FILE;
+                origin.load_node = top_level_node;
+                compiler_add_source_code(analyser->compiler, content, origin);
+            }
+            else {
+                Semantic_Error error;
+                error.type = Semantic_Error_Type::OTHERS_COULD_NOT_LOAD_FILE;
+                error.error_node = top_level_node;
+                semantic_analyser_log_error(analyser, error);
+            }
             break;
         }
         case AST_Node_Type::EXTERN_LIB_IMPORT: {
@@ -2512,6 +2517,7 @@ void analysis_workload_destroy(Analysis_Workload* workload)
     case Analysis_Workload_Type::EXTERN_FUNCTION_DECLARATION:
     case Analysis_Workload_Type::EXTERN_HEADER_IMPORT:
     case Analysis_Workload_Type::FUNCTION_HEADER:
+    case Analysis_Workload_Type::MODULE_ANALYSIS:
         break;
     case Analysis_Workload_Type::CODE_BLOCK:
         dynamic_array_destroy(&workload->options.code_block.active_defer_statements);
@@ -2523,16 +2529,8 @@ void analysis_workload_destroy(Analysis_Workload* workload)
 void analysis_workload_append_to_string(Analysis_Workload* workload, String* string, Semantic_Analyser* analyser);
 void workload_dependency_append_to_string(Workload_Dependency* dependency, String* string, Semantic_Analyser* analyser);
 
-void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
+void semantic_analyser_reset(Semantic_Analyser* analyser, Compiler* compiler)
 {
-    if (PRINT_DEPENDENCIES) {
-        logg("SEMANTIC_ANALYSER_DEPENDECIES:\n-----------------------------\n");
-    }
-    SCOPE_EXIT(if (PRINT_DEPENDENCIES) logg("------------------------------------\n"););
-
-    bool timing_print = false;
-    double time_init_start = timer_current_time_in_seconds(compiler->timer);
-
     // Reset analyser data
     Symbol_Table* base_table;
     {
@@ -2550,8 +2548,10 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
         dynamic_array_reset(&analyser->waiting_workload);
         hashtable_reset(&analyser->finished_code_blocks);
         hashtable_reset(&analyser->ast_to_symbol_table);
+        hashset_reset(&analyser->loaded_filenames);
 
         base_table = symbol_table_create(analyser, nullptr, 0);
+        analyser->base_table = base_table;
 
         if (analyser->program != 0) {
             modtree_program_destroy(analyser->program);
@@ -2694,6 +2694,74 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
         }
     }
 
+    // Add assert function
+    {
+        ModTree_Function* assert_fn = new ModTree_Function;
+        dynamic_array_push_back(&analyser->program->root_module->functions, assert_fn);
+        assert_fn->function_type = ModTree_Function_Type::FUNCTION;
+        assert_fn->parent_module = analyser->program->root_module;
+        Dynamic_Array<Type_Signature*> params = dynamic_array_create_empty<Type_Signature*>(1);
+        dynamic_array_push_back(&params, analyser->compiler->type_system.bool_type);
+        assert_fn->signature = type_system_make_function(&analyser->compiler->type_system, params, analyser->compiler->type_system.void_type);
+
+        {
+            Symbol sym;
+            sym.type = Symbol_Type::FUNCTION;
+            sym.options.function = assert_fn;
+            sym.definition_node = 0;
+            sym.id = identifier_pool_add(&analyser->compiler->identifier_pool, string_create_static("assert"));
+            sym.symbol_table = base_table;
+            sym.template_data.is_templated = false;
+            assert_fn->symbol = symbol_table_define_symbol(sym, analyser);
+        }
+
+        ModTree_Variable* cond_var = new ModTree_Variable;
+        cond_var->data_type = analyser->compiler->type_system.bool_type;
+        cond_var->origin.type = ModTree_Variable_Origin_Type::PARAMETER;
+        cond_var->origin.options.parameter.function = assert_fn;
+        cond_var->origin.options.parameter.index = 0;
+        cond_var->symbol = 0;
+        assert_fn->options.function.parameters = dynamic_array_create_empty<ModTree_Variable*>(1);
+        dynamic_array_push_back(&assert_fn->options.function.parameters, cond_var);
+
+        // Make funciton body
+        {
+            assert_fn->options.function.body = modtree_block_create_empty(analyser->base_table, 1, assert_fn);
+            ModTree_Expression* param_read_expr = new ModTree_Expression;
+            param_read_expr->has_memory_address = true;
+            param_read_expr->result_type = analyser->compiler->type_system.bool_type;
+            param_read_expr->value = 0;
+            param_read_expr->expression_type = ModTree_Expression_Type::VARIABLE_READ;
+            param_read_expr->options.variable_read = cond_var;
+
+            ModTree_Expression* cond_expr = new ModTree_Expression;
+            cond_expr->has_memory_address = true;
+            cond_expr->result_type = analyser->compiler->type_system.bool_type;
+            cond_expr->value = 0;
+            cond_expr->expression_type = ModTree_Expression_Type::UNARY_OPERATION;
+            cond_expr->options.unary_operation.operand = param_read_expr;
+            cond_expr->options.unary_operation.operation_type = ModTree_Unary_Operation_Type::LOGICAL_NOT;
+
+            ModTree_Statement* if_stat = new ModTree_Statement;
+            if_stat->type = ModTree_Statement_Type::IF;
+            if_stat->options.if_statement.condition = cond_expr;
+            if_stat->options.if_statement.if_block = modtree_block_create_empty(assert_fn->options.function.body->symbol_table, 1, assert_fn);
+            if_stat->options.if_statement.else_block = modtree_block_create_empty(assert_fn->options.function.body->symbol_table, 1, assert_fn);
+            dynamic_array_push_back(&assert_fn->options.function.body->statements, if_stat);
+
+            ModTree_Statement* exit_stat = new ModTree_Statement;
+            exit_stat->type = ModTree_Statement_Type::EXIT;
+            exit_stat->options.exit_code = Exit_Code::ASSERTION_FAILED;
+            dynamic_array_push_back(&if_stat->options.if_statement.if_block->statements, exit_stat);
+
+            ModTree_Statement* return_stat = new ModTree_Statement;
+            return_stat->type = ModTree_Statement_Type::RETURN;
+            return_stat->options.return_value.available = false;
+            dynamic_array_push_back(&assert_fn->options.function.body->statements, return_stat);
+        }
+        analyser->assert_function = assert_fn;
+    }
+
     // Add global init function
     {
         ModTree_Function* global_init_func = new ModTree_Function;
@@ -2709,13 +2777,14 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
         analyser->global_init_function = global_init_func;
         dynamic_array_push_back(&analyser->program->root_module->functions, global_init_func);
     }
+}
 
-    double time_init_end = timer_current_time_in_seconds(compiler->timer);
-
-    // Find all workloads: TODO: Maybe create Workload-Type for this task
-    semantic_analyser_analyse_module(analyser, 0, base_table, analyser->compiler->parser.root_node);
-
-    double time_module_recursiv_end = timer_current_time_in_seconds(compiler->timer);
+void semantic_analyser_execute_workloads(Semantic_Analyser* analyser)
+{
+    if (PRINT_DEPENDENCIES) {
+        logg("SEMANTIC_ANALYSER_DEPENDECIES:\n-----------------------------\n");
+    }
+    SCOPE_EXIT(if (PRINT_DEPENDENCIES) logg("------------------------------------\n"););
 
     // Execute all Workloads
     while (analyser->active_workloads.size != 0)
@@ -2739,6 +2808,12 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
         Workload_Dependency found_dependency;
         switch (workload.type)
         {
+        case Analysis_Workload_Type::MODULE_ANALYSIS: 
+        {
+            Analysis_Workload_Module_Analysis* work = &workload.options.module_analysis;
+            semantic_analyser_analyse_module(analyser, analyser->program->root_module, analyser->base_table, work->root_node);
+            break;
+        }
         case Analysis_Workload_Type::ARRAY_SIZE:
         {
             Type_Signature* array_sig = workload.options.array_size.array_signature;
@@ -3100,7 +3175,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
             AST_Node* statement_node = block_workload->current_statement_node;
             while (statement_node != 0 && !found_workload_dependency)
             {
-                SCOPE_EXIT(if(!found_workload_dependency) statement_node = statement_node->neighbor;);
+                SCOPE_EXIT(if (!found_workload_dependency) statement_node = statement_node->neighbor;);
                 block_workload->current_statement_node = statement_node;
                 if (statement_result != Statement_Analysis_Result::NO_RETURN) {
                     Semantic_Error error;
@@ -3328,6 +3403,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                             Semantic_Error error;
                             error.type = Semantic_Error_Type::INVALID_TYPE_IF_CONDITION;
                             error.error_node = statement_node->child_start;
+                            error.given_type = expression_result.options.expression->result_type;
                             semantic_analyser_log_error(analyser, error);
                         }
                         if_statement.options.if_statement.condition = expression_result.options.expression;
@@ -3384,7 +3460,7 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
                         block_workload->current_statement_node = statement_node->neighbor;
 
                         dynamic_array_push_back(&block_workload->block->statements, new ModTree_Statement(if_statement));
-                        block_workload->statement_to_check = block_workload->block->statements[block_workload->block->statements.size-1];
+                        block_workload->statement_to_check = block_workload->block->statements[block_workload->block->statements.size - 1];
                         block_workload->statement_to_check_node = statement_node;
                     }
                     else {
@@ -3834,8 +3910,6 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
         }
     }
 
-    double time_workloads_end = timer_current_time_in_seconds(compiler->timer);
-
     // Add return for global init function
     {
         ModTree_Statement* return_stmt = new ModTree_Statement;
@@ -3883,17 +3957,6 @@ void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler)
         dynamic_array_reset(&analyser->waiting_workload);
         dynamic_array_reset(&analyser->active_workloads);
     }
-
-    double time_error_report_end = timer_current_time_in_seconds(compiler->timer);
-
-    if (timing_print) {
-        logg("ANALYSIS_TIMING:\n---------------\n");
-        logg(" reset        ... %3.2fms\n", 1000.0f * (float)(time_init_end - time_init_start));
-        logg(" module_rec   ... %3.2fms\n", 1000.0f * (float)(time_module_recursiv_end - time_init_end));
-        logg(" workloads    ... %3.2fms\n", 1000.0f * (float)(time_workloads_end - time_module_recursiv_end));
-        logg(" error_report ... %3.2fms\n", 1000.0f * (float)(time_error_report_end - time_workloads_end));
-        logg(" sum          ... %3.2fms\n", 1000.0f * (float)(time_error_report_end - time_init_start));
-    }
 }
 
 Semantic_Analyser semantic_analyser_create()
@@ -3906,6 +3969,7 @@ Semantic_Analyser semantic_analyser_create()
     result.known_expression_values = dynamic_array_create_empty<void*>(32);
     result.finished_code_blocks = hashtable_create_pointer_empty<ModTree_Block*, Statement_Analysis_Result>(64);
     result.ast_to_symbol_table = hashtable_create_pointer_empty<AST_Node*, Symbol_Table*>(256);
+    result.loaded_filenames = hashset_create_pointer_empty<String*>(32);
     result.program = 0;
 
     return result;
@@ -3926,6 +3990,7 @@ void semantic_analyser_destroy(Semantic_Analyser* analyser)
     dynamic_array_destroy(&analyser->waiting_workload);
     hashtable_destroy(&analyser->ast_to_symbol_table);
     hashtable_destroy(&analyser->finished_code_blocks);
+    hashset_destroy(&analyser->loaded_filenames);
 
     if (analyser->program != 0) {
         modtree_program_destroy(analyser->program);
@@ -3943,6 +4008,10 @@ void analysis_workload_append_to_string(Analysis_Workload* workload, String* str
     case Analysis_Workload_Type::FUNCTION_HEADER: {
         string_append_formated(string, "Function Header, name: %s", workload->options.function_header.function_node->id->characters
         );
+        break;
+    }
+    case Analysis_Workload_Type::MODULE_ANALYSIS: {
+        string_append_formated(string, "Module_Analysis");
         break;
     }
     case Analysis_Workload_Type::GLOBAL: {
@@ -3971,6 +4040,21 @@ void analysis_workload_append_to_string(Analysis_Workload* workload, String* str
 
 void semantic_error_get_error_location(Semantic_Analyser* analyser, Semantic_Error error, Dynamic_Array<Token_Range>* locations)
 {
+    if (error.error_node == 0) return;
+    {
+        Code_Source* source = compiler_ast_node_to_code_source(analyser->compiler, error.error_node);
+        switch (source->origin.type) {
+        case Code_Origin_Type::GENERATED:
+            return;
+        case Code_Origin_Type::LOADED_FILE:
+            dynamic_array_push_back(locations, source->origin.load_node->token_range);
+            return;
+        case Code_Origin_Type::MAIN_PROJECT:
+            break;
+        default: panic("HEY");
+        }
+    }
+
     switch (error.type)
     {
     case Semantic_Error_Type::TEMPLATE_ARGUMENTS_INVALID_COUNT:
@@ -4197,6 +4281,10 @@ void semantic_error_get_error_location(Semantic_Analyser* analyser, Semantic_Err
     case Semantic_Error_Type::OTHERS_MAIN_UNEXPECTED_SIGNATURE: {
         break;
     }
+    case Semantic_Error_Type::OTHERS_COULD_NOT_LOAD_FILE: {
+        dynamic_array_push_back(locations, error.error_node->token_range);
+        break;
+    }
     case Semantic_Error_Type::OTHERS_CANNOT_TAKE_ADDRESS_OF_HARDCODED_FUNCTION:
         Token_Range range = error.error_node->token_range;
         dynamic_array_push_back(locations, token_range_make(range.start_index, range.start_index + 1));
@@ -4357,7 +4445,7 @@ void semantic_error_append_to_string(Semantic_Analyser* analyser, Semantic_Error
         string_append_formated(string, "Expected Variable or Function symbol for Variable read");
         print_symbol = true;
         break;
-    case Semantic_Error_Type::SYMBOL_EXPECTED_MODUL_IN_IDENTIFIER_PATH: 
+    case Semantic_Error_Type::SYMBOL_EXPECTED_MODUL_IN_IDENTIFIER_PATH:
         string_append_formated(string, "Expected module in indentifier path");
         print_symbol = true;
         break;
@@ -4453,6 +4541,9 @@ void semantic_error_append_to_string(Semantic_Analyser* analyser, Semantic_Error
         break;
     case Semantic_Error_Type::OTHERS_NO_CALLING_TO_MAIN:
         string_append_formated(string, "Cannot call main function again");
+        break;
+    case Semantic_Error_Type::OTHERS_COULD_NOT_LOAD_FILE:
+        string_append_formated(string, "Could not load file");
         break;
     case Semantic_Error_Type::OTHERS_CANNOT_TAKE_ADDRESS_OF_HARDCODED_FUNCTION:
         string_append_formated(string, "Cannot take address of hardcoded function");

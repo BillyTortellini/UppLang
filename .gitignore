@@ -1,6 +1,6 @@
 backend/**
 external_libraries/library_source/**
-upp_code/**
+upp_code/editor_text.upp
 
 ## Visual Studio Gitignore
 ## Ignore Visual Studio temporary files, build results, and

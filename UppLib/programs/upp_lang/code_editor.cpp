@@ -26,7 +26,7 @@ Code_Editor code_editor_create(Text_Renderer* text_renderer, Rendering_Core* cor
     result.context_info_pos = vec2(0.0f);
 
     // Load file into text editor
-    Optional<String> content = file_io_load_text_file("upp_code/editor_text.txt");
+    Optional<String> content = file_io_load_text_file("upp_code/editor_text.upp");
     if (content.available) {
         SCOPE_EXIT(string_destroy(&content.value););
         text_set_string(&result.text_editor->text, &content.value);
@@ -48,10 +48,11 @@ void code_editor_destroy(Code_Editor* editor)
 
 Optional<int> code_editor_get_closest_token_to_text_position(Code_Editor* editor, Text_Position pos)
 {
-    if (editor->compiler.lexer.tokens.size == 0) return optional_make_failure<int>();
-    for (int i = 0; i < editor->compiler.lexer.tokens.size; i++)
+    if (editor->compiler.main_source == 0) return optional_make_failure<int>();
+    if (editor->compiler.main_source->tokens.size == 0) return optional_make_failure<int>();
+    for (int i = 0; i < editor->compiler.main_source->tokens.size; i++)
     {
-        Token* t = &editor->compiler.lexer.tokens[i];
+        Token* t = &editor->compiler.main_source->tokens[i];
         if (t->position.start.line == pos.line && t->position.start.character <= pos.character && t->position.end.character >= pos.character) {
             return optional_make_success(i);
         }
@@ -61,8 +62,8 @@ Optional<int> code_editor_get_closest_token_to_text_position(Code_Editor* editor
 
 AST_Node* code_editor_get_closest_node_to_text_position(Code_Editor* editor, Text_Position pos)
 {
-    AST_Parser* parser = &editor->compiler.parser;
-    AST_Node* closest = parser->root_node;
+    Code_Source* source = editor->compiler.main_source;
+    AST_Node* closest = source->root_node;
     while (true)
     {
         bool continue_search = true;
@@ -72,14 +73,14 @@ AST_Node* code_editor_get_closest_node_to_text_position(Code_Editor* editor, Tex
             Token* token_start, *token_end;
             {
                 int min = 0;
-                int max = parser->lexer->tokens.size;
+                int max = source->tokens.size;
                 int start_index = child->token_range.start_index;
                 int end_index = child->token_range.end_index;
                 if (start_index == -1 || end_index == -1) continue;
                 start_index = math_clamp(start_index, min, max);
                 end_index = math_clamp(end_index, min, max);
-                token_start = &parser->lexer->tokens[start_index];
-                token_end = &parser->lexer->tokens[math_maximum(0, end_index - 1)];
+                token_start = &source->tokens[start_index];
+                token_end = &source->tokens[math_maximum(0, end_index - 1)];
             }
 
             Text_Slice node_slice = text_slice_make(token_start->position.start, token_end->position.end);
@@ -123,6 +124,7 @@ void code_editor_jump_to_definition(Code_Editor* editor)
         closest_node = closest_node->parent;
     }
 
+    Code_Source* source = editor->compiler.main_source;
     Symbol_Table* nearest_table = code_editor_find_symbol_table_of_node(editor, closest_node);
     if (nearest_table != 0)
     {
@@ -130,7 +132,7 @@ void code_editor_jump_to_definition(Code_Editor* editor)
         if (result.type != Analysis_Result_Type::SUCCESS) return;
         Symbol* symbol = result.options.symbol;
         if (symbol->definition_node != 0) {
-            Token* token = &editor->compiler.lexer.tokens[symbol->definition_node->token_range.start_index];
+            Token* token = &source->tokens[symbol->definition_node->token_range.start_index];
             Text_Position result_pos = token->position.start;
             if (math_absolute(result_pos.line - editor->text_editor->cursor_position.line) > 5) {
                 text_editor_record_jump(editor->text_editor, editor->text_editor->cursor_position, result_pos);
@@ -142,7 +144,7 @@ void code_editor_jump_to_definition(Code_Editor* editor)
     }
 }
 
-void highlight_identifiers(Code_Editor* editor, AST_Node* node, Symbol_Table* symbol_table)
+void code_editor_text_highlighting_on_node(Code_Editor* editor, AST_Node* node, Symbol_Table* symbol_table)
 {
     Token_Range node_range = node->token_range;
     // Variables definition, module def, funciton def, parameters
@@ -151,6 +153,14 @@ void highlight_identifiers(Code_Editor* editor, AST_Node* node, Symbol_Table* sy
         r.start_index += 1;
         r.end_index = r.start_index + 1;
         text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, &editor->compiler), MODULE_COLOR, BG_COLOR);
+    }
+    else if (node->type == AST_Node_Type::LOAD_FILE) {
+        Token_Range r = node_range;
+        r.end_index = r.start_index + 2;
+        text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, &editor->compiler), KEYWORD_COLOR, BG_COLOR);
+        r.start_index = r.end_index;
+        r.end_index = r.start_index + 1;
+        text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, &editor->compiler), STRING_LITERAL_COLOR, BG_COLOR);
     }
     else if (node->type == AST_Node_Type::STRUCT) {
         Token_Range r = node_range;
@@ -215,10 +225,10 @@ void highlight_identifiers(Code_Editor* editor, AST_Node* node, Symbol_Table* sy
                 {
                     // Highlight template params
                     if (node->type == AST_Node_Type::IDENTIFIER_NAME_TEMPLATED) {
-                        highlight_identifiers(editor, node->child_start, symbol_table);
+                        code_editor_text_highlighting_on_node(editor, node->child_start, symbol_table);
                     }
                     else {
-                        highlight_identifiers(editor, node->child_start->neighbor, symbol_table);
+                        code_editor_text_highlighting_on_node(editor, node->child_start->neighbor, symbol_table);
                     }
                 }
 
@@ -248,7 +258,7 @@ void highlight_identifiers(Code_Editor* editor, AST_Node* node, Symbol_Table* sy
     }
     AST_Node* child = node->child_start;
     while (child != 0) {
-        highlight_identifiers(editor, child, symbol_table);
+        code_editor_text_highlighting_on_node(editor, child, symbol_table);
         child = child->neighbor;
     }
 }
@@ -302,7 +312,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
         String output = string_create_empty(256);
         SCOPE_EXIT(string_destroy(&output););
         text_append_to_string(&editor->text_editor->text, &output);
-        file_io_write_file("upp_code/editor_text.txt", array_create_static((byte*)output.characters, output.size));
+        file_io_write_file("upp_code/editor_text.upp", array_create_static((byte*)output.characters, output.size));
         logg("Saved text file!\n");
     }
 
@@ -313,9 +323,8 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
     if (text_changed || shortcut_build)
     {
         String source_code = string_create_empty(2048);
-        SCOPE_EXIT(string_destroy(&source_code));
         text_append_to_string(&editor->text_editor->text, &source_code);
-        compiler_compile(&editor->compiler, &source_code, shortcut_build);
+        compiler_compile(&editor->compiler, source_code, shortcut_build);
 
         // Print errors
         if (editor->compiler.parser.errors.size > 0 || editor->compiler.analyser.errors.size > 0) {
@@ -341,17 +350,25 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
 
     // Execute
     if (shortcut_execute) {
-        compiler_execute(&editor->compiler);
+        Exit_Code exit_code = compiler_execute(&editor->compiler);
+        char buffer[256];
+        String str;
+        str.capacity = 200;
+        str.characters = buffer;
+        str.size = 0;
+        exit_code_append_to_string(&str, exit_code);
+        logg("\nExit Code: %s\n", str.characters);
     }
 
     double time_input_read_end = timer_current_time_in_seconds(timer);
 
     // Do syntax highlighting
+    Code_Source* source = editor->compiler.main_source;
     {
         text_editor_reset_highlights(editor->text_editor);
-        for (int i = 0; i < editor->compiler.lexer.tokens_with_decoration.size; i++)
+        for (int i = 0; i < source->tokens_with_decoration.size; i++)
         {
-            Token t = editor->compiler.lexer.tokens_with_decoration[i];
+            Token t = source->tokens_with_decoration[i];
             if (t.type == Token_Type::COMMENT)
                 text_editor_add_highlight_from_slice(editor->text_editor, t.position, COMMENT_COLOR, BG_COLOR);
             else if (token_type_is_keyword(t.type))
@@ -363,7 +380,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
         }
 
         if (editor->compiler.analyser.program != 0 && editor->compiler.analyser.program->root_module != 0) {
-            highlight_identifiers(editor, editor->compiler.parser.root_node, editor->compiler.analyser.program->root_module->symbol_table);
+            code_editor_text_highlighting_on_node(editor, editor->compiler.main_source->root_node, editor->compiler.analyser.program->root_module->symbol_table);
         }
 
         for (int i = 0; i < editor->compiler.parser.errors.size; i++) {
@@ -377,7 +394,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
     // Do context highlighting
     {
         bool search_context = true;
-        if (editor->compiler.lexer.tokens.size == 0) search_context = false;
+        if (source->tokens.size == 0) search_context = false;
         Optional<int> closest_token = code_editor_get_closest_token_to_text_position(editor, editor->text_editor->cursor_position);
         int closest_index = -1;
         if (closest_token.available) closest_index = closest_token.value;
@@ -509,7 +526,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
             vec3(1.0f), vec4(vec3(0.3f), 1.0f)
         );
         AST_Node* node = &editor->compiler.parser.nodes[node_cursor_index];
-        Token* token_start = &editor->compiler.lexer.tokens[editor->compiler.parser.token_mapping[node_cursor_index].start_index];
+        Token* token_start = &editor->compiler.code_source.tokens[editor->compiler.parser.token_mapping[node_cursor_index].start_index];
         editor->show_context_info = true;
         editor->context_info_pos = text_editor_get_character_bounding_box(editor->text_editor, token_start->position.start).min;
         string_reset(&editor->context_info);
@@ -519,8 +536,8 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
         if (next_token_index.available)
         {
             string_append_formated(&editor->context_info, "\n");
-            for (int i = next_token_index.value; i < editor->compiler.lexer.tokens.size && i < next_token_index.value + 5; i++) {
-                Token* t = &editor->compiler.lexer.tokens[i];
+            for (int i = next_token_index.value; i < editor->compiler.code_source.tokens.size && i < next_token_index.value + 5; i++) {
+                Token* t = &editor->compiler.code_source.tokens[i];
                 string_append_formated(&editor->context_info, token_type_to_string(t->type));
                 string_append_formated(&editor->context_info, " ");
             }

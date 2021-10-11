@@ -146,17 +146,17 @@ void c_compiler_compile(C_Compiler* compiler)
     return;
 }
 
-void c_compiler_execute(C_Compiler* compiler)
+Exit_Code c_compiler_execute(C_Compiler* compiler)
 {
     if (!compiler->initialized) {
-        return;
+        return Exit_Code::COMPILATION_FAILED;
     }
     if (!compiler->last_compile_successfull) {
         logg("C_Compiler did not execute, since last compile was not successfull");
-        return;
+        return Exit_Code::COMPILATION_FAILED;
     }
 
-    process_start_no_pipes(string_create_static("backend/build/main.exe"), true);
+    return (Exit_Code) process_start_no_pipes(string_create_static("backend/build/main.exe"), true);
 }
 
 C_Generator c_generator_create()
@@ -374,7 +374,7 @@ void c_generator_register_type_name(C_Generator* generator, Type_Signature* type
         string_append_formated(&type_name, "void");
         break;
     case Signature_Type::TEMPLATE_TYPE:
-        //string_append_formated(&type_name, "%s", identifier_pool_index_to_string(&generator->compiler->lexer, type->template_name).characters);
+        //string_append_formated(&type_name, "%s", identifier_pool_index_to_string(&generator->compiler->code_source, type->template_name).characters);
         string_append_formated(&type_name, "TEMPLATE_TYPE");
         break;
     default: panic("Hey");

@@ -1,5 +1,6 @@
 #include "compiler.hpp"
 #include "../../win32/timing.hpp"
+#include "../../utility/file_io.hpp"
 
 
 
@@ -39,27 +40,28 @@ Token_Range token_range_make(int start_index, int end_index)
 
 Text_Slice token_range_to_text_slice(Token_Range range, Compiler* compiler)
 {
-    assert(range.start_index >= 0 && range.start_index <= compiler->lexer.tokens.size, "HEY");
-    assert(range.end_index >= 0 && range.end_index <= compiler->lexer.tokens.size + 1, "HEY");
+    Code_Source* source = compiler->main_source;
+    assert(range.start_index >= 0 && range.start_index <= source->tokens.size, "HEY");
+    assert(range.end_index >= 0 && range.end_index <= source->tokens.size + 1, "HEY");
     assert(range.end_index >= range.start_index, "HEY");
-    if (range.end_index > compiler->lexer.tokens.size) {
-        range.end_index = compiler->lexer.tokens.size;
+    if (range.end_index > source->tokens.size) {
+        range.end_index = source->tokens.size;
     }
-    if (compiler->lexer.tokens.size == 0) {
+    if (source->tokens.size == 0) {
         return text_slice_make(text_position_make(0, 0), text_position_make(0, 0));
     }
 
-    range.end_index = math_clamp(range.end_index, 0, math_maximum(0, compiler->lexer.tokens.size));
+    range.end_index = math_clamp(range.end_index, 0, math_maximum(0, source->tokens.size));
     if (range.end_index == range.start_index) {
         return text_slice_make(
-            compiler->lexer.tokens[range.start_index].position.start,
-            compiler->lexer.tokens[range.start_index].position.end
+            source->tokens[range.start_index].position.start,
+            source->tokens[range.start_index].position.end
         );
     }
 
     return text_slice_make(
-        compiler->lexer.tokens[range.start_index].position.start,
-        compiler->lexer.tokens[range.end_index - 1].position.end
+        source->tokens[range.start_index].position.start,
+        source->tokens[range.end_index - 1].position.end
     );
 }
 
@@ -67,6 +69,9 @@ void exit_code_append_to_string(String* string, Exit_Code code)
 {
     switch (code)
     {
+    case Exit_Code::ASSERTION_FAILED:
+        string_append_formated(string, "ASSERTION_FAILED");
+        break;
     case Exit_Code::OUT_OF_BOUNDS:
         string_append_formated(string, "OUT_OF_BOUNDS");
         break;
@@ -78,6 +83,9 @@ void exit_code_append_to_string(String* string, Exit_Code code)
         break;
     case Exit_Code::SUCCESS:
         string_append_formated(string, "SUCCESS");
+        break;
+    case Exit_Code::COMPILATION_FAILED:
+        string_append_formated(string, "COMPILATION_FAILED");
         break;
     case Exit_Code::EXTERN_FUNCTION_CALL_NOT_IMPLEMENTED:
         string_append_formated(string, "EXTERN_FUNCTION_CALL_NOT_IMPLEMENTED");
@@ -205,16 +213,16 @@ void identifier_pool_destroy(Identifier_Pool* pool)
     hashtable_destroy(&pool->identifier_lookup_table);
 }
 
-String* identifier_pool_add(Identifier_Pool* lexer, String identifier)
+String* identifier_pool_add(Identifier_Pool* pool, String identifier)
 {
-    String** found = hashtable_find_element(&lexer->identifier_lookup_table, identifier);
+    String** found = hashtable_find_element(&pool->identifier_lookup_table, identifier);
     if (found != 0) {
         return *found;
     }
     else {
         String* copy = new String;
         *copy = string_create(identifier.characters);
-        hashtable_insert_element(&lexer->identifier_lookup_table, *copy, copy);
+        hashtable_insert_element(&pool->identifier_lookup_table, *copy, copy);
         return copy;
     }
 }
@@ -235,6 +243,29 @@ void identifier_pool_print(Identifier_Pool* pool)
     }
     string_append_formated(&msg, "\n");
     logg("%s", msg.characters);
+}
+
+Code_Source* code_source_create(Code_Origin origin, String source_code)
+{
+    Code_Source* result = new Code_Source;
+    result->origin = origin;
+    result->source_code = source_code;
+    result->tokens.data = 0;
+    result->tokens_with_decoration.data = 0;
+    result->root_node = 0;
+    return result;
+}
+
+void code_source_destroy(Code_Source* source)
+{
+    string_destroy(&source->source_code);
+    if (source->tokens.data != 0) {
+        dynamic_array_destroy(&source->tokens);
+    }
+    if (source->tokens_with_decoration.data != 0) {
+        dynamic_array_destroy(&source->tokens);
+    }
+    delete source;
 }
 
 
@@ -260,6 +291,8 @@ Compiler compiler_create(Timer* timer)
     result.c_compiler = c_compiler_create();
     result.c_importer = c_importer_create();
     result.ir_generator = ir_generator_create();
+
+    result.code_sources = dynamic_array_create_empty<Code_Source*>(16);
     return result;
 }
 
@@ -278,50 +311,39 @@ void compiler_destroy(Compiler* compiler)
     identifier_pool_destroy(&compiler->identifier_pool);
     extern_sources_destroy(&compiler->extern_sources);
     constant_pool_destroy(&compiler->constant_pool);
+    for (int i = 0; i < compiler->code_sources.size; i++) {
+        code_source_destroy(compiler->code_sources[i]);
+    }
+    dynamic_array_destroy(&compiler->code_sources);
 }
 
-void compiler_compile(Compiler* compiler, String* source_code, bool generate_code)
+void compiler_compile(Compiler* compiler, String source_code, bool generate_code)
 {
-    bool do_lexing = enable_lexing;
-    bool do_parsing = do_lexing && enable_parsing;
-    bool do_analysis = do_parsing && enable_analysis;
-    bool do_ir_gen = do_analysis && enable_ir_gen && generate_code;
-    bool do_bytecode_gen = do_ir_gen && enable_bytecode_gen && generate_code;
-    bool do_c_generation = do_ir_gen && enable_c_generation && generate_code;
-    bool do_c_compilation = do_c_generation && enable_c_compilation && generate_code;
+    compiler->generate_code = generate_code;
+    bool do_analysis = enable_lexing && enable_parsing && enable_analysis;
 
     // Reset data (FUTURE: Watch out for incremental compilation, pools should not be reset then)
     constant_pool_destroy(&compiler->constant_pool);
     compiler->constant_pool = constant_pool_create();
     extern_sources_destroy(&compiler->extern_sources);
     compiler->extern_sources = extern_sources_create();
+
     type_system_reset(&compiler->type_system);
     type_system_add_primitives(&compiler->type_system, &compiler->identifier_pool);
+    ast_parser_reset(&compiler->parser, &compiler->identifier_pool);
+    semantic_analyser_reset(&compiler->analyser, compiler);
 
-    double time_start_lexing = timer_current_time_in_seconds(compiler->timer);
-    if (do_lexing) {
-        lexer_lex(&compiler->lexer, source_code, &compiler->identifier_pool);
-    }
-    double time_end_lexing = timer_current_time_in_seconds(compiler->timer);
-
-    double time_start_parsing = timer_current_time_in_seconds(compiler->timer);
-    if (do_parsing) {
-        ast_parser_parse(&compiler->parser, &compiler->lexer);
-    }
-    double time_end_parsing = timer_current_time_in_seconds(compiler->timer);
-
-    double time_start_analysis = timer_current_time_in_seconds(compiler->timer);
-    if (do_analysis) {
-        semantic_analyser_analyse(&compiler->analyser, compiler);
-    }
-    double time_end_analysis = timer_current_time_in_seconds(compiler->timer);
+    Code_Origin origin;
+    origin.type = Code_Origin_Type::MAIN_PROJECT;
+    compiler_add_source_code(compiler, source_code, origin);
+    semantic_analyser_execute_workloads(&compiler->analyser);
 
     // Check for errors
     bool error_free = compiler->parser.errors.size == 0 && compiler->analyser.errors.size == 0;
-    do_ir_gen = do_ir_gen && error_free;
-    do_bytecode_gen = do_bytecode_gen && error_free;
-    do_c_generation = do_c_generation && error_free;
-    do_c_compilation = do_c_compilation && error_free;
+    bool do_ir_gen = do_analysis && enable_ir_gen && generate_code && error_free;
+    bool do_bytecode_gen = do_ir_gen && enable_bytecode_gen && generate_code && error_free;
+    bool do_c_generation = do_ir_gen && enable_c_generation && generate_code && error_free;
+    bool do_c_compilation = do_c_generation && enable_c_compilation && generate_code && error_free;
 
     double time_start_ir_gen = timer_current_time_in_seconds(compiler->timer);
     if (do_ir_gen) {
@@ -354,27 +376,6 @@ void compiler_compile(Compiler* compiler, String* source_code, bool generate_cod
     if (enable_output && generate_code)
     {
         //logg("\n\n\n\n\n\n\n\n\n\n\n\n--------SOURCE CODE--------: \n%s\n\n", source_code->characters);
-        if (do_lexing) {
-            if (output_lexing) {
-                logg("\n\n\n\n--------LEXER RESULT--------:\n");
-                lexer_print(&compiler->lexer);
-            }
-            if (output_identifiers) {
-                logg("\n--------IDENTIFIERS:--------:\n");
-                identifier_pool_print(&compiler->identifier_pool);
-            }
-        }
-
-        if (do_parsing && output_ast)
-        {
-            String printed_ast = string_create_empty(256);
-            SCOPE_EXIT(string_destroy(&printed_ast));
-            ast_parser_append_to_string(&compiler->parser, &printed_ast);
-            logg("\n");
-            logg("--------AST PARSE RESULT--------:\n");
-            logg("\n%s\n", printed_ast.characters);
-        }
-
         if (do_analysis && output_type_system) {
             logg("\n--------TYPE SYSTEM RESULT--------:\n");
             type_system_print(&compiler->type_system);
@@ -416,15 +417,6 @@ void compiler_compile(Compiler* compiler, String* source_code, bool generate_cod
     if (enable_output && output_timing && generate_code)
     {
         logg("\n--------- TIMINGS -----------\n");
-        if (enable_lexing) {
-            logg("lexing       ... %3.2fms\n", (time_end_lexing - time_start_lexing) * 1000);
-        }
-        if (enable_parsing) {
-            logg("parsing      ... %3.2fms\n", (time_end_parsing - time_start_parsing) * 1000);
-        }
-        if (enable_analysis) {
-            logg("analysis     ... %3.2fms\n", (time_end_analysis - time_start_analysis) * 1000);
-        }
         if (enable_ir_gen) {
             logg("ir_gen       ... %3.2fms\n", (time_end_ir_gen - time_start_ir_gen) * 1000);
         }
@@ -443,7 +435,7 @@ void compiler_compile(Compiler* compiler, String* source_code, bool generate_cod
     }
 }
 
-void compiler_execute(Compiler* compiler)
+Exit_Code compiler_execute(Compiler* compiler)
 {
     bool do_execution =
         enable_lexing &&
@@ -462,7 +454,7 @@ void compiler_execute(Compiler* compiler)
     if (compiler->parser.errors.size == 0 && compiler->analyser.errors.size == 0 && do_execution)
     {
         if (execute_binary) {
-            c_compiler_execute(&compiler->c_compiler);
+            return c_compiler_execute(&compiler->c_compiler);
         }
         else
         {
@@ -470,58 +462,234 @@ void compiler_execute(Compiler* compiler)
             bytecode_interpreter_execute_main(&compiler->bytecode_interpreter, compiler);
             double bytecode_end = timer_current_time_in_seconds(compiler->timer);
             float bytecode_time = (bytecode_end - bytecode_start);
-            if (compiler->bytecode_interpreter.exit_code == Exit_Code::SUCCESS) {
-                logg("Interpreter: Exit SUCCESS\n");
-                //logg("Bytecode interpreter result: %d (%2.5f seconds)\n", *(int*)(byte*)&compiler->bytecode_interpreter.return_register[0], bytecode_time);
-            }
-            else {
-                String tmp = string_create_empty(128);
-                SCOPE_EXIT(string_destroy(&tmp));
-                exit_code_append_to_string(&tmp, compiler->bytecode_interpreter.exit_code);
-                logg("Bytecode interpreter error: %s\n", tmp.characters);
-            }
+            return compiler->bytecode_interpreter.exit_code;
         }
     }
+    return Exit_Code::COMPILATION_FAILED;
 }
 
-// TODO: Call this function at some point
-void compiler_add_source_code(Compiler* compiler, String* source_code, Code_Origin origin)
+void compiler_add_source_code(Compiler* compiler, String source_code, Code_Origin origin)
 {
     bool do_lexing = enable_lexing;
     bool do_parsing = do_lexing && enable_parsing;
     bool do_analysis = do_parsing && enable_analysis;
 
-    Code_Source source;
-    source.origin = origin;
-    source.source_code = source_code;
-
-    if (do_lexing) {
-        lexer_lex(&compiler->lexer, source_code, &compiler->identifier_pool);
-        source.tokens = compiler->lexer.tokens;
-        source.tokens_with_decoration = compiler->lexer.tokens_with_decoration;
-        compiler->lexer.tokens = dynamic_array_create_empty<Token>(source.tokens.size);
-        compiler->lexer.tokens_with_decoration = dynamic_array_create_empty<Token>(source.tokens_with_decoration.size);
+    Code_Source* code_source = code_source_create(origin, source_code);
+    dynamic_array_push_back(&compiler->code_sources, code_source);
+    if (origin.type == Code_Origin_Type::MAIN_PROJECT) {
+        compiler->main_source = code_source;
     }
 
-    if (do_parsing) {
-        /*
-        ast_parser_parse(&compiler->parser, &compiler->lexer);
-        source.parse_errors = compiler->parser.errors;
-        source.nodes = compiler->parser.nodes;
-        source.token_mapping = compiler->parser.token_mapping;
-        compiler->parser.errors = dynamic_array_create_empty<Compiler_Error>(source.parse_errors.size);
-        compiler->parser.nodes = dynamic_array_create_empty<AST_Node>(source.nodes.size);
-        compiler->parser.token_mapping = dynamic_array_create_empty<Token_Range>(source.token_mapping.size);
-        */
+    if (do_lexing) 
+    {
+        lexer_lex(&compiler->lexer, &source_code, &compiler->identifier_pool);
+        if (output_lexing) {
+            logg("\n\n\n\n--------LEXER RESULT--------:\n");
+            lexer_print(&compiler->lexer);
+        }
+        if (output_identifiers) {
+            logg("\n--------IDENTIFIERS:--------:\n");
+            identifier_pool_print(&compiler->identifier_pool);
+        }
+
+        code_source->tokens = compiler->lexer.tokens;
+        code_source->tokens_with_decoration = compiler->lexer.tokens_with_decoration;
+        compiler->lexer.tokens = dynamic_array_create_empty<Token>(code_source->tokens.size);
+        compiler->lexer.tokens_with_decoration = dynamic_array_create_empty<Token>(code_source->tokens_with_decoration.size);
     }
 
-    if (do_analysis) 
+    if (do_parsing) 
+    {
+        ast_parser_parse(&compiler->parser, code_source);
+        if (output_ast)
+        {
+            String printed_ast = string_create_empty(256);
+            SCOPE_EXIT(string_destroy(&printed_ast));
+            ast_node_append_to_string(compiler->main_source, compiler->main_source->root_node, &printed_ast, 0);
+            logg("\n");
+            logg("--------AST PARSE RESULT--------:\n");
+            logg("\n%s\n", printed_ast.characters);
+        }
+    }
+
+    if (do_analysis)
     {
         // Add analysis workload
-        semantic_analyser_analyse(&compiler->analyser, compiler);
+        Analysis_Workload workload;
+        workload.type = Analysis_Workload_Type::MODULE_ANALYSIS;
+        workload.options.module_analysis.root_node = code_source->root_node;
+        dynamic_array_push_back(&compiler->analyser.active_workloads, workload);
     }
-
-    // Check for errors
-    bool error_free = compiler->parser.errors.size == 0 && compiler->analyser.errors.size == 0;
 }
 
+Code_Source* compiler_ast_node_to_code_source(Compiler* compiler, AST_Node* node)
+{
+    for (int i = 1; i < compiler->code_sources.size; i++) {
+        if (node->alloc_index < compiler->code_sources[i]->root_node->alloc_index) {
+            return compiler->code_sources[i-1];
+        }
+    }
+    return compiler->code_sources[compiler->code_sources.size - 1];
+}
+
+struct Test_Case
+{
+    const char* name;
+    bool should_succeed;
+};
+
+Test_Case test_case_make(const char* name, bool should_success) 
+{
+    Test_Case result;
+    result.name = name;
+    result.should_succeed = should_success;
+    return result;
+}
+
+void compiler_run_testcases(Timer* timer)
+{
+    bool i_enable_lexing = enable_lexing;
+    SCOPE_EXIT(enable_lexing = i_enable_lexing;);
+    bool i_enable_parsing = enable_parsing;
+    SCOPE_EXIT(enable_parsing = i_enable_parsing ;);
+    bool i_enable_analysis = enable_analysis;
+    SCOPE_EXIT(enable_analysis = i_enable_analysis ;);
+    bool i_enable_ir_gen = enable_ir_gen;
+    SCOPE_EXIT(enable_ir_gen = i_enable_ir_gen ;);
+    bool i_enable_bytecode_gen = enable_bytecode_gen;
+    SCOPE_EXIT(enable_bytecode_gen = i_enable_bytecode_gen ;);
+    bool i_enable_c_generation = enable_c_generation;
+    SCOPE_EXIT(enable_c_generation = i_enable_c_generation ;);
+    bool i_enable_c_compilation = enable_c_compilation;
+    SCOPE_EXIT(enable_c_compilation = i_enable_c_compilation ;);
+    bool i_enable_output = enable_output;
+    SCOPE_EXIT(enable_output = i_enable_output ;);
+    bool i_enable_execution = enable_execution;
+    SCOPE_EXIT(enable_execution = i_enable_execution ;);
+    bool i_execute_binary = execute_binary;
+    SCOPE_EXIT(execute_binary = i_execute_binary ;);
+    bool i_output_lexing = output_lexing;
+    SCOPE_EXIT(output_lexing = i_output_lexing ;);
+    bool i_output_identifiers = output_identifiers;
+    SCOPE_EXIT(output_identifiers = i_output_identifiers ;);
+    bool i_output_ast = output_ast;
+    SCOPE_EXIT(output_ast = i_output_ast ;);
+    bool i_output_type_system = output_type_system;
+    SCOPE_EXIT(output_type_system = i_output_type_system ;);
+    bool i_output_root_table = output_root_table;
+    SCOPE_EXIT(output_root_table = i_output_root_table ;);
+    bool i_output_ir = output_ir;
+    SCOPE_EXIT(output_ir = i_output_ir ;);
+    bool i_output_bytecode = output_bytecode;
+    SCOPE_EXIT(output_bytecode = i_output_bytecode ;);
+    bool i_output_timing = output_timing;
+    SCOPE_EXIT(output_timing = i_output_timing ;);
+
+    enable_lexing = true;
+    enable_parsing = true;
+    enable_analysis = true;
+    enable_ir_gen = true;
+    enable_bytecode_gen = true;
+    enable_c_generation = true;
+    enable_c_compilation = false;
+    enable_output = true;
+    enable_execution = true;
+    execute_binary = false;
+
+    output_lexing = false;
+    output_identifiers = false;
+    output_ast = false;
+    output_type_system = false;
+    output_root_table = false;
+    output_ir = false;
+    output_bytecode = false;
+    output_timing = false;
+
+    logg("STARTING ALL TESTS:\n-----------------------------\n");
+
+    Compiler compiler = compiler_create(timer);
+    SCOPE_EXIT(compiler_destroy(&compiler));
+
+    // Create testcases with expected result
+    Test_Case test_cases[] = {
+        test_case_make("000_empty.upp", false),
+        test_case_make("001_main.upp", true),
+        test_case_make("002_comments.upp", true),
+        test_case_make("003_valid_comment.upp", true),
+        test_case_make("004_invalid_comment.upp", false),
+        test_case_make("005_variable_definition.upp", true),
+        test_case_make("006_primitive_types.upp", true),
+        test_case_make("007_pointers_and_arrays.upp", true),
+        test_case_make("008_operator_precedence.upp", true),
+        test_case_make("009_function_calls.upp", true),
+        test_case_make("010_file_loads.upp", true),
+        test_case_make("011_pointers.upp", true),
+        test_case_make("012_new_delete.upp", true),
+        test_case_make("013_structs.upp", true),
+        test_case_make("014_templates.upp", true),
+        test_case_make("015_defer.upp", true),
+        test_case_make("016_casting.upp", true),
+        test_case_make("017_function_pointers.upp", true),
+        test_case_make("018_modules.upp", true),
+        test_case_make("019_scopes.upp", true),
+        test_case_make("020_globals.upp", true),
+        test_case_make("021_slices.upp", true),
+    };
+    int test_case_count = sizeof(test_cases) / sizeof(Test_Case);
+
+    bool errors_occured = false;
+    String result = string_create_empty(256);
+    SCOPE_EXIT(string_destroy(&result));
+    for (int i = 0; i < test_case_count; i++)
+    {
+        Test_Case* test_case = &test_cases[i];
+        String path = string_create_formated("upp_code/testcases/%s", test_case->name);
+        SCOPE_EXIT(string_destroy(&path));
+        Optional<String> code = file_io_load_text_file(path.characters);
+        if (!code.available) {
+            string_append_formated(&result, "ERROR:   Test %s could not load test file\n", test_case->name);
+            errors_occured = true;
+            continue;
+        }
+
+        compiler_compile(&compiler, code.value, true);
+        Exit_Code exit_code = compiler_execute(&compiler);
+        if (exit_code != Exit_Code::SUCCESS && test_case->should_succeed) 
+        {
+            string_append_formated(&result, "ERROR:   Test %s exited with Code ", test_case->name);
+            exit_code_append_to_string(&result, exit_code);
+            string_append_formated(&result, "\n");
+            if (exit_code == Exit_Code::COMPILATION_FAILED) 
+            {
+                for (int i = 0; i < compiler.parser.errors.size; i++) {
+                    Compiler_Error e = compiler.parser.errors[i];
+                    string_append_formated(&result, "    Parse Error: %s\n", e.message);
+                }
+                if (compiler.parser.errors.size == 0)
+                {
+                    String tmp = string_create_empty(256);
+                    SCOPE_EXIT(string_destroy(&tmp));
+                    for (int i = 0; i < compiler.analyser.errors.size; i++)
+                    {
+                        Semantic_Error e = compiler.analyser.errors[i];
+                        string_append_formated(&result, "    Semantic Error: ");
+                        semantic_error_append_to_string(&compiler.analyser, e, &result);
+                        string_append_formated(&result, "\n");
+                    }
+                }
+            }
+            errors_occured = true;
+        }
+        else {
+            string_append_formated(&result, "SUCCESS: Test %s\n", test_case->name);
+        }
+    }
+
+    logg(result.characters);
+    if (errors_occured) {
+        logg("-------------------------------\nSummary: There were errors!\n-----------------------------\n");
+    }
+    else {
+        logg("-------------------------------\nSummary: All Tests Successfull!\n-----------------------------\n");
+    }
+}

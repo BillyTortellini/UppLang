@@ -346,8 +346,7 @@ struct Analysis_Workload_Extern_Header {
 };
 
 struct Analysis_Workload_Module_Analysis {
-    ModTree_Module* parent_module;
-    AST_Node* node;
+    AST_Node* root_node;
 };
 
 struct Analysis_Workload_Array_Size {
@@ -540,6 +539,7 @@ enum class Semantic_Error_Type
     OTHERS_ASSIGNMENT_REQUIRES_MEMORY_ADDRESS,
     OTHERS_RETURN_EXPECTED_NO_VALUE,
     OTHERS_CANNOT_TAKE_ADDRESS_OF_HARDCODED_FUNCTION,
+    OTHERS_COULD_NOT_LOAD_FILE,
 
     MISSING_FEATURE_TEMPLATED_GLOBALS,
     MISSING_FEATURE_NON_INTEGER_ARRAY_SIZE_EVALUATION,
@@ -621,9 +621,12 @@ struct Semantic_Analyser
     ModTree_Function* global_init_function;
     ModTree_Function* free_function;
     ModTree_Function* malloc_function;
+    ModTree_Function* assert_function;
 
     // Temporary stuff needed for analysis
     Compiler* compiler;
+    Symbol_Table* base_table;
+    Hashset<String*> loaded_filenames;
 
     //IR_Function* global_init_function;
     Hashtable<ModTree_Block*, Statement_Analysis_Result> finished_code_blocks;
@@ -638,7 +641,8 @@ struct Semantic_Analyser
 
 Semantic_Analyser semantic_analyser_create();
 void semantic_analyser_destroy(Semantic_Analyser* analyser);
-void semantic_analyser_analyse(Semantic_Analyser* analyser, Compiler* compiler);
+void semantic_analyser_execute_workloads(Semantic_Analyser* analyser);
+void semantic_analyser_reset(Semantic_Analyser* analyser, Compiler* compiler);
 
 struct AST_Parser;
 void symbol_append_to_string(Symbol* symbol, String* string);

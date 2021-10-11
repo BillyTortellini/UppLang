@@ -1069,7 +1069,12 @@ Text_Slice motion_evaluate_at_position(Motion motion, Text_Position pos, Text_Ed
             paragraph_end++;
         }
         result.start = text_position_make(paragraph_start, 0);
-        result.end = text_position_make(paragraph_end, 0);
+        if (paragraph_end == editor->text.size) {
+            result.end = text_position_make_end(&editor->text);
+        }
+        else {
+            result.end = text_position_make(paragraph_end, 0);
+        }
         break;
     }
     default:

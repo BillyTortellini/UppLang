@@ -2,14 +2,15 @@
 
 #include "../../datastructures/dynamic_array.hpp"
 #include "../../datastructures/stack_allocator.hpp"
-#include "lexer.hpp"
 #include "text.hpp"
 #include "compiler_misc.hpp"
 
 struct Compiler;
-struct Lexer;
 struct Token_Range;
 struct Compiler_Error;
+struct Code_Source;
+struct Identifier_Pool;
+struct Token;
 
 enum class AST_Node_Type
 {
@@ -97,6 +98,7 @@ struct AST_Node
     int child_count;
     // Node information
     String* id; // Multipurpose: variable read, write, function name, function call, module name
+    Token* literal_token;
     Token_Range token_range;
 
     // DEBUGGING
@@ -106,10 +108,9 @@ struct AST_Node
 struct AST_Parser
 {
     Stack_Allocator allocator;
-    AST_Node* root_node;
     Dynamic_Array<Compiler_Error> errors;
 
-    Lexer* lexer;
+    Code_Source* code_source;
     int index;
 
     String* id_lib;
@@ -129,7 +130,10 @@ struct AST_Parser_Checkpoint
 };
 
 AST_Parser ast_parser_create();
-void ast_parser_parse(AST_Parser* parser, Lexer* lexer);
 void ast_parser_destroy(AST_Parser* parser);
-void ast_parser_append_to_string(AST_Parser* parser, String* string);
+
+void ast_parser_reset(AST_Parser* parser, Identifier_Pool* id_pool);
+void ast_parser_parse(AST_Parser* parser, Code_Source* source);
+
+void ast_node_append_to_string(Code_Source* code_source, AST_Node* node, String* string, int indentation_lvl);
 String ast_node_type_to_string(AST_Node_Type type);

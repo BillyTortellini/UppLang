@@ -1,0 +1,39 @@
+main :: ()
+{
+	// Defer inside block
+	value: int = 0;
+	{
+		defer value = 1;
+		assert(value == 0);
+	}
+	assert(value == 1);
+	
+	// Defer order
+	{
+		value = 1;
+		defer value = value * 3;
+		defer value = value + 2;
+		defer value = 5;
+	}
+	assert(value == 21);
+	
+	// Defer inside loop needs to execute after each loop
+	i := 0;
+	j := 0;
+	while i < 10
+	{
+		defer j = i;
+		i = i + 1;
+		assert(j == i-1);
+	}
+	
+	assert(tst() == 15);
+}
+
+// Defer before return
+tst :: () -> int
+{
+	x := 15;
+	defer x = 5;
+	return x;
+}

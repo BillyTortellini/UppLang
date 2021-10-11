@@ -1,0 +1,73 @@
+module Dynamic_Array<T>
+{
+    Dynamic_Array :: struct
+    {
+        buffer: []T;
+        size: i32;
+    }
+    
+    create_empty :: (initial_capacity: int) -> Dynamic_Array<T>
+    {
+        result: Dynamic_Array<T>;
+        result.buffer = new [initial_capacity]T;
+        result.size = 0;
+        return result;
+    }
+    
+    destroy :: (array: *Dynamic_Array<T>) 
+    {
+        delete array.buffer;
+        array.buffer.data = null;
+        array.buffer.size = 0;
+        array.size = 0;
+    }
+    
+    array_copy :: (destination: []T, source: []T) 
+    {
+        if (destination.size != source.size) {
+            return;
+        }
+        i := 0;
+        while i < source.size {
+            destination[i] = source[i];
+            i = i + 1;
+        }
+    }
+    
+    reserve :: (array: *Dynamic_Array<T>, required: i32) 
+    {
+        if array.buffer.size < required 
+        {
+            new_capacity := array.buffer.size;
+            while new_capacity < required {
+                new_capacity = new_capacity * 2;
+            }
+            new_buffer := new [new_capacity]T;
+            array_copy<T>(new_buffer, array.buffer);
+            delete array.buffer;
+            array.buffer = new_buffer;
+        }
+    }
+    
+    push_back :: (array: *Dynamic_Array<T>, value: T) 
+    {
+        array.size = array.size + 1;
+        reserve<T>(array, array.size);
+        array.buffer[array.size-1] = value;
+        
+        print_string("Pushing back: ");
+        ip: *int = cast<*i32>(*value);
+        print_i32(&ip);
+        print_line();
+    }
+    
+    for_each :: (array: *Dynamic_Array<T>, fn: (*T) -> void)
+    {
+        i := 0;
+        while i < array.size
+        {
+            fn(*array.buffer[i]);
+            i = i+1;
+        }
+    }
+}
