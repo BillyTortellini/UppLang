@@ -4,6 +4,7 @@
 
 
 
+// Parser stages
 bool enable_lexing = true;
 bool enable_parsing = true;
 bool enable_analysis = true;
@@ -11,10 +12,8 @@ bool enable_ir_gen = true;
 bool enable_bytecode_gen = true;
 bool enable_c_generation = false;
 bool enable_c_compilation = true;
-bool enable_output = true;
-bool enable_execution = true;
-bool execute_binary = false;
 
+// Output stages
 bool output_lexing = false;
 bool output_identifiers = false;
 bool output_ast = false;
@@ -23,6 +22,16 @@ bool output_root_table = false;
 bool output_ir = false;
 bool output_bytecode = false;
 bool output_timing = true;
+
+// Testcases
+bool enable_testcases = true;
+bool enable_stresstest = false;
+bool run_testcases_compiled = false;
+
+// Execution
+bool enable_output = true;
+bool enable_execution = true;
+bool execute_binary = false;
 
 
 
@@ -451,7 +460,7 @@ Exit_Code compiler_execute(Compiler* compiler)
     }
 
     // Execute
-    if (compiler->parser.errors.size == 0 && compiler->analyser.errors.size == 0 && do_execution)
+    if (compiler->parser.errors.size == 0 && compiler->analyser.errors.size == 0 && do_execution && compiler->ir_generator.compiler != 0)
     {
         if (execute_binary) {
             return c_compiler_execute(&compiler->c_compiler);
@@ -548,6 +557,7 @@ Test_Case test_case_make(const char* name, bool should_success)
 
 void compiler_run_testcases(Timer* timer)
 {
+    if (!enable_testcases) return;
     bool i_enable_lexing = enable_lexing;
     SCOPE_EXIT(enable_lexing = i_enable_lexing;);
     bool i_enable_parsing = enable_parsing;
@@ -591,10 +601,10 @@ void compiler_run_testcases(Timer* timer)
     enable_ir_gen = true;
     enable_bytecode_gen = true;
     enable_c_generation = true;
-    enable_c_compilation = false;
+    enable_c_compilation = run_testcases_compiled;
     enable_output = true;
     enable_execution = true;
-    execute_binary = false;
+    execute_binary = run_testcases_compiled;
 
     output_lexing = false;
     output_identifiers = false;
@@ -634,6 +644,8 @@ void compiler_run_testcases(Timer* timer)
         test_case_make("019_scopes.upp", true),
         test_case_make("020_globals.upp", true),
         test_case_make("021_slices.upp", true),
+        test_case_make("022_dynamic_array.upp", true),
+        test_case_make("023_invalid_recursive_template.upp", false),
     };
     int test_case_count = sizeof(test_cases) / sizeof(Test_Case);
 
@@ -692,4 +704,92 @@ void compiler_run_testcases(Timer* timer)
     else {
         logg("-------------------------------\nSummary: All Tests Successfull!\n-----------------------------\n");
     }
+
+
+    if (!enable_stresstest) return;
+    /* 
+    Parser/Analyser Stresstest
+    --------------------------
+    Each character gets typed one by one, then the text is parsed and analysed
+    */
+    Optional<String> text = file_io_load_text_file("upp_code/testcases/022_dynamic_array.upp");
+    SCOPE_EXIT(file_io_unload_text_file(&text););
+    if (!text.available) {
+        return;
+    }
+
+    double time_stress_start = timer_current_time_in_seconds(timer);
+
+    String code = text.value;
+    for (int i = 0; i < code.size; i++) 
+    {
+        String cut_code = string_create_empty(i + 10);
+        for (int j = 0; j < i; j++) {
+            char c = code.characters[j];
+            string_append_character(&cut_code, c);
+        }
+
+        //logg("Cut code:\n-----------------------\n%s", cut_code.characters);
+        compiler_compile(&compiler, cut_code, false);
+        if (i % (code.size / 10) == 0) {
+            logg("Stresstest (Simple): %d/%d characters\n", i, code.size);
+        }
+    }
+
+    // Stress testing again but with correct parenthesis order
+    Dynamic_Array<char> stack_parenthesis = dynamic_array_create_empty<char>(256);
+    SCOPE_EXIT(dynamic_array_destroy(&stack_parenthesis));
+    for (int i = 0; i < code.size; i++) 
+    {
+        dynamic_array_reset(&stack_parenthesis);
+        String cut_code = string_create_empty(i + 10);
+        for (int j = 0; j < i; j++) 
+        {
+            char c = code.characters[j];
+            bool is_parenthesis = true;
+            bool is_open = true;
+            char counter_type = '}';
+            switch (c) 
+            {
+            case '{': is_open = true; counter_type = '}'; break;
+            case '}': is_open = false; counter_type = '{'; break;
+            case '[': is_open = true; counter_type = ']'; break;
+            case ']': is_open = false; counter_type = '['; break;
+            case '(': is_open = true; counter_type = ')'; break;
+            case ')': is_open = false; counter_type = '('; break;
+            default: is_parenthesis = false;
+            }
+
+            char last_on_stack = '!';
+            if (stack_parenthesis.size > 0) {
+                last_on_stack = stack_parenthesis.data[stack_parenthesis.size - 1];
+            }
+
+            if (is_parenthesis)
+            {
+                if (is_open)
+                {
+                    string_append_character(&cut_code, counter_type);
+                    string_append_character(&cut_code, c);
+                    dynamic_array_push_back(&stack_parenthesis, counter_type);
+                }
+                else 
+                {
+                    assert(last_on_stack == c, "Wrong parenthesis order");
+                    string_append_character(&cut_code, c);
+                    dynamic_array_rollback_to_size(&stack_parenthesis, math_maximum(0, stack_parenthesis.size - 1));
+                }
+            }
+        }
+
+        //logg("Cut code:\n-----------------------\n%s", cut_code.characters);
+        compiler_compile(&compiler, cut_code, false);
+        if (i % (code.size / 10) == 0) {
+            logg("Stresstest (Parenthesis): %d/%d characters\n", i, code.size);
+        }
+    }
+
+    double time_stress_end = timer_current_time_in_seconds(timer);
+    float ms_time = (time_stress_end - time_stress_start) * 1000.0f;
+    logg("Stress test time: %3.2fms (%3.2fms per parse/analyse)\n", ms_time, ms_time / code.size / 2.0f);
 }

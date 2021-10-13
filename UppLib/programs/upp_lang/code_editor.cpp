@@ -70,6 +70,7 @@ AST_Node* code_editor_get_closest_node_to_text_position(Code_Editor* editor, Tex
         AST_Node* child = closest->child_start;
         while (child != 0 && continue_search)
         {
+            SCOPE_EXIT(child = child->neighbor;);
             Token* token_start, *token_end;
             {
                 int min = 0;

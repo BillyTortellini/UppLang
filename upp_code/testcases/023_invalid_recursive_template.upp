@@ -1,0 +1,11 @@
+module Test<T>
+{
+	Node :: struct {
+		next: *Node<T>;
+		wrong: *Node<Node<T>>;
+	}
+}
+
+main :: () {
+	inst: Test<int>::Node;
+}

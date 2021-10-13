@@ -27,12 +27,21 @@ Hardcoded functions should be removed at some point
 AST_Node only really needs type and child information for processing, parent and tokenrange could be in another array and multiple structures could exist for this
 
 
+Detective Mode:
+Ast error appears because we are trying to add the same child node twice...
+This seems to be an error with not correctly resetting the children, since then the same
+address is overwritten, and since it is already added, it causes an error when adding again.
+
+So in my opinion there is an error when reseting, where the parent node isn't reset properly
 
 
 TODO NOW:
 ---------
-A testcase where each character is types one by one, every time compiled, and the
-compiler must not crash
+* Fix ast error with children
+* Maybe do stresstest for analyser where the correct parenthesis order is respected, but the characters are not
+
+* New with [] should return a pointer to a slice
+* Array bounds checking would be good
 
 Compile time known expressions for array size, see below
 Type-Information in Language

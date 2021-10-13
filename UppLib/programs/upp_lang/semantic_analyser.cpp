@@ -1406,6 +1406,9 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
             semantic_analyser_log_error(analyser, error);
             return expression_analysis_result_make_error();
         }
+        if (new_type->size == 0 && new_type->alignment == 0) {
+            return expression_analysis_result_make_dependency(workload_dependency_make_type_size_unknown(new_type, expression_node));
+        }
 
         ModTree_Expression result;
         result.expression_type = ModTree_Expression_Type::NEW_ALLOCATION;
@@ -3483,6 +3486,7 @@ void semantic_analyser_execute_workloads(Semantic_Analyser* analyser)
                             Semantic_Error error;
                             error.type = Semantic_Error_Type::INVALID_TYPE_WHILE_CONDITION;
                             error.error_node = statement_node->child_start;
+                            error.given_type = expression_result.options.expression->result_type;
                             semantic_analyser_log_error(analyser, error);
                         }
                         while_statement.options.while_statement.condition = expression_result.options.expression;
@@ -3786,7 +3790,7 @@ void semantic_analyser_execute_workloads(Semantic_Analyser* analyser)
                 break;
             }
 
-            struct_signature->size = workload.options.struct_body.offset;
+            struct_signature->size = math_round_next_multiple(workload.options.struct_body.offset, workload.options.struct_body.alignment);
             struct_signature->alignment = workload.options.struct_body.alignment;
 
             break;

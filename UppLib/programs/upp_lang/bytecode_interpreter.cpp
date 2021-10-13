@@ -143,6 +143,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         case Hardcoded_Function_Type::MALLOC_SIZE_I32: {
             byte* argument_start = interpreter->stack_pointer + i->op2 - 8;
             i32 size = *(i32*)argument_start;
+            assert(size != 0, "");
             void* alloc_data = malloc(size);
             //logg("Allocated memory size: %5d, pointer: %p\n", size, alloc_data);
             memory_copy(interpreter->return_register, &alloc_data, 8);

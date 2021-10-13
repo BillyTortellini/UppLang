@@ -1,7 +1,7 @@
 #include "ast_parser.hpp"
 #include "compiler.hpp"
 
-int ast_parser_check_for_undefines(AST_Parser* parser, AST_Node* node)
+int ast_node_check_for_undefines(AST_Node* node)
 {
     if (node == 0) return 0;
     int count = 0;
@@ -10,8 +10,8 @@ int ast_parser_check_for_undefines(AST_Parser* parser, AST_Node* node)
         panic("wellerman\n");
     }
     if (node->neighbor == node) panic("HEY");
-    count += ast_parser_check_for_undefines(parser, node->neighbor);
-    count += ast_parser_check_for_undefines(parser, node->child_start);
+    count += ast_node_check_for_undefines(node->neighbor);
+    count += ast_node_check_for_undefines(node->child_start);
     return count;
 }
 
@@ -66,11 +66,15 @@ AST_Parser_Checkpoint ast_parser_checkpoint_make(AST_Parser* parser, AST_Node* n
         result.last_child = 0;
         result.node_child_count = 0;
     }
-    else {
+    else 
+    {
         result.node_child_count = node->child_count;
         result.last_child = node->child_end;
         if (node->child_count == 0) {
             assert(node->child_start == 0 && node->child_end == 0, "");
+        }
+        else {
+            assert(node->child_start->type != AST_Node_Type::UNDEFINED && node->child_end->type != AST_Node_Type::UNDEFINED, "");
         }
     }
     result.rewind_token_index = parser->index;
@@ -92,20 +96,29 @@ void check_node_parent(AST_Node* node)
     check_node_parent(node->parent);
 }
 
-void ast_parser_checkpoint_reset(AST_Parser_Checkpoint checkpoint) 
+void ast_parser_checkpoint_reset(AST_Parser_Checkpoint checkpoint)
 {
     checkpoint.parser->index = checkpoint.rewind_token_index;
-    if (checkpoint.node != 0) 
+    if (checkpoint.node != 0)
     {
-        if (checkpoint.node_child_count != 0) {
-            checkpoint.last_child->neighbor = 0;
-            checkpoint.node->child_end = checkpoint.last_child;
-            checkpoint.node->child_count = checkpoint.node_child_count;
-        }
-        else {
+        if (checkpoint.node_child_count == 0) {
             checkpoint.node->child_count = 0;
+
             checkpoint.node->child_start = 0;
             checkpoint.node->child_end = 0;
+        }
+        else if (checkpoint.node_child_count == 1) {
+            checkpoint.node->child_count = checkpoint.node_child_count;
+            checkpoint.node->child_start = checkpoint.last_child;
+
+            checkpoint.node->child_end = checkpoint.last_child;
+            checkpoint.node->child_end->neighbor = 0;
+        }
+        else {
+            checkpoint.node->child_count = checkpoint.node_child_count;
+
+            checkpoint.node->child_end = checkpoint.last_child;
+            checkpoint.node->child_end->neighbor = 0;
         }
     }
 
@@ -617,7 +630,7 @@ AST_Node* ast_parser_parse_expression_single_value(AST_Parser* parser)
         node->type = AST_Node_Type::EXPRESSION_UNARY_OPERATION_DEREFERENCE;
         parser->index++;
     }
-    else if (ast_parser_test_next_token(parser, Token_Type::LOGICAL_AND)) 
+    else if (ast_parser_test_next_token(parser, Token_Type::LOGICAL_AND))
     {
         node->type = AST_Node_Type::EXPRESSION_UNARY_OPERATION_DEREFERENCE;
         parser->index++;
@@ -1094,14 +1107,14 @@ bool ast_parser_parse_statement_block(AST_Parser* parser, AST_Node* parent)
     {
         if (parser->index >= parser->code_source->tokens.size) {
             ast_parser_log_error(parser, "Statement block did not end!", token_range_make(checkpoint.rewind_token_index, parser->index));
-            ast_parser_checkpoint_reset(checkpoint);
-            return false;
+            //ast_parser_checkpoint_reset(checkpoint);
+            return true;
         }
-        checkpoint = ast_parser_checkpoint_make(parser, parent);
+        AST_Parser_Checkpoint recoverable_checkpoint = ast_parser_checkpoint_make(parser, parent);
         if (ast_parser_parse_statement(parser, node)) {
             continue;
         }
-        ast_parser_checkpoint_reset(checkpoint);
+        ast_parser_checkpoint_reset(recoverable_checkpoint);
         // Error handling, goto next ; or next line or end of {} block
         int next_semi = ast_parser_find_next_token_type(parser, Token_Type::SEMICOLON);
         bool unused;
@@ -2004,7 +2017,7 @@ void ast_parser_parse(AST_Parser* parser, Code_Source* source)
     ast_parser_parse_root(parser);
 
     // Check sanity
-    ast_parser_check_for_undefines(parser, source->root_node);
+    ast_node_check_for_undefines(source->root_node);
     ast_parser_check_sanity(parser, source->root_node);
 
     // Cleanup token mapping, which I am still not sure if it is necessary
