@@ -273,6 +273,9 @@
     <ClInclude Include="datastructures\stack_allocator.hpp">
       <Filter>Header Files\Datastructures</Filter>
     </ClInclude>
+    <ClInclude Include="datastructures\list.hpp">
+      <Filter>Header Files\Datastructures</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="datastructures\array.cpp">

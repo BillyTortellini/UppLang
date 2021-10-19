@@ -9,6 +9,7 @@ struct Compiler;
 struct IR_Function;
 struct IR_Code_Block;
 struct IR_Program;
+struct Type_Signature;
 
 /*
     Runtime system has:
@@ -35,6 +36,7 @@ enum class Bytecode_Type
     FLOAT64,
     BOOL,
 };
+Bytecode_Type primitive_to_bytecode_type(Type_Signature* primitive);
 
 enum class Instruction_Type
 {

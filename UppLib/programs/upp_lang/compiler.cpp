@@ -337,10 +337,17 @@ void compiler_compile(Compiler* compiler, String source_code, bool generate_code
     extern_sources_destroy(&compiler->extern_sources);
     compiler->extern_sources = extern_sources_create();
 
+    for (int i = 0; i < compiler->code_sources.size; i++) {
+        code_source_destroy(compiler->code_sources[i]);
+    }
+    dynamic_array_reset(&compiler->code_sources);
+
     type_system_reset(&compiler->type_system);
     type_system_add_primitives(&compiler->type_system, &compiler->identifier_pool);
     ast_parser_reset(&compiler->parser, &compiler->identifier_pool);
     semantic_analyser_reset(&compiler->analyser, compiler);
+
+    double timer_compile_start = timer_current_time_in_seconds(compiler->timer);
 
     Code_Origin origin;
     origin.type = Code_Origin_Type::MAIN_PROJECT;
@@ -422,6 +429,7 @@ void compiler_compile(Compiler* compiler, String source_code, bool generate_code
         }
     }
     double time_end_output = timer_current_time_in_seconds(compiler->timer);
+    double timer_compile_end = timer_current_time_in_seconds(compiler->timer);
 
     if (enable_output && output_timing && generate_code)
     {
@@ -441,6 +449,7 @@ void compiler_compile(Compiler* compiler, String source_code, bool generate_code
         if (enable_c_compilation) {
             logg("g_comp       ... %3.2fms\n", (time_end_c_comp - time_start_c_comp) * 1000);
         }
+        logg("sum          ... %3.2fms\n", (timer_compile_end - timer_compile_start) * 1000);
     }
 }
 

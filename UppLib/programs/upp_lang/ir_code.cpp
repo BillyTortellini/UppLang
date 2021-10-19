@@ -643,7 +643,7 @@ IR_Data_Access ir_generator_generate_expression(IR_Generator* generator, IR_Code
         panic("HEY");
         break;
     }
-    case ModTree_Expression_Type::LITERAL_READ: {
+    case ModTree_Expression_Type::CONSTANT_READ: {
         IR_Data_Access access;
         access.index = expression->options.literal_read.constant_index;
         access.type = IR_Data_Access_Type::CONSTANT;

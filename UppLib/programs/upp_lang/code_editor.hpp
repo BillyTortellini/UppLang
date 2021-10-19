@@ -1,15 +1,20 @@
 #pragma once
 
-#include "text_editor.hpp"
-#include "compiler.hpp"
+#include "../../utility/bounding_box.hpp"
+#include "../../math/vectors.hpp"
+#include "../../datastructures/string.hpp"
 
 struct Rendering_Core;
 struct Timer;
+struct Compiler;
+struct Text_Editor;
+struct Input;
+struct Text_Renderer;
 
 struct Code_Editor
 {
     Text_Editor* text_editor;
-    Compiler compiler;
+    Compiler* compiler;
 
     bool show_context_info;
     String context_info;

@@ -24,6 +24,7 @@
     <ClInclude Include="datastructures\dynamic_array.hpp" />
     <ClInclude Include="datastructures\hashset.hpp" />
     <ClInclude Include="datastructures\hashtable.hpp" />
+    <ClInclude Include="datastructures\list.hpp" />
     <ClInclude Include="datastructures\stack_allocator.hpp" />
     <ClInclude Include="datastructures\string.hpp" />
     <ClInclude Include="datastructures\string_pool.hpp" />

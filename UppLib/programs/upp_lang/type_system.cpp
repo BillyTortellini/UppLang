@@ -1,5 +1,4 @@
 #include "type_system.hpp"
-
 #include "compiler.hpp"
 
 void type_signature_destroy(Type_Signature* sig) 
@@ -428,6 +427,27 @@ Type_Signature* type_system_make_function(Type_System* system, Dynamic_Array<Typ
     result.size = 0;
     result.options.function.parameter_types = parameter_types;
     result.options.function.return_type = return_type;
+    return type_system_register_type(system, result);
+}
+
+Type_Signature* type_system_make_template(Type_System* system, String* id)
+{
+    Type_Signature result;
+    result.size = 1;
+    result.alignment = 1;
+    result.type = Signature_Type::TEMPLATE_TYPE;
+    result.options.template_id = id;
+    return type_system_register_type(system, result);
+}
+
+Type_Signature* type_system_make_struct_empty(Type_System* system, AST_Node* struct_node)
+{
+    Type_Signature result;
+    result.type = Signature_Type::STRUCT;
+    result.size = 0;
+    result.alignment = 0;
+    result.options.structure.id = struct_node->id;
+    result.options.structure.members = dynamic_array_create_empty<Struct_Member>(struct_node->child_count);
     return type_system_register_type(system, result);
 }
 

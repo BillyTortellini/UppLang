@@ -3,6 +3,8 @@
 #include "../../datastructures/string.hpp"
 #include "../../datastructures/dynamic_array.hpp"
 #include "../../datastructures/hashtable.hpp"
+#include "../../datastructures/stack_allocator.hpp"
+#include "../../datastructures/list.hpp"
 
 #include "type_system.hpp"
 #include "compiler_misc.hpp"
@@ -73,11 +75,17 @@ enum class ModTree_Cast_Type
     ARRAY_SIZED_TO_UNSIZED // Implicit
 };
 
+struct Expression_Value
+{
+    Type_Signature* signature;
+    void* data;
+};
+
 enum class ModTree_Expression_Type
 {
     BINARY_OPERATION,
     UNARY_OPERATION,
-    LITERAL_READ,
+    CONSTANT_READ,
     FUNCTION_CALL,
     VARIABLE_READ,
     FUNCTION_POINTER_READ,
@@ -91,8 +99,7 @@ struct ModTree_Expression
 {
     ModTree_Expression_Type expression_type;
     Type_Signature* result_type;
-    bool has_memory_address;
-    void* value;
+    Expression_Value value;
     union 
     {
         struct 
@@ -182,12 +189,30 @@ struct ModTree_Statement
     } options;
 };
 
+enum class Block_Type
+{
+    FUNCTION_BODY,
+    ANONYMOUS_BLOCK,
+    DEFER_BLOCK,
+    IF_TRUE_BLOCK,
+    IF_ELSE_BLOCK,
+    WHILE_BODY,
+};
+
+struct ModTree_Block;
+union Block_Origin
+{
+    ModTree_Function* function;
+    ModTree_Block* parent;
+};
+
 struct ModTree_Block
 {
     Dynamic_Array<ModTree_Statement*> statements;
     Dynamic_Array<ModTree_Variable*> variables;
     Symbol_Table* symbol_table;
-    ModTree_Function* function;
+    Block_Type type;
+    Block_Origin origin;
 };
 
 enum class ModTree_Variable_Origin_Type
@@ -211,11 +236,19 @@ struct ModTree_Variable_Origin
     } options;
 };
 
+struct ModTree_Variable_Value
+{
+    Expression_Value value;
+    ModTree_Block* last_write_block; // If null, variable was not initialized yet
+    bool address_was_taken; // If the variable address was taken, we must not write make value valid again
+};
+
 struct ModTree_Variable
 {
     Type_Signature* data_type;
     ModTree_Variable_Origin origin;
     Symbol* symbol; // May be null
+    ModTree_Variable_Value value;
 };
 
 enum class ModTree_Function_Type
@@ -225,16 +258,23 @@ enum class ModTree_Function_Type
     EXTERN_FUNCTION,
 };
 
+struct ModTree_Intern_Function
+{
+    ModTree_Block* body;
+    Dynamic_Array<ModTree_Variable*> parameters;
+    // Dependencies
+    //Dynamic_Array<ModTree_Function*> dependency_functions; // Pointer reads and function calls
+    //Dynamic_Array<ModTree_Variable*> dependency_globals;
+    //Dynamic_Array<Type_Signature*> dependency_signatures;
+};
+
 struct ModTree_Function
 {
     ModTree_Function_Type function_type;
     Type_Signature* signature;
     union
     {
-        struct {
-            ModTree_Block* body;
-            Dynamic_Array<ModTree_Variable*> parameters;
-        } function;
+        ModTree_Intern_Function function;
         Hardcoded_Function_Type hardcoded_type;
         Extern_Function_Identifier extern_function;
     } options;
@@ -298,6 +338,33 @@ struct Symbol_Template_Data
     Dynamic_Array<Symbol_Template_Instance*> instances;
 };
 
+enum class Usage_Type
+{
+    FUNCTION_CALL,
+    FUNCTION_POINTER_READ,
+    VARIABLE_READ,
+    VARIABLE_WRITE,
+    MEMBER_ACCESS,
+
+    VARIABLE_TYPE,
+    CAST_SOURCE_TYPE,
+    CAST_DESTINATION_TYPE,
+    FUNCTION_RETURN_TYPE,
+    ALLOCATION_TYPE,
+    EXTERN_FUNCTION_TYPE,
+    MEMBER_TYPE,
+
+    TEMPLATE_ARGUMENT,
+
+    IGNORE_REFERENCE
+};
+
+struct Symbol_Reference
+{
+    Usage_Type type;
+    AST_Node* reference_node;
+};
+
 struct Symbol
 {
     Symbol_Type type;
@@ -307,6 +374,7 @@ struct Symbol
     String* id;
     Symbol_Table* symbol_table; // Is 0 if the symbol is a template instance
     AST_Node* definition_node;
+    Dynamic_Array<Symbol_Reference> references;
 
     // Template Data
     Symbol_Template_Data template_data;
@@ -324,11 +392,7 @@ Symbol_Table* symbol_table_create(Semantic_Analyser* analyser, Symbol_Table* par
 void symbol_table_destroy(Symbol_Table* symbol_table);
 
 void symbol_table_append_to_string(String* string, Symbol_Table* table, Semantic_Analyser* analyser, bool print_root);
-Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool only_current_scope);
-struct Identifier_Pool;
-Symbol* symbol_table_find_symbol_by_string(Symbol_Table* table, String* string, Identifier_Pool* pool);
-
-
+Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool only_current_scope, Symbol_Reference reference, Semantic_Analyser* analyser);
 
 
 
@@ -359,22 +423,36 @@ struct Analysis_Workload_Global
     AST_Node* node;
 };
 
-struct Analysis_Workload_Code_Block
+enum class Block_Control_Flow
+{
+    NO_RETURN,
+    RETURN,
+    CONTINUE,
+    BREAK
+};
+
+struct Block_Analysis
 {
     ModTree_Block* block;
-    // Source
     AST_Node* block_node;
     AST_Node* current_statement_node;
-    // Defer infos
-    bool inside_defer;
-    int local_block_defer_depth;
-    int surrounding_loop_defer_depth;
-    Dynamic_Array<AST_Node*> active_defer_statements;
-    // Context infos
-    bool requires_return;
+    Block_Control_Flow block_flow;
+
+    ModTree_Statement* last_analysed_statement;
+    AST_Node* last_analysed_node;
+
     bool inside_loop;
-    ModTree_Statement* statement_to_check;
-    AST_Node* statement_to_check_node;
+    bool inside_defer;
+    int defer_count_block_start;
+    int defer_count_surrounding_loop;
+};
+
+struct Analysis_Workload_Code
+{
+    ModTree_Function* function;
+    List<Block_Analysis> block_queue;
+    Block_Analysis* active_block;
+    Dynamic_Array<AST_Node*> defer_nodes;
 };
 
 struct Analysis_Workload_Struct_Body
@@ -399,7 +477,7 @@ struct Analysis_Workload_Function_Header
 enum class Analysis_Workload_Type
 {
     FUNCTION_HEADER,
-    CODE_BLOCK,
+    CODE,
     STRUCT_BODY,
     GLOBAL,
     ARRAY_SIZE,
@@ -415,7 +493,7 @@ struct Analysis_Workload
     union
     {
         Analysis_Workload_Struct_Body struct_body;
-        Analysis_Workload_Code_Block code_block;
+        Analysis_Workload_Code code_block;
         Analysis_Workload_Function_Header function_header;
         Analysis_Workload_Global global;
         Analysis_Workload_Array_Size array_size;
@@ -515,7 +593,7 @@ enum class Semantic_Error_Type
 
     EXPRESSION_INVALID_CAST,
     EXPRESSION_MEMBER_NOT_FOUND,
-    EXPRESSION_ADDRESS_OF_REQUIRES_MEMORY_ADDRESS,
+    EXPRESSION_ADDRESS_MUST_NOT_BE_OF_TEMPORARY_RESULT,
     EXPRESSION_BINARY_OP_TYPES_MUST_MATCH,
     EXPRESSION_STATEMENT_MUST_BE_FUNCTION_CALL,
 
@@ -540,12 +618,14 @@ enum class Semantic_Error_Type
     OTHERS_RETURN_EXPECTED_NO_VALUE,
     OTHERS_CANNOT_TAKE_ADDRESS_OF_HARDCODED_FUNCTION,
     OTHERS_COULD_NOT_LOAD_FILE,
+    OTHERS_ARRAY_SIZE_NOT_COMPILE_TIME_KNOWN,
+    OTHERS_ARRAY_SIZE_MUST_BE_GREATER_ZERO,
 
     MISSING_FEATURE_TEMPLATED_GLOBALS,
-    MISSING_FEATURE_NON_INTEGER_ARRAY_SIZE_EVALUATION,
     MISSING_FEATURE_NESTED_TEMPLATED_MODULES,
     MISSING_FEATURE_EXTERN_IMPORT_IN_TEMPLATED_MODULES,
     MISSING_FEATURE_EXTERN_GLOBAL_IMPORT,
+    MISSING_FEATURE,
     MISSING_FEATURE_NESTED_DEFERS
 };
 
@@ -580,14 +660,6 @@ void semantic_error_get_error_location(Semantic_Analyser* analyser, Semantic_Err
 /*
     ANALYSER
 */
-enum class Statement_Analysis_Result
-{
-    NO_RETURN,
-    RETURN,
-    CONTINUE,
-    BREAK
-};
-
 enum class Analysis_Result_Type
 {
     SUCCESS,
@@ -605,7 +677,21 @@ struct Identifier_Analysis_Result
     } options;
 };
 
+struct Bytecode_Execute_Result
+{
+    Analysis_Result_Type type;
+    union
+    {
+        Expression_Value value;
+        Workload_Dependency dependency;
+    } options;
+};
 
+struct Bake_Location
+{
+    AST_Node* node;
+    ModTree_Block* block;
+};
 
 struct Compiler;
 struct Semantic_Analyser
@@ -627,12 +713,13 @@ struct Semantic_Analyser
     Compiler* compiler;
     Symbol_Table* base_table;
     Hashset<String*> loaded_filenames;
+    Stack_Allocator allocator_values;
 
-    //IR_Function* global_init_function;
-    Hashtable<ModTree_Block*, Statement_Analysis_Result> finished_code_blocks;
+    Analysis_Workload* current_workload;
+    Hashtable<ModTree_Block*, Block_Control_Flow> finished_code_blocks;
+    Hashtable<Bake_Location, ModTree_Function*> bake_locations;
     Dynamic_Array<Analysis_Workload> active_workloads;
     Dynamic_Array<Waiting_Workload> waiting_workload;
-    Dynamic_Array<void*> known_expression_values;
 
     String* id_size;
     String* id_data;
@@ -648,4 +735,3 @@ struct AST_Parser;
 void symbol_append_to_string(Symbol* symbol, String* string);
 void hardcoded_function_type_append_to_string(String* string, Hardcoded_Function_Type hardcoded);
 void exit_code_append_to_string(String* string, Exit_Code code);
-Identifier_Analysis_Result semantic_analyser_analyse_identifier_node(Semantic_Analyser* analyser, Symbol_Table* table, AST_Node* node, bool only_current_scope);

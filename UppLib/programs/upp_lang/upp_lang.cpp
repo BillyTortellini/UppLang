@@ -203,8 +203,6 @@ void test_things()
 
 void upp_lang_main()
 {
-    Timer timer = timer_make();
-    compiler_run_testcases(&timer);
 
     Window* window = window_create("Test", 0);
     SCOPE_EXIT(window_destroy(window));
@@ -216,6 +214,7 @@ void upp_lang_main()
     Render_Pass* background_pass = render_pass_create(0, pipeline_state_make_default(), true, true, true);
     SCOPE_EXIT(render_pass_destroy(background_pass));
 
+    Timer timer = timer_make();
 
     Text_Renderer* text_renderer = text_renderer_create_from_font_atlas_file(&core, "resources/fonts/glyph_atlas.atlas");
     SCOPE_EXIT(text_renderer_destroy(text_renderer, &core));
@@ -279,13 +278,7 @@ void upp_lang_main()
                 break;
             }
             if (input->close_request_issued || input->key_pressed[(int)Key_Code::ESCAPE]) {
-                // Close window
                 window_close(window);
-                // Write text editor output to file
-                String output = string_create_empty(256);
-                SCOPE_EXIT(string_destroy(&output););
-                text_append_to_string(&code_editor.text_editor->text, &output);
-                file_io_write_file("upp_code/editor_text.upp", array_create_static((byte*)output.characters, output.size));
                 break;
             }
             if (input->key_pressed[(int)Key_Code::F11]) {

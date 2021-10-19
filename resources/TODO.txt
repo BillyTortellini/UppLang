@@ -26,38 +26,143 @@ Functions may just be compile time known function pointers?
 Hardcoded functions should be removed at some point
 AST_Node only really needs type and child information for processing, parent and tokenrange could be in another array and multiple structures could exist for this
 
-
-Detective Mode:
-Ast error appears because we are trying to add the same child node twice...
-This seems to be an error with not correctly resetting the children, since then the same
-address is overwritten, and since it is already added, it causes an error when adding again.
-
-So in my opinion there is an error when reseting, where the parent node isn't reset properly
-
-
 TODO NOW:
 ---------
-* Fix ast error with children
-* Maybe do stresstest for analyser where the correct parenthesis order is respected, but the characters are not
+ * Compile time known expressions 
+ * Compile time code execution
 
-* New with [] should return a pointer to a slice
-* Array bounds checking would be good
+ * New with [] should return a pointer to a slice
+ * Array bounds checking would be good
+ * Type-Information in Language
 
-Compile time known expressions for array size, see below
-Type-Information in Language
+Some questions:
+---------------
 
-
-
-
-
+Where do I need compile time known expressions?
+ - Static array size
+ - Template values (Templates are basically baking values into a given structure)
 
 Tactics:
 --------
- 1. Sized arrays with integers
- 2. Value for Unary operators
- 3. Value for Binary operators
- 4. Value for variables
- 5. Bake for function execution
+ 1. Bake for function execution (Requires compile time code execution)
+ 2. Type access inside language
+ 3. Maybe switch function calls to compile time known pointers and replace types with compile time known expressions
+ 4. Template parameters as compile time known things
+
+Plan:
+    * Create anonymous function for bake
+    * Find dependencies
+    * Compile everything that depends on the funciton
+    * Run the function
+
+Analysis_Workload Code Block fucking sucks if i think about it...
+I only want one workload, having 
+
+Why I need to be carefull when doing code blocks:
+    - Flow analysis
+    - Defer blocks at scope end
+    - No recursion, because of dependency system
+    - Requires ability to add blocks (Ifs true, if false, anonymous, while-body, defers)
+
+Final bake syntax:
+    #bake<int> {Code block returning something}
+
+Lets start with the bake syntax: #bake {//Code block returning i32;}
+
+  - Parser:
+        Needs to parser #bake statement_block
+
+  - Analyser:
+        When encountered, the expressions creates a new code workload (Code inside the bake)
+        and waits (Returns dependency) for it to finish. It also stores the AST_Node and current Code_Block* inside a hashmap to a ModTree_Function.
+        When finished, the expression invokes
+        analyser_compile_and_run_no_params_function (Which may again return a dependency, or an error, or it returns an expression_value)
+        If it runs successfully, set the expression value and return.
+
+        Later: 
+        When bake has a return type (#bake<int>), then the type must be trivially constructible, meaning that it contains no references.
+
+    - Tracking dependencies of functions:
+        The dependencies in question are:
+         * Type-Size dependencies (All used variables must have a known type size)
+         * Function calls to other functions
+         * Taking function pointer references
+         * All other functions must be finished
+         * Global variable reads (Also taking reference to global variables)
+        But maybe I want to go one step further and just track all dependencies of symbols
+
+    - Compile_And_Run_Function
+        At first I need to check if all the dependencies of the function are finished, if not, return dependency.
+        If they are, I need to pass these functions + globals to IR_Code.
+        IR_Code should keep track of what has already been added, and have a flush function that generates the appropriate bytecode
+        We then also need a mapping from ir-function to bytecode function
+        Also there must not be any compile errors, otherwise I can just stop here
+
+    - IR_Code + Bytecode generator + interpreter:
+        Must be able to partially generate bytecode for single functions and also
+        execute in a partially finished state
+
+    ??? What about global initialization ???
+        Every global variable may only have a single initialization statement, which I can execute
+        
+
+
+
+How I want to implement Type-Interfaces (Rust-Traits)
+    pub trait Printable {
+        fn summarize(&self) -> String;
+        fn print(&self) -> String;
+    }
+    impl Printable for Tweet {
+        fn summarize(&self) -> String {
+            format("...", self.username, self.content)
+        }
+        fn print(&self) -> String {
+            format("...", self.full_name, self.password, self.age, self.content)
+        }
+    }
+    fn print_printable(item: &impl Summary) {
+        item.print();
+        item.summarize();
+    }
+
+What I will have after the having actual arguments in my templates
+    print_printable<T: Type, summarize_fn: (*T) -> String, print_fn: (*T) -> String> (T* item)  
+    {
+        summarize_fn(item);
+        print_fn(item);
+    }
+
+But what I want would be:
+    Printable :: struct
+    {
+        summarize: (*$T) -> string;
+        print: (*T) -> string;
+    }
+    print_printable<printable: Printable<$T>> :: (item: T) 
+    {
+        printable.summarize(T);
+        printable.print(T);
+    }
+    useage :: ()
+    {
+        player := Player::make("Fred", 15, true);
+        print_printable<Player::printable>(*player);
+
+        // Maybe I could have something like
+        using Player::printable; // A printable with value T exists now, so when needed, the compiler can use this one
+        print_printable(*player);
+        print_printable(*player2);
+        print_printable(*player3);
+    }
+
+
+
+
+
+
+
+
 
 Next Up:
 --------
