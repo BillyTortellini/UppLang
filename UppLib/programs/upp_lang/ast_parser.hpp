@@ -24,6 +24,9 @@ enum class AST_Node_Type
     MODULE_TEMPLATED, // Child 0: Parameter_Block_Unnamed, Child 1: DEFINITIONS
     TEMPLATE_PARAMETERS, // Children: IDENTIFIER_NAME
     STRUCT, // Children: Variable definitions
+    UNION, // Children: Variable definitions
+    ENUM, // Children: Enum Member
+    ENUM_MEMBER, // id: member name, Optional<Child 0>: Expression
     FUNCTION, // Child 0: Function_Signature, Child 1: Statement_Block
     FUNCTION_SIGNATURE, // Child 0: Parameter_Block_Named, Child 1 (optional): Return Type
     IDENTIFIER_NAME, // id defined
@@ -33,6 +36,8 @@ enum class AST_Node_Type
     PARAMETER_BLOCK_UNNAMED, // Children: Types
     PARAMETER_BLOCK_NAMED, // Children: Named_Parameter
     NAMED_PARAMETER, // Child 0: Type
+    SWITCH_CASE, // Child 0: Expression, Child 1: Statement_Block
+    SWITCH_DEFAULT_CASE, // Child 0: Statement_Block
     TYPE_FUNCTION_POINTER, // Child 0: Parameter_Block_Unnamed, Child 1 (optional): Return Type
     TYPE_IDENTIFIER, // Child 0: Either Identifer or Identifier Path
     TYPE_POINTER_TO, // Child 0: Type
@@ -43,6 +48,7 @@ enum class AST_Node_Type
     STATEMENT_DEFER, // Child 0: Statement_Block
     STATEMENT_IF_ELSE, // Child 0: Condition, Child 1: if-Statement_Block, Child 2: Else-Statement-Block
     STATEMENT_WHILE, // Child 0: Condition, Child 1: Statements
+    STATEMENT_SWITCH, // Child 0: Expression, Children: Switch_Cases
     STATEMENT_BREAK, // No Children
     STATEMENT_CONTINUE, // No Children
     STATEMENT_RETURN, // Child 0: Return-Expression
@@ -61,7 +67,7 @@ enum class AST_Node_Type
     EXPRESSION_ARRAY_ACCESS, // Child 0: Access-to-Expression, Child 1: Index-Expression
     EXPRESSION_MEMBER_ACCESS, // Child 0: left side, id is the .what operator a.y.y[5].z
     EXPRESSION_CAST, // Child 0: type, Child 1: Expression
-    EXPRESSION_BAKE, // Child 0: Statement_Block
+    EXPRESSION_BAKE, // Child 0: type, Child 1: Statement_Block
     EXPRESSION_BINARY_OPERATION_ADDITION,
     EXPRESSION_BINARY_OPERATION_SUBTRACTION,
     EXPRESSION_BINARY_OPERATION_DIVISION,

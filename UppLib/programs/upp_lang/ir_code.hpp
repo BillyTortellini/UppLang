@@ -162,11 +162,25 @@ struct IR_Code_Block
     Dynamic_Array<IR_Instruction> instructions;
 };
 
+struct IR_Switch_Case
+{
+    int value;
+    IR_Code_Block* block;
+};
+
+struct IR_Instruction_Switch
+{
+    IR_Data_Access condition_access;
+    Dynamic_Array<IR_Switch_Case> cases;
+    IR_Code_Block* default_block;
+};
+
 enum class IR_Instruction_Type
 {
     FUNCTION_CALL,
     IF,
     WHILE,
+    SWITCH,
     BLOCK,
 
     BREAK,
@@ -189,6 +203,7 @@ struct IR_Instruction
         IR_Instruction_If if_instr;
         IR_Instruction_While while_instr;
         IR_Instruction_Return return_instr;
+        IR_Instruction_Switch switch_instr;
         IR_Instruction_Move move;
         IR_Instruction_Cast cast;
         IR_Instruction_Address_Of address_of;
@@ -230,11 +245,19 @@ struct IR_Generator
     // Stuff needed for compilation
     Hashtable<ModTree_Variable*, IR_Data_Access> variable_mapping;
     Hashtable<ModTree_Function*, IR_Function*> function_mapping;
+
+    Dynamic_Array<ModTree_Function*> function_stubs;
+    Dynamic_Array<ModTree_Variable*> queue_globals;
+    Dynamic_Array<ModTree_Function*> queue_functions;
 };
 
 IR_Generator ir_generator_create();
 void ir_generator_destroy(IR_Generator* generator);
-void ir_generator_generate(IR_Generator* generator, Compiler* compiler);
+void ir_generator_reset(IR_Generator* generator, Compiler* compiler);
+void ir_generator_generate_queued_items(IR_Generator* generator);
+void ir_generator_queue_function(IR_Generator* generator, ModTree_Function* function);
+void ir_generator_queue_global(IR_Generator* generator, ModTree_Variable* variable);
+void ir_generator_generate_queue_and_generate_all(IR_Generator* generator);
 
 IR_Program* ir_program_create(Type_System* type_system);
 void ir_program_destroy(IR_Program* program);

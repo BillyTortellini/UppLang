@@ -12,10 +12,15 @@ bool token_type_is_keyword(Token_Type type)
     case Token_Type::ELSE: return true;
     case Token_Type::FOR: return true;
     case Token_Type::WHILE: return true;
+    case Token_Type::SWITCH: return true;
     case Token_Type::CONTINUE: return true;
+    case Token_Type::DEFAULT: return true;
+    case Token_Type::CASE: return true;
     case Token_Type::BREAK: return true;
     case Token_Type::RETURN: return true;
     case Token_Type::STRUCT: return true;
+    case Token_Type::UNION: return true;
+    case Token_Type::ENUM: return true;
     case Token_Type::NEW: return true;
     case Token_Type::DEFER: return true;
     case Token_Type::DELETE_TOKEN: return true;
@@ -34,10 +39,15 @@ const char* token_type_to_string(Token_Type type)
     case Token_Type::ELSE: return "ELSE";
     case Token_Type::FOR: return "FOR";
     case Token_Type::WHILE: return "WHILE";
+    case Token_Type::SWITCH: return "SWITCH";
     case Token_Type::CONTINUE: return "CONTINUE";
+    case Token_Type::DEFAULT: return "DEFAULT";
+    case Token_Type::CASE: return "CASE";
     case Token_Type::EXTERN: return "EXTERN";
     case Token_Type::MODULE: return "MODULE";
     case Token_Type::STRUCT: return "STRUCT";
+    case Token_Type::UNION: return "UNION";
+    case Token_Type::ENUM: return "ENUM";
     case Token_Type::BREAK: return "BREAK";
     case Token_Type::DOT: return "DOT";
     case Token_Type::NEW: return "NEW";
@@ -276,10 +286,14 @@ Lexer lexer_create()
     hashtable_insert_element(&lexer.keywords, string_create_static("else"), Token_Type::ELSE);
     hashtable_insert_element(&lexer.keywords, string_create_static("for"), Token_Type::FOR);
     hashtable_insert_element(&lexer.keywords, string_create_static("while"), Token_Type::WHILE);
+    hashtable_insert_element(&lexer.keywords, string_create_static("switch"), Token_Type::SWITCH);
     hashtable_insert_element(&lexer.keywords, string_create_static("continue"), Token_Type::CONTINUE);
+    hashtable_insert_element(&lexer.keywords, string_create_static("default"), Token_Type::DEFAULT);
+    hashtable_insert_element(&lexer.keywords, string_create_static("case"), Token_Type::CASE);
     hashtable_insert_element(&lexer.keywords, string_create_static("break"), Token_Type::BREAK);
     hashtable_insert_element(&lexer.keywords, string_create_static("return"), Token_Type::RETURN);
     hashtable_insert_element(&lexer.keywords, string_create_static("struct"), Token_Type::STRUCT);
+    hashtable_insert_element(&lexer.keywords, string_create_static("union"), Token_Type::UNION);
     hashtable_insert_element(&lexer.keywords, string_create_static("cast"), Token_Type::CAST);
     hashtable_insert_element(&lexer.keywords, string_create_static("null"), Token_Type::NULLPTR);
     hashtable_insert_element(&lexer.keywords, string_create_static("new"), Token_Type::NEW);
@@ -289,6 +303,7 @@ Lexer lexer_create()
     hashtable_insert_element(&lexer.keywords, string_create_static("defer"), Token_Type::DEFER);
     hashtable_insert_element(&lexer.keywords, string_create_static("module"), Token_Type::MODULE);
     hashtable_insert_element(&lexer.keywords, string_create_static("extern"), Token_Type::EXTERN);
+    hashtable_insert_element(&lexer.keywords, string_create_static("enum"), Token_Type::ENUM);
 
     return lexer;
 }

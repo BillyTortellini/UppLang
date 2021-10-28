@@ -72,7 +72,9 @@ enum class ModTree_Cast_Type
     POINTERS, // Implicit from/to void*
     POINTER_TO_U64,
     U64_TO_POINTER,
-    ARRAY_SIZED_TO_UNSIZED // Implicit
+    ARRAY_SIZED_TO_UNSIZED, // Implicit
+    ENUM_TO_INT,
+    INT_TO_ENUM,
 };
 
 struct Expression_Value
@@ -148,6 +150,7 @@ enum class ModTree_Statement_Type
     BLOCK,
     IF, 
     WHILE, 
+    SWITCH,
 
     BREAK,
     CONTINUE,
@@ -157,6 +160,13 @@ enum class ModTree_Statement_Type
     EXPRESSION,
     ASSIGNMENT,
     DELETION,
+};
+
+struct ModTree_Switch_Case
+{
+    int value;
+    ModTree_Expression* expression;
+    ModTree_Block* body;
 };
 
 struct ModTree_Statement
@@ -175,6 +185,11 @@ struct ModTree_Statement
             ModTree_Block* while_block;
         } while_statement;
         struct {
+            ModTree_Expression* condition;
+            Dynamic_Array<ModTree_Switch_Case> cases;
+            ModTree_Block* default_block;
+        } switch_statement;
+        struct {
             ModTree_Expression* destination;
             ModTree_Expression* source;
         } assignment;
@@ -183,7 +198,6 @@ struct ModTree_Statement
             bool is_array;
         } deletion;
         ModTree_Expression* expression;
-        ModTree_Variable* variable_definition;
         Optional<ModTree_Expression*> return_value;
         Exit_Code exit_code;
     } options;
@@ -197,6 +211,8 @@ enum class Block_Type
     IF_TRUE_BLOCK,
     IF_ELSE_BLOCK,
     WHILE_BODY,
+    SWITCH_CASE,
+    SWITCH_DEFAULT_CASE,
 };
 
 struct ModTree_Block;
@@ -263,8 +279,8 @@ struct ModTree_Intern_Function
     ModTree_Block* body;
     Dynamic_Array<ModTree_Variable*> parameters;
     // Dependencies
-    //Dynamic_Array<ModTree_Function*> dependency_functions; // Pointer reads and function calls
-    //Dynamic_Array<ModTree_Variable*> dependency_globals;
+    Dynamic_Array<ModTree_Function*> dependency_functions; // Pointer reads and function calls
+    Dynamic_Array<ModTree_Variable*> dependency_globals;
     //Dynamic_Array<Type_Signature*> dependency_signatures;
 };
 
@@ -355,6 +371,7 @@ enum class Usage_Type
     MEMBER_TYPE,
 
     TEMPLATE_ARGUMENT,
+    BAKE_TYPE,
 
     IGNORE_REFERENCE
 };
@@ -399,6 +416,14 @@ Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool only_curr
 /*
     WORKLOADS
 */
+struct Analysis_Workload_Enum 
+{
+    Symbol_Table* symbol_table;
+    int next_integer_value;
+    Type_Signature* enum_type;
+    AST_Node* current_member;
+};
+
 struct Analysis_Workload_Extern_Function {
     ModTree_Module* parent_module;
     AST_Node* node;
@@ -453,6 +478,7 @@ struct Analysis_Workload_Code
     List<Block_Analysis> block_queue;
     Block_Analysis* active_block;
     Dynamic_Array<AST_Node*> defer_nodes;
+    Hashtable<AST_Node*, ModTree_Statement*> active_switches;
 };
 
 struct Analysis_Workload_Struct_Body
@@ -479,6 +505,7 @@ enum class Analysis_Workload_Type
     FUNCTION_HEADER,
     CODE,
     STRUCT_BODY,
+    ENUM_BODY,
     GLOBAL,
     ARRAY_SIZE,
 
@@ -500,13 +527,14 @@ struct Analysis_Workload
         Analysis_Workload_Module_Analysis module_analysis;
         Analysis_Workload_Extern_Header extern_header;
         Analysis_Workload_Extern_Function extern_function;
+        Analysis_Workload_Enum enum_body;
     } options;
 };
 
 enum class Workload_Dependency_Type
 {
     IDENTIFER_NOT_FOUND,
-    TYPE_SIZE_UNKNOWN, // Either of Sized_Array or Struct
+    TYPE_SIZE_UNKNOWN, // Either of Sized_Array, Enum or Struct
     CODE_BLOCK_NOT_FINISHED,
     FUNCTION_HEADER_NOT_ANALYSED, // ModTree_Function* signature is 0
 };
@@ -580,6 +608,20 @@ enum class Semantic_Error_Type
     INVALID_TYPE_ASSIGNMENT,
     INVALID_TYPE_RETURN,
     INVALID_TYPE_DELETE,
+    INVALID_TYPE_BAKE_MUST_BE_PRIMITIVE,
+    INVALID_TYPE_ENUM_VALUE,
+    ENUM_VALUE_MUST_BE_COMPILE_TIME_KNOWN,
+    ENUM_VALUE_MUST_BE_UNIQUE,
+    ENUM_MEMBER_NAME_MUST_BE_UNIQUE,
+    ENUM_DOES_NOT_CONTAIN_THIS_MEMBER,
+
+    SWITCH_REQUIRES_ENUM,
+    SWITCH_CASES_MUST_BE_COMPTIME_KNOWN,
+    SWITCH_MUST_HANDLE_ALL_CASES,
+    SWITCH_MUST_NOT_BE_EMPTY,
+    SWITCH_ONLY_ONE_DEFAULT_ALLOWED,
+    SWITCH_CASE_TYPE_INVALID,
+    SWITCH_CASE_MUST_BE_UNIQUE,
 
     SYMBOL_EXPECTED_MODUL_IN_IDENTIFIER_PATH,
     SYMBOL_EXPECTED_TYPE_ON_TYPE_IDENTIFIER,
@@ -596,6 +638,9 @@ enum class Semantic_Error_Type
     EXPRESSION_ADDRESS_MUST_NOT_BE_OF_TEMPORARY_RESULT,
     EXPRESSION_BINARY_OP_TYPES_MUST_MATCH,
     EXPRESSION_STATEMENT_MUST_BE_FUNCTION_CALL,
+
+    BAKE_FUNCTION_MUST_NOT_REFERENCE_GLOBALS,
+    BAKE_FUNCTION_DID_NOT_SUCCEED,
 
     OTHERS_STRUCT_MUST_CONTAIN_MEMBER,
     OTHERS_STRUCT_MEMBER_ALREADY_DEFINED,
@@ -642,6 +687,8 @@ struct Semantic_Error
 
     String* id;
     Symbol* symbol;
+    ModTree_Function* function;
+    Exit_Code exit_code;
     Type_Signature* given_type;
     Type_Signature* expected_type;
     Type_Signature* function_type;
@@ -675,6 +722,12 @@ struct Identifier_Analysis_Result
         Symbol* symbol;
         Workload_Dependency dependency;
     } options;
+};
+
+struct Partial_Compile_Result
+{
+    Analysis_Result_Type type;
+    Workload_Dependency dependency;
 };
 
 struct Bytecode_Execute_Result
@@ -720,6 +773,8 @@ struct Semantic_Analyser
     Hashtable<Bake_Location, ModTree_Function*> bake_locations;
     Dynamic_Array<Analysis_Workload> active_workloads;
     Dynamic_Array<Waiting_Workload> waiting_workload;
+
+    Hashset<ModTree_Function*> visited_functions;
 
     String* id_size;
     String* id_data;

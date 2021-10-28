@@ -36,7 +36,7 @@ enum class Bytecode_Type
     FLOAT64,
     BOOL,
 };
-Bytecode_Type primitive_to_bytecode_type(Type_Signature* primitive);
+Bytecode_Type type_signature_to_bytecode_type(Type_Signature* primitive);
 
 enum class Instruction_Type
 {
@@ -132,8 +132,19 @@ struct Bytecode_Generator
 
 Bytecode_Generator bytecode_generator_create();
 void bytecode_generator_destroy(Bytecode_Generator* generator);
-void bytecode_generator_generate(Bytecode_Generator* generator, Compiler* compiler);
+void bytecode_generator_reset(Bytecode_Generator* generator, Compiler* compiler);
+
+/*
+    Scheme for partial compilation:
+        1. Add all globals, call update_globals
+        2. Call compile_function for each function
+        3. Call update references
+*/
+void bytecode_generator_compile_function(Bytecode_Generator* generator, IR_Function* function);
+void bytecode_generator_update_globals(Bytecode_Generator* generator);
+void bytecode_generator_update_references(Bytecode_Generator* generator);
+void bytecode_generator_set_entry_function(Bytecode_Generator* generator);
+
 void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction instruction);
 void bytecode_generator_append_bytecode_to_string(Bytecode_Generator* generator, String* string);
-
 int align_offset_next_multiple(int offset, int alignment);

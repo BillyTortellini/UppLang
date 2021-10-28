@@ -49,6 +49,14 @@ void ir_instruction_destroy(IR_Instruction* instruction)
         ir_code_block_destroy(instruction->options.block);
         break;
     }
+    case IR_Instruction_Type::SWITCH: {
+        for (int i = 0; i < instruction->options.switch_instr.cases.size; i++) {
+            ir_code_block_destroy(instruction->options.switch_instr.cases[i].block);
+        }
+        dynamic_array_destroy(&instruction->options.switch_instr.cases);
+        ir_code_block_destroy(instruction->options.switch_instr.default_block);
+        break;
+    }
     case IR_Instruction_Type::BREAK:
     case IR_Instruction_Type::CONTINUE:
     case IR_Instruction_Type::RETURN:
@@ -306,6 +314,12 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
         case ModTree_Cast_Type::U64_TO_POINTER:
             string_append_formated(string, "U64_TO_POINTER");
             break;
+        case ModTree_Cast_Type::ENUM_TO_INT:
+            string_append_formated(string, "ENUM_TO_INT");
+            break;
+        case ModTree_Cast_Type::INT_TO_ENUM:
+            string_append_formated(string, "INT_TO_ENUM");
+            break;
         default: panic("HEY");
         }
 
@@ -400,6 +414,27 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
         indent_string(string, indentation + 1);
         string_append_formated(string, "dst: ");
         ir_data_access_append_to_string(&instruction->options.move.destination, string, code_block);
+        break;
+    }
+    case IR_Instruction_Type::SWITCH: 
+    {
+        Type_Signature* enum_type = ir_data_access_get_type(&instruction->options.switch_instr.condition_access);
+        string_append_formated(string, "SWITCH\n");
+        indent_string(string, indentation + 1);
+        string_append_formated(string, "Condition access: ");
+        ir_data_access_append_to_string(&instruction->options.switch_instr.condition_access, string, code_block);
+        string_append_formated(string, "\n");
+        for (int i = 0; i < instruction->options.switch_instr.cases.size; i++) {
+            IR_Switch_Case* switch_case = &instruction->options.switch_instr.cases[i];
+            indent_string(string, indentation + 1);
+            Optional<Enum_Member> member = enum_type_find_member_by_value(enum_type, switch_case->value);
+            assert(member.available, "");
+            string_append_formated(string, "Case %s: \n", member.value.id->characters);
+            ir_code_block_append_to_string(switch_case->block, string, indentation + 2);
+        }
+        indent_string(string, indentation + 1);
+        string_append_formated(string, "Default case: \n");
+        ir_code_block_append_to_string(instruction->options.switch_instr.default_block, string, indentation + 2);
         break;
     }
     case IR_Instruction_Type::WHILE: {
@@ -538,6 +573,9 @@ IR_Generator ir_generator_create()
     generator.program = 0;
     generator.function_mapping = hashtable_create_pointer_empty<ModTree_Function*, IR_Function*>(32);
     generator.variable_mapping = hashtable_create_pointer_empty<ModTree_Variable*, IR_Data_Access>(32);
+    generator.queue_functions = dynamic_array_create_empty<ModTree_Function*>(32);
+    generator.queue_globals = dynamic_array_create_empty<ModTree_Variable*>(32);
+    generator.function_stubs = dynamic_array_create_empty<ModTree_Function*>(32);
     return generator;
 }
 
@@ -548,6 +586,9 @@ void ir_generator_destroy(IR_Generator* generator)
     }
     hashtable_destroy(&generator->function_mapping);
     hashtable_destroy(&generator->variable_mapping);
+    dynamic_array_destroy(&generator->queue_functions);
+    dynamic_array_destroy(&generator->queue_globals);
+    dynamic_array_destroy(&generator->function_stubs);
 }
 
 IR_Data_Access ir_data_access_create_constant(IR_Generator* generator, Type_Signature* signature, Array<byte> bytes)
@@ -754,7 +795,7 @@ IR_Data_Access ir_generator_generate_expression(IR_Generator* generator, IR_Code
             mult_instr.type = IR_Instruction_Type::BINARY_OP;
             mult_instr.options.binary_op.type = ModTree_Binary_Operation_Type::MULTIPLICATION;
             mult_instr.options.binary_op.destination = ir_data_access_create_intermediate(ir_block, generator->type_system->i32_type);
-            mult_instr.options.binary_op.operand_left =  ir_data_access_create_constant_i32(generator, expression->options.new_allocation.allocation_size);
+            mult_instr.options.binary_op.operand_left = ir_data_access_create_constant_i32(generator, expression->options.new_allocation.allocation_size);
             mult_instr.options.binary_op.operand_right = array_size_access;
             dynamic_array_push_back(&ir_block->instructions, mult_instr);
 
@@ -840,6 +881,34 @@ void ir_generator_generate_block(IR_Generator* generator, IR_Code_Block* ir_bloc
             ir_generator_generate_block(generator, instr.options.if_instr.true_branch, statement->options.if_statement.if_block);
             instr.options.if_instr.false_branch = ir_code_block_create(ir_block->function);
             ir_generator_generate_block(generator, instr.options.if_instr.false_branch, statement->options.if_statement.else_block);
+            dynamic_array_push_back(&ir_block->instructions, instr);
+            break;
+        }
+        case ModTree_Statement_Type::SWITCH:
+        {
+            IR_Instruction instr;
+            instr.type = IR_Instruction_Type::SWITCH;
+            instr.options.switch_instr.condition_access = ir_generator_generate_expression(generator, ir_block, statement->options.switch_statement.condition);
+            instr.options.switch_instr.cases = dynamic_array_create_empty<IR_Switch_Case>(statement->options.switch_statement.cases.size);
+            for (int i = 0; i < statement->options.switch_statement.cases.size; i++) {
+                ModTree_Switch_Case* switch_case = &statement->options.switch_statement.cases[i];
+                IR_Switch_Case new_case;
+                new_case.value = switch_case->value;
+                new_case.block = ir_code_block_create(ir_block->function);
+                ir_generator_generate_block(generator, new_case.block, switch_case->body);
+                dynamic_array_push_back(&instr.options.switch_instr.cases, new_case);
+            }
+            instr.options.switch_instr.default_block = ir_code_block_create(ir_block->function);
+            if (statement->options.switch_statement.default_block == 0) {
+                IR_Instruction exit_instr;
+                exit_instr.type = IR_Instruction_Type::RETURN;
+                exit_instr.options.return_instr.type = IR_Instruction_Return_Type::EXIT;
+                exit_instr.options.return_instr.options.exit_code = Exit_Code::INVALID_SWITCH_CASE;
+                dynamic_array_push_back(&instr.options.switch_instr.default_block->instructions, exit_instr);
+            }
+            else {
+                ir_generator_generate_block(generator, instr.options.switch_instr.default_block, statement->options.switch_statement.default_block);
+            }
             dynamic_array_push_back(&ir_block->instructions, instr);
             break;
         }
@@ -940,15 +1009,55 @@ void ir_generator_generate_block(IR_Generator* generator, IR_Code_Block* ir_bloc
     }
 }
 
-void ir_generator_generate_module(IR_Generator* generator, ModTree_Module* module)
+void ir_generator_queue_module(IR_Generator* generator, ModTree_Module* module)
 {
-    // Generate functions
+    // Queue functions
     for (int i = 0; i < module->functions.size; i++)
     {
         ModTree_Function* mod_func = module->functions[i];
         if (mod_func->function_type != ModTree_Function_Type::FUNCTION) {
             continue;
         }
+        ir_generator_queue_function(generator, mod_func);
+    }
+
+    // Queue globals
+    for (int i = 0; i < module->globals.size; i++) {
+        ir_generator_queue_global(generator, module->globals[i]);
+    }
+
+    // Queue sub modules
+    for (int i = 0; i < module->modules.size; i++) {
+        ir_generator_queue_module(generator, module->modules[i]);
+    }
+}
+
+void ir_generator_reset(IR_Generator* generator, Compiler* compiler)
+{
+    generator->compiler = compiler;
+    if (generator->program != 0) {
+        ir_program_destroy(generator->program);
+    }
+    generator->program = ir_program_create(&generator->compiler->type_system);
+    generator->modtree = generator->compiler->analyser.program;
+    generator->type_system = &generator->compiler->type_system;
+    hashtable_reset(&generator->variable_mapping);
+    hashtable_reset(&generator->function_mapping);
+    dynamic_array_reset(&generator->queue_functions);
+    dynamic_array_reset(&generator->queue_globals);
+    dynamic_array_reset(&generator->function_stubs);
+}
+
+void ir_generator_generate_queued_items(IR_Generator* generator)
+{
+    // Generate Function stubs
+    for (int i = 0; i < generator->queue_functions.size; i++)
+    {
+        ModTree_Function* mod_func = generator->queue_functions[i];
+        if (mod_func->function_type != ModTree_Function_Type::FUNCTION) {
+            continue;
+        }
+        if (hashtable_find_element(&generator->function_mapping, mod_func) != 0) continue;
 
         IR_Function* ir_func = new IR_Function;
         ir_func->function_type = mod_func->signature;
@@ -956,6 +1065,7 @@ void ir_generator_generate_module(IR_Generator* generator, ModTree_Module* modul
         ir_func->code = ir_code_block_create(ir_func);
         dynamic_array_push_back(&generator->program->functions, ir_func);
         hashtable_insert_element(&generator->function_mapping, mod_func, ir_func);
+        dynamic_array_push_back(&generator->function_stubs, mod_func);
 
         // Generate parameters vars
         for (int j = 0; j < mod_func->options.function.parameters.size; j++) {
@@ -967,46 +1077,53 @@ void ir_generator_generate_module(IR_Generator* generator, ModTree_Module* modul
             hashtable_insert_element(&generator->variable_mapping, mod_func->options.function.parameters[j], access);
         }
     }
+    dynamic_array_reset(&generator->queue_functions);
 
-    // Generate globals
-    for (int i = 0; i < module->globals.size; i++)
+    // Generate Globals
+    for (int i = 0; i < generator->queue_globals.size; i++)
     {
-        dynamic_array_push_back(&generator->program->globals, module->globals[i]->data_type);
+        ModTree_Variable* variable = generator->queue_globals[i];
+        if (hashtable_find_element(&generator->variable_mapping, variable) != 0) continue;
+
+        dynamic_array_push_back(&generator->program->globals, variable->data_type);
         IR_Data_Access access;
         access.index = generator->program->globals.size - 1;
         access.is_memory_access = false;
         access.type = IR_Data_Access_Type::GLOBAL_DATA;
         access.option.program = generator->program;
-        hashtable_insert_element(&generator->variable_mapping, module->globals[i], access);
+        hashtable_insert_element(&generator->variable_mapping, variable, access);
     }
+    dynamic_array_reset(&generator->queue_globals);
 
-    // Generate sub modules
-    for (int i = 0; i < module->modules.size; i++) {
-        ir_generator_generate_module(generator, module->modules[i]);
+    // Execute schema for partial compilation (See Bytecode_Generator.hpp)
+    bytecode_generator_update_globals(&generator->compiler->bytecode_generator);
+
+    // Generate Blocks
+    for (int i = 0; i < generator->function_stubs.size; i++)
+    {
+        ModTree_Function* mod_func = generator->function_stubs[i];
+        IR_Function* ir_func = *hashtable_find_element(&generator->function_mapping, mod_func);
+        ir_generator_generate_block(generator, ir_func->code, mod_func->options.function.body);
+        bytecode_generator_compile_function(&generator->compiler->bytecode_generator, ir_func);
     }
+    dynamic_array_reset(&generator->function_stubs);
+
+    // Compile to Bytecode
+    bytecode_generator_update_references(&generator->compiler->bytecode_generator);
 }
 
-void ir_generator_generate(IR_Generator* generator, Compiler* compiler)
-{
-    // Reset data
-    generator->compiler = compiler;
-    if (generator->program != 0) {
-        ir_program_destroy(generator->program);
-    }
-    generator->program = ir_program_create(&generator->compiler->type_system);
-    generator->modtree = generator->compiler->analyser.program;
-    generator->type_system = &generator->compiler->type_system;
-    hashtable_reset(&generator->variable_mapping);
-    hashtable_reset(&generator->function_mapping);
+void ir_generator_queue_function(IR_Generator* generator, ModTree_Function* function) {
+    dynamic_array_push_back(&generator->queue_functions, function);
+}
 
-    // Iterate over all modtree functions and generate function stubs for them
-    ir_generator_generate_module(generator, generator->modtree->root_module);
-    // Generate all function stubs
-    auto it = hashtable_iterator_create(&generator->function_mapping);
-    while (hashtable_iterator_has_next(&it)) {
-        ir_generator_generate_block(generator, (*it.value)->code, (*it.key)->options.function.body);
-        hashtable_iterator_next(&it);
-    }
+void ir_generator_queue_global(IR_Generator* generator, ModTree_Variable* variable) {
+    dynamic_array_push_back(&generator->queue_globals, variable);
+}
+
+void ir_generator_generate_queue_and_generate_all(IR_Generator* generator)
+{
+    ir_generator_queue_module(generator, generator->modtree->root_module);
+    ir_generator_generate_queued_items(generator);
     generator->program->entry_function = *hashtable_find_element(&generator->function_mapping, generator->modtree->entry_function);
 }
 

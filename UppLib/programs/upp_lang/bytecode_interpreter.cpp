@@ -3,13 +3,16 @@
 #include <iostream>
 #include "../../utility/random.hpp"
 #include "compiler.hpp"
+#include <Windows.h>
 
 Bytecode_Interpreter bytecode_intepreter_create()
 {
     Bytecode_Interpreter result;
     result.stack = array_create_empty<byte>(8192);
-    result.globals.data = 0;
+    result.globals = array_create_empty<byte>(2048);
     result.random = random_make_time_initalized();
+    result.instruction_limit_enabled = false;
+    result.instruction_limit = 10000;
     return result;
 }
 
@@ -157,7 +160,7 @@ void bytecode_execute_unary_instr(Instruction_Type instr_type, Bytecode_Type typ
     }
 }
 
-void bytecode_execute_binary_instr(Instruction_Type instr_type, Bytecode_Type type, void* dest, void* op_left, void* op_right)
+bool bytecode_execute_binary_instr(Instruction_Type instr_type, Bytecode_Type type, void* dest, void* op_left, void* op_right)
 {
     switch (instr_type)
     {
@@ -165,8 +168,7 @@ void bytecode_execute_binary_instr(Instruction_Type instr_type, Bytecode_Type ty
         switch (type)
         {
         case Bytecode_Type::BOOL:
-            panic("What");
-            break;
+            return false;
         case Bytecode_Type::INT8:
             *(i8*)(dest) = *(i8*)(op_left)+*(i8*)(op_right);
             break;
@@ -197,14 +199,14 @@ void bytecode_execute_binary_instr(Instruction_Type instr_type, Bytecode_Type ty
         case Bytecode_Type::FLOAT64:
             *(f64*)(dest) = *(f64*)(op_left)+*(f64*)(op_right);
             break;
+        default: return false;
         }
         break;
     case Instruction_Type::BINARY_OP_SUBTRACTION:
         switch (type)
         {
         case Bytecode_Type::BOOL:
-            panic("What");
-            break;
+            return false;
         case Bytecode_Type::INT8:
             *(i8*)(dest) = *(i8*)(op_left)-*(i8*)(op_right);
             break;
@@ -235,14 +237,14 @@ void bytecode_execute_binary_instr(Instruction_Type instr_type, Bytecode_Type ty
         case Bytecode_Type::FLOAT64:
             *(f64*)(dest) = *(f64*)(op_left)-*(f64*)(op_right);
             break;
+        default: return false;
         }
         break;
     case Instruction_Type::BINARY_OP_MULTIPLICATION:
         switch (type)
         {
         case Bytecode_Type::BOOL:
-            panic("What");
-            break;
+            return false;
         case Bytecode_Type::INT8:
             *(i8*)(dest) = *(i8*)(op_left) * *(i8*)(op_right);
             break;
@@ -273,36 +275,45 @@ void bytecode_execute_binary_instr(Instruction_Type instr_type, Bytecode_Type ty
         case Bytecode_Type::FLOAT64:
             *(f64*)(dest) = *(f64*)(op_left) * *(f64*)(op_right);
             break;
+        default: return false;
         }
         break;
     case Instruction_Type::BINARY_OP_DIVISION:
         switch (type)
         {
         case Bytecode_Type::BOOL:
-            panic("What");
-            break;
+            return false;
         case Bytecode_Type::INT8:
+            if (*(i8*)op_right == 0) return false;
             *(i8*)(dest) = *(i8*)(op_left) / *(i8*)(op_right);
             break;
         case Bytecode_Type::INT16:
+            if (*(i16*)op_right == 0) return false;
             *(i16*)(dest) = *(i16*)(op_left) / *(i16*)(op_right);
             break;
-        case Bytecode_Type::INT32:
+        case Bytecode_Type::INT32: {
+            if (*(i32*)op_right == 0) return false;
             *(i32*)(dest) = *(i32*)(op_left) / *(i32*)(op_right);
             break;
+        }
         case Bytecode_Type::INT64:
+            if (*(i64*)op_right == 0) return false;
             *(i64*)(dest) = *(i64*)(op_left) / *(i64*)(op_right);
             break;
         case Bytecode_Type::UINT8:
+            if (*(u8*)op_right == 0) return false;
             *(u8*)(dest) = *(u8*)(op_left) / *(u8*)(op_right);
             break;
         case Bytecode_Type::UINT16:
+            if (*(u16*)op_right == 0) return false;
             *(u16*)(dest) = *(u16*)(op_left) / *(u16*)(op_right);
             break;
         case Bytecode_Type::UINT32:
+            if (*(u32*)op_right == 0) return false;
             *(u32*)(dest) = *(u32*)(op_left) / *(u32*)(op_right);
             break;
         case Bytecode_Type::UINT64:
+            if (*(u64*)op_right == 0) return false;
             *(u64*)(dest) = *(u64*)(op_left) / *(u64*)(op_right);
             break;
         case Bytecode_Type::FLOAT32:
@@ -311,6 +322,7 @@ void bytecode_execute_binary_instr(Instruction_Type instr_type, Bytecode_Type ty
         case Bytecode_Type::FLOAT64:
             *(f64*)(dest) = *(f64*)(op_left) / *(f64*)(op_right);
             break;
+        default: return false;
         }
         break;
     case Instruction_Type::BINARY_OP_EQUAL:
@@ -349,6 +361,7 @@ void bytecode_execute_binary_instr(Instruction_Type instr_type, Bytecode_Type ty
         case Bytecode_Type::FLOAT64:
             *(u8*)(dest) = *(f64*)(op_left) == *(f64*)(op_right) ? 1 : 0;
             break;
+        default: return false;
         }
         break;
     case Instruction_Type::BINARY_OP_NOT_EQUAL:
@@ -387,14 +400,14 @@ void bytecode_execute_binary_instr(Instruction_Type instr_type, Bytecode_Type ty
         case Bytecode_Type::FLOAT64:
             *(u8*)(dest) = *(f64*)(op_left) != *(f64*)(op_right) ? 1 : 0;
             break;
+        default: return false;
         }
         break;
     case Instruction_Type::BINARY_OP_GREATER_THAN:
         switch (type)
         {
         case Bytecode_Type::BOOL:
-            panic("what");
-            break;
+            return false;
         case Bytecode_Type::INT8:
             *(u8*)(dest) = *(i8*)(op_left) > * (i8*)(op_right) ? 1 : 0;
             break;
@@ -425,14 +438,14 @@ void bytecode_execute_binary_instr(Instruction_Type instr_type, Bytecode_Type ty
         case Bytecode_Type::FLOAT64:
             *(u8*)(dest) = *(f64*)(op_left) > * (f64*)(op_right) ? 1 : 0;
             break;
+        default: return false;
         }
         break;
     case Instruction_Type::BINARY_OP_GREATER_EQUAL:
         switch (type)
         {
         case Bytecode_Type::BOOL:
-            panic("what");
-            break;
+            return false;
         case Bytecode_Type::INT8:
             *(u8*)(dest) = *(i8*)(op_left) >= *(i8*)(op_right) ? 1 : 0;
             break;
@@ -463,14 +476,14 @@ void bytecode_execute_binary_instr(Instruction_Type instr_type, Bytecode_Type ty
         case Bytecode_Type::FLOAT64:
             *(u8*)(dest) = *(f64*)(op_left) >= *(f64*)(op_right) ? 1 : 0;
             break;
+        default: return false;
         }
         break;
     case Instruction_Type::BINARY_OP_LESS_THAN:
         switch (type)
         {
         case Bytecode_Type::BOOL:
-            panic("what");
-            break;
+            return false;
         case Bytecode_Type::INT8:
             *(u8*)(dest) = *(i8*)(op_left) < *(i8*)(op_right) ? 1 : 0;
             break;
@@ -501,13 +514,14 @@ void bytecode_execute_binary_instr(Instruction_Type instr_type, Bytecode_Type ty
         case Bytecode_Type::FLOAT64:
             *(u8*)(dest) = *(f64*)(op_left) < *(f64*)(op_right) ? 1 : 0;
             break;
+        default: return false;
         }
         break;
     case Instruction_Type::BINARY_OP_LESS_EQUAL:
         switch (type)
         {
         case Bytecode_Type::BOOL:
-            panic("what");
+            return false;
             break;
         case Bytecode_Type::INT8:
             *(u8*)(dest) = *(i8*)(op_left) <= *(i8*)(op_right) ? 1 : 0;
@@ -539,44 +553,54 @@ void bytecode_execute_binary_instr(Instruction_Type instr_type, Bytecode_Type ty
         case Bytecode_Type::FLOAT64:
             *(u8*)(dest) = *(f64*)(op_left) <= *(f64*)(op_right) ? 1 : 0;
             break;
+        default: return false;
         }
         break;
     case Instruction_Type::BINARY_OP_MODULO:
         switch (type)
         {
         case Bytecode_Type::BOOL:
-            panic("what");
+            return false;
             break;
         case Bytecode_Type::INT8:
+            if (*(i8*)op_right == 0) return false;
             *(i8*)(dest) = *(i8*)(op_left) % *(i8*)(op_right);
             break;
         case Bytecode_Type::INT16:
+            if (*(i16*)op_right == 0) return false;
             *(i16*)(dest) = *(i16*)(op_left) % *(i16*)(op_right);
             break;
         case Bytecode_Type::INT32:
+            if (*(i32*)op_right == 0) return false;
             *(i32*)(dest) = *(i32*)(op_left) % *(i32*)(op_right);
             break;
         case Bytecode_Type::INT64:
+            if (*(i64*)op_right == 0) return false;
             *(i64*)(dest) = *(i64*)(op_left) % *(i64*)(op_right);
             break;
         case Bytecode_Type::UINT8:
+            if (*(u8*)op_right == 0) return false;
             *(u8*)(dest) = *(u8*)(op_left) % *(u8*)(op_right);
             break;
         case Bytecode_Type::UINT16:
+            if (*(u16*)op_right == 0) return false;
             *(u16*)(dest) = *(u16*)(op_left) % *(u16*)(op_right);
             break;
         case Bytecode_Type::UINT32:
+            if (*(u32*)op_right == 0) return false;
             *(u32*)(dest) = *(u32*)(op_left) % *(u32*)(op_right);
             break;
         case Bytecode_Type::UINT64:
+            if (*(u64*)op_right == 0) return false;
             *(u64*)(dest) = *(u64*)(op_left) % *(u64*)(op_right);
             break;
         case Bytecode_Type::FLOAT32:
-            panic("what");
+            return false;
             break;
         case Bytecode_Type::FLOAT64:
-            panic("what");
+            return false;
             break;
+        default: return false;
         }
         break;
     case Instruction_Type::BINARY_OP_AND:
@@ -585,8 +609,19 @@ void bytecode_execute_binary_instr(Instruction_Type instr_type, Bytecode_Type ty
     case Instruction_Type::BINARY_OP_OR:
         *(bool*)(dest) = *(bool*)(op_left) || *(bool*)(op_right);
         break;
-    default: panic("");
+    default: return false;
     }
+    return true;
+}
+
+void interpreter_safe_memcopy(Bytecode_Interpreter* interpreter, void* dst, void* src, int size)
+{
+    if (memory_is_readable(dst, size) && memory_is_readable(src, size)) {
+        memory_copy(dst, src, size);
+        return;
+    }
+    interpreter->exit_code = Exit_Code::CODE_ERROR_OCCURED;
+    interpreter->error_occured = true;
 }
 
 // Returns true if we need to stop execution, e.g. on exit instruction
@@ -596,27 +631,27 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
     switch (i->instruction_type)
     {
     case Instruction_Type::MOVE_STACK_DATA:
-        memory_copy(interpreter->stack_pointer + i->op1, interpreter->stack_pointer + i->op2, i->op3);
+        interpreter_safe_memcopy(interpreter, interpreter->stack_pointer + i->op1, interpreter->stack_pointer + i->op2, i->op3);
         break;
     case Instruction_Type::READ_GLOBAL:
-        memory_copy(interpreter->stack_pointer + i->op1, interpreter->globals.data + i->op2, i->op3);
+        interpreter_safe_memcopy(interpreter, interpreter->stack_pointer + i->op1, interpreter->globals.data + i->op2, i->op3);
         break;
     case Instruction_Type::WRITE_GLOBAL:
-        memory_copy(interpreter->globals.data + i->op1, interpreter->stack_pointer + i->op2, i->op3);
+        interpreter_safe_memcopy(interpreter, interpreter->globals.data + i->op1, interpreter->stack_pointer + i->op2, i->op3);
         break;
     case Instruction_Type::WRITE_MEMORY:
-        memory_copy(*(void**)(interpreter->stack_pointer + i->op1), interpreter->stack_pointer + i->op2, i->op3);
+        interpreter_safe_memcopy(interpreter, *(void**)(interpreter->stack_pointer + i->op1), interpreter->stack_pointer + i->op2, i->op3);
         break;
     case Instruction_Type::READ_MEMORY: {
         void* result = *(void**)(interpreter->stack_pointer + i->op2);
-        memory_copy(interpreter->stack_pointer + i->op1, *((void**)(interpreter->stack_pointer + i->op2)), i->op3);
+        interpreter_safe_memcopy(interpreter, interpreter->stack_pointer + i->op1, *((void**)(interpreter->stack_pointer + i->op2)), i->op3);
         break;
     }
     case Instruction_Type::MEMORY_COPY:
-        memory_copy(*(void**)(interpreter->stack_pointer + i->op1), *(void**)(interpreter->stack_pointer + i->op2), i->op3);
+        interpreter_safe_memcopy(interpreter, *(void**)(interpreter->stack_pointer + i->op1), *(void**)(interpreter->stack_pointer + i->op2), i->op3);
         break;
     case Instruction_Type::READ_CONSTANT:
-        memory_copy(interpreter->stack_pointer + i->op1, interpreter->constant_pool->buffer.data + i->op2, i->op3);
+        interpreter_safe_memcopy(interpreter, interpreter->stack_pointer + i->op1, interpreter->constant_pool->buffer.data + i->op2, i->op3);
         break;
     case Instruction_Type::U64_ADD_CONSTANT_I32:
         *(u64*)(interpreter->stack_pointer + i->op1) = *(u64*)(interpreter->stack_pointer + i->op2) + (i->op3);
@@ -689,6 +724,10 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         }
         memory_copy(interpreter->return_register, interpreter->stack_pointer + i->op1, i->op2);
         Bytecode_Instruction* return_address = *(Bytecode_Instruction**)interpreter->stack_pointer;
+        if (return_address == 0) {
+            interpreter->exit_code = Exit_Code::SUCCESS;
+            return true;
+        }
         byte* stack_old_base = *(byte**)(interpreter->stack_pointer + 8);
         interpreter->instruction_pointer = return_address;
         interpreter->stack_pointer = stack_old_base;
@@ -746,7 +785,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
 
             char* buffer = new char[size + 1];
             SCOPE_EXIT(delete[] buffer);
-            memory_copy(buffer, str, size);
+            interpreter_safe_memcopy(interpreter, buffer, str, size);
             buffer[size] = 0;
             logg("%s", buffer);
             break;
@@ -763,7 +802,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
             }
             std::cin.ignore(10000, '\n');
             std::cin.clear();
-            memory_copy(interpreter->return_register, &num, 4);
+            interpreter_safe_memcopy(interpreter, interpreter->return_register, &num, 4);
             break;
         }
         case Hardcoded_Function_Type::READ_F32: {
@@ -775,7 +814,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
             }
             std::cin.ignore(10000, '\n');
             std::cin.clear();
-            memory_copy(interpreter->return_register, &num, 4);
+            interpreter_safe_memcopy(interpreter, interpreter->return_register, &num, 4);
             break;
         }
         case Hardcoded_Function_Type::READ_BOOL: {
@@ -797,7 +836,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         }
         case Hardcoded_Function_Type::RANDOM_I32: {
             i32 result = random_next_u32(&interpreter->random);
-            memory_copy(interpreter->return_register, &result, 4);
+            interpreter_safe_memcopy(interpreter, interpreter->return_register, &result, 4);
             break;
         }
         default: {panic("What"); }
@@ -805,7 +844,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         break;
     }
     case Instruction_Type::LOAD_RETURN_VALUE:
-        memory_copy(interpreter->stack_pointer + i->op1, &interpreter->return_register[0], i->op2);
+        interpreter_safe_memcopy(interpreter, interpreter->stack_pointer + i->op1, &interpreter->return_register[0], i->op2);
         break;
     case Instruction_Type::LOAD_REGISTER_ADDRESS:
         *(void**)(interpreter->stack_pointer + i->op1) = (void*)(interpreter->stack_pointer + i->op2);
@@ -848,13 +887,16 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
     case Instruction_Type::BINARY_OP_MODULO:
     case Instruction_Type::BINARY_OP_AND:
     case Instruction_Type::BINARY_OP_OR: {
-        bytecode_execute_binary_instr(
+        if (!bytecode_execute_binary_instr(
             i->instruction_type,
             (Bytecode_Type)i->op4,
             interpreter->stack_pointer + i->op1,
             interpreter->stack_pointer + i->op2,
             interpreter->stack_pointer + i->op3
-        );
+        )) {
+            interpreter->error_occured = true;
+            interpreter->exit_code = Exit_Code::CODE_ERROR_OCCURED;
+        }
         break;
     }
     case Instruction_Type::UNARY_OP_NOT:
@@ -932,24 +974,47 @@ void bytecode_interpreter_print_state(Bytecode_Interpreter* interpreter)
     */
 }
 
-void bytecode_interpreter_execute_main(Bytecode_Interpreter* interpreter, Compiler* compiler)
+void bytecode_interpreter_reset(Bytecode_Interpreter* interpreter, Compiler* compiler)
 {
     interpreter->constant_pool = &compiler->constant_pool;
     interpreter->generator = &compiler->bytecode_generator;
-    memory_set_bytes(&interpreter->return_register, 256, 0);
-    memory_set_bytes(interpreter->stack.data, 16, 0);
-    interpreter->instruction_pointer = &interpreter->generator->instructions[interpreter->generator->entry_point_index];
-    interpreter->stack_pointer = &interpreter->stack[0];
-    if (interpreter->generator->global_data_size != 0) {
-        if (interpreter->globals.data != 0) {
-            array_destroy(&interpreter->globals);
-        }
-        interpreter->globals = array_create_empty<byte>(interpreter->generator->global_data_size);
-    }
-    int current_instruction_index = interpreter->instruction_pointer - interpreter->generator->instructions.data;
+}
 
-    while (true) {
-        //bytecode_interpreter_print_state(interpreter);
-        if (bytecode_interpreter_execute_current_instruction(interpreter)) { break; }
+void bytecode_interpreter_run_function(Bytecode_Interpreter* interpreter, int function_start_index)
+{
+    memory_set_bytes(&interpreter->return_register, 256, 0);
+    memory_set_bytes(interpreter->stack.data, 16, 0); // Sets return address and old stack pointer to 0
+    interpreter->instruction_pointer = &interpreter->generator->instructions[function_start_index];
+    interpreter->stack_pointer = &interpreter->stack[0];
+    if (interpreter->globals.size < interpreter->generator->global_data_size) {
+        array_destroy(&interpreter->globals);
+        interpreter->globals = array_create_empty<byte>(interpreter->generator->global_data_size * 2);
+    }
+    interpreter->error_occured = false;
+    interpreter->exit_code = Exit_Code::SUCCESS;
+
+    int executed_instruction_count = 0;
+    __try
+    {
+        while (!interpreter->error_occured) {
+            //bytecode_interpreter_print_state(interpreter);
+            if (bytecode_interpreter_execute_current_instruction(interpreter)) { break; }
+            executed_instruction_count++;
+            if (interpreter->instruction_limit_enabled && executed_instruction_count > interpreter->instruction_limit) {
+                interpreter->exit_code = Exit_Code::INSTRUCTION_LIMIT_REACHED;
+                break;
+            }
+        }
+    }
+    __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ||
+              GetExceptionCode() == EXCEPTION_ARRAY_BOUNDS_EXCEEDED ||
+              GetExceptionCode() == EXCEPTION_DATATYPE_MISALIGNMENT ||
+              GetExceptionCode() == EXCEPTION_GUARD_PAGE ||
+              GetExceptionCode() == EXCEPTION_IN_PAGE_ERROR ||
+              GetExceptionCode() == EXCEPTION_INT_DIVIDE_BY_ZERO ||
+              GetExceptionCode() == EXCEPTION_INVALID_HANDLE ||
+              GetExceptionCode() == EXCEPTION_PRIV_INSTRUCTION ||
+              GetExceptionCode() == EXCEPTION_STACK_OVERFLOW){
+        interpreter->exit_code = Exit_Code::CODE_ERROR_OCCURED;
     }
 }

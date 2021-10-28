@@ -10,7 +10,7 @@ bool enable_parsing = true;
 bool enable_analysis = true;
 bool enable_ir_gen = true;
 bool enable_bytecode_gen = true;
-bool enable_c_generation = false;
+bool enable_c_generation = true;
 bool enable_c_compilation = true;
 
 // Output stages
@@ -98,6 +98,15 @@ void exit_code_append_to_string(String* string, Exit_Code code)
         break;
     case Exit_Code::EXTERN_FUNCTION_CALL_NOT_IMPLEMENTED:
         string_append_formated(string, "EXTERN_FUNCTION_CALL_NOT_IMPLEMENTED");
+        break;
+    case Exit_Code::INSTRUCTION_LIMIT_REACHED:
+        string_append_formated(string, "INSTRUCTION_LIMIT_REACHED");
+        break;
+    case Exit_Code::INVALID_SWITCH_CASE:
+        string_append_formated(string, "INVALID_SWITCH_CASE");
+        break;
+    case Exit_Code::CODE_ERROR_OCCURED:
+        string_append_formated(string, "CODE_ERROR_OCCURED");
         break;
     default: panic("Hey");
     }
@@ -346,6 +355,9 @@ void compiler_compile(Compiler* compiler, String source_code, bool generate_code
     type_system_add_primitives(&compiler->type_system, &compiler->identifier_pool);
     ast_parser_reset(&compiler->parser, &compiler->identifier_pool);
     semantic_analyser_reset(&compiler->analyser, compiler);
+    ir_generator_reset(&compiler->ir_generator, compiler);
+    bytecode_generator_reset(&compiler->bytecode_generator, compiler);
+    bytecode_interpreter_reset(&compiler->bytecode_interpreter, compiler);
 
     double timer_compile_start = timer_current_time_in_seconds(compiler->timer);
 
@@ -363,13 +375,14 @@ void compiler_compile(Compiler* compiler, String source_code, bool generate_code
 
     double time_start_ir_gen = timer_current_time_in_seconds(compiler->timer);
     if (do_ir_gen) {
-        ir_generator_generate(&compiler->ir_generator, compiler);
+        ir_generator_generate_queue_and_generate_all(&compiler->ir_generator);
     }
     double time_end_ir_gen = timer_current_time_in_seconds(compiler->timer);
 
     double time_start_codegen = timer_current_time_in_seconds(compiler->timer);
     if (do_bytecode_gen) {
-        bytecode_generator_generate(&compiler->bytecode_generator, compiler);
+        //bytecode_generator_generate(&compiler->bytecode_generator, compiler);
+        bytecode_generator_set_entry_function(&compiler->bytecode_generator);
     }
     double time_end_codegen = timer_current_time_in_seconds(compiler->timer);
 
@@ -477,7 +490,8 @@ Exit_Code compiler_execute(Compiler* compiler)
         else
         {
             double bytecode_start = timer_current_time_in_seconds(compiler->timer);
-            bytecode_interpreter_execute_main(&compiler->bytecode_interpreter, compiler);
+            compiler->bytecode_interpreter.instruction_limit_enabled = false;
+            bytecode_interpreter_run_function(&compiler->bytecode_interpreter, compiler->bytecode_generator.entry_point_index);
             double bytecode_end = timer_current_time_in_seconds(compiler->timer);
             float bytecode_time = (bytecode_end - bytecode_start);
             return compiler->bytecode_interpreter.exit_code;

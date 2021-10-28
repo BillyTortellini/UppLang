@@ -42,6 +42,7 @@ struct C_Generator
 {
     Compiler* compiler;
     IR_Program* program;
+    String section_enum_implementations;
     String section_string_data;
     String section_struct_prototypes;
     String section_struct_implementations;

@@ -1,3 +1,255 @@
+Next features:
+---------
+ * Unions
+ * Pointer usage rework
+ * Auto casts, named breaks/continues, multiple returns, Array-Initialization Syntax
+ * Constant variables
+ * Testcases for all new features
+ * Type-Information in language, type_of, Any-Type
+ * Tagged enums, anonymous types (Structs, enums, unions), type constructor
+ * Rework templates to use comptime values
+ * Iteration (Macros?)
+ * Generating source code with runtime code execution
+
+Syntax what operators are in use:
+---------------------------------
+    +   ... Addition
+    -   ... Subtraction, Unary negate
+    *   ... Multiplication/Address Of/Pointer type constructor
+    &   ... Dereference
+    /   ... Division
+    %   ... Modulo
+    !   ... Logical not
+
+    <   ... Less 
+    >   ... Greater
+    <=  ... Less Equals
+    >=  ... Greater Equals
+    ==  ... Equals
+    !=  ... Not Equals
+
+    &&  ... Logical And
+    ||  ... Logical Or
+
+    ()  ... Function call/Function definition
+    []  ... Array definition/Index operation
+    {}  ... Code Block operation
+    <>  ... Template argument parenthesis
+
+    "   ... String delimiters
+    #   ... Extern declarations (#load)
+    .   ... Member access/Auto access
+    ;   ... Statement delimiter
+    ,   ... List item delimiter
+
+    :   ... Variable definition
+    :=  ... Define-Infer
+    ::  ... Constant Definition
+    ->  ... Function return value
+
+    //  ... Single line comment
+    /*  ... Multiline comment start
+    */  ... Multiline comment end
+
+Currently unused but plans exist:
+    _   ... Unused value in multiple returns
+    '   ... Char delimiter (Not implemented yet)
+    $   ... Fast Template declaration (Not implemented yet)
+    @   ... Annotations
+    \   ... String delimiters
+
+Open Characters and normal usage
+    ~   ... Bitwise Negate
+    ^   ... Bitwise XOR
+    &   ... Bitwise And
+    |   ... Bitwise Or
+    >>  ... Bitshift right
+    <<  ... Bitshift left
+    ?   ... Ternary Operator
+    °   ... Nothing
+    
+
+
+
+Design: Enums, Switches and Unions
+----------------------------------
+Questions:
+    1. How are values referenced in enums (Color::GREEN)
+        Usually this results in a symbol lookup, and it errors when Color is not a module.
+        This usually also returns a symbol, and the type of the symbol is then looked up.
+        In theory I could introduce a new symbol type, and add symbol_tables to 
+    2. How is the union tag handled
+    3. Syntax overlaps with :: and assignment syntax
+
+Options for enum references:
+    * New Symbol type, and handle lookup in symbol table
+    * Return something different in Identifier_Lookup
+    * Use . Syntax for enum references: Color.Green; Color->Green  Color
+
+
+There is a problem with the current Syntax, more specifically with the :: Operator.
+id :: struct | enum | union | module | (function_params) -> ret_val
+
+x: struct {a: int; b: float;};
+x.a = 15;
+x.b = 3.7f;
+
+enums:
+Color :: enum
+{
+    RED = 0,
+    BLUE,
+    GREEN,
+    YELLOW = 5,
+    WHATEVER
+}
+
+x: Color;
+x = Color::RED;
+x = .RED; // What i probably want
+x = .Red;
+
+switch x
+{
+    Color::RED:
+    Color::GREEN: 
+        #fall_through;
+    Color::YELLOW:
+        if Color::is_primary(x) break;
+    .RED: 
+    else: logg("Not a known color!");
+}
+If the switch does not contain an else, and we are switching an enum, it is exhaustive, meaning all values need to be checked, 
+otherwise it results in an Compile-Error. 
+But what about integers? 
+
+Unions:
+For almost all of my usecases, I want to have tagged unions, but for compatability with C
+I probably also want to have untagged unions in the language...
+
+So I want a syntax where this works more easily, meaning;
+ * I dont want to create an enum
+ * I want switch integration
+
+Color :: enum
+{
+    RED :: 1;
+    BLUE :: 3,
+    GREEN,
+    YELLOW = 5,
+    WHATEVER
+}
+
+States :: bitfield
+{
+    VALID = 1;
+    INVALID;
+    SOMETHING;
+    MADNESS;
+}
+
+Expr :: union
+{
+    binary_op: struct { // This struct is not anonymous, it is bound to the name Expr::binary_op
+        op_type: Binary_Operation_Type;
+        operand_left: *Expression;
+        operand_right: *Expression;
+    }
+    variable_read: *Variable;
+    function_pointer_read: *function;
+}
+
+e: Expr;
+e.tag = Expr::binary_op;
+e.binary_operation.op_type = Binary_Operation_Type::ADDITION;
+e.binary_operation.operand_left = left_op;
+e.binary_operation.operand_right = right_op;
+
+bin_op: type_of(Expr::binary_op);
+
+
+// But maybe I also want anonymous structs, so i can do stuff like
+x: struct{x: int; y: int; z:int};
+y: enum{x, y, z};
+z: union {r: int; g: int; b: int};
+
+// I maybe also want an initialization syntax for structs
+vec4 :: struct {r, g, b: float;}
+
+x: vec4 = vec4{r = 5; g = 5; b = 5;};
+
+Then i could have
+Expr :: struct
+{
+    expr_num: int; // Everyone has this
+    options: union 
+    {
+        binary_operation: struct {
+            op_type: Binary_Operation_Type;
+            operand_left: *Expression;
+            operand_right: *Expression;
+        };
+        variable_read: *Variable;
+        function_pointer_read: *Function;
+    };
+}
+
+e: Expr;
+e.options.tag = Expr::options::Tag::binary_operation;
+e.options.binary_operation.op_type = 5;
+
+C_Union: union #NoTag
+{
+    x: Var;
+    y: int;
+    z: bool;
+}
+
+How is the union type set?
+
+smth: Expr::Binary_Operation;
+smth.op_type = ...
+e.binary_operation = smth.binary_operation;
+
+switch e
+{
+    Expr::Binary_Operation:
+        if (e.binary_operation.op_type) ...
+            result = e.binary_operation.operand_left + e.binary_operation.operand_right
+    Expr::Variable_Read(var):
+        // Var should be a pointer to Expr::variable_read
+        add_reference(var, Reference::READ);
+    .function_pointer_read(func):
+}
+
+struct ModTree_Expression
+{
+    ModTree_Expression_Type expression_type;
+    Type_Signature* result_type;
+    Expression_Value value;
+    union 
+    {
+        struct 
+        {
+            ModTree_Binary_Operation_Type operation_type;
+            ModTree_Expression* left_operand;
+            ModTree_Expression* right_operand;
+        } binary_operation;
+        struct 
+        {
+            ModTree_Unary_Operation_Type operation_type;
+            ModTree_Expression* operand;
+        } unary_operation;
+
+
+U :: union
+{
+    
+}
+
+
+
+
 Ideas that just come to mind:
 -----------------------------
 PrintF Debugging could be replaced with memory visualizer
@@ -12,6 +264,7 @@ Always cast to appropriate pointer type/take reference, but have special syntax 
 Automated parameter deduction (Like macros taking names from outer scope)
 Automated module/Enum scope finding (node->type == .UNDEFINED)
 break continue with identifiers, named scopes, break to named scope
+Meta-Programming code modifications may be easy if executed code must be unmodified, and only finaly code is modified
 
 Code Ideas:
 -----------
@@ -26,135 +279,6 @@ Functions may just be compile time known function pointers?
 Hardcoded functions should be removed at some point
 AST_Node only really needs type and child information for processing, parent and tokenrange could be in another array and multiple structures could exist for this
 
-TODO NOW:
----------
- * Compile time known expressions 
- * Compile time code execution
-
- * New with [] should return a pointer to a slice
- * Array bounds checking would be good
- * Type-Information in Language
-
-Some questions:
----------------
-
-Where do I need compile time known expressions?
- - Static array size
- - Template values (Templates are basically baking values into a given structure)
-
-Tactics:
---------
- 1. Bake for function execution (Requires compile time code execution)
- 2. Type access inside language
- 3. Maybe switch function calls to compile time known pointers and replace types with compile time known expressions
- 4. Template parameters as compile time known things
-
-Plan:
-    * Create anonymous function for bake
-    * Find dependencies
-    * Compile everything that depends on the funciton
-    * Run the function
-
-Analysis_Workload Code Block fucking sucks if i think about it...
-I only want one workload, having 
-
-Why I need to be carefull when doing code blocks:
-    - Flow analysis
-    - Defer blocks at scope end
-    - No recursion, because of dependency system
-    - Requires ability to add blocks (Ifs true, if false, anonymous, while-body, defers)
-
-Final bake syntax:
-    #bake<int> {Code block returning something}
-
-Lets start with the bake syntax: #bake {//Code block returning i32;}
-
-  - Parser:
-        Needs to parser #bake statement_block
-
-  - Analyser:
-        When encountered, the expressions creates a new code workload (Code inside the bake)
-        and waits (Returns dependency) for it to finish. It also stores the AST_Node and current Code_Block* inside a hashmap to a ModTree_Function.
-        When finished, the expression invokes
-        analyser_compile_and_run_no_params_function (Which may again return a dependency, or an error, or it returns an expression_value)
-        If it runs successfully, set the expression value and return.
-
-        Later: 
-        When bake has a return type (#bake<int>), then the type must be trivially constructible, meaning that it contains no references.
-
-    - Tracking dependencies of functions:
-        The dependencies in question are:
-         * Type-Size dependencies (All used variables must have a known type size)
-         * Function calls to other functions
-         * Taking function pointer references
-         * All other functions must be finished
-         * Global variable reads (Also taking reference to global variables)
-        But maybe I want to go one step further and just track all dependencies of symbols
-
-    - Compile_And_Run_Function
-        At first I need to check if all the dependencies of the function are finished, if not, return dependency.
-        If they are, I need to pass these functions + globals to IR_Code.
-        IR_Code should keep track of what has already been added, and have a flush function that generates the appropriate bytecode
-        We then also need a mapping from ir-function to bytecode function
-        Also there must not be any compile errors, otherwise I can just stop here
-
-    - IR_Code + Bytecode generator + interpreter:
-        Must be able to partially generate bytecode for single functions and also
-        execute in a partially finished state
-
-    ??? What about global initialization ???
-        Every global variable may only have a single initialization statement, which I can execute
-        
-
-
-
-How I want to implement Type-Interfaces (Rust-Traits)
-    pub trait Printable {
-        fn summarize(&self) -> String;
-        fn print(&self) -> String;
-    }
-    impl Printable for Tweet {
-        fn summarize(&self) -> String {
-            format("...", self.username, self.content)
-        }
-        fn print(&self) -> String {
-            format("...", self.full_name, self.password, self.age, self.content)
-        }
-    }
-    fn print_printable(item: &impl Summary) {
-        item.print();
-        item.summarize();
-    }
-
-What I will have after the having actual arguments in my templates
-    print_printable<T: Type, summarize_fn: (*T) -> String, print_fn: (*T) -> String> (T* item)  
-    {
-        summarize_fn(item);
-        print_fn(item);
-    }
-
-But what I want would be:
-    Printable :: struct
-    {
-        summarize: (*$T) -> string;
-        print: (*T) -> string;
-    }
-    print_printable<printable: Printable<$T>> :: (item: T) 
-    {
-        printable.summarize(T);
-        printable.print(T);
-    }
-    useage :: ()
-    {
-        player := Player::make("Fred", 15, true);
-        print_printable<Player::printable>(*player);
-
-        // Maybe I could have something like
-        using Player::printable; // A printable with value T exists now, so when needed, the compiler can use this one
-        print_printable(*player);
-        print_printable(*player2);
-        print_printable(*player3);
-    }
 
 
 
@@ -236,6 +360,8 @@ More Language features to implement:
  * Tag-System (For constant values, but also other stuff)
    ------- These features are for convenience, but they are not top priority ------
  * Any-Type and Type access (Varargs in this language, maybe use this for printf)
+ * New with [] should return a pointer to a slice
+ * Array bounds checking would be good
  * Macro-System
  * Iterators
  * Location-Information (Filename, line_number...)

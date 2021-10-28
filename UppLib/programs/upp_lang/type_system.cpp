@@ -54,6 +54,23 @@ void type_signature_append_to_string_with_children(String* string, Type_Signatur
         default: panic("Heyo");
         }
         break;
+    case Signature_Type::ENUM:
+    {
+        assert(signature->options.enum_type.id != 0, "HEY");
+        string_append_formated(string, signature->options.enum_type.id->characters);
+        if (print_child)
+        {
+            string_append_formated(string, "{");
+            for (int i = 0; i < signature->options.enum_type.members.size; i++) {
+                string_append_formated(string, "%s(%d)", signature->options.enum_type.members[i].id->characters, signature->options.enum_type.members[i].value);
+                if (i != signature->options.enum_type.members.size - 1) {
+                    string_append_formated(string, ", ");
+                }
+            }
+            string_append_formated(string, "}");
+        }
+        break;
+    }
     case Signature_Type::STRUCT:
     {
         assert(signature->options.structure.id != 0, "HEY");
@@ -191,7 +208,7 @@ void type_signature_append_value_to_string(Type_Signature* type, byte* value_ptr
                 default: panic("HEY");
                 }
             }
-            else 
+            else
             {
                 switch (type->size)
                 {
@@ -353,18 +370,19 @@ Type_Signature* type_system_register_type(Type_System* system, Type_Signature si
                 {
                 case Signature_Type::VOID_TYPE: are_equal = true; break;
                 case Signature_Type::ERROR_TYPE: are_equal = true; break;
-                case Signature_Type::PRIMITIVE: are_equal = sig1->options.primitive.type == sig2->options.primitive.type && 
+                case Signature_Type::PRIMITIVE: are_equal = sig1->options.primitive.type == sig2->options.primitive.type &&
                     sig1->options.primitive.is_signed == sig2->options.primitive.is_signed && sig1->size == sig2->size; break;
                 case Signature_Type::POINTER: are_equal = sig1->options.pointer_child == sig2->options.pointer_child; break;
                 case Signature_Type::STRUCT: are_equal = false; break;
+                case Signature_Type::ENUM: are_equal = false; break;
                 case Signature_Type::TEMPLATE_TYPE: are_equal = false; break;
-                case Signature_Type::ARRAY: are_equal = sig1->options.array.element_type == sig2->options.array.element_type && 
+                case Signature_Type::ARRAY: are_equal = sig1->options.array.element_type == sig2->options.array.element_type &&
                     sig1->options.array.element_count == sig2->options.array.element_count; break;
                 case Signature_Type::SLICE: are_equal = sig1->options.array.element_type == sig2->options.array.element_type; break;
-                case Signature_Type::FUNCTION: 
+                case Signature_Type::FUNCTION:
                 {
                     are_equal = true;
-                    if (sig1->options.function.return_type != sig2->options.function.return_type || 
+                    if (sig1->options.function.return_type != sig2->options.function.return_type ||
                         sig1->options.function.parameter_types.size != sig2->options.function.parameter_types.size) {
                         are_equal = false; break;
                     }
@@ -440,14 +458,26 @@ Type_Signature* type_system_make_template(Type_System* system, String* id)
     return type_system_register_type(system, result);
 }
 
-Type_Signature* type_system_make_struct_empty(Type_System* system, AST_Node* struct_node)
+Type_Signature* type_system_make_struct_empty(Type_System* system, AST_Node* struct_node, bool is_union)
 {
     Type_Signature result;
     result.type = Signature_Type::STRUCT;
     result.size = 0;
     result.alignment = 0;
     result.options.structure.id = struct_node->id;
+    result.options.structure.is_union = is_union;
     result.options.structure.members = dynamic_array_create_empty<Struct_Member>(struct_node->child_count);
+    return type_system_register_type(system, result);
+}
+
+Type_Signature* type_system_make_enum_empty(Type_System* system, String* id)
+{
+    Type_Signature result;
+    result.type = Signature_Type::ENUM;
+    result.size = 0;
+    result.alignment = 0;
+    result.options.enum_type.id = id;
+    result.options.enum_type.members = dynamic_array_create_empty<Enum_Member>(3);
     return type_system_register_type(system, result);
 }
 
@@ -467,4 +497,12 @@ void type_system_print(Type_System* system)
     logg("%s", msg.characters);
 }
 
-
+Optional<Enum_Member> enum_type_find_member_by_value(Type_Signature* enum_type, int value)
+{
+    assert(enum_type->type == Signature_Type::ENUM, "");
+    for (int i = 0; i < enum_type->options.enum_type.members.size; i++) {
+        Enum_Member member = enum_type->options.enum_type.members[i];
+        if (member.value == value) return optional_make_success(member);
+    }
+    return optional_make_failure<Enum_Member>();
+}

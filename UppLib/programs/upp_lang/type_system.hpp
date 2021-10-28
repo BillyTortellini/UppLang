@@ -19,6 +19,7 @@ enum class Signature_Type
     POINTER,
     FUNCTION,
     STRUCT,
+    ENUM,
     ARRAY, // Array with compile-time known size, like [5]int
     SLICE, // Array with dynamic size, []int
     TEMPLATE_TYPE,
@@ -32,6 +33,12 @@ struct Struct_Member
     Type_Signature* type;
     int offset;
     String* id;
+};
+
+struct Enum_Member
+{
+    String* id;
+    int value;
 };
 
 struct Type_Signature
@@ -62,7 +69,12 @@ struct Type_Signature
         struct {
             Dynamic_Array<Struct_Member> members;
             String* id;
+            bool is_union;
         } structure;
+        struct {
+            Dynamic_Array<Enum_Member> members;
+            String* id;
+        } enum_type;
         String* template_id;
     } options;
 };
@@ -121,5 +133,7 @@ Type_Signature* type_system_make_slice(Type_System* system, Type_Signature* elem
 Type_Signature* type_system_make_function(Type_System* system, Dynamic_Array<Type_Signature*> parameter_types, Type_Signature* return_type);
 Type_Signature* type_system_make_template(Type_System* system, String* id);
 struct AST_Node;
-Type_Signature* type_system_make_struct_empty(Type_System* system, AST_Node* struct_node);
+Type_Signature* type_system_make_struct_empty(Type_System* system, AST_Node* struct_node, bool is_union);
+Type_Signature* type_system_make_enum_empty(Type_System* system, String* id);
 void type_system_print(Type_System* system);
+Optional<Enum_Member> enum_type_find_member_by_value(Type_Signature* enum_type, int value);

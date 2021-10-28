@@ -162,6 +162,7 @@ Exit_Code c_compiler_execute(C_Compiler* compiler)
 C_Generator c_generator_create()
 {
     C_Generator result;
+    result.section_enum_implementations = string_create_empty(4096);
     result.section_struct_prototypes = string_create_empty(4096);
     result.section_struct_implementations = string_create_empty(4096);
     result.section_function_prototypes = string_create_empty(4096);
@@ -209,6 +210,7 @@ void string_add_indentation(String* str, int indentation)
 
 void c_generator_destroy(C_Generator* generator)
 {
+    string_destroy(&generator->section_enum_implementations);
     string_destroy(&generator->section_string_data);
     string_destroy(&generator->section_function_implementations);
     string_destroy(&generator->section_function_prototypes);
@@ -261,6 +263,18 @@ void c_generator_register_type_name(C_Generator* generator, Type_Signature* type
     String type_name = string_create_empty(32);
     switch (type->type)
     {
+    case Signature_Type::ENUM: 
+    {
+        string_append_formated(&type_name, "Enum_%d_%s", generator->name_counter, type->options.enum_type.id->characters);
+        generator->name_counter++;
+        string_append_formated(&generator->section_enum_implementations, "enum class %s\n{\n", type_name.characters);
+        for (int i = 0; i < type->options.enum_type.members.size; i++) {
+            Enum_Member* member = &type->options.enum_type.members[i];
+            string_append_formated(&generator->section_enum_implementations, "    %s = %d,\n", member->id->characters, member->value);
+        }
+        string_append_formated(&generator->section_enum_implementations, "};");
+        break;
+    }
     case Signature_Type::ARRAY: {
         string_append_formated(&type_name, "Array_Sized_%d", generator->name_counter);
         generator->name_counter++;
@@ -633,6 +647,30 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
             string_append_formated(output, ");\n");
             break;
         }
+        case IR_Instruction_Type::SWITCH:
+        {
+            IR_Instruction_Switch* switch_instr = &instr->options.switch_instr;
+            string_append_formated(output, "switch ((int) ");
+            c_generator_output_data_access(generator, output, switch_instr->condition_access);
+            string_append_formated(output, ")\n");
+            string_add_indentation(output, indentation_level);
+            string_append_formated(output, "{\n");
+            for (int i = 0; i < switch_instr->cases.size; i++) 
+            {
+                IR_Switch_Case* switch_case = &switch_instr->cases[i];
+                string_add_indentation(output, indentation_level);
+                string_append_formated(output, "case %d: \n", switch_case->value);
+                c_generator_output_code_block(generator, output, switch_case->block, indentation_level + 1, false);
+                string_add_indentation(output, indentation_level);
+                string_append_formated(output, "break;\n");
+            }
+            string_add_indentation(output, indentation_level);
+            string_append_formated(output, "default:\n");
+            c_generator_output_code_block(generator, output, switch_instr->default_block, indentation_level + 1, false);
+            string_add_indentation(output, indentation_level);
+            string_append_formated(output, "}\n");
+            break;
+        }
         case IR_Instruction_Type::IF:
         {
             IR_Instruction_If* if_instr = &instr->options.if_instr;
@@ -719,6 +757,8 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
                 string_append_formated(output, ".size = %d;\n", ir_data_access_get_type(&cast->source)->options.array.element_count);
                 break;
             }
+            case ModTree_Cast_Type::ENUM_TO_INT:
+            case ModTree_Cast_Type::INT_TO_ENUM:
             case ModTree_Cast_Type::INTEGERS:
             case ModTree_Cast_Type::FLOATS:
             case ModTree_Cast_Type::FLOAT_TO_INT:
@@ -843,6 +883,7 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
     {
         generator->compiler = compiler;
         generator->program = compiler->ir_generator.program;
+        string_reset(&generator->section_enum_implementations);
         string_reset(&generator->section_function_implementations);
         string_reset(&generator->section_function_prototypes);
         string_reset(&generator->section_type_declarations);
@@ -1112,6 +1153,8 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
         string_append_string(&source_code, &section_extern_includes);
         string_append_formated(&source_code, "\n/* STRING_DATA\n----------------*/\n");
         string_append_string(&source_code, &generator->section_string_data);
+        string_append_formated(&source_code, "\n/* ENUMS\n----------------*/\n");
+        string_append_string(&source_code, &generator->section_enum_implementations);
         string_append_formated(&source_code, "\n/* STRUCT_PROTOTYPES\n----------------*/\n");
         string_append_string(&source_code, &generator->section_struct_prototypes);
         string_append_formated(&source_code, "\n/* TYPE_DECLARATIONS\n------------------*/\n");
