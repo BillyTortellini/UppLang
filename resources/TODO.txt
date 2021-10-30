@@ -1,15 +1,51 @@
 Next features:
----------
- * Unions
- * Pointer usage rework
- * Auto casts, named breaks/continues, multiple returns, Array-Initialization Syntax
- * Constant variables
- * Testcases for all new features
+--------------
+ * Multiple returns, Array-Initialization Syntax
+ * Constant/Compile-time-known variable syntax, parameters constant
+ * Testcases for all new features (Expression-Context, Auto cast, Unions, Switches, Named breaks/continues)
  * Type-Information in language, type_of, Any-Type
  * Tagged enums, anonymous types (Structs, enums, unions), type constructor
  * Rework templates to use comptime values
  * Iteration (Macros?)
  * Generating source code with runtime code execution
+
+
+
+Thoughts on pointers:
+---------------------
+Pointers are essential in Computer programming, and I want them in the language
+Null seems to be an issue for a lot of programmers, but this should be handled by the static analyzor
+Pointers are used for call by reference,
+Pointers are also used to have multiple return values
+Pointers are also used to not pass huge structures by value, since this requires copying
+
+If you think about function parameters as either in, out or in_out parameters,
+pointers in C basically combine all of those into one feature.
+This makes some APIs kinda shitty, because seeing a pointer does not provide the user
+information about nullable, if its an in, out or in_out value. 
+
+In Upp I think I want a distinction of these type by having the following:
+ - Non-Pointer parameters are constant (So that huge structs can be passed internally by pointer without requiring a copy), 
+    although I have to think about constant pointers inside of structs
+ - Pointer parameters could in theory be all types of parameters (in, out, in_out), but should only be used for in_out
+    which is definitly something that is gonna be required quite often
+ - With multiple return values there is no need to use pointers for return values
+
+In C pointers are also used as arrays, with pointer arithmetic being a thing (- and + being defined for pointers)
+This also leads to the use of stacked pointers, (char** argv, where argv is actually an array to char*, so []String in my language)
+The operations required on pointers in C are:
+    - Address-Of    int* xp = &x;
+    - Dereference   *xp = *xp + 1;
+    - Array-Access  item = xp[2];
+    - Arithmetic    item = *(xp + 2);
+                    ip   = xp + 2;
+                    diff = ip - x;
+
+I would like to be pointers to be as interchangable with values as possible, to do that I want
+to pass around the expected_type of expressions 
+
+
+
 
 Syntax what operators are in use:
 ---------------------------------
@@ -68,184 +104,6 @@ Open Characters and normal usage
     ?   ... Ternary Operator
     °   ... Nothing
     
-
-
-
-Design: Enums, Switches and Unions
-----------------------------------
-Questions:
-    1. How are values referenced in enums (Color::GREEN)
-        Usually this results in a symbol lookup, and it errors when Color is not a module.
-        This usually also returns a symbol, and the type of the symbol is then looked up.
-        In theory I could introduce a new symbol type, and add symbol_tables to 
-    2. How is the union tag handled
-    3. Syntax overlaps with :: and assignment syntax
-
-Options for enum references:
-    * New Symbol type, and handle lookup in symbol table
-    * Return something different in Identifier_Lookup
-    * Use . Syntax for enum references: Color.Green; Color->Green  Color
-
-
-There is a problem with the current Syntax, more specifically with the :: Operator.
-id :: struct | enum | union | module | (function_params) -> ret_val
-
-x: struct {a: int; b: float;};
-x.a = 15;
-x.b = 3.7f;
-
-enums:
-Color :: enum
-{
-    RED = 0,
-    BLUE,
-    GREEN,
-    YELLOW = 5,
-    WHATEVER
-}
-
-x: Color;
-x = Color::RED;
-x = .RED; // What i probably want
-x = .Red;
-
-switch x
-{
-    Color::RED:
-    Color::GREEN: 
-        #fall_through;
-    Color::YELLOW:
-        if Color::is_primary(x) break;
-    .RED: 
-    else: logg("Not a known color!");
-}
-If the switch does not contain an else, and we are switching an enum, it is exhaustive, meaning all values need to be checked, 
-otherwise it results in an Compile-Error. 
-But what about integers? 
-
-Unions:
-For almost all of my usecases, I want to have tagged unions, but for compatability with C
-I probably also want to have untagged unions in the language...
-
-So I want a syntax where this works more easily, meaning;
- * I dont want to create an enum
- * I want switch integration
-
-Color :: enum
-{
-    RED :: 1;
-    BLUE :: 3,
-    GREEN,
-    YELLOW = 5,
-    WHATEVER
-}
-
-States :: bitfield
-{
-    VALID = 1;
-    INVALID;
-    SOMETHING;
-    MADNESS;
-}
-
-Expr :: union
-{
-    binary_op: struct { // This struct is not anonymous, it is bound to the name Expr::binary_op
-        op_type: Binary_Operation_Type;
-        operand_left: *Expression;
-        operand_right: *Expression;
-    }
-    variable_read: *Variable;
-    function_pointer_read: *function;
-}
-
-e: Expr;
-e.tag = Expr::binary_op;
-e.binary_operation.op_type = Binary_Operation_Type::ADDITION;
-e.binary_operation.operand_left = left_op;
-e.binary_operation.operand_right = right_op;
-
-bin_op: type_of(Expr::binary_op);
-
-
-// But maybe I also want anonymous structs, so i can do stuff like
-x: struct{x: int; y: int; z:int};
-y: enum{x, y, z};
-z: union {r: int; g: int; b: int};
-
-// I maybe also want an initialization syntax for structs
-vec4 :: struct {r, g, b: float;}
-
-x: vec4 = vec4{r = 5; g = 5; b = 5;};
-
-Then i could have
-Expr :: struct
-{
-    expr_num: int; // Everyone has this
-    options: union 
-    {
-        binary_operation: struct {
-            op_type: Binary_Operation_Type;
-            operand_left: *Expression;
-            operand_right: *Expression;
-        };
-        variable_read: *Variable;
-        function_pointer_read: *Function;
-    };
-}
-
-e: Expr;
-e.options.tag = Expr::options::Tag::binary_operation;
-e.options.binary_operation.op_type = 5;
-
-C_Union: union #NoTag
-{
-    x: Var;
-    y: int;
-    z: bool;
-}
-
-How is the union type set?
-
-smth: Expr::Binary_Operation;
-smth.op_type = ...
-e.binary_operation = smth.binary_operation;
-
-switch e
-{
-    Expr::Binary_Operation:
-        if (e.binary_operation.op_type) ...
-            result = e.binary_operation.operand_left + e.binary_operation.operand_right
-    Expr::Variable_Read(var):
-        // Var should be a pointer to Expr::variable_read
-        add_reference(var, Reference::READ);
-    .function_pointer_read(func):
-}
-
-struct ModTree_Expression
-{
-    ModTree_Expression_Type expression_type;
-    Type_Signature* result_type;
-    Expression_Value value;
-    union 
-    {
-        struct 
-        {
-            ModTree_Binary_Operation_Type operation_type;
-            ModTree_Expression* left_operand;
-            ModTree_Expression* right_operand;
-        } binary_operation;
-        struct 
-        {
-            ModTree_Unary_Operation_Type operation_type;
-            ModTree_Expression* operand;
-        } unary_operation;
-
-
-U :: union
-{
-    
-}
 
 
 

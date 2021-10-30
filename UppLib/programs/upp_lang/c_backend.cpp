@@ -702,12 +702,12 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
             c_generator_output_code_block(generator, output, instr->options.block, indentation_level + 1, false);
             break;
         }
-        case IR_Instruction_Type::BREAK: {
-            string_append_formated(output, "break;\n");
+        case IR_Instruction_Type::GOTO: {
+            string_append_formated(output, "goto upp_label_%d;\n", instr->options.label_index);
             break;
         }
-        case IR_Instruction_Type::CONTINUE: {
-            string_append_formated(output, "continue;\n");
+        case IR_Instruction_Type::LABEL: {
+            string_append_formated(output, "upp_label_%d:\n", instr->options.label_index);
             break;
         }
         case IR_Instruction_Type::RETURN: {

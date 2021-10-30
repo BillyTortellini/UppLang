@@ -27,53 +27,12 @@ ModTree_Variable modtree_variable_make(ModTree_Variable_Origin origin, Symbol* s
     return var;
 }
 
-Expression_Value expression_value_make_unknown() {
-    Expression_Value result;
-    result.signature = 0;
-    result.data = 0;
-    return result;
-}
-
-Expression_Value expression_value_make_type(Semantic_Analyser* analyser, Type_Signature* signature) {
-    Expression_Value result;
-    result.signature = signature;
-    if (!(signature->type == Signature_Type::PRIMITIVE ||
-        (signature->type == Signature_Type::POINTER && signature->options.pointer_child->type == Signature_Type::FUNCTION))) return expression_value_make_unknown();
-    result.data = stack_allocator_allocate_size(&analyser->allocator_values, signature->size, signature->alignment);
-    return result;
-}
-
-void constant_analysis_assign_variable_value(ModTree_Variable* variable, ModTree_Expression* expr, ModTree_Block* write_block)
+ModTree_Function* modtree_block_get_function(ModTree_Block* block)
 {
-    if (expr->value.data == 0) return;
-    if (variable->origin.type != ModTree_Variable_Origin_Type::LOCAL) return;
-    if (variable->value.address_was_taken) return;
-    variable->value.last_write_block = write_block;
-    variable->value.value = expr->value; // Is this legal?
-}
-
-void constant_analysis_assign_value(ModTree_Expression* left_expr, ModTree_Expression* right_expr, ModTree_Block* write_block)
-{
-    if (right_expr->value.data == 0) return;
-    if (left_expr->expression_type != ModTree_Expression_Type::VARIABLE_READ) return;
-    ModTree_Variable* variable = left_expr->options.variable_read;
-    if (variable->value.address_was_taken) return;
-    variable->value.value.data = right_expr->value.data;
-    variable->value.last_write_block = write_block;
-}
-
-Expression_Value constant_analysis_get_variable_value(ModTree_Variable* variable, ModTree_Block* read_block)
-{
-    if (variable->value.value.data == 0) return variable->value.value;
-    if (variable->value.last_write_block != 0 && variable->value.last_write_block == read_block) return variable->value.value;
-    return expression_value_make_unknown();
-}
-
-void constant_analysis_take_address_of(ModTree_Variable* variable) 
-{
-    variable->value.address_was_taken = true;
-    variable->value.last_write_block = 0;
-    variable->value.value.data = 0;
+    while (block->type != Block_Type::FUNCTION_BODY) {
+        block = block->origin.parent;
+    }
+    return block->origin.function;
 }
 
 void modtree_block_destroy(ModTree_Block* block);
@@ -534,14 +493,6 @@ Symbol_Reference symbol_reference_make(Usage_Type type, AST_Node* node)
     return reference;
 }
 
-ModTree_Function* modtree_block_get_function(ModTree_Block* block)
-{
-    while (block->type != Block_Type::FUNCTION_BODY) {
-        block = block->origin.parent;
-    }
-    return block->origin.function;
-}
-
 void symbol_add_reference(Semantic_Analyser* analyser, Symbol* symbol, Symbol_Reference reference) 
 {
     if (reference.type == Usage_Type::IGNORE_REFERENCE) return;
@@ -652,7 +603,79 @@ Symbol* symbol_table_define_symbol(
 /*
     SEMANTIC ANALYSER
 */
+// Constant Analysis
+Expression_Value expression_value_make_unknown() {
+    Expression_Value result;
+    result.signature = 0;
+    result.data = 0;
+    return result;
+}
+
+Expression_Value expression_value_make_type(Semantic_Analyser* analyser, Type_Signature* signature) {
+    Expression_Value result;
+    result.signature = signature;
+    if (!(signature->type == Signature_Type::PRIMITIVE ||
+        (signature->type == Signature_Type::POINTER && signature->options.pointer_child->type == Signature_Type::FUNCTION))) return expression_value_make_unknown();
+    result.data = stack_allocator_allocate_size(&analyser->allocator_values, signature->size, signature->alignment);
+    return result;
+}
+
+void constant_analysis_assign_variable_value(ModTree_Variable* variable, ModTree_Expression* expr, ModTree_Block* write_block)
+{
+    if (expr->value.data == 0) return;
+    if (variable->origin.type != ModTree_Variable_Origin_Type::LOCAL) return;
+    if (variable->value.address_was_taken) return;
+    variable->value.last_write_block = write_block;
+    variable->value.value = expr->value; // Is this legal?
+}
+
+void constant_analysis_assign_value(ModTree_Expression* left_expr, ModTree_Expression* right_expr, ModTree_Block* write_block)
+{
+    if (right_expr->value.data == 0) return;
+    if (left_expr->expression_type != ModTree_Expression_Type::VARIABLE_READ) return;
+    ModTree_Variable* variable = left_expr->options.variable_read;
+    if (variable->value.address_was_taken) return;
+    variable->value.value.data = right_expr->value.data;
+    variable->value.last_write_block = write_block;
+}
+
+Expression_Value constant_analysis_get_variable_value(ModTree_Variable* variable, ModTree_Block* read_block)
+{
+    if (variable->value.value.data == 0) return variable->value.value;
+    if (variable->value.last_write_block != 0 && variable->value.last_write_block == read_block) return variable->value.value;
+    return expression_value_make_unknown();
+}
+
+void constant_analysis_take_address_of(ModTree_Variable* variable) 
+{
+    variable->value.address_was_taken = true;
+    variable->value.last_write_block = 0;
+    variable->value.value.data = 0;
+}
+
+
+
+
 // Helpers
+Expression_Context expression_context_make_known_type(Type_Signature* signature) {
+    Expression_Context context;
+    context.type = Expression_Context_Type::TYPE_KNOWN;
+    context.signature = signature;
+    return context;
+}
+
+Expression_Context expression_context_make_type(Expression_Context_Type type) {
+    Expression_Context context;
+    context.type = type;
+    return context;
+}
+
+Expression_Context expression_context_make_unknown() {
+    Expression_Context context;
+    context.type = Expression_Context_Type::UNKNOWN;
+    return context;
+}
+
 struct Type_Analysis_Result
 {
     Analysis_Result_Type type;
@@ -697,6 +720,18 @@ Workload_Dependency workload_dependency_make_type_size_unknown(Type_Signature* t
     dependency.type = Workload_Dependency_Type::TYPE_SIZE_UNKNOWN;
     dependency.options.type_signature = type;
     return dependency;
+}
+
+bool inside_defer(Analysis_Workload_Code* code)
+{
+    assert(code->block_queue.count != 0, "");
+    List_Node<Block_Analysis>* node = (List_Node<Block_Analysis>*)code->active_block;
+    while (node != 0)
+    {
+        if (node->value.block->type == Block_Type::DEFER_BLOCK) return true;
+        node = node->prev;
+    }
+    return false;
 }
 
 void semantic_analyser_log_error(Semantic_Analyser* analyser, Semantic_Error error) {
@@ -756,26 +791,31 @@ Expression_Analysis_Result expression_analysis_result_make_dependency(Workload_D
     return result;
 }
 
-void analysis_workload_code_block_add_block(Analysis_Workload_Code* code_workload, ModTree_Block* block, AST_Node* block_node)
+void analysis_workload_code_block_add_block(Semantic_Analyser* analyser, Analysis_Workload_Code* code_workload, ModTree_Block* block, AST_Node* block_node)
 {
     Block_Analysis progress;
     progress.block = block;
     progress.block_node = block_node;
     progress.current_statement_node = block_node->child_start;
     progress.block_flow = Block_Control_Flow::NO_RETURN;
-
-    progress.inside_defer = code_workload->active_block->inside_defer || block->type == Block_Type::DEFER_BLOCK;
-    progress.inside_loop = code_workload->active_block->inside_loop || block->type == Block_Type::WHILE_BODY;
     progress.defer_count_block_start = code_workload->defer_nodes.size;
-    if (block->type == Block_Type::WHILE_BODY) {
-        progress.defer_count_surrounding_loop = code_workload->defer_nodes.size;
-    }
-    else {
-        progress.defer_count_surrounding_loop = code_workload->active_block->defer_count_surrounding_loop;
-    }
-
     progress.last_analysed_node = 0;
     progress.last_analysed_statement = 0;
+
+    if (block_node->id != 0) 
+    {
+        List_Node<Block_Analysis>* tail = code_workload->block_queue.tail;
+        while (tail != 0) {
+            if (tail->value.block_node->id == block_node->id) {
+                Semantic_Error error;
+                error.error_node = block_node;
+                error.type = Semantic_Error_Type::LABEL_ALREADY_IN_USE;
+                semantic_analyser_log_error(analyser, error);
+                break;
+            }
+            tail = tail->prev;
+        }
+    }
 
     list_add_at_end(&code_workload->block_queue, progress);
 }
@@ -795,12 +835,7 @@ Analysis_Workload analysis_workload_make_code_block(ModTree_Block* block, AST_No
     progress.block_node = block_node;
     progress.current_statement_node = block_node->child_start;
     progress.block_flow = Block_Control_Flow::NO_RETURN;
-
-    progress.inside_defer = false;
-    progress.inside_loop = false;
     progress.defer_count_block_start = 0;
-    progress.defer_count_surrounding_loop = 0;
-
     progress.last_analysed_node = 0;
     progress.last_analysed_statement = 0;
     list_add_at_end(&workload.options.code_block.block_queue, progress);
@@ -1148,7 +1183,8 @@ Identifier_Analysis_Result semantic_analyser_analyse_identifier_node(
     return result;
 }
 
-Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyser* analyser, Symbol_Table* symbol_table, AST_Node* expression_node);
+Expression_Analysis_Result semantic_analyser_analyse_expression(
+    Semantic_Analyser* analyser, Symbol_Table* symbol_table, AST_Node* expression_node, Expression_Context context);
 Type_Analysis_Result semantic_analyser_analyse_type(Semantic_Analyser* analyser, Symbol_Table* table, AST_Node* type_node, Usage_Type usage)
 {
     Type_System* type_system = &analyser->compiler->type_system;
@@ -1206,7 +1242,7 @@ Type_Analysis_Result semantic_analyser_analyse_type(Semantic_Analyser* analyser,
     {
         AST_Node* node_array_size = type_node->child_start;
         int array_size = 1;
-        Expression_Analysis_Result result = semantic_analyser_analyse_expression(analyser, table, node_array_size);
+        Expression_Analysis_Result result = semantic_analyser_analyse_expression(analyser, table, node_array_size, expression_context_make_unknown());
         switch (result.type)
         {
         case Analysis_Result_Type::SUCCESS:
@@ -1546,7 +1582,7 @@ Partial_Compile_Result partial_compilation_compile_function_for_bake(Semantic_An
     return result;
 }
 
-Expression_Analysis_Result semantic_analyser_analyse_expression_without_value(Semantic_Analyser* analyser, Symbol_Table* symbol_table, AST_Node* expression_node)
+Expression_Analysis_Result semantic_analyser_analyse_expression_without_value(Semantic_Analyser* analyser, Symbol_Table* symbol_table, AST_Node* expression_node, Expression_Context context)
 {
     Type_System* type_system = &analyser->compiler->type_system;
     bool error_exit = false;
@@ -1558,7 +1594,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression_without_value(Se
     case AST_Node_Type::EXPRESSION_FUNCTION_CALL:
     {
         Expression_Analysis_Result identifier_expr_result = semantic_analyser_analyse_expression(
-            analyser, symbol_table, expression_node->child_start
+            analyser, symbol_table, expression_node->child_start, expression_context_make_type(Expression_Context_Type::FUNCTION_CALL)
         );
         if (identifier_expr_result.type != Analysis_Result_Type::SUCCESS) {
             return identifier_expr_result;
@@ -1625,7 +1661,9 @@ Expression_Analysis_Result semantic_analyser_analyse_expression_without_value(Se
         while (argument_node != 0 && i < signature->options.function.parameter_types.size)
         {
             SCOPE_EXIT(argument_node = argument_node->neighbor; i++;);
-            Expression_Analysis_Result expr_result = semantic_analyser_analyse_expression(analyser, symbol_table, argument_node);
+            Expression_Analysis_Result expr_result = semantic_analyser_analyse_expression(
+                analyser, symbol_table, argument_node, expression_context_make_known_type(signature->options.function.parameter_types[i])
+            );
             switch (expr_result.type)
             {
             case Analysis_Result_Type::DEPENDENCY: {
@@ -1718,23 +1756,43 @@ Expression_Analysis_Result semantic_analyser_analyse_expression_without_value(Se
     }
     case AST_Node_Type::EXPRESSION_CAST:
     {
-        Type_Analysis_Result cast_destination_result = semantic_analyser_analyse_type(
-            analyser, symbol_table, expression_node->child_start, Usage_Type::CAST_DESTINATION_TYPE
-        );
-        if (cast_destination_result.type != Analysis_Result_Type::SUCCESS)
+        Type_Signature* destination_type = 0;
+        AST_Node* argument_node = 0;
+        if (expression_node->child_count == 2)
         {
-            error_exit = true;
-            if (cast_destination_result.type == Analysis_Result_Type::ERROR_OCCURED) {
+            argument_node = expression_node->child_end;
+            Type_Analysis_Result cast_destination_result = semantic_analyser_analyse_type(
+                analyser, symbol_table, expression_node->child_start, Usage_Type::CAST_DESTINATION_TYPE
+            );
+            if (cast_destination_result.type != Analysis_Result_Type::SUCCESS)
+            {
+                error_exit = true;
+                if (cast_destination_result.type == Analysis_Result_Type::ERROR_OCCURED) {
+                    return expression_analysis_result_make_error();
+                }
+                if (cast_destination_result.type == Analysis_Result_Type::DEPENDENCY) {
+                    return expression_analysis_result_make_dependency(cast_destination_result.options.dependency);
+                }
+                panic("Should not happen");
+            }
+            destination_type = cast_destination_result.options.result_type;
+        }
+        else 
+        {
+            argument_node = expression_node->child_start;
+            if (context.type != Expression_Context_Type::TYPE_KNOWN) {
+                Semantic_Error error;
+                error.error_node = expression_node;
+                error.type = Semantic_Error_Type::AUTO_CAST_KNOWN_CONTEXT_IS_REQUIRED;
+                semantic_analyser_log_error(analyser, error);
                 return expression_analysis_result_make_error();
             }
-            if (cast_destination_result.type == Analysis_Result_Type::DEPENDENCY) {
-                return expression_analysis_result_make_dependency(cast_destination_result.options.dependency);
-            }
-            panic("Should not happen");
+            destination_type = context.signature;
         }
-        Type_Signature* destination_type = cast_destination_result.options.result_type;
 
-        Expression_Analysis_Result expr_result = semantic_analyser_analyse_expression(analyser, symbol_table, expression_node->child_end);
+        Expression_Analysis_Result expr_result = semantic_analyser_analyse_expression(
+            analyser, symbol_table, argument_node, expression_context_make_unknown() // Pass unknown, otherwise pointer to u64 Cast could cause errors
+        );
         if (expr_result.type != Analysis_Result_Type::SUCCESS) {
             error_exit = true;
             return expr_result;
@@ -1854,7 +1912,9 @@ Expression_Analysis_Result semantic_analyser_analyse_expression_without_value(Se
         if (is_array)
         {
             result.result_type = type_system_make_slice(&analyser->compiler->type_system, new_type);
-            Expression_Analysis_Result element_count_result = semantic_analyser_analyse_expression(analyser, symbol_table, expression_node->child_start);
+            Expression_Analysis_Result element_count_result = semantic_analyser_analyse_expression(
+                analyser, symbol_table, expression_node->child_start, expression_context_make_unknown()
+            );
             switch (element_count_result.type)
             {
             case Analysis_Result_Type::DEPENDENCY: {
@@ -1882,7 +1942,9 @@ Expression_Analysis_Result semantic_analyser_analyse_expression_without_value(Se
     }
     case AST_Node_Type::EXPRESSION_ARRAY_ACCESS:
     {
-        Expression_Analysis_Result array_access_expr_result = semantic_analyser_analyse_expression(analyser, symbol_table, expression_node->child_start);
+        Expression_Analysis_Result array_access_expr_result = semantic_analyser_analyse_expression(
+            analyser, symbol_table, expression_node->child_start, expression_context_make_type(Expression_Context_Type::ARRAY)
+        );
         if (array_access_expr_result.type != Analysis_Result_Type::SUCCESS) {
             error_exit = true;
             return array_access_expr_result;
@@ -1906,7 +1968,9 @@ Expression_Analysis_Result semantic_analyser_analyse_expression_without_value(Se
         result.result_type = array_type->options.array.element_type;
         result.options.array_access.array_expression = array_access_expr_result.options.expression;
 
-        Expression_Analysis_Result index_expr_result = semantic_analyser_analyse_expression(analyser, symbol_table, expression_node->child_start->neighbor);
+        Expression_Analysis_Result index_expr_result = semantic_analyser_analyse_expression(
+            analyser, symbol_table, expression_node->child_start->neighbor, expression_context_make_known_type(type_system->i32_type)
+        );
         switch (index_expr_result.type)
         {
         case Analysis_Result_Type::SUCCESS:
@@ -1932,7 +1996,9 @@ Expression_Analysis_Result semantic_analyser_analyse_expression_without_value(Se
     }
     case AST_Node_Type::EXPRESSION_MEMBER_ACCESS:
     {
-        Expression_Analysis_Result access_expr_result = semantic_analyser_analyse_expression(analyser, symbol_table, expression_node->child_start);
+        Expression_Analysis_Result access_expr_result = semantic_analyser_analyse_expression(
+            analyser, symbol_table, expression_node->child_start, expression_context_make_type(Expression_Context_Type::MEMBER_ACCESS)
+        );
         if (access_expr_result.type != Analysis_Result_Type::SUCCESS) {
             error_exit = true;
             return access_expr_result;
@@ -1943,7 +2009,7 @@ Expression_Analysis_Result semantic_analyser_analyse_expression_without_value(Se
         // Check if we are accessing enum value
         if (access_expr->result_type->type == Signature_Type::ENUM &&
             access_expr->expression_type == ModTree_Expression_Type::VARIABLE_READ &&
-            access_expr->options.variable_read == 0)  
+            access_expr->options.variable_read == 0)
         {
             Type_Signature* enum_type = access_expr->result_type;
             if (enum_type->size == 0 && enum_type->alignment == 0) {
@@ -2089,6 +2155,56 @@ Expression_Analysis_Result semantic_analyser_analyse_expression_without_value(Se
         panic("Should not happen");
         return expression_analysis_result_make_error();
     }
+    case AST_Node_Type::EXPRESSION_AUTO_MEMBER:
+    {
+        if (context.type != Expression_Context_Type::TYPE_KNOWN)
+        {
+            Semantic_Error error;
+            error.type = Semantic_Error_Type::AUTO_MEMBER_KNOWN_CONTEXT_IS_REQUIRED;
+            error.error_node = expression_node;
+            semantic_analyser_log_error(analyser, error);
+            return expression_analysis_result_make_error();
+        }
+        if (context.signature->type != Signature_Type::ENUM) {
+            Semantic_Error error;
+            error.type = Semantic_Error_Type::AUTO_MEMBER_MUST_BE_IN_ENUM_CONTEXT;
+            error.error_node = expression_node;
+            semantic_analyser_log_error(analyser, error);
+            return expression_analysis_result_make_error();
+        }
+
+        Type_Signature* enum_type = context.signature;
+        if (enum_type->size == 0 && enum_type->alignment == 0) {
+            return expression_analysis_result_make_dependency(workload_dependency_make_type_size_unknown(enum_type, expression_node));
+        }
+
+        Enum_Member* found = 0;
+        for (int i = 0; i < enum_type->options.enum_type.members.size; i++) {
+            Enum_Member* member = &enum_type->options.enum_type.members[i];
+            if (member->id == expression_node->id) {
+                found = member;
+                break;
+            }
+        }
+
+        int value = 0;
+        if (found == 0) {
+            Semantic_Error error;
+            error.type = Semantic_Error_Type::ENUM_DOES_NOT_CONTAIN_THIS_MEMBER;
+            error.error_node = expression_node->child_start;
+            semantic_analyser_log_error(analyser, error);
+        }
+        else {
+            value = found->value;
+        }
+
+        ModTree_Expression* result = modtree_expression_create_constant_i32(analyser, value);
+        result->result_type = enum_type;
+        Expression_Analysis_Result ret_val;
+        ret_val.type = Analysis_Result_Type::SUCCESS;
+        ret_val.options.expression = result;
+        return ret_val;
+    }
     case AST_Node_Type::EXPRESSION_BAKE:
     {
         assert(analyser->current_workload->type == Analysis_Workload_Type::CODE, "");
@@ -2149,8 +2265,6 @@ Expression_Analysis_Result semantic_analyser_analyse_expression_without_value(Se
                 }
                 panic("Todo something here");
 
-                assert(result.signature == type_system->i32_type, "");
-                assert(result.data != 0, "");
                 Expression_Analysis_Result ret_val;
                 ret_val.type = Analysis_Result_Type::SUCCESS;
                 ret_val.options.expression = modtree_expression_create_constant_i32(analyser, *(i32*)result.data);
@@ -2190,7 +2304,9 @@ Expression_Analysis_Result semantic_analyser_analyse_expression_without_value(Se
     }
     case AST_Node_Type::EXPRESSION_UNARY_OPERATION_NOT:
     {
-        Expression_Analysis_Result operand_result = semantic_analyser_analyse_expression(analyser, symbol_table, expression_node->child_start);
+        Expression_Analysis_Result operand_result = semantic_analyser_analyse_expression(
+            analyser, symbol_table, expression_node->child_start, expression_context_make_known_type(type_system->bool_type)
+        );
         if (operand_result.type != Analysis_Result_Type::SUCCESS)
         {
             if (operand_result.type == Analysis_Result_Type::ERROR_OCCURED)
@@ -2229,7 +2345,9 @@ Expression_Analysis_Result semantic_analyser_analyse_expression_without_value(Se
     }
     case AST_Node_Type::EXPRESSION_UNARY_OPERATION_NEGATE:
     {
-        Expression_Analysis_Result operand_result = semantic_analyser_analyse_expression(analyser, symbol_table, expression_node->child_start);
+        Expression_Analysis_Result operand_result = semantic_analyser_analyse_expression(
+            analyser, symbol_table, expression_node->child_start, expression_context_make_type(Expression_Context_Type::ARITHMETIC_OPERAND)
+        );
         if (operand_result.type != Analysis_Result_Type::SUCCESS) {
             return operand_result;
         }
@@ -2259,7 +2377,9 @@ Expression_Analysis_Result semantic_analyser_analyse_expression_without_value(Se
     }
     case AST_Node_Type::EXPRESSION_UNARY_OPERATION_ADDRESS_OF:
     {
-        Expression_Analysis_Result operand_result = semantic_analyser_analyse_expression(analyser, symbol_table, expression_node->child_start);
+        Expression_Analysis_Result operand_result = semantic_analyser_analyse_expression(
+            analyser, symbol_table, expression_node->child_start, expression_context_make_unknown()
+        );
         if (operand_result.type != Analysis_Result_Type::SUCCESS) {
             return operand_result;
         }
@@ -2309,7 +2429,9 @@ Expression_Analysis_Result semantic_analyser_analyse_expression_without_value(Se
     }
     case AST_Node_Type::EXPRESSION_UNARY_OPERATION_DEREFERENCE:
     {
-        Expression_Analysis_Result operand_result = semantic_analyser_analyse_expression(analyser, symbol_table, expression_node->child_start);
+        Expression_Analysis_Result operand_result = semantic_analyser_analyse_expression(
+            analyser, symbol_table, expression_node->child_start, expression_context_make_unknown()
+        );
         if (operand_result.type != Analysis_Result_Type::SUCCESS) {
             return operand_result;
         }
@@ -2396,16 +2518,71 @@ Expression_Analysis_Result semantic_analyser_analyse_expression_without_value(Se
         panic("Should not happen!");
     }
 
+    // Determine what operands are valid
+    bool int_valid = false;
+    bool float_valid = false;
+    bool bool_valid = false;
+    bool ptr_valid = false;
+    bool result_type_is_bool = false;
+    bool enum_valid = false;
+    Expression_Context operand_context;
+
+    switch (binary_op_type)
+    {
+    case ModTree_Binary_Operation_Type::ADDITION:
+    case ModTree_Binary_Operation_Type::SUBTRACTION:
+    case ModTree_Binary_Operation_Type::MULTIPLICATION:
+    case ModTree_Binary_Operation_Type::DIVISION:
+        float_valid = true;
+        int_valid = true;
+        operand_context = expression_context_make_type(Expression_Context_Type::ARITHMETIC_OPERAND);
+        break;
+    case ModTree_Binary_Operation_Type::MODULO:
+        int_valid = true;
+        operand_context = expression_context_make_type(Expression_Context_Type::ARITHMETIC_OPERAND);
+        break;
+    case ModTree_Binary_Operation_Type::GREATER:
+    case ModTree_Binary_Operation_Type::GREATER_OR_EQUAL:
+    case ModTree_Binary_Operation_Type::LESS:
+    case ModTree_Binary_Operation_Type::LESS_OR_EQUAL:
+        float_valid = true;
+        int_valid = true;
+        result_type_is_bool = true;
+        enum_valid = true;
+        operand_context = expression_context_make_type(Expression_Context_Type::ARITHMETIC_OPERAND);
+        break;
+    case ModTree_Binary_Operation_Type::EQUAL:
+    case ModTree_Binary_Operation_Type::NOT_EQUAL:
+        float_valid = true;
+        int_valid = true;
+        bool_valid = true;
+        ptr_valid = true;
+        result_type_is_bool = true;
+        enum_valid = true;
+        operand_context = expression_context_make_unknown();
+        break;
+    case ModTree_Binary_Operation_Type::AND:
+    case ModTree_Binary_Operation_Type::OR:
+        bool_valid = true;
+        result_type_is_bool = true;
+        operand_context = expression_context_make_known_type(type_system->bool_type);
+        break;
+    }
+
     // Evaluate operands
     ModTree_Expression* left_expr;
     ModTree_Expression* right_expr;
     {
-        Expression_Analysis_Result left_expr_result = semantic_analyser_analyse_expression(analyser, symbol_table, expression_node->child_start);
+        Expression_Analysis_Result left_expr_result = semantic_analyser_analyse_expression(
+            analyser, symbol_table, expression_node->child_start, operand_context
+        );
         if (left_expr_result.type != Analysis_Result_Type::SUCCESS) {
             error_exit = true;
             return left_expr_result;
         }
-        Expression_Analysis_Result right_expr_result = semantic_analyser_analyse_expression(analyser, symbol_table, expression_node->child_start->neighbor);
+        Expression_Analysis_Result right_expr_result = semantic_analyser_analyse_expression(
+            analyser, symbol_table, expression_node->child_start->neighbor, operand_context
+        );
         if (right_expr_result.type != Analysis_Result_Type::SUCCESS) {
             error_exit = true;
             modtree_expression_destroy(left_expr_result.options.expression);
@@ -2420,50 +2597,6 @@ Expression_Analysis_Result semantic_analyser_analyse_expression_without_value(Se
             modtree_expression_destroy(right_expr);
         }
     );
-
-    // Determine what operands are valid
-    bool int_valid = false;
-    bool float_valid = false;
-    bool bool_valid = false;
-    bool ptr_valid = false;
-    bool result_type_is_bool = false;
-    bool enum_valid = false;
-    switch (binary_op_type)
-    {
-    case ModTree_Binary_Operation_Type::ADDITION:
-    case ModTree_Binary_Operation_Type::SUBTRACTION:
-    case ModTree_Binary_Operation_Type::MULTIPLICATION:
-    case ModTree_Binary_Operation_Type::DIVISION:
-        float_valid = true;
-        int_valid = true;
-        break;
-    case ModTree_Binary_Operation_Type::MODULO:
-        int_valid = true;
-        break;
-    case ModTree_Binary_Operation_Type::GREATER:
-    case ModTree_Binary_Operation_Type::GREATER_OR_EQUAL:
-    case ModTree_Binary_Operation_Type::LESS:
-    case ModTree_Binary_Operation_Type::LESS_OR_EQUAL:
-        float_valid = true;
-        int_valid = true;
-        result_type_is_bool = true;
-        enum_valid = true;
-        break;
-    case ModTree_Binary_Operation_Type::EQUAL:
-    case ModTree_Binary_Operation_Type::NOT_EQUAL:
-        float_valid = true;
-        int_valid = true;
-        bool_valid = true;
-        ptr_valid = true;
-        result_type_is_bool = true;
-        enum_valid = true;
-        break;
-    case ModTree_Binary_Operation_Type::AND:
-    case ModTree_Binary_Operation_Type::OR:
-        bool_valid = true;
-        result_type_is_bool = true;
-        break;
-    }
 
     // Try implicit casting if types dont match
     Type_Signature* left_type = left_expr->result_type;
@@ -2534,14 +2667,109 @@ Expression_Analysis_Result semantic_analyser_analyse_expression_without_value(Se
     return expression_analysis_result_make_success(result);
 }
 
-Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyser* analyser, Symbol_Table* symbol_table, AST_Node* expression_node)
+Expression_Analysis_Result semantic_analyser_analyse_expression(
+    Semantic_Analyser* analyser, Symbol_Table* symbol_table, AST_Node* expression_node, Expression_Context context)
 {
     int error_before_count = analyser->errors.size;
-    Expression_Analysis_Result result = semantic_analyser_analyse_expression_without_value(analyser, symbol_table, expression_node);
+    Expression_Analysis_Result result = semantic_analyser_analyse_expression_without_value(analyser, symbol_table, expression_node, context);
     if (result.type != Analysis_Result_Type::SUCCESS) return result;
     if (error_before_count != analyser->errors.size) return result;
 
     ModTree_Expression* expr = result.options.expression;
+    // Context conversions from pointer into something else
+    if (expr->result_type->type == Signature_Type::POINTER)
+    {
+        Type_Signature* given_pointer_type = expr->result_type;
+        Type_Signature* underlying_type = given_pointer_type;
+        int pointer_depth = 0;
+        while (underlying_type->type == Signature_Type::POINTER) {
+            pointer_depth++;
+            underlying_type = underlying_type->options.pointer_child;
+        }
+
+        int wanted_pointer_depth = pointer_depth;
+        switch (context.type)
+        {
+        case Expression_Context_Type::UNKNOWN: break;
+        case Expression_Context_Type::FUNCTION_CALL: wanted_pointer_depth = 1; break; // This is for function pointer pointers
+        case Expression_Context_Type::TYPE_KNOWN: {
+            Type_Signature* temp = context.signature;
+            wanted_pointer_depth = 0;
+            while (temp->type == Signature_Type::POINTER) {
+                wanted_pointer_depth++;
+                temp = temp->options.pointer_child;
+            }
+            if (temp != underlying_type) { // Dont dereference if underlying type does not match
+                wanted_pointer_depth = pointer_depth;
+            }
+            break;
+        }
+        case Expression_Context_Type::ARITHMETIC_OPERAND: {
+            // When we have operator overloading, this needs to change
+            if (underlying_type->type == Signature_Type::PRIMITIVE || underlying_type->options.primitive.type == Primitive_Type::BOOLEAN) {
+                wanted_pointer_depth = 0;
+            }
+            break;
+        }
+        case Expression_Context_Type::MEMBER_ACCESS: {
+            if (underlying_type->type == Signature_Type::ARRAY ||
+                underlying_type->type == Signature_Type::STRUCT ||
+                underlying_type->type == Signature_Type::SLICE) {
+                wanted_pointer_depth = 0;
+            }
+            break;
+        }
+        case Expression_Context_Type::ARRAY: {
+            if (underlying_type->type == Signature_Type::STRUCT ||
+                underlying_type->type == Signature_Type::SLICE) {
+                wanted_pointer_depth = 0;
+            }
+            break;
+        }
+        case Expression_Context_Type::SWITCH_CONDITION: {
+            if (underlying_type->type == Signature_Type::ENUM) {
+                wanted_pointer_depth = 0;
+            }
+            break;
+        }
+        default: panic("");
+        }
+
+        while (pointer_depth > wanted_pointer_depth)
+        {
+            ModTree_Expression* deref = new ModTree_Expression;
+            deref->expression_type = ModTree_Expression_Type::UNARY_OPERATION;
+            deref->result_type = expr->result_type->options.pointer_child;
+            deref->value = expression_value_make_unknown();
+            deref->options.unary_operation.operation_type = ModTree_Unary_Operation_Type::DEREFERENCE;
+            deref->options.unary_operation.operand = expr;
+            expr = deref;
+            pointer_depth--;
+        }
+    }
+
+    // Context conversions Address-Of
+    if (context.type == Expression_Context_Type::TYPE_KNOWN)
+    {
+        Type_Signature* type_current = expr->result_type;
+        Type_Signature* type_wanted = context.signature;
+
+        // Do implict address of
+        if (type_wanted->type == Signature_Type::POINTER && type_wanted->options.pointer_child == type_current)
+        {
+            if (!modtree_expression_result_is_temporary(expr))
+            {
+                ModTree_Expression* addr_of = new ModTree_Expression;
+                addr_of->expression_type = ModTree_Expression_Type::UNARY_OPERATION;
+                addr_of->result_type = type_wanted;
+                addr_of->value = expression_value_make_unknown();
+                addr_of->options.unary_operation.operation_type = ModTree_Unary_Operation_Type::ADDRESS_OF;
+                addr_of->options.unary_operation.operand = expr;
+                expr = addr_of;
+            }
+        }
+    }
+
     // Check if constant values was already generated (Currently only the case for Bake-Expressions)
     if (expr->value.signature != 0) {
         return result;
@@ -2676,7 +2904,10 @@ Expression_Analysis_Result semantic_analyser_analyse_expression(Semantic_Analyse
     default: panic("");
     }
 
-    return result;
+    Expression_Analysis_Result final_result;
+    final_result.type = Analysis_Result_Type::SUCCESS;
+    final_result.options.expression = expr;
+    return final_result;
 }
 
 Variable_Creation_Analysis_Result semantic_analyser_analyse_variable_creation_node(
@@ -2757,7 +2988,18 @@ Variable_Creation_Analysis_Result semantic_analyser_analyse_variable_creation_no
     Type_Signature* infered_type = 0;
     if (needs_expression_evaluation)
     {
-        Expression_Analysis_Result expr_result = semantic_analyser_analyse_expression(analyser, symbol_table, expression_node);
+        Expression_Analysis_Result expr_result;
+        if (type_is_given && definition_type != analyser->compiler->type_system.error_type) {
+            expr_result = semantic_analyser_analyse_expression(
+                analyser, symbol_table, expression_node, expression_context_make_known_type(definition_type)
+            );
+        }
+        else {
+            expr_result = semantic_analyser_analyse_expression(
+                analyser, symbol_table, expression_node, expression_context_make_unknown()
+            );
+        }
+
         switch (expr_result.type)
         {
         case Analysis_Result_Type::SUCCESS:
@@ -3090,35 +3332,11 @@ void semantic_analyser_analyse_module(Semantic_Analyser* analyser, ModTree_Modul
     }
 }
 
-enum class Defer_Resolve_Depth
-{
-    WHOLE_FUNCTION,
-    LOCAL_BLOCK,
-    LOOP_EXIT
-};
-
 Type_Signature* import_c_type(Semantic_Analyser* analyser, C_Import_Type* type, Hashtable<C_Import_Type*, Type_Signature*>* type_conversions);
 
-void workload_code_block_work_through_defers(Semantic_Analyser* analyser, Analysis_Workload_Code* workload, Defer_Resolve_Depth resolve_depth)
+void workload_code_block_work_through_defers(Semantic_Analyser* analyser, Analysis_Workload_Code* workload, int defer_start_index)
 {
-    if (workload->active_block->inside_defer) return;
-
-    int defer_start_index = 0;
-    switch (resolve_depth)
-    {
-    case Defer_Resolve_Depth::WHOLE_FUNCTION:
-        defer_start_index = 0;
-        break;
-    case Defer_Resolve_Depth::LOCAL_BLOCK: {
-        defer_start_index = workload->active_block->defer_count_block_start;
-        break;
-    }
-    case Defer_Resolve_Depth::LOOP_EXIT: {
-        defer_start_index = workload->active_block->defer_count_surrounding_loop;
-        break;
-    }
-    default: panic("what");
-    }
+    if (inside_defer(workload)) return;
 
     ModTree_Block* parent = workload->active_block->block;
     for (int i = workload->defer_nodes.size - 1; i >= defer_start_index; i--)
@@ -3128,7 +3346,7 @@ void workload_code_block_work_through_defers(Semantic_Analyser* analyser, Analys
         block_stmt->type = ModTree_Statement_Type::BLOCK;
         block_stmt->options.block = modtree_block_create_block_child(symbol_table_create(analyser, parent->symbol_table, 0), parent, Block_Type::DEFER_BLOCK);
         dynamic_array_push_back(&parent->statements, block_stmt);
-        analysis_workload_code_block_add_block(workload, block_stmt->options.block, block_node);
+        analysis_workload_code_block_add_block(analyser, workload, block_stmt->options.block, block_node);
     }
 
     dynamic_array_rollback_to_size(&workload->defer_nodes, workload->active_block->defer_count_block_start);
@@ -3755,10 +3973,62 @@ void semantic_analyser_execute_workloads(Semantic_Analyser* analyser)
                             semantic_analyser_log_error(analyser, error);
                         }
                     }
+                    else if (last_statement->type == ModTree_Statement_Type::SWITCH && code_workload->active_block->last_analysed_node->type == AST_Node_Type::STATEMENT_SWITCH)
+                    {
+                        AST_Node* switch_node = code_workload->active_block->last_analysed_node;
+                        hashtable_remove_element(&code_workload->active_switches, switch_node);
+
+                        // Check if all enum cases are handled
+                        if (last_statement->options.switch_statement.default_block == 0 &&
+                            last_statement->options.switch_statement.condition->result_type->type == Signature_Type::ENUM)
+                        {
+                            if (last_statement->options.switch_statement.cases.size <
+                                last_statement->options.switch_statement.condition->result_type->options.enum_type.members.size)
+                            {
+                                Semantic_Error error;
+                                error.type = Semantic_Error_Type::SWITCH_MUST_HANDLE_ALL_CASES;
+                                error.error_node = switch_node;
+                                semantic_analyser_log_error(analyser, error);
+                            }
+                        }
+
+                        Block_Control_Flow all_flows = Block_Control_Flow::NO_RETURN;
+                        for (int i = 0; i < last_statement->options.switch_statement.cases.size; i++)
+                        {
+                            ModTree_Switch_Case* switch_case = &last_statement->options.switch_statement.cases[i];
+                            Block_Control_Flow* case_flow = hashtable_find_element(&analyser->finished_code_blocks, switch_case->body);
+                            assert(case_flow != 0, "");
+                            if (i != 0) {
+                                if (*case_flow != all_flows) {
+                                    all_flows = Block_Control_Flow::NO_RETURN;
+                                    break;
+                                }
+                            }
+                            else {
+                                all_flows = *case_flow;
+                            }
+                        }
+                        if (last_statement->options.switch_statement.default_block != 0)
+                        {
+                            Block_Control_Flow* case_flow = hashtable_find_element(
+                                &analyser->finished_code_blocks, last_statement->options.switch_statement.default_block);
+                            assert(case_flow != 0, "");
+                            if (last_statement->options.switch_statement.cases.size != 0) {
+                                if (*case_flow != all_flows) {
+                                    all_flows = Block_Control_Flow::NO_RETURN;
+                                }
+                            }
+                            else {
+                                all_flows = *case_flow;
+                            }
+                        }
+
+                        if (all_flows == Block_Control_Flow::BREAK) all_flows = Block_Control_Flow::NO_RETURN; // Breaks inside switches cause the case to end
+                        code_workload->active_block->block_flow = all_flows;
+                    }
                     code_workload->active_block->last_analysed_node = 0;
                     code_workload->active_block->last_analysed_statement = 0;
                 }
-
 
                 // Check if end of block was reached
                 if (statement_node == 0)
@@ -3770,7 +4040,7 @@ void semantic_analyser_execute_workloads(Semantic_Analyser* analyser)
                         if (code_workload->function->signature->options.function.return_type == analyser->compiler->type_system.void_type)
                         {
                             // Append return instruction 
-                            workload_code_block_work_through_defers(analyser, code_workload, Defer_Resolve_Depth::WHOLE_FUNCTION);
+                            workload_code_block_work_through_defers(analyser, code_workload, 0);
                             ModTree_Statement* return_statement = new ModTree_Statement;
                             if (code_workload->function == analyser->program->entry_function) {
                                 return_statement->type = ModTree_Statement_Type::EXIT;
@@ -3791,7 +4061,7 @@ void semantic_analyser_execute_workloads(Semantic_Analyser* analyser)
                     }
                     else {
                         //if (!modtree_block_origin_inside_defer(&code_workload->progress.block->origin)) {
-                        workload_code_block_work_through_defers(analyser, code_workload, Defer_Resolve_Depth::LOCAL_BLOCK);
+                        workload_code_block_work_through_defers(analyser, code_workload, code_workload->active_block->defer_count_block_start);
                         //}
                     }
 
@@ -3805,16 +4075,14 @@ void semantic_analyser_execute_workloads(Semantic_Analyser* analyser)
 
                 bool auto_switch_node = true;
                 SCOPE_EXIT(
-                    if (!found_workload_dependency)
+                    if (!found_workload_dependency && auto_switch_node)
                     {
                         if (code_workload->active_block->block->statements.size != 0) {
                             code_workload->active_block->last_analysed_statement =
                                 code_workload->active_block->block->statements[code_workload->active_block->block->statements.size - 1];
                             code_workload->active_block->last_analysed_node = code_workload->active_block->current_statement_node;
                         }
-                        if (auto_switch_node) {
-                            code_workload->active_block->current_statement_node = code_workload->active_block->current_statement_node->neighbor;
-                        }
+                        code_workload->active_block->current_statement_node = code_workload->active_block->current_statement_node->neighbor;
                     }
                 );
 
@@ -3847,6 +4115,7 @@ void semantic_analyser_execute_workloads(Semantic_Analyser* analyser)
                     }
                     else
                     {
+                        Type_Signature* expected_return_type = code_workload->function->signature->options.function.return_type;
                         Type_Signature* return_type = 0;
                         return_statement.type = ModTree_Statement_Type::RETURN;
                         if (statement_node->child_count == 0) {
@@ -3856,7 +4125,9 @@ void semantic_analyser_execute_workloads(Semantic_Analyser* analyser)
                         else
                         {
                             return_statement.options.return_value.available = true;
-                            Expression_Analysis_Result expr_result = semantic_analyser_analyse_expression(analyser, symbol_table, statement_node->child_start);
+                            Expression_Analysis_Result expr_result = semantic_analyser_analyse_expression(
+                                analyser, symbol_table, statement_node->child_start, expression_context_make_known_type(expected_return_type)
+                            );
                             switch (expr_result.type)
                             {
                             case Analysis_Result_Type::SUCCESS: {
@@ -3884,7 +4155,7 @@ void semantic_analyser_execute_workloads(Semantic_Analyser* analyser)
                     }
 
                     // Check if inside defer
-                    if (code_workload->active_block->inside_defer)
+                    if (inside_defer(code_workload))
                     {
                         Semantic_Error error;
                         error.type = Semantic_Error_Type::OTHERS_DEFER_NO_RETURNS_ALLOWED;
@@ -3926,45 +4197,80 @@ void semantic_analyser_execute_workloads(Semantic_Analyser* analyser)
                         read_expr->options.variable_read = variable;
                         return_statement.options.return_value.value = read_expr;
                     }
-                    workload_code_block_work_through_defers(analyser, code_workload, Defer_Resolve_Depth::WHOLE_FUNCTION);
+                    workload_code_block_work_through_defers(analyser, code_workload, 0);
                     dynamic_array_push_back(&block->statements, new ModTree_Statement(return_statement));
                     break;
                 }
                 case AST_Node_Type::STATEMENT_BREAK:
-                {
-                    if (!code_workload->active_block->inside_loop) {
-                        Semantic_Error error;
-                        error.type = Semantic_Error_Type::OTHERS_BREAK_NOT_INSIDE_LOOP;
-                        error.error_node = statement_node;
-                        semantic_analyser_log_error(analyser, error);
-                    }
-                    workload_code_block_work_through_defers(analyser, code_workload, Defer_Resolve_Depth::LOOP_EXIT);
-
-                    ModTree_Statement* break_stmt = new ModTree_Statement;
-                    break_stmt->type = ModTree_Statement_Type::BREAK;
-                    dynamic_array_push_back(&block->statements, break_stmt);
-                    code_workload->active_block->block_flow = Block_Control_Flow::BREAK;
-                    break;
-                }
                 case AST_Node_Type::STATEMENT_CONTINUE:
                 {
-                    if (!code_workload->active_block->inside_loop) {
+                    bool is_continue = statement_node->type == AST_Node_Type::STATEMENT_CONTINUE;
+                    ModTree_Block* break_block = 0;
+                    List_Node<Block_Analysis>* node = code_workload->block_queue.tail;
+                    while (node != 0)
+                    {
+                        if (node->value.block->type == Block_Type::DEFER_BLOCK) {
+                            break;
+                        }
+                        if (statement_node->id != 0) {
+                            if (node->value.block_node->id == statement_node->id) {
+                                break_block = node->value.block;
+                                break;
+                            }
+                        }
+                        else {
+                            if (node->value.block->type == Block_Type::SWITCH_CASE ||
+                                node->value.block->type == Block_Type::SWITCH_DEFAULT_CASE ||
+                                node->value.block->type == Block_Type::WHILE_BODY) {
+                                break_block = node->value.block;
+                                break;
+                            }
+                        }
+                        node = node->prev;
+                    }
+
+                    if (break_block == 0) 
+                    {
                         Semantic_Error error;
-                        error.type = Semantic_Error_Type::OTHERS_CONTINUE_NOT_INSIDE_LOOP;
+                        if (is_continue) {
+                            error.type = statement_node->id == 0 ?
+                                Semantic_Error_Type::CONTINUE_NOT_INSIDE_LOOP : Semantic_Error_Type::CONTINUE_LABEL_NOT_FOUND;
+                        }
+                        else {
+                            error.type = statement_node->id == 0 ?
+                                Semantic_Error_Type::BREAK_NOT_INSIDE_LOOP_OR_SWITCH : Semantic_Error_Type::BREAK_LABLE_NOT_FOUND;
+                        }
                         error.error_node = statement_node;
                         semantic_analyser_log_error(analyser, error);
+                        break;
                     }
-                    workload_code_block_work_through_defers(analyser, code_workload, Defer_Resolve_Depth::LOOP_EXIT);
+                    else if (is_continue && break_block->type != Block_Type::WHILE_BODY) {
+                        Semantic_Error error;
+                        error.type = Semantic_Error_Type::CONTINUE_REQUIRES_LOOP_BLOCK;
+                        error.error_node = statement_node;
+                        semantic_analyser_log_error(analyser, error);
+                        break;
+                    }
 
-                    ModTree_Statement* break_stmt = new ModTree_Statement;
-                    break_stmt->type = ModTree_Statement_Type::CONTINUE;
-                    dynamic_array_push_back(&block->statements, break_stmt);
-                    code_workload->active_block->block_flow = Block_Control_Flow::CONTINUE;
+                    workload_code_block_work_through_defers(analyser, code_workload, node->value.defer_count_block_start);
+
+                    ModTree_Statement* stmt = new ModTree_Statement;
+                    if (is_continue) {
+                        stmt->type = ModTree_Statement_Type::CONTINUE;
+                        stmt->options.continue_to_block = break_block;
+                        code_workload->active_block->block_flow = Block_Control_Flow::CONTINUE;
+                    }
+                    else {
+                        stmt->type = ModTree_Statement_Type::BREAK;
+                        stmt->options.break_to_block = break_block;
+                        code_workload->active_block->block_flow = Block_Control_Flow::BREAK;
+                    }
+                    dynamic_array_push_back(&block->statements, stmt);
                     break;
                 }
                 case AST_Node_Type::STATEMENT_DEFER:
                 {
-                    if (code_workload->active_block->inside_defer) {
+                    if (inside_defer(code_workload)) {
                         Semantic_Error error;
                         error.type = Semantic_Error_Type::MISSING_FEATURE_NESTED_DEFERS;
                         error.error_node = statement_node;
@@ -3986,7 +4292,7 @@ void semantic_analyser_execute_workloads(Semantic_Analyser* analyser)
                         break;
                     }
                     Expression_Analysis_Result result = semantic_analyser_analyse_expression(
-                        analyser, block->symbol_table, statement_node->child_start
+                        analyser, block->symbol_table, statement_node->child_start, expression_context_make_unknown()
                     );
                     switch (result.type)
                     {
@@ -4016,14 +4322,16 @@ void semantic_analyser_execute_workloads(Semantic_Analyser* analyser)
                         block, Block_Type::ANONYMOUS_BLOCK
                     );
                     dynamic_array_push_back(&block->statements, block_stmt);
-                    analysis_workload_code_block_add_block(code_workload, block_stmt->options.block, statement_node);
+                    analysis_workload_code_block_add_block(analyser, code_workload, block_stmt->options.block, statement_node);
                     break;
                 }
                 case AST_Node_Type::STATEMENT_IF:
                 case AST_Node_Type::STATEMENT_IF_ELSE:
                 {
                     ModTree_Expression* condition = 0;
-                    Expression_Analysis_Result expression_result = semantic_analyser_analyse_expression(analyser, symbol_table, statement_node->child_start);
+                    Expression_Analysis_Result expression_result = semantic_analyser_analyse_expression(
+                        analyser, symbol_table, statement_node->child_start, expression_context_make_known_type(analyser->compiler->type_system.bool_type)
+                    );
                     switch (expression_result.type)
                     {
                     case Analysis_Result_Type::SUCCESS:
@@ -4065,9 +4373,9 @@ void semantic_analyser_execute_workloads(Semantic_Analyser* analyser)
                         block, Block_Type::IF_ELSE_BLOCK
                     );
 
-                    analysis_workload_code_block_add_block(code_workload, if_statement->options.if_statement.if_block, if_block);
+                    analysis_workload_code_block_add_block(analyser, code_workload, if_statement->options.if_statement.if_block, if_block);
                     if (else_block != 0) {
-                        analysis_workload_code_block_add_block(code_workload, if_statement->options.if_statement.else_block, else_block);
+                        analysis_workload_code_block_add_block(analyser, code_workload, if_statement->options.if_statement.else_block, else_block);
                     }
                     break;
                 }
@@ -4082,41 +4390,43 @@ void semantic_analyser_execute_workloads(Semantic_Analyser* analyser)
                     int case_value = 0;
                     if (!is_default_case)
                     {
-                        Expression_Analysis_Result result = semantic_analyser_analyse_expression(analyser, symbol_table, statement_node->child_start);
+                        Expression_Analysis_Result result = semantic_analyser_analyse_expression(
+                            analyser, symbol_table, statement_node->child_start, expression_context_make_known_type(switch_type)
+                        );
                         switch (result.type)
                         {
-                            case Analysis_Result_Type::SUCCESS:
-                                case_expr = result.options.expression;
-                                if (switch_type->type == Signature_Type::ENUM && case_expr->result_type != switch_type)
-                                {
+                        case Analysis_Result_Type::SUCCESS:
+                            case_expr = result.options.expression;
+                            if (switch_type->type == Signature_Type::ENUM && case_expr->result_type != switch_type)
+                            {
+                                Semantic_Error error;
+                                error.type = Semantic_Error_Type::SWITCH_CASE_TYPE_INVALID;
+                                error.given_type = case_expr->result_type;
+                                error.expected_type = switch_type;
+                                error.error_node = statement_node;
+                                semantic_analyser_log_error(analyser, error);
+                            }
+                            else
+                            {
+                                if (case_expr->value.data == 0) {
                                     Semantic_Error error;
-                                    error.type = Semantic_Error_Type::SWITCH_CASE_TYPE_INVALID;
-                                    error.given_type = case_expr->result_type;
-                                    error.expected_type = switch_type;
-                                    error.error_node = statement_node;
+                                    error.type = Semantic_Error_Type::SWITCH_CASES_MUST_BE_COMPTIME_KNOWN;
+                                    error.error_node = statement_node->child_start;
                                     semantic_analyser_log_error(analyser, error);
                                 }
-                                else 
-                                {
-                                    if (case_expr->value.data == 0) {
-                                        Semantic_Error error;
-                                        error.type = Semantic_Error_Type::SWITCH_CASES_MUST_BE_COMPTIME_KNOWN;
-                                        error.error_node = statement_node->child_start;
-                                        semantic_analyser_log_error(analyser, error);
-                                    }
-                                    else {
-                                        case_value = *(int*)case_expr->value.data;
-                                    }
+                                else {
+                                    case_value = *(int*)case_expr->value.data;
                                 }
-                                break;
-                            case Analysis_Result_Type::DEPENDENCY:
-                                found_workload_dependency = true;
-                                found_dependency = result.options.dependency;
-                                break;
-                            case Analysis_Result_Type::ERROR_OCCURED:
-                                case_expr = modtree_expression_create_constant_i32(analyser, 0);
-                                case_value = 0;
-                                break;
+                            }
+                            break;
+                        case Analysis_Result_Type::DEPENDENCY:
+                            found_workload_dependency = true;
+                            found_dependency = result.options.dependency;
+                            break;
+                        case Analysis_Result_Type::ERROR_OCCURED:
+                            case_expr = modtree_expression_create_constant_i32(analyser, 0);
+                            case_value = 0;
+                            break;
                         }
                         if (found_workload_dependency) break;
 
@@ -4158,35 +4468,18 @@ void semantic_analyser_execute_workloads(Semantic_Analyser* analyser)
                         dynamic_array_push_back(&switch_statement->options.switch_statement.cases, new_case);
                     }
 
-                    auto_switch_node = false;
-                    if (statement_node->neighbor != 0) {
-                        code_workload->active_block->current_statement_node = statement_node->neighbor;
-                    }
-                    else
-                    {
-                        // Finish up switch
-                        code_workload->active_block->current_statement_node = statement_node->parent->neighbor;
-                        hashtable_remove_element(&code_workload->active_switches, statement_node->parent);
-
-                        // Check if all enum cases are handled
-                        if (switch_statement->options.switch_statement.default_block == 0 &&
-                            switch_statement->options.switch_statement.condition->result_type->type == Signature_Type::ENUM) 
-                        {
-                            if (switch_statement->options.switch_statement.cases.size < switch_type->options.enum_type.members.size) {
-                                Semantic_Error error;
-                                error.type = Semantic_Error_Type::SWITCH_MUST_HANDLE_ALL_CASES;
-                                error.error_node = statement_node->parent;
-                                semantic_analyser_log_error(analyser, error);
-                            }
-                        }
+                    if (statement_node->neighbor == 0) {
+                        code_workload->active_block->current_statement_node = statement_node->parent; // Since auto switch is on, we will step after switch with the defer
                     }
 
-                    analysis_workload_code_block_add_block(code_workload, case_body, is_default_case ? statement_node->child_start : statement_node->child_end);
+                    analysis_workload_code_block_add_block(analyser, code_workload, case_body, is_default_case ? statement_node->child_start : statement_node->child_end);
                     break;
                 }
                 case AST_Node_Type::STATEMENT_SWITCH:
                 {
-                    Expression_Analysis_Result result = semantic_analyser_analyse_expression(analyser, symbol_table, statement_node->child_start);
+                    Expression_Analysis_Result result = semantic_analyser_analyse_expression(
+                        analyser, symbol_table, statement_node->child_start, expression_context_make_type(Expression_Context_Type::SWITCH_CONDITION)
+                    );
                     ModTree_Expression* expression = 0;
                     switch (result.type)
                     {
@@ -4239,7 +4532,7 @@ void semantic_analyser_execute_workloads(Semantic_Analyser* analyser)
                 {
                     ModTree_Expression* condition_expr = 0;
                     Expression_Analysis_Result expression_result = semantic_analyser_analyse_expression(
-                        analyser, symbol_table, statement_node->child_start
+                        analyser, symbol_table, statement_node->child_start, expression_context_make_known_type(analyser->compiler->type_system.bool_type)
                     );
                     switch (expression_result.type)
                     {
@@ -4277,12 +4570,14 @@ void semantic_analyser_execute_workloads(Semantic_Analyser* analyser)
                         block, Block_Type::WHILE_BODY
                     );
 
-                    analysis_workload_code_block_add_block(code_workload, while_statement->options.while_statement.while_block, body_node);
+                    analysis_workload_code_block_add_block(analyser, code_workload, while_statement->options.while_statement.while_block, body_node);
                     break;
                 }
                 case AST_Node_Type::STATEMENT_DELETE:
                 {
-                    Expression_Analysis_Result expr_result = semantic_analyser_analyse_expression(analyser, symbol_table, statement_node->child_start);
+                    Expression_Analysis_Result expr_result = semantic_analyser_analyse_expression(
+                        analyser, symbol_table, statement_node->child_start, expression_context_make_unknown()
+                    );
                     bool error_occured = false;
                     Type_Signature* delete_type;
                     switch (expr_result.type)
@@ -4349,7 +4644,9 @@ void semantic_analyser_execute_workloads(Semantic_Analyser* analyser)
                     bool error_occured = false;
                     bool ignorable_error_occured = false;
                     int error_count = analyser->errors.size;
-                    Expression_Analysis_Result left_result = semantic_analyser_analyse_expression(analyser, symbol_table, statement_node->child_start);
+                    Expression_Analysis_Result left_result = semantic_analyser_analyse_expression(
+                        analyser, symbol_table, statement_node->child_start, expression_context_make_unknown()
+                    );
                     if (analyser->errors.size != error_count) ignorable_error_occured = true;
                     Type_Signature* left_type;
                     switch (left_result.type)
@@ -4363,6 +4660,7 @@ void semantic_analyser_execute_workloads(Semantic_Analyser* analyser)
                         break;
                     case Analysis_Result_Type::ERROR_OCCURED:
                         error_occured = true;
+                        left_type = analyser->compiler->type_system.error_type;
                         break;
                     default: panic("what");
                     }
@@ -4372,7 +4670,7 @@ void semantic_analyser_execute_workloads(Semantic_Analyser* analyser)
 
                     error_count = analyser->errors.size;
                     Expression_Analysis_Result right_result = semantic_analyser_analyse_expression(
-                        analyser, symbol_table, statement_node->child_start->neighbor
+                        analyser, symbol_table, statement_node->child_start->neighbor, expression_context_make_known_type(left_type)
                     );
                     if (analyser->errors.size != error_count) ignorable_error_occured = true;
                     Type_Signature* right_type = 0;
@@ -4474,7 +4772,9 @@ void semantic_analyser_execute_workloads(Semantic_Analyser* analyser)
                 int member_value = 0;
                 if (work->current_member->child_count != 0)
                 {
-                    Expression_Analysis_Result result = semantic_analyser_analyse_expression(analyser, symbol_table, work->current_member->child_start);
+                    Expression_Analysis_Result result = semantic_analyser_analyse_expression(
+                        analyser, symbol_table, work->current_member->child_start, expression_context_make_known_type(analyser->compiler->type_system.i32_type)
+                    );
                     bool error_occured = false;
                     switch (result.type)
                     {
@@ -4926,6 +5226,25 @@ void semantic_error_get_error_location(Semantic_Analyser* analyser, Semantic_Err
         dynamic_array_push_back(locations, error.error_node->token_range);
         break;
     }
+    case Semantic_Error_Type::LABEL_ALREADY_IN_USE: {
+        dynamic_array_push_back(locations, token_range_make(error.error_node->token_range.start_index, error.error_node->token_range.start_index+1));
+        break;
+    }
+    case Semantic_Error_Type::BREAK_LABLE_NOT_FOUND:
+        dynamic_array_push_back(locations, token_range_make(error.error_node->token_range.start_index+1, error.error_node->token_range.start_index+2));
+        break;
+    case Semantic_Error_Type::BREAK_NOT_INSIDE_LOOP_OR_SWITCH:
+        dynamic_array_push_back(locations, token_range_make(error.error_node->token_range.start_index, error.error_node->token_range.start_index+1));
+        break;
+    case Semantic_Error_Type::CONTINUE_LABEL_NOT_FOUND:
+        dynamic_array_push_back(locations, token_range_make(error.error_node->token_range.start_index+1, error.error_node->token_range.start_index+2));
+        break;
+    case Semantic_Error_Type::CONTINUE_NOT_INSIDE_LOOP:
+        dynamic_array_push_back(locations, token_range_make(error.error_node->token_range.start_index, error.error_node->token_range.start_index+1));
+        break;
+    case Semantic_Error_Type::CONTINUE_REQUIRES_LOOP_BLOCK:
+        dynamic_array_push_back(locations, token_range_make(error.error_node->token_range.start_index+1, error.error_node->token_range.start_index+2));
+        break;
     case Semantic_Error_Type::SWITCH_REQUIRES_ENUM: {
         dynamic_array_push_back(locations, error.error_node->token_range);
         break;
@@ -5088,6 +5407,19 @@ void semantic_error_get_error_location(Semantic_Analyser* analyser, Semantic_Err
         dynamic_array_push_back(locations, token_range_make(range.start_index, range.start_index + 2));
         break;
     }
+    case Semantic_Error_Type::AUTO_CAST_KNOWN_CONTEXT_IS_REQUIRED: {
+        Token_Range range = error.error_node->token_range;
+        dynamic_array_push_back(locations, token_range_make(range.start_index, range.start_index + 1));
+        break;
+    }
+    case Semantic_Error_Type::AUTO_MEMBER_KNOWN_CONTEXT_IS_REQUIRED: {
+        dynamic_array_push_back(locations, error.error_node->token_range);
+        break;
+    }
+    case Semantic_Error_Type::AUTO_MEMBER_MUST_BE_IN_ENUM_CONTEXT: {
+        dynamic_array_push_back(locations, error.error_node->token_range);
+        break;
+    }
     case Semantic_Error_Type::FUNCTION_CALL_ARGUMENT_SIZE_MISMATCH: {
         AST_Node* expression_node = error.error_node;
         assert(expression_node->type == AST_Node_Type::EXPRESSION_FUNCTION_CALL, "What");
@@ -5146,16 +5478,6 @@ void semantic_error_get_error_location(Semantic_Analyser* analyser, Semantic_Err
         break;
     }
     case Semantic_Error_Type::OTHERS_DEFER_NO_RETURNS_ALLOWED: {
-        Token_Range range = error.error_node->token_range;
-        dynamic_array_push_back(locations, token_range_make(range.start_index, range.start_index + 1));
-        break;
-    }
-    case Semantic_Error_Type::OTHERS_BREAK_NOT_INSIDE_LOOP: {
-        Token_Range range = error.error_node->token_range;
-        dynamic_array_push_back(locations, token_range_make(range.start_index, range.start_index + 1));
-        break;
-    }
-    case Semantic_Error_Type::OTHERS_CONTINUE_NOT_INSIDE_LOOP: {
         Token_Range range = error.error_node->token_range;
         dynamic_array_push_back(locations, token_range_make(range.start_index, range.start_index + 1));
         break;
@@ -5436,6 +5758,15 @@ void semantic_error_append_to_string(Semantic_Analyser* analyser, Semantic_Error
         string_append_formated(string, "Bake error, exit code: ");
         exit_code_append_to_string(string, e.exit_code);
         break;
+    case Semantic_Error_Type::AUTO_MEMBER_MUST_BE_IN_ENUM_CONTEXT:
+        string_append_formated(string, "Auto Member must be in used in a Context where an enum is required");
+        break;
+    case Semantic_Error_Type::AUTO_MEMBER_KNOWN_CONTEXT_IS_REQUIRED:
+        string_append_formated(string, "Auto Member must be used inside known Context");
+        break;
+    case Semantic_Error_Type::AUTO_CAST_KNOWN_CONTEXT_IS_REQUIRED:
+        string_append_formated(string, "Auto cast not able to extract destination type, context too vague");
+        break;
     case Semantic_Error_Type::BAKE_FUNCTION_MUST_NOT_REFERENCE_GLOBALS:
         string_append_formated(string, "Bake function must not reference globals!");
         break;
@@ -5456,8 +5787,23 @@ void semantic_error_append_to_string(Semantic_Analyser* analyser, Semantic_Error
         print_given_type = true;
         print_member_access_name_id = true;
         break;
-    case Semantic_Error_Type::EXPRESSION_ADDRESS_MUST_NOT_BE_OF_TEMPORARY_RESULT:
-        string_append_formated(string, "Cannot take address, expression result is only temporary");
+    case Semantic_Error_Type::LABEL_ALREADY_IN_USE: 
+        string_append_formated(string, "Label already in use");
+        break;
+    case Semantic_Error_Type::BREAK_LABLE_NOT_FOUND:
+        string_append_formated(string, "Label cannot be found");
+        break;
+    case Semantic_Error_Type::BREAK_NOT_INSIDE_LOOP_OR_SWITCH:
+        string_append_formated(string, "Break is not inside a loop or switch");
+        break;
+    case Semantic_Error_Type::CONTINUE_LABEL_NOT_FOUND:
+        string_append_formated(string, "Label cannot be found");
+        break;
+    case Semantic_Error_Type::CONTINUE_NOT_INSIDE_LOOP:
+        string_append_formated(string, "Continue is not inside a loop");
+        break;
+    case Semantic_Error_Type::CONTINUE_REQUIRES_LOOP_BLOCK:
+        string_append_formated(string, "Continue only works for loop lables");
         break;
     case Semantic_Error_Type::EXPRESSION_BINARY_OP_TYPES_MUST_MATCH:
         string_append_formated(string, "Binary op types do not match and cannot be implicitly casted");
@@ -5487,12 +5833,6 @@ void semantic_error_append_to_string(Semantic_Analyser* analyser, Semantic_Error
         break;
     case Semantic_Error_Type::OTHERS_DEFER_NO_RETURNS_ALLOWED:
         string_append_formated(string, "No returns allowed inside of defer");
-        break;
-    case Semantic_Error_Type::OTHERS_BREAK_NOT_INSIDE_LOOP:
-        string_append_formated(string, "Break not inside a loop");
-        break;
-    case Semantic_Error_Type::OTHERS_CONTINUE_NOT_INSIDE_LOOP:
-        string_append_formated(string, "Continue not inside a loop");
         break;
     case Semantic_Error_Type::OTHERS_MISSING_RETURN_STATEMENT:
         string_append_formated(string, "Function is missing a return statement");
@@ -5755,7 +6095,7 @@ Type_Signature* import_c_type(Semantic_Analyser* analyser, C_Import_Type* type, 
         }
         break;
     }
-    case C_Import_Type_Type::ENUM: 
+    case C_Import_Type_Type::ENUM:
     {
         String* enum_id;
         if (type->enumeration.is_anonymous) {

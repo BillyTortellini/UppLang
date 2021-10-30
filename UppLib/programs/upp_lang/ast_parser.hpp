@@ -43,14 +43,14 @@ enum class AST_Node_Type
     TYPE_POINTER_TO, // Child 0: Type
     TYPE_ARRAY, // Child 0: Expression (Compile time available), Child 1: Type
     TYPE_SLICE, // Child 0: Type
-    STATEMENT_BLOCK, // Children: Statements
-    STATEMENT_IF, // Child 0: Condition, Child 1: Statements
+    STATEMENT_BLOCK, // Children: Statements, Optional: id = block_name
+    STATEMENT_IF, // Child 0: Condition, Child 1: Statements, Optional: id = block_name
     STATEMENT_DEFER, // Child 0: Statement_Block
     STATEMENT_IF_ELSE, // Child 0: Condition, Child 1: if-Statement_Block, Child 2: Else-Statement-Block
-    STATEMENT_WHILE, // Child 0: Condition, Child 1: Statements
-    STATEMENT_SWITCH, // Child 0: Expression, Children: Switch_Cases
-    STATEMENT_BREAK, // No Children
-    STATEMENT_CONTINUE, // No Children
+    STATEMENT_WHILE, // Child 0: Condition, Child 1: Statements, Optional: id = block_name
+    STATEMENT_SWITCH, // Child 0: Expression, Children: Switch_Cases, Optional: id = block_name
+    STATEMENT_BREAK, // No Children, Optional: id = block_name
+    STATEMENT_CONTINUE, // No Children, Optional: id = block_name
     STATEMENT_RETURN, // Child 0: Return-Expression
     STATEMENT_EXPRESSION, // Child 0: Expression
     STATEMENT_ASSIGNMENT, // Child 0: Destination-Expression, Child 1: Value-Expression
@@ -66,8 +66,9 @@ enum class AST_Node_Type
     EXPRESSION_VARIABLE_READ, // Child 0: Identifier
     EXPRESSION_ARRAY_ACCESS, // Child 0: Access-to-Expression, Child 1: Index-Expression
     EXPRESSION_MEMBER_ACCESS, // Child 0: left side, id is the .what operator a.y.y[5].z
-    EXPRESSION_CAST, // Child 0: type, Child 1: Expression
+    EXPRESSION_CAST, // Either: Child 0: type, Child 1: Expression    OR    Child 0: Expression
     EXPRESSION_BAKE, // Child 0: type, Child 1: Statement_Block
+    EXPRESSION_AUTO_MEMBER, // ID: name of access member
     EXPRESSION_BINARY_OPERATION_ADDITION,
     EXPRESSION_BINARY_OPERATION_SUBTRACTION,
     EXPRESSION_BINARY_OPERATION_DIVISION,

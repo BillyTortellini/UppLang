@@ -104,6 +104,12 @@ struct Function_Reference
     int instruction_index;
 };
 
+struct Goto_Label
+{
+    int jmp_instruction;
+    int label_index;
+};
+
 struct Bytecode_Generator
 {
     // Result data
@@ -123,10 +129,14 @@ struct Bytecode_Generator
     // Data required for generation
     IR_Program* ir_program;
     Compiler* compiler;
+
+    Hashtable<IR_Code_Block*, int> continue_location;
+    Hashtable<IR_Code_Block*, int> break_location;
     Dynamic_Array<Function_Reference> fill_out_calls;
     Dynamic_Array<Function_Reference> fill_out_function_ptr_loads;
-    Dynamic_Array<int> fill_out_breaks;
-    Dynamic_Array<int> fill_out_continues;
+    Dynamic_Array<Goto_Label> fill_out_gotos;
+    Dynamic_Array<int> label_locations;
+
     int current_stack_offset;
 };
 

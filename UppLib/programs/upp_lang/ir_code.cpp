@@ -57,14 +57,14 @@ void ir_instruction_destroy(IR_Instruction* instruction)
         ir_code_block_destroy(instruction->options.switch_instr.default_block);
         break;
     }
-    case IR_Instruction_Type::BREAK:
-    case IR_Instruction_Type::CONTINUE:
     case IR_Instruction_Type::RETURN:
     case IR_Instruction_Type::MOVE:
     case IR_Instruction_Type::CAST:
     case IR_Instruction_Type::ADDRESS_OF:
     case IR_Instruction_Type::UNARY_OP:
     case IR_Instruction_Type::BINARY_OP:
+    case IR_Instruction_Type::LABEL:
+    case IR_Instruction_Type::GOTO:
         break;
     default: panic("Lul");
     }
@@ -276,12 +276,12 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
         ir_code_block_append_to_string(instruction->options.block, string, indentation + 1);
         break;
     }
-    case IR_Instruction_Type::BREAK: {
-        string_append_formated(string, "BREAK");
+    case IR_Instruction_Type::GOTO: {
+        string_append_formated(string, "GOTO %d", instruction->options.label_index);
         break;
     }
-    case IR_Instruction_Type::CONTINUE: {
-        string_append_formated(string, "CONTINUE");
+    case IR_Instruction_Type::LABEL: {
+        string_append_formated(string, "LABEL %d", instruction->options.label_index);
         break;
     }
     case IR_Instruction_Type::CAST:
@@ -571,11 +571,16 @@ IR_Generator ir_generator_create()
     IR_Generator generator;
     generator.compiler = 0;
     generator.program = 0;
+    generator.next_label_index = 0;
     generator.function_mapping = hashtable_create_pointer_empty<ModTree_Function*, IR_Function*>(32);
     generator.variable_mapping = hashtable_create_pointer_empty<ModTree_Variable*, IR_Data_Access>(32);
     generator.queue_functions = dynamic_array_create_empty<ModTree_Function*>(32);
     generator.queue_globals = dynamic_array_create_empty<ModTree_Variable*>(32);
     generator.function_stubs = dynamic_array_create_empty<ModTree_Function*>(32);
+    generator.fill_out_breaks = dynamic_array_create_empty<Unresolved_Goto>(32);
+    generator.fill_out_continues = dynamic_array_create_empty<Unresolved_Goto>(32);
+    generator.labels_break = hashtable_create_pointer_empty<ModTree_Block*, int>(32);
+    generator.labels_continue = hashtable_create_pointer_empty<ModTree_Block*, int>(32);
     return generator;
 }
 
@@ -589,6 +594,10 @@ void ir_generator_destroy(IR_Generator* generator)
     dynamic_array_destroy(&generator->queue_functions);
     dynamic_array_destroy(&generator->queue_globals);
     dynamic_array_destroy(&generator->function_stubs);
+    dynamic_array_destroy(&generator->fill_out_breaks);
+    dynamic_array_destroy(&generator->fill_out_continues);
+    hashtable_destroy(&generator->labels_break);
+    hashtable_destroy(&generator->labels_continue);
 }
 
 IR_Data_Access ir_data_access_create_constant(IR_Generator* generator, Type_Signature* signature, Array<byte> bytes)
@@ -870,6 +879,13 @@ void ir_generator_generate_block(IR_Generator* generator, IR_Code_Block* ir_bloc
             instr.options.block = ir_code_block_create(ir_block->function);
             ir_generator_generate_block(generator, instr.options.block, statement->options.block);
             dynamic_array_push_back(&ir_block->instructions, instr);
+
+            IR_Instruction label;
+            label.type = IR_Instruction_Type::LABEL;
+            label.options.label_index = generator->next_label_index;
+            generator->next_label_index++;
+            dynamic_array_push_back(&ir_block->instructions, label);
+            hashtable_insert_element(&generator->labels_break, statement->options.block, label.options.label_index);
             break;
         }
         case ModTree_Statement_Type::IF:
@@ -882,6 +898,15 @@ void ir_generator_generate_block(IR_Generator* generator, IR_Code_Block* ir_bloc
             instr.options.if_instr.false_branch = ir_code_block_create(ir_block->function);
             ir_generator_generate_block(generator, instr.options.if_instr.false_branch, statement->options.if_statement.else_block);
             dynamic_array_push_back(&ir_block->instructions, instr);
+
+            IR_Instruction label;
+            label.type = IR_Instruction_Type::LABEL;
+            label.options.label_index = generator->next_label_index;
+            generator->next_label_index++;
+            dynamic_array_push_back(&ir_block->instructions, label);
+            hashtable_insert_element(&generator->labels_break, statement->options.if_statement.if_block, label.options.label_index);
+            hashtable_insert_element(&generator->labels_break, statement->options.if_statement.else_block, label.options.label_index);
+
             break;
         }
         case ModTree_Statement_Type::SWITCH:
@@ -910,10 +935,31 @@ void ir_generator_generate_block(IR_Generator* generator, IR_Code_Block* ir_bloc
                 ir_generator_generate_block(generator, instr.options.switch_instr.default_block, statement->options.switch_statement.default_block);
             }
             dynamic_array_push_back(&ir_block->instructions, instr);
+
+            IR_Instruction label;
+            label.type = IR_Instruction_Type::LABEL;
+            label.options.label_index = generator->next_label_index;
+            generator->next_label_index++;
+            dynamic_array_push_back(&ir_block->instructions, label);
+            for (int i = 0; i < statement->options.switch_statement.cases.size; i++) {
+                ModTree_Switch_Case* switch_case = &statement->options.switch_statement.cases[i];
+                hashtable_insert_element(&generator->labels_break, switch_case->body, label.options.label_index);
+            }
+            if (statement->options.switch_statement.default_block != 0) {
+                hashtable_insert_element(&generator->labels_break, statement->options.switch_statement.default_block, label.options.label_index);
+            }
+
             break;
         }
         case ModTree_Statement_Type::WHILE:
         {
+            IR_Instruction continue_label;
+            continue_label.type = IR_Instruction_Type::LABEL;
+            continue_label.options.label_index = generator->next_label_index;
+            generator->next_label_index++;
+            dynamic_array_push_back(&ir_block->instructions, continue_label);
+            hashtable_insert_element(&generator->labels_continue, statement->options.while_statement.while_block, continue_label.options.label_index);
+
             IR_Instruction instr;
             instr.type = IR_Instruction_Type::WHILE;
             instr.options.while_instr.condition_code = ir_code_block_create(ir_block->function);
@@ -923,18 +969,40 @@ void ir_generator_generate_block(IR_Generator* generator, IR_Code_Block* ir_bloc
             instr.options.while_instr.code = ir_code_block_create(ir_block->function);
             ir_generator_generate_block(generator, instr.options.while_instr.code, statement->options.while_statement.while_block);
             dynamic_array_push_back(&ir_block->instructions, instr);
+
+            IR_Instruction break_label;
+            break_label.type = IR_Instruction_Type::LABEL;
+            break_label.options.label_index = generator->next_label_index;
+            generator->next_label_index++;
+            dynamic_array_push_back(&ir_block->instructions, break_label);
+            hashtable_insert_element(&generator->labels_break, statement->options.while_statement.while_block, break_label.options.label_index);
+
             break;
         }
-        case ModTree_Statement_Type::BREAK: {
+        case ModTree_Statement_Type::BREAK: 
+        {
             IR_Instruction instr;
-            instr.type = IR_Instruction_Type::BREAK;
+            instr.type = IR_Instruction_Type::GOTO;
             dynamic_array_push_back(&ir_block->instructions, instr);
+
+            Unresolved_Goto fill_out;
+            fill_out.block = ir_block;
+            fill_out.instruction_index = ir_block->instructions.size - 1;
+            fill_out.break_block = statement->options.break_to_block;
+            dynamic_array_push_back(&generator->fill_out_breaks, fill_out);
             break;
         }
-        case ModTree_Statement_Type::CONTINUE: {
+        case ModTree_Statement_Type::CONTINUE: 
+        {
             IR_Instruction instr;
-            instr.type = IR_Instruction_Type::CONTINUE;
+            instr.type = IR_Instruction_Type::GOTO;
             dynamic_array_push_back(&ir_block->instructions, instr);
+
+            Unresolved_Goto fill_out;
+            fill_out.block = ir_block;
+            fill_out.instruction_index = ir_block->instructions.size - 1;
+            fill_out.break_block = statement->options.continue_to_block;
+            dynamic_array_push_back(&generator->fill_out_continues, fill_out);
             break;
         }
         case ModTree_Statement_Type::RETURN: {
@@ -1038,14 +1106,19 @@ void ir_generator_reset(IR_Generator* generator, Compiler* compiler)
     if (generator->program != 0) {
         ir_program_destroy(generator->program);
     }
+    generator->next_label_index = 0;
     generator->program = ir_program_create(&generator->compiler->type_system);
     generator->modtree = generator->compiler->analyser.program;
     generator->type_system = &generator->compiler->type_system;
     hashtable_reset(&generator->variable_mapping);
     hashtable_reset(&generator->function_mapping);
+    hashtable_reset(&generator->labels_break);
+    hashtable_reset(&generator->labels_continue);
     dynamic_array_reset(&generator->queue_functions);
     dynamic_array_reset(&generator->queue_globals);
     dynamic_array_reset(&generator->function_stubs);
+    dynamic_array_reset(&generator->fill_out_breaks);
+    dynamic_array_reset(&generator->fill_out_continues);
 }
 
 void ir_generator_generate_queued_items(IR_Generator* generator)
@@ -1104,6 +1177,22 @@ void ir_generator_generate_queued_items(IR_Generator* generator)
         ModTree_Function* mod_func = generator->function_stubs[i];
         IR_Function* ir_func = *hashtable_find_element(&generator->function_mapping, mod_func);
         ir_generator_generate_block(generator, ir_func->code, mod_func->options.function.body);
+        // Fill out breaks and continues
+        for (int j = 0; j < generator->fill_out_breaks.size; j++) {
+            Unresolved_Goto fill_out = generator->fill_out_breaks[j];
+            int label_index = *hashtable_find_element(&generator->labels_break, fill_out.break_block);
+            assert(fill_out.block->instructions[fill_out.instruction_index].type == IR_Instruction_Type::GOTO, "");
+            fill_out.block->instructions[fill_out.instruction_index].options.label_index = label_index;
+        }
+        for (int j = 0; j < generator->fill_out_continues.size; j++) {
+            Unresolved_Goto fill_out = generator->fill_out_continues[j];
+            int label_index = *hashtable_find_element(&generator->labels_continue, fill_out.break_block);
+            assert(fill_out.block->instructions[fill_out.instruction_index].type == IR_Instruction_Type::GOTO, "");
+            fill_out.block->instructions[fill_out.instruction_index].options.label_index = label_index;
+        }
+        dynamic_array_reset(&generator->fill_out_breaks);
+        dynamic_array_reset(&generator->fill_out_continues);
+
         bytecode_generator_compile_function(&generator->compiler->bytecode_generator, ir_func);
     }
     dynamic_array_reset(&generator->function_stubs);

@@ -175,6 +175,8 @@ struct ModTree_Statement
     union
     {
         ModTree_Block* block;
+        ModTree_Block* break_to_block;
+        ModTree_Block* continue_to_block;
         struct {
             ModTree_Expression* condition;
             ModTree_Block* if_block;
@@ -466,10 +468,7 @@ struct Block_Analysis
     ModTree_Statement* last_analysed_statement;
     AST_Node* last_analysed_node;
 
-    bool inside_loop;
-    bool inside_defer;
     int defer_count_block_start;
-    int defer_count_surrounding_loop;
 };
 
 struct Analysis_Workload_Code
@@ -572,6 +571,23 @@ struct Waiting_Workload
 ERRORS
 */
 
+enum class Expression_Context_Type
+{
+    ARITHMETIC_OPERAND, // + - * / %, unary -, requires primitive type either int or float
+    UNKNOWN,
+    FUNCTION_CALL, // Requires some type of function
+    TYPE_KNOWN,
+    ARRAY,
+    MEMBER_ACCESS, // Only valid on enums, structs, slices and arrays
+    SWITCH_CONDITION, // Enums
+};
+
+struct Expression_Context
+{
+    Expression_Context_Type type;
+    Type_Signature* signature;
+};
+
 enum class Expected_Type_Classes
 {
     PRIMITIVE,
@@ -610,6 +626,7 @@ enum class Semantic_Error_Type
     INVALID_TYPE_DELETE,
     INVALID_TYPE_BAKE_MUST_BE_PRIMITIVE,
     INVALID_TYPE_ENUM_VALUE,
+
     ENUM_VALUE_MUST_BE_COMPILE_TIME_KNOWN,
     ENUM_VALUE_MUST_BE_UNIQUE,
     ENUM_MEMBER_NAME_MUST_BE_UNIQUE,
@@ -632,6 +649,9 @@ enum class Semantic_Error_Type
     SYMBOL_TABLE_MODULE_ALREADY_DEFINED,
 
     FUNCTION_CALL_ARGUMENT_SIZE_MISMATCH,
+    AUTO_MEMBER_KNOWN_CONTEXT_IS_REQUIRED,
+    AUTO_MEMBER_MUST_BE_IN_ENUM_CONTEXT,
+    AUTO_CAST_KNOWN_CONTEXT_IS_REQUIRED,
 
     EXPRESSION_INVALID_CAST,
     EXPRESSION_MEMBER_NOT_FOUND,
@@ -642,6 +662,13 @@ enum class Semantic_Error_Type
     BAKE_FUNCTION_MUST_NOT_REFERENCE_GLOBALS,
     BAKE_FUNCTION_DID_NOT_SUCCEED,
 
+    BREAK_NOT_INSIDE_LOOP_OR_SWITCH,
+    BREAK_LABLE_NOT_FOUND,
+    CONTINUE_NOT_INSIDE_LOOP,
+    CONTINUE_LABEL_NOT_FOUND,
+    CONTINUE_REQUIRES_LOOP_BLOCK,
+    LABEL_ALREADY_IN_USE,
+
     OTHERS_STRUCT_MUST_CONTAIN_MEMBER,
     OTHERS_STRUCT_MEMBER_ALREADY_DEFINED,
     OTHERS_WHILE_ONLY_RUNS_ONCE,
@@ -649,8 +676,6 @@ enum class Semantic_Error_Type
     OTHERS_WHILE_NEVER_STOPS,
     OTHERS_STATEMENT_UNREACHABLE,
     OTHERS_DEFER_NO_RETURNS_ALLOWED,
-    OTHERS_BREAK_NOT_INSIDE_LOOP,
-    OTHERS_CONTINUE_NOT_INSIDE_LOOP,
     OTHERS_MISSING_RETURN_STATEMENT,
     OTHERS_UNFINISHED_WORKLOAD_FUNCTION_HEADER,
     OTHERS_UNFINISHED_WORKLOAD_CODE_BLOCK,

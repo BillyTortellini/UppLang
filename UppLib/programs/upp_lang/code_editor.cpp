@@ -15,6 +15,8 @@ vec3 VARIABLE_COLOR = vec3(0.5f, 0.5f, 0.8f);
 vec3 TYPE_COLOR = vec3(0.4f, 0.9f, 0.9f);
 vec3 PRIMITIVE_TYPE_COLOR = vec3(0.1f, 0.3f, 1.0f);
 vec3 STRING_LITERAL_COLOR = vec3(0.85f, 0.65f, 0.0f);
+vec3 LITERAL_COLOR = vec3(0.6f);
+
 vec4 BG_COLOR = vec4(0);
 vec4 ERROR_BG_COLOR = vec4(0.7f, 0.0f, 0.0f, 1.0f);
 vec4 HIGHLIGHT_BG_COLOR = vec4(0.3f, 0.3f, 0.3f, 1.0f);
@@ -199,7 +201,7 @@ vec3 symbol_type_to_color(Symbol_Type type)
     return IDENTIFIER_FALLBACK_COLOR;
 }
 
-void code_editor_do_text_highlighting(Code_Editor* editor, AST_Node* node, Symbol_Table* symbol_table)
+void code_editor_do_ast_syntax_highlighting(Code_Editor* editor, AST_Node* node, Symbol_Table* symbol_table)
 {
     Token_Range node_range = node->token_range;
     // Variables definition, module def, funciton def, parameters
@@ -217,7 +219,7 @@ void code_editor_do_text_highlighting(Code_Editor* editor, AST_Node* node, Symbo
         r.end_index = r.start_index + 1;
         text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, editor->compiler), STRING_LITERAL_COLOR, BG_COLOR);
     }
-    else if (node->type == AST_Node_Type::STRUCT) {
+    else if (node->type == AST_Node_Type::STRUCT || node->type == AST_Node_Type::UNION || node->type == AST_Node_Type::ENUM) {
         Token_Range r = node_range;
         r.end_index = r.start_index + 1;
         text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, editor->compiler), TYPE_COLOR, BG_COLOR);
@@ -239,6 +241,17 @@ void code_editor_do_text_highlighting(Code_Editor* editor, AST_Node* node, Symbo
         Token_Range r = node_range;
         r.end_index = r.start_index + 1;
         text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, editor->compiler), VARIABLE_COLOR, BG_COLOR);
+    }
+    else if (node->type == AST_Node_Type::EXPRESSION_AUTO_MEMBER) {
+        Token_Range r = node_range;
+        r.start_index += 1;
+        r.end_index = r.start_index + 1;
+        text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, editor->compiler), LITERAL_COLOR, BG_COLOR);
+    }
+    else if (node->type == AST_Node_Type::ENUM_MEMBER) {
+        Token_Range r = node_range;
+        r.end_index = r.start_index + 1;
+        text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, editor->compiler), LITERAL_COLOR, BG_COLOR);
     }
     else if (node->type == AST_Node_Type::IDENTIFIER_PATH || node->type == AST_Node_Type::IDENTIFIER_PATH_TEMPLATED)
     {
@@ -266,7 +279,7 @@ void code_editor_do_text_highlighting(Code_Editor* editor, AST_Node* node, Symbo
     }
     AST_Node* child = node->child_start;
     while (child != 0) {
-        code_editor_do_text_highlighting(editor, child, symbol_table);
+        code_editor_do_ast_syntax_highlighting(editor, child, symbol_table);
         child = child->neighbor;
     }
 }
@@ -385,10 +398,13 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
                 text_editor_add_highlight_from_slice(editor->text_editor, t.position, STRING_LITERAL_COLOR, BG_COLOR);
             else if (t.type == Token_Type::ERROR_TOKEN)
                 text_editor_add_highlight_from_slice(editor->text_editor, t.position, TEXT_COLOR, ERROR_BG_COLOR);
+            else if (t.type == Token_Type::NULLPTR || t.type == Token_Type::INTEGER_LITERAL || t.type == Token_Type::BOOLEAN_LITERAL || t.type == Token_Type::FLOAT_LITERAL) {
+                text_editor_add_highlight_from_slice(editor->text_editor, t.position, LITERAL_COLOR, BG_COLOR);
+            }
         }
 
         if (editor->compiler->analyser.program != 0 && editor->compiler->analyser.program->root_module != 0) {
-            code_editor_do_text_highlighting(editor, editor->compiler->main_source->root_node, editor->compiler->analyser.program->root_module->symbol_table);
+            code_editor_do_ast_syntax_highlighting(editor, editor->compiler->main_source->root_node, editor->compiler->analyser.program->root_module->symbol_table);
         }
 
         for (int i = 0; i < editor->compiler->parser.errors.size; i++) {

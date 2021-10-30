@@ -27,8 +27,8 @@ Bytecode_Generator bytecode_generator_create()
     result.global_data_offsets = dynamic_array_create_empty<int>(256);
 
     // Fill outs
-    result.fill_out_breaks = dynamic_array_create_empty<int>(64);
-    result.fill_out_continues = dynamic_array_create_empty<int>(64);
+    result.fill_out_gotos = dynamic_array_create_empty<Goto_Label>(64);
+    result.label_locations = dynamic_array_create_empty<int>(64);
     result.fill_out_calls = dynamic_array_create_empty<Function_Reference>(64);
     result.fill_out_function_ptr_loads = dynamic_array_create_empty<Function_Reference>(64);
     return result;
@@ -50,8 +50,8 @@ void bytecode_generator_destroy(Bytecode_Generator* generator)
     dynamic_array_destroy(&generator->stack_offsets);
 
     // Fill outs
-    dynamic_array_destroy(&generator->fill_out_breaks);
-    dynamic_array_destroy(&generator->fill_out_continues);
+    dynamic_array_destroy(&generator->fill_out_gotos);
+    dynamic_array_destroy(&generator->label_locations);
     dynamic_array_destroy(&generator->fill_out_calls);
     dynamic_array_destroy(&generator->fill_out_function_ptr_loads);
 } 
@@ -631,11 +631,6 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             dynamic_array_push_back(&jmp_to_switch_end_indices, 
                 bytecode_generator_add_instruction(generator, instruction_make_1(Instruction_Type::JUMP, PLACEHOLDER))
             );
-            // Handle breaks inside default
-            for (int i = 0; i < generator->fill_out_breaks.size; i++) {
-                dynamic_array_push_back(&jmp_to_switch_end_indices, generator->fill_out_breaks[i]);
-            }
-            dynamic_array_reset(&generator->fill_out_breaks);
 
             // Generate switch cases
             for (int i = 0; i < switch_instr->cases.size; i++)
@@ -646,11 +641,6 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 dynamic_array_push_back(&jmp_to_switch_end_indices,
                     bytecode_generator_add_instruction(generator, instruction_make_1(Instruction_Type::JUMP, PLACEHOLDER))
                 );
-                // Handle breaks inside case
-                for (int i = 0; i < generator->fill_out_breaks.size; i++) {
-                    dynamic_array_push_back(&jmp_to_switch_end_indices, generator->fill_out_breaks[i]);
-                }
-                dynamic_array_reset(&generator->fill_out_breaks);
             }
 
             // Set jumps to end of switch
@@ -695,33 +685,27 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             );
             generator->instructions[jmp_to_end_instruction_index].op1 = generator->instructions.size;
 
-            for (int i = 0; i < generator->fill_out_breaks.size; i++) {
-                generator->instructions[generator->fill_out_breaks[i]].op1 = generator->instructions.size;
-            }
-            for (int i = 0; i < generator->fill_out_continues.size; i++) {
-                generator->instructions[generator->fill_out_breaks[i]].op1 = condition_evaluation_start;
-            }
-            dynamic_array_reset(&generator->fill_out_breaks);
-            dynamic_array_reset(&generator->fill_out_continues);
             break;
         }
         case IR_Instruction_Type::BLOCK:
             bytecode_generator_generate_code_block(generator, instr->options.block);
             break;
-        case IR_Instruction_Type::BREAK: {
-            int break_jump = bytecode_generator_add_instruction(
-                generator,
-                instruction_make_1(Instruction_Type::JUMP, 0)
-            );
-            dynamic_array_push_back(&generator->fill_out_breaks, break_jump);
+        case IR_Instruction_Type::LABEL: {
+            while (generator->label_locations.size <= instr->options.label_index) {
+                dynamic_array_push_back(&generator->label_locations, 0);
+            }
+            generator->label_locations[instr->options.label_index] = generator->instructions.size;
             break;
         }
-        case IR_Instruction_Type::CONTINUE: {
-            int continue_jump = bytecode_generator_add_instruction(
+        case IR_Instruction_Type::GOTO: {
+            bytecode_generator_add_instruction(
                 generator,
-                instruction_make_1(Instruction_Type::JUMP, 0)
+                instruction_make_1(Instruction_Type::JUMP, PLACEHOLDER)
             );
-            dynamic_array_push_back(&generator->fill_out_continues, continue_jump);
+            Goto_Label fill_out;
+            fill_out.jmp_instruction = generator->instructions.size - 1 ;
+            fill_out.label_index = instr->options.label_index;
+            dynamic_array_push_back(&generator->fill_out_gotos, fill_out);
             break;
         }
         case IR_Instruction_Type::RETURN:
@@ -1022,8 +1006,8 @@ void bytecode_generator_reset(Bytecode_Generator* generator, Compiler* compiler)
         }
         dynamic_array_reset(&generator->stack_offsets);
         // Reset fill outs
-        dynamic_array_reset(&generator->fill_out_breaks);
-        dynamic_array_reset(&generator->fill_out_continues);
+        dynamic_array_reset(&generator->label_locations);
+        dynamic_array_reset(&generator->fill_out_gotos);
         dynamic_array_reset(&generator->fill_out_calls);
         dynamic_array_reset(&generator->fill_out_function_ptr_loads);
     }
@@ -1068,6 +1052,12 @@ void bytecode_generator_update_references(Bytecode_Generator* generator)
         generator->instructions[call_loc.instruction_index].op2 = *location;
     }
     dynamic_array_reset(&generator->fill_out_function_ptr_loads);
+
+    // Fill out all open gotos
+    for (int i = 0; i < generator->fill_out_gotos.size; i++) {
+        Goto_Label fill_out = generator->fill_out_gotos[i];
+        generator->instructions[fill_out.jmp_instruction].op1 = generator->label_locations[fill_out.label_index];
+    }
 }
 
 void bytecode_generator_set_entry_function(Bytecode_Generator* generator)

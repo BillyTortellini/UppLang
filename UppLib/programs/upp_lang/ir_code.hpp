@@ -183,8 +183,8 @@ enum class IR_Instruction_Type
     SWITCH,
     BLOCK,
 
-    BREAK,
-    CONTINUE,
+    LABEL,
+    GOTO,
     RETURN,
 
     MOVE,
@@ -210,6 +210,7 @@ struct IR_Instruction
         IR_Instruction_Unary_OP unary_op;
         IR_Instruction_Binary_OP binary_op;
         IR_Code_Block* block;
+        int label_index;
     } options;
 };
 
@@ -235,6 +236,13 @@ struct ModTree_Function;
 struct Compiler;
 struct Type_Signature;
 
+struct Unresolved_Goto
+{
+    IR_Code_Block* block;
+    int instruction_index;
+    ModTree_Block* break_block;
+};
+
 struct IR_Generator
 {
     Compiler* compiler;
@@ -249,6 +257,14 @@ struct IR_Generator
     Dynamic_Array<ModTree_Function*> function_stubs;
     Dynamic_Array<ModTree_Variable*> queue_globals;
     Dynamic_Array<ModTree_Function*> queue_functions;
+
+    Dynamic_Array<Unresolved_Goto> fill_out_continues;
+    Dynamic_Array<Unresolved_Goto> fill_out_breaks;
+
+    Hashtable<ModTree_Block*, int> labels_break;
+    Hashtable<ModTree_Block*, int> labels_continue;
+
+    int next_label_index;
 };
 
 IR_Generator ir_generator_create();
