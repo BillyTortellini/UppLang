@@ -8,6 +8,7 @@
     Some Reasons why differentiating IR_Code/ModTree could be ok:
         - Expressions cannot resolve sized_array to array cast to just statements
         - Expression evaluation order not given by modtree
+        - Differentiate Statement/Expression VS. Instructions only
 */
 
 struct Compiler;

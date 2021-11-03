@@ -16,15 +16,15 @@ bool enable_c_compilation = true;
 // Output stages
 bool output_lexing = false;
 bool output_identifiers = false;
-bool output_ast = false;
+bool output_ast = true;
 bool output_type_system = false;
 bool output_root_table = false;
-bool output_ir = true;
+bool output_ir = false;
 bool output_bytecode = false;
 bool output_timing = true;
 
 // Testcases
-bool enable_testcases = true;
+bool enable_testcases = false;
 bool enable_stresstest = false;
 bool run_testcases_compiled = false;
 
@@ -52,11 +52,14 @@ Text_Slice token_range_to_text_slice(Token_Range range, Compiler* compiler)
     Code_Source* source = compiler->main_source;
     if (source->tokens.size == 0) return text_slice_make(text_position_make(0, 0), text_position_make(0, 0));
 
-    assert(range.start_index >= 0 && range.start_index < source->tokens.size, "HEY");
+    assert(range.start_index >= 0 && range.start_index <= source->tokens.size, "HEY");
     assert(range.end_index >= 0, "HEY");
     assert(range.end_index >= range.start_index, "HEY");
     if (range.end_index > source->tokens.size) {
         range.end_index = source->tokens.size;
+    }
+    if (range.start_index >= source->tokens.size) {
+        return text_slice_make(text_position_make(0, 0), text_position_make(0, 0));
     }
 
     range.end_index = math_clamp(range.end_index, 0, math_maximum(0, source->tokens.size));

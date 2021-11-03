@@ -744,6 +744,63 @@ IR_Data_Access ir_generator_generate_expression(IR_Generator* generator, IR_Code
     case ModTree_Expression_Type::VARIABLE_READ: {
         return *hashtable_find_element(&generator->variable_mapping, expression->options.variable_read);
     }
+    case ModTree_Expression_Type::STRUCT_INITIALIZER: 
+    {
+        IR_Data_Access struct_access = ir_data_access_create_intermediate(ir_block, expression->result_type);
+        for (int i = 0; i < expression->options.struct_initializer.size; i++)
+        {
+            Member_Initializer* init = &expression->options.struct_initializer[i];
+
+            // Calculate member pointer
+            IR_Instruction element_instr;
+            element_instr.type = IR_Instruction_Type::ADDRESS_OF;
+            element_instr.options.address_of.type = IR_Instruction_Address_Of_Type::STRUCT_MEMBER;
+            element_instr.options.address_of.destination = ir_data_access_create_intermediate(
+                ir_block, type_system_make_pointer(&generator->compiler->type_system, init->member.type)
+            );
+            element_instr.options.address_of.source = struct_access;
+            element_instr.options.address_of.options.member = init->member;
+            dynamic_array_push_back(&ir_block->instructions, element_instr);
+
+            IR_Data_Access member_access = element_instr.options.address_of.destination;
+            member_access.is_memory_access = true;
+
+            IR_Instruction move_instr;
+            move_instr.type = IR_Instruction_Type::MOVE;
+            move_instr.options.move.destination = member_access;
+            move_instr.options.move.source = ir_generator_generate_expression(generator, ir_block, init->init_expr);
+            dynamic_array_push_back(&ir_block->instructions, move_instr);
+        }
+        return struct_access;
+    }
+    case ModTree_Expression_Type::ARRAY_INITIALIZER: 
+    {
+        IR_Data_Access array_access = ir_data_access_create_intermediate(ir_block, expression->result_type);
+        for (int i = 0; i < expression->options.array_initializer.size; i++)
+        {
+            ModTree_Expression* init_expr = expression->options.array_initializer[i];
+
+            // Calculate array member pointer
+            IR_Instruction element_instr;
+            element_instr.type = IR_Instruction_Type::ADDRESS_OF;
+            element_instr.options.address_of.type = IR_Instruction_Address_Of_Type::ARRAY_ELEMENT;
+            element_instr.options.address_of.destination = ir_data_access_create_intermediate(
+                ir_block, type_system_make_pointer(&generator->compiler->type_system, expression->result_type->options.array.element_type)
+            );
+            element_instr.options.address_of.source = array_access;
+            element_instr.options.address_of.options.index_access = ir_data_access_create_constant_i32(generator, i);
+            dynamic_array_push_back(&ir_block->instructions, element_instr);
+
+            IR_Data_Access member_access = element_instr.options.address_of.destination;
+            member_access.is_memory_access = true;
+            IR_Instruction move_instr;
+            move_instr.type = IR_Instruction_Type::MOVE;
+            move_instr.options.move.destination = member_access;
+            move_instr.options.move.source = ir_generator_generate_expression(generator, ir_block, init_expr);
+            dynamic_array_push_back(&ir_block->instructions, move_instr);
+        }
+        return array_access;
+    }
     case ModTree_Expression_Type::FUNCTION_POINTER_READ: {
         IR_Instruction instr;
         instr.type = IR_Instruction_Type::ADDRESS_OF;
@@ -979,7 +1036,7 @@ void ir_generator_generate_block(IR_Generator* generator, IR_Code_Block* ir_bloc
 
             break;
         }
-        case ModTree_Statement_Type::BREAK: 
+        case ModTree_Statement_Type::BREAK:
         {
             IR_Instruction instr;
             instr.type = IR_Instruction_Type::GOTO;
@@ -992,7 +1049,7 @@ void ir_generator_generate_block(IR_Generator* generator, IR_Code_Block* ir_bloc
             dynamic_array_push_back(&generator->fill_out_breaks, fill_out);
             break;
         }
-        case ModTree_Statement_Type::CONTINUE: 
+        case ModTree_Statement_Type::CONTINUE:
         {
             IR_Instruction instr;
             instr.type = IR_Instruction_Type::GOTO;

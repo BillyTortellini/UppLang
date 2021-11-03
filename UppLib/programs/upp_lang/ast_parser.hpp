@@ -36,6 +36,7 @@ enum class AST_Node_Type
     PARAMETER_BLOCK_UNNAMED, // Children: Types
     PARAMETER_BLOCK_NAMED, // Children: Named_Parameter
     NAMED_PARAMETER, // Child 0: Type
+    MEMBER_INITIALIZER, // id: member name, Child 0: Expression;
     SWITCH_CASE, // Child 0: Expression, Child 1: Statement_Block
     SWITCH_DEFAULT_CASE, // Child 0: Statement_Block
     TYPE_FUNCTION_POINTER, // Child 0: Parameter_Block_Unnamed, Child 1 (optional): Return Type
@@ -64,7 +65,10 @@ enum class AST_Node_Type
     EXPRESSION_LITERAL,
     EXPRESSION_FUNCTION_CALL, // Child 0: Expression, Child 1: ARGUMENTS
     EXPRESSION_VARIABLE_READ, // Child 0: Identifier
-    EXPRESSION_ARRAY_ACCESS, // Child 0: Access-to-Expression, Child 1: Index-Expression
+    EXPRESSION_ARRAY_ACCESS, // Child 0: Access-to-Expression, Child 1-n: Index/Initializor Expressions
+    EXPRESSION_AUTO_ARRAY_INITIALIZER, // Child 0-n: Initializor Expressions
+    EXPRESSION_STRUCT_INITIALIZER, // Child 0: Identifier_Path, child 1-n: MEMBER_INITIALIZER
+    EXPRESSION_AUTO_STRUCT_INITIALIZER, // Child 1-n: MEMBER_INITIALIZER
     EXPRESSION_MEMBER_ACCESS, // Child 0: left side, id is the .what operator a.y.y[5].z
     EXPRESSION_CAST, // Either: Child 0: type, Child 1: Expression    OR    Child 0: Expression
     EXPRESSION_BAKE, // Child 0: type, Child 1: Statement_Block

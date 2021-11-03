@@ -1,14 +1,186 @@
 Next features:
 --------------
- * Multiple returns, Array-Initialization Syntax
- * Constant/Compile-time-known variable syntax, parameters constant
+ * Anonymous structs
+ * Anonymous enums
+ * Struct unpacking syntax
+ * Tagged Unions
+ * lambdas
+ * Inner Functions, inner types (Functions inside other functions, structs/enums/unions inside functions)
+
+ * Constant/Compile-time-known variable syntax
+ * Non-Pointer parameters constant
  * Testcases for all new features (Expression-Context, Auto cast, Unions, Switches, Named breaks/continues)
  * Type-Information in language, type_of, Any-Type
- * Tagged enums, anonymous types (Structs, enums, unions), type constructor
  * Rework templates to use comptime values
  * Iteration (Macros?)
  * Generating source code with runtime code execution
 
+Syntax thouhts:
+---------------
+Some characteristics I want:
+    - Compression based length (Often used constructs should be short, others can be long)
+    - Easy to remember
+    - Same things should look the same, different things should look different
+    - Refactoring should be easy
+    - Small refactorings should not cause unpredictable errors
+
+
+Array-Initialization Syntax:
+----------------------------
+Most languages have arrays default to some value, which is not something I want,
+because undefined values are completely fine, and are handled by the static analyzor.
+
+Most of these langauges also use a {}  syntax, which I dislike, because arrays should be [] snytax;
+Now how do i differentiate between a type definition []int, and an array expression [. 5, 6, 7]?
+Obviously after the [] expression there is no Other type identifier, like [], *, ID
+
+Should 0 sized arrays be a thing?
+    I think there are usecases where passing an empty slice to functions may be usefull, which could be initialized with
+    int[],
+    For now, 0 sized arrays should have a size of 1 byte, so that new [0]int contains a pointer which needs to be freed.
+    otherwise, "delete arr;" Must check for 0 pointers, which I maybe dont want
+
+Struct and Array init syntax beeing the same?
+    Tuple :: {x: int; y: int;};
+    x0 := Tuple{x = 5, y = 17};         // Tuple
+    x1 := Tuple[];                      // Tuple array of size 0
+    x2 := Tuple[Tuple{x = 5, y = 17}];  // Tuple array of size 1
+
+    // Obvioulsy the auto syntax could also be used here
+    x0: Tuple = .{x = 5, y = 17};
+    x1: [0]Tuple;                       // Tuple array of size 0                 
+    x2: []Tuple = .[];                  // Tuple slice of size 0
+    x3: [2]Tuple = .[.{x = 5, y = 17}, .{z = 7, y = 21}];
+
+    Now what about
+    x := int[5]; // Is an [1]int, where x[0] = 5;
+    x: int[5];   // Parse error
+
+    AST-Parser:
+    difference between: int[5]
+    and                 x[5] ?
+    There is none
+
+    So EXPR_ARRAY_ACCESS may have 0 to multiple children, if the IDENTIFIER is a TYPE, it is an ARRAY initializor,
+    if it is an array/slice, it is an array access --> Not differentiable by the parser!
+
+
+
+Thought Run-Down:
+-----------------
+Struct initialization syntax, requiring all members to be set, e.g. 
+    Analyser::Workload{x = 15; b = 32; c = true || false;};
+
+Auto struct init syntax:
+    workload := .{x = 15; b = 32; c = true||false;};
+
+Anonymous structs:
+    x: struct {name: String; value: int;};
+    x.name = "Henlo";
+    x.value = 5;
+    x = .{name = "Henlo"; value = 15;};
+
+Return value may be struct
+    find_elem(...) -> struct{found: bool; index: int;}
+    return .{found = true; index = 15;};
+
+Struct unpacking syntax
+    found, index := find_elem(...);
+    f2, _ := find_elem(...);
+
+Lambda support
+    x := () {print_string("What");};
+    adder := (x: int, y: int) -> int {return x + y;};
+
+Anonymous enum
+    tag: enum{RED; GREEN; BLUE};
+    tag = .RED;
+
+Choosing enum type
+    Something :: enum<int> {}
+    Smaller :: enum<byte> {}
+
+Tagged unions using current Enum structure
+    Address :: enum
+    {
+        IPV4 = 
+            bytes: [4]byte;
+        IPV6 = 
+            addr: String;
+        NOTHING_MUCH;
+        WHATEVER = 
+            postal_code: int;
+            city_name: String;
+            blob: []byte;
+    }
+
+
+    switch addr
+    {
+    case .IPV4(bytes):
+        type_of(v4) == *(Address.IPV4)
+        loop byte in v4.bytes 
+            print(byte);
+    case .IPV6(v6):
+        print(v6.addr);
+    }
+
+    assert(addr.tag == Address.IPV4);
+    addr.tag = .IPV6;
+    addr.IPV4.bytes = [byte: 192, 168, 0, 1];
+
+    x: Address.IPV4; // ERROR: This is an enum value, not a type!
+
+    manually creating an enum:
+        a: Address;
+        a.tag = Address.IPV4;
+        a.IPV4.bytes = [byte: 0, 0, 0, 0];
+    Does not work with normal initializor
+        Address{tag = .IPV4, IPV4.bytes = [byte: 0, 0, 0, 0]} // ERROR: initializor syntax only works on structs, tagged unions require the type
+    Initializor with union:
+        Color :: union {a: int; b: int; c: int};
+        x := Color{a = 5;} // Should work, because we can differentiate based on da ding
+    with initializor:
+        a: Address = .IPV4{bytes = [byte: 0, 0, 0, 0]};
+
+    
+
+
+
+
+Design Questions:
+-----------------
+ - Do anonymous structs duck-type?
+        No, if this is useful, just define the struct
+ - Should the unpacking syntax be allowed for structs as well?
+        Yes, why should it not, makes refactoring easier
+ - Named argument passing?
+        This seems to overlap a lot with struct initilization, since struct initialization IS basically just
+        calling a function, but the function exists already for each Struct type
+        Maybe I want struct initialization to require naming the arguments, and not for functions
+
+ - With anonymous structs, how are they instanciated?
+
+Design Ideas:
+-------------
+ - Function parameters are constant, parameters may be passed as pointers if they are too big
+ - Functions can only return one value, but it may be an anonymous struct
+ - Function return value cannot be dropped, ignore syntax (_ = do_smth();)
+ - Unpacking syntax for anonymous structs (x, y = returns_anonymous();)
+
+Design: Multiple returns:
+-------------------------
+I feel like I want a clear destinction between in, out and in-out parameters of functions
+    in: Normal, non-pointer parameters, passed as values
+    in-out: Pointer parameters
+    out: Return-values
+
+In C you cannot have a clear distinction between these three, because: 
+    - You dont want to pass huge structs/unions by pointer  --> Therefore pointer arguments may be in
+        In C++ you have constant references, do_smth(const int& smth)
+        In Rust/Zig arguments are always constant, and the compiler decides wheter or not they are passed as pointers
+    - You cannot have multiple return values                --> Either have a parameter-pointer that is written to, or create and return a struct
+        Either support multiple return values, or some tuple types/anonymous structs as returns
 
 
 Thoughts on pointers:
@@ -123,6 +295,7 @@ Automated parameter deduction (Like macros taking names from outer scope)
 Automated module/Enum scope finding (node->type == .UNDEFINED)
 break continue with identifiers, named scopes, break to named scope
 Meta-Programming code modifications may be easy if executed code must be unmodified, and only finaly code is modified
+Strings should probably just be byte slices (int + pointer) and be immutable, and we'll just have a String_Builder for output
 
 Code Ideas:
 -----------

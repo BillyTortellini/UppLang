@@ -31,6 +31,7 @@ struct ModTree_Block;
 struct ModTree_Module;
 struct ModTree_Function;
 struct ModTree_Variable;
+struct ModTree_Expression;
 struct AST_Node;
 
 /*
@@ -83,6 +84,13 @@ struct Expression_Value
     void* data;
 };
 
+struct Member_Initializer
+{
+    Struct_Member member;
+    ModTree_Expression* init_expr;
+    AST_Node* init_node;
+};
+
 enum class ModTree_Expression_Type
 {
     BINARY_OPERATION,
@@ -94,6 +102,8 @@ enum class ModTree_Expression_Type
     ARRAY_ACCESS,
     MEMBER_ACCESS,
     NEW_ALLOCATION,
+    ARRAY_INITIALIZER,
+    STRUCT_INITIALIZER,
     CAST,
 };
 
@@ -126,6 +136,8 @@ struct ModTree_Expression
         } function_call;
         ModTree_Variable* variable_read;
         ModTree_Function* function_pointer_read;
+        Dynamic_Array<ModTree_Expression*> array_initializer;
+        Dynamic_Array<Member_Initializer> struct_initializer;
         struct {
             ModTree_Expression* array_expression;
             ModTree_Expression* index_expression;
@@ -371,6 +383,8 @@ enum class Usage_Type
     ALLOCATION_TYPE,
     EXTERN_FUNCTION_TYPE,
     MEMBER_TYPE,
+    ARRAY_INITIALIZER_TYPE,
+    STRUCT_INITIALIZER_TYPE,
 
     TEMPLATE_ARGUMENT,
     BAKE_TYPE,
@@ -669,6 +683,22 @@ enum class Semantic_Error_Type
     CONTINUE_REQUIRES_LOOP_BLOCK,
     LABEL_ALREADY_IN_USE,
 
+    ARRAY_SIZE_NOT_COMPILE_TIME_KNOWN,
+    ARRAY_SIZE_MUST_BE_GREATER_ZERO,
+
+    ARRAY_INITIALIZER_REQUIRES_TYPE_SYMBOL,
+    ARRAY_INITIALIZER_INVALID_TYPE,
+    ARRAY_AUTO_INITIALIZER_COULD_NOT_DETERMINE_TYPE,
+
+    STRUCT_INITIALIZER_REQUIRES_TYPE_SYMBOL,
+    STRUCT_INITIALIZER_MEMBERS_MISSING,
+    STRUCT_INITIALIZER_MEMBER_INITIALIZED_TWICE,
+    STRUCT_INITIALIZER_TYPE_MUST_BE_STRUCT,
+    STRUCT_INITIALIZER_MEMBER_DOES_NOT_EXIST,
+    STRUCT_INITIALIZER_INVALID_MEMBER_TYPE,
+    STRUCT_INITIALIZER_CAN_ONLY_SET_ONE_UNION_MEMBER,
+    AUTO_STRUCT_INITIALIZER_COULD_NOT_DETERMINE_TYPE,
+
     OTHERS_STRUCT_MUST_CONTAIN_MEMBER,
     OTHERS_STRUCT_MEMBER_ALREADY_DEFINED,
     OTHERS_WHILE_ONLY_RUNS_ONCE,
@@ -688,8 +718,6 @@ enum class Semantic_Error_Type
     OTHERS_RETURN_EXPECTED_NO_VALUE,
     OTHERS_CANNOT_TAKE_ADDRESS_OF_HARDCODED_FUNCTION,
     OTHERS_COULD_NOT_LOAD_FILE,
-    OTHERS_ARRAY_SIZE_NOT_COMPILE_TIME_KNOWN,
-    OTHERS_ARRAY_SIZE_MUST_BE_GREATER_ZERO,
 
     MISSING_FEATURE_TEMPLATED_GLOBALS,
     MISSING_FEATURE_NESTED_TEMPLATED_MODULES,
