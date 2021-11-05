@@ -21,6 +21,7 @@ enum class Token_Type
     RETURN,
     STRUCT,
     UNION,
+    C_UNION,
     ENUM,
     NEW,
     DELETE_TOKEN,
@@ -43,6 +44,7 @@ enum class Token_Type
     INFER_ASSIGN, // :=
     ARROW,        // ->
     HASHTAG,      // #
+    TILDE,        // ~
     // Operations
     OP_ASSIGNMENT, // =
     OP_PLUS, // +

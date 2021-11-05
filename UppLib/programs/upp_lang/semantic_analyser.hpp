@@ -21,6 +21,11 @@
         Symbol tables are registered in templated context, since code_block does not know if templated
 
         Function call does not take expressions but rather identifiers, so we cannot call members that are function pointers
+
+    What type does the tag have?
+    Member access on enum type results in the enum tag
+    x = Address.IPV4; // This should instanciate a value of type Address that has the tag set to ipv4
+    x.tag == Address.IPV4; ???
 */
 
 struct Type_Signature;
@@ -78,7 +83,7 @@ enum class ModTree_Cast_Type
     INT_TO_ENUM,
 };
 
-struct Expression_Value
+struct Constant_Value
 {
     Type_Signature* signature;
     void* data;
@@ -111,7 +116,7 @@ struct ModTree_Expression
 {
     ModTree_Expression_Type expression_type;
     Type_Signature* result_type;
-    Expression_Value value;
+    Constant_Value constant_value;
     union 
     {
         struct 
@@ -268,7 +273,7 @@ struct ModTree_Variable_Origin
 
 struct ModTree_Variable_Value
 {
-    Expression_Value value;
+    Constant_Value constant_value;
     ModTree_Block* last_write_block; // If null, variable was not initialized yet
     bool address_was_taken; // If the variable address was taken, we must not write make value valid again
 };
@@ -435,9 +440,9 @@ Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool only_curr
 struct Analysis_Workload_Enum 
 {
     Symbol_Table* symbol_table;
-    int next_integer_value;
     Type_Signature* enum_type;
-    AST_Node* current_member;
+    int next_integer_value;
+    AST_Node* current_node;
 };
 
 struct Analysis_Workload_Extern_Function {
@@ -591,6 +596,7 @@ enum class Expression_Context_Type
     UNKNOWN,
     FUNCTION_CALL, // Requires some type of function
     TYPE_KNOWN,
+    TYPE_EXPECTED,
     ARRAY,
     MEMBER_ACCESS, // Only valid on enums, structs, slices and arrays
     SWITCH_CONDITION, // Enums
@@ -621,6 +627,10 @@ enum class Semantic_Error_Type
 
     EXTERN_HEADER_DOES_NOT_CONTAIN_SYMBOL, // Error_node = is identifier_node
     EXTERN_HEADER_PARSING_FAILED, // Error_node = EXTERN_HEADER_IMPORT
+
+    EXPECTED_TYPE_EXPRESSION,
+    EXPECTED_VALUE_EXPRESSION,
+    EXPECTED_CALLABLE_EXPRESSION,
 
     INVALID_TYPE_VOID_USAGE,
     INVALID_TYPE_FUNCTION_CALL, // Expression
@@ -656,7 +666,7 @@ enum class Semantic_Error_Type
 
     SYMBOL_EXPECTED_MODUL_IN_IDENTIFIER_PATH,
     SYMBOL_EXPECTED_TYPE_ON_TYPE_IDENTIFIER,
-    SYMBOL_EXPECTED_VARIABLE_OR_FUNCTION_ON_VARIABLE_READ,
+    SYMBOL_MODULE_INVALID,
 
     SYMBOL_TABLE_UNRESOLVED_SYMBOL,
     SYMBOL_TABLE_SYMBOL_ALREADY_DEFINED,
@@ -788,7 +798,7 @@ struct Bytecode_Execute_Result
     Analysis_Result_Type type;
     union
     {
-        Expression_Value value;
+        Constant_Value value;
         Workload_Dependency dependency;
     } options;
 };
@@ -832,6 +842,7 @@ struct Semantic_Analyser
     String* id_size;
     String* id_data;
     String* id_main;
+    String* id_tag;
 };
 
 Semantic_Analyser semantic_analyser_create();

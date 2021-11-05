@@ -101,7 +101,7 @@ void logger_panic(const char* file_name, int line_number, const char* message_fo
     va_end(variadic_arguments);
 
     // Send to custom panic function
-   logger_custom_panic_fn(logger_message_buffer);
+    logger_custom_panic_fn(logger_message_buffer);
     __debugbreak();
 }
 

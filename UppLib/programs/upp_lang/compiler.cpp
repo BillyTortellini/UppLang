@@ -7,7 +7,7 @@
 // Parser stages
 bool enable_lexing = true;
 bool enable_parsing = true;
-bool enable_analysis = true;
+bool enable_analysis = false;
 bool enable_ir_gen = true;
 bool enable_bytecode_gen = true;
 bool enable_c_generation = false;

@@ -478,7 +478,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
                 Symbol_Table* table = code_editor_find_symbol_table_of_node(editor, node);
                 if (table == 0) break;
                 AST_Node* expression_node = node->child_start;
-                if (expression_node->type != AST_Node_Type::EXPRESSION_VARIABLE_READ) break;
+                if (expression_node->type != AST_Node_Type::EXPRESSION_IDENTIFIER) break;
 
                 Symbol* symbol = code_editor_symbol_table_lookup(editor, table, expression_node->child_start);
                 if (symbol == 0) break;

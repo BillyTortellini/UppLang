@@ -12,8 +12,17 @@ struct Code_Source;
 struct Identifier_Pool;
 struct Token;
 
+/*
+TYPE_IDENTIFIER       --> EXPRESSION_IDENTIFIER
+TYPE_POINTER_TO       --> EXPRESSION_POINTER
+TYPE_ARRAY            --> EXPRESSION_ARRAY_TYPE
+TYPE_SLICE            --> EXPRESSION_SLICE_TYPE
+TYPE_FUNCTION_POINTER --> EXPRESSION_FUNCTION_TYPE
+*/
+
 enum class AST_Node_Type
 {
+    // TOP-LEVEL DECLARATIONS
     ROOT, // Child 0: Definitions
     DEFINITIONS, // Children: functions, globals, modules, structs or extern function declaration
     EXTERN_FUNCTION_DECLARATION, // id: function name Child 0: Type
@@ -22,13 +31,16 @@ enum class AST_Node_Type
     LOAD_FILE, // id: filename
     MODULE, // Child 0: Definitions
     MODULE_TEMPLATED, // Child 0: Parameter_Block_Unnamed, Child 1: DEFINITIONS
-    TEMPLATE_PARAMETERS, // Children: IDENTIFIER_NAME
     STRUCT, // Children: Variable definitions
     UNION, // Children: Variable definitions
-    ENUM, // Children: Enum Member
-    ENUM_MEMBER, // id: member name, Optional<Child 0>: Expression
+    C_UNION, // Children: Variable definitions
+    ENUM, // Children: Enum_Member
     FUNCTION, // Child 0: Function_Signature, Child 1: Statement_Block
-    FUNCTION_SIGNATURE, // Child 0: Parameter_Block_Named, Child 1 (optional): Return Type
+
+    // Building Blocks
+    TEMPLATE_PARAMETERS, // Children: IDENTIFIER_NAME
+    ENUM_MEMBER, // Optional<Child 0>: Expression
+    FUNCTION_SIGNATURE, // Child 0: Parameter_Block_Named, Child 1 (optional): Return-Type
     IDENTIFIER_NAME, // id defined
     IDENTIFIER_NAME_TEMPLATED, // Child 0: Parameter_Block_Unnamed
     IDENTIFIER_PATH, // Child 0: Identifier-Type, id defined
@@ -39,11 +51,10 @@ enum class AST_Node_Type
     MEMBER_INITIALIZER, // id: member name, Child 0: Expression;
     SWITCH_CASE, // Child 0: Expression, Child 1: Statement_Block
     SWITCH_DEFAULT_CASE, // Child 0: Statement_Block
-    TYPE_FUNCTION_POINTER, // Child 0: Parameter_Block_Unnamed, Child 1 (optional): Return Type
-    TYPE_IDENTIFIER, // Child 0: Either Identifer or Identifier Path
-    TYPE_POINTER_TO, // Child 0: Type
-    TYPE_ARRAY, // Child 0: Expression (Compile time available), Child 1: Type
-    TYPE_SLICE, // Child 0: Type
+    ARGUMENTS, // Children: Expressions or Named arguments
+    NAMED_ARGUMENT, // id: name, Child 0: Expression
+
+    // Statements
     STATEMENT_BLOCK, // Children: Statements, Optional: id = block_name
     STATEMENT_IF, // Child 0: Condition, Child 1: Statements, Optional: id = block_name
     STATEMENT_DEFER, // Child 0: Statement_Block
@@ -58,21 +69,27 @@ enum class AST_Node_Type
     STATEMENT_VARIABLE_DEFINITION, // Child 0: Type index, id
     STATEMENT_VARIABLE_DEFINE_ASSIGN, // Child 0: Type index, Child 1: Value-Expression
     STATEMENT_VARIABLE_DEFINE_INFER, // Child 0: Expression
-    STATEMENT_DELETE, // Child =: expression
-    ARGUMENTS, // Children: Expressions
+    STATEMENT_DELETE, // Child = expression
+
+    // Expressions
+    EXPRESSION_POINTER,    // Child 0: Expr
+    EXPRESSION_IDENTIFIER, // Child 0: Identifier
+    EXPRESSION_SLICE_TYPE, // []expr_0
+    EXPRESSION_ARRAY_TYPE, // [expr_0]expr_1      
+    EXPRESSION_FUNCTION_TYPE, // Child 0: Function signature
+    // Type_End
+    EXPRESSION_LITERAL,   
     EXPRESSION_NEW, // Child 0: Type
     EXPRESSION_NEW_ARRAY, // Child 0: Array size expression, Child 1: Type
-    EXPRESSION_LITERAL,
     EXPRESSION_FUNCTION_CALL, // Child 0: Expression, Child 1: ARGUMENTS
-    EXPRESSION_VARIABLE_READ, // Child 0: Identifier
     EXPRESSION_ARRAY_ACCESS, // Child 0: Access-to-Expression, Child 1-n: Index/Initializor Expressions
     EXPRESSION_AUTO_ARRAY_INITIALIZER, // Child 0-n: Initializor Expressions
     EXPRESSION_STRUCT_INITIALIZER, // Child 0: Identifier_Path, child 1-n: MEMBER_INITIALIZER
     EXPRESSION_AUTO_STRUCT_INITIALIZER, // Child 1-n: MEMBER_INITIALIZER
+    EXPRESSION_AUTO_MEMBER, // ID: name of access member
     EXPRESSION_MEMBER_ACCESS, // Child 0: left side, id is the .what operator a.y.y[5].z
     EXPRESSION_CAST, // Either: Child 0: type, Child 1: Expression    OR    Child 0: Expression
     EXPRESSION_BAKE, // Child 0: type, Child 1: Statement_Block
-    EXPRESSION_AUTO_MEMBER, // ID: name of access member
     EXPRESSION_BINARY_OPERATION_ADDITION,
     EXPRESSION_BINARY_OPERATION_SUBTRACTION,
     EXPRESSION_BINARY_OPERATION_DIVISION,
@@ -88,17 +105,15 @@ enum class AST_Node_Type
     EXPRESSION_BINARY_OPERATION_GREATER_OR_EQUAL,
     EXPRESSION_UNARY_OPERATION_NEGATE,
     EXPRESSION_UNARY_OPERATION_NOT,
-    EXPRESSION_UNARY_OPERATION_ADDRESS_OF,
     EXPRESSION_UNARY_OPERATION_DEREFERENCE,
+
     UNDEFINED, // Just for debugging
 };
 
 bool ast_node_type_is_identifier_node(AST_Node_Type type);
-bool ast_node_type_is_binary_expression(AST_Node_Type type);
-bool ast_node_type_is_unary_expression(AST_Node_Type type);
 bool ast_node_type_is_expression(AST_Node_Type type);
+bool ast_node_type_is_binary_operation(AST_Node_Type type);
 bool ast_node_type_is_statement(AST_Node_Type type);
-bool ast_node_type_is_type(AST_Node_Type type);
 
 struct AST_Node
 {

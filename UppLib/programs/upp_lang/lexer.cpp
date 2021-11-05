@@ -20,6 +20,7 @@ bool token_type_is_keyword(Token_Type type)
     case Token_Type::RETURN: return true;
     case Token_Type::STRUCT: return true;
     case Token_Type::UNION: return true;
+    case Token_Type::C_UNION: return true;
     case Token_Type::ENUM: return true;
     case Token_Type::NEW: return true;
     case Token_Type::DEFER: return true;
@@ -47,6 +48,7 @@ const char* token_type_to_string(Token_Type type)
     case Token_Type::MODULE: return "MODULE";
     case Token_Type::STRUCT: return "STRUCT";
     case Token_Type::UNION: return "UNION";
+    case Token_Type::C_UNION: return "C_UNION";
     case Token_Type::ENUM: return "ENUM";
     case Token_Type::BREAK: return "BREAK";
     case Token_Type::DOT: return "DOT";
@@ -67,6 +69,7 @@ const char* token_type_to_string(Token_Type type)
     case Token_Type::OPEN_BRACKETS: return "OPEN_SQUARE_BRACKET";
     case Token_Type::CLOSED_BRACKETS: return "CLOSED_SQUARE_BRACKET";
     case Token_Type::HASHTAG: return "#";
+    case Token_Type::TILDE: return "~";
     case Token_Type::OP_ASSIGNMENT: return "OP_ASSIGNMENT";
     case Token_Type::OP_PLUS: return "OP_PLUS";
     case Token_Type::OP_MINUS: return "OP_MINUS";
@@ -294,6 +297,7 @@ Lexer lexer_create()
     hashtable_insert_element(&lexer.keywords, string_create_static("return"), Token_Type::RETURN);
     hashtable_insert_element(&lexer.keywords, string_create_static("struct"), Token_Type::STRUCT);
     hashtable_insert_element(&lexer.keywords, string_create_static("union"), Token_Type::UNION);
+    hashtable_insert_element(&lexer.keywords, string_create_static("c_union"), Token_Type::C_UNION);
     hashtable_insert_element(&lexer.keywords, string_create_static("cast"), Token_Type::CAST);
     hashtable_insert_element(&lexer.keywords, string_create_static("null"), Token_Type::NULLPTR);
     hashtable_insert_element(&lexer.keywords, string_create_static("new"), Token_Type::NEW);
@@ -391,6 +395,11 @@ void lexer_lex(Lexer* lexer, String* code, Identifier_Pool* identifier_pool)
         }
         case '.':
             dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::DOT, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            character_pos++;
+            index++;
+            continue;
+        case '~':
+            dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::TILDE, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;

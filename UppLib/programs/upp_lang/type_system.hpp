@@ -4,6 +4,7 @@
 #include "../../datastructures/dynamic_array.hpp"
 
 struct Identifier_Pool;
+struct AST_Node;
 
 enum class Primitive_Type
 {
@@ -39,6 +40,14 @@ struct Enum_Member
 {
     String* id;
     int value;
+    AST_Node* definition_node;
+};
+
+enum class Structure_Type
+{
+    STRUCT,
+    C_UNION,
+    UNION
 };
 
 struct Type_Signature
@@ -69,7 +78,8 @@ struct Type_Signature
         struct {
             Dynamic_Array<Struct_Member> members;
             String* id;
-            bool is_union;
+            Structure_Type struct_type;
+            Struct_Member tag_member;
         } structure;
         struct {
             Dynamic_Array<Enum_Member> members;
@@ -78,7 +88,6 @@ struct Type_Signature
         String* template_id;
     } options;
 };
-struct Semantic_Analyser;
 void type_signature_append_to_string(String* string, Type_Signature* signature);
 void type_signature_append_value_to_string(Type_Signature* type, byte* value_ptr, String* string);
 
@@ -117,6 +126,7 @@ struct Type_System
     Type_Signature* void_type;
     Type_Signature* void_ptr_type;
     Type_Signature* string_type;
+    Type_Signature* empty_struct_type;
 
     String* id_data;
     String* id_size;
@@ -133,7 +143,7 @@ Type_Signature* type_system_make_slice(Type_System* system, Type_Signature* elem
 Type_Signature* type_system_make_function(Type_System* system, Dynamic_Array<Type_Signature*> parameter_types, Type_Signature* return_type);
 Type_Signature* type_system_make_template(Type_System* system, String* id);
 struct AST_Node;
-Type_Signature* type_system_make_struct_empty(Type_System* system, AST_Node* struct_node, bool is_union);
+Type_Signature* type_system_make_struct_empty(Type_System* system, AST_Node* struct_node);
 Type_Signature* type_system_make_enum_empty(Type_System* system, String* id);
 void type_system_print(Type_System* system);
 Optional<Enum_Member> enum_type_find_member_by_value(Type_Signature* enum_type, int value);
