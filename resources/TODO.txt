@@ -1,10 +1,11 @@
 Next features:
 --------------
- * Rework type analysis
- * Type-Information in language, type_of, type_info
-
+ * Any-Type
  * Named parameter values in function calls
- * Rework type-initializers with () instead of {}
+ * Rework type-initializers with () instead of {} --> Or maybe switch to ~Syntax
+    ~ Syntax would be for accessing Members of non Type things, like Enums and structs
+    Color~{} is also unique Color.{} Would also make sense, if we go with the Color.GREEN syntax
+    .{} would still work, but its the same as ~{}
  * Finish Unions
 
  * Anonymous structs
@@ -25,24 +26,42 @@ Next features:
  * Macros and Iteration
  * Generating source code with runtime code execution
 
+
+
+
+Issues:
+-------
+Type information table seems to have a lot of members with size = 0, and one member with alignment = 0, which should not happen
+
+Notes:
+------
+
+Tactics:
+--------
+ - Implement type_info function, which looks up the type_information in the table and returns it
+    x: Type_Information;
+    x = type_info(int);
+ - Make type_information work in C-Compilation
+ - Make type_information work during partial Execution (Set global before running)
+ - Finish up type_information structure
+
+
+
 Unfinished: Unions
 ----------------------
  * Pointer def syntax in switch cases when accessing union
- * Empty-Type for union membaz (Cases that do not have a variable)
+ * Empty-Type for union membaz (Cases that do not have a variable, but i still want to have a enum case)
 
-
-
-
-Tactics: Type_Analysis:
------------------------
-Remove all type expressions, create new expressions for things
-Lambas need parameters. Makes Sense
-Function types need parameters names. In C not required, but they are here
-
-
-
-
-
+Notes:
+------
+    The ID{} syntax only fails when we have other cases where an expression
+    is immediately followed by an { (Since then we parse the expression and eat the } on the way)
+    This is the case for 
+        - if a{}
+        - while b{}
+        - switch c{}
+    Also maybe the ~ Syntax idea was not so bad at all because member access makes more sense this way
+    
 
 
 Syntax thouhts:
@@ -345,6 +364,7 @@ Ideas that just come to mind:
 -----------------------------
 PrintF Debugging could be replaced with memory visualizer
 'Destructors' could be generated with metaprogramming, simple initializors too
+Advanced initializers could also be generated with metaprogramming and Annotations
 Differentiate States and Tags in the language
 Should we have compile-time known arguments, are they the same as template args?
 Context struct could live in thread-local memory
@@ -370,6 +390,8 @@ Delete IR_Code, just use modtree for translation
 Functions may just be compile time known function pointers?
 Hardcoded functions should be removed at some point
 AST_Node only really needs type and child information for processing, parent and tokenrange could be in another array and multiple structures could exist for this
+ModTree and IR_Code Structure is probably not final, but well see when we know more
+Workload-Structure may be easier if we could analyse the dependencies beforehand --> Maybe implement pre-analysis step, so that Workloads dont need Pauses/Wait for dependencies
 
 
 

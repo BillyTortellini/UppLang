@@ -504,9 +504,6 @@ struct Analysis_Workload_Struct_Body
     Type_Signature* struct_signature;
     Symbol_Table* symbol_table;
     AST_Node* current_member_node;
-
-    int offset;
-    int alignment;
 };
 
 struct Analysis_Workload_Function_Header
@@ -589,7 +586,6 @@ struct Waiting_Workload
 /*
 ERRORS
 */
-
 enum class Expression_Context_Type
 {
     ARITHMETIC_OPERAND, // + - * / %, unary -, requires primitive type either int or float
@@ -619,6 +615,15 @@ enum class Expected_Type_Classes
     SPECIFIC_TYPE,
 };
 
+enum class Expression_Result_Any_Type
+{
+    EXPRESSION,
+    TYPE,
+    FUNCTION,
+    ERROR_OCCURED,
+    DEPENDENCY
+};
+
 enum class Semantic_Error_Type
 {
     TEMPLATE_ARGUMENTS_INVALID_COUNT,
@@ -628,9 +633,9 @@ enum class Semantic_Error_Type
     EXTERN_HEADER_DOES_NOT_CONTAIN_SYMBOL, // Error_node = is identifier_node
     EXTERN_HEADER_PARSING_FAILED, // Error_node = EXTERN_HEADER_IMPORT
 
-    EXPECTED_TYPE_EXPRESSION,
-    EXPECTED_VALUE_EXPRESSION,
-    EXPECTED_CALLABLE_EXPRESSION,
+    EXPECTED_TYPE,
+    EXPECTED_VALUE,
+    EXPECTED_CALLABLE,
 
     INVALID_TYPE_VOID_USAGE,
     INVALID_TYPE_FUNCTION_CALL, // Expression
@@ -686,6 +691,10 @@ enum class Semantic_Error_Type
     BAKE_FUNCTION_MUST_NOT_REFERENCE_GLOBALS,
     BAKE_FUNCTION_DID_NOT_SUCCEED,
 
+    EXPRESSION_CONTAINS_INVALID_TYPE_HANDLE,
+    TYPE_NOT_KNOWN_AT_COMPILE_TIME,
+    EXPRESSION_IS_NOT_A_TYPE,
+
     BREAK_NOT_INSIDE_LOOP_OR_SWITCH,
     BREAK_LABLE_NOT_FOUND,
     CONTINUE_NOT_INSIDE_LOOP,
@@ -709,6 +718,8 @@ enum class Semantic_Error_Type
     STRUCT_INITIALIZER_CAN_ONLY_SET_ONE_UNION_MEMBER,
     AUTO_STRUCT_INITIALIZER_COULD_NOT_DETERMINE_TYPE,
 
+    OTHERS_TYPE_MEMBER_ACCESS_MUST_BE_ENUM,
+    OTHERS_MEMBER_ACCESS_INVALID_ON_FUNCTION,
     OTHERS_STRUCT_MUST_CONTAIN_MEMBER,
     OTHERS_STRUCT_MEMBER_ALREADY_DEFINED,
     OTHERS_WHILE_ONLY_RUNS_ONCE,
@@ -721,6 +732,7 @@ enum class Semantic_Error_Type
     OTHERS_UNFINISHED_WORKLOAD_CODE_BLOCK,
     OTHERS_UNFINISHED_WORKLOAD_TYPE_SIZE,
     OTHERS_MAIN_CANNOT_BE_TEMPLATED,
+    OTHERS_CANNOT_TAKE_ADDRESS_OF_MAIN,
     OTHERS_MAIN_NOT_DEFINED,
     OTHERS_MAIN_UNEXPECTED_SIGNATURE,
     OTHERS_NO_CALLING_TO_MAIN,
@@ -757,6 +769,7 @@ struct Semantic_Error
     Type_Signature* function_type;
     Type_Signature* binary_op_left_type;
     Type_Signature* binary_op_right_type;
+    Expression_Result_Any_Type expression_type;
 };
 
 struct Token_Range;
@@ -824,6 +837,7 @@ struct Semantic_Analyser
     ModTree_Function* free_function;
     ModTree_Function* malloc_function;
     ModTree_Function* assert_function;
+    ModTree_Variable* global_type_informations;
 
     // Temporary stuff needed for analysis
     Compiler* compiler;
@@ -843,6 +857,8 @@ struct Semantic_Analyser
     String* id_data;
     String* id_main;
     String* id_tag;
+    String* id_type_of;
+    String* id_type_info;
 };
 
 Semantic_Analyser semantic_analyser_create();

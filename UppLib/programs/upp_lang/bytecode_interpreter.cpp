@@ -852,6 +852,9 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
     case Instruction_Type::LOAD_GLOBAL_ADDRESS:
         *(void**)(interpreter->stack_pointer + i->op1) = (void*)(interpreter->globals.data + i->op2);
         break;
+    case Instruction_Type::LOAD_CONSTANT_ADDRESS:
+        *(void**)(interpreter->stack_pointer + i->op1) = (void*)(interpreter->constant_pool->buffer.data + i->op2);
+        break;
     case Instruction_Type::LOAD_FUNCTION_LOCATION:
         *(Bytecode_Instruction**)(interpreter->stack_pointer + i->op1) = (Bytecode_Instruction*)&interpreter->generator->instructions[i->op2];
         break;

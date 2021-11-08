@@ -9,17 +9,6 @@ void type_signature_destroy(Type_Signature* sig)
         dynamic_array_destroy(&sig->options.structure.members);
 }
 
-Type_Signature type_signature_make_primitive(Primitive_Type type, int size, bool is_signed)
-{
-    Type_Signature result;
-    result.type = Signature_Type::PRIMITIVE;
-    result.options.primitive.is_signed = is_signed;
-    result.options.primitive.type = type;
-    result.size = size;
-    result.alignment = size;
-    return result;
-}
-
 void type_signature_append_to_string_with_children(String* string, Type_Signature* signature, bool print_child)
 {
     switch (signature->type)
@@ -40,6 +29,9 @@ void type_signature_append_to_string_with_children(String* string, Type_Signatur
         break;
     case Signature_Type::ERROR_TYPE:
         string_append_formated(string, "ERROR-Type");
+        break;
+    case Signature_Type::TYPE_TYPE:
+        string_append_formated(string, "TYPE_TYPE");
         break;
     case Signature_Type::POINTER:
         string_append_formated(string, "*");
@@ -253,60 +245,47 @@ void type_signature_append_to_string(String* string, Type_Signature* signature) 
 
 void type_system_add_primitives(Type_System* system, Identifier_Pool* pool)
 {
-    system->bool_type = new Type_Signature();
-    system->i8_type = new Type_Signature();
-    system->i16_type = new Type_Signature();
-    system->i32_type = new Type_Signature();
-    system->i64_type = new Type_Signature();
-    system->u8_type = new Type_Signature();
-    system->u16_type = new Type_Signature();
-    system->u32_type = new Type_Signature();
-    system->u64_type = new Type_Signature();
-    system->f32_type = new Type_Signature();
-    system->f64_type = new Type_Signature();
-    system->error_type = new Type_Signature();
-    system->void_type = new Type_Signature();
-    system->void_ptr_type = new Type_Signature();
+    system->id_data = identifier_pool_add(pool, string_create_static("data"));
+    system->id_size = identifier_pool_add(pool, string_create_static("size"));
+    system->id_tag = identifier_pool_add(pool, string_create_static("tag"));
 
-    *system->bool_type = type_signature_make_primitive(Primitive_Type::BOOLEAN, 1, false);
-    *system->i8_type = type_signature_make_primitive(Primitive_Type::INTEGER, 1, true);
-    *system->i16_type = type_signature_make_primitive(Primitive_Type::INTEGER, 2, true);
-    *system->i32_type = type_signature_make_primitive(Primitive_Type::INTEGER, 4, true);
-    *system->i64_type = type_signature_make_primitive(Primitive_Type::INTEGER, 8, true);
-    *system->u8_type = type_signature_make_primitive(Primitive_Type::INTEGER, 1, false);
-    *system->u16_type = type_signature_make_primitive(Primitive_Type::INTEGER, 2, false);
-    *system->u32_type = type_signature_make_primitive(Primitive_Type::INTEGER, 4, false);
-    *system->u64_type = type_signature_make_primitive(Primitive_Type::INTEGER, 8, false);
-    *system->f32_type = type_signature_make_primitive(Primitive_Type::FLOAT, 4, true);
-    *system->f64_type = type_signature_make_primitive(Primitive_Type::FLOAT, 8, true);
+    system->bool_type = type_system_make_primitive(system, Primitive_Type::BOOLEAN, 1, false);
+    system->i8_type = type_system_make_primitive(system, Primitive_Type::INTEGER, 1, true);
+    system->i16_type = type_system_make_primitive(system, Primitive_Type::INTEGER, 2, true);
+    system->i32_type = type_system_make_primitive(system, Primitive_Type::INTEGER, 4, true);
+    system->i64_type = type_system_make_primitive(system, Primitive_Type::INTEGER, 8, true);
+    system->u8_type = type_system_make_primitive(system, Primitive_Type::INTEGER, 1, false);
+    system->u16_type = type_system_make_primitive(system, Primitive_Type::INTEGER, 2, false);
+    system->u32_type = type_system_make_primitive(system, Primitive_Type::INTEGER, 4, false);
+    system->u64_type = type_system_make_primitive(system, Primitive_Type::INTEGER, 8, false);
+    system->f32_type = type_system_make_primitive(system, Primitive_Type::FLOAT, 4, true);
+    system->f64_type = type_system_make_primitive(system, Primitive_Type::FLOAT, 8, true);
     {
-        system->error_type->type = Signature_Type::ERROR_TYPE;
-        system->error_type->size = 0;
-        system->error_type->alignment = 1;
+        Type_Signature error_type;
+        error_type.size = 0;
+        error_type.alignment = 0;
+        error_type.type = Signature_Type::ERROR_TYPE;
+        system->error_type = type_system_register_type(system, error_type);
+
+        Type_Signature void_type;
+        void_type.type = Signature_Type::VOID_TYPE;
+        void_type.size = 0;
+        void_type.alignment = 1;
+        system->void_type = type_system_register_type(system, void_type);
+
+        Type_Signature void_ptr_type;
+        void_ptr_type.type = Signature_Type::POINTER;
+        void_ptr_type.size = 8;
+        void_ptr_type.alignment = 8;
+        void_ptr_type.options.pointer_child = system->void_type;
+        system->void_ptr_type = type_system_register_type(system, void_ptr_type);
+
+        Type_Signature type_type;
+        type_type.type = Signature_Type::TYPE_TYPE;
+        type_type.size = 8;
+        type_type.alignment = 8;
+        system->type_type = type_system_register_type(system, type_type);
     }
-    system->void_type->type = Signature_Type::VOID_TYPE;
-    system->void_type->size = 0;
-    system->void_type->alignment = 1;
-
-    system->void_ptr_type->type = Signature_Type::POINTER;
-    system->void_ptr_type->size = 8;
-    system->void_ptr_type->alignment = 8;
-    system->void_ptr_type->options.pointer_child = system->void_type;
-
-    dynamic_array_push_back(&system->types, system->bool_type);
-    dynamic_array_push_back(&system->types, system->i8_type);
-    dynamic_array_push_back(&system->types, system->i16_type);
-    dynamic_array_push_back(&system->types, system->i32_type);
-    dynamic_array_push_back(&system->types, system->i64_type);
-    dynamic_array_push_back(&system->types, system->u8_type);
-    dynamic_array_push_back(&system->types, system->u16_type);
-    dynamic_array_push_back(&system->types, system->u32_type);
-    dynamic_array_push_back(&system->types, system->u64_type);
-    dynamic_array_push_back(&system->types, system->f32_type);
-    dynamic_array_push_back(&system->types, system->f64_type);
-    dynamic_array_push_back(&system->types, system->error_type);
-    dynamic_array_push_back(&system->types, system->void_type);
-    dynamic_array_push_back(&system->types, system->void_ptr_type);
 
     // String
     {
@@ -324,41 +303,99 @@ void type_system_add_primitives(Type_System* system, Identifier_Pool* pool)
         dynamic_array_push_back(&string_members, character_buffer_member);
         dynamic_array_push_back(&string_members, size_member);
 
-        system->string_type = new Type_Signature();
-        system->string_type->type = Signature_Type::STRUCT;
-        system->string_type->alignment = 8;
-        system->string_type->size = 20;
-        system->string_type->options.structure.members = string_members;
-        system->string_type->options.structure.struct_type = Structure_Type::STRUCT;
-        system->string_type->options.structure.id = identifier_pool_add(pool, string_create_static("String"));
-        dynamic_array_push_back(&system->types, system->string_type);
+        Type_Signature string_type;
+        string_type.type = Signature_Type::STRUCT;
+        string_type.alignment = 8;
+        string_type.size = 20;
+        string_type.options.structure.members = string_members;
+        string_type.options.structure.struct_type = Structure_Type::STRUCT;
+        string_type.options.structure.id = identifier_pool_add(pool, string_create_static("String"));
+        system->string_type = type_system_register_type(system, string_type);
+    }
+
+    // Primitive Type enum
+    {
+        system->type_primitive_type_enum = type_system_make_enum_empty_from_node(system, identifier_pool_add(pool, string_create_static("Primitive_Type")));
+        Enum_Member m0;
+        m0.definition_node = 0;
+        m0.id = identifier_pool_add(pool, string_create_static("INTEGER"));
+        m0.value = 1;
+        dynamic_array_push_back(&system->type_primitive_type_enum->options.enum_type.members, m0);
+        Enum_Member m1;
+        m1.definition_node = 0;
+        m1.id = identifier_pool_add(pool, string_create_static("FLOAT"));
+        m1.value = 2;
+        dynamic_array_push_back(&system->type_primitive_type_enum->options.enum_type.members, m1);
+        Enum_Member m2;
+        m2.definition_node = 0;
+        m2.id = identifier_pool_add(pool, string_create_static("BOOL"));
+        m2.value = 3;
+        dynamic_array_push_back(&system->type_primitive_type_enum->options.enum_type.members, m2);
+        type_system_finish_type(system, system->type_primitive_type_enum);
+    }
+
+    // Type-Information
+    {
+        system->type_information_type = type_system_make_struct_empty_full(
+            system, identifier_pool_add(pool, string_create_static("Type_Information")), Structure_Type::STRUCT
+        );
+        Struct_Member type_member;
+        type_member.id = identifier_pool_add(pool, string_create_static("type"));
+        type_member.offset = 0;
+        type_member.type = system->type_type;
+        dynamic_array_push_back(&system->type_information_type->options.structure.members, type_member);
+
+        Struct_Member size_member;
+        size_member.id = identifier_pool_add(pool, string_create_static("size"));
+        size_member.offset = 0;
+        size_member.type = system->i32_type;
+        dynamic_array_push_back(&system->type_information_type->options.structure.members, size_member);
+
+        Struct_Member alignment_member;
+        alignment_member.id = identifier_pool_add(pool, string_create_static("alignment"));
+        alignment_member.offset = 0;
+        alignment_member.type = system->i32_type;
+        dynamic_array_push_back(&system->type_information_type->options.structure.members, alignment_member);
+
+        Struct_Member is_primitive_member;
+        is_primitive_member.id = identifier_pool_add(pool, string_create_static("is_primitive"));
+        is_primitive_member.offset = 0;
+        is_primitive_member.type = system->bool_type;
+        dynamic_array_push_back(&system->type_information_type->options.structure.members, is_primitive_member);
+
+        Struct_Member primitive_type_member;
+        primitive_type_member.id = identifier_pool_add(pool, string_create_static("primitive_type"));
+        primitive_type_member.offset = 0;
+        primitive_type_member.type = system->type_primitive_type_enum;
+        dynamic_array_push_back(&system->type_information_type->options.structure.members, primitive_type_member);
+
+        type_system_finish_type(system, system->type_information_type);
     }
 
     // Empty structure
     {
-        system->empty_struct_type = new Type_Signature();
-        system->empty_struct_type->alignment = 1;
-        system->empty_struct_type->size = 0;
-        system->empty_struct_type->type = Signature_Type::STRUCT;
-        system->empty_struct_type->options.structure.struct_type = Structure_Type::STRUCT;
-        system->empty_struct_type->options.structure.id = 0;
-        system->empty_struct_type->options.structure.members = dynamic_array_create_empty<Struct_Member>(1);
-        dynamic_array_push_back(&system->types, system->empty_struct_type);
+        Type_Signature empty_struct_type;
+        empty_struct_type.alignment = 1;
+        empty_struct_type.size = 0;
+        empty_struct_type.type = Signature_Type::STRUCT;
+        empty_struct_type.options.structure.struct_type = Structure_Type::STRUCT;
+        empty_struct_type.options.structure.id = 0;
+        empty_struct_type.options.structure.members = dynamic_array_create_empty<Struct_Member>(1);
+        system->empty_struct_type = type_system_register_type(system, empty_struct_type);
     }
-
-    system->id_data = identifier_pool_add(pool, string_create_static("data"));
-    system->id_size = identifier_pool_add(pool, string_create_static("size"));
 }
 
 Type_System type_system_create()
 {
     Type_System result;
     result.types = dynamic_array_create_empty<Type_Signature*>(256);
+    result.internal_type_infos = dynamic_array_create_empty<Internal_Type_Information>(256);
     return result;
 }
 
 void type_system_destroy(Type_System* system) {
     dynamic_array_destroy(&system->types);
+    dynamic_array_destroy(&system->internal_type_infos);
 }
 
 void type_system_reset(Type_System* system) {
@@ -367,6 +404,7 @@ void type_system_reset(Type_System* system) {
         delete system->types[i];
     }
     dynamic_array_reset(&system->types);
+    dynamic_array_reset(&system->internal_type_infos);
 }
 
 Type_Signature* type_system_register_type(Type_System* system, Type_Signature signature)
@@ -383,6 +421,7 @@ Type_Signature* type_system_register_type(Type_System* system, Type_Signature si
             {
                 switch (sig1->type)
                 {
+                case Signature_Type::TYPE_TYPE: are_equal = true; break;
                 case Signature_Type::VOID_TYPE: are_equal = true; break;
                 case Signature_Type::ERROR_TYPE: are_equal = true; break;
                 case Signature_Type::PRIMITIVE: are_equal = sig1->options.primitive.type == sig2->options.primitive.type &&
@@ -419,10 +458,103 @@ Type_Signature* type_system_register_type(Type_System* system, Type_Signature si
         }
     }
 
+    // Create Interal type Info and internal index
+    {
+        signature.internal_index = system->internal_type_infos.size;
+        Internal_Type_Information info;
+        info.type = signature.internal_index;
+        info.size = signature.size;
+        info.alignment = signature.alignment;
+        info.is_primitive_type = signature.type == Signature_Type::PRIMITIVE;
+        if (info.is_primitive_type) {
+            info.primitive_type = (i32)signature.options.primitive.type;
+        }
+        dynamic_array_push_back(&system->internal_type_infos, info);
+    }
     Type_Signature* new_sig = new Type_Signature();
     *new_sig = signature;
     dynamic_array_push_back(&system->types, new_sig);
     return new_sig;
+}
+
+void type_system_finish_type(Type_System* system, Type_Signature* type)
+{
+    assert(type->internal_index < system->internal_type_infos.size, "");
+    Internal_Type_Information* internal_info = &system->internal_type_infos[type->internal_index];
+    switch (type->type)
+    {
+    case Signature_Type::ENUM:
+        // FUTURE: Update interal info membaz
+        type->size = system->i32_type->size;
+        type->alignment = system->i32_type->alignment;
+        break;
+    case Signature_Type::STRUCT:
+    {
+        // FUTURE: Update interal info membaz
+        assert(type->size == 0 && type->alignment == 0, "");
+        bool overlap_members = !(type->options.structure.struct_type == Structure_Type::STRUCT);
+        int offset = 0;
+        int alignment = 0;
+        for (int i = 0; i < type->options.structure.members.size; i++)
+        {
+            Struct_Member* member = &type->options.structure.members[i];
+            offset = align_offset_next_multiple(offset, member->type->size);
+            member->offset = offset;
+            alignment = math_maximum(member->type->alignment, alignment);
+            if (!overlap_members) {
+                offset += member->type->size;
+            }
+        }
+        if (type->options.structure.struct_type == Structure_Type::UNION)
+        {
+            Type_Signature* tag_type = type_system_make_enum_empty_from_node(system, 0);
+            tag_type->size = 4;
+            tag_type->alignment = 4;
+            for (int i = 0; i < type->options.structure.members.size; i++) {
+                Struct_Member* struct_member = &type->options.structure.members[i];
+                Enum_Member tag_member;
+                tag_member.id = struct_member->id;
+                tag_member.definition_node = 0;
+                tag_member.value = i + 1;
+                dynamic_array_push_back(&tag_type->options.enum_type.members, tag_member);
+            }
+            type_system_finish_type(system, tag_type);
+
+            type->options.structure.tag_member.id = system->id_tag;
+            type->options.structure.tag_member.type = tag_type;
+            offset = math_round_next_multiple(offset, tag_type->alignment);
+            type->options.structure.tag_member.offset = offset;
+            offset += tag_type->size;
+            alignment = math_maximum(alignment, tag_type->alignment);
+            dynamic_array_push_back(&type->options.structure.members, type->options.structure.tag_member);
+        }
+
+        type->size = math_round_next_multiple(offset, alignment);
+        type->alignment = alignment;
+        break;
+    }
+    case Signature_Type::ARRAY: {
+        type->size = type->options.array.element_type->size * type->options.array.element_count;
+        type->alignment = type->options.array.element_type->alignment;
+        break;
+    }
+    default: panic("");
+    }
+
+    internal_info->size = type->size;
+    internal_info->alignment = type->alignment;
+}
+
+
+Type_Signature* type_system_make_primitive(Type_System* system, Primitive_Type type, int size, bool is_signed)
+{
+    Type_Signature result;
+    result.type = Signature_Type::PRIMITIVE;
+    result.options.primitive.is_signed = is_signed;
+    result.options.primitive.type = type;
+    result.size = size;
+    result.alignment = size;
+    return type_system_register_type(system, result);
 }
 
 Type_Signature* type_system_make_pointer(Type_System* system, Type_Signature* child_type)
@@ -435,6 +567,17 @@ Type_Signature* type_system_make_pointer(Type_System* system, Type_Signature* ch
     return type_system_register_type(system, result);
 }
 
+Type_Signature* type_system_make_array_finished(Type_System* system, Type_Signature* element_type, int element_count)
+{
+    assert(!(element_type->size == 0 && element_type->alignment == 0), "Hey");
+    Type_Signature result;
+    result.type = Signature_Type::ARRAY;
+    result.alignment = element_type->alignment;
+    result.size = element_type->size * element_count;
+    result.options.array.element_type = element_type;
+    result.options.array.element_count = element_count;
+    return type_system_register_type(system, result);
+}
 
 Type_Signature* type_system_make_slice(Type_System* system, Type_Signature* element_type)
 {
@@ -473,30 +616,34 @@ Type_Signature* type_system_make_template(Type_System* system, String* id)
     return type_system_register_type(system, result);
 }
 
-Type_Signature* type_system_make_struct_empty(Type_System* system, AST_Node* struct_node)
+Type_Signature* type_system_make_struct_empty_full(Type_System* system, String* id, Structure_Type struct_type)
 {
     Type_Signature result;
     result.type = Signature_Type::STRUCT;
     result.size = 0;
     result.alignment = 0;
-    result.options.structure.id = struct_node->id;
+    result.options.structure.id = id;
     result.options.structure.tag_member.id = 0;
     result.options.structure.tag_member.offset = 0;
     result.options.structure.tag_member.type = 0;
-    switch (struct_node->type) {
-    case AST_Node_Type::C_UNION: result.options.structure.struct_type = Structure_Type::C_UNION; break;
-    case AST_Node_Type::STRUCT: result.options.structure.struct_type = Structure_Type::STRUCT; break;
-    case AST_Node_Type::UNION: {
-        result.options.structure.struct_type = Structure_Type::UNION;
-        break;
-    }
-    default: panic("");
-    }
-    result.options.structure.members = dynamic_array_create_empty<Struct_Member>(math_maximum(0, struct_node->child_count));
+    result.options.structure.struct_type = struct_type;
+    result.options.structure.members = dynamic_array_create_empty<Struct_Member>(2);
     return type_system_register_type(system, result);
 }
 
-Type_Signature* type_system_make_enum_empty(Type_System* system, String* id)
+Type_Signature* type_system_make_struct_empty(Type_System* system, AST_Node* struct_node)
+{
+    Structure_Type struct_type;
+    switch (struct_node->type) {
+    case AST_Node_Type::C_UNION: struct_type = Structure_Type::C_UNION; break;
+    case AST_Node_Type::STRUCT: struct_type = Structure_Type::STRUCT; break;
+    case AST_Node_Type::UNION: struct_type = Structure_Type::UNION; break;
+    default: panic("");
+    }
+    return type_system_make_struct_empty_full(system, struct_node->id, struct_type);
+}
+
+Type_Signature* type_system_make_enum_empty_from_node(Type_System* system, String* id)
 {
     Type_Signature result;
     result.type = Signature_Type::ENUM;

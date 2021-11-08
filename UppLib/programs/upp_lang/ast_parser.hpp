@@ -90,6 +90,8 @@ enum class AST_Node_Type
     EXPRESSION_MEMBER_ACCESS, // Child 0: left side, id is the .what operator a.y.y[5].z
     EXPRESSION_CAST, // Either: Child 0: type, Child 1: Expression    OR    Child 0: Expression
     EXPRESSION_BAKE, // Child 0: type, Child 1: Statement_Block
+    EXPRESSION_TYPE_INFO, // Child 0: Expression;
+    EXPRESSION_TYPE_OF,   // Child 0: Expression
     EXPRESSION_BINARY_OPERATION_ADDITION,
     EXPRESSION_BINARY_OPERATION_SUBTRACTION,
     EXPRESSION_BINARY_OPERATION_DIVISION,
@@ -143,6 +145,8 @@ struct AST_Parser
     String* id_lib;
     String* id_load;
     String* id_bake;
+    String* id_type_of;
+    String* id_type_info;
 };
 
 struct AST_Parser_Checkpoint

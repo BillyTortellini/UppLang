@@ -7,11 +7,11 @@
 // Parser stages
 bool enable_lexing = true;
 bool enable_parsing = true;
-bool enable_analysis = false;
+bool enable_analysis = true;
 bool enable_ir_gen = true;
 bool enable_bytecode_gen = true;
 bool enable_c_generation = false;
-bool enable_c_compilation = true;
+bool enable_c_compilation = false;
 
 // Output stages
 bool output_lexing = false;
@@ -377,7 +377,7 @@ void compiler_compile(Compiler* compiler, String source_code, bool generate_code
 
     double time_start_ir_gen = timer_current_time_in_seconds(compiler->timer);
     if (do_ir_gen) {
-        ir_generator_generate_queue_and_generate_all(&compiler->ir_generator);
+        ir_generator_queue_and_generate_all(&compiler->ir_generator);
     }
     double time_end_ir_gen = timer_current_time_in_seconds(compiler->timer);
 

@@ -265,7 +265,12 @@ void c_generator_register_type_name(C_Generator* generator, Type_Signature* type
     {
     case Signature_Type::ENUM: 
     {
-        string_append_formated(&type_name, "Enum_%d_%s", generator->name_counter, type->options.enum_type.id->characters);
+        if (type->options.enum_type.id != 0) {
+            string_append_formated(&type_name, "Enum_%d_%s", generator->name_counter, type->options.enum_type.id->characters);
+        }
+        else {
+            string_append_formated(&type_name, "Enum_%d_anonymous", generator->name_counter);
+        }
         generator->name_counter++;
         string_append_formated(&generator->section_enum_implementations, "enum class %s\n{\n", type_name.characters);
         for (int i = 0; i < type->options.enum_type.members.size; i++) {
@@ -492,6 +497,11 @@ void c_generator_output_data_access(C_Generator* generator, String* output, IR_D
         else if (type->type == Signature_Type::POINTER && type->options.pointer_child->type == Signature_Type::VOID_TYPE && *(void**)raw_data == nullptr) {
             string_append_formated(output, "nullptr");
         }
+        else if (type->type == Signature_Type::TYPE_TYPE) {
+            string_append_formated(output, "(u64)%d", (u64*)raw_data);
+        }
+        else if (type->type == Signature_Type::ARRAY) {
+        }
         else {
             panic("Cannot load constants that are no strings or primitives!");
         }
@@ -707,7 +717,7 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
             break;
         }
         case IR_Instruction_Type::LABEL: {
-            string_append_formated(output, "upp_label_%d:\n", instr->options.label_index);
+            string_append_formated(output, "upp_label_%d: {}\n", instr->options.label_index);
             break;
         }
         case IR_Instruction_Type::RETURN: {
@@ -906,6 +916,8 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
 
     // Create String Data code
     {
+        String type_str = string_create("Type_Type");
+        hashtable_insert_element(&generator->translation_type_to_name, generator->compiler->type_system.type_type, type_str);
         String str = string_create("Unsized_Array_U8");
         Type_Signature* sig = type_system_make_slice(&generator->compiler->type_system, generator->compiler->type_system.u8_type);
         hashtable_insert_element(&generator->translation_type_to_name, sig, str);

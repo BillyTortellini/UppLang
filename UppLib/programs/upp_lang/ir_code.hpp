@@ -274,7 +274,7 @@ void ir_generator_reset(IR_Generator* generator, Compiler* compiler);
 void ir_generator_generate_queued_items(IR_Generator* generator);
 void ir_generator_queue_function(IR_Generator* generator, ModTree_Function* function);
 void ir_generator_queue_global(IR_Generator* generator, ModTree_Variable* variable);
-void ir_generator_generate_queue_and_generate_all(IR_Generator* generator);
+void ir_generator_queue_and_generate_all(IR_Generator* generator);
 
 IR_Program* ir_program_create(Type_System* type_system);
 void ir_program_destroy(IR_Program* program);

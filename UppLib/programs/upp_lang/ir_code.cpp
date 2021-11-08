@@ -1266,7 +1266,7 @@ void ir_generator_queue_global(IR_Generator* generator, ModTree_Variable* variab
     dynamic_array_push_back(&generator->queue_globals, variable);
 }
 
-void ir_generator_generate_queue_and_generate_all(IR_Generator* generator)
+void ir_generator_queue_and_generate_all(IR_Generator* generator)
 {
     ir_generator_queue_module(generator, generator->modtree->root_module);
     ir_generator_generate_queued_items(generator);

@@ -68,6 +68,10 @@ u64 hash_i64(i64* i) {
     return hash_memory(array_create_static<byte>((byte*)i, 8));
 }
 
+u64 hash_u64(u64* i) {
+    return hash_memory(array_create_static<byte>((byte*)i, 8));
+}
+
 u64 hash_pointer(void* ptr) {
     i64 val = (i64)ptr;
     return hash_i64(&val);
@@ -75,4 +79,5 @@ u64 hash_pointer(void* ptr) {
 
 bool equals_i32(i32* a, i32* b) { return *a == *b; }
 bool equals_i64(i64* a, i64* b) { return *a == *b; }
+bool equals_u64(u64* a, u64* b) { return *a == *b; }
 bool equals_pointer(void** a, void** b) { return *a == *b; }

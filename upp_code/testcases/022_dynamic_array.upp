@@ -53,7 +53,7 @@ module Dynamic_Array<T>
         array.buffer[array.size-1] = value;
     }
     
-    for_each :: (array: *Dynamic_Array<T>, fn: (*T) -> void)
+    for_each :: (array: *Dynamic_Array<T>, fn: (item: *T) -> void)
     {
         i := 0;
         while i < array.size

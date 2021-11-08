@@ -9,7 +9,7 @@ main :: ()
 	while i < 20
 	{
 		data := new f64;
-		&data = cast<f64> 1.0;
+		&data = cast(f64) 1.0;
 		delete data;
 		i = i+1;
 	}

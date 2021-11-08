@@ -528,6 +528,33 @@ AST_Node* ast_parser_parse_expression_single_value(AST_Parser* parser)
         }
         parser->index++;
     }
+    else if (ast_parser_test_next_identifier(parser, parser->id_type_info) || 
+        ast_parser_test_next_identifier(parser, parser->id_type_of)) 
+    {
+        node = ast_parser_make_node_no_parent(parser);
+        if (ast_parser_test_next_identifier(parser, parser->id_type_info)) {
+            node->type = AST_Node_Type::EXPRESSION_TYPE_INFO;
+        }
+        else {
+            node->type = AST_Node_Type::EXPRESSION_TYPE_OF;
+        }
+        parser->index++;
+        if (!ast_parser_test_next_token(parser, Token_Type::OPEN_PARENTHESIS)) {
+            ast_parser_checkpoint_reset(checkpoint);
+            return 0;
+        }
+        parser->index++;
+        if (!ast_parser_parse_expression(parser, node)) {
+            ast_parser_checkpoint_reset(checkpoint);
+            return 0;
+        }
+        if (!ast_parser_test_next_token(parser, Token_Type::CLOSED_PARENTHESIS)) {
+            ast_parser_checkpoint_reset(checkpoint);
+            return 0;
+        }
+        parser->index++;
+        node->token_range = token_range_make(checkpoint.rewind_token_index, parser->index);
+    }
     else if (ast_parser_test_next_token(parser, Token_Type::IDENTIFIER_NAME)) // Variable read
     {
         node = ast_parser_make_node_no_parent(parser);
@@ -735,14 +762,14 @@ AST_Node* ast_parser_parse_expression_single_value(AST_Parser* parser)
     {
         parser->index += 1;
         node->type = AST_Node_Type::EXPRESSION_CAST;
-        if (ast_parser_test_next_token(parser, Token_Type::COMPARISON_LESS))
+        if (ast_parser_test_next_token(parser, Token_Type::OPEN_PARENTHESIS))
         {
             parser->index++;
             if (!ast_parser_parse_expression(parser, node)) {
                 ast_parser_checkpoint_reset(checkpoint);
                 return 0;
             }
-            if (!ast_parser_test_next_token(parser, Token_Type::COMPARISON_GREATER)) {
+            if (!ast_parser_test_next_token(parser, Token_Type::CLOSED_PARENTHESIS)) {
                 ast_parser_checkpoint_reset(checkpoint);
                 return 0;
             }
@@ -2283,6 +2310,14 @@ void ast_parser_check_sanity(AST_Parser* parser, AST_Node* node)
                 panic("Should not happen");
             }
             break;
+        case AST_Node_Type::EXPRESSION_TYPE_INFO:
+            assert(node->child_count == 1, "");
+            assert(ast_node_type_is_expression(node->child_start->type), "");
+            break;
+        case AST_Node_Type::EXPRESSION_TYPE_OF:
+            assert(node->child_count == 1, "");
+            assert(ast_node_type_is_expression(node->child_start->type), "");
+            break;
         case AST_Node_Type::EXPRESSION_BAKE:
             assert(node->child_count == 2, "");
             assert(ast_node_type_is_expression(node->child_start->type), "");
@@ -2373,6 +2408,8 @@ void ast_parser_reset(AST_Parser* parser, Identifier_Pool* id_pool)
     parser->id_lib = identifier_pool_add(id_pool, string_create_static("lib"));
     parser->id_load = identifier_pool_add(id_pool, string_create_static("load"));
     parser->id_bake = identifier_pool_add(id_pool, string_create_static("bake"));
+    parser->id_type_info = identifier_pool_add(id_pool, string_create_static("type_info"));
+    parser->id_type_of = identifier_pool_add(id_pool, string_create_static("type_of"));
     dynamic_array_reset(&parser->errors);
 }
 
@@ -2468,6 +2505,8 @@ String ast_node_type_to_string(AST_Node_Type type)
     case AST_Node_Type::EXPRESSION_MEMBER_ACCESS: return string_create_static("EXPRESSION_MEMBER_ACCESS");
     case AST_Node_Type::EXPRESSION_CAST: return string_create_static("EXPRESSION_CAST");
     case AST_Node_Type::EXPRESSION_BAKE: return string_create_static("EXPRESSION_BAKE");
+    case AST_Node_Type::EXPRESSION_TYPE_INFO: return string_create_static("EXPRESSION_TYPE_INFO");
+    case AST_Node_Type::EXPRESSION_TYPE_OF: return string_create_static("EXPRESSION_TYPE_OF");
     case AST_Node_Type::EXPRESSION_LITERAL: return string_create_static("EXPRESSION_LITERAL");
     case AST_Node_Type::EXPRESSION_FUNCTION_CALL: return string_create_static("EXPRESSION_FUNCTION_CALL");
     case AST_Node_Type::EXPRESSION_IDENTIFIER: return string_create_static("EXPRESSION_IDENTIFIER");
@@ -2588,6 +2627,16 @@ void ast_node_expression_append_to_string(Code_Source* code_source, AST_Node* no
     case AST_Node_Type::EXPRESSION_MEMBER_ACCESS:
         ast_node_expression_append_to_string(code_source, node->child_start, string);
         string_append_formated(string, ".%s", node->id->characters);
+        return;
+    case AST_Node_Type::EXPRESSION_TYPE_INFO:
+        string_append_formated(string, "type_info(");
+        ast_node_expression_append_to_string(code_source, node->child_start, string);
+        string_append_formated(string, ")");
+        return;
+    case AST_Node_Type::EXPRESSION_TYPE_OF:
+        string_append_formated(string, "type_of(");
+        ast_node_expression_append_to_string(code_source, node->child_start, string);
+        string_append_formated(string, ")");
         return;
     case AST_Node_Type::EXPRESSION_BAKE:
         string_append_formated(string, "#bake");

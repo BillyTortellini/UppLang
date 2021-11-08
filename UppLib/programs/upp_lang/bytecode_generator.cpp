@@ -340,7 +340,8 @@ int bytecode_generator_get_pointer_to_access(Bytecode_Generator* generator, IR_D
         offset = generator->global_data_offsets[access.index];
         break;
     case IR_Data_Access_Type::CONSTANT:
-        panic("Cannot access address of constant, I think");
+        load_instr.instruction_type = Instruction_Type::LOAD_CONSTANT_ADDRESS;
+        offset = generator->compiler->constant_pool.constants[access.index].offset;
         break;
     }
     load_instr.op1 = bytecode_generator_create_temporary_stack_offset(generator, generator->compiler->type_system.void_ptr_type);
@@ -365,7 +366,10 @@ int stack_offsets_calculate(Dynamic_Array<Type_Signature*>* types, Dynamic_Array
 
 Bytecode_Type type_signature_to_bytecode_type(Type_Signature* primitive)
 {
-    assert(primitive->type == Signature_Type::PRIMITIVE || primitive->type == Signature_Type::ENUM, "HEY");
+    assert(primitive->type == Signature_Type::PRIMITIVE || primitive->type == Signature_Type::ENUM || primitive->type == Signature_Type::TYPE_TYPE, "HEY");
+    if (primitive->type == Signature_Type::TYPE_TYPE) {
+        return Bytecode_Type::UINT64;
+    }
     if (primitive->type == Signature_Type::ENUM) {
         return Bytecode_Type::INT32;
     }
@@ -1138,6 +1142,9 @@ void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction 
         break;
     case Instruction_Type::LOAD_GLOBAL_ADDRESS:
         string_append_formated(string, "LOAD_GLOBAL_ADDRESS          dst: %d, global-offset: %d", i.op1, i.op2);
+        break;
+    case Instruction_Type::LOAD_CONSTANT_ADDRESS:
+        string_append_formated(string, "LOAD_CONSTANT_ADDRESS        dst: %d, constant-offset: %d", i.op1, i.op2);
         break;
     case Instruction_Type::LOAD_FUNCTION_LOCATION:
         string_append_formated(string, "LOAD_FUNCTION_LOCATION       dst: %d, func-start-instr: %d", i.op1, i.op2);

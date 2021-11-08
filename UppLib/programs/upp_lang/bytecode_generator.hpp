@@ -63,6 +63,7 @@ enum class Instruction_Type
     LOAD_REGISTER_ADDRESS, // op1 = dest_reg, op2 = register_to_load
     LOAD_GLOBAL_ADDRESS, // op1 = dest_reg, op2 = global offset
     LOAD_FUNCTION_LOCATION, // op1 = dest_reg, op2 = funciton_index
+    LOAD_CONSTANT_ADDRESS, // op1 = dest_reg, op2 = constant_offset
 
     CAST_INTEGER_DIFFERENT_SIZE, // op1 = dst_reg, op2 = src_reg, op3 = dst_type, op4 = src_type
     CAST_FLOAT_DIFFERENT_SIZE, // op1 = dst_reg, op2 = src_reg, op3 = dst_type, op4 = src_type
