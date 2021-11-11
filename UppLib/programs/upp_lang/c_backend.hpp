@@ -29,6 +29,7 @@ struct IR_Program;
 struct Type_Signature;
 struct IR_Function;
 struct IR_Code_Block;
+struct Upp_Constant;
 
 struct C_Type_Definition_Dependency
 {
@@ -48,6 +49,7 @@ struct C_Generator
     String section_struct_implementations;
     String section_type_declarations; // Array types, strings, ...
     String section_function_prototypes;
+    String section_constants;
     String section_globals;
     String section_function_implementations;
     int name_counter;
@@ -55,10 +57,10 @@ struct C_Generator
     Hashtable<Type_Signature*, int> type_to_dependency_mapping;
     Dynamic_Array<C_Type_Definition_Dependency> type_dependencies;
 
+    Hashtable<Upp_Constant*, String> translation_constant_to_name;
     Hashtable<Type_Signature*, String> translation_type_to_name;
     Hashtable<IR_Function*, String> translation_function_to_name;
     Hashtable<IR_Code_Block*, String> translation_code_block_to_name;
-    Hashtable<int, String> translation_string_data_to_name;
     Dynamic_Array<int> array_index_stack;
     int current_function_index;
 };

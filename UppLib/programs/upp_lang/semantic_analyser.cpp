@@ -1282,8 +1282,17 @@ Optional<ModTree_Cast_Type> semantic_analyser_check_if_cast_possible(
             cast_type = ModTree_Cast_Type::INTEGERS;
             cast_valid = true;
             if (implicit_cast) {
-                cast_valid = source_type->options.primitive.is_signed == destination_type->options.primitive.is_signed &&
-                    source_type->size < destination_type->size;
+                if (source_type->options.primitive.is_signed == destination_type->options.primitive.is_signed) {
+                    cast_valid = source_type->size < destination_type->size;
+                }
+                else {
+                    if (source_type->options.primitive.is_signed) {
+                        cast_valid = false;
+                    }
+                    else {
+                        cast_valid = destination_type->size > source_type->size; // E.g. u8 to i32, u32 to i64
+                    }
+                }
             }
         }
         else if (destination_type->options.primitive.type == Primitive_Type::FLOAT && source_type->options.primitive.type == Primitive_Type::INTEGER)
@@ -1374,6 +1383,10 @@ ModTree_Expression* modtree_expression_create_constant(Semantic_Analyser* analys
     return expression;
 }
 
+ModTree_Expression* modtree_expression_create_constant_enum(Semantic_Analyser* analyser, Type_Signature* enum_type, i32 value) {
+    return modtree_expression_create_constant(analyser, enum_type, array_create_static((byte*)&value, sizeof(i32)));
+}
+
 ModTree_Expression* modtree_expression_create_constant_i32(Semantic_Analyser* analyser, i32 value) {
     return modtree_expression_create_constant(analyser, analyser->compiler->type_system.i32_type, array_create_static((byte*)&value, sizeof(i32)));
 }
@@ -1434,17 +1447,21 @@ Partial_Compile_Result partial_compilation_queue_functions_for_bake_recursively(
     ir_generator_queue_function(&analyser->compiler->ir_generator, function);
     hashset_insert_element(&analyser->visited_functions, function);
 
-    if (function->options.function.dependency_globals.size > 0)
+    for (int i = 0; i < function->options.function.dependency_globals.size; i++) 
     {
-        Semantic_Error error;
-        error.type = Semantic_Error_Type::BAKE_FUNCTION_MUST_NOT_REFERENCE_GLOBALS;
-        error.function = function;
-        error.error_node = bake_node;
-        semantic_analyser_log_error(analyser, error);
+        ModTree_Variable* global = function->options.function.dependency_globals[i];
+        if (global != analyser->global_type_informations) {
+            Semantic_Error error;
+            error.type = Semantic_Error_Type::BAKE_FUNCTION_MUST_NOT_REFERENCE_GLOBALS;
+            error.function = function;
+            error.error_node = bake_node;
+            semantic_analyser_log_error(analyser, error);
 
-        Partial_Compile_Result result;
-        result.type = Analysis_Result_Type::ERROR_OCCURED;
-        return result;
+            Partial_Compile_Result result;
+            result.type = Analysis_Result_Type::ERROR_OCCURED;
+            return result;
+        }
+        ir_generator_queue_global(&analyser->compiler->ir_generator, global);
     }
 
     for (int i = 0; i < function->options.function.dependency_functions.size; i++)
@@ -1493,7 +1510,8 @@ Partial_Compile_Result partial_compilation_compile_function_for_bake(Semantic_An
     return result;
 }
 
-Expression_Result_Any semantic_analyser_analyse_expression_without_value(Semantic_Analyser* analyser, Symbol_Table* symbol_table, AST_Node* expression_node, Expression_Context context)
+Expression_Result_Any semantic_analyser_analyse_expression_without_value(
+    Semantic_Analyser* analyser, Symbol_Table* symbol_table, AST_Node* expression_node, Expression_Context context)
 {
     Type_System* type_system = &analyser->compiler->type_system;
     bool error_exit = false;
@@ -1508,7 +1526,7 @@ Expression_Result_Any semantic_analyser_analyse_expression_without_value(Semanti
             analyser, symbol_table, expression_node->child_start, expression_context_make_type(Expression_Context_Type::FUNCTION_CALL)
         );
         SCOPE_EXIT(
-            if (error_exit && identifier_expr_result.type == Expression_Result_Any_Type::EXPRESSION) 
+            if (error_exit && identifier_expr_result.type == Expression_Result_Any_Type::EXPRESSION)
                 modtree_expression_destroy(identifier_expr_result.options.expression);
         );
 
@@ -1642,11 +1660,58 @@ Expression_Result_Any semantic_analyser_analyse_expression_without_value(Semanti
     }
     case AST_Node_Type::EXPRESSION_TYPE_INFO:
     {
-        Semantic_Error error;
-        error.type = Semantic_Error_Type::MISSING_FEATURE;
-        error.error_node = expression_node;
-        semantic_analyser_log_error(analyser, error);
-        return expression_result_make_error();
+        Expression_Result_Value operand_result = semantic_analyser_analyse_expression_value(
+            analyser, symbol_table, expression_node->child_start, expression_context_make_known_type(analyser->compiler->type_system.type_type)
+        );
+        switch (operand_result.type)
+        {
+        case Analysis_Result_Type::SUCCESS: break;
+        case Analysis_Result_Type::DEPENDENCY:
+            return expression_result_make_from(operand_result);
+        case Analysis_Result_Type::ERROR_OCCURED:
+            return expression_result_make_error();
+        default: panic("");
+        }
+        ModTree_Expression* operand = operand_result.options.value;
+        if (operand->result_type != analyser->compiler->type_system.type_type) {
+            Semantic_Error error;
+            error.type = Semantic_Error_Type::INVALID_TYPE_ARGUMENT;
+            error.error_node = expression_node->child_start;
+            error.given_type = operand->result_type;
+            error.expected_type = analyser->compiler->type_system.type_type;
+            semantic_analyser_log_error(analyser, error);
+            modtree_expression_destroy(operand);
+            return expression_result_make_error();
+        }
+
+        assert(analyser->current_workload->type == Analysis_Workload_Type::CODE, "");
+        dynamic_array_push_back(
+            &analyser->current_workload->options.code_block.function->options.function.dependency_globals,
+            analyser->global_type_informations
+        );
+
+        ModTree_Expression* global_read = new ModTree_Expression;
+        global_read->constant_value = constant_value_make_unknown();
+        global_read->expression_type = ModTree_Expression_Type::VARIABLE_READ;
+        global_read->options.variable_read = analyser->global_type_informations;
+        global_read->result_type = analyser->global_type_informations->data_type;
+
+        ModTree_Expression* index_access = new ModTree_Expression;
+        index_access->constant_value = constant_value_make_unknown();
+        index_access->result_type = analyser->compiler->type_system.i32_type;
+        index_access->expression_type = ModTree_Expression_Type::CAST;
+        index_access->options.cast.cast_argument = operand;
+        operand->result_type = analyser->compiler->type_system.u64_type;
+        index_access->options.cast.type = ModTree_Cast_Type::INTEGERS;
+
+        ModTree_Expression* array_access = new ModTree_Expression;
+        array_access->constant_value = constant_value_make_unknown();
+        array_access->expression_type = ModTree_Expression_Type::ARRAY_ACCESS;
+        array_access->options.array_access.array_expression = global_read;
+        array_access->options.array_access.index_expression = index_access;
+        array_access->result_type = analyser->compiler->type_system.type_information_type;
+
+        return expression_result_make_value(array_access);
     }
     case AST_Node_Type::EXPRESSION_TYPE_OF:
     {
@@ -1736,7 +1801,7 @@ Expression_Result_Any semantic_analyser_analyse_expression_without_value(Semanti
             switch (cast_destination_result.type)
             {
             case Analysis_Result_Type::SUCCESS: destination_type = cast_destination_result.options.type; break;
-            case Analysis_Result_Type::DEPENDENCY: 
+            case Analysis_Result_Type::DEPENDENCY:
             case Analysis_Result_Type::ERROR_OCCURED:
                 return expression_result_make_from(cast_destination_result);
             default: panic("");
@@ -1874,7 +1939,7 @@ Expression_Result_Any semantic_analyser_analyse_expression_without_value(Semanti
         }
 
         Expression_Result_Type element_result = semantic_analyser_analyse_expression_type(analyser, symbol_table, node_array_size->neighbor);
-        if (element_result.type != Analysis_Result_Type::SUCCESS) {return expression_result_make_from(element_result);}
+        if (element_result.type != Analysis_Result_Type::SUCCESS) { return expression_result_make_from(element_result); }
 
         Type_Signature* element_type = element_result.options.type;
         if (element_type == analyser->compiler->type_system.void_type) {
@@ -2506,7 +2571,7 @@ Expression_Result_Any semantic_analyser_analyse_expression_without_value(Semanti
             error_exit = true;
             return access_expr_result;
         }
-        case Expression_Result_Any_Type::TYPE: 
+        case Expression_Result_Any_Type::TYPE:
         {
             Type_Signature* enum_type = access_expr_result.options.type;
             if (enum_type->type != Signature_Type::ENUM) {
@@ -2541,7 +2606,7 @@ Expression_Result_Any semantic_analyser_analyse_expression_without_value(Semanti
                 value = found->value;
             }
 
-            ModTree_Expression* result = modtree_expression_create_constant_i32(analyser, value);
+            ModTree_Expression* result = modtree_expression_create_constant_enum(analyser, enum_type, value);
             result->result_type = enum_type;
             return expression_result_make_value(result);
         }
@@ -2708,7 +2773,7 @@ Expression_Result_Any semantic_analyser_analyse_expression_without_value(Semanti
             value = found->value;
         }
 
-        ModTree_Expression* result = modtree_expression_create_constant_i32(analyser, value);
+        ModTree_Expression* result = modtree_expression_create_constant_enum(analyser, enum_type, value);
         result->result_type = enum_type;
         return expression_result_make_value(result);
     }
@@ -2729,6 +2794,19 @@ Expression_Result_Any semantic_analyser_analyse_expression_without_value(Semanti
                 {
                 case Analysis_Result_Type::SUCCESS:
                 {
+                    // Update type information table
+                    {
+                        bytecode_interpreter_prepare_run(&analyser->compiler->bytecode_interpreter);
+                        IR_Data_Access* global_access = hashtable_find_element(&analyser->compiler->ir_generator.variable_mapping, analyser->global_type_informations);
+                        assert(global_access != 0 && global_access->type == IR_Data_Access_Type::GLOBAL_DATA, "");
+                        Upp_Slice<Internal_Type_Information>* info_slice = (Upp_Slice<Internal_Type_Information>*)
+                            &analyser->compiler->bytecode_interpreter.globals.data[
+                            analyser->compiler->bytecode_generator.global_data_offsets[global_access->index]
+                        ];
+                        info_slice->size = analyser->compiler->type_system.internal_type_infos.size;
+                        info_slice->data_ptr = analyser->compiler->type_system.internal_type_infos.data;
+                    }
+
                     IR_Function* ir_func = *hashtable_find_element(&analyser->compiler->ir_generator.function_mapping, *function);
                     int func_start_instr_index = *hashtable_find_element(&analyser->compiler->bytecode_generator.function_locations, ir_func);
                     analyser->compiler->bytecode_interpreter.instruction_limit_enabled = true;
@@ -4038,7 +4116,6 @@ void semantic_analyser_reset(Semantic_Analyser* analyser, Compiler* compiler)
         String* id_string = identifier_pool_add(&compiler->identifier_pool, string_create_static("String"));
         String* id_type = identifier_pool_add(&compiler->identifier_pool, string_create_static("Type"));
         String* id_type_information = identifier_pool_add(&compiler->identifier_pool, string_create_static("Type_Information"));
-        String* id_primitive_type = identifier_pool_add(&compiler->identifier_pool, string_create_static("Primitive_Type"));
 
         semantic_analyser_define_type_symbol(analyser, base_table, id_int, analyser->compiler->type_system.i32_type, 0);
         semantic_analyser_define_type_symbol(analyser, base_table, id_bool, analyser->compiler->type_system.bool_type, 0);
@@ -4058,7 +4135,6 @@ void semantic_analyser_reset(Semantic_Analyser* analyser, Compiler* compiler)
         semantic_analyser_define_type_symbol(analyser, base_table, id_string, analyser->compiler->type_system.string_type, 0);
         semantic_analyser_define_type_symbol(analyser, base_table, id_type, analyser->compiler->type_system.type_type, 0);
         semantic_analyser_define_type_symbol(analyser, base_table, id_type_information, analyser->compiler->type_system.type_information_type, 0);
-        semantic_analyser_define_type_symbol(analyser, base_table, id_primitive_type, analyser->compiler->type_system.type_primitive_type_enum, 0);
 
         analyser->id_size = identifier_pool_add(&compiler->identifier_pool, string_create_static("size"));
         analyser->id_data = identifier_pool_add(&compiler->identifier_pool, string_create_static("data"));
@@ -4258,6 +4334,8 @@ void semantic_analyser_execute_workloads(Semantic_Analyser* analyser)
     }
     SCOPE_EXIT(if (PRINT_DEPENDENCIES) logg("------------------------------------\n"););
 
+    compiler_switch_timing_task(analyser->compiler, Timing_Task::ANALYSIS);
+
     // Execute all Workloads
     while (analyser->active_workloads.size != 0)
     {
@@ -4381,17 +4459,19 @@ void semantic_analyser_execute_workloads(Semantic_Analyser* analyser)
                     semantic_analyser_log_error(analyser, error);
                 }
                 // Add call to init function
-                ModTree_Expression* call_expr = new ModTree_Expression;
-                call_expr->expression_type = ModTree_Expression_Type::FUNCTION_CALL;
-                call_expr->result_type = analyser->compiler->type_system.void_type;
-                call_expr->options.function_call.is_pointer_call = false;
-                call_expr->options.function_call.arguments = dynamic_array_create_empty<ModTree_Expression*>(1);
-                call_expr->options.function_call.function = analyser->global_init_function;
-                call_expr->constant_value = constant_value_make_unknown();
-                ModTree_Statement* call_stmt = new ModTree_Statement;
-                call_stmt->type = ModTree_Statement_Type::EXPRESSION;
-                call_stmt->options.expression = call_expr;
-                dynamic_array_push_back(&function->options.function.body->statements, call_stmt);
+                {
+                    ModTree_Expression* call_expr = new ModTree_Expression;
+                    call_expr->expression_type = ModTree_Expression_Type::FUNCTION_CALL;
+                    call_expr->result_type = analyser->compiler->type_system.void_type;
+                    call_expr->options.function_call.is_pointer_call = false;
+                    call_expr->options.function_call.arguments = dynamic_array_create_empty<ModTree_Expression*>(1);
+                    call_expr->options.function_call.function = analyser->global_init_function;
+                    call_expr->constant_value = constant_value_make_unknown();
+                    ModTree_Statement* call_stmt = new ModTree_Statement;
+                    call_stmt->type = ModTree_Statement_Type::EXPRESSION;
+                    call_stmt->options.expression = call_expr;
+                    dynamic_array_push_back(&function->options.function.body->statements, call_stmt);
+                }
             }
             break;
         }
@@ -5588,19 +5668,19 @@ void semantic_analyser_execute_workloads(Semantic_Analyser* analyser)
         }
         else
         {
-        // Workload finished
-        if (PRINT_DEPENDENCIES)
-        {
-            String output = string_create_empty(256);
-            SCOPE_EXIT(string_destroy(&output));
-            string_append_formated(&output, "FINISHED: ");
-            analysis_workload_append_to_string(&workload, &output, analyser);
-            string_append_formated(&output, "\n");
-            logg(output.characters);
-        }
+            // Workload finished
+            if (PRINT_DEPENDENCIES)
+            {
+                String output = string_create_empty(256);
+                SCOPE_EXIT(string_destroy(&output));
+                string_append_formated(&output, "FINISHED: ");
+                analysis_workload_append_to_string(&workload, &output, analyser);
+                string_append_formated(&output, "\n");
+                logg(output.characters);
+            }
 
-        // Destroy Workload
-        analysis_workload_destroy(&workload);
+            // Destroy Workload
+            analysis_workload_destroy(&workload);
         }
 
         // Check if waiting workloads could be activated
@@ -5683,82 +5763,6 @@ void semantic_analyser_execute_workloads(Semantic_Analyser* analyser)
         }
     }
 
-    // Add type_informations loading to global init function
-    {
-    Type_System* type_system = &analyser->compiler->type_system;
-    Type_Signature* type_info_array_signature = type_system_make_array_finished(type_system, type_system->type_type, type_system->internal_type_infos.size);
-    int index = constant_pool_add_constant(
-        &analyser->compiler->constant_pool, type_info_array_signature,
-        array_create_static_as_bytes(type_system->internal_type_infos.data, type_system->internal_type_infos.size)
-    );
-
-    // Set type_informations size
-    {
-        ModTree_Expression* global_access = new ModTree_Expression();
-        global_access->constant_value = constant_value_make_unknown();
-        global_access->result_type = analyser->global_type_informations->data_type;
-        global_access->expression_type = ModTree_Expression_Type::VARIABLE_READ;
-        global_access->options.variable_read = analyser->global_type_informations;
-
-        ModTree_Expression* size_access = new ModTree_Expression();
-        size_access->constant_value = constant_value_make_unknown();
-        size_access->result_type = type_system->i32_type;
-        size_access->expression_type = ModTree_Expression_Type::MEMBER_ACCESS;
-        size_access->options.member_access.structure_expression = global_access;
-        size_access->options.member_access.member = analyser->global_type_informations->data_type->options.slice.size_member;
-
-        ModTree_Statement* assign_statement = new ModTree_Statement();
-        assign_statement->type = ModTree_Statement_Type::ASSIGNMENT;
-        assign_statement->options.assignment.destination = size_access;
-        assign_statement->options.assignment.source = modtree_expression_create_constant_i32(analyser, type_system->internal_type_infos.size);
-        dynamic_array_push_back(&analyser->global_init_function->options.function.body->statements, assign_statement);
-    }
-    // Set pointer
-    {
-        ModTree_Expression* global_access = new ModTree_Expression();
-        global_access->constant_value = constant_value_make_unknown();
-        global_access->result_type = analyser->global_type_informations->data_type;
-        global_access->expression_type = ModTree_Expression_Type::VARIABLE_READ;
-        global_access->options.variable_read = analyser->global_type_informations;
-
-        ModTree_Expression* data_access = new ModTree_Expression();
-        data_access->constant_value = constant_value_make_unknown();
-        data_access->result_type = type_system_make_pointer(type_system, type_system->type_information_type);
-        data_access->expression_type = ModTree_Expression_Type::MEMBER_ACCESS;
-        data_access->options.member_access.structure_expression = global_access;
-        data_access->options.member_access.member = analyser->global_type_informations->data_type->options.slice.data_member;
-
-        ModTree_Expression* constant_access = new ModTree_Expression();
-        constant_access->constant_value = constant_value_make_unknown();
-        constant_access->result_type = type_info_array_signature;
-        constant_access->expression_type = ModTree_Expression_Type::CONSTANT_READ;
-        constant_access->options.literal_read.constant_index = index;
-
-        ModTree_Expression* ptr_expression = new ModTree_Expression();
-        ptr_expression->constant_value = constant_value_make_unknown();
-        ptr_expression->result_type = data_access->result_type;
-        ptr_expression->expression_type = ModTree_Expression_Type::UNARY_OPERATION;
-        ptr_expression->options.unary_operation.operation_type = ModTree_Unary_Operation_Type::ADDRESS_OF;
-        ptr_expression->options.unary_operation.operand = constant_access;
-
-        ModTree_Statement* assign_statement = new ModTree_Statement();
-        assign_statement->type = ModTree_Statement_Type::ASSIGNMENT;
-        assign_statement->options.assignment.destination = data_access;
-        assign_statement->options.assignment.source = ptr_expression;
-        dynamic_array_push_back(&analyser->global_init_function->options.function.body->statements, assign_statement);
-    /*
-    */
-    }
-    }
-
-    // Add return for global init function
-    {
-        ModTree_Statement* return_stmt = new ModTree_Statement;
-        return_stmt->type = ModTree_Statement_Type::RETURN;
-        return_stmt->options.return_value.available = false;
-        dynamic_array_push_back(&analyser->global_init_function->options.function.body->statements, return_stmt);
-    }
-
     if (analyser->program->entry_function == 0) {
         Semantic_Error error;
         error.type = Semantic_Error_Type::OTHERS_MAIN_NOT_DEFINED;
@@ -5797,6 +5801,85 @@ void semantic_analyser_execute_workloads(Semantic_Analyser* analyser)
         }
         dynamic_array_reset(&analyser->waiting_workload);
         dynamic_array_reset(&analyser->active_workloads);
+    }
+
+    // Add type_informations loading to global init function
+    if (analyser->errors.size == 0 && analyser->waiting_workload.size != 0)
+    {
+        Type_System* type_system = &analyser->compiler->type_system;
+        Type_Signature* type_info_array_signature = type_system_make_array_finished(
+            type_system, type_system->type_information_type, type_system->internal_type_infos.size
+        );
+        int internal_information_size = type_system->internal_type_infos.size;
+        int index = constant_pool_add_constant(
+            &analyser->compiler->constant_pool, type_info_array_signature,
+            array_create_static_as_bytes(type_system->internal_type_infos.data, type_system->internal_type_infos.size)
+        );
+        assert(type_system->types.size == type_system->internal_type_infos.size, "");
+
+        // Set type_informations pointer
+        {
+            ModTree_Expression* global_access = new ModTree_Expression();
+            global_access->constant_value = constant_value_make_unknown();
+            global_access->result_type = analyser->global_type_informations->data_type;
+            global_access->expression_type = ModTree_Expression_Type::VARIABLE_READ;
+            global_access->options.variable_read = analyser->global_type_informations;
+
+            ModTree_Expression* data_access = new ModTree_Expression();
+            data_access->constant_value = constant_value_make_unknown();
+            data_access->result_type = type_system_make_pointer(type_system, type_system->type_information_type);
+            data_access->expression_type = ModTree_Expression_Type::MEMBER_ACCESS;
+            data_access->options.member_access.structure_expression = global_access;
+            data_access->options.member_access.member = analyser->global_type_informations->data_type->options.slice.data_member;
+
+            ModTree_Expression* constant_access = new ModTree_Expression();
+            constant_access->constant_value = constant_value_make_unknown();
+            constant_access->result_type = type_info_array_signature;
+            constant_access->expression_type = ModTree_Expression_Type::CONSTANT_READ;
+            constant_access->options.literal_read.constant_index = index;
+
+            ModTree_Expression* ptr_expression = new ModTree_Expression();
+            ptr_expression->constant_value = constant_value_make_unknown();
+            ptr_expression->result_type = data_access->result_type;
+            ptr_expression->expression_type = ModTree_Expression_Type::UNARY_OPERATION;
+            ptr_expression->options.unary_operation.operation_type = ModTree_Unary_Operation_Type::ADDRESS_OF;
+            ptr_expression->options.unary_operation.operand = constant_access;
+
+            ModTree_Statement* assign_statement = new ModTree_Statement();
+            assign_statement->type = ModTree_Statement_Type::ASSIGNMENT;
+            assign_statement->options.assignment.destination = data_access;
+            assign_statement->options.assignment.source = ptr_expression;
+            dynamic_array_push_back(&analyser->global_init_function->options.function.body->statements, assign_statement);
+        }
+        // Set type_informations size
+        {
+            ModTree_Expression* global_access = new ModTree_Expression();
+            global_access->constant_value = constant_value_make_unknown();
+            global_access->result_type = analyser->global_type_informations->data_type;
+            global_access->expression_type = ModTree_Expression_Type::VARIABLE_READ;
+            global_access->options.variable_read = analyser->global_type_informations;
+
+            ModTree_Expression* size_access = new ModTree_Expression();
+            size_access->constant_value = constant_value_make_unknown();
+            size_access->result_type = type_system->i32_type;
+            size_access->expression_type = ModTree_Expression_Type::MEMBER_ACCESS;
+            size_access->options.member_access.structure_expression = global_access;
+            size_access->options.member_access.member = analyser->global_type_informations->data_type->options.slice.size_member;
+
+            ModTree_Statement* assign_statement = new ModTree_Statement();
+            assign_statement->type = ModTree_Statement_Type::ASSIGNMENT;
+            assign_statement->options.assignment.destination = size_access;
+            assign_statement->options.assignment.source = modtree_expression_create_constant_i32(analyser, internal_information_size);
+            dynamic_array_push_back(&analyser->global_init_function->options.function.body->statements, assign_statement);
+        }
+    }
+
+    // Add return for global init function
+    {
+        ModTree_Statement* return_stmt = new ModTree_Statement;
+        return_stmt->type = ModTree_Statement_Type::RETURN;
+        return_stmt->options.return_value.available = false;
+        dynamic_array_push_back(&analyser->global_init_function->options.function.body->statements, return_stmt);
     }
 }
 

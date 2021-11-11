@@ -27,10 +27,20 @@ struct Upp_Constant
     int offset;
 };
 
+struct Upp_Constant_Reference
+{
+    // Where the pointer is stored in the buffer, e.g. *(void**)&pool.buffer[ptr_offset] = &pool.buffer[buffer_destination_offset];
+    int ptr_offset;
+    int buffer_destination_offset; 
+};
+
 struct Constant_Pool
 {
+    Type_System* type_system;
     Dynamic_Array<Upp_Constant> constants;
+    Dynamic_Array<Upp_Constant_Reference> references;
     Dynamic_Array<byte> buffer;
+    Hashtable<void*, int> saved_pointers;
 };
 int constant_pool_add_constant(Constant_Pool* pool, Type_Signature* signature, Array<byte> bytes);
 
@@ -102,6 +112,18 @@ struct Code_Source
     AST_Node* root_node;
 };
 
+enum class Timing_Task
+{
+    LEXING,
+    PARSING,
+    ANALYSIS,
+    CODE_GEN,
+    RESET,
+    CODE_EXEC,
+    OUTPUT,
+    FINISH,
+};
+
 struct Compiler
 {
     Identifier_Pool identifier_pool;
@@ -121,9 +143,19 @@ struct Compiler
 
     Dynamic_Array<Code_Source*> code_sources;
     Code_Source* main_source;
-    Timer* timer;
-
     bool generate_code;
+
+    // Timing stuff
+    Timer* timer;
+    Timing_Task task_current;
+    double task_last_start_time;
+    double time_lexing;
+    double time_parsing;
+    double time_analysing;
+    double time_code_gen;
+    double time_output;
+    double time_code_exec;
+    double time_reset;
 };
 
 Compiler compiler_create(Timer* timer);
@@ -132,6 +164,8 @@ void compiler_destroy(Compiler* compiler);
 void compiler_compile(Compiler* compiler, String source_code, bool generate_code);
 Exit_Code compiler_execute(Compiler* compiler);
 void compiler_add_source_code(Compiler* compiler, String source_code, Code_Origin origin); // Takes ownership of source_code
+
+void compiler_switch_timing_task(Compiler* compiler, Timing_Task task);
 
 Text_Slice token_range_to_text_slice(Token_Range range, Compiler* compiler);
 void exit_code_append_to_string(String* string, Exit_Code code);

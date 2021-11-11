@@ -5,6 +5,10 @@
 
 int align_offset_next_multiple(int offset, int alignment) 
 {
+    if (alignment == 0) {
+        panic("");
+        return offset;
+    }
     int dist = offset % alignment;
     if (dist == 0) return offset;
     if (dist < 0) {

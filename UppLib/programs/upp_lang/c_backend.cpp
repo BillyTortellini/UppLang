@@ -9,6 +9,8 @@
 #include "semantic_analyser.hpp"
 #include "../../win32/process.hpp"
 
+void c_generator_output_cast_with_type(C_Generator* generator, String* output, Type_Signature* type);
+
 C_Compiler c_compiler_create()
 {
     C_Compiler result;
@@ -156,7 +158,12 @@ Exit_Code c_compiler_execute(C_Compiler* compiler)
         return Exit_Code::COMPILATION_FAILED;
     }
 
-    return (Exit_Code) process_start_no_pipes(string_create_static("backend/build/main.exe"), true);
+    int exit_code = process_start_no_pipes(string_create_static("backend/build/main.exe"), true);
+    if (exit_code_is_valid(exit_code)) {
+        return (Exit_Code)exit_code;
+    }
+
+    return Exit_Code::CODE_ERROR_OCCURED;
 }
 
 C_Generator c_generator_create()
@@ -170,11 +177,12 @@ C_Generator c_generator_create()
     result.section_type_declarations = string_create_empty(4096);
     result.section_string_data = string_create_empty(4096);
     result.section_globals = string_create_empty(4096);
+    result.section_constants = string_create_empty(4096);
     result.array_index_stack = dynamic_array_create_empty<int>(16);
+    result.translation_constant_to_name = hashtable_create_pointer_empty<Upp_Constant*, String>(128);
     result.translation_type_to_name = hashtable_create_pointer_empty<Type_Signature*, String>(128);
     result.translation_function_to_name = hashtable_create_pointer_empty<IR_Function*, String>(128);
     result.translation_code_block_to_name = hashtable_create_pointer_empty<IR_Code_Block*, String>(128);
-    result.translation_string_data_to_name = hashtable_create_empty<int, String>(128, hash_i32, equals_i32);
     result.type_dependencies = dynamic_array_create_empty<C_Type_Definition_Dependency>(64);
     result.type_to_dependency_mapping = hashtable_create_pointer_empty<Type_Signature*, int>(64);
     result.name_counter = 0;
@@ -192,6 +200,11 @@ void delete_type_names(Type_Signature** signature, String* value)
 }
 
 void delete_function_names(IR_Function** function, String* value)
+{
+    string_destroy(value);
+}
+
+void delete_constant_names(Upp_Constant** function, String* value)
 {
     string_destroy(value);
 }
@@ -218,15 +231,16 @@ void c_generator_destroy(C_Generator* generator)
     string_destroy(&generator->section_struct_prototypes);
     string_destroy(&generator->section_struct_implementations);
     string_destroy(&generator->section_globals);
+    string_destroy(&generator->section_constants);
     dynamic_array_destroy(&generator->array_index_stack);
     hashtable_for_each(&generator->translation_type_to_name, delete_type_names);
     hashtable_destroy(&generator->translation_type_to_name);
+    hashtable_for_each(&generator->translation_constant_to_name, delete_constant_names);
+    hashtable_destroy(&generator->translation_constant_to_name);
     hashtable_for_each(&generator->translation_function_to_name, delete_function_names);
     hashtable_destroy(&generator->translation_function_to_name);
     hashtable_for_each(&generator->translation_code_block_to_name, delete_code_block_names);
     hashtable_destroy(&generator->translation_code_block_to_name);
-    hashtable_for_each(&generator->translation_string_data_to_name, delete_string_data);
-    hashtable_destroy(&generator->translation_string_data_to_name);
     hashtable_destroy(&generator->type_to_dependency_mapping);
     dynamic_array_destroy(&generator->type_dependencies);
 }
@@ -377,7 +391,12 @@ void c_generator_register_type_name(C_Generator* generator, Type_Signature* type
     }
     case Signature_Type::STRUCT:
     {
-        string_append_formated(&type_name, "struct_%d", generator->name_counter);
+        if (type->options.structure.id != 0) {
+        string_append_formated(&type_name, "struct_%d_%s", generator->name_counter, type->options.structure.id->characters);
+        }
+        else {
+            string_append_formated(&type_name, "struct_%d", generator->name_counter);
+        }
         generator->name_counter++;
         string_append_formated(&generator->section_struct_prototypes, "struct %s;\n", type_name.characters);
 
@@ -406,6 +425,13 @@ void c_generator_output_data_access(C_Generator* generator, String* output, IR_D
     if (access.is_memory_access) {
         string_append_formated(output, "(*(");
     }
+
+    /*
+    Type_Signature* signature = ir_data_access_get_type(&access);
+    if (signature->type == Signature_Type::ENUM) {
+        c_generator_output_cast_with_type(generator, output, generator->compiler->type_system.i32_type);
+    }
+    */
 
     switch (access.type)
     {
@@ -438,73 +464,9 @@ void c_generator_output_data_access(C_Generator* generator, String* output, IR_D
     case IR_Data_Access_Type::CONSTANT:
     {
         Upp_Constant* constant = &generator->compiler->constant_pool.constants[access.index];
-        Type_Signature* type = constant->type;
-        void* raw_data = &generator->compiler->constant_pool.buffer[constant->offset];
-        if (type->type == Signature_Type::PRIMITIVE) 
-        {
-            switch (type->options.primitive.type)
-            {
-            case Primitive_Type::BOOLEAN: {
-                bool val = *(bool*)raw_data;
-                string_append_formated(output, "%s", val ? "true" : "false");
-                break;
-            }
-            case Primitive_Type::INTEGER: {
-                int value = 0;
-                if (type->options.primitive.is_signed)
-                {
-                    switch (type->size)
-                    {
-                    case 1: value = (i32) * (i8*)raw_data; break;
-                    case 2: value = (i32) * (i16*)raw_data; break;
-                    case 4: value = (i32) * (i32*)raw_data; break;
-                    case 8: value = (i32) * (i64*)raw_data; break;
-                    default: panic("HEY");
-                    }
-                }
-                else
-                {
-                    switch (type->size)
-                    {
-                    case 1: value = (i32) * (u8*)raw_data; break;
-                    case 2: value = (i32) * (u16*)raw_data; break;
-                    case 4: value = (i32) * (u32*)raw_data; break;
-                    case 8: value = (i32) * (u64*)raw_data; break;
-                    default: panic("HEY");
-                    }
-                }
-                string_append_formated(output, "%d", value);
-                break;
-            }
-            case Primitive_Type::FLOAT: {
-                if (type->size == 4) {
-                    string_append_formated(output, "%3.2f", *(float*)raw_data);
-                }
-                else if (type->size == 8) {
-                    string_append_formated(output, "%3.2f", *(float*)raw_data);
-                }
-                else panic("HEY");
-                break;
-            }
-            default: panic("HEY");
-            }
-        }
-        else if (type == generator->compiler->type_system.string_type) {
-            String* string_access_str = hashtable_find_element(&generator->translation_string_data_to_name, access.index);
-            assert(string_access_str != 0, "Should not happen");
-            string_append_formated(output, string_access_str->characters);
-        }
-        else if (type->type == Signature_Type::POINTER && type->options.pointer_child->type == Signature_Type::VOID_TYPE && *(void**)raw_data == nullptr) {
-            string_append_formated(output, "nullptr");
-        }
-        else if (type->type == Signature_Type::TYPE_TYPE) {
-            string_append_formated(output, "(u64)%d", (u64*)raw_data);
-        }
-        else if (type->type == Signature_Type::ARRAY) {
-        }
-        else {
-            panic("Cannot load constants that are no strings or primitives!");
-        }
+        String* str = hashtable_find_element(&generator->translation_constant_to_name, constant);
+        assert(str != 0, "");
+        string_append_formated(output, str->characters);
         break;
     }
     }
@@ -515,11 +477,15 @@ void c_generator_output_data_access(C_Generator* generator, String* output, IR_D
     return;
 }
 
-void c_generator_output_cast(C_Generator* generator, String* output, IR_Data_Access access)
+void c_generator_output_cast_with_type(C_Generator* generator, String* output, Type_Signature* type)
 {
     string_append_formated(output, "(");
-    c_generator_output_type_reference(generator, output, ir_data_access_get_type(&access));
+    c_generator_output_type_reference(generator, output, type);
     string_append_formated(output, ") ");
+}
+
+void c_generator_output_cast(C_Generator* generator, String* output, IR_Data_Access access) {
+    c_generator_output_cast_with_type(generator, output, ir_data_access_get_type(&access));
 }
 
 void c_generator_output_code_block(C_Generator* generator, String* output, IR_Code_Block* code_block, int indentation_level, bool registers_in_same_scope)
@@ -901,6 +867,7 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
         string_reset(&generator->section_struct_prototypes);
         string_reset(&generator->section_string_data);
         string_reset(&generator->section_globals);
+        string_reset(&generator->section_constants);
         dynamic_array_reset(&generator->type_dependencies);
         hashtable_reset(&generator->type_to_dependency_mapping);
         hashtable_for_each(&generator->translation_type_to_name, delete_type_names);
@@ -909,12 +876,12 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
         hashtable_reset(&generator->translation_function_to_name);
         hashtable_for_each(&generator->translation_code_block_to_name, delete_code_block_names);
         hashtable_reset(&generator->translation_code_block_to_name);
-        hashtable_for_each(&generator->translation_string_data_to_name, delete_string_data);
-        hashtable_reset(&generator->translation_string_data_to_name);
+        hashtable_for_each(&generator->translation_constant_to_name, delete_constant_names);
+        hashtable_reset(&generator->translation_constant_to_name);
         generator->name_counter = 0;
     }
 
-    // Create String Data code
+    // Create known type_signatures
     {
         String type_str = string_create("Type_Type");
         hashtable_insert_element(&generator->translation_type_to_name, generator->compiler->type_system.type_type, type_str);
@@ -924,30 +891,113 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
         String str_str = string_create("Upp_String");
         hashtable_insert_element(&generator->translation_type_to_name, generator->compiler->type_system.string_type, str_str);
     }
-    for (int i = 0; i < generator->compiler->constant_pool.constants.size; i++)
-    {
-        Upp_Constant* constant = &generator->compiler->constant_pool.constants[i];
-        if (constant->type == generator->compiler->type_system.string_type)
-        {
-            void* raw_data = &generator->compiler->constant_pool.buffer[constant->offset];
-            char* string_data = *(char**)raw_data;
-            i32 capacity = *(i32*)((byte*)raw_data + 8);
-            i32 size = *(i32*)((byte*)raw_data + 16);
-            assert(strlen(string_data) == size, "Hey");
 
-            string_append_formated(&generator->section_string_data, "u8* string_%d = (u8*) R\"Upp(%s)Upp\";\n", generator->name_counter, string_data);
-            String str = string_create_empty(size);
-            string_append_formated(&str, "upp_create_static_string(string_%d, %d)", generator->name_counter, size);
-            hashtable_insert_element(&generator->translation_string_data_to_name, i, str);
-            generator->name_counter++;
-        }
-    }
-
-    // Create Data-Types code
+    // Create all Type_Signatures
     for (int i = 0; i < generator->compiler->type_system.types.size; i++) {
         Type_Signature* type = generator->compiler->type_system.types[i];
         if (type == generator->compiler->type_system.error_type) continue;
         c_generator_register_type_name(generator, generator->compiler->type_system.types[i]);
+    }
+
+    // Create constant buffer
+    {
+        string_append_formated(&generator->section_constants, "byte constant_buffer[] = {");
+        for (int i = 0; i < generator->compiler->constant_pool.buffer.size; i++) {
+            if (i % 30 == 0) {
+                string_append_formated(&generator->section_constants, "\n    ");
+            }
+            string_append_formated(&generator->section_constants, "%3d", generator->compiler->constant_pool.buffer[i]);
+            if (i + 1 != generator->compiler->constant_pool.buffer.size) {
+                string_append_formated(&generator->section_constants, ", ");
+            }
+        }
+        string_append_formated(&generator->section_constants, "\n};\n");
+    }
+    // Create all constants
+    for (int i = 0; i < generator->compiler->constant_pool.constants.size; i++)
+    {
+        Upp_Constant* constant = &generator->compiler->constant_pool.constants[i];
+        void* raw_data = &generator->compiler->constant_pool.buffer[constant->offset];
+        Type_Signature* type = constant->type;
+
+        String output = string_create_empty(8);
+        if (type->type == Signature_Type::PRIMITIVE) 
+        {
+            switch (type->options.primitive.type)
+            {
+            case Primitive_Type::BOOLEAN: {
+                bool val = *(bool*)raw_data;
+                string_append_formated(&output, "%s", val ? "true" : "false");
+                break;
+            }
+            case Primitive_Type::INTEGER: {
+                int value = 0;
+                if (type->options.primitive.is_signed)
+                {
+                    switch (type->size)
+                    {
+                    case 1: value = (i32) * (i8*)raw_data; break;
+                    case 2: value = (i32) * (i16*)raw_data; break;
+                    case 4: value = (i32) * (i32*)raw_data; break;
+                    case 8: value = (i32) * (i64*)raw_data; break;
+                    default: panic("HEY");
+                    }
+                }
+                else
+                {
+                    switch (type->size)
+                    {
+                    case 1: value = (i32) * (u8*)raw_data; break;
+                    case 2: value = (i32) * (u16*)raw_data; break;
+                    case 4: value = (i32) * (u32*)raw_data; break;
+                    case 8: value = (i32) * (u64*)raw_data; break;
+                    default: panic("HEY");
+                    }
+                }
+                string_append_formated(&output, "%d", value);
+                break;
+            }
+            case Primitive_Type::FLOAT: {
+                if (type->size == 4) {
+                    string_append_formated(&output, "%3.2f", *(float*)raw_data);
+                }
+                else if (type->size == 8) {
+                    string_append_formated(&output, "%3.2f", *(float*)raw_data);
+                }
+                else panic("HEY");
+                break;
+            }
+            default: panic("HEY");
+            }
+        }
+        else if (type->type == Signature_Type::POINTER && type->options.pointer_child->type == Signature_Type::VOID_TYPE && *(void**)raw_data == nullptr) {
+            string_append_formated(&output, "nullptr");
+        }
+        else if (type->type == Signature_Type::TYPE_TYPE) {
+            string_append_formated(&output, "(u64)%d", *(u64*)raw_data);
+        }
+        else {
+            string_append_formated(&output, "(*(");
+            c_generator_output_type_reference(generator, &output, type);
+            string_append_formated(&output, "*) &constant_buffer[%d])", constant->offset);
+        }
+        hashtable_insert_element(&generator->translation_constant_to_name, constant, output);
+    }
+
+    // Implement constant reference resolution
+    {
+        string_append_formated(&generator->section_function_implementations, "\n void init_const_references(){\n");
+        for (int i = 0; i < generator->compiler->constant_pool.references.size; i++)
+        {
+            Upp_Constant_Reference* reference = &generator->compiler->constant_pool.references[i];
+            string_append_formated(
+                &generator->section_function_implementations, 
+                "    *((void**) &constant_buffer[%d]) = &constant_buffer[%d];\n", 
+                reference->ptr_offset, reference->buffer_destination_offset
+            );
+        }
+        string_append_formated(&generator->section_function_implementations, "}\n\n");
+
     }
 
     // Create globals Definitions
@@ -1138,7 +1188,10 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
     {
         String* main_fn_name = hashtable_find_element(&generator->translation_function_to_name, generator->program->entry_function);
         assert(main_fn_name != 0, "HEY");
-        string_append_formated(&generator->section_function_implementations, "\nint main(int argc, char** argv) {random_initialize(); %s(); return 0;}\n", main_fn_name->characters);
+        string_append_formated(
+            &generator->section_function_implementations, "\nint main(int argc, char** argv) {init_const_references();random_initialize(); %s(); return 0;}\n", 
+            main_fn_name->characters
+        );
     }
 
     // Handle extern data
@@ -1173,6 +1226,8 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
         string_append_string(&source_code, &generator->section_type_declarations); // Function pointers
         string_append_formated(&source_code, "\n/* STRUCT_IMPLEMENTATIONS\n----------------*/\n");
         string_append_string(&source_code, &generator->section_struct_implementations);
+        string_append_formated(&source_code, "\n/* CONSTANTS\n------------------*/\n");
+        string_append_string(&source_code, &generator->section_constants);
         string_append_formated(&source_code, "\n/* GLOBALS\n------------------*/\n");
         string_append_string(&source_code, &generator->section_globals);
         string_append_formated(&source_code, "\n/* FUNCTION PROTOTYPES\n------------------*/\n");

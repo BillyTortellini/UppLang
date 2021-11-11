@@ -20,8 +20,9 @@ struct Bytecode_Interpreter
     Array<byte> stack;
     Array<byte> globals;
     byte* stack_pointer;
-    Exit_Code exit_code;
     Random random;
+
+    Exit_Code exit_code;
     bool instruction_limit_enabled;
     int instruction_limit;
     bool error_occured;
@@ -33,6 +34,7 @@ void bytecode_interpreter_reset(Bytecode_Interpreter* interpreter, Compiler* com
 
 bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* interpreter);
 void bytecode_interpreter_run_function(Bytecode_Interpreter* interpreter, int function_start_index);
+void bytecode_interpreter_prepare_run(Bytecode_Interpreter* interpreter);
 
 bool bytecode_execute_binary_instr(Instruction_Type instr_type, Bytecode_Type type, void* dest, void* op_left, void* op_right);
 void bytecode_execute_unary_instr(Instruction_Type instr_type, Bytecode_Type type, void* dest, void* operand);

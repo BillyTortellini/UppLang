@@ -6,6 +6,7 @@
 
 struct Identifier_Pool;
 struct AST_Node;
+struct Timer;
 
 enum class Primitive_Type
 {
@@ -47,9 +48,9 @@ struct Enum_Member
 
 enum class Structure_Type
 {
-    STRUCT,
-    C_UNION,
-    UNION
+    STRUCT = 1,
+    C_UNION = 2,
+    UNION = 3
 };
 
 struct Type_Signature
@@ -94,8 +95,19 @@ struct Type_Signature
 void type_signature_append_to_string(String* string, Type_Signature* signature);
 void type_signature_append_value_to_string(Type_Signature* type, byte* value_ptr, String* string);
 
-// An array as it is currently defiend in the upp-language
+
+
+
+
+// An array as it is currently defined in the upp-language
+template<typename T>
 struct Upp_Slice
+{
+    T* data_ptr;
+    i32 size;
+};
+
+struct Upp_Slice_Base
 {
     void* data_ptr;
     i32 size;
@@ -110,17 +122,110 @@ struct Upp_String
     i32 size;
 };
 
+struct Internal_Type_Primitive
+{
+    bool is_signed;
+    Primitive_Type tag;
+};
+
+struct Internal_Type_Function
+{
+    Upp_Slice<u64> parameters;
+    u64 return_type;
+};
+
+struct Internal_Type_Struct_Member
+{
+    Upp_String name;
+    u64 type;
+    int offset;
+};
+
+struct Internal_Structure_Type
+{
+    int tag_member_index;
+    Structure_Type tag;
+};
+
+struct Internal_Type_Struct
+{
+    Upp_Slice<Internal_Type_Struct_Member> members;
+    Upp_String name;
+    Internal_Structure_Type type;
+};
+
+struct Internal_Type_Enum_Member
+{
+    Upp_String name;
+    int value;
+};
+
+struct Internal_Type_Array
+{
+    u64 element_type;
+    int size;
+};
+
+struct Internal_Type_Slice
+{
+    u64 element_type;
+};
+
+struct Internal_Type_Enum
+{
+    Upp_Slice<Internal_Type_Enum_Member> members;
+    Upp_String name;
+};
+
+enum class Internal_Type_Options_Tag
+{
+    VOID_TYPE = 1,
+    TYPE_TYPE,
+    POINTER,
+    ARRAY,
+    SLICE,
+    PRIMITIVE,
+    FUNCTION,
+    STRUCTURE,
+    ENUMERATION,
+};
+Internal_Type_Options_Tag signature_type_to_internal_type(Signature_Type type);
+
+struct Internal_Type_Info_Options
+{
+    union {
+        struct {} void_type;
+        struct {} type_type;
+        u64 pointer;
+        Internal_Type_Array array;
+        Internal_Type_Slice slice;
+        Internal_Type_Primitive primitive;
+        Internal_Type_Function function;
+        Internal_Type_Struct structure;
+        Internal_Type_Enum enumeration;
+    };
+    Internal_Type_Options_Tag tag;
+};
+
 struct Internal_Type_Information
 {
     u64 type;
     int size;
     int alignment;
-    bool is_primitive_type;
-    i32 primitive_type;
+    Internal_Type_Info_Options options;
 };
+
+
+
+
+
+
 
 struct Type_System
 {
+    Timer* timer;
+    double register_time;
+
     Dynamic_Array<Type_Signature*> types;
     Dynamic_Array<Internal_Type_Information> internal_type_infos;
     u64 next_internal_index;
@@ -143,14 +248,13 @@ struct Type_System
     Type_Signature* empty_struct_type;
     Type_Signature* type_type;
     Type_Signature* type_information_type;
-    Type_Signature* type_primitive_type_enum;
 
     String* id_data;
     String* id_size;
     String* id_tag;
 };
 
-Type_System type_system_create();
+Type_System type_system_create(Timer* timer);
 void type_system_destroy(Type_System* system);
 void type_system_add_primitives(Type_System* system, Identifier_Pool* pool);
 void type_system_reset(Type_System* system);

@@ -983,18 +983,37 @@ void bytecode_interpreter_reset(Bytecode_Interpreter* interpreter, Compiler* com
     interpreter->generator = &compiler->bytecode_generator;
 }
 
-void bytecode_interpreter_run_function(Bytecode_Interpreter* interpreter, int function_start_index)
+void bytecode_interpreter_prepare_run(Bytecode_Interpreter* interpreter)
 {
+    // Reset/Zero out previous runs
     memory_set_bytes(&interpreter->return_register, 256, 0);
     memory_set_bytes(interpreter->stack.data, 16, 0); // Sets return address and old stack pointer to 0
-    interpreter->instruction_pointer = &interpreter->generator->instructions[function_start_index];
     interpreter->stack_pointer = &interpreter->stack[0];
+    interpreter->error_occured = false;
+    interpreter->exit_code = Exit_Code::SUCCESS;
+
+    // Update global buffer size (Maybe we need to do something smarter when partial compilation can access globals)
     if (interpreter->globals.size < interpreter->generator->global_data_size) {
         array_destroy(&interpreter->globals);
         interpreter->globals = array_create_empty<byte>(interpreter->generator->global_data_size * 2);
     }
-    interpreter->error_occured = false;
-    interpreter->exit_code = Exit_Code::SUCCESS;
+
+    // Update const references
+    for (int i = 0; i < interpreter->constant_pool->references.size; i++) {
+        Upp_Constant_Reference* reference = &interpreter->constant_pool->references[i];
+        byte* buffer = (byte*)interpreter->constant_pool->buffer.data;
+        void** ptr_to_set = (void**)&buffer[reference->ptr_offset];
+        *ptr_to_set = &buffer[reference->buffer_destination_offset];
+    }
+}
+
+void bytecode_interpreter_run_function(Bytecode_Interpreter* interpreter, int function_start_index)
+{
+    Timing_Task before_task = interpreter->generator->compiler->task_current;
+    compiler_switch_timing_task(interpreter->generator->compiler, Timing_Task::CODE_EXEC);
+
+    bytecode_interpreter_prepare_run(interpreter);
+    interpreter->instruction_pointer = &interpreter->generator->instructions[function_start_index];
 
     int executed_instruction_count = 0;
     __try
@@ -1020,4 +1039,6 @@ void bytecode_interpreter_run_function(Bytecode_Interpreter* interpreter, int fu
               GetExceptionCode() == EXCEPTION_STACK_OVERFLOW){
         interpreter->exit_code = Exit_Code::CODE_ERROR_OCCURED;
     }
+
+    compiler_switch_timing_task(interpreter->generator->compiler, before_task);
 }

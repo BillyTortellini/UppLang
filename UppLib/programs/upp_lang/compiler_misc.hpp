@@ -40,6 +40,7 @@ enum class Exit_Code
     CODE_ERROR_OCCURED,
     INVALID_SWITCH_CASE,
 };
+bool exit_code_is_valid(int value);
 
 struct Type_Signature;
 struct Extern_Function_Identifier

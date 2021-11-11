@@ -1180,6 +1180,10 @@ void ir_generator_reset(IR_Generator* generator, Compiler* compiler)
 
 void ir_generator_generate_queued_items(IR_Generator* generator)
 {
+    Timing_Task before_task = generator->compiler->task_current;
+    SCOPE_EXIT(compiler_switch_timing_task(generator->compiler, before_task));
+    compiler_switch_timing_task(generator->compiler, Timing_Task::CODE_GEN);
+
     // Generate Function stubs
     for (int i = 0; i < generator->queue_functions.size; i++)
     {
