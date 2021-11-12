@@ -1147,23 +1147,46 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
             // Output type definition
             String* type_name = hashtable_find_element(&generator->translation_type_to_name, dependency->signature);
             assert(&type_name != 0, "HEY");
-            if (dependency->signature->type == Signature_Type::STRUCT)
             {
-                string_append_formated(&generator->section_struct_implementations, "struct %s {\n", type_name->characters);
-                for (int i = 0; i < dependency->signature->options.structure.members.size; i++) {
-                    Struct_Member* member = &dependency->signature->options.structure.members[i];
-                    string_add_indentation(&generator->section_struct_implementations, 1);
-                    c_generator_output_type_reference(generator, &generator->section_struct_implementations, member->type);
-                    string_append_formated(&generator->section_struct_implementations, " %s;\n", member->id->characters);
+                Type_Signature* type = dependency->signature;
+                if (type->type == Signature_Type::STRUCT)
+                {
+                    string_append_formated(&generator->section_struct_implementations, "struct %s {\n", type_name->characters);
+                    int member_indentation = 1;
+                    bool is_union = false;
+                    if (type->options.structure.struct_type != Structure_Type::STRUCT) {
+                        string_add_indentation(&generator->section_struct_implementations, 1);
+                        string_append_formated(&generator->section_struct_implementations, "union {\n");
+                        member_indentation = 2;
+                        is_union = true;
+                    }
+                    for (int i = 0; i < type->options.structure.members.size; i++) 
+                    {
+                        Struct_Member* member = &type->options.structure.members[i];
+                        if (is_union && member->offset != 0) {continue;}
+                        string_add_indentation(&generator->section_struct_implementations, member_indentation);
+                        c_generator_output_type_reference(generator, &generator->section_struct_implementations, member->type);
+                        string_append_formated(&generator->section_struct_implementations, " %s;\n", member->id->characters);
+                    }
+                    if (type->options.structure.struct_type != Structure_Type::STRUCT) {
+                        string_add_indentation(&generator->section_struct_implementations, 1);
+                        string_append_formated(&generator->section_struct_implementations, "};\n");
+                    }
+                    if (type->options.structure.struct_type == Structure_Type::UNION) {
+                        string_add_indentation(&generator->section_struct_implementations, 1);
+                        Struct_Member* member = &type->options.structure.tag_member;
+                        c_generator_output_type_reference(generator, &generator->section_struct_implementations, member->type);
+                        string_append_formated(&generator->section_struct_implementations, " %s;\n", member->id->characters);
+                    }
+                    string_append_formated(&generator->section_struct_implementations, "};\n\n");
                 }
-                string_append_formated(&generator->section_struct_implementations, "};\n\n");
+                else if (dependency->signature->type == Signature_Type::ARRAY) {
+                    string_append_formated(&generator->section_struct_implementations, "struct %s {\n    ", type_name->characters);
+                    c_generator_output_type_reference(generator, &generator->section_struct_implementations, type->options.array.element_type);
+                    string_append_formated(&generator->section_struct_implementations, " data[%d];\n};\n\n", type->options.array.element_count);
+                }
+                else { panic("hwat"); }
             }
-            else if (dependency->signature->type == Signature_Type::ARRAY) {
-                string_append_formated(&generator->section_struct_implementations, "struct %s {\n    ", type_name->characters);
-                c_generator_output_type_reference(generator, &generator->section_struct_implementations, dependency->signature->options.array.element_type);
-                string_append_formated(&generator->section_struct_implementations, " data[%d];\n};\n\n", dependency->signature->options.array.element_count);
-            }
-            else { panic("hwat"); }
         }
 
         // Sanity test, check if everything was resolved

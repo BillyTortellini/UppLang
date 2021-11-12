@@ -361,8 +361,8 @@ void type_system_add_primitives(Type_System* system, Identifier_Pool* pool)
                 type_system_finish_type(system, integer_info_type);
                 struct_add_member(primitive_type, pool, "integer", integer_info_type);
             }
-            struct_add_member(primitive_type, pool, "boolean", system->empty_struct_type);
             struct_add_member(primitive_type, pool, "floating_point", system->empty_struct_type);
+            struct_add_member(primitive_type, pool, "boolean", system->empty_struct_type);
             type_system_finish_type(system, primitive_type);
             struct_add_member(option_type, pool, "primitive", primitive_type);
             assert_similarity<Internal_Type_Primitive>(primitive_type);

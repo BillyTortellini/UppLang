@@ -11,10 +11,9 @@ Next features:
  * Anonymous structs
  * Anonymous enums
  * Anonymous functions (Lambdas)
- * Any-Type
-
  * Struct unpacking syntax
  * Inner Functions, inner types (Functions inside other functions, structs/enums/unions inside functions)
+
  * Block-Expression
 
  * Testcases for all new features (Expression-Context, Auto cast, Unions, Switches, Named breaks/continues)
@@ -30,11 +29,11 @@ Next features:
 
 Tactics:
 --------
- - C_Backend needs init code for references, string code can be removed...
+ - Parser is EXTREMELY slow, probably has to do something with error recovery, check it out.
 
 Issues:
 -------
- - Parser is EXTREMELY slow, probably has to do something with error recovery, check it out.
+ - Lexer strings only on one line
 
 Notes:
 ------
@@ -55,7 +54,7 @@ Notes:
         - if a{}
         - while b{}
         - switch c{}
-    Also maybe the ~ Syntax idea was not so bad at all because member access makes more sense this way
+    Also maybe the ~ Syntax idea was not so bad at all because member access makes more sense this way? What did i mean by that  
     
 
 
@@ -72,11 +71,8 @@ Some characteristics I want:
 
 Thought Run-Down:
 -----------------
-Struct initialization syntax, requiring all members to be set, e.g. 
-    Analyser::Workload{x = 15; b = 32; c = true || false;};
-
-Auto struct init syntax:
-    workload := .{x = 15; b = 32; c = true||false;};
+Maybe remove single statement blocks, e.g. if (bool) return false;
+Just replace these with if (cond) {return false;}
 
 Anonymous structs:
     x: struct {name: String; value: int;};
@@ -102,94 +98,41 @@ Lambda support
     x := () {print_string("What");};
     adder := (x: int, y: int) -> int {return x + y;};
 
-Anonymous enum
-    tag: enum{RED; GREEN; BLUE};
-    tag = .RED;
-
 Choosing enum type
     Something :: enum<int> {}
     Smaller :: enum<byte> {}
 
-Tagged unions using current Enum structure
-    Address :: enum
-    {
-        IPV4 :: 5 {
-            bytes: [4]byte;
-        }
-        IPV6 {
-            addr: String;
-        }
-        NOTHING_MUCH;
-        WHATEVER {
-            postal_code: int;
-            city_name: String;
-            blob: []byte;
-        }
-    }
-
-    Tagged unions have:
-        * ID for the Type-name,
-        * A list of members, where each member:
-            - Has an ID (RED, GREEN)
-            - Is a struct/can contain members
-
-    They actually contain:
-        - A tag member
-        - A union of different structs
-
-    Use cases:
-        - Switch with pointer definition syntax
-            switch addr {case Address.IPV4{v4} return v4.bytes[0]; default: }
-        - Creation using Initializers/Auto-Initializers
-            addr: Address = .IPV4{bytes = .[1, 2, 3, 4]};
-        - Normal creation by setting the tag
-            addr: Address;
-            addr.tag = .IPV4;
-        - Member access without switch
-            return addr.IPV4.bytes[0];
-        - Tag access in code (e.g. in if statement)
-            if addr.tag == .IPV4 return false;
-
-    The question now becomes what
-        Address.IPV4 actually is: Type or value?
-    because
-        addr.IPV4 // Is a member/struct which can be accessed
-        Address.IPV4 // Is a tag value 
-
-    Can I always differentiate based on context? Probably
-        x: Address.IPV4; // Should this be allowed?
-        x: Address.tag;  // Should this be allowed?
-        x = Address.IPV4; // In this context it should be an enum value 
-
-    switch addr
-    {
-    case .IPV4(v4):
-        type_of(v4) == *(Address.IPV4)
-        loop byte in v4.bytes 
-            print(byte);
-    case .IPV6(v6):
-        print(v6.addr);
-    }
-
-    assert(addr.tag == Address.IPV4);
-    addr.tag = .IPV6;
-    addr.IPV4.bytes = [byte: 192, 168, 0, 1];
-
-    x: Address.IPV4; // ERROR: This is an enum value, not a type!
-
-    manually creating an enum:
-        a: Address;
-        a.tag = Address.IPV4;
-        a.IPV4.bytes = [byte: 0, 0, 0, 0];
-    Does not work with normal initializor
-        Address{tag = .IPV4, IPV4.bytes = [byte: 0, 0, 0, 0]} // ERROR: initializor syntax only works on structs, tagged unions require the type
-    Initializor with union:
-        Color :: union {a: int; b: int; c: int};
-        x := Color{a = 5;} // Should work, because we can differentiate based on da ding
-    with initializor:
-        a: Address = .IPV4{bytes = [byte: 0, 0, 0, 0]};
-
 Expression_Blocks?
+    UPDATE: Currently i think these are a bad idea, because return does something else inside these blocks,
+        and I could introduce the concept of yield, which would return a value, but I don't think this is necessarily useful.
+        The Idea behind expression blocks would be to give more purpose to an unnamed block. E.g.
+
+        The 2 main use cases I have for these are :
+            * a short way to write if's and switches
+            * Make sure some values are initialized
+
+            The main use cases I can think of are:
+                * a short way to write if's and switches
+                * Makes sure values are going to be initialized
+                * Gives purpose to values (E.g. you know where the values are going to be used)
+
+            Problems:
+                * Syntax overlap inside if, switch, while
+                * They may be quite unnecessary, because function can do the same thing
+                * ModTree_Code's structure of expressions and statements isn't exactly build for this
+                * Would definitly need some experimentation
+
+        fn_call(15, {if condition {yield make_unknown();} yield make_known(condition);});
+
+    found, index: bool, int = {
+        
+    }
+
+    of 
+    expression.index, expression.is_templated = {
+
+    };
+
     x = {switch color {case .RED: return 5; case .GREEN: return 2;}}
     x = {if a return 4; return 2;}
     z = 32 + {if alive return 17; return -2;}

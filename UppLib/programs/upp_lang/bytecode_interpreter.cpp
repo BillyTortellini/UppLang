@@ -783,6 +783,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
             char* str = *(char**)argument_start;
             int size = *(int*)(argument_start + 16);
 
+            if (size == 0) {break;}
             char* buffer = new char[size + 1];
             SCOPE_EXIT(delete[] buffer);
             interpreter_safe_memcopy(interpreter, buffer, str, size);

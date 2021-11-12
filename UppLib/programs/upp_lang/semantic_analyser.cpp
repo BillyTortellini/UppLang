@@ -5804,7 +5804,7 @@ void semantic_analyser_execute_workloads(Semantic_Analyser* analyser)
     }
 
     // Add type_informations loading to global init function
-    if (analyser->errors.size == 0 && analyser->waiting_workload.size != 0)
+    if (analyser->errors.size == 0)
     {
         Type_System* type_system = &analyser->compiler->type_system;
         Type_Signature* type_info_array_signature = type_system_make_array_finished(
