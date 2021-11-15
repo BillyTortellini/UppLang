@@ -19,12 +19,12 @@ bool output_identifiers = false;
 bool output_ast = false;
 bool output_type_system = false;
 bool output_root_table = false;
-bool output_ir = false;
+bool output_ir = true;
 bool output_bytecode = false;
 bool output_timing = true;
 
 // Testcases
-bool enable_testcases = false;
+bool enable_testcases = true;
 bool enable_stresstest = false;
 bool run_testcases_compiled = false;
 
@@ -105,6 +105,9 @@ void exit_code_append_to_string(String* string, Exit_Code code)
         break;
     case Exit_Code::EXTERN_FUNCTION_CALL_NOT_IMPLEMENTED:
         string_append_formated(string, "EXTERN_FUNCTION_CALL_NOT_IMPLEMENTED");
+        break;
+    case Exit_Code::ANY_CAST_INVALID:
+        string_append_formated(string, "ANY_CAST_INVALID");
         break;
     case Exit_Code::INSTRUCTION_LIMIT_REACHED:
         string_append_formated(string, "INSTRUCTION_LIMIT_REACHED");

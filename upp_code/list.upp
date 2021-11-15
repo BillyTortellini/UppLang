@@ -87,13 +87,13 @@ module List_Test
 
 	test :: () 
 	{
-		players := List<Player>::create(); 
-		defer List<Player>::destroy(*players);
+		players := List<Player>~create(); 
+		defer List<Player>~destroy(*players);
 		
-		List<Player>::add(*players, player_make(true, 15, "Fred"));
-		List<Player>::add(*players, player_make(true, 15, "Manni"));
-		List<Player>::add(*players, player_make(true, 15, "Herbert"));
-		List<Player>::for_each(players, *player_print);
+		List<Player>~add(*players, player_make(true, 15, "Fred"));
+		List<Player>~add(*players, player_make(true, 15, "Manni"));
+		List<Player>~add(*players, player_make(true, 15, "Herbert"));
+		List<Player>~for_each(players, *player_print);
 	}
 }
 

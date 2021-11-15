@@ -38,6 +38,7 @@ enum class Exit_Code
     COMPILATION_FAILED,
     INSTRUCTION_LIMIT_REACHED,
     CODE_ERROR_OCCURED,
+    ANY_CAST_INVALID,
     INVALID_SWITCH_CASE,
 };
 bool exit_code_is_valid(int value);

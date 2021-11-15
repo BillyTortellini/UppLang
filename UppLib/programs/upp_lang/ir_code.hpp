@@ -126,9 +126,22 @@ struct IR_Instruction_Unary_OP
     IR_Data_Access source;
 };
 
+enum class IR_Cast_Type
+{
+    INTEGERS,
+    FLOATS,
+    FLOAT_TO_INT,
+    INT_TO_FLOAT,
+    POINTERS,
+    POINTER_TO_U64,
+    U64_TO_POINTER,
+    ENUM_TO_INT,
+    INT_TO_ENUM,
+};
+
 struct IR_Instruction_Cast
 {
-    ModTree_Cast_Type type;
+    IR_Cast_Type type;
     IR_Data_Access destination;
     IR_Data_Access source;
 };

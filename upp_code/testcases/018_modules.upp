@@ -23,10 +23,10 @@ module B
 
 main :: ()
 {
-	a: A::Node;
+	a: A~Node;
 	a.value = 5;
 	
-	b: B::Node;
-	b = B::Maker::make();
+	b: B~Node;
+	b = B~Maker~make();
 	assert(b.value == false);
 }

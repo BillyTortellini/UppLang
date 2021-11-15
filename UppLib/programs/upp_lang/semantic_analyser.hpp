@@ -66,7 +66,8 @@ enum class ModTree_Unary_Operation_Type
     NEGATE,
     LOGICAL_NOT,
     ADDRESS_OF,
-    DEREFERENCE
+    DEREFERENCE,
+    TEMPORARY_TO_STACK, // Puts temporary values onto the stack, e.g. 5 is temporary
 };
 
 enum class ModTree_Cast_Type
@@ -78,9 +79,11 @@ enum class ModTree_Cast_Type
     POINTERS, // Implicit from/to void*
     POINTER_TO_U64,
     U64_TO_POINTER,
-    ARRAY_SIZED_TO_UNSIZED, // Implicit
     ENUM_TO_INT,
     INT_TO_ENUM,
+    ARRAY_SIZED_TO_UNSIZED, // Implicit
+    TO_ANY,
+    FROM_ANY,
 };
 
 struct Constant_Value

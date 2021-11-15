@@ -122,6 +122,12 @@ struct Upp_String
     i32 size;
 };
 
+struct Upp_Any
+{
+    void* data;
+    u64 type;
+};
+
 struct Internal_Type_Primitive
 {
     bool is_signed;
@@ -248,6 +254,7 @@ struct Type_System
     Type_Signature* empty_struct_type;
     Type_Signature* type_type;
     Type_Signature* type_information_type;
+    Type_Signature* any_type;
 
     String* id_data;
     String* id_size;

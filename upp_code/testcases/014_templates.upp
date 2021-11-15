@@ -16,6 +16,6 @@ module Test<K, V>
 
 main :: ()
 {
-	a := Test<int, bool>::make(32, false);
-	b := Test<bool, float>::make(false, 12.0);
+	a := Test<int, bool>~make(32, false);
+	b := Test<bool, float>~make(false, 12.0);
 }

@@ -615,6 +615,10 @@ void lexer_lex(Lexer* lexer, String* code, Identifier_Pool* identifier_pool)
                         terminated_successfull = true;
                         break;
                     }
+                    else if (code->characters[index] == '\n') {
+                        terminated_successfull = false;
+                        break;
+                    }
                     last_was_escape = code->characters[index] == '\\';
                     if (!last_was_escape) {
                         string_append_character(&identifier_string, code->characters[index]);

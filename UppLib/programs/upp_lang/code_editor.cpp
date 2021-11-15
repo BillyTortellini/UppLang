@@ -242,7 +242,7 @@ void code_editor_do_ast_syntax_highlighting(Code_Editor* editor, AST_Node* node,
         r.end_index = r.start_index + 1;
         text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, editor->compiler), VARIABLE_COLOR, BG_COLOR);
     }
-    else if (node->type == AST_Node_Type::EXPRESSION_AUTO_MEMBER) {
+    else if (node->type == AST_Node_Type::EXPRESSION_AUTO_ENUM) {
         Token_Range r = node_range;
         r.start_index += 1;
         r.end_index = r.start_index + 1;

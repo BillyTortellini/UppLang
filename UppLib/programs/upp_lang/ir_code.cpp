@@ -290,34 +290,31 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
         string_append_formated(string, "CAST ");
         switch (cast->type)
         {
-        case ModTree_Cast_Type::FLOATS:
+        case IR_Cast_Type::FLOATS:
             string_append_formated(string, "FLOATS");
             break;
-        case ModTree_Cast_Type::FLOAT_TO_INT:
+        case IR_Cast_Type::FLOAT_TO_INT:
             string_append_formated(string, "FLOAT_TO_INT");
             break;
-        case ModTree_Cast_Type::INT_TO_FLOAT:
+        case IR_Cast_Type::INT_TO_FLOAT:
             string_append_formated(string, "INT_TO_FLOAT");
             break;
-        case ModTree_Cast_Type::INTEGERS:
+        case IR_Cast_Type::INTEGERS:
             string_append_formated(string, "INTEGERS");
             break;
-        case ModTree_Cast_Type::ARRAY_SIZED_TO_UNSIZED:
-            string_append_formated(string, "ARRAY_SIZED_TO_UNSIZED");
-            break;
-        case ModTree_Cast_Type::POINTERS:
+        case IR_Cast_Type::POINTERS:
             string_append_formated(string, "POINTERS");
             break;
-        case ModTree_Cast_Type::POINTER_TO_U64:
+        case IR_Cast_Type::POINTER_TO_U64:
             string_append_formated(string, "POINTER_TO_U64");
             break;
-        case ModTree_Cast_Type::U64_TO_POINTER:
+        case IR_Cast_Type::U64_TO_POINTER:
             string_append_formated(string, "U64_TO_POINTER");
             break;
-        case ModTree_Cast_Type::ENUM_TO_INT:
+        case IR_Cast_Type::ENUM_TO_INT:
             string_append_formated(string, "ENUM_TO_INT");
             break;
-        case ModTree_Cast_Type::INT_TO_ENUM:
+        case IR_Cast_Type::INT_TO_ENUM:
             string_append_formated(string, "INT_TO_ENUM");
             break;
         default: panic("HEY");
@@ -552,6 +549,26 @@ IR_Data_Access ir_data_access_create_intermediate(IR_Code_Block* block, Type_Sig
     return access;
 }
 
+IR_Data_Access ir_data_access_create_dereference(IR_Code_Block* block, IR_Data_Access access)
+{
+    if (!access.is_memory_access) {
+        access.is_memory_access = true;
+        return access;
+    }
+    Type_Signature* ptr_type = ir_data_access_get_type(&access);
+    assert(ptr_type->type == Signature_Type::POINTER, "");
+    IR_Data_Access ptr_access = ir_data_access_create_intermediate(block, ptr_type->options.pointer_child);
+    IR_Instruction instr;
+    instr.type = IR_Instruction_Type::MOVE;
+    instr.options.move.destination = ptr_access;
+    instr.options.move.source = access;
+    dynamic_array_push_back(&block->instructions, instr);
+
+    ptr_access.is_memory_access = true;
+    return ptr_access;
+}
+
+
 IR_Data_Access ir_data_access_create_member(IR_Generator* generator, IR_Code_Block* block, IR_Data_Access struct_access, Struct_Member member)
 {
     IR_Instruction member_instr;
@@ -744,7 +761,7 @@ IR_Data_Access ir_generator_generate_expression(IR_Generator* generator, IR_Code
     case ModTree_Expression_Type::VARIABLE_READ: {
         return *hashtable_find_element(&generator->variable_mapping, expression->options.variable_read);
     }
-    case ModTree_Expression_Type::STRUCT_INITIALIZER: 
+    case ModTree_Expression_Type::STRUCT_INITIALIZER:
     {
         IR_Data_Access struct_access = ir_data_access_create_intermediate(ir_block, expression->result_type);
         for (int i = 0; i < expression->options.struct_initializer.size; i++)
@@ -773,7 +790,7 @@ IR_Data_Access ir_generator_generate_expression(IR_Generator* generator, IR_Code
         }
         return struct_access;
     }
-    case ModTree_Expression_Type::ARRAY_INITIALIZER: 
+    case ModTree_Expression_Type::ARRAY_INITIALIZER:
     {
         IR_Data_Access array_access = ir_data_access_create_intermediate(ir_block, expression->result_type);
         for (int i = 0; i < expression->options.array_initializer.size; i++)
@@ -893,14 +910,191 @@ IR_Data_Access ir_generator_generate_expression(IR_Generator* generator, IR_Code
         panic("Unreachable");
         break;
     }
-    case ModTree_Expression_Type::CAST: {
-        IR_Instruction instr;
-        instr.type = IR_Instruction_Type::CAST;
-        instr.options.cast.type = expression->options.cast.type;
-        instr.options.cast.source = ir_generator_generate_expression(generator, ir_block, expression->options.cast.cast_argument);
-        instr.options.cast.destination = ir_data_access_create_intermediate(ir_block, expression->result_type);
-        dynamic_array_push_back(&ir_block->instructions, instr);
-        return instr.options.address_of.destination;
+    case ModTree_Expression_Type::CAST:
+    {
+        auto make_simple_cast = [](IR_Generator* generator, IR_Code_Block* ir_block, ModTree_Expression* expression, IR_Cast_Type cast_type) -> IR_Data_Access
+        {
+            IR_Instruction instr;
+            instr.type = IR_Instruction_Type::CAST;
+            instr.options.cast.type = cast_type;
+            instr.options.cast.source = ir_generator_generate_expression(generator, ir_block, expression->options.cast.cast_argument);
+            instr.options.cast.destination = ir_data_access_create_intermediate(ir_block, expression->result_type);
+            dynamic_array_push_back(&ir_block->instructions, instr);
+            return instr.options.cast.destination;
+        };
+        IR_Data_Access result_access;
+        switch (expression->options.cast.type)
+        {
+        case ModTree_Cast_Type::INTEGERS: {
+            result_access = make_simple_cast(generator, ir_block, expression, IR_Cast_Type::INTEGERS);
+            break;
+        }
+        case ModTree_Cast_Type::FLOATS: {
+            result_access = make_simple_cast(generator, ir_block, expression, IR_Cast_Type::FLOATS);
+            break;
+        }
+        case ModTree_Cast_Type::FLOAT_TO_INT: {
+            result_access = make_simple_cast(generator, ir_block, expression, IR_Cast_Type::FLOAT_TO_INT);
+            break;
+        }
+        case ModTree_Cast_Type::INT_TO_FLOAT: {
+            result_access = make_simple_cast(generator, ir_block, expression, IR_Cast_Type::INT_TO_FLOAT);
+            break;
+        }
+        case ModTree_Cast_Type::POINTERS: {
+            result_access = make_simple_cast(generator, ir_block, expression, IR_Cast_Type::POINTERS);
+            break;
+        }
+        case ModTree_Cast_Type::POINTER_TO_U64: {
+            result_access = make_simple_cast(generator, ir_block, expression, IR_Cast_Type::POINTER_TO_U64);
+            break;
+        }
+        case ModTree_Cast_Type::U64_TO_POINTER: {
+            result_access = make_simple_cast(generator, ir_block, expression, IR_Cast_Type::U64_TO_POINTER);
+            break;
+        }
+        case ModTree_Cast_Type::ENUM_TO_INT: {
+            result_access = make_simple_cast(generator, ir_block, expression, IR_Cast_Type::ENUM_TO_INT);
+            break;
+        }
+        case ModTree_Cast_Type::INT_TO_ENUM: {
+            result_access = make_simple_cast(generator, ir_block, expression, IR_Cast_Type::INT_TO_ENUM);
+            break;
+        }
+        case ModTree_Cast_Type::ARRAY_SIZED_TO_UNSIZED:
+        {
+            Type_Signature* slice_type = expression->result_type;
+            Type_Signature* array_type = expression->options.cast.cast_argument->result_type;
+            assert(slice_type->type == Signature_Type::SLICE, "");
+            assert(array_type->type == Signature_Type::ARRAY, "");
+            IR_Data_Access slice_access = ir_data_access_create_intermediate(ir_block, slice_type);
+            // Set size
+            {
+                IR_Instruction instr;
+                instr.type = IR_Instruction_Type::MOVE;
+                instr.options.move.destination = ir_data_access_create_member(generator, ir_block, slice_access, slice_type->options.slice.size_member);
+                instr.options.move.source = ir_data_access_create_constant_i32(generator, array_type->options.array.element_count);
+                dynamic_array_push_back(&ir_block->instructions, instr);
+            }
+            // Set data
+            {
+                IR_Instruction instr;
+                instr.type = IR_Instruction_Type::ADDRESS_OF;
+                instr.options.address_of.type = IR_Instruction_Address_Of_Type::DATA;
+                instr.options.address_of.source = ir_generator_generate_expression(generator, ir_block, expression->options.cast.cast_argument);
+                instr.options.address_of.destination = ir_data_access_create_member(generator, ir_block, slice_access, slice_type->options.slice.data_member);
+                dynamic_array_push_back(&ir_block->instructions, instr);
+            }
+            return slice_access;
+        }
+        case ModTree_Cast_Type::FROM_ANY:
+        {
+            // Check if type matches given type, if not error out
+            IR_Data_Access access_operand = ir_generator_generate_expression(generator, ir_block, expression->options.cast.cast_argument);
+            IR_Data_Access access_valid_cast = ir_data_access_create_intermediate(ir_block, generator->compiler->type_system.bool_type);
+            IR_Data_Access access_result = ir_data_access_create_intermediate(ir_block, expression->result_type);
+            {
+                IR_Instruction cmp_instr;
+                cmp_instr.type = IR_Instruction_Type::BINARY_OP;
+                cmp_instr.options.binary_op.type = ModTree_Binary_Operation_Type::EQUAL;
+                cmp_instr.options.binary_op.operand_left = ir_data_access_create_constant(
+                    generator, generator->compiler->type_system.type_type,
+                    array_create_static_as_bytes<u64>(&expression->result_type->internal_index, 1)
+                );
+                cmp_instr.options.binary_op.operand_right = ir_data_access_create_member(generator, ir_block, access_operand,
+                    generator->compiler->type_system.any_type->options.structure.members[1]
+                );
+                cmp_instr.options.binary_op.destination = access_valid_cast;
+                dynamic_array_push_back(&ir_block->instructions, cmp_instr);
+            }
+            IR_Code_Block* branch_valid = ir_code_block_create(ir_block->function);
+            IR_Code_Block* branch_invalid = ir_code_block_create(ir_block->function);
+            {
+                IR_Instruction if_instr;
+                if_instr.type = IR_Instruction_Type::IF;
+                if_instr.options.if_instr.condition = access_valid_cast;
+                if_instr.options.if_instr.false_branch = branch_invalid;
+                if_instr.options.if_instr.true_branch = branch_valid;
+                dynamic_array_push_back(&ir_block->instructions, if_instr);
+            }
+            {
+                // True_Branch
+                IR_Data_Access any_data_access = ir_data_access_create_member(generator, branch_valid, access_operand,
+                    generator->compiler->type_system.any_type->options.structure.members[0]
+                );
+                {
+                    IR_Instruction cast_instr;
+                    cast_instr.type = IR_Instruction_Type::CAST;
+                    cast_instr.options.cast.type = IR_Cast_Type::POINTERS;
+                    cast_instr.options.cast.source = any_data_access;
+                    cast_instr.options.cast.destination = ir_data_access_create_intermediate(
+                        branch_valid, type_system_make_pointer(&generator->compiler->type_system, expression->result_type)
+                    );
+                    dynamic_array_push_back(&branch_valid->instructions, cast_instr);
+                    any_data_access = cast_instr.options.cast.destination;
+                }
+                IR_Instruction move_instr;
+                move_instr.type = IR_Instruction_Type::MOVE;
+                move_instr.options.move.destination = access_result;
+                move_instr.options.move.source = ir_data_access_create_dereference(branch_valid, any_data_access);
+                dynamic_array_push_back(&branch_valid->instructions, move_instr);
+            }
+            {
+                // False branch
+                IR_Instruction exit_instr;
+                exit_instr.type = IR_Instruction_Type::RETURN;
+                exit_instr.options.return_instr.type = IR_Instruction_Return_Type::EXIT;
+                exit_instr.options.return_instr.options.exit_code = Exit_Code::ANY_CAST_INVALID;
+                dynamic_array_push_back(&branch_invalid->instructions, exit_instr);
+            }
+            return access_result;
+        }
+        case ModTree_Cast_Type::TO_ANY:
+        {
+            IR_Data_Access operand_access = ir_generator_generate_expression(generator, ir_block, expression->options.cast.cast_argument);
+            if (operand_access.type == IR_Data_Access_Type::CONSTANT && !operand_access.is_memory_access)
+            {
+                IR_Instruction instr;
+                instr.type = IR_Instruction_Type::MOVE;
+                instr.options.move.destination = ir_data_access_create_intermediate(ir_block, expression->options.cast.cast_argument->result_type);
+                instr.options.move.source = operand_access;
+                dynamic_array_push_back(&ir_block->instructions, instr);
+                operand_access = instr.options.move.destination;
+            }
+
+            IR_Data_Access any_access = ir_data_access_create_intermediate(ir_block, generator->compiler->type_system.any_type);
+            Type_Signature* any_type = generator->compiler->type_system.any_type;
+            // Set data
+            {
+                IR_Instruction instr;
+                instr.type = IR_Instruction_Type::ADDRESS_OF;
+                instr.options.address_of.type = IR_Instruction_Address_Of_Type::DATA;
+                instr.options.address_of.source = operand_access;
+                // In theory a cast from pointer to voidptr would be better, but I think I can ignore it
+                instr.options.address_of.destination = ir_data_access_create_member(
+                    generator, ir_block, any_access, any_type->options.structure.members[0]
+                );
+                dynamic_array_push_back(&ir_block->instructions, instr);
+            }
+            // Set type
+            {
+                IR_Instruction instr;
+                instr.type = IR_Instruction_Type::MOVE;
+                instr.options.move.destination = ir_data_access_create_member(
+                    generator, ir_block, any_access, any_type->options.structure.members[1]
+                );
+                u64 type_val = expression->options.cast.cast_argument->result_type->internal_index;
+                instr.options.move.source = ir_data_access_create_constant(
+                    generator, generator->compiler->type_system.type_type,
+                    array_create_static_as_bytes(&type_val, 1)
+                );
+                dynamic_array_push_back(&ir_block->instructions, instr);
+            }
+            return any_access;
+        }
+        default: panic("");
+        }
+        return result_access;
     }
     default: panic("HEY");
     }

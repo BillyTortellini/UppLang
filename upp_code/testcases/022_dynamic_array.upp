@@ -108,17 +108,17 @@ main :: ()
     while i < 10
     {
         defer i = i + 1;
-        players := Dynamic_Array<Player>::create_empty(4);
-        defer Dynamic_Array<Player>::destroy(*players);
+        players := Dynamic_Array<Player>~create_empty(4);
+        defer Dynamic_Array<Player>~destroy(*players);
         
-        Dynamic_Array<Player>::push_back(*players, p1);
-        Dynamic_Array<Player>::push_back(*players, p2);
-        Dynamic_Array<Player>::push_back(*players, p3);
-        Dynamic_Array<Player>::push_back(*players, p4);
-        Dynamic_Array<Player>::push_back(*players, p5);
+        Dynamic_Array<Player>~push_back(*players, p1);
+        Dynamic_Array<Player>~push_back(*players, p2);
+        Dynamic_Array<Player>~push_back(*players, p3);
+        Dynamic_Array<Player>~push_back(*players, p4);
+        Dynamic_Array<Player>~push_back(*players, p5);
     
         count = 0;
-        Dynamic_Array<Player>::for_each(*players, *count_player_lvl);
+        Dynamic_Array<Player>~for_each(*players, *count_player_lvl);
         assert(count == 15);
     }
 }

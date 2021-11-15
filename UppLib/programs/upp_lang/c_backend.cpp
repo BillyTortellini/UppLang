@@ -720,37 +720,11 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
         case IR_Instruction_Type::CAST:
         {
             IR_Instruction_Cast* cast = &instr->options.cast;
-            switch (cast->type)
-            {
-            case ModTree_Cast_Type::ARRAY_SIZED_TO_UNSIZED: {
-                assert(ir_data_access_get_type(&cast->source)->type == Signature_Type::ARRAY, "HEy");
-                c_generator_output_data_access(generator, output, cast->destination);
-                string_append_formated(output, ".data = &(");
-                c_generator_output_data_access(generator, output, cast->source);
-                string_append_formated(output, ".data[0]);\n");
-                string_add_indentation(output, indentation_level + 1);
-                c_generator_output_data_access(generator, output, cast->destination);
-                string_append_formated(output, ".size = %d;\n", ir_data_access_get_type(&cast->source)->options.array.element_count);
-                break;
-            }
-            case ModTree_Cast_Type::ENUM_TO_INT:
-            case ModTree_Cast_Type::INT_TO_ENUM:
-            case ModTree_Cast_Type::INTEGERS:
-            case ModTree_Cast_Type::FLOATS:
-            case ModTree_Cast_Type::FLOAT_TO_INT:
-            case ModTree_Cast_Type::INT_TO_FLOAT:
-            case ModTree_Cast_Type::POINTER_TO_U64:
-            case ModTree_Cast_Type::U64_TO_POINTER:
-            case ModTree_Cast_Type::POINTERS: {
-                c_generator_output_data_access(generator, output, cast->destination);
-                string_append_formated(output, " = ");
-                c_generator_output_cast(generator, output, cast->destination);
-                c_generator_output_data_access(generator, output, cast->source);
-                string_append_formated(output, ";\n");
-                break;
-            }
-            default: panic("Wat");
-            }
+            c_generator_output_data_access(generator, output, cast->destination);
+            string_append_formated(output, " = ");
+            c_generator_output_cast(generator, output, cast->destination);
+            c_generator_output_data_access(generator, output, cast->source);
+            string_append_formated(output, ";\n");
             break;
         }
         case IR_Instruction_Type::ADDRESS_OF: {
@@ -921,7 +895,7 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
         Type_Signature* type = constant->type;
 
         String output = string_create_empty(8);
-        if (type->type == Signature_Type::PRIMITIVE) 
+        if (type->type == Signature_Type::PRIMITIVE)
         {
             switch (type->options.primitive.type)
             {
@@ -991,8 +965,8 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
         {
             Upp_Constant_Reference* reference = &generator->compiler->constant_pool.references[i];
             string_append_formated(
-                &generator->section_function_implementations, 
-                "    *((void**) &constant_buffer[%d]) = &constant_buffer[%d];\n", 
+                &generator->section_function_implementations,
+                "    *((void**) &constant_buffer[%d]) = &constant_buffer[%d];\n",
                 reference->ptr_offset, reference->buffer_destination_offset
             );
         }
@@ -1160,10 +1134,10 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
                         member_indentation = 2;
                         is_union = true;
                     }
-                    for (int i = 0; i < type->options.structure.members.size; i++) 
+                    for (int i = 0; i < type->options.structure.members.size; i++)
                     {
                         Struct_Member* member = &type->options.structure.members[i];
-                        if (is_union && member->offset != 0) {continue;}
+                        if (is_union && member->offset != 0) { continue; }
                         string_add_indentation(&generator->section_struct_implementations, member_indentation);
                         c_generator_output_type_reference(generator, &generator->section_struct_implementations, member->type);
                         string_append_formated(&generator->section_struct_implementations, " %s;\n", member->id->characters);
@@ -1212,7 +1186,7 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
         String* main_fn_name = hashtable_find_element(&generator->translation_function_to_name, generator->program->entry_function);
         assert(main_fn_name != 0, "HEY");
         string_append_formated(
-            &generator->section_function_implementations, "\nint main(int argc, char** argv) {init_const_references();random_initialize(); %s(); return 0;}\n", 
+            &generator->section_function_implementations, "\nint main(int argc, char** argv) {init_const_references();random_initialize(); %s(); return 0;}\n",
             main_fn_name->characters
         );
     }

@@ -1,16 +1,7 @@
 Next features:
 --------------
- * Any-Type
- * Named parameter values in function calls
- * Rework type-initializers with () instead of {} --> Or maybe switch to ~Syntax
-    ~ Syntax would be for accessing Members of non Type things, like Enums and structs
-    Color~{} is also unique Color.{} Would also make sense, if we go with the Color.GREEN syntax
-    .{} would still work, but its the same as ~{}
- * Finish Unions
-
- * Anonymous structs
- * Anonymous enums
- * Anonymous functions (Lambdas)
+ * Anonymous/Inner types (struct, enum, union)
+ * Anonymous/Inner functions (Lambdas)
  * Struct unpacking syntax
  * Inner Functions, inner types (Functions inside other functions, structs/enums/unions inside functions)
 
@@ -19,47 +10,157 @@ Next features:
  * Testcases for all new features (Expression-Context, Auto cast, Unions, Switches, Named breaks/continues)
 
  * Constant/Compile-time-known variable syntax
- * Non-Pointer parameters constant
+ * Function overhaul, e.g. Non-Pointer parameters constant, Named parameter values in function calls
 
- * Templates rework
+ * Templates rework (No more templated modules, templated types, templated functions)
  * Macros and Iteration
  * Generating source code with runtime code execution
 
 
 
-Tactics:
---------
- - Parser is EXTREMELY slow, probably has to do something with error recovery, check it out.
+Design:
+-------
+ 
+Implementation:
+---------------
 
 Issues:
 -------
- - Lexer strings only on one line
-
-Notes:
-------
+ - Sometimes active-switch is not found in switch-case nodes
 
 
 
-
-Unfinished: Unions
-----------------------
- * Pointer def syntax in switch cases when accessing union
- * Empty-Type for union membaz (Cases that do not have a variable, but i still want to have a enum case --> true that, just add _ as empty struct to the symbol table)
-
-Notes:
-------
-    The ID{} syntax only fails when we have other cases where an expression
-    is immediately followed by an { (Since then we parse the expression and eat the } on the way)
-    This is the case for 
-        - if a{}
-        - while b{}
-        - switch c{}
-    Also maybe the ~ Syntax idea was not so bad at all because member access makes more sense this way? What did i mean by that  
-    
+Strategy:
+---------
+Big Features before Static-Analysis:
+ - Solid language
+   * Anonymous and/or Inner definitions
+   * Constant + readonly values
+   * Function overhaul (Multiple returns, const params, auto-pointer passing, Empty/Ignore-Type _)
+   * Literal overhaul
+   * Expression blocks?
+ - Template rework (Templated values, code execution)
+ - Module system improvements with import/using functionality
+ - Macros and Iteration
+ - Annotation System
 
 
-Syntax thouhts:
----------------
+
+
+
+---------------------------
+------ ISSUE TRACKER ------
+---------------------------
+
+Issues:
+-------
+ * Templates
+    - Structs and functions in templated modules may not use templates
+    - Functions created during Template-Analysis should probably be deleted later
+    - Globals are currently disabled in a template context
+ * Globals
+    - Global initializiation order is bad (Depends on dependencies of symbol definitions)
+
+Long-Term Goals:
+----------------
+ * Debugger
+ * Language features (Union/Enum, match, Macros, Compile-Time Execution)
+ * Editor features (Search and replace, jump to definition, show context info, refactoring, Code LOD)
+ * Maybe implementing Syntax guided Editor
+
+More Language features to implement:
+------------------------------------
+ * Compile time code execution, for types and array indices and stuff
+ * Tag-System (For constant values, but also other stuff)
+   ------- These features are for convenience, but they are not top priority ------
+ * Any-Type and Type access (Varargs in this language, maybe use this for printf)
+ * New with [] should return a pointer to a slice
+ * Array bounds checking would be good
+ * Macro-System
+ * Iterators
+ * Location-Information (Filename, line_number...)
+ * Using statement
+ * Context (Used for memory allocations, useful in Multi-Threading)
+ * Lambdas
+ * Default variable initialization (Maybe) with 0, although if the value-analyser works correctly, this should be fine
+ * Array access with pointers to arrays
+ * Array size should be u64, then iteration is more tedious (casting), but with iterators it should be fine
+ * Automatic casting from non-pointer type to pointer in function calls
+ * Literal overhaul (What is a float, what isnt...)
+ * Syntax for fixed array initialization [int :: 1, 2, 3, 4, 5]
+ * Loop statements, maybe loop over array syntax
+ * Break/Continue overhaul (Something like: exit_loop, continue_loop, exit_switch, exit loop_iter)
+ * Function return value overhaul: Multiple return values or no return value should be possible
+ * Variation for simple Dynamic dispatch  (Like interfaces in OO..., similar to dynamic in Rust)
+
+Editor features to implement:
+-----------------------------
+ * Code-Completion using current symbol table
+ * Search and Replace
+ * CTRL-R for replace word --> I would need Shift-R, since control R is already Redo
+ * Visual Mode/Blockmode (Multicursor)/Visual Line
+ * Multi-Window support (Multiple Tabs/Vertical or Horizontal splits, Tabs with shift-Tab)
+ * Jump to definition with string search (Maybe Ctrl-F)
+ * Undo/Redo Tree History
+ * Command recording (@ stuff with vim, altough this could maybe be done better)
+ * Tab for indentation/Ctrl-Tab for no indentation
+ * Formating with = should remove unneccessary whitespaces/add them where needed, and should ignore comments.
+    Actually, this should not be hard even without lexer, since we can count the parenthesis, spaces and other stuff...
+ * UTF-8 Support?
+
+Editor-Bugs:
+------------
+ * Alt-Gr spamming still cancels commands (win32 nonsense)
+ * Undo-Redo cursor position still sucks a little (Hint: Save positions after/before command)
+ * Non ASCII chars destroy some motions (Currently disabled) (Program crashes)
+
+ Vision for the Programming Language:
+ ------------------------------------
+  * Compile-Time code execution
+  * Static-Analysis in tandum with Tag-System
+  * Code-Visualizations in Editor
+
+Ideas that need to be tested:
+-----------------------------
+ * Implicit parameters in functions, some way of not having to call with all parameters?
+ * Using compile-time code-execution for compiler-controll, metaprogramming and static analysis
+ * Strong Code-Analysis (Analysing all possible values), with Warning System and user input
+ * Tag-System (For const, but also other information, generated by user and compiler)
+ * Visualizations for Code, better navigation, module system
+ * Non-Destructive Code-Editing for larger modules
+
+ * Tag for not used anymore for variables
+ * Compiler supported Dynamic-Array type
+ * Hot-Reloading Code
+ * Stack-Analysis for Debug information (Or others? E.g. logging)
+ * Differentiate break_loop, break_switch, maybe break_scope
+ * Redirect debug output to application window
+ * Error-Handling with the most recent build of the language
+
+Code Improvements that should be made (When I have time):
+----------------------------------------------------
+Use String* for string pooling, not identifiers.
+Hashing type signatures for lookup, not array search.
+
+Differentiation between errors and Warnings
+
+
+Intermediate Code should keep positional information, so should the bytecode (Will be necessary for the debugger)
+Improved Parser-Error handling. (Function-Parsing Error handling should check each following line if it is a function)
+
+At some point the editor should not render at 60 FPS, but rather update when necessary.
+Asynchronous Editor-Compiler architecture, lexing/parse/analysing in background when code gets bigger
+
+
+
+
+
+----------------------------
+------ RANTS/THOUGHTS ------
+----------------------------
+
+Syntax Design-Principles:
+-------------------------
 Some characteristics I want:
     - Compression based length (Often used constructs should be short, others can be long)
     - Easy to remember
@@ -67,103 +168,16 @@ Some characteristics I want:
     - Refactoring should be easy
     - Small refactorings should not cause unpredictable errors
 
-
-
-Thought Run-Down:
------------------
-Maybe remove single statement blocks, e.g. if (bool) return false;
-Just replace these with if (cond) {return false;}
-
-Anonymous structs:
-    x: struct {name: String; value: int;};
-    x.name = "Henlo";
-    x.value = 5;
-    x = .{name = "Henlo"; value = 15;};
-
-Return value may be struct
-    find_elem(...) -> struct{found: bool; index: int;}
-    return .{found = true; index = 15;};
-
-Values may be left explicitly uninitialized
-    .{found = _, index = 15};
-
-Struct unpacking syntax
-    found, index := find_elem(...);
-    f2, _ := find_elem(...);
-
-Return values must be explicitly ignored:
-    hashtable_add_element(whatever...);
-
-Lambda support
-    x := () {print_string("What");};
-    adder := (x: int, y: int) -> int {return x + y;};
-
-Choosing enum type
-    Something :: enum<int> {}
-    Smaller :: enum<byte> {}
-
-Expression_Blocks?
-    UPDATE: Currently i think these are a bad idea, because return does something else inside these blocks,
-        and I could introduce the concept of yield, which would return a value, but I don't think this is necessarily useful.
-        The Idea behind expression blocks would be to give more purpose to an unnamed block. E.g.
-
-        The 2 main use cases I have for these are :
-            * a short way to write if's and switches
-            * Make sure some values are initialized
-
-            The main use cases I can think of are:
-                * a short way to write if's and switches
-                * Makes sure values are going to be initialized
-                * Gives purpose to values (E.g. you know where the values are going to be used)
-
-            Problems:
-                * Syntax overlap inside if, switch, while
-                * They may be quite unnecessary, because function can do the same thing
-                * ModTree_Code's structure of expressions and statements isn't exactly build for this
-                * Would definitly need some experimentation
-
-        fn_call(15, {if condition {yield make_unknown();} yield make_known(condition);});
-
-    found, index: bool, int = {
-        
-    }
-
-    of 
-    expression.index, expression.is_templated = {
-
-    };
-
-    x = {switch color {case .RED: return 5; case .GREEN: return 2;}}
-    x = {if a return 4; return 2;}
-    z = 32 + {if alive return 17; return -2;}
-    min_member: *Struct_Member = 0;
-    {
-        curr_min: *Struct_Member = members[0];
-        loop mem in members {
-            if mem.val < curr_min.value curr_min = mem;
-        }
-        if (curr_min.alive != 0) {
-            min_member = curr_min;
-        }
-    }
-    
-    // Why could this be useful? Because it gives the code block a distinct purpose, and its impossible to not set the values 
-    found, member: bool, *Member = 
-    {
-        ret_type :: struct {f: bool; mem: *Member};
-        loop a in array {
-            if condition_met(a) {
-                return ret_type{f = true, mem = a};
-            }
-        }
-        return ret_type{f = false, mem = _};
-    } 
-
-    // Also some things can be typed rather quickly
-    based_num := {if is_based return 69; return 0;};
-
-
-
+Rant: On Serializability
+------------------------
+In C and C++, the program does not have access to type-information, meaning that something like automatic serialization is not possible inside the language.
+    You could still do this by writing custom tools, which parse the code again (e.g. with clang) to get this type-information
+    and create files containing serialization code (Was done by Valve Physics Engine Programmers), but this is -very- tedious and error-prone.
+Even if this works, you cannot serialize all data, mainly because of pointers/references, which is the reason you cannot just memcopy data for serialization.
+To solve this, some changes to C/C++ are required:
+    - Dynamically Allocated arrays must have a size member (e.g. Slices in Upp have a size)
+    - Void* may not be used inside these structures (You don't have any type information about that), which is solved with the Any-Type
+A problem that still exists is that function pointers will not work/require special serialization effort.
 
 Design Questions:
 -----------------
@@ -177,7 +191,6 @@ Design Questions:
         Maybe I want struct initialization to require naming the arguments, and not for functions
         Not exactly the same, since Union initialization is 
  - With anonymous structs, how are they instanciated?
-
 
 Design Ideas:
 -------------
@@ -203,6 +216,14 @@ In C you cannot have a clear distinction between these three, because:
 
 Thoughts on pointers:
 ---------------------
+UPDATE:
+Pointers acting exactly the same as values is, I think, a great idea. The only problem we have are
+situation where a pointer operation could also be used instead of a value operation. 
+The question I am having is wheter or not I want to have special syntax to solve this problem. 
+The current operations that accept both pointers and values are:
+    - Equals-Comparisons (== and !=)
+    - Cast to u64 (cast(u64))
+
 Pointers are essential in Computer programming, and I want them in the language
 Null seems to be an issue for a lot of programmers, but this should be handled by the static analyzor
 Pointers are used for call by reference,
@@ -330,28 +351,98 @@ Custom allocator for Bytecode-Interpreter, check pointers if they are in range, 
     which can be toggled to indicate that C-Functions may be called
 Initialize all variables to zero in Bytecode
 
+Thought Run-Down:
+-----------------
+Maybe remove single statement blocks, e.g. if (bool) return false;
+Just replace these with if (cond) {return false;}
 
+Anonymous structs:
+    x: struct {name: String; value: int;};
+    x.name = "Henlo";
+    x.value = 5;
+    x = .{name = "Henlo"; value = 15;};
 
+Return value may be struct
+    find_elem(...) -> struct{found: bool; index: int;}
+    return .{found = true; index = 15;};
 
+Values may be left explicitly uninitialized
+    .{found = _, index = 15};
 
+Struct unpacking syntax
+    found, index := find_elem(...);
+    f2, _ := find_elem(...);
 
+Return values must be explicitly ignored:
+    _ = hashtable_add_element(whatever...);
 
+Lambda support
+    x := () {print_string("What");};
+    adder := (x: int, y: int) -> int {return x + y;};
 
+Choosing enum type
+    Something :: enum<int> {}
+    Smaller :: enum<byte> {}
 
+Expression_Blocks?
+    UPDATE: Currently i think these are a bad idea, because return does something else inside these blocks,
+        and I could introduce the concept of yield, which would return a value, but I don't think this is necessarily useful.
+        The Idea behind expression blocks would be to give more purpose to an unnamed block. E.g.
 
-Next Up:
---------
- * Compile time code execution + Templates
- * Tags and static analyser
+        The 2 main use cases I have for these are :
+            * a short way to write if's and switches
+            * Make sure some values are initialized
 
-Features TODO:
-    - Function overhaul: Multiple return values, Named return values
-    - Lambdas, Struct/Function definitions inside code-blocks
-    - Symbol Tables: Using Modules/Structs, importing Symbol-References into current scope
-    - Integer/Float literal overhaul using correct Type depending on Context, 
-    - Type introspection (Size, Alignment, Members...), Any-Type
-    - Location information (Unique Location, file/line number), Stack-Introspection
-    - Tag-System (const-tag + static analyser)
+            The main use cases I can think of are:
+                * a short way to write if's and switches
+                * Makes sure values are going to be initialized
+                * Gives purpose to values (E.g. you know where the values are going to be used)
+
+            Problems:
+                * Syntax overlap inside if, switch, while --> Not true with extra syntax, e.g. #{}
+                * They may be quite unnecessary, because function can do the same thing
+                * ModTree_Code's structure of expressions and statements isn't exactly build for this
+                * Would definitly need some experimentation
+
+        fn_call(15, {if condition {yield make_unknown();} yield make_known(condition);});
+
+    found, index: bool, int = {
+        
+    }
+
+    of 
+    expression.index, expression.is_templated = {
+
+    };
+
+    x = {switch color {case .RED: return 5; case .GREEN: return 2;}}
+    x = {if a return 4; return 2;}
+    z = 32 + {if alive return 17; return -2;}
+    min_member: *Struct_Member = 0;
+    {
+        curr_min: *Struct_Member = members[0];
+        loop mem in members {
+            if mem.val < curr_min.value curr_min = mem;
+        }
+        if (curr_min.alive != 0) {
+            min_member = curr_min;
+        }
+    }
+    
+    // Why could this be useful? Because it gives the code block a distinct purpose, and its impossible to not set the values 
+    found, member: bool, *Member = 
+    {
+        ret_type :: struct {f: bool; mem: *Member};
+        loop a in array {
+            if condition_met(a) {
+                return ret_type{f = true, mem = a};
+            }
+        }
+        return ret_type{f = false, mem = _};
+    } 
+
+    // Also some things can be typed rather quickly
+    based_num := {if is_based return 69; return 0;};
 
 NOTES:
 ------
@@ -378,108 +469,8 @@ Metaprogramming features:
  * Generating source-code (Compile time Execution)
 
 
----------------------------
------- ISSUE TRACKER ------
----------------------------
-
-Issues:
--------
- * Templates
-    - Structs and functions in templated modules may not use templates
-    - Functions created during Template-Analysis should probably be deleted later
-    - Globals are currently disabled in a template context
- * Globals
-    - Global initializiation order is bad (Depends on dependencies of symbol definitions)
-
-Long-Term Goals:
-----------------
- * Debugger
- * Language features (Union/Enum, match, Macros, Compile-Time Execution)
- * Editor features (Search and replace, jump to definition, show context info, refactoring, Code LOD)
- * Maybe implementing Syntax guided Editor
-
-More Language features to implement:
-------------------------------------
- * Compile time code execution, for types and array indices and stuff
- * Tag-System (For constant values, but also other stuff)
-   ------- These features are for convenience, but they are not top priority ------
- * Any-Type and Type access (Varargs in this language, maybe use this for printf)
- * New with [] should return a pointer to a slice
- * Array bounds checking would be good
- * Macro-System
- * Iterators
- * Location-Information (Filename, line_number...)
- * Using statement
- * Context (Used for memory allocations, useful in Multi-Threading)
- * Lambdas
- * Default variable initialization (Maybe) with 0, although if the value-analyser works correctly, this should be fine
- * Array access with pointers to arrays
- * Array size should be u64, then iteration is more tedious (casting), but with iterators it should be fine
- * Automatic casting from non-pointer type to pointer in function calls
- * Literal overhaul (What is a float, what isnt...)
- * Syntax for fixed array initialization [int :: 1, 2, 3, 4, 5]
- * Loop statements, maybe loop over array syntax
- * Break/Continue overhaul (Something like: exit_loop, continue_loop, exit_switch, exit loop_iter)
- * Function return value overhaul: Multiple return values or no return value should be possible
- * Variation for simple Dynamic dispatch  (Like interfaces in OO..., similar to dynamic in Rust)
-
-Editor features to implement:
------------------------------
- * Code-Completion using current symbol table
- * Search and Replace
- * CTRL-R for replace word --> I would need Shift-R, since control R is already Redo
- * Visual Mode/Blockmode (Multicursor)/Visual Line
- * Multi-Window support (Multiple Tabs/Vertical or Horizontal splits, Tabs with shift-Tab)
- * Jump to definition with string search (Maybe Ctrl-F)
- * Undo/Redo Tree History
- * Command recording (@ stuff with vim, altough this could maybe be done better)
- * Tab for indentation/Ctrl-Tab for no indentation
- * Formating with = should remove unneccessary whitespaces/add them where needed, and should ignore comments.
-    Actually, this should not be hard even without lexer, since we can count the parenthesis, spaces and other stuff...
- * UTF-8 Support?
-
-Editor-Bugs:
-------------
- * Alt-Gr spamming still cancels commands (win32 nonsense)
- * Undo-Redo cursor position still sucks a little (Hint: Save positions after/before command)
- * Non ASCII chars destroy some motions (Currently disabled) (Program crashes)
-
- Vision for the Programming Language:
- ------------------------------------
-  * Compile-Time code execution
-  * Static-Analysis in tandum with Tag-System
-  * Code-Visualizations in Editor
-
-Ideas that need to be tested:
------------------------------
- * Implicit parameters in functions, some way of not having to call with all parameters?
- * Using compile-time code-execution for compiler-controll, metaprogramming and static analysis
- * Strong Code-Analysis (Analysing all possible values), with Warning System and user input
- * Tag-System (For const, but also other information, generated by user and compiler)
- * Visualizations for Code, better navigation, module system
- * Non-Destructive Code-Editing for larger modules
-
- * Tag for not used anymore for variables
- * Compiler supported Dynamic-Array type
- * Hot-Reloading Code
- * Stack-Analysis for Debug information (Or others? E.g. logging)
- * Differentiate break_loop, break_switch, maybe break_scope
- * Redirect debug output to application window
- * Error-Handling with the most recent build of the language
-
-Code Improvements that should be made (When I have time):
-----------------------------------------------------
-Use String* for string pooling, not identifiers.
-Hashing type signatures for lookup, not array search.
-
-Differentiation between errors and Warnings
 
 
-Intermediate Code should keep positional information, so should the bytecode (Will be necessary for the debugger)
-Improved Parser-Error handling. (Function-Parsing Error handling should check each following line if it is a function)
-
-At some point the editor should not render at 60 FPS, but rather update when necessary.
-Asynchronous Editor-Compiler architecture, lexing/parse/analysing in background when code gets bigger
 
 
 

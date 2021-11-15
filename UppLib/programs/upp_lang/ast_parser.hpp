@@ -12,12 +12,9 @@ struct Code_Source;
 struct Identifier_Pool;
 struct Token;
 
-/*
-TYPE_IDENTIFIER       --> EXPRESSION_IDENTIFIER
-TYPE_POINTER_TO       --> EXPRESSION_POINTER
-TYPE_ARRAY            --> EXPRESSION_ARRAY_TYPE
-TYPE_SLICE            --> EXPRESSION_SLICE_TYPE
-TYPE_FUNCTION_POINTER --> EXPRESSION_FUNCTION_TYPE
+/* CHANGES
+ARRAY_ACCESS
+ARRAY_INITIALIZER
 */
 
 enum class AST_Node_Type
@@ -82,11 +79,12 @@ enum class AST_Node_Type
     EXPRESSION_NEW, // Child 0: Type
     EXPRESSION_NEW_ARRAY, // Child 0: Array size expression, Child 1: Type
     EXPRESSION_FUNCTION_CALL, // Child 0: Expression, Child 1: ARGUMENTS
-    EXPRESSION_ARRAY_ACCESS, // Child 0: Access-to-Expression, Child 1-n: Index/Initializor Expressions
+    EXPRESSION_ARRAY_ACCESS, // Child 0: Access-to-Expression, Child 1: Index Expression
+    EXPRESSION_ARRAY_INITIALIZER, // Child 0: Type, Child 1-n: Initializor Expressions
+    EXPRESSION_STRUCT_INITIALIZER, // Child 0: Type, child 1-n: MEMBER_INITIALIZER
     EXPRESSION_AUTO_ARRAY_INITIALIZER, // Child 0-n: Initializor Expressions
-    EXPRESSION_STRUCT_INITIALIZER, // Child 0: Identifier_Path, child 1-n: MEMBER_INITIALIZER
     EXPRESSION_AUTO_STRUCT_INITIALIZER, // Child 1-n: MEMBER_INITIALIZER
-    EXPRESSION_AUTO_MEMBER, // ID: name of access member
+    EXPRESSION_AUTO_ENUM, // ID: name of access member
     EXPRESSION_MEMBER_ACCESS, // Child 0: left side, id is the .what operator a.y.y[5].z
     EXPRESSION_CAST, // Either: Child 0: type, Child 1: Expression    OR    Child 0: Expression
     EXPRESSION_BAKE, // Child 0: type, Child 1: Statement_Block

@@ -1249,6 +1249,7 @@ Identifier_Analysis_Result semantic_analyser_analyse_identifier_node(
 Optional<ModTree_Cast_Type> semantic_analyser_check_if_cast_possible(
     Semantic_Analyser* analyser, Type_Signature* source_type, Type_Signature* destination_type, bool implicit_cast)
 {
+    if (source_type == destination_type) return optional_make_failure<ModTree_Cast_Type>();
     bool cast_valid = false;
     ModTree_Cast_Type cast_type;
     // Pointer casting
@@ -1343,6 +1344,16 @@ Optional<ModTree_Cast_Type> semantic_analyser_check_if_cast_possible(
             cast_type = enum_is_source ? ModTree_Cast_Type::ENUM_TO_INT : ModTree_Cast_Type::INT_TO_ENUM;
             cast_valid = !implicit_cast;
         }
+    }
+    // Any casting
+    else if (destination_type == analyser->compiler->type_system.any_type) 
+    {
+        cast_valid = true;
+        cast_type = ModTree_Cast_Type::TO_ANY;
+    }
+    else if (source_type == analyser->compiler->type_system.any_type) {
+        cast_valid = !implicit_cast;
+        cast_type = ModTree_Cast_Type::FROM_ANY;
     }
 
     if (cast_valid) return optional_make_success(cast_type);
@@ -1958,12 +1969,8 @@ Expression_Result_Any semantic_analyser_analyse_expression_without_value(
         array_type.size = 0;
         Type_Signature* final_type = type_system_register_type(&analyser->compiler->type_system, array_type);
 
-        if (element_type->size != 0 && element_type->alignment != 0)
-        {
-            // Just calculate the size now
-            final_type->alignment = final_type->options.array.element_type->alignment;
-            final_type->size = math_round_next_multiple(final_type->options.array.element_type->size, final_type->options.array.element_type->alignment) *
-                final_type->options.array.element_count;
+        if (element_type->size != 0 || element_type->alignment != 0) {
+            type_system_finish_type(&analyser->compiler->type_system, final_type);
         }
         else {
             Analysis_Workload workload;
@@ -1977,7 +1984,6 @@ Expression_Result_Any semantic_analyser_analyse_expression_without_value(
         }
 
         return expression_result_make_type(final_type);
-
     }
     case AST_Node_Type::EXPRESSION_SLICE_TYPE:
     {
@@ -2084,77 +2090,38 @@ Expression_Result_Any semantic_analyser_analyse_expression_without_value(
     case AST_Node_Type::EXPRESSION_AUTO_STRUCT_INITIALIZER:
     {
         Type_Signature* struct_signature = 0;
-        AST_Node* member_init_node = expression_node->child_start;
+        AST_Node* member_init_node = 0;
         int member_count = 0;
         if (expression_node->type == AST_Node_Type::EXPRESSION_STRUCT_INITIALIZER)
         {
-            member_init_node = member_init_node->neighbor;
+            member_init_node = expression_node->neighbor;
             member_count = expression_node->child_count - 1;
-            Identifier_Analysis_Result identifier_result = semantic_analyser_analyse_identifier_node(
-                analyser, symbol_table, expression_node->child_start, false, Usage_Type::STRUCT_INITIALIZER_TYPE
-            );
-            switch (identifier_result.type)
-            {
-            case Analysis_Result_Type::SUCCESS:
-            {
-                Symbol* symbol = identifier_result.options.symbol;
-                if (symbol->type != Symbol_Type::TYPE)
-                {
-                    Semantic_Error error;
-                    error.type = Semantic_Error_Type::STRUCT_INITIALIZER_REQUIRES_TYPE_SYMBOL;
-                    error.symbol = symbol;
-                    error.error_node = expression_node;
-                    semantic_analyser_log_error(analyser, error);
-                }
-                else {
-                    if (symbol->options.type->type != Signature_Type::STRUCT) {
-                        Semantic_Error error;
-                        error.type = Semantic_Error_Type::STRUCT_INITIALIZER_TYPE_MUST_BE_STRUCT;
-                        error.given_type = symbol->options.type;
-                        error.error_node = expression_node;
-                        semantic_analyser_log_error(analyser, error);
-                    }
-                    else {
-                        struct_signature = symbol->options.type;
-                    }
-                }
-                break;
-            }
-            case Analysis_Result_Type::DEPENDENCY:
-                return expression_result_make_dependency(identifier_result.options.dependency);
-            case Analysis_Result_Type::ERROR_OCCURED:
-                break;
-            default: panic("");
-            }
+            Expression_Result_Type type_result = semantic_analyser_analyse_expression_type(analyser, symbol_table, expression_node->child_start);
+            if (type_result.type != Analysis_Result_Type::SUCCESS) return expression_result_make_from(type_result);
+            struct_signature = type_result.options.type;
         }
         else
         {
+            member_init_node = expression_node->child_start;
             member_count = expression_node->child_count;
-            if (context.type == Expression_Context_Type::TYPE_KNOWN)
-            {
-                if (context.signature->type != Signature_Type::STRUCT) {
-                    Semantic_Error error;
-                    error.type = Semantic_Error_Type::STRUCT_INITIALIZER_TYPE_MUST_BE_STRUCT;
-                    error.given_type = context.signature;
-                    error.error_node = expression_node;
-                    semantic_analyser_log_error(analyser, error);
-                }
-                else {
-                    struct_signature = context.signature;
-                }
+            if (context.type == Expression_Context_Type::TYPE_KNOWN) {
+                struct_signature = context.signature;
             }
             else {
                 Semantic_Error error;
                 error.type = Semantic_Error_Type::AUTO_STRUCT_INITIALIZER_COULD_NOT_DETERMINE_TYPE;
                 error.error_node = expression_node;
                 semantic_analyser_log_error(analyser, error);
+                return expression_result_make_error();
             }
         }
 
-        if (struct_signature == 0) {
-            return expression_result_make_error();
-        }
         if (struct_signature->type != Signature_Type::STRUCT) {
+            Semantic_Error error;
+            error.type = Semantic_Error_Type::STRUCT_INITIALIZER_TYPE_MUST_BE_STRUCT;
+            error.given_type = struct_signature;
+            error.error_node = expression_node;
+            semantic_analyser_log_error(analyser, error);
             return expression_result_make_error();
         }
         if (struct_signature->size == 0 && struct_signature->alignment == 0) {
@@ -2405,108 +2372,6 @@ Expression_Result_Any semantic_analyser_analyse_expression_without_value(
     }
     case AST_Node_Type::EXPRESSION_ARRAY_ACCESS:
     {
-        // Check if this is an array initializer
-        AST_Node* child_node = expression_node->child_start;
-        if (child_node->type == AST_Node_Type::EXPRESSION_IDENTIFIER)
-        {
-            Identifier_Analysis_Result result = semantic_analyser_analyse_identifier_node(
-                analyser, symbol_table, child_node->child_start, false, Usage_Type::ARRAY_INITIALIZER_TYPE
-            );
-            Symbol* symbol = 0;
-            switch (result.type)
-            {
-            case Analysis_Result_Type::SUCCESS:
-                symbol = result.options.symbol;
-                break;
-            case Analysis_Result_Type::ERROR_OCCURED:
-                return expression_result_make_error();
-            case Analysis_Result_Type::DEPENDENCY:
-                return expression_result_make_dependency(result.options.dependency);
-            default: panic("");
-            }
-
-            if (symbol->type == Symbol_Type::TYPE)
-            {
-                // It is an array initializer node
-                int member_count = expression_node->child_count - 1;
-                Type_Signature* array_signature;
-                {
-                    Type_Signature array_type;
-                    array_type.type = Signature_Type::ARRAY;
-                    array_type.options.array.element_type = symbol->options.type;
-                    array_type.options.array.element_count = member_count;
-                    array_type.alignment = symbol->options.type->alignment;
-                    array_type.size = math_maximum(1, symbol->options.type->size * member_count);
-                    array_signature = type_system_register_type(&analyser->compiler->type_system, array_type);
-                }
-                Dynamic_Array<ModTree_Expression*> init_expressions = dynamic_array_create_empty<ModTree_Expression*>(member_count + 1);
-                SCOPE_EXIT(
-                    if (error_exit) {
-                        for (int i = 0; i < init_expressions.size; i++) {
-                            modtree_expression_destroy(init_expressions[i]);
-                        }
-                        dynamic_array_destroy(&init_expressions);
-                    }
-                );
-
-                AST_Node* init_node = child_node->neighbor;
-                while (init_node != 0)
-                {
-                    Expression_Result_Value init_result = semantic_analyser_analyse_expression_value(
-                        analyser, symbol_table, init_node, expression_context_make_known_type(symbol->options.type)
-                    );
-                    switch (init_result.type)
-                    {
-                    case Analysis_Result_Type::SUCCESS: {
-                        ModTree_Expression* init_expr = init_result.options.value;
-                        if (init_expr->result_type != symbol->options.type)
-                        {
-                            ModTree_Expression* casted = semantic_analyser_cast_implicit_if_possible(analyser, init_expr, symbol->options.type);
-                            if (casted == 0)
-                            {
-                                Semantic_Error error;
-                                error.type = Semantic_Error_Type::ARRAY_INITIALIZER_INVALID_TYPE;
-                                error.error_node = init_node;
-                                error.given_type = init_expr->result_type;
-                                error.expected_type = symbol->options.type;
-                                semantic_analyser_log_error(analyser, error);
-                                dynamic_array_push_back(&init_expressions, init_expr);
-                            }
-                            else {
-                                dynamic_array_push_back(&init_expressions, casted);
-                            }
-                        }
-                        else {
-                            dynamic_array_push_back(&init_expressions, init_expr);
-                        }
-                        break;
-                    }
-                    case Analysis_Result_Type::DEPENDENCY:
-                        error_exit = true;
-                        return expression_result_make_from(init_result);
-                    case Analysis_Result_Type::ERROR_OCCURED:
-                        break;
-                    default: panic("");
-                    }
-                    init_node = init_node->neighbor;
-                }
-
-                ModTree_Expression expression;
-                expression.constant_value = constant_value_make_unknown();
-                expression.expression_type = ModTree_Expression_Type::ARRAY_INITIALIZER;
-                expression.result_type = array_signature;
-                expression.options.array_initializer = init_expressions;
-                return expression_result_make_value(expression);
-            }
-        }
-        if (expression_node->child_count != 2) {
-            Semantic_Error error;
-            error.type = Semantic_Error_Type::ARRAY_INITIALIZER_REQUIRES_TYPE_SYMBOL;
-            error.error_node = expression_node;
-            semantic_analyser_log_error(analyser, error);
-            return expression_result_make_error();
-        }
-
         Expression_Result_Value array_access_expr_result = semantic_analyser_analyse_expression_value(
             analyser, symbol_table, expression_node->child_start, expression_context_make_type(Expression_Context_Type::ARRAY)
         );
@@ -2558,6 +2423,77 @@ Expression_Result_Any semantic_analyser_analyse_expression_without_value(
         }
 
         return expression_result_make_value(result);
+    }
+    case AST_Node_Type::EXPRESSION_ARRAY_INITIALIZER:
+    {
+        Expression_Result_Type element_type_result = semantic_analyser_analyse_expression_type(analyser, symbol_table, expression_node->child_start);
+        if (element_type_result.type != Analysis_Result_Type::SUCCESS) return expression_result_make_from(element_type_result);
+        Type_Signature* element_type = element_type_result.options.type;
+        if (element_type->size == 0 && element_type->alignment == 0) {
+            return expression_result_make_dependency(workload_dependency_make_type_size_unknown(element_type, expression_node));
+        }
+
+        int member_count = expression_node->child_count - 1;
+        Type_Signature* array_signature = type_system_make_array_finished(&analyser->compiler->type_system, element_type, member_count);
+        Dynamic_Array<ModTree_Expression*> init_expressions = dynamic_array_create_empty<ModTree_Expression*>(member_count + 1);
+        SCOPE_EXIT(
+            if (error_exit) {
+                for (int i = 0; i < init_expressions.size; i++) {
+                    modtree_expression_destroy(init_expressions[i]);
+                }
+                dynamic_array_destroy(&init_expressions);
+            }
+        );
+
+        AST_Node* init_node = expression_node->child_start->neighbor;
+        while (init_node != 0)
+        {
+            Expression_Result_Value init_result = semantic_analyser_analyse_expression_value(
+                analyser, symbol_table, init_node, expression_context_make_known_type(element_type)
+            );
+            switch (init_result.type)
+            {
+            case Analysis_Result_Type::SUCCESS:
+            {
+                ModTree_Expression* init_expr = init_result.options.value;
+                if (init_expr->result_type != element_type)
+                {
+                    ModTree_Expression* casted = semantic_analyser_cast_implicit_if_possible(analyser, init_expr, element_type);
+                    if (casted == 0)
+                    {
+                        Semantic_Error error;
+                        error.type = Semantic_Error_Type::ARRAY_INITIALIZER_INVALID_TYPE;
+                        error.error_node = init_node;
+                        error.given_type = init_expr->result_type;
+                        error.expected_type = element_type;
+                        semantic_analyser_log_error(analyser, error);
+                        dynamic_array_push_back(&init_expressions, init_expr);
+                    }
+                    else {
+                        dynamic_array_push_back(&init_expressions, casted);
+                    }
+                }
+                else {
+                    dynamic_array_push_back(&init_expressions, init_expr);
+                }
+                break;
+            }
+            case Analysis_Result_Type::DEPENDENCY:
+                error_exit = true;
+                return expression_result_make_from(init_result);
+            case Analysis_Result_Type::ERROR_OCCURED:
+                break;
+            default: panic("");
+            }
+            init_node = init_node->neighbor;
+        }
+
+        ModTree_Expression expression;
+        expression.constant_value = constant_value_make_unknown();
+        expression.expression_type = ModTree_Expression_Type::ARRAY_INITIALIZER;
+        expression.result_type = array_signature;
+        expression.options.array_initializer = init_expressions;
+        return expression_result_make_value(expression);
     }
     case AST_Node_Type::EXPRESSION_MEMBER_ACCESS:
     {
@@ -2730,7 +2666,7 @@ Expression_Result_Any semantic_analyser_analyse_expression_without_value(
         panic("Should not happen");
         return expression_result_make_error();
     }
-    case AST_Node_Type::EXPRESSION_AUTO_MEMBER:
+    case AST_Node_Type::EXPRESSION_AUTO_ENUM:
     {
         if (context.type != Expression_Context_Type::TYPE_KNOWN)
         {
@@ -2800,9 +2736,9 @@ Expression_Result_Any semantic_analyser_analyse_expression_without_value(
                         IR_Data_Access* global_access = hashtable_find_element(&analyser->compiler->ir_generator.variable_mapping, analyser->global_type_informations);
                         assert(global_access != 0 && global_access->type == IR_Data_Access_Type::GLOBAL_DATA, "");
                         Upp_Slice<Internal_Type_Information>* info_slice = (Upp_Slice<Internal_Type_Information>*)
-                            &analyser->compiler->bytecode_interpreter.globals.data[
-                            analyser->compiler->bytecode_generator.global_data_offsets[global_access->index]
-                        ];
+                            & analyser->compiler->bytecode_interpreter.globals.data[
+                                analyser->compiler->bytecode_generator.global_data_offsets[global_access->index]
+                            ];
                         info_slice->size = analyser->compiler->type_system.internal_type_infos.size;
                         info_slice->data_ptr = analyser->compiler->type_system.internal_type_infos.data;
                     }
@@ -4116,6 +4052,8 @@ void semantic_analyser_reset(Semantic_Analyser* analyser, Compiler* compiler)
         String* id_string = identifier_pool_add(&compiler->identifier_pool, string_create_static("String"));
         String* id_type = identifier_pool_add(&compiler->identifier_pool, string_create_static("Type"));
         String* id_type_information = identifier_pool_add(&compiler->identifier_pool, string_create_static("Type_Information"));
+        String* id_any = identifier_pool_add(&compiler->identifier_pool, string_create_static("Any"));
+        String* id_empty = identifier_pool_add(&compiler->identifier_pool, string_create_static("_"));
 
         semantic_analyser_define_type_symbol(analyser, base_table, id_int, analyser->compiler->type_system.i32_type, 0);
         semantic_analyser_define_type_symbol(analyser, base_table, id_bool, analyser->compiler->type_system.bool_type, 0);
@@ -4135,6 +4073,7 @@ void semantic_analyser_reset(Semantic_Analyser* analyser, Compiler* compiler)
         semantic_analyser_define_type_symbol(analyser, base_table, id_string, analyser->compiler->type_system.string_type, 0);
         semantic_analyser_define_type_symbol(analyser, base_table, id_type, analyser->compiler->type_system.type_type, 0);
         semantic_analyser_define_type_symbol(analyser, base_table, id_type_information, analyser->compiler->type_system.type_information_type, 0);
+        semantic_analyser_define_type_symbol(analyser, base_table, id_any, analyser->compiler->type_system.any_type, 0);
 
         analyser->id_size = identifier_pool_add(&compiler->identifier_pool, string_create_static("size"));
         analyser->id_data = identifier_pool_add(&compiler->identifier_pool, string_create_static("data"));
@@ -5103,7 +5042,12 @@ void semantic_analyser_execute_workloads(Semantic_Analyser* analyser)
                 case AST_Node_Type::SWITCH_CASE:
                 case AST_Node_Type::SWITCH_DEFAULT_CASE:
                 {
-                    ModTree_Statement* switch_statement = *hashtable_find_element(&code_workload->active_switches, statement_node->parent);
+                    ModTree_Statement* switch_statement = 0;
+                    {
+                        ModTree_Statement** found = hashtable_find_element(&code_workload->active_switches, statement_node->parent);
+                        assert(found != 0, "");
+                        switch_statement = *found;
+                    }
                     Type_Signature* switch_type = switch_statement->options.switch_statement.condition->result_type;
 
                     bool is_default_case = statement_node->type == AST_Node_Type::SWITCH_DEFAULT_CASE;
@@ -6850,6 +6794,10 @@ void semantic_error_append_to_string(Semantic_Analyser* analyser, Semantic_Error
     }
     case Semantic_Error_Type::ENUM_DOES_NOT_CONTAIN_THIS_MEMBER: {
         string_append_formated(string, "Enum member does not exist");
+        break;
+    }
+    case Semantic_Error_Type::EXPRESSION_ADDRESS_MUST_NOT_BE_OF_TEMPORARY_RESULT: {
+        string_append_formated(string, "Cannot take address of temporary result!");
         break;
     }
     case Semantic_Error_Type::MISSING_FEATURE_NESTED_DEFERS:

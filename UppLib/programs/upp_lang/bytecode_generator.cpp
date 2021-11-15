@@ -757,32 +757,32 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             IR_Instruction_Cast* cast = &instr->options.cast;
             switch (cast->type)
             {
-            case ModTree_Cast_Type::POINTERS:
-            case ModTree_Cast_Type::POINTER_TO_U64:
-            case ModTree_Cast_Type::U64_TO_POINTER: {
+            case IR_Cast_Type::POINTERS:
+            case IR_Cast_Type::POINTER_TO_U64:
+            case IR_Cast_Type::U64_TO_POINTER: {
                 bytecode_generator_move_accesses(generator, cast->destination, cast->source);
                 break;
             }
-            case ModTree_Cast_Type::ENUM_TO_INT:
-            case ModTree_Cast_Type::INT_TO_ENUM:
-            case ModTree_Cast_Type::INTEGERS:
-            case ModTree_Cast_Type::FLOATS:
-            case ModTree_Cast_Type::FLOAT_TO_INT:
-            case ModTree_Cast_Type::INT_TO_FLOAT:
+            case IR_Cast_Type::ENUM_TO_INT:
+            case IR_Cast_Type::INT_TO_ENUM:
+            case IR_Cast_Type::INTEGERS:
+            case IR_Cast_Type::FLOATS:
+            case IR_Cast_Type::FLOAT_TO_INT:
+            case IR_Cast_Type::INT_TO_FLOAT:
             {
                 Type_Signature* cast_source = ir_data_access_get_type(&cast->source);
                 Type_Signature* cast_destination = ir_data_access_get_type(&cast->destination);
                 Instruction_Type instr_type;
                 switch (cast->type) {
-                    case ModTree_Cast_Type::ENUM_TO_INT: 
-                    case ModTree_Cast_Type::INT_TO_ENUM:
-                    case ModTree_Cast_Type::INTEGERS:
+                    case IR_Cast_Type::ENUM_TO_INT: 
+                    case IR_Cast_Type::INT_TO_ENUM:
+                    case IR_Cast_Type::INTEGERS:
                         instr_type = Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE; break;
-                    case ModTree_Cast_Type::FLOATS:
+                    case IR_Cast_Type::FLOATS:
                         instr_type = Instruction_Type::CAST_FLOAT_DIFFERENT_SIZE; break;
-                    case ModTree_Cast_Type::FLOAT_TO_INT:
+                    case IR_Cast_Type::FLOAT_TO_INT:
                         instr_type = Instruction_Type::CAST_FLOAT_INTEGER; break;
-                    case ModTree_Cast_Type::INT_TO_FLOAT:
+                    case IR_Cast_Type::INT_TO_FLOAT:
                         instr_type = Instruction_Type::CAST_INTEGER_FLOAT; break;
                     default: panic("");
                 }
@@ -795,31 +795,6 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                         (int)type_signature_to_bytecode_type(cast_destination), (int)type_signature_to_bytecode_type(cast_source)
                     )
                 );
-                break;
-            }
-            case ModTree_Cast_Type::ARRAY_SIZED_TO_UNSIZED:
-            {
-                int sized_ptr_offset = bytecode_generator_get_pointer_to_access(generator, cast->source);
-                int unsized_ptr_offset = bytecode_generator_get_pointer_to_access(generator, cast->destination);
-                bytecode_generator_add_instruction(generator, instruction_make_3(Instruction_Type::WRITE_MEMORY, unsized_ptr_offset, sized_ptr_offset, 8));
-
-                int unsized_size_ptr_offset = bytecode_generator_create_temporary_stack_offset(generator, generator->compiler->type_system.void_ptr_type);
-                bytecode_generator_add_instruction(generator, instruction_make_3(
-                    Instruction_Type::U64_ADD_CONSTANT_I32, unsized_size_ptr_offset, unsized_ptr_offset, 8
-                ));
-
-                Type_Signature* array_sized_type = ir_data_access_get_type(&cast->source);
-                int offset = generator->compiler->constant_pool.buffer.size;
-                i32* size = &array_sized_type->options.array.element_count;
-                byte* data_ptr = (byte*)size;
-                for (int i = 0; i < 4; i++) {
-                    dynamic_array_push_back(&generator->compiler->constant_pool.buffer, data_ptr[i]);
-                }
-                int const_val_offset = bytecode_generator_create_temporary_stack_offset(generator, generator->compiler->type_system.i32_type);
-                bytecode_generator_add_instruction(generator,
-                    instruction_make_3(Instruction_Type::READ_CONSTANT, const_val_offset, offset, 4));
-                bytecode_generator_add_instruction(generator,
-                    instruction_make_3(Instruction_Type::WRITE_MEMORY, unsized_size_ptr_offset, const_val_offset, 4));
                 break;
             }
             default: panic("");

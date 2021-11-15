@@ -111,6 +111,11 @@ void type_signature_append_value_to_string(Type_Signature* type, byte* value_ptr
         break;
     case Signature_Type::ERROR_TYPE:
         break;
+    case Signature_Type::TYPE_TYPE: {
+        u64 value = *(u64*)value_ptr;
+        string_append_formated(string, "Type_Type, index: %d", value);
+        break;
+    }
     case Signature_Type::TEMPLATE_TYPE:
         break;
     case Signature_Type::ARRAY:
@@ -165,17 +170,59 @@ void type_signature_append_value_to_string(Type_Signature* type, byte* value_ptr
     }
     case Signature_Type::STRUCT:
     {
-        string_append_formated(string, "Struct: {");
-        for (int i = 0; i < type->options.structure.members.size; i++) {
-            Struct_Member* mem = &type->options.structure.members[i];
-            byte* mem_ptr = value_ptr + mem->offset;
-            if (memory_is_readable(mem_ptr, mem->type->size)) {
+        if (type->options.structure.id != 0) {
+            string_append_formated(string, "%s{", type->options.structure.id->characters);
+        }
+        else {
+            string_append_formated(string, "Struct{");
+        }
+        switch (type->options.structure.struct_type)
+        {
+        case Structure_Type::C_UNION: break;
+        case Structure_Type::UNION: {
+            int tag = *(i32*)(value_ptr + type->options.structure.tag_member.offset);
+            if (tag > 0 && tag < type->options.structure.members.size) {
+                Struct_Member* member = &type->options.structure.members[tag - 1];
+                string_append_formated(string, "%s = ", member->id->characters);
+                type_signature_append_value_to_string(member->type, value_ptr + member->offset, string);
+            }
+        }
+        case Structure_Type::STRUCT:
+            for (int i = 0; i < type->options.structure.members.size; i++) 
+            {
+                Struct_Member* mem = &type->options.structure.members[i];
+                byte* mem_ptr = value_ptr + mem->offset;
                 type_signature_append_value_to_string(mem->type, mem_ptr, string);
+                if (i != type->options.structure.members.size - 1) {
+                    string_append_formated(string, ", ");
+                }
             }
-            else {
-                string_append_formated(string, "UNREADABLE");
+        }
+        string_append_formated(string, "}");
+        break;
+    }
+    case Signature_Type::ENUM:
+    {
+        if (type->options.structure.id != 0) {
+            string_append_formated(string, "%s{", type->options.enum_type.id->characters);
+        }
+        else {
+            string_append_formated(string, "Enum{");
+        }
+        int value = *(i32*)value_ptr;
+        Enum_Member* found = 0;
+        for (int i = 0; i < type->options.enum_type.members.size; i++) {
+            Enum_Member* mem = &type->options.enum_type.members[i];
+            if (value == mem->value) {
+                found = mem;
+                break;
             }
-            string_append_formated(string, ", ");
+        }
+        if (found == 0) {
+            string_append_formated(string, "INVALID_VALUE");
+        }
+        else {
+            string_append_formated(string, found->id->characters);
         }
         string_append_formated(string, "}");
         break;
@@ -318,6 +365,17 @@ void type_system_add_primitives(Type_System* system, Identifier_Pool* pool)
         struct_add_member(system->string_type, pool, "size", system->i32_type);
         type_system_finish_type(system, system->string_type);
         assert_similarity<Upp_String>(system->string_type);
+    }
+
+    // Any
+    {
+        system->any_type = type_system_make_struct_empty_full(
+            system, identifier_pool_add(pool, string_create_static("Any")), Structure_Type::STRUCT
+        );
+        struct_add_member(system->any_type, pool, "data", system->void_ptr_type);
+        struct_add_member(system->any_type, pool, "type", system->type_type);
+        type_system_finish_type(system, system->any_type);
+        assert_similarity<Upp_Any>(system->any_type);
     }
 
     {
@@ -758,7 +816,7 @@ void type_system_finish_type(Type_System* system, Type_Signature* type)
         int member_count = type->options.structure.members.size;
         internal_info->options.structure.members.size = member_count;
         internal_info->options.structure.members.data_ptr = new Internal_Type_Struct_Member[member_count];
-        for (int i = 0; i < member_count; i++) 
+        for (int i = 0; i < member_count; i++)
         {
             Internal_Type_Struct_Member* internal_member = &internal_info->options.structure.members.data_ptr[i];
             Struct_Member* member = &type->options.structure.members[i];

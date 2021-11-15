@@ -12,7 +12,7 @@ main :: ()
 	}
 	assert(x == 5);
 	
-	test: Node::Node;
+	test: Node~Node;
 	test.val = 17;
 }
 
