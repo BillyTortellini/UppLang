@@ -1,0 +1,41 @@
+Color :: enum
+{
+    RED;
+    GREEN;
+    BLUE :: 17;
+    YELLOW;
+    PINK :: 3;
+    BROWN;
+}
+
+main :: ()
+{
+    // Enums are types
+    color: Color;
+    
+    // Values are assigned with Member_Access Syntax on the Enum type
+    color = Color.RED;
+    
+    // Enums can be compared with != and ==, but not with < or >
+    assert(color == Color.RED);
+    assert(color != Color.GREEN);
+    
+    // Enums are internally stored as integers
+    reinterpreted: i32 = &(cast(*i32)*color);
+    assert(reinterpreted == 1);
+    
+    // They can be explicity cast to integer to avoid the former pointer calculations
+    casted: i32 = cast(i32)color;
+    assert(reinterpreted == casted);
+    
+    // Enum values are stored increasingly, starting at 1
+    assert(cast(i32) Color.RED == 1);
+    assert(cast(i32) Color.GREEN == 2);
+    
+    // The values can be overwritten, and then they will count upwards from the given value
+    // Values may overlap, which will cause a compile-time error
+    assert(cast(i32) Color.BLUE == 17);
+    assert(cast(i32) Color.YELLOW == 18);
+    assert(cast(i32) Color.PINK == 3);
+    assert(cast(i32) Color.BROWN == 4);
+}

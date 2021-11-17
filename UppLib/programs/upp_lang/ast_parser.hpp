@@ -12,11 +12,21 @@ struct Code_Source;
 struct Identifier_Pool;
 struct Token;
 
-/* CHANGES
-ARRAY_ACCESS
-ARRAY_INITIALIZER
-*/
 
+/*
+    So I need to check for
+        1. () or (ID: 
+        2. Afterwards -> Expression
+        3. Branch
+            - If {, its a function
+            - Else, its a function signature
+
+    How do we differentiate call with function_type/lambda: With the identifier + calls have = syntax for named parameters
+        (x: int)
+
+    Currently, after :: there needs to be a function
+    I may want a parse_function_signature + a function_signature_to_function
+*/
 enum class AST_Node_Type
 {
     // TOP-LEVEL DECLARATIONS
@@ -32,7 +42,7 @@ enum class AST_Node_Type
     UNION, // Children: Variable definitions
     C_UNION, // Children: Variable definitions
     ENUM, // Children: Enum_Member
-    FUNCTION, // Child 0: Function_Signature, Child 1: Statement_Block
+    FUNCTION, // Child 0: Statement_Block, Child 1: Function_Signature
 
     // Building Blocks
     TEMPLATE_PARAMETERS, // Children: IDENTIFIER_NAME
@@ -74,6 +84,9 @@ enum class AST_Node_Type
     EXPRESSION_SLICE_TYPE, // []expr_0
     EXPRESSION_ARRAY_TYPE, // [expr_0]expr_1      
     EXPRESSION_FUNCTION_TYPE, // Child 0: Function signature
+    EXPRESSION_STRUCT, // Child 0: STRUCT
+    EXPRESSION_ENUM, // Child 0: ENUM
+    EXPRESSION_LAMBDA, // Child 1: FUNCTION
     // Type_End
     EXPRESSION_LITERAL,   
     EXPRESSION_NEW, // Child 0: Type

@@ -234,8 +234,10 @@ void code_editor_do_ast_syntax_highlighting(Code_Editor* editor, AST_Node* node,
     }
     else if (node->type == AST_Node_Type::FUNCTION) {
         Token_Range r = node_range;
-        r.end_index = r.start_index + 1;
-        text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, editor->compiler), FUNCTION_COLOR, BG_COLOR);
+        if (node->id != 0) {
+            r.end_index = r.start_index + 1;
+            text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, editor->compiler), FUNCTION_COLOR, BG_COLOR);
+        }
     }
     else if (node->type == AST_Node_Type::NAMED_PARAMETER) {
         Token_Range r = node_range;

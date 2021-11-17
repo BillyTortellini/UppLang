@@ -1,0 +1,27 @@
+main :: ()
+{
+    // Since this is a statically typed language, 
+    // some values are required to be statically known, like
+    // the size of an array
+    arr_0: [5]int;
+    
+    // Simple constant propagation is done by the compiler
+    arr_1: [5 + 5 * 2]int;
+    assert(arr_1.size == 15);
+    
+    arr_2: [arr_1.size]int;
+    assert(arr_2.size == 15);
+    
+    // This also works with simple variables and variable assignments
+    size: int = 10;
+    size = size * 2;
+    arr_3: [size]int;
+    assert(arr_3.size == 20);
+    
+    size_2: int = size - 3;
+    arr_4: [size]int;
+    assert(arr_4.size == 17);
+    
+    // This doesn't work anymore if a pointer to a variable is taken, or if 
+    // there is a control flow change, which is shown in the next tests
+}

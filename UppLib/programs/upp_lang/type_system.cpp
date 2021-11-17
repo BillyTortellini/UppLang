@@ -771,7 +771,7 @@ void type_system_finish_type(Type_System* system, Type_Signature* type)
         // Add tag if Union
         if (type->options.structure.struct_type == Structure_Type::UNION)
         {
-            Type_Signature* tag_type = type_system_make_enum_empty_from_node(system, 0);
+            Type_Signature* tag_type = type_system_make_enum_empty(system, 0);
             tag_type->size = 4;
             tag_type->alignment = 4;
             for (int i = 0; i < type->options.structure.members.size; i++) {
@@ -949,7 +949,7 @@ Type_Signature* type_system_make_struct_empty(Type_System* system, AST_Node* str
     return type_system_make_struct_empty_full(system, struct_node->id, struct_type);
 }
 
-Type_Signature* type_system_make_enum_empty_from_node(Type_System* system, String* id)
+Type_Signature* type_system_make_enum_empty(Type_System* system, String* id)
 {
     Type_Signature result;
     result.type = Signature_Type::ENUM;

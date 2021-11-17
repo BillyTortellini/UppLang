@@ -1,16 +1,18 @@
 Next features:
 --------------
- * Anonymous/Inner types (struct, enum, union)
- * Anonymous/Inner functions (Lambdas)
- * Struct unpacking syntax
- * Inner Functions, inner types (Functions inside other functions, structs/enums/unions inside functions)
+ * Testcases for all new features
+ * Function pointers without pointer type, just function values
+ * Pointer Comparison/Cast-to U64/Assignment
 
- * Block-Expression
-
- * Testcases for all new features (Expression-Context, Auto cast, Unions, Switches, Named breaks/continues)
-
- * Constant/Compile-time-known variable syntax
+ * Comptime declaration (Inner functions, inner structs...)
+ * Constant/Read-only variables
  * Function overhaul, e.g. Non-Pointer parameters constant, Named parameter values in function calls
+
+ * Struct unpacking syntax, ignore syntax 
+     index, found := find_elem(arr, 2);
+     index, _ = find_elem(arr, 3);
+     _ = Hashtable~insert();
+     union {ipv4: int; ipv5 = _};
 
  * Templates rework (No more templated modules, templated types, templated functions)
  * Macros and Iteration
@@ -20,15 +22,30 @@ Next features:
 
 Design:
 -------
- 
+Current testcase: 34 I think
+
 Implementation:
 ---------------
+New Testcases for:
+ - Constant propagation
+ - Bakeing
+ - Unions (Check size, check member access, switch on unions)
+ - C_Unions
+ - Struct initilization syntax/union initialization syntax
+ - Array initialization syntax
+ - Auto struct + auto array syntax
+ - Type_Type (e.g. x = int;)
+ - Type-Information, type_info, type_of
+ - Any-Type (Casting from/to, size check, data check, type check)
 
 Issues:
 -------
+
+
+
+Known Bugs:
+-----------
  - Sometimes active-switch is not found in switch-case nodes
-
-
 
 Strategy:
 ---------

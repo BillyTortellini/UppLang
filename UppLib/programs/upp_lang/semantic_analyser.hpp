@@ -424,6 +424,7 @@ struct Symbol
 struct Symbol_Table
 {
     Symbol_Table* parent;
+    ModTree_Module* module; // May be null
     Hashtable<String*, Symbol*> symbols;
 };
 
@@ -819,10 +820,17 @@ struct Bytecode_Execute_Result
     } options;
 };
 
-struct Bake_Location
+struct Expression_Location
 {
     AST_Node* node;
     ModTree_Block* block;
+};
+
+union Cached_Expression
+{
+    ModTree_Function* lambda;
+    ModTree_Function* bake_function;
+    Type_Signature* type;
 };
 
 struct Compiler;
@@ -850,7 +858,7 @@ struct Semantic_Analyser
 
     Analysis_Workload* current_workload;
     Hashtable<ModTree_Block*, Block_Control_Flow> finished_code_blocks;
-    Hashtable<Bake_Location, ModTree_Function*> bake_locations;
+    Hashtable<Expression_Location, Cached_Expression> cached_expressions;
     Dynamic_Array<Analysis_Workload> active_workloads;
     Dynamic_Array<Waiting_Workload> waiting_workload;
 

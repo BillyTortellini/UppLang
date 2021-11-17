@@ -223,6 +223,7 @@ ModTree_Program* modtree_program_create(Semantic_Analyser* analyser, Symbol_Tabl
     ModTree_Program* result = new ModTree_Program();
     result->entry_function = 0;
     result->root_module = modtree_module_create(analyser, symbol_table_create(analyser, base_table, nullptr), 0, 0);
+    result->root_module->symbol_table->module = result->root_module;
     return result;
 }
 
@@ -322,16 +323,21 @@ ModTree_Function* modtree_function_make_empty(
 /*
     Symbol Table
 */
-Symbol_Table* symbol_table_create(Semantic_Analyser* analyser, Symbol_Table* parent, AST_Node* node)
+Symbol_Table* symbol_table_create_with_module(Semantic_Analyser* analyser, Symbol_Table* parent, AST_Node* node, ModTree_Module* module)
 {
     Symbol_Table* table = new Symbol_Table();
     table->parent = parent;
     table->symbols = hashtable_create_pointer_empty<String*, Symbol*>(4);
+    table->module = module;
     dynamic_array_push_back(&analyser->symbol_tables, table);
     if (node != 0) {
         hashtable_insert_element(&analyser->ast_to_symbol_table, node, table);
     }
     return table;
+}
+
+Symbol_Table* symbol_table_create(Semantic_Analyser* analyser, Symbol_Table* parent, AST_Node* node) {
+    return symbol_table_create_with_module(analyser, parent, node, 0);
 }
 
 void symbol_destroy(Symbol* symbol);
@@ -730,7 +736,7 @@ Expression_Result_Value semantic_analyser_analyse_expression_value(
     Semantic_Analyser* analyser, Symbol_Table* symbol_table, AST_Node* expression_node, Expression_Context context);
 Expression_Result_Type semantic_analyser_analyse_expression_type(
     Semantic_Analyser* analyser, Symbol_Table* symbol_table, AST_Node* expression_node);
-
+Expression_Location expression_location_make(Semantic_Analyser* analyser, AST_Node* expression_node);
 
 struct Variable_Creation_Analysis_Result
 {
@@ -1064,7 +1070,7 @@ Identifier_Analysis_Result semantic_analyser_instanciate_template(Semantic_Analy
             {
                 // Update instance symbol to differentiate it from original
                 AST_Node* enum_node = symbol->definition_node;
-                found_instance->instance_symbol->options.type = type_system_make_enum_empty_from_node(&analyser->compiler->type_system, enum_node->id);
+                found_instance->instance_symbol->options.type = type_system_make_enum_empty(&analyser->compiler->type_system, enum_node->id);
 
                 // Create body workload
                 Analysis_Workload workload;
@@ -1903,6 +1909,109 @@ Expression_Result_Any semantic_analyser_analyse_expression_without_value(
             analyser, literal_type, array_create_static<byte>((byte*)value_ptr, literal_type->size)
         ));
     }
+    case AST_Node_Type::EXPRESSION_ENUM: 
+    {
+        Expression_Location location = expression_location_make(analyser, expression_node);
+        {
+            Cached_Expression* cached_expr = hashtable_find_element(&analyser->cached_expressions, location);
+            if (cached_expr != 0) {
+                return expression_result_make_type(cached_expr->type);
+            }
+        }
+
+        AST_Node* enum_node = expression_node->child_start;
+        Type_Signature* enum_type = type_system_make_enum_empty(&analyser->compiler->type_system, 0);
+
+        // Create workload for struct node
+        Analysis_Workload workload;
+        workload.type = Analysis_Workload_Type::ENUM_BODY;
+        workload.options.enum_body.current_node = enum_node->child_start;
+        workload.options.enum_body.enum_type = enum_type;
+        workload.options.enum_body.next_integer_value = 1;
+        workload.options.enum_body.symbol_table = symbol_table;
+        dynamic_array_push_back(&analyser->active_workloads, workload);
+
+        Cached_Expression cached_expr;
+        cached_expr.type = enum_type;
+        hashtable_insert_element(&analyser->cached_expressions, location, cached_expr);
+        return expression_result_make_type(enum_type);
+    }
+    case AST_Node_Type::EXPRESSION_STRUCT:
+    {
+        Expression_Location location = expression_location_make(analyser, expression_node);
+        {
+            Cached_Expression* cached_expr = hashtable_find_element(&analyser->cached_expressions, location);
+            if (cached_expr != 0) {
+                return expression_result_make_type(cached_expr->type);
+            }
+        }
+
+        AST_Node* struct_node = expression_node->child_start;
+        Type_Signature* struct_signature = type_system_make_struct_empty(&analyser->compiler->type_system, struct_node);
+
+        // Create workload for struct node
+        Analysis_Workload workload;
+        workload.type = Analysis_Workload_Type::STRUCT_BODY;
+        workload.options.struct_body.symbol_table = symbol_table;
+        workload.options.struct_body.struct_signature = struct_signature;
+        workload.options.struct_body.current_member_node = struct_node->child_start;
+        dynamic_array_push_back(&analyser->active_workloads, workload);
+
+        Cached_Expression cached_expr;
+        cached_expr.type = struct_signature;
+        hashtable_insert_element(&analyser->cached_expressions, location, cached_expr);
+        return expression_result_make_type(struct_signature);
+    }
+    case AST_Node_Type::EXPRESSION_LAMBDA:
+    {
+        Expression_Location location = expression_location_make(analyser, expression_node);
+        {
+            Cached_Expression* cached_expr = hashtable_find_element(&analyser->cached_expressions, location);
+            if (cached_expr != 0) 
+            {
+                if (cached_expr->lambda->signature == 0) {
+                    Workload_Dependency header_dependency;
+                    header_dependency.type = Workload_Dependency_Type::FUNCTION_HEADER_NOT_ANALYSED;
+                    header_dependency.node = expression_node;
+                    header_dependency.options.function_header_not_analysed = cached_expr->lambda;
+                    return expression_result_make_dependency(header_dependency);
+                }
+                return expression_result_make_function(cached_expr->lambda);
+            }
+        }
+
+        Symbol_Table* symbol_table_next_module = symbol_table;
+        while (symbol_table_next_module != 0)
+        {
+            if (symbol_table_next_module->module != 0) {
+                break;
+            }
+            symbol_table_next_module = symbol_table_next_module->parent;
+        }
+        assert(symbol_table_next_module != 0, "Hey, we should always get back to root module, not null");
+
+        AST_Node* function_node = expression_node->child_start;
+        ModTree_Function* function = modtree_function_make_empty(analyser, symbol_table_next_module->module, symbol_table_next_module, 0, 0, function_node);
+
+        // Create header workload
+        Analysis_Workload workload;
+        workload.type = Analysis_Workload_Type::FUNCTION_HEADER;
+        workload.options.function_header.function_node = function_node;
+        workload.options.function_header.function = function;
+        workload.options.function_header.symbol_table = function->options.function.body->symbol_table;
+        workload.options.function_header.next_parameter_node = function_node->child_start->child_start->child_start;
+        dynamic_array_push_back(&analyser->active_workloads, workload);
+
+        Cached_Expression cached_expr;
+        cached_expr.lambda = function;
+        hashtable_insert_element(&analyser->cached_expressions, location, cached_expr);
+
+        Workload_Dependency header_dependency;
+        header_dependency.type = Workload_Dependency_Type::FUNCTION_HEADER_NOT_ANALYSED;
+        header_dependency.node = expression_node;
+        header_dependency.options.function_header_not_analysed = function;
+        return expression_result_make_dependency(header_dependency);
+    }
     case AST_Node_Type::EXPRESSION_ARRAY_TYPE:
     {
         AST_Node* node_array_size = expression_node->child_start;
@@ -2718,99 +2827,103 @@ Expression_Result_Any semantic_analyser_analyse_expression_without_value(
         assert(analyser->current_workload->type == Analysis_Workload_Type::CODE, "");
         Analysis_Workload_Code* work = &analyser->current_workload->options.code_block;
         // Check if we have already created the function
-        Bake_Location location;
-        location.block = work->active_block->block;
-        location.node = expression_node;
+        Expression_Location location = expression_location_make(analyser, expression_node);
+        Cached_Expression* cached_expr = hashtable_find_element(&analyser->cached_expressions, location);
+        if (cached_expr != 0)
         {
-            ModTree_Function** function = hashtable_find_element(&analyser->bake_locations, location);
-            if (function != 0)
+            ModTree_Function* function = cached_expr->bake_function;
+            Partial_Compile_Result comp_result = partial_compilation_compile_function_for_bake(analyser, function, expression_node);
+            switch (comp_result.type)
             {
-                Partial_Compile_Result comp_result = partial_compilation_compile_function_for_bake(analyser, *function, expression_node);
-                switch (comp_result.type)
+            case Analysis_Result_Type::SUCCESS:
+            {
+                // Update type information table
                 {
-                case Analysis_Result_Type::SUCCESS:
-                {
-                    // Update type information table
-                    {
-                        bytecode_interpreter_prepare_run(&analyser->compiler->bytecode_interpreter);
-                        IR_Data_Access* global_access = hashtable_find_element(&analyser->compiler->ir_generator.variable_mapping, analyser->global_type_informations);
-                        assert(global_access != 0 && global_access->type == IR_Data_Access_Type::GLOBAL_DATA, "");
-                        Upp_Slice<Internal_Type_Information>* info_slice = (Upp_Slice<Internal_Type_Information>*)
-                            & analyser->compiler->bytecode_interpreter.globals.data[
-                                analyser->compiler->bytecode_generator.global_data_offsets[global_access->index]
-                            ];
-                        info_slice->size = analyser->compiler->type_system.internal_type_infos.size;
-                        info_slice->data_ptr = analyser->compiler->type_system.internal_type_infos.data;
-                    }
-
-                    IR_Function* ir_func = *hashtable_find_element(&analyser->compiler->ir_generator.function_mapping, *function);
-                    int func_start_instr_index = *hashtable_find_element(&analyser->compiler->bytecode_generator.function_locations, ir_func);
-                    analyser->compiler->bytecode_interpreter.instruction_limit_enabled = true;
-                    analyser->compiler->bytecode_interpreter.instruction_limit = 5000;
-                    bytecode_interpreter_run_function(&analyser->compiler->bytecode_interpreter, func_start_instr_index);
-                    if (analyser->compiler->bytecode_interpreter.exit_code != Exit_Code::SUCCESS)
-                    {
-                        Semantic_Error error;
-                        error.type = Semantic_Error_Type::BAKE_FUNCTION_DID_NOT_SUCCEED;
-                        error.exit_code = analyser->compiler->bytecode_interpreter.exit_code;
-                        error.error_node = expression_node;
-                        semantic_analyser_log_error(analyser, error);
-                        return expression_result_make_error();
-                    }
-
-                    void* value_ptr = analyser->compiler->bytecode_interpreter.return_register;
-                    ModTree_Expression* expression = new ModTree_Expression;
-                    expression->result_type = (*function)->signature->options.function.return_type;
-                    expression->expression_type = ModTree_Expression_Type::CONSTANT_READ;
-                    expression->options.literal_read.constant_index = constant_pool_add_constant(
-                        &analyser->compiler->constant_pool, expression->result_type, array_create_static<byte>((byte*)value_ptr, expression->result_type->size)
-                    );
-                    expression->constant_value = constant_value_make_type(analyser, expression->result_type);
-                    memory_copy(expression->constant_value.data, value_ptr, (u64)expression->result_type->size);
-
-                    return expression_result_make_value(expression);
+                    bytecode_interpreter_prepare_run(&analyser->compiler->bytecode_interpreter);
+                    IR_Data_Access* global_access = hashtable_find_element(&analyser->compiler->ir_generator.variable_mapping, analyser->global_type_informations);
+                    assert(global_access != 0 && global_access->type == IR_Data_Access_Type::GLOBAL_DATA, "");
+                    Upp_Slice<Internal_Type_Information>* info_slice = (Upp_Slice<Internal_Type_Information>*)
+                        & analyser->compiler->bytecode_interpreter.globals.data[
+                            analyser->compiler->bytecode_generator.global_data_offsets[global_access->index]
+                        ];
+                    info_slice->size = analyser->compiler->type_system.internal_type_infos.size;
+                    info_slice->data_ptr = analyser->compiler->type_system.internal_type_infos.data;
                 }
-                case Analysis_Result_Type::ERROR_OCCURED:
+
+                IR_Function* ir_func = *hashtable_find_element(&analyser->compiler->ir_generator.function_mapping, function);
+                int func_start_instr_index = *hashtable_find_element(&analyser->compiler->bytecode_generator.function_locations, ir_func);
+                analyser->compiler->bytecode_interpreter.instruction_limit_enabled = true;
+                analyser->compiler->bytecode_interpreter.instruction_limit = 5000;
+                bytecode_interpreter_run_function(&analyser->compiler->bytecode_interpreter, func_start_instr_index);
+                if (analyser->compiler->bytecode_interpreter.exit_code != Exit_Code::SUCCESS)
+                {
+                    Semantic_Error error;
+                    error.type = Semantic_Error_Type::BAKE_FUNCTION_DID_NOT_SUCCEED;
+                    error.exit_code = analyser->compiler->bytecode_interpreter.exit_code;
+                    error.error_node = expression_node;
+                    semantic_analyser_log_error(analyser, error);
                     return expression_result_make_error();
-                case Analysis_Result_Type::DEPENDENCY:
-                    return expression_result_make_dependency(comp_result.dependency);
-                default: panic("");
                 }
 
-                panic("");
-                return expression_result_make_error();
-            }
-        }
+                void* value_ptr = analyser->compiler->bytecode_interpreter.return_register;
+                ModTree_Expression* expression = new ModTree_Expression;
+                expression->result_type = function->signature->options.function.return_type;
+                expression->expression_type = ModTree_Expression_Type::CONSTANT_READ;
+                expression->options.literal_read.constant_index = constant_pool_add_constant(
+                    &analyser->compiler->constant_pool, expression->result_type, array_create_static<byte>((byte*)value_ptr, expression->result_type->size)
+                );
+                expression->constant_value = constant_value_make_type(analyser, expression->result_type);
+                memory_copy(expression->constant_value.data, value_ptr, (u64)expression->result_type->size);
 
-        Expression_Result_Type type_result = semantic_analyser_analyse_expression_type(analyser, symbol_table, expression_node->child_start);
-        switch (type_result.type)
-        {
-        case Analysis_Result_Type::SUCCESS:
-            if (type_result.options.type->type != Signature_Type::PRIMITIVE) {
-                Semantic_Error error;
-                error.type = Semantic_Error_Type::INVALID_TYPE_BAKE_MUST_BE_PRIMITIVE;
-                error.error_node = expression_node;
-                error.given_type = type_result.options.type;
-                semantic_analyser_log_error(analyser, error);
-                return expression_result_make_error();
+                return expression_result_make_value(expression);
             }
-            break;
-        case Analysis_Result_Type::ERROR_OCCURED:
+            case Analysis_Result_Type::ERROR_OCCURED:
+                return expression_result_make_error();
+            case Analysis_Result_Type::DEPENDENCY:
+                return expression_result_make_dependency(comp_result.dependency);
+            default: panic("");
+            }
+
+            panic("");
             return expression_result_make_error();
-        case Analysis_Result_Type::DEPENDENCY:
-            return expression_result_make_dependency(type_result.options.dependency);
-        default: panic("");
         }
+        else
+        {
+            Expression_Result_Type type_result = semantic_analyser_analyse_expression_type(analyser, symbol_table, expression_node->child_start);
+            switch (type_result.type)
+            {
+            case Analysis_Result_Type::SUCCESS:
+                if (type_result.options.type->type != Signature_Type::PRIMITIVE) {
+                    Semantic_Error error;
+                    error.type = Semantic_Error_Type::INVALID_TYPE_BAKE_MUST_BE_PRIMITIVE;
+                    error.error_node = expression_node;
+                    error.given_type = type_result.options.type;
+                    semantic_analyser_log_error(analyser, error);
+                    return expression_result_make_error();
+                }
+                break;
+            case Analysis_Result_Type::ERROR_OCCURED:
+                return expression_result_make_error();
+            case Analysis_Result_Type::DEPENDENCY:
+                return expression_result_make_dependency(type_result.options.dependency);
+            default: panic("");
+            }
 
-        // Create function and analyse it
-        ModTree_Function* function = modtree_function_make_empty(
-            analyser, work->function->parent_module, work->function->parent_module->symbol_table,
-            type_system_make_function(type_system, dynamic_array_create_empty<Type_Signature*>(1), type_result.options.type),
-            0, expression_node
-        );
-        dynamic_array_push_back(&analyser->active_workloads, analysis_workload_make_code_block(function->options.function.body, expression_node->child_end));
-        hashtable_insert_element(&analyser->bake_locations, location, function);
-        return expression_result_make_dependency(workload_dependency_make_code_block_finished(function->options.function.body, expression_node));
+            // Create function and analyse it
+            ModTree_Function* function = modtree_function_make_empty(
+                analyser, work->function->parent_module, work->function->parent_module->symbol_table,
+                type_system_make_function(type_system, dynamic_array_create_empty<Type_Signature*>(1), type_result.options.type),
+                0, expression_node
+            );
+            dynamic_array_push_back(&analyser->active_workloads, analysis_workload_make_code_block(function->options.function.body, expression_node->child_end));
+
+            Cached_Expression cached;
+            cached.bake_function = function;
+            hashtable_insert_element(&analyser->cached_expressions, location, cached);
+            return expression_result_make_function(function);
+        }
+        panic("Should not happen");
+        return expression_result_make_error();
     }
     case AST_Node_Type::EXPRESSION_UNARY_OPERATION_NOT:
     {
@@ -3743,7 +3856,8 @@ void semantic_analyser_analyse_module(Semantic_Analyser* analyser, ModTree_Modul
     }
     else
     {
-        module = modtree_module_create(analyser, symbol_table_create(analyser, parent_table, module_node), parent_module, 0);
+        module = modtree_module_create(analyser, 0, parent_module, 0);
+        module->symbol_table = symbol_table_create_with_module(analyser, parent_table, module_node, module);
         // Check if templated
         template_data.is_templated = false;
         if (module_node->type == AST_Node_Type::MODULE_TEMPLATED)
@@ -3869,6 +3983,7 @@ void semantic_analyser_analyse_module(Semantic_Analyser* analyser, ModTree_Modul
         case AST_Node_Type::FUNCTION:
         {
             ModTree_Function* function = modtree_function_make_empty(analyser, module, module->symbol_table, 0, 0, top_level_node);
+            assert(top_level_node->id != 0, "Should not be possible");
             function->symbol = symbol_table_define_symbol(
                 analyser, module->symbol_table, top_level_node->id, top_level_node, Symbol_Type::FUNCTION,
                 symbol_options_make_function(function), symbol_template_data_make_inherited(&template_data)
@@ -3889,7 +4004,7 @@ void semantic_analyser_analyse_module(Semantic_Analyser* analyser, ModTree_Modul
             Analysis_Workload workload;
             workload.type = Analysis_Workload_Type::ENUM_BODY;
             workload.options.enum_body.current_node = top_level_node->child_start;
-            workload.options.enum_body.enum_type = type_system_make_enum_empty_from_node(&analyser->compiler->type_system, top_level_node->id);
+            workload.options.enum_body.enum_type = type_system_make_enum_empty(&analyser->compiler->type_system, top_level_node->id);
             workload.options.enum_body.next_integer_value = 1;
             workload.options.enum_body.symbol_table = module->symbol_table;
             dynamic_array_push_back(&analyser->active_workloads, workload);
@@ -4017,7 +4132,7 @@ void semantic_analyser_reset(Semantic_Analyser* analyser, Compiler* compiler)
         dynamic_array_reset(&analyser->waiting_workload);
         hashtable_reset(&analyser->finished_code_blocks);
         hashtable_reset(&analyser->ast_to_symbol_table);
-        hashtable_reset(&analyser->bake_locations);
+        hashtable_reset(&analyser->cached_expressions);
         hashset_reset(&analyser->loaded_filenames);
         hashset_reset(&analyser->visited_functions);
 
@@ -4636,6 +4751,7 @@ void semantic_analyser_execute_workloads(Semantic_Analyser* analyser)
                     else if (last_statement->type == ModTree_Statement_Type::SWITCH && code_workload->active_block->last_analysed_node->type == AST_Node_Type::STATEMENT_SWITCH)
                     {
                         AST_Node* switch_node = code_workload->active_block->last_analysed_node;
+                        assert(hashtable_find_element(&code_workload->active_switches, switch_node) != 0, "");
                         hashtable_remove_element(&code_workload->active_switches, switch_node);
 
                         // Check if all enum cases are handled
@@ -5198,7 +5314,8 @@ void semantic_analyser_execute_workloads(Semantic_Analyser* analyser)
                     switch_statement->options.switch_statement.condition = expression;
                     switch_statement->options.switch_statement.default_block = 0;
                     dynamic_array_push_back(&block->statements, switch_statement);
-                    hashtable_insert_element(&code_workload->active_switches, statement_node, switch_statement);
+                    bool inserted = hashtable_insert_element(&code_workload->active_switches, statement_node, switch_statement);
+                    assert(inserted, "Error here");
 
                     if (statement_node->child_count == 1) {
                         Semantic_Error error;
@@ -5827,12 +5944,26 @@ void semantic_analyser_execute_workloads(Semantic_Analyser* analyser)
     }
 }
 
-u64 hash_bake_location(Bake_Location* location)
+Expression_Location expression_location_make(Semantic_Analyser* analyser, AST_Node* expression_node)
+{
+    Expression_Location location;
+    location.node = expression_node;
+    if (analyser->current_workload->type == Analysis_Workload_Type::CODE) {
+        Analysis_Workload_Code* work = &analyser->current_workload->options.code_block;
+        location.block = work->active_block->block;
+    }
+    else {
+        location.block = 0;
+    }
+    return location;
+}
+
+u64 hash_bake_location(Expression_Location* location)
 {
     return hash_memory(array_create_static<byte>((byte*)location, sizeof(location)));
 }
 
-bool equals_bake_location(Bake_Location* loc1, Bake_Location* loc2)
+bool equals_bake_location(Expression_Location* loc1, Expression_Location* loc2)
 {
     return loc1->block == loc2->block && loc1->node == loc2->node;
 }
@@ -5849,7 +5980,7 @@ Semantic_Analyser semantic_analyser_create()
     result.ast_to_symbol_table = hashtable_create_pointer_empty<AST_Node*, Symbol_Table*>(256);
     result.loaded_filenames = hashset_create_pointer_empty<String*>(32);
     result.visited_functions = hashset_create_pointer_empty<ModTree_Function*>(32);
-    result.bake_locations = hashtable_create_empty<Bake_Location, ModTree_Function*>(32, hash_bake_location, equals_bake_location);
+    result.cached_expressions = hashtable_create_empty<Expression_Location, Cached_Expression>(32, hash_bake_location, equals_bake_location);
     result.program = 0;
     result.current_workload = 0;
 
@@ -5868,7 +5999,7 @@ void semantic_analyser_destroy(Semantic_Analyser* analyser)
     dynamic_array_destroy(&analyser->waiting_workload);
     hashtable_destroy(&analyser->ast_to_symbol_table);
     hashtable_destroy(&analyser->finished_code_blocks);
-    hashtable_destroy(&analyser->bake_locations);
+    hashtable_destroy(&analyser->cached_expressions);
     hashset_destroy(&analyser->loaded_filenames);
     hashset_destroy(&analyser->visited_functions);
 
@@ -7020,7 +7151,7 @@ Type_Signature* import_c_type(Semantic_Analyser* analyser, C_Import_Type* type, 
         else {
             enum_id = type->enumeration.id;
         }
-        result_type = type_system_make_enum_empty_from_node(&analyser->compiler->type_system, enum_id);
+        result_type = type_system_make_enum_empty(&analyser->compiler->type_system, enum_id);
         result_type->size = type->byte_size;
         result_type->alignment = type->alignment;
         for (int i = 0; i < type->enumeration.members.size; i++) {

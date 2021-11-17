@@ -1,0 +1,350 @@
+ret_2 :: ()->int
+{
+    return 2;
+}
+
+find_elem :: (array: []int, value: int) -> struct{found: bool; index: int;}
+{
+    i := 0; 
+    while i < array.size
+    {
+        if array[i] == value {
+            return .{found = true, index = i};
+        }
+    }
+    return .{found = false, index = 0};
+}
+
+main :: ()
+{
+    // Lets fets
+    what: ()->int;
+    what = *ret_2;
+    
+    what = *()->int {return 5 + 7;};
+    
+    print_i32(what());
+}
+
+/*
+main :: ()
+{
+    struct_type := struct{x: int; y: int;};
+    b: struct{x: int; y: u64;};
+    b = .{x = 5, y = cast 7};
+    info := type_info(type_of(b));
+    Print~type_information(info, true);
+    print_line();
+    print_i32(b.x);
+    
+    x: enum{RED; GREEN; BLUE;} = .GREEN;
+    info = type_info(type_of(x));
+    Print~type_information(info, true);
+}
+
+Address :: union
+{
+    ipv4: u32;
+    ipv6: String;
+}
+
+Color :: enum
+{
+    RED;
+    GREEN;
+    BLUE;
+}
+
+module Print
+{
+    integers :: (ints: []Any)
+    {
+        i := 0;
+        while i < ints.size loop_int: 
+        {
+            defer i = i+1;
+            any := ints[i];
+            if any.type == String {
+                str := cast(String) any;
+                print_string(str);
+            }
+            else if any.type == int {
+                value := cast(i32) any;
+                print_i32(value);
+            }
+            else {
+                continue loop_int;
+            }
+        
+            if i != ints.size-1 {
+                print_string(" ");
+            }
+        }
+    }
+    
+    address :: (addr: Address)
+    {
+        switch addr
+        {
+            case .ipv4:
+            print_string("IPV4");
+            print_i32(cast addr.ipv4);
+            case .ipv6:
+            print_string("IPV6 ");
+            print_string(addr.ipv6);
+        }
+    }
+    
+    color :: (col: Color)
+    {
+        switch col
+        {
+            case .RED:
+            print_string("RED");
+            case .GREEN:
+            print_string("GREEN");
+            case .BLUE:
+            print_string("BLUE");
+        }
+    }
+    
+    type_information :: (info: Type_Information, extended_info: bool)
+    {
+        print_i32(info.size);
+        print_string("/");
+        print_i32(info.alignment);
+        print_string(" ");
+    
+        switch info.options
+        {
+            case .void_type:
+            print_string("Void");
+            case .pointer:
+            print_string("Pointer");
+            if extended_info {
+                print_string("\n    ");
+                Print~type_information(type_info(info.options.pointer), false);
+            }
+            case .structure:
+            print_string("Struct \"");
+            print_string(info.options.structure.name);
+            print_string("\"");
+            if extended_info {
+                i := 0;
+                while i < info.options.structure.members.size
+                {
+                    member := *info.options.structure.members[i];
+                    print_string("\n    ");
+                    print_string(member.name);
+                    print_string(" ");
+                    Print~type_information(type_info(member.type), false);
+                    i = i+1;
+                }
+            }
+            case .enumeration: 
+            {
+                print_string("Enum \"");
+                print_string(info.options.enumeration.name);
+                print_string("\"");
+                if extended_info 
+                {
+                    i := 0;
+                    while i < info.options.enumeration.members.size
+                    {
+                        member := *info.options.enumeration.members[i];
+                        print_string("\n    ");
+                        print_string(member.name);
+                        print_string(" :: ");
+                        print_i32(member.value);
+                        i = i+1;
+                    }
+                }
+            }
+            case .primitive:
+            switch info.options.primitive
+            {
+                case .integer:
+                print_string("Integer");
+                if info.options.primitive.integer.is_signed {
+                    print_string(" Signed");
+                }
+                else {
+                    print_string(" Unsigned");
+                }
+                case .boolean:
+                print_string("Boolean");
+                case .floating_point:
+                print_string("Float");
+            }
+            case .function:
+            print_string("Function");
+            case .array:
+            print_string("Array");
+            case .slice:
+            print_string("Slice");
+            case .type:
+            print_string("Type");
+        }
+    }
+}
+
+/*
+main :: ()
+{
+    // Array stuff
+    array: [5]int = .[1,2,3,4,5];
+    a: []int = .[array[5], array[4], array[3]];
+    a = int.[5];
+    
+    // Struct stuff
+    addr := Address.{ipv4 = cast 7};
+    addr = .{ipv6 = "COFFEF"};
+    
+    // Enum stuff
+    c: Color = Color.RED;
+    c = .GREEN;
+    
+    // Module stuff
+    Print~integers(.[1, 2, "=", 3]);
+    print_line();
+    Print~address(addr);
+}
+*/
+
+/*
+
+
+
+main :: ()
+{
+    print_ints(.[1, "+",  2, "-", 3, 4, 5]);
+    
+    addr1: Address = .(ipv4 = .[cast 0, cast 0, cast 0, cast 0]);
+    print_line();
+    address_print(addr1);
+    //value: i64 = 15;
+    //x: Any = value;
+    
+    //print_ints(.[12, "What", 32]);
+    //print_line();
+    /*
+    Educated guess:
+    From_Any does not copy enough data? 
+    It does not have to do anything with passing
+    */
+    
+    //any_string_pass("Henlo there\n");
+    
+    
+    /*
+    i := 0;
+    while i < type_informations.size
+    {
+        type_information_print(type_informations[i], true);
+        print_line();
+        i = i + 1;
+    }
+    */
+    /*
+    */
+    //print_i32(type_informations.size);
+    //print_line();
+    
+    //type_information_print(x);
+    //print_line();
+    
+    /*
+    x := []int;
+    a := []int;
+    if x == a
+    {
+        print_string("same");
+    }
+    
+    info: Type_Information;
+    info.is_primitive = false;
+    info.size = 5;
+    info.primitive_type = Primitive_Type.INTEGER;
+    */
+    
+    
+    /*
+    x := Color.RED;
+    addr: Address = .(ipv6 = "asdf");
+    a: type_of(addr);
+    a = addr;
+    address_print(a);
+    */
+}
+
+/*
+global := 5;
+what := *global;
+
+Message :: union
+{
+    confirmation: bool;
+    index: int;
+}
+
+main :: ()
+{
+    //x := 5;
+    //print_i32(x);
+    print_i32(type_informations.size);
+    print_string(" ");
+    print_i32(cast type_informations[3].size);
+    
+    msg: Message = .(confirmation = true);
+    switch msg
+    {
+        case .confirmation:
+        print_string("Confirmation");
+        case .index:
+        print_string("Index");
+    }
+    //print_i32("what".size);
+    //print_string("what");
+    //print_i32(global);
+    //print_i32(what);
+}
+
+
+
+struct_print_members :: (info: Type_Information)
+{
+    if (info.options.tag != .structure) return;
+    i := 0;
+    members := *info.options.structure.members;
+    switch info.options.structure.type
+    {
+        case .union_tagged:
+        print_string("Union tagged");
+        case .union_untagged:
+        print_string("Union untagged");
+        case .structure:
+        print_string("Structure");
+    }
+    print_string(":\n");
+    while i < members.size
+    {
+        member := *members[i];
+        print_string("  ");
+        print_i32(i);
+        print_string(": ");
+        print_string(member.name);
+        print_string(", offset=");
+        print_i32(member.offset);
+        print_line();
+        i = i+1;
+    }
+}
+
+type_information_print :: (info: Type_Information, extended_info: bool)
+}
+
+*/
+
+
+*/
+*/

@@ -277,7 +277,7 @@ Type_Signature* type_system_make_function(Type_System* system, Dynamic_Array<Typ
 Type_Signature* type_system_make_template(Type_System* system, String* id);
 struct AST_Node;
 Type_Signature* type_system_make_struct_empty(Type_System* system, AST_Node* struct_node);
-Type_Signature* type_system_make_enum_empty_from_node(Type_System* system, String* id);
+Type_Signature* type_system_make_enum_empty(Type_System* system, String* id);
 Type_Signature* type_system_make_struct_empty_full(Type_System* system, String* id, Structure_Type struct_type);
 void type_system_print(Type_System* system);
 Optional<Enum_Member> enum_type_find_member_by_value(Type_Signature* enum_type, int value);
