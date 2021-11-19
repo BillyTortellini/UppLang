@@ -905,8 +905,8 @@ Type_Signature* type_system_make_function(Type_System* system, Dynamic_Array<Typ
 {
     Type_Signature result;
     result.type = Signature_Type::FUNCTION;
-    result.alignment = 1;
-    result.size = 0;
+    result.alignment = 8;
+    result.size = 8;
     result.options.function.parameter_types = parameter_types;
     result.options.function.return_type = return_type;
     return type_system_register_type(system, result);

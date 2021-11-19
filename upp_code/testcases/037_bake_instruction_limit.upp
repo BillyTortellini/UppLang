@@ -1,0 +1,25 @@
+fib :: (n: int) -> int 
+{
+    if n < 2 return 1;
+    return fib(n-1) + fib(n-2);
+}
+
+main :: ()
+{
+    /*
+    The problem with compile time code execution is that
+    it may, like all programs, crash or run in an infinite
+    loop.
+    
+    To solve the chrashing, the interpreter actually checks
+    memory accesses.
+    
+    And for the halting problem, the interpreter only allows
+    a limited number of instructions to be executed while baking.
+    
+    In the future the programmer should be able to
+    set this number inside the language, like
+        Compiler::set_bake_instruction_limit(10000);
+    */
+    x := #bake<int>{return fib(100);};
+}

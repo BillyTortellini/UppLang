@@ -1,0 +1,12 @@
+main :: ()
+{
+    /*
+    As mentioned in the previous testcase, the
+    interpreter also checks memory access for errors
+    */
+    x := #bake<int>
+    {
+        ip: *int = null;
+        return *ip;
+    };
+}

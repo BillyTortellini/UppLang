@@ -330,36 +330,30 @@ void c_generator_register_type_name(C_Generator* generator, Type_Signature* type
     case Signature_Type::ERROR_TYPE:
         panic("Should not happen in c_backend!");
         break;
-    case Signature_Type::FUNCTION: {
-        string_append_formated(&type_name, "_ERROR_FUNCTION_TYPE_NAME");
+    case Signature_Type::FUNCTION: 
+    {
+        string_append_formated(&type_name, "function_ptr_type_%d", generator->name_counter);
+        generator->name_counter++;
+        string_append_formated(&tmp, "typedef ");
+        c_generator_output_type_reference(generator, &tmp, type->options.function.return_type);
+        string_append_formated(&tmp, " (*%s)(", type_name.characters);
+        for (int i = 0; i < type->options.function.parameter_types.size; i++) {
+            c_generator_output_type_reference(generator, &tmp, type->options.function.parameter_types[i]);
+            if (i != type->options.function.parameter_types.size - 1) {
+                string_append_formated(&tmp, ", ");
+            }
+        }
+        string_append_formated(&tmp, ");\n\n");
+        string_append_formated(&generator->section_type_declarations, tmp.characters);
         break;
     }
     case Signature_Type::POINTER:
     {
-        if (type->options.pointer_child->type == Signature_Type::FUNCTION)
-        {
-            Type_Signature* function_type = type->options.pointer_child;
-            string_append_formated(&type_name, "function_ptr_type_%d", generator->name_counter);
-            generator->name_counter++;
-            string_append_formated(&tmp, "typedef ");
-            c_generator_output_type_reference(generator, &tmp, function_type->options.function.return_type);
-            string_append_formated(&tmp, " (*%s)(", type_name.characters);
-            for (int i = 0; i < function_type->options.function.parameter_types.size; i++) {
-                c_generator_output_type_reference(generator, &tmp, function_type->options.function.parameter_types[i]);
-                if (i != function_type->options.function.parameter_types.size - 1) {
-                    string_append_formated(&tmp, ", ");
-                }
-            }
-            string_append_formated(&tmp, ");\n\n");
-            string_append_formated(&generator->section_type_declarations, tmp.characters);
-        }
-        else {
-            c_generator_output_type_reference(generator, &type_name, type->options.pointer_child);
-            string_append_formated(&type_name, "*");
-        }
+        c_generator_output_type_reference(generator, &type_name, type->options.pointer_child);
+        string_append_formated(&type_name, "*");
         break;
     }
-    case Signature_Type::PRIMITIVE: 
+    case Signature_Type::PRIMITIVE:
     {
         switch (type->options.primitive.type)
         {
@@ -375,7 +369,7 @@ void c_generator_register_type_name(C_Generator* generator, Type_Signature* type
             case 8: string_append_formated(&type_name, type->options.primitive.is_signed ? "i64" : "u64"); break;
             default: panic("HEY");
             }
-            
+
             break;
         case Primitive_Type::FLOAT:
             switch (type->size)
@@ -392,7 +386,7 @@ void c_generator_register_type_name(C_Generator* generator, Type_Signature* type
     case Signature_Type::STRUCT:
     {
         if (type->options.structure.id != 0) {
-        string_append_formated(&type_name, "struct_%d_%s", generator->name_counter, type->options.structure.id->characters);
+            string_append_formated(&type_name, "struct_%d_%s", generator->name_counter, type->options.structure.id->characters);
         }
         else {
             string_append_formated(&type_name, "struct_%d", generator->name_counter);
@@ -537,7 +531,7 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
                 function_sig = call->options.function->function_type;
                 break;
             case IR_Instruction_Call_Type::FUNCTION_POINTER_CALL:
-                function_sig = ir_data_access_get_type(&call->options.pointer_access)->options.pointer_child;
+                function_sig = ir_data_access_get_type(&call->options.pointer_access);
                 break;
             case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
                 function_sig = call->options.hardcoded.signature;
@@ -631,7 +625,7 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
             string_append_formated(output, ")\n");
             string_add_indentation(output, indentation_level);
             string_append_formated(output, "{\n");
-            for (int i = 0; i < switch_instr->cases.size; i++) 
+            for (int i = 0; i < switch_instr->cases.size; i++)
             {
                 IR_Switch_Case* switch_case = &switch_instr->cases[i];
                 string_add_indentation(output, indentation_level);

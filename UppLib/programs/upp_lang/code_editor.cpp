@@ -316,7 +316,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
         text_editor_handle_key_message(editor->text_editor, msg);
     }
 
-    bool save_text_file = input->key_pressed[(int)Key_Code::S];
+    bool save_text_file = input->key_pressed[(int)Key_Code::S] && input->key_down[(int)Key_Code::CTRL];
     bool shortcut_build = false;
     bool shortcut_execute = false;
     if (input->key_pressed[(int)Key_Code::F5]) {

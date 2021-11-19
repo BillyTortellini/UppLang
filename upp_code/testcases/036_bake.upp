@@ -1,21 +1,25 @@
-Color :: enum
+fib :: (n: int) -> int 
 {
-    RED;
-    GREEN;
-    BLUE;
+    if n < 2 return 1;
+    return fib(n-1) + fib(n-2);
 }
 
 main :: ()
 {
-    color: Color;
-    &cast(*i32)*color = 0;
+    // But what if know we can calculate a value, but the constant propagation just cannot evaluate it?
+    // This is where we use bake, which does a partial compile to bytecode, and then executes the code
     
-    // The reason that enums start with 1 is that
-    // we want to error if they werent initialized correctly
-    switch color
-    {
-        case Color.RED:
-        case Color.GREEN:
-        case Color.BLUE:
-    }
+    // Wont work: arr: [doubler(fib(5))];
+    x: int = #bake<int>{return doubler(fib(5));};
+    arr: [x]bool;
+    assert(arr.size == doubler(fib(5)));
+    
+    // Currently constant values are only required in array size context, but they
+    // later also be needed in templates and constants definitions
 }
+
+doubler :: (val: int) -> int
+{
+    return val * 2; 
+}
+

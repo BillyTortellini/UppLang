@@ -2113,6 +2113,7 @@ void ast_parser_check_sanity(AST_Parser* parser, AST_Node* node)
                 AST_Node_Type child_type = child->type;
                 assert(child_type == AST_Node_Type::FUNCTION ||
                     child_type == AST_Node_Type::STRUCT ||
+                    child_type == AST_Node_Type::C_UNION ||
                     child_type == AST_Node_Type::UNION ||
                     child_type == AST_Node_Type::ENUM ||
                     child_type == AST_Node_Type::EXTERN_FUNCTION_DECLARATION ||
@@ -2128,6 +2129,7 @@ void ast_parser_check_sanity(AST_Parser* parser, AST_Node* node)
             }
             break;
         case AST_Node_Type::UNION:
+        case AST_Node_Type::C_UNION:
         case AST_Node_Type::STRUCT:
             while (child != 0) {
                 assert(child->type == AST_Node_Type::STATEMENT_VARIABLE_DEFINITION, "");

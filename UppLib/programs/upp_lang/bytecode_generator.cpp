@@ -470,7 +470,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 function_sig = call->options.function->function_type;
                 break;
             case IR_Instruction_Call_Type::FUNCTION_POINTER_CALL:
-                function_sig = ir_data_access_get_type(&call->options.pointer_access)->options.pointer_child;
+                function_sig = ir_data_access_get_type(&call->options.pointer_access);
                 break;
             case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
                 function_sig = call->options.hardcoded.signature;
