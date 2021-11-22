@@ -1,14 +1,11 @@
 Next features:
 --------------
- * Testcases for all new features
- * EDITOR: Yank same as delete up and down
- * Pointer Rework
-
- * Comptime declaration (Inner functions, inner structs...)
- * Constant/Read-only variables
+ * Comptime declarations (Inner functions, inner structs...)
+ * Bake with non primitive values, maybe functions
+ * Read-only variables (Changes in constant propagator)
  * Function overhaul, e.g. Non-Pointer parameters constant, Named parameter values in function calls
 
- * Literal overhaul (Integers, floats, strings?)
+ * Literal overhaul (Integers, floats, strings?, arrays are u64, array access with any int...)
 
  * Struct unpacking syntax, ignore syntax 
      index, found := find_elem(arr, 2);
@@ -20,327 +17,46 @@ Next features:
 
  * Templates rework (No more templated modules, templated types, templated functions)
  * Interpreter upgrade, call C-Functions, Custom allocator, check memory access
- * Bake with non primitive values, maybe functions
  * Macros and Iteration
  * Generating source code with runtime code execution
+ * Annotations
+ * Static Analyser
  
-How about using types in function/lambda definitions
+
+
+Design:
+
+
+Implementation:
+---------------
+Currently there exists the Definitions node, which may contain the following children:
+ * STRUCT, C_UNION, UNION, ENUM
+ * MODULE, MODULE_TEMPLATED
+ * FUNCTION
+ * VARIABLE_DEFINE_ASSIGN, VARIABLE_DEFINE_INFER, VARIABLE_DEFINITION
+
+ * EXTERN_FUNCTION; EXTERN_LIB; EXTERN_HEADER; LOAD_FILE
+
+Issues:
+-------
+
+Known Bugs:
+-----------
+ - Sometimes active-switch is not found in switch-case nodes
+
+
+
+
+How about beeing able to use function types in function/lambda definitions
     int_op: Type = (a: int, b: int) -> int;
     add :: bin_op 
     {
         return a + b;
     }
-
-Design Discussion: Pointers/Auto casting/Temporary values
----------------------------------------------------------
-Because I don't want to have reference types, I generally want most things to work by pointer.
-This includes iteration, operator overloading, member access, and all operations.
-E.g.
-    x: *int =...;
-    y := x + 5; // This should just work
-
-    // Now all things I need for containers:
-    arr := Dynamic_Array~create_empty(int, 5);
-    arr: Dynamic_Array(int) = Dynamic_Array~create_empty(5);
-    defer Dynamic_Array~destroy(arr);
-    Dynamic_Array~add(arr, 17);
-    Dynamic_Array~add_array(arr, .[1, 2, 3, 4, 5]);
-
-    // These all have to be pointers
-    loop x in arr {
-        x = x * 2;
-    }
-    Dynamic_Array~for_each(arr, (x:int) -> {print(x);});
-    x := arr[5] + arr[7];
-    arr[0] = arr[1] + arr[2];
-
-The problem here is, again, that pointers on their own have operations defined on them,
-which do drastically different things compared to the operations executed on non-pointers, which may lead to some errors
-The problematic ones are:
-    - Equals Comparisons
-    - cast to other pointer/cast to u64
-    - Assignment statement
-
-The alternative is to not have implicit pointer casting, and relying on the Operators
-    ap :=   *a;  // Address-Of  '*'
-    &ap =   7;   // Dereference '&' on the left side of assignment is special in general
-    x:int = &ap;
-
-If I would go the Java route, I would just not have control of pointers, which would also work
-There are obviously cases where I want full pointer control, like custom allocators...
-
-I think I can solve the comparsion and cast problem by introducing new syntax 
-e.g. 
-    a: *int;
-    b: *int;
-    value_cmp = a == b; // Compares values, always dereferences
-    ptr_cmp = a *== b;  // I cannot use *=, because *= is the multiply_assign operator
-    ptr_cmp = a *!= b;
-
-What about double pointers?
-    x: int;
-    xp: *int;
-    xpp: **int;
-    app: **int
-    cmp := x *== xp;    // ERROR
-    cmp := xp *== xpp;  // ERROR
-    cmp := app *== xpp; // ERROR
-Nullptr?
-    xp: *int = null;
-    if xp == null // Should error, since we cannot compare a value to a pointer 
-    if x *== null // This should work
-Double pointer comparisons?
-    value := 5;
-    p0: *int = *value;
-    p1: *int = *value;
-    ap: **int = *p0;
-    bp: **int = *p1;
-    cmp := ap == bp;    // TRUE
-    cmp := ap *== bp;   // FALSE, since this is a comparison on the double pointer level and (ap -> p0 != bp -> p1)
-    cmp := &ap *== &bp; // TRUE, since this compares the pointers, which both point to value
-I also had the idea to have pointer comparison syntax have an argument to show which level of pointer wants to be compared, e.g.
-    cmp := ap == bp;      // TRUE,  value 5 == 5
-    cmp := ap *== bp;     // TRUE,  because this only looks at pointer level 1  
-    cmp := ap **== bp;    // FALSE, because this looks at pointer level 2
-    cmp := ap *== value;  // TRUE,  because ap on pointer level 1 actually points to value
-    cmp := ap **== value; // ERROR, because trying to take address of a non-const value
-    cmp := ap **== p0;    // TRUE,  auto address of can kick in here
-
-To be fair, the second version would probably be more consistent with the idea that pointers are interchangable,
-but I think the first version, where implicit casting is just all out disable is better, because it 
-doesn't have ugly syntax and probably doesn't cause errors because there is no implicit casting then
-
-Casting: pointers can be cast to u64 and back, to enable pointer arithmetic in this language
-    i := x;
-    x := cast(u64) i; // This won't error when i is suddenly a pointer, and x will be garbage
-    // The same applies in the different direction
-
-    i := 5;
-    x := cast_to_raw i;
-    val: u64 = 0;
-    x := cast_ptr val;
-
-The whole problem of having to specify the pointer level comes from maving multiple pointer levels. (Double/Triple... Pointers) e.g. x: ***int; 
-I think if i limit this whole schablam to only one pointer level, I don't need syntax to specify the pointer level.
-But I think i would change the syntax for the two operators * and &
-
-Idea: Maybe we can get rid of the dereference operator entirely. If everything is dereferenced automatically this could work
-    For this I would need pointer comparisons to have an argument of the pointer level to be compared
-    Also cast_to_raw needs to have a pointer argument, since the following may be weird
-        x: **int;
-        val := cast_raw(u64) x; // 
-        addr: u64 = 0;
-        val := cast(*int) addr; // Should not work
-        val := cast_raw(*int) addr; // Should work
-        Theres obviously the cast_to_raw and cast_from_raw
-    Also with removing the dereference operator pointer operations (equal, cast) would rely on implicit casting to
-    work, and I think this should rather be done with the type system and turning off implicit casting in these cases.
-    e.g.
-        i := int;
-        ip := *i;
-        cast_to_raw i;    // ERROR, not a pointer type
-        cast_to_raw *i;   // Works
-        val := i *== ip;  // ERROR, i not a pointer type
-        val := *i *== ip; // WORKS
-
-Is this really a Problem? When would this be a problem?
-    Situation #1 Variable change:     Value --> Pointer
-        x := 32;
-        i: int = 4;
-        i = x;
-        i = i + 1;
-
-        i: *int;
-        i = x;      // This will take the pointer now
-        i = i + 1;  // This will error now, because Auto Address-Of won't work on temporary value
-
-    Situation #1 Variable change:     Pointer --> value
-        member := get_value_of(account, .TAKE_MONEY);
-        // If pointer
-        member.counter = counter + 1;
-        // If this is not a pointer, this will still work, but the logic won't make sense anymore
-
-So whats the current Solution?
-Automatic to/from pointer only works on a single pointer level, multi level pointer won't work like this.
-But I still need new syntax for Assignment/Cast/Comparison
- - Comparison 
-    i := 5;
-    j := 5;
-    x: &int = i;    // Auto address of works on one level
-    a: &int = &j;   // Address_Of Syntax still valid
-    cmp := x == a;  // TRUE  Compares values
-    cmp := x &== a; // FALSE Pointer are different
-    cmp := x &== i; // TRUE  Auto-address of also works here
-
-    ip: &int = &i;
-    ipp: &&int = &ip;
-    app: &&int = &a;
-    cmp := ipp == a; // ERROR, Cannot compare double pointer to value
-    cmp := ipp == ip; // ERROR, Cannot convert double pointer to value
-    cmp := ipp &== ip; // ERROR, Types do not implicitly cast to multi pointer
-    cmp := ipp &== app; // FALSE, works but in this case they point to different things  
-
- - Cast
-    val: u64 = 128 * 1024;
-    ptr: &int = cast(&int)       val; // ERROR, Cannot cast from integer to pointer
-    ptr: &int = raw_to_ptr(&int) val; // WORKS
-    other: u64 = ptr_to_raw ptr;     // WORKS
-    val_p: &u64 = &val;
-    ptr: &int = raw_to_ptr(&int) val_p; // WORKS, dereferences val_p and takes it as pointer
-    ptr: &int = cast(&int) val_p; // Also works, but this time there is no dereferencing
-
- - Assignment
-    i: int = 5;
-    ip: *int;
-    ip &= i; // WORKS, takes reference of i 
-    ip :&= i; // WORKS, Auto type deduction
+Would be really cool, but I think having some auto lambda function could also work.
+    add: int_op: auto {return a + b;}
+Generally lambdas could have an auto syntax, so i dont have to write the parameters + return value
     
-    ipp: **int &= ip; // ERROR, cannot cast *int to **int
-    ipp: **int &= i;  // ERROR, cannot cast int to **int
-
-    x: *int = i;  // ERROR Does not work, pointer is not initialized
-    x: *int &= i;
-    x &= ip;      // Now x points to the same value as ip
-    assert(x &== ip);
-    x &= 5;       // Error, cannot take address of temporary value
-
-    remove_node :: (list: &List, node: &Node)
-    {
-        if (node.next &!= null) {
-            node.next.prev &= node.prev;
-        }
-        if (node.prev &!= null) {
-            node.prev.next &= node.next;
-        }
-    }
-
- - Implicit casting should also work with single deref
-    slice: []int;
-    slice_p :&= slice;
-    array := int.[1, 2, 3, 4];
-    array_p :&= array;
-
-    slice = array;      // Implicit casting slice to array
-    slice = array_p;    // Dereference + implicit casting
-    slice_p = array;    // Implicit Dereference(slice_p) + cast
-    slice_p = array_p;  // Double implicit Dereference
-    slice_p &= array_p; // ERROR, After cast the right side is a temporary value, cannot take reference
-
-Problems:
-    - What if a function changes to return a pointer? --> The pointer will be turned into a value.
-        If it now returns null, there will be nullpointer exceptions, but only at runtime...
-        x := calc_value(chungus);
-    - What about struct unpacking syntax/multiple return values
-        index, found = array_find_min(.[1, 2, 7]);
-
-Some more light-weight solutions:
-    * No pointer assign syntax
-    * Syntax for pointer compare and 
-
-
-Operators defined on pointers:
-    - Equals Comparisons
-    - cast to other pointer/cast to u64
-    - Assignment statement
-
-I think the current error I had while designing the things mentioned above is that
-I wanted it to be possible to forget that we are dealing with pointers, and just handle
-have something like Java where the User wouldn't even know what they are doing.
-Which is wrong, although I do want to have some auto-define Syntax, I still want people to know what
-values they are dealing with.
-
-Another Idea: Member access and Type access both return a pointer.
-    This would align them more with how they work internally, but would deviate from other languages
-
-What about the unary operators?
-    - Address_Of  *
-    - Dereference &
-
-Usages for the implicit pointer casting
-    - Member access on pointers
-    - Binary/Unary operations 
-    - Assignments
-
-A Solution I thought about:
-    - Pointers in a non pointer context will always be handled as values
-    - Pointer operators (cast/equals) will get their own syntax, no implicit casting
-    - Infer-Declare ':='    no implicit casting
-    - Remove :&= because Type-Inference should not have to deal with pointers
-    - Unary Pointer OPs no implicit casting
-    - What to do with assignments?
-
-How can I handle assignments to pointers?
-    i: int = 5;
-    x: *int;
-    x = i; // What should this do?
-
-Options without new syntax:
-1. The right side value always gets casted to the type on the left 
-    x = i;     // WORKS, x now points at i
-    x = i + 5; // ERROR, cannot take address of temporary value (5 is temporaray)
-    i = a[5];  // WORKS
-    a[1] = 5;  // ERROR,
-    a[1] = i;  // ERROR, cannot write to temporary value (a[1] is temporary)
-2. The left side values always gets casted to the type on the right
-    x: *int = i;  // RUNTIME_ERROR
-    x: *int = *i; // WORKS
-    x = i + 1;    // DEPENDS_ON_INIT
-    x = a[5];     // Changes pointer
-    i = a[5];     // ERROR, left is temp
-    a[1] = 5;     // WORKS
-    a[1] = i;     // WORKS
-    a[1] = x;     // ERROR, write to temporary
-3. No implicit casting happens at all
-    x: *int = i;  // ERROR
-    x = i + 5;    // ERROR
-    x = a[5];     // Changes pointer
-    i = a[5];     // WORKS
-    a[1] = 5;     // ERROR
-    a[1] = x;     // ERROR, write to temporary
-
-Options with new syntax:
-4. = always writes through the pointer, &= requires a pointer and casts the right side to the given value
-    x = i;        // RUNTIME
-    x = *i;       // RUNTIME
-    x: *int = i;  // ERROR
-    x: *int = *i; // ERROR
-    x: *int &= i; // WORKS
-    x: *int;
-    x &= i;       // WORKS
-    x &= *i;      // WORKS
-    a[5] = 7;     // WORKS
-    a[5] &= 7;    // ERROR, write to temporary value (a[5])
-    j: int;
-    j &= i;       // ERROR, left type is not a pointer
-    x = a[5];     // RUNTIME
-    ipp: **int = x; // ERROR
-    ipp: **int &= *x; // WORKS
-Difference &= does not do any casting &= casts right side to left type
-    pa: []*int;
-    pa[4] &= x;   // When casting right side to left type, this actually produces an error
-    pa[4] &= x;   //
-
-    arr: []int;
-    parr: []*int;
-
-What about the combination:
-    [] overloading dereferences the value returned
-
-    x: &int = i;  // ERROR
-    x: &int &= i; // WORKS
-    j: int &= i;  // ERROR, cannot &= a non pointer
-    pa: []*int = ...;
-    pa[0] = 1;    // WRITES value
-    pa[0] &= new int;
-    
-What about:
-    = never casts/takes address of something?
-    Remove &= operator
-    [] overloaded dereferences the pointer value
-    Add cast and comparison operator for pointers.
-    
-    I think this is the goto-strat, because this will result in type conversion errors when converting 
-    values to pointers or otherwise, which is the style of defensive programming.
 
 
 
@@ -430,40 +146,6 @@ Thoughts:
 
 
 
-Design:
--------
-Constant propagation: Maybe I don't want this at all, and just put this on read_only system
-Current testcase: 34 I think
-
-Implementation:
----------------
-New Testcases for:
- - Type-Info
- - Any-Type (Casting from/to, size check, data check, type check, during bake/interpreter)
- - Named break/Continue, named blocks
-
-Issues:
--------
-
-
-
-Known Bugs:
------------
- - Sometimes active-switch is not found in switch-case nodes
-
-Strategy:
----------
-Big Features before Static-Analysis:
- - Solid language
-   * Anonymous and/or Inner definitions
-   * Constant + readonly values
-   * Function overhaul (Multiple returns, const params, auto-pointer passing, Empty/Ignore-Type _)
-   * Literal overhaul
-   * Expression blocks?
- - Template rework (Templated values, code execution)
- - Module system improvements with import/using functionality
- - Macros and Iteration
- - Annotation System
 
 
 
@@ -527,9 +209,9 @@ Editor-Bugs:
 
  Vision for the Programming Language:
  ------------------------------------
-  * Compile-Time code execution
-  * Static-Analysis in tandum with Tag-System
-  * Code-Visualizations in Editor
+  * Metaprogramming with Compile-Time code execution
+  * Static-Analyser with information exchange
+  * Code-Visualizations in Editor (Maybe syntax guided editor)
 
 Ideas that need to be tested:
 -----------------------------
@@ -544,17 +226,14 @@ Ideas that need to be tested:
  * Compiler supported Dynamic-Array type
  * Hot-Reloading Code
  * Stack-Analysis for Debug information (Or others? E.g. logging)
- * Differentiate break_loop, break_switch, maybe break_scope
  * Redirect debug output to application window
- * Error-Handling with the most recent build of the language
+ * Error-Handling with the most recent build of the language 
 
 Code Improvements that should be made (When I have time):
 ----------------------------------------------------
-Use String* for string pooling, not identifiers.
-Hashing type signatures for lookup, not array search.
+Hashing type signatures for lookup, not array search, or maybe use Graph-like data structure
 
 Differentiation between errors and Warnings
-
 
 Intermediate Code should keep positional information, so should the bytecode (Will be necessary for the debugger)
 Improved Parser-Error handling. (Function-Parsing Error handling should check each following line if it is a function)

@@ -14,13 +14,6 @@ struct Token;
 
 
 /*
-    So I need to check for
-        1. () or (ID: 
-        2. Afterwards -> Expression
-        3. Branch
-            - If {, its a function
-            - Else, its a function signature
-
     How do we differentiate call with function_type/lambda: With the identifier + calls have = syntax for named parameters
         (x: int)
 
@@ -100,6 +93,8 @@ enum class AST_Node_Type
     EXPRESSION_AUTO_ENUM, // ID: name of access member
     EXPRESSION_MEMBER_ACCESS, // Child 0: left side, id is the .what operator a.y.y[5].z
     EXPRESSION_CAST, // Either: Child 0: type, Child 1: Expression    OR    Child 0: Expression
+    EXPRESSION_CAST_PTR, // Either: Child 0: type, Child 1: Expression    OR    Child 0: Expression
+    EXPRESSION_CAST_RAW, // Child 0: Expression
     EXPRESSION_BAKE, // Child 0: type, Child 1: Statement_Block
     EXPRESSION_TYPE_INFO, // Child 0: Expression;
     EXPRESSION_TYPE_OF,   // Child 0: Expression
@@ -112,6 +107,8 @@ enum class AST_Node_Type
     EXPRESSION_BINARY_OPERATION_OR,
     EXPRESSION_BINARY_OPERATION_EQUAL,
     EXPRESSION_BINARY_OPERATION_NOT_EQUAL,
+    EXPRESSION_BINARY_OPERATION_POINTER_EQUAL,
+    EXPRESSION_BINARY_OPERATION_POINTER_NOT_EQUAL,
     EXPRESSION_BINARY_OPERATION_LESS,
     EXPRESSION_BINARY_OPERATION_LESS_OR_EQUAL,
     EXPRESSION_BINARY_OPERATION_GREATER,

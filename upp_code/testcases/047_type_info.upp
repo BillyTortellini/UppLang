@@ -1,0 +1,98 @@
+Player :: struct
+{
+    age: int;
+    name: String;
+    alive: bool;
+}
+
+main :: ()
+{
+    /*
+    To conclude why the Type-Type is quite powerfull,
+    lets look at the type_information type
+    */
+    info: Type_Information;
+    
+    /*
+    To obtain information about any type, we can use type_info()
+    */
+    info = type_info(int);
+    
+    /*
+    Type info contains all informations about a type, for example:
+    - the type this type_info is referencing
+    - size
+    - alignment
+    - struct members, with offsets and names
+    - enum members
+    - primitive type
+    - pointer info
+    - ...
+    */
+    int_size := info.size;
+    int_alignment := info.alignment;
+    
+    assert(int_size == 4);
+    assert(int_alignment == 4);
+    assert(info.type == int);
+    
+    /*
+    This is implemented by having a global slice containing
+    all type informations, called type_informations
+    
+    This slice points to an array in constant memory containing the informations
+    */
+    infos: []Type_Information = type_informations;
+    assert(infos.size > 0);
+    
+    /*
+    To give an example of what could be done, lets search for a member and get its offset
+    */
+    //print_i32(member_offset(Player, "name"));
+    /*
+    This can also be done at compiletime, using bake, which
+    makes this a zero cost operation.
+    */
+    offset := #bake<int>{return member_offset(Player, "alive");};
+    assert(offset == 32);
+    /*
+    The bake syntax seems kinda inconvinient, if you compare it to C:
+    offset_of(Player, alive);
+    
+    But in the future you will be able to get almost the same syntax with
+    Macros. There will also be the possiblility to report errors inside
+    bake, which will won't allow invalid member names.
+    */
+}
+
+
+member_offset :: (type: Type, name: String) -> int
+{
+    offset := -1;
+    info := type_info(type);
+    if info.options.tag != .structure return offset;
+    
+    members := type_info(Player).options.structure.members;
+    i := 0;
+    while i < members.size search_loop:
+    {
+        if string_compare(members[i].name, name) {
+            offset = members[i].offset;
+            break search_loop;
+        }
+        i = i+1;
+    }
+    
+    return offset;
+}
+
+string_compare :: (str1: *String, str2: *String) -> bool
+{
+    if str1.size != str2.size return false;
+    i := 0;
+    while i < str1.size {
+        if str1.character_buffer[i] != str2.character_buffer[i] return false;
+        i = i+1;
+    }
+    return true;
+}

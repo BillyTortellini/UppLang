@@ -1,0 +1,10 @@
+main :: ()
+{
+    // As mentioned before, casts from any-type will result in errors
+    // if the type does not match
+    x: int = 15;
+    x_any: Any = x;
+    
+    i: int = cast x_any; // WORKS
+    u: u32 = cast x_any; // RUNTIME_ERROR
+}

@@ -16,7 +16,7 @@ bool enable_c_compilation = true;
 // Output stages
 bool output_lexing = false;
 bool output_identifiers = false;
-bool output_ast = false;
+bool output_ast = true;
 bool output_type_system = false;
 bool output_root_table = false;
 bool output_ir = false;
@@ -931,6 +931,36 @@ void compiler_run_testcases(Timer* timer)
         test_case_make("021_slices.upp", true),
         test_case_make("022_dynamic_array.upp", true),
         test_case_make("023_invalid_recursive_template.upp", false),
+        test_case_make("024_expression_context.upp", true),
+        test_case_make("025_expression_context_limit.upp", false),
+        test_case_make("026_auto_cast.upp", true),
+        test_case_make("027_enums.upp", true),
+        test_case_make("028_invalid_enum.upp", false),
+        test_case_make("029_switch.upp", true),
+        test_case_make("030_invalid_switch_cases_missing.upp", false),
+        test_case_make("031_invalid_switch_case_not_constant.upp", false),
+        test_case_make("032_invalid_switch_value_not_in_range.upp", false),
+        test_case_make("033_constant_propagation.upp", true),
+        test_case_make("034_constant_propagation_invalid_reference.upp", false),
+        test_case_make("035_constant_propagation_control_flow.upp", false),
+        test_case_make("036_bake.upp", true),
+        test_case_make("037_bake_instruction_limit.upp", false),
+        test_case_make("038_bake_exception.upp", false),
+        test_case_make("039_struct_initializer.upp", true),
+        test_case_make("040_struct_initializer_exhaustive_error.upp", false),
+        test_case_make("041_struct_initializer_double_set_error.upp", false),
+        test_case_make("042_array_initializer.upp", true),
+        test_case_make("043_auto_syntax.upp", true),
+        test_case_make("044_c_unions.upp", true),
+        test_case_make("045_unions.upp", true),
+        test_case_make("046_types_as_values.upp", true),
+        test_case_make("047_type_info.upp", true),
+        test_case_make("048_any_type.upp", true),
+        test_case_make("049_any_error.upp", false),
+        test_case_make("050_named_break_continue.upp", true),
+        test_case_make("051_invalid_continue_no_loop.upp", false),
+        test_case_make("052_invalid_lables.upp", false),
+        test_case_make("053_named_flow_defer.upp", true),
     };
     int test_case_count = sizeof(test_cases) / sizeof(Test_Case);
 

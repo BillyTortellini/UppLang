@@ -27,6 +27,8 @@ bool token_type_is_keyword(Token_Type type)
     case Token_Type::DELETE_TOKEN: return true;
     case Token_Type::BOOLEAN_LITERAL: return true;
     case Token_Type::CAST: return true;
+    case Token_Type::CAST_RAW: return true;
+    case Token_Type::CAST_PTR: return true;
     case Token_Type::EXTERN: return true;
     }
     return false;
@@ -82,6 +84,8 @@ const char* token_type_to_string(Token_Type type)
     case Token_Type::COMPARISON_GREATER_EQUAL: return "COMPARISON_GREATER_EQUAL";
     case Token_Type::COMPARISON_EQUAL: return "COMPARISON_EQUAL";
     case Token_Type::COMPARISON_NOT_EQUAL: return "COMPARISON_NOT_EQUAL";
+    case Token_Type::COMPARISON_POINTER_EQUAL: return "COMPARISON_POINTER_EQUAL";
+    case Token_Type::COMPARISON_POINTER_NOT_EQUAL: return "COMPARISON_POINTER_NOT_EQUAL";
     case Token_Type::LOGICAL_AND: return "LOGICAL_AND";
     case Token_Type::LOGICAL_OR: return "LOGICAL_OR";
     case Token_Type::LOGICAL_BITWISE_AND: return "LOGICAL_BITWISE_AND";
@@ -98,6 +102,8 @@ const char* token_type_to_string(Token_Type type)
     case Token_Type::NEW_LINE: return "NEWLINE";
     case Token_Type::RETURN: return "RETURN";
     case Token_Type::CAST: return "CAST";
+    case Token_Type::CAST_RAW: return "CAST_RAW";
+    case Token_Type::CAST_PTR: return "CAST_PTR";
     }
     panic("Should not happen!");
     return "TOKEN_NOT_KNOWN";
@@ -299,6 +305,8 @@ Lexer lexer_create()
     hashtable_insert_element(&lexer.keywords, string_create_static("union"), Token_Type::UNION);
     hashtable_insert_element(&lexer.keywords, string_create_static("c_union"), Token_Type::C_UNION);
     hashtable_insert_element(&lexer.keywords, string_create_static("cast"), Token_Type::CAST);
+    hashtable_insert_element(&lexer.keywords, string_create_static("cast_raw"), Token_Type::CAST_RAW);
+    hashtable_insert_element(&lexer.keywords, string_create_static("cast_ptr"), Token_Type::CAST_PTR);
     hashtable_insert_element(&lexer.keywords, string_create_static("null"), Token_Type::NULLPTR);
     hashtable_insert_element(&lexer.keywords, string_create_static("new"), Token_Type::NEW);
     hashtable_insert_element(&lexer.keywords, string_create_static("delete"), Token_Type::DELETE_TOKEN);
@@ -453,11 +461,31 @@ void lexer_lex(Lexer* lexer, String* code, Identifier_Pool* identifier_pool)
             character_pos++;
             index++;
             continue;
-        case '*':
+        case '*': {
+            if (index + 2 < code->size) 
+            {
+                if (code->characters[index + 1] == '=' && code->characters[index + 2] == '=') {
+                    dynamic_array_push_back(
+                        &lexer->tokens, token_make(Token_Type::COMPARISON_POINTER_EQUAL, token_attribute_make_empty(), line_number, character_pos, 3, index)
+                    );
+                    character_pos += 3;
+                    index += 3;
+                    continue;
+                }
+                else if (code->characters[index + 1] == '!' && code->characters[index + 2] == '=') {
+                    dynamic_array_push_back(
+                        &lexer->tokens, token_make(Token_Type::COMPARISON_POINTER_NOT_EQUAL, token_attribute_make_empty(), line_number, character_pos, 3, index)
+                    );
+                    character_pos += 3;
+                    index += 3;
+                    continue;
+                }
+            }
             dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::OP_STAR, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;
+        }
         case '/':
             dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::OP_SLASH, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
@@ -468,8 +496,8 @@ void lexer_lex(Lexer* lexer, String* code, Identifier_Pool* identifier_pool)
             character_pos++;
             index++;
             continue;
-            // Check for ambiguities between one and two characters (< and <=, = and ==, ! and !=, ...)
         case '=':
+            // Check for ambiguities between one and two characters (< and <=, = and ==, ! and !=, ...)
             if (next_character == '=') {
                 dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::COMPARISON_EQUAL, token_attribute_make_empty(), line_number, character_pos, 2, index));
                 index += 2;
@@ -657,9 +685,9 @@ void lexer_lex(Lexer* lexer, String* code, Identifier_Pool* identifier_pool)
         // Constants, Identifier and Keywords
         // Parse Numbers
         Number_Base base = Number_Base::DECIMAL;
-        if (current_character == '0') 
+        if (current_character == '0')
         {
-            if (number_base_is_valid_character(Number_Base::OCTAL, next_character)) 
+            if (number_base_is_valid_character(Number_Base::OCTAL, next_character))
             {
                 index += 1;
                 character_pos += 1;

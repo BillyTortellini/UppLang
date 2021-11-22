@@ -808,10 +808,20 @@ AST_Node* ast_parser_parse_expression_single_value(AST_Parser* parser)
             parser->index++;
         }
     }
-    else if (ast_parser_test_next_token(parser, Token_Type::CAST))
+    else if (ast_parser_test_next_token(parser, Token_Type::CAST_RAW))
     {
+        parser->index++;
+        node->type = AST_Node_Type::EXPRESSION_CAST_RAW;
+    }
+    else if (ast_parser_test_next_token(parser, Token_Type::CAST) || ast_parser_test_next_token(parser, Token_Type::CAST_PTR))
+    {
+        if (ast_parser_test_next_token(parser, Token_Type::CAST)) {
+            node->type = AST_Node_Type::EXPRESSION_CAST;
+        }
+        else {
+            node->type = AST_Node_Type::EXPRESSION_CAST_PTR;
+        }
         parser->index += 1;
-        node->type = AST_Node_Type::EXPRESSION_CAST;
         if (ast_parser_test_next_token(parser, Token_Type::OPEN_PARENTHESIS))
         {
             parser->index++;
@@ -898,6 +908,16 @@ bool ast_parser_parse_binary_operator(AST_Parser* parser, AST_Node_Type* op_type
     case Token_Type::LOGICAL_OR: {
         *op_type = AST_Node_Type::EXPRESSION_BINARY_OPERATION_OR;
         *op_priority = 1;
+        break;
+    }
+    case Token_Type::COMPARISON_POINTER_EQUAL: {
+        *op_type = AST_Node_Type::EXPRESSION_BINARY_OPERATION_POINTER_EQUAL;
+        *op_priority = 2;
+        break;
+    }
+    case Token_Type::COMPARISON_POINTER_NOT_EQUAL: {
+        *op_type = AST_Node_Type::EXPRESSION_BINARY_OPERATION_POINTER_NOT_EQUAL;
+        *op_priority = 2;
         break;
     }
     case Token_Type::COMPARISON_EQUAL: {
@@ -2458,7 +2478,12 @@ void ast_parser_check_sanity(AST_Parser* parser, AST_Node* node)
             assert(ast_node_type_is_expression(node->child_start->type), "");
             assert(node->child_end->type == AST_Node_Type::STATEMENT_BLOCK, "");
             break;
+        case AST_Node_Type::EXPRESSION_CAST_RAW: 
+            assert(node->child_count == 1, "");
+            assert(ast_node_type_is_expression(child->type), "");
+            break;
         case AST_Node_Type::EXPRESSION_CAST:
+        case AST_Node_Type::EXPRESSION_CAST_PTR:
             assert(node->child_count == 2 || node->child_count == 1, "");
             if (node->child_count == 2) {
                 if (!ast_node_type_is_expression(child->type)) {
@@ -2486,6 +2511,8 @@ void ast_parser_check_sanity(AST_Parser* parser, AST_Node* node)
         case AST_Node_Type::EXPRESSION_BINARY_OPERATION_OR:
         case AST_Node_Type::EXPRESSION_BINARY_OPERATION_EQUAL:
         case AST_Node_Type::EXPRESSION_BINARY_OPERATION_NOT_EQUAL:
+        case AST_Node_Type::EXPRESSION_BINARY_OPERATION_POINTER_EQUAL:
+        case AST_Node_Type::EXPRESSION_BINARY_OPERATION_POINTER_NOT_EQUAL:
         case AST_Node_Type::EXPRESSION_BINARY_OPERATION_LESS:
         case AST_Node_Type::EXPRESSION_BINARY_OPERATION_LESS_OR_EQUAL:
         case AST_Node_Type::EXPRESSION_BINARY_OPERATION_GREATER:
@@ -2644,6 +2671,8 @@ String ast_node_type_to_string(AST_Node_Type type)
     case AST_Node_Type::EXPRESSION_ARRAY_ACCESS: return string_create_static("EXPRESSION_ARRAY_ACCESS");
     case AST_Node_Type::EXPRESSION_MEMBER_ACCESS: return string_create_static("EXPRESSION_MEMBER_ACCESS");
     case AST_Node_Type::EXPRESSION_CAST: return string_create_static("EXPRESSION_CAST");
+    case AST_Node_Type::EXPRESSION_CAST_RAW: return string_create_static("EXPRESSION_CAST_RAW");
+    case AST_Node_Type::EXPRESSION_CAST_PTR: return string_create_static("EXPRESSION_CAST_PTR");
     case AST_Node_Type::EXPRESSION_BAKE: return string_create_static("EXPRESSION_BAKE");
     case AST_Node_Type::EXPRESSION_TYPE_INFO: return string_create_static("EXPRESSION_TYPE_INFO");
     case AST_Node_Type::EXPRESSION_TYPE_OF: return string_create_static("EXPRESSION_TYPE_OF");
@@ -2661,6 +2690,8 @@ String ast_node_type_to_string(AST_Node_Type type)
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_OR: return string_create_static("EXPRESSION_BINARY_OPERATION_OR");
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_EQUAL: return string_create_static("EXPRESSION_BINARY_OPERATION_EQUAL");
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_NOT_EQUAL: return string_create_static("EXPRESSION_BINARY_OPERATION_NOT_EQUAL");
+    case AST_Node_Type::EXPRESSION_BINARY_OPERATION_POINTER_EQUAL: return string_create_static("EXPRESSION_BINARY_OPERATION_POINTER_EQUAL");
+    case AST_Node_Type::EXPRESSION_BINARY_OPERATION_POINTER_NOT_EQUAL: return string_create_static("EXPRESSION_BINARY_OPERATION_POINTER_NOT_EQUAL");
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_LESS: return string_create_static("EXPRESSION_BINARY_OPERATION_LESS");
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_LESS_OR_EQUAL: return string_create_static("EXPRESSION_BINARY_OPERATION_LESS_OR_EQUAL");
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_GREATER: return string_create_static("EXPRESSION_BINARY_OPERATION_GREATER");
@@ -2780,9 +2811,33 @@ void ast_node_expression_append_to_string(Code_Source* code_source, AST_Node* no
     case AST_Node_Type::EXPRESSION_BAKE:
         string_append_formated(string, "#bake");
         return;
+    case AST_Node_Type::EXPRESSION_CAST_RAW: 
+        string_append_formated(string, "cast_raw ");
+        ast_node_expression_append_to_string(code_source, node->child_start, string);
+        return;
+    case AST_Node_Type::EXPRESSION_CAST_PTR:
+        if (node->child_count == 1) {
+            string_append_formated(string, "cast_ptr ");
+            ast_node_expression_append_to_string(code_source, node->child_start, string);
+        }
+        else {
+            string_append_formated(string, "cast_ptr(");
+            ast_node_expression_append_to_string(code_source, node->child_start, string);
+            string_append_formated(string, ") ");
+            ast_node_expression_append_to_string(code_source, node->child_end, string);
+        }
+        return;
     case AST_Node_Type::EXPRESSION_CAST:
-        string_append_formated(string, "cast(...)");
-        ast_node_expression_append_to_string(code_source, node->child_count == 1 ? node->child_start : node->child_end, string);
+        if (node->child_count == 1) {
+            string_append_formated(string, "cast ");
+            ast_node_expression_append_to_string(code_source, node->child_start, string);
+        }
+        else {
+            string_append_formated(string, "cast(");
+            ast_node_expression_append_to_string(code_source, node->child_start, string);
+            string_append_formated(string, ") ");
+            ast_node_expression_append_to_string(code_source, node->child_end, string);
+        }
         return;
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_ADDITION: bin_op = true, bin_op_str = "+"; break;
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_SUBTRACTION: bin_op = true, bin_op_str = "-"; break;
@@ -2793,6 +2848,8 @@ void ast_node_expression_append_to_string(Code_Source* code_source, AST_Node* no
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_OR: bin_op = true, bin_op_str = "||"; break;
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_EQUAL: bin_op = true, bin_op_str = "=="; break;
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_NOT_EQUAL: bin_op = true, bin_op_str = "!="; break;
+    case AST_Node_Type::EXPRESSION_BINARY_OPERATION_POINTER_EQUAL: bin_op = true, bin_op_str = "*!="; break;
+    case AST_Node_Type::EXPRESSION_BINARY_OPERATION_POINTER_NOT_EQUAL: bin_op = true, bin_op_str = "*!="; break;
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_LESS: bin_op = true, bin_op_str = "<"; break;
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_LESS_OR_EQUAL: bin_op = true, bin_op_str = "<="; break;
     case AST_Node_Type::EXPRESSION_BINARY_OPERATION_GREATER: bin_op = true, bin_op_str = ">"; break;

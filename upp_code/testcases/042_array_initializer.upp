@@ -41,5 +41,5 @@ main :: ()
     // Since there is no 0 sized array (Types without a size do no exist)
     // empty array initializers return a Slice of size 0 and nullptr
     slice := int.[];
-    assert(slice.size == 0 && slice.data == null);
+    assert(slice.size == 0 && slice.data *== null);
 }

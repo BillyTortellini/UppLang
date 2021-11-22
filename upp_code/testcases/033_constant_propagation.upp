@@ -19,7 +19,7 @@ main :: ()
     assert(arr_3.size == 20);
     
     size_2: int = size - 3;
-    arr_4: [size]int;
+    arr_4: [size_2]int;
     assert(arr_4.size == 17);
     
     // This doesn't work anymore if a pointer to a variable is taken, or if 

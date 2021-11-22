@@ -118,7 +118,7 @@ main :: ()
         Dynamic_Array<Player>~push_back(*players, p5);
     
         count = 0;
-        Dynamic_Array<Player>~for_each(*players, *count_player_lvl);
+        Dynamic_Array<Player>~for_each(*players, count_player_lvl);
         assert(count == 15);
     }
 }

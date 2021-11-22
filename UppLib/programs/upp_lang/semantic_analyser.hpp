@@ -592,10 +592,10 @@ ERRORS
 */
 enum class Expression_Context_Type
 {
+    TYPE_KNOWN,
     ARITHMETIC_OPERAND, // + - * / %, unary -, requires primitive type either int or float
     UNKNOWN,
     FUNCTION_CALL, // Requires some type of function
-    TYPE_KNOWN,
     TYPE_EXPECTED,
     ARRAY,
     MEMBER_ACCESS, // Only valid on enums, structs, slices and arrays
@@ -606,6 +606,7 @@ struct Expression_Context
 {
     Expression_Context_Type type;
     Type_Signature* signature;
+    bool enable_pointer_conversion;
 };
 
 enum class Expected_Type_Classes
@@ -659,6 +660,10 @@ enum class Semantic_Error_Type
     INVALID_TYPE_DELETE,
     INVALID_TYPE_BAKE_MUST_BE_PRIMITIVE,
     INVALID_TYPE_ENUM_VALUE,
+    INVALID_TYPE_EXPECTED_POINTER,
+    INVALID_TYPE_CAST_RAW_REQUIRES_POINTER,
+    INVALID_TYPE_CAST_PTR_REQUIRES_U64,
+    INVALID_TYPE_CAST_PTR_DESTINATION_MUST_BE_PTR,
 
     ENUM_VALUE_MUST_BE_COMPILE_TIME_KNOWN,
     ENUM_VALUE_MUST_BE_UNIQUE,
@@ -689,6 +694,7 @@ enum class Semantic_Error_Type
     EXPRESSION_INVALID_CAST,
     EXPRESSION_MEMBER_NOT_FOUND,
     EXPRESSION_ADDRESS_MUST_NOT_BE_OF_TEMPORARY_RESULT,
+    CANNOT_TAKE_POINTER_OF_FUNCTION,
     EXPRESSION_BINARY_OP_TYPES_MUST_MATCH,
     EXPRESSION_STATEMENT_MUST_BE_FUNCTION_CALL,
 

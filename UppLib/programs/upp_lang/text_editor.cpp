@@ -55,14 +55,14 @@ void text_change_apply(Text_Change* change, Text_Editor* editor)
     {
     case Text_Change_Type::STRING_DELETION: {
         text_delete_slice(&editor->text, change->slice);
-        editor->cursor_position = change->slice.start;
+        //editor->cursor_position = change->slice.start;
         text_position_sanitize(&editor->cursor_position, editor->text);
         break;
     }
     case Text_Change_Type::STRING_INSERTION: {
         text_insert_string(&editor->text, change->slice.start, change->string);
-        editor->cursor_position = change->slice.end;
-        text_position_sanitize(&editor->cursor_position, editor->text);
+        //editor->cursor_position = change->slice.end;
+        //text_position_sanitize(&editor->cursor_position, editor->text);
         break;
     }
     case Text_Change_Type::CHARACTER_DELETION: {
@@ -1938,11 +1938,39 @@ void normal_mode_command_execute(Normal_Mode_Command command, Text_Editor* edito
         text_editor_clamp_cursor(editor);
         break;
     }
-    case Normal_Mode_Command_Type::YANK_MOTION: {
-        Text_Slice slice = motion_evaluate_at_position(command.motion, editor->cursor_position, editor);
+    case Normal_Mode_Command_Type::YANK_MOTION: 
+    {
+        Text_Slice yank_slice;
+        if (command.motion.motion_type == Motion_Type::MOVEMENT &&
+            (command.motion.movement.type == Movement_Type::MOVE_UP || command.motion.movement.type == Movement_Type::MOVE_DOWN))
+        {
+            // Handle this as an line delete
+            int line_start = editor->cursor_position.line;
+            int line_end = editor->cursor_position.line;
+            if (command.motion.movement.type == Movement_Type::MOVE_UP) {
+                line_start -= command.repeat_count * command.motion.repeat_count * command.motion.movement.repeat_count;
+            }
+            else {
+                line_end += command.repeat_count * command.motion.repeat_count * command.motion.movement.repeat_count;
+            }
+            Text_Position start = text_position_make(line_start, 0);
+            Text_Position end = text_position_make(line_end + 1, 0);
+            if (end.line >= editor->text.size) {
+                end = text_position_make_end(&editor->text);
+                text_position_sanitize(&start, editor->text);
+                start = text_position_previous(start, editor->text);
+            }
+            editor->last_yank_was_line = true;
+            yank_slice = text_slice_make(start, end);
+        }
+        else
+        {
+            yank_slice = motion_evaluate_at_position(command.motion, editor->cursor_position, editor);
+            editor->last_yank_was_line = false;
+        }
+
         string_reset(&editor->yanked_string);
-        text_append_slice_to_string(editor->text, slice, &editor->yanked_string);
-        editor->last_yank_was_line = false;
+        text_append_slice_to_string(editor->text, yank_slice, &editor->yanked_string);
         break;
     }
     case Normal_Mode_Command_Type::YANK_LINE: {
@@ -1961,38 +1989,71 @@ void normal_mode_command_execute(Normal_Mode_Command command, Text_Editor* edito
         editor->last_yank_was_line = true;
         break;
     }
-    case Normal_Mode_Command_Type::PUT_BEFORE_CURSOR: {
+    case Normal_Mode_Command_Type::PUT_BEFORE_CURSOR: 
+    {
+        Text_Position insert_pos = editor->cursor_position;
+        Text_Position next_edit_pos = editor->cursor_position;
         if (editor->last_yank_was_line) {
-            Text_Position start_pos = editor->cursor_position;
-            Text_Position pos = editor->cursor_position;
-            pos.character = 0;
-            text_position_sanitize(&pos, editor->text);
-            String copy = string_create(editor->yanked_string.characters);
-            text_history_insert_string(&editor->history, pos, copy);
-            editor->cursor_position = start_pos;
-            text_editor_clamp_cursor(editor);
-            break;
+            insert_pos = editor->cursor_position;
+            insert_pos.character = 0;
+            text_position_sanitize(&insert_pos, editor->text);
+            next_edit_pos = insert_pos;
+            for (int i = 0; i < editor->yanked_string.size; i++) {
+                if (editor->yanked_string.characters[i] != ' ' &&
+                    editor->yanked_string.characters[i] != '\t') break;
+                next_edit_pos.character++;
+            }
         }
-        String copy = string_create_from_string_with_extra_capacity(&editor->yanked_string, 0);
-        text_history_insert_string(&editor->history, editor->cursor_position, copy);
+        else {
+            for (int i = 0; i < editor->yanked_string.size-1; i++) {
+                if (editor->yanked_string.characters[i] == '\n') {
+                    next_edit_pos.line++;
+                }
+                else {
+                    next_edit_pos.character++;
+                }
+            }
+        }
+
+        String copy = string_create(editor->yanked_string.characters);
+        text_history_insert_string(&editor->history, insert_pos, copy);
+        editor->cursor_position = next_edit_pos;
+        text_editor_clamp_cursor(editor);
+        editor->horizontal_position = editor->cursor_position.character;
         break;
     }
-    case Normal_Mode_Command_Type::PUT_AFTER_CURSOR: {
+    case Normal_Mode_Command_Type::PUT_AFTER_CURSOR: 
+    {
+        Text_Position insert_pos = editor->cursor_position;
+        Text_Position next_edit_pos = editor->cursor_position;
         if (editor->last_yank_was_line) {
-            Text_Position start_pos = editor->cursor_position;
-            Text_Position pos = editor->cursor_position;
-            pos.character = 0;
-            pos.line++;
-            text_position_sanitize(&pos, editor->text);
-            String copy = string_create_from_string_with_extra_capacity(&editor->yanked_string, 0);
-            text_history_insert_string(&editor->history, pos, copy);
-            editor->cursor_position = start_pos;
-            text_editor_clamp_cursor(editor);
-            break;
+            insert_pos = editor->cursor_position;
+            insert_pos.character = 0;
+            insert_pos.line++;
+            text_position_sanitize(&insert_pos, editor->text);
+            next_edit_pos = insert_pos;
+            for (int i = 0; i < editor->yanked_string.size; i++) {
+                if (editor->yanked_string.characters[i] != ' ' &&
+                    editor->yanked_string.characters[i] != '\t') break;
+                next_edit_pos.character++;
+            }
         }
-        editor->cursor_position = text_position_next(editor->cursor_position, editor->text);
+        else {
+            for (int i = 0; i < editor->yanked_string.size-1; i++) {
+                if (editor->yanked_string.characters[i] == '\n') {
+                    next_edit_pos.line++;
+                }
+                else {
+                    next_edit_pos.character++;
+                }
+            }
+        }
+
         String copy = string_create_from_string_with_extra_capacity(&editor->yanked_string, 0);
-        text_history_insert_string(&editor->history, editor->cursor_position, copy);
+        text_history_insert_string(&editor->history, insert_pos, copy);
+        editor->cursor_position = next_edit_pos;
+        text_editor_clamp_cursor(editor);
+        editor->horizontal_position = editor->cursor_position.character;
         break;
     }
     case Normal_Mode_Command_Type::MOVE_VIEWPORT_CURSOR_TOP: {

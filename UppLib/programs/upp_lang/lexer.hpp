@@ -26,6 +26,8 @@ enum class Token_Type
     NEW,
     DELETE_TOKEN,
     CAST,
+    CAST_RAW,
+    CAST_PTR,
     NULLPTR,
     DEFER,
     EXTERN,
@@ -59,6 +61,9 @@ enum class Token_Type
     COMPARISON_GREATER_EQUAL, // >=
     COMPARISON_EQUAL, // ==
     COMPARISON_NOT_EQUAL, // !=
+    COMPARISON_POINTER_EQUAL, // *==
+    COMPARISON_POINTER_NOT_EQUAL, // *!=
+
     // Boolean Logic operators
     LOGICAL_AND, // &&
     LOGICAL_OR, // || 

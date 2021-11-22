@@ -1,0 +1,17 @@
+main :: ()
+{
+    // Labels must not shadow each other
+    block_label:
+    {
+        i := 0;
+        while i < 10 while_label:
+        {
+            if i == 5 continue while_label;
+            i = i+1;
+            block_label:
+            {
+                i = i + 2;
+            }
+        }
+    }
+}
