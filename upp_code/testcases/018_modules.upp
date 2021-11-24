@@ -1,32 +1,32 @@
-module A
+A :: module
 {
-	Node :: struct {
-		value: int;
-	}	
+    Node :: struct {
+        value: int;
+    }   
 }
 
-module B
+B :: module
 {
-	Node :: struct {
-		value: bool;
-	}
-	// Stacked modules
-	module Maker
-	{
-		make :: () -> Node {
-			result: Node;
-			result.value = false;
-			return result;
-		}
-	}
+    Node :: struct {
+        value: bool;
+    }
+    // Stacked modules
+    Maker :: module
+    {
+        make :: () -> Node {
+            result: Node;
+            result.value = false;
+            return result;
+        }
+    }
 }
 
 main :: ()
 {
-	a: A~Node;
-	a.value = 5;
-	
-	b: B~Node;
-	b = B~Maker~make();
-	assert(b.value == false);
+    a: A~Node;
+    a.value = 5;
+    
+    b: B~Node;
+    b = B~Maker~make();
+    assert(b.value == false);
 }

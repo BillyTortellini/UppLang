@@ -1,19 +1,11 @@
 Next features:
 --------------
- * Comptime declarations (Inner functions, inner structs...)
- * Bake with non primitive values, maybe functions
- * Read-only variables (Changes in constant propagator)
- * Function overhaul, e.g. Non-Pointer parameters constant, Named parameter values in function calls
+ * Finish consistent definition rework
+ * Bake with non primitive values, baking function pointers
+ * Rework constant propagator
+ * Conversion function to pointer and back
 
  * Literal overhaul (Integers, floats, strings?, arrays are u64, array access with any int...)
-
- * Struct unpacking syntax, ignore syntax 
-     index, found := find_elem(arr, 2);
-     index, _ = find_elem(arr, 3);
-     _ = Hashtable~insert();
-     union {ipv4: int; ipv5 = _};
-
- * Conversion function to pointer and back
 
  * Templates rework (No more templated modules, templated types, templated functions)
  * Interpreter upgrade, call C-Functions, Custom allocator, check memory access
@@ -21,21 +13,27 @@ Next features:
  * Generating source code with runtime code execution
  * Annotations
  * Static Analyser
+
+ * Function overhaul, e.g. Non-Pointer parameters constant, Named parameter values in function calls
+ * Read-only variables
+ * Struct unpacking syntax, ignore syntax 
+     index, found := find_elem(arr, 2);
+     index, _ = find_elem(arr, 3);
+     _ = Hashtable~insert();
+     union {ipv4: int; ipv5 = _};
+
  
 
 
 Design:
-
+-------
+!!! Templated modules wont work now, I need to check how hard it is to implement them
 
 Implementation:
 ---------------
-Currently there exists the Definitions node, which may contain the following children:
- * STRUCT, C_UNION, UNION, ENUM
- * MODULE, MODULE_TEMPLATED
- * FUNCTION
- * VARIABLE_DEFINE_ASSIGN, VARIABLE_DEFINE_INFER, VARIABLE_DEFINITION
-
- * EXTERN_FUNCTION; EXTERN_LIB; EXTERN_HEADER; LOAD_FILE
+ * Fix all errors in the current testcases
+ * Check if current templates could be implemented in a simple way
+ * Constant propagation is currently broken
 
 Issues:
 -------
@@ -58,6 +56,22 @@ Would be really cool, but I think having some auto lambda function could also wo
 Generally lambdas could have an auto syntax, so i dont have to write the parameters + return value
     
 
+
+All extern source declarations:
+#load "whatever.upp";
+#extern "cstdio" { ID0 ID1 ID2 }
+#extern fn_name :: (); 
+#extern lib "test.lib"; 
+
+/*
+To be fair at some point I want to be able to load extern sources from code.
+#run {
+    Compiler~load_file("whatever.upp");
+    Compiler~define_extern_header("adder", (a:int, b:int)->int);
+    Compiler~load_c_header("cstdio");
+    Compiler~add_lib("test.lib");
+}
+*/
 
 
 

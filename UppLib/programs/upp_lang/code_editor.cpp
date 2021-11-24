@@ -196,6 +196,7 @@ vec3 symbol_type_to_color(Symbol_Type type)
     case Symbol_Type::MODULE: return MODULE_COLOR; 
     case Symbol_Type::TYPE: return TYPE_COLOR; 
     case Symbol_Type::VARIABLE: return VARIABLE_COLOR; 
+    case Symbol_Type::CONSTANT_VALUE: return VARIABLE_COLOR; 
     default: panic("");
     }
     return IDENTIFIER_FALLBACK_COLOR;
@@ -205,13 +206,7 @@ void code_editor_do_ast_syntax_highlighting(Code_Editor* editor, AST_Node* node,
 {
     Token_Range node_range = node->token_range;
     // Variables definition, module def, funciton def, parameters
-    if (node->type == AST_Node_Type::MODULE || node->type == AST_Node_Type::MODULE_TEMPLATED) {
-        Token_Range r = node_range;
-        r.start_index += 1;
-        r.end_index = r.start_index + 1;
-        text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, editor->compiler), MODULE_COLOR, BG_COLOR);
-    }
-    else if (node->type == AST_Node_Type::LOAD_FILE) {
+    if (node->type == AST_Node_Type::LOAD_FILE) {
         Token_Range r = node_range;
         r.end_index = r.start_index + 2;
         text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, editor->compiler), KEYWORD_COLOR, BG_COLOR);
@@ -219,14 +214,22 @@ void code_editor_do_ast_syntax_highlighting(Code_Editor* editor, AST_Node* node,
         r.end_index = r.start_index + 1;
         text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, editor->compiler), STRING_LITERAL_COLOR, BG_COLOR);
     }
-    else if (node->type == AST_Node_Type::STRUCT || node->type == AST_Node_Type::UNION || node->type == AST_Node_Type::ENUM) {
-        Token_Range r = node_range;
-        r.end_index = r.start_index + 1;
-        text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, editor->compiler), TYPE_COLOR, BG_COLOR);
+    else if (node->type == AST_Node_Type::COMPTIME_DEFINE_ASSIGN ||
+        node->type == AST_Node_Type::COMPTIME_DEFINE_INFER)
+    {
+        Symbol* symbol = symbol_table_find_symbol(symbol_table, node->id, false, symbol_reference_make_ignore(), &editor->compiler->analyser);
+        if (symbol != 0)
+        {
+            Token_Range r = node_range;
+            r.end_index = r.start_index + 1;
+            text_editor_add_highlight_from_slice(
+                editor->text_editor, token_range_to_text_slice(r, editor->compiler), symbol_type_to_color(symbol->type), BG_COLOR
+            );
+        }
     }
-    else if (node->type == AST_Node_Type::STATEMENT_VARIABLE_DEFINE_ASSIGN ||
-        node->type == AST_Node_Type::STATEMENT_VARIABLE_DEFINE_INFER ||
-        node->type == AST_Node_Type::STATEMENT_VARIABLE_DEFINITION)
+    else if (node->type == AST_Node_Type::VARIABLE_DEFINE_ASSIGN ||
+        node->type == AST_Node_Type::VARIABLE_DEFINE_INFER ||
+        node->type == AST_Node_Type::VARIABLE_DEFINITION)
     {
         Token_Range r = node_range;
         r.end_index = r.start_index + 1;
@@ -497,9 +500,21 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
 
         // Search if we are above an identifier, identifier_path, type_identifier, expression_variable_read
         AST_Node* node = code_editor_get_closest_node_to_text_position(editor, editor->text_editor->cursor_position);
-        if (ast_node_type_is_identifier_node(node->type))
         {
-            Symbol* symbol = code_editor_identifier_node_lookup(editor, node);
+            Symbol* symbol = 0;
+            Symbol_Table* symbol_table = code_editor_find_symbol_table_of_node(editor, node);
+            if (symbol_table != 0)
+            {
+                if (ast_node_type_is_identifier_node(node->type)) {
+                    symbol = code_editor_identifier_node_lookup(editor, node);
+                }
+                else if (node->type == AST_Node_Type::COMPTIME_DEFINE_ASSIGN || node->type == AST_Node_Type::COMPTIME_DEFINE_INFER ||
+                    node->type == AST_Node_Type::VARIABLE_DEFINE_ASSIGN || node->type == AST_Node_Type::VARIABLE_DEFINE_INFER || 
+                    node->type == AST_Node_Type::VARIABLE_DEFINITION) {
+                    symbol = symbol_table_find_symbol(symbol_table, node->id, false, symbol_reference_make_ignore(), &editor->compiler->analyser);
+                }
+            }
+
             if (symbol != 0)
             {
                 // Show context
@@ -541,7 +556,6 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
         }
 
         // Highlight references
-
         if (search_context) {
             editor->show_context_info = false;
         }

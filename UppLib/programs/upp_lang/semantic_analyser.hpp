@@ -346,8 +346,9 @@ struct ModTree_Program
 enum class Symbol_Type
 {
     FUNCTION,
-    TYPE, // Structs or others (Not implemented yet, would be Enums, Tagged Enums, Unions...)
-    VARIABLE, // Either local, global or parameter
+    TYPE, 
+    CONSTANT_VALUE, 
+    VARIABLE,
     MODULE,
 };
 
@@ -358,6 +359,7 @@ union Symbol_Options
     ModTree_Module* module;
     ModTree_Function* function;
     Type_Signature* type; // Structs, future: Enums, Unions
+    int constant_index;
 };
 
 struct Symbol;
@@ -405,6 +407,7 @@ struct Symbol_Reference
     Usage_Type type;
     AST_Node* reference_node;
 };
+Symbol_Reference symbol_reference_make_ignore();
 
 struct Symbol
 {
@@ -467,7 +470,7 @@ struct Analysis_Workload_Array_Size {
     Type_Signature* array_signature;
 };
 
-struct Analysis_Workload_Global
+struct Analysis_Workload_Global_Definition
 {
     ModTree_Module* parent_module;
     AST_Node* node;
@@ -517,6 +520,7 @@ struct Analysis_Workload_Function_Header
 
     AST_Node* function_node;
     AST_Node* next_parameter_node;
+    int parameter_index;
 };
 
 enum class Analysis_Workload_Type
@@ -525,7 +529,7 @@ enum class Analysis_Workload_Type
     CODE,
     STRUCT_BODY,
     ENUM_BODY,
-    GLOBAL,
+    GLOBAL_DEFINITION,
     ARRAY_SIZE,
 
     MODULE_ANALYSIS,
@@ -541,7 +545,7 @@ struct Analysis_Workload
         Analysis_Workload_Struct_Body struct_body;
         Analysis_Workload_Code code_block;
         Analysis_Workload_Function_Header function_header;
-        Analysis_Workload_Global global;
+        Analysis_Workload_Global_Definition global;
         Analysis_Workload_Array_Size array_size;
         Analysis_Workload_Module_Analysis module_analysis;
         Analysis_Workload_Extern_Header extern_header;
@@ -625,6 +629,7 @@ enum class Expression_Result_Any_Type
     EXPRESSION,
     TYPE,
     FUNCTION,
+    MODULE,
     ERROR_OCCURED,
     DEPENDENCY
 };
@@ -664,6 +669,12 @@ enum class Semantic_Error_Type
     INVALID_TYPE_CAST_RAW_REQUIRES_POINTER,
     INVALID_TYPE_CAST_PTR_REQUIRES_U64,
     INVALID_TYPE_CAST_PTR_DESTINATION_MUST_BE_PTR,
+
+    INVALID_TYPE_COMPTIME_DEFINITION,
+    COMPTIME_DEFINITION_MUST_BE_COMPTIME_KNOWN,
+    COMPTIME_MODULE_MUST_BE_INFERED,
+
+    MODULE_NOT_VALID_IN_THIS_CONTEXT,
 
     ENUM_VALUE_MUST_BE_COMPILE_TIME_KNOWN,
     ENUM_VALUE_MUST_BE_UNIQUE,
@@ -705,6 +716,12 @@ enum class Semantic_Error_Type
     TYPE_NOT_KNOWN_AT_COMPILE_TIME,
     EXPRESSION_IS_NOT_A_TYPE,
 
+    MAIN_CANNOT_BE_TEMPLATED,
+    MAIN_NOT_DEFINED,
+    MAIN_UNEXPECTED_SIGNATURE,
+    MAIN_CANNOT_BE_CALLED,
+    MAIN_MUST_BE_FUNCTION,
+
     BREAK_NOT_INSIDE_LOOP_OR_SWITCH,
     BREAK_LABLE_NOT_FOUND,
     CONTINUE_NOT_INSIDE_LOOP,
@@ -742,11 +759,7 @@ enum class Semantic_Error_Type
     OTHERS_UNFINISHED_WORKLOAD_FUNCTION_HEADER,
     OTHERS_UNFINISHED_WORKLOAD_CODE_BLOCK,
     OTHERS_UNFINISHED_WORKLOAD_TYPE_SIZE,
-    OTHERS_MAIN_CANNOT_BE_TEMPLATED,
     OTHERS_CANNOT_TAKE_ADDRESS_OF_MAIN,
-    OTHERS_MAIN_NOT_DEFINED,
-    OTHERS_MAIN_UNEXPECTED_SIGNATURE,
-    OTHERS_NO_CALLING_TO_MAIN,
     OTHERS_ASSIGNMENT_REQUIRES_MEMORY_ADDRESS,
     OTHERS_RETURN_EXPECTED_NO_VALUE,
     OTHERS_CANNOT_TAKE_ADDRESS_OF_HARDCODED_FUNCTION,
@@ -835,9 +848,10 @@ struct Expression_Location
 
 union Cached_Expression
 {
-    ModTree_Function* lambda;
+    ModTree_Function* function;
     ModTree_Function* bake_function;
     Type_Signature* type;
+    ModTree_Module* module;
 };
 
 struct Compiler;

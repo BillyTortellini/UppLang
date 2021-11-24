@@ -14,33 +14,27 @@ struct Token;
 
 
 /*
-    How do we differentiate call with function_type/lambda: With the identifier + calls have = syntax for named parameters
-        (x: int)
-
-    Currently, after :: there needs to be a function
-    I may want a parse_function_signature + a function_signature_to_function
+    Changes:
+    * remove expression_struct
+    * remove expression_enum
+    * remove expression_lambda
+    * remove expression function type
+    * Variable definition now not a statement anymore
+    * module is now an expression
 */
 enum class AST_Node_Type
 {
     // TOP-LEVEL DECLARATIONS
     ROOT, // Child 0: Definitions
-    DEFINITIONS, // Children: functions, globals, modules, structs or extern function declaration
+    DEFINITIONS, // Children: Extern/load declarations, constant_definition, variable_definition
     EXTERN_FUNCTION_DECLARATION, // id: function name Child 0: Type
     EXTERN_LIB_IMPORT, // id: lib filename
     EXTERN_HEADER_IMPORT, // id: header name, Children: IDENTIFIER_NAME
     LOAD_FILE, // id: filename
-    MODULE, // Child 0: Definitions
-    MODULE_TEMPLATED, // Child 0: Parameter_Block_Unnamed, Child 1: DEFINITIONS
-    STRUCT, // Children: Variable definitions
-    UNION, // Children: Variable definitions
-    C_UNION, // Children: Variable definitions
-    ENUM, // Children: Enum_Member
-    FUNCTION, // Child 0: Statement_Block, Child 1: Function_Signature
 
     // Building Blocks
     TEMPLATE_PARAMETERS, // Children: IDENTIFIER_NAME
     ENUM_MEMBER, // Optional<Child 0>: Expression
-    FUNCTION_SIGNATURE, // Child 0: Parameter_Block_Named, Child 1 (optional): Return-Type
     IDENTIFIER_NAME, // id defined
     IDENTIFIER_NAME_TEMPLATED, // Child 0: Parameter_Block_Unnamed
     IDENTIFIER_PATH, // Child 0: Identifier-Type, id defined
@@ -66,20 +60,20 @@ enum class AST_Node_Type
     STATEMENT_RETURN, // Child 0: Return-Expression
     STATEMENT_EXPRESSION, // Child 0: Expression
     STATEMENT_ASSIGNMENT, // Child 0: Destination-Expression, Child 1: Value-Expression
-    STATEMENT_VARIABLE_DEFINITION, // Child 0: Type index, id
-    STATEMENT_VARIABLE_DEFINE_ASSIGN, // Child 0: Type index, Child 1: Value-Expression
-    STATEMENT_VARIABLE_DEFINE_INFER, // Child 0: Expression
     STATEMENT_DELETE, // Child = expression
+
+    // DEFINITIONS
+    COMPTIME_DEFINE_ASSIGN, // Child 0: Expression
+    COMPTIME_DEFINE_INFER,  // Child 0: Type-Expression, Child 1: Value-Expression
+    VARIABLE_DEFINITION,    // Child 0: Type-Expression
+    VARIABLE_DEFINE_ASSIGN, // Child 0: Type-Expression, Child 1: Value-Expression
+    VARIABLE_DEFINE_INFER,  // Child 0: Expression
 
     // Expressions
     EXPRESSION_POINTER,    // Child 0: Expr
     EXPRESSION_IDENTIFIER, // Child 0: Identifier
     EXPRESSION_SLICE_TYPE, // []expr_0
     EXPRESSION_ARRAY_TYPE, // [expr_0]expr_1      
-    EXPRESSION_FUNCTION_TYPE, // Child 0: Function signature
-    EXPRESSION_STRUCT, // Child 0: STRUCT
-    EXPRESSION_ENUM, // Child 0: ENUM
-    EXPRESSION_LAMBDA, // Child 1: FUNCTION
     // Type_End
     EXPRESSION_LITERAL,   
     EXPRESSION_NEW, // Child 0: Type
@@ -116,6 +110,17 @@ enum class AST_Node_Type
     EXPRESSION_UNARY_OPERATION_NEGATE,
     EXPRESSION_UNARY_OPERATION_NOT,
     EXPRESSION_UNARY_OPERATION_DEREFERENCE,
+
+    // Previous top level nodes:
+    MODULE, // Child 0: Definitions
+    MODULE_TEMPLATED, // Child 0: Parameter_Block_Unnamed, Child 1: DEFINITIONS
+    FUNCTION, // Child 0: Statement_Block, Child 1: Function_Signature
+    FUNCTION_SIGNATURE, // Child 0: Parameter_Block_Named, Child 1 (optional): Return-Type
+    STRUCT, // Children: Variable definitions
+    UNION, // Children: Variable definitions
+    C_UNION, // Children: Variable definitions
+    ENUM, // Children: Enum_Member
+
 
     UNDEFINED, // Just for debugging
 };

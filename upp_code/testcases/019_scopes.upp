@@ -1,24 +1,24 @@
 main :: ()
 {
-	x := 5;
-	{
-		assert(x == 5);
-		x := 10;
-		assert(x == 10);
-		{
-			x := 15;
-			assert(x == 15);
-		}
-	}
-	assert(x == 5);
-	
-	test: Node~Node;
-	test.val = 17;
+    x := 5;
+    {
+        assert(x == 5);
+        x := 10;
+        assert(x == 10);
+        {
+            x := 15;
+            assert(x == 15);
+        }
+    }
+    assert(x == 5);
+    
+    test: Node~Node;
+    test.val = 17;
 }
 
 // Currently variables may only shadow other variables, and types may shadow module
-module Node
+Node :: module
 {
-	Node :: struct {val: int;}
+    Node :: struct {val: int;}
 }
 
