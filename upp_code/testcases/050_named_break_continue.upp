@@ -18,7 +18,7 @@ main :: ()
         i = 0;
         while i < 10 i_loop: {
             i = i + 1;
-            if i == 5 break i_loop;
+            if i == 5 {break i_loop;}
         }
         assert(i == 5);
     }
@@ -32,7 +32,7 @@ main :: ()
         {
             case .RED:
             val = 5;
-            if break_cond break color_switch;
+            if break_cond {break color_switch;}
             val = 10;
             case .GREEN:
         }
@@ -44,7 +44,7 @@ main :: ()
         {
             default:
             val = 5;
-            if break_cond break color_switch;
+            if break_cond {break color_switch;}
             val = 10;
             case .GREEN:
         }
@@ -58,7 +58,7 @@ main :: ()
         while i < 10 sum_loop:
         {
             i = i + 1;
-            if i >= 4 continue sum_loop;
+            if i >= 4 {continue sum_loop;}
             val = val + i;
         }
         assert(i == 10);
@@ -85,7 +85,7 @@ main :: ()
         if true if_lbl:
         {
             val = 10;
-            if true break if_lbl;
+            if true {break if_lbl;}
             val = 5;
         }
         assert(val == 10);
@@ -121,7 +121,7 @@ main :: ()
             {
                 val = val + 1;
                 j = j+1;
-                if j == 5 break inner;
+                if j == 5 {break inner;}
             }
             i = i+1;
         }
@@ -137,7 +137,7 @@ main :: ()
             {
                 val = val + 1;
                 j = j+1;
-                if j == 5 break outer;
+                if j == 5 {break outer;}
             }
             i = i+1;
         }

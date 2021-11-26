@@ -14,13 +14,9 @@ struct Token;
 
 
 /*
-    Changes:
-    * remove expression_struct
-    * remove expression_enum
-    * remove expression_lambda
-    * remove expression function type
-    * Variable definition now not a statement anymore
-    * module is now an expression
+    Thoughts:
+     <> Parenthesis Should be removed from bake and Identifer paths
+     Node~make(henlo);
 */
 enum class AST_Node_Type
 {
@@ -40,8 +36,9 @@ enum class AST_Node_Type
     IDENTIFIER_PATH, // Child 0: Identifier-Type, id defined
     IDENTIFIER_PATH_TEMPLATED, // Child 0: Parameter_Block_Unnamed, Child 1: Identifier
     PARAMETER_BLOCK_UNNAMED, // Children: Types
-    PARAMETER_BLOCK_NAMED, // Children: Named_Parameter
-    NAMED_PARAMETER, // Child 0: Type
+    PARAMETER_BLOCK_NAMED, // Children: Named_Parameter or Named constant parameter
+    NAMED_PARAMETER, // Child 0: Type-Expression
+    NAMED_COMPTIME_PARAMETER, // Child 0: Type-Expression
     MEMBER_INITIALIZER, // id: member name, Child 0: Expression;
     SWITCH_CASE, // Child 0: Expression, Child 1: Statement_Block
     SWITCH_DEFAULT_CASE, // Child 0: Statement_Block

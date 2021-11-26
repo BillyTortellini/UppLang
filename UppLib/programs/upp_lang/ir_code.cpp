@@ -623,7 +623,9 @@ IR_Data_Access ir_data_access_create_constant(IR_Generator* generator, Type_Sign
     access.is_memory_access = false;
     access.type = IR_Data_Access_Type::CONSTANT;
     access.option.constant_pool = &generator->compiler->constant_pool;
-    access.index = constant_pool_add_constant(&generator->compiler->constant_pool, signature, bytes);
+    Constant_Result result = constant_pool_add_constant(&generator->compiler->constant_pool, signature, bytes);
+    assert(result.status == Constant_Status::SUCCESS, "Must always work");
+    access.index = result.constant_index;
     return access;
 }
 

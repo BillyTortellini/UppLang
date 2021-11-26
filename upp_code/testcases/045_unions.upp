@@ -6,7 +6,7 @@ To address this problem, one could add a value that indicates
 what value is active at a given time, like this:
 */
 
-module C_Style
+C_Style :: module
 {
     C_Address_Tag :: enum 
     {

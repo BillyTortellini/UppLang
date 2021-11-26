@@ -34,6 +34,24 @@ struct Upp_Constant_Reference
     int buffer_destination_offset; 
 };
 
+enum class Constant_Status
+{
+    SUCCESS,
+    CONTAINS_VOID_TYPE,
+    CONTAINS_INVALID_POINTER_NOT_NULL,
+    CANNOT_SAVE_FUNCTIONS_YET,
+    CANNOT_SAVE_C_UNIONS_CONTAINING_REFERENCES,
+    CONTAINS_INVALID_UNION_TAG,
+    OUT_OF_MEMORY
+};
+const char* constant_status_to_string(Constant_Status status);
+
+struct Constant_Result
+{
+    Constant_Status status;
+    int constant_index;
+};
+
 struct Constant_Pool
 {
     Type_System* type_system;
@@ -41,8 +59,9 @@ struct Constant_Pool
     Dynamic_Array<Upp_Constant_Reference> references;
     Dynamic_Array<byte> buffer;
     Hashtable<void*, int> saved_pointers;
+    int max_buffer_size;
 };
-int constant_pool_add_constant(Constant_Pool* pool, Type_Signature* signature, Array<byte> bytes);
+Constant_Result constant_pool_add_constant(Constant_Pool* pool, Type_Signature* signature, Array<byte> bytes);
 
 struct Extern_Sources
 {

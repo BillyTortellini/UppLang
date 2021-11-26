@@ -88,11 +88,11 @@ any_adder :: (val: Any)
 
 string_compare :: (str1: String, str2: String) -> bool
 {
-    if str1.size != str2.size return false;
+    if str1.size != str2.size {return false;}
     i := 0;
     while i < str1.size
     {
-        if str1.character_buffer[i] != str2.character_buffer[i] return false;
+        if str1.character_buffer[i] != str2.character_buffer[i] {return false;}
         i = i + 1;
     }
     return true;

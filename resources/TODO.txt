@@ -1,16 +1,16 @@
 Next features:
 --------------
- * Finish consistent definition rework
- * Bake with non primitive values, baking function pointers
- * Rework constant propagator
- * Conversion function to pointer and back
-
- * Literal overhaul (Integers, floats, strings?, arrays are u64, array access with any int...)
-
  * Templates rework (No more templated modules, templated types, templated functions)
+
+ * Bake expressions, bake function pointers
+ * Conversion function to pointer and back
+ * Literal overhaul (Integers, floats, strings?, arrays are u64, array access with any int...)
+ * New with values?
+ * Array bounds check
+
  * Interpreter upgrade, call C-Functions, Custom allocator, check memory access
  * Macros and Iteration
- * Generating source code with runtime code execution
+ * Generating source code with runtime code execution (#insert_code {return "what the fuck";})
  * Annotations
  * Static Analyser
 
@@ -25,22 +25,167 @@ Next features:
  
 
 
+
 Design:
 -------
-!!! Templated modules wont work now, I need to check how hard it is to implement them
+foo :: ($T: Type, x: T) -> T {
+    other := x;
+    other.value = 5;
+    return other;
+}
 
 Implementation:
 ---------------
- * Fix all errors in the current testcases
- * Check if current templates could be implemented in a simple way
- * Constant propagation is currently broken
+Let's first start with the simplest thing:
+    foo :: ($value: int) -> int {
+        return value * 2;
+    }
+
+1. Parsing this
+2. Analysing this:
+    During header analyis, I will find that one argument
+
+x: Type: (a: int, b: int) -> int; // This is a function type
+x: Type: (a: $T, b: T) -> T;      // This is a polymorphic function type, so I probably cannot assign this to a value
+
+
 
 Issues:
 -------
+ - Templates are now more complicated, since you can define anything anywhere in code.
 
 Known Bugs:
 -----------
  - Sometimes active-switch is not found in switch-case nodes
+
+
+
+
+
+Design Discussion: Templates
+----------------------------
+Open Questions:
+ * Functions inside templated functions
+ * How does type-checking work for templated functions 
+
+Why are templates usefull/what purpose do they have?
+They are usefull because there are multiple usecases where a programmer wants to reuse the same Code with
+just change some small things about it. For example, to have a typesave Container, withouth templates, 
+one would either need other metaprogramming capabilities (E.g. Macros in C, some code-generation tool...)
+or sacrifice Type-Safety/Speed (E.g. use Any-Type, Java Object...). 
+This is especially true if you want Code that works on multiple types, but requires instances of the type to be on the stack,
+since this cannot easily be done without metaprogramming or custom assembly.
+Although the main use of this is with containers, it is also usefull for values, e.g. for Vectors, or Conditionall-Compilation, 
+or calling different functions without function pointers
+
+Lets first look at how other languages approach this problem:
+    Zig: There is the concept of comptime parameters, and types can be returned from functions, which are automatically
+    executed at compiletime I guess?
+    fn List(comptime T: type) type {
+        return struct {
+            items: []T,
+            len: usize,
+        };
+    }
+
+    C/C++: Here you use custom template syntax to indicate that the function/struct is using templates
+    template<typename T, int count>
+    struct Array {
+        T data[count];
+    };
+
+    Odin: 
+    ip: *int = *i;
+    If you put a $ before the variable definition, this means that it must be compile time known:
+    foo :: ($T: Type, slice: []T, index: int) -> T {
+        return slice[index];
+    }
+    foo(int, int.[1, 2, 3], 2); // Returns 3
+
+    If you put the $ before a parameter type, this means that the type is infered from the passed parameter
+    foo :: (slice: []$T, index: int) -> T {
+        return slice[index];
+    }
+    foo(int.[1, 2, 3], 1); // Returns 2;
+
+    Jai:
+    This is basically the same as in Odin, but there are also:
+     * #modify
+     * #bake (For parameters)
+
+How do I want to approach this problem?
+Probably the same as in Jai and Odin, but since I also have comptime code execution it will
+be more similar to Jai. 
+
+Two things that bother me:
+It seems like both Jai and Odin are kind-of using Duck-Typing in their Generic approach:
+    add :: (a: $T, b: T) -> T {return a + b;}
+    return_mem_x :: (a: $T) -> int {return a.x;}
+I don't understand how this can be analysed to check if the code is correct, e.g.
+    foo :: (a: $T)
+    {
+        x := a.x;
+        // Or
+        y := bar(a);
+        info := type_info(y);
+        x = other_fn(x, 15);
+        a.x = a.x * x;
+        x.value = 15;
+    }
+To be fair this seems possible to implement, template types are just able to be used in operations, e.g., but the result is not specified
+
+Mem_Interface :: struct(T: Type) {
+    access_mem: (value: *T) -> int;
+}
+But my first thought was that all operations on templated types must also be specified, except assignment
+    foo :: (a: $T, $interface: Mem_Interface(T))
+    {
+        x := interface.access_mem(a);
+    }
+
+But do I actually have any good reasons why this shouldn't be allowed?
+ * Without this, I can check that the templated thing works without Problems --> Probably wrong because of bake/modifiy
+ * With this, I already have easily defined interfaces/traits in the language for metaprogramming
+
+foo :: (a: $T)
+{
+    #run {
+        if (type_info(T).size < 8) {
+            Compiler~error("Size of Type must be greater than 8");
+        }
+    }
+    x := false;
+    y := x + 5; // Obviously I want this 2 error now
+    a :: size_of(T);
+    #insert {
+        str := "x = x + 1;";
+        return str;
+    }
+    #if a > 16
+    {
+    }
+    #else
+    {
+    }
+}
+// To be fair, until I have some crazy stuff, I probably just want to analyse and check if I can detect
+// any errors.
+
+partial_order :: (left: $T, right: T) -> bool;
+sort_array :: (array: []$T, $order: Partial_Order(T), $swap: Swap(T))
+{
+    if order.compare(array[i], array[j]) {
+    }
+}
+
+Currently I think this should just be allowed.
+Some things do:
+Do I consider overloaded operators for now?
+
+
+
+
+
 
 
 

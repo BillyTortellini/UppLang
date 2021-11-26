@@ -6,9 +6,9 @@ main :: ()
     In this language we have a Type-Type, which is intenally just an integer representing
     one of all types created in the language
     */
-    x: Type = int;
-    y: Type = *int;
-    z: Type = [5]bool;
+    x: Type : int;
+    y: Type : *int;
+    z: Type : [5]bool;
     
     /*
     Types can be compared to one another with != and ==, but they cannot be casted
@@ -55,7 +55,7 @@ main :: ()
     /*
     This can be used like a typedef in C/C++
     */
-    add_fn_type: Type = (a: int, b: int) -> int;
+    add_fn_type :: (a: int, b: int) -> int;
     add_fn: add_fn_type;
     add_fn = adder;
     sum := add_fn(2, 3);

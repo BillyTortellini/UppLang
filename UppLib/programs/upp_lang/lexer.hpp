@@ -47,6 +47,7 @@ enum class Token_Type
     ARROW,        // ->
     HASHTAG,      // #
     TILDE,        // ~
+    DOLLAR,       // $
     // Operations
     OP_ASSIGNMENT, // =
     OP_PLUS, // +

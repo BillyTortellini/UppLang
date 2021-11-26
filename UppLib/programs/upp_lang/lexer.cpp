@@ -72,6 +72,7 @@ const char* token_type_to_string(Token_Type type)
     case Token_Type::CLOSED_BRACKETS: return "CLOSED_SQUARE_BRACKET";
     case Token_Type::HASHTAG: return "#";
     case Token_Type::TILDE: return "~";
+    case Token_Type::DOLLAR: return "$";
     case Token_Type::OP_ASSIGNMENT: return "OP_ASSIGNMENT";
     case Token_Type::OP_PLUS: return "OP_PLUS";
     case Token_Type::OP_MINUS: return "OP_MINUS";
@@ -403,6 +404,11 @@ void lexer_lex(Lexer* lexer, String* code, Identifier_Pool* identifier_pool)
         }
         case '.':
             dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::DOT, token_attribute_make_empty(), line_number, character_pos, 1, index));
+            character_pos++;
+            index++;
+            continue;
+        case '$':
+            dynamic_array_push_back(&lexer->tokens, token_make(Token_Type::DOLLAR, token_attribute_make_empty(), line_number, character_pos, 1, index));
             character_pos++;
             index++;
             continue;

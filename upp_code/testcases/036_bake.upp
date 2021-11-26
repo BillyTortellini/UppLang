@@ -1,16 +1,16 @@
 fib :: (n: int) -> int 
 {
-    if n < 2 return 1;
+    if n < 2 {return 1;}
     return fib(n-1) + fib(n-2);
 }
 
 main :: ()
 {
-    // But what if know we can calculate a value, but the constant propagation just cannot evaluate it?
+    // But what if know we can calculate a value, but normal constant evaluation cannot evaluate the expression
     // This is where we use bake, which does a partial compile to bytecode, and then executes the code
     
     // Wont work: arr: [doubler(fib(5))];
-    x: int = #bake<int>{return doubler(fib(5));};
+    x :: #bake<int>{return doubler(fib(5));};
     arr: [x]bool;
     assert(arr.size == doubler(fib(5)));
     

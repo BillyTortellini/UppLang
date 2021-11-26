@@ -1375,6 +1375,7 @@ bool ast_parser_parse_statement(AST_Parser* parser, AST_Node* parent)
     if (ast_parser_test_next_token(parser, Token_Type::SWITCH))
     {
         node->type = AST_Node_Type::STATEMENT_SWITCH;
+        parser->index++;
         if (!ast_parser_parse_expression(parser, node)) {
             ast_parser_checkpoint_reset(checkpoint);
             return false;
@@ -1472,9 +1473,17 @@ bool ast_parser_parse_statement(AST_Parser* parser, AST_Node* parent)
         {
             node->type = AST_Node_Type::STATEMENT_IF_ELSE;
             parser->index++;
-            if (!ast_parser_parse_statement_block(parser, node, true)) {
-                ast_parser_checkpoint_reset(checkpoint);
-                return false;
+            if (ast_parser_test_next_token(parser, Token_Type::IF)) {
+                if (!ast_parser_parse_statement_or_block(parser, node, true)) {
+                    ast_parser_checkpoint_reset(checkpoint);
+                    return false;
+                }
+            }
+            else {
+                if (!ast_parser_parse_statement_block(parser, node, true)) {
+                    ast_parser_checkpoint_reset(checkpoint);
+                    return false;
+                }
             }
         }
         node->token_range = token_range_make(checkpoint.rewind_token_index, parser->index);
@@ -2087,7 +2096,8 @@ void ast_parser_check_sanity(AST_Parser* parser, AST_Node* node)
             break;
         case AST_Node_Type::PARAMETER_BLOCK_NAMED:
             while (child != 0) {
-                assert(child->type == AST_Node_Type::NAMED_PARAMETER, "");
+                assert(child->type == AST_Node_Type::NAMED_PARAMETER ||
+                       child->type == AST_Node_Type::NAMED_COMPTIME_PARAMETER, "");
                 child = child->neighbor;
             }
             break;
@@ -2105,6 +2115,7 @@ void ast_parser_check_sanity(AST_Parser* parser, AST_Node* node)
             }
             break;
         case AST_Node_Type::EXPRESSION_SLICE_TYPE:
+        case AST_Node_Type::NAMED_COMPTIME_PARAMETER:
         case AST_Node_Type::NAMED_PARAMETER:
             assert(node->child_count == 1, "");
             if (!ast_node_type_is_expression(child->type)) {
@@ -2502,6 +2513,7 @@ String ast_node_type_to_string(AST_Node_Type type)
     case AST_Node_Type::EXPRESSION_SLICE_TYPE: return string_create_static("EXPRESSION_SLICE_TYPE");
     case AST_Node_Type::PARAMETER_BLOCK_UNNAMED: return string_create_static("PARAMETER_BLOCK_UNNAMED");
     case AST_Node_Type::PARAMETER_BLOCK_NAMED: return string_create_static("PARAMETER_BLOCK_NAMED");
+    case AST_Node_Type::NAMED_COMPTIME_PARAMETER: return string_create_static("NAMED_COMPTIME_PARAMETER");
     case AST_Node_Type::NAMED_PARAMETER: return string_create_static("PARAMETER");
     case AST_Node_Type::STATEMENT_DEFER: return string_create_static("STATEMENT_DEFER");
     case AST_Node_Type::STATEMENT_BLOCK: return string_create_static("STATEMENT_BLOCK");

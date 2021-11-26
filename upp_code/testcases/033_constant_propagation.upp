@@ -12,16 +12,13 @@ main :: ()
     arr_2: [arr_1.size]int;
     assert(arr_2.size == 15);
     
-    // This also works with simple variables and variable assignments
-    size: int = 10;
-    size = size * 2;
-    arr_3: [size]int;
+    // This also works with comptime definitions
+    size: int: 10;
+    size_double :: size * 2;
+    arr_3: [size_double]int;
     assert(arr_3.size == 20);
     
-    size_2: int = size - 3;
+    size_2: int : size_double - 3;
     arr_4: [size_2]int;
     assert(arr_4.size == 17);
-    
-    // This doesn't work anymore if a pointer to a variable is taken, or if 
-    // there is a control flow change, which is shown in the next tests
 }

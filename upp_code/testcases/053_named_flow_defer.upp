@@ -12,7 +12,7 @@ main :: ()
         while i < 10 i_loop:
         {
             defer i = i + 1;
-            if i % 2 == 0 continue i_loop;
+            if i % 2 == 0 {continue i_loop;}
             even_count = even_count + 1;
         }
         assert(even_count == 5);
@@ -24,7 +24,7 @@ main :: ()
         val := 0;
         block:
         {
-            if true break block;
+            if true {break block;}
             defer val = 10;
         }
         assert(val == 0);
@@ -34,7 +34,7 @@ main :: ()
         block:
         {
             defer val = 10;
-            if true break block;
+            if true {break block;}
             val = 100;
         }
         assert(val == 10);
@@ -46,7 +46,7 @@ main :: ()
             defer val = 10;
             inner: 
             {
-                if true break inner;
+                if true {break inner;}
             }
             assert(val == 0);
         }

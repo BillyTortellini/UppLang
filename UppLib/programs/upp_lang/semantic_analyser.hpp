@@ -38,6 +38,7 @@ struct ModTree_Function;
 struct ModTree_Variable;
 struct ModTree_Expression;
 struct AST_Node;
+enum class Constant_Status;
 
 /*
     MODTREE
@@ -86,12 +87,6 @@ enum class ModTree_Cast_Type
     FROM_ANY,
 };
 
-struct Constant_Value
-{
-    Type_Signature* signature;
-    void* data;
-};
-
 struct Member_Initializer
 {
     Struct_Member member;
@@ -113,13 +108,14 @@ enum class ModTree_Expression_Type
     ARRAY_INITIALIZER,
     STRUCT_INITIALIZER,
     CAST,
+
+    ERROR_EXPR, // This is used if an operation creates an error, but analysis can still continue
 };
 
 struct ModTree_Expression
 {
     ModTree_Expression_Type expression_type;
     Type_Signature* result_type;
-    Constant_Value constant_value;
     union 
     {
         struct 
@@ -274,19 +270,11 @@ struct ModTree_Variable_Origin
     } options;
 };
 
-struct ModTree_Variable_Value
-{
-    Constant_Value constant_value;
-    ModTree_Block* last_write_block; // If null, variable was not initialized yet
-    bool address_was_taken; // If the variable address was taken, we must not write make value valid again
-};
-
 struct ModTree_Variable
 {
     Type_Signature* data_type;
     ModTree_Variable_Origin origin;
     Symbol* symbol; // May be null
-    ModTree_Variable_Value value;
 };
 
 enum class ModTree_Function_Type
@@ -594,25 +582,6 @@ struct Waiting_Workload
 /*
 ERRORS
 */
-enum class Expression_Context_Type
-{
-    TYPE_KNOWN,
-    ARITHMETIC_OPERAND, // + - * / %, unary -, requires primitive type either int or float
-    UNKNOWN,
-    FUNCTION_CALL, // Requires some type of function
-    TYPE_EXPECTED,
-    ARRAY,
-    MEMBER_ACCESS, // Only valid on enums, structs, slices and arrays
-    SWITCH_CONDITION, // Enums
-};
-
-struct Expression_Context
-{
-    Expression_Context_Type type;
-    Type_Signature* signature;
-    bool enable_pointer_conversion;
-};
-
 enum class Expected_Type_Classes
 {
     PRIMITIVE,
@@ -663,7 +632,6 @@ enum class Semantic_Error_Type
     INVALID_TYPE_ASSIGNMENT,
     INVALID_TYPE_RETURN,
     INVALID_TYPE_DELETE,
-    INVALID_TYPE_BAKE_MUST_BE_PRIMITIVE,
     INVALID_TYPE_ENUM_VALUE,
     INVALID_TYPE_EXPECTED_POINTER,
     INVALID_TYPE_CAST_RAW_REQUIRES_POINTER,
@@ -673,6 +641,8 @@ enum class Semantic_Error_Type
     INVALID_TYPE_COMPTIME_DEFINITION,
     COMPTIME_DEFINITION_MUST_BE_COMPTIME_KNOWN,
     COMPTIME_MODULE_MUST_BE_INFERED,
+
+    CONSTANT_POOL_ERROR,
 
     MODULE_NOT_VALID_IN_THIS_CONTEXT,
 
@@ -794,6 +764,7 @@ struct Semantic_Error
     Type_Signature* binary_op_left_type;
     Type_Signature* binary_op_right_type;
     Expression_Result_Any_Type expression_type;
+    Constant_Status constant_error_status;
 };
 
 struct Token_Range;
@@ -828,16 +799,6 @@ struct Partial_Compile_Result
 {
     Analysis_Result_Type type;
     Workload_Dependency dependency;
-};
-
-struct Bytecode_Execute_Result
-{
-    Analysis_Result_Type type;
-    union
-    {
-        Constant_Value value;
-        Workload_Dependency dependency;
-    } options;
 };
 
 struct Expression_Location
