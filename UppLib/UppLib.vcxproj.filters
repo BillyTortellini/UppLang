@@ -276,6 +276,9 @@
     <ClInclude Include="datastructures\list.hpp">
       <Filter>Header Files\Datastructures</Filter>
     </ClInclude>
+    <ClInclude Include="programs\upp_lang\symbol_analyser.hpp">
+      <Filter>Header Files\Programs\Upp_Lang</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="datastructures\array.cpp">
@@ -445,6 +448,9 @@
     </ClCompile>
     <ClCompile Include="datastructures\stack_allocator.cpp">
       <Filter>Source Files\Datastructures</Filter>
+    </ClCompile>
+    <ClCompile Include="programs\upp_lang\symbol_analyser.cpp">
+      <Filter>Source Files\Programs\Upp_Lang</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

@@ -45,6 +45,7 @@
     <ClInclude Include="programs\upp_lang\ir_code.hpp" />
     <ClInclude Include="programs\upp_lang\semantic_analyser.hpp" />
     <ClInclude Include="programs\upp_lang\lexer.hpp" />
+    <ClInclude Include="programs\upp_lang\symbol_analyser.hpp" />
     <ClInclude Include="programs\upp_lang\test_renderer.hpp" />
     <ClInclude Include="programs\upp_lang\text.hpp" />
     <ClInclude Include="programs\upp_lang\text_editor.hpp" />
@@ -104,6 +105,7 @@
     <ClCompile Include="programs\upp_lang\ir_code.cpp" />
     <ClCompile Include="programs\upp_lang\semantic_analyser.cpp" />
     <ClCompile Include="programs\upp_lang\lexer.cpp" />
+    <ClCompile Include="programs\upp_lang\symbol_analyser.cpp" />
     <ClCompile Include="programs\upp_lang\test_renderer.cpp" />
     <ClCompile Include="programs\upp_lang\text.cpp" />
     <ClCompile Include="programs\upp_lang\text_editor.cpp" />

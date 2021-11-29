@@ -262,11 +262,6 @@ ModTree_Polymorphic_Function* modtree_program_create_polymorphic_function_empty(
     return result;
 }
 
-ModTree_Function* modtree_polymorphic_function_instanciate(Semantic_Analyser* analyser,
-    ModTree_Polymorphic_Function* poly_function, Dynamic_Array<Upp_Constant> comptime_arguments, Symbol_Table* symbol_table, ModTree_Module* module)
-{
-}
-
 void function_instance_destroy(Polymorphic_Instance instance)
 {
     modtree_function_destroy(instance.function);
@@ -4746,13 +4741,12 @@ void semantic_analyser_execute_workloads(Semantic_Analyser* analyser)
                 // Create function instance
                 Polymorphic_Instance instance;
                 assert(work->symbol_table->origin.type == Symbol_Table_Origin_Type::MODULE, "");
-                /*
                 instance.function = modtree_function_make_empty(
                     analyser, work->symbol_table->origin.options.module, work->symbol_table,
-                    type_system_make_function(&analyser->compiler->type_system, param_types, poly_function->return_type),
+                    type_system_make_function(&analyser->compiler->type_system, param_types, return_type),
                     0, work->function_node
                 );
-                */
+                instance.argument_constants = dynamic_array_create_empty<Upp_Constant>(1);
 
                 // Create parameters
                 for (int i = 0; i < poly_function->parameters.size; i++)
