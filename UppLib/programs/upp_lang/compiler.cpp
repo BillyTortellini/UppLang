@@ -16,7 +16,7 @@ bool enable_c_compilation = true;
 // Output stages
 bool output_lexing = false;
 bool output_identifiers = false;
-bool output_ast = false;
+bool output_ast = true;
 bool output_type_system = false;
 bool output_root_table = false;
 bool output_ir = false;
@@ -219,6 +219,7 @@ const char* constant_status_to_string(Constant_Status status)
     case Constant_Status::CANNOT_SAVE_C_UNIONS_CONTAINING_REFERENCES: return "CANNOT_SAVE_C_UNIONS_CONTAINING_REFERENCES";
     case Constant_Status::CONTAINS_INVALID_UNION_TAG: return "CONTAINS_INVALID_UNION_TAG";
     case Constant_Status::OUT_OF_MEMORY: return "OUT_OF_MEMORY";
+    case Constant_Status::INVALID_SLICE_SIZE: return "INVALID_SLICE_SIZE";
     default: panic("");
     }
     return 0;
@@ -254,16 +255,32 @@ bool type_signature_contains_references(Type_Signature* signature)
     return false;
 }
 
+bool constant_pool_compare_constants(Constant_Pool* pool, Upp_Constant a, Upp_Constant b)
+{
+    /*
+        It has to be assured that Struct-Constant Memory is initialized to zero,
+        otherwise memory_compare cannot be used here, since the padding bytes may be uninitialized and therefore random
+
+        Also, I could implement a deep comparison, but the use cases for that seem unclear
+    */
+
+    if (a.type != b.type) return false;
+    if (a.constant_index == b.constant_index || a.offset == b.offset) return true;
+
+    byte* pool_data = (byte*) pool->buffer.data;
+    byte* raw_data_a = &pool_data[a.offset];
+    byte* raw_data_b = &pool_data[b.offset];
+    Type_Signature* signature = a.type;
+    return memory_compare(raw_data_a, raw_data_b, signature->size);
+}
+
 Constant_Status constant_pool_search_references(Constant_Pool* pool, int data_offset, Type_Signature* signature)
 {
     void* raw_data = &pool->buffer[data_offset];
     switch (signature->type)
     {
     case Signature_Type::VOID_TYPE:
-        if (signature->options.pointer_child->type == Signature_Type::VOID_TYPE) {
-            return Constant_Status::CONTAINS_VOID_TYPE;
-        }
-        break;
+        return Constant_Status::CONTAINS_VOID_TYPE;
     case Signature_Type::PRIMITIVE:
         break;
     case Signature_Type::POINTER:
@@ -356,9 +373,11 @@ Constant_Status constant_pool_search_references(Constant_Pool* pool, int data_of
     {
         // Check if pointer is valid, if true, save slice data
         Upp_Slice_Base slice = *(Upp_Slice_Base*)raw_data;
-        assert(slice.size >= 0, "");
         if (slice.data_ptr == nullptr || slice.size == 0) {
             break;
+        }
+        if (slice.size <= 0) {
+            return Constant_Status::INVALID_SLICE_SIZE;
         }
         if (memory_is_readable(slice.data_ptr, signature->options.slice.element_type->size * slice.size)) 
         {
@@ -432,18 +451,21 @@ Constant_Result constant_pool_add_constant(Constant_Pool* pool, Type_Signature* 
     if (offset_result.status != Constant_Status::SUCCESS) {
         Constant_Result result;
         result.status = offset_result.status;
-        result.constant_index = -1;
+        result.constant.constant_index = -1;
+        result.constant.offset = -1;
+        result.constant.type = 0;
         return result;
     }
 
     Upp_Constant constant;
     constant.type = signature;
     constant.offset = offset_result.offset;
+    constant.constant_index = pool->constants.size;
     dynamic_array_push_back(&pool->constants, constant);
 
     Constant_Result result;
     result.status = Constant_Status::SUCCESS;
-    result.constant_index = pool->constants.size - 1;
+    result.constant = constant;
     return result;
 }
 

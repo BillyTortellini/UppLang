@@ -1,7 +1,9 @@
 Next features:
 --------------
+ * Analysis Process REFACTOR/REWORK
  * Templates rework (No more templated modules, templated types, templated functions)
 
+ * All Comptime Definitions should be order-independent
  * Bake expressions, bake function pointers
  * Conversion function to pointer and back
  * Literal overhaul (Integers, floats, strings?, arrays are u64, array access with any int...)
@@ -22,28 +24,117 @@ Next features:
      _ = Hashtable~insert();
      union {ipv4: int; ipv5 = _};
 
- 
 
+/*
+    poly :: ($T: Type, a: T, b: T) -> T {
+    }
 
+    I cannot analyse the argument types when I encounter the function
 
-Design:
--------
+    So what needs to change in AST_Node_Type::FUNCTION Analysis:
+        I just need to check if one argument is polymorphic, if it is, I am done
+
+*/
+
+Implementation:
+---------------
+Todo:
+ - Instanciation of Polymorphic functions
+ - Polymorphic Functions Note: Return type may be dependent on a constant argument
+ - Partial Compilations tracks dependencies of functions, but not of poly funciton instances, this has to be added
+ - Maybe we have a problem with shadowing, where shadows aren't detected anymore...
+ - Constant_Pool deduplication would be nice at some point
+
+Done:
+ - Rework Function Header analysis with Poly-Function
+
+Use-Case/Design:
+----------------
 foo :: ($T: Type, x: T) -> T {
     other := x;
     other.value = 5;
     return other;
 }
 
-Implementation:
----------------
+Facts:
+------
+ * A polymorphic function cannot be called, only an instance of it
+ * An instance will always have a valid type-signature (E.g. without comptime variables or polymorphic types)
+ * The only two usages after function declaration is: Taking a function pointer, or calling the function
+ * When ModTree function signature is 0, then a header analysis dependency is returned
+
+Implementation Helper Facts:
+ * ModTree function stores functions, but more importently, it is the argument to pass to the ir_code generator
+ * So it seems like having another Modtree-thing, e.g. ModTree_Poly_Function would be more fitting
+ * Symbols will then be able to refer to ModTree_Poly_Functions, expression results will return those...
+
+
+Code Ideas:
+-----------
+ - Modtree_Expression Cache could be generally implemented for statement analysis
+ - Function dependencies (For Partial Compilation) could be tracked through the generated modtree-code, not though symbols
+    This probably needs to be done if conditional compilation is implemented (#if)
+ - Comptime evaluation should be order independent
+ - Since Comptime Evaluation only works with Comptime Definitions, Block_Analysis doesn't need to be in one flow anymore
+ 
 Let's first start with the simplest thing:
     foo :: ($value: int) -> int {
         return value * 2;
     }
+    print_i32(foo(5));
+    // Value should be a constant in this case
+    foo :: ($value: int) {
+        arr: [value]int;
+    }
+    // But the values should already be usable during analysis:
+    foo :: ($value: int, array: [value]byte) {
+    }
+    // Or
+    foo :: ($T: Type) -> *T {
+        x: T;
+        return *x;
+    }
 
-1. Parsing this
+Analysis:
+Question: How do I store this? In the Type-Signature or in ModTree_Function, or in a new Thing?
+
+analyse_any usages:
+ * Function call (Function calls function)
+    -> Needs rework no matter what
+
+ * Type_of (Function works) 
+ * analyse_expression_value (Works, returns pointer)
+    -> Both would require an error check
+
+ * Member_access (Errors)
+ * Expression pointer (Errors)
+ * analyse expression_type (Errors)
+ * comptime expression (Works)
+    -> Can stay the same
+
+Some design decisions:
+Analysis of internal function will be different than external/hardcoded ones --> new Code-Path for Internal-Function
+
+What does the Computer need to do when:
+ * Analysing a polymorphic function
+    - Remember what parameters are polymorphic
+ * Analysing a Function_Call of polymorphic function
+    - Analyse all argument expressions
+    - If the function is polymorphic, check that the parameters are constant
+       ~ Instanciate the function with the given comptime values (E.g. Create new function signature, add new workload)
+       ~ Use the instanciated function, remove the comptime values from the arguments
+    ~ Add a call to the new function with the arguments
+  
+
 2. Analysing this:
-    During header analyis, I will find that one argument
+    - Normal Funciton-Signature analysis can stay the same, maybe add extra error that signature must not contain Comptime things
+    - Function header analysis is always on a function so it probably should return a function base
+
+A function now has a list of parameters with names + a list of comptime parameters
+To call a function, the following happens:
+ 1. Evaluate Comptime parameters if a function has those
+ 2. Match polymorphic types in parameters
+ 3. Check all normal parameters
 
 x: Type: (a: int, b: int) -> int; // This is a function type
 x: Type: (a: $T, b: T) -> T;      // This is a polymorphic function type, so I probably cannot assign this to a value
@@ -172,15 +263,24 @@ foo :: (a: $T)
 // any errors.
 
 partial_order :: (left: $T, right: T) -> bool;
-sort_array :: (array: []$T, $order: Partial_Order(T), $swap: Swap(T))
+sort_array :: (array: []$T, less_fn: (a: T, b: T) -> bool)
 {
-    if order.compare(array[i], array[j]) {
+    if less_fn(array[j], array[j])
+    {
     }
 }
 
-Currently I think this should just be allowed.
-Some things do:
-Do I consider overloaded operators for now?
+The reason that C++ has Constacts, Java has Interfaces + Generict matching thing and Rust has Traits is that
+in Polymorphic/Templated/Generic Code it is sometimes requires that a given type has some given properties.
+These could be:
+    * has a member of name x of type int
+    * has a member-function with a given signature
+    * has a given unary operator defined on it
+    * has an overloaded operator defined
+
+In Jai and Odin, it seems like you just get an error, but I feel like I just want to pass a constant function as parameter to
+handle these cases. Maybe I should checkout what Zig does.
+    
 
 
 

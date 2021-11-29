@@ -618,7 +618,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 constant_access.index = constant_pool_add_constant(
                     &generator->compiler->constant_pool, generator->compiler->type_system.i32_type,
                     array_create_static_as_bytes(&switch_case->value, 1)
-                ).constant_index;
+                ).constant.constant_index;
                 int constant_stack_offset = bytecode_generator_data_access_to_stack_offset(generator, constant_access);
 
                 bytecode_generator_add_instruction(generator,

@@ -17,6 +17,20 @@ struct Token;
     Thoughts:
      <> Parenthesis Should be removed from bake and Identifer paths
      Node~make(henlo);
+
+     Unnamed/Named parameters are the same
+     I think I want to remove 
+
+     Variable definition is:  ID: Expression;
+     Parameter is:            ID: Expression
+     hmmmmmmm
+     Assignment is: x = 5;
+     Named_Argument is: x = 5
+
+     Changes:
+      * ARGUMENTS now contains either Named or unnamed argument, not expressions
+      * MODULE_TEMPLATED Removed
+      * Struct_Initializer now with ARGUMENTS node
 */
 enum class AST_Node_Type
 {
@@ -29,21 +43,20 @@ enum class AST_Node_Type
     LOAD_FILE, // id: filename
 
     // Building Blocks
-    TEMPLATE_PARAMETERS, // Children: IDENTIFIER_NAME
-    ENUM_MEMBER, // Optional<Child 0>: Expression
     IDENTIFIER_NAME, // id defined
-    IDENTIFIER_NAME_TEMPLATED, // Child 0: Parameter_Block_Unnamed
     IDENTIFIER_PATH, // Child 0: Identifier-Type, id defined
-    IDENTIFIER_PATH_TEMPLATED, // Child 0: Parameter_Block_Unnamed, Child 1: Identifier
-    PARAMETER_BLOCK_UNNAMED, // Children: Types
-    PARAMETER_BLOCK_NAMED, // Children: Named_Parameter or Named constant parameter
-    NAMED_PARAMETER, // Child 0: Type-Expression
-    NAMED_COMPTIME_PARAMETER, // Child 0: Type-Expression
-    MEMBER_INITIALIZER, // id: member name, Child 0: Expression;
+
+    PARAMETER_BLOCK, // Children: Parameter or PARAMETER_COMPTIME
+    PARAMETER, // Child 0: Type-Expression
+    PARAMETER_COMPTIME, // Child 0: Type-Expression
+
+    ARGUMENTS, // Children: Named or Unnamed ARGUMENT
+    ARGUMENT_UNNAMED, // Child 0: Expressionl:
+    ARGUMENT_NAMED, // id: name, Child 0: Expression
+
+    ENUM_MEMBER, // Optional<Child 0>: Expression
     SWITCH_CASE, // Child 0: Expression, Child 1: Statement_Block
     SWITCH_DEFAULT_CASE, // Child 0: Statement_Block
-    ARGUMENTS, // Children: Expressions or Named arguments
-    NAMED_ARGUMENT, // id: name, Child 0: Expression
 
     // Statements
     STATEMENT_BLOCK, // Children: Statements, Optional: id = block_name
@@ -71,16 +84,17 @@ enum class AST_Node_Type
     EXPRESSION_IDENTIFIER, // Child 0: Identifier
     EXPRESSION_SLICE_TYPE, // []expr_0
     EXPRESSION_ARRAY_TYPE, // [expr_0]expr_1      
+
     // Type_End
     EXPRESSION_LITERAL,   
     EXPRESSION_NEW, // Child 0: Type
     EXPRESSION_NEW_ARRAY, // Child 0: Array size expression, Child 1: Type
     EXPRESSION_FUNCTION_CALL, // Child 0: Expression, Child 1: ARGUMENTS
     EXPRESSION_ARRAY_ACCESS, // Child 0: Access-to-Expression, Child 1: Index Expression
-    EXPRESSION_ARRAY_INITIALIZER, // Child 0: Type, Child 1-n: Initializor Expressions
-    EXPRESSION_STRUCT_INITIALIZER, // Child 0: Type, child 1-n: MEMBER_INITIALIZER
-    EXPRESSION_AUTO_ARRAY_INITIALIZER, // Child 0-n: Initializor Expressions
-    EXPRESSION_AUTO_STRUCT_INITIALIZER, // Child 1-n: MEMBER_INITIALIZER
+    EXPRESSION_ARRAY_INITIALIZER, // Child 0: Type, Child 1-n: Expressions
+    EXPRESSION_STRUCT_INITIALIZER, // Child 0: Type, Child 1: ARGUMENTS
+    EXPRESSION_AUTO_ARRAY_INITIALIZER, // Child 0-n: Expressions
+    EXPRESSION_AUTO_STRUCT_INITIALIZER, // Child 0: Arguments
     EXPRESSION_AUTO_ENUM, // ID: name of access member
     EXPRESSION_MEMBER_ACCESS, // Child 0: left side, id is the .what operator a.y.y[5].z
     EXPRESSION_CAST, // Either: Child 0: type, Child 1: Expression    OR    Child 0: Expression
@@ -89,6 +103,7 @@ enum class AST_Node_Type
     EXPRESSION_BAKE, // Child 0: type, Child 1: Statement_Block
     EXPRESSION_TYPE_INFO, // Child 0: Expression;
     EXPRESSION_TYPE_OF,   // Child 0: Expression
+
     EXPRESSION_BINARY_OPERATION_ADDITION,
     EXPRESSION_BINARY_OPERATION_SUBTRACTION,
     EXPRESSION_BINARY_OPERATION_DIVISION,
@@ -110,14 +125,12 @@ enum class AST_Node_Type
 
     // Previous top level nodes:
     MODULE, // Child 0: Definitions
-    MODULE_TEMPLATED, // Child 0: Parameter_Block_Unnamed, Child 1: DEFINITIONS
     FUNCTION, // Child 0: Statement_Block, Child 1: Function_Signature
     FUNCTION_SIGNATURE, // Child 0: Parameter_Block_Named, Child 1 (optional): Return-Type
     STRUCT, // Children: Variable definitions
     UNION, // Children: Variable definitions
     C_UNION, // Children: Variable definitions
     ENUM, // Children: Enum_Member
-
 
     UNDEFINED, // Just for debugging
 };

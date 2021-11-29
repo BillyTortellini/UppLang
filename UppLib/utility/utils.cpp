@@ -127,6 +127,11 @@ void memory_set_bytes(void* destination, u64 size, byte value) {
     memset(destination, value, size);
 }
 
+bool memory_compare(void* memory_a, void* memory_b, u64 compare_size)
+{
+    return memcmp(memory_a, memory_b, compare_size) == 0;
+}
+
 bool memory_is_readable(void* destination, u64 read_size)
 {
     MEMORY_BASIC_INFORMATION mbi = { 0 };

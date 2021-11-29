@@ -45,6 +45,7 @@ void* stack_allocator_allocate_size(Stack_Allocator* allocator, size_t size, siz
     }
     allocator->stack_pointer = next_aligned;
     void* data = &allocator->memory[allocator->current_pool_index][allocator->stack_pointer];
+    memory_set_bytes(data, size, 0);
     allocator->stack_pointer = end;
     return data;
 }

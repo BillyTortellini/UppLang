@@ -4,6 +4,16 @@
 #include "../../datastructures/hashtable.hpp"
 #include "../../datastructures/string.hpp"
 
+struct Type_Signature;
+struct String;
+
+struct Upp_Constant
+{
+    Type_Signature* type;
+    int offset;
+    int constant_index;
+};
+
 struct Token_Range
 {
     int start_index;
@@ -43,7 +53,6 @@ enum class Exit_Code
 };
 bool exit_code_is_valid(int value);
 
-struct Type_Signature;
 struct Extern_Function_Identifier
 {
     Type_Signature* function_signature;

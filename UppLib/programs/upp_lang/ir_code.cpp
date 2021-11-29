@@ -625,7 +625,7 @@ IR_Data_Access ir_data_access_create_constant(IR_Generator* generator, Type_Sign
     access.option.constant_pool = &generator->compiler->constant_pool;
     Constant_Result result = constant_pool_add_constant(&generator->compiler->constant_pool, signature, bytes);
     assert(result.status == Constant_Status::SUCCESS, "Must always work");
-    access.index = result.constant_index;
+    access.index = result.constant.constant_index;
     return access;
 }
 
@@ -714,7 +714,7 @@ IR_Data_Access ir_generator_generate_expression(IR_Generator* generator, IR_Code
     }
     case ModTree_Expression_Type::CONSTANT_READ: {
         IR_Data_Access access;
-        access.index = expression->options.literal_read.constant_index;
+        access.index = expression->options.constant_read.constant_index;
         access.type = IR_Data_Access_Type::CONSTANT;
         access.is_memory_access = false;
         access.option.constant_pool = &generator->compiler->constant_pool;

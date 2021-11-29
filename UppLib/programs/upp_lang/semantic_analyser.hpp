@@ -38,6 +38,8 @@ struct ModTree_Function;
 struct ModTree_Variable;
 struct ModTree_Expression;
 struct AST_Node;
+struct ModTree_Polymorphic_Function;
+struct Upp_Constant;
 enum class Constant_Status;
 
 /*
@@ -129,9 +131,7 @@ struct ModTree_Expression
             ModTree_Unary_Operation_Type operation_type;
             ModTree_Expression* operand;
         } unary_operation;
-        struct {
-            int constant_index;
-        } literal_read;
+        Upp_Constant constant_read;
         struct {
             bool is_pointer_call;
             ModTree_Expression* pointer_expression;
@@ -221,7 +221,7 @@ struct ModTree_Statement
     } options;
 };
 
-enum class Block_Type
+enum class ModTree_Block_Type
 {
     FUNCTION_BODY,
     ANONYMOUS_BLOCK,
@@ -233,20 +233,17 @@ enum class Block_Type
     SWITCH_DEFAULT_CASE,
 };
 
-struct ModTree_Block;
-union Block_Origin
-{
-    ModTree_Function* function;
-    ModTree_Block* parent;
-};
-
 struct ModTree_Block
 {
     Dynamic_Array<ModTree_Statement*> statements;
     Dynamic_Array<ModTree_Variable*> variables;
     Symbol_Table* symbol_table;
-    Block_Type type;
-    Block_Origin origin;
+    ModTree_Block_Type type;
+    union
+    {
+        ModTree_Function* function;
+        ModTree_Block* parent;
+    } origin;
 };
 
 enum class ModTree_Variable_Origin_Type
@@ -322,6 +319,31 @@ struct ModTree_Program
 {
     ModTree_Module* root_module;
     ModTree_Function* entry_function;
+    Dynamic_Array<ModTree_Polymorphic_Function*> function_bases;
+};
+
+struct Polymorphic_Parameter
+{
+    String* name;
+    Type_Signature* type;
+    bool is_constant; 
+    AST_Node* param_node;
+};
+
+struct Polymorphic_Instance
+{
+    ModTree_Function* function;
+    Dynamic_Array<Upp_Constant> argument_constants;
+};
+
+struct ModTree_Polymorphic_Function
+{
+    Dynamic_Array<Polymorphic_Parameter> parameters;
+    bool analysis_finished;
+    int polymorphic_argument_count;
+
+    Dynamic_Array<Polymorphic_Instance> instances;
+    Symbol* symbol; // May be 0
 };
 
 
@@ -331,39 +353,32 @@ struct ModTree_Program
 /*
     SYMBOL TABLE
 */
+struct Symbol;
+struct Symbol_Table;
+struct Symbol_Data;
+
 enum class Symbol_Type
 {
+    POLY_FUNCTION,
     FUNCTION,
-    TYPE, 
-    CONSTANT_VALUE, 
+    TYPE,
+    CONSTANT_VALUE,
     VARIABLE,
     MODULE,
 };
 
-struct Symbol_Table;
-union Symbol_Options
+struct Symbol_Data
 {
-    ModTree_Variable* variable;
-    ModTree_Module* module;
-    ModTree_Function* function;
-    Type_Signature* type; // Structs, future: Enums, Unions
-    int constant_index;
-};
-
-struct Symbol;
-struct Symbol_Table;
-struct Symbol_Template_Instance
-{
-    Dynamic_Array<Type_Signature*> arguments;
-    Symbol_Table* template_symbol_table;
-    Symbol* instance_symbol;
-};
-
-struct Symbol_Template_Data
-{
-    bool is_templated;
-    Dynamic_Array<String*> parameter_names;
-    Dynamic_Array<Symbol_Template_Instance*> instances;
+    Symbol_Type type;
+    union
+    {
+        ModTree_Variable* variable;
+        ModTree_Module* module;
+        ModTree_Function* function;
+        ModTree_Polymorphic_Function* poly_function;
+        Type_Signature* type;
+        Upp_Constant constant;
+    } options;
 };
 
 enum class Usage_Type
@@ -399,29 +414,40 @@ Symbol_Reference symbol_reference_make_ignore();
 
 struct Symbol
 {
-    Symbol_Type type;
-    Symbol_Options options;
-
+    Symbol_Data data;
     // Infos
     String* id;
-    Symbol_Table* symbol_table; // Is 0 if the symbol is a template instance
+    Symbol_Table* symbol_table;
     AST_Node* definition_node;
     Dynamic_Array<Symbol_Reference> references;
+};
 
-    // Template Data
-    Symbol_Template_Data template_data;
+enum class Symbol_Table_Origin_Type
+{
+    BASE_TABLE,
+    MODULE,
+    BLOCK,
+};
+
+struct Symbol_Table_Origin
+{
+    Symbol_Table_Origin_Type type;
+    union {
+        ModTree_Module* module;
+        ModTree_Block* block;
+    } options;
 };
 
 struct Symbol_Table
 {
     Symbol_Table* parent;
-    ModTree_Module* module; // May be null
+    Symbol_Table_Origin origin;
     Hashtable<String*, Symbol*> symbols;
 };
 
 struct Semantic_Analyser;
 struct AST_Node;
-Symbol_Table* symbol_table_create(Semantic_Analyser* analyser, Symbol_Table* parent, AST_Node* node);
+Symbol_Table* symbol_table_create(Semantic_Analyser* analyser, Symbol_Table* parent, AST_Node* node, Symbol_Table_Origin origin);
 void symbol_table_destroy(Symbol_Table* symbol_table);
 
 void symbol_table_append_to_string(String* string, Symbol_Table* table, Semantic_Analyser* analyser, bool print_root);
@@ -432,7 +458,7 @@ Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool only_curr
 /*
     WORKLOADS
 */
-struct Analysis_Workload_Enum 
+struct Analysis_Workload_Enum
 {
     Symbol_Table* symbol_table;
     Type_Signature* enum_type;
@@ -503,12 +529,11 @@ struct Analysis_Workload_Struct_Body
 
 struct Analysis_Workload_Function_Header
 {
-    ModTree_Function* function;
+    ModTree_Polymorphic_Function* poly_function;
     Symbol_Table* symbol_table;
 
     AST_Node* function_node;
     AST_Node* next_parameter_node;
-    int parameter_index;
 };
 
 enum class Analysis_Workload_Type
@@ -564,7 +589,7 @@ struct Workload_Dependency
         Type_Signature* type_signature;
         ModTree_Block* code_block;
         Workload_Dependency_Identifier_Not_Found identifier_not_found;
-        ModTree_Function* function_header_not_analysed;
+        ModTree_Polymorphic_Function* function_header_not_analysed;
     } options;
 };
 
@@ -598,6 +623,7 @@ enum class Expression_Result_Any_Type
     EXPRESSION,
     TYPE,
     FUNCTION,
+    POLY_FUNCTION,
     MODULE,
     ERROR_OCCURED,
     DEPENDENCY
@@ -615,6 +641,7 @@ enum class Semantic_Error_Type
     EXPECTED_TYPE,
     EXPECTED_VALUE,
     EXPECTED_CALLABLE,
+    INVALID_EXPRESSION_TYPE,
 
     INVALID_TYPE_VOID_USAGE,
     INVALID_TYPE_FUNCTION_CALL, // Expression
@@ -640,7 +667,7 @@ enum class Semantic_Error_Type
 
     INVALID_TYPE_COMPTIME_DEFINITION,
     COMPTIME_DEFINITION_MUST_BE_COMPTIME_KNOWN,
-    COMPTIME_MODULE_MUST_BE_INFERED,
+    COMPTIME_DEFINITION_MUST_BE_INFERED,
 
     CONSTANT_POOL_ERROR,
 
@@ -685,6 +712,8 @@ enum class Semantic_Error_Type
     EXPRESSION_CONTAINS_INVALID_TYPE_HANDLE,
     TYPE_NOT_KNOWN_AT_COMPILE_TIME,
     EXPRESSION_IS_NOT_A_TYPE,
+
+    COMPTIME_ARGUMENT_NOT_KNOWN_AT_COMPTIME,
 
     MAIN_CANNOT_BE_TEMPLATED,
     MAIN_NOT_DEFINED,
@@ -807,12 +836,21 @@ struct Expression_Location
     ModTree_Block* block;
 };
 
+struct Instanciation_Progress
+{
+    Dynamic_Array<Upp_Constant> constant_arguments;
+    AST_Node* argument_node;
+    int parameter_index;
+    bool errors_occured;
+};
+
 union Cached_Expression
 {
-    ModTree_Function* function;
+    ModTree_Polymorphic_Function* poly_function;
     ModTree_Function* bake_function;
     Type_Signature* type;
     ModTree_Module* module;
+    Instanciation_Progress instanciation;
 };
 
 struct Compiler;

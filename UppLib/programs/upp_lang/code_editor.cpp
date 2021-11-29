@@ -145,8 +145,8 @@ Symbol* code_editor_symbol_table_lookup(Code_Editor* editor, Symbol_Table* symbo
     while (parent != node) {
         symbol = symbol_table_find_symbol(symbol_table, parent->id, false, ref, 0);
         if (symbol == 0) return 0;
-        if (symbol->type != Symbol_Type::MODULE) return 0;
-        symbol_table = symbol->options.module->symbol_table;
+        if (symbol->data.type != Symbol_Type::MODULE) return 0;
+        symbol_table = symbol->data.options.module->symbol_table;
         parent = parent->child_start;
         if (!ast_node_type_is_identifier_node(parent->type)) parent = parent->neighbor;
         assert(ast_node_type_is_identifier_node(parent->type), "");
@@ -192,6 +192,7 @@ vec3 symbol_type_to_color(Symbol_Type type)
 {
     switch (type)
     {
+    case Symbol_Type::POLY_FUNCTION: return FUNCTION_COLOR; 
     case Symbol_Type::FUNCTION: return FUNCTION_COLOR; 
     case Symbol_Type::MODULE: return MODULE_COLOR; 
     case Symbol_Type::TYPE: return TYPE_COLOR; 
@@ -223,7 +224,7 @@ void code_editor_do_ast_syntax_highlighting(Code_Editor* editor, AST_Node* node,
             Token_Range r = node_range;
             r.end_index = r.start_index + 1;
             text_editor_add_highlight_from_slice(
-                editor->text_editor, token_range_to_text_slice(r, editor->compiler), symbol_type_to_color(symbol->type), BG_COLOR
+                editor->text_editor, token_range_to_text_slice(r, editor->compiler), symbol_type_to_color(symbol->data.type), BG_COLOR
             );
         }
     }
@@ -242,7 +243,7 @@ void code_editor_do_ast_syntax_highlighting(Code_Editor* editor, AST_Node* node,
             text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, editor->compiler), FUNCTION_COLOR, BG_COLOR);
         }
     }
-    else if (node->type == AST_Node_Type::NAMED_PARAMETER) {
+    else if (node->type == AST_Node_Type::PARAMETER) {
         Token_Range r = node_range;
         r.end_index = r.start_index + 1;
         text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, editor->compiler), VARIABLE_COLOR, BG_COLOR);
@@ -258,13 +259,13 @@ void code_editor_do_ast_syntax_highlighting(Code_Editor* editor, AST_Node* node,
         r.end_index = r.start_index + 1;
         text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, editor->compiler), LITERAL_COLOR, BG_COLOR);
     }
-    else if (node->type == AST_Node_Type::IDENTIFIER_PATH || node->type == AST_Node_Type::IDENTIFIER_PATH_TEMPLATED)
+    else if (node->type == AST_Node_Type::IDENTIFIER_PATH)
     {
         Token_Range r = node_range;
         r.end_index = r.start_index + 1;
         text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, editor->compiler), MODULE_COLOR, BG_COLOR);
     }
-    else if (node->type == AST_Node_Type::IDENTIFIER_NAME || node->type == AST_Node_Type::IDENTIFIER_NAME_TEMPLATED)
+    else if (node->type == AST_Node_Type::IDENTIFIER_NAME)
     {
         Symbol* symbol = code_editor_symbol_table_lookup(editor, symbol_table, node);
         if (symbol != 0)
@@ -273,7 +274,7 @@ void code_editor_do_ast_syntax_highlighting(Code_Editor* editor, AST_Node* node,
             Token_Range r = node_range;
             r.end_index = r.start_index + 1;
             text_editor_add_highlight_from_slice(
-                editor->text_editor, token_range_to_text_slice(r, editor->compiler), symbol_type_to_color(symbol->type), BG_COLOR
+                editor->text_editor, token_range_to_text_slice(r, editor->compiler), symbol_type_to_color(symbol->data.type), BG_COLOR
             );
         }
     }
@@ -487,7 +488,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
 
                 Symbol* symbol = code_editor_symbol_table_lookup(editor, table, expression_node->child_start);
                 if (symbol == 0) break;
-                if (symbol->type != Symbol_Type::FUNCTION) break;
+                if (symbol->data.type != Symbol_Type::FUNCTION) break;
 
                 search_context = false;
                 editor->show_context_info = true;
@@ -533,7 +534,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
                     text_editor_add_highlight_from_slice(
                         editor->text_editor,
                         token_range_to_text_slice(reference->reference_node->token_range, editor->compiler),
-                        symbol_type_to_color(symbol->type), HIGHLIGHT_BG_COLOR
+                        symbol_type_to_color(symbol->data.type), HIGHLIGHT_BG_COLOR
                     );
                 }
 
@@ -542,14 +543,14 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
                 if (definition_node != 0)
                 {
                     Token_Range range = token_range_make(definition_node->token_range.start_index, definition_node->token_range.start_index + 1);
-                    if (symbol->type == Symbol_Type::MODULE) {
+                    if (symbol->data.type == Symbol_Type::MODULE) {
                         range.start_index += 1;
                         range.end_index += 1;
                     }
                     text_editor_add_highlight_from_slice(
                         editor->text_editor,
                         token_range_to_text_slice(range, editor->compiler),
-                        symbol_type_to_color(symbol->type), HIGHLIGHT_BG_COLOR
+                        symbol_type_to_color(symbol->data.type), HIGHLIGHT_BG_COLOR
                     );
                 }
             }

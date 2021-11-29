@@ -21,12 +21,6 @@ struct Type_Signature;
 
 
 
-struct Upp_Constant
-{
-    Type_Signature* type;
-    int offset;
-};
-
 struct Upp_Constant_Reference
 {
     // Where the pointer is stored in the buffer, e.g. *(void**)&pool.buffer[ptr_offset] = &pool.buffer[buffer_destination_offset];
@@ -42,14 +36,15 @@ enum class Constant_Status
     CANNOT_SAVE_FUNCTIONS_YET,
     CANNOT_SAVE_C_UNIONS_CONTAINING_REFERENCES,
     CONTAINS_INVALID_UNION_TAG,
-    OUT_OF_MEMORY
+    OUT_OF_MEMORY,
+    INVALID_SLICE_SIZE
 };
 const char* constant_status_to_string(Constant_Status status);
 
 struct Constant_Result
 {
     Constant_Status status;
-    int constant_index;
+    Upp_Constant constant;
 };
 
 struct Constant_Pool
@@ -62,6 +57,7 @@ struct Constant_Pool
     int max_buffer_size;
 };
 Constant_Result constant_pool_add_constant(Constant_Pool* pool, Type_Signature* signature, Array<byte> bytes);
+bool constant_pool_compare_constants(Constant_Pool* pool, Upp_Constant a, Upp_Constant b);
 
 struct Extern_Sources
 {
