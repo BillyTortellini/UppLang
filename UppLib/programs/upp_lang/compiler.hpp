@@ -4,20 +4,22 @@
 #include "../../datastructures/dynamic_array.hpp"
 #include "../../datastructures/hashtable.hpp"
 #include "../../datastructures/string.hpp"
+#include "type_system.hpp"
 #include "compiler_misc.hpp"
 
 struct Lexer;
 struct Compiler;
 struct AST_Parser;
-struct Type_System;
 struct Semantic_Analyser;
 struct Intermediate_Generator;
 struct Bytecode_Generator;
 struct Bytecode_Interpreter;
 struct C_Generator;
 struct C_Compiler;
+struct C_Importer;
 struct IR_Generator;
 struct Type_Signature;
+struct RC_Analyser;
 
 
 
@@ -93,14 +95,6 @@ struct Compiler_Error
 
 
 #include "lexer.hpp"
-#include "ast_parser.hpp"
-#include "semantic_analyser.hpp"
-#include "bytecode_generator.hpp"
-#include "bytecode_interpreter.hpp"
-#include "c_backend.hpp"
-#include "c_importer.hpp"
-#include "type_system.hpp"
-#include "ir_code.hpp"
 
 enum class Code_Origin_Type
 {
@@ -141,24 +135,28 @@ enum class Timing_Task
 
 struct Compiler
 {
+    // Compiler internals
+    Dynamic_Array<Code_Source*> code_sources;
+    Code_Source* main_source;
+    bool generate_code; // This indicates if we want to compile (E.g. user pressed CTRL-B or F5)
+
+    // Helpers
     Identifier_Pool identifier_pool;
     Constant_Pool constant_pool;
     Type_System type_system;
     Extern_Sources extern_sources;
 
-    Lexer lexer;
-    AST_Parser parser;
-    Semantic_Analyser analyser;
-    IR_Generator ir_generator;
-    Bytecode_Generator bytecode_generator;
-    Bytecode_Interpreter bytecode_interpreter;
-    C_Generator c_generator;
-    C_Compiler c_compiler;
-    C_Importer c_importer;
-
-    Dynamic_Array<Code_Source*> code_sources;
-    Code_Source* main_source;
-    bool generate_code;
+    // Stages
+    Lexer* lexer;
+    AST_Parser* parser;
+    RC_Analyser* rc_analyser;
+    Semantic_Analyser* analyser;
+    IR_Generator* ir_generator;
+    Bytecode_Generator* bytecode_generator;
+    Bytecode_Interpreter* bytecode_interpreter;
+    C_Generator* c_generator;
+    C_Compiler* c_compiler;
+    C_Importer* c_importer;
 
     // Timing stuff
     Timer* timer;
@@ -179,6 +177,7 @@ void compiler_destroy(Compiler* compiler);
 void compiler_compile(Compiler* compiler, String source_code, bool generate_code);
 Exit_Code compiler_execute(Compiler* compiler);
 void compiler_add_source_code(Compiler* compiler, String source_code, Code_Origin origin); // Takes ownership of source_code
+bool compiler_errors_occured(Compiler* compiler);
 
 void compiler_switch_timing_task(Compiler* compiler, Timing_Task task);
 

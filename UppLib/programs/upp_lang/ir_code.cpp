@@ -1,5 +1,6 @@
 #include "ir_code.hpp"
 #include "compiler.hpp"
+#include "bytecode_generator.hpp"
 
 Type_Signature* ir_data_access_get_type(IR_Data_Access* access)
 {
@@ -725,29 +726,32 @@ IR_Data_Access ir_generator_generate_expression(IR_Generator* generator, IR_Code
         IR_Instruction call_instr;
         call_instr.type = IR_Instruction_Type::FUNCTION_CALL;
         call_instr.options.call.destination = ir_data_access_create_intermediate(ir_block, expression->result_type);
-        if (expression->options.function_call.is_pointer_call) {
-            call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_POINTER_CALL;
-            call_instr.options.call.options.pointer_access = ir_generator_generate_expression(generator, ir_block, expression->options.function_call.pointer_expression);
-        }
-        else
+        switch (expression->options.function_call.call_type)
         {
-            switch (expression->options.function_call.function->function_type)
-            {
-            case ModTree_Function_Type::FUNCTION:
-                call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
-                call_instr.options.call.options.function = *hashtable_find_element(&generator->function_mapping, expression->options.function_call.function);
-                break;
-            case ModTree_Function_Type::EXTERN_FUNCTION:
-                call_instr.options.call.call_type = IR_Instruction_Call_Type::EXTERN_FUNCTION_CALL;
-                call_instr.options.call.options.extern_function = expression->options.function_call.function->options.extern_function;
-                break;
-            case ModTree_Function_Type::HARDCODED_FUNCTION:
-                call_instr.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
-                call_instr.options.call.options.hardcoded.type = expression->options.function_call.function->options.hardcoded_type;
-                call_instr.options.call.options.hardcoded.signature = expression->options.function_call.function->signature;
-                break;
-            default: panic("HEY");
-            }
+        case ModTree_Call_Type::EXTERN_FUNCTION: {
+            call_instr.options.call.call_type = IR_Instruction_Call_Type::EXTERN_FUNCTION_CALL;
+            call_instr.options.call.options.extern_function = expression->options.function_call.options.extern_function->extern_function;
+            break;
+        }
+        case ModTree_Call_Type::HARDCODED_FUNCTION: {
+            call_instr.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
+            call_instr.options.call.options.hardcoded.type = expression->options.function_call.options.hardcoded_function->hardcoded_type;
+            call_instr.options.call.options.hardcoded.signature = expression->options.function_call.options.hardcoded_function->signature;
+            break;
+        }
+        case ModTree_Call_Type::FUNCTION: {
+            call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
+            call_instr.options.call.options.function = *hashtable_find_element(&generator->function_mapping, expression->options.function_call.options.function);
+            break;
+        }
+        case ModTree_Call_Type::FUNCTION_POINTER: {
+            call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_POINTER_CALL;
+            call_instr.options.call.options.pointer_access = ir_generator_generate_expression(
+                generator, ir_block, expression->options.function_call.options.pointer_expression
+            );
+            break;
+        }
+        default: panic("");
         }
         call_instr.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(expression->options.function_call.arguments.size);
         for (int j = 0; j < expression->options.function_call.arguments.size; j++) {
@@ -820,19 +824,19 @@ IR_Data_Access ir_generator_generate_expression(IR_Generator* generator, IR_Code
         }
         return array_access;
     }
-    case ModTree_Expression_Type::FUNCTION_POINTER_READ: {
+    case ModTree_Expression_Type::FUNCTION_POINTER_READ: 
+    {
         IR_Instruction instr;
         instr.type = IR_Instruction_Type::ADDRESS_OF;
         instr.options.address_of.destination = ir_data_access_create_intermediate(ir_block, expression->result_type);
-        if (expression->options.function_pointer_read->function_type == ModTree_Function_Type::FUNCTION) {
-            instr.options.address_of.type = IR_Instruction_Address_Of_Type::FUNCTION;
-            instr.options.address_of.options.function = *hashtable_find_element(&generator->function_mapping, expression->options.function_pointer_read);
-        }
-        else if (expression->options.function_pointer_read->function_type == ModTree_Function_Type::EXTERN_FUNCTION) {
+        if (expression->options.function_pointer_read.is_extern) {
             instr.options.address_of.type = IR_Instruction_Address_Of_Type::EXTERN_FUNCTION;
-            instr.options.address_of.options.extern_function = expression->options.function_pointer_read->options.extern_function;
+            instr.options.address_of.options.extern_function = expression->options.function_pointer_read.extern_function->extern_function;
         }
-        else panic("No hardcoded functions allowed here!");
+        else {
+            instr.options.address_of.type = IR_Instruction_Address_Of_Type::FUNCTION;
+            instr.options.address_of.options.function = *hashtable_find_element(&generator->function_mapping, expression->options.function_pointer_read.function);
+        }
         dynamic_array_push_back(&ir_block->instructions, instr);
         return instr.options.address_of.destination;
     }
@@ -888,7 +892,7 @@ IR_Data_Access ir_generator_generate_expression(IR_Generator* generator, IR_Code
             alloc_instr.type = IR_Instruction_Type::FUNCTION_CALL;
             alloc_instr.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
             alloc_instr.options.call.options.hardcoded.type = Hardcoded_Function_Type::MALLOC_SIZE_I32;
-            alloc_instr.options.call.options.hardcoded.signature = generator->compiler->analyser.malloc_function->signature;
+            alloc_instr.options.call.options.hardcoded.signature = generator->compiler->analyser->malloc_function->signature;
             alloc_instr.options.call.destination = array_data_access;
             alloc_instr.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(1);
             dynamic_array_push_back(&alloc_instr.options.call.arguments, mult_instr.options.binary_op.destination);
@@ -901,7 +905,7 @@ IR_Data_Access ir_generator_generate_expression(IR_Generator* generator, IR_Code
             alloc_instr.type = IR_Instruction_Type::FUNCTION_CALL;
             alloc_instr.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
             alloc_instr.options.call.options.hardcoded.type = Hardcoded_Function_Type::MALLOC_SIZE_I32;
-            alloc_instr.options.call.options.hardcoded.signature = generator->compiler->analyser.malloc_function->signature;
+            alloc_instr.options.call.options.hardcoded.signature = generator->compiler->analyser->malloc_function->signature;
             alloc_instr.options.call.destination = ir_data_access_create_intermediate(ir_block, expression->result_type);
             alloc_instr.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(1);
             dynamic_array_push_back(&alloc_instr.options.call.arguments, ir_data_access_create_constant_i32(generator, expression->options.new_allocation.allocation_size));
@@ -1301,7 +1305,7 @@ void ir_generator_generate_block(IR_Generator* generator, IR_Code_Block* ir_bloc
             instr.type = IR_Instruction_Type::FUNCTION_CALL;
             instr.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
             instr.options.call.options.hardcoded.type = Hardcoded_Function_Type::FREE_POINTER;
-            instr.options.call.options.hardcoded.signature = generator->compiler->analyser.free_function->signature;
+            instr.options.call.options.hardcoded.signature = generator->compiler->analyser->free_function->signature;
             instr.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(1);
 
             IR_Data_Access delete_access = ir_generator_generate_expression(generator, ir_block, statement->options.deletion.expression);
@@ -1330,29 +1334,6 @@ void ir_generator_generate_block(IR_Generator* generator, IR_Code_Block* ir_bloc
     }
 }
 
-void ir_generator_queue_module(IR_Generator* generator, ModTree_Module* module)
-{
-    // Queue functions
-    for (int i = 0; i < module->functions.size; i++)
-    {
-        ModTree_Function* mod_func = module->functions[i];
-        if (mod_func->function_type != ModTree_Function_Type::FUNCTION) {
-            continue;
-        }
-        ir_generator_queue_function(generator, mod_func);
-    }
-
-    // Queue globals
-    for (int i = 0; i < module->globals.size; i++) {
-        ir_generator_queue_global(generator, module->globals[i]);
-    }
-
-    // Queue sub modules
-    for (int i = 0; i < module->modules.size; i++) {
-        ir_generator_queue_module(generator, module->modules[i]);
-    }
-}
-
 void ir_generator_reset(IR_Generator* generator, Compiler* compiler)
 {
     generator->compiler = compiler;
@@ -1361,7 +1342,7 @@ void ir_generator_reset(IR_Generator* generator, Compiler* compiler)
     }
     generator->next_label_index = 0;
     generator->program = ir_program_create(&generator->compiler->type_system);
-    generator->modtree = generator->compiler->analyser.program;
+    generator->modtree = generator->compiler->analyser->program;
     generator->type_system = &generator->compiler->type_system;
     hashtable_reset(&generator->variable_mapping);
     hashtable_reset(&generator->function_mapping);
@@ -1384,9 +1365,6 @@ void ir_generator_generate_queued_items(IR_Generator* generator)
     for (int i = 0; i < generator->queue_functions.size; i++)
     {
         ModTree_Function* mod_func = generator->queue_functions[i];
-        if (mod_func->function_type != ModTree_Function_Type::FUNCTION) {
-            continue;
-        }
         if (hashtable_find_element(&generator->function_mapping, mod_func) != 0) continue;
 
         IR_Function* ir_func = new IR_Function;
@@ -1398,13 +1376,13 @@ void ir_generator_generate_queued_items(IR_Generator* generator)
         dynamic_array_push_back(&generator->function_stubs, mod_func);
 
         // Generate parameters vars
-        for (int j = 0; j < mod_func->options.function.parameters.size; j++) {
+        for (int j = 0; j < mod_func->parameters.size; j++) {
             IR_Data_Access access;
             access.type = IR_Data_Access_Type::PARAMETER;
             access.is_memory_access = false;
             access.option.function = ir_func;
             access.index = j;
-            hashtable_insert_element(&generator->variable_mapping, mod_func->options.function.parameters[j], access);
+            hashtable_insert_element(&generator->variable_mapping, mod_func->parameters[j], access);
         }
     }
     dynamic_array_reset(&generator->queue_functions);
@@ -1426,14 +1404,14 @@ void ir_generator_generate_queued_items(IR_Generator* generator)
     dynamic_array_reset(&generator->queue_globals);
 
     // Execute schema for partial compilation (See Bytecode_Generator.hpp)
-    bytecode_generator_update_globals(&generator->compiler->bytecode_generator);
+    bytecode_generator_update_globals(generator->compiler->bytecode_generator);
 
     // Generate Blocks
     for (int i = 0; i < generator->function_stubs.size; i++)
     {
         ModTree_Function* mod_func = generator->function_stubs[i];
         IR_Function* ir_func = *hashtable_find_element(&generator->function_mapping, mod_func);
-        ir_generator_generate_block(generator, ir_func->code, mod_func->options.function.body);
+        ir_generator_generate_block(generator, ir_func->code, mod_func->body);
         // Fill out breaks and continues
         for (int j = 0; j < generator->fill_out_breaks.size; j++) {
             Unresolved_Goto fill_out = generator->fill_out_breaks[j];
@@ -1450,12 +1428,12 @@ void ir_generator_generate_queued_items(IR_Generator* generator)
         dynamic_array_reset(&generator->fill_out_breaks);
         dynamic_array_reset(&generator->fill_out_continues);
 
-        bytecode_generator_compile_function(&generator->compiler->bytecode_generator, ir_func);
+        bytecode_generator_compile_function(generator->compiler->bytecode_generator, ir_func);
     }
     dynamic_array_reset(&generator->function_stubs);
 
     // Compile to Bytecode
-    bytecode_generator_update_references(&generator->compiler->bytecode_generator);
+    bytecode_generator_update_references(generator->compiler->bytecode_generator);
 }
 
 void ir_generator_queue_function(IR_Generator* generator, ModTree_Function* function) {
@@ -1468,7 +1446,13 @@ void ir_generator_queue_global(IR_Generator* generator, ModTree_Variable* variab
 
 void ir_generator_queue_and_generate_all(IR_Generator* generator)
 {
-    ir_generator_queue_module(generator, generator->modtree->root_module);
+    // Queue functions and globals
+    for (int i = 0; i < generator->modtree->functions.size; i++) {
+        ir_generator_queue_function(generator, generator->modtree->functions[i]);
+    }
+    for (int i = 0; i < generator->modtree->globals.size; i++) {
+        ir_generator_queue_global(generator, generator->modtree->globals[i]);
+    }
     ir_generator_generate_queued_items(generator);
     generator->program->entry_function = *hashtable_find_element(&generator->function_mapping, generator->modtree->entry_function);
 }

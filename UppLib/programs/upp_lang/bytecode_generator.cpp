@@ -2,6 +2,7 @@
 
 #include "compiler.hpp"
 #include "../../utility/hash_functions.hpp"
+#include "ir_code.hpp"
 
 int align_offset_next_multiple(int offset, int alignment) 
 {
@@ -974,7 +975,7 @@ void bytecode_generator_generate_function_code(Bytecode_Generator* generator, IR
 
 void bytecode_generator_reset(Bytecode_Generator* generator, Compiler* compiler)
 {
-    generator->ir_program = compiler->ir_generator.program;
+    generator->ir_program = compiler->ir_generator->program;
     generator->compiler = compiler;
     // Reset previous code
     {

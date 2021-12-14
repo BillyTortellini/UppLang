@@ -2,13 +2,24 @@
 #include "../../win32/timing.hpp"
 #include "../../utility/file_io.hpp"
 
+#include "semantic_analyser.hpp"
+#include "lexer.hpp"
+#include "ast_parser.hpp"
+#include "rc_analyser.hpp"
+#include "semantic_analyser.hpp"
+#include "ir_code.hpp"
+#include "bytecode_generator.hpp"
+#include "bytecode_interpreter.hpp"
+#include "c_backend.hpp"
+#include "c_importer.hpp"
+
 
 
 // Parser stages
 bool enable_lexing = true;
 bool enable_parsing = true;
 bool enable_analysis = true;
-bool enable_ir_gen = true;
+bool enable_ir_gen = false;
 bool enable_bytecode_gen = true;
 bool enable_c_generation = false;
 bool enable_c_compilation = true;
@@ -578,16 +589,27 @@ Compiler compiler_create(Timer* timer)
     result.constant_pool = constant_pool_create(&result.type_system);
     result.extern_sources = extern_sources_create();
 
-    result.lexer = lexer_create();
-    result.parser = ast_parser_create();
     result.type_system = type_system_create(timer);
-    result.analyser = semantic_analyser_create();
-    result.bytecode_generator = bytecode_generator_create();
-    result.bytecode_interpreter = bytecode_intepreter_create();
-    result.c_generator = c_generator_create();
-    result.c_compiler = c_compiler_create();
-    result.c_importer = c_importer_create();
-    result.ir_generator = ir_generator_create();
+    result.lexer = new Lexer;
+    *result.lexer = lexer_create();
+    result.parser = new AST_Parser;
+    *result.parser = ast_parser_create();
+    result.rc_analyser = new RC_Analyser;
+    *result.rc_analyser = rc_analyser_create();
+    result.analyser = new Semantic_Analyser;
+    *result.analyser = semantic_analyser_create();
+    result.ir_generator = new IR_Generator;
+    *result.ir_generator = ir_generator_create();
+    result.bytecode_generator = new Bytecode_Generator;
+    *result.bytecode_generator = bytecode_generator_create();
+    result.bytecode_interpreter = new Bytecode_Interpreter;
+    *result.bytecode_interpreter = bytecode_intepreter_create();
+    result.c_generator = new C_Generator;
+    *result.c_generator = c_generator_create();
+    result.c_compiler = new C_Compiler;
+    *result.c_compiler = c_compiler_create();
+    result.c_importer = new C_Importer;
+    *result.c_importer = c_importer_create();
 
     result.code_sources = dynamic_array_create_empty<Code_Source*>(16);
     return result;
@@ -595,23 +617,36 @@ Compiler compiler_create(Timer* timer)
 
 void compiler_destroy(Compiler* compiler)
 {
-    ast_parser_destroy(&compiler->parser);
-    lexer_destroy(&compiler->lexer);
     type_system_destroy(&compiler->type_system);
-    semantic_analyser_destroy(&compiler->analyser);
-    bytecode_generator_destroy(&compiler->bytecode_generator);
-    bytecode_interpreter_destroy(&compiler->bytecode_interpreter);
-    c_generator_destroy(&compiler->c_generator);
-    c_compiler_destroy(&compiler->c_compiler);
-    c_importer_destroy(&compiler->c_importer);
-    ir_generator_destroy(&compiler->ir_generator);
     identifier_pool_destroy(&compiler->identifier_pool);
     extern_sources_destroy(&compiler->extern_sources);
     constant_pool_destroy(&compiler->constant_pool);
+
     for (int i = 0; i < compiler->code_sources.size; i++) {
         code_source_destroy(compiler->code_sources[i]);
     }
     dynamic_array_destroy(&compiler->code_sources);
+
+    lexer_destroy(compiler->lexer);
+    delete compiler->lexer;
+    ast_parser_destroy(compiler->parser);
+    delete compiler->parser;
+    ir_generator_destroy(compiler->ir_generator);
+    delete compiler->ir_generator;
+    semantic_analyser_destroy(compiler->analyser);
+    delete compiler->analyser;
+    ir_generator_destroy(compiler->ir_generator);
+    delete compiler->ir_generator;
+    bytecode_generator_destroy(compiler->bytecode_generator);
+    delete compiler->bytecode_generator;
+    bytecode_interpreter_destroy(compiler->bytecode_interpreter);
+    delete compiler->bytecode_interpreter;
+    c_generator_destroy(compiler->c_generator);
+    delete compiler->c_generator;
+    c_importer_destroy(compiler->c_importer);
+    delete compiler->c_importer;
+    c_compiler_destroy(compiler->c_compiler);
+    delete compiler->c_compiler;
 }
 
 const char* timing_task_to_string(Timing_Task task)
@@ -658,6 +693,10 @@ void compiler_switch_timing_task(Compiler* compiler, Timing_Task task)
     compiler->task_current = task;
 }
 
+bool compiler_errors_occured(Compiler* compiler) {
+    return !(compiler->parser->errors.size == 0 && compiler->analyser->errors.size == 0 && compiler->rc_analyser->errors.size == 0);
+}
+
 void compiler_compile(Compiler* compiler, String source_code, bool generate_code)
 {
     double time_compile_start = timer_current_time_in_seconds(compiler->timer);
@@ -687,23 +726,26 @@ void compiler_compile(Compiler* compiler, String source_code, bool generate_code
         }
         dynamic_array_reset(&compiler->code_sources);
 
+        // Reset stages
         type_system_reset(&compiler->type_system);
-        type_system_add_primitives(&compiler->type_system, &compiler->identifier_pool);
-        ast_parser_reset(&compiler->parser, &compiler->identifier_pool);
-        semantic_analyser_reset(&compiler->analyser, compiler);
-        ir_generator_reset(&compiler->ir_generator, compiler);
-        bytecode_generator_reset(&compiler->bytecode_generator, compiler);
-        bytecode_interpreter_reset(&compiler->bytecode_interpreter, compiler);
+        rc_analyser_reset(compiler->rc_analyser, compiler);
+        type_system_add_primitives(&compiler->type_system, &compiler->identifier_pool, &compiler->rc_analyser->predefined_symbols);
+        ast_parser_reset(compiler->parser, &compiler->identifier_pool);
+        semantic_analyser_reset(compiler->analyser, compiler);
+        ir_generator_reset(compiler->ir_generator, compiler);
+        bytecode_generator_reset(compiler->bytecode_generator, compiler);
+        bytecode_interpreter_reset(compiler->bytecode_interpreter, compiler);
     }
 
     Code_Origin origin;
     origin.type = Code_Origin_Type::MAIN_PROJECT;
     compiler_add_source_code(compiler, source_code, origin);
-    semantic_analyser_execute_workloads(&compiler->analyser);
+    //semantic_analyser_execute_workloads(compiler->analyser);
+    //dependency_graph_resolve(&compiler->analyser->dependency_graph);
 
     // Check for errors
     bool do_analysis = enable_lexing && enable_parsing && enable_analysis;
-    bool error_free = compiler->parser.errors.size == 0 && compiler->analyser.errors.size == 0;
+    bool error_free = compiler_errors_occured(compiler);
     bool do_ir_gen = do_analysis && enable_ir_gen && generate_code && error_free;
     bool do_bytecode_gen = do_ir_gen && enable_bytecode_gen && generate_code && error_free;
     bool do_c_generation = do_ir_gen && enable_c_generation && generate_code && error_free;
@@ -712,20 +754,20 @@ void compiler_compile(Compiler* compiler, String source_code, bool generate_code
     compiler_switch_timing_task(compiler, Timing_Task::CODE_GEN);
 
     if (do_ir_gen) {
-        ir_generator_queue_and_generate_all(&compiler->ir_generator);
+        ir_generator_queue_and_generate_all(compiler->ir_generator);
     }
     if (do_bytecode_gen) {
         //bytecode_generator_generate(&compiler->bytecode_generator, compiler);
-        bytecode_generator_set_entry_function(&compiler->bytecode_generator);
+        bytecode_generator_set_entry_function(compiler->bytecode_generator);
     }
     if (do_c_generation) {
-        c_generator_generate(&compiler->c_generator, compiler);
+        c_generator_generate(compiler->c_generator, compiler);
     }
     if (do_c_compilation) {
-        c_compiler_add_source_file(&compiler->c_compiler, string_create_static("backend/src/main.cpp"));
-        c_compiler_add_source_file(&compiler->c_compiler, string_create_static("backend/src/hello_world.cpp"));
-        c_compiler_add_source_file(&compiler->c_compiler, string_create_static("backend/hardcoded/hardcoded_functions.cpp"));
-        c_compiler_compile(&compiler->c_compiler);
+        c_compiler_add_source_file(compiler->c_compiler, string_create_static("backend/src/main.cpp"));
+        c_compiler_add_source_file(compiler->c_compiler, string_create_static("backend/src/hello_world.cpp"));
+        c_compiler_add_source_file(compiler->c_compiler, string_create_static("backend/hardcoded/hardcoded_functions.cpp"));
+        c_compiler_compile(compiler->c_compiler);
     }
 
     compiler_switch_timing_task(compiler, Timing_Task::OUTPUT);
@@ -743,18 +785,18 @@ void compiler_compile(Compiler* compiler, String source_code, bool generate_code
             logg("\n--------ROOT TABLE RESULT---------\n");
             String root_table = string_create_empty(1024);
             SCOPE_EXIT(string_destroy(&root_table));
-            symbol_table_append_to_string(&root_table, compiler->analyser.program->root_module->symbol_table, &compiler->analyser, false);
+            symbol_table_append_to_string(&root_table, compiler->rc_analyser->root_symbol_table, false);
             logg("%s", root_table.characters);
         }
 
-        if (compiler->analyser.errors.size == 0 && compiler->parser.errors.size == 0)
+        if (error_free)
         {
             if (do_analysis && output_ir)
             {
                 logg("\n--------IR_PROGRAM---------\n");
                 String tmp = string_create_empty(1024);
                 SCOPE_EXIT(string_destroy(&tmp));
-                ir_program_append_to_string(compiler->ir_generator.program, &tmp);
+                ir_program_append_to_string(compiler->ir_generator->program, &tmp);
                 logg("%s", tmp.characters);
             }
 
@@ -763,7 +805,7 @@ void compiler_compile(Compiler* compiler, String source_code, bool generate_code
                 String result_str = string_create_empty(32);
                 SCOPE_EXIT(string_destroy(&result_str));
                 if (do_bytecode_gen && output_bytecode) {
-                    bytecode_generator_append_bytecode_to_string(&compiler->bytecode_generator, &result_str);
+                    bytecode_generator_append_bytecode_to_string(compiler->bytecode_generator, &result_str);
                     logg("\n----------------BYTECODE_GENERATOR RESULT---------------: \n%s\n", result_str.characters);
                 }
             }
@@ -815,19 +857,19 @@ Exit_Code compiler_execute(Compiler* compiler)
     }
 
     // Execute
-    if (compiler->parser.errors.size == 0 && compiler->analyser.errors.size == 0 && do_execution && compiler->ir_generator.compiler != 0)
+    if (!compiler_errors_occured(compiler))
     {
         if (execute_binary) {
-            return c_compiler_execute(&compiler->c_compiler);
+            return c_compiler_execute(compiler->c_compiler);
         }
         else
         {
             double bytecode_start = timer_current_time_in_seconds(compiler->timer);
-            compiler->bytecode_interpreter.instruction_limit_enabled = false;
-            bytecode_interpreter_run_function(&compiler->bytecode_interpreter, compiler->bytecode_generator.entry_point_index);
+            compiler->bytecode_interpreter->instruction_limit_enabled = false;
+            bytecode_interpreter_run_function(compiler->bytecode_interpreter, compiler->bytecode_generator->entry_point_index);
             double bytecode_end = timer_current_time_in_seconds(compiler->timer);
             float bytecode_time = (bytecode_end - bytecode_start);
-            return compiler->bytecode_interpreter.exit_code;
+            return compiler->bytecode_interpreter->exit_code;
         }
     }
     return Exit_Code::COMPILATION_FAILED;
@@ -852,27 +894,27 @@ void compiler_add_source_code(Compiler* compiler, String source_code, Code_Origi
     {
         compiler_switch_timing_task(compiler, Timing_Task::LEXING);
 
-        lexer_lex(&compiler->lexer, &source_code, &compiler->identifier_pool);
+        lexer_lex(compiler->lexer, &source_code, &compiler->identifier_pool);
         if (output_lexing) {
             logg("\n\n\n\n--------LEXER RESULT--------:\n");
-            lexer_print(&compiler->lexer);
+            lexer_print(compiler->lexer);
         }
         if (output_identifiers) {
             logg("\n--------IDENTIFIERS:--------:\n");
             identifier_pool_print(&compiler->identifier_pool);
         }
 
-        code_source->tokens = compiler->lexer.tokens;
-        code_source->tokens_with_decoration = compiler->lexer.tokens_with_decoration;
-        compiler->lexer.tokens = dynamic_array_create_empty<Token>(code_source->tokens.size);
-        compiler->lexer.tokens_with_decoration = dynamic_array_create_empty<Token>(code_source->tokens_with_decoration.size);
+        code_source->tokens = compiler->lexer->tokens;
+        code_source->tokens_with_decoration = compiler->lexer->tokens_with_decoration;
+        compiler->lexer->tokens = dynamic_array_create_empty<Token>(code_source->tokens.size);
+        compiler->lexer->tokens_with_decoration = dynamic_array_create_empty<Token>(code_source->tokens_with_decoration.size);
     }
 
     if (do_parsing)
     {
         compiler_switch_timing_task(compiler, Timing_Task::PARSING);
 
-        ast_parser_parse(&compiler->parser, code_source);
+        ast_parser_parse(compiler->parser, code_source);
         if (output_ast)
         {
             String printed_ast = string_create_empty(256);
@@ -886,11 +928,8 @@ void compiler_add_source_code(Compiler* compiler, String source_code, Code_Origi
 
     if (do_analysis)
     {
-        // Add analysis workload
-        Analysis_Workload workload;
-        workload.type = Analysis_Workload_Type::MODULE_ANALYSIS;
-        workload.options.module_analysis.root_node = code_source->root_node;
-        dynamic_array_push_back(&compiler->analyser.active_workloads, workload);
+        compiler_switch_timing_task(compiler, Timing_Task::ANALYSIS);
+        rc_analyser_analyse(compiler->rc_analyser, code_source->root_node);
     }
 }
 
@@ -1066,19 +1105,19 @@ void compiler_run_testcases(Timer* timer)
             string_append_formated(&result, "\n");
             if (exit_code == Exit_Code::COMPILATION_FAILED)
             {
-                for (int i = 0; i < compiler.parser.errors.size; i++) {
-                    Compiler_Error e = compiler.parser.errors[i];
+                for (int i = 0; i < compiler.parser->errors.size; i++) {
+                    Compiler_Error e = compiler.parser->errors[i];
                     string_append_formated(&result, "    Parse Error: %s\n", e.message);
                 }
-                if (compiler.parser.errors.size == 0)
+                if (compiler.parser->errors.size == 0)
                 {
                     String tmp = string_create_empty(256);
                     SCOPE_EXIT(string_destroy(&tmp));
-                    for (int i = 0; i < compiler.analyser.errors.size; i++)
+                    for (int i = 0; i < compiler.analyser->errors.size; i++)
                     {
-                        Semantic_Error e = compiler.analyser.errors[i];
+                        Semantic_Error e = compiler.analyser->errors[i];
                         string_append_formated(&result, "    Semantic Error: ");
-                        semantic_error_append_to_string(&compiler.analyser, e, &result);
+                        semantic_error_append_to_string(compiler.analyser, e, &result);
                         string_append_formated(&result, "\n");
                     }
                 }

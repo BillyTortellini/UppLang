@@ -1,5 +1,7 @@
 #include "type_system.hpp"
 #include "compiler.hpp"
+#include "ast_parser.hpp"
+#include "rc_analyser.hpp"
 
 void type_signature_destroy(Type_Signature* sig) 
 {
@@ -66,8 +68,8 @@ void type_signature_append_to_string_with_children(String* string, Type_Signatur
     }
     case Signature_Type::STRUCT:
     {
-        if (signature->options.structure.id != 0) {
-            string_append_formated(string, signature->options.structure.id->characters);
+        if (signature->options.structure.symbol != 0) {
+            string_append_formated(string, signature->options.structure.symbol->id->characters);
         }
         if (print_child)
         {
@@ -170,8 +172,8 @@ void type_signature_append_value_to_string(Type_Signature* type, byte* value_ptr
     }
     case Signature_Type::STRUCT:
     {
-        if (type->options.structure.id != 0) {
-            string_append_formated(string, "%s{", type->options.structure.id->characters);
+        if (type->options.structure.symbol != 0) {
+            string_append_formated(string, "%s{", type->options.structure.symbol->id->characters);
         }
         else {
             string_append_formated(string, "Struct{");
@@ -203,7 +205,7 @@ void type_signature_append_value_to_string(Type_Signature* type, byte* value_ptr
     }
     case Signature_Type::ENUM:
     {
-        if (type->options.structure.id != 0) {
+        if (type->options.enum_type.id != 0) {
             string_append_formated(string, "%s{", type->options.enum_type.id->characters);
         }
         else {
@@ -304,7 +306,7 @@ void assert_similarity(Type_Signature* signature) {
     TYPE_SYSTEM
 */
 
-void type_system_add_primitives(Type_System* system, Identifier_Pool* pool)
+void type_system_add_primitives(Type_System* system, Identifier_Pool* pool, Predefined_Symbols* predefined)
 {
     system->id_data = identifier_pool_add(pool, string_create_static("data"));
     system->id_size = identifier_pool_add(pool, string_create_static("size"));
@@ -350,17 +352,13 @@ void type_system_add_primitives(Type_System* system, Identifier_Pool* pool)
 
     // Empty structure
     {
-        system->empty_struct_type = type_system_make_struct_empty_full(
-            system, identifier_pool_add(pool, string_create_static("Empty_Type")), Structure_Type::STRUCT
-        );
+        system->empty_struct_type = type_system_make_struct_empty(system, predefined->type_empty, Structure_Type::STRUCT);
         type_system_finish_type(system, system->empty_struct_type);
     }
 
     // String
     {
-        system->string_type = type_system_make_struct_empty_full(
-            system, identifier_pool_add(pool, string_create_static("String")), Structure_Type::STRUCT
-        );
+        system->string_type = type_system_make_struct_empty(system, predefined->type_string, Structure_Type::STRUCT);
         struct_add_member(system->string_type, pool, "character_buffer", type_system_make_slice(system, system->u8_type));
         struct_add_member(system->string_type, pool, "size", system->i32_type);
         type_system_finish_type(system, system->string_type);
@@ -369,9 +367,7 @@ void type_system_add_primitives(Type_System* system, Identifier_Pool* pool)
 
     // Any
     {
-        system->any_type = type_system_make_struct_empty_full(
-            system, identifier_pool_add(pool, string_create_static("Any")), Structure_Type::STRUCT
-        );
+        system->any_type = type_system_make_struct_empty(system, predefined->type_any, Structure_Type::STRUCT);
         struct_add_member(system->any_type, pool, "data", system->void_ptr_type);
         struct_add_member(system->any_type, pool, "type", system->type_type);
         type_system_finish_type(system, system->any_type);
@@ -379,17 +375,15 @@ void type_system_add_primitives(Type_System* system, Identifier_Pool* pool)
     }
 
     {
-        Type_Signature* option_type = type_system_make_struct_empty_full(
-            system, identifier_pool_add(pool, string_create_static("Type_Information_Options")), Structure_Type::UNION
+        Type_Signature* option_type = type_system_make_struct_empty(
+            system, 0, Structure_Type::UNION
         );
         struct_add_member(option_type, pool, "void_type", system->empty_struct_type);
         struct_add_member(option_type, pool, "type", system->empty_struct_type);
         struct_add_member(option_type, pool, "pointer", system->type_type);
         // Array
         {
-            Type_Signature* array_type = type_system_make_struct_empty_full(
-                system, identifier_pool_add(pool, string_create_static("Type_Information_Option_Array")), Structure_Type::STRUCT
-            );
+            Type_Signature* array_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
             struct_add_member(array_type, pool, "element_type", system->type_type);
             struct_add_member(array_type, pool, "size", system->i32_type);
             type_system_finish_type(system, array_type);
@@ -398,9 +392,7 @@ void type_system_add_primitives(Type_System* system, Identifier_Pool* pool)
         }
         // Slice
         {
-            Type_Signature* slice_type = type_system_make_struct_empty_full(
-                system, identifier_pool_add(pool, string_create_static("Type_Information_Option_Slice")), Structure_Type::STRUCT
-            );
+            Type_Signature* slice_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
             struct_add_member(slice_type, pool, "element_type", system->type_type);
             type_system_finish_type(system, slice_type);
             struct_add_member(option_type, pool, "slice", slice_type);
@@ -408,13 +400,9 @@ void type_system_add_primitives(Type_System* system, Identifier_Pool* pool)
         }
         // Primitive
         {
-            Type_Signature* primitive_type = type_system_make_struct_empty_full(
-                system, identifier_pool_add(pool, string_create_static("Type_Information_Option_Primitive")), Structure_Type::UNION
-            );
+            Type_Signature* primitive_type = type_system_make_struct_empty(system, 0, Structure_Type::UNION);
             {
-                Type_Signature* integer_info_type = type_system_make_struct_empty_full(
-                    system, identifier_pool_add(pool, string_create_static("Type_Information_Option_Primitive_Integer")), Structure_Type::STRUCT
-                );
+                Type_Signature* integer_info_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
                 struct_add_member(integer_info_type, pool, "is_signed", system->bool_type);
                 type_system_finish_type(system, integer_info_type);
                 struct_add_member(primitive_type, pool, "integer", integer_info_type);
@@ -427,9 +415,7 @@ void type_system_add_primitives(Type_System* system, Identifier_Pool* pool)
         }
         // Function
         {
-            Type_Signature* function_type = type_system_make_struct_empty_full(
-                system, identifier_pool_add(pool, string_create_static("Type_Information_Option_Function")), Structure_Type::STRUCT
-            );
+            Type_Signature* function_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
             struct_add_member(function_type, pool, "parameter_types", type_system_make_slice(system, system->type_type));
             struct_add_member(function_type, pool, "return_type", system->type_type);
             type_system_finish_type(system, function_type);
@@ -438,13 +424,9 @@ void type_system_add_primitives(Type_System* system, Identifier_Pool* pool)
         }
         // Struct
         {
-            Type_Signature* struct_type = type_system_make_struct_empty_full(
-                system, identifier_pool_add(pool, string_create_static("Type_Information_Option_Struct")), Structure_Type::STRUCT
-            );
+            Type_Signature* struct_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
             {
-                Type_Signature* struct_member_type = type_system_make_struct_empty_full(
-                    system, identifier_pool_add(pool, string_create_static("Type_Information_Struct_Member")), Structure_Type::STRUCT
-                );
+                Type_Signature* struct_member_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
                 struct_add_member(struct_member_type, pool, "name", system->string_type);
                 struct_add_member(struct_member_type, pool, "type", system->type_type);
                 struct_add_member(struct_member_type, pool, "offset", system->i32_type);
@@ -454,15 +436,11 @@ void type_system_add_primitives(Type_System* system, Identifier_Pool* pool)
             }
             struct_add_member(struct_type, pool, "name", system->string_type);
             {
-                Type_Signature* structure_type_type = type_system_make_struct_empty_full(
-                    system, identifier_pool_add(pool, string_create_static("Type_Information_Structure_Type")), Structure_Type::UNION
-                );
+                Type_Signature* structure_type_type = type_system_make_struct_empty(system, 0, Structure_Type::UNION);
                 struct_add_member(structure_type_type, pool, "structure", system->empty_struct_type);
                 struct_add_member(structure_type_type, pool, "union_untagged", system->empty_struct_type);
                 {
-                    Type_Signature* union_tagged_struct = type_system_make_struct_empty_full(
-                        system, identifier_pool_add(pool, string_create_static("Type_Information_Union_Tagged_Struct")), Structure_Type::STRUCT
-                    );
+                    Type_Signature* union_tagged_struct = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
                     struct_add_member(union_tagged_struct, pool, "tag_member_index", system->i32_type);
                     type_system_finish_type(system, union_tagged_struct);
                     struct_add_member(structure_type_type, pool, "union_tagged", union_tagged_struct);
@@ -477,13 +455,9 @@ void type_system_add_primitives(Type_System* system, Identifier_Pool* pool)
         }
         // ENUM
         {
-            Type_Signature* enum_type = type_system_make_struct_empty_full(
-                system, identifier_pool_add(pool, string_create_static("Type_Information_Option_Enum")), Structure_Type::STRUCT
-            );
+            Type_Signature* enum_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
             {
-                Type_Signature* enum_member_type = type_system_make_struct_empty_full(
-                    system, identifier_pool_add(pool, string_create_static("Type_Information_Enum_Member")), Structure_Type::STRUCT
-                );
+                Type_Signature* enum_member_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
                 struct_add_member(enum_member_type, pool, "name", system->string_type);
                 struct_add_member(enum_member_type, pool, "value", system->i32_type);
                 type_system_finish_type(system, enum_member_type);
@@ -500,9 +474,7 @@ void type_system_add_primitives(Type_System* system, Identifier_Pool* pool)
 
         // Type Information
         {
-            Type_Signature* type_info_type = type_system_make_struct_empty_full(
-                system, identifier_pool_add(pool, string_create_static("Type_Information")), Structure_Type::STRUCT
-            );
+            Type_Signature* type_info_type = type_system_make_struct_empty(system, predefined->type_type_information ,Structure_Type::STRUCT);
             struct_add_member(type_info_type, pool, "type", system->type_type);
             struct_add_member(type_info_type, pool, "size", system->i32_type);
             struct_add_member(type_info_type, pool, "alignment", system->i32_type);
@@ -761,7 +733,7 @@ void type_system_finish_type(Type_System* system, Type_Signature* type)
                 member->offset = 0;
             }
             else {
-                offset = align_offset_next_multiple(offset, member->type->alignment);
+                offset = math_round_next_multiple(offset, member->type->alignment);
                 member->offset = offset;
                 offset += member->type->size;
             }
@@ -803,15 +775,15 @@ void type_system_finish_type(Type_System* system, Type_Signature* type)
 
 
         // Make mirroring internal info
-        if (type->options.structure.id == 0) {
+        if (type->options.structure.symbol == 0) {
             internal_info->options.structure.name.character_buffer_size = 0;
             internal_info->options.structure.name.character_buffer_data = 0;
             internal_info->options.structure.name.size = 0;
         }
         else {
-            internal_info->options.structure.name.character_buffer_size = type->options.structure.id->capacity;
-            internal_info->options.structure.name.character_buffer_data = type->options.structure.id->characters;
-            internal_info->options.structure.name.size = type->options.structure.id->size;
+            internal_info->options.structure.name.character_buffer_size = type->options.structure.symbol->id->capacity;
+            internal_info->options.structure.name.character_buffer_data = type->options.structure.symbol->id->characters;
+            internal_info->options.structure.name.size = type->options.structure.symbol->id->size;
         }
         int member_count = type->options.structure.members.size;
         internal_info->options.structure.members.size = member_count;
@@ -873,6 +845,17 @@ Type_Signature* type_system_make_pointer(Type_System* system, Type_Signature* ch
     return type_system_register_type(system, result);
 }
 
+Type_Signature* type_system_make_array(Type_System* system, Type_Signature* element_type, int element_count)
+{
+    Type_Signature result;
+    result.type = Signature_Type::ARRAY;
+    result.alignment = element_type->alignment;
+    result.size = element_type->size * element_count;
+    result.options.array.element_type = element_type;
+    result.options.array.element_count = element_count;
+    return type_system_register_type(system, result);
+}
+
 Type_Signature* type_system_make_array_finished(Type_System* system, Type_Signature* element_type, int element_count)
 {
     assert(!(element_type->size == 0 && element_type->alignment == 0), "Hey");
@@ -922,31 +905,19 @@ Type_Signature* type_system_make_template(Type_System* system, String* id)
     return type_system_register_type(system, result);
 }
 
-Type_Signature* type_system_make_struct_empty_full(Type_System* system, String* id, Structure_Type struct_type)
+Type_Signature* type_system_make_struct_empty(Type_System* system, Symbol* symbol, Structure_Type struct_type)
 {
     Type_Signature result;
     result.type = Signature_Type::STRUCT;
     result.size = 0;
     result.alignment = 0;
-    result.options.structure.id = id;
+    result.options.structure.symbol = symbol;
     result.options.structure.tag_member.id = 0;
     result.options.structure.tag_member.offset = 0;
     result.options.structure.tag_member.type = 0;
     result.options.structure.struct_type = struct_type;
     result.options.structure.members = dynamic_array_create_empty<Struct_Member>(2);
     return type_system_register_type(system, result);
-}
-
-Type_Signature* type_system_make_struct_empty(Type_System* system, AST_Node* struct_node)
-{
-    Structure_Type struct_type;
-    switch (struct_node->type) {
-    case AST_Node_Type::C_UNION: struct_type = Structure_Type::C_UNION; break;
-    case AST_Node_Type::STRUCT: struct_type = Structure_Type::STRUCT; break;
-    case AST_Node_Type::UNION: struct_type = Structure_Type::UNION; break;
-    default: panic("");
-    }
-    return type_system_make_struct_empty_full(system, struct_node->id, struct_type);
 }
 
 Type_Signature* type_system_make_enum_empty(Type_System* system, String* id)

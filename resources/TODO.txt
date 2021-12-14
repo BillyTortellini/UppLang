@@ -25,16 +25,62 @@ Next features:
      union {ipv4: int; ipv5 = _};
 
 
-/*
-    poly :: ($T: Type, a: T, b: T) -> T {
-    }
 
-    I cannot analyse the argument types when I encounter the function
+Issues:
+ - Control_Flow with labled break/continue is probably wrong
+ - Structs with symbols should probably be struct ids again
 
-    So what needs to change in AST_Node_Type::FUNCTION Analysis:
-        I just need to check if one argument is polymorphic, if it is, I am done
+Open work:
+ - Struct workloads
+ - Dependency Graph resolve
+    Also howto handle circular dependencies
+ - Some Expressions
+ - RC_Statements
+ - Bake workload
 
-*/
+
+
+TODO for Dependency Graph:
+--------------------------
+
+
+
+Over night Thoughts:
+--------------------
+Casting should be done in the expression context, and the context can just create errors, since we already
+have analyse expression internal and all that good stuff. 
+
+I probably want to remove modtree now, and stick with ir-code, since ModTree is kinda useless now.
+Definitly true, because the modtree expression/statement is kinda bad for code generation, ngl
+
+
+
+Plan for Integration:
+---------------------
+Lets try to get this to compile again,
+then slowly add features in the semantic analyser back
+
+Notes:
+ - Better Error system, so we can still resolve lots of identifer and stuff
+
+When do we exactly need to know the struct size?
+    - Comptime Definitions, e.g. INFO :: Information.{language = "German", build_time = #bake current_day()};
+    - buffer: [sizeof(Node)]byte;
+    - We can also just require #bake for Struct_Initializers (..., seems to be more appropriate)
+    - new also requires struct size to not be 0
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 Implementation:
 ---------------

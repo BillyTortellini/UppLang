@@ -67,7 +67,7 @@ enum class AST_Node_Type
     STATEMENT_SWITCH, // Child 0: Expression, Children: Switch_Cases, Optional: id = block_name
     STATEMENT_BREAK, // No Children, Optional: id = block_name
     STATEMENT_CONTINUE, // No Children, Optional: id = block_name
-    STATEMENT_RETURN, // Child 0: Return-Expression
+    STATEMENT_RETURN, // Optional: Child 0: Return-Expression
     STATEMENT_EXPRESSION, // Child 0: Expression
     STATEMENT_ASSIGNMENT, // Child 0: Destination-Expression, Child 1: Value-Expression
     STATEMENT_DELETE, // Child = expression
@@ -113,8 +113,6 @@ enum class AST_Node_Type
     EXPRESSION_BINARY_OPERATION_OR,
     EXPRESSION_BINARY_OPERATION_EQUAL,
     EXPRESSION_BINARY_OPERATION_NOT_EQUAL,
-    EXPRESSION_BINARY_OPERATION_POINTER_EQUAL,
-    EXPRESSION_BINARY_OPERATION_POINTER_NOT_EQUAL,
     EXPRESSION_BINARY_OPERATION_LESS,
     EXPRESSION_BINARY_OPERATION_LESS_OR_EQUAL,
     EXPRESSION_BINARY_OPERATION_GREATER,
@@ -122,6 +120,8 @@ enum class AST_Node_Type
     EXPRESSION_UNARY_OPERATION_NEGATE,
     EXPRESSION_UNARY_OPERATION_NOT,
     EXPRESSION_UNARY_OPERATION_DEREFERENCE,
+    EXPRESSION_BINARY_OPERATION_POINTER_EQUAL,
+    EXPRESSION_BINARY_OPERATION_POINTER_NOT_EQUAL,
 
     // Previous top level nodes:
     MODULE, // Child 0: Definitions

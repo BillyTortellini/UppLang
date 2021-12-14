@@ -4,6 +4,9 @@
 #include "../../rendering/renderer_2D.hpp"
 #include "compiler.hpp"
 #include "text_editor.hpp"
+#include "ast_parser.hpp"
+#include "semantic_analyser.hpp"
+#include "../../datastructures/hashtable.hpp"
 
 vec3 KEYWORD_COLOR = vec3(0.65f, 0.4f, 0.8f);
 vec3 COMMENT_COLOR = vec3(0.0f, 1.0f, 0.0f);
@@ -115,7 +118,7 @@ Symbol_Table* code_editor_find_symbol_table_of_node(Code_Editor* editor, AST_Nod
     Symbol_Table* nearest_table = nullptr;
     while (node != nullptr)
     {
-        Symbol_Table** table = hashtable_find_element(&editor->compiler->analyser.ast_to_symbol_table, node);
+        Symbol_Table** table = hashtable_find_element(&editor->compiler->rc_analyser->mapping_ast_to_symbol_table, node);
         if (table != 0) {
             return *table;
         }
@@ -140,19 +143,17 @@ Symbol* code_editor_symbol_table_lookup(Code_Editor* editor, Symbol_Table* symbo
     }
 
     Symbol* symbol = 0;
-    Symbol_Reference ref;
-    ref.type = Usage_Type::IGNORE_REFERENCE;
     while (parent != node) {
-        symbol = symbol_table_find_symbol(symbol_table, parent->id, false, ref, 0);
+        symbol = symbol_table_find_symbol(symbol_table, parent->id, false, 0);
         if (symbol == 0) return 0;
-        if (symbol->data.type != Symbol_Type::MODULE) return 0;
-        symbol_table = symbol->data.options.module->symbol_table;
+        if (symbol->type != Symbol_Type::MODULE) return 0;
+        symbol_table = symbol->options.module_table;
         parent = parent->child_start;
         if (!ast_node_type_is_identifier_node(parent->type)) parent = parent->neighbor;
         assert(ast_node_type_is_identifier_node(parent->type), "");
     }
 
-    return symbol_table_find_symbol(symbol_table, node->id, false, ref, 0);
+    return symbol_table_find_symbol(symbol_table, node->id, false, 0);
 }
 
 Symbol* code_editor_identifier_node_lookup(Code_Editor* editor, AST_Node* node)
@@ -192,12 +193,16 @@ vec3 symbol_type_to_color(Symbol_Type type)
 {
     switch (type)
     {
-    case Symbol_Type::POLY_FUNCTION: return FUNCTION_COLOR; 
+    case Symbol_Type::HARDCODED_FUNCTION: return FUNCTION_COLOR; 
+    case Symbol_Type::EXTERN_FUNCTION: return FUNCTION_COLOR; 
     case Symbol_Type::FUNCTION: return FUNCTION_COLOR; 
     case Symbol_Type::MODULE: return MODULE_COLOR; 
     case Symbol_Type::TYPE: return TYPE_COLOR; 
     case Symbol_Type::VARIABLE: return VARIABLE_COLOR; 
     case Symbol_Type::CONSTANT_VALUE: return VARIABLE_COLOR; 
+    case Symbol_Type::SYMBOL_ALIAS: return IDENTIFIER_FALLBACK_COLOR; 
+    case Symbol_Type::UNRESOLVED: return IDENTIFIER_FALLBACK_COLOR; 
+    case Symbol_Type::VARIABLE_UNDEFINED: return VARIABLE_COLOR; 
     default: panic("");
     }
     return IDENTIFIER_FALLBACK_COLOR;
@@ -218,13 +223,13 @@ void code_editor_do_ast_syntax_highlighting(Code_Editor* editor, AST_Node* node,
     else if (node->type == AST_Node_Type::COMPTIME_DEFINE_ASSIGN ||
         node->type == AST_Node_Type::COMPTIME_DEFINE_INFER)
     {
-        Symbol* symbol = symbol_table_find_symbol(symbol_table, node->id, false, symbol_reference_make_ignore(), &editor->compiler->analyser);
+        Symbol* symbol = symbol_table_find_symbol(symbol_table, node->id, false, 0);
         if (symbol != 0)
         {
             Token_Range r = node_range;
             r.end_index = r.start_index + 1;
             text_editor_add_highlight_from_slice(
-                editor->text_editor, token_range_to_text_slice(r, editor->compiler), symbol_type_to_color(symbol->data.type), BG_COLOR
+                editor->text_editor, token_range_to_text_slice(r, editor->compiler), symbol_type_to_color(symbol->type), BG_COLOR
             );
         }
     }
@@ -274,12 +279,12 @@ void code_editor_do_ast_syntax_highlighting(Code_Editor* editor, AST_Node* node,
             Token_Range r = node_range;
             r.end_index = r.start_index + 1;
             text_editor_add_highlight_from_slice(
-                editor->text_editor, token_range_to_text_slice(r, editor->compiler), symbol_type_to_color(symbol->data.type), BG_COLOR
+                editor->text_editor, token_range_to_text_slice(r, editor->compiler), symbol_type_to_color(symbol->type), BG_COLOR
             );
         }
     }
 
-    Symbol_Table** new_table = hashtable_find_element(&editor->compiler->analyser.ast_to_symbol_table, node);
+    Symbol_Table** new_table = hashtable_find_element(&editor->compiler->rc_analyser->mapping_ast_to_symbol_table, node);
     if (new_table != 0) {
         symbol_table = *new_table;
     }
@@ -354,21 +359,21 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
         compiler_compile(editor->compiler, source_code, shortcut_build);
 
         // Print errors
-        if (editor->compiler->parser.errors.size > 0 || editor->compiler->analyser.errors.size > 0) {
+        if (editor->compiler->parser->errors.size > 0 || editor->compiler->analyser->errors.size > 0) {
             logg("\n\nThere were errors while compiling!\n");
         }
-        for (int i = 0; i < editor->compiler->parser.errors.size; i++) {
-            Compiler_Error e = editor->compiler->parser.errors[i];
+        for (int i = 0; i < editor->compiler->parser->errors.size; i++) {
+            Compiler_Error e = editor->compiler->parser->errors[i];
             logg("Parse Error: %s\n", e.message);
         }
-        if (editor->compiler->parser.errors.size == 0)
+        if (editor->compiler->parser->errors.size == 0)
         {
             String tmp = string_create_empty(256);
             SCOPE_EXIT(string_destroy(&tmp));
-            for (int i = 0; i < editor->compiler->analyser.errors.size; i++)
+            for (int i = 0; i < editor->compiler->analyser->errors.size; i++)
             {
-                Semantic_Error e = editor->compiler->analyser.errors[i];
-                semantic_error_append_to_string(&editor->compiler->analyser, e, &tmp);
+                Semantic_Error e = editor->compiler->analyser->errors[i];
+                semantic_error_append_to_string(editor->compiler->analyser, e, &tmp);
                 logg("Semantic Error: %s\n", tmp.characters);
                 string_reset(&tmp);
             }
@@ -409,12 +414,12 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
             }
         }
 
-        if (editor->compiler->analyser.program != 0 && editor->compiler->analyser.program->root_module != 0) {
-            code_editor_do_ast_syntax_highlighting(editor, editor->compiler->main_source->root_node, editor->compiler->analyser.program->root_module->symbol_table);
+        if (editor->compiler->analyser->program != 0) {
+            code_editor_do_ast_syntax_highlighting(editor, editor->compiler->main_source->root_node, editor->compiler->rc_analyser->root_symbol_table);
         }
 
-        for (int i = 0; i < editor->compiler->parser.errors.size; i++) {
-            Compiler_Error e = editor->compiler->parser.errors[i];
+        for (int i = 0; i < editor->compiler->parser->errors.size; i++) {
+            Compiler_Error e = editor->compiler->parser->errors[i];
             text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(e.range, editor->compiler), TEXT_COLOR, ERROR_BG_COLOR);
         }
     }
@@ -430,8 +435,8 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
         if (closest_token.available) closest_index = closest_token.value;
 
         // Show parser error context
-        for (int i = 0; i < editor->compiler->parser.errors.size; i++) {
-            Compiler_Error e = editor->compiler->parser.errors[i];
+        for (int i = 0; i < editor->compiler->parser->errors.size; i++) {
+            Compiler_Error e = editor->compiler->parser->errors[i];
             if (e.range.start_index <= closest_index && closest_index < e.range.end_index) {
                 search_context = false;
                 editor->show_context_info = true;
@@ -443,15 +448,15 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
         }
 
         // Show compiler error contexts
-        if (editor->compiler->parser.errors.size == 0)
+        if (editor->compiler->parser->errors.size == 0)
         {
             Dynamic_Array<Token_Range> error_locations = dynamic_array_create_empty<Token_Range>(4);
             SCOPE_EXIT(dynamic_array_destroy(&error_locations));
-            for (int i = 0; i < editor->compiler->analyser.errors.size; i++)
+            for (int i = 0; i < editor->compiler->analyser->errors.size; i++)
             {
-                Semantic_Error e = editor->compiler->analyser.errors[i];
+                Semantic_Error e = editor->compiler->analyser->errors[i];
                 dynamic_array_reset(&error_locations);
-                semantic_error_get_error_location(&editor->compiler->analyser, e, &error_locations);
+                semantic_error_get_error_location(editor->compiler->analyser, e, &error_locations);
                 for (int j = 0; j < error_locations.size; j++)
                 {
                     Token_Range range = error_locations[j];
@@ -464,7 +469,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
                         editor->show_context_info = true;
                         editor->context_info_pos = text_editor_get_character_bounding_box(editor->text_editor, editor->text_editor->cursor_position).min;
                         string_reset(&editor->context_info);
-                        semantic_error_append_to_string(&editor->compiler->analyser, e, &editor->context_info);
+                        semantic_error_append_to_string(editor->compiler->analyser, e, &editor->context_info);
                     }
                 }
             }
@@ -488,7 +493,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
 
                 Symbol* symbol = code_editor_symbol_table_lookup(editor, table, expression_node->child_start);
                 if (symbol == 0) break;
-                if (symbol->data.type != Symbol_Type::FUNCTION) break;
+                if (symbol->type != Symbol_Type::FUNCTION) break;
 
                 search_context = false;
                 editor->show_context_info = true;
@@ -512,7 +517,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
                 else if (node->type == AST_Node_Type::COMPTIME_DEFINE_ASSIGN || node->type == AST_Node_Type::COMPTIME_DEFINE_INFER ||
                     node->type == AST_Node_Type::VARIABLE_DEFINE_ASSIGN || node->type == AST_Node_Type::VARIABLE_DEFINE_INFER || 
                     node->type == AST_Node_Type::VARIABLE_DEFINITION) {
-                    symbol = symbol_table_find_symbol(symbol_table, node->id, false, symbol_reference_make_ignore(), &editor->compiler->analyser);
+                    symbol = symbol_table_find_symbol(symbol_table, node->id, false, 0);
                 }
             }
 
@@ -529,6 +534,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
                 }
 
                 // Highlight References
+                /*
                 for (int i = 0; i < symbol->references.size; i++) {
                     Symbol_Reference* reference = &symbol->references[i];
                     text_editor_add_highlight_from_slice(
@@ -537,20 +543,21 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
                         symbol_type_to_color(symbol->data.type), HIGHLIGHT_BG_COLOR
                     );
                 }
+                */
 
                 // Highlight definition
                 AST_Node* definition_node = symbol->definition_node;
                 if (definition_node != 0)
                 {
                     Token_Range range = token_range_make(definition_node->token_range.start_index, definition_node->token_range.start_index + 1);
-                    if (symbol->data.type == Symbol_Type::MODULE) {
+                    if (symbol->type == Symbol_Type::MODULE) {
                         range.start_index += 1;
                         range.end_index += 1;
                     }
                     text_editor_add_highlight_from_slice(
                         editor->text_editor,
                         token_range_to_text_slice(range, editor->compiler),
-                        symbol_type_to_color(symbol->data.type), HIGHLIGHT_BG_COLOR
+                        symbol_type_to_color(symbol->type), HIGHLIGHT_BG_COLOR
                     );
                 }
             }

@@ -84,12 +84,32 @@ List_Node<T>* list_add_at_end(List<T>* list, T value)
 }
 
 template<typename T>
-List_Node<T>* list_add_at_start(List<T>* list, T value) 
+void list_add_list(List<T>* list, List<T>* other)
+{
+    if (list->tail == 0) {
+        *list = *other;
+        other->count = 0;
+        other->head = 0;
+        other->tail = 0;
+        return;
+    }
+    list->tail->next = other->head;
+    if (other->head != 0) {
+        other->head->prev = list->tail;
+    }
+    list->count += other->count;
+    other->count = 0;
+    other->head = 0;
+    other->tail = 0;
+}
+
+template<typename T>
+List_Node<T>* list_add_at_start(List<T>* list, T value)
 {
     list->count++;
     List_Node<T>* node = new List_Node<T>;
     node->value = value;
-    if (list->head == 0) 
+    if (list->head == 0)
     {
         list->head = node;
         list->tail = node;

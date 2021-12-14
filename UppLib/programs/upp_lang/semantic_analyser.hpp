@@ -8,6 +8,7 @@
 
 #include "type_system.hpp"
 #include "compiler_misc.hpp"
+#include "rc_analyser.hpp"
 
 /*
     What can differentiate ModTree from IR_Code?
@@ -16,16 +17,6 @@
         Variable Definitions:      Keep Position vs. in Block vs. In Function
         Expression Results:        As Tree       vs. Flatten (In Registers)
         Data Access:               Through expressions vs. Data_Access structure (Resolves expression evaluation order)
-
-    Problem:
-        Symbol tables are registered in templated context, since code_block does not know if templated
-
-        Function call does not take expressions but rather identifiers, so we cannot call members that are function pointers
-
-    What type does the tag have?
-    Member access on enum type results in the enum tag
-    x = Address.IPV4; // This should instanciate a value of type Address that has the tag set to ipv4
-    x.tag == Address.IPV4; ???
 */
 
 struct Type_Signature;
@@ -33,14 +24,14 @@ struct Symbol;
 struct Compiler;
 struct Symbol_Table;
 struct ModTree_Block;
-struct ModTree_Module;
 struct ModTree_Function;
 struct ModTree_Variable;
 struct ModTree_Expression;
 struct AST_Node;
-struct ModTree_Polymorphic_Function;
 struct Upp_Constant;
 enum class Constant_Status;
+struct Semantic_Error;
+struct Error_Information;
 
 /*
     MODTREE
@@ -52,10 +43,8 @@ enum class ModTree_Binary_Operation_Type
     DIVISION,
     MULTIPLICATION,
     MODULO,
-
     AND,
     OR,
-
     EQUAL,
     NOT_EQUAL,
     LESS,
@@ -96,6 +85,14 @@ struct Member_Initializer
     AST_Node* init_node;
 };
 
+enum class ModTree_Call_Type
+{
+    FUNCTION,
+    EXTERN_FUNCTION,
+    HARDCODED_FUNCTION,
+    FUNCTION_POINTER,
+};
+
 enum class ModTree_Expression_Type
 {
     BINARY_OPERATION,
@@ -118,28 +115,36 @@ struct ModTree_Expression
 {
     ModTree_Expression_Type expression_type;
     Type_Signature* result_type;
-    union 
+    union
     {
-        struct 
+        struct
         {
             ModTree_Binary_Operation_Type operation_type;
             ModTree_Expression* left_operand;
             ModTree_Expression* right_operand;
         } binary_operation;
-        struct 
+        struct
         {
             ModTree_Unary_Operation_Type operation_type;
             ModTree_Expression* operand;
         } unary_operation;
         Upp_Constant constant_read;
         struct {
-            bool is_pointer_call;
-            ModTree_Expression* pointer_expression;
-            ModTree_Function* function;
+            ModTree_Call_Type call_type;
+            union {
+                ModTree_Expression* pointer_expression;
+                ModTree_Function* function;
+                ModTree_Extern_Function* extern_function;
+                ModTree_Hardcoded_Function* hardcoded_function;
+            } options;
             Dynamic_Array<ModTree_Expression*> arguments;
         } function_call;
+        struct {
+            bool is_extern;
+            ModTree_Function* function;
+            ModTree_Extern_Function* extern_function;
+        } function_pointer_read;
         ModTree_Variable* variable_read;
-        ModTree_Function* function_pointer_read;
         Dynamic_Array<ModTree_Expression*> array_initializer;
         Dynamic_Array<Member_Initializer> struct_initializer;
         struct {
@@ -161,11 +166,18 @@ struct ModTree_Expression
     } options;
 };
 
+struct ModTree_Switch_Case
+{
+    int value;
+    ModTree_Expression* expression;
+    ModTree_Block* body;
+};
+
 enum class ModTree_Statement_Type
 {
     BLOCK,
-    IF, 
-    WHILE, 
+    IF,
+    WHILE,
     SWITCH,
 
     BREAK,
@@ -176,13 +188,6 @@ enum class ModTree_Statement_Type
     EXPRESSION,
     ASSIGNMENT,
     DELETION,
-};
-
-struct ModTree_Switch_Case
-{
-    int value;
-    ModTree_Expression* expression;
-    ModTree_Block* body;
 };
 
 struct ModTree_Statement
@@ -221,56 +226,15 @@ struct ModTree_Statement
     } options;
 };
 
-enum class ModTree_Block_Type
-{
-    FUNCTION_BODY,
-    ANONYMOUS_BLOCK,
-    DEFER_BLOCK,
-    IF_TRUE_BLOCK,
-    IF_ELSE_BLOCK,
-    WHILE_BODY,
-    SWITCH_CASE,
-    SWITCH_DEFAULT_CASE,
-};
-
 struct ModTree_Block
 {
     Dynamic_Array<ModTree_Statement*> statements;
     Dynamic_Array<ModTree_Variable*> variables;
-    Symbol_Table* symbol_table;
-    ModTree_Block_Type type;
-    union
-    {
-        ModTree_Function* function;
-        ModTree_Block* parent;
-    } origin;
-};
-
-enum class ModTree_Variable_Origin_Type
-{
-    GLOBAL,
-    LOCAL,
-    PARAMETER
-};
-
-struct ModTree_Variable_Origin
-{
-    ModTree_Variable_Origin_Type type;
-    union
-    {
-        ModTree_Module* parent_module;
-        ModTree_Block* local_block;
-        struct {
-            ModTree_Function* function;
-            int index;
-        } parameter;
-    } options;
 };
 
 struct ModTree_Variable
 {
     Type_Signature* data_type;
-    ModTree_Variable_Origin origin;
     Symbol* symbol; // May be null
 };
 
@@ -281,69 +245,33 @@ enum class ModTree_Function_Type
     EXTERN_FUNCTION,
 };
 
-struct ModTree_Intern_Function
+struct ModTree_Function
 {
     ModTree_Block* body;
     Dynamic_Array<ModTree_Variable*> parameters;
-    // Dependencies
-    Dynamic_Array<ModTree_Function*> dependency_functions; // Pointer reads and function calls
-    Dynamic_Array<ModTree_Variable*> dependency_globals;
-    //Dynamic_Array<Type_Signature*> dependency_signatures;
+    Symbol* symbol;
+    Type_Signature* signature;
 };
 
-struct ModTree_Function
+struct ModTree_Extern_Function
 {
-    ModTree_Function_Type function_type;
-    Type_Signature* signature;
-    union
-    {
-        ModTree_Intern_Function function;
-        Hardcoded_Function_Type hardcoded_type;
-        Extern_Function_Identifier extern_function;
-    } options;
-    ModTree_Module* parent_module;
+    Extern_Function_Identifier extern_function;
     Symbol* symbol; // May be null
 };
 
-struct ModTree_Module
+struct ModTree_Hardcoded_Function
 {
-    Symbol_Table* symbol_table;
-    Dynamic_Array<ModTree_Function*> functions;
-    Dynamic_Array<ModTree_Variable*> globals;
-    Dynamic_Array<ModTree_Module*> modules;
-    Symbol* symbol; // May be null (Root module)
-    ModTree_Module* parent_module; // May be null
+    Type_Signature* signature;
+    Hardcoded_Function_Type hardcoded_type;
 };
 
 struct ModTree_Program
 {
-    ModTree_Module* root_module;
+    Dynamic_Array<ModTree_Function*> functions;
+    Dynamic_Array<ModTree_Variable*> globals;
+    Dynamic_Array<ModTree_Hardcoded_Function*> hardcoded_functions;
+    Dynamic_Array<ModTree_Extern_Function*> extern_functions;
     ModTree_Function* entry_function;
-    Dynamic_Array<ModTree_Polymorphic_Function*> function_bases;
-};
-
-struct Polymorphic_Parameter
-{
-    String* name;
-    Type_Signature* type;
-    bool is_constant; 
-    AST_Node* param_node;
-};
-
-struct Polymorphic_Instance
-{
-    ModTree_Function* function;
-    Dynamic_Array<Upp_Constant> argument_constants;
-};
-
-struct ModTree_Polymorphic_Function
-{
-    Dynamic_Array<Polymorphic_Parameter> parameters;
-    bool analysis_finished;
-    int polymorphic_argument_count;
-
-    Dynamic_Array<Polymorphic_Instance> instances;
-    Symbol* symbol; // May be 0
 };
 
 
@@ -351,282 +279,140 @@ struct ModTree_Polymorphic_Function
 
 
 /*
-    SYMBOL TABLE
+DEPENDENCY GRAPH
 */
-struct Symbol;
-struct Symbol_Table;
-struct Symbol_Data;
 
-enum class Symbol_Type
+enum class Struct_State
 {
-    POLY_FUNCTION,
-    FUNCTION,
-    TYPE,
-    CONSTANT_VALUE,
-    VARIABLE,
-    MODULE,
+    DEFINED,
+    MEMBERS_ANALYSED,
+    SIZE_KNOWN,
+    FINISHED
 };
 
-struct Symbol_Data
+struct Struct_Progress
 {
-    Symbol_Type type;
-    union
-    {
-        ModTree_Variable* variable;
-        ModTree_Module* module;
-        ModTree_Function* function;
-        ModTree_Polymorphic_Function* poly_function;
-        Type_Signature* type;
-        Upp_Constant constant;
-    } options;
+    Struct_State state;
+    Analysis_Workload* member_workload;
+    Analysis_Workload* size_workload;
+    Analysis_Workload* reachable_resolve_workload;
 };
 
-enum class Usage_Type
+enum class Function_State
 {
-    FUNCTION_CALL,
-    FUNCTION_POINTER_READ,
-    VARIABLE_READ,
-    VARIABLE_WRITE,
-    MEMBER_ACCESS,
-
-    VARIABLE_TYPE,
-    CAST_SOURCE_TYPE,
-    CAST_DESTINATION_TYPE,
-    FUNCTION_RETURN_TYPE,
-    ALLOCATION_TYPE,
-    EXTERN_FUNCTION_TYPE,
-    MEMBER_TYPE,
-    ARRAY_INITIALIZER_TYPE,
-    STRUCT_INITIALIZER_TYPE,
-
-    TEMPLATE_ARGUMENT,
-    BAKE_TYPE,
-
-    IGNORE_REFERENCE
+    HEADER_WAITING,
+    BODY_WAITING,
+    FINISHED,
 };
 
-struct Symbol_Reference
+struct Function_Progress
 {
-    Usage_Type type;
-    AST_Node* reference_node;
+    Function_State state;
+    Analysis_Workload* header_workload;
+    Analysis_Workload* body_workload;
 };
-Symbol_Reference symbol_reference_make_ignore();
 
-struct Symbol
+struct Dependent_Workload
 {
-    Symbol_Data data;
-    // Infos
-    String* id;
-    Symbol_Table* symbol_table;
-    AST_Node* definition_node;
-    Dynamic_Array<Symbol_Reference> references;
-};
-
-enum class Symbol_Table_Origin_Type
-{
-    BASE_TABLE,
-    MODULE,
-    BLOCK,
-};
-
-struct Symbol_Table_Origin
-{
-    Symbol_Table_Origin_Type type;
-    union {
-        ModTree_Module* module;
-        ModTree_Block* block;
-    } options;
-};
-
-struct Symbol_Table
-{
-    Symbol_Table* parent;
-    Symbol_Table_Origin origin;
-    Hashtable<String*, Symbol*> symbols;
-};
-
-struct Semantic_Analyser;
-struct AST_Node;
-Symbol_Table* symbol_table_create(Semantic_Analyser* analyser, Symbol_Table* parent, AST_Node* node, Symbol_Table_Origin origin);
-void symbol_table_destroy(Symbol_Table* symbol_table);
-
-void symbol_table_append_to_string(String* string, Symbol_Table* table, Semantic_Analyser* analyser, bool print_root);
-Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool only_current_scope, Symbol_Reference reference, Semantic_Analyser* analyser);
-
-
-
-/*
-    WORKLOADS
-*/
-struct Analysis_Workload_Enum
-{
-    Symbol_Table* symbol_table;
-    Type_Signature* enum_type;
-    int next_integer_value;
-    AST_Node* current_node;
-};
-
-struct Analysis_Workload_Extern_Function {
-    ModTree_Module* parent_module;
-    AST_Node* node;
-};
-
-struct Analysis_Workload_Extern_Header {
-    ModTree_Module* parent_module;
-    AST_Node* node;
-};
-
-struct Analysis_Workload_Module_Analysis {
-    AST_Node* root_node;
-};
-
-struct Analysis_Workload_Array_Size {
-    Type_Signature* array_signature;
-};
-
-struct Analysis_Workload_Global_Definition
-{
-    ModTree_Module* parent_module;
-    AST_Node* node;
-};
-
-enum class Block_Control_Flow
-{
-    NO_RETURN,
-    RETURN,
-    CONTINUE,
-    BREAK
-};
-
-struct Block_Analysis
-{
-    ModTree_Block* block;
-    AST_Node* block_node;
-    AST_Node* current_statement_node;
-    Block_Control_Flow block_flow;
-
-    ModTree_Statement* last_analysed_statement;
-    AST_Node* last_analysed_node;
-
-    int defer_count_block_start;
-};
-
-struct Analysis_Workload_Code
-{
-    ModTree_Function* function;
-    List<Block_Analysis> block_queue;
-    Block_Analysis* active_block;
-    Dynamic_Array<AST_Node*> defer_nodes;
-    Hashtable<AST_Node*, ModTree_Statement*> active_switches;
-};
-
-struct Analysis_Workload_Struct_Body
-{
-    Type_Signature* struct_signature;
-    Symbol_Table* symbol_table;
-    AST_Node* current_member_node;
-};
-
-struct Analysis_Workload_Function_Header
-{
-    ModTree_Polymorphic_Function* poly_function;
-    Symbol_Table* symbol_table;
-
-    AST_Node* function_node;
-    AST_Node* next_parameter_node;
+    List_Node<Analysis_Workload*>* node;
+    Analysis_Workload* workload;
 };
 
 enum class Analysis_Workload_Type
 {
     FUNCTION_HEADER,
-    CODE,
-    STRUCT_BODY,
-    ENUM_BODY,
-    GLOBAL_DEFINITION,
-    ARRAY_SIZE,
-
-    MODULE_ANALYSIS,
-    EXTERN_FUNCTION_DECLARATION,
-    EXTERN_HEADER_IMPORT
+    FUNCTION_BODY,
+    BAKE,
+    STRUCT_ANALYSIS,
+    STRUCT_SIZE,
+    STRUCT_REACHABLE_RESOLVE,
+    DEFINITION,
 };
 
 struct Analysis_Workload
 {
     Analysis_Workload_Type type;
-    union
-    {
-        Analysis_Workload_Struct_Body struct_body;
-        Analysis_Workload_Code code_block;
-        Analysis_Workload_Function_Header function_header;
-        Analysis_Workload_Global_Definition global;
-        Analysis_Workload_Array_Size array_size;
-        Analysis_Workload_Module_Analysis module_analysis;
-        Analysis_Workload_Extern_Header extern_header;
-        Analysis_Workload_Extern_Function extern_function;
-        Analysis_Workload_Enum enum_body;
+    RC_Analysis_Item* analysis_item;
+    bool is_finished;
+
+    List<Analysis_Workload*> dependencies;
+    Dynamic_Array<Dependent_Workload> dependents;
+    Dynamic_Array<RC_Symbol_Read*> symbol_dependencies;
+
+    struct {
+        ModTree_Function* function;
+        Type_Signature* struct_type;
+        Analysis_Workload* reachable_cluster;
     } options;
 };
 
-enum class Workload_Dependency_Type
+struct Dependency_Graph
 {
-    IDENTIFER_NOT_FOUND,
-    TYPE_SIZE_UNKNOWN, // Either of Sized_Array, Enum or Struct
-    CODE_BLOCK_NOT_FINISHED,
-    FUNCTION_HEADER_NOT_ANALYSED, // ModTree_Function* signature is 0
-};
+    Semantic_Analyser* analyser;
+    Dynamic_Array<Analysis_Workload*> workloads;
+    Dynamic_Array<Analysis_Workload*> runnable_workloads;
 
-struct Workload_Dependency_Identifier_Not_Found
-{
-    Symbol_Table* symbol_table;
-    bool current_scope_only;
+    Hashtable<Type_Signature*, Struct_Progress> progress_structs;
+    Hashtable<ModTree_Function*, Function_Progress> progress_functions;
+    Hashtable<Symbol*, Analysis_Workload*> progress_definitions;
 };
-
-struct Workload_Dependency
-{
-    Workload_Dependency_Type type;
-    AST_Node* node;
-    union {
-        Type_Signature* type_signature;
-        ModTree_Block* code_block;
-        Workload_Dependency_Identifier_Not_Found identifier_not_found;
-        ModTree_Polymorphic_Function* function_header_not_analysed;
-    } options;
-};
-
-struct Waiting_Workload
-{
-    Analysis_Workload workload;
-    Workload_Dependency dependency;
-};
-
 
 
 
 
 
 /*
-ERRORS
+ANALYSER
 */
-enum class Expected_Type_Classes
+struct Analysis_Workload;
+struct Semantic_Analyser
 {
-    PRIMITIVE,
-    INTEGERS,
-    FLOATS,
-    POINTERS,
-    ARRAYS,
-    FUNCTION_POINTER,
-    SPECIFIC_TYPE,
+    // Result
+    Dynamic_Array<Semantic_Error> errors;
+    ModTree_Program* program;
+
+    // ModTree stuff
+    ModTree_Function* global_init_function;
+    ModTree_Hardcoded_Function* free_function;
+    ModTree_Hardcoded_Function* malloc_function;
+    ModTree_Function* assert_function;
+    ModTree_Variable* global_type_informations;
+
+    // Temporary stuff needed for analysis
+    Dependency_Graph dependency_graph;
+    Compiler* compiler;
+    Hashset<String*> loaded_filenames;
+    Stack_Allocator allocator_values;
+    Hashset<ModTree_Function*> visited_functions;
+
+    ModTree_Function* current_function;
+
+    String* id_size;
+    String* id_data;
+    String* id_main;
+    String* id_tag;
+    String* id_type_of;
+    String* id_type_info;
 };
 
-enum class Expression_Result_Any_Type
+Semantic_Analyser semantic_analyser_create();
+void semantic_analyser_destroy(Semantic_Analyser* analyser);
+void semantic_analyser_reset(Semantic_Analyser* analyser, Compiler* compiler);
+void semantic_analyser_finish(Semantic_Analyser* analyser);
+
+void hardcoded_function_type_append_to_string(String* string, Hardcoded_Function_Type hardcoded);
+
+
+
+// ERRORS
+enum class Expression_Result_Type
 {
     EXPRESSION,
     TYPE,
     FUNCTION,
-    POLY_FUNCTION,
+    HARDCODED_FUNCTION,
+    EXTERN_FUNCTION,
     MODULE,
-    ERROR_OCCURED,
-    DEPENDENCY
 };
 
 enum class Semantic_Error_Type
@@ -685,6 +471,8 @@ enum class Semantic_Error_Type
     SWITCH_ONLY_ONE_DEFAULT_ALLOWED,
     SWITCH_CASE_TYPE_INVALID,
     SWITCH_CASE_MUST_BE_UNIQUE,
+
+    VARIABLE_NOT_DEFINED_YET,
 
     SYMBOL_EXPECTED_MODUL_IN_IDENTIFIER_PATH,
     SYMBOL_EXPECTED_TYPE_ON_TYPE_IDENTIFIER,
@@ -772,132 +560,61 @@ enum class Semantic_Error_Type
     MISSING_FEATURE_NESTED_DEFERS
 };
 
+enum class Error_Information_Type
+{
+    ARGUMENT_COUNT,
+    INVALID_MEMBER,
+    ID,
+    SYMBOL,
+    EXIT_CODE,
+
+    GIVEN_TYPE,
+    EXPECTED_TYPE,
+    FUNCTION_TYPE,
+    BINARY_OP_TYPES,
+
+    EXPRESSION_RESULT_TYPE,
+    CONSTANT_STATUS
+};
+
+struct Error_Information
+{
+    Error_Information_Type type;
+    union
+    {
+        struct {
+            int expected;
+            int given;
+        } invalid_argument_count;
+        String* id;
+        Symbol* symbol;
+        Exit_Code exit_code;
+        Type_Signature* type;
+        struct {
+            Type_Signature* struct_signature;
+            String* member_id;
+        } invalid_member;
+        struct {
+            Type_Signature* left_type;
+            Type_Signature* right_type;
+        } binary_op_types;
+        Expression_Result_Type expression_type;
+        Constant_Status constant_status;
+    } options;
+};
+
 struct Semantic_Error
 {
     Semantic_Error_Type type;
     AST_Node* error_node;
-
-    // Information
-    struct {
-        int expected;
-        int given;
-    } invalid_argument_count;
-
-    String* id;
-    Symbol* symbol;
-    ModTree_Function* function;
-    Exit_Code exit_code;
-    Type_Signature* given_type;
-    Type_Signature* expected_type;
-    Type_Signature* function_type;
-    Type_Signature* binary_op_left_type;
-    Type_Signature* binary_op_right_type;
-    Expression_Result_Any_Type expression_type;
-    Constant_Status constant_error_status;
+    Dynamic_Array<Error_Information> information;
 };
 
 struct Token_Range;
 void semantic_error_append_to_string(Semantic_Analyser* analyser, Semantic_Error e, String* string);
 void semantic_error_get_error_location(Semantic_Analyser* analyser, Semantic_Error error, Dynamic_Array<Token_Range>* locations);
-
-
-
-
-
-/*
-    ANALYSER
-*/
-enum class Analysis_Result_Type
-{
-    SUCCESS,
-    ERROR_OCCURED,
-    DEPENDENCY
-};
-
-struct Identifier_Analysis_Result
-{
-    Analysis_Result_Type type;
-    union
-    {
-        Symbol* symbol;
-        Workload_Dependency dependency;
-    } options;
-};
-
-struct Partial_Compile_Result
-{
-    Analysis_Result_Type type;
-    Workload_Dependency dependency;
-};
-
-struct Expression_Location
-{
-    AST_Node* node;
-    ModTree_Block* block;
-};
-
-struct Instanciation_Progress
-{
-    Dynamic_Array<Upp_Constant> constant_arguments;
-    AST_Node* argument_node;
-    int parameter_index;
-    bool errors_occured;
-};
-
-union Cached_Expression
-{
-    ModTree_Polymorphic_Function* poly_function;
-    ModTree_Function* bake_function;
-    Type_Signature* type;
-    ModTree_Module* module;
-    Instanciation_Progress instanciation;
-};
-
-struct Compiler;
-struct Semantic_Analyser
-{
-    // Result
-    Dynamic_Array<Semantic_Error> errors;
-
-    Dynamic_Array<Symbol_Table*> symbol_tables;
-    Hashtable<AST_Node*, Symbol_Table*> ast_to_symbol_table;
-
-    // ModTree stuff
-    ModTree_Program* program;
-    ModTree_Function* global_init_function;
-    ModTree_Function* free_function;
-    ModTree_Function* malloc_function;
-    ModTree_Function* assert_function;
-    ModTree_Variable* global_type_informations;
-
-    // Temporary stuff needed for analysis
-    Compiler* compiler;
-    Symbol_Table* base_table;
-    Hashset<String*> loaded_filenames;
-    Stack_Allocator allocator_values;
-
-    Analysis_Workload* current_workload;
-    Hashtable<ModTree_Block*, Block_Control_Flow> finished_code_blocks;
-    Hashtable<Expression_Location, Cached_Expression> cached_expressions;
-    Dynamic_Array<Analysis_Workload> active_workloads;
-    Dynamic_Array<Waiting_Workload> waiting_workload;
-
-    Hashset<ModTree_Function*> visited_functions;
-
-    String* id_size;
-    String* id_data;
-    String* id_main;
-    String* id_tag;
-    String* id_type_of;
-    String* id_type_info;
-};
-
-Semantic_Analyser semantic_analyser_create();
-void semantic_analyser_destroy(Semantic_Analyser* analyser);
-void semantic_analyser_execute_workloads(Semantic_Analyser* analyser);
-void semantic_analyser_reset(Semantic_Analyser* analyser, Compiler* compiler);
-
-struct AST_Parser;
-void symbol_append_to_string(Symbol* symbol, String* string);
-void hardcoded_function_type_append_to_string(String* string, Hardcoded_Function_Type hardcoded);
-void exit_code_append_to_string(String* string, Exit_Code code);
+void semantic_analyser_log_error(Semantic_Analyser* analyser, Semantic_Error_Type type, AST_Node* node);
+void semantic_analyser_add_error_info(Semantic_Analyser* analyser, Error_Information info);
+void semantic_analyser_set_error_flag(Semantic_Analyser* analyser);
+Error_Information error_information_make_empty(Error_Information_Type type);
+void dependency_graph_resolve(Dependency_Graph* graph);

@@ -8,6 +8,7 @@
 #include "../../utility/hash_functions.hpp"
 #include "semantic_analyser.hpp"
 #include "../../win32/process.hpp"
+#include "ir_code.hpp"
 
 void c_generator_output_cast_with_type(C_Generator* generator, String* output, Type_Signature* type);
 
@@ -385,8 +386,8 @@ void c_generator_register_type_name(C_Generator* generator, Type_Signature* type
     }
     case Signature_Type::STRUCT:
     {
-        if (type->options.structure.id != 0) {
-            string_append_formated(&type_name, "struct_%d_%s", generator->name_counter, type->options.structure.id->characters);
+        if (type->options.structure.symbol != 0) {
+            string_append_formated(&type_name, "struct_%d_%s", generator->name_counter, type->options.structure.symbol->id->characters);
         }
         else {
             string_append_formated(&type_name, "struct_%d", generator->name_counter);
@@ -826,7 +827,7 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
     // Reset generator data 
     {
         generator->compiler = compiler;
-        generator->program = compiler->ir_generator.program;
+        generator->program = compiler->ir_generator->program;
         string_reset(&generator->section_enum_implementations);
         string_reset(&generator->section_function_implementations);
         string_reset(&generator->section_function_prototypes);
@@ -1195,7 +1196,7 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
         string_append_formated(&section_extern_includes, "\n");
     }
     for (int i = 0; i < generator->compiler->extern_sources.lib_files.size; i++) {
-        c_compiler_add_lib_file(&generator->compiler->c_compiler, *generator->compiler->extern_sources.lib_files[i]);
+        c_compiler_add_lib_file(generator->compiler->c_compiler, *generator->compiler->extern_sources.lib_files[i]);
     }
 
     // Combine sections into one program

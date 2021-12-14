@@ -2403,7 +2403,7 @@ bool ast_node_type_is_expression(AST_Node_Type type) {
     return type >= AST_Node_Type::EXPRESSION_POINTER && type <= AST_Node_Type::ENUM;
 }
 bool ast_node_type_is_binary_operation(AST_Node_Type type) {
-    return type >= AST_Node_Type::EXPRESSION_BINARY_OPERATION_ADDITION && type <= AST_Node_Type::EXPRESSION_BINARY_OPERATION_GREATER_OR_EQUAL;
+    return type >= AST_Node_Type::EXPRESSION_BINARY_OPERATION_ADDITION && type <= AST_Node_Type::EXPRESSION_BINARY_OPERATION_POINTER_NOT_EQUAL;
 }
 bool ast_node_type_is_statement(AST_Node_Type type) {
     return type >= AST_Node_Type::STATEMENT_BLOCK && type <= AST_Node_Type::VARIABLE_DEFINE_INFER;

@@ -986,7 +986,7 @@ void bytecode_interpreter_print_state(Bytecode_Interpreter* interpreter)
 void bytecode_interpreter_reset(Bytecode_Interpreter* interpreter, Compiler* compiler)
 {
     interpreter->constant_pool = &compiler->constant_pool;
-    interpreter->generator = &compiler->bytecode_generator;
+    interpreter->generator = compiler->bytecode_generator;
 }
 
 void bytecode_interpreter_prepare_run(Bytecode_Interpreter* interpreter)
