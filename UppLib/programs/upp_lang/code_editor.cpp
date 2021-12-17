@@ -202,6 +202,7 @@ vec3 symbol_type_to_color(Symbol_Type type)
     case Symbol_Type::CONSTANT_VALUE: return VARIABLE_COLOR; 
     case Symbol_Type::SYMBOL_ALIAS: return IDENTIFIER_FALLBACK_COLOR; 
     case Symbol_Type::UNRESOLVED: return IDENTIFIER_FALLBACK_COLOR; 
+    case Symbol_Type::ERROR_SYMBOL: return IDENTIFIER_FALLBACK_COLOR; 
     case Symbol_Type::VARIABLE_UNDEFINED: return VARIABLE_COLOR; 
     default: panic("");
     }
@@ -366,6 +367,10 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
             Compiler_Error e = editor->compiler->parser->errors[i];
             logg("Parse Error: %s\n", e.message);
         }
+        for (int i = 0; i < editor->compiler->rc_analyser->errors.size; i++) {
+            Symbol_Error error = editor->compiler->rc_analyser->errors[i];
+            logg("Symbol error: Redefinition of \"%s\"\n", error.existing_symbol->id->characters);
+        }
         if (editor->compiler->parser->errors.size == 0)
         {
             String tmp = string_create_empty(256);
@@ -447,7 +452,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
             }
         }
 
-        // Show compiler error contexts
+        // Show Semantic error contexts
         if (editor->compiler->parser->errors.size == 0)
         {
             Dynamic_Array<Token_Range> error_locations = dynamic_array_create_empty<Token_Range>(4);

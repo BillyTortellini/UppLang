@@ -18,8 +18,9 @@
 // Parser stages
 bool enable_lexing = true;
 bool enable_parsing = true;
+bool enable_rc_gen = true;
 bool enable_analysis = true;
-bool enable_ir_gen = false;
+bool enable_ir_gen = true;
 bool enable_bytecode_gen = true;
 bool enable_c_generation = false;
 bool enable_c_compilation = true;
@@ -27,10 +28,10 @@ bool enable_c_compilation = true;
 // Output stages
 bool output_lexing = false;
 bool output_identifiers = false;
-bool output_ast = true;
+bool output_ast = false;
 bool output_type_system = false;
 bool output_root_table = false;
-bool output_ir = false;
+bool output_ir = true;
 bool output_bytecode = false;
 bool output_timing = true;
 
@@ -395,7 +396,7 @@ Constant_Status constant_pool_search_references(Constant_Pool* pool, int data_of
             Upp_Constant_Reference reference;
             reference.ptr_offset = data_offset;
             Offset_Result data_result = constant_pool_add_constant_internal(
-                pool, type_system_make_array_finished(pool->type_system, signature->options.slice.element_type, slice.size), 
+                pool, type_system_make_array(pool->type_system, signature->options.slice.element_type, slice.size), 
                 array_create_static_as_bytes((byte*)slice.data_ptr, signature->options.slice.element_type->size * slice.size)
             );
             if (data_result.status != Constant_Status::SUCCESS) return data_result.status;
@@ -596,8 +597,7 @@ Compiler compiler_create(Timer* timer)
     *result.parser = ast_parser_create();
     result.rc_analyser = new RC_Analyser;
     *result.rc_analyser = rc_analyser_create();
-    result.analyser = new Semantic_Analyser;
-    *result.analyser = semantic_analyser_create();
+    result.analyser = semantic_analyser_create();
     result.ir_generator = new IR_Generator;
     *result.ir_generator = ir_generator_create();
     result.bytecode_generator = new Bytecode_Generator;
@@ -631,10 +631,9 @@ void compiler_destroy(Compiler* compiler)
     delete compiler->lexer;
     ast_parser_destroy(compiler->parser);
     delete compiler->parser;
-    ir_generator_destroy(compiler->ir_generator);
-    delete compiler->ir_generator;
+    rc_analyser_destroy(compiler->rc_analyser);
+    delete compiler->rc_analyser;
     semantic_analyser_destroy(compiler->analyser);
-    delete compiler->analyser;
     ir_generator_destroy(compiler->ir_generator);
     delete compiler->ir_generator;
     bytecode_generator_destroy(compiler->bytecode_generator);
@@ -740,19 +739,21 @@ void compiler_compile(Compiler* compiler, String source_code, bool generate_code
     Code_Origin origin;
     origin.type = Code_Origin_Type::MAIN_PROJECT;
     compiler_add_source_code(compiler, source_code, origin);
-    //semantic_analyser_execute_workloads(compiler->analyser);
-    //dependency_graph_resolve(&compiler->analyser->dependency_graph);
 
     // Check for errors
     bool do_analysis = enable_lexing && enable_parsing && enable_analysis;
-    bool error_free = compiler_errors_occured(compiler);
+    bool error_free = !compiler_errors_occured(compiler);
     bool do_ir_gen = do_analysis && enable_ir_gen && generate_code && error_free;
     bool do_bytecode_gen = do_ir_gen && enable_bytecode_gen && generate_code && error_free;
     bool do_c_generation = do_ir_gen && enable_c_generation && generate_code && error_free;
     bool do_c_compilation = do_c_generation && enable_c_compilation && generate_code && error_free;
 
-    compiler_switch_timing_task(compiler, Timing_Task::CODE_GEN);
+    if (do_analysis) {
+        dependency_graph_resolve(&compiler->analyser->dependency_graph);
+        semantic_analyser_finish(compiler->analyser);
+    }
 
+    compiler_switch_timing_task(compiler, Timing_Task::CODE_GEN);
     if (do_ir_gen) {
         ir_generator_queue_and_generate_all(compiler->ir_generator);
     }
@@ -857,7 +858,7 @@ Exit_Code compiler_execute(Compiler* compiler)
     }
 
     // Execute
-    if (!compiler_errors_occured(compiler))
+    if (!compiler_errors_occured(compiler) && do_execution)
     {
         if (execute_binary) {
             return c_compiler_execute(compiler->c_compiler);
@@ -879,7 +880,7 @@ void compiler_add_source_code(Compiler* compiler, String source_code, Code_Origi
 {
     bool do_lexing = enable_lexing;
     bool do_parsing = do_lexing && enable_parsing;
-    bool do_analysis = do_parsing && enable_analysis;
+    bool do_rc_gen = do_parsing && enable_rc_gen;
 
     Timing_Task before = compiler->task_current;
     SCOPE_EXIT(compiler_switch_timing_task(compiler, before));
@@ -926,10 +927,18 @@ void compiler_add_source_code(Compiler* compiler, String source_code, Code_Origi
         }
     }
 
-    if (do_analysis)
+    if (do_rc_gen)
     {
         compiler_switch_timing_task(compiler, Timing_Task::ANALYSIS);
         rc_analyser_analyse(compiler->rc_analyser, code_source->root_node);
+        dependency_graph_add_workload_from_item(&compiler->analyser->dependency_graph, compiler->rc_analyser->root_item);
+
+        String printed_items = string_create_empty(256);
+        SCOPE_EXIT(string_destroy(&printed_items));
+        rc_analysis_item_append_to_string(compiler->rc_analyser->root_item, &printed_items, 0);
+        logg("\n");
+        logg("--------RC_ANALYSIS_ITEMS--------:\n");
+        logg("\n%s\n", printed_items.characters);
     }
 }
 

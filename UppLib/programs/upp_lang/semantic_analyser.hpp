@@ -285,7 +285,6 @@ DEPENDENCY GRAPH
 enum class Struct_State
 {
     DEFINED,
-    MEMBERS_ANALYSED,
     SIZE_KNOWN,
     FINISHED
 };
@@ -294,7 +293,6 @@ struct Struct_Progress
 {
     Struct_State state;
     Analysis_Workload* member_workload;
-    Analysis_Workload* size_workload;
     Analysis_Workload* reachable_resolve_workload;
 };
 
@@ -324,7 +322,6 @@ enum class Analysis_Workload_Type
     FUNCTION_BODY,
     BAKE,
     STRUCT_ANALYSIS,
-    STRUCT_SIZE,
     STRUCT_REACHABLE_RESOLVE,
     DEFINITION,
 };
@@ -341,8 +338,12 @@ struct Analysis_Workload
 
     struct {
         ModTree_Function* function;
-        Type_Signature* struct_type;
-        Analysis_Workload* reachable_cluster;
+        Type_Signature* struct_analysis_type;
+        struct {
+            Analysis_Workload* cluster;
+            Dynamic_Array<Type_Signature*> struct_types;
+            Dynamic_Array<Type_Signature*> unfinished_array_types;
+        } struct_reachable;
     } options;
 };
 
@@ -352,10 +353,14 @@ struct Dependency_Graph
     Dynamic_Array<Analysis_Workload*> workloads;
     Dynamic_Array<Analysis_Workload*> runnable_workloads;
 
+    Hashtable<RC_Analysis_Item*, Analysis_Workload*> item_to_workload_mapping;
     Hashtable<Type_Signature*, Struct_Progress> progress_structs;
     Hashtable<ModTree_Function*, Function_Progress> progress_functions;
     Hashtable<Symbol*, Analysis_Workload*> progress_definitions;
 };
+
+void dependency_graph_resolve(Dependency_Graph* graph);
+Analysis_Workload* dependency_graph_add_workload_from_item(Dependency_Graph* graph, RC_Analysis_Item* item);
 
 
 
@@ -379,13 +384,13 @@ struct Semantic_Analyser
     ModTree_Variable* global_type_informations;
 
     // Temporary stuff needed for analysis
-    Dependency_Graph dependency_graph;
     Compiler* compiler;
+    Dependency_Graph dependency_graph;
+    Analysis_Workload* current_workload;
+
     Hashset<String*> loaded_filenames;
     Stack_Allocator allocator_values;
     Hashset<ModTree_Function*> visited_functions;
-
-    ModTree_Function* current_function;
 
     String* id_size;
     String* id_data;
@@ -395,7 +400,7 @@ struct Semantic_Analyser
     String* id_type_info;
 };
 
-Semantic_Analyser semantic_analyser_create();
+Semantic_Analyser* semantic_analyser_create();
 void semantic_analyser_destroy(Semantic_Analyser* analyser);
 void semantic_analyser_reset(Semantic_Analyser* analyser, Compiler* compiler);
 void semantic_analyser_finish(Semantic_Analyser* analyser);
@@ -617,4 +622,3 @@ void semantic_analyser_log_error(Semantic_Analyser* analyser, Semantic_Error_Typ
 void semantic_analyser_add_error_info(Semantic_Analyser* analyser, Error_Information info);
 void semantic_analyser_set_error_flag(Semantic_Analyser* analyser);
 Error_Information error_information_make_empty(Error_Information_Type type);
-void dependency_graph_resolve(Dependency_Graph* graph);

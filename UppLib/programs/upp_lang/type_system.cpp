@@ -629,7 +629,6 @@ Type_Signature* type_system_register_type(Type_System* system, Type_Signature si
         case Signature_Type::STRUCT:
         case Signature_Type::ENUM:
             // Are both handled in finish type
-        case Signature_Type::ARRAY:
         case Signature_Type::TEMPLATE_TYPE:
         case Signature_Type::ERROR_TYPE:
         case Signature_Type::TYPE_TYPE:
@@ -657,6 +656,11 @@ Type_Signature* type_system_register_type(Type_System* system, Type_Signature si
         {
             info.options.primitive.tag = signature.options.primitive.type;
             info.options.primitive.is_signed = signature.options.primitive.is_signed;
+            break;
+        }
+        case Signature_Type::ARRAY: {
+            info.options.array.element_type = signature.options.array.element_type->internal_index;
+            info.options.array.size = signature.options.array.element_count;
             break;
         }
         case Signature_Type::SLICE: {
@@ -728,6 +732,7 @@ void type_system_finish_type(Type_System* system, Type_Signature* type)
         for (int i = 0; i < type->options.structure.members.size; i++)
         {
             Struct_Member* member = &type->options.structure.members[i];
+            assert(!(member->type->size == 0 && member->type->alignment == 0), "");
             if (overlap_members) {
                 offset = math_maximum(offset, member->type->size);
                 member->offset = 0;
@@ -847,18 +852,6 @@ Type_Signature* type_system_make_pointer(Type_System* system, Type_Signature* ch
 
 Type_Signature* type_system_make_array(Type_System* system, Type_Signature* element_type, int element_count)
 {
-    Type_Signature result;
-    result.type = Signature_Type::ARRAY;
-    result.alignment = element_type->alignment;
-    result.size = element_type->size * element_count;
-    result.options.array.element_type = element_type;
-    result.options.array.element_count = element_count;
-    return type_system_register_type(system, result);
-}
-
-Type_Signature* type_system_make_array_finished(Type_System* system, Type_Signature* element_type, int element_count)
-{
-    assert(!(element_type->size == 0 && element_type->alignment == 0), "Hey");
     Type_Signature result;
     result.type = Signature_Type::ARRAY;
     result.alignment = element_type->alignment;

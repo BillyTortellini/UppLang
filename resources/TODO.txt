@@ -1,21 +1,21 @@
 Next features:
 --------------
- * Analysis Process REFACTOR/REWORK
- * Templates rework (No more templated modules, templated types, templated functions)
+ * RC_Generator all features implemented
 
  * All Comptime Definitions should be order-independent
  * Bake expressions, bake function pointers
  * Conversion function to pointer and back
  * Literal overhaul (Integers, floats, strings?, arrays are u64, array access with any int...)
- * New with values?
  * Array bounds check
 
- * Interpreter upgrade, call C-Functions, Custom allocator, check memory access
- * Macros and Iteration
+ * Polymorphism (Template rework: No more templated modules, templated types, templated functions)
+ * Macros and Iteration 
  * Generating source code with runtime code execution (#insert_code {return "what the fuck";})
- * Annotations
+ * Annotations (Used in generating source code)
  * Static Analyser
 
+ * New with values?
+ * Interpreter upgrade, call C-Functions, Custom allocator, check memory access
  * Function overhaul, e.g. Non-Pointer parameters constant, Named parameter values in function calls
  * Read-only variables
  * Struct unpacking syntax, ignore syntax 
@@ -24,24 +24,27 @@ Next features:
      _ = Hashtable~insert();
      union {ipv4: int; ipv5 = _};
 
+First, checkup on all features
+ - Structs
+ - Modules
+ - Workload dependencies (Seems to work with functions)
+ - Defer
+ - Bake
+ - Inner Definition accessing variables
+
+ - Switches
+ - Ifs
+ - While
 
 
 Issues:
+ - Auto-Cast on function parameters doesnt' work
  - Control_Flow with labled break/continue is probably wrong
+ - Inner Comptime-Definitions can read Variables from other items...
+
+Suggestions:
  - Structs with symbols should probably be struct ids again
 
-Open work:
- - Struct workloads
- - Dependency Graph resolve
-    Also howto handle circular dependencies
- - Some Expressions
- - RC_Statements
- - Bake workload
-
-
-
-TODO for Dependency Graph:
---------------------------
 
 
 
@@ -62,12 +65,6 @@ then slowly add features in the semantic analyser back
 
 Notes:
  - Better Error system, so we can still resolve lots of identifer and stuff
-
-When do we exactly need to know the struct size?
-    - Comptime Definitions, e.g. INFO :: Information.{language = "German", build_time = #bake current_day()};
-    - buffer: [sizeof(Node)]byte;
-    - We can also just require #bake for Struct_Initializers (..., seems to be more appropriate)
-    - new also requires struct size to not be 0
 
 
 

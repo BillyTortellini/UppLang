@@ -32,6 +32,7 @@ void modtree_function_destroy(ModTree_Function* function);
 void modtree_statement_destroy(ModTree_Statement* statement);
 ModTree_Expression* semantic_analyser_cast_implicit_if_possible(Semantic_Analyser* analyser, ModTree_Expression* expression, Type_Signature* destination_type);
 bool analysis_workload_execute(Analysis_Workload* workload, Semantic_Analyser* analyser);
+void struct_analysis_add_dependency(Dependency_Graph* graph, Analysis_Workload* my_workload, Struct_Progress* other_progress, RC_Dependency_Type dependency_type);
 
 enum class Control_Flow
 {
@@ -91,11 +92,12 @@ Error_Information error_information_make_argument_count(int given_argument_count
 Error_Information error_information_make_invalid_member(Type_Signature* struct_signature, String* id) {
     Error_Information info = error_information_make_empty(Error_Information_Type::INVALID_MEMBER);
     info.options.invalid_member.member_id = id;
-    info.options.invalid_member.struct_signature= struct_signature;
+    info.options.invalid_member.struct_signature = struct_signature;
     return info;
 }
 
 Error_Information error_information_make_id(String* id) {
+    assert(id != 0, "");
     Error_Information info = error_information_make_empty(Error_Information_Type::ID);
     info.options.id = id;
     return info;
@@ -883,6 +885,7 @@ Dependency_Graph dependency_graph_create(Semantic_Analyser* analyser)
     result.workloads = dynamic_array_create_empty<Analysis_Workload*>(8);
     result.analyser = analyser;
     result.runnable_workloads = dynamic_array_create_empty<Analysis_Workload*>(8);
+    result.item_to_workload_mapping = hashtable_create_pointer_empty<RC_Analysis_Item*, Analysis_Workload*>(8);
     result.progress_definitions = hashtable_create_pointer_empty<Symbol*, Analysis_Workload*>(8);
     result.progress_structs = hashtable_create_pointer_empty<Type_Signature*, Struct_Progress>(8);
     result.progress_functions = hashtable_create_pointer_empty<ModTree_Function*, Function_Progress>(8);
@@ -896,6 +899,7 @@ void dependency_graph_destroy(Dependency_Graph* graph)
     }
     dynamic_array_destroy(&graph->workloads);
     dynamic_array_destroy(&graph->runnable_workloads);
+    hashtable_destroy(&graph->item_to_workload_mapping);
     hashtable_destroy(&graph->progress_definitions);
     hashtable_destroy(&graph->progress_functions);
     hashtable_destroy(&graph->progress_structs);
@@ -906,6 +910,10 @@ void analysis_workload_destroy(Analysis_Workload* workload)
     list_destroy(&workload->dependencies);
     dynamic_array_destroy(&workload->dependents);
     dynamic_array_destroy(&workload->symbol_dependencies);
+    if (workload->type == Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE) {
+        dynamic_array_destroy(&workload->options.struct_reachable.struct_types);
+        dynamic_array_destroy(&workload->options.struct_reachable.unfinished_array_types);
+    }
     delete workload;
 }
 
@@ -917,11 +925,14 @@ Symbol* semantic_analyser_resolve_symbol_read(Semantic_Analyser* analyser, RC_Sy
     {
         assert(ast_node_type_is_identifier_node(identifier_node->type), "");
         bool is_path = identifier_node->type == AST_Node_Type::IDENTIFIER_PATH;
-        Symbol* symbol = symbol_table_find_symbol(table, identifier_node->id, identifier_node == symbol_read->identifier_node, is_path ? 0 : symbol_read);
+        Symbol* symbol = symbol_table_find_symbol(table, identifier_node->id, identifier_node != symbol_read->identifier_node, is_path ? 0 : symbol_read);
         if (is_path)
         {
             if (symbol == 0) {
                 return 0; // Did not find module
+            }
+            if (symbol->type == Symbol_Type::UNRESOLVED) {
+                return 0;
             }
             if (symbol->type == Symbol_Type::MODULE) {
                 table = symbol->options.module_table;
@@ -962,7 +973,7 @@ void dependency_graph_resolve(Dependency_Graph* graph)
     {
         bool progress_was_made = false;
         // Check if symbols can be resolved
-        for (int i = 0; i < unresolved_symbols_workloads.size; i++) 
+        for (int i = 0; i < unresolved_symbols_workloads.size; i++)
         {
             Analysis_Workload* workload = unresolved_symbols_workloads[i];
 
@@ -1005,15 +1016,12 @@ void dependency_graph_resolve(Dependency_Graph* graph)
                     Type_Signature* type = symbol_read->symbol->options.type;
                     if (type->type == Signature_Type::STRUCT)
                     {
-                        Struct_Progress* progress = hashtable_find_element(&graph->progress_structs, type);
-                        if (progress != 0) {
-                            if (symbol_read->type == Symbol_Dependency_Type::NORMAL && progress->state != Struct_State::FINISHED) {
-                                analysis_workload_add_dependency(workload, progress->reachable_resolve_workload);
-                            }
-                        }
-                        else {
+                        Struct_Progress* other_progress = hashtable_find_element(&graph->progress_structs, type);
+                        if (other_progress == 0) {
                             assert(type->size != 0 && type->alignment != 0, "");
+                            break;
                         }
+                        struct_analysis_add_dependency(graph, workload, other_progress, symbol_read->type);
                     }
                     break;
                 }
@@ -1045,17 +1053,20 @@ void dependency_graph_resolve(Dependency_Graph* graph)
             Analysis_Workload* workload = graph->runnable_workloads[i];
             assert(workload->symbol_dependencies.size == 0, "");
             assert(workload->dependencies.count == 0, "");
-            assert(!workload->is_finished, "");
+            if (workload->is_finished) {
+                continue;
+            }
+            //assert(!workload->is_finished, "");
             progress_was_made = true;
 
             analysis_workload_execute(workload, graph->analyser);
-            if (workload->dependencies.count == 0) 
+            if (workload->dependencies.count == 0)
             {
                 workload->is_finished = true;
                 for (int j = 0; j < workload->dependents.size; j++) {
                     Dependent_Workload* dependent = &workload->dependents[j];
-                    assert(workload->dependencies.count != 0, "");
-                    list_remove_node(&workload->dependencies, dependent->node);
+                    assert(dependent->workload->dependencies.count != 0, "");
+                    list_remove_node(&dependent->workload->dependencies, dependent->node);
                     if (dependent->workload->dependencies.count == 0 && dependent->workload->symbol_dependencies.size == 0) {
                         dynamic_array_push_back(&graph->runnable_workloads, dependent->workload);
                     }
@@ -1127,6 +1138,92 @@ void analysis_workload_add_dependency(Analysis_Workload* workload, Analysis_Work
     dynamic_array_push_back(&dependency->dependents, dependent);
 }
 
+void struct_analysis_add_dependency(Dependency_Graph* graph, Analysis_Workload* my_workload, Struct_Progress* other_progress, RC_Dependency_Type dependency_type)
+{
+    if (my_workload->type != Analysis_Workload_Type::STRUCT_ANALYSIS) {
+        analysis_workload_add_dependency(my_workload, other_progress->reachable_resolve_workload);
+        return;
+    }
+    if (other_progress->state == Struct_State::FINISHED) return;
+
+    switch (dependency_type)
+    {
+    case RC_Dependency_Type::NORMAL: {
+        // Struct member references another struct, but not as a type
+        // E.g. Foo :: struct { value: Bar.{...}; }
+        analysis_workload_add_dependency(my_workload, other_progress->reachable_resolve_workload);
+        break;
+    }
+    case RC_Dependency_Type::MEMBER_IN_MEMORY: {
+        // Struct member references other member in memory
+        // E.g. Foo :: struct { value: Bar; }
+        analysis_workload_add_dependency(my_workload, other_progress->member_workload);
+        break;
+    }
+    case RC_Dependency_Type::MEMBER_REFERENCE:
+    {
+        // Struct member contains some sort of reference to other member
+        // E.g. Foo :: struct { value: *Bar; }
+        // This means we need to unify the Reachable-Clusters
+
+        // Find cluster workloads
+        Struct_Progress* my_progress = hashtable_find_element(&graph->progress_structs, my_workload->options.struct_analysis_type);
+        assert(my_progress != 0, "");
+
+        Analysis_Workload* my_cluster = my_progress->reachable_resolve_workload;
+        while (my_cluster->options.struct_reachable.cluster != 0) {
+            my_cluster = my_cluster->options.struct_reachable.cluster;
+        }
+        assert(my_cluster->type == Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE, "");
+        Analysis_Workload* member_cluster = other_progress->reachable_resolve_workload;
+        while (member_cluster->options.struct_reachable.cluster != 0) {
+            member_cluster = member_cluster->options.struct_reachable.cluster;
+        }
+        assert(member_cluster->type == Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE, "");
+
+        // Unify the workloads
+        if (my_cluster != member_cluster && !member_cluster->is_finished)
+        {
+            // Combine workloads
+            auto node = member_cluster->dependencies.head;
+            while (node != 0)
+            {
+                bool found = false;
+                for (int k = 0; k < node->value->dependents.size; k++) {
+                    Analysis_Workload* dependent = node->value->dependents[k].workload;
+                    if (dependent == member_cluster) {
+                        node->value->dependents[k].workload = my_cluster;
+                        found = true;
+                        break;
+                    }
+                }
+                assert(found, "");
+                node = node->next;
+            }
+            list_add_list(&my_cluster->dependencies, &member_cluster->dependencies);
+
+            for (int i = 0; i < member_cluster->options.struct_reachable.unfinished_array_types.size; i++) {
+                dynamic_array_push_back(&
+                    my_cluster->options.struct_reachable.unfinished_array_types, member_cluster->options.struct_reachable.unfinished_array_types[i]
+                );
+            }
+            dynamic_array_reset(&member_cluster->options.struct_reachable.unfinished_array_types);
+            for (int i = 0; i < member_cluster->options.struct_reachable.struct_types.size; i++) {
+                dynamic_array_push_back(&
+                    my_cluster->options.struct_reachable.struct_types, member_cluster->options.struct_reachable.struct_types[i]
+                );
+            }
+            dynamic_array_reset(&member_cluster->options.struct_reachable.struct_types);
+
+            analysis_workload_add_dependency(member_cluster, my_cluster);
+            member_cluster->options.struct_reachable.cluster = my_cluster;
+        }
+        break;
+    }
+    default: panic("");
+    }
+}
+
 Analysis_Workload* dependency_graph_add_workload_empty(Dependency_Graph* graph, RC_Analysis_Item* item, Analysis_Workload_Type type)
 {
     Analysis_Workload* workload = new Analysis_Workload;
@@ -1134,10 +1231,15 @@ Analysis_Workload* dependency_graph_add_workload_empty(Dependency_Graph* graph, 
     workload->dependents = dynamic_array_create_empty<Dependent_Workload>(1);
     workload->is_finished = false;
     workload->symbol_dependencies = dynamic_array_create_empty<RC_Symbol_Read*>(1);
-    workload->analysis_item = item;
     workload->type = type;
-    for (int i = 0; i < item->dependencies_symbols.size; i++) {
-        dynamic_array_push_back(&workload->symbol_dependencies, item->dependencies_symbols[i]);
+    workload->analysis_item = item;
+    if (item != 0) 
+    {
+        bool worked = hashtable_insert_element(&graph->item_to_workload_mapping, item, workload);
+        assert(worked, "This may need to change with templates");
+        for (int i = 0; i < item->symbol_dependencies.size; i++) {
+            dynamic_array_push_back(&workload->symbol_dependencies, item->symbol_dependencies[i]);
+        }
     }
     dynamic_array_push_back(&graph->workloads, workload);
 
@@ -1194,22 +1296,19 @@ Analysis_Workload* dependency_graph_add_workload_from_item(Dependency_Graph* gra
             &graph->analyser->compiler->type_system, item->options.structure.symbol, item->options.structure.structure_type
         );
         workload = dependency_graph_add_workload_empty(graph, item, Analysis_Workload_Type::STRUCT_ANALYSIS);
-        workload->options.struct_type = struct_type;
+        workload->options.struct_analysis_type = struct_type;
 
-        Analysis_Workload* size_workload = dependency_graph_add_workload_empty(graph, item, Analysis_Workload_Type::STRUCT_SIZE);
-        size_workload->options.struct_type = workload->options.struct_type;
-        analysis_workload_add_dependency(size_workload, workload);
-
-        Analysis_Workload* reachable_workload = dependency_graph_add_workload_empty(graph, item, Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE);
-        reachable_workload->options.struct_type = workload->options.struct_type;
-        reachable_workload->options.reachable_cluster = 0;
-        analysis_workload_add_dependency(reachable_workload, size_workload);
+        Analysis_Workload* reachable_workload = dependency_graph_add_workload_empty(graph, 0, Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE);
+        reachable_workload->options.struct_reachable.struct_types = dynamic_array_create_empty<Type_Signature*>(1);
+        reachable_workload->options.struct_reachable.unfinished_array_types = dynamic_array_create_empty<Type_Signature*>(1);
+        dynamic_array_push_back(&reachable_workload->options.struct_reachable.struct_types, struct_type);
+        reachable_workload->options.struct_reachable.cluster = 0;
+        analysis_workload_add_dependency(reachable_workload, workload);
 
         Struct_Progress initial_state;
         initial_state.state = Struct_State::DEFINED;
         initial_state.member_workload = workload;
         initial_state.reachable_resolve_workload = reachable_workload;
-        initial_state.size_workload = size_workload;
         hashtable_insert_element(&graph->progress_structs, struct_type, initial_state);
 
         if (item->options.structure.symbol != 0) {
@@ -1227,96 +1326,32 @@ Analysis_Workload* dependency_graph_add_workload_from_item(Dependency_Graph* gra
     }
 
     // Create child workloads
-    for (int i = 0; i < item->dependencies_items.size; i++) {
-        Analysis_Workload* dependency = dependency_graph_add_workload_from_item(graph, item->dependencies_items[i]);
-        if (workload != 0) {
+    for (int i = 0; i < item->item_dependencies.size; i++)
+    {
+        RC_Item_Dependency* item_dependency = &item->item_dependencies[i];
+        Analysis_Workload* dependency = dependency_graph_add_workload_from_item(graph, item_dependency->item);
+        if (workload == 0) continue;
+
+        if (item_dependency->type != RC_Dependency_Type::NORMAL) {
+            assert(dependency->type == Analysis_Workload_Type::STRUCT_ANALYSIS, "");
+            Struct_Progress* progress = hashtable_find_element(&graph->progress_structs, dependency->options.struct_analysis_type);
+            struct_analysis_add_dependency(graph, workload, progress, item_dependency->type);
+        }
+        else {
             analysis_workload_add_dependency(workload, dependency);
         }
     }
     return workload;
 }
 
-
-
-
 void semantic_analyser_work_through_defers(Semantic_Analyser* analyser)
 {
     panic("DO SOMETHING HERE");
 }
 
-void struct_size_add_member_dependencies(Dependency_Graph* graph, Struct_Progress* struct_progress,
-    Type_Signature* member_signature, Hashset<Type_Signature*>* visited, bool size_required)
-{
-    {
-        if (hashset_contains(visited, member_signature)) {
-            return;
-        }
-        hashset_insert_element(visited, member_signature);
-    }
-
-    switch (member_signature->type)
-    {
-    case Signature_Type::STRUCT:
-    {
-        Struct_Progress* member_progress = hashtable_find_element(&graph->progress_structs, member_signature);
-        if (member_progress == 0) {
-            assert(member_signature->size != 0 && member_signature->alignment != 0, "Predefined structs (No progress registered) must be finished");
-            break;
-        }
-        if (size_required) {
-            analysis_workload_add_dependency(struct_progress->size_workload, member_progress->size_workload);
-        }
-        else {
-            analysis_workload_add_dependency(struct_progress->size_workload, member_progress->member_workload);
-        }
-        // Reachable resolve
-        Analysis_Workload* my_cluster = struct_progress->reachable_resolve_workload;
-        while (my_cluster->options.reachable_cluster != 0) {
-            my_cluster = my_cluster->options.reachable_cluster;
-        }
-        Analysis_Workload* member_cluster = member_progress->reachable_resolve_workload;
-        while (member_cluster->options.reachable_cluster != 0) {
-            member_cluster = member_cluster->options.reachable_cluster;
-        }
-        if (my_cluster != member_cluster && member_progress->state != Struct_State::FINISHED)
-        {
-            // Combine workloads
-            list_add_list(&my_cluster->dependencies, &member_cluster->dependencies);
-            for (int i = 0; i < member_cluster->dependents.size; i++) {
-                member_cluster->dependents[i].workload = my_cluster;
-            }
-            analysis_workload_add_dependency(member_cluster, my_cluster);
-            member_cluster->options.reachable_cluster = my_cluster;
-        }
-        break;
-    }
-    case Signature_Type::ARRAY:
-    {
-        struct_size_add_member_dependencies(graph, struct_progress, member_signature->options.array.element_type, visited, size_required);
-        break;
-    }
-    case Signature_Type::POINTER: {
-        struct_size_add_member_dependencies(graph, struct_progress, member_signature->options.array.element_type, visited, false);
-        break;
-    }
-    case Signature_Type::SLICE: {
-        struct_size_add_member_dependencies(graph, struct_progress, member_signature->options.array.element_type, visited, false);
-        break;
-    }
-    case Signature_Type::FUNCTION: {
-        for (int i = 0; i < member_signature->options.function.parameter_types.size; i++) {
-            Type_Signature* param_type = member_signature->options.function.parameter_types[i];
-            struct_size_add_member_dependencies(graph, struct_progress, param_type, visited, false);
-        }
-        struct_size_add_member_dependencies(graph, struct_progress, member_signature->options.function.return_type, visited, false);
-        break;
-    }
-    default: break; // We can ignore others
-    }
-}
-
 bool analysis_workload_execute(Analysis_Workload* workload, Semantic_Analyser* analyser)
 {
+    analyser->current_workload = workload;
     switch (workload->type)
     {
     case Analysis_Workload_Type::DEFINITION:
@@ -1336,7 +1371,7 @@ bool analysis_workload_execute(Analysis_Workload* workload, Semantic_Analyser* a
             if (definition->value_expression.available)
             {
                 value = semantic_analyser_analyse_expression_value(
-                    analyser, definition->value_expression.value, type == 0 ? expression_context_make_known_type(type, true) : expression_context_make_unknown()
+                    analyser, definition->value_expression.value, type != 0 ? expression_context_make_known_type(type, true) : expression_context_make_unknown()
                 );
                 if (type != 0)
                 {
@@ -1380,7 +1415,7 @@ bool analysis_workload_execute(Analysis_Workload* workload, Semantic_Analyser* a
             {
                 Comptime_Analysis comptime = modtree_expression_calculate_comptime_value(analyser, result.options.expression);
                 if (!comptime.available) {
-                    semantic_analyser_log_error(analyser, Semantic_Error_Type::COMPTIME_DEFINITION_MUST_BE_COMPTIME_KNOWN, definition->type_expression.value);
+                    semantic_analyser_log_error(analyser, Semantic_Error_Type::COMPTIME_DEFINITION_MUST_BE_COMPTIME_KNOWN, definition->value_expression.value);
                     symbol->type = Symbol_Type::ERROR_SYMBOL;
                     break;
                 }
@@ -1388,7 +1423,7 @@ bool analysis_workload_execute(Analysis_Workload* workload, Semantic_Analyser* a
                     &analyser->compiler->constant_pool, comptime.type, array_create_static((byte*)comptime.data, comptime.type->size)
                 );
                 if (result.status != Constant_Status::SUCCESS) {
-                    semantic_analyser_log_error(analyser, Semantic_Error_Type::CONSTANT_POOL_ERROR, definition->type_expression.value);
+                    semantic_analyser_log_error(analyser, Semantic_Error_Type::CONSTANT_POOL_ERROR, definition->value_expression.value);
                     semantic_analyser_add_error_info(analyser, error_information_make_constant_status(result.status));
                     symbol->type = Symbol_Type::ERROR_SYMBOL;
                     break;
@@ -1445,6 +1480,7 @@ bool analysis_workload_execute(Analysis_Workload* workload, Semantic_Analyser* a
         ModTree_Function* function = workload->options.function;
 
         Type_Signature* signature = semantic_analyser_analyse_expression_type(analyser, header->signature_expression);
+        function->signature = signature;
         assert(signature->type == Signature_Type::FUNCTION, "");
         assert(header->parameter_symbols.size == signature->options.function.parameter_types.size, "");
         for (int i = 0; i < header->parameter_symbols.size; i++) {
@@ -1465,8 +1501,9 @@ bool analysis_workload_execute(Analysis_Workload* workload, Semantic_Analyser* a
         Control_Flow flow = semantic_analyser_fill_block(analyser, function->body, rc_body_block);
         if (flow == Control_Flow::NO_RETURN) {
             if (function->signature->options.function.return_type == analyser->compiler->type_system.void_type) {
-                semantic_analyser_work_through_defers(analyser);
+                //semantic_analyser_work_through_defers(analyser);
                 ModTree_Statement* return_statement = modtree_block_add_statement_empty(function->body, ModTree_Statement_Type::RETURN);
+                return_statement->options.return_value.available = false;
             }
             else {
                 semantic_analyser_log_error(analyser, Semantic_Error_Type::OTHERS_MISSING_RETURN_STATEMENT, (AST_Node*)0);
@@ -1477,7 +1514,7 @@ bool analysis_workload_execute(Analysis_Workload* workload, Semantic_Analyser* a
     case Analysis_Workload_Type::STRUCT_ANALYSIS:
     {
         auto rc_struct = &workload->analysis_item->options.structure;
-        Type_Signature* struct_signature = workload->options.struct_type;
+        Type_Signature* struct_signature = workload->options.struct_analysis_type;
         Struct_Progress* progress = hashtable_find_element(&analyser->dependency_graph.progress_structs, struct_signature);
         assert(progress != 0, "");
         Hashset<Type_Signature*> visited_members = hashset_create_pointer_empty<Type_Signature*>(4);
@@ -1489,28 +1526,31 @@ bool analysis_workload_execute(Analysis_Workload* workload, Semantic_Analyser* a
             member.id = rc_member->id;
             member.offset = 0;
             member.type = semantic_analyser_analyse_expression_type(analyser, rc_member->type_expression);
+            assert(!(member.type->size == 0 && member.type->alignment == 0), "Must not happen with Dependency_Type system");
             dynamic_array_push_back(&struct_signature->options.structure.members, member);
-            struct_size_add_member_dependencies(&analyser->dependency_graph, progress, member.type, &visited_members, true);
         }
-        progress->state = Struct_State::MEMBERS_ANALYSED;
-        break;
-    }
-    case Analysis_Workload_Type::STRUCT_SIZE:
-    {
-        Type_Signature* struct_signature = workload->options.struct_type;
-        Struct_Progress* progress = hashtable_find_element(&analyser->dependency_graph.progress_structs, struct_signature);
-        assert(progress != 0, "");
-        type_system_finish_type(&analyser->compiler->type_system, struct_signature);
         progress->state = Struct_State::SIZE_KNOWN;
+        type_system_finish_type(&analyser->compiler->type_system, struct_signature);
         break;
     }
     case Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE:
     {
-        // This does not need to do anything
-        Type_Signature* struct_signature = workload->options.struct_type;
-        Struct_Progress* progress = hashtable_find_element(&analyser->dependency_graph.progress_structs, struct_signature);
-        assert(progress != 0, "");
-        progress->state = Struct_State::FINISHED;
+        for (int i = 0; i < workload->options.struct_reachable.unfinished_array_types.size; i++)
+        {
+            Type_Signature* array_type = workload->options.struct_reachable.unfinished_array_types[i];
+            assert(array_type->type == Signature_Type::ARRAY, "");
+            assert(!(array_type->options.array.element_type->size == 0 && array_type->options.array.element_type->alignment == 0), "");
+            array_type->size = array_type->options.array.element_type->size * array_type->options.array.element_count;
+            array_type->alignment = array_type->options.array.element_type->alignment;
+            type_system_finish_type(&analyser->compiler->type_system, array_type);
+        }
+        for (int i = 0; i < workload->options.struct_reachable.struct_types.size; i++)
+        {
+            Type_Signature* struct_type = workload->options.struct_reachable.struct_types[i];
+            Struct_Progress* progress = hashtable_find_element(&analyser->dependency_graph.progress_structs, struct_type);
+            if (progress->state == Struct_State::FINISHED) continue;
+            progress->state = Struct_State::FINISHED;
+        }
         break;
     }
     case Analysis_Workload_Type::BAKE:
@@ -2060,7 +2100,6 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
                 }
             }
             dynamic_array_push_back(&expr_result->options.function_call.arguments, argument_expr);
-            break;
         }
         return expression_result_make_value(expr_result);
     }
@@ -2140,6 +2179,8 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
         switch (symbol->type)
         {
         case Symbol_Type::ERROR_SYMBOL: {
+            semantic_analyser_log_error(analyser, Semantic_Error_Type::INVALID_EXPRESSION_TYPE, rc_expression);
+            semantic_analyser_add_error_info(analyser, error_information_make_symbol(symbol));
             return expression_result_make_error(type_system->error_type);
         }
         case Symbol_Type::UNRESOLVED: {
@@ -2367,7 +2408,35 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
     }
     case RC_Expression_Type::ANALYSIS_ITEM:
     {
-        panic("FUCK");
+        RC_Analysis_Item* item = rc_expression->options.analysis_item;
+        Analysis_Workload** workload_opt = hashtable_find_element(&analyser->dependency_graph.item_to_workload_mapping, item);
+        assert(workload_opt != 0, "");
+        Analysis_Workload* workload = *workload_opt;
+        switch (item->type)
+        {
+        case RC_Analysis_Item_Type::FUNCTION: {
+            ModTree_Function* function = workload->options.function;
+            ModTree_Expression* expression = modtree_expression_create_empty(ModTree_Expression_Type::FUNCTION_POINTER_READ, function->signature);
+            expression->options.function_pointer_read.is_extern = false;
+            expression->options.function_pointer_read.function = function;
+            return expression_result_make_value(expression);
+        }
+        case RC_Analysis_Item_Type::STRUCTURE: {
+            Type_Signature* struct_type = workload->options.struct_analysis_type;
+            assert(!(struct_type->size == 0 && struct_type->alignment == 0), "");
+            return expression_result_make_type(struct_type);
+        }
+        case RC_Analysis_Item_Type::BAKE:
+            panic("Not implemented yet");
+
+        case RC_Analysis_Item_Type::ROOT:
+        case RC_Analysis_Item_Type::FUNCTION_BODY:
+        case RC_Analysis_Item_Type::DEFINITION:
+            panic("Should not be found as expression!");
+        default: panic("");
+        }
+        panic("");
+        return expression_result_make_error(type_system->error_type);
         /*
         auto rc_struct = &rc_expression->options.structure;
         Type_Signature* struct_type = type_system_make_struct_empty(type_system, rc_to_ast(analyser, rc_expression));
@@ -2436,10 +2505,21 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
         }
 
         Type_Signature* element_type = semantic_analyser_analyse_expression_type(analyser, rc_array->element_type_expression);
-        if (element_type->size == 0 && element_type->alignment == 0) {
-            // TODO: Theres probably something we should do in this case, but well see after struct analysis works
+        Type_Signature* array_type = type_system_make_array(type_system, element_type, array_size);
+        if (element_type->size == 0 && element_type->alignment == 0)
+        {
+            assert(analyser->current_workload->type == Analysis_Workload_Type::STRUCT_ANALYSIS, "");
+            Struct_Progress* progress = hashtable_find_element(
+                &analyser->dependency_graph.progress_structs, analyser->current_workload->options.struct_analysis_type
+            );
+            assert(progress != 0, "");
+            assert(progress->state != Struct_State::FINISHED, "Finished structs cannot be of size + alignment 0");
+            Analysis_Workload* cluster = progress->reachable_resolve_workload;
+            while (cluster->options.struct_reachable.cluster != 0) {
+                cluster = cluster->options.struct_reachable.cluster;
+            }
+            dynamic_array_push_back(&cluster->options.struct_reachable.unfinished_array_types, array_type);
         }
-        Type_Signature* array_type = type_system_make_array_finished(type_system, element_type, array_size);
         return expression_result_make_type(array_type);
     }
     case RC_Expression_Type::SLICE_TYPE:
@@ -2497,7 +2577,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
             }
             else {
                 semantic_analyser_log_error(analyser, Semantic_Error_Type::AUTO_STRUCT_INITIALIZER_COULD_NOT_DETERMINE_TYPE, rc_expression);
-                return expression_result_make_error(struct_signature);
+                return expression_result_make_error(type_system->error_type);
             }
         }
 
@@ -2516,9 +2596,14 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
         for (int i = 0; i < rc_init->member_initializers.size; i++)
         {
             RC_Member_Initializer* rc_member = &rc_init->member_initializers[i];
+            if (!rc_member->member_id.available) {
+                semantic_analyser_log_error(analyser, Semantic_Error_Type::MISSING_FEATURE, rc_member->init_expression);
+                continue;
+            }
+            String* member_id = rc_member->member_id.value;
             Struct_Member* found_member = 0;
             for (int i = 0; i < struct_signature->options.structure.members.size; i++) {
-                if (struct_signature->options.structure.members[i].id == rc_member->member_id) {
+                if (struct_signature->options.structure.members[i].id == member_id) {
                     found_member = &struct_signature->options.structure.members[i];
                 }
             }
@@ -2547,7 +2632,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
             }
             else {
                 semantic_analyser_log_error(analyser, Semantic_Error_Type::STRUCT_INITIALIZER_MEMBER_DOES_NOT_EXIST, rc_member->init_expression);
-                semantic_analyser_add_error_info(analyser, error_information_make_id(rc_member->member_id));
+                semantic_analyser_add_error_info(analyser, error_information_make_id(member_id));
             }
         }
 
@@ -2639,7 +2724,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
             semantic_analyser_log_error(analyser, Semantic_Error_Type::INVALID_TYPE_VOID_USAGE, rc_expression);
             return expression_result_make_error(type_system->error_type);
         }
-        assert(element_type->size != 0 && element_type->alignment != 0, "");
+        assert(!(element_type->size == 0 && element_type->alignment == 0), "");
 
         int array_element_count = rc_array_init->element_initializers.size;
         // There are no 0-sized arrays, only 0-sized slices. So if we encounter an empty initializer, e.g. type.[], we return an empty slice
@@ -2679,7 +2764,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
         }
 
         ModTree_Expression* result = modtree_expression_create_empty(
-            ModTree_Expression_Type::ARRAY_INITIALIZER, type_system_make_array_finished(&analyser->compiler->type_system, element_type, array_element_count)
+            ModTree_Expression_Type::ARRAY_INITIALIZER, type_system_make_array(&analyser->compiler->type_system, element_type, array_element_count)
         );
         result->options.array_initializer = init_expressions;
         return expression_result_make_value(result);
@@ -2782,7 +2867,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
                     }
                 }
                 if (found == 0) {
-                    semantic_analyser_log_error(analyser, Semantic_Error_Type::EXPRESSION_MEMBER_NOT_FOUND, rc_member_access->expression);
+                    semantic_analyser_log_error(analyser, Semantic_Error_Type::EXPRESSION_MEMBER_NOT_FOUND, rc_expression);
                     semantic_analyser_add_error_info(analyser, error_information_make_id(rc_member_access->member_name));
                     error_exit = true;
                     return expression_result_make_error(type_system->error_type);
@@ -2796,7 +2881,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
             else if (struct_signature->type == Signature_Type::ARRAY || struct_signature->type == Signature_Type::SLICE)
             {
                 if (rc_member_access->member_name != analyser->id_size && rc_member_access->member_name != analyser->id_data) {
-                    semantic_analyser_log_error(analyser, Semantic_Error_Type::EXPRESSION_MEMBER_NOT_FOUND, rc_member_access->expression);
+                    semantic_analyser_log_error(analyser, Semantic_Error_Type::EXPRESSION_MEMBER_NOT_FOUND, rc_expression);
                     semantic_analyser_add_error_info(analyser, error_information_make_id(rc_member_access->member_name));
                     error_exit = true;
                     return expression_result_make_error(type_system->error_type);
@@ -2807,10 +2892,10 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
                     if (rc_member_access->member_name == analyser->id_size) {
                         return expression_result_make_value(modtree_expression_create_constant_i32(analyser, struct_signature->options.array.element_count));
                     }
-                    else 
+                    else
                     {
                         ModTree_Expression* result = modtree_expression_create_empty(
-                            ModTree_Expression_Type::UNARY_OPERATION, 
+                            ModTree_Expression_Type::UNARY_OPERATION,
                             type_system_make_pointer(&analyser->compiler->type_system, struct_signature->options.array.element_type)
                         );
                         result->options.unary_operation.operand = access_expr;
@@ -2851,7 +2936,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
     }
     case RC_Expression_Type::AUTO_ENUM:
     {
-        String* id= rc_expression->options.auto_enum_member_id;
+        String* id = rc_expression->options.auto_enum_member_id;
         if (context.type != Expression_Context_Type::TYPE_KNOWN) {
             semantic_analyser_log_error(analyser, Semantic_Error_Type::AUTO_MEMBER_KNOWN_CONTEXT_IS_REQUIRED, rc_expression);
             return expression_result_make_error(type_system->error_type);
@@ -2888,10 +2973,10 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
         auto rc_unary = &rc_expression->options.unary_expression;
         bool is_negate = rc_unary->op_type == RC_Unary_Operation_Type::NEGATE;
         ModTree_Expression* operand = semantic_analyser_analyse_expression_value(
-            analyser, rc_unary->operand, 
-            is_negate ? expression_context_make_type(Expression_Context_Type::ARITHMETIC_OPERAND) : expression_context_make_known_type(type_system->bool_type, true) 
+            analyser, rc_unary->operand,
+            is_negate ? expression_context_make_type(Expression_Context_Type::ARITHMETIC_OPERAND) : expression_context_make_known_type(type_system->bool_type, true)
         );
-        
+
         if (is_negate) {
             bool valid = false;
             if (operand->result_type->type == Signature_Type::PRIMITIVE) {
@@ -3054,7 +3139,6 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
         Type_Signature* right_type = right_expr->result_type;
         Type_Signature* operand_type = left_type;
         bool types_are_valid = true;
-        Semantic_Error_Type error_type = Semantic_Error_Type::EXPRESSION_BINARY_OP_TYPES_MUST_MATCH;
         if (left_type != right_type)
         {
             if (semantic_analyser_check_if_cast_possible(analyser, left_type, right_type, true).available) {
@@ -3073,7 +3157,6 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
         // Check if given type is valid
         if (types_are_valid)
         {
-            error_type = Semantic_Error_Type::INVALID_TYPE_BINARY_OPERATOR;
             if (operand_type->type == Signature_Type::POINTER) {
                 types_are_valid = ptr_valid;
             }
@@ -3448,9 +3531,10 @@ Control_Flow semantic_analyser_analyse_statement(Semantic_Analyser* analyser, RC
         auto rc_return = &rc_statement->options.return_statement;
         ModTree_Statement* return_statement = modtree_block_add_statement_empty(block, ModTree_Statement_Type::RETURN);
 
-        Type_Signature* expected_return_type = analyser->current_function->signature->options.function.return_type;
+        assert(analyser->current_workload->type == Analysis_Workload_Type::FUNCTION_BODY, "No statements outside of function body");
+        Type_Signature* expected_return_type = analyser->current_workload->options.function->signature->options.function.return_type;
         Type_Signature* return_type = 0;
-        if (rc_return->available) 
+        if (rc_return->available)
         {
             ModTree_Expression* return_expr = semantic_analyser_analyse_expression_value(
                 analyser, rc_return->value, expression_context_make_known_type(expected_return_type, true)
@@ -3633,6 +3717,7 @@ Control_Flow semantic_analyser_analyse_statement(Semantic_Analyser* analyser, RC
         if (condition->result_type != type_system->bool_type) {
             semantic_analyser_log_error(analyser, Semantic_Error_Type::INVALID_TYPE_IF_CONDITION, rc_if->condition);
         }
+        statement->options.if_statement.condition = condition;
         statement->options.if_statement.if_block = modtree_block_create_empty();
         statement->options.if_statement.else_block = modtree_block_create_empty();
         Control_Flow if_flow = semantic_analyser_fill_block(analyser, statement->options.if_statement.if_block, rc_if->true_block);
@@ -3668,6 +3753,7 @@ Control_Flow semantic_analyser_analyse_statement(Semantic_Analyser* analyser, RC
         }
         statement->options.switch_statement.condition = condition;
         statement->options.switch_statement.default_block = 0;
+        statement->options.switch_statement.cases = dynamic_array_create_empty<ModTree_Switch_Case>(1);
 
         Type_Signature* switch_type = condition->result_type;
         Expression_Context case_context = condition->result_type->type == Signature_Type::ENUM ?
@@ -3677,7 +3763,7 @@ Control_Flow semantic_analyser_analyse_statement(Semantic_Analyser* analyser, RC
             RC_Switch_Case* rc_case = &rc_switch->cases[i];
             ModTree_Block* case_body = modtree_block_create_empty();
             semantic_analyser_fill_block(analyser, case_body, rc_case->body);
-            if (rc_case->expression.available) 
+            if (rc_case->expression.available)
             {
                 ModTree_Expression* case_expr = semantic_analyser_analyse_expression_value(
                     analyser, rc_case->expression.value, case_context
@@ -3722,19 +3808,21 @@ Control_Flow semantic_analyser_analyse_statement(Semantic_Analyser* analyser, RC
 
         // Check if all cases are unique
         int unique_count = 0;
-        for (int i = 0; i < statement->options.switch_statement.cases.size; i++) 
+        for (int i = 0; i < statement->options.switch_statement.cases.size; i++)
         {
             ModTree_Switch_Case* mod_case = &statement->options.switch_statement.cases[i];
-            for (int j = i+1; j < statement->options.switch_statement.cases.size; j++)
+            bool is_unique = true;
+            for (int j = i + 1; j < statement->options.switch_statement.cases.size; j++)
             {
                 ModTree_Switch_Case* other_case = &statement->options.switch_statement.cases[j];
                 if (mod_case->value == other_case->value) {
                     semantic_analyser_log_error(analyser, Semantic_Error_Type::SWITCH_CASE_MUST_BE_UNIQUE, rc_statement); // TODO: Fix this (E.g. not 0)
+                    is_unique = false;
                     break;
                 }
-                else {
-                    unique_count++;
-                }
+            }
+            if (is_unique) {
+                unique_count++;
             }
         }
 
@@ -3824,7 +3912,7 @@ Control_Flow semantic_analyser_analyse_statement(Semantic_Analyser* analyser, RC
             analyser, rc_assignment->left_expression, expression_context_make_unknown()
         );
         ModTree_Expression* right_expr = semantic_analyser_analyse_expression_value(
-            analyser, rc_assignment->right_expression,expression_context_make_known_type(left_expr->result_type, false)
+            analyser, rc_assignment->right_expression, expression_context_make_known_type(left_expr->result_type, false)
         );
         Type_Signature* left_type = left_expr->result_type;
         Type_Signature* right_type = right_expr->result_type;
@@ -3851,7 +3939,7 @@ Control_Flow semantic_analyser_analyse_statement(Semantic_Analyser* analyser, RC
         assign_statement->options.assignment.source = right_expr;
         return Control_Flow::NO_RETURN;
     }
-    case RC_Statement_Type::VARIABLE_DEFINITION: 
+    case RC_Statement_Type::VARIABLE_DEFINITION:
     {
         auto rc_variable = &rc_statement->options.variable_definition;
         ModTree_Variable* variable;
@@ -3863,7 +3951,7 @@ Control_Flow semantic_analyser_analyse_statement(Semantic_Analyser* analyser, RC
         if (rc_variable->value_expression.available)
         {
             value = semantic_analyser_analyse_expression_value(
-                analyser, rc_variable->value_expression.value, type == 0 ? expression_context_make_known_type(type, true) : expression_context_make_unknown()
+                analyser, rc_variable->value_expression.value, type != 0 ? expression_context_make_known_type(type, true) : expression_context_make_unknown()
             );
             if (type != 0)
             {
@@ -3952,9 +4040,10 @@ void semantic_analyser_finish(Semantic_Analyser* analyser)
     }
 
     // Add type_informations loading to global init function
+    if (analyser->errors.size == 0)
     {
         Type_System* type_system = &analyser->compiler->type_system;
-        Type_Signature* type_info_array_signature = type_system_make_array_finished(
+        Type_Signature* type_info_array_signature = type_system_make_array(
             type_system, type_system->type_information_type, type_system->internal_type_infos.size
         );
         int internal_information_size = type_system->internal_type_infos.size;
@@ -4034,6 +4123,9 @@ void semantic_analyser_reset(Semantic_Analyser* analyser, Compiler* compiler)
         stack_allocator_reset(&analyser->allocator_values);
         hashset_reset(&analyser->loaded_filenames);
         hashset_reset(&analyser->visited_functions);
+
+        dependency_graph_destroy(&analyser->dependency_graph);
+        analyser->dependency_graph = dependency_graph_create(analyser);
 
         if (analyser->program != 0) {
             modtree_program_destroy(analyser->program);
@@ -4162,6 +4254,7 @@ void semantic_analyser_reset(Semantic_Analyser* analyser, Compiler* compiler)
             panic("What");
         }
         hardcoded_function->signature = type_system_make_function(type_system, parameters, return_type);
+        hardcoded_function->hardcoded_type = type;
 
         // Set symbol data
         if (symbol != 0) {
@@ -4215,14 +4308,15 @@ void semantic_analyser_reset(Semantic_Analyser* analyser, Compiler* compiler)
     );
 }
 
-Semantic_Analyser semantic_analyser_create()
+Semantic_Analyser* semantic_analyser_create()
 {
-    Semantic_Analyser result;
-    result.errors = dynamic_array_create_empty<Semantic_Error>(64);
-    result.allocator_values = stack_allocator_create_empty(2048);
-    result.loaded_filenames = hashset_create_pointer_empty<String*>(32);
-    result.visited_functions = hashset_create_pointer_empty<ModTree_Function*>(32);
-    result.program = 0;
+    Semantic_Analyser* result = new Semantic_Analyser;
+    result->errors = dynamic_array_create_empty<Semantic_Error>(64);
+    result->allocator_values = stack_allocator_create_empty(2048);
+    result->loaded_filenames = hashset_create_pointer_empty<String*>(32);
+    result->visited_functions = hashset_create_pointer_empty<ModTree_Function*>(32);
+    result->dependency_graph = dependency_graph_create(result);
+    result->program = 0;
     return result;
 }
 
@@ -4240,6 +4334,7 @@ void semantic_analyser_destroy(Semantic_Analyser* analyser)
     if (analyser->program != 0) {
         modtree_program_destroy(analyser->program);
     }
+    delete analyser;
 }
 
 
@@ -4267,6 +4362,10 @@ void semantic_error_get_error_location(Semantic_Analyser* analyser, Semantic_Err
 
     switch (error.type)
     {
+    case Semantic_Error_Type::VARIABLE_NOT_DEFINED_YET: {
+        dynamic_array_push_back(locations, error.error_node->token_range);
+        break;
+    }
     case Semantic_Error_Type::TEMPLATE_ARGUMENTS_INVALID_COUNT:
     case Semantic_Error_Type::TEMPLATE_ARGUMENTS_NOT_ON_TEMPLATE: {
         AST_Node* identifier_node = error.error_node;
@@ -4467,11 +4566,14 @@ void semantic_error_get_error_location(Semantic_Analyser* analyser, Semantic_Err
     }
     case Semantic_Error_Type::INVALID_TYPE_ASSIGNMENT: {
         AST_Node* assign_node = error.error_node;
+        /*
         assert(assign_node->type == AST_Node_Type::STATEMENT_ASSIGNMENT ||
             assign_node->type == AST_Node_Type::VARIABLE_DEFINE_ASSIGN ||
             assign_node->type == AST_Node_Type::PARAMETER, "hey");
         Token_Range range = assign_node->child_start->token_range;
         dynamic_array_push_back(locations, token_range_make(range.end_index, range.end_index + 1));
+        */
+        dynamic_array_push_back(locations, assign_node->token_range);
         break;
     }
     case Semantic_Error_Type::INVALID_TYPE_RETURN: {
@@ -5141,6 +5243,9 @@ void semantic_error_append_to_string(Semantic_Analyser* analyser, Semantic_Error
     case Semantic_Error_Type::MISSING_FEATURE_NESTED_DEFERS:
         string_append_formated(string, "Nested defers not implemented yet");
         break;
+    case Semantic_Error_Type::VARIABLE_NOT_DEFINED_YET:
+        string_append_formated(string, "Variable not defined yet");
+        break;
     default: panic("ERROR");
     }
 
@@ -5391,4 +5496,3 @@ Type_Signature* import_c_type(Semantic_Analyser* analyser, C_Import_Type* type, 
     hashtable_insert_element(type_conversions, type, result_type);
     return result_type;
 }
-

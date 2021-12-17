@@ -24,6 +24,7 @@ struct RC_Analysis_Item;
 struct Analysis_Workload;
 struct RC_Expression;
 struct RC_Statement;
+struct RC_Symbol_Read;
 
 
 /*
@@ -69,22 +70,8 @@ struct RC_Parameter
 
 struct RC_Member_Initializer
 {
-    String* member_id;
+    Optional<String*> member_id;
     RC_Expression* init_expression;
-};
-
-enum class Symbol_Dependency_Type
-{
-    NORMAL,
-    STRUCT_MEMBER_TYPE,
-};
-
-struct RC_Symbol_Read
-{
-    Symbol_Dependency_Type type;
-    AST_Node* identifier_node;
-    Symbol_Table* symbol_table;
-    Symbol* symbol;
 };
 
 enum class RC_Expression_Type
@@ -324,15 +311,8 @@ void symbol_table_append_to_string(String* string, Symbol_Table* table, bool pri
 void symbol_append_to_string(Symbol* symbol, String* string);
 Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool only_current_scope, RC_Symbol_Read* reference);
 
-enum class Symbol_Error_Type
-{
-    MODUL_ONLY_VALID_IN_COMPTIME_DEFINITION,
-    SYMBOL_ALREADY_EXISTS
-};
-
 struct Symbol_Error
 {
-    Symbol_Error_Type type;
     Symbol* existing_symbol;
     AST_Node* error_node;
 };
@@ -382,6 +362,27 @@ struct Predefined_Symbols
 ANALYSER
 */
 
+enum class RC_Dependency_Type
+{
+    NORMAL,
+    MEMBER_IN_MEMORY,
+    MEMBER_REFERENCE,
+};
+
+struct RC_Symbol_Read
+{
+    RC_Dependency_Type type;
+    AST_Node* identifier_node;
+    Symbol_Table* symbol_table;
+    Symbol* symbol;
+};
+
+struct RC_Item_Dependency
+{
+    RC_Analysis_Item* item;
+    RC_Dependency_Type type;
+};
+
 struct RC_Struct_Member
 {
     String* id;
@@ -401,8 +402,8 @@ enum class RC_Analysis_Item_Type
 struct RC_Analysis_Item
 {
     RC_Analysis_Item_Type type;
-    Dynamic_Array<RC_Analysis_Item*> dependencies_items;
-    Dynamic_Array<RC_Symbol_Read*> dependencies_symbols;
+    Dynamic_Array<RC_Item_Dependency> item_dependencies;
+    Dynamic_Array<RC_Symbol_Read*> symbol_dependencies;
     union 
     {
         struct 
@@ -447,6 +448,7 @@ struct RC_Analyser
     Compiler* compiler;
     Symbol_Table* symbol_table;
     RC_Analysis_Item* analysis_item;
+    RC_Dependency_Type dependency_type;
 
     // Allocations, TODO: Use actual allocators
     Dynamic_Array<RC_Expression*> allocated_expressions;
@@ -459,5 +461,5 @@ RC_Analyser rc_analyser_create();
 void rc_analyser_destroy(RC_Analyser* analyser);
 void rc_analyser_reset(RC_Analyser* analyser, Compiler* compiler);
 void rc_analyser_analyse(RC_Analyser* analyser, AST_Node* root_node);
-void rc_analyser_log_error(RC_Analyser* analyser, Symbol_Error_Type type, Symbol* existing_symbol, AST_Node* error_node);
-
+void rc_analyser_log_error(RC_Analyser* analyser, Symbol* existing_symbol, AST_Node* error_node);
+void rc_analysis_item_append_to_string(RC_Analysis_Item* item, String* string, int indentation);

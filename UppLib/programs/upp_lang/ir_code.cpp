@@ -641,6 +641,9 @@ IR_Data_Access ir_generator_generate_expression(IR_Generator* generator, IR_Code
 {
     switch (expression->expression_type)
     {
+    case ModTree_Expression_Type::ERROR_EXPR: {
+        panic("Should have created an error, thus not enableing ir_generation");
+    }
     case ModTree_Expression_Type::BINARY_OPERATION:
     {
         IR_Instruction instr;
@@ -1340,8 +1343,8 @@ void ir_generator_reset(IR_Generator* generator, Compiler* compiler)
     if (generator->program != 0) {
         ir_program_destroy(generator->program);
     }
-    generator->next_label_index = 0;
     generator->program = ir_program_create(&generator->compiler->type_system);
+    generator->next_label_index = 0;
     generator->modtree = generator->compiler->analyser->program;
     generator->type_system = &generator->compiler->type_system;
     hashtable_reset(&generator->variable_mapping);
