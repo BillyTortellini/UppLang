@@ -13,6 +13,7 @@
 #include "c_importer.hpp"
 #include "compiler_misc.hpp"
 #include "ast_parser.hpp"
+#include "ir_code.hpp"
 
 bool PRINT_DEPENDENCIES = false;
 
@@ -32,30 +33,30 @@ void modtree_function_destroy(ModTree_Function* function);
 void modtree_statement_destroy(ModTree_Statement* statement);
 ModTree_Expression* semantic_analyser_cast_implicit_if_possible(Semantic_Analyser* analyser, ModTree_Expression* expression, Type_Signature* destination_type);
 bool analysis_workload_execute(Analysis_Workload* workload, Semantic_Analyser* analyser);
-void struct_analysis_add_dependency(Dependency_Graph* graph, Analysis_Workload* my_workload, Struct_Progress* other_progress, RC_Dependency_Type dependency_type);
-
-enum class Control_Flow
-{
-    NO_RETURN,
-    RETURN,
-    CONTINUE,
-    BREAK
-};
-Control_Flow semantic_analyser_fill_block(Semantic_Analyser* analyser, ModTree_Block* block, RC_Block* rc_block);
+void analysis_workload_add_struct_dependency(
+    Dependency_Graph* graph, Analysis_Workload* my_workload, Struct_Progress* other_progress, RC_Dependency_Type dependency_type);
+void analysis_workload_add_function_dependency(
+    Dependency_Graph* graph, Analysis_Workload* my_workload, Function_Progress* other_progress, RC_Dependency_Type dependency_type);
+void semantic_analyser_fill_block(Semantic_Analyser* analyser, ModTree_Block* block, RC_Block* rc_block);
 
 /*
 ERROR Helpers
 */
-void semantic_analyser_set_error_flag(Semantic_Analyser* analyser) {
+void semantic_analyser_set_error_flag(Semantic_Analyser* analyser) 
+{
+    if (analyser->current_function != 0) {
+        analyser->current_function->contains_errors = true;
+    }
 }
 
 void semantic_analyser_log_error(Semantic_Analyser* analyser, Semantic_Error_Type type, AST_Node* node) {
-    semantic_analyser_set_error_flag(analyser);
+
     Semantic_Error error;
     error.type = type;
     error.error_node = node;
     error.information = dynamic_array_create_empty<Error_Information>(2);
     dynamic_array_push_back(&analyser->errors, error);
+    semantic_analyser_set_error_flag(analyser);
 }
 
 void semantic_analyser_log_error(Semantic_Analyser* analyser, Semantic_Error_Type type, RC_Expression* expression) {
@@ -181,11 +182,15 @@ ModTree_Expression* modtree_expression_create_variable_read(ModTree_Variable* va
     return expr;
 }
 
-ModTree_Block* modtree_block_create_empty()
+ModTree_Block* modtree_block_create_empty(RC_Block* rc_block)
 {
     ModTree_Block* block = new ModTree_Block;
     block->statements = dynamic_array_create_empty<ModTree_Statement*>(1);
     block->variables = dynamic_array_create_empty<ModTree_Variable*>(1);
+    block->control_flow_locked = false;
+    block->flow = Control_Flow::SEQUENTIAL;
+    block->rc_block = rc_block;
+    block->defer_start_index = 0;
     return block;
 }
 
@@ -211,13 +216,16 @@ ModTree_Variable* modtree_block_add_variable(ModTree_Block* block, Type_Signatur
     return var;
 }
 
-ModTree_Function* modtree_function_create_empty(ModTree_Program* program, Type_Signature* signature, Symbol* symbol)
+ModTree_Function* modtree_function_create_empty(ModTree_Program* program, Type_Signature* signature, Symbol* symbol, RC_Block* body_block)
 {
     ModTree_Function* function = new ModTree_Function;
     function->parameters = dynamic_array_create_empty<ModTree_Variable*>(1);
     function->symbol = symbol;
     function->signature = signature;
-    function->body = modtree_block_create_empty();
+    function->called_from = dynamic_array_create_empty<ModTree_Function*>(1);
+    function->calls = dynamic_array_create_empty<ModTree_Function*>(1);
+    function->body = modtree_block_create_empty(body_block);
+    function->contains_errors = false;
     dynamic_array_push_back(&program->functions, function);
     return function;
 }
@@ -228,6 +236,8 @@ void modtree_function_destroy(ModTree_Function* function)
         delete function->parameters[i];
     }
     dynamic_array_destroy(&function->parameters);
+    dynamic_array_destroy(&function->called_from);
+    dynamic_array_destroy(&function->calls);
     modtree_block_destroy(function->body);
     delete function;
 }
@@ -431,6 +441,9 @@ Comptime_Analysis modtree_expression_calculate_comptime_value(Semantic_Analyser*
     Type_System* type_system = &analyser->compiler->type_system;
     switch (expr->expression_type)
     {
+    case ModTree_Expression_Type::ERROR_EXPR: {
+        return comptime_analysis_make_error();
+    }
     case ModTree_Expression_Type::BINARY_OPERATION:
     {
         Comptime_Analysis left_val = modtree_expression_calculate_comptime_value(analyser, expr->options.binary_operation.left_operand);
@@ -910,9 +923,13 @@ void analysis_workload_destroy(Analysis_Workload* workload)
     list_destroy(&workload->dependencies);
     dynamic_array_destroy(&workload->dependents);
     dynamic_array_destroy(&workload->symbol_dependencies);
+    dynamic_array_destroy(&workload->reachable_clusters);
     if (workload->type == Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE) {
         dynamic_array_destroy(&workload->options.struct_reachable.struct_types);
         dynamic_array_destroy(&workload->options.struct_reachable.unfinished_array_types);
+    }
+    if (workload->type == Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE) {
+        dynamic_array_destroy(&workload->options.cluster_compile.functions);
     }
     delete workload;
 }
@@ -986,6 +1003,7 @@ void dependency_graph_resolve(Dependency_Graph* graph)
                     if (symbol_read->symbol == 0) {
                         continue;
                     }
+                    progress_was_made = true;
                 }
 
                 bool symbol_read_ready = true;
@@ -1006,8 +1024,14 @@ void dependency_graph_resolve(Dependency_Graph* graph)
                 case Symbol_Type::FUNCTION:
                 {
                     Function_Progress* progress_opt = hashtable_find_element(&graph->progress_functions, symbol_read->symbol->options.function);
-                    if (progress_opt != 0 && progress_opt->state == Function_State::HEADER_WAITING) {
-                        analysis_workload_add_dependency(workload, progress_opt->header_workload);
+                    assert(progress_opt != 0, "");
+                    if (workload->type == Analysis_Workload_Type::FUNCTION_BODY) {
+                        analysis_workload_add_function_dependency(graph, workload, progress_opt, symbol_read->type);
+                    }
+                    else {
+                        if (progress_opt->state == Function_State::DEFINED) {
+                            analysis_workload_add_dependency(workload, progress_opt->header_workload);
+                        }
                     }
                     break;
                 }
@@ -1021,7 +1045,7 @@ void dependency_graph_resolve(Dependency_Graph* graph)
                             assert(type->size != 0 && type->alignment != 0, "");
                             break;
                         }
-                        struct_analysis_add_dependency(graph, workload, other_progress, symbol_read->type);
+                        analysis_workload_add_struct_dependency(graph, workload, other_progress, symbol_read->type);
                     }
                     break;
                 }
@@ -1138,16 +1162,215 @@ void analysis_workload_add_dependency(Analysis_Workload* workload, Analysis_Work
     dynamic_array_push_back(&dependency->dependents, dependent);
 }
 
-void struct_analysis_add_dependency(Dependency_Graph* graph, Analysis_Workload* my_workload, Struct_Progress* other_progress, RC_Dependency_Type dependency_type)
+Analysis_Workload* analysis_workload_find_associated_cluster(Analysis_Workload* workload)
+{
+    assert(workload->type == Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE || workload->type == Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE, "");
+    if (workload->cluster == 0) {
+        return workload;
+    }
+    workload->cluster = analysis_workload_find_associated_cluster(workload->cluster);
+    return workload->cluster;
+}
+
+bool cluster_workload_check_for_cyclic_dependency(
+    Analysis_Workload* workload, Analysis_Workload* start_workload,
+    Hashtable<Analysis_Workload*, bool>* visited, Dynamic_Array<Analysis_Workload*>* workloads_to_merge)
+{
+    // Check if we already visited
+    {
+        bool* contains_loop = hashtable_find_element(visited, workload);
+        if (contains_loop != 0) {
+            return *contains_loop;
+        }
+    }
+    hashtable_insert_element(visited, workload, false); // This may need to change later if we actually find a loop
+    bool loop_found = false;
+    for (int i = 0; i < workload->reachable_clusters.size; i++) 
+    {
+        Analysis_Workload* reachable = analysis_workload_find_associated_cluster(workload->reachable_clusters[i]);
+        if (reachable == start_workload) {
+            loop_found = true;
+        }
+        else {
+            bool transitiv_reachable = cluster_workload_check_for_cyclic_dependency(reachable, start_workload, visited, workloads_to_merge);
+            if (transitiv_reachable) loop_found = true;
+        }
+    }
+    if (loop_found) {
+        bool* current_value = hashtable_find_element(visited, workload);
+        *current_value = true;
+        dynamic_array_push_back(workloads_to_merge, workload);
+    }
+    return loop_found;
+}
+
+void analysis_workload_add_cluster_dependency(Dependency_Graph* graph, Analysis_Workload* add_to_workload, Analysis_Workload* dependency)
+{
+    assert((add_to_workload->type == Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE && dependency->type == Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE) ||
+        (add_to_workload->type == Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE && dependency->type == Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE), "");
+    Analysis_Workload* merge_into = analysis_workload_find_associated_cluster(add_to_workload);
+    Analysis_Workload* merge_from = analysis_workload_find_associated_cluster(dependency);
+    if (merge_into == merge_into || merge_from->is_finished) {
+        return;
+    }
+
+    Hashtable<Analysis_Workload*, bool> visited = hashtable_create_pointer_empty<Analysis_Workload*, bool>(1);
+    SCOPE_EXIT(hashtable_destroy(&visited));
+    Dynamic_Array<Analysis_Workload*> workloads_to_merge = dynamic_array_create_empty<Analysis_Workload*>(1);
+    SCOPE_EXIT(dynamic_array_destroy(&workloads_to_merge));
+    bool loop_found = cluster_workload_check_for_cyclic_dependency(merge_from, merge_into, &visited, &workloads_to_merge);
+    if (!loop_found) {
+        dynamic_array_push_back(&merge_into->reachable_clusters, merge_from);
+        analysis_workload_add_dependency(merge_into, merge_from);
+        return;
+    }
+
+    // Merge all workloads together
+    for (int i = 0; i < workloads_to_merge.size; i++)
+    {
+        Analysis_Workload* merge_cluster = workloads_to_merge[i];
+        // Remove all dependent connections from the merge
+        auto node = merge_cluster->dependencies.head;
+        while (node != 0)
+        {
+            Analysis_Workload* merge_depends_on = node->value;
+            bool remove_dependency = false;
+            for (int j = 0; j < workloads_to_merge.size; j++) {
+                if (workloads_to_merge[j] == merge_depends_on) {
+                    remove_dependency = true;
+                    break;
+                }
+            }
+            if (merge_depends_on == merge_into) {
+                remove_dependency = true;
+            }
+
+            bool found = false;
+            for (int j = 0; j < merge_depends_on->dependents.size; j++) {
+                if (merge_depends_on->dependents[j].workload == merge_cluster) {
+                    dynamic_array_swap_remove(&merge_depends_on->dependents, j);
+                    found = true;
+                    break;
+                }
+            }
+            assert(found, "");
+
+            if (!remove_dependency) {
+                analysis_workload_add_dependency(merge_into, node->value);
+            }
+            node = node->next;
+        }
+        list_reset(&merge_cluster->dependencies);
+
+        // Merge all analysis item values
+        switch (merge_into->type)
+        {
+        case Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE: 
+        {
+            for (int i = 0; i < merge_cluster->options.cluster_compile.functions.size; i++) {
+                dynamic_array_push_back(&
+                    merge_into->options.cluster_compile.functions, merge_cluster->options.cluster_compile.functions[i]
+                );
+            }
+            dynamic_array_reset(&merge_cluster->options.cluster_compile.functions);
+            break;
+        }
+        case Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE: 
+        {
+            for (int i = 0; i < merge_cluster->options.struct_reachable.unfinished_array_types.size; i++) {
+                dynamic_array_push_back(&
+                    merge_into->options.struct_reachable.unfinished_array_types, merge_cluster->options.struct_reachable.unfinished_array_types[i]
+                );
+            }
+            dynamic_array_reset(&merge_cluster->options.struct_reachable.unfinished_array_types);
+            for (int i = 0; i < merge_cluster->options.struct_reachable.struct_types.size; i++) {
+                dynamic_array_push_back(&
+                    merge_into->options.struct_reachable.struct_types, merge_cluster->options.struct_reachable.struct_types[i]
+                );
+            }
+            dynamic_array_reset(&merge_cluster->options.struct_reachable.struct_types);
+
+        }
+        case Analysis_Workload_Type::DEFINITION:
+        case Analysis_Workload_Type::FUNCTION_BODY:
+        case Analysis_Workload_Type::FUNCTION_HEADER:
+        case Analysis_Workload_Type::STRUCT_ANALYSIS:
+            panic("Clustering only on function clusters and reachable resolve cluster!");
+        default: panic("");
+        }
+
+        // Add reachables to merged
+        for (int i = 0; i < merge_cluster->reachable_clusters.size; i++) {
+            dynamic_array_push_back(&merge_into->reachable_clusters, merge_cluster->reachable_clusters[i]);
+        }
+        dynamic_array_reset(&merge_cluster->reachable_clusters);
+        analysis_workload_add_dependency(merge_cluster, merge_into);
+        merge_cluster->cluster = merge_into;
+    }
+
+    // Prune reachables
+    for (int i = 0; i < merge_into->reachable_clusters.size; i++)
+    {
+        Analysis_Workload* reachable = analysis_workload_find_associated_cluster(merge_into->reachable_clusters[i]);
+        if (reachable == merge_into) {
+            // Remove self references
+            dynamic_array_swap_remove(&merge_into->reachable_clusters, i);
+            i = i - 1;
+        }
+        else
+        {
+            // Remove doubles
+            bool found = false;
+            for (int j = i + 1; j < merge_into->reachable_clusters.size; j++) {
+                if (merge_into->reachable_clusters[j] == reachable) {
+                    found = true;
+                    break;
+                }
+            }
+            if (found) {
+                dynamic_array_swap_remove(&merge_into->reachable_clusters, i);
+                i = i - 1;
+            }
+        }
+    }
+
+}
+
+void analysis_workload_add_function_dependency(
+    Dependency_Graph* graph, Analysis_Workload* my_workload, Function_Progress* other_progress, RC_Dependency_Type dependency_type)
+{
+    if (other_progress->state == Function_State::FINISHED) return;
+    if (dependency_type == RC_Dependency_Type::BAKE) {
+        analysis_workload_add_dependency(my_workload, other_progress->compile_workload);
+        return;
+    }
+    else {
+        analysis_workload_add_dependency(my_workload, other_progress->header_workload);
+    }
+
+    if (my_workload->type != Analysis_Workload_Type::FUNCTION_BODY) {
+        return;
+    }
+
+    // Unify the compile clusters
+    Function_Progress* my_progress = hashtable_find_element(&graph->progress_functions, my_workload->options.function);
+    assert(my_progress != 0, "");
+    analysis_workload_add_cluster_dependency(graph, my_progress->compile_workload, other_progress->compile_workload);
+}
+
+void analysis_workload_add_struct_dependency(Dependency_Graph* graph, Analysis_Workload* my_workload, Struct_Progress* other_progress, RC_Dependency_Type dependency_type)
 {
     if (my_workload->type != Analysis_Workload_Type::STRUCT_ANALYSIS) {
         analysis_workload_add_dependency(my_workload, other_progress->reachable_resolve_workload);
         return;
     }
     if (other_progress->state == Struct_State::FINISHED) return;
+    Struct_Progress* my_progress = hashtable_find_element(&graph->progress_structs, my_workload->options.struct_analysis_type);
+    assert(my_progress != 0, "");
 
     switch (dependency_type)
     {
+    case RC_Dependency_Type::BAKE:
     case RC_Dependency_Type::NORMAL: {
         // Struct member references another struct, but not as a type
         // E.g. Foo :: struct { value: Bar.{...}; }
@@ -1158,6 +1381,7 @@ void struct_analysis_add_dependency(Dependency_Graph* graph, Analysis_Workload* 
         // Struct member references other member in memory
         // E.g. Foo :: struct { value: Bar; }
         analysis_workload_add_dependency(my_workload, other_progress->member_workload);
+        analysis_workload_add_cluster_dependency(graph, my_progress->reachable_resolve_workload, other_progress->reachable_resolve_workload);
         break;
     }
     case RC_Dependency_Type::MEMBER_REFERENCE:
@@ -1165,59 +1389,7 @@ void struct_analysis_add_dependency(Dependency_Graph* graph, Analysis_Workload* 
         // Struct member contains some sort of reference to other member
         // E.g. Foo :: struct { value: *Bar; }
         // This means we need to unify the Reachable-Clusters
-
-        // Find cluster workloads
-        Struct_Progress* my_progress = hashtable_find_element(&graph->progress_structs, my_workload->options.struct_analysis_type);
-        assert(my_progress != 0, "");
-
-        Analysis_Workload* my_cluster = my_progress->reachable_resolve_workload;
-        while (my_cluster->options.struct_reachable.cluster != 0) {
-            my_cluster = my_cluster->options.struct_reachable.cluster;
-        }
-        assert(my_cluster->type == Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE, "");
-        Analysis_Workload* member_cluster = other_progress->reachable_resolve_workload;
-        while (member_cluster->options.struct_reachable.cluster != 0) {
-            member_cluster = member_cluster->options.struct_reachable.cluster;
-        }
-        assert(member_cluster->type == Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE, "");
-
-        // Unify the workloads
-        if (my_cluster != member_cluster && !member_cluster->is_finished)
-        {
-            // Combine workloads
-            auto node = member_cluster->dependencies.head;
-            while (node != 0)
-            {
-                bool found = false;
-                for (int k = 0; k < node->value->dependents.size; k++) {
-                    Analysis_Workload* dependent = node->value->dependents[k].workload;
-                    if (dependent == member_cluster) {
-                        node->value->dependents[k].workload = my_cluster;
-                        found = true;
-                        break;
-                    }
-                }
-                assert(found, "");
-                node = node->next;
-            }
-            list_add_list(&my_cluster->dependencies, &member_cluster->dependencies);
-
-            for (int i = 0; i < member_cluster->options.struct_reachable.unfinished_array_types.size; i++) {
-                dynamic_array_push_back(&
-                    my_cluster->options.struct_reachable.unfinished_array_types, member_cluster->options.struct_reachable.unfinished_array_types[i]
-                );
-            }
-            dynamic_array_reset(&member_cluster->options.struct_reachable.unfinished_array_types);
-            for (int i = 0; i < member_cluster->options.struct_reachable.struct_types.size; i++) {
-                dynamic_array_push_back(&
-                    my_cluster->options.struct_reachable.struct_types, member_cluster->options.struct_reachable.struct_types[i]
-                );
-            }
-            dynamic_array_reset(&member_cluster->options.struct_reachable.struct_types);
-
-            analysis_workload_add_dependency(member_cluster, my_cluster);
-            member_cluster->options.struct_reachable.cluster = my_cluster;
-        }
+        analysis_workload_add_cluster_dependency(graph, my_progress->reachable_resolve_workload, other_progress->reachable_resolve_workload);
         break;
     }
     default: panic("");
@@ -1232,8 +1404,10 @@ Analysis_Workload* dependency_graph_add_workload_empty(Dependency_Graph* graph, 
     workload->is_finished = false;
     workload->symbol_dependencies = dynamic_array_create_empty<RC_Symbol_Read*>(1);
     workload->type = type;
+    workload->cluster = 0;
+    workload->reachable_clusters = dynamic_array_create_empty<Analysis_Workload*>(1);
     workload->analysis_item = item;
-    if (item != 0) 
+    if (item != 0)
     {
         bool worked = hashtable_insert_element(&graph->item_to_workload_mapping, item, workload);
         assert(worked, "This may need to change with templates");
@@ -1246,6 +1420,10 @@ Analysis_Workload* dependency_graph_add_workload_empty(Dependency_Graph* graph, 
     return workload;
 }
 
+// NOTE: This isn't a great solution, but I don't know anything better for the time beeing
+//       The problem here is that Add_Workload_From_Item for Function body requires the funciton, since dependency may be added
+//       with add_struct_dependency or add_function_dependency, which both require the function to be set.
+ModTree_Function* global_last_function = 0;
 Analysis_Workload* dependency_graph_add_workload_from_item(Dependency_Graph* graph, RC_Analysis_Item* item)
 {
     // Create workload
@@ -1264,18 +1442,26 @@ Analysis_Workload* dependency_graph_add_workload_from_item(Dependency_Graph* gra
     }
     case RC_Analysis_Item_Type::FUNCTION:
     {
-        ModTree_Function* function = modtree_function_create_empty(graph->analyser->program, 0, item->options.function.symbol);
+        ModTree_Function* function = modtree_function_create_empty(
+            graph->analyser->program, 0, item->options.function.symbol, item->options.function.body_item->options.function_body
+        );
+        global_last_function = function;
         workload = dependency_graph_add_workload_empty(graph, item, Analysis_Workload_Type::FUNCTION_HEADER);
         workload->options.function = function;
 
         Analysis_Workload* body_workload = dependency_graph_add_workload_from_item(graph, item->options.function.body_item);
-        body_workload->options.function = workload->options.function;
         analysis_workload_add_dependency(body_workload, workload);
 
+        Analysis_Workload* compile_workload = dependency_graph_add_workload_empty(graph, 0, Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE);
+        compile_workload->options.cluster_compile.functions = dynamic_array_create_empty<ModTree_Function*>(1);
+        dynamic_array_push_back(&compile_workload->options.cluster_compile.functions, function);
+        analysis_workload_add_dependency(compile_workload, body_workload);
+
         Function_Progress initial_state;
-        initial_state.state = Function_State::HEADER_WAITING;
+        initial_state.state = Function_State::DEFINED;
         initial_state.body_workload = body_workload;
         initial_state.header_workload = workload;
+        initial_state.compile_workload = compile_workload;
         hashtable_insert_element(&graph->progress_functions, function, initial_state);
 
         if (item->options.function.symbol != 0) {
@@ -1288,6 +1474,8 @@ Analysis_Workload* dependency_graph_add_workload_from_item(Dependency_Graph* gra
     case RC_Analysis_Item_Type::FUNCTION_BODY:
     {
         workload = dependency_graph_add_workload_empty(graph, item, Analysis_Workload_Type::FUNCTION_BODY);
+        assert(global_last_function != 0, "");
+        workload->options.function = global_last_function;
         break;
     }
     case RC_Analysis_Item_Type::STRUCTURE:
@@ -1302,7 +1490,6 @@ Analysis_Workload* dependency_graph_add_workload_from_item(Dependency_Graph* gra
         reachable_workload->options.struct_reachable.struct_types = dynamic_array_create_empty<Type_Signature*>(1);
         reachable_workload->options.struct_reachable.unfinished_array_types = dynamic_array_create_empty<Type_Signature*>(1);
         dynamic_array_push_back(&reachable_workload->options.struct_reachable.struct_types, struct_type);
-        reachable_workload->options.struct_reachable.cluster = 0;
         analysis_workload_add_dependency(reachable_workload, workload);
 
         Struct_Progress initial_state;
@@ -1318,10 +1505,6 @@ Analysis_Workload* dependency_graph_add_workload_from_item(Dependency_Graph* gra
         }
         break;
     }
-    case RC_Analysis_Item_Type::BAKE: {
-        workload = dependency_graph_add_workload_empty(graph, item, Analysis_Workload_Type::BAKE);
-        break;
-    }
     default: panic("");
     }
 
@@ -1332,10 +1515,16 @@ Analysis_Workload* dependency_graph_add_workload_from_item(Dependency_Graph* gra
         Analysis_Workload* dependency = dependency_graph_add_workload_from_item(graph, item_dependency->item);
         if (workload == 0) continue;
 
-        if (item_dependency->type != RC_Dependency_Type::NORMAL) {
+        if (dependency->type == Analysis_Workload_Type::FUNCTION_HEADER && item_dependency->item->options.function.symbol == 0)
+        {
+            Function_Progress* progress = hashtable_find_element(&graph->progress_functions, dependency->options.function);
+            assert(progress != 0, "");
+            analysis_workload_add_function_dependency(graph, workload, progress, item_dependency->type);
+        }
+        else if (item_dependency->type != RC_Dependency_Type::NORMAL) {
             assert(dependency->type == Analysis_Workload_Type::STRUCT_ANALYSIS, "");
             Struct_Progress* progress = hashtable_find_element(&graph->progress_structs, dependency->options.struct_analysis_type);
-            struct_analysis_add_dependency(graph, workload, progress, item_dependency->type);
+            analysis_workload_add_struct_dependency(graph, workload, progress, item_dependency->type);
         }
         else {
             analysis_workload_add_dependency(workload, dependency);
@@ -1344,14 +1533,21 @@ Analysis_Workload* dependency_graph_add_workload_from_item(Dependency_Graph* gra
     return workload;
 }
 
-void semantic_analyser_work_through_defers(Semantic_Analyser* analyser)
+void semantic_analyser_work_through_defers(Semantic_Analyser* analyser, ModTree_Block* modtree_block, int defer_start_index)
 {
-    panic("DO SOMETHING HERE");
+    for (int i = analyser->defer_stack.size - 1; i >= defer_start_index; i--)
+    {
+        RC_Block* rc_block = analyser->defer_stack[i];
+        ModTree_Statement* statement = modtree_block_add_statement_empty(modtree_block, ModTree_Statement_Type::BLOCK);
+        statement->options.block = modtree_block_create_empty(rc_block);
+        semantic_analyser_fill_block(analyser, statement->options.block, rc_block);
+    }
 }
 
 bool analysis_workload_execute(Analysis_Workload* workload, Semantic_Analyser* analyser)
 {
     analyser->current_workload = workload;
+    analyser->current_function = 0;
     switch (workload->type)
     {
     case Analysis_Workload_Type::DEFINITION:
@@ -1400,6 +1596,7 @@ bool analysis_workload_execute(Analysis_Workload* workload, Semantic_Analyser* a
                 statement->options.assignment.destination = modtree_expression_create_variable_read(variable);
                 statement->options.assignment.source = value;
             }
+            ir_generator_queue_global(analyser->compiler->ir_generator, variable);
         }
         else // Constant definition
         {
@@ -1478,6 +1675,7 @@ bool analysis_workload_execute(Analysis_Workload* workload, Semantic_Analyser* a
     {
         auto header = &workload->analysis_item->options.function;
         ModTree_Function* function = workload->options.function;
+        analyser->current_function = function;
 
         Type_Signature* signature = semantic_analyser_analyse_expression_type(analyser, header->signature_expression);
         function->signature = signature;
@@ -1491,23 +1689,60 @@ bool analysis_workload_execute(Analysis_Workload* workload, Semantic_Analyser* a
 
         Function_Progress* progress = hashtable_find_element(&analyser->dependency_graph.progress_functions, function);
         assert(progress != 0, "");
-        progress->state = Function_State::BODY_WAITING;
+        progress->state = Function_State::HEADER_ANALYSED;
         break;
     }
     case Analysis_Workload_Type::FUNCTION_BODY:
     {
         auto rc_body_block = workload->analysis_item->options.function_body;
         ModTree_Function* function = workload->options.function;
-        Control_Flow flow = semantic_analyser_fill_block(analyser, function->body, rc_body_block);
-        if (flow == Control_Flow::NO_RETURN) {
+        analyser->current_function = function;
+        ModTree_Block* block = function->body;
+
+        dynamic_array_reset(&analyser->block_stack);
+        analyser->statement_reachable = true;
+        semantic_analyser_fill_block(analyser, block, rc_body_block);
+        Control_Flow flow = block->flow;
+        if (flow != Control_Flow::RETURNS) {
             if (function->signature->options.function.return_type == analyser->compiler->type_system.void_type) {
-                //semantic_analyser_work_through_defers(analyser);
+                semantic_analyser_work_through_defers(analyser, function->body, 0);
                 ModTree_Statement* return_statement = modtree_block_add_statement_empty(function->body, ModTree_Statement_Type::RETURN);
                 return_statement->options.return_value.available = false;
             }
             else {
                 semantic_analyser_log_error(analyser, Semantic_Error_Type::OTHERS_MISSING_RETURN_STATEMENT, (AST_Node*)0);
             }
+        }
+        Function_Progress* progress = hashtable_find_element(&analyser->dependency_graph.progress_functions, function);
+        assert(progress != 0, "");
+        progress->state = Function_State::BODY_ANALYSED;
+        break;
+    }
+    case Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE:
+    {
+        // Check if the cluster contains errors
+        bool cluster_contains_error = false;
+        for (int i = 0; i < workload->options.cluster_compile.functions.size; i++) {
+            ModTree_Function* function = workload->options.cluster_compile.functions[i];
+            if (function->contains_errors) {
+                cluster_contains_error = true;
+                break;
+            }
+        }
+
+        // Compile/Set error for all functions in cluster
+        for (int i = 0; i < workload->options.cluster_compile.functions.size; i++)
+        {
+            ModTree_Function* function = workload->options.cluster_compile.functions[i];
+            if (cluster_contains_error) {
+                function->contains_errors = true;
+            }
+            else {
+                ir_generator_queue_function(analyser->compiler->ir_generator, function);
+            }
+            Function_Progress* progress = hashtable_find_element(&analyser->dependency_graph.progress_functions, function);
+            assert(progress != 0, "");
+            progress->state = Function_State::FINISHED;
         }
         break;
     }
@@ -1553,154 +1788,7 @@ bool analysis_workload_execute(Analysis_Workload* workload, Semantic_Analyser* a
         }
         break;
     }
-    case Analysis_Workload_Type::BAKE:
     {
-        panic("NOT IMPLEMENTED YET");
-        // THIS IS QUEUE FUNCTIONS
-    /*
-    if (hashtable_find_element(&analyser->compiler->ir_generator->function_mapping, function) != 0 || hashset_contains(&analyser->visited_functions, function)) {
-    }
-
-    ir_generator_queue_function(&analyser->compiler->ir_generator, function);
-    hashset_insert_element(&analyser->visited_functions, function);
-
-    for (int i = 0; i < function->options.function.dependency_globals.size; i++)
-    {
-        ModTree_Variable* global = function->options.function.dependency_globals[i];
-        if (global != analyser->global_type_informations) {
-            Semantic_Error error;
-            error.type = Semantic_Error_Type::BAKE_FUNCTION_MUST_NOT_REFERENCE_GLOBALS;
-            error.function = function;
-            error.error_node = bake_node;
-            semantic_analyser_log_error(analyser, error);
-
-            Partial_Compile_Result result;
-            result.type = Analysis_Result_Type::ERROR_OCCURED;
-            return result;
-        }
-    }
-    ir_generator_queue_global(&analyser->compiler->ir_generator, analyser->global_type_informations);
-
-    for (int i = 0; i < function->options.function.dependency_functions.size; i++)
-    {
-        ModTree_Function* dependent_fn = function->options.function.dependency_functions[i];
-        if (hashtable_find_element(&analyser->finished_code_blocks, dependent_fn->options.function.body) == 0)
-        {
-            Partial_Compile_Result result;
-            result.type = Analysis_Result_Type::DEPENDENCY;
-            result.dependency.type = Workload_Dependency_Type::CODE_BLOCK_NOT_FINISHED;
-            result.dependency.node = bake_node;
-            result.dependency.options.code_block = dependent_fn->options.function.body;
-            return result;
-        }
-        Partial_Compile_Result result = partial_compilation_queue_functions_for_bake_recursively(analyser, dependent_fn, bake_node);
-        if (result.type != Analysis_Result_Type::SUCCESS) return result;
-    }
-
-    Partial_Compile_Result result;
-    result.type = Analysis_Result_Type::SUCCESS;
-    return result;
-    */
-
-    // Other stuff
-// TODO: This needs to be done with error flags of modtree functions
-/*
-if (analyser->errors.size != 0 || analyser->compiler->parser.errors.size != 0) {
-    Partial_Compile_Result result;
-    result.type = Analysis_Result_Type::ERROR_OCCURED;
-    return result;
-}
-
-hashset_reset(&analyser->visited_functions);
-Partial_Compile_Result result = partial_compilation_queue_functions_for_bake_recursively(analyser, function, bake_node);
-if (result.type != Analysis_Result_Type::SUCCESS) return result;
-
-ir_generator_generate_queued_items(&analyser->compiler->ir_generator);
-return result;
-*/
-
-/* Executing bake
-
-assert(analyser->current_workload->type == Analysis_Workload_Type::CODE, "");
-Analysis_Workload_Code* work = &analyser->current_workload->options.code_block;
-// Check if we have already created the function
-Expression_Location location = expression_location_make(analyser, expression_node);
-Cached_Expression* cached_expr = hashtable_find_element(&analyser->cached_expressions, location);
-if (cached_expr != 0)
-{
-    ModTree_Function* function = cached_expr->bake_function;
-    Partial_Compile_Result comp_result = partial_compilation_compile_function_for_bake(analyser, function, expression_node);
-    switch (comp_result.type)
-    {
-    case Analysis_Result_Type::SUCCESS:
-    {
-        // Update type information table
-        {
-            bytecode_interpreter_prepare_run(&analyser->compiler->bytecode_interpreter);
-            IR_Data_Access* global_access = hashtable_find_element(&analyser->compiler->ir_generator.variable_mapping, analyser->global_type_informations);
-            assert(global_access != 0 && global_access->type == IR_Data_Access_Type::GLOBAL_DATA, "");
-            Upp_Slice<Internal_Type_Information>* info_slice = (Upp_Slice<Internal_Type_Information>*)
-                & analyser->compiler->bytecode_interpreter.globals.data[
-                    analyser->compiler->bytecode_generator.global_data_offsets[global_access->index]
-                ];
-            info_slice->size = analyser->compiler->type_system.internal_type_infos.size;
-            info_slice->data_ptr = analyser->compiler->type_system.internal_type_infos.data;
-        }
-
-        IR_Function* ir_func = *hashtable_find_element(&analyser->compiler->ir_generator.function_mapping, function);
-        int func_start_instr_index = *hashtable_find_element(&analyser->compiler->bytecode_generator.function_locations, ir_func);
-        analyser->compiler->bytecode_interpreter.instruction_limit_enabled = true;
-        analyser->compiler->bytecode_interpreter.instruction_limit = 5000;
-        bytecode_interpreter_run_function(&analyser->compiler->bytecode_interpreter, func_start_instr_index);
-        if (analyser->compiler->bytecode_interpreter.exit_code != Exit_Code::SUCCESS)
-        {
-            Semantic_Error error;
-            error.type = Semantic_Error_Type::BAKE_FUNCTION_DID_NOT_SUCCEED;
-            error.exit_code = analyser->compiler->bytecode_interpreter.exit_code;
-            error.error_node = expression_node;
-            semantic_analyser_log_error(analyser, error);
-            return expression_result_make_error();
-        }
-
-        void* value_ptr = analyser->compiler->bytecode_interpreter.return_register;
-        Type_Signature* result_type = function->signature->options.function.return_type;
-        ModTree_Expression* expression = modtree_expression_create_constant(
-            analyser, result_type, array_create_static<byte>((byte*)value_ptr, (u64)result_type->size), expression_node
-        );
-        return expression_result_make_value(expression);
-    }
-    case Analysis_Result_Type::ERROR_OCCURED:
-        return expression_result_make_error();
-    case Analysis_Result_Type::DEPENDENCY:
-        return expression_result_make_dependency(comp_result.dependency);
-    default: panic("");
-    }
-
-    panic("");
-    return expression_result_make_error();
-}
-else
-{
-    Expression_Result_Type type_result = semantic_analyser_analyse_expression_type(analyser, symbol_table, expression_node->child_start);
-    if (type_result.type != Analysis_Result_Type::SUCCESS) return expression_result_make_from(type_result);
-
-    // Create function and analyse it
-    ModTree_Function* function = modtree_function_make_empty(
-        analyser, work->function->parent_module, work->function->parent_module->symbol_table,
-        type_system_make_function(type_system, dynamic_array_create_empty<Type_Signature*>(1), type_result.options.type),
-        0, expression_node
-    );
-    dynamic_array_push_back(&analyser->active_workloads, analysis_workload_make_code_block(function->options.function.body, expression_node->child_end));
-
-    Cached_Expression cached;
-    cached.bake_function = function;
-    hashtable_insert_element(&analyser->cached_expressions, location, cached);
-
-    return expression_result_make_dependency(workload_dependency_make_code_block_finished(function->options.function.body, expression_node));
-}
-panic("Should not happen");
-return expression_result_make_error();
-*/
     }
     default: panic("");
     }
@@ -2103,6 +2191,70 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
         }
         return expression_result_make_value(expr_result);
     }
+    case RC_Expression_Type::BAKE:
+    {
+        Type_Signature* return_type = semantic_analyser_analyse_expression_type(analyser, rc_expression->options.bake.type_expression);
+        Type_Signature* function_sig = type_system_make_function(type_system, dynamic_array_create_empty<Type_Signature*>(1), return_type);
+
+        ModTree_Function* bake_function = modtree_function_create_empty(analyser->program, function_sig, 0, rc_expression->options.bake.body);
+        ModTree_Function* backup_function = analyser->current_function;
+        SCOPE_EXIT(analyser->current_function = backup_function);
+        analyser->current_function = bake_function;
+
+        semantic_analyser_fill_block(analyser, bake_function->body, rc_expression->options.bake.body);
+        Control_Flow flow = bake_function->body->flow;
+        if (flow != Control_Flow::RETURNS) {
+            semantic_analyser_log_error(analyser, Semantic_Error_Type::OTHERS_MISSING_RETURN_STATEMENT, rc_expression);
+            return expression_result_make_error(return_type);
+        }
+
+        // Check if function compilation succeeded
+        if (bake_function->contains_errors) {
+            return expression_result_make_error(return_type);
+        }
+        for (int i = 0; i < bake_function->calls.size; i++) {
+            if (bake_function->calls[i]->contains_errors) {
+                bake_function->contains_errors = true;
+                return expression_result_make_error(return_type);
+            }
+        }
+
+        // Compile 
+        ir_generator_queue_function(analyser->compiler->ir_generator, bake_function);
+        ir_generator_queue_global(analyser->compiler->ir_generator, analyser->global_type_informations);
+        ir_generator_generate_queued_items(analyser->compiler->ir_generator);
+
+        // Execute
+        // Set Global Type Informations
+        {
+            bytecode_interpreter_prepare_run(analyser->compiler->bytecode_interpreter);
+            IR_Data_Access* global_access = hashtable_find_element(&analyser->compiler->ir_generator->variable_mapping, analyser->global_type_informations);
+            assert(global_access != 0 && global_access->type == IR_Data_Access_Type::GLOBAL_DATA, "");
+            Upp_Slice<Internal_Type_Information>* info_slice = (Upp_Slice<Internal_Type_Information>*)
+                & analyser->compiler->bytecode_interpreter->globals.data[
+                    analyser->compiler->bytecode_generator->global_data_offsets[global_access->index]
+                ];
+            info_slice->size = analyser->compiler->type_system.internal_type_infos.size;
+            info_slice->data_ptr = analyser->compiler->type_system.internal_type_infos.data;
+        }
+
+        IR_Function* ir_func = *hashtable_find_element(&analyser->compiler->ir_generator->function_mapping, bake_function);
+        int func_start_instr_index = *hashtable_find_element(&analyser->compiler->bytecode_generator->function_locations, ir_func);
+        analyser->compiler->bytecode_interpreter->instruction_limit_enabled = true;
+        analyser->compiler->bytecode_interpreter->instruction_limit = 5000;
+        bytecode_interpreter_run_function(analyser->compiler->bytecode_interpreter, func_start_instr_index);
+        if (analyser->compiler->bytecode_interpreter->exit_code != Exit_Code::SUCCESS) {
+            semantic_analyser_log_error(analyser, Semantic_Error_Type::BAKE_FUNCTION_DID_NOT_SUCCEED, rc_expression);
+            semantic_analyser_add_error_info(analyser, error_information_make_exit_code(analyser->compiler->bytecode_interpreter->exit_code));
+            return expression_result_make_error(return_type);
+        }
+
+        void* value_ptr = analyser->compiler->bytecode_interpreter->return_register;
+        ModTree_Expression* expression = modtree_expression_create_constant(
+            analyser, return_type, array_create_static<byte>((byte*)value_ptr, (u64)return_type->size), rc_to_ast(analyser, rc_expression)
+        );
+        return expression_result_make_value(expression);
+    }
     case RC_Expression_Type::TYPE_INFO:
     {
         ModTree_Expression* operand = semantic_analyser_analyse_expression_value(
@@ -2197,6 +2349,10 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
             return expression_result_make_hardcoded(symbol->options.hardcoded_function);
         }
         case Symbol_Type::FUNCTION: {
+            if (analyser->current_function != 0) {
+                dynamic_array_push_back(&analyser->current_function->calls, symbol->options.function);
+                dynamic_array_push_back(&symbol->options.function->called_from, analyser->current_function);
+            }
             return expression_result_make_function(symbol->options.function);
         }
         case Symbol_Type::TYPE: {
@@ -2416,19 +2572,17 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
         {
         case RC_Analysis_Item_Type::FUNCTION: {
             ModTree_Function* function = workload->options.function;
-            ModTree_Expression* expression = modtree_expression_create_empty(ModTree_Expression_Type::FUNCTION_POINTER_READ, function->signature);
-            expression->options.function_pointer_read.is_extern = false;
-            expression->options.function_pointer_read.function = function;
-            return expression_result_make_value(expression);
+            if (analyser->current_function != 0) {
+                dynamic_array_push_back(&analyser->current_function->calls, function);
+                dynamic_array_push_back(&function->called_from, analyser->current_function);
+            }
+            return expression_result_make_function(function);
         }
         case RC_Analysis_Item_Type::STRUCTURE: {
             Type_Signature* struct_type = workload->options.struct_analysis_type;
             assert(!(struct_type->size == 0 && struct_type->alignment == 0), "");
             return expression_result_make_type(struct_type);
         }
-        case RC_Analysis_Item_Type::BAKE:
-            panic("Not implemented yet");
-
         case RC_Analysis_Item_Type::ROOT:
         case RC_Analysis_Item_Type::FUNCTION_BODY:
         case RC_Analysis_Item_Type::DEFINITION:
@@ -2514,10 +2668,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
             );
             assert(progress != 0, "");
             assert(progress->state != Struct_State::FINISHED, "Finished structs cannot be of size + alignment 0");
-            Analysis_Workload* cluster = progress->reachable_resolve_workload;
-            while (cluster->options.struct_reachable.cluster != 0) {
-                cluster = cluster->options.struct_reachable.cluster;
-            }
+            Analysis_Workload* cluster = analysis_workload_find_associated_cluster(progress->reachable_resolve_workload);
             dynamic_array_push_back(&cluster->options.struct_reachable.unfinished_array_types, array_type);
         }
         return expression_result_make_type(array_type);
@@ -3521,6 +3672,17 @@ void semantic_analyser_analyse_extern_definitions(Semantic_Analyser* analyser, S
     */
 }
 
+bool inside_defer(Semantic_Analyser* analyser)
+{
+    for (int i = analyser->block_stack.size - 1; i > 0; i--) {
+        ModTree_Block* block = analyser->block_stack[i];
+        if (block->rc_block != 0 && block->rc_block->type == RC_Block_Type::DEFER_BLOCK) {
+            return true;
+        }
+    }
+    return false;
+}
+
 Control_Flow semantic_analyser_analyse_statement(Semantic_Analyser* analyser, RC_Statement* rc_statement, ModTree_Block* block)
 {
     Type_System* type_system = &analyser->compiler->type_system;
@@ -3529,164 +3691,119 @@ Control_Flow semantic_analyser_analyse_statement(Semantic_Analyser* analyser, RC
     case RC_Statement_Type::RETURN_STATEMENT:
     {
         auto rc_return = &rc_statement->options.return_statement;
-        ModTree_Statement* return_statement = modtree_block_add_statement_empty(block, ModTree_Statement_Type::RETURN);
+        assert(analyser->current_function != 0, "No statements outside of function body");
+        Type_Signature* expected_return_type = analyser->current_function->signature->options.function.return_type;
 
-        assert(analyser->current_workload->type == Analysis_Workload_Type::FUNCTION_BODY, "No statements outside of function body");
-        Type_Signature* expected_return_type = analyser->current_workload->options.function->signature->options.function.return_type;
-        Type_Signature* return_type = 0;
+        Optional<ModTree_Expression*> value_expr;
         if (rc_return->available)
         {
-            ModTree_Expression* return_expr = semantic_analyser_analyse_expression_value(
+            value_expr.available = true;
+            value_expr.value = semantic_analyser_analyse_expression_value(
                 analyser, rc_return->value, expression_context_make_known_type(expected_return_type, true)
             );
-            return_type = return_expr->result_type;
-            return_statement->options.return_value.available = true;
-            return_statement->options.return_value.value = return_expr;
+            // When we have defers, we need to temporarily store the return result in a variable
+            if (analyser->defer_stack.size != 0)
+            {
+                ModTree_Variable* tmp_return_var = modtree_block_add_variable(block, expected_return_type, 0);
+                ModTree_Statement* assign_stmt = modtree_block_add_statement_empty(block, ModTree_Statement_Type::ASSIGNMENT);
+                assign_stmt->options.assignment.destination = modtree_expression_create_variable_read(tmp_return_var);
+                assign_stmt->options.assignment.source = value_expr.value;
+                value_expr.value = modtree_expression_create_variable_read(tmp_return_var);
+            }
         }
         else {
-            return_type = type_system->void_type;
-            return_statement->options.return_value.available = false;
+            value_expr.available = false;
+        }
+        if (inside_defer(analyser)) {
+            semantic_analyser_log_error(analyser, Semantic_Error_Type::OTHERS_DEFER_NO_RETURNS_ALLOWED, rc_statement);
+        }
+        else {
+            // INFO: Inside Bakes returns only work through the defers that are inside the bake
+            int defer_start_index = 0;
+            for (int i = analyser->block_stack.size - 1; i >= 0; i--) {
+                RC_Block* block = analyser->block_stack[i]->rc_block;
+                assert(block != 0, "I don't think this can happen");
+                if (block->type == RC_Block_Type::DEFER_BLOCK) {
+                    defer_start_index = analyser->block_stack[i]->defer_start_index;
+                    break;
+                }
+            }
+            semantic_analyser_work_through_defers(analyser, block, defer_start_index);
         }
 
-        if (return_type != expected_return_type) {
+        ModTree_Statement* return_statement = modtree_block_add_statement_empty(block, ModTree_Statement_Type::RETURN);
+        return_statement->options.return_value = value_expr;
+
+        // Check if given type is correct
+        Type_Signature* given_type = value_expr.available ? value_expr.value->result_type : type_system->void_type;
+        if (given_type != expected_return_type) {
             semantic_analyser_log_error(analyser, Semantic_Error_Type::INVALID_TYPE_RETURN, rc_statement);
-            semantic_analyser_add_error_info(analyser, error_information_make_given_type(return_type));
+            semantic_analyser_add_error_info(analyser, error_information_make_given_type(given_type));
             semantic_analyser_add_error_info(analyser, error_information_make_expected_type(expected_return_type));
         }
-        return Control_Flow::RETURN;
-
-        // Check if inside defer
-        /*
-        if (inside_defer(code_workload))
-        {
-            Semantic_Error error;
-            error.type = Semantic_Error_Type::OTHERS_DEFER_NO_RETURNS_ALLOWED;
-            error.error_node = statement_node;
-            semantic_analyser_log_error(analyser, error);
-            break;
-        }
-
-        // Defers with return is tricky, since the expression needs to be evaluated before the defers are run
-        if (code_workload->defer_nodes.size != 0 && statement_node->child_count != 0 && return_statement.type != ModTree_Statement_Type::EXIT)
-        {
-            ModTree_Variable_Origin origin;
-            origin.type = ModTree_Variable_Origin_Type::LOCAL;
-            origin.options.local_block = block;
-            ModTree_Variable* variable = new ModTree_Variable(
-                modtree_variable_make(origin, 0, return_statement.options.return_value.value->result_type)
-            );
-            variable->symbol = 0;
-            dynamic_array_push_back(&block->variables, variable);
-
-            ModTree_Expression* read_expr = new ModTree_Expression;
-            read_expr->result_type = variable->data_type;
-            read_expr->expression_type = ModTree_Expression_Type::VARIABLE_READ;
-            read_expr->options.variable_read = variable;
-
-            ModTree_Statement* assign_stmt = new ModTree_Statement;
-            assign_stmt->type = ModTree_Statement_Type::ASSIGNMENT;
-            assign_stmt->options.assignment.destination = read_expr;
-            assign_stmt->options.assignment.source = return_statement.options.return_value.value;
-            dynamic_array_push_back(&block->statements, assign_stmt);
-
-            // Create second read expression
-            read_expr = new ModTree_Expression;
-            read_expr->result_type = variable->data_type;
-            read_expr->expression_type = ModTree_Expression_Type::VARIABLE_READ;
-            read_expr->options.variable_read = variable;
-            return_statement.options.return_value.value = read_expr;
-        }
-        workload_code_block_work_through_defers(analyser, code_workload, 0);
-        dynamic_array_push_back(&block->statements, new ModTree_Statement(return_statement));
-        */
+        return Control_Flow::RETURNS;
     }
     case RC_Statement_Type::BREAK_STATEMENT:
     case RC_Statement_Type::CONTINUE_STATEMENT:
     {
-        semantic_analyser_log_error(analyser, Semantic_Error_Type::MISSING_FEATURE, rc_statement);
-        return Control_Flow::NO_RETURN;
-        /*
-        bool is_continue = statement_node->type == AST_Node_Type::STATEMENT_CONTINUE;
-        ModTree_Block* break_block = 0;
-        List_Node<Block_Analysis>* node = code_workload->block_queue.tail;
-        while (node != 0)
+        bool is_continue = rc_statement->type == RC_Statement_Type::CONTINUE_STATEMENT;
+        String* search_id = is_continue ? rc_statement->options.continue_id : rc_statement->options.break_id;
+        ModTree_Block* found_block = 0;
+        for (int i = analyser->block_stack.size - 1; i > 0; i--) // INFO: Block 0 is always the function body, which cannot be a target of break/continue
         {
-            if (node->value.block->type == ModTree_Block_Type::DEFER_BLOCK) {
+            if (analyser->block_stack[i]->rc_block->block_id == search_id) {
+                found_block = analyser->block_stack[i];
                 break;
             }
-            if (statement_node->id != 0) {
-                if (node->value.block_node->id == statement_node->id) {
-                    break_block = node->value.block;
-                    break;
-                }
-            }
-            else {
-                if (node->value.block->type == ModTree_Block_Type::SWITCH_CASE ||
-                    node->value.block->type == ModTree_Block_Type::SWITCH_DEFAULT_CASE ||
-                    node->value.block->type == ModTree_Block_Type::WHILE_BODY) {
-                    break_block = node->value.block;
-                    break;
-                }
-            }
-            node = node->prev;
         }
 
-        if (break_block == 0)
+        if (found_block == 0)
         {
-            Semantic_Error error;
-            if (is_continue) {
-                error.type = statement_node->id == 0 ?
-                    Semantic_Error_Type::CONTINUE_NOT_INSIDE_LOOP : Semantic_Error_Type::CONTINUE_LABEL_NOT_FOUND;
-            }
-            else {
-                error.type = statement_node->id == 0 ?
-                    Semantic_Error_Type::BREAK_NOT_INSIDE_LOOP_OR_SWITCH : Semantic_Error_Type::BREAK_LABLE_NOT_FOUND;
-            }
-            error.error_node = statement_node;
-            semantic_analyser_log_error(analyser, error);
-            break;
+            semantic_analyser_log_error(
+                analyser, is_continue ? Semantic_Error_Type::CONTINUE_LABEL_NOT_FOUND : Semantic_Error_Type::BREAK_LABLE_NOT_FOUND, rc_statement
+            );
+            semantic_analyser_add_error_info(analyser, error_information_make_id(search_id));
+            return Control_Flow::SEQUENTIAL;
         }
-        else if (is_continue && break_block->type != ModTree_Block_Type::WHILE_BODY) {
-            Semantic_Error error;
-            error.type = Semantic_Error_Type::CONTINUE_REQUIRES_LOOP_BLOCK;
-            error.error_node = statement_node;
-            semantic_analyser_log_error(analyser, error);
-            break;
+        else
+        {
+            if (is_continue && found_block->rc_block->type != RC_Block_Type::WHILE_BODY) {
+                semantic_analyser_log_error(analyser, Semantic_Error_Type::CONTINUE_REQUIRES_LOOP_BLOCK, rc_statement);
+                return Control_Flow::SEQUENTIAL;
+            }
+            semantic_analyser_work_through_defers(analyser, block, found_block->defer_start_index);
         }
 
-        workload_code_block_work_through_defers(analyser, code_workload, node->value.defer_count_block_start);
-
-        ModTree_Statement* stmt = new ModTree_Statement;
+        ModTree_Statement* stmt = modtree_block_add_statement_empty(block, is_continue ? ModTree_Statement_Type::CONTINUE : ModTree_Statement_Type::BREAK);
         if (is_continue) {
-            stmt->type = ModTree_Statement_Type::CONTINUE;
-            stmt->options.continue_to_block = break_block;
-            code_workload->active_block->block_flow = Control_Flow::CONTINUE;
+            stmt->options.continue_to_block = found_block;
         }
-        else {
-            stmt->type = ModTree_Statement_Type::BREAK;
-            stmt->options.break_to_block = break_block;
-            code_workload->active_block->block_flow = Control_Flow::BREAK;
+        else
+        {
+            stmt->options.break_to_block = found_block;
+            // Mark all previous Code-Blocks as Sequential flow, since they contain a path to a break
+            for (int i = analyser->block_stack.size - 1; i >= 0; i--)
+            {
+                ModTree_Block* prev_block = analyser->block_stack[i];
+                if (!prev_block->control_flow_locked && analyser->statement_reachable) {
+                    prev_block->control_flow_locked = true;
+                    prev_block->flow = Control_Flow::SEQUENTIAL;
+                }
+                if (prev_block == found_block) break;
+            }
         }
-        dynamic_array_push_back(&block->statements, stmt);
-        break;
-        */
+        return Control_Flow::STOPS;
     }
     case RC_Statement_Type::DEFER:
     {
-        semantic_analyser_log_error(analyser, Semantic_Error_Type::MISSING_FEATURE, rc_statement);
-        return Control_Flow::NO_RETURN;
-        /*
-        if (inside_defer(code_workload)) {
-            Semantic_Error error;
-            error.type = Semantic_Error_Type::MISSING_FEATURE_NESTED_DEFERS;
-            error.error_node = statement_node;
-            semantic_analyser_log_error(analyser, error);
+        if (inside_defer(analyser)) {
+            semantic_analyser_log_error(analyser, Semantic_Error_Type::MISSING_FEATURE_NESTED_DEFERS, rc_statement);
+            return Control_Flow::SEQUENTIAL;
         }
         else {
-            dynamic_array_push_back(&code_workload->defer_nodes, statement_node->child_start);
+            dynamic_array_push_back(&analyser->defer_stack, rc_statement->options.defer_block);
         }
-        break;
-        */
+        return Control_Flow::SEQUENTIAL;
     }
     case RC_Statement_Type::EXPRESSION_STATEMENT:
     {
@@ -3698,13 +3815,14 @@ Control_Flow semantic_analyser_analyse_statement(Semantic_Analyser* analyser, RC
         statement->options.expression = semantic_analyser_analyse_expression_value(
             analyser, rc_expression, expression_context_make_unknown()
         );
-        return Control_Flow::NO_RETURN;
+        return Control_Flow::SEQUENTIAL;
     }
     case RC_Statement_Type::STATEMENT_BLOCK:
     {
         ModTree_Statement* statement = modtree_block_add_statement_empty(block, ModTree_Statement_Type::BLOCK);
-        statement->options.block = modtree_block_create_empty();
-        return semantic_analyser_fill_block(analyser, statement->options.block, rc_statement->options.statement_block);
+        statement->options.block = modtree_block_create_empty(rc_statement->options.statement_block);
+        semantic_analyser_fill_block(analyser, statement->options.block, rc_statement->options.statement_block);
+        return statement->options.block->flow;
     }
     case RC_Statement_Type::IF_STATEMENT:
     {
@@ -3718,17 +3836,29 @@ Control_Flow semantic_analyser_analyse_statement(Semantic_Analyser* analyser, RC
             semantic_analyser_log_error(analyser, Semantic_Error_Type::INVALID_TYPE_IF_CONDITION, rc_if->condition);
         }
         statement->options.if_statement.condition = condition;
-        statement->options.if_statement.if_block = modtree_block_create_empty();
-        statement->options.if_statement.else_block = modtree_block_create_empty();
-        Control_Flow if_flow = semantic_analyser_fill_block(analyser, statement->options.if_statement.if_block, rc_if->true_block);
-        Control_Flow else_flow = Control_Flow::NO_RETURN;
+        statement->options.if_statement.if_block = modtree_block_create_empty(rc_if->true_block);
+        semantic_analyser_fill_block(analyser, statement->options.if_statement.if_block, rc_if->true_block);
+        Control_Flow true_flow = statement->options.if_statement.if_block->flow;
+
+        Control_Flow false_flow;
         if (rc_if->false_block.available) {
-            else_flow = semantic_analyser_fill_block(analyser, statement->options.if_statement.if_block, rc_if->false_block.value);
+            statement->options.if_statement.else_block = modtree_block_create_empty(rc_if->false_block.value);
+            semantic_analyser_fill_block(analyser, statement->options.if_statement.else_block, rc_if->false_block.value);
+            false_flow = statement->options.if_statement.else_block->flow;
         }
-        if (if_flow == else_flow) {
-            return if_flow;
+        else {
+            statement->options.if_statement.else_block = modtree_block_create_empty(0);
+            false_flow = true_flow;
         }
-        return Control_Flow::NO_RETURN;
+
+        // Combine flows as given by conditional flow rules
+        if (true_flow == false_flow) {
+            return true_flow;
+        }
+        if (true_flow == Control_Flow::SEQUENTIAL || false_flow == Control_Flow::SEQUENTIAL) {
+            return Control_Flow::SEQUENTIAL;
+        }
+        return Control_Flow::STOPS;
     }
     case RC_Statement_Type::SWITCH_STATEMENT:
     {
@@ -3758,11 +3888,30 @@ Control_Flow semantic_analyser_analyse_statement(Semantic_Analyser* analyser, RC
         Type_Signature* switch_type = condition->result_type;
         Expression_Context case_context = condition->result_type->type == Signature_Type::ENUM ?
             expression_context_make_known_type(condition->result_type, true) : expression_context_make_unknown();
+        Control_Flow switch_flow = Control_Flow::SEQUENTIAL;
         for (int i = 0; i < rc_switch->cases.size; i++)
         {
             RC_Switch_Case* rc_case = &rc_switch->cases[i];
-            ModTree_Block* case_body = modtree_block_create_empty();
+            ModTree_Block* case_body = modtree_block_create_empty(rc_case->body);
             semantic_analyser_fill_block(analyser, case_body, rc_case->body);
+
+            Control_Flow case_flow = case_body->flow;
+            if (i == 0) {
+                switch_flow = case_flow;
+            }
+            else
+            {
+                // Combine flows according to the Conditional Branch rules
+                if (switch_flow != case_flow) {
+                    if (switch_flow == Control_Flow::SEQUENTIAL || case_flow == Control_Flow::SEQUENTIAL) {
+                        switch_flow = Control_Flow::SEQUENTIAL;
+                    }
+                    else {
+                        switch_flow = Control_Flow::STOPS;
+                    }
+                }
+            }
+
             if (rc_case->expression.available)
             {
                 ModTree_Expression* case_expr = semantic_analyser_analyse_expression_value(
@@ -3806,7 +3955,7 @@ Control_Flow semantic_analyser_analyse_statement(Semantic_Analyser* analyser, RC
             }
         }
 
-        // Check if all cases are unique
+        // Check if given cases are unique
         int unique_count = 0;
         for (int i = 0; i < statement->options.switch_statement.cases.size; i++)
         {
@@ -3826,13 +3975,13 @@ Control_Flow semantic_analyser_analyse_statement(Semantic_Analyser* analyser, RC
             }
         }
 
-        // Check if all cases are handled
+        // Check if all possible cases are handled
         if (statement->options.switch_statement.default_block == 0 && switch_type->type == Signature_Type::ENUM) {
             if (unique_count < switch_type->options.enum_type.members.size) {
                 semantic_analyser_log_error(analyser, Semantic_Error_Type::SWITCH_MUST_HANDLE_ALL_CASES, rc_statement);
             }
         }
-        return Control_Flow::NO_RETURN;
+        return switch_flow;
     }
     case RC_Statement_Type::WHILE_STATEMENT:
     {
@@ -3848,24 +3997,13 @@ Control_Flow semantic_analyser_analyse_statement(Semantic_Analyser* analyser, RC
 
         ModTree_Statement* statement = modtree_block_add_statement_empty(block, ModTree_Statement_Type::WHILE);
         statement->options.while_statement.condition = condition;
-        statement->options.while_statement.while_block = modtree_block_create_empty();
-        Control_Flow flow = semantic_analyser_fill_block(analyser, statement->options.while_statement.while_block, rc_while->body);
-        switch (flow)
-        {
-        case Control_Flow::NO_RETURN:
-            break;
-        case Control_Flow::RETURN:
-            semantic_analyser_log_error(analyser, Semantic_Error_Type::OTHERS_WHILE_ALWAYS_RETURNS, rc_statement);
-            break;
-        case Control_Flow::CONTINUE:
-            semantic_analyser_log_error(analyser, Semantic_Error_Type::OTHERS_WHILE_NEVER_STOPS, rc_statement);
-            break;
-        case Control_Flow::BREAK:
-            semantic_analyser_log_error(analyser, Semantic_Error_Type::OTHERS_WHILE_ONLY_RUNS_ONCE, rc_statement);
-            break;
-        default: panic("");
+        statement->options.while_statement.while_block = modtree_block_create_empty(rc_while->body);
+        semantic_analyser_fill_block(analyser, statement->options.while_statement.while_block, rc_while->body);
+        Control_Flow flow = statement->options.while_statement.while_block->flow;
+        if (flow == Control_Flow::RETURNS) {
+            return flow;
         }
-        return flow;
+        return Control_Flow::SEQUENTIAL;
     }
     case RC_Statement_Type::DELETE_STATEMENT:
     {
@@ -3903,7 +4041,7 @@ Control_Flow semantic_analyser_analyse_statement(Semantic_Analyser* analyser, RC
         expr_statement->type = ModTree_Statement_Type::EXPRESSION;
         expr_statement->options.expression = call_expr;
         dynamic_array_push_back(&block->statements, expr_statement);
-        return Control_Flow::NO_RETURN;
+        return Control_Flow::SEQUENTIAL;
     }
     case RC_Statement_Type::ASSIGNMENT_STATEMENT:
     {
@@ -3937,7 +4075,7 @@ Control_Flow semantic_analyser_analyse_statement(Semantic_Analyser* analyser, RC
         ModTree_Statement* assign_statement = modtree_block_add_statement_empty(block, ModTree_Statement_Type::ASSIGNMENT);
         assign_statement->options.assignment.destination = left_expr;
         assign_statement->options.assignment.source = right_expr;
-        return Control_Flow::NO_RETURN;
+        return Control_Flow::SEQUENTIAL;
     }
     case RC_Statement_Type::VARIABLE_DEFINITION:
     {
@@ -3987,7 +4125,7 @@ Control_Flow semantic_analyser_analyse_statement(Semantic_Analyser* analyser, RC
             statement->options.assignment.destination = modtree_expression_create_variable_read(variable);
             statement->options.assignment.source = value;
         }
-        return Control_Flow::NO_RETURN;
+        return Control_Flow::SEQUENTIAL;
     }
     default: {
         panic("Should be covered!\n");
@@ -3995,21 +4133,37 @@ Control_Flow semantic_analyser_analyse_statement(Semantic_Analyser* analyser, RC
     }
     }
     panic("HEY");
-    return Control_Flow::NO_RETURN;
+    return Control_Flow::SEQUENTIAL;
 }
 
-Control_Flow semantic_analyser_fill_block(Semantic_Analyser* analyser, ModTree_Block* block, RC_Block* rc_block)
+void semantic_analyser_fill_block(Semantic_Analyser* analyser, ModTree_Block* block, RC_Block* rc_block)
 {
-    Control_Flow flow = Control_Flow::NO_RETURN;
+    block->control_flow_locked = false;
+    block->flow = Control_Flow::SEQUENTIAL;
+    block->defer_start_index = analyser->defer_stack.size;
+
+    int rewind_block_count = analyser->block_stack.size;
+    bool rewind_reachable = analyser->statement_reachable;
+    int rewind_defer_size = analyser->defer_stack.size;
+    SCOPE_EXIT(dynamic_array_rollback_to_size(&analyser->block_stack, rewind_block_count));
+    SCOPE_EXIT(dynamic_array_rollback_to_size(&analyser->defer_stack, rewind_defer_size));
+    SCOPE_EXIT(analyser->statement_reachable = rewind_reachable);
+    dynamic_array_push_back(&analyser->block_stack, block);
     for (int i = 0; i < rc_block->statements.size; i++)
     {
-        RC_Statement* statement = rc_block->statements[i];
-        if (flow != Control_Flow::NO_RETURN) {
-            semantic_analyser_log_error(analyser, Semantic_Error_Type::OTHERS_STATEMENT_UNREACHABLE, statement);
+        Control_Flow flow = semantic_analyser_analyse_statement(analyser, rc_block->statements[i], block);
+        if (flow != Control_Flow::SEQUENTIAL) {
+            analyser->statement_reachable = false;
+            if (!block->control_flow_locked) {
+                block->flow = flow;
+                block->control_flow_locked = true;
+            }
         }
-        flow = semantic_analyser_analyse_statement(analyser, statement, block);
     }
-    return flow;
+    // Work through defers
+    if (analyser->statement_reachable) {
+        semantic_analyser_work_through_defers(analyser, block, block->defer_start_index);
+    }
 }
 
 void symbol_set_type(Symbol* symbol, Type_Signature* type)
@@ -4116,10 +4270,15 @@ void semantic_analyser_reset(Semantic_Analyser* analyser, Compiler* compiler)
     // Reset analyser data
     {
         analyser->compiler = compiler;
+        analyser->current_workload = 0;
+        analyser->current_function = 0;
+        analyser->statement_reachable = true;
         for (int i = 0; i < analyser->errors.size; i++) {
             dynamic_array_destroy(&analyser->errors[i].information);
         }
         dynamic_array_reset(&analyser->errors);
+        dynamic_array_reset(&analyser->block_stack);
+        dynamic_array_reset(&analyser->defer_stack);
         stack_allocator_reset(&analyser->allocator_values);
         hashset_reset(&analyser->loaded_filenames);
         hashset_reset(&analyser->visited_functions);
@@ -4270,7 +4429,7 @@ void semantic_analyser_reset(Semantic_Analyser* analyser, Compiler* compiler)
         dynamic_array_push_back(&params, analyser->compiler->type_system.bool_type);
         ModTree_Function* assert_fn = modtree_function_create_empty(
             analyser->program, type_system_make_function(&analyser->compiler->type_system, params, analyser->compiler->type_system.void_type),
-            symbol
+            symbol, 0
         );
         symbol->type = Symbol_Type::FUNCTION;
         symbol->options.function = assert_fn;
@@ -4287,8 +4446,8 @@ void semantic_analyser_reset(Semantic_Analyser* analyser, Compiler* compiler)
 
             ModTree_Statement* if_stat = modtree_block_add_statement_empty(assert_fn->body, ModTree_Statement_Type::IF);
             if_stat->options.if_statement.condition = cond_expr;
-            if_stat->options.if_statement.if_block = modtree_block_create_empty();
-            if_stat->options.if_statement.else_block = modtree_block_create_empty();
+            if_stat->options.if_statement.if_block = modtree_block_create_empty(0);
+            if_stat->options.if_statement.else_block = modtree_block_create_empty(0);
 
             ModTree_Statement* exit_stat = modtree_block_add_statement_empty(if_stat->options.if_statement.if_block, ModTree_Statement_Type::EXIT);
             exit_stat->type = ModTree_Statement_Type::EXIT;
@@ -4304,7 +4463,7 @@ void semantic_analyser_reset(Semantic_Analyser* analyser, Compiler* compiler)
     analyser->global_init_function = modtree_function_create_empty(
         analyser->program, type_system_make_function(
             &analyser->compiler->type_system, dynamic_array_create_empty<Type_Signature*>(1), analyser->compiler->type_system.void_type
-        ), 0
+        ), 0, 0
     );
 }
 
@@ -4312,6 +4471,8 @@ Semantic_Analyser* semantic_analyser_create()
 {
     Semantic_Analyser* result = new Semantic_Analyser;
     result->errors = dynamic_array_create_empty<Semantic_Error>(64);
+    result->block_stack = dynamic_array_create_empty<ModTree_Block*>(8);
+    result->defer_stack = dynamic_array_create_empty<RC_Block*>(8);
     result->allocator_values = stack_allocator_create_empty(2048);
     result->loaded_filenames = hashset_create_pointer_empty<String*>(32);
     result->visited_functions = hashset_create_pointer_empty<ModTree_Function*>(32);
@@ -4326,6 +4487,8 @@ void semantic_analyser_destroy(Semantic_Analyser* analyser)
         dynamic_array_destroy(&analyser->errors[i].information);
     }
     dynamic_array_destroy(&analyser->errors);
+    dynamic_array_destroy(&analyser->block_stack);
+    dynamic_array_destroy(&analyser->defer_stack);
 
     stack_allocator_destroy(&analyser->allocator_values);
     hashset_destroy(&analyser->loaded_filenames);
@@ -5096,7 +5259,7 @@ void semantic_error_append_to_string(Semantic_Analyser* analyser, Semantic_Error
         string_append_formated(string, "Modules/Polymorphic function definitions must be infered, e.g: x :: module{}");
         break;
     case Semantic_Error_Type::FUNCTION_CALL_ARGUMENT_SIZE_MISMATCH:
-        string_append_formated(string, "Parameter count does not match argument count, expected: %d, given: %d");
+        string_append_formated(string, "Parameter count does not match argument count");
         break;
     case Semantic_Error_Type::INVALID_TYPE_CAST_PTR_REQUIRES_U64:
         string_append_formated(string, "cast_ptr only casts from u64 to pointers, and requires an u64 value as operand");

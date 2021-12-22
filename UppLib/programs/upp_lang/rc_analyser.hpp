@@ -78,6 +78,7 @@ enum class RC_Expression_Type
 {
     MODULE,
     ANALYSIS_ITEM,
+    BAKE,
     SYMBOL_READ,
     ENUM,
     ARRAY_TYPE,
@@ -116,6 +117,10 @@ struct RC_Expression
     {
         RC_Analysis_Item* analysis_item;
         Symbol_Table* module_table;
+        struct {
+            RC_Expression* type_expression;
+            RC_Block* body;
+        } bake;
         struct {
             Dynamic_Array<RC_Enum_Member> members;
         } enumeration;
@@ -253,6 +258,7 @@ enum class RC_Block_Type
 struct RC_Block
 {
     RC_Block_Type type;
+    String* block_id;
     Symbol_Table* symbol_table;
     Dynamic_Array<RC_Statement*> statements;
 };
@@ -365,6 +371,7 @@ ANALYSER
 enum class RC_Dependency_Type
 {
     NORMAL,
+    BAKE,
     MEMBER_IN_MEMORY,
     MEMBER_REFERENCE,
 };
@@ -396,7 +403,6 @@ enum class RC_Analysis_Item_Type
     STRUCTURE,
     FUNCTION,
     FUNCTION_BODY,
-    BAKE
 };
 
 struct RC_Analysis_Item
@@ -425,10 +431,6 @@ struct RC_Analysis_Item
             RC_Analysis_Item* body_item; // Needs to be separate from function, since body has other dependencies
         } function;
         RC_Block* function_body;
-        struct {
-            RC_Expression* type_expression;
-            RC_Block* body;
-        } bake;
     } options;
 };
 
@@ -449,6 +451,7 @@ struct RC_Analyser
     Symbol_Table* symbol_table;
     RC_Analysis_Item* analysis_item;
     RC_Dependency_Type dependency_type;
+    bool inside_bake;
 
     // Allocations, TODO: Use actual allocators
     Dynamic_Array<RC_Expression*> allocated_expressions;

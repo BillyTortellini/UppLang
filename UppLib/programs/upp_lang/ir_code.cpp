@@ -534,6 +534,7 @@ void ir_program_append_to_string(IR_Program* program, String* string)
 
 IR_Data_Access ir_data_access_create_intermediate(IR_Code_Block* block, Type_Signature* signature)
 {
+    assert(block != 0, "");
     IR_Data_Access access;
     if (signature->type == Signature_Type::VOID_TYPE) {
         access.is_memory_access = false;
@@ -1368,6 +1369,8 @@ void ir_generator_generate_queued_items(IR_Generator* generator)
     for (int i = 0; i < generator->queue_functions.size; i++)
     {
         ModTree_Function* mod_func = generator->queue_functions[i];
+        assert(mod_func->signature != 0, "");
+        assert(!mod_func->contains_errors, "");
         if (hashtable_find_element(&generator->function_mapping, mod_func) != 0) continue;
 
         IR_Function* ir_func = new IR_Function;

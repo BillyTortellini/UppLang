@@ -2,7 +2,7 @@ Next features:
 --------------
  * RC_Generator all features implemented
 
- * All Comptime Definitions should be order-independent
+ * Better Dependency-Graph resolution
  * Bake expressions, bake function pointers
  * Conversion function to pointer and back
  * Literal overhaul (Integers, floats, strings?, arrays are u64, array access with any int...)
@@ -22,31 +22,18 @@ Next features:
      index, found := find_elem(arr, 2);
      index, _ = find_elem(arr, 3);
      _ = Hashtable~insert();
-     union {ipv4: int; ipv5 = _};
+     union {ipv4: int; ipv5: _};
 
-First, checkup on all features
- - Structs
- - Modules
- - Workload dependencies (Seems to work with functions)
- - Defer
- - Bake
- - Inner Definition accessing variables
 
- - Switches
- - Ifs
- - While
 
+
+Reimplement the following features:
+ - File loading, extern stuff
+Then assure that the test-cases all work, afterwards, fix the following issues
 
 Issues:
- - Auto-Cast on function parameters doesnt' work
- - Control_Flow with labled break/continue is probably wrong
  - Inner Comptime-Definitions can read Variables from other items...
-
-Suggestions:
- - Structs with symbols should probably be struct ids again
-
-
-
+ - Auto-Cast on function parameters doesnt' work
 
 Over night Thoughts:
 --------------------
@@ -56,15 +43,7 @@ have analyse expression internal and all that good stuff.
 I probably want to remove modtree now, and stick with ir-code, since ModTree is kinda useless now.
 Definitly true, because the modtree expression/statement is kinda bad for code generation, ngl
 
-
-
-Plan for Integration:
----------------------
-Lets try to get this to compile again,
-then slowly add features in the semantic analyser back
-
-Notes:
- - Better Error system, so we can still resolve lots of identifer and stuff
+Analysis timing is very inconsisten, maybe I should do more timing tests for it
 
 
 
@@ -79,124 +58,8 @@ Notes:
 
 
 
-Implementation:
----------------
-Todo:
- - Instanciation of Polymorphic functions
- - Polymorphic Functions Note: Return type may be dependent on a constant argument
- - Partial Compilations tracks dependencies of functions, but not of poly funciton instances, this has to be added
- - Maybe we have a problem with shadowing, where shadows aren't detected anymore...
- - Constant_Pool deduplication would be nice at some point
 
-Done:
- - Rework Function Header analysis with Poly-Function
-
-Use-Case/Design:
-----------------
-foo :: ($T: Type, x: T) -> T {
-    other := x;
-    other.value = 5;
-    return other;
-}
-
-Facts:
-------
- * A polymorphic function cannot be called, only an instance of it
- * An instance will always have a valid type-signature (E.g. without comptime variables or polymorphic types)
- * The only two usages after function declaration is: Taking a function pointer, or calling the function
- * When ModTree function signature is 0, then a header analysis dependency is returned
-
-Implementation Helper Facts:
- * ModTree function stores functions, but more importently, it is the argument to pass to the ir_code generator
- * So it seems like having another Modtree-thing, e.g. ModTree_Poly_Function would be more fitting
- * Symbols will then be able to refer to ModTree_Poly_Functions, expression results will return those...
-
-
-Code Ideas:
------------
- - Modtree_Expression Cache could be generally implemented for statement analysis
- - Function dependencies (For Partial Compilation) could be tracked through the generated modtree-code, not though symbols
-    This probably needs to be done if conditional compilation is implemented (#if)
- - Comptime evaluation should be order independent
- - Since Comptime Evaluation only works with Comptime Definitions, Block_Analysis doesn't need to be in one flow anymore
- 
-Let's first start with the simplest thing:
-    foo :: ($value: int) -> int {
-        return value * 2;
-    }
-    print_i32(foo(5));
-    // Value should be a constant in this case
-    foo :: ($value: int) {
-        arr: [value]int;
-    }
-    // But the values should already be usable during analysis:
-    foo :: ($value: int, array: [value]byte) {
-    }
-    // Or
-    foo :: ($T: Type) -> *T {
-        x: T;
-        return *x;
-    }
-
-Analysis:
-Question: How do I store this? In the Type-Signature or in ModTree_Function, or in a new Thing?
-
-analyse_any usages:
- * Function call (Function calls function)
-    -> Needs rework no matter what
-
- * Type_of (Function works) 
- * analyse_expression_value (Works, returns pointer)
-    -> Both would require an error check
-
- * Member_access (Errors)
- * Expression pointer (Errors)
- * analyse expression_type (Errors)
- * comptime expression (Works)
-    -> Can stay the same
-
-Some design decisions:
-Analysis of internal function will be different than external/hardcoded ones --> new Code-Path for Internal-Function
-
-What does the Computer need to do when:
- * Analysing a polymorphic function
-    - Remember what parameters are polymorphic
- * Analysing a Function_Call of polymorphic function
-    - Analyse all argument expressions
-    - If the function is polymorphic, check that the parameters are constant
-       ~ Instanciate the function with the given comptime values (E.g. Create new function signature, add new workload)
-       ~ Use the instanciated function, remove the comptime values from the arguments
-    ~ Add a call to the new function with the arguments
-  
-
-2. Analysing this:
-    - Normal Funciton-Signature analysis can stay the same, maybe add extra error that signature must not contain Comptime things
-    - Function header analysis is always on a function so it probably should return a function base
-
-A function now has a list of parameters with names + a list of comptime parameters
-To call a function, the following happens:
- 1. Evaluate Comptime parameters if a function has those
- 2. Match polymorphic types in parameters
- 3. Check all normal parameters
-
-x: Type: (a: int, b: int) -> int; // This is a function type
-x: Type: (a: $T, b: T) -> T;      // This is a polymorphic function type, so I probably cannot assign this to a value
-
-
-
-Issues:
--------
- - Templates are now more complicated, since you can define anything anywhere in code.
-
-Known Bugs:
------------
- - Sometimes active-switch is not found in switch-case nodes
-
-
-
-
-
-Design Discussion: Templates
+Design Discussion: Templates (OLD)
 ----------------------------
 Open Questions:
  * Functions inside templated functions
@@ -333,17 +196,6 @@ handle these cases. Maybe I should checkout what Zig does.
 
 
 
-How about beeing able to use function types in function/lambda definitions
-    int_op: Type = (a: int, b: int) -> int;
-    add :: bin_op 
-    {
-        return a + b;
-    }
-Would be really cool, but I think having some auto lambda function could also work.
-    add: int_op: auto {return a + b;}
-Generally lambdas could have an auto syntax, so i dont have to write the parameters + return value
-    
-
 
 All extern source declarations:
 #load "whatever.upp";
@@ -447,6 +299,106 @@ Thoughts:
 
 
 
+-------------------------------
+--- IMPLEMENTATION THOUGHTS ---
+-------------------------------
+RUNNABLE/STRUCT_REACHABLE: 
+--------------------------
+The problem both bake and Compile/Runnable share is that the workload depends
+on other Workloads of the same type, e.g.
+   * Runnable requires all called functions to be runnable
+   * Reachable requires all referenced/contained members to be reachable
+
+This would work fine with a dependency graph, but the problem here is that
+ - Circular Dependencies are NOT an Error, but rather something that happens often
+
+This structure seems to imply that these Workloads need to be executed in Clusters, 
+where one Cluster is a Set of Workloads that are all reachable from one to another, which is what 
+I have done currently. 
+
+
+
+CONTROL_FLOW:
+-------------
+Flow Types:
+    * Sequential 
+    * Stops      
+    * Returns 
+
+Break behavior:
+ - If a break is reachable, all blocks up to the broken block have sequential flow
+
+Loop behavior
+    Sequential, (Is fine)                               -> Return Sequential
+    Stops       (must also be fine because of continue) -> Return Sequential
+    Returns     (Error because loop only runs once)     -> Return Returns
+
+Conditional Rules:
+ - If all branches return the same flow, the result-flow is that flow
+ - If one branch is sequential, the result is sequential
+ - Otherwise we have a mix of Stops and Return, which results in Stops
+
+ 
+
+DEFERS:
+-------
+Defer: Mechanics are perfectly fine as they were before.
+Triggers:
+ - SCOPE/FUNCTION End
+ - Return
+ - Break/Continue --> Resolves it to the correct outer scope.
+
+Defer stuff to think about
+ - No defers inside other defers (I think this should work...)
+ - Continue/Break lables must be in the given defer --> I don't think thats true because Defer currently stay in the same scope
+ - Returns inside defers are not allowed? (I feel like the usecases of that are very limited)
+ - Flow of defer? With no return
+
+So current Solution:
+ - No Defers inside Defers
+ - No Break/Continue/Return inside defer (Control-Flow Changes)
+
+Implementation:
+ - Keep a stack of Modtree_Blocks as active defer blocks
+ - Keep a stack of active defers (RC_Statement_Blcoks) 
+ - ModTree_Blocks contain the start_defer index 
+ - And then I can reevaluate defer on each of those blocks
+
+
+
+
+Implementation:
+---------------
+Todo:
+ - Instanciation of Polymorphic functions
+ - Polymorphic Functions Note: Return type may be dependent on a constant argument
+ - Partial Compilations tracks dependencies of functions, but not of poly funciton instances, this has to be added
+ - Maybe we have a problem with shadowing, where shadows aren't detected anymore...
+ - Constant_Pool deduplication would be nice at some point
+
+Done:
+ - Rework Function Header analysis with Poly-Function
+
+Use-Case/Design:
+----------------
+foo :: ($T: Type, x: T) -> T {
+    other := x;
+    other.value = 5;
+    return other;
+}
+
+Facts:
+------
+ * A polymorphic function cannot be called, only an instance of it
+ * An instance will always have a valid type-signature (E.g. without comptime variables or polymorphic types)
+ * The only two usages after function declaration is: Taking a function pointer, or calling the function
+ * When ModTree function signature is 0, then a header analysis dependency is returned
+
+Implementation Helper Facts:
+ * ModTree function stores functions, but more importently, it is the argument to pass to the ir_code generator
+ * So it seems like having another Modtree-thing, e.g. ModTree_Poly_Function would be more fitting
+ * Symbols will then be able to refer to ModTree_Poly_Functions, expression results will return those...
+
 
 
 
@@ -456,16 +408,6 @@ Thoughts:
 ---------------------------
 ------ ISSUE TRACKER ------
 ---------------------------
-
-Issues:
--------
- * Templates
-    - Structs and functions in templated modules may not use templates
-    - Functions created during Template-Analysis should probably be deleted later
-    - Globals are currently disabled in a template context
- * Globals
-    - Global initializiation order is bad (Depends on dependencies of symbol definitions)
-
 Long-Term Goals:
 ----------------
  * Debugger
@@ -538,7 +480,6 @@ Hashing type signatures for lookup, not array search, or maybe use Graph-like da
 Differentiation between errors and Warnings
 
 Intermediate Code should keep positional information, so should the bytecode (Will be necessary for the debugger)
-Improved Parser-Error handling. (Function-Parsing Error handling should check each following line if it is a function)
 
 At some point the editor should not render at 60 FPS, but rather update when necessary.
 Asynchronous Editor-Compiler architecture, lexing/parse/analysing in background when code gets bigger

@@ -125,6 +125,7 @@ enum class Timing_Task
 {
     LEXING,
     PARSING,
+    RC_GEN,
     ANALYSIS,
     CODE_GEN,
     RESET,
@@ -164,6 +165,7 @@ struct Compiler
     double task_last_start_time;
     double time_lexing;
     double time_parsing;
+    double time_rc_gen;
     double time_analysing;
     double time_code_gen;
     double time_output;

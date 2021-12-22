@@ -226,10 +226,23 @@ struct ModTree_Statement
     } options;
 };
 
+enum class Control_Flow
+{
+    SEQUENTIAL, // One sequential path exists, but there may be paths that aren't sequential
+    STOPS,      // Execution never goes further than the given statement, but there may be paths that return
+    RETURNS,    // All possible code path return
+};
+
 struct ModTree_Block
 {
     Dynamic_Array<ModTree_Statement*> statements;
     Dynamic_Array<ModTree_Variable*> variables;
+
+    // Infos
+    RC_Block* rc_block;
+    Control_Flow flow;
+    bool control_flow_locked;
+    int defer_start_index;
 };
 
 struct ModTree_Variable
@@ -251,6 +264,11 @@ struct ModTree_Function
     Dynamic_Array<ModTree_Variable*> parameters;
     Symbol* symbol;
     Type_Signature* signature;
+
+    // Infos
+    bool contains_errors; // NOTE: contains_errors and is_runnable are actually 2 different things, but I only care about runnable for bake
+    Dynamic_Array<ModTree_Function*> called_from;
+    Dynamic_Array<ModTree_Function*> calls;
 };
 
 struct ModTree_Extern_Function
@@ -298,9 +316,10 @@ struct Struct_Progress
 
 enum class Function_State
 {
-    HEADER_WAITING,
-    BODY_WAITING,
-    FINISHED,
+    DEFINED,
+    HEADER_ANALYSED,
+    BODY_ANALYSED,
+    FINISHED, // Compiled if no errors occured
 };
 
 struct Function_Progress
@@ -308,6 +327,7 @@ struct Function_Progress
     Function_State state;
     Analysis_Workload* header_workload;
     Analysis_Workload* body_workload;
+    Analysis_Workload* compile_workload;
 };
 
 struct Dependent_Workload
@@ -320,7 +340,7 @@ enum class Analysis_Workload_Type
 {
     FUNCTION_HEADER,
     FUNCTION_BODY,
-    BAKE,
+    FUNCTION_CLUSTER_COMPILE,
     STRUCT_ANALYSIS,
     STRUCT_REACHABLE_RESOLVE,
     DEFINITION,
@@ -332,15 +352,24 @@ struct Analysis_Workload
     RC_Analysis_Item* analysis_item;
     bool is_finished;
 
+    // Dependencies
     List<Analysis_Workload*> dependencies;
     Dynamic_Array<Dependent_Workload> dependents;
     Dynamic_Array<RC_Symbol_Read*> symbol_dependencies;
 
+    // Note: Clustering is required for Workloads where cyclic dependencies on the same workload-type are allowed,
+    //       like recursive functions or structs containing pointers to themselves
+    Analysis_Workload* cluster;
+    Dynamic_Array<Analysis_Workload*> reachable_clusters;
+
+    // Payload
     struct {
         ModTree_Function* function;
         Type_Signature* struct_analysis_type;
         struct {
-            Analysis_Workload* cluster;
+            Dynamic_Array<ModTree_Function*> functions;
+        } cluster_compile;
+        struct {
             Dynamic_Array<Type_Signature*> struct_types;
             Dynamic_Array<Type_Signature*> unfinished_array_types;
         } struct_reachable;
@@ -387,10 +416,14 @@ struct Semantic_Analyser
     Compiler* compiler;
     Dependency_Graph dependency_graph;
     Analysis_Workload* current_workload;
+    ModTree_Function* current_function;
+    bool statement_reachable;
 
     Hashset<String*> loaded_filenames;
     Stack_Allocator allocator_values;
     Hashset<ModTree_Function*> visited_functions;
+    Dynamic_Array<ModTree_Block*> block_stack;
+    Dynamic_Array<RC_Block*> defer_stack;
 
     String* id_size;
     String* id_data;

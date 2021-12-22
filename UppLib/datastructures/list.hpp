@@ -84,6 +84,13 @@ List_Node<T>* list_add_at_end(List<T>* list, T value)
 }
 
 template<typename T>
+void list_reset(List<T>* list)
+{
+    list_destroy(list);
+    *list = list_create<T>();
+}
+
+template<typename T>
 void list_add_list(List<T>* list, List<T>* other)
 {
     if (list->tail == 0) {

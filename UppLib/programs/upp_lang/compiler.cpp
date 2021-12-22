@@ -29,9 +29,10 @@ bool enable_c_compilation = true;
 bool output_lexing = false;
 bool output_identifiers = false;
 bool output_ast = false;
+bool output_rc = false;
 bool output_type_system = false;
 bool output_root_table = false;
-bool output_ir = true;
+bool output_ir = false;
 bool output_bytecode = false;
 bool output_timing = true;
 
@@ -673,6 +674,7 @@ void compiler_switch_timing_task(Compiler* compiler, Timing_Task task)
     {
     case Timing_Task::LEXING: add_to = &compiler->time_lexing; break;
     case Timing_Task::PARSING: add_to = &compiler->time_parsing; break;
+    case Timing_Task::RC_GEN: add_to = &compiler->time_rc_gen; break;
     case Timing_Task::ANALYSIS: add_to = &compiler->time_analysing; break;
     case Timing_Task::CODE_GEN: add_to = &compiler->time_code_gen; break;
     case Timing_Task::CODE_EXEC: add_to = &compiler->time_code_exec; break;
@@ -705,6 +707,7 @@ void compiler_compile(Compiler* compiler, String source_code, bool generate_code
         compiler->time_code_gen = 0;
         compiler->time_lexing = 0;
         compiler->time_parsing = 0;
+        compiler->time_rc_gen = 0;
         compiler->time_reset = 0;
         compiler->time_code_exec = 0;
         compiler->time_output = 0;
@@ -712,7 +715,7 @@ void compiler_compile(Compiler* compiler, String source_code, bool generate_code
         compiler->task_current = Timing_Task::FINISH;
     }
 
-    compiler_switch_timing_task(compiler, Timing_Task::CODE_GEN);
+    compiler_switch_timing_task(compiler, Timing_Task::RESET);
     {
         // Reset data (FUTURE: Watch out for incremental compilation, pools should not be reset then)
         constant_pool_destroy(&compiler->constant_pool);
@@ -748,6 +751,7 @@ void compiler_compile(Compiler* compiler, String source_code, bool generate_code
     bool do_c_generation = do_ir_gen && enable_c_generation && generate_code && error_free;
     bool do_c_compilation = do_c_generation && enable_c_compilation && generate_code && error_free;
 
+    compiler_switch_timing_task(compiler, Timing_Task::ANALYSIS);
     if (do_analysis) {
         dependency_graph_resolve(&compiler->analyser->dependency_graph);
         semantic_analyser_finish(compiler->analyser);
@@ -814,7 +818,6 @@ void compiler_compile(Compiler* compiler, String source_code, bool generate_code
     }
 
     compiler_switch_timing_task(compiler, Timing_Task::FINISH);
-
     if (enable_output && output_timing && generate_code)
     {
         logg("\n-------- TIMINGS ---------\n");
@@ -824,6 +827,9 @@ void compiler_compile(Compiler* compiler, String source_code, bool generate_code
         }
         if (enable_parsing) {
             logg("parsing     ... %3.2fms\n", (float)(compiler->time_parsing) * 1000);
+        }
+        if (enable_rc_gen) {
+            logg("rc_gen      ... %3.2fms\n", (float)(compiler->time_rc_gen) * 1000);
         }
         if (enable_analysis) {
             logg("analysis    ... %3.2fms\n", (float)(compiler->time_analysing) * 1000);
@@ -929,16 +935,20 @@ void compiler_add_source_code(Compiler* compiler, String source_code, Code_Origi
 
     if (do_rc_gen)
     {
-        compiler_switch_timing_task(compiler, Timing_Task::ANALYSIS);
+        compiler_switch_timing_task(compiler, Timing_Task::RC_GEN);
         rc_analyser_analyse(compiler->rc_analyser, code_source->root_node);
+        compiler_switch_timing_task(compiler, Timing_Task::ANALYSIS);
         dependency_graph_add_workload_from_item(&compiler->analyser->dependency_graph, compiler->rc_analyser->root_item);
 
-        String printed_items = string_create_empty(256);
-        SCOPE_EXIT(string_destroy(&printed_items));
-        rc_analysis_item_append_to_string(compiler->rc_analyser->root_item, &printed_items, 0);
-        logg("\n");
-        logg("--------RC_ANALYSIS_ITEMS--------:\n");
-        logg("\n%s\n", printed_items.characters);
+        if (output_rc)
+        {
+            String printed_items = string_create_empty(256);
+            SCOPE_EXIT(string_destroy(&printed_items));
+            rc_analysis_item_append_to_string(compiler->rc_analyser->root_item, &printed_items, 0);
+            logg("\n");
+            logg("--------RC_ANALYSIS_ITEMS--------:\n");
+            logg("\n%s\n", printed_items.characters);
+        }
     }
 }
 

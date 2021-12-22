@@ -216,6 +216,7 @@ void rc_expression_destroy(RC_Expression* expression)
         dynamic_array_destroy(&expression->options.struct_initializer.member_initializers);
         break;
     case RC_Expression_Type::SYMBOL_READ:
+    case RC_Expression_Type::BAKE:
     case RC_Expression_Type::MODULE:
     case RC_Expression_Type::ARRAY_TYPE:
     case RC_Expression_Type::SLICE_TYPE:
@@ -279,7 +280,7 @@ RC_Analysis_Item* rc_analysis_item_create_empty(RC_Analyser* analyser, RC_Analys
             item_dependency.type = analyser->dependency_type;
         }
         else {
-            item_dependency.type = RC_Dependency_Type::NORMAL;
+            item_dependency.type = analyser->inside_bake ? RC_Dependency_Type::BAKE : RC_Dependency_Type::NORMAL;
         }
         dynamic_array_push_back(&parent_item->item_dependencies, item_dependency);
     }
@@ -301,7 +302,6 @@ void rc_analysis_item_destroy(RC_Analysis_Item* item)
     {
     case RC_Analysis_Item_Type::ROOT:
     case RC_Analysis_Item_Type::DEFINITION:
-    case RC_Analysis_Item_Type::BAKE:
     case RC_Analysis_Item_Type::FUNCTION_BODY:
         break;
     case RC_Analysis_Item_Type::FUNCTION: {
@@ -371,6 +371,7 @@ void rc_analyser_destroy(RC_Analyser* analyser)
 void rc_analyser_reset(RC_Analyser* analyser, Compiler* compiler)
 {
     // Reset results
+    analyser->inside_bake = false;
     dynamic_array_reset(&analyser->errors);
     hashtable_reset(&analyser->mapping_ast_to_symbol_table);
     hashtable_reset(&analyser->mapping_expressions_to_ast);
@@ -473,10 +474,12 @@ void rc_analyser_reset(RC_Analyser* analyser, Compiler* compiler)
 
 RC_Block* rc_analyser_analyse_statement_block(RC_Analyser* analyser, AST_Node* statement_block_node, RC_Block_Type block_type)
 {
+    assert(statement_block_node->type == AST_Node_Type::STATEMENT_BLOCK, "");
     RC_Block* rc_block = new RC_Block;
     rc_block->type = block_type;
     rc_block->symbol_table = symbol_table_create(analyser, analyser->symbol_table, statement_block_node);
     rc_block->statements = dynamic_array_create_empty<RC_Statement*>(1);
+    rc_block->block_id = statement_block_node->id;
     dynamic_array_push_back(&analyser->allocated_blocks, rc_block);
 
     // Set new symbol table
@@ -646,7 +649,7 @@ RC_Expression* rc_analyser_analyse_expression(RC_Analyser* analyser, AST_Node* e
 {
     RC_Dependency_Type backup_type = analyser->dependency_type;
     SCOPE_EXIT(analyser->dependency_type = backup_type);
-    if (analyser->dependency_type != RC_Dependency_Type::NORMAL) 
+    if (analyser->dependency_type != RC_Dependency_Type::NORMAL && analyser->dependency_type != RC_Dependency_Type::BAKE) 
     {
         if (expression_node->type == AST_Node_Type::FUNCTION_SIGNATURE ||
             expression_node->type == AST_Node_Type::EXPRESSION_POINTER ||
@@ -654,16 +657,17 @@ RC_Expression* rc_analyser_analyse_expression(RC_Analyser* analyser, AST_Node* e
             ) {
             analyser->dependency_type = RC_Dependency_Type::MEMBER_REFERENCE;
         }
-        else if (expression_node->type == AST_Node_Type::EXPRESSION_IDENTIFIER ||
-                 expression_node->type == AST_Node_Type::EXPRESSION_ARRAY_TYPE ||
-                 expression_node->type == AST_Node_Type::STRUCT ||
-                 expression_node->type == AST_Node_Type::UNION ||
-                 expression_node->type == AST_Node_Type::C_UNION) 
+        else if (expression_node->type != AST_Node_Type::EXPRESSION_IDENTIFIER && 
+                 expression_node->type != AST_Node_Type::EXPRESSION_ARRAY_TYPE &&
+                 expression_node->type != AST_Node_Type::STRUCT &&
+                 expression_node->type != AST_Node_Type::UNION &&
+                 expression_node->type != AST_Node_Type::C_UNION) 
         {
+            analyser->dependency_type = analyser->inside_bake ? RC_Dependency_Type::BAKE : RC_Dependency_Type::NORMAL;
         }
-        else {
-            analyser->dependency_type = RC_Dependency_Type::NORMAL;
-        }
+    }
+    else {
+        analyser->dependency_type = analyser->inside_bake ? RC_Dependency_Type::BAKE : RC_Dependency_Type::NORMAL;
     }
 
     switch (expression_node->type)
@@ -690,7 +694,8 @@ RC_Expression* rc_analyser_analyse_expression(RC_Analyser* analyser, AST_Node* e
         // Backup 
         Symbol_Table* backup_table = analyser->symbol_table;
         RC_Analysis_Item* backup_item = analyser->analysis_item;
-        SCOPE_EXIT(analyser->symbol_table = backup_table; analyser->analysis_item = backup_item;);
+        bool backup_inside_bake = analyser->inside_bake;
+        SCOPE_EXIT(analyser->symbol_table = backup_table; analyser->analysis_item = backup_item; analyser->inside_bake = backup_inside_bake;);
 
         Symbol_Table* param_table = symbol_table_create(analyser, analyser->symbol_table, expression_node);
         analyser->analysis_item = function_item;
@@ -711,6 +716,7 @@ RC_Expression* rc_analyser_analyse_expression(RC_Analyser* analyser, AST_Node* e
 
         // Analyse body
         analyser->analysis_item = body_item;
+        analyser->inside_bake = false;
         body_item->options.function_body = rc_analyser_analyse_statement_block(analyser, expression_node->child_end, RC_Block_Type::FUNCTION_BODY);
 
         RC_Expression* result_expression = rc_expression_create_empty(analyser, RC_Expression_Type::ANALYSIS_ITEM, expression_node);
@@ -826,7 +832,7 @@ RC_Expression* rc_analyser_analyse_expression(RC_Analyser* analyser, AST_Node* e
         RC_Expression* result_expr = rc_expression_create_empty(analyser, RC_Expression_Type::ARRAY_TYPE, expression_node);
         result_expr->options.array_type.element_type_expression = rc_analyser_analyse_expression(analyser, expression_node->child_end);
 
-        analyser->dependency_type = RC_Dependency_Type::NORMAL; // Reset dependency type to normal, so that the size dependencies need to be finished
+        analyser->dependency_type = analyser->inside_bake ? RC_Dependency_Type::BAKE : RC_Dependency_Type::NORMAL; // Reset dependency type to normal, so that the size dependencies need to be finished
         result_expr->options.array_type.size_expression = rc_analyser_analyse_expression(analyser, expression_node->child_start);
         return result_expr;
     }
@@ -959,18 +965,14 @@ RC_Expression* rc_analyser_analyse_expression(RC_Analyser* analyser, AST_Node* e
         result_expr->options.cast.type = type;
         return result_expr;
     }
-    case AST_Node_Type::EXPRESSION_BAKE: {
-        RC_Analysis_Item* bake_item = rc_analysis_item_create_empty(analyser, RC_Analysis_Item_Type::BAKE, analyser->analysis_item);
-        auto bake = &bake_item->options.bake;
-
-        RC_Analysis_Item* backup_item = analyser->analysis_item;
-        analyser->analysis_item = bake_item;
-        SCOPE_EXIT(analyser->analysis_item = backup_item;);
-        bake->type_expression = rc_analyser_analyse_expression(analyser, expression_node->child_start);
-        bake->body = rc_analyser_analyse_statement_block(analyser, expression_node->child_end, RC_Block_Type::FUNCTION_BODY);
-
-        RC_Expression* result_expression = rc_expression_create_empty(analyser, RC_Expression_Type::ANALYSIS_ITEM, expression_node);
-        result_expression->options.analysis_item = bake_item;
+    case AST_Node_Type::EXPRESSION_BAKE:
+    {
+        RC_Expression* result_expression = rc_expression_create_empty(analyser, RC_Expression_Type::BAKE, expression_node);
+        result_expression->options.bake.type_expression = rc_analyser_analyse_expression(analyser, expression_node->child_start);
+        bool backup_inside_bake = analyser->inside_bake;
+        SCOPE_EXIT(analyser->inside_bake = backup_inside_bake;);
+        analyser->inside_bake = true;
+        result_expression->options.bake.body = rc_analyser_analyse_statement_block(analyser, expression_node->child_end, RC_Block_Type::BAKE_BLOCK);
         return result_expression;
     }
     case AST_Node_Type::EXPRESSION_TYPE_INFO: {
@@ -1211,9 +1213,6 @@ void rc_analysis_item_append_to_string(RC_Analysis_Item* item, String* string, i
     string_set_indentation(string, indentation);
     switch (item->type)
     {
-    case RC_Analysis_Item_Type::BAKE:
-        string_append_formated(string, "Bake");
-        break;
     case RC_Analysis_Item_Type::DEFINITION:
         string_append_formated(string, "Symbol \"%s\"", item->options.definition.symbol->id->characters);
         if (!item->options.definition.is_comptime_definition) {
@@ -1249,13 +1248,14 @@ void rc_analysis_item_append_to_string(RC_Analysis_Item* item, String* string, i
     if (item->symbol_dependencies.size != 0) {
         string_append_formated(string, ": ", item->symbol_dependencies.size);
     }
-    for (int i = 0; i < item->symbol_dependencies.size; i++) 
+    for (int i = 0; i < item->symbol_dependencies.size; i++)
     {
         RC_Symbol_Read* read = item->symbol_dependencies[i];
         ast_identifier_node_append_to_string(string, read->identifier_node);
         switch (read->type)
         {
         case RC_Dependency_Type::NORMAL: break;
+        case RC_Dependency_Type::BAKE: string_append_formated(string, "(Bake)"); break;
         case RC_Dependency_Type::MEMBER_IN_MEMORY: string_append_formated(string, "(Member_In_Memory)"); break;
         case RC_Dependency_Type::MEMBER_REFERENCE: string_append_formated(string, "(Member_Reference)"); break;
         default: panic("");
