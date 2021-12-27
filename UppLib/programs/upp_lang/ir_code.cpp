@@ -400,7 +400,7 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
         ir_code_block_append_to_string(instruction->options.if_instr.true_branch, string, indentation + 1);
         indent_string(string, indentation);
         string_append_formated(string, "ELSE\n");
-        ir_code_block_append_to_string(instruction->options.if_instr.true_branch, string, indentation + 1);
+        ir_code_block_append_to_string(instruction->options.if_instr.false_branch, string, indentation + 1);
         break;
     }
     case IR_Instruction_Type::MOVE: {
@@ -1165,8 +1165,10 @@ void ir_generator_generate_block(IR_Generator* generator, IR_Code_Block* ir_bloc
             label.options.label_index = generator->next_label_index;
             generator->next_label_index++;
             dynamic_array_push_back(&ir_block->instructions, label);
-            hashtable_insert_element(&generator->labels_break, statement->options.if_statement.if_block, label.options.label_index);
-            hashtable_insert_element(&generator->labels_break, statement->options.if_statement.else_block, label.options.label_index);
+            bool valid = hashtable_insert_element(&generator->labels_break, statement->options.if_statement.if_block, label.options.label_index);
+            assert(valid, "");
+            valid = hashtable_insert_element(&generator->labels_break, statement->options.if_statement.else_block, label.options.label_index);
+            assert(valid, "");
 
             break;
         }

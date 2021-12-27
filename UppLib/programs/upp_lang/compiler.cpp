@@ -29,15 +29,15 @@ bool enable_c_compilation = true;
 bool output_lexing = false;
 bool output_identifiers = false;
 bool output_ast = false;
-bool output_rc = false;
+bool output_rc = true;
 bool output_type_system = false;
 bool output_root_table = false;
-bool output_ir = false;
+bool output_ir = true;
 bool output_bytecode = false;
 bool output_timing = true;
 
 // Testcases
-bool enable_testcases = false;
+bool enable_testcases = true;
 bool enable_stresstest = false;
 bool run_testcases_compiled = false;
 
@@ -742,20 +742,20 @@ void compiler_compile(Compiler* compiler, String source_code, bool generate_code
     Code_Origin origin;
     origin.type = Code_Origin_Type::MAIN_PROJECT;
     compiler_add_source_code(compiler, source_code, origin);
-
-    // Check for errors
     bool do_analysis = enable_lexing && enable_parsing && enable_analysis;
-    bool error_free = !compiler_errors_occured(compiler);
-    bool do_ir_gen = do_analysis && enable_ir_gen && generate_code && error_free;
-    bool do_bytecode_gen = do_ir_gen && enable_bytecode_gen && generate_code && error_free;
-    bool do_c_generation = do_ir_gen && enable_c_generation && generate_code && error_free;
-    bool do_c_compilation = do_c_generation && enable_c_compilation && generate_code && error_free;
 
     compiler_switch_timing_task(compiler, Timing_Task::ANALYSIS);
     if (do_analysis) {
         dependency_graph_resolve(&compiler->analyser->dependency_graph);
         semantic_analyser_finish(compiler->analyser);
     }
+
+    // Check for errors
+    bool error_free = !compiler_errors_occured(compiler);
+    bool do_ir_gen = do_analysis && enable_ir_gen && generate_code && error_free;
+    bool do_bytecode_gen = do_ir_gen && enable_bytecode_gen && generate_code && error_free;
+    bool do_c_generation = do_ir_gen && enable_c_generation && generate_code && error_free;
+    bool do_c_compilation = do_c_generation && enable_c_compilation && generate_code && error_free;
 
     compiler_switch_timing_task(compiler, Timing_Task::CODE_GEN);
     if (do_ir_gen) {

@@ -48,12 +48,14 @@ main :: ()
     /*
     To give an example of what could be done, lets search for a member and get its offset
     */
-    //print_i32(member_offset(Player, "name"));
+    name_offset := member_offset(Player, "name");
+    print_i32(name_offset);
+    assert(name_offset == 8);
     /*
     This can also be done at compiletime, using bake, which
     makes this a zero cost operation.
     */
-    offset := #bake<int>{return member_offset(Player, "alive");};
+    offset := #bake(int){return member_offset(Player, "alive");};
     assert(offset == 32);
     /*
     The bake syntax seems kinda inconvinient, if you compare it to C:

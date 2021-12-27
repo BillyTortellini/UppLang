@@ -190,7 +190,7 @@ ModTree_Block* modtree_block_create_empty(RC_Block* rc_block)
     block->control_flow_locked = false;
     block->flow = Control_Flow::SEQUENTIAL;
     block->rc_block = rc_block;
-    block->defer_start_index = 0;
+    block->defer_start_index = -1;
     return block;
 }
 
@@ -210,6 +210,7 @@ void modtree_block_destroy(ModTree_Block* block)
 ModTree_Variable* modtree_block_add_variable(ModTree_Block* block, Type_Signature* type, Symbol* symbol)
 {
     ModTree_Variable* var = new ModTree_Variable;
+    assert(type != 0, "");
     var->data_type = type;
     var->symbol = symbol;
     dynamic_array_push_back(&block->variables, var);
@@ -245,6 +246,7 @@ void modtree_function_destroy(ModTree_Function* function)
 ModTree_Variable* modtree_function_add_parameter(ModTree_Function* function, Type_Signature* type, Symbol* symbol)
 {
     ModTree_Variable* var = new ModTree_Variable;
+    assert(type != 0, "");
     var->data_type = type;
     var->symbol = symbol;
     dynamic_array_push_back(&function->parameters, var);
@@ -254,6 +256,7 @@ ModTree_Variable* modtree_function_add_parameter(ModTree_Function* function, Typ
 ModTree_Variable* modtree_program_add_global(ModTree_Program* program, Type_Signature* type, Symbol* symbol)
 {
     ModTree_Variable* var = new ModTree_Variable;
+    assert(type != 0, "");
     var->data_type = type;
     var->symbol = symbol;
     dynamic_array_push_back(&program->globals, var);
@@ -759,21 +762,15 @@ HELPERS
 */
 enum class Expression_Context_Type
 {
-    TYPE_KNOWN,
-    ARITHMETIC_OPERAND, // + - * / %, unary -, requires primitive type either int or float
-    UNKNOWN,
-    FUNCTION_CALL, // Requires some type of function
-    TYPE_EXPECTED,
-    ARRAY,
-    MEMBER_ACCESS, // Only valid on enums, structs, slices and arrays
-    SWITCH_CONDITION, // Enums
+    UNKNOWN,             // Type is not known
+    AUTO_DEREFERENCE,    // Type is not known, but we want pointer level 0 
+    SPECIFIC_TYPE,       // Type is known, pointer level changes + implicit casting enabled
 };
 
 struct Expression_Context
 {
     Expression_Context_Type type;
     Type_Signature* signature;
-    bool enable_pointer_conversion;
 };
 
 // Helpers
@@ -783,22 +780,22 @@ Expression_Context expression_context_make_unknown() {
     return context;
 }
 
-Expression_Context expression_context_make_known_type(Type_Signature* signature, bool auto_pointer_enabled) {
+Expression_Context expression_context_make_auto_dereference() {
+    Expression_Context context;
+    context.type = Expression_Context_Type::AUTO_DEREFERENCE;
+    return context;
+}
+
+Expression_Context expression_context_make_specific_type(Type_Signature* signature) {
     if (signature->type == Signature_Type::ERROR_TYPE) {
         return expression_context_make_unknown();
     }
     Expression_Context context;
-    context.type = Expression_Context_Type::TYPE_KNOWN;
-    context.enable_pointer_conversion = auto_pointer_enabled;
+    context.type = Expression_Context_Type::SPECIFIC_TYPE;
     context.signature = signature;
     return context;
 }
 
-Expression_Context expression_context_make_type(Expression_Context_Type type) {
-    Expression_Context context;
-    context.type = type;
-    return context;
-}
 
 struct Expression_Result
 {
@@ -1023,16 +1020,12 @@ void dependency_graph_resolve(Dependency_Graph* graph)
                 }
                 case Symbol_Type::FUNCTION:
                 {
+                    if (symbol_read->symbol->options.function == graph->analyser->assert_function) {
+                        break;
+                    }
                     Function_Progress* progress_opt = hashtable_find_element(&graph->progress_functions, symbol_read->symbol->options.function);
                     assert(progress_opt != 0, "");
-                    if (workload->type == Analysis_Workload_Type::FUNCTION_BODY) {
-                        analysis_workload_add_function_dependency(graph, workload, progress_opt, symbol_read->type);
-                    }
-                    else {
-                        if (progress_opt->state == Function_State::DEFINED) {
-                            analysis_workload_add_dependency(workload, progress_opt->header_workload);
-                        }
-                    }
+                    analysis_workload_add_function_dependency(graph, workload, progress_opt, symbol_read->type);
                     break;
                 }
                 case Symbol_Type::TYPE:
@@ -1124,6 +1117,7 @@ void dependency_graph_resolve(Dependency_Graph* graph)
                 semantic_analyser_log_error(graph->analyser, Semantic_Error_Type::MISSING_FEATURE, (AST_Node*)0);
                 break;
             }
+            logg("Resolving undefined symbols\n");
             // Search for workload with lowest unresolved symbols count, and resolve all those symbols
             Analysis_Workload* lowest = 0;
             for (int i = 0; i < unresolved_symbols_workloads.size; i++) {
@@ -1535,6 +1529,7 @@ Analysis_Workload* dependency_graph_add_workload_from_item(Dependency_Graph* gra
 
 void semantic_analyser_work_through_defers(Semantic_Analyser* analyser, ModTree_Block* modtree_block, int defer_start_index)
 {
+    assert(defer_start_index != -1, "");
     for (int i = analyser->defer_stack.size - 1; i >= defer_start_index; i--)
     {
         RC_Block* rc_block = analyser->defer_stack[i];
@@ -1567,24 +1562,9 @@ bool analysis_workload_execute(Analysis_Workload* workload, Semantic_Analyser* a
             if (definition->value_expression.available)
             {
                 value = semantic_analyser_analyse_expression_value(
-                    analyser, definition->value_expression.value, type != 0 ? expression_context_make_known_type(type, true) : expression_context_make_unknown()
+                    analyser, definition->value_expression.value, type != 0 ? expression_context_make_specific_type(type) : expression_context_make_unknown()
                 );
-                if (type != 0)
-                {
-                    if (value->result_type != type)
-                    {
-                        ModTree_Expression* casted = semantic_analyser_cast_implicit_if_possible(analyser, value, type);
-                        if (casted == 0) {
-                            semantic_analyser_log_error(analyser, Semantic_Error_Type::INVALID_TYPE_ASSIGNMENT, definition->value_expression.value);
-                            semantic_analyser_add_error_info(analyser, error_information_make_given_type(value->result_type));
-                            semantic_analyser_add_error_info(analyser, error_information_make_expected_type(type));
-                        }
-                        else {
-                            value = casted;
-                        }
-                    }
-                }
-                else {
+                if (type == 0) {
                     type = value->result_type;
                 }
             }
@@ -2103,7 +2083,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
     {
         // Analyse call expression
         Expression_Result function_expr_result = semantic_analyser_analyse_expression_any(
-            analyser, rc_expression->options.function_call.call_expr, expression_context_make_type(Expression_Context_Type::FUNCTION_CALL)
+            analyser, rc_expression->options.function_call.call_expr, expression_context_make_auto_dereference()
         );
         SCOPE_EXIT(if (error_exit && function_expr_result.type == Expression_Result_Type::EXPRESSION)
             modtree_expression_destroy(function_expr_result.options.expression);
@@ -2172,21 +2152,8 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
         {
             Type_Signature* expected_type = i < parameters.size ? parameters[i] : type_system->error_type;
             ModTree_Expression* argument_expr = semantic_analyser_analyse_expression_value(
-                analyser, arguments[i], expression_context_make_known_type(expected_type, true)
+                analyser, arguments[i], expression_context_make_specific_type(expected_type)
             );
-            // Cast if necessary
-            {
-                ModTree_Expression* casted = semantic_analyser_cast_implicit_if_possible(analyser, argument_expr, expected_type);
-                if (casted != 0) {
-                    argument_expr = casted;
-                }
-                else {
-                    semantic_analyser_log_error(analyser, Semantic_Error_Type::INVALID_TYPE_ARGUMENT, arguments[i]);
-                    semantic_analyser_add_error_info(analyser, error_information_make_expected_type(expected_type));
-                    semantic_analyser_add_error_info(analyser, error_information_make_given_type(argument_expr->result_type));
-                    semantic_analyser_add_error_info(analyser, error_information_make_function_type(function_signature));
-                }
-            }
             dynamic_array_push_back(&expr_result->options.function_call.arguments, argument_expr);
         }
         return expression_result_make_value(expr_result);
@@ -2258,15 +2225,8 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
     case RC_Expression_Type::TYPE_INFO:
     {
         ModTree_Expression* operand = semantic_analyser_analyse_expression_value(
-            analyser, rc_expression->options.type_info_expression, expression_context_make_known_type(type_system->type_type, true)
+            analyser, rc_expression->options.type_info_expression, expression_context_make_specific_type(type_system->type_type)
         );
-        if (operand->result_type != analyser->compiler->type_system.type_type) {
-            semantic_analyser_log_error(analyser, Semantic_Error_Type::INVALID_TYPE_ARGUMENT, rc_expression->options.type_info_expression);
-            semantic_analyser_add_error_info(analyser, error_information_make_expected_type(type_system->type_type));
-            semantic_analyser_add_error_info(analyser, error_information_make_given_type(operand->result_type));
-            modtree_expression_destroy(operand);
-            return expression_result_make_value(modtree_expression_make_error(type_system->type_information_type));
-        }
 
         ModTree_Expression* global_read = modtree_expression_create_empty(ModTree_Expression_Type::VARIABLE_READ, analyser->global_type_informations->data_type);
         global_read->options.variable_read = analyser->global_type_informations;
@@ -2387,7 +2347,8 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
             destination_type = semantic_analyser_analyse_expression_type(analyser, cast->type_expression);
         }
 
-        Expression_Context context = expression_context_make_unknown();
+        // Determine Context and Destination Type
+        Expression_Context operand_context = expression_context_make_unknown();
         switch (cast->type)
         {
         case RC_Cast_Type::TYPE_TO_TYPE: {
@@ -2396,7 +2357,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
         }
         case RC_Cast_Type::AUTO_CAST: {
             assert(destination_type == 0, "");
-            if (context.type != Expression_Context_Type::TYPE_KNOWN) {
+            if (context.type != Expression_Context_Type::SPECIFIC_TYPE) {
                 semantic_analyser_log_error(analyser, Semantic_Error_Type::AUTO_CAST_KNOWN_CONTEXT_IS_REQUIRED, rc_expression);
                 return expression_result_make_error(type_system->error_type);
             }
@@ -2404,7 +2365,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
             break;
         }
         case RC_Cast_Type::RAW_TO_PTR: {
-            context = expression_context_make_known_type(type_system->u64_type, true);
+            operand_context = expression_context_make_specific_type(type_system->u64_type);
             assert(destination_type != 0, "");
             if (destination_type->type != Signature_Type::POINTER) {
                 semantic_analyser_log_error(analyser, Semantic_Error_Type::INVALID_TYPE_CAST_PTR_DESTINATION_MUST_BE_PTR, rc_expression);
@@ -2420,15 +2381,15 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
         default: panic("");
         }
 
-        ModTree_Expression* operand = semantic_analyser_analyse_expression_value(analyser, cast->operand, context);
+        ModTree_Expression* operand = semantic_analyser_analyse_expression_value(analyser, cast->operand, operand_context);
         ModTree_Expression* result_expr = modtree_expression_create_empty(ModTree_Expression_Type::CAST, destination_type);
         result_expr->options.cast.cast_argument = operand;
         result_expr->options.cast.type = ModTree_Cast_Type::INTEGERS; // Placeholder
 
+        // Determine Cast type
         switch (cast->type)
         {
         case RC_Cast_Type::AUTO_CAST:
-        case RC_Cast_Type::PTR_TO_RAW:
         case RC_Cast_Type::TYPE_TO_TYPE:
         {
             assert(destination_type != 0, "");
@@ -2445,13 +2406,18 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
             }
             break;
         }
+        case RC_Cast_Type::PTR_TO_RAW: {
+            if (operand->result_type->type != Signature_Type::POINTER) {
+                semantic_analyser_log_error(analyser, Semantic_Error_Type::EXPRESSION_INVALID_CAST, rc_expression);
+                semantic_analyser_add_error_info(analyser, error_information_make_given_type(operand->result_type));
+                semantic_analyser_add_error_info(analyser, error_information_make_expected_type(destination_type));
+            }
+            result_expr->options.cast.type = ModTree_Cast_Type::POINTER_TO_U64;
+            break;
+        }
         case RC_Cast_Type::RAW_TO_PTR:
         {
             result_expr->options.cast.type = ModTree_Cast_Type::U64_TO_POINTER;
-            if (operand->result_type != analyser->compiler->type_system.u64_type) {
-                semantic_analyser_log_error(analyser, Semantic_Error_Type::INVALID_TYPE_CAST_PTR_REQUIRES_U64, rc_expression);
-                semantic_analyser_add_error_info(analyser, error_information_make_given_type(operand->result_type));
-            }
             break;
         }
         default: panic("");
@@ -2511,7 +2477,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
             if (rc_member->value_expression.available)
             {
                 ModTree_Expression* expression = semantic_analyser_analyse_expression_value(
-                    analyser, rc_member->value_expression.value, expression_context_make_known_type(type_system->i32_type, true)
+                    analyser, rc_member->value_expression.value, expression_context_make_specific_type(type_system->i32_type)
                 );
                 if (expression->result_type != analyser->compiler->type_system.i32_type) {
                     semantic_analyser_log_error(analyser, Semantic_Error_Type::INVALID_TYPE_ENUM_VALUE, rc_member->value_expression.value);
@@ -2530,7 +2496,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
             }
 
             Enum_Member member;
-            member.definition_node = rc_to_ast(analyser, rc_member->value_expression.value);
+            member.definition_node = rc_member->node;
             member.id = rc_member->id;
             member.value = next_member_value;
             next_member_value++;
@@ -2636,15 +2602,8 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
     {
         auto rc_array = &rc_expression->options.array_type;
         ModTree_Expression* size_expr = semantic_analyser_analyse_expression_value(
-            analyser, rc_array->size_expression, expression_context_make_known_type(type_system->i32_type, true)
+            analyser, rc_array->size_expression, expression_context_make_specific_type(type_system->i32_type)
         );
-        if (size_expr->result_type != type_system->i32_type) {
-            semantic_analyser_log_error(analyser, Semantic_Error_Type::INVALID_TYPE_ARRAY_SIZE, rc_array->size_expression);
-            semantic_analyser_add_error_info(analyser, error_information_make_given_type(size_expr->result_type));
-            semantic_analyser_add_error_info(analyser, error_information_make_expected_type(type_system->i32_type));
-            modtree_expression_destroy(size_expr);
-            return expression_result_make_error(type_system->error_type);
-        }
         Comptime_Analysis comptime = modtree_expression_calculate_comptime_value(analyser, size_expr);
         if (!comptime.available) {
             semantic_analyser_log_error(analyser, Semantic_Error_Type::ARRAY_SIZE_NOT_COMPILE_TIME_KNOWN, rc_array->size_expression);
@@ -2696,13 +2655,8 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
         {
             result_type = type_system_make_slice(type_system, allocated_type);
             ModTree_Expression* count = semantic_analyser_analyse_expression_value(
-                analyser, rc_new->count_expression.value, expression_context_make_known_type(type_system->i32_type, true)
+                analyser, rc_new->count_expression.value, expression_context_make_specific_type(type_system->i32_type)
             );
-            if (count->result_type != type_system->i32_type) {
-                semantic_analyser_log_error(analyser, Semantic_Error_Type::INVALID_TYPE_ARRAY_ALLOCATION_SIZE, rc_new->count_expression.value);
-                semantic_analyser_add_error_info(analyser, error_information_make_given_type(count->result_type));
-                semantic_analyser_add_error_info(analyser, error_information_make_expected_type(type_system->i32_type));
-            }
             count_expr = optional_make_success(count);
         }
         else {
@@ -2723,7 +2677,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
             struct_signature = semantic_analyser_analyse_expression_type(analyser, rc_init->type_expression.value);
         }
         else {
-            if (context.type == Expression_Context_Type::TYPE_KNOWN) {
+            if (context.type == Expression_Context_Type::SPECIFIC_TYPE) {
                 struct_signature = context.signature;
             }
             else {
@@ -2760,25 +2714,12 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
             }
             if (found_member != 0)
             {
-                ModTree_Expression* init_expr = semantic_analyser_analyse_expression_value(
-                    analyser, rc_member->init_expression, expression_context_make_known_type(found_member->type, true)
-                );
                 Member_Initializer initializer;
-                initializer.init_expr = init_expr;
+                initializer.init_expr = semantic_analyser_analyse_expression_value(
+                    analyser, rc_member->init_expression, expression_context_make_specific_type(found_member->type)
+                );
                 initializer.init_node = rc_to_ast(analyser, rc_member->init_expression);
                 initializer.member = *found_member;
-                if (init_expr->result_type != found_member->type)
-                {
-                    ModTree_Expression* cast_expr = semantic_analyser_cast_implicit_if_possible(analyser, init_expr, found_member->type);
-                    if (cast_expr != 0) {
-                        initializer.init_expr = cast_expr;
-                    }
-                    else {
-                        semantic_analyser_log_error(analyser, Semantic_Error_Type::STRUCT_INITIALIZER_INVALID_MEMBER_TYPE, rc_member->init_expression);
-                        semantic_analyser_add_error_info(analyser, error_information_make_given_type(init_expr->result_type));
-                        semantic_analyser_add_error_info(analyser, error_information_make_expected_type(found_member->type));
-                    }
-                }
                 dynamic_array_push_back(&initializers, initializer);
             }
             else {
@@ -2853,7 +2794,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
         }
         else
         {
-            if (context.type == Expression_Context_Type::TYPE_KNOWN)
+            if (context.type == Expression_Context_Type::SPECIFIC_TYPE)
             {
                 if (context.signature->type == Signature_Type::ARRAY) {
                     element_type = context.signature->options.array.element_type;
@@ -2897,20 +2838,8 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
         {
             RC_Expression* rc_element_expr = rc_array_init->element_initializers[i];
             ModTree_Expression* element_expr = semantic_analyser_analyse_expression_value(
-                analyser, rc_element_expr, expression_context_make_known_type(element_type, true)
+                analyser, rc_element_expr, expression_context_make_specific_type(element_type)
             );
-            if (element_expr->result_type != element_type)
-            {
-                ModTree_Expression* casted = semantic_analyser_cast_implicit_if_possible(analyser, element_expr, element_type);
-                if (casted == 0) {
-                    semantic_analyser_log_error(analyser, Semantic_Error_Type::ARRAY_INITIALIZER_INVALID_TYPE, rc_element_expr);
-                    semantic_analyser_add_error_info(analyser, error_information_make_expected_type(element_type));
-                    semantic_analyser_add_error_info(analyser, error_information_make_given_type(element_expr->result_type));
-                }
-                else {
-                    element_expr = casted;
-                }
-            }
             dynamic_array_push_back(&init_expressions, element_expr);
         }
 
@@ -2924,7 +2853,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
     {
         auto rc_array_access = &rc_expression->options.array_access;
         ModTree_Expression* array_expr = semantic_analyser_analyse_expression_value(
-            analyser, rc_array_access->array_expression, expression_context_make_type(Expression_Context_Type::ARRAY)
+            analyser, rc_array_access->array_expression, expression_context_make_auto_dereference()
         );
 
         Type_Signature* array_type = array_expr->result_type;
@@ -2942,14 +2871,8 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
         }
 
         ModTree_Expression* index_expr = semantic_analyser_analyse_expression_value(
-            analyser, rc_array_access->index_expression, expression_context_make_known_type(type_system->i32_type, true)
+            analyser, rc_array_access->index_expression, expression_context_make_specific_type(type_system->i32_type)
         );
-        if (index_expr->result_type != analyser->compiler->type_system.i32_type) { // Todo: Try cast
-            semantic_analyser_log_error(analyser, Semantic_Error_Type::INVALID_TYPE_ARRAY_ACCESS_INDEX, rc_array_access->index_expression);
-            semantic_analyser_add_error_info(analyser, error_information_make_given_type(index_expr->result_type));
-            semantic_analyser_add_error_info(analyser, error_information_make_expected_type(type_system->i32_type));
-        }
-
         ModTree_Expression* result = modtree_expression_create_empty(ModTree_Expression_Type::ARRAY_ACCESS, element_type);
         result->options.array_access.array_expression = array_expr;
         result->options.array_access.index_expression = index_expr;
@@ -2959,7 +2882,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
     {
         auto rc_member_access = &rc_expression->options.member_access;
         Expression_Result access_expr_result = semantic_analyser_analyse_expression_any(
-            analyser, rc_member_access->expression, expression_context_make_type(Expression_Context_Type::MEMBER_ACCESS)
+            analyser, rc_member_access->expression, expression_context_make_auto_dereference()
         );
         switch (access_expr_result.type)
         {
@@ -3088,7 +3011,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
     case RC_Expression_Type::AUTO_ENUM:
     {
         String* id = rc_expression->options.auto_enum_member_id;
-        if (context.type != Expression_Context_Type::TYPE_KNOWN) {
+        if (context.type != Expression_Context_Type::SPECIFIC_TYPE) {
             semantic_analyser_log_error(analyser, Semantic_Error_Type::AUTO_MEMBER_KNOWN_CONTEXT_IS_REQUIRED, rc_expression);
             return expression_result_make_error(type_system->error_type);
         }
@@ -3125,7 +3048,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
         bool is_negate = rc_unary->op_type == RC_Unary_Operation_Type::NEGATE;
         ModTree_Expression* operand = semantic_analyser_analyse_expression_value(
             analyser, rc_unary->operand,
-            is_negate ? expression_context_make_type(Expression_Context_Type::ARITHMETIC_OPERAND) : expression_context_make_known_type(type_system->bool_type, true)
+            is_negate ? expression_context_make_auto_dereference() : expression_context_make_specific_type(type_system->bool_type)
         );
 
         if (is_negate) {
@@ -3136,13 +3059,6 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
             if (!valid) {
                 semantic_analyser_log_error(analyser, Semantic_Error_Type::INVALID_TYPE_UNARY_OPERATOR, rc_expression);
                 semantic_analyser_add_error_info(analyser, error_information_make_given_type(operand->result_type));
-            }
-        }
-        else {
-            if (operand->result_type != type_system->bool_type) {
-                semantic_analyser_log_error(analyser, Semantic_Error_Type::INVALID_TYPE_UNARY_OPERATOR, rc_expression);
-                semantic_analyser_add_error_info(analyser, error_information_make_given_type(operand->result_type));
-                semantic_analyser_add_error_info(analyser, error_information_make_expected_type(type_system->bool_type));
             }
         }
 
@@ -3236,11 +3152,11 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
         case RC_Binary_Operation_Type::DIVISION:
             float_valid = true;
             int_valid = true;
-            operand_context = expression_context_make_type(Expression_Context_Type::ARITHMETIC_OPERAND);
+            operand_context = expression_context_make_auto_dereference();
             break;
         case RC_Binary_Operation_Type::MODULO:
             int_valid = true;
-            operand_context = expression_context_make_type(Expression_Context_Type::ARITHMETIC_OPERAND);
+            operand_context = expression_context_make_auto_dereference();
             break;
         case RC_Binary_Operation_Type::GREATER:
         case RC_Binary_Operation_Type::GREATER_OR_EQUAL:
@@ -3250,7 +3166,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
             int_valid = true;
             result_type_is_bool = true;
             enum_valid = true;
-            operand_context = expression_context_make_type(Expression_Context_Type::ARITHMETIC_OPERAND);
+            operand_context = expression_context_make_auto_dereference();
             break;
         case RC_Binary_Operation_Type::POINTER_EQUAL:
         case RC_Binary_Operation_Type::POINTER_NOT_EQUAL:
@@ -3266,14 +3182,14 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
             ptr_valid = true;
             enum_valid = true;
             type_type_valid = true;
-            operand_context = expression_context_make_type(Expression_Context_Type::ARITHMETIC_OPERAND);
+            operand_context = expression_context_make_auto_dereference();
             result_type_is_bool = true;
             break;
         case RC_Binary_Operation_Type::AND:
         case RC_Binary_Operation_Type::OR:
             bool_valid = true;
             result_type_is_bool = true;
-            operand_context = expression_context_make_known_type(type_system->bool_type, true);
+            operand_context = expression_context_make_specific_type(type_system->bool_type);
             break;
         default: panic("");
         }
@@ -3281,7 +3197,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
         // Evaluate operands
         ModTree_Expression* left_expr = semantic_analyser_analyse_expression_value(analyser, rc_binop->left_operand, operand_context);
         if (enum_valid && left_expr->result_type->type == Signature_Type::ENUM) {
-            operand_context = expression_context_make_known_type(left_expr->result_type, true);
+            operand_context = expression_context_make_specific_type(left_expr->result_type);
         }
         ModTree_Expression* right_expr = semantic_analyser_analyse_expression_value(analyser, rc_binop->right_operand, operand_context);
 
@@ -3370,120 +3286,101 @@ Expression_Result semantic_analyser_analyse_expression_any(Semantic_Analyser* an
     Expression_Result result = semantic_analyser_analyse_expression_internal(analyser, rc_expression, context);
     if (result.type != Expression_Result_Type::EXPRESSION) return result;
 
-    // Constant analysis + Context Conversions
     ModTree_Expression* expr = result.options.expression;
-    if (expr->result_type == analyser->compiler->type_system.error_type) {
+    Type_Signature* inital_type = expr->result_type;
+    if (expr->result_type == analyser->compiler->type_system.error_type ||
+        (context.type == Expression_Context_Type::SPECIFIC_TYPE && context.signature == analyser->compiler->type_system.error_type)) {
+        semantic_analyser_set_error_flag(analyser);
         return result;
     }
 
-    // Context conversions from pointer into something else
-    if (expr->result_type->type == Signature_Type::POINTER)
+    int wanted_pointer_depth = 0;
+    switch (context.type)
     {
-        Type_Signature* given_pointer_type = expr->result_type;
-        Type_Signature* underlying_type = given_pointer_type;
-        int pointer_depth = 0;
-        while (underlying_type->type == Signature_Type::POINTER) {
-            pointer_depth++;
-            underlying_type = underlying_type->options.pointer_child;
+    case Expression_Context_Type::UNKNOWN:
+        return result;
+    case Expression_Context_Type::AUTO_DEREFERENCE:
+        wanted_pointer_depth = 0;
+        break;
+    case Expression_Context_Type::SPECIFIC_TYPE:
+    {
+        Type_Signature* temp = context.signature;
+        wanted_pointer_depth = 0;
+        while (temp->type == Signature_Type::POINTER) {
+            wanted_pointer_depth++;
+            temp = temp->options.pointer_child;
         }
+        break;
+    }
+    default: panic("");
+    }
 
-        int wanted_pointer_depth = pointer_depth;
-        switch (context.type)
-        {
-        case Expression_Context_Type::UNKNOWN: break;
-        case Expression_Context_Type::FUNCTION_CALL: wanted_pointer_depth = 0; break; // This is for function pointer pointers
-        case Expression_Context_Type::TYPE_KNOWN:
-        {
-            if (context.enable_pointer_conversion)
-            {
-                Type_Signature* temp = context.signature;
-                wanted_pointer_depth = 0;
-                while (temp->type == Signature_Type::POINTER) {
-                    wanted_pointer_depth++;
-                    temp = temp->options.pointer_child;
-                }
-                if (temp != underlying_type) { // Dont dereference if underlying type does not match
-                    wanted_pointer_depth = pointer_depth;
-                }
-            }
-            break;
-        }
-        case Expression_Context_Type::TYPE_EXPECTED: {
-            wanted_pointer_depth = 0;
-            break;
-        }
-        case Expression_Context_Type::ARITHMETIC_OPERAND: {
-            // When we have operator overloading, this needs to change
-            wanted_pointer_depth = 0;
-            break;
-        }
-        case Expression_Context_Type::MEMBER_ACCESS: {
-            if (underlying_type->type == Signature_Type::ARRAY ||
-                underlying_type->type == Signature_Type::STRUCT ||
-                underlying_type->type == Signature_Type::SLICE) {
-                wanted_pointer_depth = 0;
-            }
-            break;
-        }
-        case Expression_Context_Type::ARRAY: {
-            if (underlying_type->type == Signature_Type::STRUCT ||
-                underlying_type->type == Signature_Type::SLICE) {
-                wanted_pointer_depth = 0;
-            }
-            break;
-        }
-        case Expression_Context_Type::SWITCH_CONDITION: {
-            if (underlying_type->type == Signature_Type::ENUM ||
-                (underlying_type->type == Signature_Type::STRUCT && underlying_type->options.structure.struct_type == Structure_Type::UNION))
-            {
-                wanted_pointer_depth = 0;
-            }
-            break;
-        }
-        default: panic("");
-        }
-
-        while (pointer_depth > wanted_pointer_depth)
-        {
-            ModTree_Expression* deref = new ModTree_Expression;
-            deref->expression_type = ModTree_Expression_Type::UNARY_OPERATION;
-            deref->result_type = expr->result_type->options.pointer_child;
-            deref->options.unary_operation.operation_type = ModTree_Unary_Operation_Type::DEREFERENCE;
-            deref->options.unary_operation.operand = expr;
-            expr = deref;
-            pointer_depth--;
+    // Find out wanted pointer level
+    int given_pointer_depth = 0;
+    {
+        Type_Signature* iter = expr->result_type;
+        while (iter->type == Signature_Type::POINTER) {
+            given_pointer_depth++;
+            iter = iter->options.pointer_child;
         }
     }
 
-    // Context conversions Address-Of
-    if (context.type == Expression_Context_Type::TYPE_KNOWN && context.enable_pointer_conversion)
+    // Dereference to given level
+    while (given_pointer_depth > wanted_pointer_depth)
     {
-        Type_Signature* type_current = expr->result_type;
-        Type_Signature* type_wanted = context.signature;
+        ModTree_Expression* deref = new ModTree_Expression;
+        deref->expression_type = ModTree_Expression_Type::UNARY_OPERATION;
+        deref->result_type = expr->result_type->options.pointer_child;
+        deref->options.unary_operation.operation_type = ModTree_Unary_Operation_Type::DEREFERENCE;
+        deref->options.unary_operation.operand = expr;
+        expr = deref;
+        given_pointer_depth--;
+    }
 
-        // Do implict address of
-        if (type_wanted->type == Signature_Type::POINTER && type_wanted->options.pointer_child == type_current)
+    if (context.type != Expression_Context_Type::SPECIFIC_TYPE) {
+        result.options.expression = expr;
+        return result;
+    }
+
+    // Auto address of
+    if (given_pointer_depth + 1 == wanted_pointer_depth)
+    {
+        if (!modtree_expression_result_is_temporary(expr))
         {
-            if (!modtree_expression_result_is_temporary(expr))
-            {
-                ModTree_Expression* addr_of = new ModTree_Expression;
-                addr_of->expression_type = ModTree_Expression_Type::UNARY_OPERATION;
-                addr_of->result_type = type_wanted;
-                addr_of->options.unary_operation.operation_type = ModTree_Unary_Operation_Type::ADDRESS_OF;
-                addr_of->options.unary_operation.operand = expr;
-                expr = addr_of;
-            }
+            ModTree_Expression* addr_of = new ModTree_Expression;
+            addr_of->expression_type = ModTree_Expression_Type::UNARY_OPERATION;
+            addr_of->result_type = type_system_make_pointer(&analyser->compiler->type_system, expr->result_type);
+            addr_of->options.unary_operation.operation_type = ModTree_Unary_Operation_Type::ADDRESS_OF;
+            addr_of->options.unary_operation.operand = expr;
+            expr = addr_of;
+            given_pointer_depth = wanted_pointer_depth;
         }
     }
 
+    // Implicit casting
     result.options.expression = expr;
+    if (expr->result_type != context.signature)
+    {
+        ModTree_Expression* casted = semantic_analyser_cast_implicit_if_possible(analyser, expr, context.signature);
+        if (casted != 0) {
+            expr = casted;
+            result.options.expression = expr;
+        }
+        else {
+            semantic_analyser_log_error(analyser, Semantic_Error_Type::INVALID_TYPE, rc_expression);
+            semantic_analyser_add_error_info(analyser, error_information_make_given_type(inital_type));
+            semantic_analyser_add_error_info(analyser, error_information_make_expected_type(context.signature));
+            modtree_expression_destroy(expr);
+            result.options.expression = modtree_expression_make_error(context.signature);
+        }
+    }
     return result;
 }
 
 Type_Signature* semantic_analyser_analyse_expression_type(Semantic_Analyser* analyser, RC_Expression* rc_expression)
 {
     Expression_Result result = semantic_analyser_analyse_expression_any(
-        analyser, rc_expression, expression_context_make_type(Expression_Context_Type::TYPE_EXPECTED)
+        analyser, rc_expression, expression_context_make_auto_dereference()
     );
     switch (result.type)
     {
@@ -3699,7 +3596,7 @@ Control_Flow semantic_analyser_analyse_statement(Semantic_Analyser* analyser, RC
         {
             value_expr.available = true;
             value_expr.value = semantic_analyser_analyse_expression_value(
-                analyser, rc_return->value, expression_context_make_known_type(expected_return_type, true)
+                analyser, rc_return->value, expression_context_make_specific_type(expected_return_type)
             );
             // When we have defers, we need to temporarily store the return result in a variable
             if (analyser->defer_stack.size != 0)
@@ -3713,6 +3610,11 @@ Control_Flow semantic_analyser_analyse_statement(Semantic_Analyser* analyser, RC
         }
         else {
             value_expr.available = false;
+            if (expected_return_type != type_system->void_type) {
+                semantic_analyser_log_error(analyser, Semantic_Error_Type::INVALID_TYPE_RETURN, rc_statement);
+                semantic_analyser_add_error_info(analyser, error_information_make_given_type(type_system->void_type));
+                semantic_analyser_add_error_info(analyser, error_information_make_expected_type(expected_return_type));
+            }
         }
         if (inside_defer(analyser)) {
             semantic_analyser_log_error(analyser, Semantic_Error_Type::OTHERS_DEFER_NO_RETURNS_ALLOWED, rc_statement);
@@ -3733,14 +3635,6 @@ Control_Flow semantic_analyser_analyse_statement(Semantic_Analyser* analyser, RC
 
         ModTree_Statement* return_statement = modtree_block_add_statement_empty(block, ModTree_Statement_Type::RETURN);
         return_statement->options.return_value = value_expr;
-
-        // Check if given type is correct
-        Type_Signature* given_type = value_expr.available ? value_expr.value->result_type : type_system->void_type;
-        if (given_type != expected_return_type) {
-            semantic_analyser_log_error(analyser, Semantic_Error_Type::INVALID_TYPE_RETURN, rc_statement);
-            semantic_analyser_add_error_info(analyser, error_information_make_given_type(given_type));
-            semantic_analyser_add_error_info(analyser, error_information_make_expected_type(expected_return_type));
-        }
         return Control_Flow::RETURNS;
     }
     case RC_Statement_Type::BREAK_STATEMENT:
@@ -3830,11 +3724,8 @@ Control_Flow semantic_analyser_analyse_statement(Semantic_Analyser* analyser, RC
         ModTree_Statement* statement = modtree_block_add_statement_empty(block, ModTree_Statement_Type::IF);
 
         ModTree_Expression* condition = semantic_analyser_analyse_expression_value(
-            analyser, rc_if->condition, expression_context_make_known_type(analyser->compiler->type_system.bool_type, true)
+            analyser, rc_if->condition, expression_context_make_specific_type(analyser->compiler->type_system.bool_type)
         );
-        if (condition->result_type != type_system->bool_type) {
-            semantic_analyser_log_error(analyser, Semantic_Error_Type::INVALID_TYPE_IF_CONDITION, rc_if->condition);
-        }
         statement->options.if_statement.condition = condition;
         statement->options.if_statement.if_block = modtree_block_create_empty(rc_if->true_block);
         semantic_analyser_fill_block(analyser, statement->options.if_statement.if_block, rc_if->true_block);
@@ -3848,7 +3739,7 @@ Control_Flow semantic_analyser_analyse_statement(Semantic_Analyser* analyser, RC
         }
         else {
             statement->options.if_statement.else_block = modtree_block_create_empty(0);
-            false_flow = true_flow;
+            return Control_Flow::SEQUENTIAL; // If no else, if is always sequential
         }
 
         // Combine flows as given by conditional flow rules
@@ -3866,7 +3757,7 @@ Control_Flow semantic_analyser_analyse_statement(Semantic_Analyser* analyser, RC
         ModTree_Statement* statement = modtree_block_add_statement_empty(block, ModTree_Statement_Type::SWITCH);
 
         ModTree_Expression* condition = semantic_analyser_analyse_expression_value(
-            analyser, rc_switch->condition, expression_context_make_type(Expression_Context_Type::SWITCH_CONDITION)
+            analyser, rc_switch->condition, expression_context_make_auto_dereference()
         );
         if (condition->result_type->type == Signature_Type::STRUCT && condition->result_type->options.structure.struct_type == Structure_Type::UNION)
         {
@@ -3887,7 +3778,7 @@ Control_Flow semantic_analyser_analyse_statement(Semantic_Analyser* analyser, RC
 
         Type_Signature* switch_type = condition->result_type;
         Expression_Context case_context = condition->result_type->type == Signature_Type::ENUM ?
-            expression_context_make_known_type(condition->result_type, true) : expression_context_make_unknown();
+            expression_context_make_specific_type(condition->result_type) : expression_context_make_unknown();
         Control_Flow switch_flow = Control_Flow::SEQUENTIAL;
         for (int i = 0; i < rc_switch->cases.size; i++)
         {
@@ -3922,18 +3813,13 @@ Control_Flow semantic_analyser_analyse_statement(Semantic_Analyser* analyser, RC
                 modtree_case.expression = case_expr;
                 modtree_case.body = case_body;
                 modtree_case.value = -1; // Placeholder
-                if (switch_type->type == Signature_Type::ENUM && case_expr->result_type != switch_type) {
-                    semantic_analyser_log_error(analyser, Semantic_Error_Type::SWITCH_CASE_TYPE_INVALID, rc_case->expression.value);
-                    semantic_analyser_add_error_info(analyser, error_information_make_given_type(case_expr->result_type));
-                    semantic_analyser_add_error_info(analyser, error_information_make_given_type(switch_type));
+                // Calculate case value
+                Comptime_Analysis comptime = modtree_expression_calculate_comptime_value(analyser, case_expr);
+                if (!comptime.available) {
+                    semantic_analyser_log_error(analyser, Semantic_Error_Type::SWITCH_CASES_MUST_BE_COMPTIME_KNOWN, rc_case->expression.value);
                 }
-                else
-                {
-                    Comptime_Analysis comptime = modtree_expression_calculate_comptime_value(analyser, case_expr);
-                    if (!comptime.available) {
-                        semantic_analyser_log_error(analyser, Semantic_Error_Type::SWITCH_CASES_MUST_BE_COMPTIME_KNOWN, rc_case->expression.value);
-                    }
-                    else {
+                else {
+                    if (comptime.type == type_system->i32_type || comptime.type->type == Signature_Type::ENUM) {
                         modtree_case.value = *(int*)comptime.data;
                     }
                 }
@@ -3987,13 +3873,8 @@ Control_Flow semantic_analyser_analyse_statement(Semantic_Analyser* analyser, RC
     {
         auto rc_while = &rc_statement->options.while_statement;
         ModTree_Expression* condition = semantic_analyser_analyse_expression_value(
-            analyser, rc_while->condition, expression_context_make_known_type(type_system->bool_type, true)
+            analyser, rc_while->condition, expression_context_make_specific_type(type_system->bool_type)
         );
-        if (condition->result_type != type_system->bool_type) {
-            semantic_analyser_log_error(analyser, Semantic_Error_Type::INVALID_TYPE_WHILE_CONDITION, rc_while->condition);
-            semantic_analyser_add_error_info(analyser, error_information_make_given_type(condition->result_type));
-            semantic_analyser_add_error_info(analyser, error_information_make_expected_type(type_system->bool_type));
-        }
 
         ModTree_Statement* statement = modtree_block_add_statement_empty(block, ModTree_Statement_Type::WHILE);
         statement->options.while_statement.condition = condition;
@@ -4050,27 +3931,12 @@ Control_Flow semantic_analyser_analyse_statement(Semantic_Analyser* analyser, RC
             analyser, rc_assignment->left_expression, expression_context_make_unknown()
         );
         ModTree_Expression* right_expr = semantic_analyser_analyse_expression_value(
-            analyser, rc_assignment->right_expression, expression_context_make_known_type(left_expr->result_type, false)
+            analyser, rc_assignment->right_expression, expression_context_make_specific_type(left_expr->result_type)
         );
         Type_Signature* left_type = left_expr->result_type;
         Type_Signature* right_type = right_expr->result_type;
-        if (right_type == type_system->void_type) {
-            semantic_analyser_log_error(analyser, Semantic_Error_Type::INVALID_TYPE_VOID_USAGE, rc_assignment->right_expression);
-        }
         if (modtree_expression_result_is_temporary(left_expr)) {
             semantic_analyser_log_error(analyser, Semantic_Error_Type::OTHERS_ASSIGNMENT_REQUIRES_MEMORY_ADDRESS, rc_assignment->left_expression);
-        }
-        if (left_type != right_type)
-        {
-            ModTree_Expression* cast_expr = semantic_analyser_cast_implicit_if_possible(analyser, right_expr, left_type);
-            if (cast_expr == 0) {
-                semantic_analyser_log_error(analyser, Semantic_Error_Type::INVALID_TYPE_ASSIGNMENT, rc_statement);
-                semantic_analyser_add_error_info(analyser, error_information_make_given_type(left_type));
-                semantic_analyser_add_error_info(analyser, error_information_make_expected_type(right_type));
-            }
-            else {
-                right_expr = cast_expr;
-            }
         }
         ModTree_Statement* assign_statement = modtree_block_add_statement_empty(block, ModTree_Statement_Type::ASSIGNMENT);
         assign_statement->options.assignment.destination = left_expr;
@@ -4089,24 +3955,9 @@ Control_Flow semantic_analyser_analyse_statement(Semantic_Analyser* analyser, RC
         if (rc_variable->value_expression.available)
         {
             value = semantic_analyser_analyse_expression_value(
-                analyser, rc_variable->value_expression.value, type != 0 ? expression_context_make_known_type(type, true) : expression_context_make_unknown()
+                analyser, rc_variable->value_expression.value, type != 0 ? expression_context_make_specific_type(type) : expression_context_make_unknown()
             );
-            if (type != 0)
-            {
-                if (value->result_type != type)
-                {
-                    ModTree_Expression* casted = semantic_analyser_cast_implicit_if_possible(analyser, value, type);
-                    if (casted == 0) {
-                        semantic_analyser_log_error(analyser, Semantic_Error_Type::INVALID_TYPE_ASSIGNMENT, rc_variable->value_expression.value);
-                        semantic_analyser_add_error_info(analyser, error_information_make_given_type(value->result_type));
-                        semantic_analyser_add_error_info(analyser, error_information_make_expected_type(type));
-                    }
-                    else {
-                        value = casted;
-                    }
-                }
-            }
-            else {
+            if (type == 0) {
                 type = value->result_type;
             }
         }
@@ -4164,6 +4015,7 @@ void semantic_analyser_fill_block(Semantic_Analyser* analyser, ModTree_Block* bl
     if (analyser->statement_reachable) {
         semantic_analyser_work_through_defers(analyser, block, block->defer_start_index);
     }
+    dynamic_array_rollback_to_size(&analyser->defer_stack, block->defer_start_index);
 }
 
 void symbol_set_type(Symbol* symbol, Type_Signature* type)
@@ -4299,6 +4151,7 @@ void semantic_analyser_reset(Semantic_Analyser* analyser, Compiler* compiler)
         Predefined_Symbols* pre = &analyser->compiler->rc_analyser->predefined_symbols;
         symbol_set_type(pre->type_any, ts->any_type);
         symbol_set_type(pre->type_bool, ts->bool_type);
+        symbol_set_type(pre->type_float, ts->f32_type);
         symbol_set_type(pre->type_byte, ts->u8_type);
         symbol_set_type(pre->type_empty, ts->empty_struct_type);
         symbol_set_type(pre->type_int, ts->i32_type);
@@ -4526,6 +4379,10 @@ void semantic_error_get_error_location(Semantic_Analyser* analyser, Semantic_Err
     switch (error.type)
     {
     case Semantic_Error_Type::VARIABLE_NOT_DEFINED_YET: {
+        dynamic_array_push_back(locations, error.error_node->token_range);
+        break;
+    }
+    case Semantic_Error_Type::INVALID_TYPE: {
         dynamic_array_push_back(locations, error.error_node->token_range);
         break;
     }
@@ -5042,6 +4899,9 @@ void semantic_error_append_to_string(Semantic_Analyser* analyser, Semantic_Error
 {
     switch (e.type)
     {
+    case Semantic_Error_Type::INVALID_TYPE:
+        string_append_formated(string, "Invalid Type");
+        break;
     case Semantic_Error_Type::EXPRESSION_CONTAINS_INVALID_TYPE_HANDLE:
         string_append_formated(string, "Invalid Type Handle!");
         break;

@@ -18,14 +18,14 @@ main :: ()
     {
         case Color.RED:
         // Every switch case has a unique scope, and there is no fall_through
-        value: int;
-        value = 100;
+        a: int;
+        value = 20;
         case Color.GREEN:
-        value: int = 120;
+        a: int = 120;
         case Color.BLUE:
-        value: int = 130;
+        a: int = 130;
     }
-    assert(value == 15);
+    assert(value == 20);
     
     // Switch cases work just like normal blocks
     color = Color.GREEN;

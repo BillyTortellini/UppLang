@@ -60,6 +60,10 @@ Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, RC_Analyser* anal
     new_sym->type = type;
     new_sym->origin_table = symbol_table;
     new_sym->references = dynamic_array_create_empty<RC_Symbol_Read*>(2);
+    new_sym->origin_item = analyser->analysis_item;
+    if (new_sym->origin_item->type == RC_Analysis_Item_Type::FUNCTION) {
+        new_sym->origin_item = new_sym->origin_item->options.function.body_item;
+    }
 
     hashtable_insert_element(&symbol_table->symbols, id, new_sym);
     return new_sym;
@@ -77,6 +81,12 @@ Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool only_curr
             return symbol_table_find_symbol(table->parent, id, only_current_scope, reference);
         }
         return nullptr;
+    }
+    // Variables need special treatment since we have inner functions that cannot 'see' outer function variables
+    if (reference != 0 && ((*found)->type == Symbol_Type::VARIABLE_UNDEFINED)) {
+        if (reference->item != (*found)->origin_item) {
+            return nullptr;
+        }
     }
     if (reference != 0) {
         dynamic_array_push_back(&((*found)->references), reference);
@@ -402,6 +412,8 @@ void rc_analyser_reset(RC_Analyser* analyser, Compiler* compiler)
 
     analyser->compiler = compiler;
     analyser->root_symbol_table = symbol_table_create(analyser, 0, 0);
+    analyser->analysis_item = analyser->root_item;
+    analyser->symbol_table = analyser->root_symbol_table;
     // Set predefined symbols
     {
         String* id_int = identifier_pool_add(&compiler->identifier_pool, string_create_static("int"));
@@ -430,6 +442,7 @@ void rc_analyser_reset(RC_Analyser* analyser, Compiler* compiler)
         analyser->predefined_symbols.error_symbol = symbol_table_define_symbol(analyser->root_symbol_table, analyser, id_error, Symbol_Type::ERROR_SYMBOL, 0);
         analyser->predefined_symbols.type_bool = symbol_table_define_symbol(analyser->root_symbol_table, analyser, id_bool, Symbol_Type::UNRESOLVED, 0);
         analyser->predefined_symbols.type_int = symbol_table_define_symbol(analyser->root_symbol_table, analyser, id_int, Symbol_Type::UNRESOLVED, 0);
+        analyser->predefined_symbols.type_float = symbol_table_define_symbol(analyser->root_symbol_table, analyser, id_float, Symbol_Type::UNRESOLVED, 0);
         analyser->predefined_symbols.type_u8 = symbol_table_define_symbol(analyser->root_symbol_table, analyser, id_u8, Symbol_Type::UNRESOLVED, 0);
         analyser->predefined_symbols.type_u16 = symbol_table_define_symbol(analyser->root_symbol_table, analyser, id_u16, Symbol_Type::UNRESOLVED, 0);
         analyser->predefined_symbols.type_u32 = symbol_table_define_symbol(analyser->root_symbol_table, analyser, id_u32, Symbol_Type::UNRESOLVED, 0);
@@ -794,6 +807,7 @@ RC_Expression* rc_analyser_analyse_expression(RC_Analyser* analyser, AST_Node* e
         {
             RC_Enum_Member member;
             member.id = enum_member_node->id;
+            member.node = enum_member_node;
             if (enum_member_node->child_start != 0) {
                 member.value_expression = optional_make_success(rc_analyser_analyse_expression(analyser, enum_member_node->child_start));
             }
@@ -817,6 +831,7 @@ RC_Expression* rc_analyser_analyse_expression(RC_Analyser* analyser, AST_Node* e
         read->symbol_table = analyser->symbol_table;
         read->symbol = 0;
         read->type = analyser->dependency_type;
+        read->item = analyser->analysis_item;
         dynamic_array_push_back(&analyser->analysis_item->symbol_dependencies, read);
 
         RC_Expression* result_expr = rc_expression_create_empty(analyser, RC_Expression_Type::SYMBOL_READ, expression_node);
@@ -1017,7 +1032,7 @@ RC_Expression* rc_analyser_analyse_expression(RC_Analyser* analyser, AST_Node* e
     case AST_Node_Type::EXPRESSION_UNARY_OPERATION_NOT: {
         RC_Expression* result_expr = rc_expression_create_empty(analyser, RC_Expression_Type::UNARY_OPERATION, expression_node);
         result_expr->options.unary_expression.operand = rc_analyser_analyse_expression(analyser, expression_node->child_start);
-        result_expr->options.unary_expression.op_type = RC_Unary_Operation_Type::NEGATE;
+        result_expr->options.unary_expression.op_type = RC_Unary_Operation_Type::LOGICAL_NOT;
         return result_expr;
     }
     case AST_Node_Type::EXPRESSION_UNARY_OPERATION_DEREFERENCE: {

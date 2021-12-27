@@ -2,23 +2,23 @@ main :: ()
 {
     // Since this is a statically typed language, 
     // some values are required to be statically known, like
-    // the size of an array
+    // the size of an array, comptime definitions and template arguments
     arr_0: [5]int;
     
-    // Simple constant propagation is done by the compiler
+    // Most expressions are able to do constant propagation
     arr_1: [5 + 5 * 2]int;
     assert(arr_1.size == 15);
     
     arr_2: [arr_1.size]int;
     assert(arr_2.size == 15);
     
-    // This also works with comptime definitions
-    size: int: 10;
+    // Propagation logically also works with comptime definitions
+    size :: 10;
     size_double :: size * 2;
     arr_3: [size_double]int;
     assert(arr_3.size == 20);
     
-    size_2: int : size_double - 3;
+    size_2 :: size_double - 3;
     arr_4: [size_2]int;
     assert(arr_4.size == 17);
 }

@@ -28,12 +28,49 @@ Next features:
 
 
 Reimplement the following features:
- - File loading, extern stuff
 Then assure that the test-cases all work, afterwards, fix the following issues
 
 Issues:
- - Inner Comptime-Definitions can read Variables from other items...
- - Auto-Cast on function parameters doesnt' work
+ - Auto-Cast on function parameters doesnt' work, REWORK Expression_Context
+
+
+
+REWORK Expression_Context:
+Goal: 
+ - I would like to use the expression context to do implict/explicit casting
+ - Expression_Context
+
+How is the current Context used:
+ - Pointers to values
+ - Address-Of
+ - Auto-Cast
+ - Auto Struct Initializer
+ - Auto Array-Initializer
+ - Auto Enum
+
+Auto cast carries around the type that i
+
+What should expression context do:
+ - If i know the precise type, it should be able to report errors and do implicit casting
+ - 
+
+Why doesn't assignment do auto pointer references?
+
+i: int;
+ip: *int;
+x: int;
+xp: *int;
+
+x = i;   
+x = ip;  
+xp = i;
+xp = ip;
+
+
+
+
+
+
 
 Over night Thoughts:
 --------------------

@@ -32,7 +32,7 @@ RC CODE
 */
 enum class RC_Binary_Operation_Type
 {
-    ADDITION,
+    ADDITION,               
     SUBTRACTION,
     DIVISION,
     MULTIPLICATION,
@@ -59,6 +59,7 @@ struct RC_Enum_Member
 {
     String* id;
     Optional<RC_Expression*> value_expression;
+    AST_Node* node;
 };
 
 struct RC_Parameter
@@ -302,6 +303,7 @@ struct Symbol
     String* id;
     Symbol_Table* origin_table;
     AST_Node* definition_node;
+    RC_Analysis_Item* origin_item;
     Dynamic_Array<RC_Symbol_Read*> references;
 };
 
@@ -327,6 +329,7 @@ struct Predefined_Symbols
 {
     Symbol* type_bool;
     Symbol* type_int;
+    Symbol* type_float;
     Symbol* type_u8;
     Symbol* type_u16;
     Symbol* type_u32;
@@ -382,6 +385,7 @@ struct RC_Symbol_Read
     AST_Node* identifier_node;
     Symbol_Table* symbol_table;
     Symbol* symbol;
+    RC_Analysis_Item* item;
 };
 
 struct RC_Item_Dependency

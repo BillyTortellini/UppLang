@@ -431,6 +431,16 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
 
     double time_syntax_end = timer_current_time_in_seconds(timer);
 
+    // Show RC-Errors
+    {
+        for (int i = 0; i < editor->compiler->rc_analyser->errors.size; i++) {
+            Symbol_Error e = editor->compiler->rc_analyser->errors[i];
+            text_editor_add_highlight_from_slice(
+                editor->text_editor, token_range_to_text_slice(e.error_node->token_range, editor->compiler), TEXT_COLOR, ERROR_BG_COLOR
+            );
+        }
+    }
+
     // Do context highlighting
     {
         bool search_context = true;
@@ -448,6 +458,21 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
                 editor->context_info_pos = text_editor_get_character_bounding_box(editor->text_editor, editor->text_editor->cursor_position).min;
                 string_reset(&editor->context_info);
                 string_append_formated(&editor->context_info, e.message);
+                break;
+            }
+        }
+
+        // Show Symbol error context
+        for (int i = 0; i < editor->compiler->rc_analyser->errors.size; i++) 
+        {
+            Symbol_Error e = editor->compiler->rc_analyser->errors[i];
+            Token_Range range = e.error_node->token_range;
+            if (range.start_index <= closest_index && closest_index < range.end_index) {
+                search_context = false;
+                editor->show_context_info = true;
+                editor->context_info_pos = text_editor_get_character_bounding_box(editor->text_editor, editor->text_editor->cursor_position).min;
+                string_reset(&editor->context_info);
+                string_append_formated(&editor->context_info, "Symbol already defined!");
                 break;
             }
         }

@@ -10,12 +10,16 @@ main :: ()
     // This is where we use bake, which does a partial compile to bytecode, and then executes the code
     
     // Wont work: arr: [doubler(fib(5))];
-    x :: #bake<int>{return doubler(fib(5));};
+    x :: #bake(int){return doubler(fib(5));};
     arr: [x]bool;
     assert(arr.size == doubler(fib(5)));
     
-    // Currently constant values are only required in array size context, but they
-    // later also be needed in templates and constants definitions
+    /*
+    Currently comptime values are needed in
+     - Array Size Context
+     - Template arguments
+     - Comptime Definitions
+    */
 }
 
 doubler :: (val: int) -> int
