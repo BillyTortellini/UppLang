@@ -330,12 +330,6 @@ struct Function_Progress
     Analysis_Workload* compile_workload;
 };
 
-struct Dependent_Workload
-{
-    List_Node<Analysis_Workload*>* node;
-    Analysis_Workload* workload;
-};
-
 enum class Analysis_Workload_Type
 {
     FUNCTION_HEADER,
@@ -354,7 +348,7 @@ struct Analysis_Workload
 
     // Dependencies
     List<Analysis_Workload*> dependencies;
-    Dynamic_Array<Dependent_Workload> dependents;
+    List<Analysis_Workload*> dependents;
     Dynamic_Array<RC_Symbol_Read*> symbol_dependencies;
 
     // Note: Clustering is required for Workloads where cyclic dependencies on the same workload-type are allowed,
@@ -376,12 +370,27 @@ struct Analysis_Workload
     } options;
 };
 
+struct Workload_Pair
+{
+    Analysis_Workload* workload;
+    Analysis_Workload* depends_on;
+};
+
+struct Dependency_Information
+{
+    List_Node<Analysis_Workload*>* dependency_node;
+    List_Node<Analysis_Workload*>* dependent_node;
+    Dynamic_Array<RC_Symbol_Read*> symbol_reads;
+    bool only_symbol_read_dependency;
+};
+
 struct Dependency_Graph
 {
     Semantic_Analyser* analyser;
     Dynamic_Array<Analysis_Workload*> workloads;
     Dynamic_Array<Analysis_Workload*> runnable_workloads;
 
+    Hashtable<Workload_Pair, Dependency_Information> workload_dependencies;
     Hashtable<RC_Analysis_Item*, Analysis_Workload*> item_to_workload_mapping;
     Hashtable<Type_Signature*, Struct_Progress> progress_structs;
     Hashtable<ModTree_Function*, Function_Progress> progress_functions;
@@ -458,6 +467,8 @@ enum class Semantic_Error_Type
     TEMPLATE_ARGUMENTS_INVALID_COUNT,
     TEMPLATE_ARGUMENTS_NOT_ON_TEMPLATE,
     TEMPLATE_ARGUMENTS_REQUIRED,
+
+    CYCLIC_DEPENDENCY_DETECTED,
 
     EXTERN_HEADER_DOES_NOT_CONTAIN_SYMBOL, // Error_node = is identifier_node
     EXTERN_HEADER_PARSING_FAILED, // Error_node = EXTERN_HEADER_IMPORT
@@ -611,6 +622,7 @@ enum class Error_Information_Type
     EXPECTED_TYPE,
     FUNCTION_TYPE,
     BINARY_OP_TYPES,
+    CYCLE_WORKLOAD,
 
     EXPRESSION_RESULT_TYPE,
     CONSTANT_STATUS
@@ -633,6 +645,7 @@ struct Error_Information
             Type_Signature* struct_signature;
             String* member_id;
         } invalid_member;
+        Analysis_Workload* cycle_workload;
         struct {
             Type_Signature* left_type;
             Type_Signature* right_type;

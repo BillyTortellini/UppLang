@@ -265,23 +265,26 @@ bool hashtable_remove_element(Hashtable<K, V>* table, K key)
         return false;
     }
 
+    Hashtable_Entry<K, V>* next = entry->next;
     if (table->equals_function(&entry->key, &key)) {
-        entry->valid = false;
-        if (entry->next != 0) {
-            table->entries[entry_index] = *entry->next;
-            table->entries[entry_index].valid = true;
-            delete entry->next;
+        if (next != 0) {
+            *entry = *next;
+            delete next;
+            assert(entry->valid, "Next needs to be valid");
         }
+        else {
+            entry->valid = false;
+        }
+        table->element_count -= 1;
         return true;
     }
 
-    Hashtable_Entry<K, V>* next = entry->next;
     while (next != 0)
     {
         if (table->equals_function(&next->key, &key)) {
-            *entry = *next;
+            entry->next = next->next;
             delete next;
-            entry->valid = true;
+            table->element_count -= 1;
             return true;
         }
         else {

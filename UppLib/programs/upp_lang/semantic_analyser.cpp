@@ -26,7 +26,7 @@ Type_Signature* import_c_type(Semantic_Analyser* analyser, C_Import_Type* type, 
 Expression_Result semantic_analyser_analyse_expression_any(Semantic_Analyser* analyser, RC_Expression* rc_expression, Expression_Context context);
 ModTree_Expression* semantic_analyser_analyse_expression_value(Semantic_Analyser* analyser, RC_Expression* rc_expression, Expression_Context context);
 Type_Signature* semantic_analyser_analyse_expression_type(Semantic_Analyser* analyser, RC_Expression* rc_expression);
-void analysis_workload_add_dependency(Analysis_Workload* workload, Analysis_Workload* dependency);
+void analysis_workload_add_dependency_internal(Dependency_Graph* graph, Analysis_Workload* workload, Analysis_Workload* dependency, RC_Symbol_Read* symbol_read);
 void analysis_workload_destroy(Analysis_Workload* workload);
 void modtree_block_destroy(ModTree_Block* block);
 void modtree_function_destroy(ModTree_Function* function);
@@ -34,10 +34,11 @@ void modtree_statement_destroy(ModTree_Statement* statement);
 ModTree_Expression* semantic_analyser_cast_implicit_if_possible(Semantic_Analyser* analyser, ModTree_Expression* expression, Type_Signature* destination_type);
 bool analysis_workload_execute(Analysis_Workload* workload, Semantic_Analyser* analyser);
 void analysis_workload_add_struct_dependency(
-    Dependency_Graph* graph, Analysis_Workload* my_workload, Struct_Progress* other_progress, RC_Dependency_Type dependency_type);
+    Dependency_Graph* graph, Analysis_Workload* my_workload, Struct_Progress* other_progress, RC_Dependency_Type type, RC_Symbol_Read* symbol_read);
 void analysis_workload_add_function_dependency(
-    Dependency_Graph* graph, Analysis_Workload* my_workload, Function_Progress* other_progress, RC_Dependency_Type dependency_type);
+    Dependency_Graph* graph, Analysis_Workload* my_workload, Function_Progress* other_progress, RC_Dependency_Type type, RC_Symbol_Read* symbol_read);
 void semantic_analyser_fill_block(Semantic_Analyser* analyser, ModTree_Block* block, RC_Block* rc_block);
+void analysis_workload_append_to_string(Analysis_Workload* workload, String* string);
 
 /*
 ERROR Helpers
@@ -150,6 +151,12 @@ Error_Information error_information_make_expression_result_type(Expression_Resul
 Error_Information error_information_make_constant_status(Constant_Status status) {
     Error_Information info = error_information_make_empty(Error_Information_Type::CONSTANT_STATUS);
     info.options.constant_status = status;
+    return info;
+}
+
+Error_Information error_information_make_cycle_workload(Analysis_Workload* workload) {
+    Error_Information info = error_information_make_empty(Error_Information_Type::CYCLE_WORKLOAD);
+    info.options.cycle_workload = workload;
     return info;
 }
 
@@ -886,15 +893,33 @@ AST_Node* rc_to_ast(Semantic_Analyser* analyser, RC_Statement* statement)
 
 
 
+
+
 /*
 DEPENDENCY GRAPH
 */
+Workload_Pair workload_pair_create(Analysis_Workload* workload, Analysis_Workload* depends_on) {
+    Workload_Pair result;
+    result.depends_on = depends_on;
+    result.workload = workload;
+    return result;
+}
+
+u64 workload_pair_hash(Workload_Pair* pair) {
+    return hash_memory(array_create_static_as_bytes(pair, 1));
+}
+
+bool workload_pair_equals(Workload_Pair* p1, Workload_Pair* p2) {
+    return p1->depends_on == p2->depends_on && p1->workload == p2->workload;
+}
+
 Dependency_Graph dependency_graph_create(Semantic_Analyser* analyser)
 {
     Dependency_Graph result;
     result.workloads = dynamic_array_create_empty<Analysis_Workload*>(8);
     result.analyser = analyser;
     result.runnable_workloads = dynamic_array_create_empty<Analysis_Workload*>(8);
+    result.workload_dependencies = hashtable_create_empty<Workload_Pair, Dependency_Information>(8, workload_pair_hash, workload_pair_equals);
     result.item_to_workload_mapping = hashtable_create_pointer_empty<RC_Analysis_Item*, Analysis_Workload*>(8);
     result.progress_definitions = hashtable_create_pointer_empty<Symbol*, Analysis_Workload*>(8);
     result.progress_structs = hashtable_create_pointer_empty<Type_Signature*, Struct_Progress>(8);
@@ -907,6 +932,14 @@ void dependency_graph_destroy(Dependency_Graph* graph)
     for (int i = 0; i < graph->workloads.size; i++) {
         analysis_workload_destroy(graph->workloads[i]);
     }
+    {
+        auto iter = hashtable_iterator_create(&graph->workload_dependencies);
+        while (hashtable_iterator_has_next(&iter)) {
+            SCOPE_EXIT(hashtable_iterator_next(&iter));
+            dynamic_array_destroy(&iter.value->symbol_reads);
+        }
+        hashtable_destroy(&graph->workload_dependencies);
+    }
     dynamic_array_destroy(&graph->workloads);
     dynamic_array_destroy(&graph->runnable_workloads);
     hashtable_destroy(&graph->item_to_workload_mapping);
@@ -918,7 +951,7 @@ void dependency_graph_destroy(Dependency_Graph* graph)
 void analysis_workload_destroy(Analysis_Workload* workload)
 {
     list_destroy(&workload->dependencies);
-    dynamic_array_destroy(&workload->dependents);
+    list_destroy(&workload->dependents);
     dynamic_array_destroy(&workload->symbol_dependencies);
     dynamic_array_destroy(&workload->reachable_clusters);
     if (workload->type == Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE) {
@@ -964,6 +997,117 @@ Symbol* semantic_analyser_resolve_symbol_read(Semantic_Analyser* analyser, RC_Sy
     }
 }
 
+void print_pair(Analysis_Workload* workload, Analysis_Workload* dependency, const char* msg)
+{
+    String output = string_create_empty(256);
+    SCOPE_EXIT(string_destroy(&output));
+    string_append_formated(&output, "%s:\n  ", msg);
+    analysis_workload_append_to_string(workload, &output);
+    string_append_formated(&output, " %p\n  ", workload);
+    analysis_workload_append_to_string(dependency, &output);
+    string_append_formated(&output, " %p\n", dependency);
+    logg("%s", output.characters);
+}
+
+void analysis_workload_add_dependency_internal(Dependency_Graph* graph, Analysis_Workload* workload, Analysis_Workload* dependency, RC_Symbol_Read* symbol_read)
+{
+    if (dependency->is_finished) return;
+    Workload_Pair pair = workload_pair_create(workload, dependency);
+    Dependency_Information* infos = hashtable_find_element(&graph->workload_dependencies, pair);
+    if (infos == 0) {
+        Dependency_Information info;
+        info.dependency_node = list_add_at_end(&workload->dependencies, dependency);
+        info.dependent_node = list_add_at_end(&dependency->dependents, workload);
+        info.symbol_reads = dynamic_array_create_empty<RC_Symbol_Read*>(1);
+        info.only_symbol_read_dependency = false;
+        if (symbol_read != 0) {
+            info.only_symbol_read_dependency = true;
+            dynamic_array_push_back(&info.symbol_reads, symbol_read);
+        }
+        bool inserted = hashtable_insert_element(&graph->workload_dependencies, pair, info);
+        assert(inserted, "");
+        return;
+    }
+
+    if (symbol_read != 0) {
+        dynamic_array_push_back(&infos->symbol_reads, symbol_read);
+    }
+    else {
+        infos->only_symbol_read_dependency = false;
+    }
+}
+
+
+void dependency_graph_move_dependency(Dependency_Graph* graph, Analysis_Workload* move_from, Analysis_Workload* move_to, Analysis_Workload* dependency)
+{
+    assert(move_from != move_to, "");
+    Workload_Pair original_pair = workload_pair_create(move_from, dependency);
+    Workload_Pair new_pair = workload_pair_create(move_to, dependency);
+    Dependency_Information info = *hashtable_find_element(&graph->workload_dependencies, original_pair);
+    hashtable_remove_element(&graph->workload_dependencies, original_pair);
+    list_remove_node(&move_from->dependencies, info.dependency_node);
+    list_remove_node(&dependency->dependents, info.dependent_node);
+
+    Dependency_Information* new_infos = hashtable_find_element(&graph->workload_dependencies, new_pair);
+    if (new_infos == 0) {
+        Dependency_Information new_info;
+        new_info.dependency_node = list_add_at_end(&move_to->dependencies, dependency);
+        new_info.dependent_node = list_add_at_end(&move_from->dependents, move_to);
+        new_info.symbol_reads = info.symbol_reads;
+        new_info.only_symbol_read_dependency = info.only_symbol_read_dependency;
+        hashtable_insert_element(&graph->workload_dependencies, new_pair, new_info);
+        return;
+    }
+
+    dynamic_array_append_other(&new_infos->symbol_reads, &info.symbol_reads);
+    if (new_infos->only_symbol_read_dependency) {
+        new_infos->only_symbol_read_dependency = info.only_symbol_read_dependency;
+    }
+    dynamic_array_destroy(&info.symbol_reads);
+}
+
+void dependency_graph_remove_dependency(Dependency_Graph* graph, Analysis_Workload* workload, Analysis_Workload* depends_on)
+{
+    Workload_Pair pair = workload_pair_create(workload, depends_on);
+    Dependency_Information* info = hashtable_find_element(&graph->workload_dependencies, pair);
+    assert(info != 0, "");
+    list_remove_node(&workload->dependencies, info->dependency_node);
+    list_remove_node(&depends_on->dependents, info->dependent_node);
+    dynamic_array_destroy(&info->symbol_reads);
+    bool worked = hashtable_remove_element(&graph->workload_dependencies, pair);
+    if (workload->dependencies.count == 0 && workload->symbol_dependencies.size == 0) {
+        dynamic_array_push_back(&graph->runnable_workloads, workload);
+    }
+}
+
+bool analysis_workload_find_cycle(
+    Analysis_Workload* current_workload, int current_depth, Analysis_Workload* start_workload, int desired_cycle_size,
+    Dynamic_Array<Analysis_Workload*>* loop_nodes, Hashtable<Analysis_Workload*, int>* valid_workloads)
+{
+    if (hashtable_find_element(valid_workloads, current_workload) == 0) {
+        return false;
+    }
+    if (current_workload->is_finished) return false;
+    if (current_depth > desired_cycle_size) return false;
+    if (current_workload == start_workload) {
+        assert(current_depth == desired_cycle_size, "");
+        dynamic_array_push_back(loop_nodes, current_workload);
+        return true;
+    }
+
+    List_Node<Analysis_Workload*>* node = current_workload->dependencies.head;
+    while (node != 0)
+    {
+        SCOPE_EXIT(node = node->next);
+        Analysis_Workload* dependency = node->value;
+        if (analysis_workload_find_cycle(dependency, current_depth + 1, start_workload, desired_cycle_size, loop_nodes, valid_workloads)) {
+            dynamic_array_push_back(loop_nodes, current_workload);
+            return true;
+        }
+    }
+    return false;
+}
+
 void dependency_graph_resolve(Dependency_Graph* graph)
 {
     /*
@@ -983,10 +1127,12 @@ void dependency_graph_resolve(Dependency_Graph* graph)
         dynamic_array_push_back(&unresolved_symbols_workloads, graph->workloads[i]);
     }
 
+    int round_no = 0;
     while (true)
     {
+        SCOPE_EXIT(round_no += 1);
         bool progress_was_made = false;
-        // Check if symbols can be resolved
+        // Check if symbols can be resolved (TODO: Have a symbol defined 'message' system)
         for (int i = 0; i < unresolved_symbols_workloads.size; i++)
         {
             Analysis_Workload* workload = unresolved_symbols_workloads[i];
@@ -1011,7 +1157,7 @@ void dependency_graph_resolve(Dependency_Graph* graph)
                     Analysis_Workload** definition_workload = hashtable_find_element(&graph->progress_definitions, symbol_read->symbol);
                     if (definition_workload != 0) {
                         symbol_read_ready = true;
-                        analysis_workload_add_dependency(workload, *definition_workload);
+                        analysis_workload_add_dependency_internal(graph, workload, *definition_workload, symbol_read);
                     }
                     else {
                         symbol_read_ready = false;
@@ -1025,7 +1171,7 @@ void dependency_graph_resolve(Dependency_Graph* graph)
                     }
                     Function_Progress* progress_opt = hashtable_find_element(&graph->progress_functions, symbol_read->symbol->options.function);
                     assert(progress_opt != 0, "");
-                    analysis_workload_add_function_dependency(graph, workload, progress_opt, symbol_read->type);
+                    analysis_workload_add_function_dependency(graph, workload, progress_opt, symbol_read->type, symbol_read);
                     break;
                 }
                 case Symbol_Type::TYPE:
@@ -1038,7 +1184,7 @@ void dependency_graph_resolve(Dependency_Graph* graph)
                             assert(type->size != 0 && type->alignment != 0, "");
                             break;
                         }
-                        analysis_workload_add_struct_dependency(graph, workload, other_progress, symbol_read->type);
+                        analysis_workload_add_struct_dependency(graph, workload, other_progress, symbol_read->type, symbol_read);
                     }
                     break;
                 }
@@ -1054,6 +1200,7 @@ void dependency_graph_resolve(Dependency_Graph* graph)
                 }
             }
 
+            // Add workload to running queue if all dependencies are resolved
             if (workload->symbol_dependencies.size == 0) {
                 dynamic_array_swap_remove(&unresolved_symbols_workloads, i);
                 i = i - 1; // So that we properly iterate
@@ -1063,6 +1210,31 @@ void dependency_graph_resolve(Dependency_Graph* graph)
                 progress_was_made = true;
             }
         }
+
+        // Print workloads and dependencies
+        if (true)
+        {
+            String tmp = string_create_empty(256);
+            SCOPE_EXIT(string_destroy(&tmp));
+            string_append_formated(&tmp, "Workload Execution Round %d\n---------------------\n", round_no);
+            for (int i = 0; i < graph->workloads.size; i++) 
+            {
+                Analysis_Workload* workload = graph->workloads[i];
+                analysis_workload_append_to_string(workload, &tmp);
+                string_append_formated(&tmp, "\n");
+                List_Node<Analysis_Workload*>* dependency_node = workload->dependencies.head;
+                while (dependency_node != 0) {
+                    SCOPE_EXIT(dependency_node = dependency_node->next);
+                    Analysis_Workload* dependency = dependency_node->value;
+                    string_append_formated(&tmp, "  ");
+                    analysis_workload_append_to_string(dependency, &tmp);
+                    string_append_formated(&tmp, "\n");
+                }
+            }
+            logg("%s", tmp.characters);
+        }
+
+
 
         // Execute runnable workloads
         for (int i = 0; i < graph->runnable_workloads.size; i++)
@@ -1076,26 +1248,31 @@ void dependency_graph_resolve(Dependency_Graph* graph)
             //assert(!workload->is_finished, "");
             progress_was_made = true;
 
+            String tmp = string_create_empty(128);
+            analysis_workload_append_to_string(workload, &tmp);
+            logg("Executing workload: %s\n", tmp.characters);
+            string_destroy(&tmp);
+
             analysis_workload_execute(workload, graph->analyser);
+            // Note: After a workload executes, it may have added new dependencies to itself
             if (workload->dependencies.count == 0)
             {
                 workload->is_finished = true;
-                for (int j = 0; j < workload->dependents.size; j++) {
-                    Dependent_Workload* dependent = &workload->dependents[j];
-                    assert(dependent->workload->dependencies.count != 0, "");
-                    list_remove_node(&dependent->workload->dependencies, dependent->node);
-                    if (dependent->workload->dependencies.count == 0 && dependent->workload->symbol_dependencies.size == 0) {
-                        dynamic_array_push_back(&graph->runnable_workloads, dependent->workload);
-                    }
+                List_Node<Analysis_Workload*>* node = workload->dependents.head;
+                while (node != 0) {
+                    Analysis_Workload* dependent = node->value;
+                    node = node->next; // INFO: This is required before remove_dependency, since remove will remove items from the list
+                    dependency_graph_remove_dependency(graph, dependent, workload);
                 }
-                dynamic_array_reset(&workload->dependents);
+                assert(workload->dependents.count == 0, "");
+                //list_reset(&workload->dependents);
             }
         }
         dynamic_array_reset(&graph->runnable_workloads);
+        if (progress_was_made) continue;
 
-        if (!progress_was_made)
+        // Check if all workloads finished
         {
-            // Check if all workloads finished
             bool all_finished = true;
             for (int i = 0; i < graph->workloads.size; i++) {
                 if (!graph->workloads[i]->is_finished) {
@@ -1106,54 +1283,180 @@ void dependency_graph_resolve(Dependency_Graph* graph)
             if (all_finished) {
                 break;
             }
+        }
 
-            /*
-                At some point I want to resolve circular dependencies by finishing one workload,
-                but I won't implement it now so that we may compile again
-            */
-
-            // Resolve an unresolved symbol to error to continue analysis
-            if (unresolved_symbols_workloads.size == 0) {
-                semantic_analyser_log_error(graph->analyser, Semantic_Error_Type::MISSING_FEATURE, (AST_Node*)0);
-                break;
+        /*
+            Circular Dependency Detection:
+             1. Do breadth first search to find smallest possible loop/if loop exists
+             2. If a loop was found, do a depth first search to reconstruct the loop (Could probably be done better)
+             3. Resolve the loop (Log Error, set some of the dependencies to error)
+        */
+        {
+            // Initialization
+            Hashtable<Analysis_Workload*, int> workload_to_layer = hashtable_create_pointer_empty<Analysis_Workload*, int>(4);
+            SCOPE_EXIT(hashtable_destroy(&workload_to_layer));
+            Hashset<Analysis_Workload*> unvisited = hashset_create_pointer_empty<Analysis_Workload*>(4);
+            SCOPE_EXIT(hashset_destroy(&unvisited));
+            for (int i = 0; i < graph->workloads.size; i++) {
+                Analysis_Workload* workload = graph->workloads[i];
+                if (!workload->is_finished) {
+                    hashset_insert_element(&unvisited, workload);
+                }
             }
-            logg("Resolving undefined symbols\n");
-            // Search for workload with lowest unresolved symbols count, and resolve all those symbols
-            Analysis_Workload* lowest = 0;
-            for (int i = 0; i < unresolved_symbols_workloads.size; i++) {
-                Analysis_Workload* workload = unresolved_symbols_workloads[i];
-                if (workload->dependencies.count == 0) {
-                    if (lowest != 0) {
-                        if (workload->symbol_dependencies.size < lowest->symbol_dependencies.size) {
-                            lowest = workload;
+
+            bool loop_found = false;
+            int loop_node_count = -1;
+            Analysis_Workload* loop_node = 0;
+            Analysis_Workload* loop_node_2 = 0;
+
+            // Breadth first search
+            Dynamic_Array<int> layer_start_indices = dynamic_array_create_empty<int>(4);
+            SCOPE_EXIT(dynamic_array_destroy(&layer_start_indices));
+            Dynamic_Array<Analysis_Workload*> layers = dynamic_array_create_empty<Analysis_Workload*>(4);
+            SCOPE_EXIT(dynamic_array_destroy(&layers));
+
+            while (!loop_found)
+            {
+                // Remove all nodes that are already confirmed to have no cycles (E.g nodes from last loop run)
+                for (int i = 0; i < layers.size; i++) {
+                    hashset_remove_element(&unvisited, layers[i]);
+                }
+                if (unvisited.element_count == 0) break;
+                dynamic_array_reset(&layer_start_indices);
+                dynamic_array_reset(&layers);
+                hashtable_reset(&workload_to_layer);
+
+                Analysis_Workload* start = *hashset_iterator_create(&unvisited).value;
+                dynamic_array_push_back(&layer_start_indices, layers.size);
+                dynamic_array_push_back(&layers, start);
+                dynamic_array_push_back(&layer_start_indices, layers.size);
+
+                int current_layer = 0;
+                while (true && !loop_found)
+                {
+                    SCOPE_EXIT(current_layer++);
+                    int layer_start = layer_start_indices[current_layer];
+                    int layer_end = layer_start_indices[current_layer + 1];
+                    if (layer_start == layer_end) break;
+                    for (int i = layer_start; i < layer_end && !loop_found; i++)
+                    {
+                        Analysis_Workload* scan_for_loops = layers[i];
+                        assert(!scan_for_loops->is_finished, "");
+                        List_Node<Analysis_Workload*>* node = scan_for_loops->dependencies.head;
+                        while (node != 0 && !loop_found)
+                        {
+                            SCOPE_EXIT(node = node->next;);
+                            Analysis_Workload* dependency = node->value;
+                            if (dependency == scan_for_loops) { // Self dependency
+                                loop_found = true;
+                                loop_node_count = 1;
+                                loop_node = scan_for_loops;
+                                loop_node_2 = scan_for_loops;
+                                break;
+                            }
+                            if (!hashset_contains(&unvisited, dependency)) {
+                                // Node is clear because we checked it on a previous cycle
+                                continue;
+                            }
+                            int* found_layer = hashtable_find_element(&workload_to_layer, dependency);
+                            if (found_layer == nullptr) {
+                                hashtable_insert_element(&workload_to_layer, dependency, current_layer + 1);
+                                dynamic_array_push_back(&layers, dependency);
+                            }
+                            else
+                            {
+                                int dependency_layer = *found_layer;
+                                if (dependency_layer != current_layer + 1)
+                                {
+                                    loop_found = true;
+                                    loop_node = scan_for_loops;
+                                    loop_node_2 = dependency;
+                                    if (dependency_layer == current_layer) {
+                                        loop_node_count = 2;
+                                    }
+                                    else {
+                                        loop_node_count = current_layer - dependency_layer + 1;
+                                    }
+                                }
+                            }
                         }
                     }
-                    else {
+                    dynamic_array_push_back(&layer_start_indices, layers.size);
+                }
+            }
+
+
+            // Handle the loop
+            if (loop_found)
+            {
+                // Reconstruct Loop
+                Dynamic_Array<Analysis_Workload*> workload_cycle = dynamic_array_create_empty<Analysis_Workload*>(1);
+                SCOPE_EXIT(dynamic_array_destroy(&workload_cycle));
+                if (loop_node_count != 1) {
+                    // Depth first search
+                    bool found_loop_again = analysis_workload_find_cycle(loop_node_2, 1, loop_node, loop_node_count, &workload_cycle, &workload_to_layer);
+                    assert(found_loop_again, "");
+                    dynamic_array_reverse_order(&workload_cycle);
+                }
+                else {
+                    dynamic_array_push_back(&workload_cycle, loop_node);
+                }
+
+                // Resolve and report error
+                semantic_analyser_log_error(graph->analyser, Semantic_Error_Type::CYCLIC_DEPENDENCY_DETECTED, (AST_Node*)0);
+                bool only_reads_was_found = false;
+                for (int i = 0; i < workload_cycle.size; i++)
+                {
+                    Analysis_Workload* workload = workload_cycle[i];
+                    semantic_analyser_add_error_info(graph->analyser, error_information_make_cycle_workload(workload));
+
+                    Analysis_Workload* depends_on = i + 1 == workload_cycle.size ? workload_cycle[0] : workload_cycle[i + 1];
+                    Workload_Pair pair = workload_pair_create(workload, depends_on);
+                    Dependency_Information infos = *hashtable_find_element(&graph->workload_dependencies, pair);
+                    if (infos.only_symbol_read_dependency) {
+                        only_reads_was_found = true;
+                        for (int j = 0; j < infos.symbol_reads.size; j++) {
+                            infos.symbol_reads[j]->symbol = graph->analyser->compiler->rc_analyser->predefined_symbols.error_symbol;
+                        }
+                    }
+                    dependency_graph_remove_dependency(graph, workload, depends_on);
+                }
+                assert(only_reads_was_found, "");
+                progress_was_made = true;
+            }
+        }
+        if (progress_was_made) {
+            continue;
+        }
+
+        // Resolve an unresolved symbol to error to continue analysis
+        assert(unresolved_symbols_workloads.size != 0, "Either a loop must be found or an unresolved symbol exists, otherwise there is something wrong");
+        // Search for workload with lowest unresolved symbols count, and resolve all those symbols
+        Analysis_Workload* lowest = 0;
+        for (int i = 0; i < unresolved_symbols_workloads.size; i++) {
+            Analysis_Workload* workload = unresolved_symbols_workloads[i];
+            if (workload->dependencies.count == 0) {
+                if (lowest != 0) {
+                    if (workload->symbol_dependencies.size < lowest->symbol_dependencies.size) {
                         lowest = workload;
                     }
                 }
+                else {
+                    lowest = workload;
+                }
             }
-            if (lowest == 0) {
-                break;
-            }
-
-            for (int i = 0; i < lowest->symbol_dependencies.size; i++) {
-                lowest->symbol_dependencies[i]->symbol = graph->analyser->compiler->rc_analyser->predefined_symbols.error_symbol;
-            }
-            dynamic_array_reset(&lowest->symbol_dependencies);
-            dynamic_array_push_back(&graph->runnable_workloads, lowest);
         }
+        if (lowest == 0) {
+            break;
+        }
+
+        for (int i = 0; i < lowest->symbol_dependencies.size; i++) {
+            lowest->symbol_dependencies[i]->symbol = graph->analyser->compiler->rc_analyser->predefined_symbols.error_symbol;
+        }
+        dynamic_array_reset(&lowest->symbol_dependencies);
+        dynamic_array_push_back(&graph->runnable_workloads, lowest);
     }
 
-}
-
-void analysis_workload_add_dependency(Analysis_Workload* workload, Analysis_Workload* dependency)
-{
-    if (dependency->is_finished) return;
-    Dependent_Workload dependent;
-    dependent.node = list_add_at_end(&workload->dependencies, dependency);
-    dependent.workload = workload;
-    dynamic_array_push_back(&dependency->dependents, dependent);
 }
 
 Analysis_Workload* analysis_workload_find_associated_cluster(Analysis_Workload* workload)
@@ -1177,9 +1480,9 @@ bool cluster_workload_check_for_cyclic_dependency(
             return *contains_loop;
         }
     }
-    hashtable_insert_element(visited, workload, false); // This may need to change later if we actually find a loop
+    hashtable_insert_element(visited, workload, false); // The boolean value changes later if we actually find a loop
     bool loop_found = false;
-    for (int i = 0; i < workload->reachable_clusters.size; i++) 
+    for (int i = 0; i < workload->reachable_clusters.size; i++)
     {
         Analysis_Workload* reachable = analysis_workload_find_associated_cluster(workload->reachable_clusters[i]);
         if (reachable == start_workload) {
@@ -1198,7 +1501,7 @@ bool cluster_workload_check_for_cyclic_dependency(
     return loop_found;
 }
 
-void analysis_workload_add_cluster_dependency(Dependency_Graph* graph, Analysis_Workload* add_to_workload, Analysis_Workload* dependency)
+void analysis_workload_add_cluster_dependency(Dependency_Graph* graph, Analysis_Workload* add_to_workload, Analysis_Workload* dependency, RC_Symbol_Read* symbol_read)
 {
     assert((add_to_workload->type == Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE && dependency->type == Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE) ||
         (add_to_workload->type == Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE && dependency->type == Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE), "");
@@ -1215,7 +1518,7 @@ void analysis_workload_add_cluster_dependency(Dependency_Graph* graph, Analysis_
     bool loop_found = cluster_workload_check_for_cyclic_dependency(merge_from, merge_into, &visited, &workloads_to_merge);
     if (!loop_found) {
         dynamic_array_push_back(&merge_into->reachable_clusters, merge_from);
-        analysis_workload_add_dependency(merge_into, merge_from);
+        analysis_workload_add_dependency_internal(graph, merge_into, merge_from, symbol_read);
         return;
     }
 
@@ -1223,34 +1526,26 @@ void analysis_workload_add_cluster_dependency(Dependency_Graph* graph, Analysis_
     for (int i = 0; i < workloads_to_merge.size; i++)
     {
         Analysis_Workload* merge_cluster = workloads_to_merge[i];
+        assert(merge_cluster != merge_into, "");
         // Remove all dependent connections from the merge
         auto node = merge_cluster->dependencies.head;
         while (node != 0)
         {
-            Analysis_Workload* merge_depends_on = node->value;
-            bool remove_dependency = false;
-            for (int j = 0; j < workloads_to_merge.size; j++) {
-                if (workloads_to_merge[j] == merge_depends_on) {
-                    remove_dependency = true;
-                    break;
+            Analysis_Workload* merge_dependency = node->value;
+            // Check if we need the dependency
+            bool keep_dependency = true;
+            {
+                bool* contains_loop = hashtable_find_element(&visited, merge_dependency);
+                if (contains_loop != 0) {
+                    keep_dependency = !*contains_loop;
                 }
             }
-            if (merge_depends_on == merge_into) {
-                remove_dependency = true;
-            }
 
-            bool found = false;
-            for (int j = 0; j < merge_depends_on->dependents.size; j++) {
-                if (merge_depends_on->dependents[j].workload == merge_cluster) {
-                    dynamic_array_swap_remove(&merge_depends_on->dependents, j);
-                    found = true;
-                    break;
-                }
+            if (keep_dependency) {
+                dependency_graph_move_dependency(graph, merge_cluster, merge_into, merge_dependency);
             }
-            assert(found, "");
-
-            if (!remove_dependency) {
-                analysis_workload_add_dependency(merge_into, node->value);
+            else {
+                dependency_graph_remove_dependency(graph, merge_cluster, merge_dependency);
             }
             node = node->next;
         }
@@ -1259,7 +1554,7 @@ void analysis_workload_add_cluster_dependency(Dependency_Graph* graph, Analysis_
         // Merge all analysis item values
         switch (merge_into->type)
         {
-        case Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE: 
+        case Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE:
         {
             for (int i = 0; i < merge_cluster->options.cluster_compile.functions.size; i++) {
                 dynamic_array_push_back(&
@@ -1269,7 +1564,7 @@ void analysis_workload_add_cluster_dependency(Dependency_Graph* graph, Analysis_
             dynamic_array_reset(&merge_cluster->options.cluster_compile.functions);
             break;
         }
-        case Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE: 
+        case Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE:
         {
             for (int i = 0; i < merge_cluster->options.struct_reachable.unfinished_array_types.size; i++) {
                 dynamic_array_push_back(&
@@ -1298,7 +1593,7 @@ void analysis_workload_add_cluster_dependency(Dependency_Graph* graph, Analysis_
             dynamic_array_push_back(&merge_into->reachable_clusters, merge_cluster->reachable_clusters[i]);
         }
         dynamic_array_reset(&merge_cluster->reachable_clusters);
-        analysis_workload_add_dependency(merge_cluster, merge_into);
+        analysis_workload_add_dependency_internal(graph, merge_cluster, merge_into, 0);
         merge_cluster->cluster = merge_into;
     }
 
@@ -1327,19 +1622,18 @@ void analysis_workload_add_cluster_dependency(Dependency_Graph* graph, Analysis_
             }
         }
     }
-
 }
 
 void analysis_workload_add_function_dependency(
-    Dependency_Graph* graph, Analysis_Workload* my_workload, Function_Progress* other_progress, RC_Dependency_Type dependency_type)
+    Dependency_Graph* graph, Analysis_Workload* my_workload, Function_Progress* other_progress, RC_Dependency_Type type, RC_Symbol_Read* symbol_read)
 {
     if (other_progress->state == Function_State::FINISHED) return;
-    if (dependency_type == RC_Dependency_Type::BAKE) {
-        analysis_workload_add_dependency(my_workload, other_progress->compile_workload);
+    if (type == RC_Dependency_Type::BAKE) {
+        analysis_workload_add_dependency_internal(graph, my_workload, other_progress->compile_workload, symbol_read);
         return;
     }
     else {
-        analysis_workload_add_dependency(my_workload, other_progress->header_workload);
+        analysis_workload_add_dependency_internal(graph, my_workload, other_progress->header_workload, symbol_read);
     }
 
     if (my_workload->type != Analysis_Workload_Type::FUNCTION_BODY) {
@@ -1349,33 +1643,34 @@ void analysis_workload_add_function_dependency(
     // Unify the compile clusters
     Function_Progress* my_progress = hashtable_find_element(&graph->progress_functions, my_workload->options.function);
     assert(my_progress != 0, "");
-    analysis_workload_add_cluster_dependency(graph, my_progress->compile_workload, other_progress->compile_workload);
+    analysis_workload_add_cluster_dependency(graph, my_progress->compile_workload, other_progress->compile_workload, symbol_read);
 }
 
-void analysis_workload_add_struct_dependency(Dependency_Graph* graph, Analysis_Workload* my_workload, Struct_Progress* other_progress, RC_Dependency_Type dependency_type)
+void analysis_workload_add_struct_dependency(
+    Dependency_Graph* graph, Analysis_Workload* my_workload, Struct_Progress* other_progress, RC_Dependency_Type type, RC_Symbol_Read* symbol_read)
 {
     if (my_workload->type != Analysis_Workload_Type::STRUCT_ANALYSIS) {
-        analysis_workload_add_dependency(my_workload, other_progress->reachable_resolve_workload);
+        analysis_workload_add_dependency_internal(graph, my_workload, other_progress->reachable_resolve_workload, symbol_read);
         return;
     }
     if (other_progress->state == Struct_State::FINISHED) return;
     Struct_Progress* my_progress = hashtable_find_element(&graph->progress_structs, my_workload->options.struct_analysis_type);
     assert(my_progress != 0, "");
 
-    switch (dependency_type)
+    switch (type)
     {
     case RC_Dependency_Type::BAKE:
     case RC_Dependency_Type::NORMAL: {
         // Struct member references another struct, but not as a type
         // E.g. Foo :: struct { value: Bar.{...}; }
-        analysis_workload_add_dependency(my_workload, other_progress->reachable_resolve_workload);
+        analysis_workload_add_dependency_internal(graph, my_workload, other_progress->reachable_resolve_workload, symbol_read);
         break;
     }
     case RC_Dependency_Type::MEMBER_IN_MEMORY: {
         // Struct member references other member in memory
         // E.g. Foo :: struct { value: Bar; }
-        analysis_workload_add_dependency(my_workload, other_progress->member_workload);
-        analysis_workload_add_cluster_dependency(graph, my_progress->reachable_resolve_workload, other_progress->reachable_resolve_workload);
+        analysis_workload_add_dependency_internal(graph, my_workload, other_progress->member_workload, symbol_read);
+        analysis_workload_add_cluster_dependency(graph, my_progress->reachable_resolve_workload, other_progress->reachable_resolve_workload, symbol_read);
         break;
     }
     case RC_Dependency_Type::MEMBER_REFERENCE:
@@ -1383,7 +1678,7 @@ void analysis_workload_add_struct_dependency(Dependency_Graph* graph, Analysis_W
         // Struct member contains some sort of reference to other member
         // E.g. Foo :: struct { value: *Bar; }
         // This means we need to unify the Reachable-Clusters
-        analysis_workload_add_cluster_dependency(graph, my_progress->reachable_resolve_workload, other_progress->reachable_resolve_workload);
+        analysis_workload_add_cluster_dependency(graph, my_progress->reachable_resolve_workload, other_progress->reachable_resolve_workload, symbol_read);
         break;
     }
     default: panic("");
@@ -1394,7 +1689,7 @@ Analysis_Workload* dependency_graph_add_workload_empty(Dependency_Graph* graph, 
 {
     Analysis_Workload* workload = new Analysis_Workload;
     workload->dependencies = list_create<Analysis_Workload*>();
-    workload->dependents = dynamic_array_create_empty<Dependent_Workload>(1);
+    workload->dependents = list_create<Analysis_Workload*>();
     workload->is_finished = false;
     workload->symbol_dependencies = dynamic_array_create_empty<RC_Symbol_Read*>(1);
     workload->type = type;
@@ -1444,12 +1739,12 @@ Analysis_Workload* dependency_graph_add_workload_from_item(Dependency_Graph* gra
         workload->options.function = function;
 
         Analysis_Workload* body_workload = dependency_graph_add_workload_from_item(graph, item->options.function.body_item);
-        analysis_workload_add_dependency(body_workload, workload);
+        analysis_workload_add_dependency_internal(graph, body_workload, workload, 0);
 
         Analysis_Workload* compile_workload = dependency_graph_add_workload_empty(graph, 0, Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE);
         compile_workload->options.cluster_compile.functions = dynamic_array_create_empty<ModTree_Function*>(1);
         dynamic_array_push_back(&compile_workload->options.cluster_compile.functions, function);
-        analysis_workload_add_dependency(compile_workload, body_workload);
+        analysis_workload_add_dependency_internal(graph, compile_workload, body_workload, 0);
 
         Function_Progress initial_state;
         initial_state.state = Function_State::DEFINED;
@@ -1484,7 +1779,7 @@ Analysis_Workload* dependency_graph_add_workload_from_item(Dependency_Graph* gra
         reachable_workload->options.struct_reachable.struct_types = dynamic_array_create_empty<Type_Signature*>(1);
         reachable_workload->options.struct_reachable.unfinished_array_types = dynamic_array_create_empty<Type_Signature*>(1);
         dynamic_array_push_back(&reachable_workload->options.struct_reachable.struct_types, struct_type);
-        analysis_workload_add_dependency(reachable_workload, workload);
+        analysis_workload_add_dependency_internal(graph, reachable_workload, workload, 0);
 
         Struct_Progress initial_state;
         initial_state.state = Struct_State::DEFINED;
@@ -1513,15 +1808,15 @@ Analysis_Workload* dependency_graph_add_workload_from_item(Dependency_Graph* gra
         {
             Function_Progress* progress = hashtable_find_element(&graph->progress_functions, dependency->options.function);
             assert(progress != 0, "");
-            analysis_workload_add_function_dependency(graph, workload, progress, item_dependency->type);
+            analysis_workload_add_function_dependency(graph, workload, progress, item_dependency->type, 0);
         }
         else if (item_dependency->type != RC_Dependency_Type::NORMAL) {
             assert(dependency->type == Analysis_Workload_Type::STRUCT_ANALYSIS, "");
             Struct_Progress* progress = hashtable_find_element(&graph->progress_structs, dependency->options.struct_analysis_type);
-            analysis_workload_add_struct_dependency(graph, workload, progress, item_dependency->type);
+            analysis_workload_add_struct_dependency(graph, workload, progress, item_dependency->type, 0);
         }
         else {
-            analysis_workload_add_dependency(workload, dependency);
+            analysis_workload_add_dependency_internal(graph, workload, dependency, 0);
         }
     }
     return workload;
@@ -1930,6 +2225,68 @@ case Analysis_Workload_Type::EXTERN_FUNCTION_DECLARATION:
 }
 */
 
+}
+
+void analysis_workload_append_to_string(Analysis_Workload* workload, String* string)
+{
+    switch (workload->type)
+    {
+    case Analysis_Workload_Type::DEFINITION: {
+        auto definition = &workload->analysis_item->options.definition;
+        if (definition->is_comptime_definition) {
+            string_append_formated(string, "Comptime \"%s\"", definition->symbol->id->characters);
+        }
+        else {
+            string_append_formated(string, "Global \"%s\"", definition->symbol->id->characters);
+        }
+        break;
+    }
+    case Analysis_Workload_Type::FUNCTION_BODY: {
+        Symbol* symbol = workload->options.function->symbol;
+        const char* fn_id = symbol == 0 ? "Lambda" : symbol->id->characters;
+        string_append_formated(string, "Body \"%s\"", fn_id);
+        break;
+    }
+    case Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE: 
+    {
+        string_append_formated(string, "Cluster-Compile [");
+        Analysis_Workload* cluster = analysis_workload_find_associated_cluster(workload);
+        for (int i = 0; i < cluster->options.cluster_compile.functions.size; i++) {
+            Symbol* symbol = cluster->options.cluster_compile.functions[i]->symbol;
+            const char* fn_id = symbol == 0 ? "Anonymous" : symbol->id->characters;
+            string_append_formated(string, "%s, ", fn_id);
+        }
+        string_append_formated(string, "]");
+        break;
+    }
+    case Analysis_Workload_Type::FUNCTION_HEADER: {
+        Symbol* symbol = workload->options.function->symbol;
+        const char* fn_id = symbol == 0 ? "Anonymous" : symbol->id->characters;
+        string_append_formated(string, "Header \"%s\"", fn_id);
+        break;
+    }
+    case Analysis_Workload_Type::STRUCT_ANALYSIS: {
+        Symbol* symbol = workload->analysis_item->options.structure.symbol;
+        const char* struct_id = symbol == 0 ? "Anonymous_Struct" : symbol->id->characters;
+        string_append_formated(string, "Struct-Analysis \"%s\"", struct_id);
+        break;
+    }
+    case Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE: {
+        //const char* struct_id = symbol == 0 ? "Anonymous_Struct" : symbol->id->characters;
+        string_append_formated(string, "Struct-Reachable-Resolve [");
+        Analysis_Workload* cluster = analysis_workload_find_associated_cluster(workload);
+        for (int i = 0; i < cluster->options.struct_reachable.struct_types.size; i++) {
+            Symbol* symbol = cluster->options.struct_reachable.struct_types[i]->options.structure.symbol;
+            const char* fn_id = symbol == 0 ? "Anonymous" : symbol->id->characters;
+            string_append_formated(string, "%s, ", fn_id);
+        }
+        string_append_formated(string, "]");
+
+
+        break;
+    }
+    default: panic("");
+    }
 }
 
 
@@ -4886,6 +5243,9 @@ void semantic_error_get_error_location(Semantic_Analyser* analyser, Semantic_Err
         dynamic_array_push_back(locations, range);
         break;
     }
+    case Semantic_Error_Type::CYCLIC_DEPENDENCY_DETECTED: {
+        break;
+    }
     case Semantic_Error_Type::MISSING_FEATURE_NESTED_DEFERS: {
         Token_Range range = error.error_node->token_range;
         dynamic_array_push_back(locations, token_range_make(range.start_index, range.start_index + 1));
@@ -4971,6 +5331,7 @@ void semantic_error_append_to_string(Semantic_Analyser* analyser, Semantic_Error
     case Semantic_Error_Type::INVALID_TYPE_VOID_USAGE:
         string_append_formated(string, "Invalid use of void type");
         break;
+        string_append_formated(string, "Cyclic workload dependencies detected");
     case Semantic_Error_Type::INVALID_TYPE_FUNCTION_CALL:
         string_append_formated(string, "Expected function pointer type on function call");
         break;
@@ -5266,6 +5627,9 @@ void semantic_error_append_to_string(Semantic_Analyser* analyser, Semantic_Error
     case Semantic_Error_Type::MISSING_FEATURE_NESTED_DEFERS:
         string_append_formated(string, "Nested defers not implemented yet");
         break;
+    case Semantic_Error_Type::CYCLIC_DEPENDENCY_DETECTED:
+        string_append_formated(string, "Cyclic workload dependencies detected");
+        break;
     case Semantic_Error_Type::VARIABLE_NOT_DEFINED_YET:
         string_append_formated(string, "Variable not defined yet");
         break;
@@ -5277,6 +5641,10 @@ void semantic_error_append_to_string(Semantic_Analyser* analyser, Semantic_Error
         Error_Information* info = &e.information[k];
         switch (info->type)
         {
+        case Error_Information_Type::CYCLE_WORKLOAD:
+            string_append_formated(string, "\n  ");
+            analysis_workload_append_to_string(info->options.cycle_workload, string);
+            break;
         case Error_Information_Type::ARGUMENT_COUNT:
             string_append_formated(string, "\n  Given argument count: %d, required: %d",
                 info->options.invalid_argument_count.given, info->options.invalid_argument_count.expected);

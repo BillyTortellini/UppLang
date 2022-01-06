@@ -66,6 +66,14 @@ void dynamic_array_push_back(Dynamic_Array<T>* array, T item) {
 }
 
 template <typename T>
+void dynamic_array_append_other(Dynamic_Array<T>* array, Dynamic_Array<T>* other) {
+    dynamic_array_reserve(array, array->size + other->size);
+    for (int i = 0; i < other->size; i++) {
+        dynamic_array_push_back(array, other->data[i]);
+    }
+}
+
+template <typename T>
 void dynamic_array_swap_remove(Dynamic_Array<T>* array, int index) {
     if (index >= array->size) {
         panic("Swap remove called with invalid index\n");
@@ -105,6 +113,17 @@ void dynamic_array_insert_ordered(Dynamic_Array<T>* a, T item, int index)
     }
     a->data[index] = item;
     a->size++;
+}
+
+template<typename T>
+void dynamic_array_reverse_order(Dynamic_Array<T>* a)
+{
+    for (int i = 0; i < a->size / 2; i++) {
+        int other = a->size - i - 1;
+        T swap = a->data[i];
+        a->data[i] = a->data[other];
+        a->data[other] = swap;
+    }
 }
 
 

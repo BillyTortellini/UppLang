@@ -29,15 +29,15 @@ bool enable_c_compilation = true;
 bool output_lexing = false;
 bool output_identifiers = false;
 bool output_ast = false;
-bool output_rc = true;
+bool output_rc = false;
 bool output_type_system = false;
 bool output_root_table = false;
-bool output_ir = true;
+bool output_ir = false;
 bool output_bytecode = false;
 bool output_timing = true;
 
 // Testcases
-bool enable_testcases = true;
+bool enable_testcases = false;
 bool enable_stresstest = false;
 bool run_testcases_compiled = false;
 
@@ -700,6 +700,7 @@ bool compiler_errors_occured(Compiler* compiler) {
 
 void compiler_compile(Compiler* compiler, String source_code, bool generate_code)
 {
+    logg("\n\n\n   COMPILING\n---------------\n");
     double time_compile_start = timer_current_time_in_seconds(compiler->timer);
     compiler->generate_code = generate_code;
     {

@@ -52,6 +52,14 @@ Hashset_Iterator<T> hashset_iterator_create(Hashset<T>* set) {
 }
 
 template <typename T>
+T hashset_remove_random(Hashset<T>* set) {
+    Hashset_Iterator<T> iter = hashset_iterator_create(set);
+    T result = *iter.value;
+    hashset_remove_element(set, *iter.value);
+    return result;
+}
+
+template <typename T>
 bool hashset_iterator_has_next(Hashset_Iterator<T>* iterator) {
     return iterator->current_entry != 0;
 }
@@ -229,23 +237,26 @@ bool hashset_remove_element(Hashset<T>* set, T value)
         return false;
     }
 
+    Hashset_Entry<T>* next = entry->next;
     if (set->equals_function(&entry->value, &value)) {
-        entry->valid = false;
-        if (entry->next != 0) {
-            set->entries[entry_index] = entry->next;
-            set->entries[entry_index].valid = true;
-            delete entry->next;
+        if (next != 0) {
+            *entry = *next;
+            delete next;
+            assert(entry->valid, "Next needs to be valid");
         }
+        else {
+            entry->valid = false;
+        }
+        set->element_count -= 1;
         return true;
     }
 
-    Hashset_Entry<T>* next = entry->next;
     while (next != 0)
     {
         if (set->equals_function(&next->value, &value)) {
-            *entry = *next;
+            entry->next = next->next;
             delete next;
-            entry->valid = true;
+            set->element_count -= 1;
             return true;
         }
         else {

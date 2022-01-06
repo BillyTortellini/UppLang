@@ -1,14 +1,15 @@
 Next features:
 --------------
- * RC_Generator all features implemented
+ * Error-Messages for Circular Dependencies
+ * Polymorphism/Generics/Templates (Template rework: No more templated modules, templated types, templated functions)
+ * Syntax-Guided Editor
 
- * Better Dependency-Graph resolution
+ * Named function parameters/unnamed struct initializer params
  * Bake expressions, bake function pointers
  * Conversion function to pointer and back
  * Literal overhaul (Integers, floats, strings?, arrays are u64, array access with any int...)
  * Array bounds check
 
- * Polymorphism (Template rework: No more templated modules, templated types, templated functions)
  * Macros and Iteration 
  * Generating source code with runtime code execution (#insert_code {return "what the fuck";})
  * Annotations (Used in generating source code)
@@ -24,63 +25,67 @@ Next features:
      _ = Hashtable~insert();
      union {ipv4: int; ipv5: _};
 
+General Plan for Implementation:
+--------------------------------
+I currently feel like I should be programming something with the language I have created.
+I am currently at the point where I would like to select the features needed before I can
+create a simple application, which would be:
+ - Templates (Datastructures)
+ - Syntax-Based Editor
+ - Module/Project System
+ - Context for Allocators
+ - Iterator Syntax, custom iterators for stuff
+ - Literal overhaul, u64 for array size, automatic array bounds checks
+
+Features that I DON'T need for the first simple game version:
+ - Comptime Code generation
+ - Annotations
+ - Static Analyser
+ - Macros
 
 
 
-Reimplement the following features:
-Then assure that the test-cases all work, afterwards, fix the following issues
+BUG DETECTION:
+--------------
+Something either fucks up the hashtable or the list item.
 
-Issues:
- - Auto-Cast on function parameters doesnt' work, REWORK Expression_Context
+Where does the randomness come from?
+ - It almost has to be the random accesses that I hash
+ - It could be the hashtable resizing
+ - Definitly the wrong element is beeing removed.
 
 
+Circular Dependency Handling:
+-----------------------------
+If possible, I would like to set all dependencies to a circular dependency to error
 
-REWORK Expression_Context:
-Goal: 
- - I would like to use the expression context to do implict/explicit casting
- - Expression_Context
+After having found a cycle, I also need to remove the circular dependencies so that it can compile
+The question I am having is: 
+    - What does it mean to destroy the circular dependencies
 
-How is the current Context used:
- - Pointers to values
- - Address-Of
- - Auto-Cast
- - Auto Struct Initializer
- - Auto Array-Initializer
- - Auto Enum
-
-Auto cast carries around the type that i
-
-What should expression context do:
- - If i know the precise type, it should be able to report errors and do implicit casting
- - 
-
-Why doesn't assignment do auto pointer references?
-
-i: int;
-ip: *int;
-x: int;
-xp: *int;
-
-x = i;   
-x = ip;  
-xp = i;
-xp = ip;
+It's currently also possible to have multiple connections from one workload to another, which makes the
+whole algorithm slower.
 
 
 
+Error messages for circular dependencies:
+ - When there is no progress, and no running workload can run, we have an error.
+   This error could either be because we are waiting for a symbol, or because
+   a circular dependency exists. 
+   This means we then need to check for circular dependencies, and if one
+   exists, we must report the error and resolve the circular dependency.
 
 
 
+Questions:
+ - What algorithms are usefull in my Use-Case?
+ - How do I resolve Cycles?
 
-Over night Thoughts:
---------------------
-Casting should be done in the expression context, and the context can just create errors, since we already
-have analyse expression internal and all that good stuff. 
+I should at first just make a working solution, where performance isn't as important.
+So I think I want a breadth first-search (So that I detect the shortest possible cycles)
 
-I probably want to remove modtree now, and stick with ir-code, since ModTree is kinda useless now.
-Definitly true, because the modtree expression/statement is kinda bad for code generation, ngl
 
-Analysis timing is very inconsisten, maybe I should do more timing tests for it
+
 
 
 
