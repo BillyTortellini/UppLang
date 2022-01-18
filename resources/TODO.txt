@@ -1,6 +1,5 @@
 Next features:
 --------------
- * Error-Messages for Circular Dependencies
  * Polymorphism/Generics/Templates (Template rework: No more templated modules, templated types, templated functions)
  * Syntax-Guided Editor
 
@@ -43,31 +42,6 @@ Features that I DON'T need for the first simple game version:
  - Static Analyser
  - Macros
 
-
-
-BUG DETECTION:
---------------
-Something either fucks up the hashtable or the list item.
-
-Where does the randomness come from?
- - It almost has to be the random accesses that I hash
- - It could be the hashtable resizing
- - Definitly the wrong element is beeing removed.
-
-
-Circular Dependency Handling:
------------------------------
-If possible, I would like to set all dependencies to a circular dependency to error
-
-After having found a cycle, I also need to remove the circular dependencies so that it can compile
-The question I am having is: 
-    - What does it mean to destroy the circular dependencies
-
-It's currently also possible to have multiple connections from one workload to another, which makes the
-whole algorithm slower.
-
-
-
 Error messages for circular dependencies:
  - When there is no progress, and no running workload can run, we have an error.
    This error could either be because we are waiting for a symbol, or because
@@ -77,29 +51,348 @@ Error messages for circular dependencies:
 
 
 
-Questions:
- - What algorithms are usefull in my Use-Case?
- - How do I resolve Cycles?
+For unknown-spreading, we also need an Unknown Comptime-Value, where
+we know the Type of the comptime-value, but it is currently unknown
 
-I should at first just make a working solution, where performance isn't as important.
-So I think I want a breadth first-search (So that I detect the shortest possible cycles)
+Because if the Comptime-Value is unknown, but the type is right, we dont
+need to log an error. But if the Type is wrong, we log an error
 
+This also implies that I need an Array-Type with unknown size, because I don't want to
+report an error on [unkown comptime int]byte
 
+Hashtable :: (Key_Type: Type, Value_Type: Type, resize_percent: float)
+    entries: []Entries;
+    count: int;
 
+create :: () -> Hashtable
 
-
-
-
-
-
-
-
-
-
-
+double_array :: (Key_Type: *$T, Value_Type: T)
+    
+double_array :: (ip, i)
 
 
 
+TODO: 
+    - Custom Workload for Bake
+    - Function-Cluster Compile Dependencies are added during analysis, not during Symbol-Resolve
+
+
+
+
+DECISIONS:
+----------
+I want to have bake as it's own Workload, since the usefulness isn't too great currently.
+Also I don't want to worry about definign Symbols in coming Analysis-Passes, since this is
+also a Use-Case for a later Time.
+
+Dependencies and Polymorphism:
+    Currently you can have 2 Dependencies on a Function: Header-Analysed or Compiled (Bake)
+    If we have a bake workload depending on a function, we would automatically add it to the
+    Compiled workload. 
+
+    How to Instanciate a Polymorphic-Function?
+    First you create a new Body-Workload for the Function, where a mapping of all Polymorphic-Parameters
+    to their Values is stored. This Body-Workload requires the Body of the Parent-Polymorphic Function to be finished.
+    This ensures that all Symbol-Reads are done for the Body, and the Analysis can begin.
+    To continue analysing the current Item the Instance-Workload isn't required to be finished.
+
+
+
+
+
+
+
+Polymorphic Procedures Implementation Plan:
+-------------------------------------------
+Lets start off with the simplest polymorphic function
+    foo :: ($count: int)
+    foo :: ($T: Type) {
+        x: Type;
+    }
+    foo :: (a: [count]int, $count: int)
+    foo :: (a: $T)
+    foo :: (a: *T, b: $T)
+    foo :: (a: table.Key_Type, table: Hashtable)
+    foo :: (a: $T, b: #bake mallest_member_type(T))
+
+I obviously cannot determine the final Type-Signature of the Polymorphic function without an Instance of it.
+But, similarly to analysing the body without knowing the types, I should try to analyse as much of the
+header as I can before analysing the body.
+
+This is only required so I have more information about the parameter types. Otherwise I could just set the
+parameter types to Unknown for all parameters during the body analysis
+
+foo :: (a: [count]int, $count: int)
+    1. Determine dependencies of the parameters
+        a: Has a Dependency on the 2nd parameter of the function
+        count: No dependencies on any other arguments
+    2. Do DAG and find analysis order, save for later
+        count, a
+    3. Analyse parameters in the given order, if no order is found, log error and analyse anyway
+
+This sucks again:
+    foo :: (a: (x: $T, y: T) -> (T), value: int)
+    foo :: (a: [$T]T) 
+
+
+
+The problem with something like
+    foo :: (x: *$T) {}
+    i: int = 5;
+    a := foo(&i);
+
+Ok, since I have the 
+    x: Hashtable(int) = initialize...
+    foo :: (table: *Hashtable) {}
+    bar :: (table: *$T) {}
+    foo(x);     // In this context I can see that I require a pointer level of one above my own, so I work with that
+    foo(xp);    // In this context, I see that I require a pointer level of 1, so I just keep what I have
+    foo(xpp);   // Given: Pointer Depth 2, wanted: A singular pointer level, 
+    bar(x);     // Requires pointer, so we do address-of, T = Hashtable
+    bar(xp);    // Match *, match T = Hashtable
+    bar(xpp);   // Match *, match T = *Hashtable
+
+Since we have Auto-Dereference + Auto-Address_Of, do we have ambiguities?
+    ipp: **int;
+    foo :: (a: *$T);
+    foo(ippp);  // T = **int
+    foo(ipp);   // T = *int
+    foo(ip);    // T = int
+    foo(i);     // T = int
+
+The questions I am having are:
+    How to Analyse + Store Parameters during Header-Analysis?
+    What to do when Instanciating a Polymorphic-Function?
+
+
+
+Type-Constructors:
+    - T                 ID
+    - *T                Pointer
+    - [5]T              Array
+    - []T               Slice
+    - (x: T)            Function-Signature
+    - struct {a: T}     Struct
+    - Enum {RED :: 5}   Enum
+Type-Constructors form a tree
+
+Features Simple to hard:
+------------------------
+Comptime Parameters:
+    foo :: ($count: int) {return count * 2;}
+        Problem: During Header-Analysis, count value is unknown, but type is known
+    foo :: ($count: int) {return #bake(int) {return fib(5);}}
+        Problem: Do I want to execute bakes during analysis? I do not think so.
+    foo :: ($count: int) {a: [count]int}
+        Array with correct type, but unknown size, do I need an extra type for that -> I think so
+    foo :: ($T: Type) {a: T; return get_t_value(a);}
+        Since I don't know the type of a, I also cannot determine if get_t_value works.
+    bar :: ($T: Type, a: foo(T)) 
+        Here foo should work with T, since T is unknown, but there should be an error when trying
+        to use the return type of foo as a Type. Then the parameter A is set to Unknown
+
+Parameter Referencing:
+    foo :: (array: [Count]T, $T: Type, $count: int) {}
+        A new Symbol-Table is needed where parameter names can reference other parameter names.
+        It is reasonable to define Comptime Arguments as Comptime-Symbols with an unknown Comptime value
+        Here the order of evaluation in the parameters is given by which parameter references other parameters
+    foo :: ($T: B, $B: *T) {}
+        The Dependencies of parameters may contain Cycles, which need to be reported as errors
+    foo :: ($T: Type) -> T
+        With referencing it is also possible that the return-value can reference Comptime arguments
+    foo :: ($T: Type, $count: int) -> [count]T
+        But the return type cannot create new Polymorphic Parameters, so in this case it can always be analysed last
+    foo :: ($T: Type, member_value: #bake(Type)(return smallest_member(T)))
+        Bakes can also occur in types, but they must not be executed during analysis.
+        Or, to put it more precisely: If a bake contains an unknown Type, it should not be executed
+    bar :: (x: foo(int))
+        In this case I have a dependency on the header analysis of foo, and I would need to instanciate it
+    bar :: ($T: Type, x: foo(T))
+        Here I need to instanciate foo during analysis with an Unknown-Type
+
+Implicit Type-Parameter Deduction:
+    foo :: (x: T, $T: Type)
+    foo(i);
+        Here the parameter T is not given by the caller. But T is a type, and it is referenced
+        by another parameter, so we can try to deduce the type. So we can analyse the x parameter
+        to find that the Type of the parameter is int, and now we can set T to int.
+    foo(i, int)
+        If a comptime argument is given, it is evaluated first. 
+    foo(i, *int)
+        Expression-Context can then be used again to do Auto-Address_Of
+        
+
+    foo :: (x: Count, $Count: int)
+        This already results in an error during Header-Analysis, so this function cannot be called
+    foo :: (x: [Count]int, $Count: int)
+    foo(int.[1, 2, 3])
+        In Theory we could deduce the count, since it is related to the given type of the argument, but
+        this should result in an error. This is also the only case where a Comptime-Parameter that
+        is not a Type could be deduced, but I this is a small edge case and this should not work.
+
+    foo(i, *int)
+        During Instanciation, we first need to check if any of the Polymorphic-Parameters is already given.
+        If so, we can set it and analyse the other parameters. If a parameter is not explicitly given, it
+        a reference must exist in one of the other parameters or there is an error. If a reference in another
+        parameter exists, we need to try to parse the other parameter
+    bar :: (a: [Count]T, $Count: int, $T: Type) {}
+    bar(int.[1, 2, 3]);
+        No parameter is given, so we know we need to deduce Count and Type from Parameter a
+        For me this seems like we need to treat Value Parameters different from Type-Parameters.
+        Because Type-Inference is definitly something I want, but value inference seems wrong, when
+        looking at the following example
+    bar :: (a: [Count + 1]int, $Count: int)
+    bar(int.[1, 2, 3, 4, 5])
+        Here a Human could deduce that Count = 4, but if this cannot work in all cases,
+        since expressions can represent arbitrarily complex functions
+    bar(.[1, 2, 3], T = int)
+        A parameter is given, meaning that we first evaluate the parameter, and afterwards we fit the Count
+        Expressions which require Expression-Context (Auto-Array/-Struct/-Enum + casts) 
+    bar :: (a: [Count]T, b: T, $Count: int, $T: Type) {}
+    bar()
+
+Polymorphic Datatypes:
+    Holder :: struct(T: Type) {value: T;}
+        Analysing the parameters of a polymorphic struct is the same as those of functions
+        Only on structures it is implicit that all parameters are comptime.
+    Holder :: struct(T: Type, count: int, default_value: [count]Type) {value: [count]T}
+        We can again reference other parameters, so we need a dependency cycle resolve
+    Holder :: struct(T: Type, node: Node(T)) {}
+        During analysis we may require instanciation of other Polymorphic Objects with unknown types
+    x: Holder(String).Value_Type
+        Comptime-Parameters of value types should be accessible via member access, and the access is Comptime-Known
+    x: Holder;
+        The usage of the struct without the comptime parameters results in an error.
+
+Implicit Polymorphic Type-Parameters:
+    foo :: (a: $T)
+        foo(i)
+    foo :: ($T: Type, a: T)
+        The upper line does the exact same thing as the lower one, but the function may now be
+        called more conveniently
+        
+
+    
+
+Polymorphic Datatypes as parameters:
+    foo :: (x: Holder(int)) {}
+        Poly-Types may be used as parameter types, requiring an analysis
+    foo :: ($T: Type, x: Holder(T), y: x.T)
+        They may need to be instanciated during analysis with incomplete information
+    foo :: (x: Holder)
+        Usage of incomplete Types is allowed only in other polymorphic parameters
+        This makes the function/datatype that references them also automatically polymorphic
+    Hashtable_Info :: struct(x: Hashtable)
+        table: *type_of(x)
+        smallest_key: x.Key_Type
+
+
+
+
+
+
+
+
+
+Comptime Argument: $ before the argument name
+    foo :: ($bar: int) {
+Implicit Polymorphic Type: $ before a Type-Name
+    foo :: (bar: $T)
+
+I think only having Comptime Arguments would not be that hard, although we already get Dependency Problems
+    foo :: ($count: int, a: [count]byte) 
+
+Hashset :: struct(Key_Type: Type, hash_fn: (a: Key_Type) -> u64)
+
+Sized_Array :: struct(Value_Type: Type, Size: int, default_value: [Size]Type)
+    a: [Size]Value_Type
+
+size_array_init :: (a: $T/Sized_Array, x: [a.Size]a.Value_Type)
+    
+
+Instanciation
+    foo :: ($count: int)
+    foo(15);
+
+Signature-Analysis Order is dependent on 
+
+What happens during Signature Analysis?
+    I set a boolean to indicate that polymorpic types are allowed in this context, then I analyse the header
+
+What happens during Header-Analysis?
+    First we need to check if the function is polymorphic or if it isn't polymorphic
+    I think I want to ignore the type signature during analysis of a 
+
+What happens when Instanciating?
+
+First off all, this requires that the header analysis knows which parameters are polymorphic.
+
+Problem: Header parsing needs to parse the function signature.
+Function Signatures alone can also be Expressions.
+Can normal function signatures have parameter names/comptime arguments/default arguments?
+    bin_op_function: (a: int, b: int) -> int;
+    bin_op_function = add_ints;
+    bin_op_function = sub_ints;
+
+    bin_op_function: ($count: int, c: int) -> int 
+    bin_op_function: (a: int = 5)
+
+So in RC_Code, the Parameter names + information about comptime + default values.
+Normally a function signature returns a Signature_Type, but when we detect that there
+are Polymorphic Arguments involved 
+
+I also think that all functions require parameters names, otherwise it is unspecified wheater
+    (int)
+is a function taking an integer, or just Type int in parenthesis.
+If you want to have a pointer somewhere, and don't write names, just use an alias
+    int_fn_type :: (a: int)
+    x_fn: int_fn_type = print_double
+    bin_op_fn_type :: (a: int, b: int) -> int
+    y_fn: bin_op_fn_type = add_int
+
+
+
+
+
+
+
+
+
+
+    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+------------------
+----- OTHERS -----
+------------------
+
+Metaprogramming:
+    In metaprogramming, the Coder creates a piece of code that creates other pieces of Code.
+    This is useful in Situations where we otherwise would need to have Code-Duplication,
+    or where the generation of the Code could be automated (E.g. Serialization, Printing, Simple Constructor/Destructor logic)
+
+    Compile-Time Code execution is also a means to:
+     - Replace traditional Build-Systems
+     - Metaprogramming
+     - Advanced Error detection/handling
+     - Code-Modifications (Automated logging, timing)
 
 Design Discussion: Templates (OLD)
 ----------------------------
@@ -134,7 +427,6 @@ Lets first look at how other languages approach this problem:
     };
 
     Odin: 
-    ip: *int = *i;
     If you put a $ before the variable definition, this means that it must be compile time known:
     foo :: ($T: Type, slice: []T, index: int) -> T {
         return slice[index];
@@ -218,7 +510,7 @@ sort_array :: (array: []$T, less_fn: (a: T, b: T) -> bool)
     }
 }
 
-The reason that C++ has Constacts, Java has Interfaces + Generict matching thing and Rust has Traits is that
+The reason that C++ has Contracts, Java has Interfaces + Generict matching thing and Rust has Traits is that
 in Polymorphic/Templated/Generic Code it is sometimes requires that a given type has some given properties.
 These could be:
     * has a member of name x of type int
@@ -228,14 +520,6 @@ These could be:
 
 In Jai and Odin, it seems like you just get an error, but I feel like I just want to pass a constant function as parameter to
 handle these cases. Maybe I should checkout what Zig does.
-    
-
-
-
-
-
-
-
 
 
 
@@ -248,7 +532,7 @@ All extern source declarations:
 /*
 To be fair at some point I want to be able to load extern sources from code.
 #run {
-    Compiler~load_file("whatever.upp");
+    Compiler~load_project("basic_datastructures.upp");
     Compiler~define_extern_header("adder", (a:int, b:int)->int);
     Compiler~load_c_header("cstdio");
     Compiler~add_lib("test.lib");
@@ -408,38 +692,6 @@ Implementation:
 
 
 
-
-Implementation:
----------------
-Todo:
- - Instanciation of Polymorphic functions
- - Polymorphic Functions Note: Return type may be dependent on a constant argument
- - Partial Compilations tracks dependencies of functions, but not of poly funciton instances, this has to be added
- - Maybe we have a problem with shadowing, where shadows aren't detected anymore...
- - Constant_Pool deduplication would be nice at some point
-
-Done:
- - Rework Function Header analysis with Poly-Function
-
-Use-Case/Design:
-----------------
-foo :: ($T: Type, x: T) -> T {
-    other := x;
-    other.value = 5;
-    return other;
-}
-
-Facts:
-------
- * A polymorphic function cannot be called, only an instance of it
- * An instance will always have a valid type-signature (E.g. without comptime variables or polymorphic types)
- * The only two usages after function declaration is: Taking a function pointer, or calling the function
- * When ModTree function signature is 0, then a header analysis dependency is returned
-
-Implementation Helper Facts:
- * ModTree function stores functions, but more importently, it is the argument to pass to the ir_code generator
- * So it seems like having another Modtree-thing, e.g. ModTree_Poly_Function would be more fitting
- * Symbols will then be able to refer to ModTree_Poly_Functions, expression results will return those...
 
 
 

@@ -328,7 +328,7 @@ void c_generator_register_type_name(C_Generator* generator, Type_Signature* type
         string_append_formated(&generator->section_struct_implementations, tmp.characters);
         break;
     }
-    case Signature_Type::ERROR_TYPE:
+    case Signature_Type::UNKNOWN_TYPE:
         panic("Should not happen in c_backend!");
         break;
     case Signature_Type::FUNCTION: 
@@ -864,7 +864,7 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
     // Create all Type_Signatures
     for (int i = 0; i < generator->compiler->type_system.types.size; i++) {
         Type_Signature* type = generator->compiler->type_system.types[i];
-        if (type == generator->compiler->type_system.error_type) continue;
+        if (type == generator->compiler->type_system.unknown_type) continue;
         c_generator_register_type_name(generator, generator->compiler->type_system.types[i]);
     }
 

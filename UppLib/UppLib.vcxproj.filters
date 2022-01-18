@@ -460,6 +460,9 @@
     <Text Include="..\resources\Examples.txt">
       <Filter>Resource Files</Filter>
     </Text>
+    <Text Include="..\resources\TMP.txt">
+      <Filter>Resource Files</Filter>
+    </Text>
   </ItemGroup>
   <ItemGroup>
     <None Include="..\resources\shaders\test.glsl">

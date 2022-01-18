@@ -143,6 +143,7 @@
   </ItemGroup>
   <ItemGroup>
     <Text Include="..\resources\Examples.txt" />
+    <Text Include="..\resources\TMP.txt" />
     <Text Include="..\resources\TODO.txt" />
   </ItemGroup>
   <ItemGroup>

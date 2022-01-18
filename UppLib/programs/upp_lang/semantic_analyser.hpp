@@ -292,6 +292,20 @@ struct ModTree_Program
     ModTree_Function* entry_function;
 };
 
+enum class Comptime_Result_Type
+{
+    AVAILABLE,
+    UNAVAILABLE, // The expression is comptime, but not evaluable due to the context (E.g. errors, Polymorphic parameters)
+    NOT_COMPTIME,
+};
+
+struct Comptime_Result
+{
+    Comptime_Result_Type type;
+    void* data;
+    Type_Signature* data_type;
+};
+
 
 
 
@@ -337,6 +351,8 @@ enum class Analysis_Workload_Type
     FUNCTION_CLUSTER_COMPILE,
     STRUCT_ANALYSIS,
     STRUCT_REACHABLE_RESOLVE,
+    BAKE_ANALYSIS,
+    BAKE_EXECUTION,
     DEFINITION,
 };
 
@@ -367,6 +383,14 @@ struct Analysis_Workload
             Dynamic_Array<Type_Signature*> struct_types;
             Dynamic_Array<Type_Signature*> unfinished_array_types;
         } struct_reachable;
+        struct {
+            ModTree_Function* bake_function;
+            Analysis_Workload* execute_workload;
+        } bake_analysis;
+        struct {
+            ModTree_Function* bake_function;
+            Comptime_Result result;
+        } bake_execute;
     } options;
 };
 

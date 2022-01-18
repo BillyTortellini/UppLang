@@ -29,7 +29,7 @@ void type_signature_append_to_string_with_children(String* string, Type_Signatur
         string_append_formated(string, "[]");
         type_signature_append_to_string_with_children(string, signature->options.array.element_type, print_child);
         break;
-    case Signature_Type::ERROR_TYPE:
+    case Signature_Type::UNKNOWN_TYPE:
         string_append_formated(string, "ERROR-Type");
         break;
     case Signature_Type::TYPE_TYPE:
@@ -111,7 +111,7 @@ void type_signature_append_value_to_string(Type_Signature* type, byte* value_ptr
         break;
     case Signature_Type::VOID_TYPE:
         break;
-    case Signature_Type::ERROR_TYPE:
+    case Signature_Type::UNKNOWN_TYPE:
         break;
     case Signature_Type::TYPE_TYPE: {
         u64 value = *(u64*)value_ptr;
@@ -327,8 +327,8 @@ void type_system_add_primitives(Type_System* system, Identifier_Pool* pool, Pred
         Type_Signature error_type;
         error_type.size = 0;
         error_type.alignment = 1;
-        error_type.type = Signature_Type::ERROR_TYPE;
-        system->error_type = type_system_register_type(system, error_type);
+        error_type.type = Signature_Type::UNKNOWN_TYPE;
+        system->unknown_type = type_system_register_type(system, error_type);
 
         Type_Signature void_type;
         void_type.type = Signature_Type::VOID_TYPE;
@@ -547,7 +547,7 @@ Internal_Type_Options_Tag signature_type_to_internal_type(Signature_Type type)
     {
     case Signature_Type::VOID_TYPE: return Internal_Type_Options_Tag::VOID_TYPE;
     case Signature_Type::TEMPLATE_TYPE:return Internal_Type_Options_Tag::VOID_TYPE;
-    case Signature_Type::ERROR_TYPE:return Internal_Type_Options_Tag::VOID_TYPE;
+    case Signature_Type::UNKNOWN_TYPE:return Internal_Type_Options_Tag::VOID_TYPE;
 
     case Signature_Type::TYPE_TYPE:return Internal_Type_Options_Tag::TYPE_TYPE;
     case Signature_Type::PRIMITIVE: return Internal_Type_Options_Tag::PRIMITIVE;
@@ -580,7 +580,7 @@ Type_Signature* type_system_register_type(Type_System* system, Type_Signature si
                 {
                 case Signature_Type::TYPE_TYPE: are_equal = true; break;
                 case Signature_Type::VOID_TYPE: are_equal = true; break;
-                case Signature_Type::ERROR_TYPE: are_equal = true; break;
+                case Signature_Type::UNKNOWN_TYPE: are_equal = true; break;
                 case Signature_Type::PRIMITIVE: are_equal = sig1->options.primitive.type == sig2->options.primitive.type &&
                     sig1->options.primitive.is_signed == sig2->options.primitive.is_signed && sig1->size == sig2->size; break;
                 case Signature_Type::POINTER: are_equal = sig1->options.pointer_child == sig2->options.pointer_child; break;
@@ -630,7 +630,7 @@ Type_Signature* type_system_register_type(Type_System* system, Type_Signature si
         case Signature_Type::ENUM:
             // Are both handled in finish type
         case Signature_Type::TEMPLATE_TYPE:
-        case Signature_Type::ERROR_TYPE:
+        case Signature_Type::UNKNOWN_TYPE:
         case Signature_Type::TYPE_TYPE:
         case Signature_Type::VOID_TYPE:
             break; // There are no options for these types
@@ -850,14 +850,20 @@ Type_Signature* type_system_make_pointer(Type_System* system, Type_Signature* ch
     return type_system_register_type(system, result);
 }
 
-Type_Signature* type_system_make_array(Type_System* system, Type_Signature* element_type, int element_count)
+Type_Signature* type_system_make_array(Type_System* system, Type_Signature* element_type, bool count_known, int element_count)
 {
     Type_Signature result;
     result.type = Signature_Type::ARRAY;
     result.alignment = element_type->alignment;
     result.size = element_type->size * element_count;
     result.options.array.element_type = element_type;
-    result.options.array.element_count = element_count;
+    result.options.array.count_known = count_known;
+    if (count_known) {
+        result.options.array.element_count = element_count;
+    }
+    else {
+        result.options.array.element_count = 1;
+    }
     return type_system_register_type(system, result);
 }
 

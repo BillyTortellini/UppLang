@@ -261,7 +261,7 @@ bool type_signature_contains_references(Type_Signature* signature)
     case Signature_Type::SLICE: return true;
     case Signature_Type::TEMPLATE_TYPE: return false;
     case Signature_Type::TYPE_TYPE: return false;
-    case Signature_Type::ERROR_TYPE: return false;
+    case Signature_Type::UNKNOWN_TYPE: return false;
     default: panic("");
     }
 
@@ -397,7 +397,7 @@ Constant_Status constant_pool_search_references(Constant_Pool* pool, int data_of
             Upp_Constant_Reference reference;
             reference.ptr_offset = data_offset;
             Offset_Result data_result = constant_pool_add_constant_internal(
-                pool, type_system_make_array(pool->type_system, signature->options.slice.element_type, slice.size), 
+                pool, type_system_make_array(pool->type_system, signature->options.slice.element_type, true, slice.size), 
                 array_create_static_as_bytes((byte*)slice.data_ptr, signature->options.slice.element_type->size * slice.size)
             );
             if (data_result.status != Constant_Status::SUCCESS) return data_result.status;
@@ -410,7 +410,7 @@ Constant_Status constant_pool_search_references(Constant_Pool* pool, int data_of
     }
     case Signature_Type::TEMPLATE_TYPE:
     case Signature_Type::TYPE_TYPE:
-    case Signature_Type::ERROR_TYPE:
+    case Signature_Type::UNKNOWN_TYPE:
         break;
     default: panic("");
     }

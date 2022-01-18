@@ -29,8 +29,7 @@ enum class Signature_Type
     SLICE, // Array with dynamic size, []int
     TEMPLATE_TYPE,
     TYPE_TYPE,
-    ERROR_TYPE,
-    // Future: Enum and Unions
+    UNKNOWN_TYPE, // When errors occure we contine the analysis with unknown
 };
 
 struct Type_Signature;
@@ -74,6 +73,7 @@ struct Type_Signature
         Type_Signature* pointer_child;
         struct {
             Type_Signature* element_type;
+            bool count_known; // False in case of polymorphism or when Errors occured
             int element_count;
         } array;
         struct {
@@ -238,7 +238,7 @@ struct Type_System
     Dynamic_Array<Internal_Type_Information> internal_type_infos;
     u64 next_internal_index;
 
-    Type_Signature* error_type;
+    Type_Signature* unknown_type;
     Type_Signature* bool_type;
     Type_Signature* i8_type;
     Type_Signature* i16_type;
@@ -274,7 +274,7 @@ void type_system_finish_type(Type_System* system, Type_Signature* type);
 Type_Signature* type_system_make_primitive(Type_System* system, Primitive_Type type, int size, bool is_signed);
 Type_Signature* type_system_make_pointer(Type_System* system, Type_Signature* child_type);
 Type_Signature* type_system_make_slice(Type_System* system, Type_Signature* element_type);
-Type_Signature* type_system_make_array(Type_System* system, Type_Signature* element_type, int element_count);
+Type_Signature* type_system_make_array(Type_System* system, Type_Signature* element_type, bool count_known, int element_count);
 Type_Signature* type_system_make_function(Type_System* system, Dynamic_Array<Type_Signature*> parameter_types, Type_Signature* return_type);
 Type_Signature* type_system_make_template(Type_System* system, String* id);
 struct AST_Node;
