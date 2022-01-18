@@ -204,6 +204,7 @@ vec3 symbol_type_to_color(Symbol_Type type)
     case Symbol_Type::UNRESOLVED: return IDENTIFIER_FALLBACK_COLOR; 
     case Symbol_Type::ERROR_SYMBOL: return IDENTIFIER_FALLBACK_COLOR; 
     case Symbol_Type::VARIABLE_UNDEFINED: return VARIABLE_COLOR; 
+    case Symbol_Type::POLYMORPHIC_PARAMETER: return VARIABLE_COLOR; 
     default: panic("");
     }
     return IDENTIFIER_FALLBACK_COLOR;

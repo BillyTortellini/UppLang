@@ -251,22 +251,49 @@ struct ModTree_Variable
     Symbol* symbol; // May be null
 };
 
+
+struct ModTree_Parameter
+{
+    String* name;
+    Type_Signature* data_type;
+    bool is_comptime;
+    union {
+        ModTree_Variable* variable;
+    } options;
+};
+
 enum class ModTree_Function_Type
 {
-    FUNCTION,
-    HARDCODED_FUNCTION,
-    EXTERN_FUNCTION,
+    NORMAL,
+    POLYMORPHIC_BASE,
+    POLYMOPRHIC_INSTANCE,
 };
 
 struct ModTree_Function
 {
     ModTree_Block* body;
-    Dynamic_Array<ModTree_Variable*> parameters;
+    Dynamic_Array<ModTree_Parameter> parameters;
+    Type_Signature* return_type;
+
     Symbol* symbol;
     Type_Signature* signature;
 
+    // Polymorphic infos
+    ModTree_Function_Type type;
+    union 
+    {
+        struct {
+            int poly_argument_count;
+        } base;
+        struct {
+            ModTree_Function* instance_base_function;
+            Dynamic_Array<Upp_Constant> poly_arguments;
+        } instance;
+    } options;
+
     // Infos
     bool contains_errors; // NOTE: contains_errors and is_runnable are actually 2 different things, but I only care about runnable for bake
+    bool is_runnable;
     Dynamic_Array<ModTree_Function*> called_from;
     Dynamic_Array<ModTree_Function*> calls;
 };
@@ -374,8 +401,11 @@ struct Analysis_Workload
 
     // Payload
     struct {
-        ModTree_Function* function;
+        ModTree_Function* function_header;
         Type_Signature* struct_analysis_type;
+        struct {
+            ModTree_Function* function;
+        } function_body;
         struct {
             Dynamic_Array<ModTree_Function*> functions;
         } cluster_compile;
@@ -413,6 +443,7 @@ struct Dependency_Graph
     Semantic_Analyser* analyser;
     Dynamic_Array<Analysis_Workload*> workloads;
     Dynamic_Array<Analysis_Workload*> runnable_workloads;
+    bool progress_was_made;
 
     Hashtable<Workload_Pair, Dependency_Information> workload_dependencies;
     Hashtable<RC_Analysis_Item*, Analysis_Workload*> item_to_workload_mapping;
@@ -451,6 +482,7 @@ struct Semantic_Analyser
     Analysis_Workload* current_workload;
     ModTree_Function* current_function;
     bool statement_reachable;
+    int error_flag_count;
 
     Hashset<String*> loaded_filenames;
     Stack_Allocator allocator_values;

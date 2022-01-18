@@ -269,6 +269,7 @@ enum class Symbol_Type
 {
     UNRESOLVED,
     VARIABLE_UNDEFINED,
+    POLYMORPHIC_PARAMETER,
 
     HARDCODED_FUNCTION,
     EXTERN_FUNCTION,
@@ -294,6 +295,10 @@ struct Symbol
         Type_Signature* type;
         Upp_Constant constant;
         Symbol* alias;
+        struct {
+            int parameter_index;
+            ModTree_Function* function;
+        } polymorphic;
     } options;
 
     String* id;

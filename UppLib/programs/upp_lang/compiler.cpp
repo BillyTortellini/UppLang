@@ -695,7 +695,8 @@ void compiler_switch_timing_task(Compiler* compiler, Timing_Task task)
 }
 
 bool compiler_errors_occured(Compiler* compiler) {
-    return !(compiler->parser->errors.size == 0 && compiler->analyser->errors.size == 0 && compiler->rc_analyser->errors.size == 0);
+    return !(compiler->parser->errors.size == 0 && compiler->analyser->errors.size == 0 &&
+        compiler->rc_analyser->errors.size == 0 && compiler->analyser->error_flag_count == 0);
 }
 
 void compiler_compile(Compiler* compiler, String source_code, bool generate_code)

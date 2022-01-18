@@ -1373,6 +1373,7 @@ void ir_generator_generate_queued_items(IR_Generator* generator)
         ModTree_Function* mod_func = generator->queue_functions[i];
         assert(mod_func->signature != 0, "");
         assert(!mod_func->contains_errors, "");
+        if (mod_func->type == ModTree_Function_Type::POLYMORPHIC_BASE) continue;
         if (hashtable_find_element(&generator->function_mapping, mod_func) != 0) continue;
 
         IR_Function* ir_func = new IR_Function;
@@ -1390,7 +1391,7 @@ void ir_generator_generate_queued_items(IR_Generator* generator)
             access.is_memory_access = false;
             access.option.function = ir_func;
             access.index = j;
-            hashtable_insert_element(&generator->variable_mapping, mod_func->parameters[j], access);
+            hashtable_insert_element(&generator->variable_mapping, mod_func->parameters[j].options.variable, access);
         }
     }
     dynamic_array_reset(&generator->queue_functions);

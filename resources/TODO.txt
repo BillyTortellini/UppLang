@@ -72,9 +72,6 @@ double_array :: (ip, i)
 
 
 
-TODO: 
-    - Custom Workload for Bake
-    - Function-Cluster Compile Dependencies are added during analysis, not during Symbol-Resolve
 
 
 
@@ -97,6 +94,21 @@ Dependencies and Polymorphism:
     To continue analysing the current Item the Instance-Workload isn't required to be finished.
 
 
+
+
+
+IMPL:
+-----
+foo :: ($count: int) {
+    x: [count]int;
+}
+
+Problem:
+ - Polymorphic Base Analysis may contain errors due to Unkown-Types (Error flag is set)
+ - A polymorphic Instance can only be created if the Base-Function does not have any errors
+
+ --> We need to differentiate between Errors based on Unknowns, and True-Errors, which are
+     always errors regardless of the unknown. (Basically Difference Log-Error and set-error-flag)
 
 
 

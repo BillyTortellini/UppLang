@@ -325,7 +325,7 @@ void type_system_add_primitives(Type_System* system, Identifier_Pool* pool, Pred
     system->f64_type = type_system_make_primitive(system, Primitive_Type::FLOAT, 8, true);
     {
         Type_Signature error_type;
-        error_type.size = 0;
+        error_type.size = 1;
         error_type.alignment = 1;
         error_type.type = Signature_Type::UNKNOWN_TYPE;
         system->unknown_type = type_system_register_type(system, error_type);
@@ -855,7 +855,6 @@ Type_Signature* type_system_make_array(Type_System* system, Type_Signature* elem
     Type_Signature result;
     result.type = Signature_Type::ARRAY;
     result.alignment = element_type->alignment;
-    result.size = element_type->size * element_count;
     result.options.array.element_type = element_type;
     result.options.array.count_known = count_known;
     if (count_known) {
@@ -864,6 +863,7 @@ Type_Signature* type_system_make_array(Type_System* system, Type_Signature* elem
     else {
         result.options.array.element_count = 1;
     }
+    result.size = element_type->size * result.options.array.element_count;
     return type_system_register_type(system, result);
 }
 

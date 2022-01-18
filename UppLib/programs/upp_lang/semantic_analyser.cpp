@@ -37,14 +37,18 @@ void analysis_workload_add_struct_dependency(
     Dependency_Graph* graph, Analysis_Workload* my_workload, Struct_Progress* other_progress, RC_Dependency_Type type, RC_Symbol_Read* symbol_read);
 void semantic_analyser_fill_block(Semantic_Analyser* analyser, ModTree_Block* block, RC_Block* rc_block);
 void analysis_workload_append_to_string(Analysis_Workload* workload, String* string);
+Analysis_Workload* dependency_graph_add_workload_empty(Dependency_Graph* graph, Analysis_Workload_Type type, RC_Analysis_Item* item, bool add_item_dependencies);
+void analysis_workload_check_if_runnable(Dependency_Graph* graph, Analysis_Workload* workload);
 
 /*
 ERROR Helpers
 */
 void semantic_analyser_set_error_flag(Semantic_Analyser* analyser) 
 {
+    analyser->error_flag_count += 1;
     if (analyser->current_function != 0) {
         analyser->current_function->contains_errors = true;
+        analyser->current_function->is_runnable = false;
     }
 }
 
@@ -225,21 +229,64 @@ ModTree_Variable* modtree_block_add_variable(ModTree_Block* block, Type_Signatur
 ModTree_Function* modtree_function_create_empty(ModTree_Program* program, Type_Signature* signature, Symbol* symbol, RC_Block* body_block)
 {
     ModTree_Function* function = new ModTree_Function;
-    function->parameters = dynamic_array_create_empty<ModTree_Variable*>(1);
+    function->type = ModTree_Function_Type::NORMAL;
+    function->parameters = dynamic_array_create_empty<ModTree_Parameter>(1);
+    function->return_type = 0;
     function->symbol = symbol;
     function->signature = signature;
     function->called_from = dynamic_array_create_empty<ModTree_Function*>(1);
     function->calls = dynamic_array_create_empty<ModTree_Function*>(1);
     function->body = modtree_block_create_empty(body_block);
     function->contains_errors = false;
+    function->is_runnable = true;
     dynamic_array_push_back(&program->functions, function);
     return function;
+}
+
+ModTree_Function* modtree_function_create_poly_instance(Semantic_Analyser* analyser, ModTree_Function* base_function, Dynamic_Array<Upp_Constant> arguments)
+{
+    ModTree_Function* instance = modtree_function_create_empty(analyser->program, base_function->signature, base_function->symbol, base_function->body->rc_block);
+    instance->type = ModTree_Function_Type::POLYMOPRHIC_INSTANCE;
+    instance->return_type = base_function->return_type;
+    for (int i = 0; i < base_function->parameters.size; i++) {
+        if (base_function->parameters[i].is_comptime) continue;
+        dynamic_array_push_back(&instance->parameters, base_function->parameters[i]);
+    }
+    instance->options.instance.instance_base_function = base_function;
+    instance->options.instance.poly_arguments = arguments;
+    assert(arguments.size == base_function->options.base.poly_argument_count, "");
+
+    // Create Workloads
+    Function_Progress* base_progress = hashtable_find_element(&analyser->dependency_graph.progress_functions, base_function);
+    assert(base_progress != 0, "");
+    Analysis_Workload* body_workload = dependency_graph_add_workload_empty(
+        &analyser->dependency_graph, Analysis_Workload_Type::FUNCTION_BODY, base_progress->body_workload->analysis_item, false
+    );
+    analysis_workload_add_dependency_internal(&analyser->dependency_graph, body_workload, base_progress->body_workload, 0);
+    body_workload->options.function_body.function = instance;
+    analysis_workload_check_if_runnable(&analyser->dependency_graph, body_workload); // Required so that progress made is set
+
+    Analysis_Workload* compile_workload = dependency_graph_add_workload_empty(&analyser->dependency_graph, Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE, 0, false);
+    compile_workload->options.cluster_compile.functions = dynamic_array_create_empty<ModTree_Function*>(1);
+    dynamic_array_push_back(&compile_workload->options.cluster_compile.functions, instance);
+    analysis_workload_add_dependency_internal(&analyser->dependency_graph, compile_workload, body_workload, 0);
+
+    Function_Progress initial_state;
+    initial_state.state = Function_State::HEADER_ANALYSED;
+    initial_state.header_workload = 0;
+    initial_state.body_workload = body_workload;
+    initial_state.compile_workload = compile_workload;
+    hashtable_insert_element(&analyser->dependency_graph.progress_functions, instance, initial_state);
+
+    return instance;
 }
 
 void modtree_function_destroy(ModTree_Function* function)
 {
     for (int i = 0; i < function->parameters.size; i++) {
-        delete function->parameters[i];
+        if (!function->parameters[i].is_comptime) {
+            delete function->parameters[i].options.variable;
+        }
     }
     dynamic_array_destroy(&function->parameters);
     dynamic_array_destroy(&function->called_from);
@@ -248,14 +295,24 @@ void modtree_function_destroy(ModTree_Function* function)
     delete function;
 }
 
-ModTree_Variable* modtree_function_add_parameter(ModTree_Function* function, Type_Signature* type, Symbol* symbol)
+ModTree_Variable* modtree_variable_create(Type_Signature* type, Symbol* symbol)
 {
     ModTree_Variable* var = new ModTree_Variable;
     assert(type != 0, "");
     var->data_type = type;
     var->symbol = symbol;
-    dynamic_array_push_back(&function->parameters, var);
     return var;
+}
+
+ModTree_Variable* modtree_function_add_normal_parameter(ModTree_Function* function, Type_Signature* type, String* name)
+{
+    ModTree_Parameter param;
+    param.data_type = type;
+    param.is_comptime = false;
+    param.name = name;
+    param.options.variable = modtree_variable_create(type, 0);
+    dynamic_array_push_back(&function->parameters, param);
+    return param.options.variable;
 }
 
 ModTree_Variable* modtree_program_add_global(ModTree_Program* program, Type_Signature* type, Symbol* symbol)
@@ -944,6 +1001,7 @@ Dependency_Graph dependency_graph_create(Semantic_Analyser* analyser)
     result.progress_definitions = hashtable_create_pointer_empty<Symbol*, Analysis_Workload*>(8);
     result.progress_structs = hashtable_create_pointer_empty<Type_Signature*, Struct_Progress>(8);
     result.progress_functions = hashtable_create_pointer_empty<ModTree_Function*, Function_Progress>(8);
+    result.progress_was_made = false;
     return result;
 }
 
@@ -1136,7 +1194,7 @@ void analysis_workload_add_cluster_dependency(Dependency_Graph* graph, Analysis_
         (add_to_workload->type == Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE && dependency->type == Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE), "");
     Analysis_Workload* merge_into = analysis_workload_find_associated_cluster(add_to_workload);
     Analysis_Workload* merge_from = analysis_workload_find_associated_cluster(dependency);
-    if (merge_into == merge_into || merge_from->is_finished) {
+    if (merge_into == merge_from || merge_from->is_finished) {
         return;
     }
 
@@ -1344,7 +1402,7 @@ void dependency_graph_resolve(Dependency_Graph* graph)
     while (true)
     {
         SCOPE_EXIT(round_no += 1);
-        bool progress_was_made = false;
+        graph->progress_was_made = false;
         // Check if symbols can be resolved (TODO: Have a symbol defined 'message' system)
         for (int i = 0; i < unresolved_symbols_workloads.size; i++)
         {
@@ -1359,7 +1417,7 @@ void dependency_graph_resolve(Dependency_Graph* graph)
                     if (symbol_read->symbol == 0) {
                         continue;
                     }
-                    progress_was_made = true;
+                    graph->progress_was_made = true;
                 }
 
                 bool symbol_read_ready = true;
@@ -1399,9 +1457,6 @@ void dependency_graph_resolve(Dependency_Graph* graph)
                     }
                     break;
                 }
-                case Symbol_Type::VARIABLE_UNDEFINED: {
-                    break;
-                }
                 default: break;
                 }
 
@@ -1418,7 +1473,7 @@ void dependency_graph_resolve(Dependency_Graph* graph)
                 if (workload->dependencies.count == 0) {
                     dynamic_array_push_back(&graph->runnable_workloads, workload);
                 }
-                progress_was_made = true;
+                graph->progress_was_made = true;
             }
         }
 
@@ -1428,9 +1483,10 @@ void dependency_graph_resolve(Dependency_Graph* graph)
             String tmp = string_create_empty(256);
             SCOPE_EXIT(string_destroy(&tmp));
             string_append_formated(&tmp, "Workload Execution Round %d\n---------------------\n", round_no);
-            for (int i = 0; i < graph->workloads.size; i++) 
+            for (int i = 0; i < graph->workloads.size; i++)
             {
                 Analysis_Workload* workload = graph->workloads[i];
+                if (workload->is_finished) continue;
                 analysis_workload_append_to_string(workload, &tmp);
                 string_append_formated(&tmp, "\n");
                 List_Node<Analysis_Workload*>* dependency_node = workload->dependencies.head;
@@ -1445,8 +1501,6 @@ void dependency_graph_resolve(Dependency_Graph* graph)
             logg("%s", tmp.characters);
         }
 
-
-
         // Execute runnable workloads
         for (int i = 0; i < graph->runnable_workloads.size; i++)
         {
@@ -1457,7 +1511,7 @@ void dependency_graph_resolve(Dependency_Graph* graph)
                 continue;
             }
             //assert(!workload->is_finished, "");
-            progress_was_made = true;
+            graph->progress_was_made = true;
 
             String tmp = string_create_empty(128);
             analysis_workload_append_to_string(workload, &tmp);
@@ -1480,7 +1534,7 @@ void dependency_graph_resolve(Dependency_Graph* graph)
             }
         }
         dynamic_array_reset(&graph->runnable_workloads);
-        if (progress_was_made) continue;
+        if (graph->progress_was_made) continue;
 
         // Check if all workloads finished
         {
@@ -1635,10 +1689,10 @@ void dependency_graph_resolve(Dependency_Graph* graph)
                     dependency_graph_remove_dependency(graph, workload, depends_on);
                 }
                 assert(only_reads_was_found, "");
-                progress_was_made = true;
+                graph->progress_was_made = true;
             }
         }
-        if (progress_was_made) {
+        if (graph->progress_was_made) {
             continue;
         }
 
@@ -1664,6 +1718,7 @@ void dependency_graph_resolve(Dependency_Graph* graph)
         }
 
         for (int i = 0; i < lowest->symbol_dependencies.size; i++) {
+            semantic_analyser_log_error(graph->analyser, Semantic_Error_Type::SYMBOL_TABLE_UNRESOLVED_SYMBOL, lowest->symbol_dependencies[i]->identifier_node);
             lowest->symbol_dependencies[i]->symbol = graph->analyser->compiler->rc_analyser->predefined_symbols.error_symbol;
         }
         dynamic_array_reset(&lowest->symbol_dependencies);
@@ -1681,6 +1736,7 @@ void dependency_graph_add_item_mapping(Dependency_Graph* graph, Analysis_Workloa
 
 Analysis_Workload* dependency_graph_add_workload_empty(Dependency_Graph* graph, Analysis_Workload_Type type, RC_Analysis_Item* item, bool add_item_dependencies)
 {
+    graph->progress_was_made = true;
     Analysis_Workload* workload = new Analysis_Workload;
     workload->dependencies = list_create<Analysis_Workload*>();
     workload->dependents = list_create<Analysis_Workload*>();
@@ -1690,7 +1746,7 @@ Analysis_Workload* dependency_graph_add_workload_empty(Dependency_Graph* graph, 
     workload->cluster = 0;
     workload->reachable_clusters = dynamic_array_create_empty<Analysis_Workload*>(1);
     workload->analysis_item = item;
-    if (item != 0) {
+    if (item != 0 && add_item_dependencies) {
         for (int i = 0; i < item->symbol_dependencies.size; i++) {
             dynamic_array_push_back(&workload->symbol_dependencies, item->symbol_dependencies[i]);
         }
@@ -1765,13 +1821,13 @@ Analysis_Workload* dependency_graph_add_workload_from_item(Dependency_Graph* gra
         workload = dependency_graph_add_workload_empty(graph, Analysis_Workload_Type::FUNCTION_HEADER, item, true);
         analysis_workload_create_child_workloads(graph, workload, workload->analysis_item);
         dependency_graph_add_item_mapping(graph, workload, item);
-        workload->options.function = function;
+        workload->options.function_header = function;
 
-        Analysis_Workload* body_workload= dependency_graph_add_workload_empty(
+        Analysis_Workload* body_workload = dependency_graph_add_workload_empty(
             graph, Analysis_Workload_Type::FUNCTION_BODY, item->options.function.body_item, true
         );
         dependency_graph_add_item_mapping(graph, body_workload, item->options.function.body_item);
-        body_workload->options.function = function;
+        body_workload->options.function_body.function = function;
         analysis_workload_create_child_workloads(graph, body_workload, body_workload->analysis_item);
         analysis_workload_add_dependency_internal(graph, body_workload, workload, 0);
 
@@ -1832,6 +1888,14 @@ Analysis_Workload* dependency_graph_add_workload_from_item(Dependency_Graph* gra
     }
 
     return workload;
+}
+
+void analysis_workload_check_if_runnable(Dependency_Graph* graph, Analysis_Workload* workload)
+{
+    if (!workload->is_finished && workload->symbol_dependencies.size == 0 && workload->dependencies.count == 0) {
+        dynamic_array_push_back(&graph->runnable_workloads, workload);
+        graph->progress_was_made = true;
+    }
 }
 
 void semantic_analyser_work_through_defers(Semantic_Analyser* analyser, ModTree_Block* modtree_block, int defer_start_index)
@@ -1908,6 +1972,7 @@ bool analysis_workload_execute(Analysis_Workload* workload, Semantic_Analyser* a
                 }
                 case Comptime_Result_Type::NOT_COMPTIME: {
                     semantic_analyser_log_error(analyser, Semantic_Error_Type::COMPTIME_DEFINITION_MUST_BE_COMPTIME_KNOWN, definition->value_expression.value);
+                    symbol->type = Symbol_Type::ERROR_SYMBOL;
                     return true;
                 }
                 default: panic("");
@@ -1971,19 +2036,58 @@ bool analysis_workload_execute(Analysis_Workload* workload, Semantic_Analyser* a
     case Analysis_Workload_Type::FUNCTION_HEADER:
     {
         auto header = &workload->analysis_item->options.function;
-        ModTree_Function* function = workload->options.function;
+        ModTree_Function* function = workload->options.function_header;
         analyser->current_function = function;
 
-        Type_Signature* signature = semantic_analyser_analyse_expression_type(analyser, header->signature_expression);
-        function->signature = signature;
-        assert(signature->type == Signature_Type::FUNCTION, "");
-        assert(header->parameter_symbols.size == signature->options.function.parameter_types.size, "");
-        for (int i = 0; i < header->parameter_symbols.size; i++) {
-            ModTree_Variable* param = modtree_function_add_parameter(function, signature->options.function.parameter_types[i], header->parameter_symbols[i]);
-            header->parameter_symbols[i]->type = Symbol_Type::VARIABLE;
-            header->parameter_symbols[i]->options.variable = param;
+        // Analyser Header
+        auto rc_sig = &header->signature_expression->options.function_signature;
+        assert(rc_sig->parameters.size == header->parameter_symbols.size, "");
+        int polymorphic_count = 0;
+        for (int i = 0; i < rc_sig->parameters.size; i++)
+        {
+            RC_Parameter* rc_param = &rc_sig->parameters[i];
+            Symbol* symbol = header->parameter_symbols[i];
+            ModTree_Parameter modtree_param;
+            modtree_param.data_type = semantic_analyser_analyse_expression_type(analyser, rc_sig->parameters[i].type_expression);
+            modtree_param.is_comptime = rc_param->is_comptime;
+            modtree_param.name = rc_param->param_id;
+            if (rc_param->is_comptime) {
+                symbol->type = Symbol_Type::POLYMORPHIC_PARAMETER;
+                symbol->options.polymorphic.parameter_index = i;
+                symbol->options.polymorphic.function = function;
+                polymorphic_count += 1;
+            }
+            else {
+                modtree_param.options.variable = modtree_variable_create(
+                    modtree_param.data_type, header->parameter_symbols[i]
+                );
+                symbol->type = Symbol_Type::VARIABLE;
+                symbol->options.variable = modtree_param.options.variable;
+            }
+            dynamic_array_push_back(&function->parameters, modtree_param);
+        }
+        if (rc_sig->return_type_expression.available) {
+            function->return_type = semantic_analyser_analyse_expression_type(analyser, rc_sig->return_type_expression.value);
+        }
+        else {
+            function->return_type = analyser->compiler->type_system.void_type;
+        }
+        if (polymorphic_count > 0) {
+            function->type = ModTree_Function_Type::POLYMORPHIC_BASE;
+            function->options.base.poly_argument_count = polymorphic_count;
+            function->is_runnable = false;
         }
 
+        // Create function signature
+        Dynamic_Array<Type_Signature*> param_types = dynamic_array_create_empty<Type_Signature*>(math_maximum(0, rc_sig->parameters.size));
+        for (int i = 0; i < function->parameters.size; i++) {
+            if (!function->parameters[i].is_comptime) {
+                dynamic_array_push_back(&param_types, function->parameters[i].data_type);
+            }
+        }
+        function->signature = type_system_make_function(&analyser->compiler->type_system, param_types, function->return_type);
+
+        // Advance function progress
         Function_Progress* progress = hashtable_find_element(&analyser->dependency_graph.progress_functions, function);
         assert(progress != 0, "");
         progress->state = Function_State::HEADER_ANALYSED;
@@ -1992,9 +2096,17 @@ bool analysis_workload_execute(Analysis_Workload* workload, Semantic_Analyser* a
     case Analysis_Workload_Type::FUNCTION_BODY:
     {
         auto rc_body_block = workload->analysis_item->options.function_body;
-        ModTree_Function* function = workload->options.function;
+        ModTree_Function* function = workload->options.function_body.function;
         analyser->current_function = function;
         ModTree_Block* block = function->body;
+
+        if (function->type == ModTree_Function_Type::POLYMOPRHIC_INSTANCE) {
+            ModTree_Function* base = function->options.instance.instance_base_function;
+            if (base->contains_errors) {
+                function->contains_errors = true;
+                break;
+            }
+        }
 
         dynamic_array_reset(&analyser->block_stack);
         analyser->statement_reachable = true;
@@ -2032,7 +2144,7 @@ bool analysis_workload_execute(Analysis_Workload* workload, Semantic_Analyser* a
         {
             ModTree_Function* function = workload->options.cluster_compile.functions[i];
             if (cluster_contains_error) {
-                function->contains_errors = true;
+                function->is_runnable = false;
             }
             else {
                 ir_generator_queue_function(analyser->compiler->ir_generator, function);
@@ -2113,8 +2225,8 @@ bool analysis_workload_execute(Analysis_Workload* workload, Semantic_Analyser* a
             return true;
         }
         for (int i = 0; i < bake_function->calls.size; i++) {
-            if (bake_function->calls[i]->contains_errors) {
-                bake_function->contains_errors = true;
+            if (!bake_function->calls[i]->is_runnable) {
+                bake_function->is_runnable = false;
                 *result = comptime_result_make_unavailable(bake_function->signature->options.function.return_type);
                 return true;
             }
@@ -2340,9 +2452,16 @@ void analysis_workload_append_to_string(Analysis_Workload* workload, String* str
         break;
     }
     case Analysis_Workload_Type::FUNCTION_BODY: {
-        Symbol* symbol = workload->options.function->symbol;
+        Symbol* symbol = workload->options.function_body.function->symbol;
         const char* fn_id = symbol == 0 ? "Lambda" : symbol->id->characters;
-        string_append_formated(string, "Body \"%s\"", fn_id);
+        const char* appendix = "";
+        if (workload->options.function_body.function->type == ModTree_Function_Type::POLYMORPHIC_BASE) {
+            appendix = "(Polymorphic Base)";
+        }
+        else if (workload->options.function_body.function->type == ModTree_Function_Type::POLYMOPRHIC_INSTANCE) {
+            appendix = "(Polymorphic Instance)";
+        }
+        string_append_formated(string, "Body \"%s\"%s", fn_id, appendix);
         break;
     }
     case Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE:
@@ -2358,7 +2477,7 @@ void analysis_workload_append_to_string(Analysis_Workload* workload, String* str
         break;
     }
     case Analysis_Workload_Type::FUNCTION_HEADER: {
-        Symbol* symbol = workload->options.function->symbol;
+        Symbol* symbol = workload->options.function_header->symbol;
         const char* fn_id = symbol == 0 ? "Anonymous" : symbol->id->characters;
         string_append_formated(string, "Header \"%s\"", fn_id);
         break;
@@ -2574,11 +2693,83 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
         Type_Signature* function_signature = 0;
         switch (function_expr_result.type)
         {
-        case Expression_Result_Type::FUNCTION: {
-            expr_result->options.function_call.call_type = ModTree_Call_Type::FUNCTION;
-            expr_result->options.function_call.options.function = function_expr_result.options.function;
-            function_signature = function_expr_result.options.function->signature;
-            break;
+        case Expression_Result_Type::FUNCTION:
+        {
+            // Function calls now get a different Code-Path, because of Polymorphic Functions
+            Dynamic_Array<RC_Expression*> arguments = rc_expression->options.function_call.arguments;
+            auto call = &expr_result->options.function_call;
+            call->call_type = ModTree_Call_Type::FUNCTION;
+            call->arguments = dynamic_array_create_empty<ModTree_Expression*>(1);
+            call->options.function = function_expr_result.options.function;
+
+            ModTree_Function* function = function_expr_result.options.function;
+            int compare_error_flag_count = analyser->error_flag_count;
+            if (arguments.size != function->parameters.size) {
+                semantic_analyser_log_error(analyser, Semantic_Error_Type::FUNCTION_CALL_ARGUMENT_SIZE_MISMATCH, rc_expression);
+                semantic_analyser_add_error_info(analyser, error_information_make_argument_count(arguments.size, function->parameters.size));
+                semantic_analyser_add_error_info(analyser, error_information_make_function_type(function->signature));
+            }
+            // Parse arguments
+            for (int i = 0; i < arguments.size && i < function->parameters.size; i++) {
+                ModTree_Expression* argument_expr = semantic_analyser_analyse_expression_value(
+                    analyser, arguments[i], expression_context_make_specific_type(function->parameters[i].data_type)
+                );
+                dynamic_array_push_back(&call->arguments, argument_expr);
+            }
+            // Analyse overflowing arguments 
+            for (int i = function->parameters.size; i < arguments.size; i++) {
+                dynamic_array_push_back(&call->arguments,
+                    semantic_analyser_analyse_expression_value(analyser, arguments[i], expression_context_make_unknown())
+                );
+            }
+
+            bool instanciate_function = analyser->error_flag_count == compare_error_flag_count;
+            if (function->type == ModTree_Function_Type::POLYMORPHIC_BASE && instanciate_function)
+            {
+                Dynamic_Array<Upp_Constant> comptime_parameters = dynamic_array_create_empty<Upp_Constant>(function->options.base.poly_argument_count);
+                // Run over all parameters and evaluate their constant value
+                for (int i = 0; i < function->parameters.size; i++)
+                {
+                    if (!function->parameters[i].is_comptime) continue;
+                    Comptime_Result comptime = modtree_expression_calculate_comptime_value(analyser, call->arguments[i]);
+                    switch (comptime.type)
+                    {
+                    case Comptime_Result_Type::AVAILABLE:
+                    {
+                        Constant_Result result = constant_pool_add_constant(
+                            &analyser->compiler->constant_pool, call->arguments[i]->result_type,
+                            array_create_static((byte*)comptime.data, comptime.data_type->size)
+                        );
+                        if (result.status != Constant_Status::SUCCESS) {
+                            semantic_analyser_log_error(analyser, Semantic_Error_Type::COMPTIME_ARGUMENT_NOT_KNOWN_AT_COMPTIME, arguments[i]);
+                            semantic_analyser_add_error_info(analyser, error_information_make_constant_status(result.status));
+                            instanciate_function = false;
+                        }
+                        else {
+                            dynamic_array_push_back(&comptime_parameters, result.constant);
+                        }
+                        break;
+                    }
+                    case Comptime_Result_Type::UNAVAILABLE:
+                        instanciate_function = false;
+                        break;
+                    case Comptime_Result_Type::NOT_COMPTIME: {
+                        semantic_analyser_log_error(analyser, Semantic_Error_Type::COMPTIME_ARGUMENT_NOT_KNOWN_AT_COMPTIME, arguments[i]);
+                        instanciate_function = false;
+                        break;
+                    }
+                    default: panic("");
+                    }
+                }
+
+                // Instanciate function
+                if (instanciate_function) {
+                    call->options.function = modtree_function_create_poly_instance(analyser, function, comptime_parameters);
+                    analysis_workload_register_function_call(analyser, call->options.function);
+                }
+            }
+            expr_result->result_type = call->options.function->return_type;
+            return expression_result_make_value(expr_result);
         }
         case Expression_Result_Type::HARDCODED_FUNCTION: {
             expr_result->options.function_call.call_type = ModTree_Call_Type::HARDCODED_FUNCTION;
@@ -2586,7 +2777,6 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
             function_signature = function_expr_result.options.hardcoded_function->signature;
             break;
         }
-
         case Expression_Result_Type::EXTERN_FUNCTION: {
             expr_result->options.function_call.call_type = ModTree_Call_Type::EXTERN_FUNCTION;
             expr_result->options.function_call.options.extern_function = function_expr_result.options.extern_function;
@@ -2719,6 +2909,32 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
         case Symbol_Type::VARIABLE_UNDEFINED: {
             semantic_analyser_log_error(analyser, Semantic_Error_Type::VARIABLE_NOT_DEFINED_YET, rc_expression);
             return expression_result_make_error(type_system->unknown_type);
+        }
+        case Symbol_Type::POLYMORPHIC_PARAMETER: {
+            assert(analyser->current_workload->type == Analysis_Workload_Type::FUNCTION_BODY, "");
+            ModTree_Function* function = analyser->current_workload->options.function_body.function;
+            switch (function->type)
+            {
+            case ModTree_Function_Type::NORMAL: {
+                panic("Normally I dont access polymorphic parameters in a non-polymorphic context");
+            }
+            case ModTree_Function_Type::POLYMORPHIC_BASE: {
+                ModTree_Parameter* param = &symbol->options.polymorphic.function->parameters[symbol->options.polymorphic.parameter_index];
+                assert(param->is_comptime, "");
+                return expression_result_make_error(param->data_type);
+            }
+            case ModTree_Function_Type::POLYMOPRHIC_INSTANCE: {
+                Upp_Constant arg = function->options.instance.poly_arguments[symbol->options.polymorphic.parameter_index];
+                ModTree_Expression* comptime_arg_read = modtree_expression_create_empty(ModTree_Expression_Type::CONSTANT_READ, arg.type);
+                comptime_arg_read->options.constant_read = arg;
+                return expression_result_make_value(comptime_arg_read);
+            }
+            default: panic("");
+            }
+            if (function->type == ModTree_Function_Type::POLYMORPHIC_BASE) {
+            }
+            panic("Here instances of the parameter must be accessed");
+            break;
         }
         case Symbol_Type::EXTERN_FUNCTION: {
             return expression_result_make_extern_function(symbol->options.extern_function);
@@ -2951,7 +3167,8 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
         switch (item->type)
         {
         case RC_Analysis_Item_Type::FUNCTION: {
-            ModTree_Function* function = workload->options.function;
+            assert(workload->type == Analysis_Workload_Type::FUNCTION_HEADER, "");
+            ModTree_Function* function = workload->options.function_header;
             analysis_workload_register_function_call(analyser, function);
             return expression_result_make_function(function);
         }
@@ -2997,7 +3214,13 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
         auto rc_sig = &rc_expression->options.function_signature;
         Dynamic_Array<Type_Signature*> parameters = dynamic_array_create_empty<Type_Signature*>(math_maximum(0, rc_sig->parameters.size));
         for (int i = 0; i < rc_sig->parameters.size; i++) {
-            dynamic_array_push_back(&parameters, semantic_analyser_analyse_expression_type(analyser, rc_sig->parameters[i].type_expression));
+            RC_Parameter* param = &rc_sig->parameters[i];
+            if (param->is_comptime) {
+                semantic_analyser_log_error(analyser, Semantic_Error_Type::MISSING_FEATURE, param->param_node);
+            }
+            else {
+                dynamic_array_push_back(&parameters, semantic_analyser_analyse_expression_type(analyser, rc_sig->parameters[i].type_expression));
+            }
         }
         Type_Signature* return_type;
         if (rc_sig->return_type_expression.available) {
@@ -4405,13 +4628,9 @@ Control_Flow semantic_analyser_analyse_statement(Semantic_Analyser* analyser, RC
         }
 
         variable = modtree_block_add_variable(block, type, rc_variable->symbol);
-        if (rc_variable->symbol->type == Symbol_Type::VARIABLE_UNDEFINED) {
-            rc_variable->symbol->type = Symbol_Type::VARIABLE;
-            rc_variable->symbol->options.variable = variable;
-        }
-        else {
-            panic("I dont think this can happen!");
-        }
+        assert(rc_variable->symbol->type == Symbol_Type::VARIABLE || rc_variable->symbol->type == Symbol_Type::VARIABLE_UNDEFINED, "");
+        rc_variable->symbol->type = Symbol_Type::VARIABLE;
+        rc_variable->symbol->options.variable = variable;
 
         if (value != 0) {
             ModTree_Statement* statement = modtree_block_add_statement_empty(block, ModTree_Statement_Type::ASSIGNMENT);
@@ -4567,6 +4786,7 @@ void semantic_analyser_reset(Semantic_Analyser* analyser, Compiler* compiler)
         analyser->current_workload = 0;
         analyser->current_function = 0;
         analyser->statement_reachable = true;
+        analyser->error_flag_count = 0;
         for (int i = 0; i < analyser->errors.size; i++) {
             dynamic_array_destroy(&analyser->errors[i].information);
         }
@@ -4728,7 +4948,7 @@ void semantic_analyser_reset(Semantic_Analyser* analyser, Compiler* compiler)
         );
         symbol->type = Symbol_Type::FUNCTION;
         symbol->options.function = assert_fn;
-        ModTree_Variable* cond_var = modtree_function_add_parameter(assert_fn, analyser->compiler->type_system.bool_type, 0);
+        ModTree_Variable* cond_var = modtree_function_add_normal_parameter(assert_fn, analyser->compiler->type_system.bool_type, 0);
 
         // Make function body
         {

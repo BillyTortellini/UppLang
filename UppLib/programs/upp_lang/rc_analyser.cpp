@@ -83,7 +83,10 @@ Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool only_curr
         return nullptr;
     }
     // Variables need special treatment since we have inner functions that cannot 'see' outer function variables
-    if (reference != 0 && ((*found)->type == Symbol_Type::VARIABLE_UNDEFINED)) {
+    Symbol_Type sym_type = (*found)->type;
+    if (reference != 0 && 
+        (sym_type == Symbol_Type::VARIABLE_UNDEFINED || sym_type == Symbol_Type::VARIABLE || sym_type == Symbol_Type::POLYMORPHIC_PARAMETER)) 
+    {
         if (reference->item != (*found)->origin_item) {
             return nullptr;
         }
@@ -108,6 +111,9 @@ void symbol_append_to_string(Symbol* symbol, String* string)
         break;
     case Symbol_Type::UNRESOLVED:
         string_append_formated(string, "Unresolved");
+        break;
+    case Symbol_Type::POLYMORPHIC_PARAMETER:
+        string_append_formated(string, "Polymorphic Parameter");
         break;
     case Symbol_Type::VARIABLE:
         string_append_formated(string, "Variable");
