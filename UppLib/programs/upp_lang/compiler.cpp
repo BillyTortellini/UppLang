@@ -696,7 +696,7 @@ void compiler_switch_timing_task(Compiler* compiler, Timing_Task task)
 
 bool compiler_errors_occured(Compiler* compiler) {
     return !(compiler->parser->errors.size == 0 && compiler->analyser->errors.size == 0 &&
-        compiler->rc_analyser->errors.size == 0 && compiler->analyser->error_flag_count == 0);
+        compiler->rc_analyser->errors.size == 0);
 }
 
 void compiler_compile(Compiler* compiler, String source_code, bool generate_code)
@@ -748,7 +748,7 @@ void compiler_compile(Compiler* compiler, String source_code, bool generate_code
 
     compiler_switch_timing_task(compiler, Timing_Task::ANALYSIS);
     if (do_analysis) {
-        dependency_graph_resolve(&compiler->analyser->dependency_graph);
+        workload_executer_resolve(&compiler->analyser->workload_executer);
         semantic_analyser_finish(compiler->analyser);
     }
 
@@ -940,7 +940,7 @@ void compiler_add_source_code(Compiler* compiler, String source_code, Code_Origi
         compiler_switch_timing_task(compiler, Timing_Task::RC_GEN);
         rc_analyser_analyse(compiler->rc_analyser, code_source->root_node);
         compiler_switch_timing_task(compiler, Timing_Task::ANALYSIS);
-        dependency_graph_add_workload_from_item(&compiler->analyser->dependency_graph, compiler->rc_analyser->root_item);
+        workload_executer_add_workload_from_item(&compiler->analyser->workload_executer, compiler->rc_analyser->root_item);
 
         if (output_rc)
         {

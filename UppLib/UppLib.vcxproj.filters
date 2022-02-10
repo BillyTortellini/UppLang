@@ -279,6 +279,15 @@
     <ClInclude Include="programs\upp_lang\rc_analyser.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
     </ClInclude>
+    <ClInclude Include="datastructures\dependency_graph.hpp">
+      <Filter>Header Files\Datastructures</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\upp_lang\syntax_editor.hpp">
+      <Filter>Header Files\Programs\Upp_Lang</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\upp_lang\syntax_colors.hpp">
+      <Filter>Header Files\Programs\Upp_Lang</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="datastructures\array.cpp">
@@ -452,15 +461,24 @@
     <ClCompile Include="programs\upp_lang\rc_analyser.cpp">
       <Filter>Source Files\Programs\Upp_Lang</Filter>
     </ClCompile>
+    <ClCompile Include="datastructures\dependency_graph.cpp">
+      <Filter>Source Files\Datastructures</Filter>
+    </ClCompile>
+    <ClCompile Include="programs\upp_lang\syntax_editor.cpp">
+      <Filter>Source Files\Programs\Upp_Lang</Filter>
+    </ClCompile>
+    <ClCompile Include="programs\upp_lang\syntax_colors.cpp">
+      <Filter>Source Files\Programs\Upp_Lang</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <Text Include="..\resources\TODO.txt">
       <Filter>Resource Files</Filter>
     </Text>
-    <Text Include="..\resources\Examples.txt">
+    <Text Include="..\resources\TMP.txt">
       <Filter>Resource Files</Filter>
     </Text>
-    <Text Include="..\resources\TMP.txt">
+    <Text Include="..\resources\Editor_Thoughts.txt">
       <Filter>Resource Files</Filter>
     </Text>
   </ItemGroup>

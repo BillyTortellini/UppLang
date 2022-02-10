@@ -77,6 +77,7 @@ void text_renderer_add_text(Text_Renderer* renderer, String* text, vec2 position
 Text_Layout* text_renderer_calculate_text_layout(Text_Renderer* renderer, String* text, float relative_height, float line_gap_percent);
 void text_renderer_add_text_from_layout(Text_Renderer* renderer, Text_Layout* text_layout, vec2 position);
 
+float text_renderer_cm_to_relative_height(Text_Renderer* renderer, Rendering_Core* core, float height_in_cm);
 float text_renderer_calculate_text_width(Text_Renderer* renderer, int char_count, float relative_height);
 float text_renderer_get_cursor_advance(Text_Renderer* renderer, float relative_height);
 void text_renderer_set_color(Text_Renderer* renderer, vec3 color);

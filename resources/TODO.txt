@@ -96,22 +96,32 @@ Dependencies and Polymorphism:
 
 
 
-
 IMPL:
 -----
-foo :: ($count: int) {
-    x: [count]int;
-}
+Parameter depends on Comptime:
+    doubler :: (a: T, $T: Type) -> Type
+    array_double :: (a: [Count], $Count: int) 
+Comptime depends on Comptime:
+    weird :: ($a: T, $T: Type) 
+Circular dependency:
+    fugg :: ($A: B, $B: A) 
 
-Problem:
- - Polymorphic Base Analysis may contain errors due to Unkown-Types (Error flag is set)
- - A polymorphic Instance can only be created if the Base-Function does not have any errors
+Changes TODO:
+Poly Analysis:
+    - Somehow extract the dependencies between parameters 
+        I only get this information during Symbol-Resolution in the Function_Header Workload
+    - Analyse Comptime parameters first, afterwards normal parameters
 
- --> We need to differentiate between Errors based on Unknowns, and True-Errors, which are
-     always errors regardless of the unknown. (Basically Difference Log-Error and set-error-flag)
+This isn't that hard of a problem with implicit Polymorphism, since there the RC-Analyser
+can alread set the Symbol to Type Implicit_Poly_Param (Or something like this)
 
+But how do I store the Type of a parameter depending on Polymorphic-Arguments after Poly-Analysis/What to do during Instanciation
+    doubler :: (a: T, $T: Type)
+    doubler :: (a: *T, $T: Type)
+Well I need to store it as a Polymorphic Type 
 
-
+Idea:
+    New Signature_Type: Polymorphic Type
 
 
 Polymorphic Procedures Implementation Plan:

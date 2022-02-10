@@ -438,7 +438,7 @@ struct Dependency_Information
     bool only_symbol_read_dependency;
 };
 
-struct Dependency_Graph
+struct Workload_Executer
 {
     Semantic_Analyser* analyser;
     Dynamic_Array<Analysis_Workload*> workloads;
@@ -452,8 +452,8 @@ struct Dependency_Graph
     Hashtable<Symbol*, Analysis_Workload*> progress_definitions;
 };
 
-void dependency_graph_resolve(Dependency_Graph* graph);
-Analysis_Workload* dependency_graph_add_workload_from_item(Dependency_Graph* graph, RC_Analysis_Item* item);
+void workload_executer_resolve(Workload_Executer* executer);
+Analysis_Workload* workload_executer_add_workload_from_item(Workload_Executer* executer, RC_Analysis_Item* item);
 
 
 
@@ -478,7 +478,7 @@ struct Semantic_Analyser
 
     // Temporary stuff needed for analysis
     Compiler* compiler;
-    Dependency_Graph dependency_graph;
+    Workload_Executer workload_executer;
     Analysis_Workload* current_workload;
     ModTree_Function* current_function;
     bool statement_reachable;
@@ -723,5 +723,5 @@ void semantic_error_append_to_string(Semantic_Analyser* analyser, Semantic_Error
 void semantic_error_get_error_location(Semantic_Analyser* analyser, Semantic_Error error, Dynamic_Array<Token_Range>* locations);
 void semantic_analyser_log_error(Semantic_Analyser* analyser, Semantic_Error_Type type, AST_Node* node);
 void semantic_analyser_add_error_info(Semantic_Analyser* analyser, Error_Information info);
-void semantic_analyser_set_error_flag(Semantic_Analyser* analyser);
+void semantic_analyser_set_error_flag(Semantic_Analyser* analyser, bool error_due_to_unknown);
 Error_Information error_information_make_empty(Error_Information_Type type);

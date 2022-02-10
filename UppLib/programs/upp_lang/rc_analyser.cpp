@@ -61,38 +61,40 @@ Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, RC_Analyser* anal
     new_sym->origin_table = symbol_table;
     new_sym->references = dynamic_array_create_empty<RC_Symbol_Read*>(2);
     new_sym->origin_item = analyser->analysis_item;
-    if (new_sym->origin_item->type == RC_Analysis_Item_Type::FUNCTION) {
-        new_sym->origin_item = new_sym->origin_item->options.function.body_item;
-    }
 
     hashtable_insert_element(&symbol_table->symbols, id, new_sym);
     return new_sym;
 }
 
-Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool only_current_scope, RC_Symbol_Read* reference)
+Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool only_current_scope, RC_Symbol_Read* symbol_read)
 {
-    if (reference != 0 && reference->symbol != 0) {
+    if (symbol_read != 0 && symbol_read->symbol != 0) {
         panic("Symbol already found, I dont know if this path has a use case");
-        return reference->symbol;
+        return symbol_read->symbol;
     }
     Symbol** found = hashtable_find_element(&table->symbols, id);
     if (found == 0) {
         if (!only_current_scope && table->parent != 0) {
-            return symbol_table_find_symbol(table->parent, id, only_current_scope, reference);
+            return symbol_table_find_symbol(table->parent, id, only_current_scope, symbol_read);
         }
         return nullptr;
     }
-    // Variables need special treatment since we have inner functions that cannot 'see' outer function variables
+
+    // Variables/Parameters need special treatment since we have inner functions that cannot 'see' outer function variables
     Symbol_Type sym_type = (*found)->type;
-    if (reference != 0 && 
+    if (symbol_read != 0 && 
         (sym_type == Symbol_Type::VARIABLE_UNDEFINED || sym_type == Symbol_Type::VARIABLE || sym_type == Symbol_Type::POLYMORPHIC_PARAMETER)) 
     {
-        if (reference->item != (*found)->origin_item) {
+        RC_Analysis_Item* read_item = symbol_read->item;
+        RC_Analysis_Item* definition_item = (*found)->origin_item;
+        if (read_item != definition_item && 
+            !(definition_item->type == RC_Analysis_Item_Type::FUNCTION && definition_item->options.function.body_item == read_item)) 
+        {
             return nullptr;
         }
     }
-    if (reference != 0) {
-        dynamic_array_push_back(&((*found)->references), reference);
+    if (symbol_read != 0) {
+        dynamic_array_push_back(&((*found)->references), symbol_read);
     }
     return *found;
 }
@@ -107,7 +109,12 @@ void symbol_append_to_string(Symbol* symbol, String* string)
     switch (symbol->type)
     {
     case Symbol_Type::VARIABLE_UNDEFINED:
-        string_append_formated(string, "Variable Undefined");
+        if (symbol->options.variable_undefined.is_parameter) {
+            string_append_formated(string, "Parameter Undefined (#%d)", symbol->options.variable_undefined.parameter_index);
+        }
+        else {
+            string_append_formated(string, "Variable Undefined");
+        }
         break;
     case Symbol_Type::UNRESOLVED:
         string_append_formated(string, "Unresolved");
@@ -243,7 +250,6 @@ void rc_expression_destroy(RC_Expression* expression)
     case RC_Expression_Type::AUTO_ENUM:
     case RC_Expression_Type::MEMBER_ACCESS:
     case RC_Expression_Type::CAST:
-    case RC_Expression_Type::CAST_RAW:
     case RC_Expression_Type::TYPE_INFO:
     case RC_Expression_Type::TYPE_OF:
     case RC_Expression_Type::DEREFERENCE:
@@ -313,7 +319,7 @@ void rc_analysis_item_destroy(RC_Analysis_Item* item)
     case RC_Analysis_Item_Type::ROOT:
     case RC_Analysis_Item_Type::DEFINITION:
     case RC_Analysis_Item_Type::FUNCTION_BODY:
-    case RC_Analysis_Item_Type::BAKE: 
+    case RC_Analysis_Item_Type::BAKE:
         break;
     case RC_Analysis_Item_Type::FUNCTION: {
         dynamic_array_destroy(&item->options.function.parameter_symbols);
@@ -437,7 +443,7 @@ void rc_analyser_reset(RC_Analyser* analyser, Compiler* compiler)
         String* id_any = identifier_pool_add(&compiler->identifier_pool, string_create_static("Any"));
         String* id_empty = identifier_pool_add(&compiler->identifier_pool, string_create_static("_"));
         // This placeholder can never be an identifier, becuase it starts with a number
-        String* id_error = identifier_pool_add(&compiler->identifier_pool, string_create_static("0_ERROR_SYMBOL")); 
+        String* id_error = identifier_pool_add(&compiler->identifier_pool, string_create_static("0_ERROR_SYMBOL"));
 
         analyser->predefined_symbols.error_symbol = symbol_table_define_symbol(analyser->root_symbol_table, analyser, id_error, Symbol_Type::ERROR_SYMBOL, 0);
         analyser->predefined_symbols.type_bool = symbol_table_define_symbol(analyser->root_symbol_table, analyser, id_bool, Symbol_Type::UNRESOLVED, 0);
@@ -497,9 +503,7 @@ RC_Block* rc_analyser_analyse_statement_block(RC_Analyser* analyser, AST_Node* s
 
     // Set new symbol table
     Symbol_Table* rewind_table = analyser->symbol_table;
-    SCOPE_EXIT(
-        analyser->symbol_table = rewind_table;
-    );
+    SCOPE_EXIT(analyser->symbol_table = rewind_table;);
     analyser->symbol_table = rc_block->symbol_table;
 
     AST_Node* statement_node = statement_block_node->child_start;
@@ -520,6 +524,8 @@ RC_Block* rc_analyser_analyse_statement_block(RC_Analyser* analyser, AST_Node* s
             statement->options.variable_definition.symbol = symbol_table_define_symbol(
                 analyser->symbol_table, analyser, statement_node->id, Symbol_Type::VARIABLE_UNDEFINED, statement_node
             );
+            statement->options.variable_definition.symbol->options.variable_undefined.is_parameter = false;
+            statement->options.variable_definition.symbol->options.variable_undefined.parameter_index = -1;
 
             if (statement_node->type == AST_Node_Type::VARIABLE_DEFINITION || statement_node->type == AST_Node_Type::VARIABLE_DEFINE_ASSIGN) {
                 statement->options.variable_definition.type_expression = optional_make_success(
@@ -662,7 +668,7 @@ RC_Expression* rc_analyser_analyse_expression(RC_Analyser* analyser, AST_Node* e
 {
     RC_Dependency_Type backup_type = analyser->dependency_type;
     SCOPE_EXIT(analyser->dependency_type = backup_type);
-    if (analyser->dependency_type != RC_Dependency_Type::NORMAL) 
+    if (analyser->dependency_type != RC_Dependency_Type::NORMAL)
     {
         if (expression_node->type == AST_Node_Type::FUNCTION_SIGNATURE ||
             expression_node->type == AST_Node_Type::EXPRESSION_POINTER ||
@@ -670,11 +676,11 @@ RC_Expression* rc_analyser_analyse_expression(RC_Analyser* analyser, AST_Node* e
             ) {
             analyser->dependency_type = RC_Dependency_Type::MEMBER_REFERENCE;
         }
-        else if (expression_node->type != AST_Node_Type::EXPRESSION_IDENTIFIER && 
-                 expression_node->type != AST_Node_Type::EXPRESSION_ARRAY_TYPE &&
-                 expression_node->type != AST_Node_Type::STRUCT &&
-                 expression_node->type != AST_Node_Type::UNION &&
-                 expression_node->type != AST_Node_Type::C_UNION) 
+        else if (expression_node->type != AST_Node_Type::EXPRESSION_IDENTIFIER &&
+            expression_node->type != AST_Node_Type::EXPRESSION_ARRAY_TYPE &&
+            expression_node->type != AST_Node_Type::STRUCT &&
+            expression_node->type != AST_Node_Type::UNION &&
+            expression_node->type != AST_Node_Type::C_UNION)
         {
             analyser->dependency_type = RC_Dependency_Type::NORMAL;
         }
@@ -713,12 +719,16 @@ RC_Expression* rc_analyser_analyse_expression(RC_Analyser* analyser, AST_Node* e
         // Analyse signature
         function->signature_expression = rc_analyser_analyse_expression(analyser, expression_node->child_start);
         assert(function->signature_expression->type == RC_Expression_Type::FUNCTION_SIGNATURE, "");
+
+        // Create parameter Symbols
         function->parameter_symbols = dynamic_array_create_empty<Symbol*>(1);
         for (int i = 0; i < function->signature_expression->options.function_signature.parameters.size; i++) {
             RC_Parameter* parameter = &function->signature_expression->options.function_signature.parameters[i];
             Symbol* symbol = symbol_table_define_symbol(
                 param_table, analyser, parameter->param_id, Symbol_Type::VARIABLE_UNDEFINED, parameter->param_node
             );
+            symbol->options.variable_undefined.is_parameter = true;
+            symbol->options.variable_undefined.parameter_index = i;
             dynamic_array_push_back(&function->parameter_symbols, symbol);
         }
         function->symbol = 0;
@@ -1045,8 +1055,135 @@ RC_Expression* rc_analyser_analyse_expression(RC_Analyser* analyser, AST_Node* e
     default: panic("");
     }
     panic("");
-    return rc_expression_create_empty(analyser, RC_Expression_Type::CAST_RAW, expression_node);
+    return rc_expression_create_empty(analyser, RC_Expression_Type::BINARY_OPERATION, expression_node);
 }
+
+void rc_expression_find_symbol_reads(RC_Expression* expression, Dynamic_Array<RC_Symbol_Read*>* reads)
+{
+    switch (expression->type)
+    {
+    case RC_Expression_Type::MODULE:
+        break;
+    case RC_Expression_Type::ANALYSIS_ITEM:
+        break;
+    case RC_Expression_Type::SYMBOL_READ:
+        dynamic_array_push_back(reads, expression->options.symbol_read);
+        break;
+    case RC_Expression_Type::ENUM: {
+        for (int i = 0; i < expression->options.enumeration.members.size; i++) {
+            auto mem = &expression->options.enumeration.members[i];
+            if (mem->value_expression.available) {
+                rc_expression_find_symbol_reads(mem->value_expression.value, reads);
+            }
+        }
+        break;
+    }
+    case RC_Expression_Type::ARRAY_TYPE: {
+        rc_expression_find_symbol_reads(expression->options.array_type.element_type_expression, reads);
+        rc_expression_find_symbol_reads(expression->options.array_type.size_expression, reads);
+        break;
+    }
+    case RC_Expression_Type::SLICE_TYPE: {
+        rc_expression_find_symbol_reads(expression->options.slice_type.element_type_expression, reads);
+        break;
+    }
+    case RC_Expression_Type::FUNCTION_SIGNATURE: {
+        auto signature = &expression->options.function_signature;
+        for (int i = 0; i < signature->parameters.size; i++) {
+            rc_expression_find_symbol_reads(signature->parameters[i].type_expression, reads);
+        }
+        if (signature->return_type_expression.available) {
+            rc_expression_find_symbol_reads(signature->return_type_expression.value, reads);
+        }
+        break;
+    }
+    case RC_Expression_Type::FUNCTION_CALL: {
+        auto call = &expression->options.function_call;
+        for (int i = 0; i < call->arguments.size; i++) {
+            rc_expression_find_symbol_reads(call->arguments[i], reads);
+        }
+        rc_expression_find_symbol_reads(call->call_expr, reads);
+        break;
+    }
+    case RC_Expression_Type::BINARY_OPERATION: {
+        rc_expression_find_symbol_reads(expression->options.binary_operation.left_operand, reads);
+        rc_expression_find_symbol_reads(expression->options.binary_operation.right_operand, reads);
+        break;
+    }
+    case RC_Expression_Type::UNARY_OPERATION: {
+        rc_expression_find_symbol_reads(expression->options.unary_expression.operand, reads);
+        break;
+    }
+    case RC_Expression_Type::LITERAL_READ: {
+        break;
+    }
+    case RC_Expression_Type::NEW_EXPR: {
+        if (expression->options.new_expression.count_expression.available) {
+            rc_expression_find_symbol_reads(expression->options.new_expression.count_expression.value, reads);
+        }
+        rc_expression_find_symbol_reads(expression->options.new_expression.type_expression, reads);
+        break;
+    }
+    case RC_Expression_Type::ARRAY_ACCESS: {
+        rc_expression_find_symbol_reads(expression->options.array_access.array_expression, reads);
+        rc_expression_find_symbol_reads(expression->options.array_access.index_expression, reads);
+        break;
+    }
+    case RC_Expression_Type::ARRAY_INITIALIZER: {
+        auto init = &expression->options.array_initializer;
+        for (int i = 0; i < init->element_initializers.size; i++) {
+            rc_expression_find_symbol_reads(init->element_initializers[i], reads);
+        }
+        if (init->type_expression.available) {
+            rc_expression_find_symbol_reads(init->type_expression.value, reads);
+        }
+        break;
+    }
+    case RC_Expression_Type::STRUCT_INITIALIZER: {
+        auto init = &expression->options.struct_initializer;
+        for (int i = 0; i < init->member_initializers.size; i++) {
+            rc_expression_find_symbol_reads(init->member_initializers[i].init_expression, reads);
+        }
+        if (init->type_expression.available) {
+            rc_expression_find_symbol_reads(init->type_expression.value, reads);
+        }
+        break;
+    }
+    case RC_Expression_Type::AUTO_ENUM: {
+        break;
+    }
+    case RC_Expression_Type::MEMBER_ACCESS: {
+        rc_expression_find_symbol_reads(expression->options.member_access.expression, reads);
+        break;
+    }
+    case RC_Expression_Type::CAST: {
+        if (expression->options.cast.type != RC_Cast_Type::AUTO_CAST) {
+            rc_expression_find_symbol_reads(expression->options.cast.type_expression, reads);
+        }
+        rc_expression_find_symbol_reads(expression->options.cast.operand, reads);
+        break;
+    }
+    case RC_Expression_Type::TYPE_INFO: {
+        rc_expression_find_symbol_reads(expression->options.type_info_expression, reads);
+        break;
+    }
+    case RC_Expression_Type::TYPE_OF: {
+        rc_expression_find_symbol_reads(expression->options.type_info_expression, reads);
+        break;
+    }
+    case RC_Expression_Type::DEREFERENCE: {
+        rc_expression_find_symbol_reads(expression->options.dereference_expression, reads);
+        break;
+    }
+    case RC_Expression_Type::POINTER: {
+        rc_expression_find_symbol_reads(expression->options.pointer_expression, reads);
+        break;
+    }
+    default: panic("");
+    }
+    return;
+}
+
 
 void rc_analyser_analyse_symbol_definition_node(RC_Analyser* analyser, AST_Node* definition_node)
 {

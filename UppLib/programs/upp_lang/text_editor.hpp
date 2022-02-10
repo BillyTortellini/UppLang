@@ -49,30 +49,30 @@ struct Text_History
 
 enum class Movement_Type
 {
-        SEARCH_FORWARDS_TO, // t
-        SEARCH_FORWARDS_FOR, // f
-        SEARCH_BACKWARDS_TO, // T
-        SEARCH_BACKWARDS_FOR, // F
-        REPEAT_LAST_SEARCH, // ;
-        REPEAT_LAST_SEARCH_REVERSE_DIRECTION, // ,
-        MOVE_LEFT, // h
-        MOVE_RIGHT, // l
-        MOVE_UP, // k
-        MOVE_DOWN, //j
-        TO_END_OF_LINE, // $
-        TO_START_OF_LINE, // 0
-        NEXT_WORD, // w
-        NEXT_SPACE, // W
-        PREVIOUS_WORD, // b
-        PREVIOUS_SPACE, // B
-        END_OF_WORD, // e
-        END_OF_WORD_AFTER_SPACE, // E
-        JUMP_ENCLOSURE, // %
-        NEXT_PARAGRAPH, // }
-        PREVIOUS_PARAGRAPH, // {
-        GOTO_END_OF_TEXT, // G
-        GOTO_START_OF_TEXT, // gg
-        GOTO_LINE_NUMBER, // g43
+    SEARCH_FORWARDS_TO, // t
+    SEARCH_FORWARDS_FOR, // f
+    SEARCH_BACKWARDS_TO, // T
+    SEARCH_BACKWARDS_FOR, // F
+    REPEAT_LAST_SEARCH, // ;
+    REPEAT_LAST_SEARCH_REVERSE_DIRECTION, // ,
+    MOVE_LEFT, // h
+    MOVE_RIGHT, // l
+    MOVE_UP, // k
+    MOVE_DOWN, //j
+    TO_END_OF_LINE, // $
+    TO_START_OF_LINE, // 0
+    NEXT_WORD, // w
+    NEXT_SPACE, // W
+    PREVIOUS_WORD, // b
+    PREVIOUS_SPACE, // B
+    END_OF_WORD, // e
+    END_OF_WORD_AFTER_SPACE, // E
+    JUMP_ENCLOSURE, // %
+    NEXT_PARAGRAPH, // }
+    PREVIOUS_PARAGRAPH, // {
+    GOTO_END_OF_TEXT, // G
+    GOTO_START_OF_TEXT, // gg
+    GOTO_LINE_NUMBER, // g43
 };
 
 // Missing: <> ''
@@ -119,7 +119,7 @@ enum class Normal_Mode_Command_Type
     DELETE_MOTION,
     CHANGE_LINE,
     CHANGE_MOTION,
-    YANK_LINE, // TODO: Yank/Put stuff (yy is yank line)
+    YANK_LINE, 
     YANK_MOTION,
     PUT_AFTER_CURSOR,
     PUT_BEFORE_CURSOR,

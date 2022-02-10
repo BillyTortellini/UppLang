@@ -21,6 +21,7 @@
   <ItemGroup>
     <ClInclude Include="datastructures\array.hpp" />
     <ClInclude Include="datastructures\block_allocator.hpp" />
+    <ClInclude Include="datastructures\dependency_graph.hpp" />
     <ClInclude Include="datastructures\dynamic_array.hpp" />
     <ClInclude Include="datastructures\hashset.hpp" />
     <ClInclude Include="datastructures\hashtable.hpp" />
@@ -46,6 +47,8 @@
     <ClInclude Include="programs\upp_lang\semantic_analyser.hpp" />
     <ClInclude Include="programs\upp_lang\lexer.hpp" />
     <ClInclude Include="programs\upp_lang\rc_analyser.hpp" />
+    <ClInclude Include="programs\upp_lang\syntax_colors.hpp" />
+    <ClInclude Include="programs\upp_lang\syntax_editor.hpp" />
     <ClInclude Include="programs\upp_lang\test_renderer.hpp" />
     <ClInclude Include="programs\upp_lang\text.hpp" />
     <ClInclude Include="programs\upp_lang\text_editor.hpp" />
@@ -84,6 +87,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="datastructures\array.cpp" />
+    <ClCompile Include="datastructures\dependency_graph.cpp" />
     <ClCompile Include="datastructures\dynamic_array.cpp" />
     <ClCompile Include="datastructures\hashset.cpp" />
     <ClCompile Include="datastructures\stack_allocator.cpp" />
@@ -106,6 +110,8 @@
     <ClCompile Include="programs\upp_lang\semantic_analyser.cpp" />
     <ClCompile Include="programs\upp_lang\lexer.cpp" />
     <ClCompile Include="programs\upp_lang\rc_analyser.cpp" />
+    <ClCompile Include="programs\upp_lang\syntax_colors.cpp" />
+    <ClCompile Include="programs\upp_lang\syntax_editor.cpp" />
     <ClCompile Include="programs\upp_lang\test_renderer.cpp" />
     <ClCompile Include="programs\upp_lang\text.cpp" />
     <ClCompile Include="programs\upp_lang\text_editor.cpp" />
@@ -142,7 +148,7 @@
     <ClCompile Include="win32\windows_helper_functions.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <Text Include="..\resources\Examples.txt" />
+    <Text Include="..\resources\Editor_Thoughts.txt" />
     <Text Include="..\resources\TMP.txt" />
     <Text Include="..\resources\TODO.txt" />
   </ItemGroup>

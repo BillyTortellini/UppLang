@@ -299,6 +299,12 @@ float text_renderer_calculate_text_width(Text_Renderer* renderer, int char_count
         * ((float)renderer->screen_height / renderer->screen_width);
 }
 
+float text_renderer_cm_to_relative_height(Text_Renderer* renderer, Rendering_Core* core, float height_in_cm) {
+    int height = core->render_information.window_height;
+    int dpi = core->render_information.monitor_dpi;
+    return  2.0f * (height_in_cm) / (height / (float)dpi * 2.54f);
+}
+
 
 
 

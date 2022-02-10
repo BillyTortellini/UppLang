@@ -96,7 +96,6 @@ enum class RC_Expression_Type
     AUTO_ENUM,
     MEMBER_ACCESS,
     CAST,
-    CAST_RAW,
     TYPE_INFO,
     TYPE_OF,
     DEREFERENCE,
@@ -260,6 +259,7 @@ struct RC_Block
     Dynamic_Array<RC_Statement*> statements;
 };
 
+void rc_expression_find_symbol_reads(RC_Expression* expression, Dynamic_Array<RC_Symbol_Read*>* reads);
 
 
 /*
@@ -295,6 +295,10 @@ struct Symbol
         Type_Signature* type;
         Upp_Constant constant;
         Symbol* alias;
+        struct {
+            bool is_parameter;
+            int parameter_index;
+        } variable_undefined;
         struct {
             int parameter_index;
             ModTree_Function* function;

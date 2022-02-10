@@ -3,6 +3,7 @@
 #include "../../datastructures/string.hpp"
 #include "../../utility/hash_functions.hpp"
 #include "../../datastructures/hashset.hpp"
+#include "../../datastructures/dependency_graph.hpp"
 #include "../../utility/file_io.hpp"
 
 #include "compiler.hpp"
@@ -26,7 +27,7 @@ Type_Signature* import_c_type(Semantic_Analyser* analyser, C_Import_Type* type, 
 Expression_Result semantic_analyser_analyse_expression_any(Semantic_Analyser* analyser, RC_Expression* rc_expression, Expression_Context context);
 ModTree_Expression* semantic_analyser_analyse_expression_value(Semantic_Analyser* analyser, RC_Expression* rc_expression, Expression_Context context);
 Type_Signature* semantic_analyser_analyse_expression_type(Semantic_Analyser* analyser, RC_Expression* rc_expression);
-void analysis_workload_add_dependency_internal(Dependency_Graph* graph, Analysis_Workload* workload, Analysis_Workload* dependency, RC_Symbol_Read* symbol_read);
+void analysis_workload_add_dependency_internal(Workload_Executer* graph, Analysis_Workload* workload, Analysis_Workload* dependency, RC_Symbol_Read* symbol_read);
 void analysis_workload_destroy(Analysis_Workload* workload);
 void modtree_block_destroy(ModTree_Block* block);
 void modtree_function_destroy(ModTree_Function* function);
@@ -34,20 +35,28 @@ void modtree_statement_destroy(ModTree_Statement* statement);
 ModTree_Expression* semantic_analyser_cast_implicit_if_possible(Semantic_Analyser* analyser, ModTree_Expression* expression, Type_Signature* destination_type);
 bool analysis_workload_execute(Analysis_Workload* workload, Semantic_Analyser* analyser);
 void analysis_workload_add_struct_dependency(
-    Dependency_Graph* graph, Analysis_Workload* my_workload, Struct_Progress* other_progress, RC_Dependency_Type type, RC_Symbol_Read* symbol_read);
+    Workload_Executer* graph, Analysis_Workload* my_workload, Struct_Progress* other_progress, RC_Dependency_Type type, RC_Symbol_Read* symbol_read);
 void semantic_analyser_fill_block(Semantic_Analyser* analyser, ModTree_Block* block, RC_Block* rc_block);
 void analysis_workload_append_to_string(Analysis_Workload* workload, String* string);
-Analysis_Workload* dependency_graph_add_workload_empty(Dependency_Graph* graph, Analysis_Workload_Type type, RC_Analysis_Item* item, bool add_item_dependencies);
-void analysis_workload_check_if_runnable(Dependency_Graph* graph, Analysis_Workload* workload);
+Analysis_Workload* workload_executer_add_workload_empty(Workload_Executer* graph, Analysis_Workload_Type type, RC_Analysis_Item* item, bool add_item_dependencies);
+void analysis_workload_check_if_runnable(Workload_Executer* graph, Analysis_Workload* workload);
 
 /*
 ERROR Helpers
 */
-void semantic_analyser_set_error_flag(Semantic_Analyser* analyser) 
+void semantic_analyser_set_error_flag(Semantic_Analyser* analyser, bool error_due_to_unknown) 
 {
     analyser->error_flag_count += 1;
-    if (analyser->current_function != 0) {
-        analyser->current_function->contains_errors = true;
+    if (analyser->current_function != 0) 
+    {
+        if (analyser->current_function->type == ModTree_Function_Type::POLYMORPHIC_BASE) {
+            if (!error_due_to_unknown) {
+                analyser->current_function->contains_errors = true;
+            }
+        }
+        else {
+            analyser->current_function->contains_errors = true;
+        }
         analyser->current_function->is_runnable = false;
     }
 }
@@ -59,7 +68,7 @@ void semantic_analyser_log_error(Semantic_Analyser* analyser, Semantic_Error_Typ
     error.error_node = node;
     error.information = dynamic_array_create_empty<Error_Information>(2);
     dynamic_array_push_back(&analyser->errors, error);
-    semantic_analyser_set_error_flag(analyser);
+    semantic_analyser_set_error_flag(analyser, false);
 }
 
 void semantic_analyser_log_error(Semantic_Analyser* analyser, Semantic_Error_Type type, RC_Expression* expression) {
@@ -257,26 +266,26 @@ ModTree_Function* modtree_function_create_poly_instance(Semantic_Analyser* analy
     assert(arguments.size == base_function->options.base.poly_argument_count, "");
 
     // Create Workloads
-    Function_Progress* base_progress = hashtable_find_element(&analyser->dependency_graph.progress_functions, base_function);
+    Function_Progress* base_progress = hashtable_find_element(&analyser->workload_executer.progress_functions, base_function);
     assert(base_progress != 0, "");
-    Analysis_Workload* body_workload = dependency_graph_add_workload_empty(
-        &analyser->dependency_graph, Analysis_Workload_Type::FUNCTION_BODY, base_progress->body_workload->analysis_item, false
+    Analysis_Workload* body_workload = workload_executer_add_workload_empty(
+        &analyser->workload_executer, Analysis_Workload_Type::FUNCTION_BODY, base_progress->body_workload->analysis_item, false
     );
-    analysis_workload_add_dependency_internal(&analyser->dependency_graph, body_workload, base_progress->body_workload, 0);
+    analysis_workload_add_dependency_internal(&analyser->workload_executer, body_workload, base_progress->body_workload, 0);
     body_workload->options.function_body.function = instance;
-    analysis_workload_check_if_runnable(&analyser->dependency_graph, body_workload); // Required so that progress made is set
+    analysis_workload_check_if_runnable(&analyser->workload_executer, body_workload); // Required so that progress made is set
 
-    Analysis_Workload* compile_workload = dependency_graph_add_workload_empty(&analyser->dependency_graph, Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE, 0, false);
+    Analysis_Workload* compile_workload = workload_executer_add_workload_empty(&analyser->workload_executer, Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE, 0, false);
     compile_workload->options.cluster_compile.functions = dynamic_array_create_empty<ModTree_Function*>(1);
     dynamic_array_push_back(&compile_workload->options.cluster_compile.functions, instance);
-    analysis_workload_add_dependency_internal(&analyser->dependency_graph, compile_workload, body_workload, 0);
+    analysis_workload_add_dependency_internal(&analyser->workload_executer, compile_workload, body_workload, 0);
 
     Function_Progress initial_state;
     initial_state.state = Function_State::HEADER_ANALYSED;
     initial_state.header_workload = 0;
     initial_state.body_workload = body_workload;
     initial_state.compile_workload = compile_workload;
-    hashtable_insert_element(&analyser->dependency_graph.progress_functions, instance, initial_state);
+    hashtable_insert_element(&analyser->workload_executer.progress_functions, instance, initial_state);
 
     return instance;
 }
@@ -990,9 +999,9 @@ bool workload_pair_equals(Workload_Pair* p1, Workload_Pair* p2) {
     return p1->depends_on == p2->depends_on && p1->workload == p2->workload;
 }
 
-Dependency_Graph dependency_graph_create(Semantic_Analyser* analyser)
+Workload_Executer workload_executer_create(Semantic_Analyser* analyser)
 {
-    Dependency_Graph result;
+    Workload_Executer result;
     result.workloads = dynamic_array_create_empty<Analysis_Workload*>(8);
     result.analyser = analyser;
     result.runnable_workloads = dynamic_array_create_empty<Analysis_Workload*>(8);
@@ -1005,7 +1014,7 @@ Dependency_Graph dependency_graph_create(Semantic_Analyser* analyser)
     return result;
 }
 
-void dependency_graph_destroy(Dependency_Graph* graph)
+void workload_executer_destroy(Workload_Executer* graph)
 {
     for (int i = 0; i < graph->workloads.size; i++) {
         analysis_workload_destroy(graph->workloads[i]);
@@ -1075,7 +1084,7 @@ Symbol* semantic_analyser_resolve_symbol_read(Semantic_Analyser* analyser, RC_Sy
     }
 }
 
-void analysis_workload_add_dependency_internal(Dependency_Graph* graph, Analysis_Workload* workload, Analysis_Workload* dependency, RC_Symbol_Read* symbol_read)
+void analysis_workload_add_dependency_internal(Workload_Executer* graph, Analysis_Workload* workload, Analysis_Workload* dependency, RC_Symbol_Read* symbol_read)
 {
     if (dependency->is_finished) return;
     Workload_Pair pair = workload_pair_create(workload, dependency);
@@ -1103,7 +1112,7 @@ void analysis_workload_add_dependency_internal(Dependency_Graph* graph, Analysis
     }
 }
 
-void dependency_graph_move_dependency(Dependency_Graph* graph, Analysis_Workload* move_from, Analysis_Workload* move_to, Analysis_Workload* dependency)
+void workload_executer_move_dependency(Workload_Executer* graph, Analysis_Workload* move_from, Analysis_Workload* move_to, Analysis_Workload* dependency)
 {
     assert(move_from != move_to, "");
     Workload_Pair original_pair = workload_pair_create(move_from, dependency);
@@ -1131,7 +1140,7 @@ void dependency_graph_move_dependency(Dependency_Graph* graph, Analysis_Workload
     dynamic_array_destroy(&info.symbol_reads);
 }
 
-void dependency_graph_remove_dependency(Dependency_Graph* graph, Analysis_Workload* workload, Analysis_Workload* depends_on)
+void workload_executer_remove_dependency(Workload_Executer* graph, Analysis_Workload* workload, Analysis_Workload* depends_on)
 {
     Workload_Pair pair = workload_pair_create(workload, depends_on);
     Dependency_Information* info = hashtable_find_element(&graph->workload_dependencies, pair);
@@ -1188,7 +1197,7 @@ bool cluster_workload_check_for_cyclic_dependency(
 }
 
 
-void analysis_workload_add_cluster_dependency(Dependency_Graph* graph, Analysis_Workload* add_to_workload, Analysis_Workload* dependency, RC_Symbol_Read* symbol_read)
+void analysis_workload_add_cluster_dependency(Workload_Executer* graph, Analysis_Workload* add_to_workload, Analysis_Workload* dependency, RC_Symbol_Read* symbol_read)
 {
     assert((add_to_workload->type == Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE && dependency->type == Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE) ||
         (add_to_workload->type == Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE && dependency->type == Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE), "");
@@ -1229,10 +1238,10 @@ void analysis_workload_add_cluster_dependency(Dependency_Graph* graph, Analysis_
             }
 
             if (keep_dependency) {
-                dependency_graph_move_dependency(graph, merge_cluster, merge_into, merge_dependency);
+                workload_executer_move_dependency(graph, merge_cluster, merge_into, merge_dependency);
             }
             else {
-                dependency_graph_remove_dependency(graph, merge_cluster, merge_dependency);
+                workload_executer_remove_dependency(graph, merge_cluster, merge_dependency);
             }
             node = node->next;
         }
@@ -1312,7 +1321,7 @@ void analysis_workload_add_cluster_dependency(Dependency_Graph* graph, Analysis_
 }
 
 void analysis_workload_add_struct_dependency(
-    Dependency_Graph* graph, Analysis_Workload* my_workload, Struct_Progress* other_progress, RC_Dependency_Type type, RC_Symbol_Read* symbol_read)
+    Workload_Executer* graph, Analysis_Workload* my_workload, Struct_Progress* other_progress, RC_Dependency_Type type, RC_Symbol_Read* symbol_read)
 {
     if (my_workload->type != Analysis_Workload_Type::STRUCT_ANALYSIS) {
         analysis_workload_add_dependency_internal(graph, my_workload, other_progress->reachable_resolve_workload, symbol_read);
@@ -1379,7 +1388,7 @@ bool analysis_workload_find_cycle(
     return false;
 }
 
-void dependency_graph_resolve(Dependency_Graph* graph)
+void workload_executer_resolve(Workload_Executer* graph)
 {
     /*
     Resolve is a double loop:
@@ -1527,7 +1536,7 @@ void dependency_graph_resolve(Dependency_Graph* graph)
                 while (node != 0) {
                     Analysis_Workload* dependent = node->value;
                     node = node->next; // INFO: This is required before remove_dependency, since remove will remove items from the list
-                    dependency_graph_remove_dependency(graph, dependent, workload);
+                    workload_executer_remove_dependency(graph, dependent, workload);
                 }
                 assert(workload->dependents.count == 0, "");
                 //list_reset(&workload->dependents);
@@ -1686,7 +1695,7 @@ void dependency_graph_resolve(Dependency_Graph* graph)
                             }
                         }
                     }
-                    dependency_graph_remove_dependency(graph, workload, depends_on);
+                    workload_executer_remove_dependency(graph, workload, depends_on);
                 }
                 assert(only_reads_was_found, "");
                 graph->progress_was_made = true;
@@ -1727,14 +1736,14 @@ void dependency_graph_resolve(Dependency_Graph* graph)
 
 }
 
-void dependency_graph_add_item_mapping(Dependency_Graph* graph, Analysis_Workload* workload, RC_Analysis_Item* item)
+void workload_executer_add_item_mapping(Workload_Executer* graph, Analysis_Workload* workload, RC_Analysis_Item* item)
 {
     assert(item != 0, "");
     bool worked = hashtable_insert_element(&graph->item_to_workload_mapping, item, workload);
     assert(worked, "This may need to change with templates");
 }
 
-Analysis_Workload* dependency_graph_add_workload_empty(Dependency_Graph* graph, Analysis_Workload_Type type, RC_Analysis_Item* item, bool add_item_dependencies)
+Analysis_Workload* workload_executer_add_workload_empty(Workload_Executer* graph, Analysis_Workload_Type type, RC_Analysis_Item* item, bool add_symbol_dependencies)
 {
     graph->progress_was_made = true;
     Analysis_Workload* workload = new Analysis_Workload;
@@ -1746,7 +1755,7 @@ Analysis_Workload* dependency_graph_add_workload_empty(Dependency_Graph* graph, 
     workload->cluster = 0;
     workload->reachable_clusters = dynamic_array_create_empty<Analysis_Workload*>(1);
     workload->analysis_item = item;
-    if (item != 0 && add_item_dependencies) {
+    if (item != 0 && add_symbol_dependencies) {
         for (int i = 0; i < item->symbol_dependencies.size; i++) {
             dynamic_array_push_back(&workload->symbol_dependencies, item->symbol_dependencies[i]);
         }
@@ -1756,14 +1765,14 @@ Analysis_Workload* dependency_graph_add_workload_empty(Dependency_Graph* graph, 
     return workload;
 }
 
-Analysis_Workload* dependency_graph_add_workload_from_item(Dependency_Graph* graph, RC_Analysis_Item* item);
-void analysis_workload_create_child_workloads(Dependency_Graph* graph, Analysis_Workload* workload, RC_Analysis_Item* item)
+Analysis_Workload* workload_executer_add_workload_from_item(Workload_Executer* graph, RC_Analysis_Item* item);
+void analysis_workload_create_child_workloads(Workload_Executer* graph, Analysis_Workload* workload, RC_Analysis_Item* item)
 {
     if (item == 0) return;
     for (int i = 0; i < item->item_dependencies.size; i++)
     {
         RC_Item_Dependency* item_dependency = &item->item_dependencies[i];
-        Analysis_Workload* dependency = dependency_graph_add_workload_from_item(graph, item_dependency->item);
+        Analysis_Workload* dependency = workload_executer_add_workload_from_item(graph, item_dependency->item);
         assert(dependency != 0, "");
 
         if (workload == 0) continue;
@@ -1778,7 +1787,7 @@ void analysis_workload_create_child_workloads(Dependency_Graph* graph, Analysis_
     }
 }
 
-Analysis_Workload* dependency_graph_add_workload_from_item(Dependency_Graph* graph, RC_Analysis_Item* item)
+Analysis_Workload* workload_executer_add_workload_from_item(Workload_Executer* graph, RC_Analysis_Item* item)
 {
     // Create workload
     Analysis_Workload* workload = 0;
@@ -1792,12 +1801,12 @@ Analysis_Workload* dependency_graph_add_workload_from_item(Dependency_Graph* gra
     {
         ModTree_Function* bake_function = modtree_function_create_empty(graph->analyser->program, 0, 0, item->options.bake.body);
 
-        workload = dependency_graph_add_workload_empty(graph, Analysis_Workload_Type::BAKE_EXECUTION, item, false);
-        dependency_graph_add_item_mapping(graph, workload, item);
+        workload = workload_executer_add_workload_empty(graph, Analysis_Workload_Type::BAKE_EXECUTION, item, false);
+        workload_executer_add_item_mapping(graph, workload, item);
         workload->options.bake_execute.bake_function = bake_function;
         workload->options.bake_execute.result = comptime_result_make_not_comptime();
 
-        Analysis_Workload* analysis_workload = dependency_graph_add_workload_empty(graph, Analysis_Workload_Type::BAKE_ANALYSIS, item, true);
+        Analysis_Workload* analysis_workload = workload_executer_add_workload_empty(graph, Analysis_Workload_Type::BAKE_ANALYSIS, item, true);
         analysis_workload_create_child_workloads(graph, analysis_workload, item);
         analysis_workload_add_dependency_internal(graph, workload, analysis_workload, 0);
         analysis_workload->options.bake_analysis.bake_function = bake_function;
@@ -1807,10 +1816,10 @@ Analysis_Workload* dependency_graph_add_workload_from_item(Dependency_Graph* gra
     case RC_Analysis_Item_Type::DEFINITION:
     {
         Symbol* symbol = item->options.definition.symbol;
-        workload = dependency_graph_add_workload_empty(graph, Analysis_Workload_Type::DEFINITION, item, true);
+        workload = workload_executer_add_workload_empty(graph, Analysis_Workload_Type::DEFINITION, item, true);
         analysis_workload_create_child_workloads(graph, workload, workload->analysis_item);
         hashtable_insert_element(&graph->progress_definitions, symbol, workload);
-        dependency_graph_add_item_mapping(graph, workload, item);
+        workload_executer_add_item_mapping(graph, workload, item);
         break;
     }
     case RC_Analysis_Item_Type::FUNCTION:
@@ -1818,20 +1827,20 @@ Analysis_Workload* dependency_graph_add_workload_from_item(Dependency_Graph* gra
         ModTree_Function* function = modtree_function_create_empty(
             graph->analyser->program, 0, item->options.function.symbol, item->options.function.body_item->options.function_body
         );
-        workload = dependency_graph_add_workload_empty(graph, Analysis_Workload_Type::FUNCTION_HEADER, item, true);
+        workload = workload_executer_add_workload_empty(graph, Analysis_Workload_Type::FUNCTION_HEADER, item, true);
         analysis_workload_create_child_workloads(graph, workload, workload->analysis_item);
-        dependency_graph_add_item_mapping(graph, workload, item);
+        workload_executer_add_item_mapping(graph, workload, item);
         workload->options.function_header = function;
 
-        Analysis_Workload* body_workload = dependency_graph_add_workload_empty(
+        Analysis_Workload* body_workload = workload_executer_add_workload_empty(
             graph, Analysis_Workload_Type::FUNCTION_BODY, item->options.function.body_item, true
         );
-        dependency_graph_add_item_mapping(graph, body_workload, item->options.function.body_item);
+        workload_executer_add_item_mapping(graph, body_workload, item->options.function.body_item);
         body_workload->options.function_body.function = function;
         analysis_workload_create_child_workloads(graph, body_workload, body_workload->analysis_item);
         analysis_workload_add_dependency_internal(graph, body_workload, workload, 0);
 
-        Analysis_Workload* compile_workload = dependency_graph_add_workload_empty(graph, Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE, 0, false);
+        Analysis_Workload* compile_workload = workload_executer_add_workload_empty(graph, Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE, 0, false);
         compile_workload->options.cluster_compile.functions = dynamic_array_create_empty<ModTree_Function*>(1);
         dynamic_array_push_back(&compile_workload->options.cluster_compile.functions, function);
         analysis_workload_add_dependency_internal(graph, compile_workload, body_workload, 0);
@@ -1860,12 +1869,12 @@ Analysis_Workload* dependency_graph_add_workload_from_item(Dependency_Graph* gra
         Type_Signature* struct_type = type_system_make_struct_empty(
             &graph->analyser->compiler->type_system, item->options.structure.symbol, item->options.structure.structure_type
         );
-        workload = dependency_graph_add_workload_empty(graph, Analysis_Workload_Type::STRUCT_ANALYSIS, item, true);
+        workload = workload_executer_add_workload_empty(graph, Analysis_Workload_Type::STRUCT_ANALYSIS, item, true);
         analysis_workload_create_child_workloads(graph, workload, workload->analysis_item);
-        dependency_graph_add_item_mapping(graph, workload, item);
+        workload_executer_add_item_mapping(graph, workload, item);
         workload->options.struct_analysis_type = struct_type;
 
-        Analysis_Workload* reachable_workload = dependency_graph_add_workload_empty(graph, Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE, 0, false);
+        Analysis_Workload* reachable_workload = workload_executer_add_workload_empty(graph, Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE, 0, false);
         reachable_workload->options.struct_reachable.struct_types = dynamic_array_create_empty<Type_Signature*>(1);
         reachable_workload->options.struct_reachable.unfinished_array_types = dynamic_array_create_empty<Type_Signature*>(1);
         dynamic_array_push_back(&reachable_workload->options.struct_reachable.struct_types, struct_type);
@@ -1890,7 +1899,7 @@ Analysis_Workload* dependency_graph_add_workload_from_item(Dependency_Graph* gra
     return workload;
 }
 
-void analysis_workload_check_if_runnable(Dependency_Graph* graph, Analysis_Workload* workload)
+void analysis_workload_check_if_runnable(Workload_Executer* graph, Analysis_Workload* workload)
 {
     if (!workload->is_finished && workload->symbol_dependencies.size == 0 && workload->dependencies.count == 0) {
         dynamic_array_push_back(&graph->runnable_workloads, workload);
@@ -2043,6 +2052,31 @@ bool analysis_workload_execute(Analysis_Workload* workload, Semantic_Analyser* a
         auto rc_sig = &header->signature_expression->options.function_signature;
         assert(rc_sig->parameters.size == header->parameter_symbols.size, "");
         int polymorphic_count = 0;
+
+        // Determine parameter analysis order for polymorphic dependencies
+        /*
+        Dependency_Graph graph = dependency_graph_create();
+        SCOPE_EXIT(dependency_graph_destroy(&graph));
+        {
+            Dynamic_Array<RC_Symbol_Read*> param_symbol_reads = dynamic_array_create_empty<RC_Symbol_Read*>(1);
+            SCOPE_EXIT(dynamic_array_destroy(&param_symbol_reads));
+            for (int i = 0; i < rc_sig->parameters.size; i++)
+            {
+                dynamic_array_reset(&param_symbol_reads);
+                RC_Parameter* rc_param = &rc_sig->parameters[i];
+                rc_expression_find_symbol_reads(rc_param->type_expression, &param_symbol_reads);
+                for (int j = 0; j < param_symbol_reads.size; j++) {
+                    RC_Symbol_Read* read = param_symbol_reads[j];
+                    if (read->symbol->type == Symbol_Type::VARIABLE_UNDEFINED && read->symbol->options.variable_undefined.is_parameter) {
+
+                    }
+                }
+
+            }
+        }
+        */
+
+        // Analyse parameters
         for (int i = 0; i < rc_sig->parameters.size; i++)
         {
             RC_Parameter* rc_param = &rc_sig->parameters[i];
@@ -2088,7 +2122,7 @@ bool analysis_workload_execute(Analysis_Workload* workload, Semantic_Analyser* a
         function->signature = type_system_make_function(&analyser->compiler->type_system, param_types, function->return_type);
 
         // Advance function progress
-        Function_Progress* progress = hashtable_find_element(&analyser->dependency_graph.progress_functions, function);
+        Function_Progress* progress = hashtable_find_element(&analyser->workload_executer.progress_functions, function);
         assert(progress != 0, "");
         progress->state = Function_State::HEADER_ANALYSED;
         break;
@@ -2122,7 +2156,7 @@ bool analysis_workload_execute(Analysis_Workload* workload, Semantic_Analyser* a
                 semantic_analyser_log_error(analyser, Semantic_Error_Type::OTHERS_MISSING_RETURN_STATEMENT, (AST_Node*)0);
             }
         }
-        Function_Progress* progress = hashtable_find_element(&analyser->dependency_graph.progress_functions, function);
+        Function_Progress* progress = hashtable_find_element(&analyser->workload_executer.progress_functions, function);
         assert(progress != 0, "");
         progress->state = Function_State::BODY_ANALYSED;
         break;
@@ -2149,7 +2183,7 @@ bool analysis_workload_execute(Analysis_Workload* workload, Semantic_Analyser* a
             else {
                 ir_generator_queue_function(analyser->compiler->ir_generator, function);
             }
-            Function_Progress* progress = hashtable_find_element(&analyser->dependency_graph.progress_functions, function);
+            Function_Progress* progress = hashtable_find_element(&analyser->workload_executer.progress_functions, function);
             assert(progress != 0, "");
             progress->state = Function_State::FINISHED;
         }
@@ -2159,7 +2193,7 @@ bool analysis_workload_execute(Analysis_Workload* workload, Semantic_Analyser* a
     {
         auto rc_struct = &workload->analysis_item->options.structure;
         Type_Signature* struct_signature = workload->options.struct_analysis_type;
-        Struct_Progress* progress = hashtable_find_element(&analyser->dependency_graph.progress_structs, struct_signature);
+        Struct_Progress* progress = hashtable_find_element(&analyser->workload_executer.progress_structs, struct_signature);
         assert(progress != 0, "");
         Hashset<Type_Signature*> visited_members = hashset_create_pointer_empty<Type_Signature*>(4);
         SCOPE_EXIT(hashset_destroy(&visited_members));
@@ -2191,7 +2225,7 @@ bool analysis_workload_execute(Analysis_Workload* workload, Semantic_Analyser* a
         for (int i = 0; i < workload->options.struct_reachable.struct_types.size; i++)
         {
             Type_Signature* struct_type = workload->options.struct_reachable.struct_types[i];
-            Struct_Progress* progress = hashtable_find_element(&analyser->dependency_graph.progress_structs, struct_type);
+            Struct_Progress* progress = hashtable_find_element(&analyser->workload_executer.progress_structs, struct_type);
             if (progress->state == Struct_State::FINISHED) continue;
             progress->state = Struct_State::FINISHED;
         }
@@ -2518,7 +2552,7 @@ Optional<ModTree_Cast_Type> semantic_analyser_check_if_cast_possible(
 {
     Type_System* type_system = &analyser->compiler->type_system;
     if (source_type == type_system->unknown_type || destination_type == type_system->unknown_type) {
-        semantic_analyser_set_error_flag(analyser);
+        semantic_analyser_set_error_flag(analyser, true);
         return optional_make_success(ModTree_Cast_Type::INTEGERS);
     }
     if (source_type == destination_type) return optional_make_failure<ModTree_Cast_Type>();
@@ -2654,19 +2688,19 @@ void analysis_workload_register_function_call(Semantic_Analyser* analyser, ModTr
         dynamic_array_push_back(&call_to->called_from, analyser->current_function);
     }
 
-    Function_Progress* progress = hashtable_find_element(&analyser->dependency_graph.progress_functions, call_to);
+    Function_Progress* progress = hashtable_find_element(&analyser->workload_executer.progress_functions, call_to);
     if (progress == 0) return;
     switch (analyser->current_workload->type)
     {
     case Analysis_Workload_Type::BAKE_ANALYSIS: {
         Analysis_Workload* execute_workload = analyser->current_workload->options.bake_analysis.execute_workload;
-        analysis_workload_add_dependency_internal(&analyser->dependency_graph, execute_workload, progress->compile_workload, 0);
+        analysis_workload_add_dependency_internal(&analyser->workload_executer, execute_workload, progress->compile_workload, 0);
         break;
     }
     case Analysis_Workload_Type::FUNCTION_BODY: {
-        Function_Progress* my_progress = hashtable_find_element(&analyser->dependency_graph.progress_functions, analyser->current_function);
+        Function_Progress* my_progress = hashtable_find_element(&analyser->workload_executer.progress_functions, analyser->current_function);
         assert(progress != 0, "");
-        analysis_workload_add_cluster_dependency(&analyser->dependency_graph, my_progress->compile_workload, progress->compile_workload, 0);
+        analysis_workload_add_cluster_dependency(&analyser->workload_executer, my_progress->compile_workload, progress->compile_workload, 0);
         break;
     }
     default: return;
@@ -2898,7 +2932,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
         switch (symbol->type)
         {
         case Symbol_Type::ERROR_SYMBOL: {
-            semantic_analyser_set_error_flag(analyser);
+            semantic_analyser_set_error_flag(analyser, true);
             //semantic_analyser_log_error(analyser, Semantic_Error_Type::INVALID_EXPRESSION_TYPE, rc_expression);
             //semantic_analyser_add_error_info(analyser, error_information_make_symbol(symbol));
             return expression_result_make_error(type_system->unknown_type);
@@ -3161,7 +3195,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
     case RC_Expression_Type::ANALYSIS_ITEM:
     {
         RC_Analysis_Item* item = rc_expression->options.analysis_item;
-        Analysis_Workload** workload_opt = hashtable_find_element(&analyser->dependency_graph.item_to_workload_mapping, item);
+        Analysis_Workload** workload_opt = hashtable_find_element(&analyser->workload_executer.item_to_workload_mapping, item);
         assert(workload_opt != 0, "");
         Analysis_Workload* workload = *workload_opt;
         switch (item->type)
@@ -3268,7 +3302,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
         {
             assert(analyser->current_workload->type == Analysis_Workload_Type::STRUCT_ANALYSIS, "");
             Struct_Progress* progress = hashtable_find_element(
-                &analyser->dependency_graph.progress_structs, analyser->current_workload->options.struct_analysis_type
+                &analyser->workload_executer.progress_structs, analyser->current_workload->options.struct_analysis_type
             );
             assert(progress != 0, "");
             assert(progress->state != Struct_State::FINISHED, "Finished structs cannot be of size + alignment 0");
@@ -3935,7 +3969,7 @@ Expression_Result semantic_analyser_analyse_expression_any(Semantic_Analyser* an
     Type_Signature* inital_type = expr->result_type;
     if (expr->result_type == analyser->compiler->type_system.unknown_type ||
         (context.type == Expression_Context_Type::SPECIFIC_TYPE && context.signature == analyser->compiler->type_system.unknown_type)) {
-        semantic_analyser_set_error_flag(analyser);
+        semantic_analyser_set_error_flag(analyser, true);
         return result;
     }
 
@@ -4035,6 +4069,10 @@ Type_Signature* semantic_analyser_analyse_expression_type(Semantic_Analyser* ana
     {
         ModTree_Expression* expression = result.options.expression;
         SCOPE_EXIT(modtree_expression_destroy(expression));
+        if (expression->result_type == analyser->compiler->type_system.unknown_type) {
+            semantic_analyser_set_error_flag(analyser, true);
+            return analyser->compiler->type_system.unknown_type;
+        }
         if (expression->result_type != analyser->compiler->type_system.type_type)
         {
             semantic_analyser_log_error(analyser, Semantic_Error_Type::EXPRESSION_IS_NOT_A_TYPE, rc_expression);
@@ -4797,8 +4835,8 @@ void semantic_analyser_reset(Semantic_Analyser* analyser, Compiler* compiler)
         hashset_reset(&analyser->loaded_filenames);
         hashset_reset(&analyser->visited_functions);
 
-        dependency_graph_destroy(&analyser->dependency_graph);
-        analyser->dependency_graph = dependency_graph_create(analyser);
+        workload_executer_destroy(&analyser->workload_executer);
+        analyser->workload_executer = workload_executer_create(analyser);
 
         if (analyser->program != 0) {
             modtree_program_destroy(analyser->program);
@@ -4991,7 +5029,7 @@ Semantic_Analyser* semantic_analyser_create()
     result->allocator_values = stack_allocator_create_empty(2048);
     result->loaded_filenames = hashset_create_pointer_empty<String*>(32);
     result->visited_functions = hashset_create_pointer_empty<ModTree_Function*>(32);
-    result->dependency_graph = dependency_graph_create(result);
+    result->workload_executer = workload_executer_create(result);
     result->program = 0;
     return result;
 }

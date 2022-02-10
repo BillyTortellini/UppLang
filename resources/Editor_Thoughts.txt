@@ -1,0 +1,100 @@
+Dion Notes:
+They mentioned that they tried using a Hole-Based approach, but
+having Errors is usefull. Maybe they mean the same thing that I did,
+which was that Editing is easier if you can introduce Errors during changes.
+
+Also it seemed like he was able to do a normal Copy-Paste which introduced Errors.
+
+The Problem I tried to solve with my Syntax-Editor was to
+reparse the program after inserting some new Tokens inbetween, 
+which seems to be a very hard Problem, even if we have a Syntax-Driven Approach
+
+My current Approach also was to have non Token-based editing of an AST-Tree
+It looks like even Dion is still Token-Based, since they can copy-paste wrong stuff from
+one Place to another
+
+The Question is then, when does what get parsed, and when are Tree-Operations performed?
+
+I think translating Text to AST and Back
+
+
+
+Current Thoughts:
+I don't know how to Implement a Syntax-Based Editor that allows nice editing
+
+To be fair I feel like I currently want a Indentation-Based Syntax-Style
+
+The 2 Brace Styles I use are:
+    if cond {
+        foo()
+        bar()
+        baz = sqrt(foo())
+    }
+And
+    if cond 
+    {
+        foo()
+        bar()
+        baz = sqrt(foo())
+    }
+
+    if x < 5
+        print("Hello")
+    baz()
+To be Fair I also do 
+    foo(
+        15, 
+        32, 
+        64
+        what, what, what
+    );
+
+For Compilers/Error-Messages it would be great if all statements ended with a New-Line
+and all Blocks ended when the indentation changes
+
+Also, the Code editor can store the Text Hierarchically based on indentation
+This would also allow for easy Folding, and the promised 'Code Level-of-Detail'
+
+Indentation-Style
+-----------------
+Pros:
+  - Less writing, simpler reading
+  - Parenthesis Influence is limited, e.g. (), {}, [], ""
+  - Better Parsing -> Better Error detection, better Auto-Completion
+  - Text-Storage Better
+  - Easier Editing (Since you don't need to worry about deleting {})
+
+Indentation-Style Problems:
+ - No Statements in Expressions (Lambdas)
+ - Function Type vs Function Definition
+ - Anonymous Blocks vs Whitespace inbetween
+ - Multi-line Comments have the same problem as parenthesis
+ - Multi-Line Expression
+ - Copy-Pasting between Indentation-Levels
+ - Changing Indentation of big blocks (Functions)
+ - Strings
+
+Things I don't like about Python-Style:
+ - All statements starting a block have a Colon at the end
+    while x < 5:
+    if x < 5:
+ - Lambdas kinda suck
+ - No Multi-Line Comments, no nested comments
+ - Multi-Line Expressions require \, meaning that I need to reformat a lot if I change things
+
+
+ main :: () {
+        if x < 5
+        bar
+        baz 
+        boo
+        foo
+        fuck
+        while what
+            the fuck
+
+ }
+
+
+Implementation:
+ - Start with Lexer + Parser
