@@ -178,21 +178,21 @@ vec3 symbol_type_to_color(Symbol_Type type)
 {
     switch (type)
     {
-    case Symbol_Type::HARDCODED_FUNCTION: return FUNCTION_COLOR; 
-    case Symbol_Type::EXTERN_FUNCTION: return FUNCTION_COLOR; 
-    case Symbol_Type::FUNCTION: return FUNCTION_COLOR; 
-    case Symbol_Type::MODULE: return MODULE_COLOR; 
-    case Symbol_Type::TYPE: return TYPE_COLOR; 
-    case Symbol_Type::VARIABLE: return VARIABLE_COLOR; 
-    case Symbol_Type::CONSTANT_VALUE: return VARIABLE_COLOR; 
-    case Symbol_Type::SYMBOL_ALIAS: return IDENTIFIER_FALLBACK_COLOR; 
-    case Symbol_Type::UNRESOLVED: return IDENTIFIER_FALLBACK_COLOR; 
-    case Symbol_Type::ERROR_SYMBOL: return IDENTIFIER_FALLBACK_COLOR; 
-    case Symbol_Type::VARIABLE_UNDEFINED: return VARIABLE_COLOR; 
-    case Symbol_Type::POLYMORPHIC_PARAMETER: return VARIABLE_COLOR; 
+    case Symbol_Type::HARDCODED_FUNCTION: return Syntax_Color::FUNCTION; 
+    case Symbol_Type::EXTERN_FUNCTION: return Syntax_Color::FUNCTION; 
+    case Symbol_Type::FUNCTION: return Syntax_Color::FUNCTION; 
+    case Symbol_Type::MODULE: return Syntax_Color::MODULE; 
+    case Symbol_Type::TYPE: return Syntax_Color::TYPE; 
+    case Symbol_Type::VARIABLE: return Syntax_Color::VARIABLE; 
+    case Symbol_Type::CONSTANT_VALUE: return Syntax_Color::VARIABLE; 
+    case Symbol_Type::SYMBOL_ALIAS: return Syntax_Color::IDENTIFIER_FALLBACK; 
+    case Symbol_Type::UNRESOLVED: return Syntax_Color::IDENTIFIER_FALLBACK; 
+    case Symbol_Type::ERROR_SYMBOL: return Syntax_Color::IDENTIFIER_FALLBACK; 
+    case Symbol_Type::VARIABLE_UNDEFINED: return Syntax_Color::VARIABLE; 
+    case Symbol_Type::POLYMORPHIC_PARAMETER: return Syntax_Color::VARIABLE; 
     default: panic("");
     }
-    return IDENTIFIER_FALLBACK_COLOR;
+    return Syntax_Color::IDENTIFIER_FALLBACK;
 }
 
 void code_editor_do_ast_syntax_highlighting(Code_Editor* editor, AST_Node* node, Symbol_Table* symbol_table)
@@ -202,10 +202,10 @@ void code_editor_do_ast_syntax_highlighting(Code_Editor* editor, AST_Node* node,
     if (node->type == AST_Node_Type::LOAD_FILE) {
         Token_Range r = node_range;
         r.end_index = r.start_index + 2;
-        text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, editor->compiler), KEYWORD_COLOR, BG_COLOR);
+        text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, editor->compiler), Syntax_Color::KEYWORD, Syntax_Color::BG_NORMAL);
         r.start_index = r.end_index;
         r.end_index = r.start_index + 1;
-        text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, editor->compiler), STRING_LITERAL_COLOR, BG_COLOR);
+        text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, editor->compiler), Syntax_Color::STRING, Syntax_Color::BG_NORMAL);
     }
     else if (node->type == AST_Node_Type::COMPTIME_DEFINE_ASSIGN ||
         node->type == AST_Node_Type::COMPTIME_DEFINE_INFER)
@@ -216,7 +216,7 @@ void code_editor_do_ast_syntax_highlighting(Code_Editor* editor, AST_Node* node,
             Token_Range r = node_range;
             r.end_index = r.start_index + 1;
             text_editor_add_highlight_from_slice(
-                editor->text_editor, token_range_to_text_slice(r, editor->compiler), symbol_type_to_color(symbol->type), BG_COLOR
+                editor->text_editor, token_range_to_text_slice(r, editor->compiler), symbol_type_to_color(symbol->type), Syntax_Color::BG_NORMAL
             );
         }
     }
@@ -226,36 +226,36 @@ void code_editor_do_ast_syntax_highlighting(Code_Editor* editor, AST_Node* node,
     {
         Token_Range r = node_range;
         r.end_index = r.start_index + 1;
-        text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, editor->compiler), VARIABLE_COLOR, BG_COLOR);
+        text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, editor->compiler), Syntax_Color::VARIABLE, Syntax_Color::BG_NORMAL);
     }
     else if (node->type == AST_Node_Type::FUNCTION) {
         Token_Range r = node_range;
         if (node->id != 0) {
             r.end_index = r.start_index + 1;
-            text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, editor->compiler), FUNCTION_COLOR, BG_COLOR);
+            text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, editor->compiler), Syntax_Color::FUNCTION, Syntax_Color::BG_NORMAL);
         }
     }
     else if (node->type == AST_Node_Type::PARAMETER) {
         Token_Range r = node_range;
         r.end_index = r.start_index + 1;
-        text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, editor->compiler), VARIABLE_COLOR, BG_COLOR);
+        text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, editor->compiler), Syntax_Color::VARIABLE, Syntax_Color::BG_NORMAL);
     }
     else if (node->type == AST_Node_Type::EXPRESSION_AUTO_ENUM) {
         Token_Range r = node_range;
         r.start_index += 1;
         r.end_index = r.start_index + 1;
-        text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, editor->compiler), LITERAL_COLOR, BG_COLOR);
+        text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, editor->compiler), Syntax_Color::LITERAL, Syntax_Color::BG_NORMAL);
     }
     else if (node->type == AST_Node_Type::ENUM_MEMBER) {
         Token_Range r = node_range;
         r.end_index = r.start_index + 1;
-        text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, editor->compiler), LITERAL_COLOR, BG_COLOR);
+        text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, editor->compiler), Syntax_Color::LITERAL, Syntax_Color::BG_NORMAL);
     }
     else if (node->type == AST_Node_Type::IDENTIFIER_PATH)
     {
         Token_Range r = node_range;
         r.end_index = r.start_index + 1;
-        text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, editor->compiler), MODULE_COLOR, BG_COLOR);
+        text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, editor->compiler), Syntax_Color::MODULE, Syntax_Color::BG_NORMAL);
     }
     else if (node->type == AST_Node_Type::IDENTIFIER_NAME)
     {
@@ -266,7 +266,7 @@ void code_editor_do_ast_syntax_highlighting(Code_Editor* editor, AST_Node* node,
             Token_Range r = node_range;
             r.end_index = r.start_index + 1;
             text_editor_add_highlight_from_slice(
-                editor->text_editor, token_range_to_text_slice(r, editor->compiler), symbol_type_to_color(symbol->type), BG_COLOR
+                editor->text_editor, token_range_to_text_slice(r, editor->compiler), symbol_type_to_color(symbol->type), Syntax_Color::BG_NORMAL
             );
         }
     }
@@ -393,15 +393,15 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
         {
             Token t = source->tokens_with_decoration[i];
             if (t.type == Token_Type::COMMENT)
-                text_editor_add_highlight_from_slice(editor->text_editor, t.position, COMMENT_COLOR, BG_COLOR);
+                text_editor_add_highlight_from_slice(editor->text_editor, t.position, Syntax_Color::COMMENT, Syntax_Color::BG_NORMAL);
             else if (token_type_is_keyword(t.type))
-                text_editor_add_highlight_from_slice(editor->text_editor, t.position, KEYWORD_COLOR, BG_COLOR);
+                text_editor_add_highlight_from_slice(editor->text_editor, t.position, Syntax_Color::KEYWORD, Syntax_Color::BG_NORMAL);
             else if (t.type == Token_Type::STRING_LITERAL)
-                text_editor_add_highlight_from_slice(editor->text_editor, t.position, STRING_LITERAL_COLOR, BG_COLOR);
+                text_editor_add_highlight_from_slice(editor->text_editor, t.position, Syntax_Color::STRING, Syntax_Color::BG_NORMAL);
             else if (t.type == Token_Type::ERROR_TOKEN)
-                text_editor_add_highlight_from_slice(editor->text_editor, t.position, TEXT_COLOR, ERROR_BG_COLOR);
+                text_editor_add_highlight_from_slice(editor->text_editor, t.position, Syntax_Color::TEXT, Syntax_Color::BG_ERROR);
             else if (t.type == Token_Type::NULLPTR || t.type == Token_Type::INTEGER_LITERAL || t.type == Token_Type::BOOLEAN_LITERAL || t.type == Token_Type::FLOAT_LITERAL) {
-                text_editor_add_highlight_from_slice(editor->text_editor, t.position, LITERAL_COLOR, BG_COLOR);
+                text_editor_add_highlight_from_slice(editor->text_editor, t.position, Syntax_Color::LITERAL, Syntax_Color::BG_NORMAL);
             }
         }
 
@@ -411,7 +411,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
 
         for (int i = 0; i < editor->compiler->parser->errors.size; i++) {
             Compiler_Error e = editor->compiler->parser->errors[i];
-            text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(e.range, editor->compiler), TEXT_COLOR, ERROR_BG_COLOR);
+            text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(e.range, editor->compiler), Syntax_Color::TEXT, Syntax_Color::BG_ERROR);
         }
     }
 
@@ -422,7 +422,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
         for (int i = 0; i < editor->compiler->rc_analyser->errors.size; i++) {
             Symbol_Error e = editor->compiler->rc_analyser->errors[i];
             text_editor_add_highlight_from_slice(
-                editor->text_editor, token_range_to_text_slice(e.error_node->token_range, editor->compiler), TEXT_COLOR, ERROR_BG_COLOR
+                editor->text_editor, token_range_to_text_slice(e.error_node->token_range, editor->compiler), Syntax_Color::TEXT, Syntax_Color::BG_ERROR
             );
         }
     }
@@ -573,7 +573,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
                     text_editor_add_highlight_from_slice(
                         editor->text_editor,
                         token_range_to_text_slice(range, editor->compiler),
-                        symbol_type_to_color(symbol->type), HIGHLIGHT_BG_COLOR
+                        symbol_type_to_color(symbol->type), Syntax_Color::BG_HIGHLIGHT
                     );
                 }
             }

@@ -3,7 +3,7 @@
 #include "../math/umath.hpp"
 #include "../datastructures/string.hpp"
 #include "../win32/timing.hpp"
-#include "../programs/upp_lang/test_renderer.hpp"
+#include "../rendering/test_renderer.hpp"
 
 // Forward Declarations
 struct Input;

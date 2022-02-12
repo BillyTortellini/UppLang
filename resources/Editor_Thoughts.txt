@@ -1,3 +1,29 @@
+NEW IDEA:
+Editor based on Tokens, and a parser that stores which parts need to be reparsed.
+Does this mean the parser needs to run after every insertion?
+
+Line -> List of Tokens
+
+main :: ()
+
+if if x < 15
+   | Error invalid keyword
+
+main :: () -> int
+
+
+
+
+
+
+
+
+The Editor could also already output
+a Tree-Structure, instead of a Text-Object
+
+
+
+
 Dion Notes:
 They mentioned that they tried using a Hole-Based approach, but
 having Errors is usefull. Maybe they mean the same thing that I did,
@@ -98,3 +124,5 @@ Things I don't like about Python-Style:
 
 Implementation:
  - Start with Lexer + Parser
+ - Lexer output now needs to include newlines + indentation
+ - Or lexer output now contains a Dynamic-Array which records all newlines + indentations

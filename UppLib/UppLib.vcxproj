@@ -49,7 +49,6 @@
     <ClInclude Include="programs\upp_lang\rc_analyser.hpp" />
     <ClInclude Include="programs\upp_lang\syntax_colors.hpp" />
     <ClInclude Include="programs\upp_lang\syntax_editor.hpp" />
-    <ClInclude Include="programs\upp_lang\test_renderer.hpp" />
     <ClInclude Include="programs\upp_lang\text.hpp" />
     <ClInclude Include="programs\upp_lang\text_editor.hpp" />
     <ClInclude Include="programs\upp_lang\type_system.hpp" />
@@ -66,6 +65,7 @@
     <ClInclude Include="rendering\renderer_2D.hpp" />
     <ClInclude Include="rendering\render_pass.hpp" />
     <ClInclude Include="rendering\shader_program.hpp" />
+    <ClInclude Include="rendering\test_renderer.hpp" />
     <ClInclude Include="rendering\texture_2D.hpp" />
     <ClInclude Include="rendering\texture_bitmap.hpp" />
     <ClInclude Include="rendering\text_renderer.hpp" />
@@ -112,7 +112,6 @@
     <ClCompile Include="programs\upp_lang\rc_analyser.cpp" />
     <ClCompile Include="programs\upp_lang\syntax_colors.cpp" />
     <ClCompile Include="programs\upp_lang\syntax_editor.cpp" />
-    <ClCompile Include="programs\upp_lang\test_renderer.cpp" />
     <ClCompile Include="programs\upp_lang\text.cpp" />
     <ClCompile Include="programs\upp_lang\text_editor.cpp" />
     <ClCompile Include="programs\upp_lang\type_system.cpp" />
@@ -129,6 +128,7 @@
     <ClCompile Include="rendering\renderer_2D.cpp" />
     <ClCompile Include="rendering\render_pass.cpp" />
     <ClCompile Include="rendering\shader_program.cpp" />
+    <ClCompile Include="rendering\test_renderer.cpp" />
     <ClCompile Include="rendering\texture_2D.cpp" />
     <ClCompile Include="rendering\texture_bitmap.cpp" />
     <ClCompile Include="rendering\text_renderer.cpp" />

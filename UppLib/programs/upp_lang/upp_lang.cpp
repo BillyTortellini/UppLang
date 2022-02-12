@@ -23,7 +23,7 @@
 #include "../../utility/hash_functions.hpp"
 
 #include "code_editor.hpp"
-#include "Test_Renderer.hpp"
+#include "../../rendering/test_renderer.hpp"
 #include "syntax_editor.hpp"
 
 #include "../../datastructures/block_allocator.hpp"
@@ -291,8 +291,8 @@ void upp_lang_main()
 
             camera_controller_arcball_update(&camera_controller_arcball, camera, input, window_state->width, window_state->height);
             //gui_update(&gui, input, window_state->width, window_state->height);
-            //syntax_editor_update(syntax_editor, input);
-            code_editor_update(&code_editor, input, timer_current_time_in_seconds(&timer));
+            syntax_editor_update(syntax_editor, input);
+            //code_editor_update(&code_editor, input, timer_current_time_in_seconds(&timer));
             input_reset(input); // Clear input for next frame
         }
 
@@ -309,10 +309,10 @@ void upp_lang_main()
 
             // Text editor
             Bounding_Box2 region = bounding_box_2_make_min_max(vec2(-1, -1), vec2(1, 1));
-            code_editor_render(&code_editor, &core, region);
+            //code_editor_render(&code_editor, &core, region);
 
             // Syntax editor
-            //syntax_editor_render(syntax_editor);
+            syntax_editor_render(syntax_editor);
 
             /*
             primitive_renderer_2D_add_rectangle(primitive_renderer_2D, vec2(600, 300), vec2(50, 200), 0.0f, Anchor_2D::CENTER_CENTER, vec3(1.0f, 0.2f, 0.7f));

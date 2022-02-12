@@ -4,19 +4,22 @@
 struct vec3;
 struct vec4;
 
-extern vec3 KEYWORD_COLOR;
-extern vec3 COMMENT_COLOR;
-extern vec3 FUNCTION_COLOR;
-extern vec3 MODULE_COLOR;
-extern vec3 IDENTIFIER_FALLBACK_COLOR;
-extern vec3 TEXT_COLOR;
-extern vec3 VARIABLE_COLOR;
-extern vec3 TYPE_COLOR;
-extern vec3 PRIMITIVE_TYPE_COLOR;
-extern vec3 STRING_LITERAL_COLOR;
-extern vec3 LITERAL_COLOR;
+namespace Syntax_Color
+{
+    extern vec3 KEYWORD;
+    extern vec3 COMMENT;
+    extern vec3 FUNCTION;
+    extern vec3 MODULE;
+    extern vec3 IDENTIFIER_FALLBACK;
+    extern vec3 TEXT;
+    extern vec3 VARIABLE;
+    extern vec3 TYPE;
+    extern vec3 PRIMITIVE;
+    extern vec3 STRING;
+    extern vec3 LITERAL;
 
-extern vec4 BG_COLOR;
-extern vec4 ERROR_BG_COLOR;
-extern vec4 HIGHLIGHT_BG_COLOR;
+    extern vec4 BG_NORMAL;
+    extern vec4 BG_ERROR;
+    extern vec4 BG_HIGHLIGHT;
+};
 

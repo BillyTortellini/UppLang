@@ -1,6 +1,6 @@
 #include "Test_Renderer.hpp"
 
-#include "../../rendering/mesh_utils.hpp"
+#include "mesh_utils.hpp"
 
 Mesh_CPU_Buffer_Dynamic mesh_cpu_buffer_dynamic_create(Rendering_Core* core, int expected_face_count, int vertex_byte_size, Array<Vertex_Attribute> attributes)
 {

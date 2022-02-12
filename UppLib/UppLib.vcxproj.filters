@@ -91,6 +91,15 @@
     <Filter Include="Resource Files\Shaders\Upp_Lang">
       <UniqueIdentifier>{b72a4446-85ee-44c4-88a4-1705e56cf350}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Header Files\Programs\Upp_Lang\Compiler">
+      <UniqueIdentifier>{d017d603-fb2c-4712-a250-1f2cbca4c232}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Programs\Upp_Lang\Editor">
+      <UniqueIdentifier>{71e9851b-8202-4b90-b45b-7f400b7e4d1a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Programs\Upp_Lang\Tools">
+      <UniqueIdentifier>{f4c08399-a131-4d92-a94d-0bb376aa45d7}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="datastructures\array.hpp">
@@ -132,9 +141,6 @@
     <ClInclude Include="win32\windows_helper_functions.hpp">
       <Filter>Header Files\Win32</Filter>
     </ClInclude>
-    <ClInclude Include="programs\upp_lang\text_editor.hpp">
-      <Filter>Header Files\Programs\Upp_Lang</Filter>
-    </ClInclude>
     <ClInclude Include="programs\upp_lang\upp_lang.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
     </ClInclude>
@@ -168,35 +174,8 @@
     <ClInclude Include="utility\gui.hpp">
       <Filter>Header Files\Utility</Filter>
     </ClInclude>
-    <ClInclude Include="programs\upp_lang\text.hpp">
-      <Filter>Header Files\Programs\Upp_Lang</Filter>
-    </ClInclude>
-    <ClInclude Include="programs\upp_lang\lexer.hpp">
-      <Filter>Header Files\Programs\Upp_Lang</Filter>
-    </ClInclude>
-    <ClInclude Include="programs\upp_lang\semantic_analyser.hpp">
-      <Filter>Header Files\Programs\Upp_Lang</Filter>
-    </ClInclude>
-    <ClInclude Include="programs\upp_lang\bytecode_interpreter.hpp">
-      <Filter>Header Files\Programs\Upp_Lang</Filter>
-    </ClInclude>
     <ClInclude Include="utility\random.hpp">
       <Filter>Header Files\Utility</Filter>
-    </ClInclude>
-    <ClInclude Include="programs\upp_lang\c_backend.hpp">
-      <Filter>Header Files\Programs\Upp_Lang</Filter>
-    </ClInclude>
-    <ClInclude Include="programs\upp_lang\compiler.hpp">
-      <Filter>Header Files\Programs\Upp_Lang</Filter>
-    </ClInclude>
-    <ClInclude Include="programs\upp_lang\bytecode_generator.hpp">
-      <Filter>Header Files\Programs\Upp_Lang</Filter>
-    </ClInclude>
-    <ClInclude Include="programs\upp_lang\code_editor.hpp">
-      <Filter>Header Files\Programs\Upp_Lang</Filter>
-    </ClInclude>
-    <ClInclude Include="programs\upp_lang\test_renderer.hpp">
-      <Filter>Header Files\Programs\Upp_Lang</Filter>
     </ClInclude>
     <ClInclude Include="rendering\rendering_core.hpp">
       <Filter>Header Files\Rendering\Core</Filter>
@@ -243,29 +222,14 @@
     <ClInclude Include="rendering\render_pass.hpp">
       <Filter>Header Files\Rendering\Utility</Filter>
     </ClInclude>
-    <ClInclude Include="programs\upp_lang\ast_parser.hpp">
-      <Filter>Header Files\Programs\Upp_Lang</Filter>
-    </ClInclude>
     <ClInclude Include="utility\hash_functions.hpp">
       <Filter>Header Files\Utility</Filter>
     </ClInclude>
     <ClInclude Include="datastructures\hashset.hpp">
       <Filter>Header Files\Datastructures</Filter>
     </ClInclude>
-    <ClInclude Include="programs\upp_lang\c_importer.hpp">
-      <Filter>Header Files\Programs\Upp_Lang</Filter>
-    </ClInclude>
     <ClInclude Include="win32\process.hpp">
       <Filter>Header Files\Win32</Filter>
-    </ClInclude>
-    <ClInclude Include="programs\upp_lang\ir_code.hpp">
-      <Filter>Header Files\Programs\Upp_Lang</Filter>
-    </ClInclude>
-    <ClInclude Include="programs\upp_lang\type_system.hpp">
-      <Filter>Header Files\Programs\Upp_Lang</Filter>
-    </ClInclude>
-    <ClInclude Include="programs\upp_lang\compiler_misc.hpp">
-      <Filter>Header Files\Programs\Upp_Lang</Filter>
     </ClInclude>
     <ClInclude Include="datastructures\block_allocator.hpp">
       <Filter>Header Files\Datastructures</Filter>
@@ -276,17 +240,62 @@
     <ClInclude Include="datastructures\list.hpp">
       <Filter>Header Files\Datastructures</Filter>
     </ClInclude>
-    <ClInclude Include="programs\upp_lang\rc_analyser.hpp">
-      <Filter>Header Files\Programs\Upp_Lang</Filter>
-    </ClInclude>
     <ClInclude Include="datastructures\dependency_graph.hpp">
       <Filter>Header Files\Datastructures</Filter>
     </ClInclude>
-    <ClInclude Include="programs\upp_lang\syntax_editor.hpp">
-      <Filter>Header Files\Programs\Upp_Lang</Filter>
+    <ClInclude Include="programs\upp_lang\ast_parser.hpp">
+      <Filter>Header Files\Programs\Upp_Lang\Compiler</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\upp_lang\bytecode_generator.hpp">
+      <Filter>Header Files\Programs\Upp_Lang\Compiler</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\upp_lang\bytecode_interpreter.hpp">
+      <Filter>Header Files\Programs\Upp_Lang\Compiler</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\upp_lang\c_backend.hpp">
+      <Filter>Header Files\Programs\Upp_Lang\Compiler</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\upp_lang\c_importer.hpp">
+      <Filter>Header Files\Programs\Upp_Lang\Tools</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\upp_lang\code_editor.hpp">
+      <Filter>Header Files\Programs\Upp_Lang\Editor</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\upp_lang\compiler.hpp">
+      <Filter>Header Files\Programs\Upp_Lang\Compiler</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\upp_lang\compiler_misc.hpp">
+      <Filter>Header Files\Programs\Upp_Lang\Compiler</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\upp_lang\ir_code.hpp">
+      <Filter>Header Files\Programs\Upp_Lang\Compiler</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\upp_lang\lexer.hpp">
+      <Filter>Header Files\Programs\Upp_Lang\Compiler</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\upp_lang\rc_analyser.hpp">
+      <Filter>Header Files\Programs\Upp_Lang\Compiler</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\upp_lang\semantic_analyser.hpp">
+      <Filter>Header Files\Programs\Upp_Lang\Compiler</Filter>
     </ClInclude>
     <ClInclude Include="programs\upp_lang\syntax_colors.hpp">
-      <Filter>Header Files\Programs\Upp_Lang</Filter>
+      <Filter>Header Files\Programs\Upp_Lang\Editor</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\upp_lang\text.hpp">
+      <Filter>Header Files\Programs\Upp_Lang\Editor</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\upp_lang\text_editor.hpp">
+      <Filter>Header Files\Programs\Upp_Lang\Editor</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\upp_lang\type_system.hpp">
+      <Filter>Header Files\Programs\Upp_Lang\Compiler</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\upp_lang\syntax_editor.hpp">
+      <Filter>Header Files\Programs\Upp_Lang\Editor</Filter>
+    </ClInclude>
+    <ClInclude Include="rendering\test_renderer.hpp">
+      <Filter>Header Files\Rendering\Utility</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -389,9 +398,6 @@
     <ClCompile Include="programs\upp_lang\code_editor.cpp">
       <Filter>Source Files\Programs\Upp_Lang</Filter>
     </ClCompile>
-    <ClCompile Include="programs\upp_lang\test_renderer.cpp">
-      <Filter>Source Files\Programs\Upp_Lang</Filter>
-    </ClCompile>
     <ClCompile Include="rendering\camera_controllers.cpp">
       <Filter>Source Files\Rendering\Utility</Filter>
     </ClCompile>
@@ -464,10 +470,13 @@
     <ClCompile Include="datastructures\dependency_graph.cpp">
       <Filter>Source Files\Datastructures</Filter>
     </ClCompile>
+    <ClCompile Include="programs\upp_lang\syntax_colors.cpp">
+      <Filter>Source Files\Programs\Upp_Lang</Filter>
+    </ClCompile>
     <ClCompile Include="programs\upp_lang\syntax_editor.cpp">
       <Filter>Source Files\Programs\Upp_Lang</Filter>
     </ClCompile>
-    <ClCompile Include="programs\upp_lang\syntax_colors.cpp">
+    <ClCompile Include="rendering\test_renderer.cpp">
       <Filter>Source Files\Programs\Upp_Lang</Filter>
     </ClCompile>
   </ItemGroup>

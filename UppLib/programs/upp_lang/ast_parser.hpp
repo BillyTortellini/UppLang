@@ -13,25 +13,6 @@ struct Identifier_Pool;
 struct Token;
 
 
-/*
-    Thoughts:
-     <> Parenthesis Should be removed from bake and Identifer paths
-     Node~make(henlo);
-
-     Unnamed/Named parameters are the same
-     I think I want to remove 
-
-     Variable definition is:  ID: Expression;
-     Parameter is:            ID: Expression
-     hmmmmmmm
-     Assignment is: x = 5;
-     Named_Argument is: x = 5
-
-     Changes:
-      * ARGUMENTS now contains either Named or unnamed argument, not expressions
-      * MODULE_TEMPLATED Removed
-      * Struct_Initializer now with ARGUMENTS node
-*/
 enum class AST_Node_Type
 {
     // TOP-LEVEL DECLARATIONS

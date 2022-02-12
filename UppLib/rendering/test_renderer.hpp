@@ -1,10 +1,10 @@
 #pragma once
 
-#include "../../rendering/shader_program.hpp"
-#include "../../rendering/gpu_buffers.hpp"
-#include "../../math/umath.hpp"
-#include "../../rendering/rendering_core.hpp"
-#include "../../utility/bounding_box.hpp"
+#include "shader_program.hpp"
+#include "gpu_buffers.hpp"
+#include "../math/umath.hpp"
+#include "rendering_core.hpp"
+#include "../utility/bounding_box.hpp"
 
 /*
     This class support the following Primitives:
