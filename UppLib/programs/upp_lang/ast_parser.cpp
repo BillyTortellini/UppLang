@@ -1685,6 +1685,7 @@ bool ast_parser_parse_definitions(AST_Parser* parser, AST_Node* parent)
             continue;
         }
 
+        // Error Recovery
         ast_parser_checkpoint_reset(checkpoint);
         bool exit_braces_found;
         int next_closing_braces = ast_parser_find_parenthesis_ending(
