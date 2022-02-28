@@ -107,7 +107,7 @@ struct Lexer
 {
     Identifier_Pool* identifier_pool;
     Hashtable<String, Token_Type> keywords;
-    Dynamic_Array<Token> tokens;
+    Dynamic_Array<Token> syntax_tokens;
     Dynamic_Array<Token> tokens_with_decoration; // Includes comments and whitespaces
 };
 

@@ -51,10 +51,10 @@ void code_editor_destroy(Code_Editor* editor)
 Optional<int> code_editor_get_closest_token_to_text_position(Code_Editor* editor, Text_Position pos)
 {
     if (editor->compiler->main_source == 0) return optional_make_failure<int>();
-    if (editor->compiler->main_source->tokens.size == 0) return optional_make_failure<int>();
-    for (int i = 0; i < editor->compiler->main_source->tokens.size; i++)
+    if (editor->compiler->main_source->syntax_tokens.size == 0) return optional_make_failure<int>();
+    for (int i = 0; i < editor->compiler->main_source->syntax_tokens.size; i++)
     {
-        Token* t = &editor->compiler->main_source->tokens[i];
+        Token* t = &editor->compiler->main_source->syntax_tokens[i];
         if (t->position.start.line == pos.line && t->position.start.character <= pos.character && t->position.end.character >= pos.character) {
             return optional_make_success(i);
         }
@@ -66,7 +66,7 @@ AST_Node* code_editor_get_closest_node_to_text_position(Code_Editor* editor, Tex
 {
     Code_Source* source = editor->compiler->main_source;
     AST_Node* closest = source->root_node;
-    if (source->tokens.size == 0) return closest;
+    if (source->syntax_tokens.size == 0) return closest;
     while (true)
     {
         bool continue_search = true;
@@ -77,14 +77,14 @@ AST_Node* code_editor_get_closest_node_to_text_position(Code_Editor* editor, Tex
             Token* token_start, * token_end;
             {
                 int min = 0;
-                int max = source->tokens.size;
+                int max = source->syntax_tokens.size;
                 int start_index = child->token_range.start_index;
                 int end_index = child->token_range.end_index;
                 if (start_index == -1 || end_index == -1) continue;
                 start_index = math_clamp(start_index, min, max);
                 end_index = math_clamp(end_index, min, max);
-                token_start = &source->tokens[start_index];
-                token_end = &source->tokens[math_maximum(0, end_index - 1)];
+                token_start = &source->syntax_tokens[start_index];
+                token_end = &source->syntax_tokens[math_maximum(0, end_index - 1)];
             }
 
             Text_Slice node_slice = text_slice_make(token_start->position.start, token_end->position.end);
@@ -162,7 +162,7 @@ void code_editor_jump_to_definition(Code_Editor* editor)
         Symbol* symbol = code_editor_symbol_table_lookup(editor, nearest_table, closest_node);
         if (symbol == 0) return;
         if (symbol->definition_node != 0) {
-            Token* token = &source->tokens[symbol->definition_node->token_range.start_index];
+            Token* token = &source->syntax_tokens[symbol->definition_node->token_range.start_index];
             Text_Position result_pos = token->position.start;
             if (math_absolute(result_pos.line - editor->text_editor->cursor_position.line) > 5) {
                 text_editor_record_jump(editor->text_editor, editor->text_editor->cursor_position, result_pos);
@@ -430,7 +430,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
     // Do context highlighting
     {
         bool search_context = true;
-        if (source->tokens.size == 0) search_context = false;
+        if (source->syntax_tokens.size == 0) search_context = false;
         Optional<int> closest_token = code_editor_get_closest_token_to_text_position(editor, editor->text_editor->cursor_position);
         int closest_index = -1;
         if (closest_token.available) closest_index = closest_token.value;

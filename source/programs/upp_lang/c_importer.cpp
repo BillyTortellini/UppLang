@@ -123,7 +123,7 @@ struct Header_Parser
 {
     C_Import_Package result_package;
     Lexer* lexer;
-    Dynamic_Array<Token> tokens;
+    Dynamic_Array<Token> syntax_tokens;
     int index;
     String source_code;
 
@@ -165,7 +165,7 @@ struct Header_Parser
     String* identifier_call_conv_vectorcall;
 };
 
-void print_tokens_till_newline(Dynamic_Array<Token> tokens, String source, int token_index);
+void print_tokens_till_newline(Dynamic_Array<Token> syntax_tokens, String source, int token_index);
 Header_Parser header_parser_create(Lexer* lexer, String source_code)
 {
     Header_Parser result;
@@ -212,15 +212,15 @@ Header_Parser header_parser_create(Lexer* lexer, String source_code)
     result.identifier_call_conv_vectorcall = identifier_pool_add(lexer->identifier_pool, string_create_static("__vectorcall"));
 
     // Create new tokens array, where lines starting with # are removed, and __pragma and __declspec compiler stuff is removed
-    result.tokens = dynamic_array_create_empty<Token>(lexer->tokens.size);
+    result.syntax_tokens = dynamic_array_create_empty<Token>(lexer->syntax_tokens.size);
 
     String* identifier_pragma_underscore = identifier_pool_add(lexer->identifier_pool, string_create_static("__pragma"));
     String* identifier_declspec = identifier_pool_add(lexer->identifier_pool, string_create_static("__declspec"));
     String* identifier_static_assert = identifier_pool_add(lexer->identifier_pool, string_create_static("static_assert"));
     int last_line_index = -1;
-    for (int i = 0; i < lexer->tokens.size; i++)
+    for (int i = 0; i < lexer->syntax_tokens.size; i++)
     {
-        Token* token = &lexer->tokens[i];
+        Token* token = &lexer->syntax_tokens[i];
         bool is_first_token_in_line = false;
         if (token->position.start.line != last_line_index) {
             last_line_index = token->position.start.line;
@@ -229,7 +229,7 @@ Header_Parser header_parser_create(Lexer* lexer, String source_code)
 
         // Skip lines starting with a hashtag
         if (is_first_token_in_line && token->type == Token_Type::HASHTAG) {
-            while (i < lexer->tokens.size && lexer->tokens[i].position.start.line == last_line_index) {
+            while (i < lexer->syntax_tokens.size && lexer->syntax_tokens[i].position.start.line == last_line_index) {
                 i++;
             }
             i--;
@@ -244,12 +244,12 @@ Header_Parser header_parser_create(Lexer* lexer, String source_code)
             {
                 // Skip everything afterwards if followed by a (
                 i += 1;
-                token = &lexer->tokens[i];
+                token = &lexer->syntax_tokens[i];
                 if (token->type == Token_Type::OPEN_PARENTHESIS) {
                     i++;
                     int depth = 1;
-                    while (i < lexer->tokens.size) {
-                        token = &lexer->tokens[i];
+                    while (i < lexer->syntax_tokens.size) {
+                        token = &lexer->syntax_tokens[i];
                         if (token->type == Token_Type::OPEN_PARENTHESIS) {
                             depth++;
                         }
@@ -282,7 +282,7 @@ Header_Parser header_parser_create(Lexer* lexer, String source_code)
                 continue;
             }
         }
-        dynamic_array_push_back(&result.tokens, *token);
+        dynamic_array_push_back(&result.syntax_tokens, *token);
     }
 
     return result;
@@ -290,74 +290,74 @@ Header_Parser header_parser_create(Lexer* lexer, String source_code)
 
 void header_parser_destroy(Header_Parser* parser, bool destroy_package)
 {
-    dynamic_array_destroy(&parser->tokens);
+    dynamic_array_destroy(&parser->syntax_tokens);
     if (destroy_package) {
         c_import_package_destroy(&parser->result_package);
     }
 }
 
 bool header_parser_is_finished(Header_Parser* parser) {
-    return parser->index >= parser->tokens.size;
+    return parser->index >= parser->syntax_tokens.size;
 }
 
 void header_parser_goto_next_line(Header_Parser* parser) {
     if (!header_parser_is_finished(parser)) return;
-    int line = parser->tokens[parser->index].position.start.line;
+    int line = parser->syntax_tokens[parser->index].position.start.line;
     parser->index++;
-    while (header_parser_is_finished(parser) && parser->tokens[parser->index].position.start.line == line) {
+    while (header_parser_is_finished(parser) && parser->syntax_tokens[parser->index].position.start.line == line) {
         parser->index++;
     }
 }
 
 bool header_parser_test_next_token(Header_Parser* parser, Token_Type type) {
-    if (parser->index >= parser->tokens.size) return false;
-    return parser->tokens[parser->index].type == type;
+    if (parser->index >= parser->syntax_tokens.size) return false;
+    return parser->syntax_tokens[parser->index].type == type;
 }
 
 bool header_parser_test_next_token_2(Header_Parser* parser, Token_Type t1, Token_Type t2) {
-    if (parser->index + 1 >= parser->tokens.size) return false;
-    return parser->tokens[parser->index].type == t1 &&
-        parser->tokens[parser->index + 1].type == t2;
+    if (parser->index + 1 >= parser->syntax_tokens.size) return false;
+    return parser->syntax_tokens[parser->index].type == t1 &&
+        parser->syntax_tokens[parser->index + 1].type == t2;
 }
 
 bool header_parser_test_next_token_3(Header_Parser* parser, Token_Type t1, Token_Type t2, Token_Type t3) {
-    if (parser->index + 2 >= parser->tokens.size) return false;
-    return parser->tokens[parser->index].type == t1 &&
-        parser->tokens[parser->index + 1].type == t2 &&
-        parser->tokens[parser->index + 2].type == t3;
+    if (parser->index + 2 >= parser->syntax_tokens.size) return false;
+    return parser->syntax_tokens[parser->index].type == t1 &&
+        parser->syntax_tokens[parser->index + 1].type == t2 &&
+        parser->syntax_tokens[parser->index + 2].type == t3;
 }
 
 bool header_parser_test_next_token_4(Header_Parser* parser, Token_Type t1, Token_Type t2, Token_Type t3, Token_Type t4) {
-    if (parser->index + 3 >= parser->tokens.size) return false;
-    return parser->tokens[parser->index].type == t1 &&
-        parser->tokens[parser->index + 1].type == t2 &&
-        parser->tokens[parser->index + 2].type == t3 &&
-        parser->tokens[parser->index + 3].type == t4;
+    if (parser->index + 3 >= parser->syntax_tokens.size) return false;
+    return parser->syntax_tokens[parser->index].type == t1 &&
+        parser->syntax_tokens[parser->index + 1].type == t2 &&
+        parser->syntax_tokens[parser->index + 2].type == t3 &&
+        parser->syntax_tokens[parser->index + 3].type == t4;
 }
 
 bool header_parser_test_next_token_5(Header_Parser* parser, Token_Type t1, Token_Type t2, Token_Type t3, Token_Type t4, Token_Type t5) {
-    if (parser->index + 4 >= parser->tokens.size) return false;
-    return parser->tokens[parser->index].type == t1 &&
-        parser->tokens[parser->index + 1].type == t2 &&
-        parser->tokens[parser->index + 2].type == t3 &&
-        parser->tokens[parser->index + 3].type == t4 &&
-        parser->tokens[parser->index + 4].type == t5;
+    if (parser->index + 4 >= parser->syntax_tokens.size) return false;
+    return parser->syntax_tokens[parser->index].type == t1 &&
+        parser->syntax_tokens[parser->index + 1].type == t2 &&
+        parser->syntax_tokens[parser->index + 2].type == t3 &&
+        parser->syntax_tokens[parser->index + 3].type == t4 &&
+        parser->syntax_tokens[parser->index + 4].type == t5;
 }
 
 bool header_parser_next_is_identifier(Header_Parser* parser, String* id)
 {
-    if (parser->index >= parser->tokens.size) return false;
-    return parser->tokens[parser->index].type == Token_Type::IDENTIFIER_NAME && parser->tokens[parser->index].attribute.id == id;
+    if (parser->index >= parser->syntax_tokens.size) return false;
+    return parser->syntax_tokens[parser->index].type == Token_Type::IDENTIFIER_NAME && parser->syntax_tokens[parser->index].attribute.id == id;
 }
 
-void print_tokens_till_newline_token_style(Dynamic_Array<Token> tokens, String source, int token_index, Lexer* lexer)
+void print_tokens_till_newline_token_style(Dynamic_Array<Token> syntax_tokens, String source, int token_index, Lexer* lexer)
 {
-    Token* start_tok = &tokens[token_index];
+    Token* start_tok = &syntax_tokens[token_index];
     String str = string_create_empty(256);
     SCOPE_EXIT(string_destroy(&str));
-    for (int i = token_index; i < tokens.size; i++) 
+    for (int i = token_index; i < syntax_tokens.size; i++) 
     {
-        Token* token = &tokens[i];
+        Token* token = &syntax_tokens[i];
         if (start_tok->position.start.line != token->position.start.line) {
             break;
         }
@@ -386,13 +386,13 @@ void print_tokens_till_newline_token_style(Dynamic_Array<Token> tokens, String s
     logg(str.characters);
 }
 
-void print_tokens_till_newline(Dynamic_Array<Token> tokens, String source, int token_index)
+void print_tokens_till_newline(Dynamic_Array<Token> syntax_tokens, String source, int token_index)
 {
-    Token* token = &tokens[token_index];
+    Token* token = &syntax_tokens[token_index];
     int end_pos = token->source_code_index;
-    for (int i = token_index + 1; i < tokens.size; i++) {
-        if (tokens[i].position.start.line != token->position.start.line) {
-            end_pos = tokens[i].source_code_index;
+    for (int i = token_index + 1; i < syntax_tokens.size; i++) {
+        if (syntax_tokens[i].position.start.line != token->position.start.line) {
+            end_pos = syntax_tokens[i].source_code_index;
             break;
         }
     }
@@ -412,8 +412,8 @@ void c_import_type_append_to_string(C_Import_Type* type, String* string, int ind
 C_Type_Qualifiers header_parser_parse_type_qualifiers(Header_Parser* parser)
 {
     u8 result = 0;
-    while (parser->index < parser->tokens.size && parser->tokens[parser->index].type == Token_Type::IDENTIFIER_NAME) {
-        String* id = parser->tokens[parser->index].attribute.id;
+    while (parser->index < parser->syntax_tokens.size && parser->syntax_tokens[parser->index].type == Token_Type::IDENTIFIER_NAME) {
+        String* id = parser->syntax_tokens[parser->index].attribute.id;
         if (id == parser->identifier_atomic) {
             result = result | (u8)C_Type_Qualifiers::ATOMIC;
         }
@@ -448,7 +448,7 @@ Optional<C_Import_Type*> header_parser_parse_primitive_type(Header_Parser* parse
     C_Import_Type prototype;
     prototype.qualifiers = qualifiers;
     prototype.type = C_Import_Type_Type::PRIMITIVE;
-    String* identifier = parser->tokens[parser->index].attribute.id;
+    String* identifier = parser->syntax_tokens[parser->index].attribute.id;
     if (identifier == parser->identifier_long)
     {
         parser->index++;
@@ -616,7 +616,7 @@ Optional<C_Import_Type*> header_parser_parse_structure(Header_Parser* parser, C_
         if (header_parser_test_next_token(parser, Token_Type::IDENTIFIER_NAME))
         {
             has_name = true;
-            id = parser->tokens[parser->index].attribute.id;
+            id = parser->syntax_tokens[parser->index].attribute.id;
             parser->index++;
         }
         if (header_parser_test_next_token(parser, Token_Type::OPEN_BRACES))
@@ -713,23 +713,23 @@ Optional<C_Import_Type*> header_parser_parse_structure(Header_Parser* parser, C_
             if (header_parser_test_next_token_2(parser, Token_Type::IDENTIFIER_NAME, Token_Type::OP_ASSIGNMENT))
             {
                 C_Import_Enum_Member member;
-                member.id = parser->tokens[parser->index].attribute.id;
+                member.id = parser->syntax_tokens[parser->index].attribute.id;
                 parser->index += 2;
                 if (header_parser_test_next_token(parser, Token_Type::INTEGER_LITERAL))
                 {
-                    member.value = parser->tokens[parser->index].attribute.integer_value;
+                    member.value = parser->syntax_tokens[parser->index].attribute.integer_value;
                     enum_counter = member.value + 1;
                     parser->index++;
                 }
                 else if (header_parser_test_next_token_2(parser, Token_Type::OP_MINUS, Token_Type::INTEGER_LITERAL))
                 {
-                    member.value = -parser->tokens[parser->index].attribute.integer_value;
+                    member.value = -parser->syntax_tokens[parser->index].attribute.integer_value;
                     enum_counter = member.value + 1;
                     parser->index += 2;
                 }
                 else if (header_parser_test_next_token(parser, Token_Type::IDENTIFIER_NAME))
                 {
-                    String* ref_name = parser->tokens[parser->index].attribute.id;
+                    String* ref_name = parser->syntax_tokens[parser->index].attribute.id;
                     parser->index++;
                     bool found = false;
                     int found_value = 0;
@@ -758,7 +758,7 @@ Optional<C_Import_Type*> header_parser_parse_structure(Header_Parser* parser, C_
             }
             else if (header_parser_test_next_token(parser, Token_Type::IDENTIFIER_NAME)) {
                 C_Import_Enum_Member member;
-                member.id = parser->tokens[parser->index].attribute.id;
+                member.id = parser->syntax_tokens[parser->index].attribute.id;
                 member.value = enum_counter;
                 enum_counter++;
                 dynamic_array_push_back(&structure_type->enumeration.members, member);
@@ -864,7 +864,7 @@ Optional<C_Import_Type*> header_parser_parse_type(Header_Parser* parser, bool re
         if (!result.available) {
             if (header_parser_test_next_token(parser, Token_Type::IDENTIFIER_NAME))
             {
-                String* id = parser->tokens[parser->index].attribute.id;
+                String* id = parser->syntax_tokens[parser->index].attribute.id;
                 parser->index++;
                 C_Import_Symbol* symbol = hashtable_find_element(&parser->result_package.symbol_table.symbols, id);
                 if (symbol == 0) {
@@ -939,9 +939,9 @@ void header_parser_skip_parenthesis(Header_Parser* parser, Token_Type open_type,
     parser->index++;
     int depth = 1;
     Token* last_token = 0;
-    while (depth != 0 && parser->index < parser->tokens.size)
+    while (depth != 0 && parser->index < parser->syntax_tokens.size)
     {
-        Token* token = &parser->tokens[parser->index];
+        Token* token = &parser->syntax_tokens[parser->index];
         last_token = token;
         switch (token->type)
         {
@@ -966,7 +966,7 @@ C_Import_Type* header_parser_parse_array_suffix(Header_Parser* parser, C_Import_
     bool is_array = false;
     bool has_size = false;
     int size = 0;
-    while (parser->index < parser->tokens.size)
+    while (parser->index < parser->syntax_tokens.size)
     {
         if (header_parser_test_next_token_2(parser, Token_Type::OPEN_BRACKETS, Token_Type::CLOSED_BRACKETS))
         {
@@ -979,7 +979,7 @@ C_Import_Type* header_parser_parse_array_suffix(Header_Parser* parser, C_Import_
         {
             is_array = true;
             has_size = true;
-            size = parser->tokens[parser->index + 1].attribute.integer_value;
+            size = parser->syntax_tokens[parser->index + 1].attribute.integer_value;
             parser->index += 3;
         }
         else if (header_parser_test_next_token(parser, Token_Type::OPEN_BRACKETS))
@@ -1083,7 +1083,7 @@ Optional<Dynamic_Array<C_Import_Parameter>> header_parser_parse_parameters(Heade
         param.has_name = false;
         if (header_parser_test_next_token(parser, Token_Type::IDENTIFIER_NAME)) {
             param.has_name = true;
-            param.id = parser->tokens[parser->index].attribute.id;
+            param.id = parser->syntax_tokens[parser->index].attribute.id;
             parser->index++;
         }
         type = header_parser_parse_array_suffix(parser, type);
@@ -1139,7 +1139,7 @@ Optional<C_Variable_Definition> header_parser_parse_variable_definition(Header_P
     if (header_parser_test_next_token_2(parser, Token_Type::OPEN_PARENTHESIS, Token_Type::OP_STAR) ||
         header_parser_test_next_token_3(parser, Token_Type::OPEN_PARENTHESIS, Token_Type::IDENTIFIER_NAME, Token_Type::OP_STAR))
     {
-        if (parser->tokens[parser->index + 1].type == Token_Type::IDENTIFIER_NAME) {
+        if (parser->syntax_tokens[parser->index + 1].type == Token_Type::IDENTIFIER_NAME) {
             parser->index += 3;
         }
         else {
@@ -1149,7 +1149,7 @@ Optional<C_Variable_Definition> header_parser_parse_variable_definition(Header_P
             success = false;
             return optional_make_failure<C_Variable_Definition>();
         }
-        String* id = parser->tokens[parser->index].attribute.id;
+        String* id = parser->syntax_tokens[parser->index].attribute.id;
         parser->index += 2;
 
         Optional<Dynamic_Array<C_Import_Parameter>> params = header_parser_parse_parameters(parser);
@@ -1198,7 +1198,7 @@ Optional<C_Variable_Definition> header_parser_parse_variable_definition(Header_P
             // Parse instance name
             if (header_parser_test_next_token(parser, Token_Type::IDENTIFIER_NAME))
             {
-                instance.id = parser->tokens[parser->index].attribute.id;
+                instance.id = parser->syntax_tokens[parser->index].attribute.id;
                 parser->index++;
             }
             else {
@@ -1553,10 +1553,10 @@ void header_parser_parse(Header_Parser* parser)
 
     String* identifier_extern_c = identifier_pool_add(parser->lexer->identifier_pool, string_create_static("C"));
     String* identifier_extern_cpp = identifier_pool_add(parser->lexer->identifier_pool, string_create_static("C++"));
-    while (parser->index + 2 < parser->tokens.size)
+    while (parser->index + 2 < parser->syntax_tokens.size)
     {
-        Token* t1 = &parser->tokens[parser->index];
-        Token* t2 = &parser->tokens[parser->index + 1];
+        Token* t1 = &parser->syntax_tokens[parser->index];
+        Token* t2 = &parser->syntax_tokens[parser->index + 1];
         if (t1->type == Token_Type::EXTERN && t2->type == Token_Type::STRING_LITERAL && t2->attribute.id == identifier_extern_cpp)
         {
             /*
@@ -1576,14 +1576,14 @@ void header_parser_parse(Header_Parser* parser)
             parser->index = rewind_index;
         }
 
-        int current_line = parser->tokens[parser->index].position.start.line;
+        int current_line = parser->syntax_tokens[parser->index].position.start.line;
         int depth = 0;
         bool depth_was_nonzero = false;
-        while (parser->index + 2 < parser->tokens.size)
+        while (parser->index + 2 < parser->syntax_tokens.size)
         {
-            Token* t1 = &parser->tokens[parser->index];
-            Token* t2 = &parser->tokens[parser->index + 1];
-            Token* t3 = &parser->tokens[parser->index + 2];
+            Token* t1 = &parser->syntax_tokens[parser->index];
+            Token* t2 = &parser->syntax_tokens[parser->index + 1];
+            Token* t3 = &parser->syntax_tokens[parser->index + 2];
 
             switch (t1->type)
             {

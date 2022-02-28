@@ -129,21 +129,21 @@ void ast_parser_checkpoint_reset(AST_Parser_Checkpoint checkpoint)
 
 bool ast_parser_test_next_identifier(AST_Parser* parser, String* id)
 {
-    if (parser->index >= parser->code_source->tokens.size) {
+    if (parser->index >= parser->code_source->syntax_tokens.size) {
         return false;
     }
-    if (parser->code_source->tokens[parser->index].type == Token_Type::IDENTIFIER_NAME) {
-        if (parser->code_source->tokens[parser->index].attribute.id == id) return true;
+    if (parser->code_source->syntax_tokens[parser->index].type == Token_Type::IDENTIFIER_NAME) {
+        if (parser->code_source->syntax_tokens[parser->index].attribute.id == id) return true;
     }
     return false;
 }
 
 bool ast_parser_test_next_token(AST_Parser* parser, Token_Type type)
 {
-    if (parser->index >= parser->code_source->tokens.size) {
+    if (parser->index >= parser->code_source->syntax_tokens.size) {
         return false;
     }
-    if (parser->code_source->tokens[parser->index].type == type) {
+    if (parser->code_source->syntax_tokens[parser->index].type == type) {
         return true;
     }
     return false;
@@ -151,10 +151,10 @@ bool ast_parser_test_next_token(AST_Parser* parser, Token_Type type)
 
 bool ast_parser_test_next_2_tokens(AST_Parser* parser, Token_Type type1, Token_Type type2)
 {
-    if (parser->index + 1 >= parser->code_source->tokens.size) {
+    if (parser->index + 1 >= parser->code_source->syntax_tokens.size) {
         return false;
     }
-    if (parser->code_source->tokens[parser->index].type == type1 && parser->code_source->tokens[parser->index + 1].type == type2) {
+    if (parser->code_source->syntax_tokens[parser->index].type == type1 && parser->code_source->syntax_tokens[parser->index + 1].type == type2) {
         return true;
     }
     return false;
@@ -162,12 +162,12 @@ bool ast_parser_test_next_2_tokens(AST_Parser* parser, Token_Type type1, Token_T
 
 bool ast_parser_test_next_3_tokens(AST_Parser* parser, Token_Type type1, Token_Type type2, Token_Type type3)
 {
-    if (parser->index + 2 >= parser->code_source->tokens.size) {
+    if (parser->index + 2 >= parser->code_source->syntax_tokens.size) {
         return false;
     }
-    if (parser->code_source->tokens[parser->index].type == type1 &&
-        parser->code_source->tokens[parser->index + 1].type == type2 &&
-        parser->code_source->tokens[parser->index + 2].type == type3) {
+    if (parser->code_source->syntax_tokens[parser->index].type == type1 &&
+        parser->code_source->syntax_tokens[parser->index + 1].type == type2 &&
+        parser->code_source->syntax_tokens[parser->index + 2].type == type3) {
         return true;
     }
     return false;
@@ -176,13 +176,13 @@ bool ast_parser_test_next_3_tokens(AST_Parser* parser, Token_Type type1, Token_T
 bool ast_parser_test_next_4_tokens(AST_Parser* parser, Token_Type type1, Token_Type type2, Token_Type type3,
     Token_Type type4)
 {
-    if (parser->index + 3 >= parser->code_source->tokens.size) {
+    if (parser->index + 3 >= parser->code_source->syntax_tokens.size) {
         return false;
     }
-    if (parser->code_source->tokens[parser->index].type == type1 &&
-        parser->code_source->tokens[parser->index + 1].type == type2 &&
-        parser->code_source->tokens[parser->index + 2].type == type3 &&
-        parser->code_source->tokens[parser->index + 3].type == type4)
+    if (parser->code_source->syntax_tokens[parser->index].type == type1 &&
+        parser->code_source->syntax_tokens[parser->index + 1].type == type2 &&
+        parser->code_source->syntax_tokens[parser->index + 2].type == type3 &&
+        parser->code_source->syntax_tokens[parser->index + 3].type == type4)
     {
         return true;
     }
@@ -192,14 +192,14 @@ bool ast_parser_test_next_4_tokens(AST_Parser* parser, Token_Type type1, Token_T
 bool ast_parser_test_next_5_tokens(AST_Parser* parser, Token_Type type1, Token_Type type2, Token_Type type3,
     Token_Type type4, Token_Type type5)
 {
-    if (parser->index + 4 >= parser->code_source->tokens.size) {
+    if (parser->index + 4 >= parser->code_source->syntax_tokens.size) {
         return false;
     }
-    if (parser->code_source->tokens[parser->index].type == type1 &&
-        parser->code_source->tokens[parser->index + 1].type == type2 &&
-        parser->code_source->tokens[parser->index + 2].type == type3 &&
-        parser->code_source->tokens[parser->index + 3].type == type4 &&
-        parser->code_source->tokens[parser->index + 4].type == type5) {
+    if (parser->code_source->syntax_tokens[parser->index].type == type1 &&
+        parser->code_source->syntax_tokens[parser->index + 1].type == type2 &&
+        parser->code_source->syntax_tokens[parser->index + 2].type == type3 &&
+        parser->code_source->syntax_tokens[parser->index + 3].type == type4 &&
+        parser->code_source->syntax_tokens[parser->index + 4].type == type5) {
         return true;
     }
     return false;
@@ -208,9 +208,9 @@ bool ast_parser_test_next_5_tokens(AST_Parser* parser, Token_Type type1, Token_T
 int ast_parser_find_next_token_type(AST_Parser* parser, Token_Type type)
 {
     int index = parser->index;
-    while (index < parser->code_source->tokens.size)
+    while (index < parser->code_source->syntax_tokens.size)
     {
-        if (parser->code_source->tokens[index].type == type) {
+        if (parser->code_source->syntax_tokens[index].type == type) {
             return index;
         }
         index++;
@@ -220,11 +220,11 @@ int ast_parser_find_next_token_type(AST_Parser* parser, Token_Type type)
 
 int ast_parser_find_next_line_start_token(AST_Parser* parser)
 {
-    if (parser->index >= parser->code_source->tokens.size) return parser->index;
+    if (parser->index >= parser->code_source->syntax_tokens.size) return parser->index;
     int i = parser->index;
-    int line = parser->code_source->tokens[parser->index].position.start.line;
-    while (i < parser->code_source->tokens.size) {
-        int token_line = parser->code_source->tokens[i].position.start.line;
+    int line = parser->code_source->syntax_tokens[parser->index].position.start.line;
+    while (i < parser->code_source->syntax_tokens.size) {
+        int token_line = parser->code_source->syntax_tokens[i].position.start.line;
         if (token_line != line) return i;
         i++;
     }
@@ -235,10 +235,10 @@ int ast_parser_find_parenthesis_ending(AST_Parser* parser, int start_index, Toke
 {
     int i = parser->index;
     int depth = 0;
-    while (i < parser->code_source->tokens.size)
+    while (i < parser->code_source->syntax_tokens.size)
     {
-        if (parser->code_source->tokens[i].type == open_type) depth++;
-        if (parser->code_source->tokens[i].type == closed_type) {
+        if (parser->code_source->syntax_tokens[i].type == open_type) depth++;
+        if (parser->code_source->syntax_tokens[i].type == closed_type) {
             depth--;
             if (depth <= 0) {
                 if (depth == 0) {
@@ -310,7 +310,7 @@ Optional<int> error_handling_block(AST_Parser* parser)
     }
     else {
         if (!depth_negative) {
-            next_index = math_minimum(next_index + 1, parser->code_source->tokens.size);
+            next_index = math_minimum(next_index + 1, parser->code_source->syntax_tokens.size);
         }
     }
     ast_parser_log_error(parser, "Could not parse block!", token_range_make(parser->index, next_index));
@@ -354,9 +354,9 @@ Optional<int> error_handling_switch_node(AST_Parser* parser)
     bool unused;
     int next_brace = ast_parser_find_parenthesis_ending(parser, parser->index, Token_Type::OPEN_BRACES, Token_Type::CLOSED_BRACES, &unused);
     int next_case = ast_parser_find_next_token_type(parser, Token_Type::CASE);
-    if (next_case == parser->index) next_case = parser->code_source->tokens.size;
+    if (next_case == parser->index) next_case = parser->code_source->syntax_tokens.size;
     int next_default = ast_parser_find_next_token_type(parser, Token_Type::DEFAULT);
-    if (next_default == parser->index) next_case = parser->code_source->tokens.size;
+    if (next_default == parser->index) next_case = parser->code_source->syntax_tokens.size;
     int recover_index = next_brace;
     if (next_case < next_default && next_case < next_brace) {
         recover_index = next_case;
@@ -384,7 +384,7 @@ bool ast_parser_parse_list_items(
     AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, parent);
     while (!finished_fn(parser))
     {
-        if (parser->index >= parser->code_source->tokens.size) {
+        if (parser->index >= parser->code_source->syntax_tokens.size) {
             ast_parser_log_error(parser, "Unexpected end of tokens", token_range_make(checkpoint.rewind_token_index, parser->index));
             return true;
         }
@@ -419,7 +419,7 @@ bool ast_parser_parse_identifier_or_path(AST_Parser* parser, AST_Node* parent)
     AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, parent);
     AST_Node* node = ast_parser_make_node_child(parser, parent);
 
-    node->id = parser->code_source->tokens[parser->index].attribute.id;
+    node->id = parser->code_source->syntax_tokens[parser->index].attribute.id;
     node->type = AST_Node_Type::IDENTIFIER_NAME;
     parser->index++;
 
@@ -457,7 +457,7 @@ bool ast_parser_parse_arguments(AST_Parser* parser, AST_Node* parent, Token_Type
         argument_node->type = AST_Node_Type::ARGUMENT_UNNAMED;
         if (ast_parser_test_next_2_tokens(parser, Token_Type::IDENTIFIER_NAME, Token_Type::OP_ASSIGNMENT)) {
             argument_node->type = AST_Node_Type::ARGUMENT_NAMED;
-            argument_node->id = parser->code_source->tokens[parser->index].attribute.id;
+            argument_node->id = parser->code_source->syntax_tokens[parser->index].attribute.id;
             parser->index += 2;
         }
         if (!ast_parser_parse_expression(parser, argument_node)) {
@@ -568,7 +568,7 @@ AST_Node* ast_parser_parse_expression_single_value(AST_Parser* parser)
                 ast_parser_checkpoint_reset(checkpoint);
                 return false;
             }
-            member_node->id = parser->code_source->tokens[parser->index].attribute.id;
+            member_node->id = parser->code_source->syntax_tokens[parser->index].attribute.id;
             parser->index++;
 
             if (ast_parser_test_next_token(parser, Token_Type::DOUBLE_COLON))
@@ -638,7 +638,7 @@ AST_Node* ast_parser_parse_expression_single_value(AST_Parser* parser)
                 }
                 if (ast_parser_test_next_token(parser, Token_Type::SEMICOLON)) {
                     node->type = AST_Node_Type::VARIABLE_DEFINITION;
-                    node->id = parser->code_source->tokens[checkpoint.rewind_token_index].attribute.id;
+                    node->id = parser->code_source->syntax_tokens[checkpoint.rewind_token_index].attribute.id;
                     parser->index += 1;
                     node->token_range = token_range_make(checkpoint.rewind_token_index, parser->index);
                     return true;
@@ -667,7 +667,7 @@ AST_Node* ast_parser_parse_expression_single_value(AST_Parser* parser)
         AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, module_node);
         module_node->type = AST_Node_Type::MODULE;
         parser->index += 1;
-        module_node->id = parser->code_source->tokens[parser->index - 1].attribute.id;
+        module_node->id = parser->code_source->syntax_tokens[parser->index - 1].attribute.id;
 
         if (!ast_parser_test_next_token(parser, Token_Type::OPEN_BRACES)) {
             ast_parser_checkpoint_reset(checkpoint);
@@ -687,7 +687,7 @@ AST_Node* ast_parser_parse_expression_single_value(AST_Parser* parser)
         parser->index++;
 
         module_node->token_range.start_index = checkpoint.rewind_token_index;
-        module_node->token_range.end_index = math_clamp(parser->index, 0, parser->code_source->tokens.size);
+        module_node->token_range.end_index = math_clamp(parser->index, 0, parser->code_source->syntax_tokens.size);
         node = module_node;
     }
     else if (ast_parser_test_next_token(parser, Token_Type::OPEN_PARENTHESIS)) // Parenthesized expression
@@ -745,7 +745,7 @@ AST_Node* ast_parser_parse_expression_single_value(AST_Parser* parser)
     {
         node = ast_parser_make_node_no_parent(parser);
         node->type = AST_Node_Type::EXPRESSION_LITERAL;
-        node->literal_token = &parser->code_source->tokens[parser->index];
+        node->literal_token = &parser->code_source->syntax_tokens[parser->index];
         parser->index++;
         node->token_range = token_range_make(checkpoint.rewind_token_index, parser->index);
     }
@@ -806,7 +806,7 @@ AST_Node* ast_parser_parse_expression_single_value(AST_Parser* parser)
         }
         else if (ast_parser_test_next_token(parser, Token_Type::IDENTIFIER_NAME)) {
             node->type = AST_Node_Type::EXPRESSION_AUTO_ENUM;
-            node->id = parser->code_source->tokens[parser->index].attribute.id;
+            node->id = parser->code_source->syntax_tokens[parser->index].attribute.id;
             parser->index += 1;
         }
         else {
@@ -864,7 +864,7 @@ AST_Node* ast_parser_parse_expression_single_value(AST_Parser* parser)
                 if (ast_parser_test_next_token(parser, Token_Type::IDENTIFIER_NAME)) // Member access
                 {
                     new_node->type = AST_Node_Type::EXPRESSION_MEMBER_ACCESS;
-                    new_node->id = parser->code_source->tokens[parser->index].attribute.id;
+                    new_node->id = parser->code_source->syntax_tokens[parser->index].attribute.id;
                     parser->index++;
                 }
                 else if (ast_parser_test_next_token(parser, Token_Type::OPEN_BRACES)) // Struct Initializer
@@ -1044,8 +1044,8 @@ bool ast_parser_parse_binary_operator(AST_Parser* parser, AST_Node_Type* op_type
             5       ---     *, /
             6       ---     %
     */
-    if (parser->index + 1 >= parser->code_source->tokens.size) return false;
-    switch (parser->code_source->tokens[parser->index].type)
+    if (parser->index + 1 >= parser->code_source->syntax_tokens.size) return false;
+    switch (parser->code_source->syntax_tokens[parser->index].type)
     {
     case Token_Type::LOGICAL_AND: {
         *op_type = AST_Node_Type::EXPRESSION_BINARY_OPERATION_AND;
@@ -1329,7 +1329,7 @@ bool ast_parser_parse_statement(AST_Parser* parser, AST_Node* parent)
             return false;
         }
         if (ast_parser_test_next_2_tokens(parser, Token_Type::IDENTIFIER_NAME, Token_Type::COLON)) {
-            node->id = parser->code_source->tokens[parser->index].attribute.id;
+            node->id = parser->code_source->syntax_tokens[parser->index].attribute.id;
             parser->index += 2;
         }
 
@@ -1441,7 +1441,7 @@ bool ast_parser_parse_statement(AST_Parser* parser, AST_Node* parent)
     if (ast_parser_test_next_3_tokens(parser, Token_Type::BREAK, Token_Type::IDENTIFIER_NAME, Token_Type::SEMICOLON))
     {
         node->type = AST_Node_Type::STATEMENT_BREAK;
-        node->id = parser->code_source->tokens[parser->index + 1].attribute.id;
+        node->id = parser->code_source->syntax_tokens[parser->index + 1].attribute.id;
         parser->index += 3;
         node->token_range = token_range_make(checkpoint.rewind_token_index, parser->index);
         return true;
@@ -1450,7 +1450,7 @@ bool ast_parser_parse_statement(AST_Parser* parser, AST_Node* parent)
     if (ast_parser_test_next_3_tokens(parser, Token_Type::CONTINUE, Token_Type::IDENTIFIER_NAME, Token_Type::SEMICOLON))
     {
         node->type = AST_Node_Type::STATEMENT_CONTINUE;
-        node->id = parser->code_source->tokens[parser->index + 1].attribute.id;
+        node->id = parser->code_source->syntax_tokens[parser->index + 1].attribute.id;
         parser->index += 3;
         node->token_range = token_range_make(checkpoint.rewind_token_index, parser->index);
         return true;
@@ -1491,7 +1491,7 @@ bool ast_parser_parse_statement_block(AST_Parser* parser, AST_Node* parent, bool
     block_node->type = AST_Node_Type::STATEMENT_BLOCK;
 
     if (label_allowed && ast_parser_test_next_2_tokens(parser, Token_Type::IDENTIFIER_NAME, Token_Type::COLON)) {
-        block_node->id = parser->code_source->tokens[parser->index].attribute.id;
+        block_node->id = parser->code_source->syntax_tokens[parser->index].attribute.id;
         parser->index += 2;
     }
     if (!ast_parser_test_next_token(parser, Token_Type::OPEN_BRACES)) {
@@ -1545,7 +1545,7 @@ bool ast_parser_parse_parameter_block(AST_Parser* parser, AST_Node* parent)
             ast_parser_checkpoint_reset(checkpoint);
             return false;
         }
-        node->id = parser->code_source->tokens[parser->index].attribute.id;
+        node->id = parser->code_source->syntax_tokens[parser->index].attribute.id;
         parser->index += 2;
         if (!ast_parser_parse_expression(parser, node)) {
             ast_parser_checkpoint_reset(checkpoint);
@@ -1576,13 +1576,13 @@ bool ast_parser_parse_extern_source_declarations(AST_Parser* parser, AST_Node* p
 
     if (ast_parser_test_next_2_tokens(parser, Token_Type::HASHTAG, Token_Type::IDENTIFIER_NAME))
     {
-        if (parser->code_source->tokens[parser->index + 1].attribute.id = parser->id_load)
+        if (parser->code_source->syntax_tokens[parser->index + 1].attribute.id = parser->id_load)
         {
             parser->index += 2;
             if (ast_parser_test_next_2_tokens(parser, Token_Type::STRING_LITERAL, Token_Type::SEMICOLON)) {
                 AST_Node* node = ast_parser_make_node_child(parser, parent);
                 node->type = AST_Node_Type::LOAD_FILE;
-                node->id = parser->code_source->tokens[parser->index].attribute.id;
+                node->id = parser->code_source->syntax_tokens[parser->index].attribute.id;
                 parser->index += 2;
                 node->token_range = token_range_make(checkpoint.rewind_token_index, parser->index);
                 return true;
@@ -1601,14 +1601,14 @@ bool ast_parser_parse_extern_source_declarations(AST_Parser* parser, AST_Node* p
     {
         AST_Node* node = ast_parser_make_node_child(parser, parent);
         node->type = AST_Node_Type::EXTERN_HEADER_IMPORT;
-        node->id = parser->code_source->tokens[parser->index].attribute.id;
+        node->id = parser->code_source->syntax_tokens[parser->index].attribute.id;
         parser->index += 2;
         while (true)
         {
             if (ast_parser_test_next_token(parser, Token_Type::IDENTIFIER_NAME)) {
                 AST_Node* child_node = ast_parser_make_node_child(parser, node);
                 child_node->type = AST_Node_Type::IDENTIFIER_NAME;
-                child_node->id = parser->code_source->tokens[parser->index].attribute.id;
+                child_node->id = parser->code_source->syntax_tokens[parser->index].attribute.id;
                 child_node->token_range = token_range_make(parser->index, parser->index + 1);
                 parser->index++;
             }
@@ -1628,8 +1628,8 @@ bool ast_parser_parse_extern_source_declarations(AST_Parser* parser, AST_Node* p
 
     if (ast_parser_test_next_3_tokens(parser, Token_Type::IDENTIFIER_NAME, Token_Type::STRING_LITERAL, Token_Type::SEMICOLON))
     {
-        String* id1 = parser->code_source->tokens[parser->index].attribute.id;
-        String* id2 = parser->code_source->tokens[parser->index + 1].attribute.id;
+        String* id1 = parser->code_source->syntax_tokens[parser->index].attribute.id;
+        String* id2 = parser->code_source->syntax_tokens[parser->index + 1].attribute.id;
         if (id1 != parser->id_lib) {
             ast_parser_checkpoint_reset(checkpoint);
             return false;
@@ -1649,7 +1649,7 @@ bool ast_parser_parse_extern_source_declarations(AST_Parser* parser, AST_Node* p
 
     AST_Node* node = ast_parser_make_node_child(parser, parent);
     node->type = AST_Node_Type::EXTERN_FUNCTION_DECLARATION;
-    node->id = parser->code_source->tokens[parser->index].attribute.id;
+    node->id = parser->code_source->syntax_tokens[parser->index].attribute.id;
     parser->index += 2;
 
     if (!ast_parser_parse_expression(parser, node)) {
@@ -1671,7 +1671,7 @@ bool ast_parser_parse_definitions(AST_Parser* parser, AST_Node* parent)
     AST_Node* node = ast_parser_make_node_child(parser, parent);
     node->type = AST_Node_Type::DEFINITIONS;
 
-    while (parser->index < parser->code_source->tokens.size)
+    while (parser->index < parser->code_source->syntax_tokens.size)
     {
         if (ast_parser_test_next_token(parser, Token_Type::CLOSED_BRACES)) {
             break;
@@ -1706,7 +1706,7 @@ bool ast_parser_parse_definitions(AST_Parser* parser, AST_Node* parent)
     }
 
     node->token_range.start_index = start_index;
-    node->token_range.end_index = math_clamp(parser->index, 0, parser->code_source->tokens.size);
+    node->token_range.end_index = math_clamp(parser->index, 0, parser->code_source->syntax_tokens.size);
     return true;
 }
 
@@ -1719,7 +1719,7 @@ bool ast_parser_parse_definition(AST_Parser* parser, AST_Node* parent)
 
     AST_Node* node = ast_parser_make_node_child(parser, parent);
     node->token_range.start_index = parser->index;
-    node->id = parser->code_source->tokens[parser->index].attribute.id;
+    node->id = parser->code_source->syntax_tokens[parser->index].attribute.id;
     parser->index++;
     if (ast_parser_test_next_token(parser, Token_Type::COLON)) // id: ...
     {
@@ -1804,7 +1804,7 @@ void ast_parser_parse_root(AST_Parser* parser)
     parser->code_source->root_node = ast_parser_make_node_no_parent(parser);
     parser->code_source->root_node->type = AST_Node_Type::ROOT;
     ast_parser_parse_definitions(parser, parser->code_source->root_node);
-    parser->code_source->root_node->token_range = token_range_make(0, math_maximum(0, parser->code_source->tokens.size - 1));
+    parser->code_source->root_node->token_range = token_range_make(0, math_maximum(0, parser->code_source->syntax_tokens.size - 1));
 }
 
 void ast_parser_check_sanity(AST_Parser* parser, AST_Node* node)
@@ -1838,11 +1838,11 @@ void ast_parser_check_sanity(AST_Parser* parser, AST_Node* node)
         }
 
         // Check if token mappings are only 0 if Definitions or Root
-        if (parser->code_source->tokens.size != 0)
+        if (parser->code_source->syntax_tokens.size != 0)
         {
             int start = node->token_range.start_index;
             int end = node->token_range.end_index;
-            if (start < 0 || end < 0 || start >= parser->code_source->tokens.size || end > parser->code_source->tokens.size) {
+            if (start < 0 || end < 0 || start >= parser->code_source->syntax_tokens.size || end > parser->code_source->syntax_tokens.size) {
                 logg("Should not happen: range: %d-%d\n", start, end);
                 panic("Should not happen!");
             }
@@ -2598,7 +2598,7 @@ void ast_node_append_to_string(Code_Source* code_source, AST_Node* node, String*
         ast_node_expression_append_to_string(code_source, node, string);
         //string_append_formated(string, "\n");
     }
-    if (code_source->tokens.size > 0) {
+    if (code_source->syntax_tokens.size > 0) {
         /*
         int start_index = node->token_range.start_index;
         int end_index = node->token_range.end_index;

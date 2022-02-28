@@ -115,7 +115,7 @@ struct Code_Source
     Code_Origin origin;
     String source_code;
     // Lexer result
-    Dynamic_Array<Token> tokens;
+    Dynamic_Array<Token> syntax_tokens;
     Dynamic_Array<Token> tokens_with_decoration;
     // Parser result
     AST_Node* root_node;

@@ -1,0 +1,11 @@
+/*
+mtain :: ()
+    What: int = 5;
+    x := What + 5;
+    print_i32(x);
+    print_line();
+    
+    ivar := 15;
+    ivar = ivar + 5;
+    
+*/
