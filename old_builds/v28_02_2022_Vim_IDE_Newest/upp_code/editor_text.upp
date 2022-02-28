@@ -1,0 +1,21 @@
+/*
+Editor Info:
+This editor uses VIM-Keybindings, but instead of
+using the Escape-Key, Shift-L is used to exit Modes/Cancel commands
+
+Other Controls:
+ F5  - Compile and Run
+ F11 - Toggle Fullscreen
+*/
+
+fib :: (a: int) -> int {
+    if a < 2 {
+        return 1;
+    }
+    return fib(a-1) + fib(a-2);
+}
+
+main :: () {
+    print_string("Hello World! ");
+    print_i32(fib(5));
+}

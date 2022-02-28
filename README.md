@@ -7,20 +7,36 @@ The 3 big features I would like to (try) implementing are:
 * Syntax-Guided IDE
 * Integrated Static-Analysis (Experimental)
 
-![alt-text](gifs/Hello_World.gif)
+![Hello World](gifs/Hello_World.gif)
+The design of UppLang is strongly influenced by the following other Programming-Languages:
+* Jai (Based on Jonathan Blow's development videos)
+* Odin
+* Zig
 
-# Current Status
+# Current Features
 
-StackEdit stores your files in your browser, which means all your files are automatically saved locally and are accessible **offline!**
+Right now the Project contains a functional Text-Editor (Vim-Keybindings), and Source-Code can be compiled and executed as Bytecode, or translated to C and then compiled with the MSVC Compiler (C-Backend will be replaced with LLVM at some point).
 
-## Create files and folders
+Currently there is no documentation about all features of the Language itself, but the Testcases (upp_code/testcases/*) are a starting point for interested readers, some of them also document some of the design-decisions. The most interesting testcases probably are:
+* 011_pointer.upp
+* 033_constant_propagation.upp
+* 036_bake.upp
+* 046_types_as_values.upp
+* 047_type_info.upp
+* 050_named_break_continue.upp
 
-The file explorer is accessible using the button in left corner of the navigation bar. You can create a new file by clicking the **New file** button in the file explorer. You can also create folders by clicking the **New folder** button.
+At the moment the only way to get proper syntax highlighting for the Test-Case Code is to copy-paste it into the editors save file (upp_code/editor_text.upp) and running the editor.
 
-## Switch to another file
+# Progress
 
-All your files and folders are presented as a tree in the file explorer. You can switch from one to another by clicking a file in the tree.
+Right now I am reworking the Syntax to be more Python-like and creating a Syntax-Guided Editor for the language. Most of the Ideas I have for the editor are based on the 2020 Dion-Systems Demo (https://dion.systems/gallery.html)
 
-## Rename a file
+![Hello World](gifs/Guided_Editor.gif)
 
-You can rename the current file by clicking the file name in the navigation bar or by clicking the **Rename** button in the file explorer.
+# Running and Building
+To build/run the current state of the Program you need a Windows 10 PC and Visual Studio 2019. If you just want to try out the Program, it is probably better to use one of the prebuilt executables (Folder old_builds). 
+!!! Right now no Documentation is available on how to use the Program, only the Comments in  "old_builds/Vim_IDE_Newest"
+
+# Gallery
+![Error](gifs/Error.jpg)
+![Fib](gifs/Fib.jpg)
