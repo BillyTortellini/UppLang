@@ -8,6 +8,7 @@ The 3 big features I would like to (try) implementing are:
 * Integrated Static-Analysis (Experimental)
 
 ![Hello World](gifs/Hello_World.gif)
+
 The design of UppLang is strongly influenced by the following other Programming-Languages:
 * Jai (Based on Jonathan Blow's development videos)
 * Odin
