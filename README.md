@@ -18,7 +18,7 @@ The design of UppLang is strongly influenced by the following other Programming-
 
 Right now the Project contains a functional Text-Editor (Vim-Keybindings), and Source-Code can be compiled and executed as Bytecode, or translated to C and then compiled with the MSVC Compiler (C-Backend will be replaced with LLVM at some point).
 
-Currently there is no documentation about all features of the Language itself, but the Testcases (upp_code/testcases/*) are a starting point for interested readers, some of them also document some of the design-decisions. The most interesting testcases probably are:
+Currently there is no documentation about all features of the Language itself, but the Testcases (upp_code/testcases/*) are a starting point for interested readers, some of them also contain comments on different design-decisions. The most interesting testcases probably are:
 * 011_pointer.upp
 * 033_constant_propagation.upp
 * 036_bake.upp
@@ -36,6 +36,7 @@ Right now I am reworking the Syntax to be more Python-like and creating a Syntax
 
 # Running and Building
 To build/run the current state of the Program you need a Windows 10 PC and Visual Studio 2019. If you just want to try out the Program, it is probably better to use one of the prebuilt executables (Folder old_builds). 
+
 !!! Right now no Documentation is available on how to use the Program, only the Comments in  "old_builds/Vim_IDE_Newest"
 
 # Gallery
