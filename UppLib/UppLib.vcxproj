@@ -148,6 +148,7 @@
     <ClCompile Include="win32\windows_helper_functions.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <Text Include="..\resources\Coding_Style.txt" />
     <Text Include="..\resources\Editor_Thoughts.txt" />
     <Text Include="..\resources\TMP.txt" />
     <Text Include="..\resources\TODO.txt" />

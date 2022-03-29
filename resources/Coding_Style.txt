@@ -1,0 +1,6 @@
+Ideas for general Coding-Style:
+-------------------------------
+ * Try to make an Architecture that divides Responsibilities better
+ * Don't think to much about performance (E.g. Memory allocations)
+ * Try using a new union Technique
+ * Try and write down more Formal-Features of a given technique (e.g. parsing), and use their properties

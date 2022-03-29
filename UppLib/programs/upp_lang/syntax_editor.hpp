@@ -14,6 +14,31 @@ struct AST_Item;
 struct Syntax_Editor;
 
 /*
+Each line is an Array of Tokens
+Tokens can only be edited at the end (Removing characters/adding characters)
+    - This is done because one needs to be able to input tokens during normal editing
+    - Later I want to add an extra GUI to do internal editing (Of strings, comments, identifiers, numbers with different bases, etc.)
+Space only works on Identifier/Keyword Tokens to seperate them from other Keywords/Tokens
+The last index of a line is not a valid cursor position, only if the line is empty
+Gaps should be navigatable, and insert/after does the same thing
+Gaps are determined by the Formating Syntax
+
+What about multi-delimiter Operators?
+I think I can handle those by adding them to the Format-Tree Parser
+
+So the process is the following:
+    Array of Tokens for each line
+    Formating Parser produces Format_Tree for each line
+    Format_Tree traversal sets Display_Properties of Tokens (Has_gap, Syntax_Color, Token-Spacing, ...)
+    In insert mode, we don't care about the format tree and navigate on tokens
+    In edit mode, we use the display tokens + Boolean Flags(Space pressed/On_Gap...) to navigate
+    The Format tree is used by the Syntax Parser to produce a Syntax_Tree (Which may not include all format_tree items)
+    The Syntax Tree is further used for Analysis/Code-Generation
+    To display Analysis Information (Symbol Resolution, Type_Info, Erro_Messages), we need to remember the mappings from syntax to format tree 
+        and when we generate the display tokens we then can use the information of the format tree
+*/
+
+/*
 TODO and Ending-Thoughts:
  - Finish all expressions 
  - Add literal tokens (True/False, Strings, Float numbers)
@@ -25,8 +50,25 @@ Second parser for analysable parsing
 */
 
 /*
+Editor/Syntax Properties:
+ - Editor does auto-formating and shows missing Pieces (Gaps)
+ - Lines can be parsed indiviually
+ - Formating-Grammer is different than actual Language-Grammer
+ - Indentation is important for the whole Project-Structure
+
+Output: Abstract Syntax Tree without modifications
+
+How should the Editor work?
+Navigation?
+Editing?
+Behavior on Gaps/Indentation?
+Multi-Sign Operators? (::, ->)
+
+*/
+
+/*
     Features I want:
-     - Auto-Formating (Whitespaces + Text-Wrapping)
+     - Auto-Formating (Whitespaces + Auto-Wrapping, Auto Folding...)
      - Editing-Freedom (Delete wherever I want, insert wherever I want)
      - Code-Completion
      - Better Parser Errors (Display missing Gaps, possible continuations)
