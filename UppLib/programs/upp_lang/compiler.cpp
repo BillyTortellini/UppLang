@@ -63,29 +63,29 @@ Token_Range token_range_make(int start_index, int end_index)
 Text_Slice token_range_to_text_slice(Token_Range range, Compiler* compiler)
 {
     Code_Source* source = compiler->main_source;
-    if (source->syntax_tokens.size == 0) return text_slice_make(text_position_make(0, 0), text_position_make(0, 0));
+    if (source->tokens.size == 0) return text_slice_make(text_position_make(0, 0), text_position_make(0, 0));
 
-    assert(range.start_index >= 0 && range.start_index <= source->syntax_tokens.size, "HEY");
+    assert(range.start_index >= 0 && range.start_index <= source->tokens.size, "HEY");
     assert(range.end_index >= 0, "HEY");
     assert(range.end_index >= range.start_index, "HEY");
-    if (range.end_index > source->syntax_tokens.size) {
-        range.end_index = source->syntax_tokens.size;
+    if (range.end_index > source->tokens.size) {
+        range.end_index = source->tokens.size;
     }
-    if (range.start_index >= source->syntax_tokens.size) {
+    if (range.start_index >= source->tokens.size) {
         return text_slice_make(text_position_make(0, 0), text_position_make(0, 0));
     }
 
-    range.end_index = math_clamp(range.end_index, 0, math_maximum(0, source->syntax_tokens.size));
+    range.end_index = math_clamp(range.end_index, 0, math_maximum(0, source->tokens.size));
     if (range.end_index == range.start_index) {
         return text_slice_make(
-            source->syntax_tokens[range.start_index].position.start,
-            source->syntax_tokens[range.start_index].position.end
+            source->tokens[range.start_index].position.start,
+            source->tokens[range.start_index].position.end
         );
     }
 
     return text_slice_make(
-        source->syntax_tokens[range.start_index].position.start,
-        source->syntax_tokens[range.end_index - 1].position.end
+        source->tokens[range.start_index].position.start,
+        source->tokens[range.end_index - 1].position.end
     );
 }
 
@@ -560,7 +560,7 @@ Code_Source* code_source_create(Code_Origin origin, String source_code)
     Code_Source* result = new Code_Source;
     result->origin = origin;
     result->source_code = source_code;
-    result->syntax_tokens.data = 0;
+    result->tokens.data = 0;
     result->tokens_with_decoration.data = 0;
     result->root_node = 0;
     return result;
@@ -569,11 +569,11 @@ Code_Source* code_source_create(Code_Origin origin, String source_code)
 void code_source_destroy(Code_Source* source)
 {
     string_destroy(&source->source_code);
-    if (source->syntax_tokens.data != 0) {
-        dynamic_array_destroy(&source->syntax_tokens);
+    if (source->tokens.data != 0) {
+        dynamic_array_destroy(&source->tokens);
     }
     if (source->tokens_with_decoration.data != 0) {
-        dynamic_array_destroy(&source->syntax_tokens);
+        dynamic_array_destroy(&source->tokens);
     }
     delete source;
 }
@@ -913,9 +913,9 @@ void compiler_add_source_code(Compiler* compiler, String source_code, Code_Origi
             identifier_pool_print(&compiler->identifier_pool);
         }
 
-        code_source->syntax_tokens = compiler->lexer->syntax_tokens;
+        code_source->tokens = compiler->lexer->tokens;
         code_source->tokens_with_decoration = compiler->lexer->tokens_with_decoration;
-        compiler->lexer->syntax_tokens = dynamic_array_create_empty<Token>(code_source->syntax_tokens.size);
+        compiler->lexer->tokens = dynamic_array_create_empty<Token>(code_source->tokens.size);
         compiler->lexer->tokens_with_decoration = dynamic_array_create_empty<Token>(code_source->tokens_with_decoration.size);
     }
 

@@ -12,6 +12,7 @@ struct Input;
 struct Renderer_2D;
 struct AST_Item;
 struct Syntax_Editor;
+struct Syntax_Line;
 
 /*
 Each line is an Array of Tokens
@@ -28,14 +29,24 @@ I think I can handle those by adding them to the Format-Tree Parser
 
 So the process is the following:
     Array of Tokens for each line
-    Formating Parser produces Format_Tree for each line
-    Format_Tree traversal sets Display_Properties of Tokens (Has_gap, Syntax_Color, Token-Spacing, ...)
+    Formating Parser produces Format_Tokens for each line (Not a tree, since a tree is only usefull if the Order means something)
+    Format_Tree traversal creates Display_Tokens?
     In insert mode, we don't care about the format tree and navigate on tokens
     In edit mode, we use the display tokens + Boolean Flags(Space pressed/On_Gap...) to navigate
     The Format tree is used by the Syntax Parser to produce a Syntax_Tree (Which may not include all format_tree items)
     The Syntax Tree is further used for Analysis/Code-Generation
     To display Analysis Information (Symbol Resolution, Type_Info, Erro_Messages), we need to remember the mappings from syntax to format tree 
         and when we generate the display tokens we then can use the information of the format tree
+
+Cursor Problems:
+    In Normal-Mode the cursor can only be at the start of a token (Or on Gaps/Empty Line)
+    In Insert-Mode it is more complicated, since we can Insert between Tokens or append to a token
+    A cursor can be before or after a token
+    Space is used to separate Identifiers, Keywords and Numbers (Cursor is visually displaced)
+    .(
+    ||
+    Token1 Token2
+    |    | |    |
 */
 
 /*
@@ -136,7 +147,64 @@ struct Syntax_Token
     } options;
 };
 
-enum class Keyword_Type
+
+
+// Format-Tree
+/*
+x := List~create(15)
+what is this    -> Binop List with missing binops
+
+Pre-Operators:
+    [] - ! & * 
+Operators:
+    Literals, ()
+Post-Operators:
+    [] .member () ~member
+*/
+
+enum class Format_Operator
+{
+    ADDITION,           // +
+    SUBTRACTION,        // -
+    DIVISON,            // /
+    MULTIPLY,           // *
+    MODULO,             // %
+    COMMA,              // ,
+    DOT,                // .
+    TILDE,              // ~
+    COLON,              // :
+    ASSIGN,             // =
+    NOT,                // !
+    AMPERSAND,          // &
+    LESS_THAN,          // <
+    GREATER_THAN,       // >
+
+    LESS_EQUAL,         // <=
+    GREATER_EQUAL,      // >=
+    EQUALS,             // ==
+    NOT_EQUALS,         // !=
+    POINTER_EQUALS,     // *==
+    POINTER_NOT_EQUALS, // *!=
+
+    DEFINE_COMPTIME,    // ::
+    DEFINE_INFER,       // :=
+
+    AND,                // &&
+    OR,                 // ||
+    ARROW,              // ->
+
+    MAX_ENUM_VALUE
+};
+
+struct Operator_Mapping
+{
+    Format_Operator op;
+    String string;
+    bool is_binop;
+    bool is_unop;
+};
+
+enum class Format_Keyword
 {
     RETURN,
     BREAK,
@@ -158,69 +226,111 @@ enum class Keyword_Type
     CAST,
 };
 
-enum class Operator_Type
+enum class Format_Item_Type
 {
-    ADDITION,           // +
-    SUBTRACTION,        // -
-    DIVISON,            // /
-    MULTIPLY,           // *
-    MODULO,             // %
-    COMMA,              // ,
-    DOT,                // .
-    COLON,              // :
-    ASSIGN,             // =
-    NOT,                // !
-    AMPERSAND,          // &
-    VERT_LINE,          // |
-    OPEN_PARENTHESIS,   // (
-    CLOSED_PARENTHESIS, // )
-    OPEN_BRACKET,       // [
-    CLOSED_BRACKET,     // ]
-    OPEN_BRACES,        // {
-    CLOSED_BRACES,      // }
-    LESS_THAN,          // <
-    GREATER_THAN,       // >
-    LESS_EQUAL,         // <=
-    GREATER_EQUAL,      // >=
-    EQUALS,             // ==
-    NOT_EQUALS,         // !=
-    POINTER_EQUALS,     // *==
-    POINTER_NOT_EQUALS, // *!=
-    AND,                // &&
-    OR,                 // ||
-    ARROW,              // ->
-};
-
-struct Operator_Mapping
-{
-    Operator_Type type;
-    String string;
-};
-
-enum class Parse_Token_Type
-{
+    OPERATOR,
     IDENTIFIER,
     KEYWORD,
-    OPERATOR,
-    NUMBER,
-    INVALID, // Currently only single |
+    LITERAL,
+    PARENTHESIS,
+    ERROR_ITEM, // | or something unexpected like a non-closing parenthesis
+    GAP,
 };
 
-struct Parse_Token
+enum class Format_Parenthesis_Type
 {
-    Parse_Token_Type type;
-    int start_index;
-    int length;
+    PARENTHESIS, 
+    BRACKETS,   // []
+    BRACES,     // {} 
+};
+
+struct Format_Parenthesis
+{
+    Format_Parenthesis_Type type;
+    bool is_open;
+};
+
+struct Format_Item
+{
+    Format_Item_Type type;
+    int token_start_index;
+    int token_length;
     union {
-        Keyword_Type keyword;
-        Operator_Type operation;
+        Format_Operator op;
+        Format_Keyword keyword;
+        struct {
+            Format_Parenthesis type;
+            bool matching_exists;
+            int matching_index;
+        } parenthesis;
     } options;
 };
 
+struct Format_Parser
+{
+    Syntax_Editor* editor;
+    Syntax_Line* line;
+    int index;
+    int max_parse_index;
+};
+
+
+// EDITOR
+enum class Editor_Mode
+{
+    NORMAL,
+    INPUT,
+};
+
+enum class Insert_Mode
+{
+    APPEND, // Appends inputs to current token
+    BEFORE,  // New token is added after current one
+};
+
+struct Syntax_Line
+{
+    Dynamic_Array<Syntax_Token> tokens;
+    Dynamic_Array<Format_Item> format_items;
+    int indentation_level;
+};
+
+struct Syntax_Editor
+{
+    // Editing
+    Editor_Mode mode;
+    Insert_Mode insert_mode;
+    Dynamic_Array<Syntax_Line> lines;
+    int cursor_index; // In range [0, tokens.size)
+    int line_index;
+
+    Hashtable<String, Format_Keyword> keyword_table;
+    Array<Operator_Mapping> operator_mapping;
+    Dynamic_Array<char> delimiter_characters;
+
+    // Rendering
+    Rendering_Core* rendering_core;
+    Renderer_2D* renderer_2D;
+    Text_Renderer* text_renderer;
+    vec2 character_size;
+};
+
+Syntax_Editor* syntax_editor_create(Rendering_Core* rendering_core, Text_Renderer* text_renderer, Renderer_2D* renderer_2D);
+void syntax_editor_destroy(Syntax_Editor* editor);
+void syntax_editor_update(Syntax_Editor* editor, Input* input);
+void syntax_editor_render(Syntax_Editor* editor);
 
 
 
-// Parser
+
+
+
+
+
+
+
+/*
+
 struct Range
 {
     int start;
@@ -354,76 +464,6 @@ struct Render_Item
 
 
 
-// EDITOR
-enum class Editor_Mode
-{
-    NORMAL,
-    INPUT,
-};
-
-enum class Insert_Mode
-{
-    APPEND, // Appends inputs to current token
-    BEFORE,  // New token is added after current one
-};
-
-struct Syntax_Line
-{
-    Dynamic_Array<Syntax_Token> syntax_tokens;
-    Dynamic_Array<Parse_Token> parse_tokens;
-    Dynamic_Array<Render_Item> render_items;
-    Dynamic_Array<Error_Message> error_messages;
-    Dynamic_Array<AST_Item*> allocated_items;
-    AST_Item* root;
-    int parse_index;
-    int render_item_offset;
-    int indentation_level;
-    bool requires_block;
-};
-
-struct Syntax_Block;
-struct Block_Item
-{
-    bool is_line;
-    int line_index;
-    Syntax_Block* block;
-};
-
-struct Syntax_Block
-{
-    Syntax_Block* parent;
-    Dynamic_Array<Block_Item> items;
-    int line_start_index;
-    int line_end_index_exclusive;
-    int indentation;
-};
-
-struct Syntax_Editor
-{
-    // Editing
-    Editor_Mode mode;
-    Insert_Mode insert_mode;
-    Dynamic_Array<Syntax_Line> lines;
-    int cursor_index; // In range 0-tokens.size
-    int line_index;
-    Hashtable<String, Keyword_Type> keyword_table;
-    Dynamic_Array<Operator_Mapping> operator_table;
-
-    // Block-Parsing
-    Syntax_Block* root_block;
-    int block_parse_index;
-
-    // Rendering
-    Rendering_Core* rendering_core;
-    Renderer_2D* renderer_2D;
-    Text_Renderer* text_renderer;
-    vec2 character_size;
-};
-
-Syntax_Editor* syntax_editor_create(Rendering_Core* rendering_core, Text_Renderer* text_renderer, Renderer_2D* renderer_2D);
-void syntax_editor_destroy(Syntax_Editor* editor);
-void syntax_editor_update(Syntax_Editor* editor, Input* input);
-void syntax_editor_render(Syntax_Editor* editor);
 
 
 
@@ -433,6 +473,9 @@ void syntax_editor_render(Syntax_Editor* editor);
 
 
 
+
+
+*/
 
 
 
