@@ -15,7 +15,7 @@ struct String
 };
 
 String string_create_static(const char* content);
-String string_create_static_with_size(char* content, int size);
+String string_create_static_with_size(const char* content, int length);
 String string_create(const char* content);
 String string_create_formated(const char* format, ...);
 String string_create_empty(int capacity);

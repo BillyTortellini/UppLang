@@ -70,9 +70,19 @@ Scenarios:
 Formatter
 Input:  Text, Syntax-Tokens, Cursor Position
 Output:
-    - Display-Spacing between tokens
-    - Trimmed Text
-    - New cursor position
+    - Display-Spacing between tokens (Given by the before/after booleans)
+    - Trimmed Text                   (Given by essential spaces after things)
+    - Trimmed cursor position        (Needs special handling, but this is done by the algorithm)
+    - Cursor Token + token offset    (Given by function cursor-char to cursor token)
+
+Algorithm:
+    Tokenize Text
+    -LATER: Determine Gaps based on parsing
+    Determine Cursor-Token + Cursor offset
+    Determine Token-Info for each token
+    Trim Text based on token-info, update token-text mapping
+    Set cursor-char based on prev. cursor-token
+    Render line based on token infos 
 
 So we have 2 basic classes of tokens, which are:
     Space-Critical          (Identifier, Keyword, Number-Literal) 
@@ -85,7 +95,8 @@ So we have 2 basic classes of tokens, which are:
             No side:    "!-15"    ->  !-15
             Right side:  "x,y,z"  ->  x, y, z 
 
-
+If i display the tokens based on token info, I 
+think I need a function from char-pos to token index + offset
 
 
    
@@ -286,10 +297,11 @@ struct Token_Info
     // Character information
     int char_start;
     int char_length;
-    int display_length; // Multi-Char Operators with spaces between can have a different lengths, e.g. "+ =" -> +=
 
-    // Formating Information
-    bool space_critical;
+    // Formating Information (Both for rendering + trimming)
+    int critical_space_count; // Count of critical spaces after the token
+    
+    // Only valid for Critical_Sapce_Count = 0
     bool format_space_before;
     bool format_space_after;
 };
