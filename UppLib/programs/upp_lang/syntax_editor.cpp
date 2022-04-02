@@ -7,9 +7,9 @@
 
 #include "../../win32/input.hpp"
 #include "syntax_colors.hpp"
+#include "compiler.hpp"
 
 // PROTOTYPES
-int syntax_editor_find_visual_cursor_pos(Syntax_Editor* editor, int line_pos, int line_index, Editor_Mode mode);
 void syntax_editor_insert_line(Syntax_Editor* editor, int index, int indentation_level);
 
 // Helpers
@@ -38,451 +38,391 @@ bool char_is_letter(int c) {
         (c >= 'A' && c <= 'Z');
 }
 
-void syntax_token_append_to_string(Syntax_Token token, String* string)
-{
-    switch (token.type)
-    {
-    case Syntax_Token_Type::IDENTIFIER:
-        string_append_string(string, &token.options.identifier);
-        break;
-    case Syntax_Token_Type::DELIMITER: {
-        string_append_character(string, token.options.delimiter);
-        break;
-    }
-    case Syntax_Token_Type::NUMBER:
-        string_append_string(string, &token.options.number);
-        break;
-    default: panic("");
-    }
+bool char_is_valid_identifier(int c) {
+    return (c >= 'a' && c <= 'z') ||
+        (c >= 'A' && c <= 'Z') ||
+        (c >= '0' && c <= '9') ||
+        (c == '_');
 }
 
-
+char parenthesis_to_char(Parenthesis p)
+{
+    switch (p.type)
+    {
+    case Parenthesis_Type::BRACES:
+        return p.is_open ? '{' : '}';
+    case Parenthesis_Type::BRACKETS:
+        return p.is_open ? '[' : ']';
+    case Parenthesis_Type::PARENTHESIS:
+        return p.is_open ? '(' : ')';
+    default: panic("");
+    }
+    return ' ';
+}
 
 // Parsing
-bool format_parser_parse_any(Format_Parser* parser);
-bool format_parser_parse_operand(Format_Parser* parser);
-bool format_parser_parse_simple_operand(Format_Parser* parser);
-bool format_parser_parse_parenthesis(Format_Parser* parser);
-bool format_parser_test_delimiter(Format_Parser* parser, char delimiter);
+void syntax_editor_sanitize_cursor(Syntax_Editor* editor);
 
-Format_Item* format_parser_add_empty_item(Format_Parser* parser, Format_Item_Type type, int token_length)
+void syntax_lexer_parse_line(Syntax_Line* line, Syntax_Editor* editor)
 {
-    Format_Item item;
-    item.type = type;
-    item.token_start_index = parser->index;
-    item.token_length = token_length;
-    dynamic_array_push_back(&parser->line->format_items, item);
-    parser->index += token_length;
-    return &parser->line->format_items[parser->line->format_items.size - 1];
-}
+    auto& text = line->text;
+    auto& cursor = editor->cursor_index;
+    auto& tokens = line->tokens;
+    dynamic_array_reset(&line->tokens);
 
-Optional<Operator_Mapping> format_parser_test_operator(Format_Parser* parser)
-{
-    auto& tokens = parser->line->tokens;
-    auto& index = parser->index;
-    if (parser->index >= parser->max_parse_index) {
-        return optional_make_failure<Operator_Mapping>();
-    }
-
-    auto& op_table = parser->editor->operator_mapping;
-    int longest = -1;
-    int longest_index = -1;
-    for (int i = 0; i < op_table.size; i++)
+    // Tokenize Text
     {
-        auto& op_str = op_table[i].string;
-        bool matches = true;
-        for (int j = 0; j < op_str.size; j++)
+        int index = 0;
+        Dynamic_Array<int> unmatched_open_parenthesis = dynamic_array_create_empty<int>(1);
+        SCOPE_EXIT(dynamic_array_destroy(&unmatched_open_parenthesis));
+        while (index < text.size)
         {
-            char op_char = op_str[j];
-            if (index + j >= parser->max_parse_index) {
-                matches = false;
-                break;
+            Syntax_Token token;
+            token.info.char_start = index;
+            memory_zero(&token.info);
+
+            char c = text[index];
+            if (char_is_letter(c))
+            {
+                // Identifier/Keyword
+                int start_index = index;
+                index += 1;
+                while (index < text.size && char_is_valid_identifier(text[index])) {
+                    index += 1;
+                }
+                token.type = Syntax_Token_Type::IDENTIFIER;
+                token.options.identifier = identifier_pool_add(editor->identifier_pool, string_create_substring_static(&text, start_index, index));
+
+                // Determine if its a keyword
+                Syntax_Keyword* keyword = hashtable_find_element(&editor->keyword_table, *token.options.identifier);
+                if (keyword != 0) {
+                    token.type = Syntax_Token_Type::KEYWORD;
+                    token.options.keyword = *keyword;
+                }
             }
-            auto& token = tokens[index + j];
-            if (!(token.type == Syntax_Token_Type::DELIMITER && token.options.delimiter == op_char)) {
-                matches = false;
-                break;
-            }
-        }
-        if (matches && op_str.size > longest) {
-            longest_index = i;
-            longest = op_str.size;
-        }
-    }
-    if (longest_index != -1) {
-        return optional_make_success(op_table[longest_index]);
-    }
-    return optional_make_failure<Operator_Mapping>();
-}
-
-bool format_parser_parse_binop(Format_Parser* parser)
-{
-    auto& binop_mapping = parser->editor->binop_mapping;
-    Optional<int> result = format_parser_test_operator(parser, binop_mapping);
-    if (result.available) {
-        auto item = format_parser_add_empty_item(parser, Format_Item_Type::BINARY_OPERAND, binop_mapping[result.value].size);
-        item->options.binop = (Format_Binop)result.value;
-    }
-    return result.available;
-}
-
-bool format_parser_parse_unop(Format_Parser* parser)
-{
-    auto& unop_mapping = parser->editor->unop_mapping;
-    Optional<int> result = format_parser_test_operator(parser, unop_mapping);
-    if (result.available) {
-        auto item = format_parser_add_empty_item(parser, Format_Item_Type::UNARY_OPERAND, unop_mapping[result.value].size);
-        item->options.unop = (Format_Unop)result.value;
-    }
-    return result.available;
-}
-
-bool format_parser_parse_simple_operand(Format_Parser* parser)
-{
-    /*
-        Valid simple Operands are:
-            - Identifier
-            - Keywords + optional additional expressions
-            - Literal (Number/String/Bool)
-            - Parenthesis
-    */
-    auto& tokens = parser->line->tokens;
-    auto& index = parser->index;
-    if (index >= parser->max_parse_index) {
-        return false;
-    }
-    auto& token = tokens[index];
-    if (token.type == Syntax_Token_Type::NUMBER) {
-        format_parser_add_empty_item(parser, Format_Item_Type::LITERAL, 1);
-        return true;
-    }
-    else if (token.type == Syntax_Token_Type::IDENTIFIER) 
-    {
-        auto& keywords = parser->editor->keyword_table;
-        Format_Keyword* found_keyword = hashtable_find_element(&keywords, token.options.identifier);
-        if (found_keyword != 0) {
-            Format_Item* item = format_parser_add_empty_item(parser, Format_Item_Type::KEYWORD, 1);
-            item->options.keyword = *found_keyword;
-            // After keywords anything can happen again
-            format_parser_parse_any(parser);
-        }
-        else {
-            format_parser_add_empty_item(parser, Format_Item_Type::IDENTIFIER, 1);
-        }
-        return true;
-    }
-    else if (format_parser_test_delimiter(parser, '(')) {
-        bool must_succeed = format_parser_parse_parenthesis(parser);
-        assert(must_succeed, "");
-    }
-    return false;
-}
-
-Format_Item format_item_make_empty(Format_Parser* parser, Format_Item_Type type, int token_length)
-{
-    Format_Item item;
-    item.type = type;
-    item.token_start_index = parser->index;
-    item.token_length = token_length;
-    return item;
-}
-
-Format_Item format_parser_parse_single_format_item(Format_Parser* parser)
-{
-    auto& index = parser->index;
-    auto& tokens = parser->line->tokens;
-    assert(index < tokens.size, "");
-    auto& token = tokens[index];
-
-    Format_Item item;
-    switch (token.type)
-    {
-    case Syntax_Token_Type::IDENTIFIER: {
-        auto& keywords = parser->editor->keyword_table;
-        Format_Keyword* found_keyword = hashtable_find_element(&keywords, token.options.identifier);
-        if (found_keyword != 0) {
-            item = format_item_make_empty(parser, Format_Item_Type::KEYWORD, 1);
-            item.options.keyword = *found_keyword;
-        }
-        else {
-            item = format_item_make_empty(parser, Format_Item_Type::IDENTIFIER, 1);
-        }
-        break;
-    }
-    case Syntax_Token_Type::NUMBER: {
-        item = format_item_make_empty(parser, Format_Item_Type::LITERAL, 1);
-        break;
-    }
-    case Syntax_Token_Type::DELIMITER: {
-        auto operator_result = format_parser_test_operator(parser);
-        if (operator_result.available) {
-            item = format_item_make_empty(parser, Format_Item_Type::OPERATOR, operator_result.value.string.size);
-            break;
-        }
-
-        // Check Parenthesis
-        auto parenthesis_result = syntax_token_is_parenthesis(token);
-        if (parenthesis_result.available) {
-            item = format_item_make_empty(parser, Format_Item_Type::PARENTHESIS, 1);
-            item.options.parenthesis.matching_exists = false;
-            item.options.parenthesis.matching_index = -1;
-            break;
-        }
-
-        item = format_item_make_empty(parser, Format_Item_Type::ERROR_ITEM, 1);
-        break;
-    }
-    default: panic("");
-    }
-
-    return item;
-}
-
-void format_parser_parse_everything(Format_Parser* parser)
-{
-    auto& tokens = parser->line->tokens;
-    auto& index = parser->index;
-    while (index < tokens.size)
-    {
-        Format_Item item = format_parser_parse_single_format_item(parser);
-        switch (item.type)
-        {
-        case Format_Item_Type::ERROR_ITEM:
-        case Format_Item_Type::IDENTIFIER:
-        case Format_Item_Type::KEYWORD:
-        case Format_Item_Type::LITERAL:
-        case Format_Item_Type::OPERATOR:
-        case Format_Item_Type::PARENTHESIS:
-        default: panic(""); // Can never be of type Gap
-        }
-
-    }
-}
-
-
-bool format_parser_parse_any(Format_Parser* parser)
-{
-    /*
-        Parse any parses a undeterminedly long binop chain
-        1. Try parsing a operand
-        2. If failed, try parsing a
-
-        Expected: Operand BinOp Operand BinOp Operand
-        Depending on what is given, we either insert a gap for the operand or for the
-    */
-    auto& index = parser->index;
-    auto& tokens = parser->line->tokens;
-    bool operand_required = true;
-    bool gap_added_last_round = false;
-    while (index < parser->max_parse_index)
-    {
-        bool found_required_item = false; // Either operand or operator
-        if (operand_required) {
-            found_required_item = format_parser_parse_operand(parser);
-        }
-        else {
-            found_required_item = format_parser_parse_binop(parser);
-        }
-
-        if (!found_required_item)
-        {
-            if (gap_added_last_round) {
-                // Finding 2 gapes means that neither Binop nor Operand can be parsed
-                format_parser_add_empty_item(parser, Format_Item_Type::ERROR_ITEM, 1);
-                gap_added_last_round = false;
-                operand_required = false; // Next after error should be another binop
+            else if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+                index += 1;
                 continue;
             }
-            else {
-                format_parser_add_empty_item(parser, Format_Item_Type::GAP, 0);
+            else if (char_is_digit(c))
+            {
+                // Number literal
+                int start_index = index;
+                index += 1;
+                while (index < text.size && char_is_digit(text[index])) {
+                    index += 1;
+                }
+                token.type = Syntax_Token_Type::LITERAL;
+                token.options.literal_string = identifier_pool_add(editor->identifier_pool, string_create_substring_static(&text, start_index, index));
             }
+            else if (string_contains_character(string_create_static("[](){}"), c))
+            {
+                index += 1;
+                Parenthesis parenthesis;
+                switch (c)
+                {
+                case '[': parenthesis.is_open = true;  parenthesis.type = Parenthesis_Type::BRACKETS; break;
+                case ']': parenthesis.is_open = false; parenthesis.type = Parenthesis_Type::BRACKETS; break;
+                case '{': parenthesis.is_open = true;  parenthesis.type = Parenthesis_Type::BRACES; break;
+                case '}': parenthesis.is_open = false; parenthesis.type = Parenthesis_Type::BRACES; break;
+                case '(': parenthesis.is_open = true;  parenthesis.type = Parenthesis_Type::PARENTHESIS; break;
+                case ')': parenthesis.is_open = false; parenthesis.type = Parenthesis_Type::PARENTHESIS; break;
+                default:
+                    panic("");
+                }
+
+                token.type = Syntax_Token_Type::PARENTHESIS;
+                token.options.parenthesis.type = parenthesis;
+                token.options.parenthesis.matching_exists = false;
+                token.options.parenthesis.matching_index = -1;
+                if (parenthesis.is_open) {
+                    dynamic_array_push_back(&unmatched_open_parenthesis, line->tokens.size);
+                }
+                else
+                {
+                    // Search backwards for matching parenthesis
+                    for (int i = unmatched_open_parenthesis.size - 1; i >= 0; i--)
+                    {
+                        auto& item = line->tokens[unmatched_open_parenthesis[i]];
+                        assert(item.type == Syntax_Token_Type::PARENTHESIS, "");
+                        auto& open = item.options.parenthesis;
+                        assert(open.type.is_open && !open.matching_exists, "");
+                        if (open.type.type == parenthesis.type) {
+                            open.matching_exists = true;
+                            open.matching_index = line->tokens.size;
+                            token.options.parenthesis.matching_exists = true;
+                            token.options.parenthesis.matching_index = unmatched_open_parenthesis[i];
+                            dynamic_array_rollback_to_size(&unmatched_open_parenthesis, i);
+                            break;
+                        }
+                    }
+                }
+            }
+            else
+            {
+                // Either operator or Error-Item
+                auto& op_table = editor->operator_buffer;
+                int longest_index = -1;
+                int longest_end = -1;
+                // Check all operators
+                for (int i = 0; i < op_table.size; i++)
+                {
+                    auto& op = op_table[i];
+                    auto& op_str = op.string;
+                    bool matches = true;
+
+                    int end = index;
+                    // Check if all op characters match
+                    for (int j = 0; j < op_str.size; j++)
+                    {
+                        char op_char = op_str[j];
+                        // skip unnecessary characters between
+                        while (end < text.size && string_contains_character(string_create_static(" \n\r\t"), text[end])) {
+                            end += 1;
+                        }
+                        if (end >= text.size || text[end] != op_char) {
+                            matches = false;
+                            break;
+                        }
+                        end += 1;
+                    }
+                    if (matches && end > longest_end) {
+                        longest_end = end;
+                        longest_index = i;
+                    }
+                }
+
+                if (longest_end != -1) {
+                    index = longest_end;
+                    token.type = Syntax_Token_Type::OPERATOR;
+                    token.options.op = &op_table[longest_index];
+                }
+                else {
+                    index += 1;
+                    token.type = Syntax_Token_Type::UNEXPECTED_CHAR;
+                    token.options.unexpected = c;
+                }
+            }
+
+            token.info.char_length = index - token.info.char_start;
+            dynamic_array_push_back(&line->tokens, token);
         }
-
-        gap_added_last_round = found_required_item;
-        operand_required = !operand_required;
     }
 
-    assert(index == parser->max_parse_index, "");
-    return true;
-}
+    // Early exit so I don't have to deal with the 0 tokens case
+    if (tokens.size == 0) {
+        cursor = 0;
+        string_reset(&text);
+        return;
+    }
 
-Optional<Format_Parenthesis> syntax_token_is_parenthesis(Syntax_Token token)
-{
-    if (token.type != Syntax_Token_Type::DELIMITER)
-        return optional_make_failure<Format_Parenthesis>();
-    Format_Parenthesis_Type type;
-    bool is_open;
-    switch (token.options.delimiter)
+    // MISSING: Find/Report Gaps with Parser
+
+    // Find cursor token
+    int cursor_token = -1;
     {
-    case '[': is_open = true; type = Format_Parenthesis_Type::BRACKETS; break;
-    case ']': is_open = false; type = Format_Parenthesis_Type::BRACKETS; break;
-    case '{': is_open = true; type = Format_Parenthesis_Type::BRACES; break;
-    case '}': is_open = false; type = Format_Parenthesis_Type::BRACES; break;
-    case '(': is_open = true; type = Format_Parenthesis_Type::PARENTHESIS; break;
-    case ')': is_open = false; type = Format_Parenthesis_Type::PARENTHESIS; break;
-    default:
-        return optional_make_failure<Format_Parenthesis>();
-    }
-
-    Format_Parenthesis result;
-    result.is_open = is_open;
-    result.type = type;
-    return optional_make_success(result);
-}
-
-bool format_parser_parse_parenthesis(Format_Parser* parser)
-{
-    /*
-        Parenthesis are either
-            (, [, {
-        Inside parenthesis, anything is allowed again
-    */
-    auto& index = parser->index;
-    auto& tokens = parser->line->tokens;
-
-    auto is_parenthesis = syntax_token_is_parenthesis(tokens[index]);
-    if (!is_parenthesis.available) return false;
-    auto start_parenthesis = is_parenthesis.value;
-    if (!start_parenthesis.is_open) return false;
-
-    // Find closing parenthesis
-    int closing_index = -1;
-    for (int i = index + 1; i < parser->max_parse_index; i++) {
-        auto is_parenthesis = syntax_token_is_parenthesis(tokens[i]);
-        if (is_parenthesis.available) {
-            auto closed_parenthesis = is_parenthesis.value;
-            if (!closed_parenthesis.is_open && closed_parenthesis.type == start_parenthesis.type) {
-                closing_index = i;
+        for (int i = 0; i < tokens.size; i++)
+        {
+            auto& token = tokens[i];
+            if (cursor == token.info.char_start) {
+                cursor_token = i;
+                break;
+            }
+            else if (cursor < token.info.char_start) {
+                // Cursor is on previous token
+                if (i == 0) { // Special case when we have a line starting with a space, and the cursor is before the space '| what'
+                    cursor_token = i;
+                    break;
+                }
+                cursor_token = i - 1;
                 break;
             }
         }
-    }
-
-    if (closing_index == -1) {
-        auto item = format_parser_add_empty_item(parser, Format_Item_Type::PARENTHESIS, 1);
-        item->options.parenthesis.type = start_parenthesis;
-        item->options.parenthesis.matching_exists = false;
-        item->options.parenthesis.matching_index = false;
-
-        bool must_succeed = format_parser_parse_any(parser);
-        assert(must_succeed, "");
-    }
-    else {
-        format_parser_add_empty_item(parser, Format_Item_Type::PARENTHESIS, 1);
-        int parenthesis_item_index = parser->line->format_items.size - 1;
-        int backup_max_index = parser->max_parse_index;
-        parser->max_parse_index = closing_index;
-        SCOPE_EXIT(parser->max_parse_index = backup_max_index);
-
-        bool must_succeed = format_parser_parse_any(parser);
-        assert(must_succeed && parser->index == backup_max_index, "");
-
-        auto closing_item = format_parser_add_empty_item(parser, Format_Item_Type::PARENTHESIS, 1);
-        closing_item->options.parenthesis.type = start_parenthesis;
-        closing_item->options.parenthesis.type.is_open = false;
-        closing_item->options.parenthesis.matching_exists = true;
-        closing_item->options.parenthesis.matching_index = parenthesis_item_index;
-
-        auto open_item = &parser->line->format_items[parenthesis_item_index];
-        open_item->options.parenthesis.type = start_parenthesis;
-        open_item->options.parenthesis.matching_exists = true;
-        open_item->options.parenthesis.matching_index = parser->line->format_items.size - 1;
-    }
-    return true;
-}
-
-bool format_parser_test_delimiter(Format_Parser* parser, char delimiter)
-{
-    if (parser->index >= parser->max_parse_index) return false;
-    const auto& token = parser->line->tokens[parser->index];
-    return token.type == Syntax_Token_Type::DELIMITER && token.options.delimiter == delimiter;
-}
-
-bool format_parser_parse_operand(Format_Parser* parser)
-{
-    /*
-        A operand is built upon:
-            PreOp 'Simple Operand' PostOp
-        PreOp may be:
-            []
-            Unary Op !, *, -, &
-        PostOp may be:
-            Function Call ()
-            Array Access []
-       + (32)[15]{200} * 2
-    */
-    auto& index = parser->index;
-    auto& tokens = parser->line->tokens;
-    // Pre-Ops
-    bool operand_required = false;
-    while (index < parser->max_parse_index)
-    {
-        if (format_parser_parse_unop(parser)) {
-            operand_required = true;
-            continue;
+        // Edge case for cursor on last token
+        if (cursor_token == -1) {
+            cursor_token = tokens.size - 1;
         }
+    }
 
-        if (format_parser_test_delimiter(parser, '[')) {
-            bool must_be_true = format_parser_parse_parenthesis(parser);
-            assert(must_be_true, "");
-            if (index < parser->max_parse_index) {
-                operand_required = true;
+    // Go through tokens and figure out Spacing between Tokens
+    Syntax_Token_Type previous_type = Syntax_Token_Type::UNEXPECTED_CHAR;
+    for (int i = 0; i < tokens.size; i++)
+    {
+        auto& token = tokens[i];
+        bool previous_needs_space = false;
+        bool needs_space = false;
+        switch (token.type)
+        {
+        case Syntax_Token_Type::IDENTIFIER:
+        case Syntax_Token_Type::KEYWORD:
+        case Syntax_Token_Type::LITERAL:
+            if (previous_type == Syntax_Token_Type::IDENTIFIER || previous_type == Syntax_Token_Type::KEYWORD || previous_type == Syntax_Token_Type::LITERAL) {
+                previous_needs_space = true;
             }
-            continue;
+            break;
+        case Syntax_Token_Type::OPERATOR: 
+        {
+            switch (token.options.op->type)
+            {
+            case Operator_Type::BINOP: {
+                previous_needs_space = token.options.op->space_before;
+                needs_space = token.options.op->space_after;
+                break;
+            }
+            case Operator_Type::UNOP:
+                // Unop does not require space before/after, e.g. -*ip
+                break;
+            case Operator_Type::BOTH: {
+                // Determining if - or * is Binop or Unop can be quite hard, but I think this is a good approximation
+                if (!(previous_type == Syntax_Token_Type::OPERATOR ||
+                     (previous_type == Syntax_Token_Type::PARENTHESIS && tokens[i - 1].options.parenthesis.type.is_open) ||
+                     (previous_type == Syntax_Token_Type::KEYWORD) || i == 0)) 
+                {
+                    previous_needs_space = token.options.op->space_before;
+                    needs_space = token.options.op->space_after;
+                }
+            }
+            default: panic("");
+            }
+            break;
+        }
+        case Syntax_Token_Type::UNEXPECTED_CHAR:
+            previous_needs_space = true;
+            needs_space = true;
+            break;
+        case Syntax_Token_Type::PARENTHESIS:
+        case Syntax_Token_Type::GAP:
+            break;
+        default: panic("");
         }
 
-        break;
-    }
-
-    if (!format_parser_parse_simple_operand(parser)) {
-        if (operand_required) {
-            format_parser_add_empty_item(parser, Format_Item_Type::GAP, 0);
-            return true;
+        token.has_space_after = needs_space;
+        if (previous_needs_space && i != 0) {
+            tokens[i - 1].has_space_after = true;
         }
-        return false;
+        previous_type = token.type;
     }
 
-    // Post-Ops
-    while (index < parser->max_parse_index)
+    // Format the original text
+    String new_text = string_create_empty(text.size);
+    int new_cursor = 0;
+    for (int i = 0; i < tokens.size; i++)
     {
-        if (format_parser_test_delimiter(parser, '[') || format_parser_test_delimiter(parser, '(')) {
-            bool must_be_true = format_parser_parse_parenthesis(parser);
-            assert(must_be_true, "");
-            continue;
+        auto& token = tokens[i];
+        if (cursor_token == i) {
+            new_cursor = new_text.size + (cursor - tokens[cursor_token].start);
         }
-        break;
+
+        // Append token without any spaces
+        switch (token.type)
+        {
+        case Syntax_Token_Type::IDENTIFIER:
+            string_append_string(&new_text, token.options.identifier);
+            break;
+        case Syntax_Token_Type::KEYWORD:
+            string_append_string(&new_text, &editor->keyword_mapping[(int)token.options.keyword]);
+            break;
+        case Syntax_Token_Type::LITERAL:
+            string_append_string(&new_text, token.options.literal_string);
+            break;
+        case Syntax_Token_Type::OPERATOR:
+            string_append_string(&new_text, &token.options.op->string);
+            break;
+        case Syntax_Token_Type::PARENTHESIS:
+            string_append_character(&new_text, parenthesis_to_char(token.options.parenthesis.type));
+            break;
+        case Syntax_Token_Type::UNEXPECTED_CHAR:
+            string_append_character(&new_text, token.options.unexpected);
+            break;
+        case Syntax_Token_Type::GAP:
+            break;
+        default: panic("");
+        }
+
+        // Do spacing
+        if (token.has_space_after) {
+            string_append_formated(&new_text, " ");
+        }
     }
-    return true;
-}
 
-void format_parser_parse_line(Syntax_Line* line, Syntax_Editor* editor)
-{
-    Format_Parser parser;
-    parser.line = line;
-    parser.index = 0;
-    parser.editor = editor;
-    parser.max_parse_index = line->tokens.size;
-    dynamic_array_reset(&line->format_items);
-    format_parser_parse_any(&parser);
-}
-
-void format_item_append_to_string(String* str, Format_Item item)
-{
-    switch (item.type)
+    // Now I would replace the original text with the new_text, but for testing I won't
+    if (false)
     {
-    case Format_Item_Type::BINARY_OPERAND:
-    case Format_Item_Type::ERROR_ITEM:
-    case Format_Item_Type::GAP:
-    case Format_Item_Type::IDENTIFIER:
-    case Format_Item_Type::KEYWORD:
-    case Format_Item_Type::LITERAL:
-    case Format_Item_Type::PARENTHESIS:
-    case Format_Item_Type::UNARY_OPERAND:
-    default: panic("");
+        logg(new_text.characters, "");
+        logg("\n");
+        string_destroy(&new_text);
     }
+    else
+    {
+        if (string_equals(&new_text, &text)) {
+            string_destroy(&new_text);
+            return;
+        }
+        if (new_text.size > 8) {
+            logg("Error\n");
+        }
+        logg("Old: \"%s\"\nNew: \"%s\"\n\n", text.characters, new_text.characters);
+        editor->cursor_index = new_cursor;
+        syntax_editor_sanitize_cursor(editor);
+        string_destroy(&text);
+        text = new_text;
+    }
+
 }
 
+void line_print_tokens(Syntax_Line* line, Syntax_Editor* editor)
+{
+    String output = string_create_empty(256);
+    SCOPE_EXIT(string_destroy(&output));
+    string_append_formated(&output, "--------------\nTOKENS\n----------------\n");
 
+    for (int i = 0; i < line->tokens.size; i++)
+    {
+        auto& item = line->tokens[i];
+        string_append_formated(&output, "#%d: ", i);
+        switch (item.type)
+        {
+        case Syntax_Token_Type::IDENTIFIER:
+            string_append_formated(&output, "Identifier");
+            //string_append_formated(&output, item.options.identifier->characters);
+            break;
+        case Syntax_Token_Type::KEYWORD:
+            string_append_formated(&output, "Keyword");
+            //string_append_string(&output, &editor->keyword_mapping[(int)item.options.keyword]);
+            break;
+        case Syntax_Token_Type::GAP:
+            string_append_formated(&output, "GAP");
+            break;
+        case Syntax_Token_Type::PARENTHESIS:
+            string_append_formated(&output, "Parenthesis");
+            if (item.options.parenthesis.matching_exists) {
+                string_append_formated(&output, " Matching at %d", item.options.parenthesis.matching_index);
+            }
+            else {
+                string_append_formated(&output, " NO-MATCHING");
+            }
+            break;
+        case Syntax_Token_Type::OPERATOR:
+            string_append_formated(&output, "Operator");
+            break;
+        case Syntax_Token_Type::LITERAL:
+            string_append_formated(&output, "Literal");
+            break;
+        case Syntax_Token_Type::UNEXPECTED_CHAR:
+            string_append_formated(&output, "Unexpected Character");
+            break;
+        default: panic("");
+        }
+
+        String substr = string_create_substring_static(&line->text, item.start, item.start + item.length);
+        string_append_formated(&output, " ");
+        string_append_string(&output, &substr);
+
+        string_append_formated(&output, "\n");
+    }
+
+    logg(output.characters);
+}
 
 
 // Editing
@@ -532,141 +472,32 @@ void syntax_editor_sanitize_cursor(Syntax_Editor* editor)
     if (editor->line_index < 0) {
         editor->line_index = 0;
     }
-    auto& tokens = editor->lines[editor->line_index].tokens;
-    if (tokens.size == 0) {
+    auto& text = editor->lines[editor->line_index].text;
+    if (text.size == 0) {
         editor->cursor_index = 0;
         return;
     }
-    if (editor->cursor_index >= tokens.size) {
-        editor->cursor_index = tokens.size - 1;
+    if (editor->cursor_index > text.size) {
+        editor->cursor_index = text.size;
     }
     if (editor->cursor_index < 0) {
         editor->cursor_index = 0;
     }
 }
 
-void syntax_editor_remove_cursor_token(Syntax_Editor* editor)
-{
-    auto& tokens = editor->lines[editor->line_index].tokens;
-    if (editor->cursor_index >= tokens.size || editor->cursor_index < 0) return;
-    Syntax_Token t = tokens[editor->cursor_index];
-    switch (t.type)
-    {
-    case Syntax_Token_Type::IDENTIFIER:
-        string_destroy(&t.options.identifier);
-        break;
-    case Syntax_Token_Type::NUMBER:
-        string_destroy(&t.options.number);
-        break;
-    }
-    dynamic_array_remove_ordered(&tokens, editor->cursor_index);
-}
-
 void normal_mode_handle_command(Syntax_Editor* editor, Normal_Command command)
 {
     auto& current_line = editor->lines[editor->line_index];
-    auto& tokens = current_line.tokens;
+    //auto& tokens = current_line.tokens;
     auto& cursor = editor->cursor_index;
     switch (command)
     {
-    case Normal_Command::DELETE_TOKEN: {
-        syntax_editor_remove_cursor_token(editor);
-        break;
-    }
-    case Normal_Command::CHANGE_TOKEN: {
-        if (tokens.size == 0) return;
-        syntax_editor_remove_cursor_token(editor);
-        editor->mode = Editor_Mode::INPUT;
-        editor->insert_mode = Insert_Mode::BEFORE;
-        break;
-    }
     case Normal_Command::INSERT_AFTER: {
         editor->mode = Editor_Mode::INPUT;
-        editor->insert_mode = Insert_Mode::APPEND;
-        break;
-    }
-    case Normal_Command::INSERT_AT_LINE_END: {
-        cursor = tokens.size;
-        editor->mode = Editor_Mode::INPUT;
-        editor->insert_mode = Insert_Mode::BEFORE;
         break;
     }
     case Normal_Command::INSERT_BEFORE: {
         editor->mode = Editor_Mode::INPUT;
-        editor->insert_mode = Insert_Mode::BEFORE;
-        break;
-    }
-    case Normal_Command::INSERT_AT_LINE_START: {
-        cursor = 0;
-        editor->mode = Editor_Mode::INPUT;
-        editor->insert_mode = Insert_Mode::BEFORE;
-        break;
-    }
-    case Normal_Command::MOVE_LINE_START: {
-        editor->cursor_index = 0;
-        break;
-    }
-    case Normal_Command::MOVE_LINE_END: {
-        editor->cursor_index = tokens.size;
-        break;
-    }
-    case Normal_Command::ADD_LINE_ABOVE: {
-        syntax_editor_insert_line(editor, editor->line_index, current_line.indentation_level);
-        editor->cursor_index = 0;
-        editor->mode = Editor_Mode::INPUT;
-        editor->insert_mode = Insert_Mode::BEFORE;
-        break;
-    }
-    case Normal_Command::ADD_LINE_BELOW: {
-        syntax_editor_insert_line(editor, editor->line_index + 1, current_line.indentation_level);
-        editor->line_index += 1;
-        editor->cursor_index = 0;
-        editor->mode = Editor_Mode::INPUT;
-        editor->insert_mode = Insert_Mode::BEFORE;
-        break;
-    }
-    case Normal_Command::MOVE_UP: {
-        if (editor->line_index == 0) return;
-        int current_pos = syntax_editor_find_visual_cursor_pos(editor, editor->cursor_index, editor->line_index, editor->mode);
-        int new_line_index = editor->line_index - 1;
-        auto& new_line = editor->lines[new_line_index];
-        // Find nearest position
-        {
-            int min_dist = 10000;
-            int min_pos = 0;
-            for (int i = 0; i <= new_line.tokens.size; i++) {
-                int new_pos = syntax_editor_find_visual_cursor_pos(editor, i, new_line_index, editor->mode);
-                int dist = math_absolute(new_pos - current_pos);
-                if (dist < min_dist) {
-                    min_pos = i;
-                    min_dist = dist;
-                }
-            }
-            editor->cursor_index = min_pos;
-            editor->line_index = new_line_index;
-        }
-        break;
-    }
-    case Normal_Command::MOVE_DOWN: {
-        if (editor->line_index + 1 >= editor->lines.size) return;
-        int current_pos = syntax_editor_find_visual_cursor_pos(editor, editor->cursor_index, editor->line_index, editor->mode);
-        int new_line_index = editor->line_index + 1;
-        auto& new_line = editor->lines[new_line_index];
-        // Find nearest position
-        {
-            int min_dist = 10000;
-            int min_pos = 0;
-            for (int i = 0; i <= new_line.tokens.size; i++) {
-                int new_pos = syntax_editor_find_visual_cursor_pos(editor, i, new_line_index, editor->mode);
-                int dist = math_absolute(new_pos - current_pos);
-                if (dist < min_dist) {
-                    min_pos = i;
-                    min_dist = dist;
-                }
-            }
-            editor->cursor_index = min_pos;
-            editor->line_index = new_line_index;
-        }
         break;
     }
     case Normal_Command::MOVE_LEFT: {
@@ -679,32 +510,119 @@ void normal_mode_handle_command(Syntax_Editor* editor, Normal_Command command)
         syntax_editor_sanitize_cursor(editor);
         break;
     }
-    default: panic("");
+                                   /*
+                                   case Normal_Command::DELETE_TOKEN: {
+                                       syntax_editor_remove_cursor_token(editor);
+                                       break;
+                                   }
+                                   case Normal_Command::CHANGE_TOKEN: {
+                                       if (tokens.size == 0) return;
+                                       syntax_editor_remove_cursor_token(editor);
+                                       editor->mode = Editor_Mode::INPUT;
+                                       editor->insert_mode = Insert_Mode::BEFORE;
+                                       break;
+                                   }
+                                   case Normal_Command::INSERT_AT_LINE_END: {
+                                       cursor = tokens.size;
+                                       editor->mode = Editor_Mode::INPUT;
+                                       editor->insert_mode = Insert_Mode::BEFORE;
+                                       break;
+                                   }
+                                   case Normal_Command::INSERT_AT_LINE_START: {
+                                       cursor = 0;
+                                       editor->mode = Editor_Mode::INPUT;
+                                       editor->insert_mode = Insert_Mode::BEFORE;
+                                       break;
+                                   }
+                                   case Normal_Command::MOVE_LINE_START: {
+                                       editor->cursor_index = 0;
+                                       break;
+                                   }
+                                   case Normal_Command::MOVE_LINE_END: {
+                                       editor->cursor_index = tokens.size;
+                                       break;
+                                   }
+                                   case Normal_Command::ADD_LINE_ABOVE: {
+                                       syntax_editor_insert_line(editor, editor->line_index, current_line.indentation_level);
+                                       editor->cursor_index = 0;
+                                       editor->mode = Editor_Mode::INPUT;
+                                       editor->insert_mode = Insert_Mode::BEFORE;
+                                       break;
+                                   }
+                                   case Normal_Command::ADD_LINE_BELOW: {
+                                       syntax_editor_insert_line(editor, editor->line_index + 1, current_line.indentation_level);
+                                       editor->line_index += 1;
+                                       editor->cursor_index = 0;
+                                       editor->mode = Editor_Mode::INPUT;
+                                       editor->insert_mode = Insert_Mode::BEFORE;
+                                       break;
+                                   }
+                                   case Normal_Command::MOVE_UP: {
+                                       if (editor->line_index == 0) return;
+                                       int current_pos = syntax_editor_find_visual_cursor_pos(editor, editor->cursor_index, editor->line_index, editor->mode);
+                                       int new_line_index = editor->line_index - 1;
+                                       auto& new_line = editor->lines[new_line_index];
+                                       // Find nearest position
+                                       {
+                                           int min_dist = 10000;
+                                           int min_pos = 0;
+                                           for (int i = 0; i <= new_line.tokens.size; i++) {
+                                               int new_pos = syntax_editor_find_visual_cursor_pos(editor, i, new_line_index, editor->mode);
+                                               int dist = math_absolute(new_pos - current_pos);
+                                               if (dist < min_dist) {
+                                                   min_pos = i;
+                                                   min_dist = dist;
+                                               }
+                                           }
+                                           editor->cursor_index = min_pos;
+                                           editor->line_index = new_line_index;
+                                       }
+                                       break;
+                                   }
+                                   case Normal_Command::MOVE_DOWN: {
+                                       if (editor->line_index + 1 >= editor->lines.size) return;
+                                       int current_pos = syntax_editor_find_visual_cursor_pos(editor, editor->cursor_index, editor->line_index, editor->mode);
+                                       int new_line_index = editor->line_index + 1;
+                                       auto& new_line = editor->lines[new_line_index];
+                                       // Find nearest position
+                                       {
+                                           int min_dist = 10000;
+                                           int min_pos = 0;
+                                           for (int i = 0; i <= new_line.tokens.size; i++) {
+                                               int new_pos = syntax_editor_find_visual_cursor_pos(editor, i, new_line_index, editor->mode);
+                                               int dist = math_absolute(new_pos - current_pos);
+                                               if (dist < min_dist) {
+                                                   min_pos = i;
+                                                   min_dist = dist;
+                                               }
+                                           }
+                                           editor->cursor_index = min_pos;
+                                           editor->line_index = new_line_index;
+                                       }
+                                       break;
+                                   }
+                                   default: panic("");
+                                   */
+    default:
+        break;
     }
 }
 
 void insert_mode_handle_command(Syntax_Editor* editor, Input_Command input)
 {
     auto& line = editor->lines[editor->line_index];
-    auto& tokens = line.tokens;
+    auto& text = line.text;
     auto& cursor = editor->cursor_index;
     assert(editor->mode == Editor_Mode::INPUT, "");
     syntax_editor_sanitize_cursor(editor);
 
-    if (cursor == tokens.size) {
-        editor->insert_mode = Insert_Mode::BEFORE;
-    }
-
     // Handle Universal Inputs
     if (input.type == Input_Command_Type::EXIT_INSERT_MODE) {
-        if (editor->insert_mode == Insert_Mode::APPEND) {
-            cursor += 1;
-            syntax_editor_sanitize_cursor(editor);
-        }
         editor->mode = Editor_Mode::NORMAL;
-        editor->insert_mode = Insert_Mode::APPEND;
+        syntax_editor_sanitize_cursor(editor);
         return;
     }
+    /*
     if (input.type == Input_Command_Type::ENTER) {
         syntax_editor_insert_line(editor, editor->line_index + 1, editor->lines[editor->line_index].indentation_level);
         editor->line_index = editor->line_index + 1;
@@ -716,14 +634,6 @@ void insert_mode_handle_command(Syntax_Editor* editor, Input_Command input)
         syntax_editor_insert_line(editor, editor->line_index + 1, indent);
         editor->line_index = editor->line_index + 1;
         editor->cursor_index = 0;
-        return;
-    }
-    if (input.type == Input_Command_Type::SPACE) {
-        if (editor->insert_mode == Insert_Mode::APPEND) {
-            editor->insert_mode = Insert_Mode::BEFORE;
-            editor->cursor_index += 1;
-            syntax_editor_sanitize_cursor(editor);
-        }
         return;
     }
     if (input.type == Input_Command_Type::ADD_INDENTATION) {
@@ -738,125 +648,33 @@ void insert_mode_handle_command(Syntax_Editor* editor, Input_Command input)
         }
         return;
     }
+    */
 
-    // Handle the case of editing inside a token
-    if (editor->insert_mode == Insert_Mode::APPEND)
-    {
-        auto& token = tokens[cursor];
-        bool input_used = false;
-        bool remove_token = false;
-        switch (token.type)
-        {
-        case Syntax_Token_Type::DELIMITER: {
-            if (input.type == Input_Command_Type::BACKSPACE) {
-                remove_token = true;
-                input_used = true;
-            }
-            break;
-        }
-        case Syntax_Token_Type::IDENTIFIER: {
-            auto& id = token.options.identifier;
-            input_used = true;
-            switch (input.type)
-            {
-            case Input_Command_Type::BACKSPACE:
-                if (id.size == 1) {
-                    remove_token = true;
-                    break;
-                }
-                string_truncate(&id, id.size - 1);
-                break;
-            case Input_Command_Type::IDENTIFIER_LETTER:
-                string_append_character(&id, input.letter);
-                break;
-            case Input_Command_Type::NUMBER_LETTER:
-                string_append_character(&id, input.letter);
-                break;
-            default: input_used = false;
-            }
-            break;
-        }
-        case Syntax_Token_Type::NUMBER: {
-            auto& text = token.options.number;
-            input_used = true;
-            switch (input.type)
-            {
-            case Input_Command_Type::BACKSPACE:
-                if (text.size == 1) {
-                    remove_token = true;
-                    break;
-                }
-                string_truncate(&text, text.size - 1);
-                break;
-            case Input_Command_Type::NUMBER_LETTER:
-                string_append_character(&text, input.letter);
-                break;
-            default: input_used = false;
-            }
-            break;
-        }
-        }
-
-        if (remove_token) {
-            bool goto_before_mode = token.type == Syntax_Token_Type::NUMBER || token.type == Syntax_Token_Type::IDENTIFIER;
-            goto_before_mode = false; // Still not sure about that one
-            syntax_editor_remove_cursor_token(editor);
-            if (goto_before_mode) {
-                editor->insert_mode = Insert_Mode::BEFORE;
-            }
-            else {
-                editor->cursor_index -= 1;
-                syntax_editor_sanitize_cursor(editor);
-            }
-            return;
-        }
-        if (input_used) return;
-    }
-    else
-    {
-        if (input.type == Input_Command_Type::BACKSPACE && cursor != 0) {
-            cursor -= 1;
-            editor->insert_mode = Insert_Mode::APPEND;
-            return;
-        }
-    }
-
-    // Insert new token if necessary (Mode could either be BEFORE or APPEND)
-    Syntax_Token new_token;
-    bool token_valid = false;
     switch (input.type)
     {
-    case Input_Command_Type::IDENTIFIER_LETTER: {
-        token_valid = true;
-        new_token.type = Syntax_Token_Type::IDENTIFIER;
-        new_token.options.identifier = string_create_empty(1);
-        string_append_character(&new_token.options.identifier, input.letter);
+    case Input_Command_Type::DELIMITER_LETTER:
+        string_insert_character_before(&text, input.letter, editor->cursor_index);
+        editor->cursor_index += 1;
         break;
-    }
-    case Input_Command_Type::NUMBER_LETTER: {
-        token_valid = true;
-        new_token.type = Syntax_Token_Type::NUMBER;
-        new_token.options.number = string_create_empty(1);
-        string_append_character(&new_token.options.number, input.letter);
+    case Input_Command_Type::SPACE:
+        string_insert_character_before(&text, ' ', editor->cursor_index);
+        editor->cursor_index += 1;
         break;
-    }
-    case Input_Command_Type::DELIMITER_LETTER: {
-        token_valid = true;
-        new_token.type = Syntax_Token_Type::DELIMITER;
-        new_token.options.delimiter = input.letter;
+    case Input_Command_Type::BACKSPACE:
+        string_remove_character(&text, editor->cursor_index - 1);
+        editor->cursor_index -= 1;
         break;
+    case Input_Command_Type::IDENTIFIER_LETTER:
+        string_insert_character_before(&text, input.letter, editor->cursor_index);
+        editor->cursor_index += 1;
+        break;
+    case Input_Command_Type::NUMBER_LETTER:
+        string_insert_character_before(&text, input.letter, editor->cursor_index);
+        editor->cursor_index += 1;
+        break;
+    default: break;
     }
-    default: token_valid = false;
-    }
-
-    if (token_valid) {
-        if (editor->insert_mode == Insert_Mode::APPEND) {
-            cursor += 1;
-        }
-        dynamic_array_insert_ordered(&tokens, new_token, cursor);
-        syntax_editor_sanitize_cursor(editor);
-        editor->insert_mode = Insert_Mode::APPEND;
-    }
+    syntax_editor_sanitize_cursor(editor);
 }
 
 void syntax_editor_update(Syntax_Editor* editor, Input* input)
@@ -901,18 +719,13 @@ void syntax_editor_update(Syntax_Editor* editor, Input* input)
                 }
             }
             else if (msg.key_down && msg.character != -1) {
-                // Check if delimiter
-                bool is_delimiter = false;
-                for (int i = 0; i < editor->delimiter_characters.size; i++) {
-                    if (editor->delimiter_characters[i] == msg.character) {
-                        is_delimiter = true;
-                        break;
-                    }
+                if (string_contains_character(characters_get_non_identifier_non_whitespace(), msg.character)) {
+                    input.type = Input_Command_Type::DELIMITER_LETTER;
+                    input.letter = msg.character;
                 }
-
-                if (!is_delimiter) continue;
-                input.type = Input_Command_Type::DELIMITER_LETTER;
-                input.letter = msg.character;
+                else {
+                    continue;
+                }
             }
             else {
                 continue;
@@ -982,34 +795,19 @@ void syntax_editor_insert_line(Syntax_Editor* editor, int index, int indentation
 {
     Syntax_Line line;
     line.tokens = dynamic_array_create_empty<Syntax_Token>(1);
-    line.format_items = dynamic_array_create_empty<Format_Item>(1);
+    line.text = string_create_empty(1);
     line.indentation_level = indentation_level;
     dynamic_array_insert_ordered(&editor->lines, line, index);
 }
 
-void syntax_editor_add_delimiter_character(Syntax_Editor* editor, char c)
+void operator_mapping_set(Syntax_Editor* editor, Syntax_Operator** op, const char* str, Operator_Type type, bool space_before, bool space_after, int buffer_index)
 {
-    auto& delimiter_characters = editor->delimiter_characters;
-    bool found = false;
-    for (int i = 0; i < delimiter_characters.size; i++) {
-        if (delimiter_characters[i] == c) {
-            found = true;
-            break;
-        }
-    }
-    if (!found) {
-        dynamic_array_push_back(&delimiter_characters, c);
-    }
-}
-
-void operator_mapping_set(Syntax_Editor* editor, Format_Operator op, const char* text, bool is_binop, bool is_unop)
-{
-    assert(editor->operator_mapping.size == (int)Format_Operator::MAX_ENUM_VALUE, "");
-    assert(is_binop || is_unop, "");
-    editor->operator_mapping[(int)op].op = op;
-    editor->operator_mapping[(int)op].string = string_create_static(text);
-    editor->operator_mapping[(int)op].is_binop = is_binop;
-    editor->operator_mapping[(int)op].is_unop = is_unop;
+    assert(buffer_index < editor->operator_buffer.size, "");
+    editor->operator_buffer[buffer_index].string = string_create_static(str);
+    editor->operator_buffer[buffer_index].type = type;
+    editor->operator_buffer[buffer_index].space_after = space_after;
+    editor->operator_buffer[buffer_index].space_before = space_before;
+    *op = &editor->operator_buffer[buffer_index];
 }
 
 Syntax_Editor* syntax_editor_create(Rendering_Core* rendering_core, Text_Renderer* text_renderer, Renderer_2D* renderer_2D)
@@ -1017,10 +815,12 @@ Syntax_Editor* syntax_editor_create(Rendering_Core* rendering_core, Text_Rendere
     Syntax_Editor* result = new Syntax_Editor;
     result->cursor_index = 0;
     result->mode = Editor_Mode::INPUT;
-    result->insert_mode = Insert_Mode::APPEND;
     result->line_index = 0;
     result->lines = dynamic_array_create_empty<Syntax_Line>(1);
     syntax_editor_insert_line(result, 0, 0);
+
+    result->identifier_pool = new Identifier_Pool;
+    *result->identifier_pool = identifier_pool_create();
 
     result->text_renderer = text_renderer;
     result->rendering_core = rendering_core;
@@ -1029,71 +829,65 @@ Syntax_Editor* syntax_editor_create(Rendering_Core* rendering_core, Text_Rendere
     // Add mapping infos
     {
         auto& keyword_table = result->keyword_table;
-        auto& operator_mapping = result->operator_mapping;
-        auto& delimiter_characters = result->delimiter_characters;
+        auto& keyword_mapping = result->keyword_mapping;
 
-        delimiter_characters = dynamic_array_create_empty<char>(32);
-        keyword_table = hashtable_create_empty<String, Format_Keyword>(8, hash_string, string_equals);
-        operator_mapping = array_create_empty<Operator_Mapping>((int)Format_Operator::MAX_ENUM_VALUE);
-        memory_set_bytes(operator_mapping.data, sizeof(Operator_Mapping) * operator_mapping.size, 0);
+        keyword_table = hashtable_create_empty<String, Syntax_Keyword>(8, hash_string, string_equals);
+        keyword_mapping = array_create_empty<String>((int)Syntax_Keyword::MAX_ENUM_VALUE);
 
-        hashtable_insert_element(&keyword_table, string_create_static("break"), Format_Keyword::BREAK);
-        hashtable_insert_element(&keyword_table, string_create_static("case"), Format_Keyword::CASE);
-        hashtable_insert_element(&keyword_table, string_create_static("cast"), Format_Keyword::CAST);
-        hashtable_insert_element(&keyword_table, string_create_static("continue"), Format_Keyword::CONTINUE);
-        hashtable_insert_element(&keyword_table, string_create_static("c_union"), Format_Keyword::C_UNION);
-        hashtable_insert_element(&keyword_table, string_create_static("default"), Format_Keyword::DEFAULT);
-        hashtable_insert_element(&keyword_table, string_create_static("defer"), Format_Keyword::DEFER);
-        hashtable_insert_element(&keyword_table, string_create_static("delete"), Format_Keyword::DELETE_KEYWORD);
-        hashtable_insert_element(&keyword_table, string_create_static("else"), Format_Keyword::ELSE);
-        hashtable_insert_element(&keyword_table, string_create_static("if"), Format_Keyword::IF);
-        hashtable_insert_element(&keyword_table, string_create_static("module"), Format_Keyword::MODULE);
-        hashtable_insert_element(&keyword_table, string_create_static("new"), Format_Keyword::NEW);
-        hashtable_insert_element(&keyword_table, string_create_static("return"), Format_Keyword::RETURN);
-        hashtable_insert_element(&keyword_table, string_create_static("struct"), Format_Keyword::STRUCT);
-        hashtable_insert_element(&keyword_table, string_create_static("switch"), Format_Keyword::SWITCH);
-        hashtable_insert_element(&keyword_table, string_create_static("union"), Format_Keyword::UNION);
-        hashtable_insert_element(&keyword_table, string_create_static("while"), Format_Keyword::WHILE);
+        keyword_mapping[(int)Syntax_Keyword::BREAK] = string_create_static("break");
+        keyword_mapping[(int)Syntax_Keyword::CASE] = string_create_static("case");
+        keyword_mapping[(int)Syntax_Keyword::CAST] = string_create_static("cast");
+        keyword_mapping[(int)Syntax_Keyword::CONTINUE] = string_create_static("continue");
+        keyword_mapping[(int)Syntax_Keyword::C_UNION] = string_create_static("c_union");
+        keyword_mapping[(int)Syntax_Keyword::DEFAULT] = string_create_static("default");
+        keyword_mapping[(int)Syntax_Keyword::DEFER] = string_create_static("defer");
+        keyword_mapping[(int)Syntax_Keyword::DELETE_KEYWORD] = string_create_static("delete");
+        keyword_mapping[(int)Syntax_Keyword::ELSE] = string_create_static("else");
+        keyword_mapping[(int)Syntax_Keyword::IF] = string_create_static("if");
+        keyword_mapping[(int)Syntax_Keyword::MODULE] = string_create_static("module");
+        keyword_mapping[(int)Syntax_Keyword::NEW] = string_create_static("new");
+        keyword_mapping[(int)Syntax_Keyword::ENUM] = string_create_static("enum");
+        keyword_mapping[(int)Syntax_Keyword::RETURN] = string_create_static("return");
+        keyword_mapping[(int)Syntax_Keyword::STRUCT] = string_create_static("struct");
+        keyword_mapping[(int)Syntax_Keyword::SWITCH] = string_create_static("switch");
+        keyword_mapping[(int)Syntax_Keyword::UNION] = string_create_static("union");
+        keyword_mapping[(int)Syntax_Keyword::WHILE] = string_create_static("while");
 
-        operator_mapping_set(result, Format_Operator::ADDITION, "+", true, false);
-        operator_mapping_set(result, Format_Operator::SUBTRACTION, "-", true, true);
-        operator_mapping_set(result, Format_Operator::DIVISON, "/", true, false);
-        operator_mapping_set(result, Format_Operator::MULTIPLY, "*", true, true);
-        operator_mapping_set(result, Format_Operator::MODULO, "%", true, false);
-        operator_mapping_set(result, Format_Operator::COMMA, ",", true, false);
-        operator_mapping_set(result, Format_Operator::DOT, ".", true, false);
-        operator_mapping_set(result, Format_Operator::TILDE, "~", true, false);
-        operator_mapping_set(result, Format_Operator::COLON, ":", true, false);
-        operator_mapping_set(result, Format_Operator::ASSIGN, "=", true, false);
-        operator_mapping_set(result, Format_Operator::NOT, "!", true, true);
-        operator_mapping_set(result, Format_Operator::AMPERSAND, "&", false, true);
-        operator_mapping_set(result, Format_Operator::LESS_THAN, "<", true, false);
-        operator_mapping_set(result, Format_Operator::GREATER_THAN, ">", true, false);
-        operator_mapping_set(result, Format_Operator::LESS_EQUAL, "<=", true, false);
-        operator_mapping_set(result, Format_Operator::GREATER_EQUAL, ">=", true, false);
-        operator_mapping_set(result, Format_Operator::EQUALS, "==", true, false);
-        operator_mapping_set(result, Format_Operator::NOT_EQUALS, "!=", true, false);
-        operator_mapping_set(result, Format_Operator::POINTER_EQUALS, "*==", true, false);
-        operator_mapping_set(result, Format_Operator::POINTER_NOT_EQUALS, "*!=", true, false);
-        operator_mapping_set(result, Format_Operator::DEFINE_COMPTIME, "::", true, false);
-        operator_mapping_set(result, Format_Operator::DEFINE_INFER, ":=", true, false);
-        operator_mapping_set(result, Format_Operator::AND, "&&", true, false);
-        operator_mapping_set(result, Format_Operator::OR, "||", true, false);
-        operator_mapping_set(result, Format_Operator::ARROW, "->", true, false);
-
-        syntax_editor_add_delimiter_character(result, '(');
-        syntax_editor_add_delimiter_character(result, ')');
-        syntax_editor_add_delimiter_character(result, '{');
-        syntax_editor_add_delimiter_character(result, '}');
-        syntax_editor_add_delimiter_character(result, '[');
-        syntax_editor_add_delimiter_character(result, ']');
-        syntax_editor_add_delimiter_character(result, '|');
-        for (int i = 0; i < operator_mapping.size; i++) {
-            auto& str = operator_mapping[i].string;
-            for (int j = 0; j < str.size; j++) {
-                syntax_editor_add_delimiter_character(result, str[j]);
-            }
+        for (int i = 0; i < keyword_mapping.size; i++) {
+            hashtable_insert_element(&keyword_table, keyword_mapping[i], (Syntax_Keyword)i);
         }
+
+        auto& op_map = result->operator_mapping;
+        int operator_count = sizeof(Operator_Mapping) / sizeof(Syntax_Operator*);
+        result->operator_buffer = array_create_empty<Syntax_Operator>(operator_count);
+
+        int buffer_index = 0;
+        operator_mapping_set(result, &op_map.addition, "+", Operator_Type::BINOP, true, true, buffer_index++);
+        operator_mapping_set(result, &op_map.subtraction, "-", Operator_Type::BOTH, true, true, buffer_index++);
+        operator_mapping_set(result, &op_map.divison, "/", Operator_Type::BINOP, true, true, buffer_index++);
+        operator_mapping_set(result, &op_map.multiply, "*", Operator_Type::BOTH, true, true, buffer_index++);
+        operator_mapping_set(result, &op_map.modulo, "%", Operator_Type::BINOP, true, true, buffer_index++);
+        operator_mapping_set(result, &op_map.comma, ",", Operator_Type::BINOP, false, true, buffer_index++);
+        operator_mapping_set(result, &op_map.dot, ".", Operator_Type::BINOP, false, false, buffer_index++);
+        operator_mapping_set(result, &op_map.tilde, "~", Operator_Type::BINOP, false, false, buffer_index++);
+        operator_mapping_set(result, &op_map.colon, ":", Operator_Type::BINOP, false, true, buffer_index++);
+        operator_mapping_set(result, &op_map.assign, "=", Operator_Type::BINOP, true, true, buffer_index++);
+        operator_mapping_set(result, &op_map.not, "!", Operator_Type::UNOP, true, true, buffer_index++);
+        operator_mapping_set(result, &op_map.ampersand, "&", Operator_Type::UNOP, true, true, buffer_index++);
+        operator_mapping_set(result, &op_map.less_than, "<", Operator_Type::BINOP, true, true, buffer_index++);
+        operator_mapping_set(result, &op_map.greater_than, ">", Operator_Type::BINOP, true, true, buffer_index++);
+        operator_mapping_set(result, &op_map.less_equal, "<=", Operator_Type::BINOP, true, true, buffer_index++);
+        operator_mapping_set(result, &op_map.greater_equal, ">=", Operator_Type::BINOP, true, true, buffer_index++);
+        operator_mapping_set(result, &op_map.equals, "==", Operator_Type::BINOP, true, true, buffer_index++);
+        operator_mapping_set(result, &op_map.not_equals, "!=", Operator_Type::BINOP, true, true, buffer_index++);
+        operator_mapping_set(result, &op_map.pointer_equals, "*==", Operator_Type::BINOP, true, true, buffer_index++);
+        operator_mapping_set(result, &op_map.pointer_not_equals, "*!=", Operator_Type::BINOP, true, true, buffer_index++);
+        operator_mapping_set(result, &op_map.define_comptime, "::", Operator_Type::BINOP, true, true, buffer_index++);
+        operator_mapping_set(result, &op_map.define_infer, ":=", Operator_Type::BINOP, true, true, buffer_index++);
+        operator_mapping_set(result, &op_map.and, "&&", Operator_Type::BINOP, true, true, buffer_index++);
+        operator_mapping_set(result, &op_map. or , "||", Operator_Type::BINOP, true, true, buffer_index++);
+        operator_mapping_set(result, &op_map.arrow, "->", Operator_Type::BINOP, true, true, buffer_index++);
+        assert(operator_count == buffer_index, "");
     }
 
     return result;
@@ -1104,11 +898,14 @@ void syntax_editor_destroy(Syntax_Editor* editor)
     for (int i = 0; i < editor->lines.size; i++)
     {
         auto& line = editor->lines[i];
+        string_destroy(&line.text);
         dynamic_array_destroy(&line.tokens);
-        dynamic_array_destroy(&line.format_items);
     }
+    identifier_pool_destroy(editor->identifier_pool);
+    delete editor->identifier_pool;
     dynamic_array_destroy(&editor->lines);
-    array_destroy(&editor->operator_mapping);
+    array_destroy(&editor->operator_buffer);
+    array_destroy(&editor->keyword_mapping);
     hashtable_destroy(&editor->keyword_table);
     delete editor;
 }
@@ -1179,76 +976,14 @@ void syntax_editor_draw_string(Syntax_Editor* editor, String string, vec3 color,
     text_renderer_add_text(editor->text_renderer, &string, pos, editor->character_size.y, 1.0f);
 }
 
-int syntax_editor_find_visual_cursor_pos(Syntax_Editor* editor, int line_pos, int line_index, Editor_Mode mode)
-{
-    auto& line = editor->lines[line_index];
-    auto& cursor = line_pos;
-    auto& tokens = line.tokens;
-
-    /*
-    if (tokens.size == 0) return line.indentation_level * 4;
-    if (cursor == tokens.size) {
-        auto& last = render_items[render_items.size - 1];
-        return last.pos + last.size + 1;
-    }
-
-    Render_Item* item = token_index_to_render_item(&line, cursor);
-    if (mode == Editor_Mode::NORMAL) {
-        return item->pos;
-    }
-    if (editor->insert_mode == Insert_Mode::BEFORE) {
-        return item->pos - 1;
-    }
-    else {
-        return item->pos + item->size;
-    }
-    panic("hey");
-    */
-    return 0;
-}
-
 void syntax_editor_render_line(Syntax_Editor* editor, int line_index)
 {
     auto& line = editor->lines[line_index];
-    auto& tokens = line.tokens;
-
-    //auto& render_items = line.render_items;
-    int pos = 0;
-    for (int i = 0; i < tokens.size; i++)
-    {
-        auto& token = tokens[i];
-        switch (token.type)
-        {
-        case Syntax_Token_Type::DELIMITER: {
-            char str[2] = { token.options.delimiter, '\0' };
-            syntax_editor_draw_string(editor, string_create_static(str), Syntax_Color::TEXT, line_index, pos);
-            pos += 2;
-            break;
-        }
-        case Syntax_Token_Type::IDENTIFIER:
-            syntax_editor_draw_string(editor, token.options.identifier, Syntax_Color::IDENTIFIER_FALLBACK, line_index, pos);
-            pos += token.options.identifier.size + 1;
-            break;
-        case Syntax_Token_Type::NUMBER:
-            syntax_editor_draw_string(editor, token.options.number, Syntax_Color::LITERAL, line_index, pos);
-            pos += token.options.number.size + 1;
-            break;
-        default: panic("");
-        }
-    }
-
-    // Render Error messages
-    /*
-    for (int i = 0; i < line.error_messages.size; i++) {
-        auto& msg = line.error_messages[i];
-        Render_Item* item = token_index_to_render_item(&line, msg.token_index);
-        syntax_editor_draw_underline(editor, line_index, item->pos, item->size, vec3(0.8f, 0.0f, 0.0f));
-    }
-    */
+    syntax_editor_draw_string(editor, line.text, Syntax_Color::TEXT, line_index, 0);
 
     // Render Cursor
     if (line_index == editor->line_index) {
-        int cursor_pos = syntax_editor_find_visual_cursor_pos(editor, editor->cursor_index, editor->line_index, editor->mode);
+        int cursor_pos = editor->cursor_index;
         if (editor->mode == Editor_Mode::NORMAL) {
             syntax_editor_draw_character_box(editor, Syntax_Color::COMMENT, line_index, cursor_pos);
         }
@@ -1268,7 +1003,8 @@ void syntax_editor_render(Syntax_Editor* editor)
 
     // Render lines
     for (int i = 0; i < editor->lines.size; i++) {
-        format_parser_parse_line(&editor->lines[i], editor);
+        syntax_lexer_parse_line(&editor->lines[i], editor);
+        //line_print_tokens(&editor->lines[i], editor);
         syntax_editor_render_line(editor, i);
     }
 

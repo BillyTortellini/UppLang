@@ -13,40 +13,109 @@ struct Renderer_2D;
 struct AST_Item;
 struct Syntax_Editor;
 struct Syntax_Line;
+struct Identifier_Pool;
 
 /*
-Each line is an Array of Tokens
-Tokens can only be edited at the end (Removing characters/adding characters)
-    - This is done because one needs to be able to input tokens during normal editing
-    - Later I want to add an extra GUI to do internal editing (Of strings, comments, identifiers, numbers with different bases, etc.)
-Space only works on Identifier/Keyword Tokens to seperate them from other Keywords/Tokens
-The last index of a line is not a valid cursor position, only if the line is empty
-Gaps should be navigatable, and insert/after does the same thing
-Gaps are determined by the Formating Syntax
+Lessons Learned:
 
-What about multi-delimiter Operators?
-I think I can handle those by adding them to the Format-Tree Parser
+What I am currently actually doing is creating a Code-Formater that does
+Formating all the time, even during editing. If you would just run a normal formater after
+every edit, you would run into the same problems I am facing now, some examples:
 
-So the process is the following:
-    Array of Tokens for each line
-    Formating Parser produces Format_Tokens for each line (Not a tree, since a tree is only usefull if the Order means something)
-    Format_Tree traversal creates Display_Tokens?
-    In insert mode, we don't care about the format tree and navigate on tokens
-    In edit mode, we use the display tokens + Boolean Flags(Space pressed/On_Gap...) to navigate
-    The Format tree is used by the Syntax Parser to produce a Syntax_Tree (Which may not include all format_tree items)
-    The Syntax Tree is further used for Analysis/Code-Generation
-    To display Analysis Information (Symbol Resolution, Type_Info, Erro_Messages), we need to remember the mappings from syntax to format tree 
-        and when we generate the display tokens we then can use the information of the format tree
+Problem 1:
+    a + |b
+    After deleting one the space before b, the formater would immediately add the space again after it, leading to either
+    a + |b  (Delete operation did nothing)
+    a +| b  (The cursor has moved)
 
-Cursor Problems:
-    In Normal-Mode the cursor can only be at the start of a token (Or on Gaps/Empty Line)
-    In Insert-Mode it is more complicated, since we can Insert between Tokens or append to a token
-    A cursor can be before or after a token
-    Space is used to separate Identifiers, Keywords and Numbers (Cursor is visually displaced)
-    .(
-    ||
-    Token1 Token2
-    |    | |    |
+Problem 2:
+    If you do live formating then you have to question which Cursor placements are valid, and which aren't
+    a + b
+    Is the Position after + exactly the same as the position before b?
+
+
+
+The general problems I am dealing with revolve around Space-Insertion and Space-Deletion in cases
+where we don't want these things to happen. This auto Insertion/Deletion is problematic because
+there is a difference between 
+    Essential Spaces  ... Determine the Semantics/Tokenization of the Program
+    Formatting Spaces ... Just there for visual clarity and readability
+This problem could be solved by _not_ saving 'formating' spaces in the underlying text representation
+
+Also the underlying text determines the possible Cursor-Positions
+
+Then we also have some cases where we want double-spaces, so that we can insert between space-critical tokens
+    if x
+    if y x
+
+And currently I am also unaware of how to implement gaps properly, since they should also have a cursor position
+But maybe that cursor position may not be reachable in Insert mode
+
+Gaps can possibly be inserted everywhere (Between Tokens), right?
+    _ := 15
+    _ := _ 
+    x.
+
+Scenarios:
+    "+"        ->   _ + _
+    "++"       ->   _ + _ + _
+    "+-"       ->   _ + -_
+    "x.5"      ->   x._ _ 5 
+    "x..5"     ->   x._._ 5
+    "a b"      ->   a _ b
+    "else x"   ->   else _ x
+    "15a.5"    ->   15 a.5
+    "x +b"     ->   x  + b
+
+Formatter
+Input:  Text, Syntax-Tokens, Cursor Position
+Output:
+    - Display-Spacing between tokens
+    - Trimmed Text
+    - New cursor position
+
+So we have 2 basic classes of tokens, which are:
+    Space-Critical          (Identifier, Keyword, Number-Literal) 
+        - Spaces between Space critical tokens must be preserve
+        - Spaces after a space critical token must be preserved (If the cursor is on it)
+        - 2-Spaces must be preserved between Space critical tokens (If the cursor is in between)
+    Non-Space Critical      (Operator, Parenthesis, Unexpected Char, Gap)
+        - Depending on the context, these operators have different display spaces
+            Both sides: "x+y"     ->  x + y
+            No side:    "!-15"    ->  !-15
+            Right side:  "x,y,z"  ->  x, y, z 
+
+
+
+
+   
+Another possibility is to make the editing be dependent on the token you are on (Previous solution)
+but this also implies that text editing and Token-Editing need completely different logic, which seems annoying
+
+
+
+
+
+*/
+
+/*
+Going back to Text-Representation: Why?
+---------------------------------------
+The problem with tokens is that they are a direct result of the underlying text, and when changing that text
+changes in e.g. the middle of a token, this could cause the token-structure to change drastically
+This could be resolved by a purely token based approach (E.g. -> and - > are two different things),
+but I think this doesn't have a lot of benefits and only restricts editing-possibilities
+    E.g. cannot combine two strings/numbers, cannot divide operators...
+        what 54 -> what54
+        x := 5  -> x: int = 5
+With token based editing, I think you would need own UI to edit things like Comments and strings
+
+So my current approach is to have an underlying text representation, which 
+gets tokenized and parsed, and after that the text is formated automatically,
+wheras rendering can still be done on the tokens to allow displaying additional information (Like Gaps, variable names, Context-Info), which
+don't influence the editing process. 
+
+And I think in normal mode I want token-based navigation, with another mode that reverts back to text (Inserting inside := operator)
 */
 
 /*
@@ -84,9 +153,9 @@ Multi-Sign Operators? (::, ->)
      - Code-Completion
      - Better Parser Errors (Display missing Gaps, possible continuations)
      - Level-Of-Detail (Folding)
-     - Indentation-Based Navigation
+     - Indentation-Based Navigation (+ other Code-Based navigations)
      - Code-Views (Dion-Slices, only display/edit a Slice of Code, e.g. only 1 Module)
-     - Better Rendering (Smooth-Scrolling, Cursor-Movement Traces, Good Selection)
+     - Better Rendering (Smooth-Scrolling, Cursor-Movement Traces, Good Selection, Animated Editing)
      - Less input (Less Keystrokes for Space, Semicolon, {})
      - Transformative Copy-Paste (Requires Selection of valid source code)
      - Single Project-Files
@@ -128,83 +197,54 @@ Multi-Sign Operators? (::, ->)
 
 */
 
-// Lexer
-enum class Syntax_Token_Type
+enum class Operator_Type
 {
-    IDENTIFIER,
-    DELIMITER,
-    NUMBER,
+    BINOP,
+    UNOP,
+    BOTH,
 };
 
-struct Syntax_Token
+struct Syntax_Operator
 {
-    Syntax_Token_Type type;
-    union
-    {
-        String identifier;
-        char delimiter;
-        String number;
-    } options;
-};
-
-
-
-// Format-Tree
-/*
-x := List~create(15)
-what is this    -> Binop List with missing binops
-
-Pre-Operators:
-    [] - ! & * 
-Operators:
-    Literals, ()
-Post-Operators:
-    [] .member () ~member
-*/
-
-enum class Format_Operator
-{
-    ADDITION,           // +
-    SUBTRACTION,        // -
-    DIVISON,            // /
-    MULTIPLY,           // *
-    MODULO,             // %
-    COMMA,              // ,
-    DOT,                // .
-    TILDE,              // ~
-    COLON,              // :
-    ASSIGN,             // =
-    NOT,                // !
-    AMPERSAND,          // &
-    LESS_THAN,          // <
-    GREATER_THAN,       // >
-
-    LESS_EQUAL,         // <=
-    GREATER_EQUAL,      // >=
-    EQUALS,             // ==
-    NOT_EQUALS,         // !=
-    POINTER_EQUALS,     // *==
-    POINTER_NOT_EQUALS, // *!=
-
-    DEFINE_COMPTIME,    // ::
-    DEFINE_INFER,       // :=
-
-    AND,                // &&
-    OR,                 // ||
-    ARROW,              // ->
-
-    MAX_ENUM_VALUE
+    String string;
+    Operator_Type type;
+    bool space_before;
+    bool space_after;
 };
 
 struct Operator_Mapping
 {
-    Format_Operator op;
-    String string;
-    bool is_binop;
-    bool is_unop;
+    Syntax_Operator* addition;
+    Syntax_Operator* subtraction;
+    Syntax_Operator* divison;
+    Syntax_Operator* multiply;
+    Syntax_Operator* modulo;
+    Syntax_Operator* comma;
+    Syntax_Operator* dot;
+    Syntax_Operator* tilde;
+    Syntax_Operator* colon;
+    Syntax_Operator* assign;
+    Syntax_Operator* not;
+    Syntax_Operator* ampersand;
+    Syntax_Operator* less_than;
+    Syntax_Operator* greater_than;
+
+    Syntax_Operator* less_equal;
+    Syntax_Operator* greater_equal;
+    Syntax_Operator* equals;
+    Syntax_Operator* not_equals;
+    Syntax_Operator* pointer_equals;
+    Syntax_Operator* pointer_not_equals;
+
+    Syntax_Operator* define_comptime;
+    Syntax_Operator* define_infer;
+
+    Syntax_Operator* and;
+    Syntax_Operator* or;
+    Syntax_Operator* arrow;
 };
 
-enum class Format_Keyword
+enum class Syntax_Keyword
 {
     RETURN,
     BREAK,
@@ -224,56 +264,64 @@ enum class Format_Keyword
     DELETE_KEYWORD,
     DEFER,
     CAST,
+
+    MAX_ENUM_VALUE,
 };
 
-enum class Format_Item_Type
-{
-    OPERATOR,
-    IDENTIFIER,
-    KEYWORD,
-    LITERAL,
-    PARENTHESIS,
-    ERROR_ITEM, // | or something unexpected like a non-closing parenthesis
-    GAP,
-};
-
-enum class Format_Parenthesis_Type
+enum class Parenthesis_Type
 {
     PARENTHESIS, 
     BRACKETS,   // []
     BRACES,     // {} 
 };
 
-struct Format_Parenthesis
+struct Parenthesis
 {
-    Format_Parenthesis_Type type;
+    Parenthesis_Type type;
     bool is_open;
 };
 
-struct Format_Item
+struct Token_Info
 {
-    Format_Item_Type type;
-    int token_start_index;
-    int token_length;
+    // Character information
+    int char_start;
+    int char_length;
+    int display_length; // Multi-Char Operators with spaces between can have a different lengths, e.g. "+ =" -> +=
+
+    // Formating Information
+    bool space_critical;
+    bool format_space_before;
+    bool format_space_after;
+};
+
+enum class Syntax_Token_Type
+{
+    IDENTIFIER,
+    KEYWORD,
+    LITERAL,
+    OPERATOR,
+    PARENTHESIS,
+    UNEXPECTED_CHAR, // Unexpected Character, like | or ; \...
+    GAP,
+};
+
+struct Syntax_Token
+{
+    Syntax_Token_Type type;
+    Token_Info info;
     union {
-        Format_Operator op;
-        Format_Keyword keyword;
+        Syntax_Operator* op;
+        String* identifier;
+        String* literal_string;
+        Syntax_Keyword keyword;
+        char unexpected;
         struct {
-            Format_Parenthesis type;
+            Parenthesis type;
             bool matching_exists;
             int matching_index;
         } parenthesis;
     } options;
 };
-
-struct Format_Parser
-{
-    Syntax_Editor* editor;
-    Syntax_Line* line;
-    int index;
-    int max_parse_index;
-};
-
 
 // EDITOR
 enum class Editor_Mode
@@ -282,16 +330,10 @@ enum class Editor_Mode
     INPUT,
 };
 
-enum class Insert_Mode
-{
-    APPEND, // Appends inputs to current token
-    BEFORE,  // New token is added after current one
-};
-
 struct Syntax_Line
 {
+    String text;
     Dynamic_Array<Syntax_Token> tokens;
-    Dynamic_Array<Format_Item> format_items;
     int indentation_level;
 };
 
@@ -299,14 +341,15 @@ struct Syntax_Editor
 {
     // Editing
     Editor_Mode mode;
-    Insert_Mode insert_mode;
     Dynamic_Array<Syntax_Line> lines;
-    int cursor_index; // In range [0, tokens.size)
+    int cursor_index; // Dependent on Editor_Mode
     int line_index;
 
-    Hashtable<String, Format_Keyword> keyword_table;
-    Array<Operator_Mapping> operator_mapping;
-    Dynamic_Array<char> delimiter_characters;
+    Hashtable<String, Syntax_Keyword> keyword_table;
+    Array<String> keyword_mapping;
+    Operator_Mapping operator_mapping;
+    Array<Syntax_Operator> operator_buffer;
+    Identifier_Pool* identifier_pool;
 
     // Rendering
     Rendering_Core* rendering_core;

@@ -81,3 +81,10 @@ void memory_copy(void* destination, void* source, u64 size);
 void memory_set_bytes(void* destination, u64 size, byte value);
 bool memory_is_readable(void* destination, u64 read_size);
 bool memory_compare(void* memory_a, void* memory_b, u64 compare_size);
+
+template<typename T>
+void memory_zero(T* ptr) {
+    memory_set_bytes(ptr, sizeof(T), 0);
+}
+
+

@@ -531,7 +531,8 @@ String* identifier_pool_add(Identifier_Pool* pool, String identifier)
     }
     else {
         String* copy = new String;
-        *copy = string_create(identifier.characters);
+        *copy = string_create_empty(identifier.size);
+        string_append_string(copy, &identifier);
         hashtable_insert_element(&pool->identifier_lookup_table, *copy, copy);
         return copy;
     }
