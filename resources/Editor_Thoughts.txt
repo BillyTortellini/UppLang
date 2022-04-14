@@ -1,15 +1,119 @@
-NEW IDEA:
-Editor based on Tokens, and a parser that stores which parts need to be reparsed.
-Does this mean the parser needs to run after every insertion?
+Specification: Live-Formater
+----------------------------
+Problems: 
+1. Cursor-Placement (Insert Mode vs Normal Mode)
+2. Numbers and Identifiers mixed                                 FIXED
+3. Something weird with space at the end picking the wrong token FIXED
+4. Keyword Space is a problem                                    FIXED
 
-Line -> List of Tokens
 
-main :: ()
+TODO:
+ * Normal Mode token movement + Better cursor
+ * Multi Lines + Indentation
+ * Simple Commands (Delete, Start of line, end of line ...)
+ * More Token-Types (String)
 
-if if x < 15
-   | Error invalid keyword
 
-main :: () -> int
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Current formating approach:
+    - Data-Representation is String
+    - Editing is done on String
+    - After Editing the Lexer _always_ trims String into a correct, Tokenized-Format
+    - Rendering is done on Tokens, not on Text (For formating, displaying additional infos, etc.)
+    - Each line can be independently tokenized
+
+
+
+
+
+
+Other Approaches:
+    * Data-Representation is Tokens
+        Restricted Editing (Start/End of Tokens, Token seperation, ...)
+        Cannot use normal Text-Editor Logic
+    * Data-Representation is Tree
+        Restricted Editing
+        Only valid Syntax allowed
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Editor Formal Specification:
+----------------------------
+Automated Formating
+Display of Missing Gaps
+Smart wrapping of long lines
+
+
+
+
+
+Elements of Text in a Programming-Language:
+    * Identifiers (Connections between pieces)
+    * Operators, single and multi-character
+    * Parenthesis
+    * Keywords
+    * Spaces
+    * Newlines
+    
+
+
+
+
+
+
+
 
 
 

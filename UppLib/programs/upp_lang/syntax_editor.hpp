@@ -1,19 +1,39 @@
 #pragma once
 
-#include "../../datastructures/string.hpp"
-#include "../../datastructures/dynamic_array.hpp"
-#include "../../datastructures/hashtable.hpp"
-#include "../../math/vectors.hpp"
-
-// Prototypes
-struct Text_Renderer;
 struct Rendering_Core;
 struct Input;
 struct Renderer_2D;
-struct AST_Item;
-struct Syntax_Editor;
-struct Syntax_Line;
-struct Identifier_Pool;
+struct Text_Renderer;
+
+void syntax_editor_create(Rendering_Core* rendering_core, Text_Renderer* text_renderer, Renderer_2D* renderer_2D, Input* input);
+void syntax_editor_destroy();
+void syntax_editor_update();
+void syntax_editor_render();
+
+/*
+Problems with current parser:
+    Cursor Rendering with Non-Essential spaces
+    Essential spaces before operators not working, e.g. "a |+" -> "a|+" because of the cursor index
+    Essential spaces before an operator?
+        "+| a" -> "+|a" -> '+ |a'
+    2 Spaces doesn't work
+    3 Spaces doesn't work
+        "a  | b" -> "a |b"
+    Space at start doesn't work
+        "| b" -> "|b"
+
+    if 
+
+    So for rendering I need: 
+        - Tokens (Text, color) 
+        - Space before/Space after
+        - Cursor Token + Cursor offset from token
+
+    Essential Spaces:
+        Determination of 
+
+
+*/
 
 /*
 Lessons Learned:
@@ -102,11 +122,6 @@ think I need a function from char-pos to token index + offset
    
 Another possibility is to make the editing be dependent on the token you are on (Previous solution)
 but this also implies that text editing and Token-Editing need completely different logic, which seems annoying
-
-
-
-
-
 */
 
 /*
@@ -207,173 +222,6 @@ Multi-Sign Operators? (::, ->)
         
 
 */
-
-enum class Operator_Type
-{
-    BINOP,
-    UNOP,
-    BOTH,
-};
-
-struct Syntax_Operator
-{
-    String string;
-    Operator_Type type;
-    bool space_before;
-    bool space_after;
-};
-
-struct Operator_Mapping
-{
-    Syntax_Operator* addition;
-    Syntax_Operator* subtraction;
-    Syntax_Operator* divison;
-    Syntax_Operator* multiply;
-    Syntax_Operator* modulo;
-    Syntax_Operator* comma;
-    Syntax_Operator* dot;
-    Syntax_Operator* tilde;
-    Syntax_Operator* colon;
-    Syntax_Operator* assign;
-    Syntax_Operator* not;
-    Syntax_Operator* ampersand;
-    Syntax_Operator* less_than;
-    Syntax_Operator* greater_than;
-
-    Syntax_Operator* less_equal;
-    Syntax_Operator* greater_equal;
-    Syntax_Operator* equals;
-    Syntax_Operator* not_equals;
-    Syntax_Operator* pointer_equals;
-    Syntax_Operator* pointer_not_equals;
-
-    Syntax_Operator* define_comptime;
-    Syntax_Operator* define_infer;
-
-    Syntax_Operator* and;
-    Syntax_Operator* or;
-    Syntax_Operator* arrow;
-};
-
-enum class Syntax_Keyword
-{
-    RETURN,
-    BREAK,
-    CONTINUE,
-    IF,
-    ELSE,
-    WHILE,
-    SWITCH,
-    CASE,
-    DEFAULT,
-    MODULE,
-    NEW,
-    STRUCT,
-    UNION,
-    C_UNION,
-    ENUM,
-    DELETE_KEYWORD,
-    DEFER,
-    CAST,
-
-    MAX_ENUM_VALUE,
-};
-
-enum class Parenthesis_Type
-{
-    PARENTHESIS, 
-    BRACKETS,   // []
-    BRACES,     // {} 
-};
-
-struct Parenthesis
-{
-    Parenthesis_Type type;
-    bool is_open;
-};
-
-struct Token_Info
-{
-    // Character information
-    int char_start;
-    int char_length;
-
-    // Formating Information (Both for rendering + trimming)
-    int critical_space_count; // Count of critical spaces after the token
-    
-    // Only valid for Critical_Sapce_Count = 0
-    bool format_space_before;
-    bool format_space_after;
-};
-
-enum class Syntax_Token_Type
-{
-    IDENTIFIER,
-    KEYWORD,
-    LITERAL,
-    OPERATOR,
-    PARENTHESIS,
-    UNEXPECTED_CHAR, // Unexpected Character, like | or ; \...
-    GAP,
-};
-
-struct Syntax_Token
-{
-    Syntax_Token_Type type;
-    Token_Info info;
-    union {
-        Syntax_Operator* op;
-        String* identifier;
-        String* literal_string;
-        Syntax_Keyword keyword;
-        char unexpected;
-        struct {
-            Parenthesis type;
-            bool matching_exists;
-            int matching_index;
-        } parenthesis;
-    } options;
-};
-
-// EDITOR
-enum class Editor_Mode
-{
-    NORMAL,
-    INPUT,
-};
-
-struct Syntax_Line
-{
-    String text;
-    Dynamic_Array<Syntax_Token> tokens;
-    int indentation_level;
-};
-
-struct Syntax_Editor
-{
-    // Editing
-    Editor_Mode mode;
-    Dynamic_Array<Syntax_Line> lines;
-    int cursor_index; // Dependent on Editor_Mode
-    int line_index;
-
-    Hashtable<String, Syntax_Keyword> keyword_table;
-    Array<String> keyword_mapping;
-    Operator_Mapping operator_mapping;
-    Array<Syntax_Operator> operator_buffer;
-    Identifier_Pool* identifier_pool;
-
-    // Rendering
-    Rendering_Core* rendering_core;
-    Renderer_2D* renderer_2D;
-    Text_Renderer* text_renderer;
-    vec2 character_size;
-};
-
-Syntax_Editor* syntax_editor_create(Rendering_Core* rendering_core, Text_Renderer* text_renderer, Renderer_2D* renderer_2D);
-void syntax_editor_destroy(Syntax_Editor* editor);
-void syntax_editor_update(Syntax_Editor* editor, Input* input);
-void syntax_editor_render(Syntax_Editor* editor);
 
 
 

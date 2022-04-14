@@ -227,8 +227,8 @@ void upp_lang_main()
     Code_Editor code_editor = code_editor_create(text_renderer, &core, &timer);
     SCOPE_EXIT(code_editor_destroy(&code_editor));
 
-    Syntax_Editor* syntax_editor = syntax_editor_create(&core, text_renderer, renderer_2D);
-    SCOPE_EXIT(syntax_editor_destroy(syntax_editor));
+    syntax_editor_create(&core, text_renderer, renderer_2D, window_get_input(window));
+    SCOPE_EXIT(syntax_editor_destroy());
 
     // Background
     Mesh_GPU_Buffer mesh_quad = mesh_utils_create_quad_2D(&core);
@@ -291,7 +291,7 @@ void upp_lang_main()
 
             camera_controller_arcball_update(&camera_controller_arcball, camera, input, window_state->width, window_state->height);
             //gui_update(&gui, input, window_state->width, window_state->height);
-            syntax_editor_update(syntax_editor, input);
+            syntax_editor_update();
             //code_editor_update(&code_editor, input, timer_current_time_in_seconds(&timer));
             input_reset(input); // Clear input for next frame
         }
@@ -312,7 +312,7 @@ void upp_lang_main()
             //code_editor_render(&code_editor, &core, region);
 
             // Syntax editor
-            syntax_editor_render(syntax_editor);
+            syntax_editor_render();
 
             /*
             primitive_renderer_2D_add_rectangle(primitive_renderer_2D, vec2(600, 300), vec2(50, 200), 0.0f, Anchor_2D::CENTER_CENTER, vec3(1.0f, 0.2f, 0.7f));

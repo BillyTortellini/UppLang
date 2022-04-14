@@ -135,7 +135,10 @@ void string_reserve(String* string, int new_capacity) {
         new_capacity = cap;
     }
     char* resized_buffer = new char[new_capacity];
-    strcpy_s(resized_buffer, new_capacity, string->characters);
+    memory_copy(resized_buffer, string->characters, string->size);
+    if (string->size < string->capacity && string->characters[string->size] == 0) {
+        resized_buffer[string->size] = 0;
+    }
     delete[] string->characters;
     string->characters = resized_buffer;
     string->capacity = new_capacity;
