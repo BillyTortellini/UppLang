@@ -65,6 +65,11 @@ enum class Key_Code
     F11 = 68,
     F12 = 69,
 
+    ARROW_LEFT = 80,
+    ARROW_RIGHT = 81,
+    ARROW_UP = 82,
+    ARROW_DOWN = 83,
+
     LCTRL = 224,
     LSHIFT = 225,
     LALT = 226, /**< alt, option */

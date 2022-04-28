@@ -105,6 +105,7 @@ void dynamic_array_insert_ordered(Dynamic_Array<T>* a, T item, int index)
         dynamic_array_push_back(a, item);
         return;
     }
+    if (index < 0) index = 0;
     if (a->size + 1 > a->capacity) {
         dynamic_array_reserve(a, a->capacity*2);
     }

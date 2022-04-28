@@ -11,7 +11,15 @@ void syntax_editor_update();
 void syntax_editor_render();
 
 /*
-Problems with current parser:
+    Parsing TODO:
+     * Add helper for parsing Syntax-Blocks
+     * Add helper for parsing Parenthesis with commas and items
+     * Finish expressions
+     * Add Statements
+*/
+
+/*
+Problems with current lexer:
     Cursor Rendering with Non-Essential spaces
     Essential spaces before operators not working, e.g. "a |+" -> "a|+" because of the cursor index
     Essential spaces before an operator?

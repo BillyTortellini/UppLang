@@ -16,7 +16,7 @@ namespace Syntax_Color
     extern vec3 TYPE;
     extern vec3 PRIMITIVE;
     extern vec3 STRING;
-    extern vec3 LITERAL;
+    extern vec3 LITERAL_NUMBER;
 
     extern vec4 BG_NORMAL;
     extern vec4 BG_ERROR;

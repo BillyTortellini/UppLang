@@ -115,6 +115,11 @@ void keyboard_initialize_translation_table()
     key_translation_table[VK_MENU] = (byte)Key_Code::ALT;
     key_translation_table[VK_RCONTROL] = (byte)Key_Code::RCTRL;
     key_translation_table[VK_RSHIFT] = (byte)Key_Code::RSHIFT;
+
+    key_translation_table[VK_LEFT] = (byte)Key_Code::ARROW_LEFT;
+    key_translation_table[VK_UP] = (byte)Key_Code::ARROW_UP;
+    key_translation_table[VK_RIGHT] = (byte)Key_Code::ARROW_RIGHT;
+    key_translation_table[VK_DOWN] = (byte)Key_Code::ARROW_DOWN;
     //keyTranslationTable[] = KEY_RALT; 
 }
 

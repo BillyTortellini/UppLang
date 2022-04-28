@@ -98,7 +98,7 @@ enum class RC_Expression_Type
     CAST,
     TYPE_INFO,
     TYPE_OF,
-    DEREFERENCE,
+    ADDRESS_OF,
     POINTER,
 };
 

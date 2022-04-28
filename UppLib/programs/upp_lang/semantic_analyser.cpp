@@ -574,7 +574,7 @@ Comptime_Result modtree_expression_calculate_comptime_value(Semantic_Analyser* a
         }
         case ModTree_Unary_Operation_Type::ADDRESS_OF:
             return comptime_result_make_not_comptime();
-        case ModTree_Unary_Operation_Type::DEREFERENCE:
+        case ModTree_Unary_Operation_Type::ADDRESS_OF:
             return comptime_result_make_not_comptime();
         case ModTree_Unary_Operation_Type::TEMPORARY_TO_STACK:
             return value;
@@ -786,7 +786,7 @@ bool modtree_expression_result_is_temporary(ModTree_Expression* expression)
         switch (expression->options.unary_operation.operation_type)
         {
         case ModTree_Unary_Operation_Type::ADDRESS_OF: return true; // The pointer is always temporary
-        case ModTree_Unary_Operation_Type::DEREFERENCE: return false; // There are special cases where memory loss is not detected, e.g. &(new int) 
+        case ModTree_Unary_Operation_Type::ADDRESS_OF: return false; // There are special cases where memory loss is not detected, e.g. &(new int) 
         case ModTree_Unary_Operation_Type::LOGICAL_NOT: return true;
         case ModTree_Unary_Operation_Type::NEGATE: return true;
         default: panic("");
@@ -3791,7 +3791,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
         panic("");
         break;
     }
-    case RC_Expression_Type::DEREFERENCE:
+    case RC_Expression_Type::ADDRESS_OF:
     {
         ModTree_Expression* operand = semantic_analyser_analyse_expression_value(
             analyser, rc_expression->options.dereference_expression, expression_context_make_unknown()
@@ -3806,7 +3806,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(Semantic_Analyse
         }
 
         ModTree_Expression* result = modtree_expression_create_empty(ModTree_Expression_Type::UNARY_OPERATION, result_type);
-        result->options.unary_operation.operation_type = ModTree_Unary_Operation_Type::DEREFERENCE;
+        result->options.unary_operation.operation_type = ModTree_Unary_Operation_Type::ADDRESS_OF;
         result->options.unary_operation.operand = operand;
         return expression_result_make_value(result);
     }
@@ -4010,7 +4010,7 @@ Expression_Result semantic_analyser_analyse_expression_any(Semantic_Analyser* an
         ModTree_Expression* deref = new ModTree_Expression;
         deref->expression_type = ModTree_Expression_Type::UNARY_OPERATION;
         deref->result_type = expr->result_type->options.pointer_child;
-        deref->options.unary_operation.operation_type = ModTree_Unary_Operation_Type::DEREFERENCE;
+        deref->options.unary_operation.operation_type = ModTree_Unary_Operation_Type::ADDRESS_OF;
         deref->options.unary_operation.operand = expr;
         expr = deref;
         given_pointer_depth--;

@@ -244,12 +244,12 @@ void code_editor_do_ast_syntax_highlighting(Code_Editor* editor, AST_Node* node,
         Token_Range r = node_range;
         r.start_index += 1;
         r.end_index = r.start_index + 1;
-        text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, editor->compiler), Syntax_Color::LITERAL, Syntax_Color::BG_NORMAL);
+        text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, editor->compiler), Syntax_Color::LITERAL_NUMBER, Syntax_Color::BG_NORMAL);
     }
     else if (node->type == AST_Node_Type::ENUM_MEMBER) {
         Token_Range r = node_range;
         r.end_index = r.start_index + 1;
-        text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, editor->compiler), Syntax_Color::LITERAL, Syntax_Color::BG_NORMAL);
+        text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(r, editor->compiler), Syntax_Color::LITERAL_NUMBER, Syntax_Color::BG_NORMAL);
     }
     else if (node->type == AST_Node_Type::IDENTIFIER_PATH)
     {
@@ -401,7 +401,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
             else if (t.type == Token_Type::ERROR_TOKEN)
                 text_editor_add_highlight_from_slice(editor->text_editor, t.position, Syntax_Color::TEXT, Syntax_Color::BG_ERROR);
             else if (t.type == Token_Type::NULLPTR || t.type == Token_Type::INTEGER_LITERAL || t.type == Token_Type::BOOLEAN_LITERAL || t.type == Token_Type::FLOAT_LITERAL) {
-                text_editor_add_highlight_from_slice(editor->text_editor, t.position, Syntax_Color::LITERAL, Syntax_Color::BG_NORMAL);
+                text_editor_add_highlight_from_slice(editor->text_editor, t.position, Syntax_Color::LITERAL_NUMBER, Syntax_Color::BG_NORMAL);
             }
         }
 

@@ -675,7 +675,7 @@ IR_Data_Access ir_generator_generate_expression(IR_Generator* generator, IR_Code
             dynamic_array_push_back(&ir_block->instructions, instr);
             return instr.options.binary_op.destination;
         }
-        case ModTree_Unary_Operation_Type::DEREFERENCE:
+        case ModTree_Unary_Operation_Type::ADDRESS_OF:
         {
             if (!access.is_memory_access) {
                 access.is_memory_access = true;

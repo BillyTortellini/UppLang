@@ -58,7 +58,7 @@ enum class ModTree_Unary_Operation_Type
     NEGATE,
     LOGICAL_NOT,
     ADDRESS_OF,
-    DEREFERENCE,
+    ADDRESS_OF,
     TEMPORARY_TO_STACK, // Puts temporary values onto the stack, e.g. 5 is temporary
 };
 

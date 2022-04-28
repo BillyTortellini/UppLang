@@ -490,9 +490,6 @@
     <Text Include="..\resources\Editor_Thoughts.txt">
       <Filter>Resource Files</Filter>
     </Text>
-    <Text Include="..\resources\Coding_Style.txt">
-      <Filter>Resource Files</Filter>
-    </Text>
   </ItemGroup>
   <ItemGroup>
     <None Include="..\resources\shaders\test.glsl">

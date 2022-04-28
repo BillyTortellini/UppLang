@@ -63,6 +63,7 @@ String string_create_static(const char* content)
 }
 
 String string_create_empty(int capacity) {
+    capacity = math_maximum(capacity, 1);
     String result;
     result.characters = new char[capacity];
     result.characters[0] = 0;

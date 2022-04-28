@@ -252,7 +252,7 @@ void rc_expression_destroy(RC_Expression* expression)
     case RC_Expression_Type::CAST:
     case RC_Expression_Type::TYPE_INFO:
     case RC_Expression_Type::TYPE_OF:
-    case RC_Expression_Type::DEREFERENCE:
+    case RC_Expression_Type::ADDRESS_OF:
     case RC_Expression_Type::POINTER:
         break;
     default: panic("");
@@ -1048,7 +1048,7 @@ RC_Expression* rc_analyser_analyse_expression(RC_Analyser* analyser, AST_Node* e
         return result_expr;
     }
     case AST_Node_Type::EXPRESSION_UNARY_OPERATION_DEREFERENCE: {
-        RC_Expression* result_expr = rc_expression_create_empty(analyser, RC_Expression_Type::DEREFERENCE, expression_node);
+        RC_Expression* result_expr = rc_expression_create_empty(analyser, RC_Expression_Type::ADDRESS_OF, expression_node);
         result_expr->options.dereference_expression = rc_analyser_analyse_expression(analyser, expression_node->child_start);
         return result_expr;
     }
@@ -1171,7 +1171,7 @@ void rc_expression_find_symbol_reads(RC_Expression* expression, Dynamic_Array<RC
         rc_expression_find_symbol_reads(expression->options.type_info_expression, reads);
         break;
     }
-    case RC_Expression_Type::DEREFERENCE: {
+    case RC_Expression_Type::ADDRESS_OF: {
         rc_expression_find_symbol_reads(expression->options.dereference_expression, reads);
         break;
     }
