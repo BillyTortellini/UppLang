@@ -1810,7 +1810,7 @@ namespace Parser
 
             // Helpers
             ARGUMENT, // a(15, 32, a = 200)
-            PARAMETER, 
+            PARAMETER,
         };
 
         struct Base
@@ -1879,7 +1879,7 @@ namespace Parser
             */
 
             // Memory Reads
-            SYMBOL_READ, 
+            SYMBOL_READ,
             LITERAL_READ,
             ARRAY_ACCESS,
             MEMBER_ACCESS,
@@ -1910,7 +1910,7 @@ namespace Parser
                 } binop;
                 struct {
                     Unop type;
-                    Expression* unop;
+                    Expression* expr;
                 } unop;
                 struct {
                     Expression* expr;
@@ -1938,7 +1938,10 @@ namespace Parser
                     Expression* array_expr;
                     Expression* index_expr;
                 } array_access;
-                String* member_name;
+                struct {
+                    String* name;
+                    Expression* expr;
+                } member_access;
                 Module* module;
                 struct {
                     Expression* signature;
@@ -2022,6 +2025,10 @@ namespace Parser
         {
             switch (node->type)
             {
+            case Base_Type::PARAMETER: {
+                auto param = (Parameter*)node;
+                break;
+            }
             case Base_Type::ARGUMENT: {
                 auto arg = (Argument*)node;
                 break;
@@ -2097,6 +2104,205 @@ namespace Parser
             }
             delete node;
         }
+
+        void base_enumerate_children(Base* node, Dynamic_Array<Base*>* fill)
+        {
+#define FILL(x) {dynamic_array_push_back(fill, &x->base);};
+#define FILL_OPTIONAL(x) if (x.available) {dynamic_array_push_back(fill, &x.value->base);}
+#define FILL_ARRAY(x) for (int i = 0; i < x.size; i++) {dynamic_array_push_back(fill, &x[i]->base);}
+            switch (node->type)
+            {
+            case Base_Type::PARAMETER: {
+                auto param = (Parameter*)node;
+                FILL(param->type);
+                FILL_OPTIONAL(param->default_value);
+                break;
+            }
+            case Base_Type::ARGUMENT: {
+                auto arg = (Argument*)node;
+                FILL(arg->value);
+                break;
+            }
+            case Base_Type::CODE_BLOCK: {
+                auto block = (Code_Block*)node;
+                FILL_ARRAY(block->statements);
+                break;
+            }
+            case Base_Type::DEFINITION: {
+                auto def = (Definition*)node;
+                FILL_OPTIONAL(def->type);
+                FILL_OPTIONAL(def->value);
+                break;
+            }
+            case Base_Type::MODULE: {
+                auto module = (Module*)node;
+                FILL_ARRAY(module->definitions);
+                break;
+            }
+            case Base_Type::EXPRESSION:
+            {
+                auto expr = (Expression*)node;
+                switch (expr->type)
+                {
+                case Expression_Type::BINARY_OPERATION: {
+                    auto& binop = expr->options.binop;
+                    FILL(binop.left);
+                    FILL(binop.right);
+                    break;
+                }
+                case Expression_Type::UNARY_OPERATION: {
+                    auto& unop = expr->options.unop;
+                    FILL(unop.expr);
+                    break;
+                }
+                case Expression_Type::NEW_EXPR: {
+                    auto& new_expr = expr->options.new_expr;
+                    FILL_OPTIONAL(new_expr.count_expr);
+                    FILL(new_expr.type_expr);
+                    break;
+                }
+                case Expression_Type::CAST: {
+                    auto& cast = expr->options.cast;
+                    FILL_OPTIONAL(cast.to_type);
+                    FILL(cast.operand);
+                    break;
+                }
+                case Expression_Type::SYMBOL_READ: {
+                    break;
+                }
+                case Expression_Type::LITERAL_READ: {
+                    break;
+                }
+                case Expression_Type::ARRAY_ACCESS: {
+                    auto& access = expr->options.array_access;
+                    FILL(access.array_expr);
+                    FILL(access.index_expr);
+                    break;
+                }
+                case Expression_Type::MEMBER_ACCESS: {
+                    auto& access = expr->options.member_access;
+                    FILL(access.expr);
+                    break;
+                }
+                case Expression_Type::MODULE: {
+                    auto& module = expr->options.module;
+                    FILL(module);
+                    break;
+                }
+                case Expression_Type::FUNCTION: {
+                    auto& func = expr->options.function;
+                    FILL(func.signature);
+                    FILL(func.body);
+                    break;
+                }
+                case Expression_Type::ERROR_EXPR: {
+                    break;
+                }
+                case Expression_Type::FUNCTION_CALL: {
+                    auto& call = expr->options.call;
+                    FILL(call.expr);
+                    FILL_ARRAY(call.arguments);
+                    break;
+                }
+                case Expression_Type::FUNCTION_SIGNATURE: {
+                    auto& sig = expr->options.function_signature;
+                    FILL_ARRAY(sig.parameters);
+                    FILL_OPTIONAL(sig.return_value);
+                    break;
+                }
+                case Expression_Type::STRUCTURE_TYPE: {
+                    auto& str = expr->options.structure;
+                    FILL_ARRAY(str.members);
+                    break;
+                }
+                case Expression_Type::ENUM_TYPE: {
+                    auto& members = expr->options.enum_members;
+                    FILL_ARRAY(members);
+                    break;
+                }
+                default: panic("");
+                }
+                break;
+            }
+            case Base_Type::STATEMENT:
+            {
+                auto stat = (Statement*)node;
+                switch (stat->type)
+                {
+                case Statement_Type::DEFINITION: {
+                    auto def = stat->options.definition;
+                    FILL(def);
+                    break;
+                }
+                case Statement_Type::BLOCK: {
+                    auto block = stat->options.block;
+                    FILL(block);
+                    break;
+                }
+                case Statement_Type::ASSIGNMENT: {
+                    auto ass = stat->options.assignment;
+                    FILL(ass.left_side);
+                    FILL(ass.right_side);
+                    break;
+                }
+                case Statement_Type::EXPRESSION_STATEMENT: {
+                    auto expr = stat->options.expression;
+                    FILL(expr);
+                    break;
+                }
+                case Statement_Type::DEFER: {
+                    auto defer = stat->options.defer_block;
+                    FILL(defer);
+                    break;
+                }
+                case Statement_Type::IF_STATEMENT: {
+                    auto if_stat = stat->options.if_statement;
+                    FILL(if_stat.condition);
+                    FILL(if_stat.block);
+                    FILL_OPTIONAL(if_stat.else_block);
+                    break;
+                }
+                case Statement_Type::WHILE_STATEMENT: {
+                    auto while_stat = stat->options.while_statement;
+                    FILL(while_stat.condition);
+                    FILL(while_stat.block);
+                    break;
+                }
+                case Statement_Type::BREAK_STATEMENT: {
+                    break;
+                }
+                case Statement_Type::CONTINUE_STATEMENT: {
+                    break;
+                }
+                case Statement_Type::RETURN_STATEMENT: {
+                    auto ret = stat->options.return_value;
+                    FILL_OPTIONAL(ret);
+                    break;
+                }
+                case Statement_Type::DELETE_STATEMENT: {
+                    auto del = stat->options.delete_expr;
+                    FILL(del);
+                    break;
+                }
+                case Statement_Type::SWITCH_STATEMENT: {
+                    auto cases = stat->options.switch_statement.cases;
+                    for (int i = 0; i < cases.size; i++) {
+                        auto& cas = cases[i];
+                        FILL_OPTIONAL(cas.value);
+                        FILL(cas.block);
+                    }
+                    break;
+                }
+                default: panic("HEY");
+                }
+                break;
+            }
+            default: panic("");
+            }
+#undef FILL
+#undef FILL_OPTIONAL
+#undef FILL_ARRAY
+        }
     }
 
     using namespace AST;
@@ -2167,15 +2373,38 @@ namespace Parser
         return result;
     }
 
-    // Gets may return 0
-    Syntax_Token* get_token(int offset) {
+    Syntax_Line* get_line() {
         auto& editor = syntax_editor;
         auto& pos = parser.pos;
         if (pos.line_index >= pos.block->lines.size) return 0;
-        auto& tokens = pos.block->lines[pos.line_index]->tokens;
-        int tok_index = pos.token_index + offset;
+        return pos.block->lines[pos.line_index];
+    }
+
+    bool on_follow_block() {
+        auto line = get_line();
+        if (line == 0) return false;
+        auto& pos = parser.pos;
+        return (pos.token_index >= line->tokens.size || line->text.size == 0) && line->follow_block != 0;
+    }
+
+    // Returns 0 if not on token
+    Syntax_Token* get_token(int offset) {
+        auto line = get_line();
+        if (line == 0) return 0;
+        auto& tokens = line->tokens;
+        int tok_index = parser.pos.token_index + offset;
         if (tok_index >= tokens.size) return 0;
         return &tokens[tok_index];
+    }
+
+    Syntax_Block* test_syntax_block() {
+        auto& editor = syntax_editor;
+        auto& pos = parser.pos;
+        if (pos.line_index >= pos.block->lines.size) return 0;
+        auto& line = pos.block->lines[pos.line_index];
+        auto& tokens = line->tokens;
+        if (pos.token_index < tokens.size && line->text.size != 0) return 0;
+        return line->follow_block;
     }
 
     void advance_token() {
@@ -2240,9 +2469,11 @@ namespace Parser
     Expression* parse_expression(Base* parent);
     Expression* parse_expression_or_error_expr(Base* parent);
     Expression* parse_single_expression(Base* parent);
+    Expression* parse_single_expression_or_error(Base* parent);
 
-    //Parsing
+    //Parsing Helpers
 #define CHECKPOINT_SETUP \
+        if (get_token(0) == 0) {return 0;}\
         auto checkpoint = parser.pos;\
         bool _error_exit = false;\
         SCOPE_EXIT(if (_error_exit) parser_rollback(checkpoint););
@@ -2250,7 +2481,7 @@ namespace Parser
 #define CHECKPOINT_EXIT {_error_exit = true; return 0;}
 
     typedef bool(*token_predicate_fn)(Syntax_Token* token);
-    Optional<Parse_Position> find_error_recovery_token(token_predicate_fn predicate, bool skip_blocks) 
+    Optional<Parse_Position> find_error_recovery_token(token_predicate_fn predicate, bool skip_blocks)
     {
         Dynamic_Array<Parenthesis> parenthesis_stack = dynamic_array_create_empty<Parenthesis>(1);
         SCOPE_EXIT(dynamic_array_destroy(&parenthesis_stack));
@@ -2261,9 +2492,9 @@ namespace Parser
 
         Syntax_Line* line = lines[pos.line_index];
         Dynamic_Array<Syntax_Token>* tokens = &line->tokens;
-        while (true) 
+        while (true)
         {
-            if (pos.token_index >= tokens->size) 
+            if (pos.token_index >= tokens->size)
             {
                 if (!(skip_blocks || parenthesis_stack.size != 0)) {
                     return optional_make_failure<Parse_Position>();
@@ -2291,7 +2522,7 @@ namespace Parser
                 if (parenthesis.is_open) {
                     dynamic_array_push_back(&parenthesis_stack, parenthesis);
                 }
-                else if (parenthesis_stack.size > 0){
+                else if (parenthesis_stack.size > 0) {
                     auto last = dynamic_array_last(&parenthesis_stack);
                     if (last.type == parenthesis.type) {
                         dynamic_array_rollback_to_size(&parenthesis_stack, parenthesis_stack.size - 1);
@@ -2302,11 +2533,180 @@ namespace Parser
         }
     }
 
+    template<typename T>
+    void parse_syntax_block(Syntax_Block* block, Base* parent, Dynamic_Array<T*>* fill_array, T* (*parse_fn)(Base* parent))
+    {
+        // Setup parser position at block start
+        auto& pos = parser.pos;
+        pos.block = block;
+        pos.line_index = 0;
+        pos.token_index = 0;
+
+        // Parse block
+        auto& lines = pos.block->lines;
+        while (pos.line_index < lines.size)
+        {
+            auto line = lines[pos.line_index];
+            auto before_line_index = pos.line_index;
+            pos.token_index = 0;
+
+            if (line->text.size == 0 && line->follow_block == 0) {
+                pos.line_index += 1;
+                continue;
+            }
+
+            T* parsed = parse_fn(parent);
+            if (parsed != 0) {
+                dynamic_array_push_back(fill_array, parsed);
+            }
+            if (before_line_index == pos.line_index) {
+                pos.line_index += 1;
+            }
+        }
+    }
+
+    template<typename T>
+    void parse_follow_block(Base* parent, Dynamic_Array<T*>* fill_array, T* (*parse_fn)(Base* parent), bool parse_if_not_on_end)
+    {
+        auto line = get_line();
+        assert(line != 0, "");
+        // Check if at end of line
+        if (line->follow_block == 0) return;
+        if (!parse_if_not_on_end && !on_follow_block()) {
+            // TODO: Log error of unexpected tokens
+            return;
+        }
+        auto backup_pos = parser.pos;
+        backup_pos.line_index += 1;
+        parse_syntax_block(line->follow_block, parent, fill_array, parse_fn);
+
+        backup_pos.allocated_count = parser.pos.allocated_count;
+        parser.pos = backup_pos;
+        return;
+    }
+
+    template<Parenthesis_Type type>
+    bool successfull_parenthesis_exit()
+    {
+        auto parenthesis_pos = find_error_recovery_token(
+            [](Syntax_Token* t) -> bool
+            { return t->type == Syntax_Token_Type::PARENTHESIS &&
+            !t->options.parenthesis.is_open && t->options.parenthesis.type == type; },
+            true
+        );
+        if (!parenthesis_pos.available) {
+            return false;
+        }
+        parser.pos = parenthesis_pos.value;
+        advance_token();
+        return true;
+    }
+
     bool parse_position_in_order(Parse_Position a, Parse_Position b) {
         assert(a.block == b.block, "Only works for positions in the same block");
         if (a.line_index < b.line_index) return true;
         if (a.line_index > b.line_index) return false;
         return a.token_index < b.token_index;
+    }
+
+    // Parser position must be on Open Parenthesis for this to work
+    template<typename T>
+    void parse_parenthesis_comma_seperated(Base* parent, Dynamic_Array<T*>* fill_array, T* (*parse_fn)(Base* parent), Parenthesis_Type type)
+    {
+        char closing_char;
+        {
+            Parenthesis p;
+            p.type = type;
+            p.is_open = true;
+            if (!test_parenthesis_offset(parenthesis_to_char(p), 0)) return;
+            advance_token();
+            p.is_open = false;
+            closing_char = parenthesis_to_char(p);
+        }
+
+        // Parse Items
+        while (true)
+        {
+            if (test_parenthesis_offset(closing_char, 0)) {
+                advance_token();
+                break;
+            }
+            auto item = parse_fn(parent);
+            if (item != 0) {
+                dynamic_array_push_back(fill_array, item);
+            }
+            if (test_operator(Syntax_Operator::COLON)) {
+                advance_token();
+                continue;
+            }
+            if (test_parenthesis_offset(closing_char, 0)) {
+                continue;
+            }
+
+            // Error Recovery
+            auto comma_pos = find_error_recovery_token(
+                [](Syntax_Token* t) -> bool
+                { return t->type == Syntax_Token_Type::OPERATOR && t->options.op == Syntax_Operator::COMMA; },
+                true
+            );
+            auto parenthesis_pos = find_error_recovery_token(
+                [](Syntax_Token* t) -> bool
+                { return t->type == Syntax_Token_Type::PARENTHESIS &&
+                !t->options.parenthesis.is_open && t->options.parenthesis.type == Parenthesis_Type::PARENTHESIS; },
+                true
+            );
+            enum class Error_Start { COMMA, PARENTHESIS, NOT_FOUND } tactic;
+            tactic = Error_Start::NOT_FOUND;
+            if (comma_pos.available) {
+                tactic = Error_Start::COMMA;
+            }
+            if (parenthesis_pos.available) {
+                tactic = Error_Start::PARENTHESIS;
+                if (comma_pos.available && parse_position_in_order(comma_pos.value, parenthesis_pos.value)) {
+                    tactic = Error_Start::COMMA;
+                }
+            }
+
+            if (tactic == Error_Start::COMMA) {
+                parser.pos = comma_pos.value;
+                advance_token();
+            }
+            else if (tactic == Error_Start::PARENTHESIS) {
+                parser.pos = parenthesis_pos.value;
+            }
+            else {
+                // TODO: Error reporting
+                // Think this case through
+                auto line = get_line();
+                if (line == 0) return;
+                parser.pos.token_index = line->tokens.size; // Goto end of line for now
+            }
+        }
+    }
+
+    // Parsing
+    Code_Block* parse_code_block(Base* parent)
+    {
+        // Check if we are at the start of a block
+        auto result = allocate_base<Code_Block>(parent, Base_Type::CODE_BLOCK);
+        result->statements = dynamic_array_create_empty<Statement*>(1);
+        parse_follow_block(parent, &result->statements, parse_statement, true);
+        return result;
+    }
+
+    Argument* parse_argument(Base* parent)
+    {
+        CHECKPOINT_SETUP;
+        auto result = allocate_base<Argument>(parent, Base_Type::ARGUMENT);
+        if (test_token(Syntax_Token_Type::IDENTIFIER) && test_operator_offset(Syntax_Operator::ASSIGN, 1)) {
+            result->name = optional_make_success(get_token(0)->options.identifier);
+            advance_token();
+            advance_token();
+            result->value = parse_expression_or_error_expr(&result->base);
+            return result;
+        }
+        result->value = parse_expression(&result->base);
+        return result;
     }
 
     Parameter* parse_parameter(Base* parent)
@@ -2355,103 +2755,11 @@ namespace Parser
         CHECKPOINT_EXIT;
     }
 
-    Code_Block* parse_code_block(Base* parent)
-    {
-        // Check if we are at the start of a block
-        auto rewind_pos = parser.pos;
-        {
-            auto& p = parser.pos;
-            if (p.line_index >= p.block->lines.size) return 0;
-            auto& line = p.block->lines[p.line_index];
-            auto& tokens = line->tokens;
-            if (line->follow_block == 0) return 0; // No block following this line
-            if (p.token_index < tokens.size) return 0; // Not at end of line
-            p.line_index = 0;
-            p.token_index = 0;
-            p.block = line->follow_block;
-        }
-
-        // Parse all statements
-        auto& pos = parser.pos;
-        auto result = allocate_base<Code_Block>(parent, Base_Type::EXPRESSION);
-        result->statements = dynamic_array_create_empty<Statement*>(1);
-        while (pos.line_index < pos.block->lines.size)
-        {
-            auto& line = pos.block->lines[pos.line_index];
-            // Test for empty line (Dummy token)
-            if (line->text.size == 0) {
-                pos.line_index += 1;
-                // TODO: Test for anonymous block (Empty line + follow block)
-                continue;
-            }
-            // Parse everything available inside a block
-            auto statement = parse_statement(&result->base);
-            if (statement == 0) {
-                // Logg error here
-                advance_line();
-            }
-            else {
-                dynamic_array_push_back(&result->statements, statement);
-            }
-        }
-
-        // Set parse index
-        parser.pos.block = rewind_pos.block;
-        parser.pos.line_index = rewind_pos.line_index + 1;
-        parser.pos.token_index = 0;
-        return result;
-    }
-
-    Expression* parse_single_expression_or_error(Base* parent)
-    {
-        auto expr = parse_single_expression(parent);
-        if (expr != 0) return expr;
-        expr = allocate_base<AST::Expression>(parent, AST::Base_Type::EXPRESSION);
-        expr->type = Expression_Type::ERROR_EXPR;
-        return expr;
-    }
-
-    template<Parenthesis_Type type>
-    bool successfull_parenthesis_exit()
-    {
-        auto parenthesis_pos = find_error_recovery_token(
-            [](Syntax_Token* t) -> bool
-            { return t->type == Syntax_Token_Type::PARENTHESIS &&
-            !t->options.parenthesis.is_open && t->options.parenthesis.type == type; },
-            true
-        );
-        if (!parenthesis_pos.available) {
-            return false;
-        }
-        parser.pos = parenthesis_pos.value;
-        advance_token();
-        return true;
-    }
-
-    Expression* parse_single_expression(Base* parent)
+    Expression* parse_single_expression_no_postop(Base* parent)
     {
         CHECKPOINT_SETUP;
         auto result = allocate_base<Expression>(parent, Base_Type::EXPRESSION);
 
-        /*
-            Prefix Operations:
-                Negate  - a          X
-                Not     ! a          X
-                Deref   & a          X
-                Pointer * a          X
-                Cast    cast<u64> a  X
-                Array   [expr]a      X
-                Slice   []a          X
-            Operands:
-                Fn-Type () [-> expr] X
-                Expr    (a+...)      X
-                Lit     true         X
-                Read    a            X
-            Postfix Operations
-                Mem     a.
-                Array   a[]
-                Call    a()
-        */
         // Unops
         if (test_token(Syntax_Token_Type::OPERATOR))
         {
@@ -2469,7 +2777,7 @@ namespace Parser
                 advance_token();
                 result->type = Expression_Type::UNARY_OPERATION;
                 result->options.unop.type = unop;
-                result->options.unop.unop = parse_single_expression_or_error(&result->base);
+                result->options.unop.expr = parse_single_expression_or_error(&result->base);
                 return result;
             }
         }
@@ -2521,22 +2829,7 @@ namespace Parser
 
             result->type = Expression_Type::ARRAY_TYPE;
             result->options.array_type.size_expr = parse_expression_or_error_expr(&result->base);
-            if (!test_parenthesis_offset(']', 0)) {
-                // TODO: Log error
-                auto parenthesis_pos = find_error_recovery_token(
-                    [](Syntax_Token* t) -> bool
-                    { return t->type == Syntax_Token_Type::PARENTHESIS &&
-                    !t->options.parenthesis.is_open && t->options.parenthesis.type == Parenthesis_Type::BRACKETS; },
-                    true
-                );
-                if (!parenthesis_pos.available) {
-                    CHECKPOINT_EXIT;
-                }
-                else {
-                    parser.pos = parenthesis_pos.value;
-                    advance_token();
-                }
-            }
+            if (!successfull_parenthesis_exit<Parenthesis_Type::BRACKETS>()) CHECKPOINT_EXIT;
             result->options.array_type.type_expr = parse_single_expression_or_error(&result->base);
             return result;
         }
@@ -2600,63 +2893,7 @@ namespace Parser
             auto& signature = result->options.function_signature;
             signature.parameters = dynamic_array_create_empty<Parameter*>(1);
             signature.return_value.available = false;
-            advance_token(); // Skip (
-
-            // Parse Parameters
-            while (true)
-            {
-                if (test_parenthesis_offset(')', 0)) {
-                    advance_token();
-                    break;
-                }
-                auto definition = parse_parameter((Base*)result);
-                if (definition != 0)
-                {
-                    dynamic_array_push_back(&signature.parameters, definition);
-                    if (test_operator(Syntax_Operator::COLON)) {
-                        advance_token();
-                        continue;
-                    }
-                    if (test_parenthesis_offset(')', 0)) {
-                        continue;
-                    }
-                }
-
-                // ERROR Recovery
-                auto comma_pos = find_error_recovery_token(
-                    [](Syntax_Token* t) -> bool
-                    { return t->type == Syntax_Token_Type::OPERATOR && t->options.op == Syntax_Operator::COMMA; },
-                    true
-                );
-                auto parenthesis_pos = find_error_recovery_token(
-                    [](Syntax_Token* t) -> bool
-                    { return t->type == Syntax_Token_Type::PARENTHESIS &&
-                    !t->options.parenthesis.is_open && t->options.parenthesis.type == Parenthesis_Type::PARENTHESIS; },
-                    true
-                );
-                enum class Error_Start { COMMA, PARENTHESIS, NOT_FOUND } tactic;
-                tactic = Error_Start::NOT_FOUND;
-                if (comma_pos.available) {
-                    tactic = Error_Start::COMMA;
-                }
-                if (parenthesis_pos.available) {
-                    tactic = Error_Start::PARENTHESIS;
-                    if (comma_pos.available && parse_position_in_order(comma_pos.value, parenthesis_pos.value)) {
-                        tactic = Error_Start::COMMA;
-                    }
-                }
-
-                if (tactic == Error_Start::COMMA) {
-                    parser.pos = comma_pos.value;
-                    advance_token();
-                }
-                else if (tactic == Error_Start::PARENTHESIS) {
-                    parser.pos = parenthesis_pos.value;
-                }
-                else {
-                    CHECKPOINT_EXIT;
-                }
-            }
+            parse_parenthesis_comma_seperated(&result->base, &signature.parameters, parse_parameter, Parenthesis_Type::PARENTHESIS);
 
             // Parse Return value
             if (test_operator(Syntax_Operator::ARROW)) {
@@ -2664,20 +2901,18 @@ namespace Parser
                 signature.return_value = optional_make_success(parse_expression_or_error_expr((Base*)result));
             }
 
-            // Check if its a function or just a function signature
-            auto code_block = parse_code_block((Base*)result);
-            if (code_block == 0) {
+            if (!on_follow_block()) {
                 return result;
             }
 
+            // Check if its a function or just a function signature
             auto signature_expr = result;
             result = allocate_base<Expression>(parent, Base_Type::EXPRESSION);
             result->type = Expression_Type::FUNCTION;
-            signature_expr->base.parent = (Base*)result;
-
             auto& function = result->options.function;
-            function.body = code_block;
+            function.body = parse_code_block(&result->base);
             function.signature = signature_expr;
+            signature_expr->base.parent = (Base*)result;
             return result;
         }
 
@@ -2691,7 +2926,7 @@ namespace Parser
         }
 
         // Keyword expressions
-        if (test_keyword_offset(Syntax_Keyword::NEW, 0)) 
+        if (test_keyword_offset(Syntax_Keyword::NEW, 0))
         {
             result->type = Expression_Type::NEW_EXPR;
             result->options.new_expr.count_expr.available = false;
@@ -2705,35 +2940,138 @@ namespace Parser
         }
         if (test_keyword_offset(Syntax_Keyword::STRUCT, 0) ||
             test_keyword_offset(Syntax_Keyword::C_UNION, 0) ||
-            test_keyword_offset(Syntax_Keyword::UNION, 0)) 
+            test_keyword_offset(Syntax_Keyword::UNION, 0))
         {
             result->type = Expression_Type::STRUCTURE_TYPE;
             result->options.structure.members = dynamic_array_create_empty<Definition*>(1);
+            if (test_keyword_offset(Syntax_Keyword::STRUCT, 0)) {
+                result->options.structure.type = Structure_Type::STRUCT;
+            }
+            else if (test_keyword_offset(Syntax_Keyword::C_UNION, 0)) {
+                result->options.structure.type = Structure_Type::C_UNION;
+            }
+            else {
+                result->options.structure.type = Structure_Type::UNION;
+            }
+            advance_token();
+            parse_follow_block(&result->base, &result->options.structure.members, parse_definition, false);
+            return result;
         }
         if (test_keyword_offset(Syntax_Keyword::ENUM, 0)) {
-
+            result->type = Expression_Type::ENUM_TYPE;
+            result->options.enum_members = dynamic_array_create_empty<Definition*>(1);
+            advance_token();
+            parse_follow_block(&result->base, &result->options.enum_members, parse_definition, false);
+            return result;
         }
         if (test_keyword_offset(Syntax_Keyword::MODULE, 0)) {
+            auto module = allocate_base<Module>(&result->base, Base_Type::MODULE);
+            module->definitions = dynamic_array_create_empty<Definition*>(1);
+            advance_token();
+            parse_follow_block(&module->base, &module->definitions, parse_definition, true);
 
+            result->type = Expression_Type::MODULE;
+            result->options.module = module;
+            return result;
         }
 
-        // Post operators
+        CHECKPOINT_EXIT;
+    }
 
+    Expression* parse_post_operator_internal(Expression* child)
+    {
+        CHECKPOINT_SETUP;
+        // Post operators
+        auto result = allocate_base<Expression>(child->base.parent, Base_Type::EXPRESSION);
+        if (test_operator(Syntax_Operator::DOT))
+        {
+            advance_token();
+            if (test_token(Syntax_Token_Type::IDENTIFIER)) // Member access
+            {
+                result->type = Expression_Type::MEMBER_ACCESS;
+                result->options.member_access.name = get_token(0)->options.identifier;
+                result->options.member_access.expr = child;
+                advance_token();
+                return result;
+            }
+            else if (test_parenthesis_offset('{', 0)) // Struct Initializer
+            {
+                /*
+                new_node->type = AST_Node_Type::EXPRESSION_STRUCT_INITIALIZER;
+                if (!ast_parser_parse_arguments(parser, new_node, Token_Type::OPEN_BRACES, ast_parser_skip_single_token<Token_Type::CLOSED_BRACES>)) {
+                    ast_parser_checkpoint_reset(checkpoint);
+                    return 0;
+                }
+                */
+            }
+            else if (test_parenthesis_offset('[', 0)) // Array Initializer
+            {
+                /*
+                new_node->type = AST_Node_Type::EXPRESSION_ARRAY_INITIALIZER;
+                parser->index++;
+                if (!ast_parser_parse_list_items(
+                    parser, new_node,
+                    ast_parser_parse_expression,
+                    ast_parser_skip_single_token<Token_Type::COMMA>,
+                    ast_parser_skip_single_token<Token_Type::CLOSED_BRACKETS>,
+                    [](AST_Parser* parser) -> Optional<int> { return optional_make_failure<int>(); }
+                )) {
+                    ast_parser_checkpoint_reset(checkpoint);
+                    return 0;
+                }
+                */
+            }
+            CHECKPOINT_EXIT;
+        }
+        else if (test_parenthesis_offset('[', 0)) // Array access
+        {
+            result->type = Expression_Type::ARRAY_ACCESS;
+            result->options.array_access.array_expr = child;
+            result->options.array_access.index_expr = parse_expression_or_error_expr(&result->base);
+            if (!successfull_parenthesis_exit<Parenthesis_Type::BRACKETS>()) CHECKPOINT_EXIT;
+            return result;
+        }
+        else if (test_parenthesis_offset('(', 0)) // Function call
+        {
+            result->type = Expression_Type::FUNCTION_CALL;
+            auto& call = result->options.call;
+            call.expr = child;
+            call.arguments = dynamic_array_create_empty<Argument*>(1);
+            parse_parenthesis_comma_seperated<Argument>(&result->base, &call.arguments, parse_argument, Parenthesis_Type::PARENTHESIS);
+            return result;
+        }
+        CHECKPOINT_EXIT;
+    }
+
+    Expression* parse_single_expression(Base* parent)
+    {
+        // This function only does post-op parsing
+        Expression* child = parse_single_expression_no_postop(parent);
+        if (child == 0) return child;
+        Expression* post_op = parse_post_operator_internal(child);
+        while (post_op != 0) {
+            child->base.parent = &post_op->base;
+            child = post_op;
+            post_op = parse_post_operator_internal(child);
+        }
+        return child;
+    }
+
+    Expression* parse_single_expression_or_error(Base* parent)
+    {
+        auto expr = parse_single_expression(parent);
+        if (expr != 0) return expr;
+        expr = allocate_base<AST::Expression>(parent, AST::Base_Type::EXPRESSION);
+        expr->type = Expression_Type::ERROR_EXPR;
+        return expr;
     }
 
     Expression* parse_expression(Base* parent)
     {
         CHECKPOINT_SETUP;
-        auto result = allocate_base<Expression>(parent, Base_Type::EXPRESSION);
-
-        if (test_token(Syntax_Token_Type::IDENTIFIER)) {
-            result->type = Expression_Type::SYMBOL_READ;
-            result->options.symbol_read = get_token(0)->options.identifier;
-            advance_token();
-            return result;
-        }
-
-
+        auto result = parse_single_expression(parent);
+        // TODO: Binop Parsing
+        return result;
         CHECKPOINT_EXIT;
     }
 
@@ -2752,6 +3090,7 @@ namespace Parser
         auto result = allocate_base<Definition>(parent, AST::Base_Type::DEFINITION);
         result->is_comptime = false;
 
+        if (parser.pos.token_index != 0) CHECKPOINT_EXIT;
         if (!test_token(Syntax_Token_Type::IDENTIFIER)) CHECKPOINT_EXIT;
         result->name = get_token(0)->options.identifier;
         advance_token();
@@ -2789,50 +3128,109 @@ namespace Parser
         return result;
     }
 
-    Module* parse_module(Base* parent, Syntax_Block* block)
+
+    void base_append_to_string(Base* base, String* str)
     {
-        auto result = allocate_base<Module>(parent, Base_Type::MODULE);
-        result->definitions = dynamic_array_create_empty<Definition*>(1);
-
-        // Parse block lines
-        auto& pos = parser.pos;
-        auto backup_pos = pos;
-        SCOPE_EXIT(
-            backup_pos.allocated_count = pos.allocated_count;
-        pos = backup_pos;
-        );
-
-        pos.block = block;
-        pos.line_index = 0;
-        pos.token_index = 0;
-
-        auto& lines = pos.block->lines;
-        while (pos.line_index < lines.size)
+        switch (base->type)
         {
-            // Try parse module things (Currently only definitions)
-            // TODO: Parse file-loads, extern imports and probably top level bakes
-            auto line = lines[pos.line_index];
-            if (line->text.size == 0) {
-                pos.line_index += 1;
-                continue;
+        case Base_Type::DEFINITION: string_append_formated(str, "DEFINITION %s", ((Definition*)base)->name->characters); break;
+        case Base_Type::CODE_BLOCK: string_append_formated(str, "CODE_BLOCK"); break;
+        case Base_Type::MODULE: string_append_formated(str, "MODULE"); break;
+        case Base_Type::ARGUMENT: string_append_formated(str, "ARGUMENT"); break;
+        case Base_Type::PARAMETER: string_append_formated(str, "PARAMETER"); break;
+        case Base_Type::EXPRESSION:
+        {
+            auto expr = (Expression*)base;
+            switch (expr->type)
+            {
+            case Expression_Type::BINARY_OPERATION: string_append_formated(str, "BINARY_OPERATION"); break;
+            case Expression_Type::UNARY_OPERATION: string_append_formated(str, "UNARY_OPERATION"); break;
+            case Expression_Type::FUNCTION_CALL: string_append_formated(str, "FUNCTION_CALL"); break;
+            case Expression_Type::NEW_EXPR: string_append_formated(str, "NEW_EXPR"); break;
+            case Expression_Type::CAST: string_append_formated(str, "CAST"); break;
+            case Expression_Type::SYMBOL_READ: string_append_formated(str, "SYMBOL_READ %s", expr->options.symbol_read->characters); break;
+            case Expression_Type::LITERAL_READ: string_append_formated(str, "LITERAL_READ"); break;
+            case Expression_Type::ARRAY_ACCESS: string_append_formated(str, "ARRAY_ACCESS"); break;
+            case Expression_Type::MEMBER_ACCESS: string_append_formated(str, "MEMBER_ACCESS"); break;
+            case Expression_Type::MODULE: string_append_formated(str, "MODULE"); break;
+            case Expression_Type::FUNCTION: string_append_formated(str, "FUNCTION"); break;
+            case Expression_Type::FUNCTION_SIGNATURE: string_append_formated(str, "FUNCTION_SIGNATURE"); break;
+            case Expression_Type::STRUCTURE_TYPE: string_append_formated(str, "STRUCTURE_TYPE"); break;
+            case Expression_Type::ENUM_TYPE: string_append_formated(str, "ENUM_TYPE"); break;
+            case Expression_Type::ARRAY_TYPE: string_append_formated(str, "ARRAY_TYPE"); break;
+            case Expression_Type::SLICE_TYPE: string_append_formated(str, "SLICE_TYPE"); break;
+            case Expression_Type::ERROR_EXPR: string_append_formated(str, "ERROR_EXPR"); break;
+            default: panic("");
             }
-
-            auto definition = parse_definition((Base*)result);
-            if (definition == 0) {
-                // Log error for given line
-                advance_line();
-                continue;
-            }
-            dynamic_array_push_back(&result->definitions, definition);
+            break;
         }
-        return result;
+        case Base_Type::STATEMENT: 
+        {
+            auto stat = (Statement*)base;
+            switch (stat->type)
+            {
+            case Statement_Type::DEFINITION: string_append_formated(str, "STAT_DEF"); break;
+            case Statement_Type::BLOCK: string_append_formated(str, "STAT_BLOCK"); break;
+            case Statement_Type::ASSIGNMENT: string_append_formated(str, "ASSIGNMENT"); break;
+            case Statement_Type::EXPRESSION_STATEMENT: string_append_formated(str, "EXPRESSION_STATEMENT"); break;
+            case Statement_Type::DEFER: string_append_formated(str, "DEFER"); break;
+            case Statement_Type::IF_STATEMENT: string_append_formated(str, "IF_STATEMENT"); break;
+            case Statement_Type::WHILE_STATEMENT: string_append_formated(str, "WHILE_STATEMENT"); break;
+            case Statement_Type::SWITCH_STATEMENT: string_append_formated(str, "SWITCH_STATEMENT"); break;
+            case Statement_Type::BREAK_STATEMENT: string_append_formated(str, "BREAK_STATEMENT"); break;
+            case Statement_Type::CONTINUE_STATEMENT: string_append_formated(str, "CONTINUE_STATEMENT"); break;
+            case Statement_Type::RETURN_STATEMENT: string_append_formated(str, "RETURN_STATEMENT"); break;
+            case Statement_Type::DELETE_STATEMENT: string_append_formated(str, "DELETE_STATEMENT"); break;
+            default:panic("");
+            }
+            break;
+        }
+        default:panic("");
+        }
+    }
+
+    void parser_print_recursive(Base* base, String* str, int indentation)
+    {
+        base_append_to_string(base, str);
+        Dynamic_Array<Base*> children = dynamic_array_create_empty<Base*>(1);
+        SCOPE_EXIT(dynamic_array_destroy(&children));
+        base_enumerate_children(base, &children);
+
+        if (children.size == 1) {
+            string_append_formated(str, ": ");
+            parser_print_recursive(children[0], str, indentation + 1);
+        }
+        else {
+            string_append_formated(str, "\n");
+            for (int i = 0; i < children.size; i++) {
+                for (int i = 0; i < indentation + 1; i++) {
+                    string_append_formated(str, "  ");
+                }
+                parser_print_recursive(children[i], str, indentation + 1);
+            }
+        }
+    }
+
+    void parser_print()
+    {
+        String text = string_create_empty(1024);
+        SCOPE_EXIT(string_destroy(&text));
+        parser_print_recursive(&parser.root->base, &text, 0);
+        logg("PARSE_RESULT:\n------------------------\n%s\n", text.characters);
     }
 
     // Parsing
     void parser_execute()
     {
         reset();
-        parser.root = parse_module(0, syntax_editor.root_block);
+        //parser.root = parse_module(0, syntax_editor.root_block);
+        parser.root = allocate_base<Module>(0, Base_Type::MODULE);
+        parser.root->definitions = dynamic_array_create_empty<Definition*>(1);
+        parse_syntax_block<Definition>(syntax_editor.root_block, &parser.root->base, &parser.root->definitions, parse_definition);
+
+        if (syntax_editor.input->key_pressed[(int)Key_Code::RETURN]) {
+            parser_print();
+        }
     }
 
 #undef CHECKPOINT_EXIT

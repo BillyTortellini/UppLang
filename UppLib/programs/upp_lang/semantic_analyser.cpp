@@ -574,7 +574,7 @@ Comptime_Result modtree_expression_calculate_comptime_value(Semantic_Analyser* a
         }
         case ModTree_Unary_Operation_Type::ADDRESS_OF:
             return comptime_result_make_not_comptime();
-        case ModTree_Unary_Operation_Type::ADDRESS_OF:
+        case ModTree_Unary_Operation_Type::DEREFERENCE:
             return comptime_result_make_not_comptime();
         case ModTree_Unary_Operation_Type::TEMPORARY_TO_STACK:
             return value;
@@ -785,7 +785,7 @@ bool modtree_expression_result_is_temporary(ModTree_Expression* expression)
     {
         switch (expression->options.unary_operation.operation_type)
         {
-        case ModTree_Unary_Operation_Type::ADDRESS_OF: return true; // The pointer is always temporary
+        case ModTree_Unary_Operation_Type::DEREFERENCE: return true; // The pointer is always temporary
         case ModTree_Unary_Operation_Type::ADDRESS_OF: return false; // There are special cases where memory loss is not detected, e.g. &(new int) 
         case ModTree_Unary_Operation_Type::LOGICAL_NOT: return true;
         case ModTree_Unary_Operation_Type::NEGATE: return true;
