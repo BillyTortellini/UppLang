@@ -25,7 +25,7 @@ struct Identifier_Pool;
 
 
 // Datatypes
-#define SYNTAX_OPERATOR_COUNT 30
+#define SYNTAX_OPERATOR_COUNT 31
 enum class Syntax_Operator
 {
     ADDITION,
@@ -53,6 +53,7 @@ enum class Syntax_Operator
     OR,
     ARROW,
     DOLLAR,
+    HASHTAG,
     ASSIGN,
     ASSIGN_ADD,
     ASSIGN_SUB,
@@ -89,6 +90,7 @@ Operator_Info syntax_operator_info(Syntax_Operator op)
 {
     switch (op)
     {
+    case Syntax_Operator::HASHTAG: return operator_info_make("#", Operator_Type::UNOP, false, false);
     case Syntax_Operator::ADDITION: return operator_info_make("+", Operator_Type::BINOP, true, true);
     case Syntax_Operator::SUBTRACTION: return operator_info_make("-", Operator_Type::BOTH, true, true);
     case Syntax_Operator::DIVISON: return operator_info_make("/", Operator_Type::BINOP, true, true);
@@ -1706,6 +1708,21 @@ void syntax_editor_render_line(Syntax_Line* line, int indentation, int line_inde
     // cursor_pos = cursor;
 }
 
+void syntax_editor_render_block(Syntax_Block* block, int indentation, int* line_index)
+{
+    for (int i = 0; i < block->lines.size; i++)
+    {
+        auto& line = block->lines[i];
+        line_tokenize_text(line);
+        line_format_text_from_tokens(line);
+        syntax_editor_render_line(line, indentation, *line_index);
+        *line_index += 1;
+        if (line->follow_block != 0) {
+            syntax_editor_render_block(line->follow_block, indentation + 1, line_index);
+        }
+    }
+}
+
 void syntax_editor_render()
 {
     auto& editor = syntax_editor;
@@ -1716,26 +1733,9 @@ void syntax_editor_render()
     editor.character_size.x = text_renderer_get_cursor_advance(editor.text_renderer, editor.character_size.y);
 
     // Render lines
-    auto line = editor.root_block->lines[0];
-    int indentation = 0;
+    syntax_editor_sanitize_cursor();
     int index = 0;
-    while (true)
-    {
-        line_tokenize_text(line);
-        line_format_text_from_tokens(line);
-        syntax_editor_sanitize_cursor();
-        syntax_editor_render_line(line, indentation, index);
-
-        // Iterate to next line
-        auto next_line = navigate_next_line(line);
-        if (next_line == line) break;
-        if (next_line->parent_block != line->parent_block) {
-            if (line->follow_block != 0) indentation += 1;
-            else indentation -= 1;
-        }
-        line = next_line;
-        index += 1;
-    }
+    syntax_editor_render_block(editor.root_block, 0, &index);
 
     // Render Primitives
     renderer_2D_render(editor.renderer_2D, editor.rendering_core);
@@ -1776,6 +1776,7 @@ namespace Parser
             GREATER_OR_EQUAL,
             POINTER_EQUAL,
             POINTER_NOT_EQUAL,
+            INVALID,
         };
 
         enum class Unop
@@ -1870,16 +1871,15 @@ namespace Parser
             FUNCTION_CALL,
             NEW_EXPR,
             CAST,
-            /*
             ARRAY_INITIALIZER,
             STRUCT_INITIALIZER,
             AUTO_ENUM,
-            TYPE_INFO,
-            TYPE_OF,
-            */
+            BAKE_EXPR,
+            BAKE_BLOCK,
 
             // Memory Reads
             SYMBOL_READ,
+            PATH_READ,
             LITERAL_READ,
             ARRAY_ACCESS,
             MEMBER_ACCESS,
@@ -1912,6 +1912,8 @@ namespace Parser
                     Unop type;
                     Expression* expr;
                 } unop;
+                Expression* bake_expr;
+                Code_Block* bake_block;
                 struct {
                     Expression* expr;
                     Dynamic_Array<Argument*> arguments;
@@ -1926,6 +1928,11 @@ namespace Parser
                     Expression* operand;
                 } cast;
                 String* symbol_read;
+                struct {
+                    String* name;
+                    Expression* child_read;
+                } path;
+                String* auto_enum;
                 struct {
                     Literal_Type type;
                     union {
@@ -1951,6 +1958,14 @@ namespace Parser
                     Dynamic_Array<Parameter*> parameters;
                     Optional<Expression*> return_value;
                 } function_signature;
+                struct {
+                    Optional<Expression*> type_expr;
+                    Dynamic_Array<Argument*> arguments;
+                } struct_initializer;
+                struct {
+                    Optional<Expression*> type_expr;
+                    Dynamic_Array<Expression*> values;
+                } array_initializer;
                 struct {
                     Expression* size_expr;
                     Expression* type_expr;
@@ -2051,10 +2066,21 @@ namespace Parser
                 }
                 break;
             }
-            case Base_Type::EXPRESSION: {
+            case Base_Type::EXPRESSION: 
+            {
                 auto expr = (Expression*)node;
                 switch (expr->type)
                 {
+                case Expression_Type::STRUCT_INITIALIZER: {
+                    auto& init = expr->options.struct_initializer;
+                    dynamic_array_destroy(&init.arguments);
+                    break;
+                }
+                case Expression_Type::ARRAY_INITIALIZER: {
+                    auto& init = expr->options.array_initializer;
+                    dynamic_array_destroy(&init.values);
+                    break;
+                }
                 case Expression_Type::FUNCTION_CALL: {
                     auto& call = expr->options.call;
                     if (call.arguments.data != 0) {
@@ -2167,6 +2193,10 @@ namespace Parser
                     FILL(cast.operand);
                     break;
                 }
+                case Expression_Type::PATH_READ: {
+                    FILL(expr->options.path.child_read);
+                    break;
+                }
                 case Expression_Type::SYMBOL_READ: {
                     break;
                 }
@@ -2187,6 +2217,40 @@ namespace Parser
                 case Expression_Type::MODULE: {
                     auto& module = expr->options.module;
                     FILL(module);
+                    break;
+                }
+                case Expression_Type::STRUCT_INITIALIZER: {
+                    auto& init = expr->options.struct_initializer;
+                    FILL_OPTIONAL(init.type_expr);
+                    FILL_ARRAY(init.arguments);
+                    break;
+                }
+                case Expression_Type::BAKE_BLOCK: {
+                    FILL(expr->options.bake_block);
+                    break;
+                }
+                case Expression_Type::BAKE_EXPR: {
+                    FILL(expr->options.bake_expr);
+                    break;
+                }
+                case Expression_Type::ARRAY_INITIALIZER: {
+                    auto& init = expr->options.array_initializer;
+                    FILL_OPTIONAL(init.type_expr);
+                    FILL_ARRAY(init.values);
+                    break;
+                }
+                case Expression_Type::ARRAY_TYPE: {
+                    auto& array = expr->options.array_type;
+                    FILL(array.size_expr);
+                    FILL(array.type_expr);
+                    break;
+                }
+                case Expression_Type::SLICE_TYPE: {
+                    auto& slice = expr->options.slice_type;
+                    FILL(slice);
+                    break;
+                }
+                case Expression_Type::AUTO_ENUM: {
                     break;
                 }
                 case Expression_Type::FUNCTION: {
@@ -2303,6 +2367,94 @@ namespace Parser
 #undef FILL_OPTIONAL
 #undef FILL_ARRAY
         }
+
+        void base_append_to_string(Base* base, String* str)
+        {
+            switch (base->type)
+            {
+            case Base_Type::DEFINITION:
+                string_append_formated(str, "DEFINITION ");
+                string_append_string(str, ((Definition*)base)->name);
+                break;
+            case Base_Type::CODE_BLOCK: string_append_formated(str, "CODE_BLOCK"); break;
+            case Base_Type::MODULE: string_append_formated(str, "MODULE"); break;
+            case Base_Type::ARGUMENT: {
+                string_append_formated(str, "ARGUMENT");
+                auto arg = (Argument*)base;
+                if (arg->name.available) {
+                    string_append_formated(str, " ");
+                    string_append_string(str, arg->name.value);
+                }
+                break;
+            }
+            case Base_Type::PARAMETER: {
+                auto param = (Parameter*)base;
+                string_append_formated(str, "PARAMETER ");
+                string_append_string(str, param->name);
+                break;
+            }
+            case Base_Type::EXPRESSION:
+            {
+                auto expr = (Expression*)base;
+                switch (expr->type)
+                {
+                case Expression_Type::BINARY_OPERATION: string_append_formated(str, "BINARY_OPERATION"); break;
+                case Expression_Type::UNARY_OPERATION: string_append_formated(str, "UNARY_OPERATION"); break;
+                case Expression_Type::FUNCTION_CALL: string_append_formated(str, "FUNCTION_CALL"); break;
+                case Expression_Type::NEW_EXPR: string_append_formated(str, "NEW_EXPR"); break;
+                case Expression_Type::CAST: string_append_formated(str, "CAST"); break;
+                case Expression_Type::BAKE_BLOCK: string_append_formated(str, "BAKE_BLOCK"); break;
+                case Expression_Type::BAKE_EXPR: string_append_formated(str, "BAKE_EXPR"); break;
+                case Expression_Type::PATH_READ:
+                    string_append_formated(str, "PATH ");
+                    string_append_string(str, expr->options.path.name);
+                    break;
+                case Expression_Type::SYMBOL_READ:
+                    string_append_formated(str, "SYMBOL_READ ");
+                    string_append_string(str, expr->options.symbol_read);
+                    break;
+                case Expression_Type::LITERAL_READ: string_append_formated(str, "LITERAL_READ"); break;
+                case Expression_Type::ARRAY_ACCESS: string_append_formated(str, "ARRAY_ACCESS"); break;
+                case Expression_Type::MEMBER_ACCESS: string_append_formated(str, "MEMBER_ACCESS"); break;
+                case Expression_Type::MODULE: string_append_formated(str, "MODULE"); break;
+                case Expression_Type::FUNCTION: string_append_formated(str, "FUNCTION"); break;
+                case Expression_Type::FUNCTION_SIGNATURE: string_append_formated(str, "FUNCTION_SIGNATURE"); break;
+                case Expression_Type::STRUCTURE_TYPE: string_append_formated(str, "STRUCTURE_TYPE"); break;
+                case Expression_Type::ENUM_TYPE: string_append_formated(str, "ENUM_TYPE"); break;
+                case Expression_Type::ARRAY_TYPE: string_append_formated(str, "ARRAY_TYPE"); break;
+                case Expression_Type::SLICE_TYPE: string_append_formated(str, "SLICE_TYPE"); break;
+                case Expression_Type::ERROR_EXPR: string_append_formated(str, "ERROR_EXPR"); break;
+                case Expression_Type::STRUCT_INITIALIZER: string_append_formated(str, "STRUCT_INITIALIZER"); break;
+                case Expression_Type::ARRAY_INITIALIZER: string_append_formated(str, "ARRAY_INITIZALIZER"); break;
+                case Expression_Type::AUTO_ENUM: string_append_formated(str, "AUTO_ENUM"); break;
+                default: panic("");
+                }
+                break;
+            }
+            case Base_Type::STATEMENT:
+            {
+                auto stat = (Statement*)base;
+                switch (stat->type)
+                {
+                case Statement_Type::DEFINITION: string_append_formated(str, "STAT_DEF"); break;
+                case Statement_Type::BLOCK: string_append_formated(str, "STAT_BLOCK"); break;
+                case Statement_Type::ASSIGNMENT: string_append_formated(str, "ASSIGNMENT"); break;
+                case Statement_Type::EXPRESSION_STATEMENT: string_append_formated(str, "EXPRESSION_STATEMENT"); break;
+                case Statement_Type::DEFER: string_append_formated(str, "DEFER"); break;
+                case Statement_Type::IF_STATEMENT: string_append_formated(str, "IF_STATEMENT"); break;
+                case Statement_Type::WHILE_STATEMENT: string_append_formated(str, "WHILE_STATEMENT"); break;
+                case Statement_Type::SWITCH_STATEMENT: string_append_formated(str, "SWITCH_STATEMENT"); break;
+                case Statement_Type::BREAK_STATEMENT: string_append_formated(str, "BREAK_STATEMENT"); break;
+                case Statement_Type::CONTINUE_STATEMENT: string_append_formated(str, "CONTINUE_STATEMENT"); break;
+                case Statement_Type::RETURN_STATEMENT: string_append_formated(str, "RETURN_STATEMENT"); break;
+                case Statement_Type::DELETE_STATEMENT: string_append_formated(str, "DELETE_STATEMENT"); break;
+                default:panic("");
+                }
+                break;
+            }
+            default:panic("");
+            }
+        }
     }
 
     using namespace AST;
@@ -2413,6 +2565,7 @@ namespace Parser
 
     void advance_line() {
         parser.pos.line_index += 1;
+        parser.pos.token_index = 0;
     }
 
 
@@ -2461,7 +2614,6 @@ namespace Parser
         auto given = get_token(offset)->options.parenthesis;
         return given.is_open == p.is_open && given.type == p.type;
     }
-
 
     // Prototypes
     Definition* parse_definition(Base* parent);
@@ -2582,6 +2734,7 @@ namespace Parser
 
         backup_pos.allocated_count = parser.pos.allocated_count;
         parser.pos = backup_pos;
+        parser.pos.token_index = 0;
         return;
     }
 
@@ -2680,6 +2833,7 @@ namespace Parser
                 auto line = get_line();
                 if (line == 0) return;
                 parser.pos.token_index = line->tokens.size; // Goto end of line for now
+                return;
             }
         }
     }
@@ -2738,20 +2892,129 @@ namespace Parser
         CHECKPOINT_SETUP;
         auto result = allocate_base<Statement>(parent, Base_Type::STATEMENT);
 
-        auto definition = parse_definition(&result->base);
-        if (definition != 0) {
-            result->type = Statement_Type::DEFINITION;
-            result->options.definition = definition;
-            return result;
+        // TODO: Log error if there is more in one line
+        {
+            auto definition = parse_definition(&result->base);
+            if (definition != 0) {
+                result->type = Statement_Type::DEFINITION;
+                result->options.definition = definition;
+                return result;
+            }
         }
 
-        auto expr = parse_expression(&result->base);
-        if (expr != 0) {
-            result->type = Statement_Type::EXPRESSION_STATEMENT;
-            result->options.expression = expr;
-            return result;
+        {
+            auto expr = parse_expression(&result->base);
+            if (expr != 0)
+            {
+                if (test_operator(Syntax_Operator::ASSIGN)) {
+                    result->type = Statement_Type::ASSIGNMENT;
+                    result->options.assignment.left_side = expr;
+                    advance_token();
+                    result->options.assignment.right_side = parse_expression_or_error_expr(&result->base);
+                    return result;
+                }
+                result->type = Statement_Type::EXPRESSION_STATEMENT;
+                result->options.expression = expr;
+                return result;
+            }
         }
-
+        {
+            auto line = get_line();
+            if (line != 0 && line->text.size == 0 && line->follow_block != 0) {
+                result->type = Statement_Type::BLOCK;
+                result->options.block = parse_code_block(&result->base);
+                return result;
+            }
+        }
+        if (test_token(Syntax_Token_Type::KEYWORD))
+        {
+            switch (get_token(0)->options.keyword)
+            {
+            case Syntax_Keyword::IF:
+            {
+                advance_token();
+                result->type = Statement_Type::IF_STATEMENT;
+                auto& if_stat = result->options.if_statement;
+                if_stat.condition = parse_expression_or_error_expr(&result->base);
+                if_stat.block = parse_code_block(&result->base);
+                if_stat.else_block.available = false;
+                if (test_keyword_offset(Syntax_Keyword::ELSE, 0)) {
+                    if_stat.else_block = optional_make_success(parse_code_block(&result->base));
+                }
+                return result;
+            }
+            case Syntax_Keyword::WHILE:
+            {
+                advance_token();
+                result->type = Statement_Type::WHILE_STATEMENT;
+                auto& loop = result->options.while_statement;
+                loop.condition = parse_expression_or_error_expr(&result->base);
+                loop.block = parse_code_block(&result->base);
+                return result;
+            }
+            case Syntax_Keyword::DEFER:
+            {
+                advance_token();
+                result->type = Statement_Type::DEFER;
+                result->options.defer_block = parse_code_block(&result->base);
+                return result;
+            }
+            case Syntax_Keyword::SWITCH:
+            {
+                advance_token();
+                result->type = Statement_Type::SWITCH_STATEMENT;
+                auto& switch_stat = result->options.switch_statement;
+                switch_stat.condition = parse_expression_or_error_expr(&result->base);
+                switch_stat.cases = dynamic_array_create_empty<Switch_Case>(1);
+                advance_line();
+                while (test_keyword_offset(Syntax_Keyword::CASE, 0) || test_keyword_offset(Syntax_Keyword::DEFAULT, 0))
+                {
+                    bool is_default = test_keyword_offset(Syntax_Keyword::DEFAULT, 0);
+                    advance_token();
+                    Switch_Case c;
+                    c.value.available = false;
+                    if (!is_default) {
+                        c.value = optional_make_success(parse_expression_or_error_expr(&result->base));
+                    }
+                    c.block = parse_code_block(&result->base);
+                    dynamic_array_push_back(&switch_stat.cases, c);
+                }
+                return result;
+            }
+            case Syntax_Keyword::DELETE_KEYWORD: {
+                advance_token();
+                result->type = Statement_Type::DELETE_STATEMENT;
+                result->options.delete_expr = parse_expression_or_error_expr(&result->base);
+                return result;
+            }
+            case Syntax_Keyword::RETURN: {
+                advance_token();
+                result->type = Statement_Type::RETURN_STATEMENT;
+                auto expr = parse_expression(&result->base);
+                result->options.return_value.available = false;
+                if (expr != 0) {
+                    result->options.return_value = optional_make_success(expr);
+                }
+                return result;
+            }
+            case Syntax_Keyword::CONTINUE: {
+                advance_token();
+                result->type = Statement_Type::CONTINUE_STATEMENT;
+                if (!test_token(Syntax_Token_Type::IDENTIFIER)) CHECKPOINT_EXIT;
+                result->options.continue_name = get_token(0)->options.identifier;
+                advance_token();
+                return result;
+            }
+            case Syntax_Keyword::BREAK: {
+                advance_token();
+                result->type = Statement_Type::BREAK_STATEMENT;
+                if (!test_token(Syntax_Token_Type::IDENTIFIER)) CHECKPOINT_EXIT;
+                result->options.break_name = get_token(0)->options.identifier;
+                advance_token();
+                return result;
+            }
+            }
+        }
         CHECKPOINT_EXIT;
     }
 
@@ -2780,6 +3043,22 @@ namespace Parser
                 result->options.unop.expr = parse_single_expression_or_error(&result->base);
                 return result;
             }
+        }
+
+        if (test_operator(Syntax_Operator::HASHTAG) && test_token_offset(Syntax_Token_Type::IDENTIFIER, 1))
+        {
+            advance_token();
+            auto id = get_token(0)->options.identifier;
+            if (!string_equals_cstring(id, "bake")) CHECKPOINT_EXIT;
+            advance_token();
+            if (on_follow_block()) {
+                result->type = Expression_Type::BAKE_BLOCK;
+                result->options.bake_block = parse_code_block(&result->base);
+                return result;
+            }
+            result->type = Expression_Type::BAKE_EXPR;
+            result->options.bake_expr = parse_single_expression_or_error(&result->base);
+            return result;
         }
 
         // Casts
@@ -2835,11 +3114,55 @@ namespace Parser
         }
 
         // Bases
-        if (test_token(Syntax_Token_Type::IDENTIFIER)) {
+        if (test_token(Syntax_Token_Type::IDENTIFIER)) 
+        {
+            auto final = result;
+            while (test_token(Syntax_Token_Type::IDENTIFIER) && 
+                test_operator_offset(Syntax_Operator::TILDE, 1) &&
+                test_token_offset(Syntax_Token_Type::IDENTIFIER, 2)) 
+            {
+                result->type = Expression_Type::PATH_READ;
+                result->options.path.name = get_token(0)->options.identifier;
+                result->options.path.child_read = allocate_base<Expression>(&result->base, Base_Type::EXPRESSION);
+                result = result->options.path.child_read;
+                advance_token();
+                advance_token();
+            }
             result->type = Expression_Type::SYMBOL_READ;
             result->options.symbol_read = get_token(0)->options.identifier;
             advance_token();
-            return result;
+            return final;
+        }
+
+        if (test_operator(Syntax_Operator::DOT))
+        {
+            advance_token();
+            if (test_token(Syntax_Token_Type::IDENTIFIER)) // Member access
+            {
+                result->type = Expression_Type::AUTO_ENUM;
+                result->options.auto_enum = get_token(0)->options.identifier;
+                advance_token();
+                return result;
+            }
+            else if (test_parenthesis_offset('{', 0)) // Struct Initializer
+            {
+                result->type = Expression_Type::STRUCT_INITIALIZER;
+                auto& init = result->options.struct_initializer;
+                init.type_expr = optional_make_failure<Expression*>();
+                init.arguments = dynamic_array_create_empty<Argument*>(1);
+                parse_parenthesis_comma_seperated(&result->base, &init.arguments, parse_argument, Parenthesis_Type::BRACES);
+                return result;
+            }
+            else if (test_parenthesis_offset('[', 0)) // Array Initializer
+            {
+                result->type = Expression_Type::ARRAY_INITIALIZER;
+                auto& init = result->options.array_initializer;
+                init.type_expr = optional_make_failure<Expression*>();
+                init.values = dynamic_array_create_empty<Expression*>(1);
+                parse_parenthesis_comma_seperated(&result->base, &init.values, parse_expression, Parenthesis_Type::BRACES);
+                return result;
+            }
+            CHECKPOINT_EXIT;
         }
 
         // Literals
@@ -2996,35 +3319,27 @@ namespace Parser
             }
             else if (test_parenthesis_offset('{', 0)) // Struct Initializer
             {
-                /*
-                new_node->type = AST_Node_Type::EXPRESSION_STRUCT_INITIALIZER;
-                if (!ast_parser_parse_arguments(parser, new_node, Token_Type::OPEN_BRACES, ast_parser_skip_single_token<Token_Type::CLOSED_BRACES>)) {
-                    ast_parser_checkpoint_reset(checkpoint);
-                    return 0;
-                }
-                */
+                result->type = Expression_Type::STRUCT_INITIALIZER;
+                auto& init = result->options.struct_initializer;
+                init.type_expr = optional_make_success(child);
+                init.arguments = dynamic_array_create_empty<Argument*>(1);
+                parse_parenthesis_comma_seperated(&result->base, &init.arguments, parse_argument, Parenthesis_Type::BRACES);
+                return result;
             }
             else if (test_parenthesis_offset('[', 0)) // Array Initializer
             {
-                /*
-                new_node->type = AST_Node_Type::EXPRESSION_ARRAY_INITIALIZER;
-                parser->index++;
-                if (!ast_parser_parse_list_items(
-                    parser, new_node,
-                    ast_parser_parse_expression,
-                    ast_parser_skip_single_token<Token_Type::COMMA>,
-                    ast_parser_skip_single_token<Token_Type::CLOSED_BRACKETS>,
-                    [](AST_Parser* parser) -> Optional<int> { return optional_make_failure<int>(); }
-                )) {
-                    ast_parser_checkpoint_reset(checkpoint);
-                    return 0;
-                }
-                */
+                result->type = Expression_Type::ARRAY_INITIALIZER;
+                auto& init = result->options.array_initializer;
+                init.type_expr = optional_make_success(child);
+                init.values = dynamic_array_create_empty<Expression*>(1);
+                parse_parenthesis_comma_seperated(&result->base, &init.values, parse_expression, Parenthesis_Type::BRACES);
+                return result;
             }
             CHECKPOINT_EXIT;
         }
         else if (test_parenthesis_offset('[', 0)) // Array access
         {
+            advance_token();
             result->type = Expression_Type::ARRAY_ACCESS;
             result->options.array_access.array_expr = child;
             result->options.array_access.index_expr = parse_expression_or_error_expr(&result->base);
@@ -3066,13 +3381,113 @@ namespace Parser
         return expr;
     }
 
+    struct Binop_Link
+    {
+        Binop binop;
+        Expression* expr;
+    };
+
+    int binop_priority(Binop binop)
+    {
+        switch (binop)
+        {
+        case Binop::AND: return 0;
+        case Binop::OR: return 1;
+        case Binop::POINTER_EQUAL: return 2;
+        case Binop::POINTER_NOT_EQUAL: return 2;
+        case Binop::EQUAL: return 2;
+        case Binop::NOT_EQUAL: return 2;
+        case Binop::GREATER: return 3;
+        case Binop::GREATER_OR_EQUAL: return 3;
+        case Binop::LESS: return 3;
+        case Binop::LESS_OR_EQUAL: return 3;
+        case Binop::ADDITION: return 4;
+        case Binop::SUBTRACTION: return 4;
+        case Binop::MULTIPLICATION: return 5;
+        case Binop::DIVISION: return 5;
+        case Binop::MODULO: return 6;
+        default: panic("");
+        }
+        panic("");
+        return 0;
+    }
+
+    Expression* parse_priority_level(Expression* expr, int priority_level, Dynamic_Array<Binop_Link>* links, int* index)
+    {
+        while (*index < links->size)
+        {
+            auto& link = (*links)[*index];
+            auto op_prio = binop_priority(link.binop);
+            if (op_prio > priority_level) {
+                expr = parse_priority_level(expr, priority_level + 1, links, index);
+            }
+            else if (op_prio == priority_level) {
+                *index = *index + 1;
+                Expression* result = allocate_base<Expression>(0, Base_Type::EXPRESSION);
+                result->type = Expression_Type::BINARY_OPERATION;
+                result->options.binop.type = link.binop;
+                result->options.binop.left = expr;
+                result->options.binop.right = parse_priority_level(link.expr, priority_level + 1, links, index);
+                result->options.binop.left->base.parent = &result->base;
+                result->options.binop.right->base.parent = &result->base;
+                expr = result;
+            }
+            else {
+                break;
+            }
+        }
+        return expr;
+    }
+
     Expression* parse_expression(Base* parent)
     {
         CHECKPOINT_SETUP;
-        auto result = parse_single_expression(parent);
-        // TODO: Binop Parsing
+        Expression* start_expr = parse_single_expression(parent);
+        if (start_expr == 0) return 0;
+
+        Dynamic_Array<Binop_Link> links = dynamic_array_create_empty<Binop_Link>(1);
+        SCOPE_EXIT(dynamic_array_destroy(&links));
+        while (true)
+        {
+            Binop_Link link;
+            link.binop = Binop::INVALID;
+            if (test_token(Syntax_Token_Type::OPERATOR))
+            {
+                switch (get_token(0)->options.op)
+                {
+                case Syntax_Operator::ADDITION: link.binop = Binop::ADDITION; break;
+                case Syntax_Operator::SUBTRACTION: link.binop = Binop::SUBTRACTION; break;
+                case Syntax_Operator::MULTIPLY:link.binop = Binop::MULTIPLICATION; break;
+                case Syntax_Operator::DIVISON:link.binop = Binop::DIVISION; break;
+                case Syntax_Operator::MODULO:link.binop = Binop::MODULO; break;
+                case Syntax_Operator::AND:link.binop = Binop::AND; break;
+                case Syntax_Operator::OR:link.binop = Binop::OR; break;
+                case Syntax_Operator::GREATER_THAN:link.binop = Binop::GREATER; break;
+                case Syntax_Operator::GREATER_EQUAL:link.binop = Binop::GREATER_OR_EQUAL; break;
+                case Syntax_Operator::LESS_THAN:link.binop = Binop::LESS; break;
+                case Syntax_Operator::LESS_EQUAL:link.binop = Binop::LESS_OR_EQUAL; break;
+                case Syntax_Operator::EQUALS:link.binop = Binop::EQUAL; break;
+                case Syntax_Operator::NOT_EQUALS:link.binop = Binop::NOT_EQUAL; break;
+                case Syntax_Operator::POINTER_EQUALS:link.binop = Binop::POINTER_EQUAL; break;
+                case Syntax_Operator::POINTER_NOT_EQUALS:link.binop = Binop::POINTER_NOT_EQUAL; break;
+                }
+                if (link.binop != Binop::INVALID) {
+                    advance_token();
+                }
+            }
+            if (link.binop == Binop::INVALID) {
+                break;
+            }
+            link.expr = parse_single_expression_or_error(parent);
+            dynamic_array_push_back(&links, link);
+        }
+
+        // Now build the binop tree
+        if (links.size == 0) return start_expr;
+        int index = 0;
+        Expression* result = parse_priority_level(start_expr, 0, &links, &index);
+        result->base.parent = parent;
         return result;
-        CHECKPOINT_EXIT;
     }
 
     Expression* parse_expression_or_error_expr(Base* parent)
@@ -3095,6 +3510,7 @@ namespace Parser
         result->name = get_token(0)->options.identifier;
         advance_token();
 
+        int prev_line_index = parser.pos.line_index;
         if (test_operator(Syntax_Operator::COLON))
         {
             advance_token();
@@ -3123,70 +3539,11 @@ namespace Parser
 
         // Definitions are one line long, so everything afterwards here is an error
         // TODO: Report error
-        advance_line();
+        if (prev_line_index == parser.pos.line_index) {
+            advance_line();
+        }
 
         return result;
-    }
-
-
-    void base_append_to_string(Base* base, String* str)
-    {
-        switch (base->type)
-        {
-        case Base_Type::DEFINITION: string_append_formated(str, "DEFINITION %s", ((Definition*)base)->name->characters); break;
-        case Base_Type::CODE_BLOCK: string_append_formated(str, "CODE_BLOCK"); break;
-        case Base_Type::MODULE: string_append_formated(str, "MODULE"); break;
-        case Base_Type::ARGUMENT: string_append_formated(str, "ARGUMENT"); break;
-        case Base_Type::PARAMETER: string_append_formated(str, "PARAMETER"); break;
-        case Base_Type::EXPRESSION:
-        {
-            auto expr = (Expression*)base;
-            switch (expr->type)
-            {
-            case Expression_Type::BINARY_OPERATION: string_append_formated(str, "BINARY_OPERATION"); break;
-            case Expression_Type::UNARY_OPERATION: string_append_formated(str, "UNARY_OPERATION"); break;
-            case Expression_Type::FUNCTION_CALL: string_append_formated(str, "FUNCTION_CALL"); break;
-            case Expression_Type::NEW_EXPR: string_append_formated(str, "NEW_EXPR"); break;
-            case Expression_Type::CAST: string_append_formated(str, "CAST"); break;
-            case Expression_Type::SYMBOL_READ: string_append_formated(str, "SYMBOL_READ %s", expr->options.symbol_read->characters); break;
-            case Expression_Type::LITERAL_READ: string_append_formated(str, "LITERAL_READ"); break;
-            case Expression_Type::ARRAY_ACCESS: string_append_formated(str, "ARRAY_ACCESS"); break;
-            case Expression_Type::MEMBER_ACCESS: string_append_formated(str, "MEMBER_ACCESS"); break;
-            case Expression_Type::MODULE: string_append_formated(str, "MODULE"); break;
-            case Expression_Type::FUNCTION: string_append_formated(str, "FUNCTION"); break;
-            case Expression_Type::FUNCTION_SIGNATURE: string_append_formated(str, "FUNCTION_SIGNATURE"); break;
-            case Expression_Type::STRUCTURE_TYPE: string_append_formated(str, "STRUCTURE_TYPE"); break;
-            case Expression_Type::ENUM_TYPE: string_append_formated(str, "ENUM_TYPE"); break;
-            case Expression_Type::ARRAY_TYPE: string_append_formated(str, "ARRAY_TYPE"); break;
-            case Expression_Type::SLICE_TYPE: string_append_formated(str, "SLICE_TYPE"); break;
-            case Expression_Type::ERROR_EXPR: string_append_formated(str, "ERROR_EXPR"); break;
-            default: panic("");
-            }
-            break;
-        }
-        case Base_Type::STATEMENT: 
-        {
-            auto stat = (Statement*)base;
-            switch (stat->type)
-            {
-            case Statement_Type::DEFINITION: string_append_formated(str, "STAT_DEF"); break;
-            case Statement_Type::BLOCK: string_append_formated(str, "STAT_BLOCK"); break;
-            case Statement_Type::ASSIGNMENT: string_append_formated(str, "ASSIGNMENT"); break;
-            case Statement_Type::EXPRESSION_STATEMENT: string_append_formated(str, "EXPRESSION_STATEMENT"); break;
-            case Statement_Type::DEFER: string_append_formated(str, "DEFER"); break;
-            case Statement_Type::IF_STATEMENT: string_append_formated(str, "IF_STATEMENT"); break;
-            case Statement_Type::WHILE_STATEMENT: string_append_formated(str, "WHILE_STATEMENT"); break;
-            case Statement_Type::SWITCH_STATEMENT: string_append_formated(str, "SWITCH_STATEMENT"); break;
-            case Statement_Type::BREAK_STATEMENT: string_append_formated(str, "BREAK_STATEMENT"); break;
-            case Statement_Type::CONTINUE_STATEMENT: string_append_formated(str, "CONTINUE_STATEMENT"); break;
-            case Statement_Type::RETURN_STATEMENT: string_append_formated(str, "RETURN_STATEMENT"); break;
-            case Statement_Type::DELETE_STATEMENT: string_append_formated(str, "DELETE_STATEMENT"); break;
-            default:panic("");
-            }
-            break;
-        }
-        default:panic("");
-        }
     }
 
     void parser_print_recursive(Base* base, String* str, int indentation)

@@ -1143,7 +1143,6 @@ AST_Node* ast_parser_parse_binary_expression(AST_Parser* parser, AST_Node* node,
         AST_Parser_Checkpoint checkpoint = ast_parser_checkpoint_make(parser, node);
 
         int first_op_priority;
-        int first_op_index = parser->index;
         AST_Node_Type first_op_type;
         if (!ast_parser_parse_binary_operator(parser, &first_op_type, &first_op_priority)) {
             break;

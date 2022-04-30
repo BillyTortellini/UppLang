@@ -11,11 +11,11 @@ void syntax_editor_update();
 void syntax_editor_render();
 
 /*
-    Parsing TODO:
-     * Add helper for parsing Syntax-Blocks
-     * Add helper for parsing Parenthesis with commas and items
-     * Finish expressions
-     * Add Statements
+Parser TODO:
+ - Editor Line/Indentation handling
+ - Integration/Rewrite of Semantic Analyser
+ - Editor Error Display
+ - Parser Error reporting
 */
 
 /*
