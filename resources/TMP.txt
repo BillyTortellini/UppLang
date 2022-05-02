@@ -3,7 +3,7 @@ Some thoughts about the general Compiling-Process:
         Analysis should only 'decorate' some form of the AST. Although this is problematic 
         when parts of the AST need to be analysed multiple times (defer, polymorphic-instances, macros)
 
-        The reason I would like this is that I can have a more stop and continue analysis, 
+        The reason I would like this is that I can have more of a stop and continue analysis, 
         instead of requiring all Dependencies of e.g. a function to be complete.
         For example, after knowing all Struct-Members I could already analyse Headers and Code,
         but for Compilation/Member-Access analysis I would stop and wait for the specific Event to occur.

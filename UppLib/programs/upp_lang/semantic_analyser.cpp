@@ -6230,3 +6230,5 @@ Type_Signature* import_c_type(Semantic_Analyser* analyser, C_Import_Type* type, 
     hashtable_insert_element(type_conversions, type, result_type);
     return result_type;
 }
+
+

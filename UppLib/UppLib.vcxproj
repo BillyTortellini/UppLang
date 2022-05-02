@@ -35,6 +35,8 @@
     <ClInclude Include="math\umath.hpp" />
     <ClInclude Include="math\vectors.hpp" />
     <ClInclude Include="programs\proc_city\proc_city.hpp" />
+    <ClInclude Include="programs\upp_lang\analyser2.hpp" />
+    <ClInclude Include="programs\upp_lang\ast.hpp" />
     <ClInclude Include="programs\upp_lang\ast_parser.hpp" />
     <ClInclude Include="programs\upp_lang\bytecode_generator.hpp" />
     <ClInclude Include="programs\upp_lang\bytecode_interpreter.hpp" />
@@ -99,6 +101,8 @@
     <ClCompile Include="math\spherical.cpp" />
     <ClCompile Include="math\vectors.cpp" />
     <ClCompile Include="programs\proc_city\proc_city.cpp" />
+    <ClCompile Include="programs\upp_lang\analyser2.cpp" />
+    <ClCompile Include="programs\upp_lang\ast.cpp" />
     <ClCompile Include="programs\upp_lang\ast_parser.cpp" />
     <ClCompile Include="programs\upp_lang\bytecode_generator.cpp" />
     <ClCompile Include="programs\upp_lang\bytecode_interpreter.cpp" />
@@ -220,7 +224,7 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <IncludePath>$(VC_IncludePath);$(SolutionDir)external_libraries\includes\freetype;$(SolutionDir)external_libraries\includes\opengl_spec;$(WindowsSDK_IncludePath);$(SolutionDir)external_libraries\includes\zlib;P:\Programme\LLVM\include</IncludePath>
     <LibraryPath>P:\Programme\LLVM\lib;$(SolutionDir)external_libraries\binaries;$(LibraryPath)</LibraryPath>
-    <RunCodeAnalysis>true</RunCodeAnalysis>
+    <RunCodeAnalysis>false</RunCodeAnalysis>
     <EnableClangTidyCodeAnalysis>false</EnableClangTidyCodeAnalysis>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
