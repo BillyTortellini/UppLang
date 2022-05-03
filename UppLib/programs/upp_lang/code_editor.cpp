@@ -346,7 +346,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
         compiler_compile(editor->compiler, source_code, shortcut_build);
 
         // Print errors
-        if (editor->compiler->parser->errors.size > 0 || editor->compiler->analyser->errors.size > 0) {
+        if (editor->compiler->parser->errors.size > 0 || editor->compiler->dependency_analyser->errors.size > 0) {
             logg("\n\nThere were errors while compiling!\n");
         }
         for (int i = 0; i < editor->compiler->parser->errors.size; i++) {
@@ -361,10 +361,10 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
         {
             String tmp = string_create_empty(256);
             SCOPE_EXIT(string_destroy(&tmp));
-            for (int i = 0; i < editor->compiler->analyser->errors.size; i++)
+            for (int i = 0; i < editor->compiler->dependency_analyser->errors.size; i++)
             {
-                Semantic_Error e = editor->compiler->analyser->errors[i];
-                semantic_error_append_to_string(editor->compiler->analyser, e, &tmp);
+                Semantic_Error e = editor->compiler->dependency_analyser->errors[i];
+                semantic_error_append_to_string(editor->compiler->dependency_analyser, e, &tmp);
                 logg("Semantic Error: %s\n", tmp.characters);
                 string_reset(&tmp);
             }
@@ -405,7 +405,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
             }
         }
 
-        if (editor->compiler->analyser->program != 0) {
+        if (editor->compiler->dependency_analyser->program != 0) {
             code_editor_do_ast_syntax_highlighting(editor, editor->compiler->main_source->root_node, editor->compiler->rc_analyser->root_symbol_table);
         }
 
@@ -468,11 +468,11 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
         {
             Dynamic_Array<Token_Range> error_locations = dynamic_array_create_empty<Token_Range>(4);
             SCOPE_EXIT(dynamic_array_destroy(&error_locations));
-            for (int i = 0; i < editor->compiler->analyser->errors.size; i++)
+            for (int i = 0; i < editor->compiler->dependency_analyser->errors.size; i++)
             {
-                Semantic_Error e = editor->compiler->analyser->errors[i];
+                Semantic_Error e = editor->compiler->dependency_analyser->errors[i];
                 dynamic_array_reset(&error_locations);
-                semantic_error_get_error_location(editor->compiler->analyser, e, &error_locations);
+                semantic_error_get_error_location(editor->compiler->dependency_analyser, e, &error_locations);
                 for (int j = 0; j < error_locations.size; j++)
                 {
                     Token_Range range = error_locations[j];
@@ -485,7 +485,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
                         editor->show_context_info = true;
                         editor->context_info_pos = text_editor_get_character_bounding_box(editor->text_editor, editor->text_editor->cursor_position).min;
                         string_reset(&editor->context_info);
-                        semantic_error_append_to_string(editor->compiler->analyser, e, &editor->context_info);
+                        semantic_error_append_to_string(editor->compiler->dependency_analyser, e, &editor->context_info);
                     }
                 }
             }

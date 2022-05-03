@@ -177,3 +177,8 @@ Array<T> dynamic_array_make_slice(Dynamic_Array<T>* array, int start_index, int 
     Array<T> result = dynamic_array_as_array(array);
     return array_make_slice(result, start_index, end_index);
 }
+
+template<typename T>
+T dynamic_array_last(Dynamic_Array<T>* array) {
+    return (*array)[array->size - 1];
+}

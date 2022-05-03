@@ -21,6 +21,10 @@ namespace AST
             }
             break;
         }
+        case Base_Type::SYMBOL_READ: {
+            auto read = (Symbol_Read*)node;
+            break;
+        }
         case Base_Type::DEFINITION: {
             auto def = (Definition*)node;
             break;
@@ -96,18 +100,24 @@ namespace AST
         }
         delete node;
     }
-
-    void base_enumerate_children(Base* node, Dynamic_Array<Base*>* fill)
+    
+    Base* base_get_child(Base* node, int child_index)
     {
-#define FILL(x) {dynamic_array_push_back(fill, &x->base);};
-#define FILL_OPTIONAL(x) if (x.available) {dynamic_array_push_back(fill, &x.value->base);}
-#define FILL_ARRAY(x) for (int i = 0; i < x.size; i++) {dynamic_array_push_back(fill, &x[i]->base);}
+        int index = 0;
+#define FILL(x) { if (child_index == index) {return &x->base;} else {index += 1;}}
+#define FILL_OPTIONAL(x) if (x.available) {FILL(x.value);}
+#define FILL_ARRAY(x) {if (child_index < index + x.size) {return &x[child_index - index]->base;} else {index += x.size;}}
         switch (node->type)
         {
         case Base_Type::PARAMETER: {
             auto param = (Parameter*)node;
             FILL(param->type);
             FILL_OPTIONAL(param->default_value);
+            break;
+        }
+        case Base_Type::SYMBOL_READ: {
+            auto read = (Symbol_Read*)node;
+            FILL_OPTIONAL(read->path_child);
             break;
         }
         case Base_Type::ARGUMENT: {
@@ -159,11 +169,248 @@ namespace AST
                 FILL(cast.operand);
                 break;
             }
-            case Expression_Type::PATH_READ: {
-                FILL(expr->options.path.child_read);
+            case Expression_Type::SYMBOL_READ: {
+                FILL(expr->options.symbol_read);
+                break;
+            }
+            case Expression_Type::LITERAL_READ: {
+                break;
+            }
+            case Expression_Type::ARRAY_ACCESS: {
+                auto& access = expr->options.array_access;
+                FILL(access.array_expr);
+                FILL(access.index_expr);
+                break;
+            }
+            case Expression_Type::MEMBER_ACCESS: {
+                auto& access = expr->options.member_access;
+                FILL(access.expr);
+                break;
+            }
+            case Expression_Type::MODULE: {
+                auto& module = expr->options.module;
+                FILL(module);
+                break;
+            }
+            case Expression_Type::STRUCT_INITIALIZER: {
+                auto& init = expr->options.struct_initializer;
+                FILL_OPTIONAL(init.type_expr);
+                FILL_ARRAY(init.arguments);
+                break;
+            }
+            case Expression_Type::BAKE_BLOCK: {
+                FILL(expr->options.bake_block);
+                break;
+            }
+            case Expression_Type::BAKE_EXPR: {
+                FILL(expr->options.bake_expr);
+                break;
+            }
+            case Expression_Type::ARRAY_INITIALIZER: {
+                auto& init = expr->options.array_initializer;
+                FILL_OPTIONAL(init.type_expr);
+                FILL_ARRAY(init.values);
+                break;
+            }
+            case Expression_Type::ARRAY_TYPE: {
+                auto& array = expr->options.array_type;
+                FILL(array.size_expr);
+                FILL(array.type_expr);
+                break;
+            }
+            case Expression_Type::SLICE_TYPE: {
+                auto& slice = expr->options.slice_type;
+                FILL(slice);
+                break;
+            }
+            case Expression_Type::AUTO_ENUM: {
+                break;
+            }
+            case Expression_Type::FUNCTION: {
+                auto& func = expr->options.function;
+                FILL(func.signature);
+                FILL(func.body);
+                break;
+            }
+            case Expression_Type::ERROR_EXPR: {
+                break;
+            }
+            case Expression_Type::FUNCTION_CALL: {
+                auto& call = expr->options.call;
+                FILL(call.expr);
+                FILL_ARRAY(call.arguments);
+                break;
+            }
+            case Expression_Type::FUNCTION_SIGNATURE: {
+                auto& sig = expr->options.function_signature;
+                FILL_ARRAY(sig.parameters);
+                FILL_OPTIONAL(sig.return_value);
+                break;
+            }
+            case Expression_Type::STRUCTURE_TYPE: {
+                auto& str = expr->options.structure;
+                FILL_ARRAY(str.members);
+                break;
+            }
+            case Expression_Type::ENUM_TYPE: {
+                auto& members = expr->options.enum_members;
+                FILL_ARRAY(members);
+                break;
+            }
+            default: panic("");
+            }
+            break;
+        }
+        case Base_Type::STATEMENT:
+        {
+            auto stat = (Statement*)node;
+            switch (stat->type)
+            {
+            case Statement_Type::DEFINITION: {
+                auto def = stat->options.definition;
+                FILL(def);
+                break;
+            }
+            case Statement_Type::BLOCK: {
+                auto block = stat->options.block;
+                FILL(block);
+                break;
+            }
+            case Statement_Type::ASSIGNMENT: {
+                auto ass = stat->options.assignment;
+                FILL(ass.left_side);
+                FILL(ass.right_side);
+                break;
+            }
+            case Statement_Type::EXPRESSION_STATEMENT: {
+                auto expr = stat->options.expression;
+                FILL(expr);
+                break;
+            }
+            case Statement_Type::DEFER: {
+                auto defer = stat->options.defer_block;
+                FILL(defer);
+                break;
+            }
+            case Statement_Type::IF_STATEMENT: {
+                auto if_stat = stat->options.if_statement;
+                FILL(if_stat.condition);
+                FILL(if_stat.block);
+                FILL_OPTIONAL(if_stat.else_block);
+                break;
+            }
+            case Statement_Type::WHILE_STATEMENT: {
+                auto while_stat = stat->options.while_statement;
+                FILL(while_stat.condition);
+                FILL(while_stat.block);
+                break;
+            }
+            case Statement_Type::BREAK_STATEMENT: {
+                break;
+            }
+            case Statement_Type::CONTINUE_STATEMENT: {
+                break;
+            }
+            case Statement_Type::RETURN_STATEMENT: {
+                auto ret = stat->options.return_value;
+                FILL_OPTIONAL(ret);
+                break;
+            }
+            case Statement_Type::DELETE_STATEMENT: {
+                auto del = stat->options.delete_expr;
+                FILL(del);
+                break;
+            }
+            case Statement_Type::SWITCH_STATEMENT: {
+                auto cases = stat->options.switch_statement.cases;
+                for (int i = 0; i < cases.size; i++) {
+                    auto& cas = cases[i];
+                    FILL_OPTIONAL(cas.value);
+                    FILL(cas.block);
+                }
+                break;
+            }
+            default: panic("HEY");
+            }
+            break;
+        }
+        default: panic("");
+        }
+        return 0;
+#undef FILL
+#undef FILL_OPTIONAL
+#undef FILL_ARRAY
+    }
+
+    void base_enumerate_children(Base* node, Dynamic_Array<Base*>* fill)
+    {
+#define FILL(x) {dynamic_array_push_back(fill, &x->base);};
+#define FILL_OPTIONAL(x) if (x.available) {dynamic_array_push_back(fill, &x.value->base);}
+#define FILL_ARRAY(x) for (int i = 0; i < x.size; i++) {dynamic_array_push_back(fill, &x[i]->base);}
+        switch (node->type)
+        {
+        case Base_Type::PARAMETER: {
+            auto param = (Parameter*)node;
+            FILL(param->type);
+            FILL_OPTIONAL(param->default_value);
+            break;
+        }
+        case Base_Type::SYMBOL_READ: {
+            auto read = (Symbol_Read*)node;
+            FILL_OPTIONAL(read->path_child);
+            break;
+        }
+        case Base_Type::ARGUMENT: {
+            auto arg = (Argument*)node;
+            FILL(arg->value);
+            break;
+        }
+        case Base_Type::CODE_BLOCK: {
+            auto block = (Code_Block*)node;
+            FILL_ARRAY(block->statements);
+            break;
+        }
+        case Base_Type::DEFINITION: {
+            auto def = (Definition*)node;
+            FILL_OPTIONAL(def->type);
+            FILL_OPTIONAL(def->value);
+            break;
+        }
+        case Base_Type::MODULE: {
+            auto module = (Module*)node;
+            FILL_ARRAY(module->definitions);
+            break;
+        }
+        case Base_Type::EXPRESSION:
+        {
+            auto expr = (Expression*)node;
+            switch (expr->type)
+            {
+            case Expression_Type::BINARY_OPERATION: {
+                auto& binop = expr->options.binop;
+                FILL(binop.left);
+                FILL(binop.right);
+                break;
+            }
+            case Expression_Type::UNARY_OPERATION: {
+                auto& unop = expr->options.unop;
+                FILL(unop.expr);
+                break;
+            }
+            case Expression_Type::NEW_EXPR: {
+                auto& new_expr = expr->options.new_expr;
+                FILL_OPTIONAL(new_expr.count_expr);
+                FILL(new_expr.type_expr);
+                break;
+            }
+            case Expression_Type::CAST: {
+                auto& cast = expr->options.cast;
+                FILL_OPTIONAL(cast.to_type);
+                FILL(cast.operand);
                 break;
             }
             case Expression_Type::SYMBOL_READ: {
+                FILL(expr->options.symbol_read);
                 break;
             }
             case Expression_Type::LITERAL_READ: {
@@ -342,6 +589,10 @@ namespace AST
             string_append_formated(str, "DEFINITION ");
             string_append_string(str, ((Definition*)base)->name);
             break;
+        case Base_Type::SYMBOL_READ:
+            string_append_formated(str, "SYMBOL_READ ");
+            string_append_string(str, ((Symbol_Read*)base)->name);
+            break;
         case Base_Type::CODE_BLOCK: string_append_formated(str, "CODE_BLOCK"); break;
         case Base_Type::MODULE: string_append_formated(str, "MODULE"); break;
         case Base_Type::ARGUMENT: {
@@ -371,14 +622,7 @@ namespace AST
             case Expression_Type::CAST: string_append_formated(str, "CAST"); break;
             case Expression_Type::BAKE_BLOCK: string_append_formated(str, "BAKE_BLOCK"); break;
             case Expression_Type::BAKE_EXPR: string_append_formated(str, "BAKE_EXPR"); break;
-            case Expression_Type::PATH_READ:
-                string_append_formated(str, "PATH ");
-                string_append_string(str, expr->options.path.name);
-                break;
-            case Expression_Type::SYMBOL_READ:
-                string_append_formated(str, "SYMBOL_READ ");
-                string_append_string(str, expr->options.symbol_read);
-                break;
+            case Expression_Type::SYMBOL_READ: string_append_formated(str, "SYMBOL_READ "); break;
             case Expression_Type::LITERAL_READ: string_append_formated(str, "LITERAL_READ"); break;
             case Expression_Type::ARRAY_ACCESS: string_append_formated(str, "ARRAY_ACCESS"); break;
             case Expression_Type::MEMBER_ACCESS: string_append_formated(str, "MEMBER_ACCESS"); break;

@@ -597,9 +597,8 @@ Compiler compiler_create(Timer* timer)
     *result.lexer = lexer_create();
     result.parser = new AST_Parser;
     *result.parser = ast_parser_create();
-    result.rc_analyser = new RC_Analyser;
-    *result.rc_analyser = rc_analyser_create();
-    result.analyser = semantic_analyser_create();
+    result.rc_analyser = dependency_analyser_initialize();
+    result.dependency_analyser = semantic_analyser_create();
     result.ir_generator = new IR_Generator;
     *result.ir_generator = ir_generator_create();
     result.bytecode_generator = new Bytecode_Generator;
@@ -633,9 +632,8 @@ void compiler_destroy(Compiler* compiler)
     delete compiler->lexer;
     ast_parser_destroy(compiler->parser);
     delete compiler->parser;
-    rc_analyser_destroy(compiler->rc_analyser);
-    delete compiler->rc_analyser;
-    semantic_analyser_destroy(compiler->analyser);
+    dependency_analyser_destroy();
+    semantic_analyser_destroy(compiler->dependency_analyser);
     ir_generator_destroy(compiler->ir_generator);
     delete compiler->ir_generator;
     bytecode_generator_destroy(compiler->bytecode_generator);
@@ -696,7 +694,7 @@ void compiler_switch_timing_task(Compiler* compiler, Timing_Task task)
 }
 
 bool compiler_errors_occured(Compiler* compiler) {
-    return !(compiler->parser->errors.size == 0 && compiler->analyser->errors.size == 0 &&
+    return !(compiler->parser->errors.size == 0 && compiler->dependency_analyser->errors.size == 0 &&
         compiler->rc_analyser->errors.size == 0);
 }
 
@@ -733,10 +731,10 @@ void compiler_compile(Compiler* compiler, String source_code, bool generate_code
 
         // Reset stages
         type_system_reset(&compiler->type_system);
-        rc_analyser_reset(compiler->rc_analyser, compiler);
+        dependency_analyser_reset(compiler);
         type_system_add_primitives(&compiler->type_system, &compiler->identifier_pool, &compiler->rc_analyser->predefined_symbols);
         ast_parser_reset(compiler->parser, &compiler->identifier_pool);
-        semantic_analyser_reset(compiler->analyser, compiler);
+        semantic_analyser_reset(compiler->dependency_analyser, compiler);
         ir_generator_reset(compiler->ir_generator, compiler);
         bytecode_generator_reset(compiler->bytecode_generator, compiler);
         bytecode_interpreter_reset(compiler->bytecode_interpreter, compiler);
@@ -749,8 +747,8 @@ void compiler_compile(Compiler* compiler, String source_code, bool generate_code
 
     compiler_switch_timing_task(compiler, Timing_Task::ANALYSIS);
     if (do_analysis) {
-        workload_executer_resolve(&compiler->analyser->workload_executer);
-        semantic_analyser_finish(compiler->analyser);
+        workload_executer_resolve(&compiler->dependency_analyser->workload_executer);
+        semantic_analyser_finish(compiler->dependency_analyser);
     }
 
     // Check for errors
@@ -939,15 +937,15 @@ void compiler_add_source_code(Compiler* compiler, String source_code, Code_Origi
     if (do_rc_gen)
     {
         compiler_switch_timing_task(compiler, Timing_Task::RC_GEN);
-        rc_analyser_analyse(compiler->rc_analyser, code_source->root_node);
+        //dependency_analyser_analyse(compiler->rc_analyser, code_source->root_node);
         compiler_switch_timing_task(compiler, Timing_Task::ANALYSIS);
-        workload_executer_add_workload_from_item(&compiler->analyser->workload_executer, compiler->rc_analyser->root_item);
+        workload_executer_add_workload_from_item(compiler->rc_analyser->root_item);
 
         if (output_rc)
         {
             String printed_items = string_create_empty(256);
             SCOPE_EXIT(string_destroy(&printed_items));
-            rc_analysis_item_append_to_string(compiler->rc_analyser->root_item, &printed_items, 0);
+            dependency_analyser_append_to_string(&printed_items);
             logg("\n");
             logg("--------RC_ANALYSIS_ITEMS--------:\n");
             logg("\n%s\n", printed_items.characters);
@@ -1135,11 +1133,11 @@ void compiler_run_testcases(Timer* timer)
                 {
                     String tmp = string_create_empty(256);
                     SCOPE_EXIT(string_destroy(&tmp));
-                    for (int i = 0; i < compiler.analyser->errors.size; i++)
+                    for (int i = 0; i < compiler.dependency_analyser->errors.size; i++)
                     {
-                        Semantic_Error e = compiler.analyser->errors[i];
+                        Semantic_Error e = compiler.dependency_analyser->errors[i];
                         string_append_formated(&result, "    Semantic Error: ");
-                        semantic_error_append_to_string(compiler.analyser, e, &result);
+                        semantic_error_append_to_string(compiler.dependency_analyser, e, &result);
                         string_append_formated(&result, "\n");
                     }
                 }

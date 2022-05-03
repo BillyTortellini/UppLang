@@ -35,7 +35,6 @@
     <ClInclude Include="math\umath.hpp" />
     <ClInclude Include="math\vectors.hpp" />
     <ClInclude Include="programs\proc_city\proc_city.hpp" />
-    <ClInclude Include="programs\upp_lang\analyser2.hpp" />
     <ClInclude Include="programs\upp_lang\ast.hpp" />
     <ClInclude Include="programs\upp_lang\ast_parser.hpp" />
     <ClInclude Include="programs\upp_lang\bytecode_generator.hpp" />
@@ -101,7 +100,6 @@
     <ClCompile Include="math\spherical.cpp" />
     <ClCompile Include="math\vectors.cpp" />
     <ClCompile Include="programs\proc_city\proc_city.cpp" />
-    <ClCompile Include="programs\upp_lang\analyser2.cpp" />
     <ClCompile Include="programs\upp_lang\ast.cpp" />
     <ClCompile Include="programs\upp_lang\ast_parser.cpp" />
     <ClCompile Include="programs\upp_lang\bytecode_generator.cpp" />

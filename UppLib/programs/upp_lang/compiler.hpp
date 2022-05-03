@@ -19,7 +19,7 @@ struct C_Compiler;
 struct C_Importer;
 struct IR_Generator;
 struct Type_Signature;
-struct RC_Analyser;
+struct Dependency_Analyser;
 
 
 
@@ -150,8 +150,8 @@ struct Compiler
     // Stages
     Lexer* lexer;
     AST_Parser* parser;
-    RC_Analyser* rc_analyser;
-    Semantic_Analyser* analyser;
+    Dependency_Analyser* rc_analyser;
+    Semantic_Analyser* dependency_analyser;
     IR_Generator* ir_generator;
     Bytecode_Generator* bytecode_generator;
     Bytecode_Interpreter* bytecode_interpreter;

@@ -300,9 +300,6 @@
     <ClInclude Include="programs\upp_lang\ast.hpp">
       <Filter>Header Files\Programs\Upp_Lang\Compiler</Filter>
     </ClInclude>
-    <ClInclude Include="programs\upp_lang\analyser2.hpp">
-      <Filter>Header Files\Programs\Upp_Lang\Compiler</Filter>
-    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="datastructures\array.cpp">
@@ -486,9 +483,6 @@
       <Filter>Source Files\Programs\Upp_Lang</Filter>
     </ClCompile>
     <ClCompile Include="programs\upp_lang\ast.cpp">
-      <Filter>Source Files\Programs\Upp_Lang</Filter>
-    </ClCompile>
-    <ClCompile Include="programs\upp_lang\analyser2.cpp">
       <Filter>Source Files\Programs\Upp_Lang</Filter>
     </ClCompile>
   </ItemGroup>

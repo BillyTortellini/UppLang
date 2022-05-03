@@ -11,7 +11,6 @@
 #include "syntax_colors.hpp"
 #include "compiler.hpp"
 #include "ast.hpp"
-#include "analyser2.hpp"
 
 
 
@@ -948,11 +947,6 @@ void syntax_line_move(Syntax_Line* line, Syntax_Block* block, int index) {
     line->parent_block = block;
 }
 
-template<typename T>
-T dynamic_array_last(Dynamic_Array<T>* array) {
-    return (*array)[array->size - 1];
-}
-
 Syntax_Line* navigate_prev_line(Syntax_Line* line) {
     auto line_index = syntax_line_index(line);
     auto block = line->parent_block;
@@ -1554,7 +1548,6 @@ void syntax_editor_create(Rendering_Core* rendering_core, Text_Renderer* text_re
     }
 
     Parser::initialize();
-    Semantic_Analysis::initialize();
 }
 
 void syntax_editor_destroy()
@@ -1567,7 +1560,6 @@ void syntax_editor_destroy()
     hashtable_destroy(&editor.keyword_table);
 
     Parser::destroy();
-    Semantic_Analysis::destroy();
 }
 
 
@@ -2448,22 +2440,25 @@ namespace Parser
         // Bases
         if (test_token(Syntax_Token_Type::IDENTIFIER)) 
         {
-            auto final = result;
+            Symbol_Read* final_read = allocate_base<Symbol_Read>(&result->base, Base_Type::SYMBOL_READ);
+            Symbol_Read* read = final_read;
+            read->path_child.available = false;
+            read->name = get_token(0)->options.identifier;
             while (test_token(Syntax_Token_Type::IDENTIFIER) && 
                 test_operator_offset(Syntax_Operator::TILDE, 1) &&
                 test_token_offset(Syntax_Token_Type::IDENTIFIER, 2)) 
             {
-                result->type = Expression_Type::PATH_READ;
-                result->options.path.name = get_token(0)->options.identifier;
-                result->options.path.child_read = allocate_base<Expression>(&result->base, Base_Type::EXPRESSION);
-                result = result->options.path.child_read;
+                read->path_child = optional_make_success(allocate_base<Symbol_Read>(&read->base, Base_Type::SYMBOL_READ));
+                read->path_child.value->name = get_token(0)->options.identifier;
+                read = read->path_child.value;
                 advance_token();
                 advance_token();
             }
+
             result->type = Expression_Type::SYMBOL_READ;
-            result->options.symbol_read = get_token(0)->options.identifier;
+            result->options.symbol_read = final_read;
             advance_token();
-            return final;
+            return result;
         }
 
         if (test_operator(Syntax_Operator::DOT))
@@ -2920,7 +2915,6 @@ namespace Parser
         if (syntax_editor.input->key_pressed[(int)Key_Code::RETURN]) {
             parser_print();
         }
-        Semantic_Analysis::analyse_ast(parser.root);
     }
 
 #undef CHECKPOINT_EXIT

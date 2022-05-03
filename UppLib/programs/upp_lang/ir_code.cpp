@@ -896,7 +896,7 @@ IR_Data_Access ir_generator_generate_expression(IR_Generator* generator, IR_Code
             alloc_instr.type = IR_Instruction_Type::FUNCTION_CALL;
             alloc_instr.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
             alloc_instr.options.call.options.hardcoded.type = Hardcoded_Function_Type::MALLOC_SIZE_I32;
-            alloc_instr.options.call.options.hardcoded.signature = generator->compiler->analyser->malloc_function->signature;
+            alloc_instr.options.call.options.hardcoded.signature = generator->compiler->dependency_analyser->malloc_function->signature;
             alloc_instr.options.call.destination = array_data_access;
             alloc_instr.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(1);
             dynamic_array_push_back(&alloc_instr.options.call.arguments, mult_instr.options.binary_op.destination);
@@ -909,7 +909,7 @@ IR_Data_Access ir_generator_generate_expression(IR_Generator* generator, IR_Code
             alloc_instr.type = IR_Instruction_Type::FUNCTION_CALL;
             alloc_instr.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
             alloc_instr.options.call.options.hardcoded.type = Hardcoded_Function_Type::MALLOC_SIZE_I32;
-            alloc_instr.options.call.options.hardcoded.signature = generator->compiler->analyser->malloc_function->signature;
+            alloc_instr.options.call.options.hardcoded.signature = generator->compiler->dependency_analyser->malloc_function->signature;
             alloc_instr.options.call.destination = ir_data_access_create_intermediate(ir_block, expression->result_type);
             alloc_instr.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(1);
             dynamic_array_push_back(&alloc_instr.options.call.arguments, ir_data_access_create_constant_i32(generator, expression->options.new_allocation.allocation_size));
@@ -1311,7 +1311,7 @@ void ir_generator_generate_block(IR_Generator* generator, IR_Code_Block* ir_bloc
             instr.type = IR_Instruction_Type::FUNCTION_CALL;
             instr.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
             instr.options.call.options.hardcoded.type = Hardcoded_Function_Type::FREE_POINTER;
-            instr.options.call.options.hardcoded.signature = generator->compiler->analyser->free_function->signature;
+            instr.options.call.options.hardcoded.signature = generator->compiler->dependency_analyser->free_function->signature;
             instr.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(1);
 
             IR_Data_Access delete_access = ir_generator_generate_expression(generator, ir_block, statement->options.deletion.expression);
@@ -1348,7 +1348,7 @@ void ir_generator_reset(IR_Generator* generator, Compiler* compiler)
     }
     generator->program = ir_program_create(&generator->compiler->type_system);
     generator->next_label_index = 0;
-    generator->modtree = generator->compiler->analyser->program;
+    generator->modtree = generator->compiler->dependency_analyser->program;
     generator->type_system = &generator->compiler->type_system;
     hashtable_reset(&generator->variable_mapping);
     hashtable_reset(&generator->function_mapping);

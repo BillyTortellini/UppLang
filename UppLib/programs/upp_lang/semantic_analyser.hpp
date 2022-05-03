@@ -27,11 +27,15 @@ struct ModTree_Block;
 struct ModTree_Function;
 struct ModTree_Variable;
 struct ModTree_Expression;
-struct AST_Node;
 struct Upp_Constant;
 enum class Constant_Status;
 struct Semantic_Error;
 struct Error_Information;
+
+namespace AST
+{
+    struct Code_Block;
+}
 
 /*
     MODTREE
@@ -82,7 +86,7 @@ struct Member_Initializer
 {
     Struct_Member member;
     ModTree_Expression* init_expr;
-    AST_Node* init_node;
+    AST::Base* init_node;
 };
 
 enum class ModTree_Call_Type
@@ -239,7 +243,7 @@ struct ModTree_Block
     Dynamic_Array<ModTree_Variable*> variables;
 
     // Infos
-    RC_Block* rc_block;
+    AST::Code_Block* code_block;
     Control_Flow flow;
     bool control_flow_locked;
     int defer_start_index;
@@ -386,13 +390,13 @@ enum class Analysis_Workload_Type
 struct Analysis_Workload
 {
     Analysis_Workload_Type type;
-    RC_Analysis_Item* analysis_item;
+    Analysis_Item* analysis_item;
     bool is_finished;
 
     // Dependencies
     List<Analysis_Workload*> dependencies;
     List<Analysis_Workload*> dependents;
-    Dynamic_Array<RC_Symbol_Read*> symbol_dependencies;
+    Dynamic_Array<Symbol_Dependency*> symbol_dependencies;
 
     // Note: Clustering is required for Workloads where cyclic dependencies on the same workload-type are allowed,
     //       like recursive functions or structs containing pointers to themselves
@@ -434,26 +438,25 @@ struct Dependency_Information
 {
     List_Node<Analysis_Workload*>* dependency_node;
     List_Node<Analysis_Workload*>* dependent_node;
-    Dynamic_Array<RC_Symbol_Read*> symbol_reads;
+    Dynamic_Array<Symbol_Dependency*> symbol_reads;
     bool only_symbol_read_dependency;
 };
 
 struct Workload_Executer
 {
-    Semantic_Analyser* analyser;
     Dynamic_Array<Analysis_Workload*> workloads;
     Dynamic_Array<Analysis_Workload*> runnable_workloads;
     bool progress_was_made;
 
     Hashtable<Workload_Pair, Dependency_Information> workload_dependencies;
-    Hashtable<RC_Analysis_Item*, Analysis_Workload*> item_to_workload_mapping;
+    Hashtable<Analysis_Item*, Analysis_Workload*> item_to_workload_mapping;
     Hashtable<Type_Signature*, Struct_Progress> progress_structs;
     Hashtable<ModTree_Function*, Function_Progress> progress_functions;
     Hashtable<Symbol*, Analysis_Workload*> progress_definitions;
 };
 
-void workload_executer_resolve(Workload_Executer* executer);
-Analysis_Workload* workload_executer_add_workload_from_item(Workload_Executer* executer, RC_Analysis_Item* item);
+void workload_executer_resolve();
+Analysis_Workload* workload_executer_add_workload_from_item(Analysis_Item* item);
 
 
 
@@ -488,7 +491,7 @@ struct Semantic_Analyser
     Stack_Allocator allocator_values;
     Hashset<ModTree_Function*> visited_functions;
     Dynamic_Array<ModTree_Block*> block_stack;
-    Dynamic_Array<RC_Block*> defer_stack;
+    Dynamic_Array<AST::Code_Block*> defer_stack;
 
     String* id_size;
     String* id_data;
@@ -498,10 +501,10 @@ struct Semantic_Analyser
     String* id_type_info;
 };
 
-Semantic_Analyser* semantic_analyser_create();
-void semantic_analyser_destroy(Semantic_Analyser* analyser);
-void semantic_analyser_reset(Semantic_Analyser* analyser, Compiler* compiler);
-void semantic_analyser_finish(Semantic_Analyser* analyser);
+Semantic_Analyser* semantic_analyser_initialize();
+void semantic_analyser_destroy();
+void semantic_analyser_reset(Compiler* compiler);
+void semantic_analyser_finish();
 
 void hardcoded_function_type_append_to_string(String* string, Hardcoded_Function_Type hardcoded);
 
@@ -714,14 +717,14 @@ struct Error_Information
 struct Semantic_Error
 {
     Semantic_Error_Type type;
-    AST_Node* error_node;
+    AST::Base* error_node;
     Dynamic_Array<Error_Information> information;
 };
 
 struct Token_Range;
-void semantic_error_append_to_string(Semantic_Analyser* analyser, Semantic_Error e, String* string);
-void semantic_error_get_error_location(Semantic_Analyser* analyser, Semantic_Error error, Dynamic_Array<Token_Range>* locations);
-void semantic_analyser_log_error(Semantic_Analyser* analyser, Semantic_Error_Type type, AST_Node* node);
-void semantic_analyser_add_error_info(Semantic_Analyser* analyser, Error_Information info);
-void semantic_analyser_set_error_flag(Semantic_Analyser* analyser, bool error_due_to_unknown);
+void semantic_error_append_to_string(Semantic_Error e, String* string);
+void semantic_error_get_error_location( Semantic_Error error, Dynamic_Array<Token_Range>* locations);
+void semantic_analyser_log_error(Semantic_Error_Type type, AST::Base* node);
+void semantic_analyser_add_error_info(Error_Information info);
+void semantic_analyser_set_error_flag(bool error_due_to_unknown);
 Error_Information error_information_make_empty(Error_Information_Type type);

@@ -4,13 +4,15 @@
 #include "../../utility/utils.hpp"
 #include "../../datastructures/string.hpp"
 
+struct Symbol;
+struct Symbol_Table;
+
 namespace AST
 {
     struct Expression;
     struct Statement;
     struct Code_Block;
     struct Definition;
-
     enum class Binop
     {
         ADDITION,
@@ -64,24 +66,34 @@ namespace AST
         // Helpers
         ARGUMENT, // a(15, 32, a = 200)
         PARAMETER,
+        SYMBOL_READ,
     };
 
     struct Base
     {
         Base_Type type;
         Base* parent;
-        int index;
+    };
+
+    struct Symbol_Read
+    {
+        Base base;
+        String* name;
+        Optional<Symbol_Read*> path_child;
+        Symbol* resolved_symbol;
     };
 
     struct Module
     {
         Base base;
         Dynamic_Array<Definition*> definitions;
+        Symbol_Table* symbol_table;
     };
 
     struct Definition
     {
         Base base;
+        Symbol* symbol;
         bool is_comptime; // :: instead of :=
         String* name;
         Optional<Expression*> type;
@@ -98,6 +110,7 @@ namespace AST
     struct Parameter
     {
         Base base;
+        Symbol* symbol;
         bool is_comptime; // $ at the start
         String* name;
         Expression* type;
@@ -107,6 +120,7 @@ namespace AST
     struct Code_Block
     {
         Base base;
+        Symbol_Table* symbol_table;
         Dynamic_Array<Statement*> statements;
     };
 
@@ -132,7 +146,6 @@ namespace AST
 
         // Memory Reads
         SYMBOL_READ,
-        PATH_READ,
         LITERAL_READ,
         ARRAY_ACCESS,
         MEMBER_ACCESS,
@@ -180,11 +193,7 @@ namespace AST
                 Optional<Expression*> to_type;
                 Expression* operand;
             } cast;
-            String* symbol_read;
-            struct {
-                String* name;
-                Expression* child_read;
-            } path;
+            Symbol_Read* symbol_read;
             String* auto_enum;
             struct {
                 Literal_Type type;
@@ -206,6 +215,7 @@ namespace AST
             struct {
                 Expression* signature;
                 Code_Block* body;
+                Symbol_Table* symbol_table;
             } function;
             struct {
                 Dynamic_Array<Parameter*> parameters;
@@ -290,6 +300,7 @@ namespace AST
     };
 
     void base_destroy(Base* node);
+    Base* base_get_child(Base* node, int child_index);
     void base_enumerate_children(Base* node, Dynamic_Array<Base*>* fill);
     void base_append_to_string(Base* base, String* str);
 }
