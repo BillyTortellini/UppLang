@@ -5,10 +5,13 @@
 #include "../../datastructures/hashtable.hpp"
 
 struct Identifier_Pool;
-struct AST_Node;
 struct Symbol;
 struct Predefined_Symbols;
 struct Timer;
+namespace AST
+{
+    struct Definition;
+}
 
 enum class Primitive_Type
 {
@@ -44,7 +47,7 @@ struct Enum_Member
 {
     String* id;
     int value;
-    AST_Node* definition_node;
+    AST::Definition* definition_node;
 };
 
 enum class Structure_Type
@@ -277,7 +280,6 @@ Type_Signature* type_system_make_slice(Type_System* system, Type_Signature* elem
 Type_Signature* type_system_make_array(Type_System* system, Type_Signature* element_type, bool count_known, int element_count);
 Type_Signature* type_system_make_function(Type_System* system, Dynamic_Array<Type_Signature*> parameter_types, Type_Signature* return_type);
 Type_Signature* type_system_make_template(Type_System* system, String* id);
-struct AST_Node;
 Type_Signature* type_system_make_enum_empty(Type_System* system, String* id);
 Type_Signature* type_system_make_struct_empty(Type_System* system, Symbol* symbol, Structure_Type struct_type);
 void type_system_print(Type_System* system);

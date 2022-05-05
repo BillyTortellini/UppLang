@@ -225,9 +225,9 @@ void upp_lang_main()
     SCOPE_EXIT(gui_destroy(&gui));
 
     Code_Editor code_editor = code_editor_create(text_renderer, &core, &timer);
-    SCOPE_EXIT(code_editor_destroy(&code_editor));
+    //SCOPE_EXIT(code_editor_destroy(&code_editor));
 
-    syntax_editor_create(&core, text_renderer, renderer_2D, window_get_input(window));
+    syntax_editor_create(&core, text_renderer, renderer_2D, window_get_input(window), &timer);
     SCOPE_EXIT(syntax_editor_destroy());
 
     // Background

@@ -31,10 +31,14 @@ struct Upp_Constant;
 enum class Constant_Status;
 struct Semantic_Error;
 struct Error_Information;
+struct Dependency_Analyser;
+struct Analysis_Workload;
+struct Analysis_Progress;
 
 namespace AST
 {
     struct Code_Block;
+    enum class Section;
 }
 
 /*
@@ -344,6 +348,18 @@ struct Comptime_Result
 /*
 DEPENDENCY GRAPH
 */
+enum class Analysis_Progress_Type
+{
+    FUNCTION,
+    STRUCTURE,
+    BAKE,
+    DEFINITION,
+};
+
+struct Analysis_Progress
+{
+    Analysis_Progress_Type type;
+};
 
 enum class Struct_State
 {
@@ -354,9 +370,20 @@ enum class Struct_State
 
 struct Struct_Progress
 {
+    Analysis_Progress base;
     Struct_State state;
-    Analysis_Workload* member_workload;
+    Type_Signature* struct_type;
+    Analysis_Workload* analysis_workload;
     Analysis_Workload* reachable_resolve_workload;
+};
+
+struct Bake_Progress
+{
+    Analysis_Progress base;
+    ModTree_Function* bake_function;
+    Comptime_Result result;
+    Analysis_Workload* analysis_workload;
+    Analysis_Workload* execute_workload;
 };
 
 enum class Function_State
@@ -369,10 +396,19 @@ enum class Function_State
 
 struct Function_Progress
 {
+    Analysis_Progress base;
     Function_State state;
+    ModTree_Function* function;
     Analysis_Workload* header_workload;
     Analysis_Workload* body_workload;
     Analysis_Workload* compile_workload;
+};
+
+struct Definition_Progress
+{
+    Analysis_Progress base;
+    Analysis_Workload* definition_workload;
+    Symbol* symbol;
 };
 
 enum class Analysis_Workload_Type
@@ -390,6 +426,7 @@ enum class Analysis_Workload_Type
 struct Analysis_Workload
 {
     Analysis_Workload_Type type;
+    Analysis_Progress* progress;
     Analysis_Item* analysis_item;
     bool is_finished;
 
@@ -405,11 +442,6 @@ struct Analysis_Workload
 
     // Payload
     struct {
-        ModTree_Function* function_header;
-        Type_Signature* struct_analysis_type;
-        struct {
-            ModTree_Function* function;
-        } function_body;
         struct {
             Dynamic_Array<ModTree_Function*> functions;
         } cluster_compile;
@@ -417,14 +449,6 @@ struct Analysis_Workload
             Dynamic_Array<Type_Signature*> struct_types;
             Dynamic_Array<Type_Signature*> unfinished_array_types;
         } struct_reachable;
-        struct {
-            ModTree_Function* bake_function;
-            Analysis_Workload* execute_workload;
-        } bake_analysis;
-        struct {
-            ModTree_Function* bake_function;
-            Comptime_Result result;
-        } bake_execute;
     } options;
 };
 
@@ -449,14 +473,17 @@ struct Workload_Executer
     bool progress_was_made;
 
     Hashtable<Workload_Pair, Dependency_Information> workload_dependencies;
-    Hashtable<Analysis_Item*, Analysis_Workload*> item_to_workload_mapping;
-    Hashtable<Type_Signature*, Struct_Progress> progress_structs;
-    Hashtable<ModTree_Function*, Function_Progress> progress_functions;
-    Hashtable<Symbol*, Analysis_Workload*> progress_definitions;
+    Hashtable<Analysis_Item*, Analysis_Progress*> progress_items;
+    Hashtable<Type_Signature*, Struct_Progress*> progress_structs;
+    Hashtable<ModTree_Function*, Function_Progress*> progress_functions;
+    Hashtable<Symbol*, Definition_Progress*> progress_definitions;
+
+    // Allocations
+    Dynamic_Array<Analysis_Progress*> allocated_progresses;
 };
 
 void workload_executer_resolve();
-Analysis_Workload* workload_executer_add_workload_from_item(Analysis_Item* item);
+void workload_executer_add_analysis_items(Dependency_Analyser* dependency_analyser);
 
 
 
@@ -481,7 +508,7 @@ struct Semantic_Analyser
 
     // Temporary stuff needed for analysis
     Compiler* compiler;
-    Workload_Executer workload_executer;
+    Workload_Executer* workload_executer;
     Analysis_Workload* current_workload;
     ModTree_Function* current_function;
     bool statement_reachable;
@@ -505,8 +532,6 @@ Semantic_Analyser* semantic_analyser_initialize();
 void semantic_analyser_destroy();
 void semantic_analyser_reset(Compiler* compiler);
 void semantic_analyser_finish();
-
-void hardcoded_function_type_append_to_string(String* string, Hardcoded_Function_Type hardcoded);
 
 
 
@@ -718,13 +743,13 @@ struct Semantic_Error
 {
     Semantic_Error_Type type;
     AST::Base* error_node;
+    AST::Section section;
     Dynamic_Array<Error_Information> information;
 };
 
 struct Token_Range;
-void semantic_error_append_to_string(Semantic_Error e, String* string);
-void semantic_error_get_error_location( Semantic_Error error, Dynamic_Array<Token_Range>* locations);
 void semantic_analyser_log_error(Semantic_Error_Type type, AST::Base* node);
 void semantic_analyser_add_error_info(Error_Information info);
 void semantic_analyser_set_error_flag(bool error_due_to_unknown);
-Error_Information error_information_make_empty(Error_Information_Type type);
+void semantic_error_append_to_string(Semantic_Error e, String* string);
+AST::Section semantic_error_get_section(Semantic_Error e);

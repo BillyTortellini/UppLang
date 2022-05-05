@@ -20,8 +20,11 @@ struct C_Importer;
 struct IR_Generator;
 struct Type_Signature;
 struct Dependency_Analyser;
-
-
+namespace AST
+{
+    struct Base;
+    struct Module;
+}
 
 struct Upp_Constant_Reference
 {
@@ -107,18 +110,13 @@ struct Code_Origin
 {
     Code_Origin_Type type;
     String* id_filename; // May be null, otherwise pointer to string in identifier_pool
-    AST_Node* load_node;
+    AST::Base* load_node;
 };
 
 struct Code_Source
 {
     Code_Origin origin;
-    String source_code;
-    // Lexer result
-    Dynamic_Array<Token> tokens;
-    Dynamic_Array<Token> tokens_with_decoration;
-    // Parser result
-    AST_Node* root_node;
+    AST::Module* source;
 };
 
 enum class Timing_Task
@@ -151,7 +149,7 @@ struct Compiler
     Lexer* lexer;
     AST_Parser* parser;
     Dependency_Analyser* rc_analyser;
-    Semantic_Analyser* dependency_analyser;
+    Semantic_Analyser* semantic_analyser;
     IR_Generator* ir_generator;
     Bytecode_Generator* bytecode_generator;
     Bytecode_Interpreter* bytecode_interpreter;
@@ -176,15 +174,13 @@ struct Compiler
 Compiler compiler_create(Timer* timer);
 void compiler_destroy(Compiler* compiler);
 
-void compiler_compile(Compiler* compiler, String source_code, bool generate_code);
+void compiler_compile(Compiler* compiler, AST::Module* source_code, bool generate_code);
 Exit_Code compiler_execute(Compiler* compiler);
-void compiler_add_source_code(Compiler* compiler, String source_code, Code_Origin origin); // Takes ownership of source_code
+void compiler_add_source_code(Compiler* compiler, AST::Module* source_code, Code_Origin origin); // Takes ownership of source_code
 bool compiler_errors_occured(Compiler* compiler);
-
 void compiler_switch_timing_task(Compiler* compiler, Timing_Task task);
+void compiler_run_testcases(Timer* timer);
 
 Text_Slice token_range_to_text_slice(Token_Range range, Compiler* compiler);
 void exit_code_append_to_string(String* string, Exit_Code code);
 void hardcoded_function_type_append_to_string(String* string, Hardcoded_Function_Type hardcoded);
-Code_Source* compiler_ast_node_to_code_source(Compiler* compiler, AST_Node* node);
-void compiler_run_testcases(Timer* timer);

@@ -28,6 +28,7 @@ namespace AST
     struct Code_Block;
     struct Symbol_Read;
     struct Definition;
+    struct Module;
 }
 
 namespace Dependency_Analysis

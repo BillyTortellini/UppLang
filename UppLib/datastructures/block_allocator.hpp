@@ -86,6 +86,10 @@ T* block_allocator_allocate(Block_Allocator<T>* allocator)
             prev = &new_memory[i];
         }
     }
+    if (curr->next == 0) {
+        panic("Doesnt happen");
+        return 0;
+    }
 
     // Remove block
     curr->next->prev = curr->prev;

@@ -122,6 +122,7 @@ namespace AST
         Base base;
         Symbol_Table* symbol_table;
         Dynamic_Array<Statement*> statements;
+        String* block_id; // Empty string if no id is attached
     };
 
     enum class Structure_Type {
@@ -297,6 +298,17 @@ namespace AST
             Optional<Expression*> return_value;
             Expression* delete_expr;
         } options;
+    };
+
+    enum class Section
+    {
+        WHOLE,             // Every character, including child text
+        WHOLE_NO_CHILDREN, // Every character without child text
+        IDENTIFIER,        // Highlight Identifier if the node has any
+        KEYWORD,           // Highlight keyword if the node contains one
+        ENCLOSURE,         // Highlight enclosures, e.g. (), {}, []
+        NONE,              // Not quite sure if this is usefull at all
+        END_CHARACTER,     // To display that something is missing
     };
 
     void base_destroy(Base* node);

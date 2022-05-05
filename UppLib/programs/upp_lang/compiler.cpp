@@ -62,6 +62,7 @@ Token_Range token_range_make(int start_index, int end_index)
 
 Text_Slice token_range_to_text_slice(Token_Range range, Compiler* compiler)
 {
+    /*
     Code_Source* source = compiler->main_source;
     if (source->tokens.size == 0) return text_slice_make(text_position_make(0, 0), text_position_make(0, 0));
 
@@ -83,10 +84,14 @@ Text_Slice token_range_to_text_slice(Token_Range range, Compiler* compiler)
         );
     }
 
+
     return text_slice_make(
         source->tokens[range.start_index].position.start,
         source->tokens[range.end_index - 1].position.end
     );
+    */
+
+    return text_slice_make(text_position_make(0, 0), text_position_make(0, 0));
 }
 
 bool exit_code_is_valid(int value)
@@ -556,26 +561,18 @@ void identifier_pool_print(Identifier_Pool* pool)
     logg("%s", msg.characters);
 }
 
-Code_Source* code_source_create(Code_Origin origin, String source_code)
+
+
+Code_Source* code_source_create(Code_Origin origin, AST::Module* source)
 {
     Code_Source* result = new Code_Source;
     result->origin = origin;
-    result->source_code = source_code;
-    result->tokens.data = 0;
-    result->tokens_with_decoration.data = 0;
-    result->root_node = 0;
+    result->source = source;
     return result;
 }
 
 void code_source_destroy(Code_Source* source)
 {
-    string_destroy(&source->source_code);
-    if (source->tokens.data != 0) {
-        dynamic_array_destroy(&source->tokens);
-    }
-    if (source->tokens_with_decoration.data != 0) {
-        dynamic_array_destroy(&source->tokens);
-    }
     delete source;
 }
 
@@ -598,7 +595,7 @@ Compiler compiler_create(Timer* timer)
     result.parser = new AST_Parser;
     *result.parser = ast_parser_create();
     result.rc_analyser = dependency_analyser_initialize();
-    result.dependency_analyser = semantic_analyser_create();
+    result.semantic_analyser = semantic_analyser_initialize();
     result.ir_generator = new IR_Generator;
     *result.ir_generator = ir_generator_create();
     result.bytecode_generator = new Bytecode_Generator;
@@ -633,7 +630,7 @@ void compiler_destroy(Compiler* compiler)
     ast_parser_destroy(compiler->parser);
     delete compiler->parser;
     dependency_analyser_destroy();
-    semantic_analyser_destroy(compiler->dependency_analyser);
+    semantic_analyser_destroy();
     ir_generator_destroy(compiler->ir_generator);
     delete compiler->ir_generator;
     bytecode_generator_destroy(compiler->bytecode_generator);
@@ -694,11 +691,11 @@ void compiler_switch_timing_task(Compiler* compiler, Timing_Task task)
 }
 
 bool compiler_errors_occured(Compiler* compiler) {
-    return !(compiler->parser->errors.size == 0 && compiler->dependency_analyser->errors.size == 0 &&
+    return !(compiler->parser->errors.size == 0 && compiler->semantic_analyser->errors.size == 0 &&
         compiler->rc_analyser->errors.size == 0);
 }
 
-void compiler_compile(Compiler* compiler, String source_code, bool generate_code)
+void compiler_compile(Compiler* compiler, AST::Module* source_code, bool generate_code)
 {
     logg("\n\n\n   COMPILING\n---------------\n");
     double time_compile_start = timer_current_time_in_seconds(compiler->timer);
@@ -734,7 +731,7 @@ void compiler_compile(Compiler* compiler, String source_code, bool generate_code
         dependency_analyser_reset(compiler);
         type_system_add_primitives(&compiler->type_system, &compiler->identifier_pool, &compiler->rc_analyser->predefined_symbols);
         ast_parser_reset(compiler->parser, &compiler->identifier_pool);
-        semantic_analyser_reset(compiler->dependency_analyser, compiler);
+        semantic_analyser_reset(compiler);
         ir_generator_reset(compiler->ir_generator, compiler);
         bytecode_generator_reset(compiler->bytecode_generator, compiler);
         bytecode_interpreter_reset(compiler->bytecode_interpreter, compiler);
@@ -747,8 +744,8 @@ void compiler_compile(Compiler* compiler, String source_code, bool generate_code
 
     compiler_switch_timing_task(compiler, Timing_Task::ANALYSIS);
     if (do_analysis) {
-        workload_executer_resolve(&compiler->dependency_analyser->workload_executer);
-        semantic_analyser_finish(compiler->dependency_analyser);
+        workload_executer_resolve();
+        semantic_analyser_finish();
     }
 
     // Check for errors
@@ -883,7 +880,7 @@ Exit_Code compiler_execute(Compiler* compiler)
     return Exit_Code::COMPILATION_FAILED;
 }
 
-void compiler_add_source_code(Compiler* compiler, String source_code, Code_Origin origin)
+void compiler_add_source_code(Compiler* compiler, AST::Module* source_code, Code_Origin origin)
 {
     bool do_lexing = enable_lexing;
     bool do_parsing = do_lexing && enable_parsing;
@@ -893,11 +890,31 @@ void compiler_add_source_code(Compiler* compiler, String source_code, Code_Origi
     SCOPE_EXIT(compiler_switch_timing_task(compiler, before));
 
     Code_Source* code_source = code_source_create(origin, source_code);
+    code_source->source = source_code;
     dynamic_array_push_back(&compiler->code_sources, code_source);
     if (origin.type == Code_Origin_Type::MAIN_PROJECT) {
         compiler->main_source = code_source;
     }
 
+    if (do_rc_gen)
+    {
+        compiler_switch_timing_task(compiler, Timing_Task::RC_GEN);
+        dependency_analyser_analyse(code_source->source);
+        compiler_switch_timing_task(compiler, Timing_Task::ANALYSIS);
+        workload_executer_add_analysis_items(compiler->rc_analyser);
+
+        if (output_rc)
+        {
+            String printed_items = string_create_empty(256);
+            SCOPE_EXIT(string_destroy(&printed_items));
+            dependency_analyser_append_to_string(&printed_items);
+            logg("\n");
+            logg("--------RC_ANALYSIS_ITEMS--------:\n");
+            logg("\n%s\n", printed_items.characters);
+        }
+    }
+
+    /*
     if (do_lexing)
     {
         compiler_switch_timing_task(compiler, Timing_Task::LEXING);
@@ -911,11 +928,6 @@ void compiler_add_source_code(Compiler* compiler, String source_code, Code_Origi
             logg("\n--------IDENTIFIERS:--------:\n");
             identifier_pool_print(&compiler->identifier_pool);
         }
-
-        code_source->tokens = compiler->lexer->tokens;
-        code_source->tokens_with_decoration = compiler->lexer->tokens_with_decoration;
-        compiler->lexer->tokens = dynamic_array_create_empty<Token>(code_source->tokens.size);
-        compiler->lexer->tokens_with_decoration = dynamic_array_create_empty<Token>(code_source->tokens_with_decoration.size);
     }
 
     if (do_parsing)
@@ -933,36 +945,13 @@ void compiler_add_source_code(Compiler* compiler, String source_code, Code_Origi
             logg("\n%s\n", printed_ast.characters);
         }
     }
-
-    if (do_rc_gen)
-    {
-        compiler_switch_timing_task(compiler, Timing_Task::RC_GEN);
-        //dependency_analyser_analyse(compiler->rc_analyser, code_source->root_node);
-        compiler_switch_timing_task(compiler, Timing_Task::ANALYSIS);
-        workload_executer_add_workload_from_item(compiler->rc_analyser->root_item);
-
-        if (output_rc)
-        {
-            String printed_items = string_create_empty(256);
-            SCOPE_EXIT(string_destroy(&printed_items));
-            dependency_analyser_append_to_string(&printed_items);
-            logg("\n");
-            logg("--------RC_ANALYSIS_ITEMS--------:\n");
-            logg("\n%s\n", printed_items.characters);
-        }
-    }
+    */
 }
 
-Code_Source* compiler_ast_node_to_code_source(Compiler* compiler, AST_Node* node)
-{
-    for (int i = 1; i < compiler->code_sources.size; i++) {
-        if (node->alloc_index < compiler->code_sources[i]->root_node->alloc_index) {
-            return compiler->code_sources[i - 1];
-        }
-    }
-    return compiler->code_sources[compiler->code_sources.size - 1];
-}
 
+/*
+    Test Cases
+*/
 struct Test_Case
 {
     const char* name;
@@ -1116,7 +1105,7 @@ void compiler_run_testcases(Timer* timer)
             continue;
         }
 
-        compiler_compile(&compiler, code.value, true);
+        //compiler_compile(&compiler, code.value, true);
         Exit_Code exit_code = compiler_execute(&compiler);
         if (exit_code != Exit_Code::SUCCESS && test_case->should_succeed)
         {
@@ -1133,11 +1122,11 @@ void compiler_run_testcases(Timer* timer)
                 {
                     String tmp = string_create_empty(256);
                     SCOPE_EXIT(string_destroy(&tmp));
-                    for (int i = 0; i < compiler.dependency_analyser->errors.size; i++)
+                    for (int i = 0; i < compiler.semantic_analyser->errors.size; i++)
                     {
-                        Semantic_Error e = compiler.dependency_analyser->errors[i];
+                        Semantic_Error e = compiler.semantic_analyser->errors[i];
                         string_append_formated(&result, "    Semantic Error: ");
-                        semantic_error_append_to_string(compiler.dependency_analyser, e, &result);
+                        semantic_error_append_to_string(e, &result);
                         string_append_formated(&result, "\n");
                     }
                 }
@@ -1182,7 +1171,7 @@ void compiler_run_testcases(Timer* timer)
         }
 
         //logg("Cut code:\n-----------------------\n%s", cut_code.characters);
-        compiler_compile(&compiler, cut_code, false);
+        //compiler_compile(&compiler, cut_code, false);
         if (i % (code.size / 10) == 0) {
             logg("Stresstest (Simple): %d/%d characters\n", i, code.size);
         }
@@ -1235,7 +1224,7 @@ void compiler_run_testcases(Timer* timer)
         }
 
         //logg("Cut code:\n-----------------------\n%s", cut_code.characters);
-        compiler_compile(&compiler, cut_code, false);
+        //compiler_compile(&compiler, cut_code, false);
         if (i % (code.size / 10) == 0) {
             logg("Stresstest (Parenthesis): %d/%d characters\n", i, code.size);
         }

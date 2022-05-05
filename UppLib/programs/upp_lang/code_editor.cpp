@@ -50,6 +50,7 @@ void code_editor_destroy(Code_Editor* editor)
 
 Optional<int> code_editor_get_closest_token_to_text_position(Code_Editor* editor, Text_Position pos)
 {
+    /*
     if (editor->compiler->main_source == 0) return optional_make_failure<int>();
     if (editor->compiler->main_source->tokens.size == 0) return optional_make_failure<int>();
     for (int i = 0; i < editor->compiler->main_source->tokens.size; i++)
@@ -59,12 +60,14 @@ Optional<int> code_editor_get_closest_token_to_text_position(Code_Editor* editor
             return optional_make_success(i);
         }
     }
+    */
     return optional_make_failure<int>();
 }
 
 AST_Node* code_editor_get_closest_node_to_text_position(Code_Editor* editor, Text_Position pos)
 {
     Code_Source* source = editor->compiler->main_source;
+    /*
     AST_Node* closest = source->root_node;
     if (source->tokens.size == 0) return closest;
     while (true)
@@ -95,12 +98,14 @@ AST_Node* code_editor_get_closest_node_to_text_position(Code_Editor* editor, Tex
         }
         if (continue_search) break;
     }
-    return closest;
+    */
+    return 0;
 }
 
 Symbol_Table* code_editor_find_symbol_table_of_node(Code_Editor* editor, AST_Node* node)
 {
     Symbol_Table* nearest_table = nullptr;
+    /*
     while (node != nullptr)
     {
         Symbol_Table** table = hashtable_find_element(&editor->compiler->rc_analyser->mapping_ast_to_symbol_table, node);
@@ -109,6 +114,7 @@ Symbol_Table* code_editor_find_symbol_table_of_node(Code_Editor* editor, AST_Nod
         }
         node = node->parent;
     }
+    */
     return 0;
 }
 
@@ -155,6 +161,7 @@ void code_editor_jump_to_definition(Code_Editor* editor)
         return;
     }
 
+    /*
     Code_Source* source = editor->compiler->main_source;
     Symbol_Table* nearest_table = code_editor_find_symbol_table_of_node(editor, closest_node);
     if (nearest_table != 0)
@@ -172,6 +179,7 @@ void code_editor_jump_to_definition(Code_Editor* editor)
             text_editor_clamp_cursor(editor->text_editor);
         }
     }
+    */
 }
 
 vec3 symbol_type_to_color(Symbol_Type type)
@@ -271,6 +279,7 @@ void code_editor_do_ast_syntax_highlighting(Code_Editor* editor, AST_Node* node,
         }
     }
 
+    /*
     Symbol_Table** new_table = hashtable_find_element(&editor->compiler->rc_analyser->mapping_ast_to_symbol_table, node);
     if (new_table != 0) {
         symbol_table = *new_table;
@@ -280,6 +289,7 @@ void code_editor_do_ast_syntax_highlighting(Code_Editor* editor, AST_Node* node,
         code_editor_do_ast_syntax_highlighting(editor, child, symbol_table);
         child = child->neighbor;
     }
+    */
 }
 
 void code_editor_update(Code_Editor* editor, Input* input, double time)
@@ -343,10 +353,10 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
     {
         String source_code = string_create_empty(2048);
         text_append_to_string(&editor->text_editor->text, &source_code);
-        compiler_compile(editor->compiler, source_code, shortcut_build);
+        //compiler_compile(editor->compiler, source_code, shortcut_build);
 
         // Print errors
-        if (editor->compiler->parser->errors.size > 0 || editor->compiler->dependency_analyser->errors.size > 0) {
+        if (editor->compiler->parser->errors.size > 0 || editor->compiler->semantic_analyser->errors.size > 0) {
             logg("\n\nThere were errors while compiling!\n");
         }
         for (int i = 0; i < editor->compiler->parser->errors.size; i++) {
@@ -361,10 +371,10 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
         {
             String tmp = string_create_empty(256);
             SCOPE_EXIT(string_destroy(&tmp));
-            for (int i = 0; i < editor->compiler->dependency_analyser->errors.size; i++)
+            for (int i = 0; i < editor->compiler->semantic_analyser->errors.size; i++)
             {
-                Semantic_Error e = editor->compiler->dependency_analyser->errors[i];
-                semantic_error_append_to_string(editor->compiler->dependency_analyser, e, &tmp);
+                Semantic_Error e = editor->compiler->semantic_analyser->errors[i];
+                semantic_error_append_to_string(e, &tmp);
                 logg("Semantic Error: %s\n", tmp.characters);
                 string_reset(&tmp);
             }
@@ -388,6 +398,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
     // Do syntax highlighting
     Code_Source* source = editor->compiler->main_source;
     {
+        /*
         text_editor_reset_highlights(editor->text_editor);
         for (int i = 0; i < source->tokens_with_decoration.size; i++)
         {
@@ -413,22 +424,26 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
             Compiler_Error e = editor->compiler->parser->errors[i];
             text_editor_add_highlight_from_slice(editor->text_editor, token_range_to_text_slice(e.range, editor->compiler), Syntax_Color::TEXT, Syntax_Color::BG_ERROR);
         }
+        */
     }
 
     double time_syntax_end = timer_current_time_in_seconds(timer);
 
     // Show RC-Errors
     {
+        /*
         for (int i = 0; i < editor->compiler->rc_analyser->errors.size; i++) {
             Symbol_Error e = editor->compiler->rc_analyser->errors[i];
             text_editor_add_highlight_from_slice(
                 editor->text_editor, token_range_to_text_slice(e.error_node->token_range, editor->compiler), Syntax_Color::TEXT, Syntax_Color::BG_ERROR
             );
         }
+        */
     }
 
     // Do context highlighting
     {
+        /*
         bool search_context = true;
         if (source->tokens.size == 0) search_context = false;
         Optional<int> closest_token = code_editor_get_closest_token_to_text_position(editor, editor->text_editor->cursor_position);
@@ -550,6 +565,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
                 }
 
                 // Highlight References
+                */
                 /*
                 for (int i = 0; i < symbol->references.size; i++) {
                     Symbol_Reference* reference = &symbol->references[i];
@@ -560,6 +576,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
                     );
                 }
                 */
+                /*
 
                 // Highlight definition
                 AST_Node* definition_node = symbol->definition_node;
@@ -583,6 +600,7 @@ void code_editor_update(Code_Editor* editor, Input* input, double time)
         if (search_context) {
             editor->show_context_info = false;
         }
+        */
     }
 
     double time_context_end = timer_current_time_in_seconds(timer);

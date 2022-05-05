@@ -1,7 +1,7 @@
 #pragma once
 
 /*
-Plan: Create a new Analyser
+Plan: Rework Analyser
 
 Semantic Analyser v2:
  - Uses Global Variable
@@ -43,8 +43,9 @@ struct Rendering_Core;
 struct Input;
 struct Renderer_2D;
 struct Text_Renderer;
+struct Timer;
 
-void syntax_editor_create(Rendering_Core* rendering_core, Text_Renderer* text_renderer, Renderer_2D* renderer_2D, Input* input);
+void syntax_editor_create(Rendering_Core* rendering_core, Text_Renderer* text_renderer, Renderer_2D* renderer_2D, Input* input, Timer* timer);
 void syntax_editor_destroy();
 void syntax_editor_update();
 void syntax_editor_render();

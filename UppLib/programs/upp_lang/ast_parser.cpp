@@ -2270,7 +2270,7 @@ void ast_parser_reset(AST_Parser* parser, Identifier_Pool* id_pool)
     dynamic_array_reset(&parser->errors);
 }
 
-void ast_parser_parse(AST_Parser* parser, Code_Source* source)
+void ast_parser_parse(AST_Parser* parser, Lexer_Source* source)
 {
     // Reset parser data
     parser->code_source = source;
@@ -2418,8 +2418,8 @@ void ast_node_identifer_or_path_append_to_string(AST_Node* node, String* string)
     }
 }
 
-void ast_node_expression_append_to_string(Code_Source* code_source, AST_Node* node, String* string);
-void ast_node_arguments_append_to_string(Code_Source* code_source, AST_Node* node, String* string)
+void ast_node_expression_append_to_string(Lexer_Source* code_source, AST_Node* node, String* string);
+void ast_node_arguments_append_to_string(Lexer_Source* code_source, AST_Node* node, String* string)
 {
     string_append(string, "(");
     AST_Node* child = node->child_start;
@@ -2433,7 +2433,7 @@ void ast_node_arguments_append_to_string(Code_Source* code_source, AST_Node* nod
     string_append(string, ")");
 }
 
-void ast_node_expression_append_to_string(Code_Source* code_source, AST_Node* node, String* string)
+void ast_node_expression_append_to_string(Lexer_Source* code_source, AST_Node* node, String* string)
 {
     bool bin_op = false;
     bool unary_op = false;
@@ -2584,7 +2584,7 @@ void ast_node_expression_append_to_string(Code_Source* code_source, AST_Node* no
     }
 }
 
-void ast_node_append_to_string(Code_Source* code_source, AST_Node* node, String* string, int indentation_lvl)
+void ast_node_append_to_string(Lexer_Source* code_source, AST_Node* node, String* string, int indentation_lvl)
 {
     for (int j = 0; j < indentation_lvl; j++) {
         string_append_formated(string, "  ");

@@ -8,7 +8,6 @@
 struct Compiler;
 struct Token_Range;
 struct Compiler_Error;
-struct Code_Source;
 struct Identifier_Pool;
 struct Token;
 
@@ -139,12 +138,19 @@ struct AST_Node
     int alloc_index;
 };
 
+struct Lexer_Source
+{
+    Dynamic_Array<Token> tokens;
+    Dynamic_Array<Token> tokens_with_decoration; // Includes comments and whitespaces
+    AST_Node* root_node;
+};
+
 struct AST_Parser
 {
     Stack_Allocator allocator;
     Dynamic_Array<Compiler_Error> errors;
 
-    Code_Source* code_source;
+    Lexer_Source* code_source;
     int index;
 
     String* id_lib;
@@ -170,7 +176,7 @@ AST_Parser ast_parser_create();
 void ast_parser_destroy(AST_Parser* parser);
 
 void ast_parser_reset(AST_Parser* parser, Identifier_Pool* id_pool);
-void ast_parser_parse(AST_Parser* parser, Code_Source* source);
+void ast_parser_parse(AST_Parser* parser, Lexer_Source* source);
 
-void ast_node_append_to_string(Code_Source* code_source, AST_Node* node, String* string, int indentation_lvl);
+void ast_node_append_to_string(Lexer_Source* code_source, AST_Node* node, String* string, int indentation_lvl);
 String ast_node_type_to_string(AST_Node_Type type);

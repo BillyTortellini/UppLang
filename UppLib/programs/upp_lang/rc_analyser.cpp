@@ -266,7 +266,7 @@ void analysis_item_append_to_string(Analysis_Item* item, String* string, int ind
 void dependency_analyser_append_to_string(String* string) {
     auto& items = dependency_analyser.analysis_items;
     for (int i = 0; i < items.size; i++) {
-        analysis_item_append_to_string(&items[i], string, 0);
+        analysis_item_append_to_string(items[i], string, 0);
     }
 }
 

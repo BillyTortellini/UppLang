@@ -11,6 +11,8 @@
 #include "syntax_colors.hpp"
 #include "compiler.hpp"
 #include "ast.hpp"
+#include "rc_analyser.hpp"
+#include "semantic_analyser.hpp"
 
 
 
@@ -258,6 +260,8 @@ struct Syntax_Editor
     Renderer_2D* renderer_2D;
     Text_Renderer* text_renderer;
     vec2 character_size;
+
+    Compiler* compiler;
 };
 
 enum class Input_Command_Type
@@ -1367,12 +1371,13 @@ void check_block_integrity(Syntax_Block* block)
 }
 
 namespace Parser {
-    void parser_execute();
+    AST::Module* parser_execute();
     void initialize();
     void destroy();
     struct Parser;
     extern Parser parser;
 }
+
 void syntax_editor_update()
 {
     auto& input = syntax_editor.input;
@@ -1494,10 +1499,33 @@ void syntax_editor_update()
         }
     }
     check_block_integrity(syntax_editor.root_block);
-    Parser::parser_execute();
+
+    auto module = Parser::parser_execute();
+    if (syntax_editor.input->key_pressed[(int)Key_Code::F5]) 
+    {
+        auto& compiler = syntax_editor.compiler;
+        compiler_compile(compiler, module, false);
+
+        for (int i = 0; i < compiler->rc_analyser->errors.size; i++) {
+            Symbol_Error error = compiler->rc_analyser->errors[i];
+            logg("Symbol error: Redefinition of \"%s\"\n", error.existing_symbol->id->characters);
+        }
+        {
+            String tmp = string_create_empty(256);
+            SCOPE_EXIT(string_destroy(&tmp));
+            for (int i = 0; i < compiler->semantic_analyser->errors.size; i++)
+            {
+                Semantic_Error e = compiler->semantic_analyser->errors[i];
+                semantic_error_append_to_string(e, &tmp);
+                logg("Semantic Error: %s\n", tmp.characters);
+                string_reset(&tmp);
+            }
+        }
+
+    }
 }
 
-void syntax_editor_create(Rendering_Core* rendering_core, Text_Renderer* text_renderer, Renderer_2D* renderer_2D, Input* input)
+void syntax_editor_create(Rendering_Core* rendering_core, Text_Renderer* text_renderer, Renderer_2D* renderer_2D, Input* input, Timer* timer)
 {
     memory_zero(&syntax_editor);
     syntax_editor.cursor_index = 0;
@@ -1505,13 +1533,15 @@ void syntax_editor_create(Rendering_Core* rendering_core, Text_Renderer* text_re
     syntax_editor.root_block = syntax_block_create(0);
     syntax_editor.cursor_line = syntax_editor.root_block->lines[0];
 
-    syntax_editor.identifier_pool = new Identifier_Pool;
-    *syntax_editor.identifier_pool = identifier_pool_create();
 
     syntax_editor.text_renderer = text_renderer;
     syntax_editor.rendering_core = rendering_core;
     syntax_editor.renderer_2D = renderer_2D;
     syntax_editor.input = input;
+
+    syntax_editor.compiler = new Compiler;
+    *syntax_editor.compiler = compiler_create(timer);
+    syntax_editor.identifier_pool = &syntax_editor.compiler->identifier_pool;
 
     // Add mapping infos
     {
@@ -1558,7 +1588,8 @@ void syntax_editor_destroy()
     delete editor.identifier_pool;
     array_destroy(&editor.keyword_mapping);
     hashtable_destroy(&editor.keyword_table);
-
+    compiler_destroy(editor.compiler);
+    delete editor.compiler;
     Parser::destroy();
 }
 
@@ -2165,9 +2196,14 @@ namespace Parser
     // Parsing
     Code_Block* parse_code_block(Base* parent)
     {
-        // Check if we are at the start of a block
         auto result = allocate_base<Code_Block>(parent, Base_Type::CODE_BLOCK);
         result->statements = dynamic_array_create_empty<Statement*>(1);
+        result->block_id = identifier_pool_add(syntax_editor.identifier_pool, string_create_static(""));
+        if (test_token(Syntax_Token_Type::IDENTIFIER), test_operator_offset(Syntax_Operator::DOT, 1)) {
+            result->block_id = get_token(0)->options.identifier;
+            advance_token();
+            advance_token();
+        }
         parse_follow_block(parent, &result->statements, parse_statement, true);
         return result;
     }
@@ -2904,17 +2940,17 @@ namespace Parser
     }
 
     // Parsing
-    void parser_execute()
+    AST::Module* parser_execute()
     {
         reset();
         //parser.root = parse_module(0, syntax_editor.root_block);
         parser.root = allocate_base<Module>(0, Base_Type::MODULE);
         parser.root->definitions = dynamic_array_create_empty<Definition*>(1);
         parse_syntax_block<Definition>(syntax_editor.root_block, &parser.root->base, &parser.root->definitions, parse_definition);
-
         if (syntax_editor.input->key_pressed[(int)Key_Code::RETURN]) {
             parser_print();
         }
+        return parser.root;
     }
 
 #undef CHECKPOINT_EXIT
