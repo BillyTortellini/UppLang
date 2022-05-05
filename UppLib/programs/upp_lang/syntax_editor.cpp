@@ -1370,8 +1370,18 @@ void check_block_integrity(Syntax_Block* block)
 
 }
 
-namespace Parser {
+namespace Parser 
+{
+    struct Parse_Info
+    {
+        AST::Base* allocation;
+        Syntax_Block* block;
+        int line_index;
+        int token_index;
+    };
+
     AST::Module* parser_execute();
+    Parse_Info* base_get_parse_info(AST::Base* base);
     void initialize();
     void destroy();
     struct Parser;
@@ -1501,11 +1511,11 @@ void syntax_editor_update()
     check_block_integrity(syntax_editor.root_block);
 
     auto module = Parser::parser_execute();
-    if (syntax_editor.input->key_pressed[(int)Key_Code::F5]) 
-    {
-        auto& compiler = syntax_editor.compiler;
-        compiler_compile(compiler, module, false);
+    auto& compiler = syntax_editor.compiler;
 
+    if (syntax_editor.input->key_pressed[(int)Key_Code::F5])
+    {
+        compiler_compile(compiler, module, true);
         for (int i = 0; i < compiler->rc_analyser->errors.size; i++) {
             Symbol_Error error = compiler->rc_analyser->errors[i];
             logg("Symbol error: Redefinition of \"%s\"\n", error.existing_symbol->id->characters);
@@ -1521,7 +1531,12 @@ void syntax_editor_update()
                 string_reset(&tmp);
             }
         }
-
+        if (!compiler_errors_occured(compiler)) {
+            compiler_execute(compiler);
+        }
+    }
+    else {
+        compiler_compile(compiler, module, false);
     }
 }
 
@@ -1532,7 +1547,6 @@ void syntax_editor_create(Rendering_Core* rendering_core, Text_Renderer* text_re
     syntax_editor.mode = Editor_Mode::INPUT;
     syntax_editor.root_block = syntax_block_create(0);
     syntax_editor.cursor_line = syntax_editor.root_block->lines[0];
-
 
     syntax_editor.text_renderer = text_renderer;
     syntax_editor.rendering_core = rendering_core;
@@ -1584,8 +1598,6 @@ void syntax_editor_destroy()
 {
     auto& editor = syntax_editor;
     syntax_block_destroy(editor.root_block);
-    identifier_pool_destroy(editor.identifier_pool);
-    delete editor.identifier_pool;
     array_destroy(&editor.keyword_mapping);
     hashtable_destroy(&editor.keyword_table);
     compiler_destroy(editor.compiler);
@@ -1751,6 +1763,17 @@ void syntax_editor_render_line(Syntax_Line* line, int indentation, int line_inde
         }
     }
 
+    // Draw error messages
+    for (int i = 0; i < editor->compiler->semantic_analyser->errors.size; i++) {
+        auto& error = editor->compiler->semantic_analyser->errors[i];
+        auto& node = error.error_node;
+        if (node == 0) continue;
+        auto info = Parser::base_get_parse_info(node);
+        if (line == info->block->lines[info->line_index]) {
+            syntax_editor_draw_underline(line_index, indentation * 3, 4, vec3(1.0f, 0.0f, 0.0f));
+        }
+    }
+
     // Text rendering
     // syntax_editor_draw_string(editor, line.text, Syntax_Color::TEXT, line_index, 0);
     // cursor_pos = cursor;
@@ -1825,7 +1848,7 @@ namespace Parser
     struct Parser
     {
         Parse_Position pos;
-        Dynamic_Array<AST::Base*> allocated;
+        Dynamic_Array<Parse_Info> parse_informations;
         AST::Module* root;
     };
 
@@ -1835,10 +1858,10 @@ namespace Parser
     // Functions
     void parser_rollback(Parse_Position checkpoint)
     {
-        for (int i = checkpoint.allocated_count; i < parser.allocated.size; i++) {
-            AST::base_destroy(parser.allocated[i]);
+        for (int i = checkpoint.allocated_count; i < parser.parse_informations.size; i++) {
+            AST::base_destroy(parser.parse_informations[i].allocation);
         }
-        dynamic_array_rollback_to_size(&parser.allocated, checkpoint.allocated_count);
+        dynamic_array_rollback_to_size(&parser.parse_informations, checkpoint.allocated_count);
         parser.pos = checkpoint;
     }
 
@@ -1856,14 +1879,14 @@ namespace Parser
 
     void initialize()
     {
-        parser.allocated = dynamic_array_create_empty<AST::Base*>(32);
+        parser.parse_informations = dynamic_array_create_empty<Parse_Info>(32);
         reset();
     }
 
     void destroy()
     {
         reset();
-        dynamic_array_destroy(&parser.allocated);
+        dynamic_array_destroy(&parser.parse_informations);
     }
 
     // Allocations
@@ -1875,8 +1898,16 @@ namespace Parser
         Base* base = &result->base;
         base->parent = parent;
         base->type = type;
-        dynamic_array_push_back(&parser.allocated, &result->base);
-        parser.pos.allocated_count = parser.allocated.size;
+        base->allocation_index = parser.parse_informations.size;
+
+        Parse_Info info;
+        info.allocation = base;
+        info.block = parser.pos.block;
+        info.token_index = parser.pos.token_index;
+        info.line_index = parser.pos.line_index;
+        dynamic_array_push_back(&parser.parse_informations, info);
+        parser.pos.allocated_count = parser.parse_informations.size;
+
         return result;
     }
 
@@ -2474,15 +2505,15 @@ namespace Parser
         }
 
         // Bases
-        if (test_token(Syntax_Token_Type::IDENTIFIER)) 
+        if (test_token(Syntax_Token_Type::IDENTIFIER))
         {
             Symbol_Read* final_read = allocate_base<Symbol_Read>(&result->base, Base_Type::SYMBOL_READ);
             Symbol_Read* read = final_read;
             read->path_child.available = false;
             read->name = get_token(0)->options.identifier;
-            while (test_token(Syntax_Token_Type::IDENTIFIER) && 
+            while (test_token(Syntax_Token_Type::IDENTIFIER) &&
                 test_operator_offset(Syntax_Operator::TILDE, 1) &&
-                test_token_offset(Syntax_Token_Type::IDENTIFIER, 2)) 
+                test_token_offset(Syntax_Token_Type::IDENTIFIER, 2))
             {
                 read->path_child = optional_make_success(allocate_base<Symbol_Read>(&read->base, Base_Type::SYMBOL_READ));
                 read->path_child.value->name = get_token(0)->options.identifier;
@@ -2951,6 +2982,10 @@ namespace Parser
             parser_print();
         }
         return parser.root;
+    }
+
+    Parse_Info* base_get_parse_info(AST::Base* base) {
+        return &parser.parse_informations[base->allocation_index];
     }
 
 #undef CHECKPOINT_EXIT

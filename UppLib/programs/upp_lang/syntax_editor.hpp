@@ -1,18 +1,9 @@
 #pragma once
 
 /*
-Plan: Rework Analyser
-
 Semantic Analyser v2:
- - Uses Global Variable
- - Attaches Information to AST
- - Workload Discovery Phase
- - Get rid of Modtree and IR-Code
-
-Parser TODO:
- - Integration/Rewrite of Semantic Analyser
  - Editor Error Display
- - Parser Error reporting
+ - Parser Error reporting + Display
 */
 
 /*

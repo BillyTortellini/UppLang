@@ -79,7 +79,7 @@ Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool only_curr
 
     // Variables/Parameters need special treatment since we have inner definitions that cannot 'see' outer function variables
     Symbol_Type sym_type = (*found)->type;
-    if (dependency != 0 && dependency->item == (*found)->origin_item &&
+    if (dependency != 0 && dependency->item != (*found)->origin_item &&
         (sym_type == Symbol_Type::VARIABLE_UNDEFINED || sym_type == Symbol_Type::VARIABLE || sym_type == Symbol_Type::POLYMORPHIC_PARAMETER))
     {
         Analysis_Item* read_item = dependency->item;
@@ -490,6 +490,7 @@ void dependency_analyser_reset(Compiler* compiler)
     }
     dynamic_array_reset(&analyser.analysis_items);
     dynamic_array_reset(&analyser.item_dependencies);
+    hashtable_reset(&analyser.mapping_ast_to_items);
 
     // Reset allocations
     for (int i = 0; i < dependency_analyser.allocated_symbol_tables.size; i++) {

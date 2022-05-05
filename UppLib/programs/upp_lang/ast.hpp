@@ -73,6 +73,7 @@ namespace AST
     {
         Base_Type type;
         Base* parent;
+        int allocation_index;
     };
 
     struct Symbol_Read

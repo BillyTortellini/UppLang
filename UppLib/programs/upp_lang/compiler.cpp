@@ -42,7 +42,7 @@ bool enable_stresstest = false;
 bool run_testcases_compiled = false;
 
 // Execution
-bool enable_output = true;
+bool enable_output = false;
 bool enable_execution = true;
 bool execute_binary = false;
 
@@ -697,7 +697,9 @@ bool compiler_errors_occured(Compiler* compiler) {
 
 void compiler_compile(Compiler* compiler, AST::Module* source_code, bool generate_code)
 {
-    logg("\n\n\n   COMPILING\n---------------\n");
+    if (enable_output) {
+        //logg("\n\n\n   COMPILING\n---------------\n");
+    }
     double time_compile_start = timer_current_time_in_seconds(compiler->timer);
     compiler->generate_code = generate_code;
     {

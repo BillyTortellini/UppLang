@@ -334,7 +334,7 @@ ModTree_Function* modtree_function_create_poly_instance(ModTree_Function* base_f
     analysis_workload_add_dependency_internal(body_workload, base_progress->body_workload, 0);
     analysis_workload_check_if_runnable(body_workload); // Required so that progress made is set
 
-    Analysis_Workload* compile_workload = workload_executer_add_workload_empty(Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE, 0, to_base(new_progress), false);
+    Analysis_Workload* compile_workload = workload_executer_add_workload_empty(Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE, base_progress->header_workload->analysis_item, to_base(new_progress), false);
     compile_workload->options.cluster_compile.functions = dynamic_array_create_empty<ModTree_Function*>(1);
     dynamic_array_push_back(&compile_workload->options.cluster_compile.functions, instance);
     analysis_workload_add_dependency_internal(compile_workload, body_workload, 0);
@@ -859,6 +859,7 @@ bool modtree_expression_result_is_temporary(ModTree_Expression* expression)
     }
     case ModTree_Expression_Type::ARRAY_INITIALIZER: return true;
     case ModTree_Expression_Type::STRUCT_INITIALIZER: return true;
+    case ModTree_Expression_Type::ERROR_EXPR: return true;
     default: panic("");
     }
 
@@ -1544,7 +1545,7 @@ void workload_executer_resolve()
         }
 
         // Print workloads and dependencies
-        if (true)
+        if (false)
         {
             String tmp = string_create_empty(256);
             SCOPE_EXIT(string_destroy(&tmp));
@@ -1581,7 +1582,7 @@ void workload_executer_resolve()
 
             String tmp = string_create_empty(128);
             analysis_workload_append_to_string(workload, &tmp);
-            logg("Executing workload: %s\n", tmp.characters);
+            //logg("Executing workload: %s\n", tmp.characters);
             string_destroy(&tmp);
 
             analysis_workload_execute(workload);
@@ -1797,6 +1798,7 @@ Analysis_Workload* workload_executer_add_workload_empty(Analysis_Workload_Type t
 {
     auto& executer = workload_executer;
     executer.progress_was_made = true;
+    assert(item != 0, "");
 
     Analysis_Workload* workload = new Analysis_Workload;
     workload->type = type;
@@ -1895,7 +1897,7 @@ void workload_executer_add_analysis_items(Dependency_Analyser* dependency_analys
             auto header_workload = workload_executer_add_workload_empty(Analysis_Workload_Type::FUNCTION_HEADER, item, progress, true);
             auto body_workload = workload_executer_add_workload_empty(Analysis_Workload_Type::FUNCTION_BODY, item->options.function_body_item, progress, true);
             analysis_workload_add_dependency_internal(body_workload, header_workload, 0);
-            auto compile_workload = workload_executer_add_workload_empty(Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE, 0, progress, false);
+            auto compile_workload = workload_executer_add_workload_empty(Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE, item->options.function_body_item, progress, false);
             compile_workload->options.cluster_compile.functions = dynamic_array_create_empty<ModTree_Function*>(1);
             dynamic_array_push_back(&compile_workload->options.cluster_compile.functions, function);
             analysis_workload_add_dependency_internal(compile_workload, body_workload, 0);
@@ -1922,7 +1924,7 @@ void workload_executer_add_analysis_items(Dependency_Analyser* dependency_analys
 
             progress = to_base(analysis_progress_create_struct(struct_type));
             auto workload = workload_executer_add_workload_empty(Analysis_Workload_Type::STRUCT_ANALYSIS, item, progress, true);
-            auto reachable_workload = workload_executer_add_workload_empty(Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE, 0, progress, false);
+            auto reachable_workload = workload_executer_add_workload_empty(Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE, item, progress, false);
             reachable_workload->options.struct_reachable.struct_types = dynamic_array_create_empty<Type_Signature*>(1);
             reachable_workload->options.struct_reachable.unfinished_array_types = dynamic_array_create_empty<Type_Signature*>(1);
             dynamic_array_push_back(&reachable_workload->options.struct_reachable.struct_types, struct_type);
@@ -2041,7 +2043,7 @@ void semantic_analyser_work_through_defers(ModTree_Block* modtree_block, int def
 
 bool analysis_workload_execute(Analysis_Workload* workload)
 {
-    auto analyser = semantic_analyser;
+    auto& analyser = semantic_analyser;
     auto& type_system = analyser.compiler->type_system;
     analyser.current_workload = workload;
     analyser.current_function = 0;
@@ -2344,7 +2346,7 @@ bool analysis_workload_execute(Analysis_Workload* workload)
             Struct_Member member;
             member.id = member_node->name;
             member.offset = 0;
-            member.type = semantic_analyser_analyse_expression_type(member_node->value.value);
+            member.type = semantic_analyser_analyse_expression_type(member_node->type.value);
             assert(!(member.type->size == 0 && member.type->alignment == 0), "Must not happen with Dependency_Type system");
             dynamic_array_push_back(&struct_signature->options.structure.members, member);
         }
@@ -2886,11 +2888,14 @@ void analysis_workload_register_function_call(ModTree_Function* call_to)
 
 Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression* expression_node, Expression_Context context)
 {
-    auto analyser = semantic_analyser;
+    auto& analyser = semantic_analyser;
     Type_System* type_system = &analyser.compiler->type_system;
     bool error_exit = false;
     switch (expression_node->type)
     {
+    case AST::Expression_Type::ERROR_EXPR: {
+        return expression_result_make_error(type_system->unknown_type);
+    }
     case AST::Expression_Type::FUNCTION_CALL:
     {
         // Analyse call expression
@@ -4883,7 +4888,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement_node,
             // Already handled by definition workload
             return Control_Flow::SEQUENTIAL;
         }
-        assert(!(!definition->value.available && !definition->value.available), "");
+        assert(!(!definition->value.available && !definition->type.available), "");
 
         ModTree_Variable* variable;
         Type_Signature* type = 0;
@@ -4964,7 +4969,7 @@ void semantic_analyser_finish()
     auto& type_system = semantic_analyser.compiler->type_system;
     // Check if main is defined
     Symbol* main_symbol = symbol_table_find_symbol(
-        semantic_analyser.compiler->rc_analyser->root_symbol_table, semantic_analyser.id_main, false, 0
+        semantic_analyser.compiler->main_source->source->symbol_table, semantic_analyser.id_main, false, 0
     );
     ModTree_Function* main_function = 0;
     if (main_symbol == 0) {
