@@ -45,6 +45,7 @@
     <ClInclude Include="programs\upp_lang\c_backend.hpp" />
     <ClInclude Include="programs\upp_lang\c_importer.hpp" />
     <ClInclude Include="programs\upp_lang\ir_code.hpp" />
+    <ClInclude Include="programs\upp_lang\parser.hpp" />
     <ClInclude Include="programs\upp_lang\semantic_analyser.hpp" />
     <ClInclude Include="programs\upp_lang\lexer.hpp" />
     <ClInclude Include="programs\upp_lang\rc_analyser.hpp" />
@@ -109,6 +110,7 @@
     <ClCompile Include="programs\upp_lang\c_backend.cpp" />
     <ClCompile Include="programs\upp_lang\c_importer.cpp" />
     <ClCompile Include="programs\upp_lang\ir_code.cpp" />
+    <ClCompile Include="programs\upp_lang\parser.cpp" />
     <ClCompile Include="programs\upp_lang\semantic_analyser.cpp" />
     <ClCompile Include="programs\upp_lang\lexer.cpp" />
     <ClCompile Include="programs\upp_lang\rc_analyser.cpp" />

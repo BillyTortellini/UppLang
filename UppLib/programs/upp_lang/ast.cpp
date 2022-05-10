@@ -253,8 +253,8 @@ namespace AST
                 break;
             }
             case Expression_Type::ENUM_TYPE: {
-                auto& members = expr->options.enum_members;
-                FILL_ARRAY(members);
+                //auto& members = expr->options.enum_members;
+                //FILL_ARRAY(members);
                 break;
             }
             default: panic("");
@@ -323,6 +323,7 @@ namespace AST
             }
             case Statement_Type::SWITCH_STATEMENT: {
                 auto cases = stat->options.switch_statement.cases;
+                FILL(stat->options.switch_statement.condition);
                 for (int i = 0; i < cases.size; i++) {
                     auto& cas = cases[i];
                     FILL_OPTIONAL(cas.value);
@@ -493,8 +494,8 @@ namespace AST
                 break;
             }
             case Expression_Type::ENUM_TYPE: {
-                auto& members = expr->options.enum_members;
-                FILL_ARRAY(members);
+                //auto& members = expr->options.enum_members;
+                //FILL_ARRAY(members);
                 break;
             }
             default: panic("");
@@ -562,7 +563,8 @@ namespace AST
                 break;
             }
             case Statement_Type::SWITCH_STATEMENT: {
-                auto cases = stat->options.switch_statement.cases;
+                auto& cases = stat->options.switch_statement.cases;
+                FILL(stat->options.switch_statement.condition);
                 for (int i = 0; i < cases.size; i++) {
                     auto& cas = cases[i];
                     FILL_OPTIONAL(cas.value);
@@ -664,5 +666,35 @@ namespace AST
         }
         default:panic("");
         }
+    }
+
+    void base_append_to_string_recursive(Base* base, String* str, int indentation)
+    {
+        base_append_to_string(base, str);
+        Dynamic_Array<Base*> children = dynamic_array_create_empty<Base*>(1);
+        SCOPE_EXIT(dynamic_array_destroy(&children));
+        base_enumerate_children(base, &children);
+
+        if (children.size == 1) {
+            string_append_formated(str, ": ");
+            base_append_to_string_recursive(children[0], str, indentation + 1);
+        }
+        else {
+            string_append_formated(str, "\n");
+            for (int i = 0; i < children.size; i++) {
+                for (int i = 0; i < indentation + 1; i++) {
+                    string_append_formated(str, "  ");
+                }
+                base_append_to_string_recursive(children[i], str, indentation + 1);
+            }
+        }
+    }
+
+    void base_print(Base* node)
+    {
+        String text = string_create_empty(1024);
+        SCOPE_EXIT(string_destroy(&text));
+        base_append_to_string_recursive(node, &text, 0);
+        logg("AST:\n------------------------\n%s\n", text.characters);
     }
 }

@@ -16,6 +16,7 @@
 #include "compiler_misc.hpp"
 #include "ast.hpp"
 #include "ir_code.hpp"
+#include "parser.hpp"
 
 
 struct Expression_Result;
@@ -1896,6 +1897,9 @@ void workload_executer_add_analysis_items(Dependency_Analyser* dependency_analys
             progress = to_base(analysis_progress_create_function(function));
             auto header_workload = workload_executer_add_workload_empty(Analysis_Workload_Type::FUNCTION_HEADER, item, progress, true);
             auto body_workload = workload_executer_add_workload_empty(Analysis_Workload_Type::FUNCTION_BODY, item->options.function_body_item, progress, true);
+            bool body_item_registered = hashtable_insert_element(&workload_executer.progress_items, item->options.function_body_item, progress);
+            assert(body_item_registered, "This may need to change with templates");
+
             analysis_workload_add_dependency_internal(body_workload, header_workload, 0);
             auto compile_workload = workload_executer_add_workload_empty(Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE, item->options.function_body_item, progress, false);
             compile_workload->options.cluster_compile.functions = dynamic_array_create_empty<ModTree_Function*>(1);
@@ -1940,8 +1944,11 @@ void workload_executer_add_analysis_items(Dependency_Analyser* dependency_analys
         default: panic("");
         }
 
-        bool worked = hashtable_insert_element(&workload_executer.progress_items, item, progress);
-        assert(worked, "This may need to change with templates");
+        if (progress != 0) {
+            assert(item != 0, "Hey");
+            bool worked = hashtable_insert_element(&workload_executer.progress_items, item, progress);
+            assert(worked, "This may need to change with templates");
+        }
     }
 
     for (int i = 0; i < dependency_analyser->item_dependencies.size; i++)
@@ -2332,7 +2339,7 @@ bool analysis_workload_execute(Analysis_Workload* workload)
         Struct_Progress* progress = (Struct_Progress*)workload->progress;
         Type_Signature* struct_signature = progress->struct_type;
 
-        for (int i = 0; i < struct_node.members.size; i++) 
+        for (int i = 0; i < struct_node.members.size; i++)
         {
             auto member_node = struct_node.members[i];
             if (member_node->value.available) {
@@ -2448,7 +2455,7 @@ bool analysis_workload_execute(Analysis_Workload* workload)
             IR_Data_Access* global_access = hashtable_find_element(&compiler->ir_generator->variable_mapping, analyser.global_type_informations);
             assert(global_access != 0 && global_access->type == IR_Data_Access_Type::GLOBAL_DATA, "");
             Upp_Slice<Internal_Type_Information>* info_slice = (Upp_Slice<Internal_Type_Information>*)
-                &compiler->bytecode_interpreter->globals.data[
+                & compiler->bytecode_interpreter->globals.data[
                     compiler->bytecode_generator->global_data_offsets[global_access->index]
                 ];
             info_slice->size = compiler->type_system.internal_type_infos.size;
@@ -3108,7 +3115,11 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
     */
     case AST::Expression_Type::SYMBOL_READ:
     {
-        Symbol* symbol = expression_node->options.symbol_read->resolved_symbol;
+        auto read = expression_node->options.symbol_read;
+        while (read->path_child.available) {
+            read = read->path_child.value;
+        }
+        Symbol* symbol = read->resolved_symbol;
         assert(symbol != 0, "Must be given by dependency analysis");
         while (symbol->type == Symbol_Type::SYMBOL_ALIAS) {
             symbol = symbol->options.alias;
@@ -3200,9 +3211,9 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
         Expression_Context operand_context = expression_context_make_unknown();
         switch (cast->type)
         {
-        case AST::Cast_Type::TYPE_TO_TYPE: 
+        case AST::Cast_Type::TYPE_TO_TYPE:
         {
-            if (destination_type == 0) 
+            if (destination_type == 0)
             {
                 if (context.type != Expression_Context_Type::SPECIFIC_TYPE) {
                     semantic_analyser_log_error(Semantic_Error_Type::AUTO_CAST_KNOWN_CONTEXT_IS_REQUIRED, expression_node);
@@ -3212,7 +3223,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
             }
             break;
         }
-        case AST::Cast_Type::RAW_TO_PTR: 
+        case AST::Cast_Type::RAW_TO_PTR:
         {
             if (destination_type == 0) {
                 semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_INVALID_CAST, expression_node);
@@ -3227,7 +3238,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
             }
             break;
         }
-        case AST::Cast_Type::PTR_TO_RAW: 
+        case AST::Cast_Type::PTR_TO_RAW:
         {
             if (destination_type != 0) {
                 semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_INVALID_CAST, expression_node);
@@ -3299,13 +3310,13 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
             literal_type = type_system->i32_type;
             value_ptr = &read.options.number;
             break;
-        /*
-        cast NULLPTR:
-        
-            literal_type = type_system->void_ptr_type;
-            value_ptr = &null_pointer;
-            break
-        */
+            /*
+            cast NULLPTR:
+
+                literal_type = type_system->void_ptr_type;
+                value_ptr = &null_pointer;
+                break
+            */
         case AST::Literal_Type::STRING: {
             String* string = read.options.string;
             string_buffer.character_buffer_data = string->characters;
@@ -3330,14 +3341,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
         for (int i = 0; i < members.size; i++)
         {
             auto& member_node = members[i];
-            if (!member_node->is_comptime || !member_node->value.available) {
-                semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, to_base(member_node));
-                continue;
-            }
-            if (member_node->type.available) {
-                semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, member_node->type.value);
-                continue;
-            }
+            /*
             if (member_node->value.available)
             {
                 ModTree_Expression* expression = semantic_analyser_analyse_expression_value(
@@ -3357,10 +3361,11 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
                 default: panic("");
                 }
             }
+            */
 
             Enum_Member member;
-            member.definition_node = member_node;
-            member.id = member_node->name;
+            //member.definition_node = &expression_node->base;
+            member.id = member_node;
             member.value = next_member_value;
             next_member_value++;
             dynamic_array_push_back(&enum_type->options.enum_type.members, member);
@@ -3376,11 +3381,11 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
             {
                 Enum_Member* other = &enum_type->options.enum_type.members[j];
                 if (other->id == member->id) {
-                    semantic_analyser_log_error(Semantic_Error_Type::ENUM_MEMBER_NAME_MUST_BE_UNIQUE, to_base(other->definition_node));
+                    semantic_analyser_log_error(Semantic_Error_Type::ENUM_MEMBER_NAME_MUST_BE_UNIQUE, to_base(expression_node));
                     semantic_analyser_add_error_info(error_information_make_id(other->id));
                 }
                 if (other->value == member->value) {
-                    semantic_analyser_log_error(Semantic_Error_Type::ENUM_VALUE_MUST_BE_UNIQUE, to_base(other->definition_node));
+                    semantic_analyser_log_error(Semantic_Error_Type::ENUM_VALUE_MUST_BE_UNIQUE, to_base(expression_node));
                     semantic_analyser_add_error_info(error_information_make_id(other->id));
                 }
             }
@@ -3391,7 +3396,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
     case AST::Expression_Type::MODULE: {
         return expression_result_make_module(expression_node->options.module->symbol_table);
     }
-    case AST::Expression_Type::FUNCTION: 
+    case AST::Expression_Type::FUNCTION:
     case AST::Expression_Type::STRUCTURE_TYPE:
     case AST::Expression_Type::BAKE_BLOCK:
     case AST::Expression_Type::BAKE_EXPR:
@@ -3401,18 +3406,18 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
             Analysis_Item** item_opt = hashtable_find_element(&analyser.compiler->rc_analyser->mapping_ast_to_items, to_base(expression_node));
             assert(item_opt != 0, "");
             Analysis_Progress** progress_opt = hashtable_find_element(&workload_executer.progress_items, *item_opt);
-            assert(progress_opt != 0 && (*progress_opt)->type == Analysis_Progress_Type::FUNCTION, "");
+            assert(progress_opt != 0, "");
             progress = *progress_opt;
         }
         switch (progress->type)
         {
-        case Analysis_Progress_Type::FUNCTION: 
+        case Analysis_Progress_Type::FUNCTION:
         {
             auto func = (Function_Progress*)progress;
             analysis_workload_register_function_call(func->function);
             return expression_result_make_function(func->function);
         }
-        case Analysis_Progress_Type::STRUCTURE: 
+        case Analysis_Progress_Type::STRUCTURE:
         {
             auto structure = (Struct_Progress*)progress;
             Type_Signature* struct_type = structure->struct_type;
@@ -3452,7 +3457,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
     {
         auto& sig = expression_node->options.function_signature;
         Dynamic_Array<Type_Signature*> parameters = dynamic_array_create_empty<Type_Signature*>(math_maximum(0, sig.parameters.size));
-        for (int i = 0; i < sig.parameters.size; i++) 
+        for (int i = 0; i < sig.parameters.size; i++)
         {
             auto& param = sig.parameters[i];
             if (param->is_comptime) {
@@ -3929,7 +3934,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
         switch (unary_node.type)
         {
         case AST::Unop::NEGATE:
-        case AST::Unop::NOT: 
+        case AST::Unop::NOT:
         {
             bool is_negate = unary_node.type == AST::Unop::NEGATE;
             ModTree_Expression* operand = semantic_analyser_analyse_expression_value(
@@ -3953,7 +3958,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
             result->options.unary_operation.operand = operand;
             return expression_result_make_value(result);
         }
-        case AST::Unop::POINTER: 
+        case AST::Unop::POINTER:
         {
             Expression_Result operand_result = semantic_analyser_analyse_expression_any(unary_node.expr, expression_context_make_unknown());
             switch (operand_result.type)
@@ -4479,7 +4484,7 @@ void semantic_analyser_analyse_extern_definitions(Symbol_Table* parent_table, AS
     */
 }
 
-bool modtree_block_is_while(ModTree_Block* block) 
+bool modtree_block_is_while(ModTree_Block* block)
 {
     if (block->code_block != 0 && block->code_block->base.parent->type == AST::Base_Type::STATEMENT) {
         auto parent = (AST::Statement*) block->code_block->base.parent;
@@ -4488,7 +4493,7 @@ bool modtree_block_is_while(ModTree_Block* block)
     return false;
 }
 
-bool modtree_block_is_defer(ModTree_Block* block) 
+bool modtree_block_is_defer(ModTree_Block* block)
 {
     if (block->code_block != 0 && block->code_block->base.parent->type == AST::Base_Type::STATEMENT) {
         auto parent = (AST::Statement*) block->code_block->base.parent;
@@ -4548,11 +4553,11 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement_node,
         if (inside_defer()) {
             semantic_analyser_log_error(Semantic_Error_Type::OTHERS_DEFER_NO_RETURNS_ALLOWED, statement_node);
         }
-        else 
+        else
         {
             // INFO: Inside Bakes returns only work through the defers that are inside the bake
             int defer_start_index = 0;
-            for (int i = semantic_analyser.block_stack.size - 1; i >= 0; i--) 
+            for (int i = semantic_analyser.block_stack.size - 1; i >= 0; i--)
             {
                 if (modtree_block_is_defer(semantic_analyser.block_stack[i])) {
                     defer_start_index = semantic_analyser.block_stack[i]->defer_start_index;
@@ -4574,7 +4579,8 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement_node,
         ModTree_Block* found_block = 0;
         for (int i = semantic_analyser.block_stack.size - 1; i > 0; i--) // INFO: Block 0 is always the function body, which cannot be a target of break/continue
         {
-            if (semantic_analyser.block_stack[i]->code_block->block_id == search_id) {
+            auto id = semantic_analyser.block_stack[i]->code_block->block_id;
+            if (id.available && id.value == search_id) {
                 found_block = semantic_analyser.block_stack[i];
                 break;
             }
@@ -5298,10 +5304,10 @@ void semantic_analyser_destroy()
 /*
 ERRORS + Import
 */
-void semantic_error_get_infos_internal(Semantic_Error e, const char** result_str, AST::Section* result_section)
+void semantic_error_get_infos_internal(Semantic_Error e, const char** result_str, Parser::Section* result_section)
 {
     const char* string = "";
-    AST::Section section;
+    Parser::Section section;
 #define HANDLE_CASE(type, msg, sec) \
     case type: \
         string = msg;\
@@ -5310,122 +5316,122 @@ void semantic_error_get_infos_internal(Semantic_Error e, const char** result_str
 
     switch (e.type)
     {
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE, "Invalid Type", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::EXPRESSION_CONTAINS_INVALID_TYPE_HANDLE, "Invalid Type Handle!", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::TYPE_NOT_KNOWN_AT_COMPILE_TIME, "Type not known at compile time", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::EXPRESSION_IS_NOT_A_TYPE, "Expression used as a type", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_EXPRESSION_TYPE, "Expression type not valid in this context", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::EXPECTED_CALLABLE, "Expected: Callable", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::EXPECTED_TYPE, "Expected: Type", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::EXPECTED_VALUE, "Expected: Value", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::TEMPLATE_ARGUMENTS_INVALID_COUNT, "Invalid Template Argument count", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::TEMPLATE_ARGUMENTS_NOT_ON_TEMPLATE, "Template arguments invalid", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::OTHERS_MEMBER_ACCESS_INVALID_ON_FUNCTION, "Functions do not have any members to access", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::OTHERS_TYPE_MEMBER_ACCESS_MUST_BE_ENUM, "Member access on types requires enums", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::TEMPLATE_ARGUMENTS_REQUIRED, "Symbol is templated", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::SWITCH_REQUIRES_ENUM, "Switch requires enum", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::SWITCH_CASES_MUST_BE_COMPTIME_KNOWN, "Switch case must be compile time known", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::SWITCH_MUST_HANDLE_ALL_CASES, "Switch does not handle all cases", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::SWITCH_MUST_NOT_BE_EMPTY, "Switch must not be empty", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::SWITCH_ONLY_ONE_DEFAULT_ALLOWED, "Switch only one default case allowed", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::SWITCH_CASE_MUST_BE_UNIQUE, "Switch case must be unique", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::SWITCH_CASE_TYPE_INVALID, "Switch case type must be enum value", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::EXTERN_HEADER_DOES_NOT_CONTAIN_SYMBOL, "Extern header does not contain this symbol", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::EXTERN_HEADER_PARSING_FAILED, "Parsing extern header failed", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_VOID_USAGE, "Invalid use of void type", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_FUNCTION_CALL, "Expected function pointer type on function call", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_FUNCTION_IMPORT_EXPECTED_FUNCTION_POINTER, "Expected function type on function import", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_ARGUMENT, "Argument type does not match function parameter type", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::ARRAY_INITIALIZER_REQUIRES_TYPE_SYMBOL, "Array initializer requires type", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::STRUCT_INITIALIZER_REQUIRES_TYPE_SYMBOL, "Struct initilizer requires type", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::STRUCT_INITIALIZER_MEMBERS_MISSING, "Struct member/s missing", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::STRUCT_INITIALIZER_CANNOT_SET_UNION_TAG, "Cannot set union tag in initializer", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::STRUCT_INITIALIZER_MEMBER_INITIALIZED_TWICE, "Member already initialized", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::STRUCT_INITIALIZER_TYPE_MUST_BE_STRUCT, "Initializer type must either be struct/union/enum", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::STRUCT_INITIALIZER_MEMBER_DOES_NOT_EXIST, "Struct does not contain member", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::STRUCT_INITIALIZER_INVALID_MEMBER_TYPE, "Member type does not match", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::STRUCT_INITIALIZER_CAN_ONLY_SET_ONE_UNION_MEMBER, "Only one union member may be active at one time", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::AUTO_STRUCT_INITIALIZER_COULD_NOT_DETERMINE_TYPE, "Auto struct type could not be determined by context", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::ARRAY_AUTO_INITIALIZER_COULD_NOT_DETERMINE_TYPE, "Could not determine array type by context", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::ARRAY_INITIALIZER_INVALID_TYPE, "Array initializer member invalid type", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_ARRAY_ACCESS, "Array access only works on array types", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_ARRAY_ACCESS_INDEX, "Array access index must be of type i32", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_ARRAY_ALLOCATION_SIZE, "Array allocation size must be of type i32", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_ARRAY_SIZE, "Array size must be of type i32", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_ON_MEMBER_ACCESS, "Member access only valid on struct/array or pointer to struct/array types", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_IF_CONDITION, "If condition must be boolean", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_WHILE_CONDITION, "While condition must be boolean", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_UNARY_OPERATOR, "Unary operator type invalid", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_BINARY_OPERATOR, "Binary operator types invalid", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_ASSIGNMENT, "Invalid assignment type", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_RETURN, "Invalid return type", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_DELETE, "Only pointer or unsized array types can be deleted", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::SYMBOL_EXPECTED_TYPE_ON_TYPE_IDENTIFIER, "Expected Type symbol", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::SYMBOL_MODULE_INVALID, "Expected Variable or Function symbol for Variable read", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::SYMBOL_EXPECTED_MODUL_IN_IDENTIFIER_PATH, "Expected module in indentifier path", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::SYMBOL_TABLE_UNRESOLVED_SYMBOL, "Could not resolve symbol", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::SYMBOL_TABLE_SYMBOL_ALREADY_DEFINED, "Symbol already defined", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::SYMBOL_TABLE_MODULE_ALREADY_DEFINED, "Module already defined", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_ENUM_VALUE, "Enum value must be of i32 type!", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_EXPECTED_POINTER, "Invalid type", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::BAKE_FUNCTION_DID_NOT_SUCCEED, "Bake error", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::AUTO_MEMBER_MUST_BE_IN_ENUM_CONTEXT, "Auto Member must be in used in a Context where an enum is required", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::AUTO_MEMBER_KNOWN_CONTEXT_IS_REQUIRED, "Auto Member must be used inside known Context", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::AUTO_CAST_KNOWN_CONTEXT_IS_REQUIRED, "Auto cast not able to extract destination type", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::BAKE_FUNCTION_MUST_NOT_REFERENCE_GLOBALS, "Bake function must not reference globals!", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::CONSTANT_POOL_ERROR, "Could not add value to constant pool", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_COMPTIME_DEFINITION, "Value does not match given type", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::COMPTIME_DEFINITION_MUST_BE_COMPTIME_KNOWN, "Comptime definition value must be known at compile time", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::COMPTIME_DEFINITION_MUST_BE_INFERED, "Modules/Polymorphic function definitions must be infered", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::FUNCTION_CALL_ARGUMENT_SIZE_MISMATCH, "Parameter count does not match argument count", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_CAST_PTR_REQUIRES_U64, "cast_ptr only casts from u64 to pointers", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_CAST_PTR_DESTINATION_MUST_BE_PTR, "cast_ptr only casts from u64 to pointers", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::EXPRESSION_INVALID_CAST, "Invalid cast", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::EXPRESSION_MEMBER_NOT_FOUND, "Struct/Array does not contain member", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::LABEL_ALREADY_IN_USE, "Label already in use", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::BREAK_LABLE_NOT_FOUND, "Label cannot be found", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::BREAK_NOT_INSIDE_LOOP_OR_SWITCH, "Break is not inside a loop or switch", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::CONTINUE_LABEL_NOT_FOUND, "Label cannot be found", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::CONTINUE_NOT_INSIDE_LOOP, "Continue is not inside a loop", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::CONTINUE_REQUIRES_LOOP_BLOCK, "Continue only works for loop lables", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::EXPRESSION_BINARY_OP_TYPES_MUST_MATCH, "Binary op types do not match and cannot be implicitly casted", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::EXPRESSION_STATEMENT_MUST_BE_FUNCTION_CALL, "Expression does not do anything", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::OTHERS_STRUCT_MUST_CONTAIN_MEMBER, "Struct must contain at least one member", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::OTHERS_STRUCT_MEMBER_ALREADY_DEFINED, "Struct member is already defined", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::OTHERS_WHILE_ONLY_RUNS_ONCE, "While loop always exits", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::OTHERS_WHILE_ALWAYS_RETURNS, "While loop always returns", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::OTHERS_WHILE_NEVER_STOPS, "While loop always continues", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::OTHERS_STATEMENT_UNREACHABLE, "Unreachable statement", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::OTHERS_DEFER_NO_RETURNS_ALLOWED, "No returns allowed inside of defer", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::OTHERS_MISSING_RETURN_STATEMENT, "Function is missing a return statement", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::OTHERS_UNFINISHED_WORKLOAD_FUNCTION_HEADER, "Unfinished workload function header", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::OTHERS_UNFINISHED_WORKLOAD_CODE_BLOCK, "Unfinished workload code block", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::OTHERS_UNFINISHED_WORKLOAD_TYPE_SIZE, "Unfinished workload type size", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::MAIN_CANNOT_BE_TEMPLATED, "Main function cannot be templated", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::MAIN_MUST_BE_FUNCTION, "Main must be a function", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::MAIN_NOT_DEFINED, "Main function not found", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::MAIN_UNEXPECTED_SIGNATURE, "Main unexpected signature", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::MAIN_CANNOT_BE_CALLED, "Cannot call main function again", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::OTHERS_COULD_NOT_LOAD_FILE, "Could not load file", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::OTHERS_CANNOT_TAKE_ADDRESS_OF_MAIN, "Cannot take address of main", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::OTHERS_CANNOT_TAKE_ADDRESS_OF_HARDCODED_FUNCTION, "Cannot take address of hardcoded function", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::OTHERS_ASSIGNMENT_REQUIRES_MEMORY_ADDRESS, "Left side of assignment does not have a memory address", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::MISSING_FEATURE_TEMPLATED_GLOBALS, "Templated globals not implemented yet", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::ARRAY_SIZE_NOT_COMPILE_TIME_KNOWN, "Array size not known at compile time", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::ARRAY_SIZE_MUST_BE_GREATER_ZERO, "Array size must be greater zero!", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::MISSING_FEATURE_NESTED_TEMPLATED_MODULES, "Nested template modules not implemented yet", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::MISSING_FEATURE_EXTERN_IMPORT_IN_TEMPLATED_MODULES, "Extern imports inside templates not allowed", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::MISSING_FEATURE_EXTERN_GLOBAL_IMPORT, "Extern global variable import not implemented yet", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::MISSING_FEATURE, "Missing feature", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::ENUM_MEMBER_NAME_MUST_BE_UNIQUE, "Enum member name must be unique", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::ENUM_VALUE_MUST_BE_COMPILE_TIME_KNOWN, "enum value must be compile time known", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::ENUM_VALUE_MUST_BE_UNIQUE, "Enum value must be unique", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::ENUM_DOES_NOT_CONTAIN_THIS_MEMBER, "Enum member does not exist", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::CANNOT_TAKE_POINTER_OF_FUNCTION, "Cannot take pointer of function", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::EXPRESSION_ADDRESS_MUST_NOT_BE_OF_TEMPORARY_RESULT, "Cannot take address of temporary result!", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::MISSING_FEATURE_NESTED_DEFERS, "Nested defers not implemented yet", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::CYCLIC_DEPENDENCY_DETECTED, "Cyclic workload dependencies detected", AST::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::VARIABLE_NOT_DEFINED_YET, "Variable not defined yet", AST::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE, "Invalid Type", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::EXPRESSION_CONTAINS_INVALID_TYPE_HANDLE, "Invalid Type Handle!", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::TYPE_NOT_KNOWN_AT_COMPILE_TIME, "Type not known at compile time", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::EXPRESSION_IS_NOT_A_TYPE, "Expression used as a type", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::INVALID_EXPRESSION_TYPE, "Expression type not valid in this context", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::EXPECTED_CALLABLE, "Expected: Callable", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::EXPECTED_TYPE, "Expected: Type", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::EXPECTED_VALUE, "Expected: Value", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::TEMPLATE_ARGUMENTS_INVALID_COUNT, "Invalid Template Argument count", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::TEMPLATE_ARGUMENTS_NOT_ON_TEMPLATE, "Template arguments invalid", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::OTHERS_MEMBER_ACCESS_INVALID_ON_FUNCTION, "Functions do not have any members to access", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::OTHERS_TYPE_MEMBER_ACCESS_MUST_BE_ENUM, "Member access on types requires enums", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::TEMPLATE_ARGUMENTS_REQUIRED, "Symbol is templated", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::SWITCH_REQUIRES_ENUM, "Switch requires enum", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::SWITCH_CASES_MUST_BE_COMPTIME_KNOWN, "Switch case must be compile time known", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::SWITCH_MUST_HANDLE_ALL_CASES, "Switch does not handle all cases", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::SWITCH_MUST_NOT_BE_EMPTY, "Switch must not be empty", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::SWITCH_ONLY_ONE_DEFAULT_ALLOWED, "Switch only one default case allowed", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::SWITCH_CASE_MUST_BE_UNIQUE, "Switch case must be unique", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::SWITCH_CASE_TYPE_INVALID, "Switch case type must be enum value", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::EXTERN_HEADER_DOES_NOT_CONTAIN_SYMBOL, "Extern header does not contain this symbol", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::EXTERN_HEADER_PARSING_FAILED, "Parsing extern header failed", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_VOID_USAGE, "Invalid use of void type", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_FUNCTION_CALL, "Expected function pointer type on function call", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_FUNCTION_IMPORT_EXPECTED_FUNCTION_POINTER, "Expected function type on function import", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_ARGUMENT, "Argument type does not match function parameter type", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::ARRAY_INITIALIZER_REQUIRES_TYPE_SYMBOL, "Array initializer requires type", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::STRUCT_INITIALIZER_REQUIRES_TYPE_SYMBOL, "Struct initilizer requires type", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::STRUCT_INITIALIZER_MEMBERS_MISSING, "Struct member/s missing", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::STRUCT_INITIALIZER_CANNOT_SET_UNION_TAG, "Cannot set union tag in initializer", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::STRUCT_INITIALIZER_MEMBER_INITIALIZED_TWICE, "Member already initialized", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::STRUCT_INITIALIZER_TYPE_MUST_BE_STRUCT, "Initializer type must either be struct/union/enum", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::STRUCT_INITIALIZER_MEMBER_DOES_NOT_EXIST, "Struct does not contain member", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::STRUCT_INITIALIZER_INVALID_MEMBER_TYPE, "Member type does not match", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::STRUCT_INITIALIZER_CAN_ONLY_SET_ONE_UNION_MEMBER, "Only one union member may be active at one time", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::AUTO_STRUCT_INITIALIZER_COULD_NOT_DETERMINE_TYPE, "Auto struct type could not be determined by context", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::ARRAY_AUTO_INITIALIZER_COULD_NOT_DETERMINE_TYPE, "Could not determine array type by context", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::ARRAY_INITIALIZER_INVALID_TYPE, "Array initializer member invalid type", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_ARRAY_ACCESS, "Array access only works on array types", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_ARRAY_ACCESS_INDEX, "Array access index must be of type i32", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_ARRAY_ALLOCATION_SIZE, "Array allocation size must be of type i32", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_ARRAY_SIZE, "Array size must be of type i32", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_ON_MEMBER_ACCESS, "Member access only valid on struct/array or pointer to struct/array types", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_IF_CONDITION, "If condition must be boolean", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_WHILE_CONDITION, "While condition must be boolean", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_UNARY_OPERATOR, "Unary operator type invalid", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_BINARY_OPERATOR, "Binary operator types invalid", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_ASSIGNMENT, "Invalid assignment type", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_RETURN, "Invalid return type", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_DELETE, "Only pointer or unsized array types can be deleted", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::SYMBOL_EXPECTED_TYPE_ON_TYPE_IDENTIFIER, "Expected Type symbol", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::SYMBOL_MODULE_INVALID, "Expected Variable or Function symbol for Variable read", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::SYMBOL_EXPECTED_MODUL_IN_IDENTIFIER_PATH, "Expected module in indentifier path", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::SYMBOL_TABLE_UNRESOLVED_SYMBOL, "Could not resolve symbol", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::SYMBOL_TABLE_SYMBOL_ALREADY_DEFINED, "Symbol already defined", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::SYMBOL_TABLE_MODULE_ALREADY_DEFINED, "Module already defined", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_ENUM_VALUE, "Enum value must be of i32 type!", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_EXPECTED_POINTER, "Invalid type", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::BAKE_FUNCTION_DID_NOT_SUCCEED, "Bake error", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::AUTO_MEMBER_MUST_BE_IN_ENUM_CONTEXT, "Auto Member must be in used in a Context where an enum is required", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::AUTO_MEMBER_KNOWN_CONTEXT_IS_REQUIRED, "Auto Member must be used inside known Context", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::AUTO_CAST_KNOWN_CONTEXT_IS_REQUIRED, "Auto cast not able to extract destination type", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::BAKE_FUNCTION_MUST_NOT_REFERENCE_GLOBALS, "Bake function must not reference globals!", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::CONSTANT_POOL_ERROR, "Could not add value to constant pool", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_COMPTIME_DEFINITION, "Value does not match given type", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::COMPTIME_DEFINITION_MUST_BE_COMPTIME_KNOWN, "Comptime definition value must be known at compile time", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::COMPTIME_DEFINITION_MUST_BE_INFERED, "Modules/Polymorphic function definitions must be infered", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::FUNCTION_CALL_ARGUMENT_SIZE_MISMATCH, "Parameter count does not match argument count", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_CAST_PTR_REQUIRES_U64, "cast_ptr only casts from u64 to pointers", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_CAST_PTR_DESTINATION_MUST_BE_PTR, "cast_ptr only casts from u64 to pointers", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::EXPRESSION_INVALID_CAST, "Invalid cast", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::EXPRESSION_MEMBER_NOT_FOUND, "Struct/Array does not contain member", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::LABEL_ALREADY_IN_USE, "Label already in use", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::BREAK_LABLE_NOT_FOUND, "Label cannot be found", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::BREAK_NOT_INSIDE_LOOP_OR_SWITCH, "Break is not inside a loop or switch", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::CONTINUE_LABEL_NOT_FOUND, "Label cannot be found", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::CONTINUE_NOT_INSIDE_LOOP, "Continue is not inside a loop", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::CONTINUE_REQUIRES_LOOP_BLOCK, "Continue only works for loop lables", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::EXPRESSION_BINARY_OP_TYPES_MUST_MATCH, "Binary op types do not match and cannot be implicitly casted", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::EXPRESSION_STATEMENT_MUST_BE_FUNCTION_CALL, "Expression does not do anything", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::OTHERS_STRUCT_MUST_CONTAIN_MEMBER, "Struct must contain at least one member", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::OTHERS_STRUCT_MEMBER_ALREADY_DEFINED, "Struct member is already defined", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::OTHERS_WHILE_ONLY_RUNS_ONCE, "While loop always exits", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::OTHERS_WHILE_ALWAYS_RETURNS, "While loop always returns", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::OTHERS_WHILE_NEVER_STOPS, "While loop always continues", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::OTHERS_STATEMENT_UNREACHABLE, "Unreachable statement", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::OTHERS_DEFER_NO_RETURNS_ALLOWED, "No returns allowed inside of defer", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::OTHERS_MISSING_RETURN_STATEMENT, "Function is missing a return statement", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::OTHERS_UNFINISHED_WORKLOAD_FUNCTION_HEADER, "Unfinished workload function header", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::OTHERS_UNFINISHED_WORKLOAD_CODE_BLOCK, "Unfinished workload code block", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::OTHERS_UNFINISHED_WORKLOAD_TYPE_SIZE, "Unfinished workload type size", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::MAIN_CANNOT_BE_TEMPLATED, "Main function cannot be templated", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::MAIN_MUST_BE_FUNCTION, "Main must be a function", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::MAIN_NOT_DEFINED, "Main function not found", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::MAIN_UNEXPECTED_SIGNATURE, "Main unexpected signature", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::MAIN_CANNOT_BE_CALLED, "Cannot call main function again", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::OTHERS_COULD_NOT_LOAD_FILE, "Could not load file", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::OTHERS_CANNOT_TAKE_ADDRESS_OF_MAIN, "Cannot take address of main", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::OTHERS_CANNOT_TAKE_ADDRESS_OF_HARDCODED_FUNCTION, "Cannot take address of hardcoded function", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::OTHERS_ASSIGNMENT_REQUIRES_MEMORY_ADDRESS, "Left side of assignment does not have a memory address", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::MISSING_FEATURE_TEMPLATED_GLOBALS, "Templated globals not implemented yet", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::ARRAY_SIZE_NOT_COMPILE_TIME_KNOWN, "Array size not known at compile time", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::ARRAY_SIZE_MUST_BE_GREATER_ZERO, "Array size must be greater zero!", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::MISSING_FEATURE_NESTED_TEMPLATED_MODULES, "Nested template modules not implemented yet", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::MISSING_FEATURE_EXTERN_IMPORT_IN_TEMPLATED_MODULES, "Extern imports inside templates not allowed", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::MISSING_FEATURE_EXTERN_GLOBAL_IMPORT, "Extern global variable import not implemented yet", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::MISSING_FEATURE, "Missing feature", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::ENUM_MEMBER_NAME_MUST_BE_UNIQUE, "Enum member name must be unique", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::ENUM_VALUE_MUST_BE_COMPILE_TIME_KNOWN, "enum value must be compile time known", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::ENUM_VALUE_MUST_BE_UNIQUE, "Enum value must be unique", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::ENUM_DOES_NOT_CONTAIN_THIS_MEMBER, "Enum member does not exist", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::CANNOT_TAKE_POINTER_OF_FUNCTION, "Cannot take pointer of function", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::EXPRESSION_ADDRESS_MUST_NOT_BE_OF_TEMPORARY_RESULT, "Cannot take address of temporary result!", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::MISSING_FEATURE_NESTED_DEFERS, "Nested defers not implemented yet", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::CYCLIC_DEPENDENCY_DETECTED, "Cyclic workload dependencies detected", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::VARIABLE_NOT_DEFINED_YET, "Variable not defined yet", Parser::Section::WHOLE);
     default: panic("ERROR");
     }
 #undef HANDLE_CASE
@@ -5437,9 +5443,9 @@ void semantic_error_get_infos_internal(Semantic_Error e, const char** result_str
     }
 }
 
-AST::Section semantic_error_get_section(Semantic_Error e)
+Parser::Section semantic_error_get_section(Semantic_Error e)
 {
-    AST::Section result;
+    Parser::Section result;
     semantic_error_get_infos_internal(e, 0, &result);
     return result;
 }

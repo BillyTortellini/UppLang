@@ -905,7 +905,7 @@ void compiler_add_source_code(Compiler* compiler, AST::Module* source_code, Code
         compiler_switch_timing_task(compiler, Timing_Task::ANALYSIS);
         workload_executer_add_analysis_items(compiler->rc_analyser);
 
-        if (output_rc)
+        if (output_rc && enable_output)
         {
             String printed_items = string_create_empty(256);
             SCOPE_EXIT(string_destroy(&printed_items));

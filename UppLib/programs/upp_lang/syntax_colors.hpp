@@ -23,3 +23,5 @@ namespace Syntax_Color
     extern vec4 BG_HIGHLIGHT;
 };
 
+enum class Symbol_Type;
+vec3 symbol_type_to_color(Symbol_Type type);

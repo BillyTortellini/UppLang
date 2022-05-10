@@ -35,10 +35,14 @@ struct Dependency_Analyser;
 struct Analysis_Workload;
 struct Analysis_Progress;
 
+namespace Parser
+{
+    enum class Section;
+}
+
 namespace AST
 {
     struct Code_Block;
-    enum class Section;
 }
 
 /*
@@ -743,7 +747,6 @@ struct Semantic_Error
 {
     Semantic_Error_Type type;
     AST::Base* error_node;
-    AST::Section section;
     Dynamic_Array<Error_Information> information;
 };
 
@@ -752,4 +755,4 @@ void semantic_analyser_log_error(Semantic_Error_Type type, AST::Base* node);
 void semantic_analyser_add_error_info(Error_Information info);
 void semantic_analyser_set_error_flag(bool error_due_to_unknown);
 void semantic_error_append_to_string(Semantic_Error e, String* string);
-AST::Section semantic_error_get_section(Semantic_Error e);
+Parser::Section semantic_error_get_section(Semantic_Error e);

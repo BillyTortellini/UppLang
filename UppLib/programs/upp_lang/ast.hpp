@@ -64,9 +64,9 @@ namespace AST
         MODULE,
 
         // Helpers
-        ARGUMENT, // a(15, 32, a = 200)
-        PARAMETER,
-        SYMBOL_READ,
+        ARGUMENT,    // Expression with optional name
+        PARAMETER,   // Name/Type compination with optional default value + comptime
+        SYMBOL_READ, // A symbol read
     };
 
     struct Base
@@ -123,7 +123,7 @@ namespace AST
         Base base;
         Symbol_Table* symbol_table;
         Dynamic_Array<Statement*> statements;
-        String* block_id; // Empty string if no id is attached
+        Optional<String*> block_id;
     };
 
     enum class Structure_Type {
@@ -240,7 +240,7 @@ namespace AST
                 Dynamic_Array<Definition*> members;
                 Structure_Type type;
             } structure;
-            Dynamic_Array<Definition*> enum_members;
+            Dynamic_Array<String*> enum_members;
         } options;
     };
 
@@ -301,20 +301,9 @@ namespace AST
         } options;
     };
 
-    enum class Section
-    {
-        WHOLE,             // Every character, including child text
-        WHOLE_NO_CHILDREN, // Every character without child text
-        IDENTIFIER,        // Highlight Identifier if the node has any
-        KEYWORD,           // Highlight keyword if the node contains one
-        ENCLOSURE,         // Highlight enclosures, e.g. (), {}, []
-        NONE,              // Not quite sure if this is usefull at all
-        END_CHARACTER,     // To display that something is missing
-    };
-
     void base_destroy(Base* node);
     Base* base_get_child(Base* node, int child_index);
     void base_enumerate_children(Base* node, Dynamic_Array<Base*>* fill);
-    void base_append_to_string(Base* base, String* str);
+    void base_print(Base* node);
 }
 

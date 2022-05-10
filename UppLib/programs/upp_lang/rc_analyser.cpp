@@ -335,7 +335,7 @@ void analyse_ast_base(AST::Base* base)
             function_item->options.function_body_item = analysis_item_create_empty(Analysis_Item_Type::FUNCTION_BODY, 0, &function.body->base);
             if (base->parent->type == Base_Type::DEFINITION) {
                 auto def = (Definition*)base->parent;
-                if (def->value.available && def->value.value == expr) {
+                if (def->value.available && def->value.value == expr && def->is_comptime) {
                     function_item->symbol = def->symbol;
                     function_item->options.function_body_item->symbol = def->symbol;
                 }
@@ -351,30 +351,31 @@ void analyse_ast_base(AST::Base* base)
             return;
         }
         case Expression_Type::STRUCTURE_TYPE:
-        { auto& structure = expr->options.structure;
-        Analysis_Item* struct_item = analysis_item_create_empty(Analysis_Item_Type::STRUCTURE, analyser.analysis_item, base);
-        analyser.analysis_item = struct_item;
-        analyser.dependency_type = Dependency_Type::MEMBER_IN_MEMORY;
-        if (base->parent->type == Base_Type::DEFINITION) {
-            auto def = (Definition*)base->parent;
-            if (def->value.available && def->value.value == expr) {
-                struct_item->symbol = def->symbol;
+        { 
+            auto& structure = expr->options.structure;
+            Analysis_Item* struct_item = analysis_item_create_empty(Analysis_Item_Type::STRUCTURE, analyser.analysis_item, base);
+            analyser.analysis_item = struct_item;
+            analyser.dependency_type = Dependency_Type::MEMBER_IN_MEMORY;
+            if (base->parent->type == Base_Type::DEFINITION) {
+                auto def = (Definition*)base->parent;
+                if (def->value.available && def->value.value == expr && def->is_comptime) {
+                    struct_item->symbol = def->symbol;
+                }
             }
-        }
-        for (int i = 0; i < structure.members.size; i++)
-        {
-            auto& def = structure.members[i];
-            def->symbol = 0;
-            if (def->type.available) {
-                analyser.dependency_type = Dependency_Type::MEMBER_IN_MEMORY;
-                analyse_ast_base(&def->type.value->base);
+            for (int i = 0; i < structure.members.size; i++)
+            {
+                auto& def = structure.members[i];
+                def->symbol = 0;
+                if (def->type.available) {
+                    analyser.dependency_type = Dependency_Type::MEMBER_IN_MEMORY;
+                    analyse_ast_base(&def->type.value->base);
+                }
+                if (def->value.available) {
+                    analyser.dependency_type = Dependency_Type::NORMAL;
+                    analyse_ast_base(&def->value.value->base);
+                }
             }
-            if (def->value.available) {
-                analyser.dependency_type = Dependency_Type::NORMAL;
-                analyse_ast_base(&def->value.value->base);
-            }
-        }
-        return;
+            return;
         }
         case Expression_Type::BAKE_BLOCK:
         case Expression_Type::BAKE_EXPR:
@@ -415,6 +416,7 @@ void analyse_ast_base(AST::Base* base)
         }
 
         Analysis_Item* item = analysis_item_create_empty(Analysis_Item_Type::DEFINITION, analyser.analysis_item, base);
+        item->symbol = definition->symbol;
         analyser.analysis_item = item;
         break;
     }

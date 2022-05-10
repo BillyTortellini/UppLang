@@ -755,7 +755,7 @@ void type_system_finish_type(Type_System* system, Type_Signature* type)
                 Struct_Member* struct_member = &type->options.structure.members[i];
                 Enum_Member tag_member;
                 tag_member.id = struct_member->id;
-                tag_member.definition_node = 0;
+                //tag_member.definition_node = 0;
                 tag_member.value = i + 1;
                 dynamic_array_push_back(&tag_type->options.enum_type.members, tag_member);
             }

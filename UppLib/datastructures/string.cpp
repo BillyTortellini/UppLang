@@ -271,6 +271,7 @@ void string_append_string(String* string, String* appendix)
     string_reserve(string, string->size + appendix->size + 1);
     memory_copy(string->characters + string->size, appendix->characters, appendix->size + 1);
     string->size += appendix->size;
+    string->characters[string->size] = '\0';
 }
 
 void string_remove_character(String* string, int index) 

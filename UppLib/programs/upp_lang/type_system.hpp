@@ -47,7 +47,7 @@ struct Enum_Member
 {
     String* id;
     int value;
-    AST::Definition* definition_node;
+    //AST::Expression* definition_node;
 };
 
 enum class Structure_Type
