@@ -418,3 +418,9 @@ bool string_equals_cstring(String* string, const char* compare) {
     return false;
 }
 
+bool string_test_char(String str, int char_index, char c)
+{
+    if (char_index > str.size) return false;
+    return str[char_index] == c;
+}
+

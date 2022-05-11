@@ -305,5 +305,7 @@ namespace AST
     Base* base_get_child(Base* node, int child_index);
     void base_enumerate_children(Base* node, Dynamic_Array<Base*>* fill);
     void base_print(Base* node);
+
+    int binop_priority(Binop binop);
 }
 

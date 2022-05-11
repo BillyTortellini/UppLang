@@ -1,7 +1,7 @@
 #include "lexer.hpp"
 
 #include "../../utility/hash_functions.hpp"
-#include "compiler.hpp"
+#include "../upp_lang/compiler_misc.hpp"
 
 bool token_type_is_keyword(Token_Type type)
 {

@@ -1,12 +1,14 @@
 #include "c_importer.hpp"
 
 #include "../../utility/file_io.hpp"
-#include "compiler.hpp"
+#include "lexer.hpp"
+#include "../upp_lang/compiler_misc.hpp"
 #include <iostream>
 #include <cstdio>
 #include <algorithm>
 #include "../../win32/process.hpp"
 #include "../../utility/binary_parser.hpp"
+#include "../../win32/timing.hpp"
 
 struct C_Variable_Instance
 {
@@ -1905,3 +1907,173 @@ void c_importer_destroy(C_Importer* importer)
     hashtable_for_each(&importer->cache, c_package_cache_destroy);
     hashtable_destroy(&importer->cache);
 }
+
+Type_Signature* import_c_type(C_Import_Type* type, Hashtable<C_Import_Type*, Type_Signature*>* type_conversions)
+{
+    /*
+    auto& type_system = semantic_analyser.compiler->type_system;
+    {
+        Type_Signature** converted = hashtable_find_element(type_conversions, type);
+        if (converted != 0) {
+            return *converted;
+        }
+    }
+    Type_Signature signature;
+    signature.size = type->byte_size;
+    signature.alignment = type->alignment;
+    Type_Signature* result_type = 0;
+    switch (type->type)
+    {
+    case C_Import_Type_Type::ARRAY: {
+        signature.type = Signature_Type::ARRAY;
+        signature.options.array.element_count = type->array.array_size;
+        signature.options.array.element_type = import_c_type(type->array.element_type, type_conversions);
+        result_type = type_system_register_type(&type_system, signature);
+        break;
+    }
+    case C_Import_Type_Type::POINTER: {
+        signature.type = Signature_Type::POINTER;
+        signature.options.pointer_child = import_c_type(type->array.element_type, type_conversions);
+        result_type = type_system_register_type(&type_system, signature);
+        break;
+    }
+    case C_Import_Type_Type::PRIMITIVE: {
+        switch (type->primitive)
+        {
+        case C_Import_Primitive::VOID_TYPE:
+            result_type = type_system.void_type;
+            break;
+        case C_Import_Primitive::BOOL:
+            result_type = type_system.bool_type;
+            break;
+        case C_Import_Primitive::CHAR: {
+            if (((u8)type->qualifiers & (u8)C_Type_Qualifiers::UNSIGNED) != 0) {
+                result_type = type_system.u8_type;
+            }
+            else {
+                result_type = type_system.i8_type;
+            }
+            break;
+        }
+        case C_Import_Primitive::DOUBLE:
+            result_type = type_system.f64_type;
+            break;
+        case C_Import_Primitive::FLOAT:
+            result_type = type_system.f32_type;
+            break;
+        case C_Import_Primitive::INT:
+            if (((u8)type->qualifiers & (u8)C_Type_Qualifiers::UNSIGNED) != 0) {
+                result_type = type_system.u32_type;
+            }
+            else {
+                result_type = type_system.i32_type;
+            }
+            break;
+        case C_Import_Primitive::LONG:
+            if (((u8)type->qualifiers & (u8)C_Type_Qualifiers::UNSIGNED) != 0) {
+                result_type = type_system.u32_type;
+            }
+            else {
+                result_type = type_system.i32_type;
+            }
+            break;
+        case C_Import_Primitive::LONG_DOUBLE:
+            result_type = type_system.f64_type;
+            break;
+        case C_Import_Primitive::LONG_LONG:
+            if (((u8)type->qualifiers & (u8)C_Type_Qualifiers::UNSIGNED) != 0) {
+                result_type = type_system.u64_type;
+            }
+            else {
+                result_type = type_system.i64_type;
+            }
+            break;
+        case C_Import_Primitive::SHORT:
+            if (((u8)type->qualifiers & (u8)C_Type_Qualifiers::UNSIGNED) != 0) {
+                result_type = type_system.u16_type;
+            }
+            else {
+                result_type = type_system.i16_type;
+            }
+            break;
+        default: panic("WHAT");
+        }
+        break;
+    }
+    case C_Import_Type_Type::ENUM:
+    {
+        String* enum_id;
+        if (type->enumeration.is_anonymous) {
+            enum_id = identifier_pool_add(&semantic_analyser.compiler->identifier_pool, string_create_static("__c_anon_enum"));
+        }
+        else {
+            enum_id = type->enumeration.id;
+        }
+        result_type = type_system_make_enum_empty(&type_system, enum_id);
+        result_type->size = type->byte_size;
+        result_type->alignment = type->alignment;
+        for (int i = 0; i < type->enumeration.members.size; i++) {
+            Enum_Member new_member;
+            new_member.id = type->enumeration.members[i].id;
+            new_member.value = type->enumeration.members[i].value;
+            dynamic_array_push_back(&result_type->options.enum_type.members, new_member);
+        }
+        break;
+    }
+    case C_Import_Type_Type::ERROR_TYPE: {
+        signature.type = Signature_Type::ARRAY;
+        signature.options.array.element_type = type_system.u8_type;
+        signature.options.array.element_count = type->byte_size;
+        result_type = type_system_register_type(&type_system, signature);
+        break;
+    }
+    case C_Import_Type_Type::STRUCTURE:
+    {
+        signature.type = Signature_Type::STRUCT;
+        //if (type->structure.is_anonymous) {
+            //signature.options.structure.id = identifier_pool_add(&analyser->compiler->identifier_pool, string_create_static("__c_anon"));
+        //}
+        //else {
+            //signature.options.structure.id = type->structure.id;
+        //}
+        signature.options.structure.symbol = 0;
+        signature.options.structure.struct_type = Structure_Type::C_UNION;
+        signature.options.structure.members = dynamic_array_create_empty<Struct_Member>(type->structure.members.size);
+        if (!type->structure.contains_bitfield)
+        {
+            for (int i = 0; i < type->structure.members.size; i++) {
+                C_Import_Structure_Member* mem = &type->structure.members[i];
+                Struct_Member member;
+                member.id = mem->id;
+                member.offset = mem->offset;
+                member.type = import_c_type(mem->type, type_conversions);
+                dynamic_array_push_back(&signature.options.structure.members, member);
+            }
+        }
+        result_type = type_system_register_type(&type_system, signature);
+        break;
+    }
+    case C_Import_Type_Type::FUNCTION_SIGNATURE:
+    {
+        signature.type = Signature_Type::FUNCTION;
+        signature.options.function.return_type = import_c_type(type->function_signature.return_type, type_conversions);
+        signature.options.function.parameter_types = dynamic_array_create_empty<Type_Signature*>(type->function_signature.parameters.size);
+        for (int i = 0; i < type->function_signature.parameters.size; i++) {
+            dynamic_array_push_back(
+                &signature.options.function.parameter_types,
+                import_c_type(type->function_signature.parameters[i].type, type_conversions)
+            );
+        }
+        result_type = type_system_register_type(&type_system, signature);
+        break;
+    }
+    default: panic("WHAT");
+    }
+
+    assert(result_type != 0, "HEY");
+    hashtable_insert_element(type_conversions, type, result_type);
+    return result_type;
+    */
+    return 0;
+}
+

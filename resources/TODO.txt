@@ -1,11 +1,11 @@
 TODO:
 -----
-Parser report errors
-Rewrite/Run Testcases
-Remove old Parser
+Fix File Loading
+Rewrite/Run Testcases (Maybe requires load keyword?, Idk)
+
+Maybe we can replace Symbol with AST::Definition, but probably not
+Bug: Types can be used as integer, e.g. x: int = int
 Replace Modtree with AST-Decorations, add new IR-Codegen Phase
-Move Lexer to C-Importer, remove from Compiler
-Make C-Importer a stand-alone Tool/remove from compiler
 Integrate Editor features into new editor (Undo-Redo, Copy-Paste, Indentation Handling)
 For loop and looping over array pls
 Editor features (Code-Completion, Jump to Definition, Line-Trimming similar to tokens)

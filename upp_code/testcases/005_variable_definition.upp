@@ -1,4 +1,2 @@
-main :: ()
-{
-	x: int;
-}
+main::()
+	x:int

@@ -3,7 +3,7 @@
 #include "../../datastructures/dynamic_array.hpp"
 #include "../../datastructures/hashtable.hpp"
 #include "../../datastructures/string.hpp"
-#include "text.hpp"
+#include "../text_editor/text.hpp"
 
 enum class Token_Type
 {

@@ -8,10 +8,17 @@ namespace Parser
     // Types
     using namespace AST;
 
+    struct Binop_Link
+    {
+        Binop binop;
+        Expression* expr;
+    };
+
     struct Parse_State
     {
         Syntax_Position pos;
         int allocated_count;
+        int error_count;
     };
 
     struct Parse_Info
@@ -25,6 +32,7 @@ namespace Parser
     {
         Parse_State state;
         Dynamic_Array<Parse_Info> parse_informations;
+        Dynamic_Array<Error_Message> error_messages;
         AST::Module* root;
     };
 
@@ -38,6 +46,7 @@ namespace Parser
             AST::base_destroy(parser.parse_informations[i].allocation);
         }
         dynamic_array_rollback_to_size(&parser.parse_informations, checkpoint.allocated_count);
+        dynamic_array_rollback_to_size(&parser.error_messages, checkpoint.error_count);
         parser.state = checkpoint;
     }
 
@@ -50,12 +59,16 @@ namespace Parser
         state.pos.line_index = 0;
         state.pos.token_index = 0;
         state.allocated_count = 0;
+        state.error_count = 0;
         parser_rollback(state);
+
+        dynamic_array_reset(&parser.error_messages);
     }
 
     void initialize()
     {
         parser.parse_informations = dynamic_array_create_empty<Parse_Info>(32);
+        parser.error_messages = dynamic_array_create_empty<Error_Message>(4);
         reset();
     }
 
@@ -63,6 +76,7 @@ namespace Parser
     {
         reset();
         dynamic_array_destroy(&parser.parse_informations);
+        dynamic_array_destroy(&parser.error_messages);
     }
 
     // Allocations
@@ -85,6 +99,39 @@ namespace Parser
 
         return result;
     }
+
+    void log_error(const char* msg, Syntax_Range range)
+    {
+        Error_Message err;
+        err.msg = msg;
+        err.range = range;
+        dynamic_array_push_back(&parser.error_messages, err);
+        parser.state.error_count = parser.error_messages.size;
+    }
+
+    void log_error_to_pos(const char* msg, Syntax_Position pos) {
+        Syntax_Range range;
+        range.start = parser.state.pos;
+        range.end = pos;
+        log_error(msg, range);
+    }
+
+    void log_error_range_offset(const char* msg, int token_offset) {
+        Syntax_Range range;
+        range.start = parser.state.pos;
+        range.end = range.start;
+        range.end.token_index += token_offset;
+        log_error(msg, range);
+    }
+
+    void log_error_range_offset_with_start(const char* msg, Syntax_Position start, int token_offset) {
+        Syntax_Range range;
+        range.start = start;
+        range.end = range.start;
+        range.end.token_index += token_offset;
+        log_error(msg, range);
+    }
+
 
     Syntax_Line* get_line() {
         if (!syntax_position_on_line(parser.state.pos)) return 0;
@@ -116,7 +163,6 @@ namespace Parser
         parser.state.pos.line_index += 1;
         parser.state.pos.token_index = 0;
     }
-
 
     // Helpers
     bool test_token_offset(Syntax_Token_Type type, int offset) {
@@ -173,7 +219,6 @@ namespace Parser
     Expression* parse_single_expression(Base* parent);
     Expression* parse_single_expression_or_error(Base* parent);
 
-    //Parsing Helpers
 #define CHECKPOINT_SETUP \
         if (get_token(0) == 0) {return 0;}\
         auto checkpoint = parser.state;\
@@ -181,11 +226,13 @@ namespace Parser
         SCOPE_EXIT(if (_error_exit) parser_rollback(checkpoint););
 
 #define CHECKPOINT_EXIT {_error_exit = true; return 0;}
+#define SET_END_RANGE(val) parser.parse_informations[val->base.allocation_index].end_pos = parser.state.pos;
 #define PARSE_SUCCESS(val) { \
         parser.parse_informations[val->base.allocation_index].end_pos = parser.state.pos; \
         return val; \
     }
 
+    // Parsing Helpers
     typedef bool(*token_predicate_fn)(Syntax_Token* token, void* user_data);
     Optional<Syntax_Position> find_error_recovery_token(token_predicate_fn predicate, void* user_data, bool skip_blocks)
     {
@@ -265,10 +312,15 @@ namespace Parser
             if (parsed != 0) {
                 dynamic_array_push_back(fill_array, parsed);
             }
+            else {
+                log_error_to_pos("Couldn't parse line", syntax_line_get_end_pos(line));
+            }
             if (before_line_index == pos.line_index) {
+                if (pos.token_index < line->tokens.size) {
+                    log_error_to_pos("Unexpected Tokens, Line already parsed", syntax_line_get_end_pos(line));
+                }
                 pos.line_index += 1;
             }
-            // TODO: Error handling for tokens after the first ones
         }
     }
 
@@ -278,9 +330,8 @@ namespace Parser
         auto line = get_line();
         assert(line != 0, "");
         // Check if at end of line
-        if (line->follow_block == 0) return;
-        if (!parse_if_not_on_end && !on_follow_block()) {
-            // TODO: Log error of unexpected tokens
+        if (line->follow_block == 0 || (!parse_if_not_on_end && !on_follow_block())) {
+            log_error_range_offset("Expected Follow Block", 1);
             return;
         }
         auto next_pos = parser.state.pos;
@@ -308,22 +359,12 @@ namespace Parser
         return true;
     }
 
-    bool parse_position_in_order(Syntax_Position a, Syntax_Position b) {
-        //assert(a.block == b.block, "Only works for positions in the same block");
-        if (a.line_index < b.line_index) return true;
-        if (a.line_index > b.line_index) return false;
-        return a.token_index < b.token_index;
-    }
-
-    bool syntax_position_equal(Syntax_Position a, Syntax_Position b) {
-        return a.block == b.block && a.line_index == b.line_index && a.token_index == b.token_index;
-    }
-
     // Parser position must be on Open Parenthesis for this to work
     template<typename T>
     void parse_parenthesis_comma_seperated(Base* parent, Dynamic_Array<T*>* fill_array, T* (*parse_fn)(Base* parent), Parenthesis_Type type)
     {
         char closing_char;
+        auto open_parenthesis_pos = parser.state.pos;
         {
             Parenthesis p;
             p.type = type;
@@ -342,15 +383,16 @@ namespace Parser
                 break;
             }
             auto item = parse_fn(parent);
-            if (item != 0) {
+            if (item != 0) 
+            {
                 dynamic_array_push_back(fill_array, item);
-            }
-            if (test_operator(Syntax_Operator::COLON)) {
-                advance_token();
-                continue;
-            }
-            if (test_parenthesis_offset(closing_char, 0)) {
-                continue;
+                if (test_operator(Syntax_Operator::COLON)) {
+                    advance_token();
+                    continue;
+                }
+                if (test_parenthesis_offset(closing_char, 0)) {
+                    continue;
+                }
             }
 
             // Error Recovery
@@ -372,21 +414,23 @@ namespace Parser
             }
             if (parenthesis_pos.available) {
                 tactic = Error_Start::PARENTHESIS;
-                if (comma_pos.available && parse_position_in_order(comma_pos.value, parenthesis_pos.value)) {
+                if (comma_pos.available && syntax_position_in_order(comma_pos.value, parenthesis_pos.value)) {
                     tactic = Error_Start::COMMA;
                 }
             }
 
             if (tactic == Error_Start::COMMA) {
+                log_error_to_pos("Couldn't parse list item", comma_pos.value);
                 parser.state.pos = comma_pos.value;
                 advance_token();
             }
             else if (tactic == Error_Start::PARENTHESIS) {
+                log_error_to_pos("Couldn't parse list item", parenthesis_pos.value);
                 parser.state.pos = parenthesis_pos.value;
             }
             else {
-                // TODO: Error reporting
-                // Think this case through
+                log_error_range_offset_with_start("Couldn't find closing_parenthesis", open_parenthesis_pos, 1);
+                // TODO: Think/Test this case
                 auto line = get_line();
                 if (line == 0) return;
                 parser.state.pos.token_index = line->tokens.size; // Goto end of line for now
@@ -422,6 +466,7 @@ namespace Parser
             PARSE_SUCCESS(result);
         }
         result->value = parse_expression(&result->base);
+        if (result->value == 0) CHECKPOINT_EXIT;
         PARSE_SUCCESS(result);
     }
 
@@ -454,7 +499,6 @@ namespace Parser
         CHECKPOINT_SETUP;
         auto result = allocate_base<Statement>(parent, Base_Type::STATEMENT);
 
-        // TODO: Log error if there is more in one line
         {
             auto definition = parse_definition(&result->base);
             if (definition != 0) {
@@ -704,11 +748,13 @@ namespace Parser
                 read = read->path_child.value;
                 advance_token();
                 advance_token();
+                SET_END_RANGE(read);
             }
 
             result->type = Expression_Type::SYMBOL_READ;
             result->options.symbol_read = final_read;
             advance_token();
+            SET_END_RANGE(final_read);
             PARSE_SUCCESS(result);
         }
 
@@ -953,41 +999,13 @@ namespace Parser
     Expression* parse_single_expression_or_error(Base* parent)
     {
         auto expr = parse_single_expression(parent);
-        if (expr != 0) return expr;
+        if (expr != 0) {
+            return expr;
+        }
+        log_error_range_offset("Expected Single Expression", 1);
         expr = allocate_base<AST::Expression>(parent, AST::Base_Type::EXPRESSION);
         expr->type = Expression_Type::ERROR_EXPR;
         return expr;
-    }
-
-    struct Binop_Link
-    {
-        Binop binop;
-        Expression* expr;
-    };
-
-    int binop_priority(Binop binop)
-    {
-        switch (binop)
-        {
-        case Binop::AND: return 0;
-        case Binop::OR: return 1;
-        case Binop::POINTER_EQUAL: return 2;
-        case Binop::POINTER_NOT_EQUAL: return 2;
-        case Binop::EQUAL: return 2;
-        case Binop::NOT_EQUAL: return 2;
-        case Binop::GREATER: return 3;
-        case Binop::GREATER_OR_EQUAL: return 3;
-        case Binop::LESS: return 3;
-        case Binop::LESS_OR_EQUAL: return 3;
-        case Binop::ADDITION: return 4;
-        case Binop::SUBTRACTION: return 4;
-        case Binop::MULTIPLICATION: return 5;
-        case Binop::DIVISION: return 5;
-        case Binop::MODULO: return 6;
-        default: panic("");
-        }
-        panic("");
-        return 0;
     }
 
     Expression* parse_priority_level(Expression* expr, int priority_level, Dynamic_Array<Binop_Link>* links, int* index)
@@ -1071,8 +1089,12 @@ namespace Parser
     Expression* parse_expression_or_error_expr(Base* parent)
     {
         auto expr = parse_expression(parent);
-        if (expr != 0) return expr;
+        if (expr != 0) {
+            return expr;
+        }
+        log_error_range_offset("Expected Expression", 1);
         expr = allocate_base<AST::Expression>(parent, AST::Base_Type::EXPRESSION);
+
         expr->type = Expression_Type::ERROR_EXPR;
         PARSE_SUCCESS(expr);
     }
@@ -1116,13 +1138,12 @@ namespace Parser
         }
 
         // Definitions are one line long, so everything afterwards here is an error
-        // TODO: Report error
-        if (prev_line_index == parser.state.pos.line_index) {
-            advance_line();
-        }
+        // But this should be handled by block parser if i'm not mistaken
 
         PARSE_SUCCESS(result);
     }
+
+
 
     void base_correct_token_ranges(Base* base)
     {
@@ -1139,28 +1160,35 @@ namespace Parser
         }
 
         auto& info = parser.parse_informations[base->allocation_index];
-        if (parse_position_in_order(start, info.start_pos)) {
+        info.start_pos = syntax_position_sanitize(info.start_pos);
+        info.end_pos = syntax_position_sanitize(info.end_pos);
+        if (syntax_position_in_order(start, info.start_pos)) {
             info.start_pos = start;
         }
-        if (parse_position_in_order(info.end_pos, end)) {
+        if (syntax_position_in_order(info.end_pos, end)) {
             info.end_pos = end;
         }
     }
 
-    // Parsing
     AST::Module* execute(Syntax_Block* root_block)
     {
-        reset();
         parser.root = allocate_base<Module>(0, Base_Type::MODULE);
+        parser.parse_informations[0].start_pos.block = root_block;
         parser.root->definitions = dynamic_array_create_empty<Definition*>(1);
         parse_syntax_block<Definition>(root_block, &parser.root->base, &parser.root->definitions, parse_definition);
+        SET_END_RANGE(parser.root);
         base_correct_token_ranges(&parser.root->base);
-        PARSE_SUCCESS(parser.root);
+        return parser.root;
     }
 
 #undef CHECKPOINT_EXIT
 #undef CHECKPOINT_SETUP
 #undef PARSE_SUCCESS
+#undef SET_END_RANGE
+
+    Array<Error_Message> get_error_messages() {
+        return dynamic_array_as_array(&parser.error_messages);
+    }
 
     void ast_base_get_section_token_range(AST::Base* base, Section section, Dynamic_Array<Syntax_Range>* ranges)
     {
@@ -1176,13 +1204,13 @@ namespace Parser
             dynamic_array_push_back(ranges, range);
             break;
         }
-        case Section::WHOLE_NO_CHILDREN: 
+        case Section::WHOLE_NO_CHILDREN:
         {
             Syntax_Range range;
             range.start = info.start_pos;
             int index = 0;
             auto child = AST::base_get_child(base, index);
-            while (child != 0) 
+            while (child != 0)
             {
                 auto& child_info = parser.parse_informations[child->allocation_index];
                 if (!syntax_position_equal(range.start, child_info.start_pos)) {
@@ -1218,7 +1246,7 @@ namespace Parser
         {
             // Find next (), {} or [], and add the tokens to the ranges
             parser.state.pos = info.start_pos;
-            auto result = find_error_recovery_token([](Syntax_Token* t, void* type) -> bool {return t->type == Syntax_Token_Type::PARENTHESIS;}, 0, false);
+            auto result = find_error_recovery_token([](Syntax_Token* t, void* type) -> bool {return t->type == Syntax_Token_Type::PARENTHESIS; }, 0, false);
             if (!result.available) {
                 break;
             }
@@ -1247,7 +1275,7 @@ namespace Parser
             dynamic_array_push_back(ranges, range);
             break;
         }
-        case Section::KEYWORD: 
+        case Section::KEYWORD:
         {
             auto result = find_error_recovery_token([](Syntax_Token* t, void* type) -> bool {return t->type == Syntax_Token_Type::KEYWORD; }, 0, false);
             if (!result.available) {

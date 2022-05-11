@@ -1,6 +1,5 @@
 #include "type_system.hpp"
 #include "compiler.hpp"
-#include "ast_parser.hpp"
 #include "rc_analyser.hpp"
 
 void type_signature_destroy(Type_Signature* sig) 

@@ -22,12 +22,12 @@
 #include "../../datastructures/hashset.hpp"
 #include "../../utility/hash_functions.hpp"
 
-#include "code_editor.hpp"
 #include "../../rendering/test_renderer.hpp"
 #include "syntax_editor.hpp"
 
 #include "../../datastructures/block_allocator.hpp"
 #include "../../datastructures/stack_allocator.hpp"
+#include "../../win32/windows_helper_functions.hpp"
 
 struct Dummy
 {
@@ -224,10 +224,7 @@ void upp_lang_main()
     GUI gui = gui_create(renderer_2D, window_get_input(window), &timer);
     SCOPE_EXIT(gui_destroy(&gui));
 
-    Code_Editor code_editor = code_editor_create(text_renderer, &core, &timer);
-    //SCOPE_EXIT(code_editor_destroy(&code_editor));
-
-    syntax_editor_create(&core, text_renderer, renderer_2D, window_get_input(window), &timer);
+    syntax_editor_initialize(&core, text_renderer, renderer_2D, window_get_input(window), &timer);
     SCOPE_EXIT(syntax_editor_destroy());
 
     // Background

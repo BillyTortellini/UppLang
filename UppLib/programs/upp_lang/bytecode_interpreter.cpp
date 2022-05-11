@@ -1016,7 +1016,7 @@ void bytecode_interpreter_prepare_run(Bytecode_Interpreter* interpreter)
 void bytecode_interpreter_run_function(Bytecode_Interpreter* interpreter, int function_start_index)
 {
     Timing_Task before_task = interpreter->generator->compiler->task_current;
-    compiler_switch_timing_task(interpreter->generator->compiler, Timing_Task::CODE_EXEC);
+    compiler_switch_timing_task(Timing_Task::CODE_EXEC);
 
     bytecode_interpreter_prepare_run(interpreter);
     interpreter->instruction_pointer = &interpreter->generator->instructions[function_start_index];
@@ -1046,5 +1046,5 @@ void bytecode_interpreter_run_function(Bytecode_Interpreter* interpreter, int fu
         interpreter->exit_code = Exit_Code::CODE_ERROR_OCCURED;
     }
 
-    compiler_switch_timing_task(interpreter->generator->compiler, before_task);
+    compiler_switch_timing_task(before_task);
 }

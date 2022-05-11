@@ -697,4 +697,29 @@ namespace AST
         base_append_to_string_recursive(node, &text, 0);
         logg("AST:\n------------------------\n%s\n", text.characters);
     }
+
+    int binop_priority(Binop binop)
+    {
+        switch (binop)
+        {
+        case Binop::AND: return 0;
+        case Binop::OR: return 1;
+        case Binop::POINTER_EQUAL: return 2;
+        case Binop::POINTER_NOT_EQUAL: return 2;
+        case Binop::EQUAL: return 2;
+        case Binop::NOT_EQUAL: return 2;
+        case Binop::GREATER: return 3;
+        case Binop::GREATER_OR_EQUAL: return 3;
+        case Binop::LESS: return 3;
+        case Binop::LESS_OR_EQUAL: return 3;
+        case Binop::ADDITION: return 4;
+        case Binop::SUBTRACTION: return 4;
+        case Binop::MULTIPLICATION: return 5;
+        case Binop::DIVISION: return 5;
+        case Binop::MODULO: return 6;
+        default: panic("");
+        }
+        panic("");
+        return 0;
+    }
 }

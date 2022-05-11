@@ -4,6 +4,8 @@
 #include "../../datastructures/hashtable.hpp"
 #include "../../utility/utils.hpp"
 
+struct Type_Signature;
+
 enum class C_Import_Primitive
 {
     CHAR,
@@ -145,5 +147,7 @@ struct C_Importer
 C_Importer c_importer_create();
 void c_importer_destroy(C_Importer* importer);
 Optional<C_Import_Package> c_importer_import_header(C_Importer* importer, String header_name, Identifier_Pool* identifier_pool);
+Type_Signature* import_c_type(C_Import_Type* type, Hashtable<C_Import_Type*, Type_Signature*>* type_conversions);
+
 
 

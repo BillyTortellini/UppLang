@@ -48,6 +48,7 @@ void string_insert_character_before(String* string, byte character, int index);
 void string_insert_string(String* string, String* insertion, int position);
 bool string_contains_character(String string, char character);
 bool string_contains_only_characters_in_set(String* string, String set, bool use_set_complement);
+bool string_test_char(String str, int char_index, char c);
 Optional<int> string_find_character_index(String* string, char c, int start_position);
 Optional<int> string_find_character_index_reverse(String* string, char character, int startpos);
 Optional<float> string_parse_float(String* string);
