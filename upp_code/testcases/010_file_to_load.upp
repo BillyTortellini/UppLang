@@ -1,4 +1,4 @@
-success :: () 
-{
-	assert(true);
-}
+success::()
+	assert(true)
+
+

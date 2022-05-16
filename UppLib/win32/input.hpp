@@ -143,3 +143,4 @@ void input_destroy(Input* input);
 void input_add_key_message(Input* input, Key_Message message);
 void input_add_mouse_message(Input* input, Mouse_Message message);
 void input_reset(Input* input);
+void input_on_focus_lost(Input* input);

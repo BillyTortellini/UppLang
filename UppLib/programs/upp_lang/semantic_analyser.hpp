@@ -285,7 +285,6 @@ struct ModTree_Function
 {
     ModTree_Block* body;
     Dynamic_Array<ModTree_Parameter> parameters;
-    Type_Signature* return_type;
 
     Symbol* symbol;
     Type_Signature* signature;
@@ -466,8 +465,9 @@ struct Dependency_Information
 {
     List_Node<Analysis_Workload*>* dependency_node;
     List_Node<Analysis_Workload*>* dependent_node;
-    Dynamic_Array<Symbol_Dependency*> symbol_reads;
+    // Information for cyclic resolve
     bool only_symbol_read_dependency;
+    Dynamic_Array<Symbol_Dependency*> symbol_reads;
 };
 
 struct Workload_Executer

@@ -149,19 +149,19 @@ LRESULT CALLBACK window_message_callback(HWND hwnd, UINT msg_type, WPARAM wparam
             break;
         }
         if (window_for_message_callback->put_next_char_into_last_key_message) {
-            if (window_for_message_callback->input.key_messages.size == 0) {
+            if (input->key_messages.size == 0) {
                 logg("I think this should not happen\n");
                 break;
             }
-            window_for_message_callback->input.key_messages.data[window_for_message_callback->input.key_messages.size-1].character = (char)key;
+            input->key_messages.data[input->key_messages.size-1].character = (char)key;
             window_for_message_callback->put_next_char_into_last_key_message = false;
         }
         else {
-            input_add_key_message(&window_for_message_callback->input,
+            input_add_key_message(input,
                 key_message_make(Key_Code::UNASSIGNED, false, (char)key,
-                    window_for_message_callback->input.key_down[(int)Key_Code::SHIFT],
-                    window_for_message_callback->input.key_down[(int)Key_Code::ALT],
-                    window_for_message_callback->input.key_down[(int)Key_Code::CTRL]
+                    input->key_down[(int)Key_Code::SHIFT],
+                    input->key_down[(int)Key_Code::ALT],
+                    input->key_down[(int)Key_Code::CTRL]
                 ));
         }
         break;
@@ -172,17 +172,18 @@ LRESULT CALLBACK window_message_callback(HWND hwnd, UINT msg_type, WPARAM wparam
         int key = (int)wparam;
         int repeatCount = lparam & 0xFFFF;
         // Check if the key was not down last frame
-        if (window_for_message_callback->input.key_down[key_translation_table[key]] == false &&
+        //logg("Key_Down: %s\n", key_code_to_string((Key_Code)key_translation_table[key]));
+        if (input->key_down[key_translation_table[key]] == false &&
             repeatCount == 1) {
-            window_for_message_callback->input.key_pressed[key_translation_table[key]]++;
+            input->key_pressed[key_translation_table[key]]++;
         }
-        input_add_key_message(&window_for_message_callback->input,
+        input_add_key_message(input,
             key_message_make((Key_Code)key_translation_table[key], true, 0,
-                window_for_message_callback->input.key_down[(int)Key_Code::SHIFT],
-                window_for_message_callback->input.key_down[(int)Key_Code::ALT],
-                window_for_message_callback->input.key_down[(int)Key_Code::CTRL]
+                input->key_down[(int)Key_Code::SHIFT],
+                input->key_down[(int)Key_Code::ALT],
+                input->key_down[(int)Key_Code::CTRL]
             ));
-        window_for_message_callback->input.key_down[key_translation_table[key]] = true;
+        input->key_down[key_translation_table[key]] = true;
         window_for_message_callback->put_next_char_into_last_key_message = true;
         break;
     }
@@ -190,79 +191,80 @@ LRESULT CALLBACK window_message_callback(HWND hwnd, UINT msg_type, WPARAM wparam
     case WM_SYSKEYUP:
     {
         int key = (int)wparam;
-        window_for_message_callback->input.key_down[key_translation_table[key]] = false;
-        input_add_key_message(&window_for_message_callback->input, 
+        input->key_down[key_translation_table[key]] = false;
+        //logg("Key_Up: %s\n", key_code_to_string((Key_Code)key_translation_table[key]));
+        input_add_key_message(input,
             key_message_make((Key_Code)key_translation_table[key], false, 0,
-                window_for_message_callback->input.key_down[(int)Key_Code::SHIFT],
-                window_for_message_callback->input.key_down[(int)Key_Code::ALT],
-                window_for_message_callback->input.key_down[(int)Key_Code::CTRL]
+                input->key_down[(int)Key_Code::SHIFT],
+                input->key_down[(int)Key_Code::ALT],
+                input->key_down[(int)Key_Code::CTRL]
             ));
         window_for_message_callback->put_next_char_into_last_key_message = true;
         break;
     }
     // Mouse input
     case WM_LBUTTONDOWN:
-        window_for_message_callback->input.mouse_pressed[(int)Mouse_Key_Code::LEFT] = true;
+        input->mouse_pressed[(int)Mouse_Key_Code::LEFT] = true;
         input_add_mouse_message(input,
             mouse_message_make(Mouse_Key_Code::LEFT, true, input)
         );
-        window_for_message_callback->input.mouse_down[(int)Mouse_Key_Code::LEFT] = true;
+        input->mouse_down[(int)Mouse_Key_Code::LEFT] = true;
         return 0;
     case WM_LBUTTONUP:
-        window_for_message_callback->input.mouse_down[(int)Mouse_Key_Code::LEFT] = false;
-        window_for_message_callback->input.mouse_released[(int)Mouse_Key_Code::LEFT] = true;
+        input->mouse_down[(int)Mouse_Key_Code::LEFT] = false;
+        input->mouse_released[(int)Mouse_Key_Code::LEFT] = true;
         input_add_mouse_message(input,
             mouse_message_make(Mouse_Key_Code::LEFT, false, input)
         );
         return 0;
     case WM_MBUTTONDOWN:
-        if (window_for_message_callback->input.mouse_down[(int)Mouse_Key_Code::MIDDLE]) {
-            window_for_message_callback->input.mouse_pressed[(int)Mouse_Key_Code::MIDDLE] = true;
+        if (input->mouse_down[(int)Mouse_Key_Code::MIDDLE]) {
+            input->mouse_pressed[(int)Mouse_Key_Code::MIDDLE] = true;
         }
         input_add_mouse_message(input,
             mouse_message_make(Mouse_Key_Code::MIDDLE, true, input)
         );
-        window_for_message_callback->input.mouse_down[(int)Mouse_Key_Code::MIDDLE] = true;
+        input->mouse_down[(int)Mouse_Key_Code::MIDDLE] = true;
         return 0;
     case WM_MBUTTONUP:
-        window_for_message_callback->input.mouse_down[(int)Mouse_Key_Code::MIDDLE] = false;
-        if (!window_for_message_callback->input.mouse_down[(int)Mouse_Key_Code::MIDDLE]) {
-            window_for_message_callback->input.mouse_released[(int)Mouse_Key_Code::MIDDLE] = true;
+        input->mouse_down[(int)Mouse_Key_Code::MIDDLE] = false;
+        if (!input->mouse_down[(int)Mouse_Key_Code::MIDDLE]) {
+            input->mouse_released[(int)Mouse_Key_Code::MIDDLE] = true;
         }
         input_add_mouse_message(input,
             mouse_message_make(Mouse_Key_Code::MIDDLE, false, input)
         );
         return 0;
     case WM_RBUTTONDOWN:
-        if (window_for_message_callback->input.mouse_down[(int)Mouse_Key_Code::RIGHT]) {
-            window_for_message_callback->input.mouse_pressed[(int)Mouse_Key_Code::RIGHT] = true;
+        if (input->mouse_down[(int)Mouse_Key_Code::RIGHT]) {
+            input->mouse_pressed[(int)Mouse_Key_Code::RIGHT] = true;
         }
         input_add_mouse_message(input,
             mouse_message_make(Mouse_Key_Code::RIGHT, true, input)
         );
-        window_for_message_callback->input.mouse_down[(int)Mouse_Key_Code::RIGHT] = true;
+        input->mouse_down[(int)Mouse_Key_Code::RIGHT] = true;
         return 0;
     case WM_RBUTTONUP:
-        if (!window_for_message_callback->input.mouse_down[(int)Mouse_Key_Code::RIGHT]) {
-            window_for_message_callback->input.mouse_released[(int)Mouse_Key_Code::RIGHT] = true;
+        if (!input->mouse_down[(int)Mouse_Key_Code::RIGHT]) {
+            input->mouse_released[(int)Mouse_Key_Code::RIGHT] = true;
         }
         input_add_mouse_message(input,
             mouse_message_make(Mouse_Key_Code::RIGHT, false, input)
         );
-        window_for_message_callback->input.mouse_down[(int)Mouse_Key_Code::RIGHT] = false;
+        input->mouse_down[(int)Mouse_Key_Code::RIGHT] = false;
         return 0;
     case WM_MOUSELEAVE: {
         //logg("MOUSE_LEAVE\n");
         ClipCursor(0);
-        window_for_message_callback->input.mouse_down[(int)Mouse_Key_Code::LEFT] = false;
-        window_for_message_callback->input.mouse_down[(int)Mouse_Key_Code::RIGHT] = false;
-        window_for_message_callback->input.mouse_down[(int)Mouse_Key_Code::MIDDLE] = false;
+        input->mouse_down[(int)Mouse_Key_Code::LEFT] = false;
+        input->mouse_down[(int)Mouse_Key_Code::RIGHT] = false;
+        input->mouse_down[(int)Mouse_Key_Code::MIDDLE] = false;
         break;
     }
     case WM_MOUSEWHEEL:
     {
         int zDelta = GET_WHEEL_DELTA_WPARAM(wparam);
-        window_for_message_callback->input.mouse_wheel_delta += zDelta / ((float)WHEEL_DELTA);
+        input->mouse_wheel_delta += zDelta / ((float)WHEEL_DELTA);
         return 0;
     }
     case WM_ACTIVATE: 
@@ -281,12 +283,15 @@ LRESULT CALLBACK window_message_callback(HWND hwnd, UINT msg_type, WPARAM wparam
             }
         }
         else {
+            input_on_focus_lost(input);
+            //logg("Key_Down after Reset: %s\n", input->key_down[(int)Key_Code::O] ? "TRUE" : "FALSE");
             window_for_message_callback->state.in_focus = false;
             ClipCursor(0);
             SetCursor(window_for_message_callback->cursor_default);
             window_cursor_update_contrain_rect(window_for_message_callback);
         }
         //logg("WM_ACTIVATE\n");
+        break;
     }
     case WM_MOUSEMOVE: {
         if (window_for_message_callback->state.cursor_visible) {
@@ -298,7 +303,6 @@ LRESULT CALLBACK window_message_callback(HWND hwnd, UINT msg_type, WPARAM wparam
         }
         int x = GET_X_LPARAM(lparam);
         int y = GET_Y_LPARAM(lparam);
-        Input* input = &window_for_message_callback->input;
         input->mouse_delta_x += (x - input->mouse_x);
         input->mouse_delta_y += (y - input->mouse_y);
         input->mouse_normalized_delta_x = (float)input->mouse_delta_x / window_for_message_callback->primary_monitor_width;
@@ -318,11 +322,7 @@ LRESULT CALLBACK window_message_callback(HWND hwnd, UINT msg_type, WPARAM wparam
         Window_State* state = &window_for_message_callback->state;
         if (wparam == SIZE_MINIMIZED) { // Handle Minimization
             state->minimized = true;
-            Input* input = &window_for_message_callback->input;
-            memset(input->key_pressed, 0, KEYBOARD_KEY_COUNT);
-            memset(input->mouse_pressed, 0, MOUSE_KEY_COUNT);
-            memset(input->key_down, 0, KEYBOARD_KEY_COUNT);
-            memset(input->key_down, 0, MOUSE_KEY_COUNT);
+            input_on_focus_lost(input);
             if (!state->cursor_visible) {
                 SetCursor(0);
             }
@@ -337,7 +337,7 @@ LRESULT CALLBACK window_message_callback(HWND hwnd, UINT msg_type, WPARAM wparam
 
         // Handle resizing
         if (state->width != LOWORD(lparam) || state->height != HIWORD(lparam)) {
-            window_for_message_callback->input.client_area_resized = true;
+            input->client_area_resized = true;
         }
         state->width = new_width;
         state->height = new_height;
@@ -357,7 +357,7 @@ LRESULT CALLBACK window_message_callback(HWND hwnd, UINT msg_type, WPARAM wparam
     }
     case WM_CLOSE:
         logg("WM_CLOSE\n");
-        window_for_message_callback->input.close_request_issued = true;
+        input->close_request_issued = true;
         return 0;
         break;
     case WM_DESTROY:

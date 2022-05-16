@@ -31,7 +31,7 @@ bool output_type_system = false;
 bool output_root_table = false;
 bool output_ir = false;
 bool output_bytecode = false;
-bool output_timing = true;
+bool output_timing = false;
 
 // Testcases
 bool enable_testcases = false;

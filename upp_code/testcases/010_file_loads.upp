@@ -1,9 +1,9 @@
-#load "upp_code/testcases/010_file_to_load.upp";
-// Load twice must also work
-#load "upp_code/testcases/010_file_to_load.upp";
-#load "upp_code/testcases/010_file_to_load.upp";
+#load"upp_code/testcases/010_file_to_load.upp"
+// Multiple loads must also work
+#load"upp_code/testcases/010_file_to_load.upp"
+#load"upp_code/testcases/010_file_to_load.upp"
 
-main :: ()
-{
-	success();
-}
+main::()
+	success()
+
+

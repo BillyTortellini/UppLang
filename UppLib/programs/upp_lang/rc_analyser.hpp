@@ -178,7 +178,7 @@ enum class Analysis_Item_Type
 struct Analysis_Item
 {
     Analysis_Item_Type type;
-    Dynamic_Array<Symbol_Dependency> symbol_dependencies;
+    Dynamic_Array<Symbol_Dependency*> symbol_dependencies;
     AST::Base* node;
     Symbol* symbol; // Optional
     union {

@@ -1,32 +1,29 @@
-// Comment inside
+// Comments can be located at any scope!
 
-main :: ()
-{
-// Single line comment
-
-// Single line comment
-
-// Single line comment
-
-/* Multi
-line comment
-*/
-/* Multi line comment */
-/* Multi
-Li
-ne
-commnt*/
-
-/**//* **** */ 
-}
-
-/*
-	Nested 
-	/*
+main::()
+	// Single line comment
+	a:=15// Comment at end of line
 	
-		/*  
-			Comment
-		*/
+	//
+		Multi line comments start with // and
+		indentation
+		
+		still works
 	
-	*/
-*/
+	//
+		Nested comments also work, but they also require
+		another // symbol, like normal multi-line comments
+		//
+			This is a nested comment
+		This would otherwise cause problems with end of line comments
+		and anonymous blocks
+	
+	// Working end of line comment
+	cond:=true
+	if cond// Do something when cond is true
+		assert(true)
+	
+	// Anonymous block
+		x:=15+5
+		assert(x==20)
+	

@@ -1,20 +1,20 @@
-main :: ()
-{
-	x0: int;
-	x1: float;
-	x_1: bool;
+main::()
+	x0:int
+	x1:float
+	x_1:bool
 	
-	x2: u8;
-	x3: u16;
-	x4: u32;
-	x5: u64;
-	x6: i8;
-	x7: i16;
-	x8: i32;
-	x9: i64;
+	x2:u8
+	x3:u16
+	x4:u32
+	x5:u64
+	x6:i8
+	x7:i16
+	x8:i32
+	x9:i64
 	
-	x10: f32;
-	x11: f64;
+	x10:f32
+	x11:f64
 	
-	x12: byte;
-}
+	x12:byte
+
+

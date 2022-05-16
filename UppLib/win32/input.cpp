@@ -70,6 +70,10 @@ const char* key_code_to_string(Key_Code code)
     case Key_Code::RCTRL: return "RCTRL";
     case Key_Code::RSHIFT: return "RSHIFT";
     case Key_Code::RALT: return "RALT";
+    case Key_Code::ARROW_DOWN: return "ARROW_DOWN";
+    case Key_Code::ARROW_LEFT: return "ARROW_LEFT";
+    case Key_Code::ARROW_RIGHT: return "ARROW_RIGHT";
+    case Key_Code::ARROW_UP: return "ARROW_UP";
     }
     panic("invalid enum value!");
     return "WRONG";
@@ -147,6 +151,7 @@ void input_add_mouse_message(Input* input, Mouse_Message message) {
 
 void input_reset(Input* input)
 {
+    // ! Don't reset key_down here, since this function is supposed to be once per frame
     memory_set_bytes(input->key_pressed, KEYBOARD_KEY_COUNT, 0);
     memory_set_bytes(input->mouse_pressed, MOUSE_KEY_COUNT, 0);
     memory_set_bytes(input->mouse_released, MOUSE_KEY_COUNT, 0);
@@ -163,4 +168,12 @@ void input_reset(Input* input)
     dynamic_array_reset(&input->key_messages);
     dynamic_array_reset(&input->mouse_messages);
 }
+
+void input_on_focus_lost(Input* input)
+{
+    input_reset(input);
+    memory_set_bytes(input->key_down, KEYBOARD_KEY_COUNT, 0);
+    memory_set_bytes(input->mouse_down, MOUSE_KEY_COUNT, 0);
+}
+
 

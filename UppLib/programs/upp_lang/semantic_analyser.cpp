@@ -294,7 +294,6 @@ ModTree_Function* modtree_function_create_empty(Type_Signature* signature, Symbo
     ModTree_Function* function = new ModTree_Function;
     function->type = ModTree_Function_Type::NORMAL;
     function->parameters = dynamic_array_create_empty<ModTree_Parameter>(1);
-    function->return_type = 0;
     function->symbol = symbol;
     function->signature = signature;
     function->called_from = dynamic_array_create_empty<ModTree_Function*>(1);
@@ -311,7 +310,6 @@ ModTree_Function* modtree_function_create_poly_instance(ModTree_Function* base_f
     auto& analyser = semantic_analyser;
     ModTree_Function* instance = modtree_function_create_empty(base_function->signature, base_function->symbol, base_function->body->code_block);
     instance->type = ModTree_Function_Type::POLYMOPRHIC_INSTANCE;
-    instance->return_type = base_function->return_type;
     for (int i = 0; i < base_function->parameters.size; i++) {
         if (base_function->parameters[i].is_comptime) continue;
         dynamic_array_push_back(&instance->parameters, base_function->parameters[i]);
@@ -1198,7 +1196,7 @@ void workload_executer_move_dependency(Analysis_Workload* move_from, Analysis_Wo
     dynamic_array_destroy(&info.symbol_reads);
 }
 
-void workload_executer_remove_dependency(Analysis_Workload* workload, Analysis_Workload* depends_on)
+void workload_executer_remove_dependency(Analysis_Workload* workload, Analysis_Workload* depends_on, bool add_if_runnable)
 {
     auto graph = &workload_executer;
     Workload_Pair pair = workload_pair_create(workload, depends_on);
@@ -1208,7 +1206,7 @@ void workload_executer_remove_dependency(Analysis_Workload* workload, Analysis_W
     list_remove_node(&depends_on->dependents, info->dependent_node);
     dynamic_array_destroy(&info->symbol_reads);
     bool worked = hashtable_remove_element(&graph->workload_dependencies, pair);
-    if (workload->dependencies.count == 0 && workload->symbol_dependencies.size == 0) {
+    if (add_if_runnable && workload->dependencies.count == 0 && workload->symbol_dependencies.size == 0) {
         dynamic_array_push_back(&graph->runnable_workloads, workload);
     }
 }
@@ -1290,6 +1288,10 @@ void analysis_workload_add_cluster_dependency(Analysis_Workload* add_to_workload
             Analysis_Workload* merge_dependency = node->value;
             // Check if we need the dependency
             bool keep_dependency = true;
+            if (merge_dependency == merge_into || merge_dependency == merge_from) {
+                keep_dependency = false;
+            }
+            else
             {
                 bool* contains_loop = hashtable_find_element(&visited, merge_dependency);
                 if (contains_loop != 0) {
@@ -1297,13 +1299,14 @@ void analysis_workload_add_cluster_dependency(Analysis_Workload* add_to_workload
                 }
             }
 
+            auto next = node->next;
             if (keep_dependency) {
                 workload_executer_move_dependency(merge_cluster, merge_into, merge_dependency);
             }
             else {
-                workload_executer_remove_dependency(merge_cluster, merge_dependency);
+                workload_executer_remove_dependency(merge_cluster, merge_dependency, false);
             }
-            node = node->next;
+            node = next;
         }
         list_reset(&merge_cluster->dependencies);
 
@@ -1312,29 +1315,17 @@ void analysis_workload_add_cluster_dependency(Analysis_Workload* add_to_workload
         {
         case Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE:
         {
-            for (int i = 0; i < merge_cluster->options.cluster_compile.functions.size; i++) {
-                dynamic_array_push_back(&
-                    merge_into->options.cluster_compile.functions, merge_cluster->options.cluster_compile.functions[i]
-                );
-            }
+            dynamic_array_append_other(&merge_into->options.cluster_compile.functions, &merge_cluster->options.cluster_compile.functions);
             dynamic_array_reset(&merge_cluster->options.cluster_compile.functions);
             break;
         }
         case Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE:
         {
-            for (int i = 0; i < merge_cluster->options.struct_reachable.unfinished_array_types.size; i++) {
-                dynamic_array_push_back(&
-                    merge_into->options.struct_reachable.unfinished_array_types, merge_cluster->options.struct_reachable.unfinished_array_types[i]
-                );
-            }
+            dynamic_array_append_other(&merge_into->options.struct_reachable.struct_types, &merge_cluster->options.struct_reachable.struct_types);
             dynamic_array_reset(&merge_cluster->options.struct_reachable.unfinished_array_types);
-            for (int i = 0; i < merge_cluster->options.struct_reachable.struct_types.size; i++) {
-                dynamic_array_push_back(&
-                    merge_into->options.struct_reachable.struct_types, merge_cluster->options.struct_reachable.struct_types[i]
-                );
-            }
+            dynamic_array_append_other(&merge_into->options.struct_reachable.unfinished_array_types, &merge_cluster->options.struct_reachable.unfinished_array_types);
             dynamic_array_reset(&merge_cluster->options.struct_reachable.struct_types);
-
+            break;
         }
         case Analysis_Workload_Type::DEFINITION:
         case Analysis_Workload_Type::FUNCTION_BODY:
@@ -1345,9 +1336,7 @@ void analysis_workload_add_cluster_dependency(Analysis_Workload* add_to_workload
         }
 
         // Add reachables to merged
-        for (int i = 0; i < merge_cluster->reachable_clusters.size; i++) {
-            dynamic_array_push_back(&merge_into->reachable_clusters, merge_cluster->reachable_clusters[i]);
-        }
+        dynamic_array_append_other(&merge_into->reachable_clusters, &merge_cluster->reachable_clusters);
         dynamic_array_reset(&merge_cluster->reachable_clusters);
         analysis_workload_add_dependency_internal(merge_cluster, merge_into, 0);
         merge_cluster->cluster = merge_into;
@@ -1591,7 +1580,7 @@ void workload_executer_resolve()
                 while (node != 0) {
                     Analysis_Workload* dependent = node->value;
                     node = node->next; // INFO: This is required before remove_dependency, since remove will remove items from the list
-                    workload_executer_remove_dependency(dependent, workload);
+                    workload_executer_remove_dependency(dependent, workload, true);
                 }
                 assert(workload->dependents.count == 0, "");
                 //list_reset(&workload->dependents);
@@ -1749,8 +1738,8 @@ void workload_executer_resolve()
                                 semantic_analyser_add_error_info(error_information_make_cycle_workload(workload));
                             }
                         }
+                        workload_executer_remove_dependency(workload, depends_on, true);
                     }
-                    workload_executer_remove_dependency(workload, depends_on);
                 }
                 assert(only_reads_was_found, "");
                 graph->progress_was_made = true;
@@ -1809,7 +1798,7 @@ Analysis_Workload* workload_executer_add_workload_empty(Analysis_Workload_Type t
     workload->symbol_dependencies = dynamic_array_create_empty<Symbol_Dependency*>(1);
     if (item != 0 && add_symbol_dependencies) {
         for (int i = 0; i < item->symbol_dependencies.size; i++) {
-            dynamic_array_push_back(&workload->symbol_dependencies, &item->symbol_dependencies[i]);
+            dynamic_array_push_back(&workload->symbol_dependencies, item->symbol_dependencies[i]);
         }
     }
     switch (type)
@@ -2236,11 +2225,9 @@ bool analysis_workload_execute(Analysis_Workload* workload)
             dynamic_array_push_back(&function->parameters, modtree_param);
         }
 
+        Type_Signature* return_type = analyser.compiler->type_system.void_type;
         if (signature_node.return_value.available) {
-            function->return_type = semantic_analyser_analyse_expression_type(signature_node.return_value.value);
-        }
-        else {
-            function->return_type = analyser.compiler->type_system.void_type;
+            return_type = semantic_analyser_analyse_expression_type(signature_node.return_value.value);
         }
         if (polymorphic_count > 0) {
             function->type = ModTree_Function_Type::POLYMORPHIC_BASE;
@@ -2255,7 +2242,7 @@ bool analysis_workload_execute(Analysis_Workload* workload)
                 dynamic_array_push_back(&param_types, function->parameters[i].data_type);
             }
         }
-        function->signature = type_system_make_function(&type_system, param_types, function->return_type);
+        function->signature = type_system_make_function(&type_system, param_types, return_type);
 
         // Advance Progress
         progress->state = Function_State::HEADER_ANALYSED;
@@ -2987,7 +2974,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
                     analysis_workload_register_function_call(call->options.function);
                 }
             }
-            expr_result->result_type = call->options.function->return_type;
+            expr_result->result_type = call->options.function->signature->options.function.return_type;
             return expression_result_make_value(expr_result);
         }
         case Expression_Result_Type::HARDCODED_FUNCTION: {

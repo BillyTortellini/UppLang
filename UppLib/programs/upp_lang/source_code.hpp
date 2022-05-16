@@ -147,7 +147,7 @@ enum class Syntax_Token_Type
     OPERATOR,
     PARENTHESIS,
     UNEXPECTED_CHAR, // Unexpected Character, like | or ; \...
-    GAP,
+    COMMENT, // Single line for now
     DUMMY, // All empty lines have 1 tokenized dummy token, so i dont have to worry about dumb stuff
 };
 
@@ -159,6 +159,7 @@ struct Syntax_Token
         Syntax_Operator op;
         String* identifier;
         String* literal_number;
+        String* comment;
         struct {
             String* string; // With ""
             bool has_closure;
@@ -209,6 +210,9 @@ String syntax_keyword_as_string(Syntax_Keyword keyword);
 String syntax_token_as_string(Syntax_Token token);
 Syntax_Token syntax_token_make_dummy();
 
+bool syntax_line_is_comment(Syntax_Line* line);
+bool syntax_line_is_multi_line_comment(Syntax_Line* line);
+bool syntax_line_is_empty(Syntax_Line* line);
 int syntax_line_index(Syntax_Line* line);
 void syntax_line_remove_token(Syntax_Line* line, int index);
 int syntax_line_character_to_token_index(Syntax_Line* line, int char_index);

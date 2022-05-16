@@ -1,4 +1,15 @@
-main :: ()
-{
-	/*/
-}
+
+main::()
+	// With the current design there are no invalid
+	// Multi line comments must start
+		with an empty line
+	x:=15
+	//
+		This works
+	y:=15// 
+		this doesn't work
+	assert(y==15)
+	
+
+
+

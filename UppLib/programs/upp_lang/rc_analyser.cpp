@@ -180,7 +180,7 @@ Analysis_Item* analysis_item_create_empty(Analysis_Item_Type type, Analysis_Item
 {
     auto& analyser = dependency_analyser;
     Analysis_Item* item = new Analysis_Item;
-    item->symbol_dependencies = dynamic_array_create_empty<Symbol_Dependency>(1);
+    item->symbol_dependencies = dynamic_array_create_empty<Symbol_Dependency*>(1);
     item->type = type;
     item->node = node;
     item->symbol = 0;
@@ -199,6 +199,10 @@ Analysis_Item* analysis_item_create_empty(Analysis_Item_Type type, Analysis_Item
 
 void analysis_item_destroy(Analysis_Item* item)
 {
+    for (int i = 0; i < item->symbol_dependencies.size; i++) {
+        auto& dep = item->symbol_dependencies[i];
+        delete dep;
+    }
     dynamic_array_destroy(&item->symbol_dependencies);
     delete item;
 }
@@ -247,9 +251,9 @@ void analysis_item_append_to_string(Analysis_Item* item, String* string, int ind
     }
     for (int i = 0; i < item->symbol_dependencies.size; i++)
     {
-        Symbol_Dependency read = item->symbol_dependencies[i];
+        Symbol_Dependency* read = item->symbol_dependencies[i];
         //ast_identifier_node_append_to_string(string, read->identifier_node);
-        switch (read.type)
+        switch (read->type)
         {
         case Dependency_Type::NORMAL: break;
         case Dependency_Type::MEMBER_IN_MEMORY: string_append_formated(string, "(Member_In_Memory)"); break;
@@ -429,11 +433,11 @@ void analyse_ast_base(AST::Base* base)
     case Base_Type::SYMBOL_READ:
     {
         auto symbol_read = (Symbol_Read*)base;
-        Symbol_Dependency dep;
-        dep.item = analyser.analysis_item;
-        dep.read = symbol_read;
-        dep.symbol_table = analyser.symbol_table;
-        dep.type = analyser.dependency_type;
+        auto dep = new Symbol_Dependency;
+        dep->item = analyser.analysis_item;
+        dep->read = symbol_read;
+        dep->symbol_table = analyser.symbol_table;
+        dep->type = analyser.dependency_type;
         dynamic_array_push_back(&analyser.analysis_item->symbol_dependencies, dep);
         break;
     }

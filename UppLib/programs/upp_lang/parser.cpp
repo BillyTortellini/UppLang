@@ -142,7 +142,7 @@ namespace Parser
         auto line = get_line();
         if (line == 0) return false;
         auto& pos = parser.state.pos;
-        return (pos.token_index >= line->tokens.size || line->text.size == 0) && line->follow_block != 0;
+        return (pos.token_index >= line->tokens.size || (syntax_line_is_empty(line) && ! syntax_line_is_multi_line_comment(line))) && line->follow_block != 0;
     }
 
     // Returns 0 if not on token
@@ -303,8 +303,9 @@ namespace Parser
             auto before_line_index = pos.line_index;
             pos.token_index = 0;
 
-            if (line->text.size == 0 && line->follow_block == 0) {
+            if ((syntax_line_is_empty(line) && line->follow_block == 0) || syntax_line_is_multi_line_comment(line)) {
                 pos.line_index += 1;
+                pos.token_index = 0;
                 continue;
             }
 
@@ -316,10 +317,21 @@ namespace Parser
                 log_error_to_pos("Couldn't parse line", syntax_line_get_end_pos(line));
             }
             if (before_line_index == pos.line_index) {
-                if (pos.token_index < line->tokens.size) {
+                if (pos.token_index < line->tokens.size && line->tokens[pos.token_index].type != Syntax_Token_Type::COMMENT) {
                     log_error_to_pos("Unexpected Tokens, Line already parsed", syntax_line_get_end_pos(line));
                 }
+                if (line->follow_block != 0) {
+                    Syntax_Range range;
+                    range.start.block = line->follow_block;
+                    range.start.token_index = 0;
+                    range.start.line_index = 0;
+                    range.end.block = line->follow_block;
+                    range.end.line_index = line->follow_block->lines.size - 1;
+                    range.end.token_index = line->follow_block->lines[range.end.line_index]->tokens.size;
+                    log_error_to_pos("Unexpected follow block, Line already parsed", syntax_line_get_end_pos(line));
+                }
                 pos.line_index += 1;
+                pos.token_index = 0;
             }
         }
     }
@@ -386,7 +398,7 @@ namespace Parser
             if (item != 0) 
             {
                 dynamic_array_push_back(fill_array, item);
-                if (test_operator(Syntax_Operator::COLON)) {
+                if (test_operator(Syntax_Operator::COMMA)) {
                     advance_token();
                     continue;
                 }
@@ -409,14 +421,14 @@ namespace Parser
             );
             enum class Error_Start { COMMA, PARENTHESIS, NOT_FOUND } tactic;
             tactic = Error_Start::NOT_FOUND;
-            if (comma_pos.available) {
+            if (comma_pos.available && parenthesis_pos.available) {
+                tactic = syntax_position_in_order(comma_pos.value, parenthesis_pos.value) ? Error_Start::COMMA : Error_Start::PARENTHESIS;
+            }
+            else if (comma_pos.available) {
                 tactic = Error_Start::COMMA;
             }
-            if (parenthesis_pos.available) {
+            else if (parenthesis_pos.available) {
                 tactic = Error_Start::PARENTHESIS;
-                if (comma_pos.available && syntax_position_in_order(comma_pos.value, parenthesis_pos.value)) {
-                    tactic = Error_Start::COMMA;
-                }
             }
 
             if (tactic == Error_Start::COMMA) {
@@ -526,7 +538,7 @@ namespace Parser
         }
         {
             auto line = get_line();
-            if (line != 0 && line->text.size == 0 && line->follow_block != 0) {
+            if (syntax_line_is_empty(line) && !syntax_line_is_multi_line_comment(line)) {
                 result->type = Statement_Type::BLOCK;
                 result->options.block = parse_code_block(&result->base);
                 PARSE_SUCCESS(result);
@@ -783,7 +795,7 @@ namespace Parser
                 auto& init = result->options.array_initializer;
                 init.type_expr = optional_make_failure<Expression*>();
                 init.values = dynamic_array_create_empty<Expression*>(1);
-                parse_parenthesis_comma_seperated(&result->base, &init.values, parse_expression, Parenthesis_Type::BRACES);
+                parse_parenthesis_comma_seperated(&result->base, &init.values, parse_expression, Parenthesis_Type::BRACKETS);
                 PARSE_SUCCESS(result);
             }
             CHECKPOINT_EXIT;
@@ -956,7 +968,7 @@ namespace Parser
                 auto& init = result->options.array_initializer;
                 init.type_expr = optional_make_success(child);
                 init.values = dynamic_array_create_empty<Expression*>(1);
-                parse_parenthesis_comma_seperated(&result->base, &init.values, parse_expression, Parenthesis_Type::BRACES);
+                parse_parenthesis_comma_seperated(&result->base, &init.values, parse_expression, Parenthesis_Type::BRACKETS);
                 PARSE_SUCCESS(result);
             }
             CHECKPOINT_EXIT;
@@ -1150,7 +1162,7 @@ namespace Parser
         int index = 0;
         auto child = AST::base_get_child(base, index);
         if (child == 0) return;
-        auto start = parser.parse_informations[child->allocation_index].start_pos;
+        auto& start = parser.parse_informations[child->allocation_index].start_pos;
         Syntax_Position end;
         while (child != 0) {
             base_correct_token_ranges(child);
@@ -1160,6 +1172,8 @@ namespace Parser
         }
 
         auto& info = parser.parse_informations[base->allocation_index];
+        start = syntax_position_sanitize(start);
+        end = syntax_position_sanitize(end);
         info.start_pos = syntax_position_sanitize(info.start_pos);
         info.end_pos = syntax_position_sanitize(info.end_pos);
         if (syntax_position_in_order(start, info.start_pos)) {

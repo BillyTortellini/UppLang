@@ -70,6 +70,17 @@ void lexer_tokenize_syntax_line(Syntax_Line* line)
     auto& tokens = line->tokens;
     dynamic_array_reset(&line->tokens);
 
+    if (syntax_line_is_comment(line)) {
+        Syntax_Token token;
+        memory_zero(&token.info);
+        token.info.char_start = 0;
+        token.info.char_end = line->text.size;
+        token.type = Syntax_Token_Type::COMMENT;
+        token.options.comment = identifier_pool_add(lexer.identifier_pool, string_create_substring_static(&text, 0, text.size));
+        dynamic_array_push_back(&line->tokens, token);
+        return;
+    }
+
     int index = 0;
     while (index < text.size)
     {
@@ -140,6 +151,11 @@ void lexer_tokenize_syntax_line(Syntax_Line* line)
             index += 1;
             token.type = Syntax_Token_Type::PARENTHESIS;
             token.options.parenthesis = char_to_parenthesis(c);
+        }
+        else if (index + 1 < text.size && c == '/' && text[index + 1] == '/') {
+            token.type = Syntax_Token_Type::COMMENT;
+            token.options.comment = identifier_pool_add(lexer.identifier_pool, string_create_substring_static(&text, index, text.size));
+            index = text.size;
         }
         else
         {
@@ -316,9 +332,11 @@ void lexer_reconstruct_line_text(Syntax_Line* line, int* editor_cursor)
         case Syntax_Token_Type::LITERAL_NUMBER:
         case Syntax_Token_Type::LITERAL_STRING:
         case Syntax_Token_Type::LITERAL_BOOL:
-        case Syntax_Token_Type::GAP:
         case Syntax_Token_Type::KEYWORD:
         case Syntax_Token_Type::DUMMY:
+            break;
+        case Syntax_Token_Type::COMMENT:
+            info.format_space_before = i != 0;
             break;
         case Syntax_Token_Type::PARENTHESIS:
             if (!token.options.parenthesis.is_open && is_space_critical(next_type) && token.options.parenthesis.type != Parenthesis_Type::BRACKETS) {
@@ -342,6 +360,7 @@ void lexer_reconstruct_line_text(Syntax_Line* line, int* editor_cursor)
                 // Determining if - or * is Binop or Unop can be quite hard, but I think this is a good approximation
                 if (!(previous_type == Syntax_Token_Type::OPERATOR ||
                     (previous_type == Syntax_Token_Type::PARENTHESIS && tokens[i - 1].options.parenthesis.is_open) ||
+                    (previous_type == Syntax_Token_Type::PARENTHESIS && tokens[i - 1].options.parenthesis.type == Parenthesis_Type::BRACKETS) ||
                     (previous_type == Syntax_Token_Type::KEYWORD) || i == 0))
                 {
                     info.format_space_before = op_info.space_before;
@@ -535,7 +554,7 @@ void syntax_block_append_to_string(Syntax_Block* block, String* string, int inde
     }
 }
 
-void syntax_block_sanity_check(Syntax_Block* block) 
+void syntax_block_sanity_check(Syntax_Block* block)
 {
     assert(block->lines.size > 0, "");
     for (int i = 0; i < block->lines.size; i++) {
@@ -699,8 +718,8 @@ String syntax_token_as_string(Syntax_Token token)
     }
     case Syntax_Token_Type::UNEXPECTED_CHAR:
         return string_create_static_with_size(&token.options.unexpected, 1);
-    case Syntax_Token_Type::GAP:
-        return string_create_static(" ");
+    case Syntax_Token_Type::COMMENT:
+        return *token.options.comment;
     case Syntax_Token_Type::DUMMY:
         return string_create_static("");
     default: panic("");
@@ -739,8 +758,8 @@ void syntax_line_print_tokens(Syntax_Line* line)
         case Syntax_Token_Type::KEYWORD:
             string_append_formated(&output, "Keyword");
             break;
-        case Syntax_Token_Type::GAP:
-            string_append_formated(&output, "GAP");
+        case Syntax_Token_Type::COMMENT:
+            string_append_formated(&output, "Comment");
             break;
         case Syntax_Token_Type::PARENTHESIS:
             string_append_formated(&output, "Parenthesis");
@@ -772,6 +791,29 @@ void syntax_line_print_tokens(Syntax_Line* line)
 
 
 // Editing
+bool syntax_line_is_multi_line_comment(Syntax_Line* line)
+{
+    auto comment_start = string_create_static("//");
+    if (string_equals(&line->text, &comment_start)) return true;
+    return false;
+}
+
+bool syntax_line_is_comment(Syntax_Line* line)
+{
+    auto comment_start = string_create_static("//");
+    if (string_compare_substring(&line->text, 0, &comment_start)) return true;
+    auto parent = line->parent_block->parent_line;
+    if (parent == 0) return false;
+    return syntax_line_is_multi_line_comment(parent);
+}
+
+bool syntax_line_is_empty(Syntax_Line* line) {
+    if (line->text.size == 0) return true;
+    if (syntax_line_is_comment(line)) return true;
+    return false;
+}
+
+
 int syntax_line_index(Syntax_Line* line) {
     auto block = line->parent_block;
     for (int i = 0; i < block->lines.size; i++) {

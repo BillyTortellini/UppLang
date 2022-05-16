@@ -1,16 +1,13 @@
-main :: ()
-{
-	x: *int = new int;
-	&x = 15;
-	assert(&x == 15);
-	delete x;
+main::()
+	x:*int=new int
+	&x=15
+	print_i32(x)
+	assert(&x==15)
+	delete x
 	
-	i := 0;
-	while i < 20
-	{
-		data := new f64;
-		&data = cast(f64) 1.0;
-		delete data;
-		i = i+1;
-	}
-}
+	i:=0
+	while i<20
+		data:=new f64
+		&data=1
+		delete data
+		i=i+1

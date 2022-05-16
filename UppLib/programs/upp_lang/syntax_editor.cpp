@@ -503,11 +503,20 @@ void syntax_editor_update()
     auto& input = syntax_editor.input;
     auto& mode = syntax_editor.mode;
 
+    /*
+    if (syntax_editor.input->key_pressed[(int)Key_Code::O]) {
+        logg("O Pressed m8\n");
+    }
+    if (syntax_editor.input->key_down[(int)Key_Code::O]) {
+        logg("O DOWN m8\n");
+    }
+    */
+
     if (syntax_editor.input->key_pressed[(int)Key_Code::O] && syntax_editor.input->key_down[(int)Key_Code::CTRL]) {
         auto open_file = open_file_selection_dialog();
         if (open_file.available) {
-            Parser::reset();
             syntax_editor_load_text_file(open_file.value.characters);
+            compiler_compile(syntax_editor.root_block, false);
         }
         return;
     }
@@ -635,7 +644,6 @@ void syntax_editor_update()
 
     int index = 0;
     syntax_editor_layout_block(syntax_editor.root_block, 0, &index);
-    auto module = Parser::execute(syntax_editor.root_block);
 
     if (syntax_editor.input->key_pressed[(int)Key_Code::F5])
     {
@@ -648,7 +656,11 @@ void syntax_editor_update()
         compiler_compile(syntax_editor.root_block, true);
 
         if (!compiler_errors_occured()) {
-            compiler_execute();
+            auto exit_code = compiler_execute();
+            String output = string_create_empty(256);
+            SCOPE_EXIT(string_destroy(&output));
+            exit_code_append_to_string(&output, exit_code);
+            logg("\nProgram Exit with Code: %s\n", output.characters);
         }
         else 
         {
@@ -850,7 +862,12 @@ void syntax_editor_layout_line(Syntax_Line* line, int line_index)
         info.screen_pos = pos;
         info.screen_size = str.size;
         vec3 color = Syntax_Color::TEXT;
-        if (token.type == Syntax_Token_Type::KEYWORD) {
+        
+        // This has to be the first if case, since multi-line comments may not start with ||
+        if (token.type == Syntax_Token_Type::COMMENT || syntax_line_is_comment(line)) {
+            color = Syntax_Color::COMMENT;
+        }
+        else if (token.type == Syntax_Token_Type::KEYWORD) {
             color = Syntax_Color::KEYWORD;
         }
         else if (token.type == Syntax_Token_Type::LITERAL_STRING) {
@@ -1053,7 +1070,7 @@ void syntax_editor_render()
     auto& cursor = syntax_editor.cursor_index;
 
     // Prepare Render
-    editor.character_size.y = text_renderer_cm_to_relative_height(editor.text_renderer, editor.rendering_core, 0.8f);
+    editor.character_size.y = text_renderer_cm_to_relative_height(editor.text_renderer, editor.rendering_core, 0.6f);
     editor.character_size.x = text_renderer_get_cursor_advance(editor.text_renderer, editor.character_size.y);
 
     // Layout Source Code
