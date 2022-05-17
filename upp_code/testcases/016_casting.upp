@@ -1,22 +1,22 @@
-main :: ()
-{
-    // Float to int, int to float
-    assert(cast(int)1.5 == 1);
-    assert(cast(float)1 == 1.0);
-    
-    // Unsigned to signed
-    assert(cast(u8) -1 == cast(u8)255);
-    assert(cast(i8) 255 == -1);
-    
-    // Pointer arithmethic with cast_raw and cast_ptr
-    arr: [5]int;
-    second_ptr := *arr[1];
-    val := cast_raw *arr[0] + cast(u64)4;
-    ptr := cast_ptr(*int)val;
-    assert(ptr == *arr[1]);
-    
-    // Array to slice
-    slice: []int = cast([]int) arr;
-    assert(slice.size == arr.size);
-    assert(slice.data == *arr[0]);
-}
+main::()
+	// Float to int, int to float
+	assert(cast{int}1.5==1)
+	assert(cast{float}1==1.0)
+	
+	// Unsigned to signed
+	assert(cast{u8}-1==cast{u8}255)
+	assert(cast{i8}255==-1)
+	
+	// Pointer arithmethic with cast_raw and cast_ptr
+	arr:[5]int
+	second_ptr:=*arr[1]
+	val:=cast_raw*arr[0]+cast{u64}4
+	ptr:=cast_ptr{*int}val
+	assert(ptr==*arr[1])
+	
+	// Array to slice
+	slice:[]int=cast{[]int}arr
+	assert(slice.size==arr.size)
+	assert(slice.data==*arr[0])
+
+

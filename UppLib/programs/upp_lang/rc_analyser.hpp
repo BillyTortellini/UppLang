@@ -81,7 +81,7 @@ struct Symbol
     Symbol_Table* origin_table;
     AST::Base* definition_node;
     Analysis_Item* origin_item;
-    Dynamic_Array<AST::Symbol_Read*> references;
+    Dynamic_Array<Symbol_Dependency*> references;
 };
 
 struct Symbol_Table
@@ -154,6 +154,7 @@ struct Symbol_Dependency
 {
     Dependency_Type type;
     AST::Symbol_Read* read;
+    Symbol* resolved_symbol;
     Symbol_Table* symbol_table;
     Analysis_Item* item;
 };
@@ -178,7 +179,7 @@ enum class Analysis_Item_Type
 struct Analysis_Item
 {
     Analysis_Item_Type type;
-    Dynamic_Array<Symbol_Dependency*> symbol_dependencies;
+    Dynamic_Array<Symbol_Dependency> symbol_dependencies;
     AST::Base* node;
     Symbol* symbol; // Optional
     union {

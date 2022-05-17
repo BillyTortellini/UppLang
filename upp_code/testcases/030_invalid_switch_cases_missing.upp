@@ -1,15 +1,11 @@
 Color :: enum
-{
-    RED;
-    GREEN;
-    BLUE;
-}
+	RED
+	GREEN
+	BLUE
 
 main :: ()
-{
-    switch Color.RED
-    {
-        case Color.GREEN:
-        case Color.RED:
-    }
-}
+	switch Color.RED
+	case Color.GREEN
+		
+	case Color.RED
+		

@@ -2,6 +2,7 @@
 
 #include "ast.hpp"
 #include "syntax_editor.hpp"
+#include "compiler.hpp"
 
 namespace Parser
 {
@@ -228,6 +229,7 @@ namespace Parser
 #define CHECKPOINT_EXIT {_error_exit = true; return 0;}
 #define SET_END_RANGE(val) parser.parse_informations[val->base.allocation_index].end_pos = parser.state.pos;
 #define PARSE_SUCCESS(val) { \
+        if (val->base.type == Base_Type::CODE_BLOCK) return val; \
         parser.parse_informations[val->base.allocation_index].end_pos = parser.state.pos; \
         return val; \
     }
@@ -294,6 +296,7 @@ namespace Parser
         pos.block = block;
         pos.line_index = 0;
         pos.token_index = 0;
+        parser.parse_informations[parent->allocation_index].start_pos = pos;
 
         // Parse block
         auto& lines = pos.block->lines;
@@ -334,6 +337,7 @@ namespace Parser
                 pos.token_index = 0;
             }
         }
+        parser.parse_informations[parent->allocation_index].end_pos = pos;
     }
 
     template<typename T>
@@ -351,7 +355,6 @@ namespace Parser
         next_pos.token_index = 0;
         parse_syntax_block(line->follow_block, parent, fill_array, parse_fn);
         parser.state.pos = next_pos;
-        return;
     }
 
     template<Parenthesis_Type type>
@@ -651,6 +654,8 @@ namespace Parser
 
     Expression* parse_single_expression_no_postop(Base* parent)
     {
+        // Note: Single expression no postop means pre-ops + bases, e.g.
+        // --*x   -> is 3 pre-ops + base x
         CHECKPOINT_SETUP;
         auto result = allocate_base<Expression>(parent, Base_Type::EXPRESSION);
 
@@ -663,7 +668,7 @@ namespace Parser
             {
             case Syntax_Operator::SUBTRACTION: unop = Unop::NEGATE; break;
             case Syntax_Operator::NOT: unop = Unop::NOT; break;
-            case Syntax_Operator::AMPERSAND: unop = Unop::ADDRESS_OF; break;
+            case Syntax_Operator::AMPERSAND: unop = Unop::DEREFERENCE; break;
             case Syntax_Operator::MULTIPLY: unop = Unop::POINTER; break;
             default: valid = false;
             }
@@ -755,11 +760,11 @@ namespace Parser
                 test_operator_offset(Syntax_Operator::TILDE, 1) &&
                 test_token_offset(Syntax_Token_Type::IDENTIFIER, 2))
             {
+                advance_token();
+                advance_token();
                 read->path_child = optional_make_success(allocate_base<Symbol_Read>(&read->base, Base_Type::SYMBOL_READ));
                 read->path_child.value->name = get_token(0)->options.identifier;
                 read = read->path_child.value;
-                advance_token();
-                advance_token();
                 SET_END_RANGE(read);
             }
 
@@ -802,12 +807,20 @@ namespace Parser
         }
 
         // Literals
-        if (test_token(Syntax_Token_Type::LITERAL_NUMBER)) {
+        if (test_token(Syntax_Token_Type::LITERAL_NUMBER)) 
+        {
             auto str = get_token(0)->options.literal_number;
             int value = 0;
             bool valid = true;
-            for (int i = 0; i < str->size; i++) {
-                auto c = str->characters[i];
+            bool is_float = false;
+            int index;
+            for (index = 0; index < str->size; index++) {
+                auto c = str->characters[index];
+                if (c == '.') {
+                    is_float = true;
+                    index += 1;
+                    break;
+                }
                 if (!(c >= '0' && c <= '9')) {
                     valid = false;
                     break;
@@ -815,6 +828,23 @@ namespace Parser
                 value = value * 10;
                 value += (c - '0');
             }
+            float float_val = (float)value;
+            if (is_float) 
+            {
+                float multiplier = 0.1f;
+                while (index < str->size) 
+                {
+                    auto c = str->characters[index];
+                    if (!(c >= '0' && c <= '9')) {
+                        valid = false;
+                        break;
+                    }
+                    float_val = float_val + multiplier * (c - '0');
+                    multiplier *= 0.1f;
+                    index += 1;
+                }
+            }
+
             advance_token();
             if (!valid) {
                 result->type = Expression_Type::ERROR_EXPR;
@@ -822,14 +852,77 @@ namespace Parser
             }
 
             result->type = Expression_Type::LITERAL_READ;
-            result->options.literal_read.type = Literal_Type::NUMBER;
-            result->options.literal_read.options.number = value;
+            if (is_float) {
+                result->options.literal_read.type = Literal_Type::FLOAT_VAL;
+                result->options.literal_read.options.float_val = float_val;
+            }
+            else {
+                result->options.literal_read.type = Literal_Type::INTEGER;
+                result->options.literal_read.options.int_val = value;
+            }
             PARSE_SUCCESS(result);
         }
-        if (test_token(Syntax_Token_Type::LITERAL_STRING)) {
+        if (test_token(Syntax_Token_Type::LITERAL_STRING)) 
+        {
+            auto text = get_token(0)->options.literal_string.string;
+
+            auto result_str = string_create_empty(text->size);
+            SCOPE_EXIT(string_destroy(&result_str));
+
+            // Parse String literal
+            bool invalid_escape_found = false;
+            bool last_was_escape = false;
+            for (int i = 1; i < text->size; i++)
+            {
+                char c = text->characters[i];
+                if (last_was_escape)
+                {
+                    switch (c)
+                    {
+                    case 'n':
+                        string_append_character(&result_str, '\n');
+                        break;
+                    case 'r':
+                        string_append_character(&result_str, '\r');
+                        break;
+                    case 't':
+                        string_append_character(&result_str, '\t');
+                        break;
+                    case '\\':
+                        string_append_character(&result_str, '\\');
+                        break;
+                    case '\'':
+                        string_append_character(&result_str, '\'');
+                        break;
+                    case '\"':
+                        string_append_character(&result_str, '\"');
+                        break;
+                    case '\n':
+                        break;
+                    default:
+                        invalid_escape_found = true;
+                        break;
+                    }
+                    last_was_escape = false;
+                }
+                else
+                {
+                    if (c == '\"') {
+                        break;
+                    }
+                    last_was_escape = c == '\\';
+                    if (!last_was_escape) {
+                        string_append_character(&result_str, c);
+                    }
+                }
+            }
+            if (invalid_escape_found) {
+                log_error_range_offset("Invalid escape sequence found", 1);
+            }
+
             result->type = Expression_Type::LITERAL_READ;
             result->options.literal_read.type = Literal_Type::STRING;
-            result->options.literal_read.options.string = get_token(0)->options.literal_string.string;
+            result->options.literal_read.options.string = identifier_pool_add(&compiler.identifier_pool, result_str);
             advance_token();
             PARSE_SUCCESS(result);
         }
@@ -891,6 +984,7 @@ namespace Parser
             result->options.new_expr.count_expr.available = false;
             advance_token();
             if (test_parenthesis_offset('[', 0)) {
+                advance_token();
                 result->options.new_expr.count_expr = optional_make_success(parse_expression_or_error_expr(&result->base));
                 if (!successfull_parenthesis_exit<Parenthesis_Type::BRACKETS>()) CHECKPOINT_EXIT;
             }

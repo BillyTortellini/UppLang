@@ -140,9 +140,17 @@ void lexer_tokenize_syntax_line(Syntax_Line* line)
             // Number literal
             int start_index = index;
             index += 1;
+            // We require char_is_valid_identifier because token stringify would put a space between 5a, which cannot be deleted
             while (index < text.size && (char_is_digit(text[index]) || char_is_valid_identifier(text[index]))) {
                 index += 1;
             }
+            if (string_test_char(text, index, '.')) {
+                index += 1;
+                while (index < text.size && (char_is_digit(text[index]) || char_is_valid_identifier(text[index]))) {
+                    index += 1;
+                }
+            }
+
             token.type = Syntax_Token_Type::LITERAL_NUMBER;
             token.options.literal_number = identifier_pool_add(lexer.identifier_pool, string_create_substring_static(&text, start_index, index));
         }

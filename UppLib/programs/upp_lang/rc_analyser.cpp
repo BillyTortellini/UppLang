@@ -56,7 +56,7 @@ Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbo
     new_sym->id = id;
     new_sym->type = type;
     new_sym->origin_table = symbol_table;
-    new_sym->references = dynamic_array_create_empty<AST::Symbol_Read*>(1);
+    new_sym->references = dynamic_array_create_empty<Symbol_Dependency*>(1);
     new_sym->origin_item = dependency_analyser.analysis_item;
 
     hashtable_insert_element(&symbol_table->symbols, id, new_sym);
@@ -65,9 +65,9 @@ Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbo
 
 Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool only_current_scope, Symbol_Dependency* dependency)
 {
-    if (dependency != 0 && dependency->read->resolved_symbol != 0) {
+    if (dependency != 0 && dependency->resolved_symbol != 0) {
         panic("Symbol already found, I dont know if this path has a use case");
-        return dependency->read->resolved_symbol;
+        return dependency->resolved_symbol;
     }
     Symbol** found = hashtable_find_element(&table->symbols, id);
     if (found == 0) {
@@ -84,12 +84,12 @@ Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool only_curr
     {
         Analysis_Item* read_item = dependency->item;
         Analysis_Item* definition_item = (*found)->origin_item;
-        if (!(definition_item->type == Analysis_Item_Type::FUNCTION && definition_item->options.function_body_item == read_item)) {
+        if (definition_item != 0 && !(definition_item->type == Analysis_Item_Type::FUNCTION && definition_item->options.function_body_item == read_item)) {
             return nullptr;
         }
     }
     if (dependency != 0) {
-        dynamic_array_push_back(&((*found)->references), dependency->read);
+        dynamic_array_push_back(&((*found)->references), dependency);
     }
     return *found;
 }
@@ -180,7 +180,7 @@ Analysis_Item* analysis_item_create_empty(Analysis_Item_Type type, Analysis_Item
 {
     auto& analyser = dependency_analyser;
     Analysis_Item* item = new Analysis_Item;
-    item->symbol_dependencies = dynamic_array_create_empty<Symbol_Dependency*>(1);
+    item->symbol_dependencies = dynamic_array_create_empty<Symbol_Dependency>(1);
     item->type = type;
     item->node = node;
     item->symbol = 0;
@@ -199,10 +199,6 @@ Analysis_Item* analysis_item_create_empty(Analysis_Item_Type type, Analysis_Item
 
 void analysis_item_destroy(Analysis_Item* item)
 {
-    for (int i = 0; i < item->symbol_dependencies.size; i++) {
-        auto& dep = item->symbol_dependencies[i];
-        delete dep;
-    }
     dynamic_array_destroy(&item->symbol_dependencies);
     delete item;
 }
@@ -251,9 +247,9 @@ void analysis_item_append_to_string(Analysis_Item* item, String* string, int ind
     }
     for (int i = 0; i < item->symbol_dependencies.size; i++)
     {
-        Symbol_Dependency* read = item->symbol_dependencies[i];
+        auto& read = item->symbol_dependencies[i];
         //ast_identifier_node_append_to_string(string, read->identifier_node);
-        switch (read->type)
+        switch (read.type)
         {
         case Dependency_Type::NORMAL: break;
         case Dependency_Type::MEMBER_IN_MEMORY: string_append_formated(string, "(Member_In_Memory)"); break;
@@ -433,13 +429,14 @@ void analyse_ast_base(AST::Base* base)
     case Base_Type::SYMBOL_READ:
     {
         auto symbol_read = (Symbol_Read*)base;
-        auto dep = new Symbol_Dependency;
-        dep->item = analyser.analysis_item;
-        dep->read = symbol_read;
-        dep->symbol_table = analyser.symbol_table;
-        dep->type = analyser.dependency_type;
+        Symbol_Dependency dep;
+        dep.item = analyser.analysis_item;
+        dep.read = symbol_read;
+        dep.resolved_symbol = 0;
+        dep.symbol_table = analyser.symbol_table;
+        dep.type = analyser.dependency_type;
         dynamic_array_push_back(&analyser.analysis_item->symbol_dependencies, dep);
-        break;
+        return; // We return here because we don't want to iterate over all children
     }
     default: panic("");
     }

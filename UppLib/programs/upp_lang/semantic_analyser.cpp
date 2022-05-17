@@ -42,6 +42,7 @@ void analysis_workload_append_to_string(Analysis_Workload* workload, String* str
 Analysis_Workload* workload_executer_add_workload_empty(Analysis_Workload_Type type, Analysis_Item* item, Analysis_Progress* progress, bool add_symbol_dependencies);
 void analysis_workload_check_if_runnable(Analysis_Workload* workload);
 Comptime_Result comptime_result_make_not_comptime();
+ModTree_Function* modtree_function_create_empty(Type_Signature* signature, Symbol* symbol, AST::Code_Block* body_block);
 
 /*
 ERROR Helpers
@@ -87,9 +88,12 @@ Struct_Progress* analysis_progress_create_struct(Type_Signature* struct_type) {
     return result;
 }
 
-Bake_Progress* analysis_progress_create_bake() {
+Bake_Progress* analysis_progress_create_bake() 
+{
     auto result = analysis_progress_allocate_internal<Bake_Progress>(Analysis_Progress_Type::BAKE);
-    result->bake_function = 0;
+    result->bake_function = modtree_function_create_empty(
+        type_system_make_function(&compiler.type_system, dynamic_array_create_empty<Type_Signature*>(1), compiler.type_system.void_type), 0, 0
+    );
     result->result = comptime_result_make_not_comptime();
     return result;
 }
@@ -101,11 +105,11 @@ Definition_Progress* analysis_progress_create_definition(Symbol* symbol) {
     return result;
 }
 
-void semantic_analyser_set_error_flag( bool error_due_to_unknown) 
+void semantic_analyser_set_error_flag(bool error_due_to_unknown)
 {
     auto& analyser = semantic_analyser;
     analyser.error_flag_count += 1;
-    if (analyser.current_function != 0) 
+    if (analyser.current_function != 0)
     {
         if (analyser.current_function->type == ModTree_Function_Type::POLYMORPHIC_BASE) {
             if (!error_due_to_unknown) {
@@ -139,7 +143,7 @@ void semantic_analyser_log_error(Semantic_Error_Type type, AST::Statement* node)
 void semantic_analyser_add_error_info(Error_Information info) {
     auto& errors = semantic_analyser.errors;
     assert(errors.size != 0, "");
-    Semantic_Error* last_error = &errors[errors.size-1];
+    Semantic_Error* last_error = &errors[errors.size - 1];
     dynamic_array_push_back(&last_error->information, info);
 }
 
@@ -833,8 +837,8 @@ bool modtree_expression_result_is_temporary(ModTree_Expression* expression)
     {
         switch (expression->options.unary_operation.operation_type)
         {
-        case ModTree_Unary_Operation_Type::DEREFERENCE: return true; // The pointer is always temporary
-        case ModTree_Unary_Operation_Type::ADDRESS_OF: return false; // There are special cases where memory loss is not detected, e.g. &(new int) 
+        case ModTree_Unary_Operation_Type::ADDRESS_OF: return true; // The pointer is always temporary
+        case ModTree_Unary_Operation_Type::DEREFERENCE: return false; // There are special cases where memory loss is not detected, e.g. &(new int) 
         case ModTree_Unary_Operation_Type::LOGICAL_NOT: return true;
         case ModTree_Unary_Operation_Type::NEGATE: return true;
         default: panic("");
@@ -1104,25 +1108,47 @@ void analysis_workload_destroy(Analysis_Workload* workload)
     delete workload;
 }
 
-Symbol* symbol_dependency_try_resolve(Symbol_Dependency* symbol_read)
+void symbol_dependency_set_error_symbol(Symbol_Dependency* symbol_dep)
 {
+    symbol_dep->resolved_symbol = compiler.dependency_analyser->predefined_symbols.error_symbol;
+    AST::Symbol_Read* read = symbol_dep->read;
+    while (read != 0)
+    {
+        if (read->resolved_symbol == 0 || !read->path_child.available) {
+            read->resolved_symbol = compiler.dependency_analyser->predefined_symbols.error_symbol;
+        }
+        if (read->path_child.available) {
+            read = read->path_child.value;
+        }
+        else {
+            read = 0;
+        }
+    }
+}
+
+bool symbol_dependency_try_resolve(Symbol_Dependency* symbol_dep)
+{
+    if (symbol_dep->resolved_symbol != 0) return true;
     auto& analyser = semantic_analyser;
-    AST::Symbol_Read* read = symbol_read->read;
-    Symbol_Table* table = symbol_read->symbol_table;
+    AST::Symbol_Read* read = symbol_dep->read;
+    Symbol_Table* table = symbol_dep->symbol_table;
     while (true)
     {
         bool is_path = read->path_child.available;
-        Symbol* symbol = symbol_table_find_symbol(table, read->name, read != symbol_read->read, is_path ? 0 : symbol_read);
+        auto& symbol = read->resolved_symbol;
+        if (symbol == 0) {
+            symbol = symbol_table_find_symbol(table, read->name, read != symbol_dep->read, is_path ? 0 : symbol_dep);
+        }
         if (is_path)
         {
             if (symbol == 0) {
-                return 0; // Did not find module
+                return false;
             }
-            read->resolved_symbol = symbol;
             if (symbol->type == Symbol_Type::UNRESOLVED) {
-                return 0;
+                return false;
             }
             if (symbol->type == Symbol_Type::MODULE) {
+                read->resolved_symbol = symbol;
                 table = symbol->options.module_table;
                 read = read->path_child.value;
                 continue;
@@ -1130,10 +1156,13 @@ Symbol* symbol_dependency_try_resolve(Symbol_Dependency* symbol_read)
 
             semantic_analyser_log_error(Semantic_Error_Type::SYMBOL_EXPECTED_MODUL_IN_IDENTIFIER_PATH, &read->base);
             semantic_analyser_add_error_info(error_information_make_symbol(symbol));
-            return analyser.compiler->dependency_analyser->predefined_symbols.error_symbol;
+            symbol_dependency_set_error_symbol(symbol_dep);
+            return true;
         }
         else {
-            return symbol;
+            symbol_dep->resolved_symbol = symbol;
+            read->resolved_symbol = symbol;
+            return true;
         }
     }
 }
@@ -1462,15 +1491,15 @@ void workload_executer_resolve()
             // Try to resolve all unresolved symbols
             for (int j = 0; j < workload->symbol_dependencies.size; j++)
             {
-                Symbol_Dependency* symbol_read = workload->symbol_dependencies[j];
-                if (symbol_read->read->resolved_symbol == 0) {
-                    symbol_read->read->resolved_symbol = symbol_dependency_try_resolve(symbol_read);
-                    if (symbol_read->read->resolved_symbol == 0) {
+                Symbol_Dependency* dep = workload->symbol_dependencies[j];
+                if (dep->resolved_symbol == 0) {
+                    symbol_dependency_try_resolve(dep);
+                    if (dep->resolved_symbol == 0) {
                         continue;
                     }
                     graph->progress_was_made = true;
                 }
-                Symbol* symbol = symbol_read->read->resolved_symbol;
+                auto& symbol = dep->resolved_symbol;
 
                 bool symbol_read_ready = true;
                 switch (symbol->type)
@@ -1480,7 +1509,7 @@ void workload_executer_resolve()
                     Definition_Progress** progress = hashtable_find_element(&graph->progress_definitions, symbol);
                     if (progress != 0) {
                         symbol_read_ready = true;
-                        analysis_workload_add_dependency_internal(workload, (*progress)->definition_workload, symbol_read);
+                        analysis_workload_add_dependency_internal(workload, (*progress)->definition_workload, dep);
                     }
                     else {
                         symbol_read_ready = false;
@@ -1491,7 +1520,7 @@ void workload_executer_resolve()
                 {
                     Function_Progress** progress = hashtable_find_element(&graph->progress_functions, symbol->options.function);
                     if (progress != 0) {
-                        analysis_workload_add_dependency_internal(workload, (*progress)->header_workload, symbol_read);
+                        analysis_workload_add_dependency_internal(workload, (*progress)->header_workload, dep);
                     }
                     break;
                 }
@@ -1502,7 +1531,7 @@ void workload_executer_resolve()
                     {
                         Struct_Progress** progress = hashtable_find_element(&graph->progress_structs, type);
                         if (progress != 0) {
-                            analysis_workload_add_struct_dependency((Struct_Progress*)workload->progress, *progress, symbol_read->type, symbol_read);
+                            analysis_workload_add_struct_dependency((Struct_Progress*)workload->progress, *progress, dep->type, dep);
                         }
                         else {
                             assert(type->size != 0 && type->alignment != 0, "");
@@ -1731,7 +1760,7 @@ void workload_executer_resolve()
                     if (infos.only_symbol_read_dependency) {
                         only_reads_was_found = true;
                         for (int j = 0; j < infos.symbol_reads.size; j++) {
-                            infos.symbol_reads[j]->read->resolved_symbol = semantic_analyser.compiler->dependency_analyser->predefined_symbols.error_symbol;
+                            symbol_dependency_set_error_symbol(infos.symbol_reads[j]);
                             semantic_analyser_log_error(Semantic_Error_Type::CYCLIC_DEPENDENCY_DETECTED, &infos.symbol_reads[j]->read->base);
                             for (int k = 0; k < workload_cycle.size; k++) {
                                 Analysis_Workload* workload = workload_cycle[k];
@@ -1772,7 +1801,7 @@ void workload_executer_resolve()
 
         for (int i = 0; i < lowest->symbol_dependencies.size; i++) {
             semantic_analyser_log_error(Semantic_Error_Type::SYMBOL_TABLE_UNRESOLVED_SYMBOL, &lowest->symbol_dependencies[i]->read->base);
-            lowest->symbol_dependencies[i]->read->resolved_symbol = semantic_analyser.compiler->dependency_analyser->predefined_symbols.error_symbol;
+            symbol_dependency_set_error_symbol(lowest->symbol_dependencies[i]);
         }
         dynamic_array_reset(&lowest->symbol_dependencies);
         dynamic_array_push_back(&graph->runnable_workloads, lowest);
@@ -1798,14 +1827,14 @@ Analysis_Workload* workload_executer_add_workload_empty(Analysis_Workload_Type t
     workload->symbol_dependencies = dynamic_array_create_empty<Symbol_Dependency*>(1);
     if (item != 0 && add_symbol_dependencies) {
         for (int i = 0; i < item->symbol_dependencies.size; i++) {
-            dynamic_array_push_back(&workload->symbol_dependencies, item->symbol_dependencies[i]);
+            dynamic_array_push_back(&workload->symbol_dependencies, &item->symbol_dependencies[i]);
         }
     }
     switch (type)
     {
-    case Analysis_Workload_Type::DEFINITION: 
+    case Analysis_Workload_Type::DEFINITION:
         assert(progress->type == Analysis_Progress_Type::DEFINITION, "");
-        ((Definition_Progress*)progress)->definition_workload = workload; 
+        ((Definition_Progress*)progress)->definition_workload = workload;
         break;
     case Analysis_Workload_Type::STRUCT_ANALYSIS:
         assert(progress->type == Analysis_Progress_Type::STRUCTURE, "");
@@ -2373,35 +2402,32 @@ bool analysis_workload_execute(Analysis_Workload* workload)
         auto expr = ((AST::Expression*) base_node);
         auto code_block = ((AST::Code_Block*)base_node);
         Bake_Progress* progress = (Bake_Progress*)workload->progress;
-
-        progress->bake_function = modtree_function_create_empty(
-            type_system_make_function(&type_system, dynamic_array_create_empty<Type_Signature*>(1), type_system.void_type), 0, 0
-        );
-        analyser.current_function = progress->bake_function;
-        semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, expr);
-        /*
         if (expr->type == AST::Expression_Type::BAKE_BLOCK) {
             auto& code_block = expr->options.bake_block;
+            semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, expr);
+            /*
+            semantic_analyser_fill_block(semantic_analyser.current_function->body, rc_bake->body);
+            Control_Flow flow = bake_function->body->flow;
+            if (flow != Control_Flow::RETURNS) {
+                semantic_analyser_log_error(Semantic_Error_Type::OTHERS_MISSING_RETURN_STATEMENT, rc_to_ast(rc_bake->type_expression)->parent);
+            }
+            */
         }
         else if (expr->type == AST::Expression_Type::BAKE_EXPR)
         {
             auto& bake_expr = expr->options.bake_expr;
+            analyser.current_function = progress->bake_function;
+            auto result_expr = semantic_analyser_analyse_expression_value(expr->options.bake_expr, expression_context_make_unknown());
+
+            // Set Function type
+            progress->bake_function->signature = type_system_make_function(&type_system, dynamic_array_create_empty<Type_Signature*>(1), result_expr->result_type);
+            // Fill function
+            auto return_stat = modtree_block_add_statement_empty(progress->bake_function->body, ModTree_Statement_Type::RETURN);
+            return_stat->options.return_value = optional_make_success(result_expr);
         }
         else {
             panic("");
         }
-
-        ModTree_Function* bake_function = workload->options.bake_analysis.bake_function;
-        semantic_analyser.current_function = bake_function;
-
-        Type_Signature* return_type = semantic_analyser_analyse_expression_type(rc_bake->type_expression);
-
-        semantic_analyser_fill_block(semantic_analyser.current_function->body, rc_bake->body);
-        Control_Flow flow = bake_function->body->flow;
-        if (flow != Control_Flow::RETURNS) {
-            semantic_analyser_log_error(Semantic_Error_Type::OTHERS_MISSING_RETURN_STATEMENT, rc_to_ast(rc_bake->type_expression)->parent);
-        }
-        */
         break;
     }
     case Analysis_Workload_Type::BAKE_EXECUTION:
@@ -3289,9 +3315,13 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
             literal_type = type_system->bool_type;
             value_ptr = &read.options.boolean;
             break;
-        case AST::Literal_Type::NUMBER:
+        case AST::Literal_Type::FLOAT_VAL:
+            literal_type = type_system->f32_type;
+            value_ptr = &read.options.float_val;
+            break;
+        case AST::Literal_Type::INTEGER:
             literal_type = type_system->i32_type;
-            value_ptr = &read.options.number;
+            value_ptr = &read.options.int_val;
             break;
             /*
             cast NULLPTR:
@@ -3984,7 +4014,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
             panic("");
             break;
         }
-        case AST::Unop::ADDRESS_OF:
+        case AST::Unop::DEREFERENCE:
         {
             ModTree_Expression* operand = semantic_analyser_analyse_expression_value(unary_node.expr, expression_context_make_unknown());
             Type_Signature* result_type = type_system->unknown_type;
@@ -3997,11 +4027,9 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
             }
 
             ModTree_Expression* result = modtree_expression_create_empty(ModTree_Expression_Type::UNARY_OPERATION, result_type);
-            result->options.unary_operation.operation_type = ModTree_Unary_Operation_Type::ADDRESS_OF;
+            result->options.unary_operation.operation_type = ModTree_Unary_Operation_Type::DEREFERENCE;
             result->options.unary_operation.operand = operand;
             return expression_result_make_value(result);
-
-            break;
         }
         default:panic("");
         }
@@ -4212,7 +4240,7 @@ Expression_Result semantic_analyser_analyse_expression_any(AST::Expression* expr
         ModTree_Expression* deref = new ModTree_Expression;
         deref->expression_type = ModTree_Expression_Type::UNARY_OPERATION;
         deref->result_type = expr->result_type->options.pointer_child;
-        deref->options.unary_operation.operation_type = ModTree_Unary_Operation_Type::ADDRESS_OF;
+        deref->options.unary_operation.operation_type = ModTree_Unary_Operation_Type::DEREFERENCE;
         deref->options.unary_operation.operand = expr;
         expr = deref;
         given_pointer_depth--;

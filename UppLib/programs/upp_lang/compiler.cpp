@@ -25,7 +25,7 @@ bool enable_c_compilation = true;
 // Output stages
 bool output_lexing = false;
 bool output_identifiers = false;
-bool output_ast = false;
+bool output_ast = true;
 bool output_rc = false;
 bool output_type_system = false;
 bool output_root_table = false;
@@ -39,9 +39,14 @@ bool enable_stresstest = false;
 bool run_testcases_compiled = false;
 
 // Execution
-bool enable_output = false;
+bool enable_output = true;
+bool output_only_on_code_gen = true;
 bool enable_execution = true;
 bool execute_binary = false;
+
+
+// This variable gets written to in compiler_compile
+bool do_output;
 
 // GLOBALS
 Compiler compiler;
@@ -153,7 +158,8 @@ bool compiler_errors_occured() {
 
 void compiler_compile(Syntax_Block* source_code, bool generate_code)
 {
-    if (enable_output) {
+    do_output= enable_output && !(output_only_on_code_gen && !generate_code);
+    if (do_output) {
         logg("\n\n\n   COMPILING\n---------------\n");
     }
     double time_compile_start = timer_current_time_in_seconds(compiler.timer);
@@ -231,7 +237,7 @@ void compiler_compile(Syntax_Block* source_code, bool generate_code)
 
     compiler_switch_timing_task(Timing_Task::OUTPUT);
 
-    if (enable_output && generate_code)
+    if (do_output && generate_code)
     {
         //logg("\n\n\n\n\n\n\n\n\n\n\n\n--------SOURCE CODE--------: \n%s\n\n", source_code->characters);
         if (do_analysis && output_type_system) {
@@ -272,7 +278,7 @@ void compiler_compile(Syntax_Block* source_code, bool generate_code)
     }
 
     compiler_switch_timing_task(Timing_Task::FINISH);
-    if (enable_output && output_timing && generate_code)
+    if (do_output && output_timing && generate_code)
     {
         logg("\n-------- TIMINGS ---------\n");
         logg("reset       ... %3.2fms\n", (float)(compiler.time_reset) * 1000);
@@ -292,7 +298,7 @@ void compiler_compile(Syntax_Block* source_code, bool generate_code)
         if (enable_bytecode_gen) {
             logg("code_gen    ... %3.2fms\n", (float)(compiler.time_code_gen) * 1000);
         }
-        if (enable_output) {
+        if (do_output) {
             logg("output      ... %3.2fms\n", (float)(compiler.time_output) * 1000);
         }
         double sum = timer_current_time_in_seconds(compiler.timer) - time_compile_start;
@@ -369,10 +375,10 @@ void compiler_add_source_code(Syntax_Block* source_code, Code_Origin origin)
 
     if (do_parsing)
     {
-        compiler_switch_timing_task(Timing_Task::LEXING);
+        compiler_switch_timing_task(Timing_Task::PARSING);
         code_source->ast = Parser::execute(code_source->source);
 
-        if (output_ast)
+        if (output_ast && do_output)
         {
             logg("\n");
             logg("--------AST PARSE RESULT--------:\n");
@@ -387,7 +393,7 @@ void compiler_add_source_code(Syntax_Block* source_code, Code_Origin origin)
         compiler_switch_timing_task(Timing_Task::ANALYSIS);
         workload_executer_add_analysis_items(compiler.dependency_analyser);
 
-        if (output_rc && enable_output)
+        if (output_rc && do_output)
         {
             String printed_items = string_create_empty(256);
             SCOPE_EXIT(string_destroy(&printed_items));

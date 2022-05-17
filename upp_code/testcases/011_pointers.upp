@@ -1,7 +1,7 @@
 main::()
 	//
-		Pointers in Upp are similar to C Pointers,with some differences in Syntax.
-		When declaring a pointer type,the*is before the type:
+		Pointers in Upp are similar to C Pointers, with some differences in Syntax.
+		When declaring a pointer type, the * is before the type:
 		C:   int*x;
 		Upp: x:*int;
 		
@@ -10,10 +10,10 @@ main::()
 		Upp: x:[5]int
 		
 		Combinations are also possible,which cannot be done in C since array syntax is after ID
-		C:   int*x[5];// Array of 5 int*
-		Upp: x:[5]*[3]*int;// Array 5 of Pointer to Array 3 of int pointer
+		C:   int*x[5]; // Array of 5 int*
+		Upp: x:[5]*[3]*int; // Array 5 of Pointer to Array 3 of int pointer
 		
-		The unary Address-Of and Dereference operators(&,*)are also present,but they are swapped compared to C
+		The unary Address-Of and Dereference operators (&,*) are also present, but they are swapped compared to C
 		Upp: x:*int=*i
 		     &x=5;
 		C:   int*x=&i;
@@ -33,15 +33,15 @@ main::()
 	
 	//
 		This is made possible because all C-Operations on pointers are removed. These are:
-		1.Casting between integers and pointers(int*x=(int*)15)
-		2.Array access on pointers(int*x=&i;int elem=x[2];)
-		3.Pointer arithmetic(+,-)
-		4.Pointer comparisons(==,!=,<,>,<=,>=)
+		1. Casting between integers and pointers(int*x=(int*)15)
+		2. Array access on pointers(int*x=&i;int elem=x[2];)
+		3. Pointer arithmetic(+,-)
+		4. Pointer comparisons(==,!=,<,>,<=,>=)
 		
 		To still offer the same functionality,there are new operators which replace the previously mentioned:
-		-New pointer comparison syntax(*==,*!=)
-		-New syntax for casting pointers to integers(cast_raw,cast_ptr)
-		-Pointer arithmetic is done only with integer values
+		- New pointer comparison syntax(*==,*!=)
+		- New syntax for casting pointers to integers(cast_raw,cast_ptr)
+		- Pointer arithmetic is done only with integer values
 	
 	i:=5
 	j:=5

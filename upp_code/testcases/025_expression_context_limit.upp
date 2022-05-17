@@ -1,8 +1,7 @@
-print_int :: (val: **int) {}
+print_int::(val:**int)
+	
 
-main :: ()
-{
-    // Auto Address-Of cannot work if the address cannot be taken
-    x: int = 5;
-    print_int(x);
-}
+main::()
+	// Expression-Context must not work if the address cannot be taken
+	x:int=5
+	print_int(x)

@@ -1,7 +1,6 @@
 main::()
 	x:*int=new int
 	&x=15
-	print_i32(x)
 	assert(&x==15)
 	delete x
 	

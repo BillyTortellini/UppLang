@@ -1,12 +1,10 @@
-main :: ()
-{
-    /*
-    As mentioned in the previous testcase, the
-    interpreter also checks memory access for errors
-    */
-    x := #bake<int>
-    {
-        ip: *int = null;
-        return *ip;
-    };
-}
+null_deref::()->int
+	ip:=cast_ptr{*int}cast{u64}0
+	return*ip
+
+main::()
+	//
+		As mentioned in the previous testcase, the
+		interpreter also checks memory access for errors, so this should not crash
+	x:=#bake null_deref()
+		

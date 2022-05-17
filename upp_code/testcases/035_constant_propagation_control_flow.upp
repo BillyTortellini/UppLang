@@ -1,12 +1,11 @@
-main :: ()
-{
-    // Variables are also removed from constant analysis if there are writes in other blocks
-    x := 5;
-    {
-        y := x + 3;
-        x = 7;
-    }
-    arr: [x]int;
-    // This is done to prevent ifs and loops writing to values, since constant propagation cannot be applied here
-}
+main::()
+	// TODO: Update this description, I think I removed this propagation in general
+	
+	// Variables are also removed from constant analysis if there are writes in other blocks
+	x:=5
+	
+		y:=x+3
+		x=7
+	
+	arr:[x]int
 

@@ -1,6 +1,5 @@
 TODO:
 -----
-Maybe Comments?
 Rewrite/Run Testcases (Maybe requires load keyword?, Idk)
 
 Maybe we can replace Symbol with AST::Definition, but probably not
@@ -10,8 +9,33 @@ Integrate Editor features into new editor (Undo-Redo, Copy-Paste, Indentation Ha
 For loop and looping over array pls
 Editor features (Code-Completion, Jump to Definition, Line-Trimming similar to tokens)
 
+Bugs:
+    - Formating with && as double dereference
+    - Nullptr missing
+    - Enum member values
+    - Not sure if I am happy with comments, but it actually seems quite nice
 
+Ideas:
+------
+Switch cases could use Indentation e.g.
+    switch strategy
+        .RUN
+            pos += max_speed
+        .WALK
+            pos += max_speed * 0.5
+        .EAT
+            search_and_eat_nearest(player)
+            player.energy -= 15
 
+Named blocks could start like definitions
+    game_loop: while true
+        if player.health < 0
+            break game_loop
+        update_world()
+        render_world()
+
+    anon_1:
+        print_i32(what)
 
 
 

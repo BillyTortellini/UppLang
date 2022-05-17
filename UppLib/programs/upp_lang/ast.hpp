@@ -38,7 +38,7 @@ namespace AST
         NOT, // !
         NEGATE, // -
         POINTER, // *
-        ADDRESS_OF, // &
+        DEREFERENCE, // &
     };
 
     enum class Cast_Type
@@ -51,7 +51,8 @@ namespace AST
     enum class Literal_Type
     {
         STRING,
-        NUMBER,
+        INTEGER,
+        FLOAT_VAL,
         BOOLEAN,
     };
 
@@ -201,8 +202,9 @@ namespace AST
                 Literal_Type type;
                 union {
                     String* string;
-                    int number;
+                    int int_val;
                     bool boolean;
+                    float float_val;
                 } options;
             } literal_read;
             struct {
