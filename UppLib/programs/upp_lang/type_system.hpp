@@ -3,6 +3,7 @@
 #include "../../datastructures/string.hpp"
 #include "../../datastructures/dynamic_array.hpp"
 #include "../../datastructures/hashtable.hpp"
+#include <initializer_list>
 
 struct Identifier_Pool;
 struct Symbol;
@@ -279,6 +280,7 @@ Type_Signature* type_system_make_pointer(Type_System* system, Type_Signature* ch
 Type_Signature* type_system_make_slice(Type_System* system, Type_Signature* element_type);
 Type_Signature* type_system_make_array(Type_System* system, Type_Signature* element_type, bool count_known, int element_count);
 Type_Signature* type_system_make_function(Type_System* system, Dynamic_Array<Type_Signature*> parameter_types, Type_Signature* return_type);
+Type_Signature* type_system_make_function(Type_System* system, std::initializer_list<Type_Signature*> parameter_types, Type_Signature* return_type);
 Type_Signature* type_system_make_template(Type_System* system, String* id);
 Type_Signature* type_system_make_enum_empty(Type_System* system, String* id);
 Type_Signature* type_system_make_struct_empty(Type_System* system, Symbol* symbol, Structure_Type struct_type);

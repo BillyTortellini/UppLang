@@ -1,71 +1,60 @@
-adder :: (a: int, b: int) -> int{return a + b;}
+adder::(a:int,b:int)->int
+	return a+b
 
-main :: ()
-{
-    /*
-    In this language we have a Type-Type, which is intenally just an integer representing
-    one of all types created in the given program
-    */
-    a: Type = bool;
-    
-    // Most of the time we want types to be comptime values
-    x :: int;
-    y :: *int;
-    z :: [5]bool;
-    
-    /*
-    Types can be compared to one another with != and ==, but they cannot be casted
-    */
-    assert(x == int);
-    assert(y == *int);
-    assert(z == [5]bool);
-    assert(x != y);
-    assert(y != z);
-    assert(z != []bool); // Difference between arrays and slices!
-    
-    /*
-    To find the type of an expression, we can use the interal type_of function
-    */
-    {
-        bool_type: Type = type_of(5 * 7 == 35);
-        assert(bool_type == bool);
-        
-        // In type theory, type_of(Type) would probably be something like Type_Type,
-        // and type_of(type_of(type_of(Type))) would be Type_Type_Type_Type;
-        // But in this language, we just stay at Type because the previous behavior isn't really usefull
-        // in any practical applications
-        assert(type_of(int) == Type);
-        assert(type_of(Type) == Type);
-        assert(type_of(type_of(Type)) == Type);
-    }
-    
-    /*
-    Ok, so we can compare types, but why is this a usefull feature?
-    For once, if a value of a type-variable is compile time known (See constant propagator test),
-    we can use this value to instanciate other variables with the given type
-    */
-    x_type: x;
-    y_type: y;
-    z_type: z;
-    
-    x_type = 5;
-    y_type = *x_type;
-    z_type = .[true, true, false, true, true];
-    
-    assert(&y_type == 5);
-    assert(z_type[2] == false);
-    
-    /*
-    This can be used like a typedef in C/C++
-    */
-    add_fn_type :: (a: int, b: int) -> int;
-    add_fn: add_fn_type;
-    add_fn = adder;
-    sum := add_fn(2, 3);
-    assert(sum == 5);
-    
-    /*
-    The real use of this is in metaprogramming/type_information/any_type.
-    These features are showcased in the next test_cases
-    */
-}
+main::()
+	//
+		In this language we have a Type-Type, which is internally just an integer representing
+		one of all types created in the given program
+	a:Type=bool
+	
+	// Most of the time we want types to be comptime values
+	x::int
+	y::*int
+	z::[5]bool
+	
+	// Types can be compared to one another with != and ==, but they cannot be casted
+	assert(x==int)
+	assert(y==*int)
+	assert(z==[5]bool)
+	assert(x!=y)
+	assert(y!=z)
+	assert(z!=[]bool)// Difference between arrays and slices!
+	
+	// To find the type of an expression, we can use the hardcoded type_of function
+		bool_type:Type=type_of(5*7==35)
+		assert(bool_type==bool)
+		
+		// In type theory, type_of(Type) would probably be something like Type_Type,
+		// and type_of(type_of(type_of(Type))) would be Type_Type_Type_Type
+		// But in this language, we just stay at Type because the previous behavior isn't really usefull
+		// in any practical applications
+		assert(type_of(int)==Type)
+		assert(type_of(Type)==Type)
+		assert(type_of(type_of(Type))==Type)
+	
+	//
+		Ok, so we can compare types, but why is this a usefull feature?
+		For once, if a value of a type-variable is compile time known (See constant propagator test),
+		we can use this value to instanciate other variables with the given type
+	x_type:x
+	y_type:y
+	z_type:z
+	
+	x_type=5
+	y_type=*x_type
+	z_type=.[true,true,false,true,true]
+	
+	assert(&y_type==5)
+	assert(z_type[2]==false)
+	
+	// This can be used like a typedef in C/C++
+	add_fn_type::(v:int,b:int)->int
+	add_fn:add_fn_type
+	add_fn=adder
+	sum:=add_fn(2,3)
+	assert(sum==5)
+	
+	//
+		The real use of this is in metaprogramming/type_information/any_type.
+		These features are showcased in the next test_cases
+

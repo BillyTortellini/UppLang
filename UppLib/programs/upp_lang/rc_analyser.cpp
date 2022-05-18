@@ -508,67 +508,52 @@ void dependency_analyser_reset(Compiler* compiler)
     dependency_analyser.symbol_table = dependency_analyser.root_symbol_table;
     // Set predefined symbols
     {
-        String* id_int = identifier_pool_add(&compiler->identifier_pool, string_create_static("int"));
-        String* id_bool = identifier_pool_add(&compiler->identifier_pool, string_create_static("bool"));
-        String* id_float = identifier_pool_add(&compiler->identifier_pool, string_create_static("float"));
-        String* id_u8 = identifier_pool_add(&compiler->identifier_pool, string_create_static("u8"));
-        String* id_u16 = identifier_pool_add(&compiler->identifier_pool, string_create_static("u16"));
-        String* id_u32 = identifier_pool_add(&compiler->identifier_pool, string_create_static("u32"));
-        String* id_u64 = identifier_pool_add(&compiler->identifier_pool, string_create_static("u64"));
-        String* id_i8 = identifier_pool_add(&compiler->identifier_pool, string_create_static("i8"));
-        String* id_i16 = identifier_pool_add(&compiler->identifier_pool, string_create_static("i16"));
-        String* id_i32 = identifier_pool_add(&compiler->identifier_pool, string_create_static("i32"));
-        String* id_i64 = identifier_pool_add(&compiler->identifier_pool, string_create_static("i64"));
-        String* id_f64 = identifier_pool_add(&compiler->identifier_pool, string_create_static("f64"));
-        String* id_f32 = identifier_pool_add(&compiler->identifier_pool, string_create_static("f32"));
-        String* id_byte = identifier_pool_add(&compiler->identifier_pool, string_create_static("byte"));
-        String* id_void = identifier_pool_add(&compiler->identifier_pool, string_create_static("void"));
-        String* id_string = identifier_pool_add(&compiler->identifier_pool, string_create_static("String"));
-        String* id_type = identifier_pool_add(&compiler->identifier_pool, string_create_static("Type"));
-        String* id_type_information = identifier_pool_add(&compiler->identifier_pool, string_create_static("Type_Information"));
-        String* id_any = identifier_pool_add(&compiler->identifier_pool, string_create_static("Any"));
-        String* id_empty = identifier_pool_add(&compiler->identifier_pool, string_create_static("_"));
-        // This placeholder can never be an identifier, becuase it starts with a number
-        String* id_error = identifier_pool_add(&compiler->identifier_pool, string_create_static("0_ERROR_SYMBOL"));
-
         auto& analyser = dependency_analyser;
         auto& root = analyser.root_symbol_table;
         auto& pool = analyser.compiler->identifier_pool;
         auto& predef = analyser.predefined_symbols;
-        predef.error_symbol = symbol_table_define_symbol(root, id_error, Symbol_Type::ERROR_SYMBOL, 0);
-        predef.type_bool = symbol_table_define_symbol(root, id_bool, Symbol_Type::UNRESOLVED, 0);
-        predef.type_int = symbol_table_define_symbol(root, id_int, Symbol_Type::UNRESOLVED, 0);
-        predef.type_float = symbol_table_define_symbol(root, id_float, Symbol_Type::UNRESOLVED, 0);
-        predef.type_u8 = symbol_table_define_symbol(root, id_u8, Symbol_Type::UNRESOLVED, 0);
-        predef.type_u16 = symbol_table_define_symbol(root, id_u16, Symbol_Type::UNRESOLVED, 0);
-        predef.type_u32 = symbol_table_define_symbol(root, id_u32, Symbol_Type::UNRESOLVED, 0);
-        predef.type_u64 = symbol_table_define_symbol(root, id_u64, Symbol_Type::UNRESOLVED, 0);
-        predef.type_i8 = symbol_table_define_symbol(root, id_i8, Symbol_Type::UNRESOLVED, 0);
-        predef.type_i16 = symbol_table_define_symbol(root, id_i16, Symbol_Type::UNRESOLVED, 0);
-        predef.type_i32 = symbol_table_define_symbol(root, id_i32, Symbol_Type::UNRESOLVED, 0);
-        predef.type_i64 = symbol_table_define_symbol(root, id_i64, Symbol_Type::UNRESOLVED, 0);
-        predef.type_f32 = symbol_table_define_symbol(root, id_f32, Symbol_Type::UNRESOLVED, 0);
-        predef.type_f64 = symbol_table_define_symbol(root, id_f64, Symbol_Type::UNRESOLVED, 0);
-        predef.type_byte = symbol_table_define_symbol(root, id_byte, Symbol_Type::UNRESOLVED, 0);
-        predef.type_void = symbol_table_define_symbol(root, id_void, Symbol_Type::UNRESOLVED, 0);
-        predef.type_string = symbol_table_define_symbol(root, id_string, Symbol_Type::UNRESOLVED, 0);
-        predef.type_type = symbol_table_define_symbol(root, id_type, Symbol_Type::UNRESOLVED, 0);
-        predef.type_type_information = symbol_table_define_symbol(root, id_type_information, Symbol_Type::UNRESOLVED, 0);
-        predef.type_any = symbol_table_define_symbol(root, id_any, Symbol_Type::UNRESOLVED, 0);
-        predef.type_empty = symbol_table_define_symbol(root, id_empty, Symbol_Type::UNRESOLVED, 0);
-#define POOL_ADD(x) (identifier_pool_add(&pool, string_create_static(x)))
-        predef.hardcoded_print_bool = symbol_table_define_symbol(root, POOL_ADD("print_bool"), Symbol_Type::UNRESOLVED, 0);
-        predef.hardcoded_print_i32 = symbol_table_define_symbol(root, POOL_ADD("print_i32"), Symbol_Type::UNRESOLVED, 0);
-        predef.hardcoded_print_f32 = symbol_table_define_symbol(root, POOL_ADD("print_f32"), Symbol_Type::UNRESOLVED, 0);
-        predef.hardcoded_print_string = symbol_table_define_symbol(root, POOL_ADD("print_string"), Symbol_Type::UNRESOLVED, 0);
-        predef.hardcoded_print_line = symbol_table_define_symbol(root, POOL_ADD("print_line"), Symbol_Type::UNRESOLVED, 0);
-        predef.hardcoded_read_i32 = symbol_table_define_symbol(root, POOL_ADD("read_i32"), Symbol_Type::UNRESOLVED, 0);
-        predef.hardcoded_read_f32 = symbol_table_define_symbol(root, POOL_ADD("read_f32"), Symbol_Type::UNRESOLVED, 0);
-        predef.hardcoded_read_bool = symbol_table_define_symbol(root, POOL_ADD("read_bool"), Symbol_Type::UNRESOLVED, 0);
-        predef.hardcoded_random_i32 = symbol_table_define_symbol(root, POOL_ADD("random_i32"), Symbol_Type::UNRESOLVED, 0);
-        predef.function_assert = symbol_table_define_symbol(root, POOL_ADD("assert"), Symbol_Type::UNRESOLVED, 0);
-        predef.global_type_informations = symbol_table_define_symbol(root, POOL_ADD("type_informations"), Symbol_Type::UNRESOLVED, 0);
-#undef POOL_ADD
+
+#define PREDEF_SYMBOL(name, c_str) predef.name = symbol_table_define_symbol(root, identifier_pool_add(&compiler->identifier_pool, string_create_static(c_str)), Symbol_Type::UNRESOLVED, 0);
+#define PREDEF_HARDCODED(name, c_str, hardcoded_type) PREDEF_SYMBOL(name, c_str); predef.name->type = Symbol_Type::HARDCODED_FUNCTION; predef.name->options.hardcoded = hardcoded_type;
+        PREDEF_SYMBOL(error_symbol, "0_ERROR_SYMBOL"); // This placeholder can never be an identifier, becuase it starts with a number
+        predef.error_symbol->type = Symbol_Type::ERROR_SYMBOL;
+
+        PREDEF_SYMBOL(type_bool, "bool");
+        PREDEF_SYMBOL(type_int, "int");
+        PREDEF_SYMBOL(type_float, "float");
+        PREDEF_SYMBOL(type_u8, "u8");
+        PREDEF_SYMBOL(type_u16, "u16");
+        PREDEF_SYMBOL(type_u32, "u32");
+        PREDEF_SYMBOL(type_u64, "u64");
+        PREDEF_SYMBOL(type_i8, "i8");
+        PREDEF_SYMBOL(type_i16, "i16");
+        PREDEF_SYMBOL(type_i32, "i32");
+        PREDEF_SYMBOL(type_i64, "i64");
+        PREDEF_SYMBOL(type_f32, "f32");
+        PREDEF_SYMBOL(type_f64, "f64");
+        PREDEF_SYMBOL(type_byte, "byte");
+        PREDEF_SYMBOL(type_void, "void");
+        PREDEF_SYMBOL(type_string, "String");
+        PREDEF_SYMBOL(type_type, "Type");
+        PREDEF_SYMBOL(type_type_information, "Type_Information");
+        PREDEF_SYMBOL(type_any, "Any");
+        PREDEF_SYMBOL(type_empty, "_");
+
+        PREDEF_HARDCODED(hardcoded_print_bool, "print_bool", Hardcoded_Type::PRINT_BOOL);
+        PREDEF_HARDCODED(hardcoded_print_i32, "print_i32", Hardcoded_Type::PRINT_I32);
+        PREDEF_HARDCODED(hardcoded_print_f32, "print_f32", Hardcoded_Type::PRINT_F32);
+        PREDEF_HARDCODED(hardcoded_print_string, "print_string", Hardcoded_Type::PRINT_STRING);
+        PREDEF_HARDCODED(hardcoded_print_line, "print_line", Hardcoded_Type::PRINT_LINE);
+        PREDEF_HARDCODED(hardcoded_read_i32, "read_i32", Hardcoded_Type::PRINT_I32);
+        PREDEF_HARDCODED(hardcoded_read_f32, "read_f32", Hardcoded_Type::READ_F32);
+        PREDEF_HARDCODED(hardcoded_read_bool, "read_bool", Hardcoded_Type::READ_BOOL);
+        PREDEF_HARDCODED(hardcoded_random_i32, "random_i32", Hardcoded_Type::RANDOM_I32);
+        PREDEF_HARDCODED(hardcoded_type_of, "type_of", Hardcoded_Type::TYPE_OF);
+        PREDEF_HARDCODED(hardcoded_type_info, "type_info", Hardcoded_Type::TYPE_INFO);
+        PREDEF_HARDCODED(hardcoded_assert, "assert", Hardcoded_Type::ASSERT_FN);
+        PREDEF_SYMBOL(global_type_informations, "type_informations");
+#undef PREDEF_SYMBOL
+#undef PREDEF_HARDCODED
     }
 }
 
@@ -617,7 +602,7 @@ case AST_Node_Type::LOAD_FILE:
     Optional<String> file_content = file_io_load_text_file(top_level_node->id->characters);
     if (file_content.available)
     {
-        String content = file_content.value;
+        String content = file_content.value;false
         Code_Origin origin;
         origin.type = Code_Origin_Type::LOADED_FILE;
         origin.load_node = top_level_node;

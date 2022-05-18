@@ -147,7 +147,7 @@ struct ModTree_Expression
                 ModTree_Expression* pointer_expression;
                 ModTree_Function* function;
                 ModTree_Extern_Function* extern_function;
-                ModTree_Hardcoded_Function* hardcoded_function;
+                Hardcoded_Type hardcoded;
             } options;
             Dynamic_Array<ModTree_Expression*> arguments;
         } function_call;
@@ -315,17 +315,10 @@ struct ModTree_Extern_Function
     Symbol* symbol; // May be null
 };
 
-struct ModTree_Hardcoded_Function
-{
-    Type_Signature* signature;
-    Hardcoded_Function_Type hardcoded_type;
-};
-
 struct ModTree_Program
 {
     Dynamic_Array<ModTree_Function*> functions;
     Dynamic_Array<ModTree_Variable*> globals;
-    Dynamic_Array<ModTree_Hardcoded_Function*> hardcoded_functions;
     Dynamic_Array<ModTree_Extern_Function*> extern_functions;
     ModTree_Function* entry_function;
 };
@@ -503,13 +496,6 @@ struct Semantic_Analyser
     Dynamic_Array<Semantic_Error> errors;
     ModTree_Program* program;
 
-    // ModTree stuff
-    ModTree_Function* global_init_function;
-    ModTree_Hardcoded_Function* free_function;
-    ModTree_Hardcoded_Function* malloc_function;
-    ModTree_Function* assert_function;
-    ModTree_Variable* global_type_informations;
-
     // Temporary stuff needed for analysis
     Compiler* compiler;
     Workload_Executer* workload_executer;
@@ -524,6 +510,25 @@ struct Semantic_Analyser
     Dynamic_Array<ModTree_Block*> block_stack;
     Dynamic_Array<AST::Code_Block*> defer_stack;
 
+    // ModTree stuff
+    ModTree_Function* global_init_function;
+    ModTree_Function* assert_function;
+    ModTree_Variable* global_type_informations;
+
+    Type_Signature* type_free;
+    Type_Signature* type_malloc;
+    Type_Signature* type_type_of;
+    Type_Signature* type_type_info;
+    Type_Signature* type_print_bool;
+    Type_Signature* type_print_i32;
+    Type_Signature* type_print_f32;
+    Type_Signature* type_print_line;
+    Type_Signature* type_print_string;
+    Type_Signature* type_read_i32;
+    Type_Signature* type_read_f32;
+    Type_Signature* type_read_bool;
+    Type_Signature* type_random_i32;
+
     String* id_size;
     String* id_data;
     String* id_main;
@@ -536,6 +541,7 @@ Semantic_Analyser* semantic_analyser_initialize();
 void semantic_analyser_destroy();
 void semantic_analyser_reset(Compiler* compiler);
 void semantic_analyser_finish();
+Type_Signature* hardcoded_type_to_signature(Hardcoded_Type type);
 
 
 
@@ -713,7 +719,8 @@ enum class Error_Information_Type
     CYCLE_WORKLOAD,
 
     EXPRESSION_RESULT_TYPE,
-    CONSTANT_STATUS
+    CONSTANT_STATUS,
+    EXTRA_TEXT,
 };
 
 struct Error_Information
@@ -725,6 +732,7 @@ struct Error_Information
             int expected;
             int given;
         } invalid_argument_count;
+        const char* extra_text;
         String* id;
         Symbol* symbol;
         Exit_Code exit_code;

@@ -153,6 +153,12 @@ Error_Information error_information_make_empty(Error_Information_Type type) {
     return info;
 }
 
+Error_Information error_information_make_text(const char* text) {
+    Error_Information info = error_information_make_empty(Error_Information_Type::ARGUMENT_COUNT);
+    info.options.extra_text = text;
+    return info;
+}
+
 Error_Information error_information_make_argument_count(int given_argument_count, int expected_argument_count) {
     Error_Information info = error_information_make_empty(Error_Information_Type::ARGUMENT_COUNT);
     info.options.invalid_argument_count.expected = expected_argument_count;
@@ -511,7 +517,6 @@ ModTree_Program* modtree_program_create()
     result->functions = dynamic_array_create_empty<ModTree_Function*>(16);
     result->globals = dynamic_array_create_empty<ModTree_Variable*>(16);
     result->extern_functions = dynamic_array_create_empty<ModTree_Extern_Function*>(16);
-    result->hardcoded_functions = dynamic_array_create_empty<ModTree_Hardcoded_Function*>(16);
     return result;
 }
 
@@ -526,10 +531,6 @@ void modtree_program_destroy()
         modtree_function_destroy(program->functions[i]);
     }
     dynamic_array_destroy(&program->functions);
-    for (int i = 0; i < program->hardcoded_functions.size; i++) {
-        delete program->hardcoded_functions[i];
-    }
-    dynamic_array_destroy(&program->hardcoded_functions);
     for (int i = 0; i < program->extern_functions.size; i++) {
         delete program->extern_functions[i];
     }
@@ -952,7 +953,7 @@ struct Expression_Result
         ModTree_Expression* expression;
         Type_Signature* type;
         ModTree_Function* function;
-        ModTree_Hardcoded_Function* hardcoded_function;
+        Hardcoded_Type hardcoded;
         ModTree_Extern_Function* extern_function;
         Symbol_Table* module_table;
     } options;
@@ -990,11 +991,11 @@ Expression_Result expression_result_make_function(ModTree_Function* function)
     return result;
 }
 
-Expression_Result expression_result_make_hardcoded(ModTree_Hardcoded_Function* hardcoded)
+Expression_Result expression_result_make_hardcoded(Hardcoded_Type hardcoded)
 {
     Expression_Result result;
     result.type = Expression_Result_Type::HARDCODED_FUNCTION;
-    result.options.hardcoded_function = hardcoded;
+    result.options.hardcoded = hardcoded;
     return result;
 }
 
@@ -1024,6 +1025,31 @@ AST::Base* rc_to_ast(AST::Statement* statement)
     return &statement->base;
 }
 
+Type_Signature* hardcoded_type_to_signature(Hardcoded_Type type)
+{
+    auto& an = semantic_analyser;
+    switch (type)
+    {
+    case Hardcoded_Type::ASSERT_FN: return an.assert_function->signature;
+    case Hardcoded_Type::FREE_POINTER: return an.type_free;
+    case Hardcoded_Type::MALLOC_SIZE_I32: return an.type_malloc;
+    case Hardcoded_Type::TYPE_INFO: return an.type_type_info;
+    case Hardcoded_Type::TYPE_OF: return an.type_type_of;
+
+    case Hardcoded_Type::PRINT_BOOL: return an.type_print_bool;
+    case Hardcoded_Type::PRINT_I32: return an.type_print_i32;
+    case Hardcoded_Type::PRINT_F32: return an.type_print_f32;
+    case Hardcoded_Type::PRINT_STRING: return an.type_print_string;
+    case Hardcoded_Type::PRINT_LINE: return an.type_print_line;
+
+    case Hardcoded_Type::READ_I32: return an.type_print_i32;
+    case Hardcoded_Type::READ_F32: return an.type_print_f32;
+    case Hardcoded_Type::READ_BOOL: return an.type_print_bool;
+    case Hardcoded_Type::RANDOM_I32: return an.type_random_i32;
+    default: panic("HEY");
+    }
+    return 0;
+}
 
 
 
@@ -1527,11 +1553,16 @@ void workload_executer_resolve()
                 case Symbol_Type::TYPE:
                 {
                     Type_Signature* type = symbol->options.type;
-                    if (type->type == Signature_Type::STRUCT && workload->progress->type == Analysis_Progress_Type::STRUCTURE)
+                    if (type->type == Signature_Type::STRUCT)
                     {
                         Struct_Progress** progress = hashtable_find_element(&graph->progress_structs, type);
                         if (progress != 0) {
-                            analysis_workload_add_struct_dependency((Struct_Progress*)workload->progress, *progress, dep->type, dep);
+                            if (workload->progress->type == Analysis_Progress_Type::STRUCTURE) {
+                                analysis_workload_add_struct_dependency((Struct_Progress*)workload->progress, *progress, dep->type, dep);
+                            }
+                            else {
+                                analysis_workload_add_dependency_internal(workload, (*progress)->reachable_resolve_workload, dep);
+                            }
                         }
                         else {
                             assert(type->size != 0 && type->alignment != 0, "");
@@ -1560,7 +1591,7 @@ void workload_executer_resolve()
         }
 
         // Print workloads and dependencies
-        if (false)
+        if (PRINT_DEPENDENCIES)
         {
             String tmp = string_create_empty(256);
             SCOPE_EXIT(string_destroy(&tmp));
@@ -2162,7 +2193,7 @@ bool analysis_workload_execute(Analysis_Workload* workload)
             case Expression_Result_Type::HARDCODED_FUNCTION:
             {
                 symbol->type = Symbol_Type::HARDCODED_FUNCTION;
-                symbol->options.hardcoded_function = result.options.hardcoded_function;
+                symbol->options.hardcoded = result.options.hardcoded;
                 break;
             }
             case Expression_Result_Type::FUNCTION:
@@ -2921,6 +2952,93 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
             modtree_expression_destroy(function_expr_result.options.expression);
         );
 
+        // Handle compiler-driven Hardcoded functions (type_info, type_of)
+        if (function_expr_result.type == Expression_Result_Type::HARDCODED_FUNCTION)
+        {
+            switch (function_expr_result.options.hardcoded)
+            {
+            case Hardcoded_Type::TYPE_INFO: 
+            {
+                if (call.arguments.size != 1) {
+                    semantic_analyser_log_error(Semantic_Error_Type::FUNCTION_CALL_ARGUMENT_SIZE_MISMATCH, call.expr);
+                    semantic_analyser_add_error_info(error_information_make_argument_count(call.arguments.size, 1));
+                    return expression_result_make_value(modtree_expression_make_error(type_system->type_information_type));
+                }
+                auto& arg = call.arguments[0];
+                if (arg->name.available) {
+                    semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, &arg->base);
+                }
+                ModTree_Expression* operand = semantic_analyser_analyse_expression_value(
+                    arg->value, expression_context_make_specific_type(type_system->type_type)
+                );
+
+                ModTree_Expression* global_read = modtree_expression_create_empty(ModTree_Expression_Type::VARIABLE_READ, analyser.global_type_informations->data_type);
+                global_read->options.variable_read = analyser.global_type_informations;
+
+                ModTree_Expression* index_access = new ModTree_Expression;
+                index_access->result_type = type_system->i32_type;
+                index_access->expression_type = ModTree_Expression_Type::CAST;
+                index_access->options.cast.cast_argument = operand;
+                operand->result_type = type_system->u64_type;
+                index_access->options.cast.type = ModTree_Cast_Type::INTEGERS;
+
+                ModTree_Expression* array_access = new ModTree_Expression;
+                array_access->expression_type = ModTree_Expression_Type::ARRAY_ACCESS;
+                array_access->options.array_access.array_expression = global_read;
+                array_access->options.array_access.index_expression = index_access;
+                array_access->result_type = analyser.compiler->type_system.type_information_type;
+
+                return expression_result_make_value(array_access);
+            }
+            case Hardcoded_Type::TYPE_OF: 
+            {
+                if (call.arguments.size != 1) {
+                    semantic_analyser_log_error(Semantic_Error_Type::FUNCTION_CALL_ARGUMENT_SIZE_MISMATCH, call.expr);
+                    semantic_analyser_add_error_info(error_information_make_argument_count(call.arguments.size, 1));
+                    return expression_result_make_value(modtree_expression_make_error(type_system->type_information_type));
+                }
+                auto& arg = call.arguments[0];
+                if (arg->name.available) {
+                    semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, &arg->base);
+                    semantic_analyser_add_error_info(error_information_make_text("Name must not be given for hardcoded type"));
+                }
+
+                Expression_Result any_result = semantic_analyser_analyse_expression_any(arg->value, expression_context_make_unknown());
+                switch (any_result.type)
+                {
+                case Expression_Result_Type::EXPRESSION: {
+                    Type_Signature* result_type = any_result.options.expression->result_type;
+                    modtree_expression_destroy(any_result.options.expression);
+                    return expression_result_make_type(result_type);
+                }
+                case Expression_Result_Type::EXTERN_FUNCTION: {
+                    return expression_result_make_type(any_result.options.extern_function->extern_function.function_signature);
+                }
+                case Expression_Result_Type::HARDCODED_FUNCTION: {
+                    semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, arg->value);
+                    semantic_analyser_add_error_info(error_information_make_text("Cannot use type_of on hardcoded functions!"));
+                    return expression_result_make_error(type_system->type_type);
+                }
+                case Expression_Result_Type::FUNCTION: {
+                    return expression_result_make_type(any_result.options.function->signature);
+                }
+                case Expression_Result_Type::TYPE: {
+                    return expression_result_make_type(type_system->type_type);
+                }
+                case Expression_Result_Type::MODULE: {
+                    semantic_analyser_log_error(Semantic_Error_Type::INVALID_EXPRESSION_TYPE, arg->value);
+                    semantic_analyser_add_error_info(error_information_make_expression_result_type(any_result.type));
+                    return expression_result_make_error(type_system->unknown_type);
+                }
+                default: panic("");
+                }
+
+                panic("");
+                return expression_result_make_value(modtree_expression_make_error(type_system->unknown_type));
+            }
+            }
+        }
+
         ModTree_Expression* expr_result = modtree_expression_create_empty(ModTree_Expression_Type::FUNCTION_CALL, 0);
         Type_Signature* function_signature = 0;
         switch (function_expr_result.type)
@@ -3003,10 +3121,11 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
             expr_result->result_type = call->options.function->signature->options.function.return_type;
             return expression_result_make_value(expr_result);
         }
-        case Expression_Result_Type::HARDCODED_FUNCTION: {
+        case Expression_Result_Type::HARDCODED_FUNCTION:
+        {
             expr_result->options.function_call.call_type = ModTree_Call_Type::HARDCODED_FUNCTION;
-            expr_result->options.function_call.options.hardcoded_function = function_expr_result.options.hardcoded_function;
-            function_signature = function_expr_result.options.hardcoded_function->signature;
+            expr_result->options.function_call.options.hardcoded = function_expr_result.options.hardcoded;
+            function_signature = hardcoded_type_to_signature(function_expr_result.options.hardcoded);
             break;
         }
         case Expression_Result_Type::EXTERN_FUNCTION: {
@@ -3062,65 +3181,6 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
         return expression_result_make_value(expr_result);
     }
     /*
-    case AST::Expression_Type::TYPE_INFO:
-    {
-        ModTree_Expression* operand = semantic_analyser_analyse_expression_value(
-            expression_node->options.type_info_expression, expression_context_make_specific_type(type_system->type_type)
-        );
-
-        ModTree_Expression* global_read = modtree_expression_create_empty(ModTree_Expression_Type::VARIABLE_READ, analyser.global_type_informations->data_type);
-        global_read->options.variable_read = analyser.global_type_informations;
-
-        ModTree_Expression* index_access = new ModTree_Expression;
-        index_access->result_type = type_system->i32_type;
-        index_access->expression_type = ModTree_Expression_Type::CAST;
-        index_access->options.cast.cast_argument = operand;
-        operand->result_type = type_system->u64_type;
-        index_access->options.cast.type = ModTree_Cast_Type::INTEGERS;
-
-        ModTree_Expression* array_access = new ModTree_Expression;
-        array_access->expression_type = ModTree_Expression_Type::ARRAY_ACCESS;
-        array_access->options.array_access.array_expression = global_read;
-        array_access->options.array_access.index_expression = index_access;
-        array_access->result_type = analyser.compiler->type_system.type_information_type;
-
-        return expression_result_make_value(array_access);
-    }
-    case AST::Expression_Type::TYPE_OF:
-    {
-        Expression_Result any_result = semantic_analyser_analyse_expression_any(
-            expression_node->options.type_of_expression, expression_context_make_unknown()
-        );
-        switch (any_result.type)
-        {
-        case Expression_Result_Type::EXPRESSION: {
-            Type_Signature* result_type = any_result.options.expression->result_type;
-            modtree_expression_destroy(any_result.options.expression);
-            return expression_result_make_type(result_type);
-        }
-        case Expression_Result_Type::EXTERN_FUNCTION: {
-            return expression_result_make_type(any_result.options.extern_function->extern_function.function_signature);
-        }
-        case Expression_Result_Type::HARDCODED_FUNCTION: {
-            return expression_result_make_type(any_result.options.hardcoded_function->signature);
-        }
-        case Expression_Result_Type::FUNCTION: {
-            return expression_result_make_type(any_result.options.function->signature);
-        }
-        case Expression_Result_Type::TYPE: {
-            return expression_result_make_type(type_system->type_type);
-        }
-        case Expression_Result_Type::MODULE: {
-            semantic_analyser_log_error(Semantic_Error_Type::INVALID_EXPRESSION_TYPE, expression_node->options.type_of_expression);
-            semantic_analyser_add_error_info(error_information_make_expression_result_type(any_result.type));
-            return expression_result_make_value(modtree_expression_make_error(type_system->unknown_type));
-        }
-        default: panic("");
-        }
-
-        panic("");
-        return expression_result_make_value(modtree_expression_make_error(type_system->unknown_type));
-    }
     */
     case AST::Expression_Type::SYMBOL_READ:
     {
@@ -3178,7 +3238,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
             return expression_result_make_extern_function(symbol->options.extern_function);
         }
         case Symbol_Type::HARDCODED_FUNCTION: {
-            return expression_result_make_hardcoded(symbol->options.hardcoded_function);
+            return expression_result_make_hardcoded(symbol->options.hardcoded);
         }
         case Symbol_Type::FUNCTION: {
             analysis_workload_register_function_call(symbol->options.function);
@@ -4386,7 +4446,7 @@ ModTree_Expression* semantic_analyser_analyse_expression_value(AST::Expression* 
     case Expression_Result_Type::HARDCODED_FUNCTION:
     {
         semantic_analyser_log_error(Semantic_Error_Type::OTHERS_CANNOT_TAKE_ADDRESS_OF_HARDCODED_FUNCTION, expression_node);
-        return modtree_expression_make_error(result.options.hardcoded_function->signature);
+        return modtree_expression_make_error(type_system.unknown_type);
     }
     case Expression_Result_Type::MODULE:
     {
@@ -4857,7 +4917,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement_node,
         call_expr->result_type = type_system.void_type;
         call_expr->options.function_call.arguments = dynamic_array_create_empty<ModTree_Expression*>(1);
         call_expr->options.function_call.call_type = ModTree_Call_Type::HARDCODED_FUNCTION;
-        call_expr->options.function_call.options.hardcoded_function = semantic_analyser.free_function;
+        call_expr->options.function_call.options.hardcoded = Hardcoded_Type::FREE_POINTER;
 
         // Add argument
         if (delete_type->type == Signature_Type::SLICE)
@@ -5150,93 +5210,25 @@ void semantic_analyser_reset(Compiler* compiler)
     }
 
     // Initialize hardcoded_functions
-    for (int i = 0; i < (int)Hardcoded_Function_Type::HARDCODED_FUNCTION_COUNT; i++)
-    {
-        Hardcoded_Function_Type type = (Hardcoded_Function_Type)i;
-
-        // Create Function
-        ModTree_Hardcoded_Function* hardcoded_function = new ModTree_Hardcoded_Function;
-        dynamic_array_push_back(&semantic_analyser.program->hardcoded_functions, hardcoded_function);
-
-        // Find signature
-        Dynamic_Array<Type_Signature*> parameters = dynamic_array_create_empty<Type_Signature*>(2);
-        Type_Signature* return_type = type_system.void_type;
-        Symbol* symbol = 0;
-        switch (type)
-        {
-        case Hardcoded_Function_Type::PRINT_I32: {
-            symbol = pre->hardcoded_print_i32;
-            dynamic_array_push_back(&parameters, type_system.i32_type);
-            break;
-        }
-        case Hardcoded_Function_Type::PRINT_F32: {
-            symbol = pre->hardcoded_print_f32;
-            dynamic_array_push_back(&parameters, type_system.f32_type);
-            break;
-        }
-        case Hardcoded_Function_Type::PRINT_BOOL: {
-            symbol = pre->hardcoded_print_bool;
-            dynamic_array_push_back(&parameters, type_system.bool_type);
-            break;
-        }
-        case Hardcoded_Function_Type::PRINT_STRING: {
-            symbol = pre->hardcoded_print_string;
-            dynamic_array_push_back(&parameters, type_system.string_type);
-            break;
-        }
-        case Hardcoded_Function_Type::PRINT_LINE: {
-            symbol = pre->hardcoded_print_line;
-            break;
-        }
-        case Hardcoded_Function_Type::READ_I32: {
-            symbol = pre->hardcoded_read_i32;
-            return_type = type_system.i32_type;
-            break;
-        }
-        case Hardcoded_Function_Type::READ_F32: {
-            symbol = pre->hardcoded_read_f32;
-            return_type = type_system.f32_type;
-            break;
-        }
-        case Hardcoded_Function_Type::READ_BOOL: {
-            symbol = pre->hardcoded_read_bool;
-            return_type = type_system.bool_type;
-            break;
-        }
-        case Hardcoded_Function_Type::RANDOM_I32: {
-            symbol = pre->hardcoded_random_i32;
-            return_type = type_system.i32_type;
-            break;
-        }
-        case Hardcoded_Function_Type::MALLOC_SIZE_I32: {
-            symbol = 0;
-            semantic_analyser.malloc_function = hardcoded_function;
-            dynamic_array_push_back(&parameters, type_system.i32_type);
-            return_type = type_system.void_ptr_type;
-            break;
-        }
-        case Hardcoded_Function_Type::FREE_POINTER:
-            symbol = 0;
-            semantic_analyser.free_function = hardcoded_function;
-            dynamic_array_push_back(&parameters, type_system.void_ptr_type);
-            return_type = type_system.void_type;
-            break;
-        default:
-            panic("What");
-        }
-        hardcoded_function->signature = type_system_make_function(&type_system, parameters, return_type);
-        hardcoded_function->hardcoded_type = type;
-
-        // Set symbol data
-        if (symbol != 0) {
-            symbol->type = Symbol_Type::HARDCODED_FUNCTION;
-            symbol->options.hardcoded_function = hardcoded_function;
-        }
-    }
+    auto& analyser = semantic_analyser;
+    auto& ts = type_system;
+    analyser.type_free = type_system_make_function(&ts, { ts.void_ptr_type }, ts.void_type);
+    analyser.type_malloc = type_system_make_function(&ts, { ts.i32_type }, ts.void_ptr_type);
+    analyser.type_type_info = type_system_make_function(&ts, { ts.type_type }, ts.type_information_type);
+    analyser.type_type_of = type_system_make_function(&ts, { ts.empty_struct_type }, ts.type_type); // I am not sure if this is valid...
+    analyser.type_print_bool = type_system_make_function(&ts, { ts.bool_type }, ts.void_type);
+    analyser.type_print_i32 = type_system_make_function(&ts, { ts.i32_type }, ts.void_type);
+    analyser.type_print_f32 = type_system_make_function(&ts, { ts.f32_type }, ts.void_type);
+    analyser.type_print_line = type_system_make_function(&ts, {}, ts.void_type);
+    analyser.type_print_string = type_system_make_function(&ts, { ts.string_type }, ts.void_type);
+    analyser.type_read_i32 = type_system_make_function(&ts, {}, ts.i32_type);
+    analyser.type_read_f32 = type_system_make_function(&ts, {}, ts.f32_type);
+    analyser.type_read_bool = type_system_make_function(&ts, {}, ts.bool_type);
+    analyser.type_random_i32 = type_system_make_function(&ts, {}, ts.i32_type);
 
     // Add assert function
     {
-        Symbol* symbol = pre->function_assert;
+        Symbol* symbol = pre->hardcoded_assert;
         Dynamic_Array<Type_Signature*> params = dynamic_array_create_empty<Type_Signature*>(1);
         dynamic_array_push_back(&params, type_system.bool_type);
         ModTree_Function* assert_fn = modtree_function_create_empty(
@@ -5472,6 +5464,9 @@ void semantic_error_append_to_string(Semantic_Error e, String* string)
         Error_Information* info = &e.information[k];
         switch (info->type)
         {
+        case Error_Information_Type::EXTRA_TEXT:
+            string_append_formated(string, "\n %s", info->options.extra_text);
+            break;
         case Error_Information_Type::CYCLE_WORKLOAD:
             string_append_formated(string, "\n  ");
             analysis_workload_append_to_string(info->options.cycle_workload, string);

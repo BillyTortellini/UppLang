@@ -1,138 +1,114 @@
-Player :: struct
-{
-    age: int;
-    name: String;
-    alive: bool;
-}
+Player::struct
+	age:int
+	name:String
+	alive:bool
 
-main :: ()
-{
-    /*
-    The Any type in this language is our version of the C-Style void*.
-    The difference is that Any also stores the type of the given value.
-    Basically, Any is defined as
-    Any :: struct 
-    {
-        data: *void;
-        type: Type;
-    }
-    */
-    val_int: int = 5;
-    val_bool: bool = false;
-    val_player: Player = .{name = "What", age = 5, alive = true};
-    
-    // Values automatically cast to any
-    any_int: Any = val_int;
-    any_bool: Any = val_bool;
-    any_player: Any = val_player;
-    
-    // Even values that are temporary can be cast to any type 
-    // by creating an invisible variable on the stack.
-    // Remember, normally you cannot do something like
-    // x: *void = 5; // 5 is temporary
-    any_int2: Any = 5;
-    any_player2: Any = Player.{name = "Dude", age = 69, alive = false};
-    
-    // As mentioned before, the any type contains a data member (*void) to the data
-    assert(any_int.data *== cast(*void)*val_int);
-    assert(any_player.data *== cast(*void)*val_player);
-    
-    // And also a type value, which can be switched over, or you can call type_info on it
-    assert(any_player.type == Player);
-    assert(any_int.type == int);
-    
-    // The Any type can again be casted to the value it contains
-    val_player_cpy := cast(Player) any_player;
-    assert(val_player_cpy.age == val_player.age && val_player_cpy.alive == val_player.alive);
-    
-    // Any type variables almost behaves like variables in dynamically typed languages
-    i_val: i32 = 0;
-    u_val: u32 = cast 0;
-    any_adder(i_val);
-    any_adder(u_val);
-    
-    // One of the main usecases of any will be printing/formating, because you can
-    // do things like the following:
-    result := mini_calc(.[5, "+", 5, "*", 2, "-", 1]);
-    assert(result.success);
-    assert(result.value == 19);
-    
-    // Casting from any to a value will result in a crash if the types dont match, shown in next testcase
-    
-    /*
-    One of the reasons we have tagged unions, slice types and Any type
-    is that this way we have eliminated all cases where the Compiler cannot determine
-    what type is currently active, making it possible to auto-generate
-    - Printing functions
-    - Serialization functions
-    - GUI interfaces for structs 
-    - Memory inspectors
-    - ...
-    
-    Maybe, if our metaprogramming system gets good enough to be able to emulate this
-    functionality, these features (Or this syntax) will be removed from the compiler.
-    */
-}
+main::()
+	//
+		The Any type in this language is our version of the C-Style void*.
+		The difference is that Any also stores the type of the given value.
+		This type serves the same purpose as the tag of tagged unions.
+	val_int:int=5
+	val_bool:bool=false
+	val_player:Player=.{name="What",age=5,alive=true}
+	
+	// Values automatically cast to any
+	any_int:Any=val_int
+	any_bool:Any=val_bool
+	any_player:Any=val_player
+	
+	// Even values that are temporary can be cast to any type by creating an invisible variable on the stack.
+	// Remember, normally you cannot do something like
+	// x: *void = 5 // 5 is temporary
+	any_int2:Any=5
+	any_player2:Any=Player.{name="Dude",age=69,alive=false}
+	
+	// As mentioned before, the any type contains a data member (*void) to the data
+	assert(any_int.data*==cast{*void}*val_int)
+	assert(any_player.data*==cast{*void}*val_player)
+	
+	// And also the type value, which can be used in type_info
+	assert(any_player.type==Player)
+	assert(any_int.type==int)
+	
+	// The Any type can again be casted to the value it contains
+	val_player_cpy:=cast{Player}any_player
+	assert(val_player_cpy.age==val_player.age&&val_player_cpy.alive==val_player.alive)
+	
+	// Any type variables almost behave like variables in dynamically typed languages
+	i_val:i32=0
+	u_val:u32=cast 0
+	any_adder(i_val)
+	any_adder(u_val)
+	
+	// One of the main usecases of any will be printing/formating, because you can
+	// do things like the following:
+	result:=mini_calc(.[5,"+",5,"*",2,"-",1])
+	assert(result.success)
+	assert(result.value==19)
+	
+	// Casting from any to a value will result in a crash if the types dont match, shown in next testcase
+	
+	//
+		One of the reasons we have tagged unions, slice types and Any type
+		is that this way we have eliminated all cases where the Compiler cannot determine
+		what type is currently active, making it possible to auto-generate
+		- Printing functions
+		- Serialization functions
+		- GUI interfaces for structs 
+		- Memory inspectors
+		- ...
+		Maybe, if our metaprogramming system gets good enough to be able to emulate this
+		functionality,these features(Or this syntax)will be removed from the compiler.
+	
 
-any_adder :: (val: Any)
-{
-    if val.type == i32
-    {
-        &cast(*int)val.data = cast(int)val + 1;
-    }
-    else if val.type == u32
-    {
-        &cast(*u32)val.data = cast(u32)val + cast(u32) 2;
-    }
-}
+any_adder::(val:Any)
+	if val.type==i32
+		&cast{*int}val.data=cast{int}val+1
+	else if val.type==u32
+		&cast{*u32}val.data=cast{u32}val+cast{u32}2
 
-string_compare :: (str1: String, str2: String) -> bool
-{
-    if str1.size != str2.size {return false;}
-    i := 0;
-    while i < str1.size
-    {
-        if str1.character_buffer[i] != str2.character_buffer[i] {return false;}
-        i = i + 1;
-    }
-    return true;
-}
+string_compare::(str1:String,str2:String)->bool
+	if str1.size!=str2.size
+		return false
+	i:=0
+	while i<str1.size
+		if str1.character_buffer[i]!=str2.character_buffer[i]
+			return false
+		i=i+1
+	return true
 
-mini_calc :: (ops: []Any) -> struct {success: bool; value: int;}
-{
-    i := 0;
-    result := 0;
-    status: enum{ADD; SUB; MULT;} = .ADD;
-    while i < ops.size
-    {
-        if ops[i].type == int 
-        {
-            switch status
-            {
-                case .ADD:  result = result + cast(int)ops[i];
-                case .SUB:  result = result - cast(int)ops[i];
-                case .MULT: result = result * cast(int)ops[i];
-            }
-        }
-        else if ops[i].type == String
-        {
-            if string_compare(cast ops[i], "+") {
-                status = .ADD;
-            }
-            else if string_compare(cast ops[i], "*") {
-                status = .MULT;
-            }
-            else if string_compare(cast ops[i], "-") {
-                status = .SUB;
-            }
-            else {
-                return .{success = false, value = result};
-            }
-        }
-        else {
-            return .{success = false, value = result};
-        }
-        i = i+1;
-    }
-    return .{success = true, value = result};
-}
+mini_calc::(ops:[]Any)->struct
+	success:bool
+	value:int
+
+	i:=0
+	result:=0
+	status:enum
+		ADD
+		SUB
+		MULT
+	=.ADD
+	while i<ops.size
+		if ops[i].type==int
+			switch status
+			case.ADD:
+				result=result+cast{int}ops[i]
+			case.SUB:
+				result=result-cast{int}ops[i]
+			case.MULT:
+				result=result*cast{int}ops[i]
+		else if ops[i].type==String
+			if string_compare(cast ops[i],"+")
+				status=.ADD
+			else if string_compare(cast ops[i],"*")
+				status=.MULT
+			else if string_compare(cast ops[i],"-")
+				status=.SUB
+			else
+				return.{success=false,value=result}
+		else
+			return.{success=false,value=result}
+		i=i+1
+	return.{success=true,value=result}
+

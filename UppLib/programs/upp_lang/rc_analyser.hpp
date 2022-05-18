@@ -7,7 +7,6 @@
 
 struct ModTree_Variable;
 struct ModTree_Function;
-struct ModTree_Hardcoded_Function;
 struct ModTree_Extern_Function;
 struct Modtree_Polymorphic_Function;
 struct Type_Signature;
@@ -62,7 +61,7 @@ struct Symbol
         ModTree_Variable* variable;
         Symbol_Table* module_table;
         ModTree_Function* function;
-        ModTree_Hardcoded_Function* hardcoded_function;
+        Hardcoded_Type hardcoded;
         ModTree_Extern_Function* extern_function;
         Type_Signature* type;
         Upp_Constant constant;
@@ -119,6 +118,9 @@ struct Predefined_Symbols
     Symbol* type_any;
     Symbol* type_empty;
 
+    Symbol* hardcoded_type_info;
+    Symbol* hardcoded_type_of;
+    Symbol* hardcoded_assert;
     Symbol* hardcoded_print_bool;
     Symbol* hardcoded_print_i32;
     Symbol* hardcoded_print_f32;
@@ -129,9 +131,7 @@ struct Predefined_Symbols
     Symbol* hardcoded_read_bool;
     Symbol* hardcoded_random_i32;
 
-    Symbol* function_assert;
     Symbol* global_type_informations;
-
     Symbol* error_symbol;
 };
 

@@ -23,8 +23,15 @@ enum class Timing_Task
 
 const char* timing_task_to_string(Timing_Task task);
 
-enum class Hardcoded_Function_Type
+enum class Hardcoded_Type
 {
+    TYPE_OF,
+    TYPE_INFO,
+    ASSERT_FN,
+
+    MALLOC_SIZE_I32,
+    FREE_POINTER,
+
     PRINT_I32,
     PRINT_F32,
     PRINT_BOOL,
@@ -34,13 +41,9 @@ enum class Hardcoded_Function_Type
     READ_F32,
     READ_BOOL,
     RANDOM_I32,
-    MALLOC_SIZE_I32,
-    FREE_POINTER,
-
-    HARDCODED_FUNCTION_COUNT, // Should always be last element
 };
 
-void hardcoded_function_type_append_to_string(String* string, Hardcoded_Function_Type hardcoded);
+void hardcoded_type_append_to_string(String* string, Hardcoded_Type hardcoded);
 
 enum class Exit_Code
 {

@@ -19,41 +19,47 @@ const char* timing_task_to_string(Timing_Task task)
     return "";
 }
 
-void hardcoded_function_type_append_to_string(String* string, Hardcoded_Function_Type hardcoded)
+void hardcoded_type_append_to_string(String* string, Hardcoded_Type hardcoded)
 {
     switch (hardcoded)
     {
-    case Hardcoded_Function_Type::PRINT_I32:
-        string_append_formated(string, "PRINT_I32");
+    case Hardcoded_Type::ASSERT_FN:
+        string_append_formated(string, "ASSERT");
         break;
-    case Hardcoded_Function_Type::PRINT_F32:
+    case Hardcoded_Type::TYPE_INFO:
+        string_append_formated(string, "TYPE_INFO");
+        break;
+    case Hardcoded_Type::TYPE_OF:
+        string_append_formated(string, "TYPE_OF");
+        break;
+    case Hardcoded_Type::PRINT_F32:
         string_append_formated(string, "PRINT_F32");
         break;
-    case Hardcoded_Function_Type::PRINT_BOOL:
+    case Hardcoded_Type::PRINT_BOOL:
         string_append_formated(string, "PRINT_BOOL");
         break;
-    case Hardcoded_Function_Type::PRINT_LINE:
+    case Hardcoded_Type::PRINT_LINE:
         string_append_formated(string, "PRINT_LINE");
         break;
-    case Hardcoded_Function_Type::PRINT_STRING:
+    case Hardcoded_Type::PRINT_STRING:
         string_append_formated(string, "PRINT_STRING");
         break;
-    case Hardcoded_Function_Type::READ_I32:
+    case Hardcoded_Type::READ_I32:
         string_append_formated(string, "READ_I32");
         break;
-    case Hardcoded_Function_Type::READ_F32:
+    case Hardcoded_Type::READ_F32:
         string_append_formated(string, "READ_F32");
         break;
-    case Hardcoded_Function_Type::READ_BOOL:
+    case Hardcoded_Type::READ_BOOL:
         string_append_formated(string, "READ_BOOL");
         break;
-    case Hardcoded_Function_Type::RANDOM_I32:
+    case Hardcoded_Type::RANDOM_I32:
         string_append_formated(string, "RANDOM_I32");
         break;
-    case Hardcoded_Function_Type::MALLOC_SIZE_I32:
+    case Hardcoded_Type::MALLOC_SIZE_I32:
         string_append_formated(string, "MALLOC_SIZE_I32");
         break;
-    case Hardcoded_Function_Type::FREE_POINTER:
+    case Hardcoded_Type::FREE_POINTER:
         string_append_formated(string, "FREE_POINTER");
         break;
     default: panic("Should not happen");

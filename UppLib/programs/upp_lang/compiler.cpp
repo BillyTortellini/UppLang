@@ -202,7 +202,7 @@ void compiler_compile(Syntax_Block* source_code, bool generate_code)
     }
 
     compiler_add_source_code(source_code, Code_Origin::MAIN_PROJECT);
-    bool do_analysis = enable_lexing && enable_parsing && enable_analysis;
+    bool do_analysis = enable_lexing && enable_parsing && enable_rc_gen && enable_analysis;
 
     compiler_switch_timing_task(Timing_Task::ANALYSIS);
     if (do_analysis) {
@@ -313,6 +313,7 @@ Exit_Code compiler_execute()
     bool do_execution =
         enable_lexing &&
         enable_parsing &&
+        enable_rc_gen &&
         enable_analysis &&
         enable_ir_gen &&
         enable_execution;

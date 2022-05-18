@@ -4,10 +4,16 @@
 
 void type_signature_destroy(Type_Signature* sig) 
 {
-    if (sig->type == Signature_Type::FUNCTION)
-        dynamic_array_destroy(&sig->options.function.parameter_types);
+    if (sig->type == Signature_Type::FUNCTION) {
+        auto& params = sig->options.function.parameter_types;
+        if (params.data != 0 && params.capacity != 0) {
+            dynamic_array_destroy(&params);
+        }
+    }
     if (sig->type == Signature_Type::STRUCT)
         dynamic_array_destroy(&sig->options.structure.members);
+    if (sig->type == Signature_Type::ENUM)
+        dynamic_array_destroy(&sig->options.enum_type.members);
 }
 
 void type_signature_append_to_string_with_children(String* string, Type_Signature* signature, bool print_child)
@@ -891,6 +897,15 @@ Type_Signature* type_system_make_function(Type_System* system, Dynamic_Array<Typ
     result.options.function.parameter_types = parameter_types;
     result.options.function.return_type = return_type;
     return type_system_register_type(system, result);
+}
+
+Type_Signature* type_system_make_function(Type_System* system, std::initializer_list<Type_Signature*> parameter_types, Type_Signature* return_type)
+{
+    Dynamic_Array<Type_Signature*> params = dynamic_array_create_empty<Type_Signature*>(1);
+    for (auto& param : parameter_types) {
+        dynamic_array_push_back(&params, param);
+    }
+    return type_system_make_function(system, params, return_type);
 }
 
 Type_Signature* type_system_make_template(Type_System* system, String* id)

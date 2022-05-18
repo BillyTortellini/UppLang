@@ -384,7 +384,7 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
             break;
         case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
             string_append_formated(string, "HARDCODED_FUNCTION_CALL, type: ");
-            hardcoded_function_type_append_to_string(string, call->options.hardcoded.type);
+            hardcoded_type_append_to_string(string, call->options.hardcoded.type);
             break;
         case IR_Instruction_Call_Type::EXTERN_FUNCTION_CALL:
             string_append_formated(string, "EXTERN_FUNCTION_CALL, type: ");
@@ -739,8 +739,8 @@ IR_Data_Access ir_generator_generate_expression(IR_Generator* generator, IR_Code
         }
         case ModTree_Call_Type::HARDCODED_FUNCTION: {
             call_instr.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
-            call_instr.options.call.options.hardcoded.type = expression->options.function_call.options.hardcoded_function->hardcoded_type;
-            call_instr.options.call.options.hardcoded.signature = expression->options.function_call.options.hardcoded_function->signature;
+            call_instr.options.call.options.hardcoded.type = expression->options.function_call.options.hardcoded;
+            call_instr.options.call.options.hardcoded.signature = hardcoded_type_to_signature(expression->options.function_call.options.hardcoded);
             break;
         }
         case ModTree_Call_Type::FUNCTION: {
@@ -895,8 +895,8 @@ IR_Data_Access ir_generator_generate_expression(IR_Generator* generator, IR_Code
             IR_Instruction alloc_instr;
             alloc_instr.type = IR_Instruction_Type::FUNCTION_CALL;
             alloc_instr.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
-            alloc_instr.options.call.options.hardcoded.type = Hardcoded_Function_Type::MALLOC_SIZE_I32;
-            alloc_instr.options.call.options.hardcoded.signature = generator->compiler->semantic_analyser->malloc_function->signature;
+            alloc_instr.options.call.options.hardcoded.type = Hardcoded_Type::MALLOC_SIZE_I32;
+            alloc_instr.options.call.options.hardcoded.signature = hardcoded_type_to_signature(Hardcoded_Type::MALLOC_SIZE_I32);
             alloc_instr.options.call.destination = array_data_access;
             alloc_instr.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(1);
             dynamic_array_push_back(&alloc_instr.options.call.arguments, mult_instr.options.binary_op.destination);
@@ -908,8 +908,8 @@ IR_Data_Access ir_generator_generate_expression(IR_Generator* generator, IR_Code
             IR_Instruction alloc_instr;
             alloc_instr.type = IR_Instruction_Type::FUNCTION_CALL;
             alloc_instr.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
-            alloc_instr.options.call.options.hardcoded.type = Hardcoded_Function_Type::MALLOC_SIZE_I32;
-            alloc_instr.options.call.options.hardcoded.signature = generator->compiler->semantic_analyser->malloc_function->signature;
+            alloc_instr.options.call.options.hardcoded.type = Hardcoded_Type::MALLOC_SIZE_I32;
+            alloc_instr.options.call.options.hardcoded.signature = hardcoded_type_to_signature(Hardcoded_Type::MALLOC_SIZE_I32);
             alloc_instr.options.call.destination = ir_data_access_create_intermediate(ir_block, expression->result_type);
             alloc_instr.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(1);
             dynamic_array_push_back(&alloc_instr.options.call.arguments, ir_data_access_create_constant_i32(generator, expression->options.new_allocation.allocation_size));
@@ -1310,8 +1310,8 @@ void ir_generator_generate_block(IR_Generator* generator, IR_Code_Block* ir_bloc
             IR_Instruction instr;
             instr.type = IR_Instruction_Type::FUNCTION_CALL;
             instr.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
-            instr.options.call.options.hardcoded.type = Hardcoded_Function_Type::FREE_POINTER;
-            instr.options.call.options.hardcoded.signature = generator->compiler->semantic_analyser->free_function->signature;
+            instr.options.call.options.hardcoded.type = Hardcoded_Type::FREE_POINTER;
+            instr.options.call.options.hardcoded.signature = hardcoded_type_to_signature(Hardcoded_Type::FREE_POINTER);
             instr.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(1);
 
             IR_Data_Access delete_access = ir_generator_generate_expression(generator, ir_block, statement->options.deletion.expression);

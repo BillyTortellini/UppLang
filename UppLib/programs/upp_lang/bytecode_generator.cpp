@@ -1104,7 +1104,7 @@ void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction 
         break;
     case Instruction_Type::CALL_HARDCODED_FUNCTION:
         string_append_formated(string, "CALL_HARDCODED_FUNCTION      hardcoded_func_type:");
-        hardcoded_function_type_append_to_string(string, (Hardcoded_Function_Type)i.op1);
+        hardcoded_type_append_to_string(string, (Hardcoded_Type)i.op1);
         string_append_formated(string, ", arg-start-offset: %d", i.op2);
         break;
     case Instruction_Type::RETURN:

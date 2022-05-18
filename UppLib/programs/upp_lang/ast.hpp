@@ -286,7 +286,7 @@ namespace AST
             struct {
                 Expression* condition;
                 Code_Block* block;
-                Optional<Code_Block*> else_block;
+                Optional<AST::Code_Block*> else_block;
             } if_statement;
             struct {
                 Expression* condition;

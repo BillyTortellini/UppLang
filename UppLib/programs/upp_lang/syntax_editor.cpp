@@ -1070,7 +1070,7 @@ void syntax_editor_render()
     auto& cursor = syntax_editor.cursor_index;
 
     // Prepare Render
-    editor.character_size.y = text_renderer_cm_to_relative_height(editor.text_renderer, editor.rendering_core, 0.35f);
+    editor.character_size.y = text_renderer_cm_to_relative_height(editor.text_renderer, editor.rendering_core, 0.45f);
     editor.character_size.x = text_renderer_get_cursor_advance(editor.text_renderer, editor.character_size.y);
 
     // Layout Source Code

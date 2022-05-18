@@ -567,37 +567,37 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
             case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL: {
                 switch (call->options.hardcoded.type)
                 {
-                case Hardcoded_Function_Type::PRINT_I32:
+                case Hardcoded_Type::PRINT_I32:
                     string_append_formated(output, "print_i32");
                     break;
-                case Hardcoded_Function_Type::PRINT_F32:
+                case Hardcoded_Type::PRINT_F32:
                     string_append_formated(output, "print_f32");
                     break;
-                case Hardcoded_Function_Type::PRINT_BOOL:
+                case Hardcoded_Type::PRINT_BOOL:
                     string_append_formated(output, "print_bool");
                     break;
-                case Hardcoded_Function_Type::PRINT_LINE:
+                case Hardcoded_Type::PRINT_LINE:
                     string_append_formated(output, "print_line");
                     break;
-                case Hardcoded_Function_Type::PRINT_STRING:
+                case Hardcoded_Type::PRINT_STRING:
                     string_append_formated(output, "print_string");
                     break;
-                case Hardcoded_Function_Type::READ_I32:
+                case Hardcoded_Type::READ_I32:
                     string_append_formated(output, "read_i32");
                     break;
-                case Hardcoded_Function_Type::READ_F32:
+                case Hardcoded_Type::READ_F32:
                     string_append_formated(output, "read_f32");
                     break;
-                case Hardcoded_Function_Type::READ_BOOL:
+                case Hardcoded_Type::READ_BOOL:
                     string_append_formated(output, "read_bool");
                     break;
-                case Hardcoded_Function_Type::RANDOM_I32:
+                case Hardcoded_Type::RANDOM_I32:
                     string_append_formated(output, "random_i32");
                     break;
-                case Hardcoded_Function_Type::MALLOC_SIZE_I32:
+                case Hardcoded_Type::MALLOC_SIZE_I32:
                     string_append_formated(output, "malloc_size_i32");
                     break;
-                case Hardcoded_Function_Type::FREE_POINTER:
+                case Hardcoded_Type::FREE_POINTER:
                     string_append_formated(output, "free_pointer");
                     break;
                 default: panic("What");

@@ -319,7 +319,9 @@ namespace Parser
             else {
                 log_error_to_pos("Couldn't parse line", syntax_line_get_end_pos(line));
             }
-            if (before_line_index == pos.line_index) {
+            if ((before_line_index == pos.line_index || pos.token_index != 0) && syntax_position_on_line(pos)) 
+            {
+                line = lines[pos.line_index];
                 if (pos.token_index < line->tokens.size && line->tokens[pos.token_index].type != Syntax_Token_Type::COMMENT) {
                     log_error_to_pos("Unexpected Tokens, Line already parsed", syntax_line_get_end_pos(line));
                 }
@@ -455,15 +457,22 @@ namespace Parser
     }
 
     // Parsing
-    Code_Block* parse_code_block(Base* parent)
+    Code_Block* parse_code_block(Base* parent, AST::Expression* related_expression)
     {
         auto result = allocate_base<Code_Block>(parent, Base_Type::CODE_BLOCK);
         result->statements = dynamic_array_create_empty<Statement*>(1);
         result->block_id = optional_make_failure<String*>();
-        if (test_token(Syntax_Token_Type::IDENTIFIER), test_operator_offset(Syntax_Operator::DOT, 1)) {
+        if (test_token(Syntax_Token_Type::IDENTIFIER), test_operator_offset(Syntax_Operator::COLON, 1)) {
             result->block_id = optional_make_success(get_token(0)->options.identifier);
             advance_token();
             advance_token();
+        }
+        else if (related_expression != 0 && related_expression->type == Expression_Type::SYMBOL_READ && !related_expression->options.symbol_read->path_child.available){
+            // This is an experimental feature: give the block the name of the condition if possible,
+            // e.g. switch color
+            //      case .RED
+            //          break color
+            result->block_id = optional_make_success(related_expression->options.symbol_read->name);
         }
         parse_follow_block(parent, &result->statements, parse_statement, true);
         PARSE_SUCCESS(result);
@@ -513,7 +522,6 @@ namespace Parser
     {
         CHECKPOINT_SETUP;
         auto result = allocate_base<Statement>(parent, Base_Type::STATEMENT);
-
         {
             auto definition = parse_definition(&result->base);
             if (definition != 0) {
@@ -543,7 +551,7 @@ namespace Parser
             auto line = get_line();
             if (syntax_line_is_empty(line) && !syntax_line_is_multi_line_comment(line)) {
                 result->type = Statement_Type::BLOCK;
-                result->options.block = parse_code_block(&result->base);
+                result->options.block = parse_code_block(&result->base, 0);
                 PARSE_SUCCESS(result);
             }
         }
@@ -557,10 +565,33 @@ namespace Parser
                 result->type = Statement_Type::IF_STATEMENT;
                 auto& if_stat = result->options.if_statement;
                 if_stat.condition = parse_expression_or_error_expr(&result->base);
-                if_stat.block = parse_code_block(&result->base);
+                if_stat.block = parse_code_block(&result->base, if_stat.condition);
                 if_stat.else_block.available = false;
-                if (test_keyword_offset(Syntax_Keyword::ELSE, 0)) {
-                    if_stat.else_block = optional_make_success(parse_code_block(&result->base));
+
+                auto last_if_stat = result;
+                // Parse else-if chain
+                while (test_keyword_offset(Syntax_Keyword::ELSE, 0) && test_keyword_offset(Syntax_Keyword::IF, 1)) 
+                {
+                    advance_token();
+                    auto else_block = allocate_base<AST::Code_Block>(&result->base, Base_Type::CODE_BLOCK);
+                    else_block->statements = dynamic_array_create_empty<Statement*>(1);
+                    else_block->block_id = optional_make_failure<String*>();
+                    auto new_if_stat = allocate_base<AST::Statement>(&result->base, Base_Type::STATEMENT);
+                    new_if_stat->type = Statement_Type::IF_STATEMENT;
+                    dynamic_array_push_back(&else_block->statements, new_if_stat);
+                    last_if_stat->options.if_statement.else_block = optional_make_success(else_block);
+                    last_if_stat = new_if_stat;
+
+                    advance_token();
+                    auto& new_if = new_if_stat->options.if_statement;
+                    new_if.condition = parse_expression_or_error_expr(&new_if_stat->base);
+                    new_if.block = parse_code_block(&result->base, new_if.condition);
+                    new_if.else_block.available = false;
+                }
+                if (test_keyword_offset(Syntax_Keyword::ELSE, 0))
+                {
+                    advance_token();
+                    last_if_stat->options.if_statement.else_block = optional_make_success(parse_code_block(&last_if_stat->base, 0));
                 }
                 PARSE_SUCCESS(result);
             }
@@ -570,14 +601,14 @@ namespace Parser
                 result->type = Statement_Type::WHILE_STATEMENT;
                 auto& loop = result->options.while_statement;
                 loop.condition = parse_expression_or_error_expr(&result->base);
-                loop.block = parse_code_block(&result->base);
+                loop.block = parse_code_block(&result->base, loop.condition);
                 PARSE_SUCCESS(result);
             }
             case Syntax_Keyword::DEFER:
             {
                 advance_token();
                 result->type = Statement_Type::DEFER;
-                result->options.defer_block = parse_code_block(&result->base);
+                result->options.defer_block = parse_code_block(&result->base, 0);
                 PARSE_SUCCESS(result);
             }
             case Syntax_Keyword::SWITCH:
@@ -597,7 +628,7 @@ namespace Parser
                     if (!is_default) {
                         c.value = optional_make_success(parse_expression_or_error_expr(&result->base));
                     }
-                    c.block = parse_code_block(&result->base);
+                    c.block = parse_code_block(&result->base, switch_stat.condition);
                     dynamic_array_push_back(&switch_stat.cases, c);
                 }
                 PARSE_SUCCESS(result);
@@ -689,7 +720,7 @@ namespace Parser
             advance_token();
             if (on_follow_block()) {
                 result->type = Expression_Type::BAKE_BLOCK;
-                result->options.bake_block = parse_code_block(&result->base);
+                result->options.bake_block = parse_code_block(&result->base, 0);
                 PARSE_SUCCESS(result);
             }
             result->type = Expression_Type::BAKE_EXPR;
@@ -807,7 +838,7 @@ namespace Parser
         }
 
         // Literals
-        if (test_token(Syntax_Token_Type::LITERAL_NUMBER)) 
+        if (test_token(Syntax_Token_Type::LITERAL_NUMBER))
         {
             auto str = get_token(0)->options.literal_number;
             int value = 0;
@@ -829,10 +860,10 @@ namespace Parser
                 value += (c - '0');
             }
             float float_val = (float)value;
-            if (is_float) 
+            if (is_float)
             {
                 float multiplier = 0.1f;
-                while (index < str->size) 
+                while (index < str->size)
                 {
                     auto c = str->characters[index];
                     if (!(c >= '0' && c <= '9')) {
@@ -862,7 +893,7 @@ namespace Parser
             }
             PARSE_SUCCESS(result);
         }
-        if (test_token(Syntax_Token_Type::LITERAL_STRING)) 
+        if (test_token(Syntax_Token_Type::LITERAL_STRING))
         {
             auto text = get_token(0)->options.literal_string.string;
 
@@ -962,7 +993,7 @@ namespace Parser
             result = allocate_base<Expression>(parent, Base_Type::EXPRESSION);
             result->type = Expression_Type::FUNCTION;
             auto& function = result->options.function;
-            function.body = parse_code_block(&result->base);
+            function.body = parse_code_block(&result->base, 0);
             function.signature = signature_expr;
             signature_expr->base.parent = (Base*)result;
             PARSE_SUCCESS(result);

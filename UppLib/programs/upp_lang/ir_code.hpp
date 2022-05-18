@@ -80,7 +80,7 @@ struct IR_Instruction_Call
         IR_Data_Access pointer_access;
         struct {
             Type_Signature* signature;
-            Hardcoded_Function_Type type;
+            Hardcoded_Type type;
         } hardcoded;
         Extern_Function_Identifier extern_function;
     } options;

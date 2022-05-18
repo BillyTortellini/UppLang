@@ -5,6 +5,7 @@ Rewrite/Run Testcases (Maybe requires load keyword?, Idk)
 Maybe we can replace Symbol with AST::Definition, but probably not
 Bug: Types can be used as integer, e.g. x: int = int
 Replace Modtree with AST-Decorations, add new IR-Codegen Phase
+Maybe replace Symbol pointing to types/function with Function_Progress...
 Integrate Editor features into new editor (Undo-Redo, Copy-Paste, Indentation Handling)
 For loop and looping over array pls
 Editor features (Code-Completion, Jump to Definition, Line-Trimming similar to tokens)
@@ -13,6 +14,7 @@ Bugs:
     - Formating with && as double dereference
     - Nullptr missing
     - Enum member values
+    - else if chains
     - Not sure if I am happy with comments, but it actually seems quite nice
 
 Ideas:
