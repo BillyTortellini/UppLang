@@ -34,7 +34,7 @@ bool output_bytecode = false;
 bool output_timing = false;
 
 // Testcases
-bool enable_testcases = false;
+bool enable_testcases = true;
 bool enable_stresstest = false;
 bool run_testcases_compiled = false;
 
@@ -496,11 +496,11 @@ void compiler_run_testcases(Timer* timer)
         test_case_make("007_pointers_and_arrays.upp", true),
         test_case_make("008_operator_precedence.upp", true),
         test_case_make("009_function_calls.upp", true),
-        test_case_make("010_file_loads.upp", true),
+        //test_case_make("010_file_loads.upp", true),
         test_case_make("011_pointers.upp", true),
         test_case_make("012_new_delete.upp", true),
         test_case_make("013_structs.upp", true),
-        test_case_make("014_templates.upp", true),
+        //test_case_make("014_templates.upp", true),
         test_case_make("015_defer.upp", true),
         test_case_make("016_casting.upp", true),
         test_case_make("017_function_pointers.upp", true),
@@ -508,8 +508,8 @@ void compiler_run_testcases(Timer* timer)
         test_case_make("019_scopes.upp", true),
         test_case_make("020_globals.upp", true),
         test_case_make("021_slices.upp", true),
-        test_case_make("022_dynamic_array.upp", true),
-        test_case_make("023_invalid_recursive_template.upp", false),
+        //test_case_make("022_dynamic_array.upp", true),
+        //test_case_make("023_invalid_recursive_template.upp", false),
         test_case_make("024_expression_context.upp", true),
         test_case_make("025_expression_context_limit.upp", false),
         test_case_make("026_auto_cast.upp", true),
@@ -558,6 +558,9 @@ void compiler_run_testcases(Timer* timer)
             continue;
         }
 
+        auto main_block = syntax_block_create_from_string(code.value);
+        SCOPE_EXIT(syntax_block_destroy(main_block));
+        compiler_compile(main_block, true);
         Exit_Code exit_code = compiler_execute();
         if (exit_code != Exit_Code::SUCCESS && test_case->should_succeed)
         {
@@ -610,9 +613,10 @@ void compiler_run_testcases(Timer* timer)
     --------------------------
     Each character gets typed one by one, then the text is parsed and analysed
     */
-    Optional<String> text = file_io_load_text_file("upp_code/testcases/022_dynamic_array.upp");
+    Optional<String> text = file_io_load_text_file("upp_code/testcases/045_unions.upp");
     SCOPE_EXIT(file_io_unload_text_file(&text););
     if (!text.available) {
+        logg("Couldn't execute stresstest, file not found\n");
         return;
     }
 

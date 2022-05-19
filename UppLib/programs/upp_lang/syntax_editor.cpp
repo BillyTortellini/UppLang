@@ -706,6 +706,7 @@ void syntax_editor_initialize(Rendering_Core* rendering_core, Text_Renderer* tex
     syntax_editor.input = input;
 
     compiler_initialize(timer);
+    compiler_run_testcases(timer);
     syntax_editor_load_text_file("upp_code/editor_text.upp");
 }
 

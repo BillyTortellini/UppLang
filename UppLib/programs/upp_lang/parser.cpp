@@ -521,7 +521,21 @@ namespace Parser
     Statement* parse_statement(Base* parent)
     {
         CHECKPOINT_SETUP;
+
         auto result = allocate_base<Statement>(parent, Base_Type::STATEMENT);
+        {
+            // This needs to be done before definition
+            auto line = get_line();
+            if ((syntax_line_is_empty(line) && !syntax_line_is_multi_line_comment(line)) ||
+                (test_token(Syntax_Token_Type::IDENTIFIER) && test_operator_offset(Syntax_Operator::COLON, 1) &&
+                (line->tokens.size == 2 || (line->tokens.size == 3 && line->tokens[2].type == Syntax_Token_Type::COMMENT)))) 
+            {
+                result->type = Statement_Type::BLOCK;
+                result->options.block = parse_code_block(&result->base, 0);
+                PARSE_SUCCESS(result);
+            }
+        }
+
         {
             auto definition = parse_definition(&result->base);
             if (definition != 0) {
@@ -544,14 +558,6 @@ namespace Parser
                 }
                 result->type = Statement_Type::EXPRESSION_STATEMENT;
                 result->options.expression = expr;
-                PARSE_SUCCESS(result);
-            }
-        }
-        {
-            auto line = get_line();
-            if (syntax_line_is_empty(line) && !syntax_line_is_multi_line_comment(line)) {
-                result->type = Statement_Type::BLOCK;
-                result->options.block = parse_code_block(&result->base, 0);
                 PARSE_SUCCESS(result);
             }
         }

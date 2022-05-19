@@ -5010,6 +5010,16 @@ void semantic_analyser_fill_block(ModTree_Block* block, AST::Code_Block* code_bl
     block->flow = Control_Flow::SEQUENTIAL;
     block->defer_start_index = semantic_analyser.defer_stack.size;
 
+    if (code_block->block_id.available)
+    {
+        for (int i = 0; i < semantic_analyser.block_stack.size; i++) {
+            auto prev = semantic_analyser.block_stack[i];
+            if (prev->code_block != 0 && prev->code_block->block_id.available && prev->code_block->block_id.value == code_block->block_id.value) {
+                semantic_analyser_log_error(Semantic_Error_Type::LABEL_ALREADY_IN_USE, &code_block->base);
+            }
+        }
+    }
+
     int rewind_block_count = semantic_analyser.block_stack.size;
     bool rewind_reachable = semantic_analyser.statement_reachable;
     int rewind_defer_size = semantic_analyser.defer_stack.size;

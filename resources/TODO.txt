@@ -11,10 +11,9 @@ For loop and looping over array pls
 Editor features (Code-Completion, Jump to Definition, Line-Trimming similar to tokens)
 
 Bugs:
-    - Formating with && as double dereference
     - Nullptr missing
     - Enum member values
-    - else if chains
+    - Formating with && as double dereference
     - Not sure if I am happy with comments, but it actually seems quite nice
 
 Ideas:
