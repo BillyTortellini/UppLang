@@ -516,7 +516,7 @@ void syntax_editor_update()
         auto open_file = open_file_selection_dialog();
         if (open_file.available) {
             syntax_editor_load_text_file(open_file.value.characters);
-            compiler_compile(syntax_editor.root_block, false);
+            compiler_compile(syntax_editor.root_block, false, string_create(syntax_editor.file_path));
         }
         return;
     }
@@ -653,7 +653,7 @@ void syntax_editor_update()
             logg("AST_Error: %s\n", error.msg);
         }
 
-        compiler_compile(syntax_editor.root_block, true);
+        compiler_compile(syntax_editor.root_block, true, string_create(syntax_editor.file_path));
 
         if (!compiler_errors_occured()) {
             auto exit_code = compiler_execute();
@@ -662,7 +662,7 @@ void syntax_editor_update()
             exit_code_append_to_string(&output, exit_code);
             logg("\nProgram Exit with Code: %s\n", output.characters);
         }
-        else 
+        else
         {
             // Print errors
             auto parse_errors = Parser::get_error_messages();
@@ -687,7 +687,7 @@ void syntax_editor_update()
         }
     }
     else {
-        compiler_compile(syntax_editor.root_block, false);
+        compiler_compile(syntax_editor.root_block, false, string_create(syntax_editor.file_path));
     }
 }
 
@@ -863,7 +863,7 @@ void syntax_editor_layout_line(Syntax_Line* line, int line_index)
         info.screen_pos = pos;
         info.screen_size = str.size;
         vec3 color = Syntax_Color::TEXT;
-        
+
         // This has to be the first if case, since multi-line comments may not start with ||
         if (token.type == Syntax_Token_Type::COMMENT || syntax_line_is_comment(line)) {
             color = Syntax_Color::COMMENT;
@@ -1071,7 +1071,7 @@ void syntax_editor_render()
     auto& cursor = syntax_editor.cursor_index;
 
     // Prepare Render
-    editor.character_size.y = text_renderer_cm_to_relative_height(editor.text_renderer, editor.rendering_core, 0.45f);
+    editor.character_size.y = text_renderer_cm_to_relative_height(editor.text_renderer, editor.rendering_core, 0.65f);
     editor.character_size.x = text_renderer_get_cursor_advance(editor.text_renderer, editor.character_size.y);
 
     // Layout Source Code
@@ -1154,6 +1154,7 @@ void syntax_editor_render()
             auto& node = error.error_node;
             dynamic_array_reset(&error_ranges);
             if (node == 0) continue;
+            if (code_source_from_ast(node) != compiler.main_source) continue;
             Parser::ast_base_get_section_token_range(node, Parser::Section::IDENTIFIER, &error_ranges);
             for (int j = 0; j < error_ranges.size; j++)
             {
@@ -1175,6 +1176,7 @@ void syntax_editor_render()
             auto& node = error.error_node;
             dynamic_array_reset(&error_ranges);
             if (node == 0) continue;
+            if (code_source_from_ast(node) != compiler.main_source) continue;
             Parser::ast_base_get_section_token_range(node, semantic_error_get_section(error), &error_ranges);
             for (int j = 0; j < error_ranges.size; j++)
             {

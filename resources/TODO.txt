@@ -1,20 +1,28 @@
 TODO:
 -----
-Rewrite/Run Testcases (Maybe requires load keyword?, Idk)
+Integrate Editor features into new editor (Undo-Redo, Copy-Paste, Indentation Handling)
+Editor features (Code-Completion, Jump to Definition, Line-Trimming similar to tokens, Auto-formating, Vim-Commands)
 
-Maybe we can replace Symbol with AST::Definition, but probably not
-Bug: Types can be used as integer, e.g. x: int = int
 Replace Modtree with AST-Decorations, add new IR-Codegen Phase
 Maybe replace Symbol pointing to types/function with Function_Progress...
-Integrate Editor features into new editor (Undo-Redo, Copy-Paste, Indentation Handling)
-For loop and looping over array pls
-Editor features (Code-Completion, Jump to Definition, Line-Trimming similar to tokens)
+For loop and looping over arrays pls
 
 Bugs:
+    - Loading files introduces new symbols, which could conflict with the old ones...
     - Nullptr missing
     - Enum member values
+    - Bake block
+    - Fix missing-feature error messages
+    - Error messages using the AST::Display
+    - Bug: Types can be used as integers...
+    - # probalby needs to be a valid identifier character now, if we keep it as a token keyword
+
     - Formating with && as double dereference
     - Not sure if I am happy with comments, but it actually seems quite nice
+    - I feel like the auto block-ids (if cond) should not work if there are 2 instances where we use the same cond
+        e.g. the parser should do this
+
+
 
 Ideas:
 ------
@@ -27,16 +35,8 @@ Switch cases could use Indentation e.g.
         .EAT
             search_and_eat_nearest(player)
             player.energy -= 15
-
-Named blocks could start like definitions
-    game_loop: while true
-        if player.health < 0
-            break game_loop
-        update_world()
-        render_world()
-
-    anon_1:
-        print_i32(what)
+    This looks bad, but when the auto formater works like it should
+    this will be fine
 
 
 

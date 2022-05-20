@@ -179,19 +179,20 @@ void symbol_table_append_to_string(String* string, Symbol_Table* table, bool pri
 Analysis_Item* analysis_item_create_empty(Analysis_Item_Type type, Analysis_Item* parent_item, AST::Base* node)
 {
     auto& analyser = dependency_analyser;
+    auto& src = analyser.code_source;
     Analysis_Item* item = new Analysis_Item;
     item->symbol_dependencies = dynamic_array_create_empty<Symbol_Dependency>(1);
     item->type = type;
     item->node = node;
     item->symbol = 0;
-    if (parent_item != 0) {
+    if (parent_item != 0 && parent_item->type != Analysis_Item_Type::ROOT && type != Analysis_Item_Type::IMPORT) {
         Item_Dependency item_dependency;
         item_dependency.dependent = parent_item;
         item_dependency.depends_on = item;
         item_dependency.type = type == Analysis_Item_Type::STRUCTURE ? dependency_analyser.dependency_type : Dependency_Type::NORMAL;
-        dynamic_array_push_back(&analyser.item_dependencies, item_dependency);
+        dynamic_array_push_back(&src->item_dependencies, item_dependency);
     }
-    dynamic_array_push_back(&analyser.analysis_items, item);
+    dynamic_array_push_back(&src->analysis_items, item);
     bool worked = hashtable_insert_element(&dependency_analyser.mapping_ast_to_items, node, item);
     assert(worked, "");
     return item;
@@ -210,32 +211,35 @@ void string_set_indentation(String* string, int indentation)
     }
 }
 
-void analysis_item_append_to_string(Analysis_Item* item, String* string, int indentation)
+void analysis_item_append_to_string(Analysis_Item* item, String* string, int indentation, bool print_symbol_dependencies)
 {
     string_set_indentation(string, indentation);
     switch (item->type)
     {
+    case Analysis_Item_Type::IMPORT:
+        string_append_formated(string, "Import");
+        break;
     case Analysis_Item_Type::ROOT:
         string_append_formated(string, "Root");
         break;
     case Analysis_Item_Type::DEFINITION:
-        string_append_formated(string, "Symbol \"%s\" Definition", item->symbol->id->characters);
+        string_append_formated(string, "\"%s\" Definition", item->symbol->id->characters);
         break;
     case Analysis_Item_Type::FUNCTION:
         if (item->symbol != 0) {
-            string_append_formated(string, "Symbol \"%s\", ", item->symbol->id->characters);
+            string_append_formated(string, "\"%s\", ", item->symbol->id->characters);
         }
         string_append_formated(string, "Function");
         break;
     case Analysis_Item_Type::FUNCTION_BODY:
         if (item->symbol != 0) {
-            string_append_formated(string, "Symbol \"%s\", ", item->symbol->id->characters);
+            string_append_formated(string, "\"%s\", ", item->symbol->id->characters);
         }
         string_append_formated(string, "Body");
         break;
     case Analysis_Item_Type::STRUCTURE:
         if (item->symbol != 0) {
-            string_append_formated(string, "Symbol \"%s\", ", item->symbol->id->characters);
+            string_append_formated(string, "\"%s\", ", item->symbol->id->characters);
         }
         string_append_formated(string, "Structure");
         break;
@@ -247,9 +251,9 @@ void analysis_item_append_to_string(Analysis_Item* item, String* string, int ind
     }
     for (int i = 0; i < item->symbol_dependencies.size; i++)
     {
-        auto& read = item->symbol_dependencies[i];
-        //ast_identifier_node_append_to_string(string, read->identifier_node);
-        switch (read.type)
+        auto& dep = item->symbol_dependencies[i];
+        AST::symbol_read_append_to_string(dep.read, string);
+        switch (dep.type)
         {
         case Dependency_Type::NORMAL: break;
         case Dependency_Type::MEMBER_IN_MEMORY: string_append_formated(string, "(Member_In_Memory)"); break;
@@ -260,13 +264,22 @@ void analysis_item_append_to_string(Analysis_Item* item, String* string, int ind
             string_append_formated(string, ", ");
         }
     }
-    string_append_formated(string, "\n");
 }
 
 void dependency_analyser_append_to_string(String* string) {
-    auto& items = dependency_analyser.analysis_items;
+    auto& items = dependency_analyser.code_source->analysis_items;
     for (int i = 0; i < items.size; i++) {
-        analysis_item_append_to_string(items[i], string, 0);
+        analysis_item_append_to_string(items[i], string, 0, true);
+        string_append_formated(string, "\n");
+    }
+    auto& item_deps = dependency_analyser.code_source->item_dependencies;
+    string_append_formated(string, "\nItem Dependencies:\n");
+    for (int i = 0; i < item_deps.size; i++) {
+        auto& dep = item_deps[i];
+        analysis_item_append_to_string(dep.dependent, string, 1, false);
+        string_append_formated(string, " --> ");
+        analysis_item_append_to_string(dep.depends_on, string, 1, false);
+        string_append_formated(string, "\n");
     }
 }
 
@@ -291,9 +304,18 @@ void analyse_ast_base(AST::Base* base)
 
     switch (base->type)
     {
+    case Base_Type::PROJECT_IMPORT: {
+        analysis_item_create_empty(Analysis_Item_Type::IMPORT, 0, base);
+        break;
+    }
     case Base_Type::MODULE: {
         auto module = (Module*)base;
-        module->symbol_table = symbol_table_create(analyser.symbol_table, base);
+        if (base->parent != 0) {
+            module->symbol_table = symbol_table_create(analyser.symbol_table, base);
+        }
+        else {
+            module->symbol_table = analyser.root_symbol_table;
+        }
         analyser.symbol_table = module->symbol_table;
         break;
     }
@@ -351,7 +373,7 @@ void analyse_ast_base(AST::Base* base)
             return;
         }
         case Expression_Type::STRUCTURE_TYPE:
-        { 
+        {
             auto& structure = expr->options.structure;
             Analysis_Item* struct_item = analysis_item_create_empty(Analysis_Item_Type::STRUCTURE, analyser.analysis_item, base);
             analyser.analysis_item = struct_item;
@@ -458,8 +480,7 @@ Dependency_Analyser* dependency_analyser_initialize()
     dependency_analyser.allocated_symbol_tables = dynamic_array_create_empty<Symbol_Table*>(16);
     dependency_analyser.root_symbol_table = 0;
     dependency_analyser.compiler = 0;
-    dependency_analyser.analysis_items = dynamic_array_create_empty<Analysis_Item*>(1);
-    dependency_analyser.item_dependencies = dynamic_array_create_empty<Item_Dependency>(1);
+    dependency_analyser.code_source = 0;
     dependency_analyser.mapping_ast_to_items = hashtable_create_pointer_empty<AST::Base*, Analysis_Item*>(1);
     return &dependency_analyser;
 }
@@ -469,11 +490,6 @@ void dependency_analyser_destroy()
     // Destroy results
     auto& analyser = dependency_analyser;
     dynamic_array_destroy(&analyser.errors);
-    for (int i = 0; i < analyser.analysis_items.size; i++) {
-        analysis_item_destroy(analyser.analysis_items[i]);
-    }
-    dynamic_array_destroy(&analyser.analysis_items);
-    dynamic_array_destroy(&analyser.item_dependencies);
     hashtable_destroy(&dependency_analyser.mapping_ast_to_items);
 
     // Destroy allocations
@@ -488,11 +504,6 @@ void dependency_analyser_reset(Compiler* compiler)
     // Reset results
     auto& analyser = dependency_analyser;
     dynamic_array_reset(&dependency_analyser.errors);
-    for (int i = 0; i < analyser.analysis_items.size; i++) {
-        analysis_item_destroy(analyser.analysis_items[i]);
-    }
-    dynamic_array_reset(&analyser.analysis_items);
-    dynamic_array_reset(&analyser.item_dependencies);
     hashtable_reset(&analyser.mapping_ast_to_items);
 
     // Reset allocations
@@ -557,13 +568,14 @@ void dependency_analyser_reset(Compiler* compiler)
     }
 }
 
-void dependency_analyser_analyse(AST::Module* root_module)
+void dependency_analyser_analyse(Code_Source* code_source)
 {
-    auto analyser = dependency_analyser;
+    auto& analyser = dependency_analyser;
+    analyser.code_source = code_source;
     analyser.dependency_type = Dependency_Type::NORMAL;
     analyser.symbol_table = analyser.root_symbol_table;
-    analyser.analysis_item = analysis_item_create_empty(Analysis_Item_Type::ROOT, 0, &root_module->base);
-    analyse_ast_base(&root_module->base);
+    analyser.analysis_item = analysis_item_create_empty(Analysis_Item_Type::ROOT, 0, &code_source->ast->base);
+    analyse_ast_base(&code_source->ast->base);
 }
 
 

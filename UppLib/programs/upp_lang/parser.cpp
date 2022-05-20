@@ -212,9 +212,72 @@ namespace Parser
         return given.is_open == p.is_open && given.type == p.type;
     }
 
+    String* literal_string_handle_escapes(Syntax_Token* token)
+    {
+        assert(token->type == Syntax_Token_Type::LITERAL_STRING, "");
+        auto text = token->options.literal_string.string;
+
+        auto result_str = string_create_empty(text->size);
+        SCOPE_EXIT(string_destroy(&result_str));
+
+        // Parse String literal
+        bool invalid_escape_found = false;
+        bool last_was_escape = false;
+        for (int i = 1; i < text->size; i++)
+        {
+            char c = text->characters[i];
+            if (last_was_escape)
+            {
+                switch (c)
+                {
+                case 'n':
+                    string_append_character(&result_str, '\n');
+                    break;
+                case 'r':
+                    string_append_character(&result_str, '\r');
+                    break;
+                case 't':
+                    string_append_character(&result_str, '\t');
+                    break;
+                case '\\':
+                    string_append_character(&result_str, '\\');
+                    break;
+                case '\'':
+                    string_append_character(&result_str, '\'');
+                    break;
+                case '\"':
+                    string_append_character(&result_str, '\"');
+                    break;
+                case '\n':
+                    break;
+                default:
+                    invalid_escape_found = true;
+                    break;
+                }
+                last_was_escape = false;
+            }
+            else
+            {
+                if (c == '\"') {
+                    break;
+                }
+                last_was_escape = c == '\\';
+                if (!last_was_escape) {
+                    string_append_character(&result_str, c);
+                }
+            }
+        }
+        if (invalid_escape_found) {
+            log_error_range_offset("Invalid escape sequence found", 1);
+        }
+
+        return identifier_pool_add(&compiler.identifier_pool, result_str);
+    }
+
     // Prototypes
-    Definition* parse_definition(Base* parent);
-    Statement* parse_statement(Base* parent);
+    Definition* parse_definition(Base* parent, bool& add_to_fill);
+    Statement* parse_statement(Base* parent, bool& add_to_fill);
+    Definition* parse_module_item(Base* parent, bool& add_to_fill);
     Expression* parse_expression(Base* parent);
     Expression* parse_expression_or_error_expr(Base* parent);
     Expression* parse_single_expression(Base* parent);
@@ -289,7 +352,7 @@ namespace Parser
     }
 
     template<typename T>
-    void parse_syntax_block(Syntax_Block* block, Base* parent, Dynamic_Array<T*>* fill_array, T* (*parse_fn)(Base* parent))
+    void parse_syntax_block(Syntax_Block* block, Base* parent, Dynamic_Array<T*>* fill_array, T* (*parse_fn)(Base* parent, bool& add_to_fill))
     {
         // Setup parser position at block start
         auto& pos = parser.state.pos;
@@ -312,14 +375,19 @@ namespace Parser
                 continue;
             }
 
-            T* parsed = parse_fn(parent);
-            if (parsed != 0) {
-                dynamic_array_push_back(fill_array, parsed);
+            bool add_to_fill;
+            T* parsed = parse_fn(parent, add_to_fill);
+            if (add_to_fill)
+            {
+                if (parsed != 0) {
+                    dynamic_array_push_back(fill_array, parsed);
+                }
+                else {
+                    log_error_to_pos("Couldn't parse line", syntax_line_get_end_pos(line));
+                }
             }
-            else {
-                log_error_to_pos("Couldn't parse line", syntax_line_get_end_pos(line));
-            }
-            if ((before_line_index == pos.line_index || pos.token_index != 0) && syntax_position_on_line(pos)) 
+
+            if ((before_line_index == pos.line_index || pos.token_index != 0) && syntax_position_on_line(pos))
             {
                 line = lines[pos.line_index];
                 if (pos.token_index < line->tokens.size && line->tokens[pos.token_index].type != Syntax_Token_Type::COMMENT) {
@@ -343,7 +411,7 @@ namespace Parser
     }
 
     template<typename T>
-    void parse_follow_block(Base* parent, Dynamic_Array<T*>* fill_array, T* (*parse_fn)(Base* parent), bool parse_if_not_on_end)
+    void parse_follow_block(Base* parent, Dynamic_Array<T*>* fill_array, T* (*parse_fn)(Base* parent, bool& add_to_fill), bool parse_if_not_on_end)
     {
         auto line = get_line();
         assert(line != 0, "");
@@ -400,7 +468,7 @@ namespace Parser
                 break;
             }
             auto item = parse_fn(parent);
-            if (item != 0) 
+            if (item != 0)
             {
                 dynamic_array_push_back(fill_array, item);
                 if (test_operator(Syntax_Operator::COMMA)) {
@@ -467,7 +535,7 @@ namespace Parser
             advance_token();
             advance_token();
         }
-        else if (related_expression != 0 && related_expression->type == Expression_Type::SYMBOL_READ && !related_expression->options.symbol_read->path_child.available){
+        else if (related_expression != 0 && related_expression->type == Expression_Type::SYMBOL_READ && !related_expression->options.symbol_read->path_child.available) {
             // This is an experimental feature: give the block the name of the condition if possible,
             // e.g. switch color
             //      case .RED
@@ -518,7 +586,7 @@ namespace Parser
         PARSE_SUCCESS(result);
     }
 
-    Statement* parse_statement(Base* parent)
+    Statement* parse_statement(Base* parent, bool& add_to_fill)
     {
         CHECKPOINT_SETUP;
 
@@ -528,7 +596,7 @@ namespace Parser
             auto line = get_line();
             if ((syntax_line_is_empty(line) && !syntax_line_is_multi_line_comment(line)) ||
                 (test_token(Syntax_Token_Type::IDENTIFIER) && test_operator_offset(Syntax_Operator::COLON, 1) &&
-                (line->tokens.size == 2 || (line->tokens.size == 3 && line->tokens[2].type == Syntax_Token_Type::COMMENT)))) 
+                    (line->tokens.size == 2 || (line->tokens.size == 3 && line->tokens[2].type == Syntax_Token_Type::COMMENT))))
             {
                 result->type = Statement_Type::BLOCK;
                 result->options.block = parse_code_block(&result->base, 0);
@@ -537,7 +605,8 @@ namespace Parser
         }
 
         {
-            auto definition = parse_definition(&result->base);
+            bool _unused;
+            auto definition = parse_definition(&result->base, _unused);
             if (definition != 0) {
                 result->type = Statement_Type::DEFINITION;
                 result->options.definition = definition;
@@ -576,7 +645,7 @@ namespace Parser
 
                 auto last_if_stat = result;
                 // Parse else-if chain
-                while (test_keyword_offset(Syntax_Keyword::ELSE, 0) && test_keyword_offset(Syntax_Keyword::IF, 1)) 
+                while (test_keyword_offset(Syntax_Keyword::ELSE, 0) && test_keyword_offset(Syntax_Keyword::IF, 1))
                 {
                     advance_token();
                     auto else_block = allocate_base<AST::Code_Block>(&result->base, Base_Type::CODE_BLOCK);
@@ -676,8 +745,9 @@ namespace Parser
         CHECKPOINT_EXIT;
     }
 
-    String* parse_enum_member(Base* parent)
+    String* parse_enum_member(Base* parent, bool& add_to_fill)
     {
+        add_to_fill = true;
         String* result;
         if (test_token(Syntax_Token_Type::IDENTIFIER)) {
             result = get_token(0)->options.identifier;
@@ -718,11 +788,8 @@ namespace Parser
             }
         }
 
-        if (test_operator(Syntax_Operator::HASHTAG) && test_token_offset(Syntax_Token_Type::IDENTIFIER, 1))
+        if (test_keyword_offset(Syntax_Keyword::BAKE, 0))
         {
-            advance_token();
-            auto id = get_token(0)->options.identifier;
-            if (!string_equals_cstring(id, "bake")) CHECKPOINT_EXIT;
             advance_token();
             if (on_follow_block()) {
                 result->type = Expression_Type::BAKE_BLOCK;
@@ -901,65 +968,9 @@ namespace Parser
         }
         if (test_token(Syntax_Token_Type::LITERAL_STRING))
         {
-            auto text = get_token(0)->options.literal_string.string;
-
-            auto result_str = string_create_empty(text->size);
-            SCOPE_EXIT(string_destroy(&result_str));
-
-            // Parse String literal
-            bool invalid_escape_found = false;
-            bool last_was_escape = false;
-            for (int i = 1; i < text->size; i++)
-            {
-                char c = text->characters[i];
-                if (last_was_escape)
-                {
-                    switch (c)
-                    {
-                    case 'n':
-                        string_append_character(&result_str, '\n');
-                        break;
-                    case 'r':
-                        string_append_character(&result_str, '\r');
-                        break;
-                    case 't':
-                        string_append_character(&result_str, '\t');
-                        break;
-                    case '\\':
-                        string_append_character(&result_str, '\\');
-                        break;
-                    case '\'':
-                        string_append_character(&result_str, '\'');
-                        break;
-                    case '\"':
-                        string_append_character(&result_str, '\"');
-                        break;
-                    case '\n':
-                        break;
-                    default:
-                        invalid_escape_found = true;
-                        break;
-                    }
-                    last_was_escape = false;
-                }
-                else
-                {
-                    if (c == '\"') {
-                        break;
-                    }
-                    last_was_escape = c == '\\';
-                    if (!last_was_escape) {
-                        string_append_character(&result_str, c);
-                    }
-                }
-            }
-            if (invalid_escape_found) {
-                log_error_range_offset("Invalid escape sequence found", 1);
-            }
-
             result->type = Expression_Type::LITERAL_READ;
             result->options.literal_read.type = Literal_Type::STRING;
-            result->options.literal_read.options.string = identifier_pool_add(&compiler.identifier_pool, result_str);
+            result->options.literal_read.options.string = literal_string_handle_escapes(get_token(0));
             advance_token();
             PARSE_SUCCESS(result);
         }
@@ -1057,8 +1068,9 @@ namespace Parser
         if (test_keyword_offset(Syntax_Keyword::MODULE, 0)) {
             auto module = allocate_base<Module>(&result->base, Base_Type::MODULE);
             module->definitions = dynamic_array_create_empty<Definition*>(1);
+            module->imports = dynamic_array_create_empty<Project_Import*>(1);
             advance_token();
-            parse_follow_block(&module->base, &module->definitions, parse_definition, true);
+            parse_follow_block(&module->base, &module->definitions, parse_module_item, true);
 
             result->type = Expression_Type::MODULE;
             result->options.module = module;
@@ -1242,8 +1254,9 @@ namespace Parser
         PARSE_SUCCESS(expr);
     }
 
-    Definition* parse_definition(Base* parent)
+    Definition* parse_definition(Base* parent, bool& add_to_fill)
     {
+        add_to_fill = true;
         CHECKPOINT_SETUP;
         auto result = allocate_base<Definition>(parent, AST::Base_Type::DEFINITION);
         result->is_comptime = false;
@@ -1286,7 +1299,26 @@ namespace Parser
         PARSE_SUCCESS(result);
     }
 
+    Definition* parse_module_item(Base* parent, bool& add_to_fill)
+    {
+        CHECKPOINT_SETUP;
+        if (test_keyword_offset(Syntax_Keyword::IMPORT, 0) && test_token_offset(Syntax_Token_Type::LITERAL_STRING, 1))
+        {
+            assert(parent->type == Base_Type::MODULE, "");
+            auto module = (Module*)parent;
+            auto import = allocate_base<Project_Import>(parent, Base_Type::PROJECT_IMPORT);
+            import->filename = literal_string_handle_escapes(get_token(1));
+            advance_token();
+            advance_token();
+            SET_END_RANGE(import);
+            dynamic_array_push_back(&module->imports, import);
 
+            add_to_fill = false;
+            return 0;
+        }
+
+        return parse_definition(parent, add_to_fill);
+    }
 
     void base_correct_token_ranges(Base* base)
     {
@@ -1320,7 +1352,8 @@ namespace Parser
         parser.root = allocate_base<Module>(0, Base_Type::MODULE);
         parser.parse_informations[0].start_pos.block = root_block;
         parser.root->definitions = dynamic_array_create_empty<Definition*>(1);
-        parse_syntax_block<Definition>(root_block, &parser.root->base, &parser.root->definitions, parse_definition);
+        parser.root->imports = dynamic_array_create_empty<Project_Import*>(1);
+        parse_syntax_block<Definition>(root_block, &parser.root->base, &parser.root->definitions, parse_module_item);
         SET_END_RANGE(parser.root);
         base_correct_token_ranges(&parser.root->base);
         return parser.root;

@@ -65,9 +65,10 @@ namespace AST
         MODULE,
 
         // Helpers
-        ARGUMENT,    // Expression with optional name
-        PARAMETER,   // Name/Type compination with optional default value + comptime
-        SYMBOL_READ, // A symbol read
+        ARGUMENT,       // Expression with optional name
+        PARAMETER,      // Name/Type compination with optional default value + comptime
+        SYMBOL_READ,    // A symbol read
+        PROJECT_IMPORT, // Loading a project
     };
 
     struct Base
@@ -75,6 +76,12 @@ namespace AST
         Base_Type type;
         Base* parent;
         int allocation_index;
+    };
+
+    struct Project_Import
+    {
+        Base base;
+        String* filename;
     };
 
     struct Symbol_Read
@@ -89,6 +96,7 @@ namespace AST
     {
         Base base;
         Dynamic_Array<Definition*> definitions;
+        Dynamic_Array<Project_Import*> imports;
         Symbol_Table* symbol_table;
     };
 
@@ -308,6 +316,7 @@ namespace AST
     void base_enumerate_children(Base* node, Dynamic_Array<Base*>* fill);
     void base_print(Base* node);
 
+    void symbol_read_append_to_string(Symbol_Read* read, String* string);
     int binop_priority(Binop binop);
 }
 

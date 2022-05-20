@@ -6,14 +6,12 @@ namespace AST
     {
         switch (node->type)
         {
-        case Base_Type::PARAMETER: {
-            auto param = (Parameter*)node;
+        case Base_Type::PROJECT_IMPORT: 
+        case Base_Type::PARAMETER: 
+        case Base_Type::ARGUMENT: 
+        case Base_Type::SYMBOL_READ: 
+        case Base_Type::DEFINITION: 
             break;
-        }
-        case Base_Type::ARGUMENT: {
-            auto arg = (Argument*)node;
-            break;
-        }
         case Base_Type::CODE_BLOCK: {
             auto block = (Code_Block*)node;
             if (block->statements.data != 0) {
@@ -21,18 +19,13 @@ namespace AST
             }
             break;
         }
-        case Base_Type::SYMBOL_READ: {
-            auto read = (Symbol_Read*)node;
-            break;
-        }
-        case Base_Type::DEFINITION: {
-            auto def = (Definition*)node;
-            break;
-        }
         case Base_Type::MODULE: {
             auto module = (Module*)node;
             if (module->definitions.data != 0) {
                 dynamic_array_destroy(&module->definitions);
+            }
+            if (module->imports.data != 0) {
+                dynamic_array_destroy(&module->imports);
             }
             break;
         }
@@ -136,8 +129,12 @@ namespace AST
             FILL_OPTIONAL(def->value);
             break;
         }
+        case Base_Type::PROJECT_IMPORT: {
+            break;
+        }
         case Base_Type::MODULE: {
             auto module = (Module*)node;
+            FILL_ARRAY(module->imports);
             FILL_ARRAY(module->definitions);
             break;
         }
@@ -350,6 +347,9 @@ namespace AST
 #define FILL_ARRAY(x) for (int i = 0; i < x.size; i++) {dynamic_array_push_back(fill, &x[i]->base);}
         switch (node->type)
         {
+        case Base_Type::PROJECT_IMPORT: {
+            break;
+        }
         case Base_Type::PARAMETER: {
             auto param = (Parameter*)node;
             FILL(param->type);
@@ -379,6 +379,7 @@ namespace AST
         }
         case Base_Type::MODULE: {
             auto module = (Module*)node;
+            FILL_ARRAY(module->imports);
             FILL_ARRAY(module->definitions);
             break;
         }
@@ -591,6 +592,10 @@ namespace AST
             string_append_formated(str, "DEFINITION ");
             string_append_string(str, ((Definition*)base)->name);
             break;
+        case Base_Type::PROJECT_IMPORT:
+            string_append_formated(str, "IMPORT ");
+            string_append_string(str, ((Project_Import*)base)->filename);
+            break;
         case Base_Type::SYMBOL_READ:
             string_append_formated(str, "SYMBOL_READ ");
             string_append_string(str, ((Symbol_Read*)base)->name);
@@ -721,5 +726,14 @@ namespace AST
         }
         panic("");
         return 0;
+    }
+
+    void symbol_read_append_to_string(Symbol_Read* read, String* string)
+    {
+        string_append_string(string, read->name);
+        if (read->path_child.available) {
+            string_append_formated(string, "~");
+            symbol_read_append_to_string(read->path_child.value, string);
+        }
     }
 }

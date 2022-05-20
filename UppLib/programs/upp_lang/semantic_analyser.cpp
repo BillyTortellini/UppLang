@@ -16,6 +16,7 @@
 #include "ast.hpp"
 #include "ir_code.hpp"
 #include "parser.hpp"
+#include "source_code.hpp"
 
 struct Expression_Result;
 struct Expression_Context;
@@ -1078,8 +1079,10 @@ bool workload_pair_equals(Workload_Pair* p1, Workload_Pair* p2) {
 
 Workload_Executer* workload_executer_initialize()
 {
-    workload_executer.workloads = dynamic_array_create_empty<Analysis_Workload*>(8);
+    workload_executer.all_workloads = dynamic_array_create_empty<Analysis_Workload*>(8);
+    workload_executer.waiting_for_symbols_workloads = dynamic_array_create_empty<Analysis_Workload*>(8);
     workload_executer.runnable_workloads = dynamic_array_create_empty<Analysis_Workload*>(8);
+    workload_executer.finished_workloads = dynamic_array_create_empty<Analysis_Workload*>(8);
     workload_executer.workload_dependencies = hashtable_create_empty<Workload_Pair, Dependency_Information>(8, workload_pair_hash, workload_pair_equals);
 
     workload_executer.allocated_progresses = dynamic_array_create_empty<Analysis_Progress*>(8);
@@ -1099,19 +1102,24 @@ void workload_executer_destroy()
         delete executer.allocated_progresses[i];
     }
     dynamic_array_destroy(&executer.allocated_progresses);
-    for (int i = 0; i < executer.workloads.size; i++) {
-        analysis_workload_destroy(executer.workloads[i]);
+
+    for (int i = 0; i < executer.all_workloads.size; i++) {
+        analysis_workload_destroy(executer.all_workloads[i]);
     }
+    dynamic_array_destroy(&executer.all_workloads);
+    dynamic_array_destroy(&executer.waiting_for_symbols_workloads);
+    dynamic_array_destroy(&executer.runnable_workloads);
+    dynamic_array_destroy(&executer.finished_workloads);
+
     {
         auto iter = hashtable_iterator_create(&executer.workload_dependencies);
         while (hashtable_iterator_has_next(&iter)) {
             SCOPE_EXIT(hashtable_iterator_next(&iter));
-            dynamic_array_destroy(&iter.value->symbol_reads);
+            auto& dep_info = iter.value;
+            dynamic_array_destroy(&dep_info->symbol_reads);
         }
         hashtable_destroy(&executer.workload_dependencies);
     }
-    dynamic_array_destroy(&executer.workloads);
-    dynamic_array_destroy(&executer.runnable_workloads);
     hashtable_destroy(&executer.progress_items);
     hashtable_destroy(&executer.progress_definitions);
     hashtable_destroy(&executer.progress_functions);
@@ -1497,23 +1505,16 @@ void workload_executer_resolve()
                 if they exist, resolve them (E.g. set symbols to error, set member type to error, ...)
                 else, resolve one unresolved symbol (E.g. set to error) and try again
     */
-    auto graph = &workload_executer;
-    Dynamic_Array<Analysis_Workload*> unresolved_symbols_workloads = dynamic_array_create_empty<Analysis_Workload*>(8);
-    SCOPE_EXIT(dynamic_array_destroy(&unresolved_symbols_workloads));
-    for (int i = 0; i < graph->workloads.size; i++) {
-        dynamic_array_push_back(&unresolved_symbols_workloads, graph->workloads[i]);
-    }
-
+    auto& executer = workload_executer;
     int round_no = 0;
     while (true)
     {
         SCOPE_EXIT(round_no += 1);
-        graph->progress_was_made = false;
+        executer.progress_was_made = false;
         // Check if symbols can be resolved (TODO: Have a symbol defined 'message' system)
-        for (int i = 0; i < unresolved_symbols_workloads.size; i++)
+        for (int i = 0; i < executer.waiting_for_symbols_workloads.size; i++)
         {
-            Analysis_Workload* workload = unresolved_symbols_workloads[i];
-
+            auto workload = executer.waiting_for_symbols_workloads[i];
             // Try to resolve all unresolved symbols
             for (int j = 0; j < workload->symbol_dependencies.size; j++)
             {
@@ -1523,7 +1524,7 @@ void workload_executer_resolve()
                     if (dep->resolved_symbol == 0) {
                         continue;
                     }
-                    graph->progress_was_made = true;
+                    executer.progress_was_made = true;
                 }
                 auto& symbol = dep->resolved_symbol;
 
@@ -1532,7 +1533,7 @@ void workload_executer_resolve()
                 {
                 case Symbol_Type::UNRESOLVED:
                 {
-                    Definition_Progress** progress = hashtable_find_element(&graph->progress_definitions, symbol);
+                    Definition_Progress** progress = hashtable_find_element(&executer.progress_definitions, symbol);
                     if (progress != 0) {
                         symbol_read_ready = true;
                         analysis_workload_add_dependency_internal(workload, (*progress)->definition_workload, dep);
@@ -1544,7 +1545,7 @@ void workload_executer_resolve()
                 }
                 case Symbol_Type::FUNCTION:
                 {
-                    Function_Progress** progress = hashtable_find_element(&graph->progress_functions, symbol->options.function);
+                    Function_Progress** progress = hashtable_find_element(&executer.progress_functions, symbol->options.function);
                     if (progress != 0) {
                         analysis_workload_add_dependency_internal(workload, (*progress)->header_workload, dep);
                     }
@@ -1555,7 +1556,7 @@ void workload_executer_resolve()
                     Type_Signature* type = symbol->options.type;
                     if (type->type == Signature_Type::STRUCT)
                     {
-                        Struct_Progress** progress = hashtable_find_element(&graph->progress_structs, type);
+                        Struct_Progress** progress = hashtable_find_element(&executer.progress_structs, type);
                         if (progress != 0) {
                             if (workload->progress->type == Analysis_Progress_Type::STRUCTURE) {
                                 analysis_workload_add_struct_dependency((Struct_Progress*)workload->progress, *progress, dep->type, dep);
@@ -1581,12 +1582,12 @@ void workload_executer_resolve()
 
             // Add workload to running queue if all dependencies are resolved
             if (workload->symbol_dependencies.size == 0) {
-                dynamic_array_swap_remove(&unresolved_symbols_workloads, i);
+                dynamic_array_swap_remove(&executer.waiting_for_symbols_workloads, i);
                 i = i - 1; // So that we properly iterate
                 if (workload->dependencies.count == 0) {
-                    dynamic_array_push_back(&graph->runnable_workloads, workload);
+                    dynamic_array_push_back(&executer.runnable_workloads, workload);
                 }
-                graph->progress_was_made = true;
+                executer.progress_was_made = true;
             }
         }
 
@@ -1596,10 +1597,35 @@ void workload_executer_resolve()
             String tmp = string_create_empty(256);
             SCOPE_EXIT(string_destroy(&tmp));
             string_append_formated(&tmp, "Workload Execution Round %d\n---------------------\n", round_no);
-            for (int i = 0; i < graph->workloads.size; i++)
+            string_append_formated(&tmp, "Symbol waiting workloads:\n");
+            for (int i = 0; i < executer.waiting_for_symbols_workloads.size; i++)
             {
-                Analysis_Workload* workload = graph->workloads[i];
+                auto workload = executer.waiting_for_symbols_workloads[i];
                 if (workload->is_finished) continue;
+                analysis_workload_append_to_string(workload, &tmp);
+                string_append_formated(&tmp, "\n");
+                for (int j = 0; j < workload->symbol_dependencies.size; j++) {
+                    auto& dep = workload->symbol_dependencies[j];
+                    string_append_formated(&tmp, "  ");
+                    AST::symbol_read_append_to_string(dep->read, &tmp);
+                    string_append_formated(&tmp, "\n");
+                }
+            }
+
+            string_append_formated(&tmp, "Runnable workloads:\n");
+            for (int i = 0; i < executer.runnable_workloads.size; i++)
+            {
+                auto workload = executer.runnable_workloads[i];
+                if (workload->is_finished) continue;
+                analysis_workload_append_to_string(workload, &tmp);
+                string_append_formated(&tmp, "\n");
+            }
+
+            string_append_formated(&tmp, "\nWorkloads with dependencies:\n");
+            for (int i = 0; i < executer.all_workloads.size; i++)
+            {
+                Analysis_Workload* workload = executer.all_workloads[i];
+                if (workload->is_finished || workload->dependencies.count == 0) continue;
                 analysis_workload_append_to_string(workload, &tmp);
                 string_append_formated(&tmp, "\n");
                 List_Node<Analysis_Workload*>* dependency_node = workload->dependencies.head;
@@ -1611,25 +1637,27 @@ void workload_executer_resolve()
                     string_append_formated(&tmp, "\n");
                 }
             }
+
             logg("%s", tmp.characters);
         }
 
         // Execute runnable workloads
-        for (int i = 0; i < graph->runnable_workloads.size; i++)
+        for (int i = 0; i < executer.runnable_workloads.size; i++)
         {
-            Analysis_Workload* workload = graph->runnable_workloads[i];
+            Analysis_Workload* workload = executer.runnable_workloads[i];
             assert(workload->symbol_dependencies.size == 0, "");
             assert(workload->dependencies.count == 0, "");
             if (workload->is_finished) {
                 continue;
             }
-            //assert(!workload->is_finished, "");
-            graph->progress_was_made = true;
+            executer.progress_was_made = true;
 
-            String tmp = string_create_empty(128);
-            analysis_workload_append_to_string(workload, &tmp);
-            //logg("Executing workload: %s\n", tmp.characters);
-            string_destroy(&tmp);
+            if (PRINT_DEPENDENCIES) {
+                String tmp = string_create_empty(128);
+                analysis_workload_append_to_string(workload, &tmp);
+                logg("Executing workload: %s\n", tmp.characters);
+                string_destroy(&tmp);
+            }
 
             analysis_workload_execute(workload);
             // Note: After a workload executes, it may have added new dependencies to itself
@@ -1646,14 +1674,14 @@ void workload_executer_resolve()
                 //list_reset(&workload->dependents);
             }
         }
-        dynamic_array_reset(&graph->runnable_workloads);
-        if (graph->progress_was_made) continue;
+        dynamic_array_reset(&executer.runnable_workloads);
+        if (executer.progress_was_made) continue;
 
         // Check if all workloads finished
         {
             bool all_finished = true;
-            for (int i = 0; i < graph->workloads.size; i++) {
-                if (!graph->workloads[i]->is_finished) {
+            for (int i = 0; i < executer.all_workloads.size; i++) {
+                if (!executer.all_workloads[i]->is_finished) {
                     all_finished = false;
                     break;
                 }
@@ -1675,8 +1703,8 @@ void workload_executer_resolve()
             SCOPE_EXIT(hashtable_destroy(&workload_to_layer));
             Hashset<Analysis_Workload*> unvisited = hashset_create_pointer_empty<Analysis_Workload*>(4);
             SCOPE_EXIT(hashset_destroy(&unvisited));
-            for (int i = 0; i < graph->workloads.size; i++) {
-                Analysis_Workload* workload = graph->workloads[i];
+            for (int i = 0; i < executer.all_workloads.size; i++) {
+                Analysis_Workload* workload = executer.all_workloads[i];
                 if (!workload->is_finished) {
                     hashset_insert_element(&unvisited, workload);
                 }
@@ -1787,7 +1815,7 @@ void workload_executer_resolve()
                     Analysis_Workload* workload = workload_cycle[i];
                     Analysis_Workload* depends_on = i + 1 == workload_cycle.size ? workload_cycle[0] : workload_cycle[i + 1];
                     Workload_Pair pair = workload_pair_create(workload, depends_on);
-                    Dependency_Information infos = *hashtable_find_element(&graph->workload_dependencies, pair);
+                    Dependency_Information infos = *hashtable_find_element(&executer.workload_dependencies, pair);
                     if (infos.only_symbol_read_dependency) {
                         only_reads_was_found = true;
                         for (int j = 0; j < infos.symbol_reads.size; j++) {
@@ -1802,19 +1830,19 @@ void workload_executer_resolve()
                     }
                 }
                 assert(only_reads_was_found, "");
-                graph->progress_was_made = true;
+                executer.progress_was_made = true;
             }
         }
-        if (graph->progress_was_made) {
+        if (executer.progress_was_made) {
             continue;
         }
 
         // Resolve an unresolved symbol to error to continue analysis
-        assert(unresolved_symbols_workloads.size != 0, "Either a loop must be found or an unresolved symbol exists, otherwise there is something wrong");
+        assert(executer.waiting_for_symbols_workloads.size != 0, "Either a loop must be found or an unresolved symbol exists, otherwise there is something wrong");
         // Search for workload with lowest unresolved symbols count, and resolve all those symbols
         Analysis_Workload* lowest = 0;
-        for (int i = 0; i < unresolved_symbols_workloads.size; i++) {
-            Analysis_Workload* workload = unresolved_symbols_workloads[i];
+        for (int i = 0; i < executer.waiting_for_symbols_workloads.size; i++) {
+            Analysis_Workload* workload = executer.waiting_for_symbols_workloads[i];
             if (workload->dependencies.count == 0) {
                 if (lowest != 0) {
                     if (workload->symbol_dependencies.size < lowest->symbol_dependencies.size) {
@@ -1835,9 +1863,8 @@ void workload_executer_resolve()
             symbol_dependency_set_error_symbol(lowest->symbol_dependencies[i]);
         }
         dynamic_array_reset(&lowest->symbol_dependencies);
-        dynamic_array_push_back(&graph->runnable_workloads, lowest);
+        dynamic_array_push_back(&executer.runnable_workloads, lowest);
     }
-
 }
 
 Analysis_Workload* workload_executer_add_workload_empty(Analysis_Workload_Type type, Analysis_Item* item, Analysis_Progress* progress, bool add_symbol_dependencies)
@@ -1863,6 +1890,7 @@ Analysis_Workload* workload_executer_add_workload_empty(Analysis_Workload_Type t
     }
     switch (type)
     {
+    case Analysis_Workload_Type::PROJECT_IMPORT: break;
     case Analysis_Workload_Type::DEFINITION:
         assert(progress->type == Analysis_Progress_Type::DEFINITION, "");
         ((Definition_Progress*)progress)->definition_workload = workload;
@@ -1900,21 +1928,27 @@ Analysis_Workload* workload_executer_add_workload_empty(Analysis_Workload_Type t
         break;
     default:panic("");
     }
-    dynamic_array_push_back(&executer.workloads, workload);
+    dynamic_array_push_back(&executer.all_workloads, workload);
+    dynamic_array_push_back(&executer.waiting_for_symbols_workloads, workload);
 
     return workload;
 }
 
-void workload_executer_add_analysis_items(Dependency_Analyser* dependency_analyser)
+void workload_executer_add_analysis_items(Code_Source* source)
 {
     auto& executer = workload_executer;
+    executer.progress_was_made = true;
     // Create workload
-    for (int i = 0; i < dependency_analyser->analysis_items.size; i++)
+    for (int i = 0; i < source->analysis_items.size; i++)
     {
-        Analysis_Item* item = dependency_analyser->analysis_items[i];
+        Analysis_Item* item = source->analysis_items[i];
         Analysis_Progress* progress = 0;
         switch (item->type)
         {
+        case Analysis_Item_Type::IMPORT: {
+            workload_executer_add_workload_empty(Analysis_Workload_Type::PROJECT_IMPORT, item, 0, false);
+            break;
+        }
         case Analysis_Item_Type::ROOT:
         {
             break;
@@ -1996,9 +2030,9 @@ void workload_executer_add_analysis_items(Dependency_Analyser* dependency_analys
         }
     }
 
-    for (int i = 0; i < dependency_analyser->item_dependencies.size; i++)
+    for (int i = 0; i < source->item_dependencies.size; i++)
     {
-        auto& item_dependency = dependency_analyser->item_dependencies[i];
+        auto& item_dependency = source->item_dependencies[i];
         auto prog_dependent = *hashtable_find_element(&executer.progress_items, item_dependency.dependent);
         auto prog_dependency = *hashtable_find_element(&executer.progress_items, item_dependency.depends_on);
         auto type = item_dependency.dependent->type;
@@ -2101,6 +2135,44 @@ bool analysis_workload_execute(Analysis_Workload* workload)
     analyser.current_function = 0;
     switch (workload->type)
     {
+    case Analysis_Workload_Type::PROJECT_IMPORT: 
+    {
+        assert(workload->analysis_item->type == Analysis_Item_Type::IMPORT, "");
+        assert(workload->analysis_item->node->type == AST::Base_Type::PROJECT_IMPORT, "");
+        auto import = (AST::Project_Import*)workload->analysis_item->node;
+        auto src = code_source_from_ast(workload->analysis_item->node);
+
+        String path = string_create(src->file_path.characters);
+        file_io_relative_to_full_path(&path);
+        bool success = false;
+        SCOPE_EXIT(if (!success) { string_destroy(&path); });
+
+        Optional<int> last_pos = string_find_character_index_reverse(&path, '/', path.size - 1);
+        if (last_pos.available) {
+            string_truncate(&path, last_pos.value + 1);
+        }
+        else {
+            string_reset(&path);
+        }
+        string_append_string(&path, import->filename);
+        file_io_relative_to_full_path(&path);
+
+        if (!hashset_insert_element(&analyser.loaded_filenames, path)) {
+            // Project is already imported
+            break;
+        }
+
+        Optional<String> file_content = file_io_load_text_file(path.characters);
+        if (file_content.available) {
+            auto src = syntax_block_create_from_string(file_content.value);
+            compiler_add_source_code(src, Code_Origin::LOADED_FILE, path);
+            success = true;
+        }
+        else {
+            semantic_analyser_log_error(Semantic_Error_Type::OTHERS_COULD_NOT_LOAD_FILE, to_base(import));
+        }
+        break;
+    }
     case Analysis_Workload_Type::DEFINITION:
     {
         assert(workload->analysis_item->type == Analysis_Item_Type::DEFINITION, "");
@@ -2531,11 +2603,11 @@ case Analysis_Workload_Type::EXTERN_HEADER_IMPORT:
 {
     AST_Node* extern_node = workload.options.extern_header.node;
     String* header_name_id = extern_node->id;
-    Optional<C_Import_Package> package = c_importer_import_header(&analyser->compiler->c_importer, *header_name_id, &analyser->compiler->identifier_pool);
+    Optional<C_Import_Package> package = c_importer_import_header(&analyser.compiler->c_importer, *header_name_id, &analyser.compiler->identifier_pool);
     if (package.available)
     {
         logg("Importing header successfull: %s\n", header_name_id->characters);
-        dynamic_array_push_back(&analyser->compiler->extern_sources.headers_to_include, header_name_id);
+        dynamic_array_push_back(&analyser.compiler->extern_sources.headers_to_include, header_name_id);
         Hashtable<C_Import_Type*, Type_Signature*> type_conversion_table = hashtable_create_pointer_empty<C_Import_Type*, Type_Signature*>(256);
         SCOPE_EXIT(hashtable_destroy(&type_conversion_table));
 
@@ -2560,7 +2632,7 @@ case Analysis_Workload_Type::EXTERN_HEADER_IMPORT:
             {
                 Type_Signature* type = import_c_type(analyser, import_symbol->data_type, &type_conversion_table);
                 if (type->type == Signature_Type::STRUCT) {
-                    hashtable_insert_element(&analyser->compiler->extern_sources.extern_type_signatures, type, import_id);
+                    hashtable_insert_element(&analyser.compiler->extern_sources.extern_type_signatures, type, import_id);
                 }
                 symbol_table_define_symbol(
                     analyser, workload.options.extern_header.parent_module->symbol_table, import_id,
@@ -2613,7 +2685,7 @@ case Analysis_Workload_Type::EXTERN_HEADER_IMPORT:
                 {
                     Type_Signature* type = *signature;
                     if (type->type == Signature_Type::STRUCT) {
-                        hashtable_insert_element(&analyser->compiler->extern_sources.extern_type_signatures, type, id);
+                        hashtable_insert_element(&analyser.compiler->extern_sources.extern_type_signatures, type, id);
                     }
                     symbol_table_define_symbol(
                         analyser, workload.options.extern_header.parent_module->symbol_table, id,
@@ -2660,7 +2732,7 @@ case Analysis_Workload_Type::EXTERN_FUNCTION_DECLARATION:
         extern_fn->options.extern_function.function_signature = extern_fn->signature;
         assert(extern_fn->signature->type == Signature_Type::FUNCTION, "HEY");
         dynamic_array_push_back(&extern_fn->parent_module->functions, extern_fn);
-        dynamic_array_push_back(&analyser->compiler->extern_sources.extern_functions, extern_fn->options.extern_function);
+        dynamic_array_push_back(&analyser.compiler->extern_sources.extern_functions, extern_fn->options.extern_function);
 
         extern_fn->symbol = symbol_table_define_symbol(
             analyser, work->parent_module->symbol_table, extern_fn->options.extern_function.id,
@@ -2685,6 +2757,11 @@ void analysis_workload_append_to_string(Analysis_Workload* workload, String* str
 {
     switch (workload->type)
     {
+    case Analysis_Workload_Type::PROJECT_IMPORT: {
+        auto import = (AST::Project_Import*)workload->analysis_item->node;
+        string_append_formated(string, "Project Import %s\n", import->filename->characters);
+        break;
+    }
     case Analysis_Workload_Type::DEFINITION: {
         AST::Definition* definition = (AST::Definition*)workload->analysis_item->node;
         if (definition->is_comptime) {
@@ -2957,7 +3034,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
         {
             switch (function_expr_result.options.hardcoded)
             {
-            case Hardcoded_Type::TYPE_INFO: 
+            case Hardcoded_Type::TYPE_INFO:
             {
                 if (call.arguments.size != 1) {
                     semantic_analyser_log_error(Semantic_Error_Type::FUNCTION_CALL_ARGUMENT_SIZE_MISMATCH, call.expr);
@@ -2990,7 +3067,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
 
                 return expression_result_make_value(array_access);
             }
-            case Hardcoded_Type::TYPE_OF: 
+            case Hardcoded_Type::TYPE_OF:
             {
                 if (call.arguments.size != 1) {
                     semantic_analyser_log_error(Semantic_Error_Type::FUNCTION_CALL_ARGUMENT_SIZE_MISMATCH, call.expr);
@@ -4464,18 +4541,6 @@ void semantic_analyser_analyse_extern_definitions(Symbol_Table* parent_table, AS
 {
     // THIS IS THE PREVIOUS ANALYSE MODULE
     /*
-    assert(module_node->type == AST_Node_Type::ROOT || module_node->type == AST_Node_Type::MODULE, "");
-
-    // Create module if not root
-    ModTree_Module* module;
-    if (module_node->type == AST_Node_Type::ROOT) {
-        module = analyser->program->root_module;
-    }
-    else {
-        module = modtree_module_create(analyser, 0, parent_module, 0);
-        module->symbol_table = symbol_table_create(analyser, parent_table, module_node, symbol_table_origin_make_module(module));
-    }
-
     // Analyse Definitions
     AST_Node* definitions_node = module_node->child_start;
     assert(definitions_node->type == AST_Node_Type::DEFINITIONS, "");
@@ -4486,62 +4551,8 @@ void semantic_analyser_analyse_extern_definitions(Symbol_Table* parent_table, AS
         SCOPE_EXIT(top_level_node = top_level_node->neighbor);
         switch (top_level_node->type)
         {
-        case AST_Node_Type::COMPTIME_DEFINE_ASSIGN:
-        case AST_Node_Type::COMPTIME_DEFINE_INFER:
-        case AST_Node_Type::VARIABLE_DEFINE_ASSIGN:
-        case AST_Node_Type::VARIABLE_DEFINE_INFER:
-        case AST_Node_Type::VARIABLE_DEFINITION:
-        {
-            Analysis_Workload workload;
-            workload.type = Analysis_Workload_Type::GLOBAL_DEFINITION;
-            workload.options.global.parent_module = module;
-            workload.options.global.node = top_level_node;
-            dynamic_array_push_back(&analyser->active_workloads, workload);
-            break;
-        }
-        case AST_Node_Type::EXTERN_FUNCTION_DECLARATION:
-        {
-            // Create Workload
-            Analysis_Workload workload;
-            workload.type = Analysis_Workload_Type::EXTERN_FUNCTION_DECLARATION;
-            workload.options.extern_function.node = top_level_node;
-            workload.options.extern_function.parent_module = module;
-            dynamic_array_push_back(&analyser->active_workloads, workload);
-            break;
-        }
-        case AST_Node_Type::EXTERN_HEADER_IMPORT:
-        {
-            // Create Workload
-            Analysis_Workload workload;
-            workload.type = Analysis_Workload_Type::EXTERN_HEADER_IMPORT;
-            workload.options.extern_header.parent_module = module;
-            workload.options.extern_header.node = top_level_node;
-            dynamic_array_push_back(&analyser->active_workloads, workload);
-            break;
-        }
         case AST_Node_Type::LOAD_FILE:
         {
-            if (hashset_contains(&analyser->loaded_filenames, top_level_node->id)) {
-                break;
-            }
-            hashset_insert_element(&analyser->loaded_filenames, top_level_node->id);
-
-            Optional<String> file_content = file_io_load_text_file(top_level_node->id->characters);
-            if (file_content.available)
-            {
-                String content = file_content.value;
-                Code_Origin origin;
-                origin.type = Code_Origin_Type::LOADED_FILE;
-                origin.load_node = top_level_node;
-                compiler_add_source_code(analyser->compiler, content, origin);
-            }
-            else {
-                Semantic_Error error;
-                error.type = Semantic_Error_Type::OTHERS_COULD_NOT_LOAD_FILE;
-                error.error_node = top_level_node;
-                semantic_analyser_log_error(analyser, error);
-            }
-            break;
         }
         case AST_Node_Type::EXTERN_LIB_IMPORT: {
             dynamic_array_push_back(&analyser->compiler->extern_sources.lib_files, top_level_node->id);
@@ -5287,7 +5298,7 @@ Semantic_Analyser* semantic_analyser_initialize()
     semantic_analyser.block_stack = dynamic_array_create_empty<ModTree_Block*>(8);
     semantic_analyser.defer_stack = dynamic_array_create_empty<AST::Code_Block*>(8);
     semantic_analyser.allocator_values = stack_allocator_create_empty(2048);
-    semantic_analyser.loaded_filenames = hashset_create_pointer_empty<String*>(32);
+    semantic_analyser.loaded_filenames = hashset_create_empty<String>(32, hash_string, string_equals);
     semantic_analyser.visited_functions = hashset_create_pointer_empty<ModTree_Function*>(32);
     semantic_analyser.workload_executer = workload_executer_initialize();
     semantic_analyser.program = 0;

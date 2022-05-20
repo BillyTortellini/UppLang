@@ -417,6 +417,7 @@ enum class Analysis_Workload_Type
     BAKE_ANALYSIS,
     BAKE_EXECUTION,
     DEFINITION,
+    PROJECT_IMPORT,
 };
 
 struct Analysis_Workload
@@ -465,8 +466,10 @@ struct Dependency_Information
 
 struct Workload_Executer
 {
-    Dynamic_Array<Analysis_Workload*> workloads;
+    Dynamic_Array<Analysis_Workload*> all_workloads;
+    Dynamic_Array<Analysis_Workload*> waiting_for_symbols_workloads;
     Dynamic_Array<Analysis_Workload*> runnable_workloads;
+    Dynamic_Array<Analysis_Workload*> finished_workloads;
     bool progress_was_made;
 
     Hashtable<Workload_Pair, Dependency_Information> workload_dependencies;
@@ -480,7 +483,7 @@ struct Workload_Executer
 };
 
 void workload_executer_resolve();
-void workload_executer_add_analysis_items(Dependency_Analyser* dependency_analyser);
+void workload_executer_add_analysis_items(Code_Source* source);
 
 
 
@@ -504,7 +507,7 @@ struct Semantic_Analyser
     bool statement_reachable;
     int error_flag_count;
 
-    Hashset<String*> loaded_filenames;
+    Hashset<String> loaded_filenames;
     Stack_Allocator allocator_values;
     Hashset<ModTree_Function*> visited_functions;
     Dynamic_Array<ModTree_Block*> block_stack;

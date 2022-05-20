@@ -1,5 +1,6 @@
 #include "compiler.hpp"
 #include "../../win32/timing.hpp"
+#include "../../win32/windows_helper_functions.hpp"
 #include "../../utility/file_io.hpp"
 
 #include "semantic_analyser.hpp"
@@ -23,9 +24,8 @@ bool enable_c_generation = false;
 bool enable_c_compilation = true;
 
 // Output stages
-bool output_lexing = false;
 bool output_identifiers = false;
-bool output_ast = true;
+bool output_ast = false;
 bool output_rc = false;
 bool output_type_system = false;
 bool output_root_table = false;
@@ -51,17 +51,27 @@ bool do_output;
 // GLOBALS
 Compiler compiler;
 
-Code_Source* code_source_create(Code_Origin origin, Syntax_Block* source)
+// Code_Source
+Code_Source* code_source_create(Code_Origin origin, Syntax_Block* source, String file_path)
 {
     Code_Source* result = new Code_Source;
     result->origin = origin;
     result->source = source;
     result->ast = 0;
+    result->analysis_items = dynamic_array_create_empty<Analysis_Item*>(1);
+    result->item_dependencies = dynamic_array_create_empty<Item_Dependency>(1);
+    result->file_path = file_path;
     return result;
 }
 
 void code_source_destroy(Code_Source* source)
 {
+    string_destroy(&source->file_path);
+    for (int i = 0; i < source->analysis_items.size; i++) {
+        analysis_item_destroy(source->analysis_items[i]);
+    }
+    dynamic_array_destroy(&source->analysis_items);
+    dynamic_array_destroy(&source->item_dependencies);
     delete source;
 }
 
@@ -156,7 +166,24 @@ bool compiler_errors_occured() {
         compiler.dependency_analyser->errors.size == 0 && Parser::get_error_messages().size == 0);
 }
 
-void compiler_compile(Syntax_Block* source_code, bool generate_code)
+Code_Source* code_source_from_ast(AST::Base* base)
+{
+    while (base->parent != 0) {
+        base = base->parent;
+    }
+    assert(base->type == AST::Base_Type::MODULE, "Root must be module");
+    auto mod = (AST::Module*)base;
+    for (int i = 0; i < compiler.code_sources.size; i++) {
+        auto src = compiler.code_sources[i];
+        if (src->ast == mod) {
+            return src;
+        }
+    }
+    panic("Should not happen!\n");
+    return 0;
+}
+
+void compiler_compile(Syntax_Block* source_code, bool generate_code, String project_path)
 {
     do_output= enable_output && !(output_only_on_code_gen && !generate_code);
     if (do_output) {
@@ -201,7 +228,9 @@ void compiler_compile(Syntax_Block* source_code, bool generate_code)
         bytecode_interpreter_reset(compiler.bytecode_interpreter, &compiler);
     }
 
-    compiler_add_source_code(source_code, Code_Origin::MAIN_PROJECT);
+    file_io_relative_to_full_path(&project_path);
+    hashset_insert_element(&compiler.semantic_analyser->loaded_filenames, project_path);
+    compiler_add_source_code(source_code, Code_Origin::MAIN_PROJECT, project_path);
     bool do_analysis = enable_lexing && enable_parsing && enable_rc_gen && enable_analysis;
 
     compiler_switch_timing_task(Timing_Task::ANALYSIS);
@@ -343,7 +372,7 @@ Exit_Code compiler_execute()
     return Exit_Code::COMPILATION_FAILED;
 }
 
-void compiler_add_source_code(Syntax_Block* source_code, Code_Origin origin)
+void compiler_add_source_code(Syntax_Block* source_code, Code_Origin origin, String file_path)
 {
     bool do_lexing = enable_lexing;
     bool do_parsing = do_lexing && enable_parsing;
@@ -352,7 +381,7 @@ void compiler_add_source_code(Syntax_Block* source_code, Code_Origin origin)
     Timing_Task before = compiler.task_current;
     SCOPE_EXIT(compiler_switch_timing_task(before));
 
-    Code_Source* code_source = code_source_create(origin, source_code);
+    Code_Source* code_source = code_source_create(origin, source_code, file_path);
     dynamic_array_push_back(&compiler.code_sources, code_source);
     if (origin == Code_Origin::MAIN_PROJECT) {
         compiler.main_source = code_source;
@@ -362,12 +391,7 @@ void compiler_add_source_code(Syntax_Block* source_code, Code_Origin origin)
     {
         compiler_switch_timing_task(Timing_Task::LEXING);
         lexer_tokenize_block(code_source->source, 0);
-        /*
-        if (output_lexing) {
-            logg("\n\n\n\n--------LEXER RESULT--------:\n");
-            lexer_print(compiler.lexer);
-        }
-        */
+
         if (output_identifiers) {
             logg("\n--------IDENTIFIERS:--------:\n");
             identifier_pool_print(&compiler.identifier_pool);
@@ -390,9 +414,9 @@ void compiler_add_source_code(Syntax_Block* source_code, Code_Origin origin)
     if (do_rc_gen)
     {
         compiler_switch_timing_task(Timing_Task::RC_GEN);
-        dependency_analyser_analyse(code_source->ast);
+        dependency_analyser_analyse(code_source);
         compiler_switch_timing_task(Timing_Task::ANALYSIS);
-        workload_executer_add_analysis_items(compiler.dependency_analyser);
+        workload_executer_add_analysis_items(code_source);
 
         if (output_rc && do_output)
         {
@@ -445,8 +469,6 @@ void compiler_run_testcases(Timer* timer)
     SCOPE_EXIT(enable_execution = i_enable_execution;);
     bool i_execute_binary = execute_binary;
     SCOPE_EXIT(execute_binary = i_execute_binary;);
-    bool i_output_lexing = output_lexing;
-    SCOPE_EXIT(output_lexing = i_output_lexing;);
     bool i_output_identifiers = output_identifiers;
     SCOPE_EXIT(output_identifiers = i_output_identifiers;);
     bool i_output_ast = output_ast;
@@ -473,7 +495,6 @@ void compiler_run_testcases(Timer* timer)
     enable_execution = true;
     execute_binary = run_testcases_compiled;
 
-    output_lexing = false;
     output_identifiers = false;
     output_ast = false;
     output_type_system = false;
@@ -489,14 +510,14 @@ void compiler_run_testcases(Timer* timer)
         test_case_make("000_empty.upp", false),
         test_case_make("001_main.upp", true),
         test_case_make("002_comments.upp", true),
-        test_case_make("003_valid_comment.upp", true),
-        test_case_make("004_invalid_comment.upp", false),
-        test_case_make("005_variable_definition.upp", true),
-        test_case_make("006_primitive_types.upp", true),
-        test_case_make("007_pointers_and_arrays.upp", true),
-        test_case_make("008_operator_precedence.upp", true),
-        test_case_make("009_function_calls.upp", true),
-        //test_case_make("010_file_loads.upp", true),
+        test_case_make("002_comments_invalid.upp", false),
+        test_case_make("002_comments_valid.upp", true),
+        test_case_make("003_variables.upp", true),
+        test_case_make("004_types_pointers_arrays.upp", true),
+        test_case_make("004_types_primitive.upp", true),
+        test_case_make("005_operator_precedence.upp", true),
+        test_case_make("006_function_calls.upp", true),
+        test_case_make("007_imports.upp", true),
         test_case_make("011_pointers.upp", true),
         test_case_make("012_new_delete.upp", true),
         test_case_make("013_structs.upp", true),
@@ -550,17 +571,17 @@ void compiler_run_testcases(Timer* timer)
     {
         Test_Case* test_case = &test_cases[i];
         String path = string_create_formated("upp_code/testcases/%s", test_case->name);
-        SCOPE_EXIT(string_destroy(&path));
         Optional<String> code = file_io_load_text_file(path.characters);
         if (!code.available) {
             string_append_formated(&result, "ERROR:   Test %s could not load test file\n", test_case->name);
             errors_occured = true;
+            string_destroy(&path);
             continue;
         }
 
         auto main_block = syntax_block_create_from_string(code.value);
         SCOPE_EXIT(syntax_block_destroy(main_block));
-        compiler_compile(main_block, true);
+        compiler_compile(main_block, true, path);
         Exit_Code exit_code = compiler_execute();
         if (exit_code != Exit_Code::SUCCESS && test_case->should_succeed)
         {

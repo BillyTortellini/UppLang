@@ -89,7 +89,7 @@ void lexer_tokenize_syntax_line(Syntax_Line* line)
         token.info.char_start = index;
 
         char c = text[index];
-        if (char_is_letter(c))
+        if (char_is_letter(c) || c == '#')
         {
             // Identifier/Keyword
             int start_index = index;
@@ -593,7 +593,6 @@ Operator_Info syntax_operator_info(Syntax_Operator op)
 {
     switch (op)
     {
-    case Syntax_Operator::HASHTAG: return operator_info_make("#", Operator_Type::UNOP, false, false);
     case Syntax_Operator::ADDITION: return operator_info_make("+", Operator_Type::BINOP, true, true);
     case Syntax_Operator::SUBTRACTION: return operator_info_make("-", Operator_Type::BOTH, true, true);
     case Syntax_Operator::DIVISON: return operator_info_make("/", Operator_Type::BINOP, true, true);
@@ -635,6 +634,8 @@ String syntax_keyword_as_string(Syntax_Keyword keyword)
 {
     switch (keyword)
     {
+    case Syntax_Keyword::IMPORT: return string_create_static("#import");
+    case Syntax_Keyword::BAKE: return string_create_static("#bake");
     case Syntax_Keyword::BREAK: return string_create_static("break");
     case Syntax_Keyword::CASE: return string_create_static("case");
     case Syntax_Keyword::CAST: return string_create_static("cast");

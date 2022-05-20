@@ -93,13 +93,27 @@ void file_io_unload_text_file(Optional<String>* file_content)
     }
 }
 
+void file_io_relative_to_full_path(String* relative_path)
+{
+    char buffer[1024];
+    int length = GetFullPathNameA(relative_path->characters, 1024, buffer, 0);
+    if (length == 0 || length > 1024) {
+        return;
+    }
+    string_reset(relative_path);
+    string_append(relative_path, buffer);
+    string_replace_character(relative_path, '\\', '/');
+}
+
 bool file_io_check_if_file_exists(const char* filepath)
 {
     FILE* file;
     if (fopen_s(&file, filepath, "r") != 0) {
         return false;
     }
-    fclose(file);
+    if (file != 0) {
+        fclose(file);
+    }
     return true;
 }
 

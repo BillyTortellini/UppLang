@@ -7,6 +7,7 @@
 struct Type_Signature;
 struct String;
 struct Type_System;
+struct Analysis_Item;
 
 enum class Timing_Task
 {
@@ -62,6 +63,44 @@ enum class Exit_Code
 
 bool exit_code_is_valid(int value);
 void exit_code_append_to_string(String* string, Exit_Code code);
+
+
+// Source Code
+struct Syntax_Block;
+namespace AST {
+    struct Module;
+}
+
+enum class Dependency_Type
+{
+    NORMAL,
+    MEMBER_IN_MEMORY,
+    MEMBER_REFERENCE,
+};
+
+enum class Code_Origin
+{
+    MAIN_PROJECT,
+    LOADED_FILE,
+    GENERATED
+};
+
+struct Item_Dependency
+{
+    Analysis_Item* dependent;
+    Analysis_Item* depends_on;
+    Dependency_Type type;
+};
+
+struct Code_Source
+{
+    Code_Origin origin;
+    String file_path;
+    Syntax_Block* source;
+    AST::Module* ast;
+    Dynamic_Array<Analysis_Item*> analysis_items;
+    Dynamic_Array<Item_Dependency> item_dependencies;
+};
 
 
 

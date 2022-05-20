@@ -18,6 +18,7 @@ struct Symbol_Table;
 struct Symbol_Data;
 struct Analysis_Item;
 struct Symbol_Dependency;
+struct Code_Source;
 
 namespace AST
 {
@@ -143,13 +144,6 @@ Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool only_curr
 
 
 
-enum class Dependency_Type
-{
-    NORMAL,
-    MEMBER_IN_MEMORY,
-    MEMBER_REFERENCE,
-};
-
 struct Symbol_Dependency
 {
     Dependency_Type type;
@@ -157,13 +151,6 @@ struct Symbol_Dependency
     Symbol* resolved_symbol;
     Symbol_Table* symbol_table;
     Analysis_Item* item;
-};
-
-struct Item_Dependency
-{
-    Analysis_Item* dependent;
-    Analysis_Item* depends_on;
-    Dependency_Type type;
 };
 
 enum class Analysis_Item_Type
@@ -174,6 +161,7 @@ enum class Analysis_Item_Type
     FUNCTION_BODY,
     BAKE,
     ROOT, // At unexpected global scope
+    IMPORT
 };
 
 struct Analysis_Item
@@ -189,10 +177,10 @@ struct Analysis_Item
 
 struct Dependency_Analyser
 {
+    Code_Source* code_source;
+
     // Output
-    Dynamic_Array<Analysis_Item*> analysis_items;
-    Dynamic_Array<Item_Dependency> item_dependencies;
-    Symbol_Table* root_symbol_table; // Not the same as the module table of the ast, since we could load multiple files
+    Symbol_Table* root_symbol_table;
     Predefined_Symbols predefined_symbols;
     Dynamic_Array<Symbol_Error> errors;
     Hashtable<AST::Base*, Analysis_Item*> mapping_ast_to_items;
@@ -210,7 +198,8 @@ struct Dependency_Analyser
 Dependency_Analyser* dependency_analyser_initialize();
 void dependency_analyser_destroy();
 void dependency_analyser_reset(Compiler* compiler);
-void dependency_analyser_analyse(AST::Module* root_module);
+void dependency_analyser_analyse(Code_Source* code_source);
 
+void analysis_item_destroy(Analysis_Item* item);
 void dependency_analyser_log_error(Symbol* existing_symbol, AST::Base* error_node);
 void dependency_analyser_append_to_string(String* string);

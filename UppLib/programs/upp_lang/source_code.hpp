@@ -10,7 +10,7 @@ struct Syntax_Line;
 struct Identifier_Pool;
 
 // TYPES
-constexpr auto SYNTAX_OPERATOR_COUNT = 31;
+constexpr auto SYNTAX_OPERATOR_COUNT = 30;
 enum class Syntax_Operator
 {
     ADDITION,
@@ -38,7 +38,6 @@ enum class Syntax_Operator
     OR,
     ARROW,
     DOLLAR,
-    HASHTAG,
     ASSIGN,
     ASSIGN_ADD,
     ASSIGN_SUB,
@@ -75,6 +74,8 @@ enum class Syntax_Keyword
     CAST,
     CAST_RAW,
     CAST_PTR,
+    BAKE,
+    IMPORT,
 
     MAX_ENUM_VALUE,
 };
