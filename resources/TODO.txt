@@ -1,53 +1,35 @@
-TODO:
------
-Integrate Editor features into new editor (Undo-Redo, Copy-Paste, Indentation Handling)
-Editor features (Code-Completion, Jump to Definition, Line-Trimming similar to tokens, Auto-formating, Vim-Commands)
 
-Replace Modtree with AST-Decorations, add new IR-Codegen Phase
-Maybe replace Symbol pointing to types/function with Function_Progress...
-For loop and looping over arrays pls
+Why are AST-Decorations better than generating Code directly during Analysis:
+ - Simpler analysis because I don't have to worry about order of operations
+ - Modtree currently has to duplicate AST-Structure, which isn't necessary with Decorations
+ - Modtree can be deleted
+ - Analysis can be out of order in e.g. Parameter analysis, which may make things like Polymorphic Types easier.
+ - If i have to switch to stop and go analysis, this would also be easier.
 
-Bugs:
-    - Loading files introduces new symbols, which could conflict with the old ones...
-    - Nullptr missing
-    - Enum member values
-    - Bake block
-    - Fix missing-feature error messages
-    - Error messages using the AST::Display
-    - Bug: Types can be used as integers...
-    - # probalby needs to be a valid identifier character now, if we keep it as a token keyword
-
-    - Formating with && as double dereference
-    - Not sure if I am happy with comments, but it actually seems quite nice
-    - I feel like the auto block-ids (if cond) should not work if there are 2 instances where we use the same cond
-        e.g. the parser should do this
-
-
-
-Ideas:
-------
-Switch cases could use Indentation e.g.
-    switch strategy
-        .RUN
-            pos += max_speed
-        .WALK
-            pos += max_speed * 0.5
-        .EAT
-            search_and_eat_nearest(player)
-            player.energy -= 15
-    This looks bad, but when the auto formater works like it should
-    this will be fine
-
-
-
+Problems:
+ - AST-Nodes may need to be traversed multiple times (Macros, Templates), which is why I cannot
+   just write the Analysis Informatio into the AST-Nodes
+ - Code-Generation Step afterwards is more involved then current IR-Gen from Modtree
+ - If I need to save Analysis-Information which is not easily saveable into the AST-Structure, it will be more
+    complicated to store this data. 
 
 Next features:
 --------------
+ * AST-Annotation as Semantic-Analyser + new IR-Codegen phase
+ * Syntax-Guided Editor (Undo-Redo, copy-paste, code-completion, jump to definition, auto-formating, vim-commands)
  * Polymorphism/Generics/Templates (Template rework: No more templated modules, templated types, templated functions)
- * Syntax-Guided Editor
 
  * Named function parameters/unnamed struct initializer params
- * Bake expressions, bake function pointers
+ * Bake function pointers
+ * Formating with && as double dereference always takes it as and operator
+ * Loading files introduces new symbols, which could conflict with the old ones...
+ * Rethink auto pointers with pointers on the left side of assignment, maybe just use pointer assign syntax &=
+ * Switch with indentation, remove case keyword
+ * Switch case variables 
+ * Error messages using the AST::Display
+ * Auto block-ids (if cond_var) should not work if there are 2 instances where we use the same cond, then just disable auto ids (Parser thing)
+ * For loop and looping over arrays/slices pls
+ * Slices as varargs, e.g. printf(a: string, values: []Any ...)
  * Conversion function to pointer and back
  * Literal overhaul (Integers, floats, strings?, arrays are u64, array access with any int...)
  * Array bounds check
@@ -65,6 +47,7 @@ Next features:
      index, found := find_elem(arr, 2);
      index, _ = find_elem(arr, 3);
      _ = Hashtable~insert();
+     - Analysis can be out of order in e.g. Parameter analysis, which may make things like Polymorphic Types easier.
      union {ipv4: int; ipv5: _};
 
 General Plan for Implementation:

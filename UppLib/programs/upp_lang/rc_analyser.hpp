@@ -140,8 +140,7 @@ Symbol_Table* symbol_table_create(Symbol_Table* parent, AST::Base* definition_no
 void symbol_table_destroy(Symbol_Table* symbol_table);
 void symbol_table_append_to_string(String* string, Symbol_Table* table, bool print_root);
 void symbol_append_to_string(Symbol* symbol, String* string);
-Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool only_current_scope, Symbol_Dependency* reference);
-
+Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool only_current_scope, Symbol_Dependency* dependency, Analysis_Item* searching_from);
 
 
 struct Symbol_Dependency

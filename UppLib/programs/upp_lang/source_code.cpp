@@ -60,8 +60,8 @@ void lexer_tokenize_block(Syntax_Block* block, int indentation)
 }
 
 bool is_space_critical(Syntax_Token_Type type) {
-    return type == Syntax_Token_Type::IDENTIFIER || type == Syntax_Token_Type::KEYWORD || type == Syntax_Token_Type::LITERAL_NUMBER ||
-        type == Syntax_Token_Type::LITERAL_BOOL;
+    return type == Syntax_Token_Type::KEYWORD || type == Syntax_Token_Type::LITERAL_NUMBER ||
+        type == Syntax_Token_Type::LITERAL_BOOL || type == Syntax_Token_Type::IDENTIFIER;
 }
 
 void lexer_tokenize_syntax_line(Syntax_Line* line)
@@ -634,6 +634,7 @@ String syntax_keyword_as_string(Syntax_Keyword keyword)
 {
     switch (keyword)
     {
+    case Syntax_Keyword::NULL_KEYWORD: return string_create_static("null");
     case Syntax_Keyword::IMPORT: return string_create_static("#import");
     case Syntax_Keyword::BAKE: return string_create_static("#bake");
     case Syntax_Keyword::BREAK: return string_create_static("break");

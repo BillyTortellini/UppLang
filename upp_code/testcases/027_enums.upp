@@ -1,9 +1,9 @@
 Color::enum
 	RED
 	GREEN
-	BLUE
+	BLUE::17
 	YELLOW
-	PINK
+	PINK::3
 	BROWN
 
 main::()
@@ -29,11 +29,11 @@ main::()
 	assert(cast{i32}Color.RED==1)
 	assert(cast{i32}Color.GREEN==2)
 	
-	//
 		// Normally values can be overwritten, but I will implement this later
 		// The values can be overwritten, and then they will count upwards from the given value
 		// Values may overlap, which will cause a compile-time error
-		assert(cast(i32) Color.BLUE == 17)
-		assert(cast(i32) Color.YELLOW == 18)
-		assert(cast(i32) Color.PINK == 3)
-		assert(cast(i32) Color.BROWN == 4)
+		assert(cast{i32}Color.BLUE==17)
+		assert(cast{i32}Color.YELLOW==18)
+		assert(cast{i32}Color.PINK==3)
+		assert(cast{i32}Color.BROWN==4)
+	

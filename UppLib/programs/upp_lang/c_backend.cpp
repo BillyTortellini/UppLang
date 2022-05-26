@@ -289,7 +289,7 @@ void c_generator_register_type_name(C_Generator* generator, Type_Signature* type
         generator->name_counter++;
         string_append_formated(&generator->section_enum_implementations, "enum class %s\n{\n", type_name.characters);
         for (int i = 0; i < type->options.enum_type.members.size; i++) {
-            Enum_Member* member = &type->options.enum_type.members[i];
+            auto member = &type->options.enum_type.members[i];
             string_append_formated(&generator->section_enum_implementations, "    %s = %d,\n", member->id->characters, member->value);
         }
         string_append_formated(&generator->section_enum_implementations, "};");

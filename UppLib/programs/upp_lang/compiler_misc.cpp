@@ -284,7 +284,7 @@ Constant_Status constant_pool_search_references(Constant_Pool* pool, int data_of
             int found_member_index = -1;
             for (int i = 0; i < tag_type->options.enum_type.members.size; i++) 
             {
-                Enum_Member* member = &tag_type->options.enum_type.members[i];
+                auto member = &tag_type->options.enum_type.members[i];
                 if (member->value == tag_value) {
                     found_member_index = tag_value - 1;
                 }

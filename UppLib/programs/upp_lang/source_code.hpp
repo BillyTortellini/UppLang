@@ -76,6 +76,7 @@ enum class Syntax_Keyword
     CAST_PTR,
     BAKE,
     IMPORT,
+    NULL_KEYWORD,
 
     MAX_ENUM_VALUE,
 };
@@ -145,6 +146,7 @@ enum class Syntax_Token_Type
     LITERAL_NUMBER,
     LITERAL_STRING,
     LITERAL_BOOL,
+    LITERAL_NULL,
     OPERATOR,
     PARENTHESIS,
     UNEXPECTED_CHAR, // Unexpected Character, like | or ; \...

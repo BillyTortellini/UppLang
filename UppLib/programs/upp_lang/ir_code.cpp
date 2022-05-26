@@ -425,7 +425,7 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
         for (int i = 0; i < instruction->options.switch_instr.cases.size; i++) {
             IR_Switch_Case* switch_case = &instruction->options.switch_instr.cases[i];
             indent_string(string, indentation + 1);
-            Optional<Enum_Member> member = enum_type_find_member_by_value(enum_type, switch_case->value);
+            Optional<Enum_Item> member = enum_type_find_member_by_value(enum_type, switch_case->value);
             assert(member.available, "");
             string_append_formated(string, "Case %s: \n", member.value.id->characters);
             ir_code_block_append_to_string(switch_case->block, string, indentation + 2);

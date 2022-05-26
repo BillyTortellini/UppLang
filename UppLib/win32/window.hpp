@@ -36,5 +36,7 @@ void window_set_minimized(Window* window, bool minimized);
 void window_set_position(Window* window, int x, int y);
 void window_set_size(Window* window, int width, int height);
 
+void window_save_position(Window* window, const char* filename);
+void window_load_position(Window* window, const char* filename);
 
 

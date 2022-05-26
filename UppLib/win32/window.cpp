@@ -10,6 +10,7 @@
 #include "../datastructures/string.hpp"
 #include "windows_helper_functions.hpp"
 #include "../rendering/opengl_function_pointers.hpp"
+#include "../utility/file_io.hpp"
 
 struct Window
 {
@@ -1063,5 +1064,49 @@ void window_set_cursor_into_center_of_screen(Window* window)
     window->last_mouse_reset_pos_x = window_rect.left + width/2;
     window->last_mouse_reset_pos_y = window_rect.top + height/2;
     SetCursorPos(window->last_mouse_reset_pos_x, window->last_mouse_reset_pos_y);
-
 }
+
+struct Window_Saved_Position
+{
+    RECT window_rect;
+    RECT console_rect;
+};
+
+void window_load_position(Window* window, const char* filename)
+{
+    auto result = file_io_load_binary_file(filename);
+    SCOPE_EXIT(file_io_unload_binary_file(&result));
+    if (result.available)
+    {
+        assert(result.value.size == sizeof(Window_Saved_Position), "Hey");
+        auto pos = *((Window_Saved_Position*)result.value.data);
+        auto win = pos.window_rect;
+        if (win.left == win.right || win.top == win.bottom) return;
+        MoveWindow(window->hwnd, win.left, win.top, win.right - win.left, win.bottom - win.top, false);
+
+        HWND hwnd = GetConsoleWindow();
+        win = pos.console_rect;
+        if (hwnd != NULL) {
+            if (win.left == win.right || win.top == win.bottom) return;
+            MoveWindow(hwnd, win.left, win.top, win.right - win.left, win.bottom - win.top, false);
+        }
+    }
+}
+
+void window_save_position(Window* window, const char* filename)
+{
+    Window_Saved_Position pos;
+    memory_zero(&pos);
+
+    // save window rect
+    GetWindowRect(window->hwnd, &pos.window_rect);
+    // Save console rect if exists
+    HWND hwnd = GetConsoleWindow();
+    if (hwnd != NULL) {
+        GetWindowRect(hwnd, &pos.console_rect);
+    }
+
+    auto data = array_create_static_as_bytes(&pos, 1);
+    file_io_write_file(filename, data);
+}
+

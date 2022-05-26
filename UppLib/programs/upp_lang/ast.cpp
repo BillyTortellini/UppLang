@@ -10,6 +10,7 @@ namespace AST
         case Base_Type::PARAMETER: 
         case Base_Type::ARGUMENT: 
         case Base_Type::SYMBOL_READ: 
+        case Base_Type::ENUM_MEMBER: 
         case Base_Type::DEFINITION: 
             break;
         case Base_Type::CODE_BLOCK: {
@@ -113,6 +114,9 @@ namespace AST
             FILL_OPTIONAL(read->path_child);
             break;
         }
+        case Base_Type::ENUM_MEMBER: {
+            break;
+        }
         case Base_Type::ARGUMENT: {
             auto arg = (Argument*)node;
             FILL(arg->value);
@@ -250,8 +254,8 @@ namespace AST
                 break;
             }
             case Expression_Type::ENUM_TYPE: {
-                //auto& members = expr->options.enum_members;
-                //FILL_ARRAY(members);
+                auto& members = expr->options.enum_members;
+                FILL_ARRAY(members);
                 break;
             }
             default: panic("");
@@ -347,6 +351,7 @@ namespace AST
 #define FILL_ARRAY(x) for (int i = 0; i < x.size; i++) {dynamic_array_push_back(fill, &x[i]->base);}
         switch (node->type)
         {
+        case Base_Type::ENUM_MEMBER: break;
         case Base_Type::PROJECT_IMPORT: {
             break;
         }
@@ -495,8 +500,8 @@ namespace AST
                 break;
             }
             case Expression_Type::ENUM_TYPE: {
-                //auto& members = expr->options.enum_members;
-                //FILL_ARRAY(members);
+                auto& members = expr->options.enum_members;
+                FILL_ARRAY(members);
                 break;
             }
             default: panic("");
@@ -609,6 +614,12 @@ namespace AST
                 string_append_formated(str, " ");
                 string_append_string(str, arg->name.value);
             }
+            break;
+        }
+        case Base_Type::ENUM_MEMBER: {
+            auto mem = (Enum_Member*)base;
+            string_append_formated(str, "ENUM_MEMBER ");
+            string_append_string(str, mem->name);
             break;
         }
         case Base_Type::PARAMETER: {

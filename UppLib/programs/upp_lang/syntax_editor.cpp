@@ -39,6 +39,7 @@ struct Syntax_Editor
     // Rendering
     Input* input;
     Rendering_Core* rendering_core;
+    Window* window;
     Renderer_2D* renderer_2D;
     Text_Renderer* text_renderer;
     vec2 character_size;
@@ -502,15 +503,6 @@ void syntax_editor_update()
 {
     auto& input = syntax_editor.input;
     auto& mode = syntax_editor.mode;
-
-    /*
-    if (syntax_editor.input->key_pressed[(int)Key_Code::O]) {
-        logg("O Pressed m8\n");
-    }
-    if (syntax_editor.input->key_down[(int)Key_Code::O]) {
-        logg("O DOWN m8\n");
-    }
-    */
 
     if (syntax_editor.input->key_pressed[(int)Key_Code::O] && syntax_editor.input->key_down[(int)Key_Code::CTRL]) {
         auto open_file = open_file_selection_dialog();

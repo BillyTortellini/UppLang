@@ -250,7 +250,8 @@ void upp_lang_main()
 
     // Set Window/Rendering Options
     {
-        window_set_size(window, 800, 600);
+        window_load_position(window, "window_pos.set");
+        //window_set_size(window, 800, 600);
         //window_set_position(window, -1234, 96);
         //window_set_fullscreen(window, true);
         window_set_vsync(window, false);
@@ -261,6 +262,7 @@ void upp_lang_main()
     Pipeline_State pipeline_state = pipeline_state_make_default();
     pipeline_state.blending_state.blending_enabled = true;
     rendering_core_update_pipeline_state(&core, pipeline_state);
+
 
     // Window Loop
     double time_last_update_start = timer_current_time_in_seconds(&timer);
@@ -278,6 +280,7 @@ void upp_lang_main()
                 break;
             }
             if (input->close_request_issued || input->key_pressed[(int)Key_Code::ESCAPE]) {
+                window_save_position(window, "window_pos.set");
                 window_close(window);
                 break;
             }

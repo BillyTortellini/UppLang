@@ -54,6 +54,7 @@ namespace AST
         INTEGER,
         FLOAT_VAL,
         BOOLEAN,
+        NULL_VAL,
     };
 
     enum class Base_Type
@@ -69,6 +70,7 @@ namespace AST
         PARAMETER,      // Name/Type compination with optional default value + comptime
         SYMBOL_READ,    // A symbol read
         PROJECT_IMPORT, // Loading a project
+        ENUM_MEMBER,    // ID with or without value-expr
     };
 
     struct Base
@@ -98,6 +100,13 @@ namespace AST
         Dynamic_Array<Definition*> definitions;
         Dynamic_Array<Project_Import*> imports;
         Symbol_Table* symbol_table;
+    };
+
+    struct Enum_Member
+    {
+        Base base;
+        String* name;
+        Optional<Expression*> value;
     };
 
     struct Definition
@@ -250,7 +259,7 @@ namespace AST
                 Dynamic_Array<Definition*> members;
                 Structure_Type type;
             } structure;
-            Dynamic_Array<String*> enum_members;
+            Dynamic_Array<Enum_Member*> enum_members;
         } options;
     };
 

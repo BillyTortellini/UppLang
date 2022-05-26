@@ -217,9 +217,9 @@ void type_signature_append_value_to_string(Type_Signature* type, byte* value_ptr
             string_append_formated(string, "Enum{");
         }
         int value = *(i32*)value_ptr;
-        Enum_Member* found = 0;
+        Enum_Item* found = 0;
         for (int i = 0; i < type->options.enum_type.members.size; i++) {
-            Enum_Member* mem = &type->options.enum_type.members[i];
+            Enum_Item* mem = &type->options.enum_type.members[i];
             if (value == mem->value) {
                 found = mem;
                 break;
@@ -716,7 +716,7 @@ void type_system_finish_type(Type_System* system, Type_Signature* type)
         internal_info->options.enumeration.members.data_ptr = new Internal_Type_Enum_Member[member_count];
         for (int i = 0; i < member_count; i++)
         {
-            Enum_Member* member = &type->options.enum_type.members[i];
+            Enum_Item* member = &type->options.enum_type.members[i];
             Internal_Type_Enum_Member* internal_member = &internal_info->options.enumeration.members.data_ptr[i];
             internal_member->name.size = member->id->size;
             internal_member->name.character_buffer_size = 0;
@@ -758,7 +758,7 @@ void type_system_finish_type(Type_System* system, Type_Signature* type)
             tag_type->alignment = 4;
             for (int i = 0; i < type->options.structure.members.size; i++) {
                 Struct_Member* struct_member = &type->options.structure.members[i];
-                Enum_Member tag_member;
+                Enum_Item tag_member;
                 tag_member.id = struct_member->id;
                 //tag_member.definition_node = 0;
                 tag_member.value = i + 1;
@@ -940,7 +940,7 @@ Type_Signature* type_system_make_enum_empty(Type_System* system, String* id)
     result.size = 0;
     result.alignment = 0;
     result.options.enum_type.id = id;
-    result.options.enum_type.members = dynamic_array_create_empty<Enum_Member>(3);
+    result.options.enum_type.members = dynamic_array_create_empty<Enum_Item>(3);
     return type_system_register_type(system, result);
 }
 
@@ -960,12 +960,12 @@ void type_system_print(Type_System* system)
     logg("%s", msg.characters);
 }
 
-Optional<Enum_Member> enum_type_find_member_by_value(Type_Signature* enum_type, int value)
+Optional<Enum_Item> enum_type_find_member_by_value(Type_Signature* enum_type, int value)
 {
     assert(enum_type->type == Signature_Type::ENUM, "");
     for (int i = 0; i < enum_type->options.enum_type.members.size; i++) {
-        Enum_Member member = enum_type->options.enum_type.members[i];
+        Enum_Item member = enum_type->options.enum_type.members[i];
         if (member.value == value) return optional_make_success(member);
     }
-    return optional_make_failure<Enum_Member>();
+    return optional_make_failure<Enum_Item>();
 }

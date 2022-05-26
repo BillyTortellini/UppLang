@@ -745,18 +745,23 @@ namespace Parser
         CHECKPOINT_EXIT;
     }
 
-    String* parse_enum_member(Base* parent, bool& add_to_fill)
+    Enum_Member* parse_enum_member(Base* parent, bool& add_to_fill)
     {
         add_to_fill = true;
-        String* result;
-        if (test_token(Syntax_Token_Type::IDENTIFIER)) {
-            result = get_token(0)->options.identifier;
-            advance_token();
-        }
-        else {
+        if (!test_token(Syntax_Token_Type::IDENTIFIER)) {
             return 0;
         }
-        return result;
+
+        CHECKPOINT_SETUP;
+        auto result = allocate_base<Enum_Member>(parent, Base_Type::ENUM_MEMBER);
+        result->name = get_token(0)->options.identifier;
+        advance_token();
+        if (test_operator(Syntax_Operator::DEFINE_COMPTIME)) 
+        {
+            advance_token();
+            result->value = optional_make_success(parse_expression_or_error_expr(&result->base));
+        }
+        PARSE_SUCCESS(result);
     }
 
     Expression* parse_single_expression_no_postop(Base* parent)
@@ -966,6 +971,13 @@ namespace Parser
             }
             PARSE_SUCCESS(result);
         }
+        if (test_keyword_offset(Syntax_Keyword::NULL_KEYWORD, 0))
+        {
+            result->type = Expression_Type::LITERAL_READ;
+            result->options.literal_read.type = Literal_Type::NULL_VAL;
+            advance_token();
+            PARSE_SUCCESS(result);
+        }
         if (test_token(Syntax_Token_Type::LITERAL_STRING))
         {
             result->type = Expression_Type::LITERAL_READ;
@@ -1060,7 +1072,7 @@ namespace Parser
         }
         if (test_keyword_offset(Syntax_Keyword::ENUM, 0)) {
             result->type = Expression_Type::ENUM_TYPE;
-            result->options.enum_members = dynamic_array_create_empty<String*>(1);
+            result->options.enum_members = dynamic_array_create_empty<Enum_Member*>(1);
             advance_token();
             parse_follow_block(&result->base, &result->options.enum_members, parse_enum_member, false);
             PARSE_SUCCESS(result);

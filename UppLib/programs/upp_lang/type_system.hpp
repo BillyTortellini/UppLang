@@ -44,7 +44,7 @@ struct Struct_Member
     String* id;
 };
 
-struct Enum_Member
+struct Enum_Item
 {
     String* id;
     int value;
@@ -92,7 +92,7 @@ struct Type_Signature
             Struct_Member tag_member;
         } structure;
         struct {
-            Dynamic_Array<Enum_Member> members;
+            Dynamic_Array<Enum_Item> members;
             String* id;
         } enum_type;
         String* template_id;
@@ -285,4 +285,4 @@ Type_Signature* type_system_make_template(Type_System* system, String* id);
 Type_Signature* type_system_make_enum_empty(Type_System* system, String* id);
 Type_Signature* type_system_make_struct_empty(Type_System* system, Symbol* symbol, Structure_Type struct_type);
 void type_system_print(Type_System* system);
-Optional<Enum_Member> enum_type_find_member_by_value(Type_Signature* enum_type, int value);
+Optional<Enum_Item> enum_type_find_member_by_value(Type_Signature* enum_type, int value);
