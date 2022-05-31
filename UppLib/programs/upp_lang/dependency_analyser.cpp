@@ -1,4 +1,4 @@
-#include "rc_analyser.hpp"
+#include "dependency_analyser.hpp"
 
 #include "compiler_misc.hpp"
 #include "compiler.hpp"
@@ -87,7 +87,7 @@ Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool only_curr
     Symbol_Type sym_type = (*found)->type;
     Analysis_Item* definition_item = (*found)->origin_item;
     if (searching_from != 0 && searching_from != definition_item &&
-        (sym_type == Symbol_Type::VARIABLE_UNDEFINED || sym_type == Symbol_Type::VARIABLE || sym_type == Symbol_Type::POLYMORPHIC_PARAMETER))
+        (sym_type == Symbol_Type::VARIABLE_UNDEFINED || sym_type == Symbol_Type::VARIABLE))
     {
         // Check if we are in the body of the definition function
         if (definition_item != 0 && !(definition_item->type == Analysis_Item_Type::FUNCTION && definition_item->options.function_body_item == searching_from)) 
@@ -122,14 +122,17 @@ void symbol_append_to_string(Symbol* symbol, String* string)
             string_append_formated(string, "Variable Undefined");
         }
         break;
+    case Symbol_Type::PARAMETER:
+        string_append_formated(string, "Parameter");
+        break;
     case Symbol_Type::UNRESOLVED:
         string_append_formated(string, "Unresolved");
         break;
-    case Symbol_Type::POLYMORPHIC_PARAMETER:
-        string_append_formated(string, "Polymorphic Parameter");
-        break;
     case Symbol_Type::VARIABLE:
         string_append_formated(string, "Variable");
+        break;
+    case Symbol_Type::GLOBAL:
+        string_append_formated(string, "Global");
         break;
     case Symbol_Type::TYPE:
         string_append_formated(string, "Type");
@@ -140,7 +143,7 @@ void symbol_append_to_string(Symbol* symbol, String* string)
     case Symbol_Type::SYMBOL_ALIAS:
         string_append_formated(string, "Alias for %s", symbol->options.alias->id);
         break;
-    case Symbol_Type::CONSTANT_VALUE:
+    case Symbol_Type::COMPTIME_VALUE:
         string_append_formated(string, "Constant %d", symbol->options.constant.constant_index);
         break;
     case Symbol_Type::HARDCODED_FUNCTION:
@@ -193,8 +196,11 @@ Analysis_Item* analysis_item_create_empty(Analysis_Item_Type type, Analysis_Item
     auto& src = analyser.code_source;
     Analysis_Item* item = new Analysis_Item;
     item->symbol_dependencies = dynamic_array_create_empty<Symbol_Dependency>(1);
+    item->passes = dynamic_array_create_empty<Analysis_Pass*>(1);
     item->type = type;
     item->node = node;
+    item->max_node_index = 0;
+    item->min_node_index = INT32_MAX;
     item->symbol = 0;
     if (parent_item != 0 && parent_item->type != Analysis_Item_Type::ROOT && type != Analysis_Item_Type::IMPORT) {
         Item_Dependency item_dependency;
@@ -211,6 +217,12 @@ Analysis_Item* analysis_item_create_empty(Analysis_Item_Type type, Analysis_Item
 
 void analysis_item_destroy(Analysis_Item* item)
 {
+    for (int i = 0; i < item->passes.size; i++) {
+        auto& pass = item->passes[i];
+        array_destroy(&pass->infos);
+        delete pass;
+    }
+    dynamic_array_destroy(&item->passes);
     dynamic_array_destroy(&item->symbol_dependencies);
     delete item;
 }
@@ -312,6 +324,9 @@ void analyse_ast_base(AST::Base* base)
     SCOPE_EXIT(analyser.dependency_type = _backup_type);
     Analysis_Item* _backup_item = analyser.analysis_item;
     SCOPE_EXIT(analyser.analysis_item = _backup_item);
+
+    analyser.analysis_item->max_node_index = math_maximum(analyser.analysis_item->max_node_index, base->allocation_index);
+    analyser.analysis_item->min_node_index = math_minimum(analyser.analysis_item->min_node_index, base->allocation_index);
 
     switch (base->type)
     {
@@ -421,6 +436,7 @@ void analyse_ast_base(AST::Base* base)
         }
         break;
     }
+    case Base_Type::SWITCH_CASE: break;
     case Base_Type::ARGUMENT: break;
     case Base_Type::STATEMENT: break;
     case Base_Type::CODE_BLOCK: {

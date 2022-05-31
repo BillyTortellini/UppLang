@@ -3,6 +3,7 @@
 #include "compiler.hpp"
 #include "../../utility/hash_functions.hpp"
 #include "ir_code.hpp"
+#include "ast.hpp"
 
 int align_offset_next_multiple(int offset, int alignment) 
 {
@@ -868,47 +869,50 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
         {
             IR_Instruction_Binary_OP* binary_op = &instr->options.binary_op;
             Bytecode_Instruction instr;
+            using AST::Binop;
+            // TODO: Replace this with integer logic
             switch (binary_op->type)
             {
-            case ModTree_Binary_Operation_Type::ADDITION:
+            case Binop::ADDITION:
                 instr.instruction_type = Instruction_Type::BINARY_OP_ADDITION;
                 break;
-            case ModTree_Binary_Operation_Type::AND:
+            case Binop::AND:
                 instr.instruction_type = Instruction_Type::BINARY_OP_AND;
                 break;
-            case ModTree_Binary_Operation_Type::DIVISION:
+            case Binop::DIVISION:
                 instr.instruction_type = Instruction_Type::BINARY_OP_DIVISION;
                 break;
-            case ModTree_Binary_Operation_Type::EQUAL:
+            case Binop::EQUAL:
                 instr.instruction_type = Instruction_Type::BINARY_OP_EQUAL;
                 break;
-            case ModTree_Binary_Operation_Type::GREATER:
+            case Binop::GREATER:
                 instr.instruction_type = Instruction_Type::BINARY_OP_GREATER_THAN;
                 break;
-            case ModTree_Binary_Operation_Type::GREATER_OR_EQUAL:
+            case Binop::GREATER_OR_EQUAL:
                 instr.instruction_type = Instruction_Type::BINARY_OP_GREATER_EQUAL;
                 break;
-            case ModTree_Binary_Operation_Type::LESS:
+            case Binop::LESS:
                 instr.instruction_type = Instruction_Type::BINARY_OP_LESS_THAN;
                 break;
-            case ModTree_Binary_Operation_Type::LESS_OR_EQUAL:
+            case Binop::LESS_OR_EQUAL:
                 instr.instruction_type = Instruction_Type::BINARY_OP_LESS_EQUAL;
                 break;
-            case ModTree_Binary_Operation_Type::MODULO:
+            case Binop::MODULO:
                 instr.instruction_type = Instruction_Type::BINARY_OP_MODULO;
                 break;
-            case ModTree_Binary_Operation_Type::MULTIPLICATION:
+            case Binop::MULTIPLICATION:
                 instr.instruction_type = Instruction_Type::BINARY_OP_MULTIPLICATION;
                 break;
-            case ModTree_Binary_Operation_Type::NOT_EQUAL:
+            case Binop::NOT_EQUAL:
                 instr.instruction_type = Instruction_Type::BINARY_OP_NOT_EQUAL;
                 break;
-            case ModTree_Binary_Operation_Type::OR:
+            case Binop::OR:
                 instr.instruction_type = Instruction_Type::BINARY_OP_OR;
                 break;
-            case ModTree_Binary_Operation_Type::SUBTRACTION:
+            case Binop::SUBTRACTION:
                 instr.instruction_type = Instruction_Type::BINARY_OP_SUBTRACTION;
                 break;
+            default: panic("");
             }
 
             Type_Signature* operand_types = ir_data_access_get_type(&binary_op->operand_left);

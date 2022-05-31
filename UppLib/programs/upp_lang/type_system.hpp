@@ -4,6 +4,7 @@
 #include "../../datastructures/dynamic_array.hpp"
 #include "../../datastructures/hashtable.hpp"
 #include <initializer_list>
+#include "ast.hpp"
 
 struct Identifier_Pool;
 struct Symbol;
@@ -48,14 +49,6 @@ struct Enum_Item
 {
     String* id;
     int value;
-    //AST::Expression* definition_node;
-};
-
-enum class Structure_Type
-{
-    STRUCT = 1,
-    C_UNION = 2,
-    UNION = 3
 };
 
 struct Type_Signature
@@ -77,7 +70,7 @@ struct Type_Signature
         Type_Signature* pointer_child;
         struct {
             Type_Signature* element_type;
-            bool count_known; // False in case of polymorphism or when Errors occured
+            bool count_known; // False in case of polymorphism(Comptime values) or when Errors occured
             int element_count;
         } array;
         struct {
@@ -88,7 +81,7 @@ struct Type_Signature
         struct {
             Dynamic_Array<Struct_Member> members;
             Symbol* symbol; // May be null
-            Structure_Type struct_type;
+            AST::Structure_Type struct_type;
             Struct_Member tag_member;
         } structure;
         struct {
@@ -156,7 +149,7 @@ struct Internal_Type_Struct_Member
 struct Internal_Structure_Type
 {
     int tag_member_index;
-    Structure_Type tag;
+    AST::Structure_Type tag;
 };
 
 struct Internal_Type_Struct
@@ -261,10 +254,6 @@ struct Type_System
     Type_Signature* type_type;
     Type_Signature* type_information_type;
     Type_Signature* any_type;
-
-    String* id_data;
-    String* id_size;
-    String* id_tag;
 };
 
 Type_System type_system_create(Timer* timer);
@@ -283,6 +272,7 @@ Type_Signature* type_system_make_function(Type_System* system, Dynamic_Array<Typ
 Type_Signature* type_system_make_function(Type_System* system, std::initializer_list<Type_Signature*> parameter_types, Type_Signature* return_type);
 Type_Signature* type_system_make_template(Type_System* system, String* id);
 Type_Signature* type_system_make_enum_empty(Type_System* system, String* id);
-Type_Signature* type_system_make_struct_empty(Type_System* system, Symbol* symbol, Structure_Type struct_type);
+Type_Signature* type_system_make_struct_empty(Type_System* system, Symbol* symbol, AST::Structure_Type struct_type);
 void type_system_print(Type_System* system);
 Optional<Enum_Item> enum_type_find_member_by_value(Type_Signature* enum_type, int value);
+Optional<Struct_Member> type_signature_find_member_by_id(Type_Signature* type, String* id); // Valid for both structs, unions and slices

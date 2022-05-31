@@ -1,10 +1,107 @@
+To think about:
+ - Maybe always analyse struct initializer/function parameters, even if the function type is not known
+
+TODO:
+ - Type_informations_global + type_info function
+ - Global-init function, setting all global values + calling main?
+
+
+
+
+ - Downcast for Analysis_Progress?
+ - Slice/Array bounds check (Shouldn't be done in ir-code (Probably))
+
+Variables:
+ - Need to somehow store the variable type... -> Symbol-Data?
+Work-throuhg defer?
+
+What does the Analysis_Information need to provide?
+ - Everything necessary so that Code-Generation isn't slow (No duplicate 'expensive' operations)
+ - All Infos required for analysis
+ - Maybe infos for user feedback
+
+Expression Evaluation + Casts:
+ - Analyse-Expression Internal gets called
+ - Context is used for Auto- Cast, Struct-Init, Array-Init, Enum
+ - Analyse-Interal exits, Apply_Context applies
+ - Here Auto- Dereference/Address of + Implicit Casting happens
+
+Can multiple implicit casts happen?
+    I don't actually think so, no
+
+Do I want to store the type before/after cast?
+    Maybe, since Code-Gen probably generates casts from types?
+
+Cast instruction?
+    Gets its own cast type
+    
+How do Constants work?
+    Analyser needs to generates Constats for e.g. array-size/comptime definitions
+    And the codegen then only needs to load those constants
+    x:: 15
+    y := x * 2
+
+Expression is temporary works how?
+    Like previously...
+
+Expression is comptime works how?
+    Same as previous
+
+
+
+
+
+Implementation:
+Add Analysis-Passes to Analysis_Item, which contain an array of things
+RC-Analyser may want to keep track of the smallest and highest item number.
+
+The Job of the Semantic Analyser:
+ - Globals, Functions, Extern-Functions and entry function
+ - Determine the Type of all expressions
+ - Error Reportin
+
+What are the most important/difficult saved things in modtree:
+ - Expression result type + cast information
+ - Modtree_Function (Called From/Calls, contains errors/is_runnable)
+ - Modtree Parameter/modtree variable (For symbols to have a reference to)
+ - Comptime results
+ - Block control flow
+ - Blocks (break/continue ids) are resolved
+ - Extern Functions
+ - Bakes are intern functions
+ - Assert is also a function -> e.g. cannot be done with modtree...
+ - Global init function
+
+Symbol Data connected to modtree:
+    * Variables
+    * Globalz
+    * Functions
+
+Ideas for AST-Decorations:
+ - Symbol Reads are dependent on the Analysis-Pass 
+ - Merge Analysis-Pass with analysis Progress
+
+Relations between
+ - Analysis Item
+    Partition of AST into Items with Symbol-Dependencies
+ - Analysis Workload
+    Through Symbol Dependencies and internal Dependencies workloads depend on other workloads
+ - Analysis Progress
+    Progress of Functions, Definitions, Types to create dependencies between workloads
+ - Analysis Pass
+    One instance of an Analysis-Item with AST-Annotations
+
+
+
+
 
 Why are AST-Decorations better than generating Code directly during Analysis:
- - Simpler analysis because I don't have to worry about order of operations
- - Modtree currently has to duplicate AST-Structure, which isn't necessary with Decorations
- - Modtree can be deleted
+ - Simpler analysis because I can split order of execution and order of analysis
+ - Modtree currently has to duplicate AST-Structure, which isn't necessary with Decorations, modtree can be removed later
  - Analysis can be out of order in e.g. Parameter analysis, which may make things like Polymorphic Types easier.
- - If i have to switch to stop and go analysis, this would also be easier.
+ - Switching to stop and go will be easier
+ - Allocation are easier, since I can do it with passes/arrays
+ - Code-Generation is easier with Instruction/Register based code than with Modtree's Tree-Based code (Temporary values, return + defer...)
 
 Problems:
  - AST-Nodes may need to be traversed multiple times (Macros, Templates), which is why I cannot
@@ -12,6 +109,11 @@ Problems:
  - Code-Generation Step afterwards is more involved then current IR-Gen from Modtree
  - If I need to save Analysis-Information which is not easily saveable into the AST-Structure, it will be more
     complicated to store this data. 
+ - Modtree removes all type-related things from AST (Enums, structs...), which the analyser still needs to annotate
+
+
+
+
 
 Next features:
 --------------

@@ -71,6 +71,7 @@ namespace AST
         SYMBOL_READ,    // A symbol read
         PROJECT_IMPORT, // Loading a project
         ENUM_MEMBER,    // ID with or without value-expr
+        SWITCH_CASE,    // Expression 
     };
 
     struct Base
@@ -145,7 +146,7 @@ namespace AST
     };
 
     enum class Structure_Type {
-        STRUCT,
+        STRUCT = 1,
         UNION,
         C_UNION
     };
@@ -265,7 +266,8 @@ namespace AST
 
     struct Switch_Case
     {
-        Optional<Expression*> value;
+        Base base;
+        Optional<Expression*> value; // Default-Case if value not available
         Code_Block* block;
     };
 
@@ -303,7 +305,7 @@ namespace AST
             struct {
                 Expression* condition;
                 Code_Block* block;
-                Optional<AST::Code_Block*> else_block;
+                Optional<Code_Block*> else_block;
             } if_statement;
             struct {
                 Expression* condition;
@@ -311,7 +313,7 @@ namespace AST
             } while_statement;
             struct {
                 Expression* condition;
-                Dynamic_Array<Switch_Case> cases;
+                Dynamic_Array<Switch_Case*> cases;
             } switch_statement;
             String* break_name;
             String* continue_name;
@@ -327,5 +329,26 @@ namespace AST
 
     void symbol_read_append_to_string(Symbol_Read* read, String* string);
     int binop_priority(Binop binop);
+
+    namespace Helpers
+    {
+        bool type_correct(Definition* base);
+        bool type_correct(Switch_Case* base);
+        bool type_correct(Argument* base);
+        bool type_correct(Parameter* base);
+        bool type_correct(Expression* base);
+        bool type_correct(Enum_Member* base);
+        bool type_correct(Module* base);
+        bool type_correct(Project_Import* base);
+        bool type_correct(Symbol_Read* base);
+    }
+
+    template<typename T>
+    T* base_downcast(Base* node)
+    {
+        T* result = (T*)node;
+        assert(Helpers::type_correct(result), "Heyy");
+        return result;
+    }
 }
 

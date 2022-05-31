@@ -4,13 +4,6 @@
 #include "../../datastructures/hashtable.hpp"
 #include "semantic_analyser.hpp"
 
-/*
-    Some Reasons why differentiating IR_Code/ModTree could be ok:
-        - Expressions cannot resolve sized_array to array cast to just statements
-        - Expression evaluation order not given by modtree
-        - Differentiate Statement/Expression VS. Instructions only
-*/
-
 struct Compiler;
 struct IR_Function;
 struct IR_Data_Access;
@@ -18,6 +11,7 @@ struct IR_Code_Block;
 struct IR_Program;
 struct Type_Signature;
 struct Constant_Pool;
+struct Analysis_Pass;
 
 enum class IR_Data_Access_Type
 {
@@ -107,7 +101,7 @@ struct IR_Instruction_Return
 
 struct IR_Instruction_Binary_OP
 {
-    ModTree_Binary_Operation_Type type;
+    AST::Binop type;
     IR_Data_Access destination;
     IR_Data_Access operand_left;
     IR_Data_Access operand_right;
@@ -245,8 +239,8 @@ struct IR_Program
 
 struct Type_System;
 struct ModTree_Program;
-struct ModTree_Variable;
 struct ModTree_Function;
+struct ModTree_Global;
 struct Compiler;
 struct Type_Signature;
 
@@ -254,40 +248,44 @@ struct Unresolved_Goto
 {
     IR_Code_Block* block;
     int instruction_index;
-    ModTree_Block* break_block;
+    AST::Code_Block* break_block;
 };
 
 struct IR_Generator
 {
-    Compiler* compiler;
     IR_Program* program;
-    Type_System* type_system;
     ModTree_Program* modtree;
 
     // Stuff needed for compilation
-    Hashtable<ModTree_Variable*, IR_Data_Access> variable_mapping;
+    Hashtable<AST::Definition*, IR_Data_Access> variable_mapping; 
+    Hashtable<ModTree_Global*, IR_Data_Access> global_mapping;
     Hashtable<ModTree_Function*, IR_Function*> function_mapping;
 
     Dynamic_Array<ModTree_Function*> function_stubs;
-    Dynamic_Array<ModTree_Variable*> queue_globals;
+    Dynamic_Array<ModTree_Global*> queue_globals;
     Dynamic_Array<ModTree_Function*> queue_functions;
 
+    Dynamic_Array<AST::Code_Block*> defer_stack;
     Dynamic_Array<Unresolved_Goto> fill_out_continues;
     Dynamic_Array<Unresolved_Goto> fill_out_breaks;
 
-    Hashtable<ModTree_Block*, int> labels_break;
-    Hashtable<ModTree_Block*, int> labels_continue;
+    Hashtable<AST::Code_Block*, int> labels_break;
+    Hashtable<AST::Code_Block*, int> labels_continue;
+    Hashtable<AST::Code_Block*, int> block_defer_depths;
 
     int next_label_index;
+    Analysis_Pass* current_pass;
 };
 
-IR_Generator ir_generator_create();
-void ir_generator_destroy(IR_Generator* generator);
-void ir_generator_reset(IR_Generator* generator, Compiler* compiler);
-void ir_generator_generate_queued_items(IR_Generator* generator);
-void ir_generator_queue_function(IR_Generator* generator, ModTree_Function* function);
-void ir_generator_queue_global(IR_Generator* generator, ModTree_Variable* variable);
-void ir_generator_queue_and_generate_all(IR_Generator* generator);
+extern IR_Generator ir_generator;
+
+IR_Generator* ir_generator_initialize();
+void ir_generator_destroy();
+void ir_generator_reset();
+void ir_generator_generate_queued_items();
+void ir_generator_queue_function(ModTree_Function* function);
+void ir_generator_queue_global(ModTree_Global* global);
+void ir_generator_finish();
 
 IR_Program* ir_program_create(Type_System* type_system);
 void ir_program_destroy(IR_Program* program);

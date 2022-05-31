@@ -8,25 +8,13 @@
 
 #include "type_system.hpp"
 #include "compiler_misc.hpp"
-#include "rc_analyser.hpp"
-
-/*
-    What can differentiate ModTree from IR_Code?
-        Module Hierarchy:          Keep    vs. Flatten
-        Resolve Identifiers to:    Symbols vs. Structures (Functions, Data_Accesses...)
-        Variable Definitions:      Keep Position vs. in Block vs. In Function
-        Expression Results:        As Tree       vs. Flatten (In Registers)
-        Data Access:               Through expressions vs. Data_Access structure (Resolves expression evaluation order)
-*/
+#include "dependency_analyser.hpp"
 
 struct Type_Signature;
 struct Symbol;
 struct Compiler;
 struct Symbol_Table;
-struct ModTree_Block;
 struct ModTree_Function;
-struct ModTree_Variable;
-struct ModTree_Expression;
 struct Upp_Constant;
 enum class Constant_Status;
 struct Semantic_Error;
@@ -34,6 +22,8 @@ struct Error_Information;
 struct Dependency_Analyser;
 struct Analysis_Workload;
 struct Analysis_Progress;
+struct Analysis_Pass;
+struct Analysis_Item;
 
 namespace Parser
 {
@@ -45,262 +35,20 @@ namespace AST
     struct Code_Block;
 }
 
-/*
-    MODTREE
-*/
-enum class ModTree_Binary_Operation_Type
+
+
+// Modtree
+struct ModTree_Global
 {
-    ADDITION,
-    SUBTRACTION,
-    DIVISION,
-    MULTIPLICATION,
-    MODULO,
-    AND,
-    OR,
-    EQUAL,
-    NOT_EQUAL,
-    LESS,
-    LESS_OR_EQUAL,
-    GREATER,
-    GREATER_OR_EQUAL,
-};
-
-enum class ModTree_Unary_Operation_Type
-{
-    NEGATE,
-    LOGICAL_NOT,
-    ADDRESS_OF,
-    DEREFERENCE,
-    TEMPORARY_TO_STACK, // Puts temporary values onto the stack, e.g. 5 is temporary
-};
-
-enum class ModTree_Cast_Type
-{
-    INTEGERS, // Implicit to bigger
-    FLOATS, // Implicit to bigger
-    FLOAT_TO_INT,
-    INT_TO_FLOAT, // Implicit
-    POINTERS, // Implicit from/to void*
-    POINTER_TO_U64,
-    U64_TO_POINTER,
-    ENUM_TO_INT,
-    INT_TO_ENUM,
-    ARRAY_SIZED_TO_UNSIZED, // Implicit
-    TO_ANY,
-    FROM_ANY,
-};
-
-struct Member_Initializer
-{
-    Struct_Member member;
-    ModTree_Expression* init_expr;
-    AST::Base* init_node;
-};
-
-enum class ModTree_Call_Type
-{
-    FUNCTION,
-    EXTERN_FUNCTION,
-    HARDCODED_FUNCTION,
-    FUNCTION_POINTER,
-};
-
-enum class ModTree_Expression_Type
-{
-    BINARY_OPERATION,
-    UNARY_OPERATION,
-    CONSTANT_READ,
-    FUNCTION_CALL,
-    VARIABLE_READ,
-    FUNCTION_POINTER_READ,
-    ARRAY_ACCESS,
-    MEMBER_ACCESS,
-    NEW_ALLOCATION,
-    ARRAY_INITIALIZER,
-    STRUCT_INITIALIZER,
-    CAST,
-
-    ERROR_EXPR, // This is used if an operation creates an error, but analysis can still continue
-};
-
-struct ModTree_Expression
-{
-    ModTree_Expression_Type expression_type;
-    Type_Signature* result_type;
-    union
-    {
-        struct
-        {
-            ModTree_Binary_Operation_Type operation_type;
-            ModTree_Expression* left_operand;
-            ModTree_Expression* right_operand;
-        } binary_operation;
-        struct
-        {
-            ModTree_Unary_Operation_Type operation_type;
-            ModTree_Expression* operand;
-        } unary_operation;
-        Upp_Constant constant_read;
-        struct {
-            ModTree_Call_Type call_type;
-            union {
-                ModTree_Expression* pointer_expression;
-                ModTree_Function* function;
-                ModTree_Extern_Function* extern_function;
-                Hardcoded_Type hardcoded;
-            } options;
-            Dynamic_Array<ModTree_Expression*> arguments;
-        } function_call;
-        struct {
-            bool is_extern;
-            ModTree_Function* function;
-            ModTree_Extern_Function* extern_function;
-        } function_pointer_read;
-        ModTree_Variable* variable_read;
-        Dynamic_Array<ModTree_Expression*> array_initializer;
-        Dynamic_Array<Member_Initializer> struct_initializer;
-        struct {
-            ModTree_Expression* array_expression;
-            ModTree_Expression* index_expression;
-        } array_access;
-        struct {
-            ModTree_Expression* structure_expression;
-            Struct_Member member;
-        } member_access;
-        struct {
-            ModTree_Expression* cast_argument;
-            ModTree_Cast_Type type;
-        } cast;
-        struct {
-            int allocation_size;
-            Optional<ModTree_Expression*> element_count; // If true this is an array allocation
-        } new_allocation;
-    } options;
-};
-
-struct ModTree_Switch_Case
-{
-    int value;
-    ModTree_Expression* expression;
-    ModTree_Block* body;
-};
-
-enum class ModTree_Statement_Type
-{
-    BLOCK,
-    IF,
-    WHILE,
-    SWITCH,
-
-    BREAK,
-    CONTINUE,
-    RETURN,
-    EXIT,
-
-    EXPRESSION,
-    ASSIGNMENT,
-    DELETION,
-};
-
-struct ModTree_Statement
-{
-    ModTree_Statement_Type type;
-    union
-    {
-        ModTree_Block* block;
-        ModTree_Block* break_to_block;
-        ModTree_Block* continue_to_block;
-        struct {
-            ModTree_Expression* condition;
-            ModTree_Block* if_block;
-            ModTree_Block* else_block;
-        } if_statement;
-        struct {
-            ModTree_Expression* condition;
-            ModTree_Block* while_block;
-        } while_statement;
-        struct {
-            ModTree_Expression* condition;
-            Dynamic_Array<ModTree_Switch_Case> cases;
-            ModTree_Block* default_block;
-        } switch_statement;
-        struct {
-            ModTree_Expression* destination;
-            ModTree_Expression* source;
-        } assignment;
-        struct {
-            ModTree_Expression* expression;
-            bool is_array;
-        } deletion;
-        ModTree_Expression* expression;
-        Optional<ModTree_Expression*> return_value;
-        Exit_Code exit_code;
-    } options;
-};
-
-enum class Control_Flow
-{
-    SEQUENTIAL, // One sequential path exists, but there may be paths that aren't sequential
-    STOPS,      // Execution never goes further than the given statement, but there may be paths that return
-    RETURNS,    // All possible code path return
-};
-
-struct ModTree_Block
-{
-    Dynamic_Array<ModTree_Statement*> statements;
-    Dynamic_Array<ModTree_Variable*> variables;
-
-    // Infos
-    AST::Code_Block* code_block;
-    Control_Flow flow;
-    bool control_flow_locked;
-    int defer_start_index;
-};
-
-struct ModTree_Variable
-{
-    Type_Signature* data_type;
-    Symbol* symbol; // May be null
-};
-
-
-struct ModTree_Parameter
-{
-    String* name;
-    Type_Signature* data_type;
-    bool is_comptime;
-    union {
-        ModTree_Variable* variable;
-    } options;
-};
-
-enum class ModTree_Function_Type
-{
-    NORMAL,
-    POLYMORPHIC_BASE,
-    POLYMOPRHIC_INSTANCE,
+    AST::Definition* definition;
+    Type_Signature* type;
 };
 
 struct ModTree_Function
 {
-    ModTree_Block* body;
-    Dynamic_Array<ModTree_Parameter> parameters;
-
-    Symbol* symbol;
+    Analysis_Pass* body_pass;
     Type_Signature* signature;
-
-    // Polymorphic infos
-    ModTree_Function_Type type;
-    union 
-    {
-        struct {
-            int poly_argument_count;
-        } base;
-        struct {
-            ModTree_Function* instance_base_function;
-            Dynamic_Array<Upp_Constant> poly_arguments;
-        } instance;
-    } options;
+    Symbol* symbol; // May be 0
 
     // Infos
     bool contains_errors; // NOTE: contains_errors and is_runnable are actually 2 different things, but I only care about runnable for bake
@@ -309,17 +57,10 @@ struct ModTree_Function
     Dynamic_Array<ModTree_Function*> calls;
 };
 
-struct ModTree_Extern_Function
-{
-    Extern_Function_Identifier extern_function;
-    Symbol* symbol; // May be null
-};
-
 struct ModTree_Program
 {
     Dynamic_Array<ModTree_Function*> functions;
-    Dynamic_Array<ModTree_Variable*> globals;
-    Dynamic_Array<ModTree_Extern_Function*> extern_functions;
+    Dynamic_Array<ModTree_Global*> globals;
     ModTree_Function* entry_function;
 };
 
@@ -339,11 +80,7 @@ struct Comptime_Result
 
 
 
-
-
-/*
-DEPENDENCY GRAPH
-*/
+// Analysis Progress
 enum class Analysis_Progress_Type
 {
     FUNCTION,
@@ -367,8 +104,11 @@ enum class Struct_State
 struct Struct_Progress
 {
     Analysis_Progress base;
+    Analysis_Pass* pass;
+
     Struct_State state;
     Type_Signature* struct_type;
+
     Analysis_Workload* analysis_workload;
     Analysis_Workload* reachable_resolve_workload;
 };
@@ -376,10 +116,21 @@ struct Struct_Progress
 struct Bake_Progress
 {
     Analysis_Progress base;
+    Analysis_Pass* pass;
+
     ModTree_Function* bake_function;
     Comptime_Result result;
+
     Analysis_Workload* analysis_workload;
     Analysis_Workload* execute_workload;
+};
+
+struct Definition_Progress
+{
+    Analysis_Progress base;
+    Analysis_Pass* pass;
+    Analysis_Workload* definition_workload;
+    Symbol* symbol;
 };
 
 enum class Function_State
@@ -393,20 +144,20 @@ enum class Function_State
 struct Function_Progress
 {
     Analysis_Progress base;
+    Analysis_Pass* header_pass;
+    Analysis_Pass* body_pass;
+
     Function_State state;
     ModTree_Function* function;
+
     Analysis_Workload* header_workload;
     Analysis_Workload* body_workload;
     Analysis_Workload* compile_workload;
 };
 
-struct Definition_Progress
-{
-    Analysis_Progress base;
-    Analysis_Workload* definition_workload;
-    Symbol* symbol;
-};
 
+
+// Workload Executer
 enum class Analysis_Workload_Type
 {
     FUNCTION_HEADER,
@@ -424,7 +175,6 @@ struct Analysis_Workload
 {
     Analysis_Workload_Type type;
     Analysis_Progress* progress;
-    Analysis_Item* analysis_item;
     bool is_finished;
 
     // Dependencies
@@ -446,6 +196,9 @@ struct Analysis_Workload
             Dynamic_Array<Type_Signature*> struct_types;
             Dynamic_Array<Type_Signature*> unfinished_array_types;
         } struct_reachable;
+        struct {
+            AST::Project_Import* import;
+        };
     } options;
 };
 
@@ -487,12 +240,135 @@ void workload_executer_add_analysis_items(Code_Source* source);
 
 
 
+// Analysis Information
+enum class Info_Cast_Type
+{
+    INTEGERS, // Implicit to bigger
+    FLOATS, // Implicit to bigger
+    FLOAT_TO_INT,
+    INT_TO_FLOAT, // Implicit
+    POINTERS, // Implicit from/to void*
+    POINTER_TO_U64,
+    U64_TO_POINTER,
+    ENUM_TO_INT,
+    INT_TO_ENUM,
+    ARRAY_SIZED_TO_UNSIZED, // Implicit
+    TO_ANY,
+    FROM_ANY,
+
+    NO_CAST, // No cast required
+    INVALID, // No cast can create the desired result, but we still handle it as a cast
+};
+
+enum class Expression_Context_Type
+{
+    UNKNOWN,             // Type is not known
+    AUTO_DEREFERENCE,    // Type is not known, but we want pointer level 0 
+    SPECIFIC_TYPE,       // Type is known, pointer level changes + implicit casting enabled
+};
+
+struct Expression_Context
+{
+    Expression_Context_Type type;
+    Type_Signature* signature;
+};
+
+enum class Expression_Result_Type
+{
+    VALUE,
+    TYPE,
+    FUNCTION,
+    HARDCODED_FUNCTION,
+    MODULE,
+};
+
+struct Argument_Info
+{
+    bool valid;
+    Struct_Member member; // For struct initializer
+};
+
+struct Expression_Info
+{
+    Expression_Result_Type result_type;
+    union
+    {
+        Type_Signature* value_type; // Before casting 
+        Type_Signature* type;
+        ModTree_Function* function;
+        Hardcoded_Type hardcoded;
+        Symbol_Table* module_table;
+    } options;
+
+    union {
+        Info_Cast_Type cast_type;
+    } specifics;
+
+    Optional<Upp_Constant> constant_value; // If the value is constant
+    Expression_Context context; // Maybe I dont even need to store the context
+    struct {
+        int deref_count;
+        bool take_address_of;
+        Info_Cast_Type cast;
+        Type_Signature* after_cast_type;
+    } context_ops; 
+};
+
+enum class Control_Flow
+{
+    SEQUENTIAL, // One sequential path exists, but there may be paths that aren't sequential
+    STOPS,      // Execution never goes further than the given statement, but there may be paths that return
+    RETURNS,    // All possible code path return
+};
+
+struct Statement_Info
+{
+    Control_Flow flow;
+    struct {
+        AST::Code_Block* block; // Continue/break
+    } specifics;
+};
+
+struct Code_Block_Info
+{
+    Control_Flow flow;
+    bool control_flow_locked;
+};
+
+struct Case_Info
+{
+    int is_valid;
+    int case_value; // Can I curretly only switch over ints/enums? I think so
+};
+
+union Analysis_Info
+{
+    Expression_Info info_expr;
+    Statement_Info info_stat;
+    Code_Block_Info info_block;
+};
+
+struct Analysis_Pass
+{
+    Analysis_Item* item;
+    Array<Analysis_Info> infos;
+};
+
+Type_Signature* expression_info_get_type(Expression_Info* info);
+
+template<typename Info_Type, typename AST_Type>
+Info_Type* pass_get_info_internal(Analysis_Pass* pass, AST_Type* node)
+{
+    assert(pass != 0, "");
+    auto& item = pass->item;
+    auto& id = node->base.allocation_index;
+    assert(id >= item->min_node_index && id <= item->max_node_index, "");
+    return (Info_Type*) &pass->infos[id - item->min_node_index];
+}
 
 
-/*
-ANALYSER
-*/
-struct Analysis_Workload;
+
+// ANALYSER
 struct Semantic_Analyser
 {
     // Result
@@ -502,6 +378,7 @@ struct Semantic_Analyser
     // Temporary stuff needed for analysis
     Compiler* compiler;
     Workload_Executer* workload_executer;
+    Analysis_Pass* current_pass;
     Analysis_Workload* current_workload;
     ModTree_Function* current_function;
     bool statement_reachable;
@@ -510,14 +387,9 @@ struct Semantic_Analyser
     Hashset<String> loaded_filenames;
     Stack_Allocator allocator_values;
     Hashset<ModTree_Function*> visited_functions;
-    Dynamic_Array<ModTree_Block*> block_stack;
-    Dynamic_Array<AST::Code_Block*> defer_stack;
+    Dynamic_Array<AST::Code_Block*> block_stack;
 
-    // ModTree stuff
-    ModTree_Function* global_init_function;
-    ModTree_Function* assert_function;
-    ModTree_Variable* global_type_informations;
-
+    Type_Signature* type_assert;
     Type_Signature* type_free;
     Type_Signature* type_malloc;
     Type_Signature* type_type_of;
@@ -531,13 +403,6 @@ struct Semantic_Analyser
     Type_Signature* type_read_f32;
     Type_Signature* type_read_bool;
     Type_Signature* type_random_i32;
-
-    String* id_size;
-    String* id_data;
-    String* id_main;
-    String* id_tag;
-    String* id_type_of;
-    String* id_type_info;
 };
 
 Semantic_Analyser* semantic_analyser_initialize();
@@ -549,16 +414,6 @@ Type_Signature* hardcoded_type_to_signature(Hardcoded_Type type);
 
 
 // ERRORS
-enum class Expression_Result_Type
-{
-    EXPRESSION,
-    TYPE,
-    FUNCTION,
-    HARDCODED_FUNCTION,
-    EXTERN_FUNCTION,
-    MODULE,
-};
-
 enum class Semantic_Error_Type
 {
     TEMPLATE_ARGUMENTS_INVALID_COUNT,
@@ -769,9 +624,8 @@ struct Semantic_Error
     Dynamic_Array<Error_Information> information;
 };
 
-struct Token_Range;
-void semantic_analyser_log_error(Semantic_Error_Type type, AST::Base* node);
 void semantic_analyser_add_error_info(Error_Information info);
+void semantic_analyser_log_error(Semantic_Error_Type type, AST::Base* node);
 void semantic_analyser_set_error_flag(bool error_due_to_unknown);
 void semantic_error_append_to_string(Semantic_Error e, String* string);
 Parser::Section semantic_error_get_section(Semantic_Error e);

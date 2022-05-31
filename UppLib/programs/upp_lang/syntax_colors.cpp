@@ -1,5 +1,5 @@
 #include "syntax_colors.hpp"
-#include "rc_analyser.hpp"
+#include "dependency_analyser.hpp"
 
 namespace Syntax_Color
 {
@@ -30,12 +30,13 @@ vec3 symbol_type_to_color(Symbol_Type type)
     case Symbol_Type::MODULE: return Syntax_Color::MODULE; 
     case Symbol_Type::TYPE: return Syntax_Color::TYPE; 
     case Symbol_Type::VARIABLE: return Syntax_Color::VARIABLE; 
-    case Symbol_Type::CONSTANT_VALUE: return Syntax_Color::VARIABLE; 
+    case Symbol_Type::COMPTIME_VALUE: return Syntax_Color::VARIABLE; 
     case Symbol_Type::SYMBOL_ALIAS: return Syntax_Color::IDENTIFIER_FALLBACK; 
     case Symbol_Type::UNRESOLVED: return Syntax_Color::IDENTIFIER_FALLBACK; 
     case Symbol_Type::ERROR_SYMBOL: return Syntax_Color::IDENTIFIER_FALLBACK; 
     case Symbol_Type::VARIABLE_UNDEFINED: return Syntax_Color::VARIABLE; 
-    case Symbol_Type::POLYMORPHIC_PARAMETER: return Syntax_Color::VARIABLE; 
+    case Symbol_Type::GLOBAL: return Syntax_Color::VARIABLE; 
+    case Symbol_Type::PARAMETER: return Syntax_Color::VARIABLE; 
     default: panic("");
     }
     return Syntax_Color::IDENTIFIER_FALLBACK;

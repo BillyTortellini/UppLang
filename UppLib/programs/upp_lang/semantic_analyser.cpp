@@ -11,15 +11,12 @@
 #include "type_system.hpp"
 #include "bytecode_generator.hpp"
 #include "bytecode_interpreter.hpp"
-#include "rc_analyser.hpp"
+#include "dependency_analyser.hpp"
 #include "compiler_misc.hpp"
 #include "ast.hpp"
 #include "ir_code.hpp"
 #include "parser.hpp"
 #include "source_code.hpp"
-
-struct Expression_Result;
-struct Expression_Context;
 
 // GLOBALS
 bool PRINT_DEPENDENCIES = false;
@@ -27,41 +24,98 @@ static Semantic_Analyser semantic_analyser;
 static Workload_Executer workload_executer;
 
 // PROTOTYPES
-Expression_Result semantic_analyser_analyse_expression_any(AST::Expression* expression, Expression_Context context);
-ModTree_Expression* semantic_analyser_analyse_expression_value( AST::Expression* rc_expression, Expression_Context context);
-Type_Signature* semantic_analyser_analyse_expression_type( AST::Expression* rc_expression);
+/*
 void analysis_workload_add_dependency_internal(Analysis_Workload* workload, Analysis_Workload* dependency, Symbol_Dependency* symbol_read);
-void analysis_workload_destroy(Analysis_Workload* workload);
 void modtree_block_destroy(ModTree_Block* block);
 void modtree_function_destroy(ModTree_Function* function);
 void modtree_statement_destroy(ModTree_Statement* statement);
 ModTree_Expression* semantic_analyser_cast_implicit_if_possible( ModTree_Expression* expression, Type_Signature* destination_type);
-bool analysis_workload_execute(Analysis_Workload* workload);
-void analysis_workload_add_struct_dependency(Struct_Progress* my_workload, Struct_Progress* other_progress, Dependency_Type type, Symbol_Dependency* symbol_read);
-void semantic_analyser_fill_block( ModTree_Block* block, AST::Code_Block* code_block);
-void analysis_workload_append_to_string(Analysis_Workload* workload, String* string);
 Analysis_Workload* workload_executer_add_workload_empty(Analysis_Workload_Type type, Analysis_Item* item, Analysis_Progress* progress, bool add_symbol_dependencies);
 void analysis_workload_check_if_runnable(Analysis_Workload* workload);
-Comptime_Result comptime_result_make_not_comptime();
 ModTree_Function* modtree_function_create_empty(Type_Signature* signature, Symbol* symbol, AST::Code_Block* body_block);
-
-/*
-ERROR Helpers
 */
-Structure_Type ast_structure_type_to_type(AST::Structure_Type type)
-{
-    switch (type)
-    {
-    case AST::Structure_Type::C_UNION: return Structure_Type::C_UNION;
-    case AST::Structure_Type::STRUCT: return Structure_Type::STRUCT;
-    case AST::Structure_Type::UNION: return Structure_Type::UNION;
-    }
-    panic("");
-    return Structure_Type::UNION;
-}
 
+ModTree_Function* modtree_function_create_empty(Type_Signature* signature, Symbol* symbol, Analysis_Pass* body_pass);
+Comptime_Result comptime_result_make_not_comptime();
+void analysis_workload_destroy(Analysis_Workload* workload);
+Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression* expression, Expression_Context context);
+Type_Signature* semantic_analyser_analyse_expression_value(AST::Expression* rc_expression, Expression_Context context);
+Type_Signature* semantic_analyser_analyse_expression_type(AST::Expression* rc_expression);
+Control_Flow semantic_analyser_analyse_block(AST::Code_Block* code_block);
+
+void analysis_workload_execute(Analysis_Workload* workload);
+void analysis_workload_add_struct_dependency(Struct_Progress* my_workload, Struct_Progress* other_progress, Dependency_Type type, Symbol_Dependency* symbol_read);
+void analysis_workload_append_to_string(Analysis_Workload* workload, String* string);
+
+
+
+// HELPERS
 #define to_base(x) (&x->base)
 
+Type_Signature* hardcoded_type_to_signature(Hardcoded_Type type)
+{
+    auto& an = semantic_analyser;
+    switch (type)
+    {
+    case Hardcoded_Type::ASSERT_FN: return an.type_assert;
+    case Hardcoded_Type::FREE_POINTER: return an.type_free;
+    case Hardcoded_Type::MALLOC_SIZE_I32: return an.type_malloc;
+    case Hardcoded_Type::TYPE_INFO: return an.type_type_info;
+    case Hardcoded_Type::TYPE_OF: return an.type_type_of;
+
+    case Hardcoded_Type::PRINT_BOOL: return an.type_print_bool;
+    case Hardcoded_Type::PRINT_I32: return an.type_print_i32;
+    case Hardcoded_Type::PRINT_F32: return an.type_print_f32;
+    case Hardcoded_Type::PRINT_STRING: return an.type_print_string;
+    case Hardcoded_Type::PRINT_LINE: return an.type_print_line;
+
+    case Hardcoded_Type::READ_I32: return an.type_print_i32;
+    case Hardcoded_Type::READ_F32: return an.type_print_f32;
+    case Hardcoded_Type::READ_BOOL: return an.type_print_bool;
+    case Hardcoded_Type::RANDOM_I32: return an.type_random_i32;
+    default: panic("HEY");
+    }
+    return 0;
+}
+
+
+
+// Analysis Info
+Analysis_Pass* analysis_item_create_pass(Analysis_Item* item)
+{
+    auto pass = new Analysis_Pass;
+    pass->item = item;
+    int range = item->max_node_index - item->min_node_index;
+    assert(range > 0, "Hey");
+    pass->infos = array_create_empty<Analysis_Info>(range);
+    memory_set_bytes(pass->infos.data, pass->infos.size * sizeof(Analysis_Info), 0);
+    dynamic_array_push_back(&item->passes, pass);
+    return pass;
+}
+
+Expression_Info* pass_get_info(AST::Expression* expression) {
+    return pass_get_info_internal<Expression_Info>(semantic_analyser.current_pass, expression);
+}
+
+Case_Info* pass_get_info(AST::Switch_Case* sw_case) {
+    return pass_get_info_internal<Case_Info>(semantic_analyser.current_pass, sw_case);
+}
+
+Argument_Info* pass_get_info(AST::Argument* argument) {
+    return pass_get_info_internal<Argument_Info>(semantic_analyser.current_pass, argument);
+}
+
+Statement_Info* pass_get_info(AST::Statement* statement) {
+    return pass_get_info_internal<Statement_Info>(semantic_analyser.current_pass, statement);
+}
+
+Code_Block_Info* pass_get_info(AST::Code_Block* block) {
+    return pass_get_info_internal<Code_Block_Info>(semantic_analyser.current_pass, block);
+}
+
+
+
+// Analysis Progress
 template<typename T>
 T* analysis_progress_allocate_internal(Analysis_Progress_Type type)
 {
@@ -73,53 +127,70 @@ T* analysis_progress_allocate_internal(Analysis_Progress_Type type)
     return progress;
 }
 
-Function_Progress* analysis_progress_create_function(ModTree_Function* function) {
+Function_Progress* analysis_progress_create_function(ModTree_Function* function, Analysis_Item* body_item, Analysis_Item* header_item) 
+{
+    assert(body_item->type == Analysis_Item_Type::FUNCTION_BODY && header_item->type == Analysis_Item_Type::FUNCTION, "");
     auto result = analysis_progress_allocate_internal<Function_Progress>(Analysis_Progress_Type::FUNCTION);
     result->state = Function_State::DEFINED;
     result->function = function;
+    result->body_pass = analysis_item_create_pass(body_item);
+    result->header_pass = analysis_item_create_pass(header_item);
     hashtable_insert_element(&workload_executer.progress_functions, function, result);
     return result;
 }
 
-Struct_Progress* analysis_progress_create_struct(Type_Signature* struct_type) {
+Struct_Progress* analysis_progress_create_struct(Type_Signature* struct_type, Analysis_Item* item) 
+{
+    assert(item->type == Analysis_Item_Type::STRUCTURE, "");
     auto result = analysis_progress_allocate_internal<Struct_Progress>(Analysis_Progress_Type::STRUCTURE);
     result->state = Struct_State::DEFINED;
+    result->pass = analysis_item_create_pass(item);
     result->struct_type = struct_type;
     hashtable_insert_element(&workload_executer.progress_structs, struct_type, result);
     return result;
 }
 
-Bake_Progress* analysis_progress_create_bake() 
+Bake_Progress* analysis_progress_create_bake(Analysis_Item* item) 
 {
+    assert(item->type == Analysis_Item_Type::BAKE, "");
     auto result = analysis_progress_allocate_internal<Bake_Progress>(Analysis_Progress_Type::BAKE);
     result->bake_function = modtree_function_create_empty(
         type_system_make_function(&compiler.type_system, dynamic_array_create_empty<Type_Signature*>(1), compiler.type_system.void_type), 0, 0
     );
     result->result = comptime_result_make_not_comptime();
+    result->pass = analysis_item_create_pass(item);
     return result;
 }
 
-Definition_Progress* analysis_progress_create_definition(Symbol* symbol) {
+Definition_Progress* analysis_progress_create_definition(Symbol* symbol, Analysis_Item* item) 
+{
+    assert(item->type == Analysis_Item_Type::DEFINITION, "");
     auto result = analysis_progress_allocate_internal<Definition_Progress>(Analysis_Progress_Type::DEFINITION);
     result->symbol = symbol;
+    result->pass = analysis_item_create_pass(item);
     hashtable_insert_element(&workload_executer.progress_definitions, symbol, result);
     return result;
 }
 
+
+
+// Errors
 void semantic_analyser_set_error_flag(bool error_due_to_unknown)
 {
     auto& analyser = semantic_analyser;
     analyser.error_flag_count += 1;
     if (analyser.current_function != 0)
     {
+        /*
         if (analyser.current_function->type == ModTree_Function_Type::POLYMORPHIC_BASE) {
             if (!error_due_to_unknown) {
                 analyser.current_function->contains_errors = true;
             }
         }
         else {
-            analyser.current_function->contains_errors = true;
         }
+        */
+        analyser.current_function->contains_errors = true;
         analyser.current_function->is_runnable = false;
     }
 }
@@ -238,277 +309,38 @@ Error_Information error_information_make_cycle_workload(Analysis_Workload* workl
 
 
 
-/*
-MOD_TREE
-*/
-
-ModTree_Statement* modtree_block_add_statement_empty(ModTree_Block* block, ModTree_Statement_Type statement_type)
-{
-    ModTree_Statement* statement = new ModTree_Statement;
-    statement->type = statement_type;
-    dynamic_array_push_back(&block->statements, statement);
-    return statement;
-}
-
-ModTree_Expression* modtree_expression_create_empty(ModTree_Expression_Type type, Type_Signature* result_type)
-{
-    ModTree_Expression* expr = new ModTree_Expression;
-    expr->result_type = result_type;
-    expr->expression_type = type;
-    return expr;
-}
-
-ModTree_Expression* modtree_expression_create_variable_read(ModTree_Variable* variable)
-{
-    ModTree_Expression* expr = modtree_expression_create_empty(ModTree_Expression_Type::VARIABLE_READ, variable->data_type);
-    expr->options.variable_read = variable;
-    return expr;
-}
-
-ModTree_Block* modtree_block_create_empty(AST::Code_Block* code_block)
-{
-    ModTree_Block* block = new ModTree_Block;
-    block->statements = dynamic_array_create_empty<ModTree_Statement*>(1);
-    block->variables = dynamic_array_create_empty<ModTree_Variable*>(1);
-    block->control_flow_locked = false;
-    block->flow = Control_Flow::SEQUENTIAL;
-    block->code_block = code_block;
-    block->defer_start_index = -1;
-    return block;
-}
-
-void modtree_block_destroy(ModTree_Block* block)
-{
-    for (int i = 0; i < block->statements.size; i++) {
-        modtree_statement_destroy(block->statements[i]);
-    }
-    dynamic_array_destroy(&block->statements);
-    for (int i = 0; i < block->variables.size; i++) {
-        delete block->variables[i];
-    }
-    dynamic_array_destroy(&block->variables);
-    delete block;
-}
-
-ModTree_Variable* modtree_block_add_variable(ModTree_Block* block, Type_Signature* type, Symbol* symbol)
-{
-    ModTree_Variable* var = new ModTree_Variable;
-    assert(type != 0, "");
-    var->data_type = type;
-    var->symbol = symbol;
-    dynamic_array_push_back(&block->variables, var);
-    return var;
-}
-
-ModTree_Function* modtree_function_create_empty(Type_Signature* signature, Symbol* symbol, AST::Code_Block* body_block)
+// MOD_TREE
+ModTree_Function* modtree_function_create_empty(Type_Signature* signature, Symbol* symbol, Analysis_Pass* body_pass)
 {
     ModTree_Function* function = new ModTree_Function;
-    function->type = ModTree_Function_Type::NORMAL;
-    function->parameters = dynamic_array_create_empty<ModTree_Parameter>(1);
+    function->body_pass = body_pass;
     function->symbol = symbol;
     function->signature = signature;
+
     function->called_from = dynamic_array_create_empty<ModTree_Function*>(1);
     function->calls = dynamic_array_create_empty<ModTree_Function*>(1);
-    function->body = modtree_block_create_empty(body_block);
     function->contains_errors = false;
     function->is_runnable = true;
+
     dynamic_array_push_back(&semantic_analyser.program->functions, function);
     return function;
 }
 
-ModTree_Function* modtree_function_create_poly_instance(ModTree_Function* base_function, Dynamic_Array<Upp_Constant> arguments)
-{
-    auto& analyser = semantic_analyser;
-    ModTree_Function* instance = modtree_function_create_empty(base_function->signature, base_function->symbol, base_function->body->code_block);
-    instance->type = ModTree_Function_Type::POLYMOPRHIC_INSTANCE;
-    for (int i = 0; i < base_function->parameters.size; i++) {
-        if (base_function->parameters[i].is_comptime) continue;
-        dynamic_array_push_back(&instance->parameters, base_function->parameters[i]);
-    }
-    instance->options.instance.instance_base_function = base_function;
-    instance->options.instance.poly_arguments = arguments;
-    assert(arguments.size == base_function->options.base.poly_argument_count, "");
-
-    // Create Workloads
-    auto base_progress = *hashtable_find_element(&workload_executer.progress_functions, base_function);
-    Function_Progress* new_progress = analysis_progress_create_function(instance);
-    new_progress->state = Function_State::HEADER_ANALYSED;
-
-    Analysis_Workload* body_workload = workload_executer_add_workload_empty(
-        Analysis_Workload_Type::FUNCTION_BODY, base_progress->header_workload->analysis_item, to_base(new_progress), false
-    );
-    analysis_workload_add_dependency_internal(body_workload, base_progress->body_workload, 0);
-    analysis_workload_check_if_runnable(body_workload); // Required so that progress made is set
-
-    Analysis_Workload* compile_workload = workload_executer_add_workload_empty(Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE, base_progress->header_workload->analysis_item, to_base(new_progress), false);
-    compile_workload->options.cluster_compile.functions = dynamic_array_create_empty<ModTree_Function*>(1);
-    dynamic_array_push_back(&compile_workload->options.cluster_compile.functions, instance);
-    analysis_workload_add_dependency_internal(compile_workload, body_workload, 0);
-    return instance;
-}
-
 void modtree_function_destroy(ModTree_Function* function)
 {
-    for (int i = 0; i < function->parameters.size; i++) {
-        if (!function->parameters[i].is_comptime) {
-            delete function->parameters[i].options.variable;
-        }
-    }
-    dynamic_array_destroy(&function->parameters);
     dynamic_array_destroy(&function->called_from);
     dynamic_array_destroy(&function->calls);
-    modtree_block_destroy(function->body);
     delete function;
 }
 
-ModTree_Variable* modtree_variable_create(Type_Signature* type, Symbol* symbol)
+ModTree_Global* modtree_program_add_global(AST::Definition* definition, Type_Signature* type)
 {
-    ModTree_Variable* var = new ModTree_Variable;
+    ModTree_Global* var = new ModTree_Global;
     assert(type != 0, "");
-    var->data_type = type;
-    var->symbol = symbol;
-    return var;
-}
-
-ModTree_Variable* modtree_function_add_normal_parameter(ModTree_Function* function, Type_Signature* type, String* name)
-{
-    ModTree_Parameter param;
-    param.data_type = type;
-    param.is_comptime = false;
-    param.name = name;
-    param.options.variable = modtree_variable_create(type, 0);
-    dynamic_array_push_back(&function->parameters, param);
-    return param.options.variable;
-}
-
-ModTree_Variable* modtree_program_add_global(Type_Signature* type, Symbol* symbol)
-{
-    ModTree_Variable* var = new ModTree_Variable;
-    assert(type != 0, "");
-    var->data_type = type;
-    var->symbol = symbol;
+    var->type = type;
+    var->definition = definition;
     dynamic_array_push_back(&semantic_analyser.program->globals, var);
     return var;
-}
-
-
-void modtree_expression_destroy(ModTree_Expression* expression)
-{
-    switch (expression->expression_type)
-    {
-    case ModTree_Expression_Type::ERROR_EXPR:
-        break;
-    case ModTree_Expression_Type::BINARY_OPERATION:
-        modtree_expression_destroy(expression->options.binary_operation.left_operand);
-        modtree_expression_destroy(expression->options.binary_operation.right_operand);
-        break;
-    case ModTree_Expression_Type::UNARY_OPERATION:
-        modtree_expression_destroy(expression->options.unary_operation.operand);
-        break;
-    case ModTree_Expression_Type::CONSTANT_READ:
-        break;
-    case ModTree_Expression_Type::FUNCTION_CALL:
-        for (int i = 0; i < expression->options.function_call.arguments.size; i++) {
-            modtree_expression_destroy(expression->options.function_call.arguments[i]);
-        }
-        dynamic_array_destroy(&expression->options.function_call.arguments);
-        if (expression->options.function_call.call_type == ModTree_Call_Type::FUNCTION_POINTER) {
-            modtree_expression_destroy(expression->options.function_call.options.pointer_expression);
-        }
-        break;
-    case ModTree_Expression_Type::VARIABLE_READ:
-        break;
-    case ModTree_Expression_Type::ARRAY_ACCESS: {
-        modtree_expression_destroy(expression->options.array_access.array_expression);
-        modtree_expression_destroy(expression->options.array_access.index_expression);
-        break;
-    }
-    case ModTree_Expression_Type::MEMBER_ACCESS: {
-        modtree_expression_destroy(expression->options.member_access.structure_expression);
-        break;
-    }
-    case ModTree_Expression_Type::CAST: {
-        modtree_expression_destroy(expression->options.cast.cast_argument);
-        break;
-    }
-    case ModTree_Expression_Type::FUNCTION_POINTER_READ: {
-        break;
-    }
-    case ModTree_Expression_Type::ARRAY_INITIALIZER: {
-        for (int i = 0; i < expression->options.array_initializer.size; i++) {
-            modtree_expression_destroy(expression->options.array_initializer[i]);
-        }
-        dynamic_array_destroy(&expression->options.array_initializer);
-        break;
-    }
-    case ModTree_Expression_Type::STRUCT_INITIALIZER: {
-        for (int i = 0; i < expression->options.struct_initializer.size; i++) {
-            modtree_expression_destroy(expression->options.struct_initializer[i].init_expr);
-        }
-        dynamic_array_destroy(&expression->options.struct_initializer);
-        break;
-    }
-    case ModTree_Expression_Type::NEW_ALLOCATION: {
-        if (expression->options.new_allocation.element_count.available) {
-            modtree_expression_destroy(expression->options.new_allocation.element_count.value);
-        }
-        break;
-    }
-    default: panic("HEY");
-    }
-
-    delete expression;
-}
-
-void modtree_statement_destroy(ModTree_Statement* statement)
-{
-    switch (statement->type)
-    {
-    case ModTree_Statement_Type::BLOCK:
-        modtree_block_destroy(statement->options.block);
-        break;
-    case ModTree_Statement_Type::IF:
-        modtree_expression_destroy(statement->options.if_statement.condition);
-        modtree_block_destroy(statement->options.if_statement.if_block);
-        modtree_block_destroy(statement->options.if_statement.else_block);
-        break;
-    case ModTree_Statement_Type::WHILE:
-        modtree_expression_destroy(statement->options.while_statement.condition);
-        modtree_block_destroy(statement->options.while_statement.while_block);
-        break;
-    case ModTree_Statement_Type::EXIT:
-    case ModTree_Statement_Type::BREAK:
-    case ModTree_Statement_Type::CONTINUE:
-        break;
-    case ModTree_Statement_Type::RETURN:
-        if (statement->options.return_value.available) {
-            modtree_expression_destroy(statement->options.return_value.value);
-        }
-        break;
-    case ModTree_Statement_Type::SWITCH:
-        modtree_expression_destroy(statement->options.switch_statement.condition);
-        for (int i = 0; i < statement->options.switch_statement.cases.size; i++) {
-            modtree_block_destroy(statement->options.switch_statement.cases[i].body);
-            modtree_expression_destroy(statement->options.switch_statement.cases[i].expression);
-        }
-        if (statement->options.switch_statement.default_block != 0) {
-            modtree_block_destroy(statement->options.switch_statement.default_block);
-        }
-        break;
-    case ModTree_Statement_Type::EXPRESSION:
-        modtree_expression_destroy(statement->options.expression);
-        break;
-    case ModTree_Statement_Type::DELETION:
-        modtree_expression_destroy(statement->options.deletion.expression);
-        break;
-    case ModTree_Statement_Type::ASSIGNMENT:
-        modtree_expression_destroy(statement->options.assignment.destination);
-        modtree_expression_destroy(statement->options.assignment.source);
-        break;
-    default: panic("HEY");
-    }
-
-    delete statement;
 }
 
 ModTree_Program* modtree_program_create()
@@ -516,8 +348,7 @@ ModTree_Program* modtree_program_create()
     ModTree_Program* result = new ModTree_Program();
     result->entry_function = 0;
     result->functions = dynamic_array_create_empty<ModTree_Function*>(16);
-    result->globals = dynamic_array_create_empty<ModTree_Variable*>(16);
-    result->extern_functions = dynamic_array_create_empty<ModTree_Extern_Function*>(16);
+    result->globals = dynamic_array_create_empty<ModTree_Global*>(16);
     return result;
 }
 
@@ -532,14 +363,12 @@ void modtree_program_destroy()
         modtree_function_destroy(program->functions[i]);
     }
     dynamic_array_destroy(&program->functions);
-    for (int i = 0; i < program->extern_functions.size; i++) {
-        delete program->extern_functions[i];
-    }
-    dynamic_array_destroy(&program->extern_functions);
-
     delete program;
 }
 
+
+
+// Comptime Values
 Comptime_Result comptime_result_make_available(void* data, Type_Signature* type) {
     Comptime_Result result;
     result.type = Comptime_Result_Type::AVAILABLE;
@@ -564,8 +393,10 @@ Comptime_Result comptime_result_make_not_comptime() {
     return result;
 }
 
-Comptime_Result modtree_expression_calculate_comptime_value(ModTree_Expression* expr)
+Comptime_Result expression_calculate_comptime_value(AST::Expression* expression)
 {
+    return comptime_result_make_not_comptime();
+    /*
     auto& analyser = semantic_analyser;
     Type_System* type_system = &analyser.compiler->type_system;
     switch (expr->expression_type)
@@ -672,28 +503,28 @@ Comptime_Result modtree_expression_calculate_comptime_value(ModTree_Expression* 
         Instruction_Type instr_type = (Instruction_Type)-1;
         switch (expr->options.cast.type)
         {
-        case ModTree_Cast_Type::FLOATS: instr_type = Instruction_Type::CAST_FLOAT_DIFFERENT_SIZE; break;
-        case ModTree_Cast_Type::FLOAT_TO_INT: instr_type = Instruction_Type::CAST_FLOAT_INTEGER; break;
-        case ModTree_Cast_Type::INT_TO_FLOAT: instr_type = Instruction_Type::CAST_INTEGER_FLOAT; break;
-        case ModTree_Cast_Type::INTEGERS: instr_type = Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE; break;
-        case ModTree_Cast_Type::ENUM_TO_INT: instr_type = Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE; break;
-        case ModTree_Cast_Type::INT_TO_ENUM: instr_type = Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE; break;
-        case ModTree_Cast_Type::POINTERS: return comptime_result_make_not_comptime();
-        case ModTree_Cast_Type::POINTER_TO_U64: return comptime_result_make_not_comptime();
-        case ModTree_Cast_Type::U64_TO_POINTER: return comptime_result_make_not_comptime();
-        case ModTree_Cast_Type::ARRAY_SIZED_TO_UNSIZED: {
+        case Info_Cast_Type::FLOATS: instr_type = Instruction_Type::CAST_FLOAT_DIFFERENT_SIZE; break;
+        case Info_Cast_Type::FLOAT_TO_INT: instr_type = Instruction_Type::CAST_FLOAT_INTEGER; break;
+        case Info_Cast_Type::INT_TO_FLOAT: instr_type = Instruction_Type::CAST_INTEGER_FLOAT; break;
+        case Info_Cast_Type::INTEGERS: instr_type = Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE; break;
+        case Info_Cast_Type::ENUM_TO_INT: instr_type = Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE; break;
+        case Info_Cast_Type::INT_TO_ENUM: instr_type = Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE; break;
+        case Info_Cast_Type::POINTERS: return comptime_result_make_not_comptime();
+        case Info_Cast_Type::POINTER_TO_U64: return comptime_result_make_not_comptime();
+        case Info_Cast_Type::U64_TO_POINTER: return comptime_result_make_not_comptime();
+        case Info_Cast_Type::ARRAY_SIZED_TO_UNSIZED: {
             Upp_Slice_Base* slice = stack_allocator_allocate<Upp_Slice_Base>(&analyser.allocator_values);
             slice->data_ptr = value.data;
             slice->size = value.data_type->options.array.element_count;
             return comptime_result_make_available(slice, expr->result_type);
         }
-        case ModTree_Cast_Type::TO_ANY: {
+        case Info_Cast_Type::TO_ANY: {
             Upp_Any* any = stack_allocator_allocate<Upp_Any>(&analyser.allocator_values);
             any->type = expr->result_type->internal_index;
             any->data = value.data;
             return comptime_result_make_available(any, expr->result_type);
         }
-        case ModTree_Cast_Type::FROM_ANY: {
+        case Info_Cast_Type::FROM_ANY: {
             Upp_Any* given = (Upp_Any*)value.data;
             if (given->type >= analyser.compiler->type_system.types.size) {
                 return comptime_result_make_not_comptime();
@@ -776,7 +607,6 @@ Comptime_Result modtree_expression_calculate_comptime_value(ModTree_Expression* 
     {
         // NOTE: Maybe this works in the futurre, but it dependes if we can always finish the struct size after analysis
         return comptime_result_make_not_comptime();
-        /*
         Type_Signature* element_type = expr->result_type->options.array.element_type;
         if (element_type->size == 0 && element_type->alignment == 0) {
             return comptime_analysis_make_error();
@@ -798,13 +628,11 @@ Comptime_Result modtree_expression_calculate_comptime_value(ModTree_Expression* 
             }
         }
         return comptime_analysis_make_success(result_buffer, expr->result_type);
-        */
     }
     case ModTree_Expression_Type::STRUCT_INITIALIZER:
     {
         // NOTE: Maybe this works in the future
         return comptime_result_make_not_comptime();
-        /*
         Type_Signature* struct_type = expr->result_type->options.array.element_type;
         void* result_buffer = stack_allocator_allocate_size(&analyser->allocator_values, expr->result_type->size, expr->result_type->alignment);
         for (int i = 0; i < expr->options.struct_initializer.size; i++)
@@ -821,16 +649,18 @@ Comptime_Result modtree_expression_calculate_comptime_value(ModTree_Expression* 
             }
         }
         return comptime_analysis_make_success(result_buffer, expr->result_type);
-        */
     }
     default: panic("");
     }
     panic("");
     return comptime_result_make_not_comptime();
+    */
 }
 
-bool modtree_expression_result_is_temporary(ModTree_Expression* expression)
+bool expression_is_temporary(AST::Expression* expression)
 {
+    return true;
+    /*
     if (expression->result_type->size == 0 && expression->result_type->alignment != 0) return true;
     switch (expression->expression_type)
     {
@@ -855,7 +685,7 @@ bool modtree_expression_result_is_temporary(ModTree_Expression* expression)
     case ModTree_Expression_Type::MEMBER_ACCESS: return modtree_expression_result_is_temporary(expression->options.member_access.structure_expression);
     case ModTree_Expression_Type::NEW_ALLOCATION: return true;
     case ModTree_Expression_Type::CAST: {
-        if (expression->options.cast.type == ModTree_Cast_Type::FROM_ANY) return false;
+        if (expression->options.cast.type == Info_Cast_Type::FROM_ANY) return false;
         return true;
     }
     case ModTree_Expression_Type::ARRAY_INITIALIZER: return true;
@@ -866,63 +696,12 @@ bool modtree_expression_result_is_temporary(ModTree_Expression* expression)
 
     panic("");
     return false;
-}
-
-ModTree_Expression* modtree_expression_make_error(Type_Signature* result_type)
-{
-    ModTree_Expression* expression = new ModTree_Expression;
-    expression->expression_type = ModTree_Expression_Type::ERROR_EXPR;
-    expression->result_type = result_type;
-    return expression;
-}
-
-ModTree_Expression* modtree_expression_create_constant(Type_Signature* signature, Array<byte> bytes, AST::Base* error_report_node)
-{
-    auto& analyser = semantic_analyser;
-    Constant_Result result = constant_pool_add_constant(&analyser.compiler->constant_pool, signature, bytes);
-    if (result.status != Constant_Status::SUCCESS)
-    {
-        assert(error_report_node != 0, "Error"); // Error report node may only be null if we know that adding the constant cannot fail.
-        semantic_analyser_log_error(Semantic_Error_Type::CONSTANT_POOL_ERROR, error_report_node);
-        semantic_analyser_add_error_info(error_information_make_constant_status(result.status));
-        return modtree_expression_make_error(signature);
-    }
-    ModTree_Expression* expression = new ModTree_Expression;
-    expression->expression_type = ModTree_Expression_Type::CONSTANT_READ;
-    expression->options.constant_read = result.constant;
-    expression->result_type = signature;
-    return expression;
-}
-
-ModTree_Expression* modtree_expression_create_constant_enum(Type_Signature* enum_type, i32 value) {
-    return modtree_expression_create_constant(enum_type, array_create_static((byte*)&value, sizeof(i32)), 0);
-}
-
-ModTree_Expression* modtree_expression_create_constant_i32(i32 value) {
-    return modtree_expression_create_constant(semantic_analyser.compiler->type_system.i32_type, array_create_static((byte*)&value, sizeof(i32)), 0);
+    */
 }
 
 
 
-
-
-/*
-HELPERS
-*/
-enum class Expression_Context_Type
-{
-    UNKNOWN,             // Type is not known
-    AUTO_DEREFERENCE,    // Type is not known, but we want pointer level 0 
-    SPECIFIC_TYPE,       // Type is known, pointer level changes + implicit casting enabled
-};
-
-struct Expression_Context
-{
-    Expression_Context_Type type;
-    Type_Signature* signature;
-};
-
-// Helpers
+// Context
 Expression_Context expression_context_make_unknown() {
     Expression_Context context;
     context.type = Expression_Context_Type::UNKNOWN;
@@ -946,122 +725,97 @@ Expression_Context expression_context_make_specific_type(Type_Signature* signatu
 }
 
 
-struct Expression_Result
+
+// Result
+void expression_info_set_module(Expression_Info* info, Symbol_Table* module_table)
 {
-    Expression_Result_Type type;
-    union
+    info->result_type = Expression_Result_Type::MODULE;
+    info->options.module_table = module_table;
+    info->context_ops.after_cast_type = compiler.type_system.unknown_type;
+}
+
+void expression_info_set_value(Expression_Info* info, Type_Signature* result_type)
+{
+    info->result_type = Expression_Result_Type::VALUE;
+    info->options.value_type = result_type;
+    info->context_ops.after_cast_type = result_type;
+}
+
+void expression_info_set_error(Expression_Info* info, Type_Signature* result_type)
+{
+    info->result_type = Expression_Result_Type::VALUE;
+    info->options.value_type = result_type;
+    info->context_ops.after_cast_type = result_type;
+}
+
+void expression_info_set_function(Expression_Info* info, ModTree_Function* function)
+{
+    info->result_type = Expression_Result_Type::FUNCTION;
+    info->options.function = function;
+    info->context_ops.after_cast_type = function->signature;
+}
+
+void expression_info_set_hardcoded(Expression_Info* info, Hardcoded_Type hardcoded)
+{
+    info->result_type = Expression_Result_Type::HARDCODED_FUNCTION;
+    info->options.hardcoded = hardcoded;
+    info->context_ops.after_cast_type = hardcoded_type_to_signature(hardcoded);
+}
+
+void expression_info_set_type(Expression_Info* info, Type_Signature* type)
+{
+    info->result_type = Expression_Result_Type::TYPE;
+    info->options.type = type;
+    info->context_ops.after_cast_type = compiler.type_system.type_type;
+}
+
+void expression_info_set_constant(Expression_Info* info, Upp_Constant constant) {
+    info->constant_value = optional_make_success(constant);
+    info->context_ops.after_cast_type = constant.type;
+}
+
+void expression_info_set_constant(Expression_Info* info, Type_Signature* signature, Array<byte> bytes, AST::Base* error_report_node)
+{
+    auto& analyser = semantic_analyser;
+    Constant_Result result = constant_pool_add_constant(&analyser.compiler->constant_pool, signature, bytes);
+    if (result.status != Constant_Status::SUCCESS)
     {
-        ModTree_Expression* expression;
-        Type_Signature* type;
-        ModTree_Function* function;
-        Hardcoded_Type hardcoded;
-        ModTree_Extern_Function* extern_function;
-        Symbol_Table* module_table;
-    } options;
-};
-
-Expression_Result expression_result_make_module(Symbol_Table* module_table)
-{
-    Expression_Result result;
-    result.type = Expression_Result_Type::MODULE;
-    result.options.module_table = module_table;
-    return result;
-}
-
-Expression_Result expression_result_make_error(Type_Signature* result_type)
-{
-    Expression_Result result;
-    result.type = Expression_Result_Type::EXPRESSION;
-    result.options.expression = modtree_expression_make_error(result_type);
-    return result;
-}
-
-Expression_Result expression_result_make_value(ModTree_Expression* expression)
-{
-    Expression_Result result;
-    result.type = Expression_Result_Type::EXPRESSION;
-    result.options.expression = expression;
-    return result;
-}
-
-Expression_Result expression_result_make_function(ModTree_Function* function)
-{
-    Expression_Result result;
-    result.type = Expression_Result_Type::FUNCTION;
-    result.options.function = function;
-    return result;
-}
-
-Expression_Result expression_result_make_hardcoded(Hardcoded_Type hardcoded)
-{
-    Expression_Result result;
-    result.type = Expression_Result_Type::HARDCODED_FUNCTION;
-    result.options.hardcoded = hardcoded;
-    return result;
-}
-
-Expression_Result expression_result_make_extern_function(ModTree_Extern_Function* extern_function)
-{
-    Expression_Result result;
-    result.type = Expression_Result_Type::EXTERN_FUNCTION;
-    result.options.extern_function = extern_function;
-    return result;
-}
-
-Expression_Result expression_result_make_type(Type_Signature* type)
-{
-    Expression_Result result;
-    result.type = Expression_Result_Type::TYPE;
-    result.options.type = type;
-    return result;
-}
-
-AST::Base* rc_to_ast(AST::Expression* expression)
-{
-    return &expression->base;
-}
-
-AST::Base* rc_to_ast(AST::Statement* statement)
-{
-    return &statement->base;
-}
-
-Type_Signature* hardcoded_type_to_signature(Hardcoded_Type type)
-{
-    auto& an = semantic_analyser;
-    switch (type)
-    {
-    case Hardcoded_Type::ASSERT_FN: return an.assert_function->signature;
-    case Hardcoded_Type::FREE_POINTER: return an.type_free;
-    case Hardcoded_Type::MALLOC_SIZE_I32: return an.type_malloc;
-    case Hardcoded_Type::TYPE_INFO: return an.type_type_info;
-    case Hardcoded_Type::TYPE_OF: return an.type_type_of;
-
-    case Hardcoded_Type::PRINT_BOOL: return an.type_print_bool;
-    case Hardcoded_Type::PRINT_I32: return an.type_print_i32;
-    case Hardcoded_Type::PRINT_F32: return an.type_print_f32;
-    case Hardcoded_Type::PRINT_STRING: return an.type_print_string;
-    case Hardcoded_Type::PRINT_LINE: return an.type_print_line;
-
-    case Hardcoded_Type::READ_I32: return an.type_print_i32;
-    case Hardcoded_Type::READ_F32: return an.type_print_f32;
-    case Hardcoded_Type::READ_BOOL: return an.type_print_bool;
-    case Hardcoded_Type::RANDOM_I32: return an.type_random_i32;
-    default: panic("HEY");
+        assert(error_report_node != 0, "Error"); // Error report node may only be null if we know that adding the constant cannot fail.
+        semantic_analyser_log_error(Semantic_Error_Type::CONSTANT_POOL_ERROR, error_report_node);
+        semantic_analyser_add_error_info(error_information_make_constant_status(result.status));
+        expression_info_set_error(info, signature);
+        return;
     }
-    return 0;
+    expression_info_set_constant(info, result.constant);
+}
+
+void expression_info_set_constant_enum(Expression_Info* info, Type_Signature* enum_type, i32 value) {
+    expression_info_set_constant(info, enum_type, array_create_static((byte*)&value, sizeof(i32)), 0);
+}
+
+void expression_info_set_constant_i32(Expression_Info* info, i32 value) {
+    expression_info_set_constant(info, semantic_analyser.compiler->type_system.i32_type, array_create_static((byte*)&value, sizeof(i32)), 0);
+}
+
+// Returns result type of a value before a cast
+Type_Signature* expression_info_get_type(Expression_Info* info)
+{
+    auto& type_system = semantic_analyser.compiler->type_system;
+    switch (info->result_type)
+    {
+    case Expression_Result_Type::VALUE: return info->options.value_type;
+    case Expression_Result_Type::FUNCTION: return info->options.function->signature;
+    case Expression_Result_Type::HARDCODED_FUNCTION: return hardcoded_type_to_signature(info->options.hardcoded);
+    case Expression_Result_Type::MODULE: return type_system.unknown_type;
+    case Expression_Result_Type::TYPE: return type_system.type_type;
+    default: panic("");
+    }
+    return type_system.unknown_type;
 }
 
 
 
-
-
-
-
-/*
-DEPENDENCY GRAPH
-*/
-
+//DEPENDENCY GRAPH
 Workload_Pair workload_pair_create(Analysis_Workload* workload, Analysis_Workload* depends_on) {
     Workload_Pair result;
     result.depends_on = depends_on;
@@ -1875,7 +1629,6 @@ Analysis_Workload* workload_executer_add_workload_empty(Analysis_Workload_Type t
 
     Analysis_Workload* workload = new Analysis_Workload;
     workload->type = type;
-    workload->analysis_item = item;
     workload->progress = progress;
     workload->is_finished = false;
     workload->cluster = 0;
@@ -1946,7 +1699,8 @@ void workload_executer_add_analysis_items(Code_Source* source)
         switch (item->type)
         {
         case Analysis_Item_Type::IMPORT: {
-            workload_executer_add_workload_empty(Analysis_Workload_Type::PROJECT_IMPORT, item, 0, false);
+            auto workload = workload_executer_add_workload_empty(Analysis_Workload_Type::PROJECT_IMPORT, item, 0, false);
+            workload->options.import = AST::base_downcast<AST::Project_Import>(item->node);
             break;
         }
         case Analysis_Item_Type::ROOT:
@@ -1955,7 +1709,7 @@ void workload_executer_add_analysis_items(Code_Source* source)
         }
         case Analysis_Item_Type::BAKE:
         {
-            progress = to_base(analysis_progress_create_bake());
+            progress = to_base(analysis_progress_create_bake(item));
             auto analysis_workload = workload_executer_add_workload_empty(Analysis_Workload_Type::BAKE_ANALYSIS, item, progress, true);
             auto execute_workload = workload_executer_add_workload_empty(Analysis_Workload_Type::BAKE_EXECUTION, item, progress, false);
             analysis_workload_add_dependency_internal(execute_workload, analysis_workload, 0);
@@ -1963,32 +1717,34 @@ void workload_executer_add_analysis_items(Code_Source* source)
         }
         case Analysis_Item_Type::DEFINITION:
         {
-            progress = to_base(analysis_progress_create_definition(item->symbol));
+            progress = to_base(analysis_progress_create_definition(item->symbol, item));
             workload_executer_add_workload_empty(Analysis_Workload_Type::DEFINITION, item, progress, true);
             break;
         }
         case Analysis_Item_Type::FUNCTION:
         {
             assert(item->options.function_body_item->node->type == AST::Base_Type::CODE_BLOCK, "");
-            ModTree_Function* function = modtree_function_create_empty(
-                0, item->symbol, (AST::Code_Block*) item->options.function_body_item->node
-            );
-            progress = to_base(analysis_progress_create_function(function));
+            auto func_progress = analysis_progress_create_function(0, item->options.function_body_item, item);
+            progress = to_base(func_progress);
+            func_progress->function = modtree_function_create_empty(0, item->symbol, func_progress->body_pass);
+
             auto header_workload = workload_executer_add_workload_empty(Analysis_Workload_Type::FUNCTION_HEADER, item, progress, true);
             auto body_workload = workload_executer_add_workload_empty(Analysis_Workload_Type::FUNCTION_BODY, item->options.function_body_item, progress, true);
             bool body_item_registered = hashtable_insert_element(&workload_executer.progress_items, item->options.function_body_item, progress);
             assert(body_item_registered, "This may need to change with templates");
 
             analysis_workload_add_dependency_internal(body_workload, header_workload, 0);
-            auto compile_workload = workload_executer_add_workload_empty(Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE, item->options.function_body_item, progress, false);
+            auto compile_workload = workload_executer_add_workload_empty(
+                Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE, item->options.function_body_item, progress, false
+            );
             compile_workload->options.cluster_compile.functions = dynamic_array_create_empty<ModTree_Function*>(1);
-            dynamic_array_push_back(&compile_workload->options.cluster_compile.functions, function);
+            dynamic_array_push_back(&compile_workload->options.cluster_compile.functions, func_progress->function);
             analysis_workload_add_dependency_internal(compile_workload, body_workload, 0);
 
             if (item->symbol != 0) {
                 Symbol* symbol = item->symbol;
                 symbol->type = Symbol_Type::FUNCTION;
-                symbol->options.function = function;
+                symbol->options.function = func_progress->function;
             }
             break;
         }
@@ -2002,10 +1758,10 @@ void workload_executer_add_analysis_items(Code_Source* source)
             assert(item->node->type == AST::Base_Type::EXPRESSION, "");
             Type_Signature* struct_type = type_system_make_struct_empty(
                 &semantic_analyser.compiler->type_system, item->symbol,
-                ast_structure_type_to_type(((AST::Expression*)item->node)->options.structure.type)
+                ((AST::Expression*)item->node)->options.structure.type
             );
 
-            progress = to_base(analysis_progress_create_struct(struct_type));
+            progress = to_base(analysis_progress_create_struct(struct_type, item));
             auto workload = workload_executer_add_workload_empty(Analysis_Workload_Type::STRUCT_ANALYSIS, item, progress, true);
             auto reachable_workload = workload_executer_add_workload_empty(Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE, item, progress, false);
             reachable_workload->options.struct_reachable.struct_types = dynamic_array_create_empty<Type_Signature*>(1);
@@ -2115,32 +1871,19 @@ void analysis_workload_check_if_runnable(Analysis_Workload* workload)
     }
 }
 
-void semantic_analyser_work_through_defers(ModTree_Block* modtree_block, int defer_start_index)
-{
-    assert(defer_start_index != -1, "");
-    for (int i = semantic_analyser.defer_stack.size - 1; i >= defer_start_index; i--)
-    {
-        AST::Code_Block* code_block = semantic_analyser.defer_stack[i];
-        ModTree_Statement* statement = modtree_block_add_statement_empty(modtree_block, ModTree_Statement_Type::BLOCK);
-        statement->options.block = modtree_block_create_empty(code_block);
-        semantic_analyser_fill_block(statement->options.block, code_block);
-    }
-}
-
-bool analysis_workload_execute(Analysis_Workload* workload)
+void analysis_workload_execute(Analysis_Workload* workload)
 {
     auto& analyser = semantic_analyser;
     auto& type_system = analyser.compiler->type_system;
     analyser.current_workload = workload;
     analyser.current_function = 0;
+    analyser.current_pass = 0;
     switch (workload->type)
     {
     case Analysis_Workload_Type::PROJECT_IMPORT: 
     {
-        assert(workload->analysis_item->type == Analysis_Item_Type::IMPORT, "");
-        assert(workload->analysis_item->node->type == AST::Base_Type::PROJECT_IMPORT, "");
-        auto import = (AST::Project_Import*)workload->analysis_item->node;
-        auto src = code_source_from_ast(workload->analysis_item->node);
+        auto import = workload->options.import;
+        auto src = code_source_from_ast(to_base(import));
 
         String path = string_create(src->file_path.characters);
         file_io_relative_to_full_path(&path);
@@ -2175,10 +1918,12 @@ bool analysis_workload_execute(Analysis_Workload* workload)
     }
     case Analysis_Workload_Type::DEFINITION:
     {
-        assert(workload->analysis_item->type == Analysis_Item_Type::DEFINITION, "");
-        assert(workload->analysis_item->node->type == AST::Base_Type::DEFINITION, "");
-        auto definition = (AST::Definition*)workload->analysis_item->node;
+        assert(workload->progress->type == Analysis_Progress_Type::DEFINITION, "");
+        auto progress = (Definition_Progress*)workload->progress;
+        assert(progress->pass->item->node->type == AST::Base_Type::DEFINITION, "");
+        auto definition = (AST::Definition*)progress->pass->item->node;
         assert(!(!definition->type.available && !definition->value.available), "Syntax should not allow no type and no definition!");
+        analyser.current_pass = progress->pass;
 
         Symbol* symbol = definition->symbol;
         if (!definition->is_comptime) // Global variable definition
@@ -2187,54 +1932,48 @@ bool analysis_workload_execute(Analysis_Workload* workload)
             if (definition->type.available) {
                 type = semantic_analyser_analyse_expression_type(definition->type.value);
             }
-            ModTree_Expression* value = 0;
             if (definition->value.available)
             {
-                value = semantic_analyser_analyse_expression_value(
+                auto value_type = semantic_analyser_analyse_expression_value(
                     definition->value.value, type != 0 ? expression_context_make_specific_type(type) : expression_context_make_unknown()
                 );
                 if (type == 0) {
-                    type = value->result_type;
+                    type = value_type;
                 }
             }
-            ModTree_Variable* variable = modtree_program_add_global(type, definition->symbol);
-            symbol->type = Symbol_Type::VARIABLE;
-            symbol->options.variable = variable;
-            if (value != 0) {
-                ModTree_Statement* statement = modtree_block_add_statement_empty(analyser.global_init_function->body, ModTree_Statement_Type::ASSIGNMENT);
-                statement->options.assignment.destination = modtree_expression_create_variable_read(variable);
-                statement->options.assignment.source = value;
-            }
-            ir_generator_queue_global(analyser.compiler->ir_generator, variable);
+            symbol->type = Symbol_Type::GLOBAL;
+            symbol->options.global = modtree_program_add_global(definition, type);
+            ir_generator_queue_global(symbol->options.global);
         }
         else // Comptime definition
         {
             if (definition->type.available) {
-                Type_Signature* type = semantic_analyser_analyse_expression_type(definition->type.value);
+                semantic_analyser_analyse_expression_type(definition->type.value);
                 semantic_analyser_log_error(Semantic_Error_Type::COMPTIME_DEFINITION_MUST_BE_INFERED, definition->type.value);
             }
             if (!definition->value.available) {
                 semantic_analyser_log_error(Semantic_Error_Type::COMPTIME_DEFINITION_REQUIRES_INITAL_VALUE, to_base(definition));
-                return true;
+                return;
             }
-            Expression_Result result = semantic_analyser_analyse_expression_any(definition->value.value, expression_context_make_unknown());
-            switch (result.type)
+
+            auto result = semantic_analyser_analyse_expression_any(definition->value.value, expression_context_make_unknown());
+            switch (result->result_type)
             {
-            case Expression_Result_Type::EXPRESSION:
+            case Expression_Result_Type::VALUE:
             {
-                Comptime_Result comptime = modtree_expression_calculate_comptime_value(result.options.expression);
+                Comptime_Result comptime = expression_calculate_comptime_value(definition->value.value);
                 switch (comptime.type)
                 {
                 case Comptime_Result_Type::AVAILABLE:
                     break;
                 case Comptime_Result_Type::UNAVAILABLE: {
                     symbol->type = Symbol_Type::ERROR_SYMBOL;
-                    return true;
+                    return;
                 }
                 case Comptime_Result_Type::NOT_COMPTIME: {
                     semantic_analyser_log_error(Semantic_Error_Type::COMPTIME_DEFINITION_MUST_BE_COMPTIME_KNOWN, definition->value.value);
                     symbol->type = Symbol_Type::ERROR_SYMBOL;
-                    return true;
+                    return;
                 }
                 default: panic("");
                 }
@@ -2249,25 +1988,19 @@ bool analysis_workload_execute(Analysis_Workload* workload)
                     break;
                 }
 
-                symbol->type = Symbol_Type::CONSTANT_VALUE;
+                symbol->type = Symbol_Type::COMPTIME_VALUE;
                 symbol->options.constant = result.constant;
-                break;
-            }
-            case Expression_Result_Type::EXTERN_FUNCTION:
-            {
-                symbol->type = Symbol_Type::EXTERN_FUNCTION;
-                symbol->options.extern_function = result.options.extern_function;
                 break;
             }
             case Expression_Result_Type::HARDCODED_FUNCTION:
             {
                 symbol->type = Symbol_Type::HARDCODED_FUNCTION;
-                symbol->options.hardcoded = result.options.hardcoded;
+                symbol->options.hardcoded = result->options.hardcoded;
                 break;
             }
             case Expression_Result_Type::FUNCTION:
             {
-                ModTree_Function* function = result.options.function;
+                ModTree_Function* function = result->options.function;
                 // I am not quite sure if this is correct/alias actually works
                 if (function->symbol != 0) {
                     symbol->type = Symbol_Type::SYMBOL_ALIAS;
@@ -2275,18 +2008,18 @@ bool analysis_workload_execute(Analysis_Workload* workload)
                 }
                 else {
                     symbol->type = Symbol_Type::FUNCTION;
-                    symbol->options.function = result.options.function;
+                    symbol->options.function = result->options.function;
                 }
                 break;
             }
             case Expression_Result_Type::MODULE: {
                 symbol->type = Symbol_Type::MODULE;
-                symbol->options.module_table = result.options.module_table;
+                symbol->options.module_table = result->options.module_table;
                 break;
             }
             case Expression_Result_Type::TYPE: {
                 symbol->type = Symbol_Type::TYPE;
-                symbol->options.type = result.options.type;
+                symbol->options.type = result->options.type;
                 break;
             }
             default: panic("");
@@ -2296,80 +2029,38 @@ bool analysis_workload_execute(Analysis_Workload* workload)
     }
     case Analysis_Workload_Type::FUNCTION_HEADER:
     {
-        assert(workload->analysis_item->type == Analysis_Item_Type::FUNCTION, "");
-        auto& base_node = workload->analysis_item->node;
+        assert(workload->progress->type == Analysis_Progress_Type::FUNCTION, "");
+        auto progress = (Function_Progress*)workload->progress;
+        auto& base_node = progress->header_pass->item->node;
         assert(base_node->type == AST::Base_Type::EXPRESSION && ((AST::Expression*)base_node)->type == AST::Expression_Type::FUNCTION, "");
         auto& header = ((AST::Expression*)base_node)->options.function;
-        Function_Progress* progress = (Function_Progress*)workload->progress;
+
         ModTree_Function* function = progress->function;
         analyser.current_function = function;
+        analyser.current_pass = progress->header_pass;
 
         // Analyser Header
         auto& signature_node = header.signature->options.function_signature;
-        int polymorphic_count = 0;
-
-        // Determine parameter analysis order for polymorphic dependencies
-        /*
-        Dependency_Graph graph = dependency_graph_create();
-        SCOPE_EXIT(dependency_graph_destroy(&graph));
-        {
-            Dynamic_Array<RC_Symbol_Read*> param_symbol_reads = dynamic_array_create_empty<RC_Symbol_Read*>(1);
-            SCOPE_EXIT(dynamic_array_destroy(&param_symbol_reads));
-            for (int i = 0; i < rc_sig->parameters.size; i++)
-            {
-                dynamic_array_reset(&param_symbol_reads);
-                RC_Parameter* rc_param = &rc_sig->parameters[i];
-                rc_expression_find_symbol_reads(rc_param->type_expression, &param_symbol_reads);
-                for (int j = 0; j < param_symbol_reads.size; j++) {
-                    RC_Symbol_Read* read = param_symbol_reads[j];
-                    if (read->symbol->type == Symbol_Type::VARIABLE_UNDEFINED && read->symbol->options.variable_undefined.is_parameter) {
-
-                    }
-                }
-
-            }
-        }
-        */
 
         // Analyse parameters
+        Dynamic_Array<Type_Signature*> param_types = dynamic_array_create_empty<Type_Signature*>(math_maximum(0, signature_node.parameters.size));
         for (int i = 0; i < signature_node.parameters.size; i++)
         {
             auto param = signature_node.parameters[i];
             Symbol* symbol = param->symbol;
-            ModTree_Parameter modtree_param;
-            modtree_param.data_type = semantic_analyser_analyse_expression_type(param->type);
-            modtree_param.is_comptime = param->is_comptime;
-            modtree_param.name = param->name;
             if (param->is_comptime) {
-                symbol->type = Symbol_Type::POLYMORPHIC_PARAMETER;
-                symbol->options.polymorphic.parameter_index = i;
-                symbol->options.polymorphic.function = function;
-                polymorphic_count += 1;
+                semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, to_base(param));
+                semantic_analyser_add_error_info(error_information_make_text("Currently comptime parameters not supported!"));
             }
-            else {
-                modtree_param.options.variable = modtree_variable_create(modtree_param.data_type, symbol);
-                symbol->type = Symbol_Type::VARIABLE;
-                symbol->options.variable = modtree_param.options.variable;
-            }
-            dynamic_array_push_back(&function->parameters, modtree_param);
+            symbol->type = Symbol_Type::PARAMETER;
+            symbol->options.parameter_type = semantic_analyser_analyse_expression_type(param->type);
+            symbol->options.parameter_index = i;
+            dynamic_array_push_back(&param_types, symbol->options.variable_type);
         }
 
         Type_Signature* return_type = analyser.compiler->type_system.void_type;
         if (signature_node.return_value.available) {
             return_type = semantic_analyser_analyse_expression_type(signature_node.return_value.value);
-        }
-        if (polymorphic_count > 0) {
-            function->type = ModTree_Function_Type::POLYMORPHIC_BASE;
-            function->options.base.poly_argument_count = polymorphic_count;
-            function->is_runnable = false;
-        }
-
-        // Create function signature
-        Dynamic_Array<Type_Signature*> param_types = dynamic_array_create_empty<Type_Signature*>(math_maximum(0, signature_node.parameters.size));
-        for (int i = 0; i < function->parameters.size; i++) {
-            if (!function->parameters[i].is_comptime) {
-                dynamic_array_push_back(&param_types, function->parameters[i].data_type);
-            }
         }
         function->signature = type_system_make_function(&type_system, param_types, return_type);
 
@@ -2379,43 +2070,29 @@ bool analysis_workload_execute(Analysis_Workload* workload)
     }
     case Analysis_Workload_Type::FUNCTION_BODY:
     {
-        assert(workload->analysis_item->type == Analysis_Item_Type::FUNCTION_BODY, "");
-        auto& base_node = workload->analysis_item->node;
+        assert(workload->progress->type == Analysis_Progress_Type::FUNCTION, "");
+        auto progress = (Function_Progress*)workload->progress;
+        auto& base_node = progress->body_pass->item->node;
         assert(base_node->type == AST::Base_Type::CODE_BLOCK, "");
         auto code_block = ((AST::Code_Block*)base_node);
-        Function_Progress* progress = (Function_Progress*)workload->progress;
-        ModTree_Function* function = progress->function;
-        analyser.current_function = function;
 
-        ModTree_Block* block = function->body;
-        if (function->type == ModTree_Function_Type::POLYMOPRHIC_INSTANCE) {
-            ModTree_Function* base = function->options.instance.instance_base_function;
-            if (base->contains_errors) {
-                function->contains_errors = true;
-                break;
-            }
-        }
+        auto function = progress->function;
+        analyser.current_function = function;
+        analyser.current_pass = progress->body_pass;
 
         dynamic_array_reset(&analyser.block_stack);
         analyser.statement_reachable = true;
-        semantic_analyser_fill_block(block, code_block);
-        Control_Flow flow = block->flow;
-        if (flow != Control_Flow::RETURNS) {
-            if (function->signature->options.function.return_type == type_system.void_type) {
-                semantic_analyser_work_through_defers(function->body, 0);
-                ModTree_Statement* return_statement = modtree_block_add_statement_empty(function->body, ModTree_Statement_Type::RETURN);
-                return_statement->options.return_value.available = false;
-            }
-            else {
-                semantic_analyser_log_error(Semantic_Error_Type::OTHERS_MISSING_RETURN_STATEMENT, base_node);
-            }
+        Control_Flow flow = semantic_analyser_analyse_block(code_block);
+        if (flow != Control_Flow::RETURNS && function->signature->options.function.return_type != type_system.void_type) {
+            semantic_analyser_log_error(Semantic_Error_Type::OTHERS_MISSING_RETURN_STATEMENT, base_node);
         }
         progress->state = Function_State::BODY_ANALYSED;
         break;
     }
     case Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE:
     {
-        Function_Progress* progress = (Function_Progress*)workload->progress;
+        assert(workload->progress->type == Analysis_Progress_Type::FUNCTION, "");
+        auto progress = (Function_Progress*)workload->progress;
 
         // Check if the cluster contains errors
         bool cluster_contains_error = false;
@@ -2435,7 +2112,7 @@ bool analysis_workload_execute(Analysis_Workload* workload)
                 function->is_runnable = false;
             }
             else {
-                ir_generator_queue_function(analyser.compiler->ir_generator, function);
+                ir_generator_queue_function(function);
             }
             Function_Progress* progress = *hashtable_find_element(&workload_executer.progress_functions, function);
             progress->state = Function_State::FINISHED;
@@ -2444,11 +2121,13 @@ bool analysis_workload_execute(Analysis_Workload* workload)
     }
     case Analysis_Workload_Type::STRUCT_ANALYSIS:
     {
-        assert(workload->analysis_item->type == Analysis_Item_Type::STRUCTURE, "");
-        auto& base_node = workload->analysis_item->node;
+        assert(workload->progress->type == Analysis_Progress_Type::STRUCTURE, "");
+        auto progress = (Struct_Progress*)workload->progress;
+        analyser.current_pass = progress->pass;
+
+        auto& base_node = progress->pass->item->node;
         assert(base_node->type == AST::Base_Type::EXPRESSION && ((AST::Expression*)base_node)->type == AST::Expression_Type::STRUCTURE_TYPE, "");
         auto& struct_node = ((AST::Expression*)base_node)->options.structure;
-        Struct_Progress* progress = (Struct_Progress*)workload->progress;
         Type_Signature* struct_signature = progress->struct_type;
 
         for (int i = 0; i < struct_node.members.size; i++)
@@ -2466,7 +2145,7 @@ bool analysis_workload_execute(Analysis_Workload* workload)
             member.id = member_node->name;
             member.offset = 0;
             member.type = semantic_analyser_analyse_expression_type(member_node->type.value);
-            assert(!(member.type->size == 0 && member.type->alignment == 0), "Must not happen with Dependency_Type system");
+            assert(!(member.type->size == 0 && member.type->alignment == 0), "Must not happen with current Dependency-System");
             dynamic_array_push_back(&struct_signature->options.structure.members, member);
         }
         progress->state = Struct_State::SIZE_KNOWN;
@@ -2475,7 +2154,6 @@ bool analysis_workload_execute(Analysis_Workload* workload)
     }
     case Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE:
     {
-        assert(workload->analysis_item->type == Analysis_Item_Type::STRUCTURE, "");
         auto& reachable = workload->options.struct_reachable;
         for (int i = 0; i < reachable.unfinished_array_types.size; i++)
         {
@@ -2496,22 +2174,19 @@ bool analysis_workload_execute(Analysis_Workload* workload)
     }
     case Analysis_Workload_Type::BAKE_ANALYSIS:
     {
-        assert(workload->analysis_item->type == Analysis_Item_Type::BAKE, "");
-        auto& base_node = workload->analysis_item->node;
+        assert(workload->progress->type == Analysis_Progress_Type::BAKE, "");
+        auto progress = (Bake_Progress*)workload->progress;
+        analyser.current_pass = progress->pass;
+        analyser.current_function = progress->bake_function;
+
+        auto& base_node = progress->pass->item->node;
         assert(base_node->type == AST::Base_Type::EXPRESSION, "");
         auto expr = ((AST::Expression*) base_node);
-        auto code_block = ((AST::Code_Block*)base_node);
-        Bake_Progress* progress = (Bake_Progress*)workload->progress;
-        auto bake_function = progress->bake_function;
-        analyser.current_function = bake_function;
-
-        if (expr->type == AST::Expression_Type::BAKE_BLOCK) 
+        if (expr->type == AST::Expression_Type::BAKE_BLOCK)
         {
             auto& code_block = expr->options.bake_block;
             progress->bake_function->signature = type_system_make_function(&type_system, {}, type_system.void_type);
-            semantic_analyser_fill_block(semantic_analyser.current_function->body, expr->options.bake_block);
-
-            Control_Flow flow = bake_function->body->flow;
+            auto flow = semantic_analyser_analyse_block(expr->options.bake_block);
             if (flow != Control_Flow::RETURNS) {
                 semantic_analyser_log_error(Semantic_Error_Type::OTHERS_MISSING_RETURN_STATEMENT, to_base(expr->options.bake_block));
             }
@@ -2519,13 +2194,9 @@ bool analysis_workload_execute(Analysis_Workload* workload)
         else if (expr->type == AST::Expression_Type::BAKE_EXPR)
         {
             auto& bake_expr = expr->options.bake_expr;
-            auto result_expr = semantic_analyser_analyse_expression_value(expr->options.bake_expr, expression_context_make_unknown());
-
+            auto result_type = semantic_analyser_analyse_expression_value(expr->options.bake_expr, expression_context_make_unknown());
             // Set Function type
-            progress->bake_function->signature = type_system_make_function(&type_system, dynamic_array_create_empty<Type_Signature*>(1), result_expr->result_type);
-            // Fill function
-            auto return_stat = modtree_block_add_statement_empty(progress->bake_function->body, ModTree_Statement_Type::RETURN);
-            return_stat->options.return_value = optional_make_success(result_expr);
+            progress->bake_function->signature = type_system_make_function(&type_system, {}, result_type);
         }
         else {
             panic("");
@@ -2534,28 +2205,33 @@ bool analysis_workload_execute(Analysis_Workload* workload)
     }
     case Analysis_Workload_Type::BAKE_EXECUTION:
     {
-        assert(workload->analysis_item->type == Analysis_Item_Type::BAKE, "");
-        auto& base_node = workload->analysis_item->node;
         assert(workload->progress->type == Analysis_Progress_Type::BAKE, "");
-        Bake_Progress* progress = (Bake_Progress*)workload->progress;
-        auto compiler = analyser.compiler;
-        ModTree_Function* bake_function = progress->bake_function;
-        Comptime_Result* result = &progress->result;
+        auto progress = (Bake_Progress*)workload->progress;
 
+        auto& compiler = analyser.compiler;
+        auto bake_function = progress->bake_function;
+
+        semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, progress->pass->item->node);
+        semantic_analyser_add_error_info(error_information_make_text("During transition to annotated AST bake is not implemented!"));
+        progress->result = comptime_result_make_unavailable(bake_function->signature->options.function.return_type);
+        return;
+
+        /*
         // Check if function compilation succeeded
         if (bake_function->contains_errors) {
-            *result = comptime_result_make_unavailable(bake_function->signature->options.function.return_type);
-            return true;
+            progress->result = comptime_result_make_unavailable(bake_function->signature->options.function.return_type);
+            return;
         }
         for (int i = 0; i < bake_function->calls.size; i++) {
             if (!bake_function->calls[i]->is_runnable) {
                 bake_function->is_runnable = false;
-                *result = comptime_result_make_unavailable(bake_function->signature->options.function.return_type);
-                return true;
+                progress->result = comptime_result_make_unavailable(bake_function->signature->options.function.return_type);
+                return;
             }
         }
 
-        // Compile 
+
+        // Compile
         ir_generator_queue_function(compiler->ir_generator, bake_function);
         ir_generator_queue_global(compiler->ir_generator, analyser.global_type_informations);
         ir_generator_generate_queued_items(compiler->ir_generator);
@@ -2589,12 +2265,11 @@ bool analysis_workload_execute(Analysis_Workload* workload)
         void* value_ptr = compiler->bytecode_interpreter->return_register;
         *result = comptime_result_make_available(value_ptr, bake_function->signature->options.function.return_type);
         return true;
+        */
     }
     default: panic("");
     }
-
-    return true;
-
+    return;
 
     // OLD EXTERN IMPORTS
     /*
@@ -2757,12 +2432,12 @@ void analysis_workload_append_to_string(Analysis_Workload* workload, String* str
     switch (workload->type)
     {
     case Analysis_Workload_Type::PROJECT_IMPORT: {
-        auto import = (AST::Project_Import*)workload->analysis_item->node;
+        auto import = workload->options.import;
         string_append_formated(string, "Project Import %s\n", import->filename->characters);
         break;
     }
     case Analysis_Workload_Type::DEFINITION: {
-        AST::Definition* definition = (AST::Definition*)workload->analysis_item->node;
+        AST::Definition* definition = (AST::Definition*) ((Definition_Progress*)workload->progress)->pass->item->node;
         if (definition->is_comptime) {
             string_append_formated(string, "Comptime \"%s\"", definition->symbol->id->characters);
         }
@@ -2780,17 +2455,10 @@ void analysis_workload_append_to_string(Analysis_Workload* workload, String* str
         break;
     }
     case Analysis_Workload_Type::FUNCTION_BODY: {
-        Symbol* symbol = workload->analysis_item->symbol;
+        Symbol* symbol = ((Function_Progress*)workload->progress)->header_pass->item->symbol;
         auto function = ((Function_Progress*)workload->progress)->function;
         const char* fn_id = symbol == 0 ? "Lambda" : symbol->id->characters;
-        const char* appendix = "";
-        if (function->type == ModTree_Function_Type::POLYMORPHIC_BASE) {
-            appendix = "(Polymorphic Base)";
-        }
-        else if (function->type == ModTree_Function_Type::POLYMOPRHIC_INSTANCE) {
-            appendix = "(Polymorphic Instance)";
-        }
-        string_append_formated(string, "Body \"%s\"%s", fn_id, appendix);
+        string_append_formated(string, "Body \"%s\"", fn_id);
         break;
     }
     case Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE:
@@ -2806,13 +2474,13 @@ void analysis_workload_append_to_string(Analysis_Workload* workload, String* str
         break;
     }
     case Analysis_Workload_Type::FUNCTION_HEADER: {
-        Symbol* symbol = workload->analysis_item->symbol;
+        Symbol* symbol = ((Function_Progress*)workload->progress)->header_pass->item->symbol;
         const char* fn_id = symbol == 0 ? "Anonymous" : symbol->id->characters;
         string_append_formated(string, "Header \"%s\"", fn_id);
         break;
     }
     case Analysis_Workload_Type::STRUCT_ANALYSIS: {
-        Symbol* symbol = workload->analysis_item->symbol;
+        Symbol* symbol = ((Struct_Progress*)workload->progress)->pass->item->symbol;
         const char* struct_id = symbol == 0 ? "Anonymous_Struct" : symbol->id->characters;
         string_append_formated(string, "Struct-Analysis \"%s\"", struct_id);
         break;
@@ -2838,148 +2506,8 @@ void analysis_workload_append_to_string(Analysis_Workload* workload, String* str
 
 
 
-/*
-    SEMANTIC ANALYSER
-*/
-// ANALYSER FUNCTIONS
-Optional<ModTree_Cast_Type> semantic_analyser_check_if_cast_possible(
-    Type_Signature* source_type, Type_Signature* destination_type, bool implicit_cast)
-{
-    auto& analyser = semantic_analyser;
-    auto& type_system = analyser.compiler->type_system;
-    if (source_type == type_system.unknown_type || destination_type == type_system.unknown_type) {
-        semantic_analyser_set_error_flag(true);
-        return optional_make_success(ModTree_Cast_Type::INTEGERS);
-    }
-    if (source_type == destination_type) return optional_make_failure<ModTree_Cast_Type>();
-    bool cast_valid = false;
-    ModTree_Cast_Type cast_type;
-    // Pointer casting
-    if (source_type->type == Signature_Type::POINTER || destination_type->type == Signature_Type::POINTER)
-    {
-        if (source_type->type == Signature_Type::POINTER && destination_type->type == Signature_Type::POINTER)
-        {
-            cast_type = ModTree_Cast_Type::POINTERS;
-            if (implicit_cast) {
-                cast_valid = source_type == type_system.void_ptr_type ||
-                    destination_type == type_system.void_ptr_type;
-            }
-            else {
-                cast_valid = true;
-            }
-        }
-    }
-    // Primitive Casting:
-    else if (source_type->type == Signature_Type::PRIMITIVE && destination_type->type == Signature_Type::PRIMITIVE)
-    {
-        if (source_type->options.primitive.type == Primitive_Type::INTEGER && destination_type->options.primitive.type == Primitive_Type::INTEGER)
-        {
-            cast_type = ModTree_Cast_Type::INTEGERS;
-            cast_valid = true;
-            if (implicit_cast) {
-                if (source_type->options.primitive.is_signed == destination_type->options.primitive.is_signed) {
-                    cast_valid = source_type->size < destination_type->size;
-                }
-                else {
-                    if (source_type->options.primitive.is_signed) {
-                        cast_valid = false;
-                    }
-                    else {
-                        cast_valid = destination_type->size > source_type->size; // E.g. u8 to i32, u32 to i64
-                    }
-                }
-            }
-        }
-        else if (destination_type->options.primitive.type == Primitive_Type::FLOAT && source_type->options.primitive.type == Primitive_Type::INTEGER)
-        {
-            cast_type = ModTree_Cast_Type::INT_TO_FLOAT;
-            cast_valid = true;
-        }
-        else if (destination_type->options.primitive.type == Primitive_Type::INTEGER && source_type->options.primitive.type == Primitive_Type::FLOAT)
-        {
-            cast_type = ModTree_Cast_Type::FLOAT_TO_INT;
-            cast_valid = !implicit_cast;
-        }
-        else if (destination_type->options.primitive.type == Primitive_Type::FLOAT && source_type->options.primitive.type == Primitive_Type::FLOAT)
-        {
-            cast_type = ModTree_Cast_Type::FLOATS;
-            cast_valid = true;
-            if (implicit_cast) {
-                cast_valid = source_type->size < destination_type->size;
-            }
-        }
-        else { // Booleans can never be cast
-            cast_valid = false;
-        }
-    }
-    // Array casting
-    else if (source_type->type == Signature_Type::ARRAY && destination_type->type == Signature_Type::SLICE)
-    {
-        if (source_type->options.array.element_type == destination_type->options.array.element_type) {
-            cast_type = ModTree_Cast_Type::ARRAY_SIZED_TO_UNSIZED;
-            cast_valid = true;
-        }
-    }
-    // Enum casting
-    else if (source_type->type == Signature_Type::ENUM || destination_type->type == Signature_Type::ENUM)
-    {
-        bool enum_is_source = false;
-        Type_Signature* other = 0;
-        if (source_type->type == Signature_Type::ENUM) {
-            enum_is_source = true;
-            other = destination_type;
-        }
-        else {
-            enum_is_source = false;
-            other = source_type;
-        }
-
-        if (other->type == Signature_Type::PRIMITIVE && other->options.primitive.type == Primitive_Type::INTEGER) {
-            cast_type = enum_is_source ? ModTree_Cast_Type::ENUM_TO_INT : ModTree_Cast_Type::INT_TO_ENUM;
-            cast_valid = !implicit_cast;
-        }
-    }
-    // Any casting
-    else if (destination_type == type_system.any_type)
-    {
-        cast_valid = true;
-        cast_type = ModTree_Cast_Type::TO_ANY;
-    }
-    else if (source_type == type_system.any_type) {
-        cast_valid = !implicit_cast;
-        cast_type = ModTree_Cast_Type::FROM_ANY;
-    }
-
-    if (cast_valid) return optional_make_success(cast_type);
-    return optional_make_failure<ModTree_Cast_Type>();
-}
-
-// If not possible, null is returned, otherwise an expression pointer is returned and the expression argument ownership is given to this pointer
-ModTree_Expression* semantic_analyser_cast_implicit_if_possible(ModTree_Expression* expression, Type_Signature* destination_type)
-{
-    auto& analyser = semantic_analyser;
-    auto& type_system = analyser.compiler->type_system;
-    Type_Signature* source_type = expression->result_type;
-    if (source_type == type_system.unknown_type || destination_type == type_system.unknown_type) {
-        return expression;
-    }
-    if (source_type == destination_type) {
-        return expression;
-    }
-    Optional<ModTree_Cast_Type> cast_type = semantic_analyser_check_if_cast_possible(expression->result_type, destination_type, true);
-    if (cast_type.available) {
-        ModTree_Expression cast_expr;
-        cast_expr.expression_type = ModTree_Expression_Type::CAST;
-        cast_expr.options.cast.cast_argument = expression;
-        cast_expr.options.cast.type = cast_type.value;
-        cast_expr.result_type = destination_type;
-        return new ModTree_Expression(cast_expr);
-    }
-
-    return 0;
-}
-
-void analysis_workload_register_function_call(ModTree_Function* call_to)
+// EXPRESSIONS
+void semantic_analyser_register_function_call(ModTree_Function* call_to)
 {
     auto& analyser = semantic_analyser;
     auto& type_system = analyser.compiler->type_system;
@@ -3009,258 +2537,261 @@ void analysis_workload_register_function_call(ModTree_Function* call_to)
     }
 }
 
-Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression* expression_node, Expression_Context context)
+Info_Cast_Type semantic_analyser_check_cast_type(Type_Signature* source_type, Type_Signature* destination_type, bool implicit_cast)
 {
     auto& analyser = semantic_analyser;
-    Type_System* type_system = &analyser.compiler->type_system;
-    bool error_exit = false;
-    switch (expression_node->type)
+    auto& type_system = analyser.compiler->type_system;
+    if (source_type == type_system.unknown_type || destination_type == type_system.unknown_type) {
+        semantic_analyser_set_error_flag(true);
+        return Info_Cast_Type::NO_CAST;
+    }
+    if (source_type == destination_type) return Info_Cast_Type::NO_CAST;
+    bool cast_valid = false;
+    Info_Cast_Type cast_type = Info_Cast_Type::INVALID;
+    // Pointer casting
+    if (source_type->type == Signature_Type::POINTER || destination_type->type == Signature_Type::POINTER)
+    {
+        if (source_type->type == Signature_Type::POINTER && destination_type->type == Signature_Type::POINTER)
+        {
+            cast_type = Info_Cast_Type::POINTERS;
+            if (implicit_cast) {
+                cast_valid = source_type == type_system.void_ptr_type ||
+                    destination_type == type_system.void_ptr_type;
+            }
+            else {
+                cast_valid = true;
+            }
+        }
+    }
+    // Primitive Casting:
+    else if (source_type->type == Signature_Type::PRIMITIVE && destination_type->type == Signature_Type::PRIMITIVE)
+    {
+        if (source_type->options.primitive.type == Primitive_Type::INTEGER && destination_type->options.primitive.type == Primitive_Type::INTEGER)
+        {
+            cast_type = Info_Cast_Type::INTEGERS;
+            cast_valid = true;
+            if (implicit_cast) {
+                if (source_type->options.primitive.is_signed == destination_type->options.primitive.is_signed) {
+                    cast_valid = source_type->size < destination_type->size;
+                }
+                else {
+                    if (source_type->options.primitive.is_signed) {
+                        cast_valid = false;
+                    }
+                    else {
+                        cast_valid = destination_type->size > source_type->size; // E.g. u8 to i32, u32 to i64
+                    }
+                }
+            }
+        }
+        else if (destination_type->options.primitive.type == Primitive_Type::FLOAT && source_type->options.primitive.type == Primitive_Type::INTEGER)
+        {
+            cast_type = Info_Cast_Type::INT_TO_FLOAT;
+            cast_valid = true;
+        }
+        else if (destination_type->options.primitive.type == Primitive_Type::INTEGER && source_type->options.primitive.type == Primitive_Type::FLOAT)
+        {
+            cast_type = Info_Cast_Type::FLOAT_TO_INT;
+            cast_valid = !implicit_cast;
+        }
+        else if (destination_type->options.primitive.type == Primitive_Type::FLOAT && source_type->options.primitive.type == Primitive_Type::FLOAT)
+        {
+            cast_type = Info_Cast_Type::FLOATS;
+            cast_valid = true;
+            if (implicit_cast) {
+                cast_valid = source_type->size < destination_type->size;
+            }
+        }
+        else { // Booleans can never be cast
+            cast_valid = false;
+        }
+    }
+    // Array casting
+    else if (source_type->type == Signature_Type::ARRAY && destination_type->type == Signature_Type::SLICE)
+    {
+        if (source_type->options.array.element_type == destination_type->options.array.element_type) {
+            cast_type = Info_Cast_Type::ARRAY_SIZED_TO_UNSIZED;
+            cast_valid = true;
+        }
+    }
+    // Enum casting
+    else if (source_type->type == Signature_Type::ENUM || destination_type->type == Signature_Type::ENUM)
+    {
+        bool enum_is_source = false;
+        Type_Signature* other = 0;
+        if (source_type->type == Signature_Type::ENUM) {
+            enum_is_source = true;
+            other = destination_type;
+        }
+        else {
+            enum_is_source = false;
+            other = source_type;
+        }
+
+        if (other->type == Signature_Type::PRIMITIVE && other->options.primitive.type == Primitive_Type::INTEGER) {
+            cast_type = enum_is_source ? Info_Cast_Type::ENUM_TO_INT : Info_Cast_Type::INT_TO_ENUM;
+            cast_valid = !implicit_cast;
+        }
+    }
+    // Any casting
+    else if (destination_type == type_system.any_type)
+    {
+        cast_valid = true;
+        cast_type = Info_Cast_Type::TO_ANY;
+    }
+    else if (source_type == type_system.any_type) {
+        cast_valid = !implicit_cast;
+        cast_type = Info_Cast_Type::FROM_ANY;
+    }
+
+    if (cast_valid) return cast_type;
+    return Info_Cast_Type::INVALID;
+}
+
+void expression_info_set_cast(Expression_Info* info, Info_Cast_Type cast_type, Type_Signature* result_type)
+{
+    info->context_ops.after_cast_type = result_type;
+    info->context_ops.cast = cast_type;
+}
+
+Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* expr, Expression_Context context)
+{
+    auto& analyser = semantic_analyser;
+    auto type_system = &analyser.compiler->type_system;
+    auto info = pass_get_info(expr);
+    info->constant_value.available = false;
+    info->context = context;
+    info->context_ops.after_cast_type = 0;
+    info->context_ops.cast = Info_Cast_Type::NO_CAST;
+    info->context_ops.deref_count = 0;
+    info->context_ops.take_address_of = false;
+    expression_info_set_error(info, type_system->unknown_type);
+
+#define EXIT_VALUE(val) expression_info_set_value(info, val); return info;
+#define EXIT_TYPE(type) expression_info_set_type(info, type); return info;
+#define EXIT_ERROR(type) expression_info_set_error(info, type); return info;
+#define EXIT_HARDCODED(hardcoded) expression_info_set_hardcoded(info, hardcoded); return info;
+#define EXIT_FUNCTION(function) expression_info_set_function(info, function); return info;
+
+    switch (expr->type)
     {
     case AST::Expression_Type::ERROR_EXPR: {
-        return expression_result_make_error(type_system->unknown_type);
+        EXIT_ERROR(type_system->unknown_type);
     }
     case AST::Expression_Type::FUNCTION_CALL:
     {
         // Analyse call expression
-        auto& call = expression_node->options.call;
-        Expression_Result function_expr_result = semantic_analyser_analyse_expression_any(call.expr, expression_context_make_auto_dereference());
-        SCOPE_EXIT(if (error_exit && function_expr_result.type == Expression_Result_Type::EXPRESSION)
-            modtree_expression_destroy(function_expr_result.options.expression);
-        );
+        auto& call = expr->options.call;
+        auto function_expr_info = semantic_analyser_analyse_expression_any(call.expr, expression_context_make_auto_dereference());
 
-        // Handle compiler-driven Hardcoded functions (type_info, type_of)
-        if (function_expr_result.type == Expression_Result_Type::HARDCODED_FUNCTION)
+        // Handle Type-Of (Or in the future other compiler given functions)
+        if (function_expr_info->result_type == Expression_Result_Type::HARDCODED_FUNCTION && function_expr_info->options.hardcoded == Hardcoded_Type::TYPE_OF)
         {
-            switch (function_expr_result.options.hardcoded)
-            {
-            case Hardcoded_Type::TYPE_INFO:
-            {
-                if (call.arguments.size != 1) {
-                    semantic_analyser_log_error(Semantic_Error_Type::FUNCTION_CALL_ARGUMENT_SIZE_MISMATCH, call.expr);
-                    semantic_analyser_add_error_info(error_information_make_argument_count(call.arguments.size, 1));
-                    return expression_result_make_value(modtree_expression_make_error(type_system->type_information_type));
-                }
-                auto& arg = call.arguments[0];
-                if (arg->name.available) {
-                    semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, &arg->base);
-                }
-                ModTree_Expression* operand = semantic_analyser_analyse_expression_value(
-                    arg->value, expression_context_make_specific_type(type_system->type_type)
-                );
-
-                ModTree_Expression* global_read = modtree_expression_create_empty(ModTree_Expression_Type::VARIABLE_READ, analyser.global_type_informations->data_type);
-                global_read->options.variable_read = analyser.global_type_informations;
-
-                ModTree_Expression* index_access = new ModTree_Expression;
-                index_access->result_type = type_system->i32_type;
-                index_access->expression_type = ModTree_Expression_Type::CAST;
-                index_access->options.cast.cast_argument = operand;
-                operand->result_type = type_system->u64_type;
-                index_access->options.cast.type = ModTree_Cast_Type::INTEGERS;
-
-                ModTree_Expression* array_access = new ModTree_Expression;
-                array_access->expression_type = ModTree_Expression_Type::ARRAY_ACCESS;
-                array_access->options.array_access.array_expression = global_read;
-                array_access->options.array_access.index_expression = index_access;
-                array_access->result_type = analyser.compiler->type_system.type_information_type;
-
-                return expression_result_make_value(array_access);
+            if (call.arguments.size != 1) {
+                semantic_analyser_log_error(Semantic_Error_Type::FUNCTION_CALL_ARGUMENT_SIZE_MISMATCH, call.expr);
+                semantic_analyser_add_error_info(error_information_make_argument_count(call.arguments.size, 1));
+                EXIT_ERROR(type_system->unknown_type);
             }
-            case Hardcoded_Type::TYPE_OF:
+            auto& arg = call.arguments[0];
+            if (arg->name.available) {
+                semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, &arg->base);
+                semantic_analyser_add_error_info(error_information_make_text("Argument name for type_of must not be given"));
+            }
+
+            auto arg_result = semantic_analyser_analyse_expression_any(arg->value, expression_context_make_unknown());
+            switch (arg_result->result_type)
             {
-                if (call.arguments.size != 1) {
-                    semantic_analyser_log_error(Semantic_Error_Type::FUNCTION_CALL_ARGUMENT_SIZE_MISMATCH, call.expr);
-                    semantic_analyser_add_error_info(error_information_make_argument_count(call.arguments.size, 1));
-                    return expression_result_make_value(modtree_expression_make_error(type_system->type_information_type));
-                }
-                auto& arg = call.arguments[0];
-                if (arg->name.available) {
-                    semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, &arg->base);
-                    semantic_analyser_add_error_info(error_information_make_text("Argument name for type_of must not be given"));
-                }
-
-                Expression_Result any_result = semantic_analyser_analyse_expression_any(arg->value, expression_context_make_unknown());
-                switch (any_result.type)
-                {
-                case Expression_Result_Type::EXPRESSION: {
-                    Type_Signature* result_type = any_result.options.expression->result_type;
-                    modtree_expression_destroy(any_result.options.expression);
-                    return expression_result_make_type(result_type);
-                }
-                case Expression_Result_Type::EXTERN_FUNCTION: {
-                    return expression_result_make_type(any_result.options.extern_function->extern_function.function_signature);
-                }
-                case Expression_Result_Type::HARDCODED_FUNCTION: {
-                    semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, arg->value);
-                    semantic_analyser_add_error_info(error_information_make_text("Cannot use type_of on hardcoded functions!"));
-                    return expression_result_make_error(type_system->type_type);
-                }
-                case Expression_Result_Type::FUNCTION: {
-                    return expression_result_make_type(any_result.options.function->signature);
-                }
-                case Expression_Result_Type::TYPE: {
-                    return expression_result_make_type(type_system->type_type);
-                }
-                case Expression_Result_Type::MODULE: {
-                    semantic_analyser_log_error(Semantic_Error_Type::INVALID_EXPRESSION_TYPE, arg->value);
-                    semantic_analyser_add_error_info(error_information_make_expression_result_type(any_result.type));
-                    return expression_result_make_error(type_system->unknown_type);
-                }
-                default: panic("");
-                }
-
-                panic("");
-                return expression_result_make_value(modtree_expression_make_error(type_system->unknown_type));
+            case Expression_Result_Type::VALUE: {
+                EXIT_TYPE(arg_result->options.type);
             }
+            case Expression_Result_Type::HARDCODED_FUNCTION: {
+                semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, arg->value);
+                semantic_analyser_add_error_info(error_information_make_text("Cannot use type_of on hardcoded functions!"));
+                EXIT_ERROR(type_system->unknown_type);
             }
+            case Expression_Result_Type::FUNCTION: {
+                EXIT_TYPE(arg_result->options.function->signature);
+            }
+            case Expression_Result_Type::TYPE: {
+                EXIT_TYPE(type_system->type_type);
+            }
+            case Expression_Result_Type::MODULE: {
+                semantic_analyser_log_error(Semantic_Error_Type::INVALID_EXPRESSION_TYPE, arg->value);
+                semantic_analyser_add_error_info(error_information_make_expression_result_type(arg_result->result_type));
+                EXIT_ERROR(type_system->unknown_type);
+            }
+            default: panic("");
+            }
+
+            panic("");
+            EXIT_ERROR(arg_result->options.type);
         }
 
-        ModTree_Expression* expr_result = modtree_expression_create_empty(ModTree_Expression_Type::FUNCTION_CALL, 0);
         Type_Signature* function_signature = 0;
-        switch (function_expr_result.type)
+        switch (function_expr_info->result_type)
         {
-        case Expression_Result_Type::FUNCTION:
-        {
-            // Function calls now get a different Code-Path, because of Polymorphic Functions
-            auto& arguments = call.arguments;
-            auto call = &expr_result->options.function_call;
-            call->call_type = ModTree_Call_Type::FUNCTION;
-            call->arguments = dynamic_array_create_empty<ModTree_Expression*>(1);
-            call->options.function = function_expr_result.options.function;
-
-            ModTree_Function* function = function_expr_result.options.function;
-            int compare_error_flag_count = analyser.error_flag_count;
-            if (arguments.size != function->parameters.size) {
-                semantic_analyser_log_error(Semantic_Error_Type::FUNCTION_CALL_ARGUMENT_SIZE_MISMATCH, expression_node);
-                semantic_analyser_add_error_info(error_information_make_argument_count(arguments.size, function->parameters.size));
-                semantic_analyser_add_error_info(error_information_make_function_type(function->signature));
-            }
-            // Parse arguments
-            for (int i = 0; i < arguments.size && i < function->parameters.size; i++) {
-                ModTree_Expression* argument_expr = semantic_analyser_analyse_expression_value(
-                    arguments[i]->value, expression_context_make_specific_type(function->parameters[i].data_type)
-                );
-                dynamic_array_push_back(&call->arguments, argument_expr);
-            }
-            // Analyse overflowing arguments 
-            for (int i = function->parameters.size; i < arguments.size; i++) {
-                dynamic_array_push_back(&call->arguments,
-                    semantic_analyser_analyse_expression_value(arguments[i]->value, expression_context_make_unknown())
-                );
-            }
-
-            bool instanciate_function = analyser.error_flag_count == compare_error_flag_count;
-            if (function->type == ModTree_Function_Type::POLYMORPHIC_BASE && instanciate_function)
-            {
-                Dynamic_Array<Upp_Constant> comptime_parameters = dynamic_array_create_empty<Upp_Constant>(function->options.base.poly_argument_count);
-                // Run over all parameters and evaluate their constant value
-                for (int i = 0; i < function->parameters.size; i++)
-                {
-                    if (!function->parameters[i].is_comptime) continue;
-                    Comptime_Result comptime = modtree_expression_calculate_comptime_value(call->arguments[i]);
-                    switch (comptime.type)
-                    {
-                    case Comptime_Result_Type::AVAILABLE:
-                    {
-                        Constant_Result result = constant_pool_add_constant(
-                            &analyser.compiler->constant_pool, call->arguments[i]->result_type,
-                            array_create_static((byte*)comptime.data, comptime.data_type->size)
-                        );
-                        if (result.status != Constant_Status::SUCCESS) {
-                            semantic_analyser_log_error(Semantic_Error_Type::COMPTIME_ARGUMENT_NOT_KNOWN_AT_COMPTIME, arguments[i]->value);
-                            semantic_analyser_add_error_info(error_information_make_constant_status(result.status));
-                            instanciate_function = false;
-                        }
-                        else {
-                            dynamic_array_push_back(&comptime_parameters, result.constant);
-                        }
-                        break;
-                    }
-                    case Comptime_Result_Type::UNAVAILABLE:
-                        instanciate_function = false;
-                        break;
-                    case Comptime_Result_Type::NOT_COMPTIME: {
-                        semantic_analyser_log_error(Semantic_Error_Type::COMPTIME_ARGUMENT_NOT_KNOWN_AT_COMPTIME, arguments[i]->value);
-                        instanciate_function = false;
-                        break;
-                    }
-                    default: panic("");
-                    }
-                }
-
-                // Instanciate function
-                if (instanciate_function) {
-                    call->options.function = modtree_function_create_poly_instance(function, comptime_parameters);
-                    analysis_workload_register_function_call(call->options.function);
-                }
-            }
-            expr_result->result_type = call->options.function->signature->options.function.return_type;
-            return expression_result_make_value(expr_result);
+        case Expression_Result_Type::FUNCTION: {
+            function_signature = function_expr_info->options.function->signature;
+            break;
         }
         case Expression_Result_Type::HARDCODED_FUNCTION:
         {
-            expr_result->options.function_call.call_type = ModTree_Call_Type::HARDCODED_FUNCTION;
-            expr_result->options.function_call.options.hardcoded = function_expr_result.options.hardcoded;
-            function_signature = hardcoded_type_to_signature(function_expr_result.options.hardcoded);
+            function_signature = hardcoded_type_to_signature(function_expr_info->options.hardcoded);
             break;
         }
-        case Expression_Result_Type::EXTERN_FUNCTION: {
-            expr_result->options.function_call.call_type = ModTree_Call_Type::EXTERN_FUNCTION;
-            expr_result->options.function_call.options.extern_function = function_expr_result.options.extern_function;
-            function_signature = function_expr_result.options.extern_function->extern_function.function_signature;
-            break;
-        }
-        case Expression_Result_Type::EXPRESSION: {
+        case Expression_Result_Type::VALUE: 
+        {
             // TODO: Check if this is comptime known, then we dont need a function pointer call
-            function_signature = function_expr_result.options.expression->result_type;
-            if (function_signature->type == Signature_Type::FUNCTION) {
-                expr_result->options.function_call.call_type = ModTree_Call_Type::FUNCTION_POINTER;
-                expr_result->options.function_call.options.pointer_expression = function_expr_result.options.expression;
-            }
-            else {
-                semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE_FUNCTION_CALL, expression_node);
+            function_signature = function_expr_info->options.type;
+            if (function_signature->type != Signature_Type::FUNCTION) {
+                semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE_FUNCTION_CALL, expr);
                 semantic_analyser_add_error_info(error_information_make_given_type(function_signature));
-                error_exit = true;
-                return expression_result_make_value(modtree_expression_make_error(type_system->unknown_type));
+                function_signature = 0;
             }
             break;
         }
         case Expression_Result_Type::MODULE:
         case Expression_Result_Type::TYPE: {
-            semantic_analyser_log_error(Semantic_Error_Type::EXPECTED_CALLABLE, expression_node);
-            semantic_analyser_add_error_info(error_information_make_expression_result_type(function_expr_result.type));
-            error_exit = true;
-            return expression_result_make_value(modtree_expression_make_error(type_system->unknown_type));
+            semantic_analyser_log_error(Semantic_Error_Type::EXPECTED_CALLABLE, expr);
+            semantic_analyser_add_error_info(error_information_make_expression_result_type(function_expr_info->result_type));
+            function_signature = 0;
+            break;
         }
         default: panic("");
         }
-        expr_result->result_type = function_signature->options.function.return_type;
 
         // Analyse arguments
         auto& arguments = call.arguments;
-        Dynamic_Array<Type_Signature*> parameters = function_signature->options.function.parameter_types;
-        if (arguments.size != parameters.size) {
-            semantic_analyser_log_error(Semantic_Error_Type::FUNCTION_CALL_ARGUMENT_SIZE_MISMATCH, expression_node);
-            semantic_analyser_add_error_info(error_information_make_argument_count(arguments.size, parameters.size));
-            semantic_analyser_add_error_info(error_information_make_function_type(function_signature));
+        if (function_signature != 0)
+        {
+            auto& parameters = function_signature->options.function.parameter_types;
+            if (arguments.size != parameters.size) {
+                semantic_analyser_log_error(Semantic_Error_Type::FUNCTION_CALL_ARGUMENT_SIZE_MISMATCH, expr);
+                semantic_analyser_add_error_info(error_information_make_argument_count(arguments.size, parameters.size));
+                semantic_analyser_add_error_info(error_information_make_function_type(function_signature));
+            }
         }
 
-        expr_result->options.function_call.arguments = dynamic_array_create_empty<ModTree_Expression*>(arguments.size);
         for (int i = 0; i < arguments.size; i++)
         {
-            Type_Signature* expected_type = i < parameters.size ? parameters[i] : type_system->unknown_type;
-            ModTree_Expression* argument_expr = semantic_analyser_analyse_expression_value(
-                arguments[i]->value, expression_context_make_specific_type(expected_type)
-            );
-            dynamic_array_push_back(&expr_result->options.function_call.arguments, argument_expr);
+            Type_Signature* expected_type = type_system->unknown_type;
+            auto context = expression_context_make_unknown();
+            if (function_signature != 0 && i < function_signature->options.function.parameter_types.size) {
+                context = expression_context_make_specific_type(function_signature->options.function.parameter_types[i]);
+            }
+            semantic_analyser_analyse_expression_value(arguments[i]->value, context);
         }
-        return expression_result_make_value(expr_result);
+
+        if (function_signature == 0) {
+            EXIT_ERROR(type_system->unknown_type);
+        }
+        else {
+            EXIT_VALUE(function_signature->options.function.return_type);
+        }
     }
-    /*
-    */
     case AST::Expression_Type::SYMBOL_READ:
     {
-        auto read = expression_node->options.symbol_read;
+        auto read = expr->options.symbol_read;
         while (read->path_child.available) {
             read = read->path_child.value;
         }
@@ -3273,70 +2804,42 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
         {
         case Symbol_Type::ERROR_SYMBOL: {
             semantic_analyser_set_error_flag(true);
-            //semantic_analyser_log_error(analyser, Semantic_Error_Type::INVALID_EXPRESSION_TYPE, rc_expression);
-            //semantic_analyser_add_error_info(analyser, error_information_make_symbol(symbol));
-            return expression_result_make_error(type_system->unknown_type);
+            EXIT_ERROR(type_system->unknown_type);
         }
         case Symbol_Type::UNRESOLVED: {
             panic("Should not happen");
         }
         case Symbol_Type::VARIABLE_UNDEFINED: {
-            semantic_analyser_log_error(Semantic_Error_Type::VARIABLE_NOT_DEFINED_YET, expression_node);
-            return expression_result_make_error(type_system->unknown_type);
-        }
-        case Symbol_Type::POLYMORPHIC_PARAMETER: {
-            assert(analyser.current_workload->type == Analysis_Workload_Type::FUNCTION_BODY, "");
-            auto function = ((Function_Progress*)analyser.current_workload->progress)->function;
-            switch (function->type)
-            {
-            case ModTree_Function_Type::NORMAL: {
-                panic("Normally I dont access polymorphic parameters in a non-polymorphic context");
-            }
-            case ModTree_Function_Type::POLYMORPHIC_BASE: {
-                ModTree_Parameter* param = &symbol->options.polymorphic.function->parameters[symbol->options.polymorphic.parameter_index];
-                assert(param->is_comptime, "");
-                return expression_result_make_error(param->data_type);
-            }
-            case ModTree_Function_Type::POLYMOPRHIC_INSTANCE: {
-                Upp_Constant arg = function->options.instance.poly_arguments[symbol->options.polymorphic.parameter_index];
-                ModTree_Expression* comptime_arg_read = modtree_expression_create_empty(ModTree_Expression_Type::CONSTANT_READ, arg.type);
-                comptime_arg_read->options.constant_read = arg;
-                return expression_result_make_value(comptime_arg_read);
-            }
-            default: panic("");
-            }
-            if (function->type == ModTree_Function_Type::POLYMORPHIC_BASE) {
-            }
-            panic("Here instances of the parameter must be accessed");
-            break;
-        }
-        case Symbol_Type::EXTERN_FUNCTION: {
-            return expression_result_make_extern_function(symbol->options.extern_function);
+            semantic_analyser_log_error(Semantic_Error_Type::VARIABLE_NOT_DEFINED_YET, expr);
+            EXIT_ERROR(type_system->unknown_type);
         }
         case Symbol_Type::HARDCODED_FUNCTION: {
-            return expression_result_make_hardcoded(symbol->options.hardcoded);
+            EXIT_HARDCODED(symbol->options.hardcoded);
         }
         case Symbol_Type::FUNCTION: {
-            analysis_workload_register_function_call(symbol->options.function);
-            return expression_result_make_function(symbol->options.function);
+            semantic_analyser_register_function_call(symbol->options.function);
+            EXIT_FUNCTION(symbol->options.function);
+        }
+        case Symbol_Type::GLOBAL: {
+            EXIT_VALUE(symbol->options.global->type);
         }
         case Symbol_Type::TYPE: {
-            return expression_result_make_type(symbol->options.type);
+            EXIT_TYPE(symbol->options.type);
         }
         case Symbol_Type::VARIABLE: {
-            ModTree_Expression* expression = modtree_expression_create_empty(ModTree_Expression_Type::VARIABLE_READ, symbol->options.variable->data_type);
-            expression->options.variable_read = symbol->options.variable;
-            return expression_result_make_value(expression);
+            EXIT_VALUE(symbol->options.variable_type);
         }
-        case Symbol_Type::CONSTANT_VALUE: {
-            ModTree_Expression* expression = modtree_expression_create_empty(ModTree_Expression_Type::CONSTANT_READ, symbol->options.constant.type);
-            expression->options.constant_read = symbol->options.constant;
-            return expression_result_make_value(expression);
+        case Symbol_Type::PARAMETER: {
+            EXIT_VALUE(symbol->options.parameter_type);
+        }
+        case Symbol_Type::COMPTIME_VALUE: {
+            expression_info_set_constant(info, symbol->options.constant);
+            EXIT_VALUE(symbol->options.constant.type);
         }
         case Symbol_Type::MODULE: {
-            semantic_analyser_log_error(Semantic_Error_Type::SYMBOL_MODULE_INVALID, expression_node);
+            semantic_analyser_log_error(Semantic_Error_Type::SYMBOL_MODULE_INVALID, expr);
             semantic_analyser_add_error_info(error_information_make_symbol(symbol));
-            return expression_result_make_error(type_system->unknown_type);
+            EXIT_ERROR(type_system->unknown_type);
         }
         default: panic("HEY");
         }
@@ -3346,7 +2849,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
     }
     case AST::Expression_Type::CAST:
     {
-        auto cast = &expression_node->options.cast;
+        auto cast = &expr->options.cast;
         Type_Signature* destination_type = 0;
         if (cast->to_type.available) {
             destination_type = semantic_analyser_analyse_expression_type(cast->to_type.value);
@@ -3361,8 +2864,8 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
             if (destination_type == 0)
             {
                 if (context.type != Expression_Context_Type::SPECIFIC_TYPE) {
-                    semantic_analyser_log_error(Semantic_Error_Type::AUTO_CAST_KNOWN_CONTEXT_IS_REQUIRED, expression_node);
-                    return expression_result_make_error(type_system->unknown_type);
+                    semantic_analyser_log_error(Semantic_Error_Type::AUTO_CAST_KNOWN_CONTEXT_IS_REQUIRED, expr);
+                    EXIT_ERROR(type_system->unknown_type);
                 }
                 destination_type = context.signature;
             }
@@ -3371,13 +2874,13 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
         case AST::Cast_Type::RAW_TO_PTR:
         {
             if (destination_type == 0) {
-                semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_INVALID_CAST, expression_node);
+                semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_INVALID_CAST, expr);
                 destination_type = type_system->unknown_type;
             }
             else {
                 operand_context = expression_context_make_specific_type(type_system->u64_type);
                 if (destination_type->type != Signature_Type::POINTER) {
-                    semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE_CAST_PTR_DESTINATION_MUST_BE_PTR, expression_node);
+                    semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE_CAST_PTR_DESTINATION_MUST_BE_PTR, expr);
                     semantic_analyser_add_error_info(error_information_make_given_type(destination_type));
                 }
             }
@@ -3386,7 +2889,7 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
         case AST::Cast_Type::PTR_TO_RAW:
         {
             if (destination_type != 0) {
-                semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_INVALID_CAST, expression_node);
+                semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_INVALID_CAST, expr);
             }
             destination_type = type_system->u64_type;
             break;
@@ -3394,51 +2897,45 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
         default: panic("");
         }
 
-        ModTree_Expression* operand = semantic_analyser_analyse_expression_value(cast->operand, operand_context);
-        ModTree_Expression* result_expr = modtree_expression_create_empty(ModTree_Expression_Type::CAST, destination_type);
-        result_expr->options.cast.cast_argument = operand;
-        result_expr->options.cast.type = ModTree_Cast_Type::INTEGERS; // Placeholder
-
+        auto operand_type = semantic_analyser_analyse_expression_value(cast->operand, operand_context);
+        Info_Cast_Type cast_type;
         // Determine Cast type
         switch (cast->type)
         {
         case AST::Cast_Type::TYPE_TO_TYPE:
         {
             assert(destination_type != 0, "");
-            Optional<ModTree_Cast_Type> cast_valid = semantic_analyser_check_if_cast_possible(
-                operand->result_type, destination_type, false
-            );
-            if (cast_valid.available) {
-                result_expr->options.cast.type = cast_valid.value;
-            }
-            else {
-                semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_INVALID_CAST, expression_node);
-                semantic_analyser_add_error_info(error_information_make_given_type(operand->result_type));
+            cast_type = semantic_analyser_check_cast_type(operand_type, destination_type, false);
+            if (cast_type == Info_Cast_Type::INVALID) {
+                semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_INVALID_CAST, expr);
+                semantic_analyser_add_error_info(error_information_make_given_type(operand_type));
                 semantic_analyser_add_error_info(error_information_make_expected_type(destination_type));
             }
             break;
         }
         case AST::Cast_Type::PTR_TO_RAW: {
-            if (operand->result_type->type != Signature_Type::POINTER) {
-                semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_INVALID_CAST, expression_node);
-                semantic_analyser_add_error_info(error_information_make_given_type(operand->result_type));
+            if (operand_type->type != Signature_Type::POINTER) {
+                semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_INVALID_CAST, expr);
+                semantic_analyser_add_error_info(error_information_make_given_type(operand_type));
                 semantic_analyser_add_error_info(error_information_make_expected_type(destination_type));
             }
-            result_expr->options.cast.type = ModTree_Cast_Type::POINTER_TO_U64;
+            cast_type = Info_Cast_Type::POINTER_TO_U64;
             break;
         }
         case AST::Cast_Type::RAW_TO_PTR:
         {
-            result_expr->options.cast.type = ModTree_Cast_Type::U64_TO_POINTER;
+            cast_type = Info_Cast_Type::U64_TO_POINTER;
             break;
         }
         default: panic("");
         }
-        return expression_result_make_value(result_expr);
+
+        info->specifics.cast_type = cast_type;
+        EXIT_VALUE(destination_type);
     }
     case AST::Expression_Type::LITERAL_READ:
     {
-        auto& read = expression_node->options.literal_read;
+        auto& read = expr->options.literal_read;
         void* value_ptr;
         Type_Signature* literal_type;
         void* null_pointer = 0;
@@ -3459,29 +2956,28 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
             literal_type = type_system->i32_type;
             value_ptr = &read.options.int_val;
             break;
-        case AST::Literal_Type::NULL_VAL :
+        case AST::Literal_Type::NULL_VAL:
             literal_type = type_system->void_ptr_type;
             value_ptr = &null_pointer;
             break;
         case AST::Literal_Type::STRING: {
-                String* string = read.options.string;
-                string_buffer.character_buffer_data = string->characters;
-                string_buffer.character_buffer_size = string->capacity;
-                string_buffer.size = string->size;
+            String* string = read.options.string;
+            string_buffer.character_buffer_data = string->characters;
+            string_buffer.character_buffer_size = string->capacity;
+            string_buffer.size = string->size;
 
-                literal_type = type_system->string_type;
-                value_ptr = &string_buffer;
-                break;
-            }
+            literal_type = type_system->string_type;
+            value_ptr = &string_buffer;
+            break;
+        }
         default: panic("");
         }
-        return expression_result_make_value(modtree_expression_create_constant(
-            literal_type, array_create_static<byte>((byte*)value_ptr, literal_type->size), rc_to_ast(expression_node)
-        ));
+        expression_info_set_constant(info, literal_type, array_create_static<byte>((byte*)value_ptr, literal_type->size), to_base(expr));
+        EXIT_VALUE(literal_type);
     }
     case AST::Expression_Type::ENUM_TYPE:
     {
-        auto& members = expression_node->options.enum_members;
+        auto& members = expr->options.enum_members;
         Type_Signature* enum_type = type_system_make_enum_empty(type_system, 0);
         int next_member_value = 1;
         for (int i = 0; i < members.size; i++)
@@ -3489,10 +2985,8 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
             auto& member_node = members[i];
             if (member_node->value.available)
             {
-                ModTree_Expression* expression = semantic_analyser_analyse_expression_value(
-                    member_node->value.value, expression_context_make_specific_type(type_system->i32_type)
-                );
-                Comptime_Result comptime = modtree_expression_calculate_comptime_value(expression);
+                semantic_analyser_analyse_expression_value(member_node->value.value, expression_context_make_specific_type(type_system->i32_type));
+                Comptime_Result comptime = expression_calculate_comptime_value(member_node->value.value);
                 switch (comptime.type)
                 {
                 case Comptime_Result_Type::AVAILABLE:
@@ -3524,20 +3018,21 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
             {
                 auto other = &enum_type->options.enum_type.members[j];
                 if (other->id == member->id) {
-                    semantic_analyser_log_error(Semantic_Error_Type::ENUM_MEMBER_NAME_MUST_BE_UNIQUE, to_base(expression_node));
+                    semantic_analyser_log_error(Semantic_Error_Type::ENUM_MEMBER_NAME_MUST_BE_UNIQUE, to_base(expr));
                     semantic_analyser_add_error_info(error_information_make_id(other->id));
                 }
                 if (other->value == member->value) {
-                    semantic_analyser_log_error(Semantic_Error_Type::ENUM_VALUE_MUST_BE_UNIQUE, to_base(expression_node));
+                    semantic_analyser_log_error(Semantic_Error_Type::ENUM_VALUE_MUST_BE_UNIQUE, to_base(expr));
                     semantic_analyser_add_error_info(error_information_make_id(other->id));
                 }
             }
         }
         type_system_finish_type(type_system, enum_type);
-        return expression_result_make_type(enum_type);
+        EXIT_TYPE(enum_type);
     }
     case AST::Expression_Type::MODULE: {
-        return expression_result_make_module(expression_node->options.module->symbol_table);
+        expression_info_set_module(info, expr->options.module->symbol_table);
+        return info;
     }
     case AST::Expression_Type::FUNCTION:
     case AST::Expression_Type::STRUCTURE_TYPE:
@@ -3546,26 +3041,27 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
     {
         Analysis_Progress* progress;
         {
-            Analysis_Item** item_opt = hashtable_find_element(&analyser.compiler->dependency_analyser->mapping_ast_to_items, to_base(expression_node));
+            Analysis_Item** item_opt = hashtable_find_element(&analyser.compiler->dependency_analyser->mapping_ast_to_items, to_base(expr));
             assert(item_opt != 0, "");
             Analysis_Progress** progress_opt = hashtable_find_element(&workload_executer.progress_items, *item_opt);
             assert(progress_opt != 0, "");
             progress = *progress_opt;
         }
+
         switch (progress->type)
         {
         case Analysis_Progress_Type::FUNCTION:
         {
             auto func = (Function_Progress*)progress;
-            analysis_workload_register_function_call(func->function);
-            return expression_result_make_function(func->function);
+            semantic_analyser_register_function_call(func->function);
+            EXIT_FUNCTION(func->function);
         }
         case Analysis_Progress_Type::STRUCTURE:
         {
             auto structure = (Struct_Progress*)progress;
             Type_Signature* struct_type = structure->struct_type;
             assert(!(struct_type->size == 0 && struct_type->alignment == 0), "");
-            return expression_result_make_type(struct_type);
+            EXIT_TYPE(struct_type);
         }
         case Analysis_Progress_Type::BAKE:
         {
@@ -3574,13 +3070,13 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
             switch (bake_result->type)
             {
             case Comptime_Result_Type::AVAILABLE: {
-                ModTree_Expression* comp_expr = modtree_expression_create_constant(
-                    bake_result->data_type, array_create_static((byte*)bake_result->data, bake_result->data_type->size), to_base(expression_node)
+                expression_info_set_constant(
+                    info, bake_result->data_type, array_create_static((byte*)bake_result->data, bake_result->data_type->size), to_base(expr)
                 );
-                return expression_result_make_value(comp_expr);
+                return info;
             }
             case Comptime_Result_Type::UNAVAILABLE:
-                return expression_result_make_error(bake_result->data_type);
+                EXIT_ERROR(bake_result->data_type);
             case Comptime_Result_Type::NOT_COMPTIME:
                 panic("Should not happen with bake!");
                 break;
@@ -3594,12 +3090,12 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
         }
         default: panic("");
         }
-        return expression_result_make_error(type_system->unknown_type);
+        EXIT_ERROR(type_system->unknown_type);
     }
     case AST::Expression_Type::FUNCTION_SIGNATURE:
     {
-        auto& sig = expression_node->options.function_signature;
-        Dynamic_Array<Type_Signature*> parameters = dynamic_array_create_empty<Type_Signature*>(math_maximum(0, sig.parameters.size));
+        auto& sig = expr->options.function_signature;
+        Dynamic_Array<Type_Signature*> parameters = dynamic_array_create_empty<Type_Signature*>(math_maximum(1, sig.parameters.size));
         for (int i = 0; i < sig.parameters.size; i++)
         {
             auto& param = sig.parameters[i];
@@ -3618,16 +3114,15 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
         else {
             return_type = type_system->void_type;
         }
-        return expression_result_make_type(type_system_make_function(type_system, parameters, return_type));
+        EXIT_TYPE(type_system_make_function(type_system, parameters, return_type));
     }
     case AST::Expression_Type::ARRAY_TYPE:
     {
-        auto& array_node = expression_node->options.array_type;
-        ModTree_Expression* size_expr = semantic_analyser_analyse_expression_value(
+        auto& array_node = expr->options.array_type;
+        semantic_analyser_analyse_expression_value(
             array_node.size_expr, expression_context_make_specific_type(type_system->i32_type)
         );
-        SCOPE_EXIT(modtree_expression_destroy(size_expr));
-        Comptime_Result comptime = modtree_expression_calculate_comptime_value(size_expr);
+        Comptime_Result comptime = expression_calculate_comptime_value(array_node.size_expr);
         int array_size = 0;
         bool array_size_known = false;
         switch (comptime.type)
@@ -3661,19 +3156,15 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
             Analysis_Workload* cluster = analysis_workload_find_associated_cluster(progress->reachable_resolve_workload);
             dynamic_array_push_back(&cluster->options.struct_reachable.unfinished_array_types, array_type);
         }
-        return expression_result_make_type(array_type);
+        EXIT_TYPE(array_type);
     }
     case AST::Expression_Type::SLICE_TYPE:
     {
-        return expression_result_make_type(
-            type_system_make_slice(
-                type_system, semantic_analyser_analyse_expression_type(expression_node->options.slice_type)
-            )
-        );
+        EXIT_TYPE(type_system_make_slice(type_system, semantic_analyser_analyse_expression_type(expr->options.slice_type)));
     }
     case AST::Expression_Type::NEW_EXPR:
     {
-        auto& new_node = expression_node->options.new_expr;
+        auto& new_node = expr->options.new_expr;
         Type_Signature* allocated_type = semantic_analyser_analyse_expression_type(new_node.type_expr);
         if (allocated_type == type_system->void_type) {
             semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE_VOID_USAGE, new_node.type_expr);
@@ -3681,28 +3172,19 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
         assert(!(allocated_type->size == 0 && allocated_type->alignment == 0), "HEY");
 
         Type_Signature* result_type = 0;
-        Optional<ModTree_Expression*> count_expr;
         if (new_node.count_expr.available)
         {
             result_type = type_system_make_slice(type_system, allocated_type);
-            ModTree_Expression* count = semantic_analyser_analyse_expression_value(
-                new_node.count_expr.value, expression_context_make_specific_type(type_system->i32_type)
-            );
-            count_expr = optional_make_success(count);
+            semantic_analyser_analyse_expression_value(new_node.count_expr.value, expression_context_make_specific_type(type_system->i32_type));
         }
         else {
             result_type = type_system_make_pointer(type_system, allocated_type);
-            count_expr = optional_make_failure<ModTree_Expression*>();
         }
-
-        ModTree_Expression* result = modtree_expression_create_empty(ModTree_Expression_Type::NEW_ALLOCATION, result_type);
-        result->options.new_allocation.allocation_size = result_type->size;
-        result->options.new_allocation.element_count = count_expr;
-        return expression_result_make_value(result);
+        EXIT_VALUE(result_type);
     }
     case AST::Expression_Type::STRUCT_INITIALIZER:
     {
-        auto& init_node = expression_node->options.struct_initializer;
+        auto& init_node = expr->options.struct_initializer;
         Type_Signature* struct_signature = 0;
         if (init_node.type_expr.available) {
             struct_signature = semantic_analyser_analyse_expression_type(init_node.type_expr.value);
@@ -3712,23 +3194,23 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
                 struct_signature = context.signature;
             }
             else {
-                semantic_analyser_log_error(Semantic_Error_Type::AUTO_STRUCT_INITIALIZER_COULD_NOT_DETERMINE_TYPE, expression_node);
-                return expression_result_make_error(type_system->unknown_type);
+                semantic_analyser_log_error(Semantic_Error_Type::AUTO_STRUCT_INITIALIZER_COULD_NOT_DETERMINE_TYPE, expr);
+                EXIT_ERROR(type_system->unknown_type);
             }
         }
 
         if (struct_signature->type != Signature_Type::STRUCT) {
-            semantic_analyser_log_error(Semantic_Error_Type::STRUCT_INITIALIZER_TYPE_MUST_BE_STRUCT, expression_node);
+            semantic_analyser_log_error(Semantic_Error_Type::STRUCT_INITIALIZER_TYPE_MUST_BE_STRUCT, expr);
             semantic_analyser_add_error_info(error_information_make_given_type(struct_signature));
-            return expression_result_make_error(struct_signature);
+            EXIT_ERROR(struct_signature);
         }
         if (init_node.arguments.size == 0) {
-            semantic_analyser_log_error(Semantic_Error_Type::STRUCT_INITIALIZER_MEMBERS_MISSING, expression_node);
-            return expression_result_make_error(struct_signature);
+            semantic_analyser_log_error(Semantic_Error_Type::STRUCT_INITIALIZER_MEMBERS_MISSING, expr);
+            EXIT_ERROR(struct_signature);
         }
         assert(!(struct_signature->size == 0 && struct_signature->alignment == 0), "");
 
-        Dynamic_Array<Member_Initializer> initializers = dynamic_array_create_empty<Member_Initializer>(struct_signature->size);
+        // Analyse arguments
         for (int i = 0; i < init_node.arguments.size; i++)
         {
             auto& argument = init_node.arguments[i];
@@ -3743,82 +3225,70 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
                     found_member = &struct_signature->options.structure.members[i];
                 }
             }
+            auto context = expression_context_make_unknown();
+            auto arg_info = pass_get_info(argument);
             if (found_member != 0)
             {
-                Member_Initializer initializer;
-                initializer.init_expr = semantic_analyser_analyse_expression_value(
-                    argument->value, expression_context_make_specific_type(found_member->type)
-                );
-                initializer.init_node = to_base(argument);
-                initializer.member = *found_member;
-                dynamic_array_push_back(&initializers, initializer);
+                arg_info->valid = true;
+                arg_info->member = *found_member;
+                context = expression_context_make_specific_type(found_member->type);
             }
             else {
+                arg_info->valid = false;
                 semantic_analyser_log_error(Semantic_Error_Type::STRUCT_INITIALIZER_MEMBER_DOES_NOT_EXIST, to_base(argument));
                 semantic_analyser_add_error_info(error_information_make_id(member_id));
+                // TODO: Find out if we want to analyse expressions even if we don't have the context for it
             }
+            semantic_analyser_analyse_expression_value(argument->value, context);
         }
 
-        // Check for errors
-        if (struct_signature->options.structure.struct_type != Structure_Type::STRUCT)
+        // Check for errors (Different for unions/structs)
+        if (struct_signature->options.structure.struct_type != AST::Structure_Type::STRUCT)
         {
-            if (init_node.arguments.size > 1) {
-                semantic_analyser_log_error(Semantic_Error_Type::STRUCT_INITIALIZER_CAN_ONLY_SET_ONE_UNION_MEMBER, expression_node);
+            if (init_node.arguments.size == 0) {
+                semantic_analyser_log_error(Semantic_Error_Type::STRUCT_INITIALIZER_MEMBERS_MISSING, expr);
             }
-            else if (struct_signature->options.structure.struct_type == Structure_Type::UNION && initializers.size == 1)
+            else if (init_node.arguments.size != 1) {
+                semantic_analyser_log_error(Semantic_Error_Type::STRUCT_INITIALIZER_CAN_ONLY_SET_ONE_UNION_MEMBER, expr);
+            }
+            else if (struct_signature->options.structure.struct_type == AST::Structure_Type::UNION)
             {
-                if (initializers[0].member.offset == struct_signature->options.structure.tag_member.offset) {
-                    semantic_analyser_log_error(Semantic_Error_Type::STRUCT_INITIALIZER_CANNOT_SET_UNION_TAG, initializers[0].init_node);
-                }
-                else
-                {
-                    Type_Signature* tag_type = struct_signature->options.structure.tag_member.type;
-                    assert(tag_type->type == Signature_Type::ENUM, "");
-                    int value = 0;
-                    for (int i = 0; i < tag_type->options.enum_type.members.size; i++) {
-                        Enum_Item* member = &tag_type->options.enum_type.members[i];
-                        if (member->id == initializers[0].member.id) {
-                            value = member->value;
-                            break;
-                        }
-                    }
-                    // Set tag in initilaizer
-                    Member_Initializer tag_init;
-                    tag_init.init_node = 0;
-                    tag_init.init_expr = modtree_expression_create_constant_i32(value);
-                    tag_init.init_expr->result_type = tag_type;
-                    tag_init.member = struct_signature->options.structure.tag_member;
-                    dynamic_array_push_back(&initializers, tag_init);
+                auto& member = pass_get_info(init_node.arguments[0])->member;
+                if (member.offset == struct_signature->options.structure.tag_member.offset) {
+                    semantic_analyser_log_error(Semantic_Error_Type::STRUCT_INITIALIZER_CANNOT_SET_UNION_TAG, to_base(init_node.arguments[0]));
                 }
             }
         }
         else
         {
             // Check that all members aren't initilized more than once
-            for (int i = 0; i < initializers.size; i++)
+            int valid_count = 0;
+            for (int i = 0; i < init_node.arguments.size; i++)
             {
-                Member_Initializer* member = &initializers[i];
-                for (int j = i + 1; j < initializers.size; j++)
+                auto info = pass_get_info(init_node.arguments[i]);
+                if (!info->valid) continue;
+                valid_count += 1;
+                for (int j = i + 1; j < init_node.arguments.size; j++)
                 {
-                    Member_Initializer* other = &initializers[j];
-                    if (member->member.id == other->member.id) {
-                        semantic_analyser_log_error(Semantic_Error_Type::STRUCT_INITIALIZER_MEMBER_INITIALIZED_TWICE, other->init_node);
+                    auto other = pass_get_info(init_node.arguments[j]);
+                    if (!other->valid) continue;
+                    if (info->member.id == other->member.id) {
+                        semantic_analyser_log_error(Semantic_Error_Type::STRUCT_INITIALIZER_MEMBER_INITIALIZED_TWICE, to_base(init_node.arguments[j]));
+                        semantic_analyser_log_error(Semantic_Error_Type::STRUCT_INITIALIZER_MEMBER_INITIALIZED_TWICE, to_base(init_node.arguments[i]));
                     }
                 }
             }
             // Check if all members are initiliazed
-            if (initializers.size != struct_signature->options.structure.members.size) {
-                semantic_analyser_log_error(Semantic_Error_Type::STRUCT_INITIALIZER_MEMBERS_MISSING, expression_node);
+            if (valid_count != struct_signature->options.structure.members.size) {
+                semantic_analyser_log_error(Semantic_Error_Type::STRUCT_INITIALIZER_MEMBERS_MISSING, expr);
             }
         }
 
-        ModTree_Expression* expr = modtree_expression_create_empty(ModTree_Expression_Type::STRUCT_INITIALIZER, struct_signature);
-        expr->options.struct_initializer = initializers;
-        return expression_result_make_value(expr);
+        EXIT_VALUE(struct_signature);
     }
     case AST::Expression_Type::ARRAY_INITIALIZER:
     {
-        auto& init_node = expression_node->options.array_initializer;
+        auto& init_node = expr->options.array_initializer;
         Type_Signature* element_type = 0;
         if (init_node.type_expr.available) {
             element_type = semantic_analyser_analyse_expression_type(init_node.type_expr.value);
@@ -3838,55 +3308,35 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
                 }
             }
             if (element_type == 0) {
-                semantic_analyser_log_error(Semantic_Error_Type::ARRAY_AUTO_INITIALIZER_COULD_NOT_DETERMINE_TYPE, expression_node);
-                return expression_result_make_error(type_system->unknown_type);
+                semantic_analyser_log_error(Semantic_Error_Type::ARRAY_AUTO_INITIALIZER_COULD_NOT_DETERMINE_TYPE, expr);
+                EXIT_ERROR(type_system->unknown_type);
             }
         }
 
         if (element_type == type_system->void_type) {
-            semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE_VOID_USAGE, expression_node);
-            return expression_result_make_error(type_system->unknown_type);
+            semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE_VOID_USAGE, expr);
+            EXIT_ERROR(type_system->unknown_type);
         }
         assert(!(element_type->size == 0 && element_type->alignment == 0), "");
 
         int array_element_count = init_node.values.size;
         // There are no 0-sized arrays, only 0-sized slices. So if we encounter an empty initializer, e.g. type.[], we return an empty slice
-        if (array_element_count == 0)
-        {
-            Upp_Slice_Base data_slice;
-            data_slice.data_ptr = 0;
-            data_slice.size = 0;
-            return expression_result_make_value(
-                modtree_expression_create_constant(
-                    type_system_make_slice(type_system, element_type),
-                    array_create_static_as_bytes(&data_slice, 1), 0
-                )
-            );
+        if (array_element_count == 0) {
+            EXIT_VALUE(type_system_make_slice(type_system, element_type));
         }
 
-        Dynamic_Array<ModTree_Expression*> init_expressions = dynamic_array_create_empty<ModTree_Expression*>(array_element_count + 1);
-        for (int i = 0; i < init_node.values.size; i++)
-        {
-            ModTree_Expression* element_expr = semantic_analyser_analyse_expression_value(
-                init_node.values[i], expression_context_make_specific_type(element_type)
-            );
-            dynamic_array_push_back(&init_expressions, element_expr);
+        for (int i = 0; i < init_node.values.size; i++) {
+            semantic_analyser_analyse_expression_value(init_node.values[i], expression_context_make_specific_type(element_type));
         }
-
-        ModTree_Expression* result = modtree_expression_create_empty(
-            ModTree_Expression_Type::ARRAY_INITIALIZER, type_system_make_array(type_system, element_type, true, array_element_count)
-        );
-        result->options.array_initializer = init_expressions;
-        return expression_result_make_value(result);
+        EXIT_VALUE(type_system_make_array(type_system, element_type, true, array_element_count));
     }
     case AST::Expression_Type::ARRAY_ACCESS:
     {
-        auto& access_node = expression_node->options.array_access;
-        ModTree_Expression* array_expr = semantic_analyser_analyse_expression_value(
+        auto& access_node = expr->options.array_access;
+        auto array_type = semantic_analyser_analyse_expression_value(
             access_node.array_expr, expression_context_make_auto_dereference()
         );
 
-        Type_Signature* array_type = array_expr->result_type;
         Type_Signature* element_type = 0;
         if (array_type->type == Signature_Type::ARRAY) {
             element_type = array_type->options.array.element_type;
@@ -3895,37 +3345,32 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
             element_type = array_type->options.slice.element_type;
         }
         else {
-            semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE_ARRAY_ACCESS, expression_node);
+            semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE_ARRAY_ACCESS, expr);
             semantic_analyser_add_error_info(error_information_make_given_type(array_type));
             element_type = type_system->unknown_type;
         }
 
-        ModTree_Expression* index_expr = semantic_analyser_analyse_expression_value(
+        semantic_analyser_analyse_expression_value(
             access_node.index_expr, expression_context_make_specific_type(type_system->i32_type)
         );
-        ModTree_Expression* result = modtree_expression_create_empty(ModTree_Expression_Type::ARRAY_ACCESS, element_type);
-        result->options.array_access.array_expression = array_expr;
-        result->options.array_access.index_expression = index_expr;
-        return expression_result_make_value(result);
+        EXIT_VALUE(element_type);
     }
     case AST::Expression_Type::MEMBER_ACCESS:
     {
-        auto& member_node = expression_node->options.member_access;
-        Expression_Result access_expr_result = semantic_analyser_analyse_expression_any(
-            member_node.expr, expression_context_make_auto_dereference()
-        );
-        switch (access_expr_result.type)
+        auto& member_node = expr->options.member_access;
+        auto access_expr_info = semantic_analyser_analyse_expression_any(member_node.expr, expression_context_make_auto_dereference());
+        switch (access_expr_info->result_type)
         {
         case Expression_Result_Type::TYPE:
         {
-            Type_Signature* enum_type = access_expr_result.options.type;
-            if (enum_type->type == Signature_Type::STRUCT && enum_type->options.structure.struct_type == Structure_Type::UNION) {
+            Type_Signature* enum_type = access_expr_info->options.type;
+            if (enum_type->type == Signature_Type::STRUCT && enum_type->options.structure.struct_type == AST::Structure_Type::UNION) {
                 enum_type = enum_type->options.structure.tag_member.type;
             }
             if (enum_type->type != Signature_Type::ENUM) {
                 semantic_analyser_log_error(Semantic_Error_Type::OTHERS_TYPE_MEMBER_ACCESS_MUST_BE_ENUM, member_node.expr);
                 semantic_analyser_add_error_info(error_information_make_given_type(enum_type));
-                return expression_result_make_error(type_system->unknown_type);
+                EXIT_ERROR(type_system->unknown_type);
             }
 
             Enum_Item* found = 0;
@@ -3945,22 +3390,19 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
             else {
                 value = found->value;
             }
-            return expression_result_make_value(modtree_expression_create_constant_enum(enum_type, value));
+            expression_info_set_constant_enum(info, enum_type, value);
+            return info;
         }
         case Expression_Result_Type::FUNCTION:
-        case Expression_Result_Type::EXTERN_FUNCTION:
         case Expression_Result_Type::HARDCODED_FUNCTION:
         case Expression_Result_Type::MODULE: {
             semantic_analyser_log_error(Semantic_Error_Type::INVALID_EXPRESSION_TYPE, member_node.expr);
-            semantic_analyser_add_error_info(error_information_make_expression_result_type(access_expr_result.type));
-            return expression_result_make_error(type_system->unknown_type);
+            semantic_analyser_add_error_info(error_information_make_expression_result_type(access_expr_info->result_type));
+            EXIT_ERROR(type_system->unknown_type);
         }
-        case Expression_Result_Type::EXPRESSION:
+        case Expression_Result_Type::VALUE:
         {
-            ModTree_Expression* access_expr = access_expr_result.options.expression;
-            SCOPE_EXIT(if (error_exit) modtree_expression_destroy(access_expr););
-
-            Type_Signature* struct_signature = access_expr->result_type;
+            Type_Signature* struct_signature = access_expr_info->options.type;
             if (struct_signature->type == Signature_Type::STRUCT)
             {
                 Struct_Member* found = 0;
@@ -3971,64 +3413,48 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
                     }
                 }
                 if (found == 0) {
-                    semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_MEMBER_NOT_FOUND, expression_node);
+                    semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_MEMBER_NOT_FOUND, expr);
                     semantic_analyser_add_error_info(error_information_make_id(member_node.name));
-                    error_exit = true;
-                    return expression_result_make_error(type_system->unknown_type);
+                    EXIT_ERROR(type_system->unknown_type);
                 }
-
-                ModTree_Expression* result = modtree_expression_create_empty(ModTree_Expression_Type::MEMBER_ACCESS, found->type);
-                result->options.member_access.member = *found;
-                result->options.member_access.structure_expression = access_expr;
-                return expression_result_make_value(result);
+                EXIT_VALUE(found->type);
             }
             else if (struct_signature->type == Signature_Type::ARRAY || struct_signature->type == Signature_Type::SLICE)
             {
-                if (member_node.name != analyser.id_size && member_node.name != analyser.id_data) {
-                    semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_MEMBER_NOT_FOUND, expression_node);
+                if (member_node.name != compiler.id_size && member_node.name != compiler.id_data) {
+                    semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_MEMBER_NOT_FOUND, expr);
                     semantic_analyser_add_error_info(error_information_make_id(member_node.name));
-                    error_exit = true;
-                    return expression_result_make_error(type_system->unknown_type);
+                    EXIT_ERROR(type_system->unknown_type);
                 }
 
                 if (struct_signature->type == Signature_Type::ARRAY)
                 {
-                    if (member_node.name == analyser.id_size) {
-                        return expression_result_make_value(modtree_expression_create_constant_i32(struct_signature->options.array.element_count));
+                    if (member_node.name == compiler.id_size) {
+                        expression_info_set_constant_i32(info, struct_signature->options.array.element_count);
+                        return info;
                     }
                     else
-                    {
-                        ModTree_Expression* result = modtree_expression_create_empty(
-                            ModTree_Expression_Type::UNARY_OPERATION,
-                            type_system_make_pointer(type_system, struct_signature->options.array.element_type)
-                        );
-                        result->options.unary_operation.operand = access_expr;
-                        result->options.unary_operation.operation_type = ModTree_Unary_Operation_Type::ADDRESS_OF;
-                        return expression_result_make_value(result);
+                    { // Data access
+                        EXIT_VALUE(type_system_make_pointer(type_system, struct_signature->options.array.element_type));
                     }
                 }
                 else // Slice
                 {
                     Struct_Member member;
-                    if (member_node.name == semantic_analyser.id_size) {
+                    if (member_node.name == compiler.id_size) {
                         member = struct_signature->options.slice.size_member;
                     }
                     else {
                         member = struct_signature->options.slice.data_member;
                     }
-
-                    ModTree_Expression* result = modtree_expression_create_empty(ModTree_Expression_Type::MEMBER_ACCESS, member.type);
-                    result->options.member_access.structure_expression = access_expr;
-                    result->options.member_access.member = member;
-                    return expression_result_make_value(result);
+                    EXIT_VALUE(member.type);
                 }
             }
             else
             {
-                semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE_ON_MEMBER_ACCESS, expression_node);
+                semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE_ON_MEMBER_ACCESS, expr);
                 semantic_analyser_add_error_info(error_information_make_given_type(struct_signature));
-                error_exit = true;
-                return expression_result_make_error(type_system->unknown_type);
+                EXIT_ERROR(type_system->unknown_type);
             }
             panic("");
             break;
@@ -4036,18 +3462,18 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
         default: panic("");
         }
         panic("Should not happen");
-        return expression_result_make_error(type_system->unknown_type);
+        EXIT_ERROR(type_system->unknown_type);
     }
     case AST::Expression_Type::AUTO_ENUM:
     {
-        String* id = expression_node->options.auto_enum;
+        String* id = expr->options.auto_enum;
         if (context.type != Expression_Context_Type::SPECIFIC_TYPE) {
-            semantic_analyser_log_error(Semantic_Error_Type::AUTO_MEMBER_KNOWN_CONTEXT_IS_REQUIRED, expression_node);
-            return expression_result_make_error(type_system->unknown_type);
+            semantic_analyser_log_error(Semantic_Error_Type::AUTO_MEMBER_KNOWN_CONTEXT_IS_REQUIRED, expr);
+            EXIT_ERROR(type_system->unknown_type);
         }
         if (context.signature->type != Signature_Type::ENUM) {
-            semantic_analyser_log_error(Semantic_Error_Type::AUTO_MEMBER_MUST_BE_IN_ENUM_CONTEXT, expression_node);
-            return expression_result_make_error(type_system->unknown_type);
+            semantic_analyser_log_error(Semantic_Error_Type::AUTO_MEMBER_MUST_BE_IN_ENUM_CONTEXT, expr);
+            EXIT_ERROR(type_system->unknown_type);
         }
 
         Type_Signature* enum_type = context.signature;
@@ -4062,83 +3488,72 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
 
         int value = 0;
         if (found == 0) {
-            semantic_analyser_log_error(Semantic_Error_Type::ENUM_DOES_NOT_CONTAIN_THIS_MEMBER, expression_node);
+            semantic_analyser_log_error(Semantic_Error_Type::ENUM_DOES_NOT_CONTAIN_THIS_MEMBER, expr);
             semantic_analyser_add_error_info(error_information_make_id(id));
         }
         else {
             value = found->value;
         }
 
-        ModTree_Expression* result = modtree_expression_create_constant_enum(enum_type, value);
-        return expression_result_make_value(result);
+        expression_info_set_constant_enum(info, enum_type, value);
+        return info;
     }
     case AST::Expression_Type::UNARY_OPERATION:
     {
-        auto& unary_node = expression_node->options.unop;
+        auto& unary_node = expr->options.unop;
         switch (unary_node.type)
         {
         case AST::Unop::NEGATE:
         case AST::Unop::NOT:
         {
             bool is_negate = unary_node.type == AST::Unop::NEGATE;
-            ModTree_Expression* operand = semantic_analyser_analyse_expression_value(
+            auto operand_type = semantic_analyser_analyse_expression_value(
                 unary_node.expr,
                 is_negate ? expression_context_make_auto_dereference() : expression_context_make_specific_type(type_system->bool_type)
             );
 
-            if (is_negate) {
+            if (is_negate) 
+            {
                 bool valid = false;
-                if (operand->result_type->type == Signature_Type::PRIMITIVE) {
-                    valid = operand->result_type->options.primitive.is_signed && operand->result_type->options.primitive.type != Primitive_Type::BOOLEAN;
+                if (operand_type->type == Signature_Type::PRIMITIVE) {
+                    valid = operand_type->options.primitive.is_signed && operand_type->options.primitive.type != Primitive_Type::BOOLEAN;
                 }
                 if (!valid) {
-                    semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE_UNARY_OPERATOR, expression_node);
-                    semantic_analyser_add_error_info(error_information_make_given_type(operand->result_type));
+                    semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE_UNARY_OPERATOR, expr);
+                    semantic_analyser_add_error_info(error_information_make_given_type(operand_type));
                 }
             }
 
-            ModTree_Expression* result = modtree_expression_create_empty(ModTree_Expression_Type::UNARY_OPERATION, operand->result_type);
-            result->options.unary_operation.operation_type = is_negate ? ModTree_Unary_Operation_Type::NEGATE : ModTree_Unary_Operation_Type::LOGICAL_NOT;
-            result->options.unary_operation.operand = operand;
-            return expression_result_make_value(result);
+            EXIT_VALUE(is_negate ? operand_type : type_system->bool_type);
         }
         case AST::Unop::POINTER:
         {
-            Expression_Result operand_result = semantic_analyser_analyse_expression_any(unary_node.expr, expression_context_make_unknown());
-            switch (operand_result.type)
+            // TODO: I think I can check if the context is a specific type + pointer and continue with child type
+            auto operand_result = semantic_analyser_analyse_expression_any(unary_node.expr, expression_context_make_unknown());
+            switch (operand_result->result_type)
             {
-            case Expression_Result_Type::EXPRESSION:
+            case Expression_Result_Type::VALUE:
             {
-                ModTree_Expression* operand = operand_result.options.expression;
-                if (operand->result_type == type_system->void_type) {
-                    semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE_VOID_USAGE, expression_node);
-                    modtree_expression_destroy(operand);
-                    return expression_result_make_error(type_system->unknown_type);
+                Type_Signature* operand_type = operand_result->context_ops.after_cast_type;
+                if (operand_type == type_system->void_type) {
+                    semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE_VOID_USAGE, expr);
+                    EXIT_ERROR(type_system->unknown_type);
                 }
 
-                if (modtree_expression_result_is_temporary(operand)) {
-                    semantic_analyser_log_error(
-                        Semantic_Error_Type::EXPRESSION_ADDRESS_MUST_NOT_BE_OF_TEMPORARY_RESULT, expression_node
-                    );
+                if (expression_is_temporary(unary_node.expr)) {
+                    semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_ADDRESS_MUST_NOT_BE_OF_TEMPORARY_RESULT, expr);
                 }
-
-                ModTree_Expression* result = modtree_expression_create_empty(
-                    ModTree_Expression_Type::UNARY_OPERATION, type_system_make_pointer(type_system, operand->result_type)
-                );
-                result->options.unary_operation.operation_type = ModTree_Unary_Operation_Type::ADDRESS_OF;
-                result->options.unary_operation.operand = operand;
-                return expression_result_make_value(result);
+                EXIT_VALUE(type_system_make_pointer(type_system, operand_type));
             }
             case Expression_Result_Type::TYPE: {
-                return expression_result_make_type(type_system_make_pointer(type_system, operand_result.options.type));
+                EXIT_TYPE(type_system_make_pointer(type_system, operand_result->options.type));
             }
             case Expression_Result_Type::FUNCTION:
-            case Expression_Result_Type::EXTERN_FUNCTION:
             case Expression_Result_Type::HARDCODED_FUNCTION:
             case Expression_Result_Type::MODULE: {
-                semantic_analyser_log_error(Semantic_Error_Type::INVALID_EXPRESSION_TYPE, expression_node);
-                semantic_analyser_add_error_info(error_information_make_expression_result_type(operand_result.type));
-                return expression_result_make_error(type_system->unknown_type);
+                semantic_analyser_log_error(Semantic_Error_Type::INVALID_EXPRESSION_TYPE, expr);
+                semantic_analyser_add_error_info(error_information_make_expression_result_type(operand_result->result_type));
+                EXIT_ERROR(type_system->unknown_type);
             }
             default: panic("");
             }
@@ -4147,29 +3562,25 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
         }
         case AST::Unop::DEREFERENCE:
         {
-            ModTree_Expression* operand = semantic_analyser_analyse_expression_value(unary_node.expr, expression_context_make_unknown());
+            auto operand_type = semantic_analyser_analyse_expression_value(unary_node.expr, expression_context_make_unknown());
             Type_Signature* result_type = type_system->unknown_type;
-            if (operand->result_type->type != Signature_Type::POINTER || operand->result_type == type_system->void_ptr_type) {
-                semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE_UNARY_OPERATOR, expression_node);
-                semantic_analyser_add_error_info(error_information_make_given_type(operand->result_type));
+            if (operand_type->type != Signature_Type::POINTER || operand_type == type_system->void_ptr_type) {
+                semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE_UNARY_OPERATOR, expr);
+                semantic_analyser_add_error_info(error_information_make_given_type(operand_type));
             }
             else {
-                result_type = operand->result_type->options.pointer_child;
+                result_type = operand_type->options.pointer_child;
             }
-
-            ModTree_Expression* result = modtree_expression_create_empty(ModTree_Expression_Type::UNARY_OPERATION, result_type);
-            result->options.unary_operation.operation_type = ModTree_Unary_Operation_Type::DEREFERENCE;
-            result->options.unary_operation.operand = operand;
-            return expression_result_make_value(result);
+            EXIT_VALUE(result_type);
         }
         default:panic("");
         }
         panic("");
-        return expression_result_make_error(type_system->unknown_type);
+        EXIT_ERROR(type_system->unknown_type);
     }
     case AST::Expression_Type::BINARY_OPERATION:
     {
-        auto& binop_node = expression_node->options.binop;
+        auto& binop_node = expr->options.binop;
 
         // Determine what operands are valid
         bool int_valid = false;
@@ -4234,25 +3645,25 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
         }
 
         // Evaluate operands
-        ModTree_Expression* left_expr = semantic_analyser_analyse_expression_value(binop_node.left, operand_context);
-        if (enum_valid && left_expr->result_type->type == Signature_Type::ENUM) {
-            operand_context = expression_context_make_specific_type(left_expr->result_type);
+        auto left_type = semantic_analyser_analyse_expression_value(binop_node.left, operand_context);
+        if (enum_valid && left_type->type == Signature_Type::ENUM) {
+            operand_context = expression_context_make_specific_type(left_type);
         }
-        ModTree_Expression* right_expr = semantic_analyser_analyse_expression_value(binop_node.right, operand_context);
+        auto right_type = semantic_analyser_analyse_expression_value(binop_node.right, operand_context);
 
         // Try implicit casting if types dont match
-        Type_Signature* left_type = left_expr->result_type;
-        Type_Signature* right_type = right_expr->result_type;
         Type_Signature* operand_type = left_type;
         bool types_are_valid = true;
         if (left_type != right_type)
         {
-            if (semantic_analyser_check_if_cast_possible(left_type, right_type, true).available) {
-                left_expr = semantic_analyser_cast_implicit_if_possible(left_expr, right_type);
+            auto left_cast = semantic_analyser_check_cast_type(left_type, right_type, true);
+            auto right_cast = semantic_analyser_check_cast_type(right_type, left_type, true);
+            if (left_cast != Info_Cast_Type::INVALID) {
+                expression_info_set_cast(pass_get_info(binop_node.left), left_cast, right_type);
                 operand_type = right_type;
             }
-            else if (semantic_analyser_check_if_cast_possible(right_type, left_type, true).available) {
-                right_expr = semantic_analyser_cast_implicit_if_possible(right_expr, left_type);
+            else if (right_cast != Info_Cast_Type::INVALID) {
+                expression_info_set_cast(pass_get_info(binop_node.right), right_cast, left_type);
                 operand_type = left_type;
             }
             else {
@@ -4289,26 +3700,11 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
             }
         }
 
-        ModTree_Expression* result = modtree_expression_create_empty(
-            ModTree_Expression_Type::BINARY_OPERATION, result_type_is_bool ? type_system->bool_type : operand_type
-        );
-        if (binop_node.type == AST::Binop::POINTER_EQUAL) {
-            result->options.binary_operation.operation_type = ModTree_Binary_Operation_Type::EQUAL;
-        }
-        else if (binop_node.type == AST::Binop::POINTER_NOT_EQUAL) {
-            result->options.binary_operation.operation_type = ModTree_Binary_Operation_Type::NOT_EQUAL;
-        }
-        else {
-            result->options.binary_operation.operation_type = (ModTree_Binary_Operation_Type)binop_node.type;
-        }
-        result->options.binary_operation.left_operand = left_expr;
-        result->options.binary_operation.right_operand = right_expr;
-
         if (!types_are_valid) {
-            semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE_BINARY_OPERATOR, expression_node);
+            semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE_BINARY_OPERATOR, expr);
             semantic_analyser_add_error_info(error_information_make_binary_op_type(left_type, right_type));
         }
-        return expression_result_make_value(result);
+        EXIT_VALUE(result_type_is_bool ? type_system->bool_type : operand_type);
     }
     default: {
         panic("Not all expression covered!\n");
@@ -4317,23 +3713,31 @@ Expression_Result semantic_analyser_analyse_expression_internal(AST::Expression*
     }
 
     panic("HEY");
-    return expression_result_make_value(modtree_expression_make_error(type_system->unknown_type));
+    EXIT_ERROR(type_system->unknown_type);
+
+#undef EXIT_VALUE
+#undef EXIT_TYPE
+#undef EXIT_ERROR
+#undef EXIT_HARDCODED
+#undef EXIT_FUNCTION
 }
 
-ModTree_Expression* expression_context_apply(ModTree_Expression* expr, Expression_Context context, AST::Base* error_node)
+void expression_context_apply(AST::Expression* expr, Expression_Context context)
 {
+    // Do nothing if context is unknown
+    if (context.type == Expression_Context_Type::UNKNOWN) return;
     auto& type_system = semantic_analyser.compiler->type_system;
-    auto initial_type = expr->result_type;
+    auto info = pass_get_info(expr);
+    assert(info->result_type == Expression_Result_Type::VALUE, "");
+    auto initial_type = expression_info_get_type(info);
+    auto final_type = initial_type;
 
     // Check for unknowns
-    if (expr->result_type == type_system.unknown_type ||
+    if (initial_type == type_system.unknown_type ||
         (context.type == Expression_Context_Type::SPECIFIC_TYPE && context.signature == type_system.unknown_type)) {
         semantic_analyser_set_error_flag(true);
-        return expr;
+        return;
     }
-
-    // Do nothing if context is unknown
-    if (context.type == Expression_Context_Type::UNKNOWN) return expr;
 
     // Auto pointer dereferencing/address of
     {
@@ -4341,7 +3745,7 @@ ModTree_Expression* expression_context_apply(ModTree_Expression* expr, Expressio
         switch (context.type)
         {
         case Expression_Context_Type::UNKNOWN:
-            return expr; 
+            return;
         case Expression_Context_Type::AUTO_DEREFERENCE:
             wanted_pointer_depth = 0;
             break;
@@ -4360,99 +3764,77 @@ ModTree_Expression* expression_context_apply(ModTree_Expression* expr, Expressio
 
         // Find out given pointer level
         int given_pointer_depth = 0;
-        {
-            Type_Signature* iter = expr->result_type;
-            while (iter->type == Signature_Type::POINTER) {
-                given_pointer_depth++;
-                iter = iter->options.pointer_child;
-            }
+        Type_Signature* iter = initial_type;
+        while (iter->type == Signature_Type::POINTER) {
+            given_pointer_depth++;
+            iter = iter->options.pointer_child;
         }
 
-        // Dereference to given level
-        while (given_pointer_depth > wanted_pointer_depth)
+        if (given_pointer_depth + 1 == wanted_pointer_depth && context.type == Expression_Context_Type::SPECIFIC_TYPE) 
         {
-            ModTree_Expression* deref = new ModTree_Expression;
-            deref->expression_type = ModTree_Expression_Type::UNARY_OPERATION;
-            deref->result_type = expr->result_type->options.pointer_child;
-            deref->options.unary_operation.operation_type = ModTree_Unary_Operation_Type::DEREFERENCE;
-            deref->options.unary_operation.operand = expr;
-            expr = deref;
-            given_pointer_depth--;
+            // Auto address of
+            info->context_ops.take_address_of = true;
+            final_type = type_system_make_pointer(&type_system, initial_type);
         }
-
-        // Auto address of
-        if (given_pointer_depth + 1 == wanted_pointer_depth && context.type == Expression_Context_Type::SPECIFIC_TYPE)
+        else
         {
-            if (!modtree_expression_result_is_temporary(expr))
+            // Auto-Dereference to given level
+            while (given_pointer_depth > wanted_pointer_depth)
             {
-                ModTree_Expression* addr_of = new ModTree_Expression;
-                addr_of->expression_type = ModTree_Expression_Type::UNARY_OPERATION;
-                addr_of->result_type = type_system_make_pointer(&type_system, expr->result_type);
-                addr_of->options.unary_operation.operation_type = ModTree_Unary_Operation_Type::ADDRESS_OF;
-                addr_of->options.unary_operation.operand = expr;
-                expr = addr_of;
-                given_pointer_depth = wanted_pointer_depth;
+                info->context_ops.deref_count = given_pointer_depth - wanted_pointer_depth;
+                final_type = final_type->options.pointer_child;
+                given_pointer_depth--;
             }
         }
     }
 
     // Implicit casting
-    if (context.type == Expression_Context_Type::SPECIFIC_TYPE) 
+    if (context.type == Expression_Context_Type::SPECIFIC_TYPE)
     {
-        if (expr->result_type != context.signature)
+        if (final_type != context.signature)
         {
-            ModTree_Expression* casted = semantic_analyser_cast_implicit_if_possible(expr, context.signature);
-            if (casted != 0) {
-                expr = casted;
-            }
-            else {
-                semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE, error_node);
+            Info_Cast_Type cast_type = semantic_analyser_check_cast_type(final_type, context.signature, true);
+            if (cast_type == Info_Cast_Type::INVALID) {
+                semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE, expr);
                 semantic_analyser_add_error_info(error_information_make_given_type(initial_type));
                 semantic_analyser_add_error_info(error_information_make_expected_type(context.signature));
-                modtree_expression_destroy(expr);
-                return modtree_expression_make_error(context.signature);
             }
+            expression_info_set_cast(info, cast_type, context.signature);
         }
     }
-    return expr;
 }
 
-Expression_Result semantic_analyser_analyse_expression_any(AST::Expression* expression_node, Expression_Context context)
+Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression* expression, Expression_Context context)
 {
     auto& type_system = semantic_analyser.compiler->type_system;
-    Expression_Result result = semantic_analyser_analyse_expression_internal(expression_node, context);
-    if (result.type != Expression_Result_Type::EXPRESSION) return result;
-
-    result.options.expression = expression_context_apply(result.options.expression, context, to_base(expression_node));
+    auto result = semantic_analyser_analyse_expression_internal(expression, context);
+    if (result->result_type != Expression_Result_Type::VALUE) return result;
+    expression_context_apply(expression, context);
     return result;
 }
 
-Type_Signature* semantic_analyser_analyse_expression_type(AST::Expression* expression_node)
+Type_Signature* semantic_analyser_analyse_expression_type(AST::Expression* expression)
 {
     auto& type_system = semantic_analyser.compiler->type_system;
-    Expression_Result result = semantic_analyser_analyse_expression_any(
-        expression_node, expression_context_make_auto_dereference()
-    );
-    switch (result.type)
+    auto result = semantic_analyser_analyse_expression_any(expression, expression_context_make_auto_dereference());
+    switch (result->result_type)
     {
     case Expression_Result_Type::TYPE:
-        return result.options.type;
-    case Expression_Result_Type::EXPRESSION:
+        return result->options.type;
+    case Expression_Result_Type::VALUE:
     {
-        ModTree_Expression* expression = result.options.expression;
-        SCOPE_EXIT(modtree_expression_destroy(expression));
-        if (expression->result_type == type_system.unknown_type) {
+        if (result->context_ops.after_cast_type == type_system.unknown_type) {
             semantic_analyser_set_error_flag(true);
             return type_system.unknown_type;
         }
-        if (expression->result_type != type_system.type_type)
+        if (result->context_ops.after_cast_type != type_system.type_type)
         {
-            semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_IS_NOT_A_TYPE, expression_node);
-            semantic_analyser_add_error_info(error_information_make_given_type(expression->result_type));
+            semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_IS_NOT_A_TYPE, expression);
+            semantic_analyser_add_error_info(error_information_make_given_type(result->context_ops.after_cast_type));
             return type_system.unknown_type;
         }
 
-        Comptime_Result comptime = modtree_expression_calculate_comptime_value(expression);
+        Comptime_Result comptime = expression_calculate_comptime_value(expression);
         Type_Signature* result_type = type_system.unknown_type;
         switch (comptime.type)
         {
@@ -4460,7 +3842,7 @@ Type_Signature* semantic_analyser_analyse_expression_type(AST::Expression* expre
         {
             u64 type_index = *(u64*)comptime.data;
             if (type_index >= type_system.internal_type_infos.size) {
-                semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_CONTAINS_INVALID_TYPE_HANDLE, expression_node);
+                semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_CONTAINS_INVALID_TYPE_HANDLE, expression);
                 return type_system.unknown_type;
             }
             return type_system.types[type_index];
@@ -4468,7 +3850,7 @@ Type_Signature* semantic_analyser_analyse_expression_type(AST::Expression* expre
         case Comptime_Result_Type::UNAVAILABLE:
             return type_system.unknown_type;
         case Comptime_Result_Type::NOT_COMPTIME:
-            semantic_analyser_log_error(Semantic_Error_Type::TYPE_NOT_KNOWN_AT_COMPILE_TIME, expression_node);
+            semantic_analyser_log_error(Semantic_Error_Type::TYPE_NOT_KNOWN_AT_COMPILE_TIME, expression);
             return type_system.unknown_type;
         default: panic("");
         }
@@ -4477,11 +3859,10 @@ Type_Signature* semantic_analyser_analyse_expression_type(AST::Expression* expre
         break;
     }
     case Expression_Result_Type::MODULE:
-    case Expression_Result_Type::EXTERN_FUNCTION:
     case Expression_Result_Type::HARDCODED_FUNCTION:
     case Expression_Result_Type::FUNCTION: {
-        semantic_analyser_log_error(Semantic_Error_Type::EXPECTED_TYPE, expression_node);
-        semantic_analyser_add_error_info(error_information_make_expression_result_type(result.type));
+        semantic_analyser_log_error(Semantic_Error_Type::EXPECTED_TYPE, expression);
+        semantic_analyser_add_error_info(error_information_make_expression_result_type(result->result_type));
         return type_system.unknown_type;
     }
     default: panic("");
@@ -4490,101 +3871,58 @@ Type_Signature* semantic_analyser_analyse_expression_type(AST::Expression* expre
     return type_system.unknown_type;
 }
 
-ModTree_Expression* semantic_analyser_analyse_expression_value(AST::Expression* expression_node, Expression_Context context)
+Type_Signature* semantic_analyser_analyse_expression_value(AST::Expression* expression, Expression_Context context)
 {
     auto& type_system = semantic_analyser.compiler->type_system;
-    Expression_Result result = semantic_analyser_analyse_expression_any(expression_node, context);
-    ModTree_Expression* result_expr = 0;
-    switch (result.type)
+    auto result = semantic_analyser_analyse_expression_any(expression, context);
+    switch (result->result_type)
     {
-    case Expression_Result_Type::EXPRESSION: {
-        return result.options.expression; // Here context was already applied
+    case Expression_Result_Type::VALUE: {
+        return result->context_ops.after_cast_type; // Here context was already applied, so we return
     }
     case Expression_Result_Type::TYPE: {
-        result_expr = modtree_expression_create_constant(
-            type_system.type_type,
-            array_create_static_as_bytes(&result.options.type->internal_index, 1), 0
-        );
+        expression_info_set_constant(result, type_system.type_type, array_create_static_as_bytes(&result->options.type->internal_index, 1), to_base(expression));
         break;
     }
-    case Expression_Result_Type::EXTERN_FUNCTION:
     case Expression_Result_Type::FUNCTION:
     {
-        result_expr = modtree_expression_create_empty(ModTree_Expression_Type::FUNCTION_POINTER_READ, 0);
-        auto function_ptr_read = &result_expr->options.function_pointer_read;
-        if (result.type == Expression_Result_Type::FUNCTION) {
-            function_ptr_read->is_extern = false;
-            function_ptr_read->function = result.options.function;
-            function_ptr_read->extern_function = 0;
-            result_expr->result_type = result.options.function->signature;
-        }
-        else {
-            function_ptr_read->is_extern = true;
-            function_ptr_read->function = 0;
-            function_ptr_read->extern_function = result.options.extern_function;
-            result_expr->result_type = result.options.extern_function->extern_function.function_signature;
-        }
+        // Function pointer read
         break;
     }
     case Expression_Result_Type::HARDCODED_FUNCTION:
     {
-        semantic_analyser_log_error(Semantic_Error_Type::OTHERS_CANNOT_TAKE_ADDRESS_OF_HARDCODED_FUNCTION, expression_node);
-        return modtree_expression_make_error(type_system.unknown_type);
+        semantic_analyser_log_error(Semantic_Error_Type::OTHERS_CANNOT_TAKE_ADDRESS_OF_HARDCODED_FUNCTION, expression);
+        return type_system.unknown_type;
     }
     case Expression_Result_Type::MODULE:
     {
-        semantic_analyser_log_error(Semantic_Error_Type::EXPECTED_VALUE, expression_node);
-        semantic_analyser_add_error_info(error_information_make_expression_result_type(result.type));
-        return modtree_expression_make_error(type_system.unknown_type);
+        semantic_analyser_log_error(Semantic_Error_Type::EXPECTED_VALUE, expression);
+        semantic_analyser_add_error_info(error_information_make_expression_result_type(result->result_type));
+        return type_system.unknown_type;
     }
     default: panic("");
     }
 
-    return expression_context_apply(result_expr, context, to_base(expression_node));
+    expression_context_apply(expression, context);
+    return result->context_ops.after_cast_type;
 }
 
-void semantic_analyser_analyse_extern_definitions(Symbol_Table* parent_table, AST::Module* module_node)
+
+
+// STATEMENTS
+bool code_block_is_while(AST::Code_Block* block)
 {
-    // THIS IS THE PREVIOUS ANALYSE MODULE
-    /*
-    // Analyse Definitions
-    AST_Node* definitions_node = module_node->child_start;
-    assert(definitions_node->type == AST_Node_Type::DEFINITIONS, "");
-
-    AST_Node* top_level_node = definitions_node->child_start;
-    while (top_level_node != 0)
-    {
-        SCOPE_EXIT(top_level_node = top_level_node->neighbor);
-        switch (top_level_node->type)
-        {
-        case AST_Node_Type::LOAD_FILE:
-        {
-        }
-        case AST_Node_Type::EXTERN_LIB_IMPORT: {
-            dynamic_array_push_back(&analyser->compiler->extern_sources.lib_files, top_level_node->id);
-            break;
-        }
-        default: panic("HEy");
-        }
-    }
-
-    return module;
-    */
-}
-
-bool modtree_block_is_while(ModTree_Block* block)
-{
-    if (block->code_block != 0 && block->code_block->base.parent->type == AST::Base_Type::STATEMENT) {
-        auto parent = (AST::Statement*) block->code_block->base.parent;
+    if (block != 0 && block->base.parent->type == AST::Base_Type::STATEMENT) {
+        auto parent = (AST::Statement*) block->base.parent;
         return parent->type == AST::Statement_Type::WHILE_STATEMENT;
     }
     return false;
 }
 
-bool modtree_block_is_defer(ModTree_Block* block)
+bool code_block_is_defer(AST::Code_Block* block)
 {
-    if (block->code_block != 0 && block->code_block->base.parent->type == AST::Base_Type::STATEMENT) {
-        auto parent = (AST::Statement*) block->code_block->base.parent;
+    if (block != 0 && block->base.parent->type == AST::Base_Type::STATEMENT) {
+        auto parent = (AST::Statement*) block->base.parent;
         return parent->type == AST::Statement_Type::DEFER;
     }
     return false;
@@ -4594,27 +3932,30 @@ bool inside_defer()
 {
     for (int i = semantic_analyser.block_stack.size - 1; i > 0; i--)
     {
-        ModTree_Block* block = semantic_analyser.block_stack[i];
-        if (modtree_block_is_defer(semantic_analyser.block_stack[i])) {
+        auto block = semantic_analyser.block_stack[i];
+        if (code_block_is_defer(block)) {
             return true;
         }
     }
     return false;
 }
 
-Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement_node, ModTree_Block* block)
+Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 {
     auto& type_system = semantic_analyser.compiler->type_system;
     auto& analyser = semantic_analyser;
-    switch (statement_node->type)
+    auto info = pass_get_info(statement);
+    info->flow = Control_Flow::SEQUENTIAL;
+    #define EXIT(flow_result) { info->flow = flow_result; return flow_result; };
+
+    switch (statement->type)
     {
     case AST::Statement_Type::RETURN_STATEMENT:
     {
-        auto& return_stat = statement_node->options.return_value;
+        auto& return_stat = statement->options.return_value;
         assert(semantic_analyser.current_function != 0, "No statements outside of function body");
         Type_Signature* expected_return_type = semantic_analyser.current_function->signature->options.function.return_type;
 
-        Optional<ModTree_Expression*> value_expr;
         if (return_stat.available)
         {
             Expression_Context context;
@@ -4624,42 +3965,30 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement_node,
             else {
                 context = expression_context_make_specific_type(expected_return_type);
             }
-            value_expr.available = true;
-            value_expr.value = semantic_analyser_analyse_expression_value(return_stat.value, context);
+            auto return_type = semantic_analyser_analyse_expression_value(return_stat.value, context);
 
             // Check bake return type
-            if (analyser.current_workload->type == Analysis_Workload_Type::BAKE_ANALYSIS) 
+            if (analyser.current_workload->type == Analysis_Workload_Type::BAKE_ANALYSIS)
             {
                 if (expected_return_type == type_system.void_type) {
-                    semantic_analyser.current_function->signature = type_system_make_function(&type_system, {}, value_expr.value->result_type);
+                    semantic_analyser.current_function->signature = type_system_make_function(&type_system, {}, return_type);
                 }
-                else if (expected_return_type != value_expr.value->result_type){
-                    semantic_analyser_log_error(Semantic_Error_Type::BAKE_BLOCK_RETURN_TYPE_DIFFERS_FROM_PREVIOUS_RETURN, statement_node);
-                    semantic_analyser_add_error_info(error_information_make_given_type(value_expr.value->result_type));
+                else if (expected_return_type != return_type) {
+                    semantic_analyser_log_error(Semantic_Error_Type::BAKE_BLOCK_RETURN_TYPE_DIFFERS_FROM_PREVIOUS_RETURN, statement);
+                    semantic_analyser_add_error_info(error_information_make_given_type(return_type));
                     semantic_analyser_add_error_info(error_information_make_expected_type(expected_return_type));
                 }
             }
-
-            // When we have defers, we need to temporarily store the return result in a variable
-            if (semantic_analyser.defer_stack.size != 0)
-            {
-                ModTree_Variable* tmp_return_var = modtree_block_add_variable(block, expected_return_type, 0);
-                ModTree_Statement* assign_stmt = modtree_block_add_statement_empty(block, ModTree_Statement_Type::ASSIGNMENT);
-                assign_stmt->options.assignment.destination = modtree_expression_create_variable_read(tmp_return_var);
-                assign_stmt->options.assignment.source = value_expr.value;
-                value_expr.value = modtree_expression_create_variable_read(tmp_return_var);
-            }
         }
-        else 
+        else
         {
-            value_expr.available = false;
             if (analyser.current_workload->type == Analysis_Workload_Type::BAKE_ANALYSIS) {
-                semantic_analyser_log_error(Semantic_Error_Type::BAKE_BLOCK_RETURN_MUST_NOT_BE_EMPTY, statement_node);
+                semantic_analyser_log_error(Semantic_Error_Type::BAKE_BLOCK_RETURN_MUST_NOT_BE_EMPTY, statement);
             }
             else
             {
                 if (expected_return_type != type_system.void_type) {
-                    semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE_RETURN, statement_node);
+                    semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE_RETURN, statement);
                     semantic_analyser_add_error_info(error_information_make_given_type(type_system.void_type));
                     semantic_analyser_add_error_info(error_information_make_expected_type(expected_return_type));
                 }
@@ -4667,25 +3996,19 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement_node,
         }
 
         if (inside_defer()) {
-            semantic_analyser_log_error(Semantic_Error_Type::OTHERS_DEFER_NO_RETURNS_ALLOWED, statement_node);
+            semantic_analyser_log_error(Semantic_Error_Type::OTHERS_DEFER_NO_RETURNS_ALLOWED, statement);
         }
-        else {
-            semantic_analyser_work_through_defers(block, 0);
-        }
-
-        ModTree_Statement* return_statement = modtree_block_add_statement_empty(block, ModTree_Statement_Type::RETURN);
-        return_statement->options.return_value = value_expr;
-        return Control_Flow::RETURNS;
+        EXIT(Control_Flow::RETURNS);
     }
     case AST::Statement_Type::BREAK_STATEMENT:
     case AST::Statement_Type::CONTINUE_STATEMENT:
     {
-        bool is_continue = statement_node->type == AST::Statement_Type::CONTINUE_STATEMENT;
-        String* search_id = is_continue ? statement_node->options.continue_name : statement_node->options.break_name;
-        ModTree_Block* found_block = 0;
+        bool is_continue = statement->type == AST::Statement_Type::CONTINUE_STATEMENT;
+        String* search_id = is_continue ? statement->options.continue_name : statement->options.break_name;
+        AST::Code_Block* found_block = 0;
         for (int i = semantic_analyser.block_stack.size - 1; i > 0; i--) // INFO: Block 0 is always the function body, which cannot be a target of break/continue
         {
-            auto id = semantic_analyser.block_stack[i]->code_block->block_id;
+            auto id = semantic_analyser.block_stack[i]->block_id;
             if (id.available && id.value == search_id) {
                 found_block = semantic_analyser.block_stack[i];
                 break;
@@ -4695,92 +4018,73 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement_node,
         if (found_block == 0)
         {
             semantic_analyser_log_error(
-                is_continue ? Semantic_Error_Type::CONTINUE_LABEL_NOT_FOUND : Semantic_Error_Type::BREAK_LABLE_NOT_FOUND, statement_node
+                is_continue ? Semantic_Error_Type::CONTINUE_LABEL_NOT_FOUND : Semantic_Error_Type::BREAK_LABLE_NOT_FOUND, statement
             );
             semantic_analyser_add_error_info(error_information_make_id(search_id));
-            return Control_Flow::SEQUENTIAL;
+            EXIT(Control_Flow::RETURNS);
         }
         else
         {
-            if (is_continue && !modtree_block_is_while(found_block)) {
-                semantic_analyser_log_error(Semantic_Error_Type::CONTINUE_REQUIRES_LOOP_BLOCK, statement_node);
-                return Control_Flow::SEQUENTIAL;
+            info->specifics.block = found_block;
+            if (is_continue && !code_block_is_while(found_block)) {
+                semantic_analyser_log_error(Semantic_Error_Type::CONTINUE_REQUIRES_LOOP_BLOCK, statement);
+                EXIT(Control_Flow::SEQUENTIAL);
             }
-            semantic_analyser_work_through_defers(block, found_block->defer_start_index);
         }
 
-        ModTree_Statement* stmt = modtree_block_add_statement_empty(block, is_continue ? ModTree_Statement_Type::CONTINUE : ModTree_Statement_Type::BREAK);
-        if (is_continue) {
-            stmt->options.continue_to_block = found_block;
-        }
-        else
+        if (!is_continue) 
         {
-            stmt->options.break_to_block = found_block;
             // Mark all previous Code-Blocks as Sequential flow, since they contain a path to a break
             for (int i = semantic_analyser.block_stack.size - 1; i >= 0; i--)
             {
-                ModTree_Block* prev_block = semantic_analyser.block_stack[i];
-                if (!prev_block->control_flow_locked && semantic_analyser.statement_reachable) {
-                    prev_block->control_flow_locked = true;
-                    prev_block->flow = Control_Flow::SEQUENTIAL;
+                auto block = semantic_analyser.block_stack[i];
+                auto prev = pass_get_info(block);
+                if (!prev->control_flow_locked && semantic_analyser.statement_reachable) {
+                    prev->control_flow_locked = true;
+                    prev->flow = Control_Flow::SEQUENTIAL;
                 }
-                if (prev_block == found_block) break;
+                if (block == found_block) break;
             }
         }
-        return Control_Flow::STOPS;
+        EXIT(Control_Flow::STOPS);
     }
     case AST::Statement_Type::DEFER:
     {
+        semantic_analyser_analyse_block(statement->options.defer_block);
         if (inside_defer()) {
-            semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE_NESTED_DEFERS, statement_node);
-            return Control_Flow::SEQUENTIAL;
+            semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE_NESTED_DEFERS, statement);
+            EXIT(Control_Flow::SEQUENTIAL);
         }
-        else {
-            dynamic_array_push_back(&semantic_analyser.defer_stack, statement_node->options.defer_block);
-        }
-        return Control_Flow::SEQUENTIAL;
+        EXIT(Control_Flow::SEQUENTIAL);
     }
     case AST::Statement_Type::EXPRESSION_STATEMENT:
     {
-        auto& expression_node = statement_node->options.expression;
+        auto& expression_node = statement->options.expression;
         if (expression_node->type != AST::Expression_Type::FUNCTION_CALL) {
-            semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_STATEMENT_MUST_BE_FUNCTION_CALL, statement_node);
+            semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_STATEMENT_MUST_BE_FUNCTION_CALL, statement);
         }
-        ModTree_Statement* statement = modtree_block_add_statement_empty(block, ModTree_Statement_Type::EXPRESSION);
-        statement->options.expression = semantic_analyser_analyse_expression_value(
-            expression_node, expression_context_make_unknown()
-        );
-        return Control_Flow::SEQUENTIAL;
+        semantic_analyser_analyse_expression_value(expression_node, expression_context_make_unknown());
+        EXIT(Control_Flow::SEQUENTIAL);
     }
     case AST::Statement_Type::BLOCK:
     {
-        ModTree_Statement* statement = modtree_block_add_statement_empty(block, ModTree_Statement_Type::BLOCK);
-        statement->options.block = modtree_block_create_empty(statement_node->options.block);
-        semantic_analyser_fill_block(statement->options.block, statement_node->options.block);
-        return statement->options.block->flow;
+        auto flow = semantic_analyser_analyse_block(statement->options.block);
+        EXIT(flow);
     }
     case AST::Statement_Type::IF_STATEMENT:
     {
-        auto& if_node = statement_node->options.if_statement;
-        ModTree_Statement* statement = modtree_block_add_statement_empty(block, ModTree_Statement_Type::IF);
+        auto& if_node = statement->options.if_statement;
 
-        ModTree_Expression* condition = semantic_analyser_analyse_expression_value(
+        auto condition_type = semantic_analyser_analyse_expression_value(
             if_node.condition, expression_context_make_specific_type(type_system.bool_type)
         );
-        statement->options.if_statement.condition = condition;
-        statement->options.if_statement.if_block = modtree_block_create_empty(if_node.block);
-        semantic_analyser_fill_block(statement->options.if_statement.if_block, if_node.block);
-        Control_Flow true_flow = statement->options.if_statement.if_block->flow;
-
+        auto true_flow = semantic_analyser_analyse_block(statement->options.if_statement.block);
         Control_Flow false_flow;
         if (if_node.else_block.available) {
-            statement->options.if_statement.else_block = modtree_block_create_empty(if_node.else_block.value);
-            semantic_analyser_fill_block(statement->options.if_statement.else_block, if_node.else_block.value);
-            false_flow = statement->options.if_statement.else_block->flow;
+            false_flow = semantic_analyser_analyse_block(statement->options.if_statement.else_block.value);
         }
         else {
-            statement->options.if_statement.else_block = modtree_block_create_empty(0);
-            return Control_Flow::SEQUENTIAL; // If no else, if is always sequential
+            EXIT(Control_Flow::SEQUENTIAL;) // If no else, if is always sequential, since it's possible to skip the block
         }
 
         // Combine flows as given by conditional flow rules
@@ -4788,46 +4092,34 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement_node,
             return true_flow;
         }
         if (true_flow == Control_Flow::SEQUENTIAL || false_flow == Control_Flow::SEQUENTIAL) {
-            return Control_Flow::SEQUENTIAL;
+            EXIT(Control_Flow::SEQUENTIAL);
         }
-        return Control_Flow::STOPS;
+        EXIT(Control_Flow::STOPS);
     }
     case AST::Statement_Type::SWITCH_STATEMENT:
     {
-        auto& switch_node = statement_node->options.switch_statement;
-        ModTree_Statement* statement = modtree_block_add_statement_empty(block, ModTree_Statement_Type::SWITCH);
+        auto& switch_node = statement->options.switch_statement;
 
-        ModTree_Expression* condition = semantic_analyser_analyse_expression_value(
-            switch_node.condition, expression_context_make_auto_dereference()
-        );
-        if (condition->result_type->type == Signature_Type::STRUCT && condition->result_type->options.structure.struct_type == Structure_Type::UNION)
+        auto switch_type = semantic_analyser_analyse_expression_value(switch_node.condition, expression_context_make_auto_dereference());
+        if (switch_type->type == Signature_Type::STRUCT && switch_type->options.structure.struct_type == AST::Structure_Type::UNION) {
+            switch_type = switch_type->options.structure.tag_member.type;
+        }
+        else if (switch_type->type != Signature_Type::ENUM)
         {
-            ModTree_Expression* tag_access_expr = modtree_expression_create_empty(
-                ModTree_Expression_Type::MEMBER_ACCESS, condition->result_type->options.structure.tag_member.type
-            );
-            tag_access_expr->options.member_access.member = condition->result_type->options.structure.tag_member;
-            tag_access_expr->options.member_access.structure_expression = condition;
-            condition = tag_access_expr;
-        }
-        else if (condition->result_type->type != Signature_Type::ENUM) {
             semantic_analyser_log_error(Semantic_Error_Type::SWITCH_REQUIRES_ENUM, switch_node.condition);
-            semantic_analyser_add_error_info(error_information_make_given_type(condition->result_type));
+            semantic_analyser_add_error_info(error_information_make_given_type(switch_type));
         }
-        statement->options.switch_statement.condition = condition;
-        statement->options.switch_statement.default_block = 0;
-        statement->options.switch_statement.cases = dynamic_array_create_empty<ModTree_Switch_Case>(1);
 
-        Type_Signature* switch_type = condition->result_type;
-        Expression_Context case_context = condition->result_type->type == Signature_Type::ENUM ?
-            expression_context_make_specific_type(condition->result_type) : expression_context_make_unknown();
+        Expression_Context case_context = switch_type->type == Signature_Type::ENUM ?
+            expression_context_make_specific_type(switch_type) : expression_context_make_unknown();
         Control_Flow switch_flow = Control_Flow::SEQUENTIAL;
+        bool default_found = false;
         for (int i = 0; i < switch_node.cases.size; i++)
         {
             auto& case_node = switch_node.cases[i];
-            ModTree_Block* case_body = modtree_block_create_empty(case_node.block);
-            semantic_analyser_fill_block(case_body, case_node.block);
-
-            Control_Flow case_flow = case_body->flow;
+            auto case_info = pass_get_info(case_node);
+            case_info->is_valid = false;
+            auto case_flow = semantic_analyser_analyse_block(case_node->block);
             if (i == 0) {
                 switch_flow = case_flow;
             }
@@ -4844,64 +4136,57 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement_node,
                 }
             }
 
-            if (case_node.value.available)
+            if (case_node->value.available)
             {
-                ModTree_Expression* case_expr = semantic_analyser_analyse_expression_value(
-                    case_node.value.value, case_context
-                );
-
-                ModTree_Switch_Case modtree_case;
-                modtree_case.expression = case_expr;
-                modtree_case.body = case_body;
-                modtree_case.value = -1; // Placeholder
+                auto case_type = semantic_analyser_analyse_expression_value(case_node->value.value, case_context);
                 // Calculate case value
-                Comptime_Result comptime = modtree_expression_calculate_comptime_value(case_expr);
+                Comptime_Result comptime = expression_calculate_comptime_value(case_node->value.value);
                 switch (comptime.type)
                 {
-                case Comptime_Result_Type::AVAILABLE: {
-                    if (comptime.data_type == type_system.i32_type || comptime.data_type->type == Signature_Type::ENUM) {
-                        modtree_case.value = *(int*)comptime.data;
-                    }
+                case Comptime_Result_Type::AVAILABLE:
+                    case_info->case_value = *((int*)comptime.data);
+                    case_info->is_valid = true;
                     break;
-                }
-                case Comptime_Result_Type::UNAVAILABLE: {
+                case Comptime_Result_Type::NOT_COMPTIME:
+                    case_info->is_valid = false;
+                    case_info->case_value = -1;
                     break;
-                }
-                case Comptime_Result_Type::NOT_COMPTIME: {
-                    semantic_analyser_log_error(Semantic_Error_Type::SWITCH_CASES_MUST_BE_COMPTIME_KNOWN, case_node.value.value);
+                case Comptime_Result_Type::UNAVAILABLE:
+                    semantic_analyser_set_error_flag(true);
                     break;
-                }
                 default: panic("");
                 }
-                dynamic_array_push_back(&statement->options.switch_statement.cases, modtree_case);
+                if (comptime.type == Comptime_Result_Type::NOT_COMPTIME) {
+                    semantic_analyser_log_error(Semantic_Error_Type::SWITCH_CASES_MUST_BE_COMPTIME_KNOWN, case_node->value.value);
+                    break;
+                }
             }
             else
             {
                 // Default case
-                if (statement->options.switch_statement.default_block != 0) {
-                    semantic_analyser_log_error(Semantic_Error_Type::SWITCH_ONLY_ONE_DEFAULT_ALLOWED, statement_node);
-                    // Switch old default so that we can analyse all given blocks
-                    ModTree_Switch_Case modtree_case;
-                    modtree_case.value = -420;
-                    modtree_case.body = statement->options.switch_statement.default_block;
-                    modtree_case.expression = modtree_expression_make_error(type_system.unknown_type);
-                    dynamic_array_push_back(&statement->options.switch_statement.cases, modtree_case);
+                if (default_found) {
+                    semantic_analyser_log_error(Semantic_Error_Type::SWITCH_ONLY_ONE_DEFAULT_ALLOWED, statement);
                 }
-                statement->options.switch_statement.default_block = case_body;
+                default_found = true;
             }
         }
 
         // Check if given cases are unique
         int unique_count = 0;
-        for (int i = 0; i < statement->options.switch_statement.cases.size; i++)
+        for (int i = 0; i < switch_node.cases.size; i++)
         {
-            ModTree_Switch_Case* mod_case = &statement->options.switch_statement.cases[i];
+            auto case_node = switch_node.cases[i];
+            auto case_info = pass_get_info(case_node);
+            if (!case_info->is_valid) continue;
+
             bool is_unique = true;
             for (int j = i + 1; j < statement->options.switch_statement.cases.size; j++)
             {
-                ModTree_Switch_Case* other_case = &statement->options.switch_statement.cases[j];
-                if (mod_case->value == other_case->value) {
-                    semantic_analyser_log_error(Semantic_Error_Type::SWITCH_CASE_MUST_BE_UNIQUE, statement_node); // TODO: Fix this (E.g. not 0)
+                auto& other_case = statement->options.switch_statement.cases[j];
+                auto other_info = pass_get_info(other_case);
+                if (!other_info->is_valid) continue;
+                if (case_info->case_value == other_info->case_value) {
+                    semantic_analyser_log_error(Semantic_Error_Type::SWITCH_CASE_MUST_BE_UNIQUE, to_base(other_case));
                     is_unique = false;
                     break;
                 }
@@ -4912,123 +4197,70 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement_node,
         }
 
         // Check if all possible cases are handled
-        if (statement->options.switch_statement.default_block == 0 && switch_type->type == Signature_Type::ENUM) {
+        if (!default_found && switch_type->type == Signature_Type::ENUM) {
             if (unique_count < switch_type->options.enum_type.members.size) {
-                semantic_analyser_log_error(Semantic_Error_Type::SWITCH_MUST_HANDLE_ALL_CASES, statement_node);
+                semantic_analyser_log_error(Semantic_Error_Type::SWITCH_MUST_HANDLE_ALL_CASES, statement);
             }
         }
         return switch_flow;
     }
     case AST::Statement_Type::WHILE_STATEMENT:
     {
-        auto& while_node = statement_node->options.while_statement;
-        ModTree_Expression* condition = semantic_analyser_analyse_expression_value(
-            while_node.condition, expression_context_make_specific_type(type_system.bool_type)
-        );
+        auto& while_node = statement->options.while_statement;
+        semantic_analyser_analyse_expression_value(while_node.condition, expression_context_make_specific_type(type_system.bool_type));
 
-        ModTree_Statement* statement = modtree_block_add_statement_empty(block, ModTree_Statement_Type::WHILE);
-        statement->options.while_statement.condition = condition;
-        statement->options.while_statement.while_block = modtree_block_create_empty(while_node.block);
-        semantic_analyser_fill_block(statement->options.while_statement.while_block, while_node.block);
-        Control_Flow flow = statement->options.while_statement.while_block->flow;
+        auto flow = semantic_analyser_analyse_block(while_node.block);
         if (flow == Control_Flow::RETURNS) {
-            return flow;
+            EXIT(flow);
         }
-        return Control_Flow::SEQUENTIAL;
+        EXIT(Control_Flow::SEQUENTIAL); // While is always sequential, since the condition may be wrong
     }
     case AST::Statement_Type::DELETE_STATEMENT:
     {
-        ModTree_Expression* operand = semantic_analyser_analyse_expression_value(
-            statement_node->options.delete_expr, expression_context_make_unknown()
-        );
-        Type_Signature* delete_type = operand->result_type;
+        auto delete_type = semantic_analyser_analyse_expression_value(statement->options.delete_expr, expression_context_make_unknown());
         if (delete_type->type != Signature_Type::POINTER && delete_type->type != Signature_Type::SLICE) {
-            semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE_DELETE, statement_node->options.delete_expr);
+            semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE_DELETE, statement->options.delete_expr);
             semantic_analyser_add_error_info(error_information_make_given_type(delete_type));
         }
-
-        ModTree_Expression* call_expr = new ModTree_Expression;
-        call_expr->expression_type = ModTree_Expression_Type::FUNCTION_CALL;
-        call_expr->result_type = type_system.void_type;
-        call_expr->options.function_call.arguments = dynamic_array_create_empty<ModTree_Expression*>(1);
-        call_expr->options.function_call.call_type = ModTree_Call_Type::HARDCODED_FUNCTION;
-        call_expr->options.function_call.options.hardcoded = Hardcoded_Type::FREE_POINTER;
-
-        // Add argument
-        if (delete_type->type == Signature_Type::SLICE)
-        {
-            ModTree_Expression* data_member_access = new ModTree_Expression;
-            data_member_access->expression_type = ModTree_Expression_Type::MEMBER_ACCESS;
-            data_member_access->result_type = delete_type->options.slice.data_member.type;
-            data_member_access->options.member_access.structure_expression = operand;
-            data_member_access->options.member_access.member = delete_type->options.slice.data_member;
-            dynamic_array_push_back(&call_expr->options.function_call.arguments, data_member_access);
-        }
-        else {
-            dynamic_array_push_back(&call_expr->options.function_call.arguments, operand);
-        }
-
-        ModTree_Statement* expr_statement = new ModTree_Statement;
-        expr_statement->type = ModTree_Statement_Type::EXPRESSION;
-        expr_statement->options.expression = call_expr;
-        dynamic_array_push_back(&block->statements, expr_statement);
-        return Control_Flow::SEQUENTIAL;
+        EXIT(Control_Flow::SEQUENTIAL);
     }
     case AST::Statement_Type::ASSIGNMENT:
     {
-        auto& assignment_node = statement_node->options.assignment;
-        ModTree_Expression* left_expr = semantic_analyser_analyse_expression_value(
-            assignment_node.left_side, expression_context_make_unknown()
-        );
-        ModTree_Expression* right_expr = semantic_analyser_analyse_expression_value(
-            assignment_node.right_side, expression_context_make_specific_type(left_expr->result_type)
-        );
-        Type_Signature* left_type = left_expr->result_type;
-        Type_Signature* right_type = right_expr->result_type;
-        if (modtree_expression_result_is_temporary(left_expr)) {
+        auto& assignment_node = statement->options.assignment;
+        auto left_type = semantic_analyser_analyse_expression_value(assignment_node.left_side, expression_context_make_unknown());
+        auto right_type = semantic_analyser_analyse_expression_value(assignment_node.right_side, expression_context_make_specific_type(left_type));
+        if (expression_is_temporary(assignment_node.left_side)) {
             semantic_analyser_log_error(Semantic_Error_Type::OTHERS_ASSIGNMENT_REQUIRES_MEMORY_ADDRESS, assignment_node.left_side);
         }
-        ModTree_Statement* assign_statement = modtree_block_add_statement_empty(block, ModTree_Statement_Type::ASSIGNMENT);
-        assign_statement->options.assignment.destination = left_expr;
-        assign_statement->options.assignment.source = right_expr;
-        return Control_Flow::SEQUENTIAL;
+        EXIT(Control_Flow::SEQUENTIAL);
     }
     case AST::Statement_Type::DEFINITION:
     {
-        auto& definition = statement_node->options.definition;
+        auto& definition = statement->options.definition;
         if (definition->is_comptime) {
             // Already handled by definition workload
-            return Control_Flow::SEQUENTIAL;
+            EXIT(Control_Flow::SEQUENTIAL);
         }
         assert(!(!definition->value.available && !definition->type.available), "");
 
-        ModTree_Variable* variable;
         Type_Signature* type = 0;
         if (definition->type.available) {
             type = semantic_analyser_analyse_expression_type(definition->type.value);
         }
-        ModTree_Expression* value = 0;
         if (definition->value.available)
         {
-            value = semantic_analyser_analyse_expression_value(
+            auto value_type = semantic_analyser_analyse_expression_value(
                 definition->value.value, type != 0 ? expression_context_make_specific_type(type) : expression_context_make_unknown()
             );
             if (type == 0) {
-                type = value->result_type;
+                type = value_type;
             }
         }
 
-        variable = modtree_block_add_variable(block, type, definition->symbol);
         assert(definition->symbol->type == Symbol_Type::VARIABLE || definition->symbol->type == Symbol_Type::VARIABLE_UNDEFINED, "");
         definition->symbol->type = Symbol_Type::VARIABLE;
-        definition->symbol->options.variable = variable;
-
-        if (value != 0) {
-            ModTree_Statement* statement = modtree_block_add_statement_empty(block, ModTree_Statement_Type::ASSIGNMENT);
-            statement->options.assignment.destination = modtree_expression_create_variable_read(variable);
-            statement->options.assignment.source = value;
-        }
-        return Control_Flow::SEQUENTIAL;
+        definition->symbol->options.variable_type = type;
+        EXIT(Control_Flow::SEQUENTIAL);
     }
     default: {
         panic("Should be covered!\n");
@@ -5036,62 +4268,54 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement_node,
     }
     }
     panic("HEY");
-    return Control_Flow::SEQUENTIAL;
+    EXIT(Control_Flow::SEQUENTIAL);
+#undef EXIT
 }
 
-void semantic_analyser_fill_block(ModTree_Block* block, AST::Code_Block* code_block)
+Control_Flow semantic_analyser_analyse_block(AST::Code_Block* block)
 {
-    block->control_flow_locked = false;
-    block->flow = Control_Flow::SEQUENTIAL;
-    block->defer_start_index = semantic_analyser.defer_stack.size;
+    auto block_info = pass_get_info(block);
+    block_info->control_flow_locked = false;
+    block_info->flow = Control_Flow::SEQUENTIAL;
 
-    if (code_block->block_id.available)
+    if (block->block_id.available)
     {
         for (int i = 0; i < semantic_analyser.block_stack.size; i++) {
             auto prev = semantic_analyser.block_stack[i];
-            if (prev->code_block != 0 && prev->code_block->block_id.available && prev->code_block->block_id.value == code_block->block_id.value) {
-                semantic_analyser_log_error(Semantic_Error_Type::LABEL_ALREADY_IN_USE, &code_block->base);
+            if (prev != 0 && prev->block_id.available && prev->block_id.value == block->block_id.value) {
+                semantic_analyser_log_error(Semantic_Error_Type::LABEL_ALREADY_IN_USE, &block->base);
             }
         }
     }
 
     int rewind_block_count = semantic_analyser.block_stack.size;
     bool rewind_reachable = semantic_analyser.statement_reachable;
-    int rewind_defer_size = semantic_analyser.defer_stack.size;
     SCOPE_EXIT(dynamic_array_rollback_to_size(&semantic_analyser.block_stack, rewind_block_count));
-    SCOPE_EXIT(dynamic_array_rollback_to_size(&semantic_analyser.defer_stack, rewind_defer_size));
     SCOPE_EXIT(semantic_analyser.statement_reachable = rewind_reachable);
     dynamic_array_push_back(&semantic_analyser.block_stack, block);
-    for (int i = 0; i < code_block->statements.size; i++)
+    for (int i = 0; i < block->statements.size; i++)
     {
-        Control_Flow flow = semantic_analyser_analyse_statement(code_block->statements[i], block);
+        Control_Flow flow = semantic_analyser_analyse_statement(block->statements[i]);
         if (flow != Control_Flow::SEQUENTIAL) {
             semantic_analyser.statement_reachable = false;
-            if (!block->control_flow_locked) {
-                block->flow = flow;
-                block->control_flow_locked = true;
+            if (!block_info->control_flow_locked) {
+                block_info->flow = flow;
+                block_info->control_flow_locked = true;
             }
         }
     }
-    // Work through defers
-    if (semantic_analyser.statement_reachable) {
-        semantic_analyser_work_through_defers(block, block->defer_start_index);
-    }
-    dynamic_array_rollback_to_size(&semantic_analyser.defer_stack, block->defer_start_index);
+    return block_info->flow;
 }
 
-void symbol_set_type(Symbol* symbol, Type_Signature* type)
-{
-    symbol->type = Symbol_Type::TYPE;
-    symbol->options.type = type;
-}
 
+
+// ANALYSER
 void semantic_analyser_finish()
 {
     auto& type_system = semantic_analyser.compiler->type_system;
     // Check if main is defined
     Symbol* main_symbol = symbol_table_find_symbol(
-        semantic_analyser.compiler->main_source->ast->symbol_table, semantic_analyser.id_main, false, 0, 0
+        semantic_analyser.compiler->main_source->ast->symbol_table, compiler.id_main, false, 0, 0
     );
     ModTree_Function* main_function = 0;
     if (main_symbol == 0) {
@@ -5107,76 +4331,6 @@ void semantic_analyser_finish()
             main_function = main_symbol->options.function;
         }
     }
-
-    // Add type_informations loading to global init function
-    if (semantic_analyser.errors.size == 0)
-    {
-        Type_Signature* type_info_array_signature = type_system_make_array(
-            &type_system, type_system.type_information_type, true, type_system.internal_type_infos.size
-        );
-        int internal_information_size = type_system.internal_type_infos.size;
-        Constant_Result result = constant_pool_add_constant(
-            &semantic_analyser.compiler->constant_pool, type_info_array_signature,
-            array_create_static_as_bytes(type_system.internal_type_infos.data, type_system.internal_type_infos.size)
-        );
-        assert(result.status == Constant_Status::SUCCESS, "Type information must be valid");
-        assert(type_system.types.size == type_system.internal_type_infos.size, "");
-
-        // Set type_informations pointer
-        {
-            ModTree_Expression* global_access = modtree_expression_create_empty(ModTree_Expression_Type::VARIABLE_READ, semantic_analyser.global_type_informations->data_type);
-            global_access->options.variable_read = semantic_analyser.global_type_informations;
-
-            ModTree_Expression* data_access = modtree_expression_create_empty(
-                ModTree_Expression_Type::MEMBER_ACCESS, type_system_make_pointer(&type_system, type_system.type_information_type)
-            );
-            data_access->options.member_access.structure_expression = global_access;
-            data_access->options.member_access.member = semantic_analyser.global_type_informations->data_type->options.slice.data_member;
-
-            ModTree_Expression* constant_access = modtree_expression_create_empty(ModTree_Expression_Type::CONSTANT_READ, type_info_array_signature);
-            constant_access->options.constant_read = result.constant;
-
-            ModTree_Expression* ptr_expression = modtree_expression_create_empty(ModTree_Expression_Type::UNARY_OPERATION, data_access->result_type);
-            ptr_expression->options.unary_operation.operation_type = ModTree_Unary_Operation_Type::ADDRESS_OF;
-            ptr_expression->options.unary_operation.operand = constant_access;
-
-            ModTree_Statement* assign_statement = modtree_block_add_statement_empty(semantic_analyser.global_init_function->body, ModTree_Statement_Type::ASSIGNMENT);
-            assign_statement->options.assignment.destination = data_access;
-            assign_statement->options.assignment.source = ptr_expression;
-        }
-        // Set type_informations size
-        {
-            ModTree_Expression* global_access = modtree_expression_create_empty(
-                ModTree_Expression_Type::VARIABLE_READ, semantic_analyser.global_type_informations->data_type
-            );
-            global_access->options.variable_read = semantic_analyser.global_type_informations;
-
-            ModTree_Expression* size_access = modtree_expression_create_empty(ModTree_Expression_Type::MEMBER_ACCESS, type_system.i32_type);
-            size_access->options.member_access.structure_expression = global_access;
-            size_access->options.member_access.member = semantic_analyser.global_type_informations->data_type->options.slice.size_member;
-
-            ModTree_Statement* assign_statement = modtree_block_add_statement_empty(semantic_analyser.global_init_function->body, ModTree_Statement_Type::ASSIGNMENT);
-            assign_statement->options.assignment.destination = size_access;
-            assign_statement->options.assignment.source = modtree_expression_create_constant_i32(internal_information_size);
-        }
-    }
-
-    // Call main after end of global init function
-    {
-        if (main_function != 0)
-        {
-            ModTree_Expression* call_expr = modtree_expression_create_empty(ModTree_Expression_Type::FUNCTION_CALL, type_system.void_type);
-            call_expr->options.function_call.call_type = ModTree_Call_Type::FUNCTION;
-            call_expr->options.function_call.arguments = dynamic_array_create_empty<ModTree_Expression*>(1);
-            call_expr->options.function_call.options.function = main_function;
-            ModTree_Statement* call_stmt = modtree_block_add_statement_empty(semantic_analyser.global_init_function->body, ModTree_Statement_Type::EXPRESSION);
-            call_stmt->options.expression = call_expr;
-        }
-        ModTree_Statement* exit_stmt = modtree_block_add_statement_empty(semantic_analyser.global_init_function->body, ModTree_Statement_Type::EXIT);
-        exit_stmt->options.exit_code = Exit_Code::SUCCESS;
-
-        semantic_analyser.program->entry_function = semantic_analyser.global_init_function;
-    }
 }
 
 void semantic_analyser_reset(Compiler* compiler)
@@ -5187,6 +4341,7 @@ void semantic_analyser_reset(Compiler* compiler)
     // Reset analyser data
     {
         semantic_analyser.compiler = compiler;
+        semantic_analyser.current_pass = 0;
         semantic_analyser.current_workload = 0;
         semantic_analyser.current_function = 0;
         semantic_analyser.statement_reachable = true;
@@ -5196,7 +4351,6 @@ void semantic_analyser_reset(Compiler* compiler)
         }
         dynamic_array_reset(&semantic_analyser.errors);
         dynamic_array_reset(&semantic_analyser.block_stack);
-        dynamic_array_reset(&semantic_analyser.defer_stack);
         stack_allocator_reset(&semantic_analyser.allocator_values);
         hashset_reset(&semantic_analyser.loaded_filenames);
         hashset_reset(&semantic_analyser.visited_functions);
@@ -5208,12 +4362,16 @@ void semantic_analyser_reset(Compiler* compiler)
             modtree_program_destroy();
         }
         semantic_analyser.program = modtree_program_create();
-        semantic_analyser.global_init_function = 0;
     }
 
     // Add symbols for basic datatypes
     {
         Type_System* ts = &semantic_analyser.compiler->type_system;
+        auto symbol_set_type = [](Symbol* symbol, Type_Signature* type) -> void {
+            symbol->type = Symbol_Type::TYPE;
+            symbol->options.type = type;
+        };
+
         symbol_set_type(pre->type_any, ts->any_type);
         symbol_set_type(pre->type_bool, ts->bool_type);
         symbol_set_type(pre->type_float, ts->f32_type);
@@ -5234,24 +4392,12 @@ void semantic_analyser_reset(Compiler* compiler)
         symbol_set_type(pre->type_i64, ts->i64_type);
         symbol_set_type(pre->type_f32, ts->f32_type);
         symbol_set_type(pre->type_f64, ts->f64_type);
-
-        semantic_analyser.id_size = identifier_pool_add(&compiler->identifier_pool, string_create_static("size"));
-        semantic_analyser.id_data = identifier_pool_add(&compiler->identifier_pool, string_create_static("data"));
-        semantic_analyser.id_main = identifier_pool_add(&compiler->identifier_pool, string_create_static("main"));
-        semantic_analyser.id_tag = identifier_pool_add(&compiler->identifier_pool, string_create_static("tag"));
-        semantic_analyser.id_type_of = identifier_pool_add(&compiler->identifier_pool, string_create_static("type_of"));
-        semantic_analyser.id_type_info = identifier_pool_add(&compiler->identifier_pool, string_create_static("type_info"));
     }
 
     {
-        // Add global type_information table
-        semantic_analyser.global_type_informations = modtree_program_add_global(
-            type_system_make_slice(&type_system, type_system.type_information_type),
-            pre->global_type_informations
-        );
         Symbol* type_infos = pre->global_type_informations;
         type_infos->type = Symbol_Type::VARIABLE;
-        type_infos->options.variable = semantic_analyser.global_type_informations;
+        type_infos->options.variable_type = type_system_make_slice(&type_system, type_system.type_information_type);
     }
 
     // Initialize hardcoded_functions
@@ -5270,57 +4416,12 @@ void semantic_analyser_reset(Compiler* compiler)
     analyser.type_read_f32 = type_system_make_function(&ts, {}, ts.f32_type);
     analyser.type_read_bool = type_system_make_function(&ts, {}, ts.bool_type);
     analyser.type_random_i32 = type_system_make_function(&ts, {}, ts.i32_type);
-
-    // Add assert function
-    {
-        Symbol* symbol = pre->hardcoded_assert;
-        Dynamic_Array<Type_Signature*> params = dynamic_array_create_empty<Type_Signature*>(1);
-        dynamic_array_push_back(&params, type_system.bool_type);
-        ModTree_Function* assert_fn = modtree_function_create_empty(
-            type_system_make_function(&type_system, params, type_system.void_type),
-            symbol, 0
-        );
-        symbol->type = Symbol_Type::FUNCTION;
-        symbol->options.function = assert_fn;
-        ModTree_Variable* cond_var = modtree_function_add_normal_parameter(assert_fn, type_system.bool_type, 0);
-
-        // Make function body
-        {
-            ModTree_Expression* param_read_expr = modtree_expression_create_empty(ModTree_Expression_Type::VARIABLE_READ, cond_var->data_type);
-            param_read_expr->options.variable_read = cond_var;
-
-            ModTree_Expression* cond_expr = modtree_expression_create_empty(ModTree_Expression_Type::UNARY_OPERATION, cond_var->data_type);
-            cond_expr->options.unary_operation.operand = param_read_expr;
-            cond_expr->options.unary_operation.operation_type = ModTree_Unary_Operation_Type::LOGICAL_NOT;
-
-            ModTree_Statement* if_stat = modtree_block_add_statement_empty(assert_fn->body, ModTree_Statement_Type::IF);
-            if_stat->options.if_statement.condition = cond_expr;
-            if_stat->options.if_statement.if_block = modtree_block_create_empty(0);
-            if_stat->options.if_statement.else_block = modtree_block_create_empty(0);
-
-            ModTree_Statement* exit_stat = modtree_block_add_statement_empty(if_stat->options.if_statement.if_block, ModTree_Statement_Type::EXIT);
-            exit_stat->type = ModTree_Statement_Type::EXIT;
-            exit_stat->options.exit_code = Exit_Code::ASSERTION_FAILED;
-
-            ModTree_Statement* return_stat = modtree_block_add_statement_empty(if_stat->options.if_statement.else_block, ModTree_Statement_Type::RETURN);
-            return_stat->options.return_value.available = false;
-        }
-        semantic_analyser.assert_function = assert_fn;
-    }
-
-    // Add global init function
-    semantic_analyser.global_init_function = modtree_function_create_empty(
-        type_system_make_function(
-            &type_system, dynamic_array_create_empty<Type_Signature*>(1), type_system.void_type
-        ), 0, 0
-    );
 }
 
 Semantic_Analyser* semantic_analyser_initialize()
 {
     semantic_analyser.errors = dynamic_array_create_empty<Semantic_Error>(64);
-    semantic_analyser.block_stack = dynamic_array_create_empty<ModTree_Block*>(8);
-    semantic_analyser.defer_stack = dynamic_array_create_empty<AST::Code_Block*>(8);
+    semantic_analyser.block_stack = dynamic_array_create_empty<AST::Code_Block*>(8);
     semantic_analyser.allocator_values = stack_allocator_create_empty(2048);
     semantic_analyser.loaded_filenames = hashset_create_empty<String>(32, hash_string, string_equals);
     semantic_analyser.visited_functions = hashset_create_pointer_empty<ModTree_Function*>(32);
@@ -5336,7 +4437,6 @@ void semantic_analyser_destroy()
     }
     dynamic_array_destroy(&semantic_analyser.errors);
     dynamic_array_destroy(&semantic_analyser.block_stack);
-    dynamic_array_destroy(&semantic_analyser.defer_stack);
 
     stack_allocator_destroy(&semantic_analyser.allocator_values);
     hashset_destroy(&semantic_analyser.loaded_filenames);
@@ -5349,9 +4449,7 @@ void semantic_analyser_destroy()
 
 
 
-/*
-ERRORS + Import
-*/
+// ERRORS
 void semantic_error_get_infos_internal(Semantic_Error e, const char** result_str, Parser::Section* result_section)
 {
     const char* string = "";
@@ -5571,16 +4669,13 @@ void semantic_error_append_to_string(Semantic_Error e, String* string)
             string_append_formated(string, "\nGiven: ");
             switch (info->options.expression_type)
             {
-            case Expression_Result_Type::EXTERN_FUNCTION:
-                string_append_formated(string, "Extern function");
-                break;
             case Expression_Result_Type::HARDCODED_FUNCTION:
                 string_append_formated(string, "Hardcoded function");
                 break;
             case Expression_Result_Type::MODULE:
                 string_append_formated(string, "Module");
                 break;
-            case Expression_Result_Type::EXPRESSION:
+            case Expression_Result_Type::VALUE:
                 string_append_formated(string, "Value");
                 break;
             case Expression_Result_Type::FUNCTION:

@@ -4,7 +4,7 @@
 #include "../../utility/file_io.hpp"
 
 #include "semantic_analyser.hpp"
-#include "rc_analyser.hpp"
+#include "dependency_analyser.hpp"
 #include "semantic_analyser.hpp"
 #include "ir_code.hpp"
 #include "bytecode_generator.hpp"
@@ -18,7 +18,7 @@ bool enable_lexing = true;
 bool enable_parsing = true;
 bool enable_rc_gen = true;
 bool enable_analysis = true;
-bool enable_ir_gen = true;
+bool enable_ir_gen = false;
 bool enable_bytecode_gen = true;
 bool enable_c_generation = false;
 bool enable_c_compilation = true;
@@ -34,7 +34,7 @@ bool output_bytecode = false;
 bool output_timing = false;
 
 // Testcases
-bool enable_testcases = true;
+bool enable_testcases = false;
 bool enable_stresstest = false;
 bool run_testcases_compiled = false;
 
@@ -89,8 +89,7 @@ Compiler* compiler_initialize(Timer* timer)
     compiler.type_system = type_system_create(timer);
     compiler.dependency_analyser = dependency_analyser_initialize();
     compiler.semantic_analyser = semantic_analyser_initialize();
-    compiler.ir_generator = new IR_Generator;
-    *compiler.ir_generator = ir_generator_create();
+    compiler.ir_generator = ir_generator_initialize();
     compiler.bytecode_generator = new Bytecode_Generator;
     *compiler.bytecode_generator = bytecode_generator_create();
     compiler.bytecode_interpreter = new Bytecode_Interpreter;
@@ -121,8 +120,7 @@ void compiler_destroy()
 
     dependency_analyser_destroy();
     semantic_analyser_destroy();
-    ir_generator_destroy(compiler.ir_generator);
-    delete compiler.ir_generator;
+    ir_generator_destroy();
     bytecode_generator_destroy(compiler.bytecode_generator);
     delete compiler.bytecode_generator;
     bytecode_interpreter_destroy(compiler.bytecode_interpreter);
@@ -206,6 +204,14 @@ void compiler_compile(Syntax_Block* source_code, bool generate_code, String proj
 
     compiler_switch_timing_task(Timing_Task::RESET);
     {
+        // ! Identifier pool is currently not being reset at all
+        compiler.id_size = identifier_pool_add(&compiler.identifier_pool, string_create_static("size"));
+        compiler.id_data = identifier_pool_add(&compiler.identifier_pool, string_create_static("data"));
+        compiler.id_tag = identifier_pool_add(&compiler.identifier_pool, string_create_static("tag"));
+        compiler.id_main = identifier_pool_add(&compiler.identifier_pool, string_create_static("main"));
+        compiler.id_type_of = identifier_pool_add(&compiler.identifier_pool, string_create_static("type_of"));
+        compiler.id_type_info = identifier_pool_add(&compiler.identifier_pool, string_create_static("type_info"));
+
         // Reset data (FUTURE: Watch out for incremental compilation, pools should not be reset then)
         constant_pool_destroy(&compiler.constant_pool);
         compiler.constant_pool = constant_pool_create(&compiler.type_system);
@@ -223,7 +229,7 @@ void compiler_compile(Syntax_Block* source_code, bool generate_code, String proj
         type_system_add_primitives(&compiler.type_system, &compiler.identifier_pool, &compiler.dependency_analyser->predefined_symbols);
         Parser::reset();
         semantic_analyser_reset(&compiler);
-        ir_generator_reset(compiler.ir_generator, &compiler);
+        ir_generator_reset();
         bytecode_generator_reset(compiler.bytecode_generator, &compiler);
         bytecode_interpreter_reset(compiler.bytecode_interpreter, &compiler);
     }
@@ -248,7 +254,7 @@ void compiler_compile(Syntax_Block* source_code, bool generate_code, String proj
 
     compiler_switch_timing_task(Timing_Task::CODE_GEN);
     if (do_ir_gen) {
-        ir_generator_queue_and_generate_all(compiler.ir_generator);
+        ir_generator_finish();
     }
     if (do_bytecode_gen) {
         //bytecode_generator_generate(&compiler.bytecode_generator, compiler);

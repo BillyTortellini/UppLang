@@ -13,7 +13,7 @@
 #include "syntax_colors.hpp"
 #include "compiler.hpp"
 #include "ast.hpp"
-#include "rc_analyser.hpp"
+#include "dependency_analyser.hpp"
 #include "semantic_analyser.hpp"
 #include "parser.hpp"
 #include "source_code.hpp"

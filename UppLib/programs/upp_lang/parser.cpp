@@ -586,6 +586,25 @@ namespace Parser
         PARSE_SUCCESS(result);
     }
 
+    Switch_Case* parse_switch_case(Base* parent, bool& add_to_fill)
+    {
+        add_to_fill = true;
+        if (!test_keyword_offset(Syntax_Keyword::CASE, 0) && !test_keyword_offset(Syntax_Keyword::DEFAULT, 0)) {
+            return 0;
+        }
+
+        auto result = allocate_base<Switch_Case>(parent, Base_Type::SWITCH_CASE);
+        bool is_default = test_keyword_offset(Syntax_Keyword::DEFAULT, 0);
+        advance_token();
+        result->value.available = false;
+        if (!is_default) {
+            result->value = optional_make_success(parse_expression_or_error_expr(&result->base));
+        }
+        assert(parent->type == Base_Type::STATEMENT && ((Statement*) parent)->type == Statement_Type::SWITCH_STATEMENT, "");
+        result->block = parse_code_block(&result->base, ((Statement*) parent)->options.switch_statement.condition);
+        return result;
+    }
+
     Statement* parse_statement(Base* parent, bool& add_to_fill)
     {
         CHECKPOINT_SETUP;
@@ -692,20 +711,8 @@ namespace Parser
                 result->type = Statement_Type::SWITCH_STATEMENT;
                 auto& switch_stat = result->options.switch_statement;
                 switch_stat.condition = parse_expression_or_error_expr(&result->base);
-                switch_stat.cases = dynamic_array_create_empty<Switch_Case>(1);
-                advance_line();
-                while (test_keyword_offset(Syntax_Keyword::CASE, 0) || test_keyword_offset(Syntax_Keyword::DEFAULT, 0))
-                {
-                    bool is_default = test_keyword_offset(Syntax_Keyword::DEFAULT, 0);
-                    advance_token();
-                    Switch_Case c;
-                    c.value.available = false;
-                    if (!is_default) {
-                        c.value = optional_make_success(parse_expression_or_error_expr(&result->base));
-                    }
-                    c.block = parse_code_block(&result->base, switch_stat.condition);
-                    dynamic_array_push_back(&switch_stat.cases, c);
-                }
+                switch_stat.cases = dynamic_array_create_empty<Switch_Case*>(1);
+                parse_follow_block(&result->base, &switch_stat.cases, parse_switch_case, true);
                 PARSE_SUCCESS(result);
             }
             case Syntax_Keyword::DELETE_KEYWORD: {
@@ -756,7 +763,7 @@ namespace Parser
         auto result = allocate_base<Enum_Member>(parent, Base_Type::ENUM_MEMBER);
         result->name = get_token(0)->options.identifier;
         advance_token();
-        if (test_operator(Syntax_Operator::DEFINE_COMPTIME)) 
+        if (test_operator(Syntax_Operator::DEFINE_COMPTIME))
         {
             advance_token();
             result->value = optional_make_success(parse_expression_or_error_expr(&result->base));

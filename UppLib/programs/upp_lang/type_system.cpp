@@ -1,6 +1,8 @@
 #include "type_system.hpp"
 #include "compiler.hpp"
-#include "rc_analyser.hpp"
+#include "dependency_analyser.hpp"
+
+using AST::Structure_Type;
 
 void type_signature_destroy(Type_Signature* sig) 
 {
@@ -313,10 +315,6 @@ void assert_similarity(Type_Signature* signature) {
 
 void type_system_add_primitives(Type_System* system, Identifier_Pool* pool, Predefined_Symbols* predefined)
 {
-    system->id_data = identifier_pool_add(pool, string_create_static("data"));
-    system->id_size = identifier_pool_add(pool, string_create_static("size"));
-    system->id_tag = identifier_pool_add(pool, string_create_static("tag"));
-
     system->bool_type = type_system_make_primitive(system, Primitive_Type::BOOLEAN, 1, false);
     system->i8_type = type_system_make_primitive(system, Primitive_Type::INTEGER, 1, true);
     system->i16_type = type_system_make_primitive(system, Primitive_Type::INTEGER, 2, true);
@@ -767,7 +765,7 @@ void type_system_finish_type(Type_System* system, Type_Signature* type)
             type_system_finish_type(system, tag_type);
 
             Struct_Member union_tag;
-            union_tag.id = system->id_tag;
+            union_tag.id = compiler.id_tag;
             offset = math_round_next_multiple(offset, system->i32_type->alignment);
             union_tag.offset = offset;
             union_tag.type = tag_type;
@@ -857,6 +855,7 @@ Type_Signature* type_system_make_pointer(Type_System* system, Type_Signature* ch
 
 Type_Signature* type_system_make_array(Type_System* system, Type_Signature* element_type, bool count_known, int element_count)
 {
+    assert(!(count_known && element_count < 0), "Hey");
     Type_Signature result;
     result.type = Signature_Type::ARRAY;
     result.alignment = element_type->alignment;
@@ -879,10 +878,10 @@ Type_Signature* type_system_make_slice(Type_System* system, Type_Signature* elem
     result.alignment = 8;
     result.size = 16;
     result.options.slice.element_type = element_type;
-    result.options.slice.data_member.id = system->id_data;
+    result.options.slice.data_member.id = compiler.id_data;
     result.options.slice.data_member.type = type_system_make_pointer(system, element_type);
     result.options.slice.data_member.offset = 0;
-    result.options.slice.size_member.id = system->id_size;
+    result.options.slice.size_member.id = compiler.id_size;
     result.options.slice.size_member.type = system->i32_type;
     result.options.slice.size_member.offset = 8;
     return type_system_register_type(system, result);
@@ -968,4 +967,33 @@ Optional<Enum_Item> enum_type_find_member_by_value(Type_Signature* enum_type, in
         if (member.value == value) return optional_make_success(member);
     }
     return optional_make_failure<Enum_Item>();
+}
+
+Optional<Struct_Member> type_signature_find_member_by_id(Type_Signature* type, String* id)
+{
+    switch (type->type)
+    {
+    case Signature_Type::STRUCT:
+    {
+        for (int i = 0; i < type->options.structure.members.size; i++) {
+            auto& member = type->options.structure.members[i];
+            if (member.id == id) return optional_make_success(member);
+        }
+        if (type->options.structure.struct_type == AST::Structure_Type::UNION && id == compiler.id_tag) {
+            return optional_make_success(type->options.structure.tag_member);
+        }
+        break;
+    }
+    case Signature_Type::SLICE:
+    {
+        if (id == compiler.id_data) {
+            return optional_make_success(type->options.slice.data_member);
+        }
+        else if (id == compiler.id_size) {
+            return optional_make_success(type->options.slice.size_member);
+        }
+        break;
+    }
+    }
+    return optional_make_failure<Struct_Member>();
 }

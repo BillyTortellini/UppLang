@@ -282,9 +282,6 @@
     <ClInclude Include="programs\upp_lang\parser.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
     </ClInclude>
-    <ClInclude Include="programs\upp_lang\rc_analyser.hpp">
-      <Filter>Header Files\Programs\Upp_Lang</Filter>
-    </ClInclude>
     <ClInclude Include="programs\upp_lang\semantic_analyser.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
     </ClInclude>
@@ -305,6 +302,9 @@
     </ClInclude>
     <ClInclude Include="programs\text_editor\text.hpp">
       <Filter>Header Files\Programs\Text_Editor</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\upp_lang\dependency_analyser.hpp">
+      <Filter>Header Files\Programs\Upp_Lang</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -455,9 +455,6 @@
     <ClCompile Include="datastructures\stack_allocator.cpp">
       <Filter>Source Files\Datastructures</Filter>
     </ClCompile>
-    <ClCompile Include="programs\upp_lang\rc_analyser.cpp">
-      <Filter>Source Files\Programs\Upp_Lang</Filter>
-    </ClCompile>
     <ClCompile Include="datastructures\dependency_graph.cpp">
       <Filter>Source Files\Datastructures</Filter>
     </ClCompile>
@@ -496,6 +493,9 @@
     </ClCompile>
     <ClCompile Include="programs\text_editor\text.cpp">
       <Filter>Source Files\Programs\Text_Editor</Filter>
+    </ClCompile>
+    <ClCompile Include="programs\upp_lang\dependency_analyser.cpp">
+      <Filter>Source Files\Programs\Upp_Lang</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

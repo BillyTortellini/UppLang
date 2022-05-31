@@ -794,19 +794,19 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
             const char* binary_str = "";
             switch (binary->type)
             {
-            case ModTree_Binary_Operation_Type::ADDITION: binary_str = "+"; break;
-            case ModTree_Binary_Operation_Type::AND: binary_str = "&&"; break;
-            case ModTree_Binary_Operation_Type::DIVISION: binary_str = "/"; break;
-            case ModTree_Binary_Operation_Type::EQUAL: binary_str = "=="; break;
-            case ModTree_Binary_Operation_Type::GREATER_OR_EQUAL: binary_str = ">="; break;
-            case ModTree_Binary_Operation_Type::GREATER: binary_str = ">"; break;
-            case ModTree_Binary_Operation_Type::LESS_OR_EQUAL: binary_str = "<="; break;
-            case ModTree_Binary_Operation_Type::LESS: binary_str = "<"; break;
-            case ModTree_Binary_Operation_Type::MODULO: binary_str = "%"; break;
-            case ModTree_Binary_Operation_Type::MULTIPLICATION: binary_str = "*"; break;
-            case ModTree_Binary_Operation_Type::NOT_EQUAL: binary_str = "!="; break;
-            case ModTree_Binary_Operation_Type::OR: binary_str = "||"; break;
-            case ModTree_Binary_Operation_Type::SUBTRACTION: binary_str = "-"; break;
+            case AST::Binop::ADDITION: binary_str = "+"; break;
+            case AST::Binop::AND: binary_str = "&&"; break;
+            case AST::Binop::DIVISION: binary_str = "/"; break;
+            case AST::Binop::EQUAL: binary_str = "=="; break;
+            case AST::Binop::GREATER_OR_EQUAL: binary_str = ">="; break;
+            case AST::Binop::GREATER: binary_str = ">"; break;
+            case AST::Binop::LESS_OR_EQUAL: binary_str = "<="; break;
+            case AST::Binop::LESS: binary_str = "<"; break;
+            case AST::Binop::MODULO: binary_str = "%"; break;
+            case AST::Binop::MULTIPLICATION: binary_str = "*"; break;
+            case AST::Binop::NOT_EQUAL: binary_str = "!="; break;
+            case AST::Binop::OR: binary_str = "||"; break;
+            case AST::Binop::SUBTRACTION: binary_str = "-"; break;
             default: panic("Hey");
             }
             string_append_formated(output, "%s ", binary_str);
@@ -1123,7 +1123,7 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
                     string_append_formated(&generator->section_struct_implementations, "struct %s {\n", type_name->characters);
                     int member_indentation = 1;
                     bool is_union = false;
-                    if (type->options.structure.struct_type != Structure_Type::STRUCT) {
+                    if (type->options.structure.struct_type != AST::Structure_Type::STRUCT) {
                         string_add_indentation(&generator->section_struct_implementations, 1);
                         string_append_formated(&generator->section_struct_implementations, "union {\n");
                         member_indentation = 2;
@@ -1137,11 +1137,11 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
                         c_generator_output_type_reference(generator, &generator->section_struct_implementations, member->type);
                         string_append_formated(&generator->section_struct_implementations, " %s;\n", member->id->characters);
                     }
-                    if (type->options.structure.struct_type != Structure_Type::STRUCT) {
+                    if (type->options.structure.struct_type != AST::Structure_Type::STRUCT) {
                         string_add_indentation(&generator->section_struct_implementations, 1);
                         string_append_formated(&generator->section_struct_implementations, "};\n");
                     }
-                    if (type->options.structure.struct_type == Structure_Type::UNION) {
+                    if (type->options.structure.struct_type == AST::Structure_Type::UNION) {
                         string_add_indentation(&generator->section_struct_implementations, 1);
                         Struct_Member* member = &type->options.structure.tag_member;
                         c_generator_output_type_reference(generator, &generator->section_struct_implementations, member->type);

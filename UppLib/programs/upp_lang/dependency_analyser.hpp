@@ -5,10 +5,8 @@
 #include "compiler_misc.hpp"
 #include "type_system.hpp"
 
-struct ModTree_Variable;
 struct ModTree_Function;
-struct ModTree_Extern_Function;
-struct Modtree_Polymorphic_Function;
+struct ModTree_Global;
 struct Type_Signature;
 struct Dependency_Analyser;
 
@@ -19,6 +17,7 @@ struct Symbol_Data;
 struct Analysis_Item;
 struct Symbol_Dependency;
 struct Code_Source;
+struct Analysis_Pass;
 
 namespace AST
 {
@@ -31,27 +30,25 @@ namespace AST
     struct Module;
 }
 
-namespace Dependency_Analysis
-{
-    struct Symbol_Dependency;
-}
+
 
 // Symbol Table
 enum class Symbol_Type
 {
-    UNRESOLVED,
-    VARIABLE_UNDEFINED,
-    POLYMORPHIC_PARAMETER,
+    UNRESOLVED,            // An Analysis Item exists for this Symbol, but it hasn't advance yet (Function without header analysis, struct not started...)
+    VARIABLE_UNDEFINED,    // A variable/parameter/global that hasn't been defined yet
+    SYMBOL_ALIAS,          // Comptime definition pointing at another symbol
 
     HARDCODED_FUNCTION,
     EXTERN_FUNCTION,
     FUNCTION,
     TYPE,
-    CONSTANT_VALUE,
+    COMPTIME_VALUE,
     VARIABLE,
+    GLOBAL,
+    PARAMETER,
     MODULE,
-    SYMBOL_ALIAS,
-    ERROR_SYMBOL,
+    ERROR_SYMBOL, 
 };
 
 struct Symbol
@@ -59,22 +56,22 @@ struct Symbol
     Symbol_Type type;
     union
     {
-        ModTree_Variable* variable;
+        Type_Signature* variable_type;
         Symbol_Table* module_table;
         ModTree_Function* function;
         Hardcoded_Type hardcoded;
-        ModTree_Extern_Function* extern_function;
         Type_Signature* type;
+        ModTree_Global* global;
+        struct {
+            Type_Signature* parameter_type;
+            int parameter_index;
+        };
         Upp_Constant constant;
         Symbol* alias;
         struct {
             bool is_parameter;
             int parameter_index;
         } variable_undefined;
-        struct {
-            int parameter_index;
-            ModTree_Function* function;
-        } polymorphic;
     } options;
 
     String* id;
@@ -143,6 +140,8 @@ void symbol_append_to_string(Symbol* symbol, String* string);
 Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool only_current_scope, Symbol_Dependency* dependency, Analysis_Item* searching_from);
 
 
+
+// Analysis Items
 struct Symbol_Dependency
 {
     Dependency_Type type;
@@ -167,8 +166,13 @@ struct Analysis_Item
 {
     Analysis_Item_Type type;
     Dynamic_Array<Symbol_Dependency> symbol_dependencies;
-    AST::Base* node;
     Symbol* symbol; // Optional
+
+    Dynamic_Array<Analysis_Pass*> passes;
+    AST::Base* node;
+    int min_node_index;
+    int max_node_index;
+
     union {
         Analysis_Item* function_body_item;
     } options;

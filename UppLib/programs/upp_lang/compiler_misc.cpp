@@ -261,7 +261,7 @@ Constant_Status constant_pool_search_references(Constant_Pool* pool, int data_of
         // Loop over each member and call this function
         switch (signature->options.structure.struct_type)
         {
-        case Structure_Type::STRUCT: 
+        case AST::Structure_Type::STRUCT: 
         {
             for (int i = 0; i < signature->options.structure.members.size; i++) {
                 Struct_Member* member = &signature->options.structure.members[i];
@@ -270,13 +270,13 @@ Constant_Status constant_pool_search_references(Constant_Pool* pool, int data_of
             }
             break;
         }
-        case Structure_Type::C_UNION: {
+        case AST::Structure_Type::C_UNION: {
             if (type_signature_contains_references(signature)) {
                 return Constant_Status::CANNOT_SAVE_C_UNIONS_CONTAINING_REFERENCES;
             }
             break;
         }
-        case Structure_Type::UNION: 
+        case AST::Structure_Type::UNION: 
         {
             Type_Signature* tag_type = signature->options.structure.tag_member.type;
             assert(tag_type->type == Signature_Type::ENUM, "");

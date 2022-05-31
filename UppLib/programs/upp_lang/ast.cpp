@@ -6,6 +6,7 @@ namespace AST
     {
         switch (node->type)
         {
+        case Base_Type::SWITCH_CASE: 
         case Base_Type::PROJECT_IMPORT: 
         case Base_Type::PARAMETER: 
         case Base_Type::ARGUMENT: 
@@ -103,6 +104,12 @@ namespace AST
 #define FILL_ARRAY(x) {if (child_index < index + x.size) {return &x[child_index - index]->base;} else {index += x.size;}}
         switch (node->type)
         {
+        case Base_Type::SWITCH_CASE: {
+            auto sw_case = (Switch_Case*)node;
+            FILL_OPTIONAL(sw_case->value);
+            FILL(sw_case->block);
+            break;
+        }
         case Base_Type::PARAMETER: {
             auto param = (Parameter*)node;
             FILL(param->type);
@@ -323,13 +330,8 @@ namespace AST
                 break;
             }
             case Statement_Type::SWITCH_STATEMENT: {
-                auto cases = stat->options.switch_statement.cases;
                 FILL(stat->options.switch_statement.condition);
-                for (int i = 0; i < cases.size; i++) {
-                    auto& cas = cases[i];
-                    FILL_OPTIONAL(cas.value);
-                    FILL(cas.block);
-                }
+                FILL_ARRAY(stat->options.switch_statement.cases);
                 break;
             }
             default: panic("HEY");
@@ -351,6 +353,12 @@ namespace AST
 #define FILL_ARRAY(x) for (int i = 0; i < x.size; i++) {dynamic_array_push_back(fill, &x[i]->base);}
         switch (node->type)
         {
+        case Base_Type::SWITCH_CASE: {
+            auto sw_case = (Switch_Case*)node;
+            FILL_OPTIONAL(sw_case->value);
+            FILL(sw_case->block);
+            break;
+        }
         case Base_Type::ENUM_MEMBER: break;
         case Base_Type::PROJECT_IMPORT: {
             break;
@@ -569,13 +577,8 @@ namespace AST
                 break;
             }
             case Statement_Type::SWITCH_STATEMENT: {
-                auto& cases = stat->options.switch_statement.cases;
                 FILL(stat->options.switch_statement.condition);
-                for (int i = 0; i < cases.size; i++) {
-                    auto& cas = cases[i];
-                    FILL_OPTIONAL(cas.value);
-                    FILL(cas.block);
-                }
+                FILL_ARRAY(stat->options.switch_statement.cases);
                 break;
             }
             default: panic("HEY");
@@ -605,6 +608,7 @@ namespace AST
             string_append_formated(str, "SYMBOL_READ ");
             string_append_string(str, ((Symbol_Read*)base)->name);
             break;
+        case Base_Type::SWITCH_CASE: string_append_formated(str, "SWITCH_CASE"); break;
         case Base_Type::CODE_BLOCK: string_append_formated(str, "CODE_BLOCK"); break;
         case Base_Type::MODULE: string_append_formated(str, "MODULE"); break;
         case Base_Type::ARGUMENT: {
@@ -747,4 +751,36 @@ namespace AST
             symbol_read_append_to_string(read->path_child.value, string);
         }
     }
+
+    namespace Helpers
+    {
+        bool type_correct(Definition* base) {
+            return base->base.type == Base_Type::DEFINITION;
+        }
+        bool type_correct(Switch_Case* base) {
+            return base->base.type == Base_Type::SWITCH_CASE;
+        }
+        bool type_correct(Argument* base) {
+            return base->base.type == Base_Type::ARGUMENT;
+        }
+        bool type_correct(Parameter* base) {
+            return base->base.type == Base_Type::PARAMETER;
+        }
+        bool type_correct(Expression* base) {
+            return base->base.type == Base_Type::EXPRESSION;
+        }
+        bool type_correct(Enum_Member* base) {
+            return base->base.type == Base_Type::ENUM_MEMBER;
+        }
+        bool type_correct(Module* base) {
+            return base->base.type == Base_Type::MODULE;
+        }
+        bool type_correct(Project_Import* base) {
+            return base->base.type == Base_Type::PROJECT_IMPORT;
+        }
+        bool type_correct(Symbol_Read* base) {
+            return base->base.type == Base_Type::SYMBOL_READ;
+        }
+    }
+
 }

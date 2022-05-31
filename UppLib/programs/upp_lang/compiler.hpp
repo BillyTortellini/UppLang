@@ -63,6 +63,14 @@ struct Compiler
     double time_output;
     double time_code_exec;
     double time_reset;
+
+    // IDs
+    String* id_data;
+    String* id_size;
+    String* id_tag;
+    String* id_main;
+    String* id_type_of;
+    String* id_type_info;
 };
 
 extern Compiler compiler;
