@@ -129,7 +129,6 @@ struct Predefined_Symbols
     Symbol* hardcoded_read_bool;
     Symbol* hardcoded_random_i32;
 
-    Symbol* global_type_informations;
     Symbol* error_symbol;
 };
 

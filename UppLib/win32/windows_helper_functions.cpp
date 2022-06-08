@@ -27,25 +27,3 @@ void helper_print_last_error()
     LocalFree(msg_buffer);
 }
 
-static char buffer[256];
-Optional<String> open_file_selection_dialog()
-{
-    // open a file name
-    OPENFILENAME ofn;
-    ZeroMemory(&ofn, sizeof(ofn));
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = NULL;
-    ofn.lpstrFile = buffer;
-    ofn.lpstrFile[0] = '\0';
-    ofn.nMaxFile = sizeof(buffer);
-    ofn.lpstrFilter = "All\0*.*\0Text\0*.TXT\0";
-    ofn.nFilterIndex = 1;
-    ofn.lpstrFileTitle = NULL;
-    ofn.nMaxFileTitle = 0;
-    ofn.lpstrInitialDir = NULL;
-    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
-
-    int ret_val = GetOpenFileName(&ofn);
-    if (ret_val == 0) return optional_make_failure<String>();
-    return optional_make_success(string_create_static(ofn.lpstrFile));
-}

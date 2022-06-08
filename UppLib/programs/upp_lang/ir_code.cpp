@@ -6,109 +6,6 @@
 void ir_generator_generate_block(IR_Code_Block* ir_block, AST::Code_Block* ast_block);
 IR_Data_Access ir_generator_generate_expression(IR_Code_Block* ir_block, AST::Expression* expression);
 
-/*
-Some codegen from previous modtree
-
-    // Add type_informations loading to global init function
-    if (semantic_analyser.errors.size == 0)
-    {
-        Type_Signature* type_info_array_signature = type_system_make_array(
-            &type_system, type_system.type_information_type, true, type_system.internal_type_infos.size
-        );
-        int internal_information_size = type_system.internal_type_infos.size;
-        Constant_Result result = constant_pool_add_constant(
-            &semantic_analyser.compiler->constant_pool, type_info_array_signature,
-            array_create_static_as_bytes(type_system.internal_type_infos.data, type_system.internal_type_infos.size)
-        );
-        assert(result.status == Constant_Status::SUCCESS, "Type information must be valid");
-        assert(type_system.types.size == type_system.internal_type_infos.size, "");
-    }
-
-    // TODO: add type_information table (Slice) as a global to the program
-
-
-        // Set type_informations pointer
-        {
-            ModTree_Expression* global_access = modtree_expression_create_empty(AST::Expression_Type::VARIABLE_READ, semantic_analyser.global_type_informations->data_type);
-            global_access->options.variable_read = semantic_analyser.global_type_informations;
-
-            ModTree_Expression* data_access = modtree_expression_create_empty(
-                AST::Expression_Type::MEMBER_ACCESS, type_system_make_pointer(&type_system, type_system.type_information_type)
-            );
-            data_access->options.member_access.structure_expression = global_access;
-            data_access->options.member_access.member = semantic_analyser.global_type_informations->data_type->options.slice.data_member;
-
-            ModTree_Expression* constant_access = modtree_expression_create_empty(AST::Expression_Type::CONSTANT_READ, type_info_array_signature);
-            constant_access->options.constant_read = result.constant;
-
-            ModTree_Expression* ptr_expression = modtree_expression_create_empty(AST::Expression_Type::UNARY_OPERATION, data_access->result_type);
-            ptr_expression->options.unary_operation.operation_type = AST::Unop::ADDRESS_OF;
-            ptr_expression->options.unary_operation.operand = constant_access;
-
-            ModTree_Statement* assign_statement = modtree_block_add_statement_empty(semantic_analyser.global_init_function->body, ModTree_Statement_Type::ASSIGNMENT);
-            assign_statement->options.assignment.destination = data_access;
-            assign_statement->options.assignment.source = ptr_expression;
-        }
-        // Set type_informations size
-        {
-            ModTree_Expression* global_access = modtree_expression_create_empty(
-                AST::Expression_Type::VARIABLE_READ, semantic_analyser.global_type_informations->data_type
-            );
-            global_access->options.variable_read = semantic_analyser.global_type_informations;
-
-            ModTree_Expression* size_access = modtree_expression_create_empty(AST::Expression_Type::MEMBER_ACCESS, type_system.i32_type);
-            size_access->options.member_access.structure_expression = global_access;
-            size_access->options.member_access.member = semantic_analyser.global_type_informations->data_type->options.slice.size_member;
-
-            ModTree_Statement* assign_statement = modtree_block_add_statement_empty(semantic_analyser.global_init_function->body, ModTree_Statement_Type::ASSIGNMENT);
-            assign_statement->options.assignment.destination = size_access;
-            assign_statement->options.assignment.source = modtree_expression_create_constant_i32(internal_information_size);
-        }
-    }
-
-    // Call main after end of global init function
-    {
-        if (main_function != 0)
-        {
-            ModTree_Expression* call_expr = modtree_expression_create_empty(AST::Expression_Type::FUNCTION_CALL, type_system.void_type);
-            call_expr->options.function_call.call_type = ModTree_Call_Type::FUNCTION;
-            call_expr->options.function_call.arguments = dynamic_array_create_empty<ModTree_Expression*>(1);
-            call_expr->options.function_call.options.function = main_function;
-            ModTree_Statement* call_stmt = modtree_block_add_statement_empty(semantic_analyser.global_init_function->body, ModTree_Statement_Type::EXPRESSION);
-            call_stmt->options.expression = call_expr;
-        }
-        ModTree_Statement* exit_stmt = modtree_block_add_statement_empty(semantic_analyser.global_init_function->body, ModTree_Statement_Type::EXIT);
-        exit_stmt->options.exit_code = Exit_Code::SUCCESS;
-
-        semantic_analyser.program->entry_function = semantic_analyser.global_init_function;
-    }
-
-
-    // ASSERT FUNCTION
-
-            ModTree_Expression* param_read_expr = modtree_expression_create_empty(AST::Expression_Type::VARIABLE_READ, cond_var->data_type);
-            param_read_expr->options.variable_read = cond_var;
-
-            ModTree_Expression* cond_expr = modtree_expression_create_empty(AST::Expression_Type::UNARY_OPERATION, cond_var->data_type);
-            cond_expr->options.unary_operation.operand = param_read_expr;
-            cond_expr->options.unary_operation.operation_type = AST::Unop::LOGICAL_NOT;
-
-            ModTree_Statement* if_stat = modtree_block_add_statement_empty(assert_fn->body, ModTree_Statement_Type::IF);
-            if_stat->options.if_statement.condition = cond_expr;
-            if_stat->options.if_statement.if_block = modtree_block_create_empty(0);
-            if_stat->options.if_statement.else_block = modtree_block_create_empty(0);
-
-            ModTree_Statement* exit_stat = modtree_block_add_statement_empty(if_stat->options.if_statement.if_block, ModTree_Statement_Type::EXIT);
-            exit_stat->type = ModTree_Statement_Type::EXIT;
-            exit_stat->options.exit_code = Exit_Code::ASSERTION_FAILED;
-
-            ModTree_Statement* return_stat = modtree_block_add_statement_empty(if_stat->options.if_statement.else_block, AST::Statement_Type::RETURN);
-            return_stat->options.return_value.available = false;
-        }
-        semantic_analyser.assert_function = assert_fn;
-
-    // TODO global init function
-*/
 
 
 // IR Program
@@ -175,13 +72,22 @@ void ir_code_block_destroy(IR_Code_Block* block)
     delete block;
 }
 
-IR_Function* ir_function_create(IR_Program* program, Type_Signature* signature)
+IR_Function* ir_function_create(Type_Signature* signature, ModTree_Function* origin_func)
 {
     IR_Function* function = new IR_Function();
     function->code = ir_code_block_create(function);
     function->function_type = signature;
-    function->program = program;
-    dynamic_array_push_back(&program->functions, function);
+    function->program = ir_generator.program;
+    dynamic_array_push_back(&ir_generator.program->functions, function);
+
+    if (origin_func != 0) {
+        auto worked = hashtable_insert_element(&ir_generator.function_mapping, origin_func, function);
+        assert(worked, "");
+        Function_Stub stub;
+        stub.mod_func = origin_func;
+        stub.ir_func = function;
+        dynamic_array_push_back(&ir_generator.queue_functions, stub);
+    }
     return function;
 }
 
@@ -196,15 +102,14 @@ IR_Program* ir_program_create(Type_System* type_system)
     IR_Program* result = new IR_Program;
     result->entry_function = 0;
     result->functions = dynamic_array_create_empty<IR_Function*>(32);
-    result->globals = dynamic_array_create_empty<Type_Signature*>(32);
     return result;
 }
 
 void ir_program_destroy(IR_Program* program)
 {
-    dynamic_array_destroy(&program->globals);
     for (int i = 0; i < program->functions.size; i++) {
-        ir_function_destroy(program->functions[i]);
+        auto function = program->functions[i];
+        ir_function_destroy(function);
     }
     dynamic_array_destroy(&program->functions);
     delete program;
@@ -218,17 +123,16 @@ void ir_data_access_append_to_string(IR_Data_Access* access, String* string, IR_
     switch (access->type)
     {
     case IR_Data_Access_Type::CONSTANT: {
-        Upp_Constant* constant = &access->option.constant_pool->constants[access->index];
+        Upp_Constant* constant = &compiler.constant_pool.constants[access->index];
         string_append_formated(string, "Constant #%d ", access->index);
         type_signature_append_to_string(string, constant->type);
         string_append_formated(string, " ", access->index);
-        type_signature_append_value_to_string(constant->type, &access->option.constant_pool->buffer[constant->offset], string);
+        type_signature_append_value_to_string(constant->type, &compiler.constant_pool.buffer[constant->offset], string);
         break;
     }
     case IR_Data_Access_Type::GLOBAL_DATA: {
-        Type_Signature* sig = access->option.program->globals[access->index];
         string_append_formated(string, "Global #%d, type: ", access->index);
-        type_signature_append_to_string(string, sig);
+        type_signature_append_to_string(string, ir_data_access_get_type(access));
         break;
     }
     case IR_Data_Access_Type::PARAMETER: {
@@ -636,10 +540,10 @@ Type_Signature* ir_data_access_get_type(IR_Data_Access* access)
     switch (access->type)
     {
     case IR_Data_Access_Type::GLOBAL_DATA:
-        sig = access->option.program->globals[access->index];
+        return ir_generator.modtree->globals[access->index]->type;
         break;
     case IR_Data_Access_Type::CONSTANT:
-        sig = access->option.constant_pool->constants[access->index].type;
+        sig = compiler.constant_pool.constants[access->index].type;
         break;
     case IR_Data_Access_Type::REGISTER:
         sig = access->option.definition_block->registers[access->index];
@@ -650,9 +554,19 @@ Type_Signature* ir_data_access_get_type(IR_Data_Access* access)
     default: panic("Hey!");
     }
     if (access->is_memory_access) {
+        assert(sig->type == Signature_Type::POINTER, "");
         return sig->options.pointer_child;
     }
     return sig;
+}
+
+IR_Data_Access ir_data_access_create_global(ModTree_Global* global)
+{
+    IR_Data_Access access;
+    access.type = IR_Data_Access_Type::GLOBAL_DATA;
+    access.index = global->index;
+    access.is_memory_access = false;
+    return access;
 }
 
 IR_Data_Access ir_data_access_create_intermediate(IR_Code_Block* block, Type_Signature* signature)
@@ -662,13 +576,14 @@ IR_Data_Access ir_data_access_create_intermediate(IR_Code_Block* block, Type_Sig
     if (signature->type == Signature_Type::VOID_TYPE) {
         access.is_memory_access = false;
         access.type = IR_Data_Access_Type::GLOBAL_DATA;
-        access.option.program = 0;
         access.index = 0;
         return access;
     }
     access.is_memory_access = false;
     access.type = IR_Data_Access_Type::REGISTER;
     access.option.definition_block = block;
+    assert(signature->type != Signature_Type::UNKNOWN_TYPE, "Cannot have register with unknown type");
+    assert(!(signature->size == 0), "Cannot have register with 0 size!");
     dynamic_array_push_back(&block->registers, signature);
     access.index = block->registers.size - 1;
     return access;
@@ -685,7 +600,7 @@ IR_Data_Access ir_data_access_create_dereference(IR_Code_Block* block, IR_Data_A
     }
     Type_Signature* ptr_type = ir_data_access_get_type(&access);
     assert(ptr_type->type == Signature_Type::POINTER, "");
-    IR_Data_Access ptr_access = ir_data_access_create_intermediate(block, ptr_type->options.pointer_child);
+    IR_Data_Access ptr_access = ir_data_access_create_intermediate(block, ptr_type);
     IR_Instruction instr;
     instr.type = IR_Instruction_Type::MOVE;
     instr.options.move.destination = ptr_access;
@@ -730,10 +645,18 @@ IR_Data_Access ir_data_access_create_constant(Type_Signature* signature, Array<b
     IR_Data_Access access;
     access.is_memory_access = false;
     access.type = IR_Data_Access_Type::CONSTANT;
-    access.option.constant_pool = &compiler.constant_pool;
     Constant_Result result = constant_pool_add_constant(&compiler.constant_pool, signature, bytes);
     assert(result.status == Constant_Status::SUCCESS, "Must always work");
     access.index = result.constant.constant_index;
+    return access;
+}
+
+IR_Data_Access ir_data_access_create_constant(Upp_Constant constant)
+{
+    IR_Data_Access access;
+    access.index = constant.constant_index;
+    access.type = IR_Data_Access_Type::CONSTANT;
+    access.is_memory_access = false;
     return access;
 }
 
@@ -747,6 +670,22 @@ IR_Data_Access ir_data_access_create_constant_i32(i32 value) {
 
 
 // Code Gen
+Expression_Info* get_info(AST::Expression* node) {
+    return &analysis_pass_get_node_info(ir_generator.current_pass, &node->base)->info_expr;
+}
+
+Statement_Info* get_info(AST::Statement* node) {
+    return &analysis_pass_get_node_info(ir_generator.current_pass, &node->base)->info_stat;
+}
+
+Argument_Info* get_info(AST::Argument* node) {
+    return &analysis_pass_get_node_info(ir_generator.current_pass, &node->base)->arg_info;
+}
+
+Case_Info* get_info(AST::Switch_Case* node) {
+    return &analysis_pass_get_node_info(ir_generator.current_pass, &node->base)->info_case;
+}
+
 IR_Data_Access ir_generator_generate_cast(IR_Code_Block* ir_block, IR_Data_Access source, Type_Signature* result_type, Info_Cast_Type cast_type)
 {
     if (cast_type == Info_Cast_Type::NO_CAST) return source;
@@ -805,7 +744,7 @@ IR_Data_Access ir_generator_generate_cast(IR_Code_Block* ir_block, IR_Data_Acces
         result_access = make_simple_cast(ir_block, source, result_type, IR_Cast_Type::INT_TO_ENUM);
         break;
     }
-    case Info_Cast_Type::ARRAY_SIZED_TO_UNSIZED:
+    case Info_Cast_Type::ARRAY_TO_SLICE:
     {
         Type_Signature* slice_type = result_type;
         Type_Signature* array_type = source_type;
@@ -942,25 +881,15 @@ IR_Data_Access ir_generator_generate_cast(IR_Code_Block* ir_block, IR_Data_Acces
 
 IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block, AST::Expression* expression)
 {
-    auto info = pass_get_info_internal<Expression_Info>(ir_generator.current_pass, expression);
+    auto info = get_info(expression);
     auto result_type = expression_info_get_type(info);
     auto type_system = &compiler.type_system;
-
-    // Handle constants
-    if (info->constant_value.available)
-    {
-        auto value = info->constant_value.value;
-        IR_Data_Access access;
-        access.index = value.constant_index;
-        access.type = IR_Data_Access_Type::CONSTANT;
-        access.is_memory_access = false;
-        access.option.constant_pool = &compiler.constant_pool;
-        return access;
-    }
 
     // Handle different expression results
     switch (info->result_type)
     {
+    case Expression_Result_Type::CONSTANT:
+        return ir_data_access_create_constant(info->options.constant);
     case Expression_Result_Type::TYPE:
         return ir_data_access_create_constant(type_system->u64_type, array_create_static_as_bytes(&result_type->internal_index, 1));
     case Expression_Result_Type::FUNCTION: {
@@ -971,7 +900,6 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
         load_instr.options.address_of.type = IR_Instruction_Address_Of_Type::FUNCTION;
         load_instr.options.address_of.options.function = *hashtable_find_element(&ir_generator.function_mapping, info->options.function);
         load_instr.options.address_of.destination = access;
-        load_instr.options.call.destination = ir_data_access_create_intermediate(ir_block, result_type);
         dynamic_array_push_back(&ir_block->instructions, load_instr);
         return access;
     }
@@ -1041,7 +969,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
     case AST::Expression_Type::FUNCTION_CALL:
     {
         auto& call = expression->options.call;
-        auto call_info = pass_get_info_internal<Expression_Info>(ir_generator.current_pass, call.expr);
+        auto call_info = get_info(call.expr);
 
         IR_Instruction call_instr;
         call_instr.type = IR_Instruction_Type::FUNCTION_CALL;
@@ -1058,12 +986,17 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
             call_instr.options.call.options.pointer_access = ir_generator_generate_expression(ir_block, call.expr);
             break;
         }
+        case Expression_Result_Type::CONSTANT: {
+            call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_POINTER_CALL;
+            call_instr.options.call.options.pointer_access = ir_data_access_create_constant(call_info->options.constant);
+            break;
+        }
         case Expression_Result_Type::HARDCODED_FUNCTION:
         {
             auto& hardcoded = call_info->options.hardcoded;
             switch (hardcoded)
             {
-            case Hardcoded_Type::ASSERT_FN: 
+            case Hardcoded_Type::ASSERT_FN:
             {
                 IR_Instruction if_instr;
                 if_instr.type = IR_Instruction_Type::IF;
@@ -1071,7 +1004,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
                 if_instr.options.if_instr.true_branch = ir_code_block_create(ir_block->function);
                 if_instr.options.if_instr.false_branch = ir_code_block_create(ir_block->function);
                 dynamic_array_push_back(&ir_block->instructions, if_instr);
-                
+
                 IR_Instruction exit_instr;
                 exit_instr.type = IR_Instruction_Type::RETURN;
                 exit_instr.options.return_instr.type = IR_Instruction_Return_Type::EXIT;
@@ -1079,7 +1012,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
                 dynamic_array_push_back(&if_instr.options.if_instr.false_branch->instructions, exit_instr);
                 return call_instr.options.call.destination;
             }
-            case Hardcoded_Type::TYPE_INFO: 
+            case Hardcoded_Type::TYPE_INFO:
             {
                 // TODO Do type info global lookup
                 // Is array access with i32 currently? Yeh i dink so
@@ -1119,12 +1052,10 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
     case AST::Expression_Type::SYMBOL_READ:
     {
         auto symbol = expression->options.symbol_read->resolved_symbol;
-        assert(symbol->type == Symbol_Type::VARIABLE, "Symbol read must be handled by analyser or above!");
-
         switch (symbol->type)
         {
         case Symbol_Type::GLOBAL: {
-            return *hashtable_find_element(&ir_generator.global_mapping, symbol->options.global);
+            return ir_data_access_create_global(symbol->options.global);
         }
         case Symbol_Type::VARIABLE: {
             return *hashtable_find_element(&ir_generator.variable_mapping, AST::base_downcast<AST::Definition>(symbol->definition_node));
@@ -1137,7 +1068,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
             access.option.function = ir_block->function;
             return access;
         }
-        default: panic("Shouldn't happen here!");
+        default: panic("Other Symbol-cases must be handled by analyser or in this function above!");
         }
         return ir_data_access_create_constant_i32(-1);
     }
@@ -1148,7 +1079,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
         for (int i = 0; i < struct_init.arguments.size; i++)
         {
             auto arg = struct_init.arguments[i];
-            auto arg_info = pass_get_info_internal<Argument_Info>(ir_generator.current_pass, arg);
+            auto arg_info = get_info(arg);
             assert(arg_info->valid, "");
             assert(result_type->type == Signature_Type::STRUCT, "");
 
@@ -1163,7 +1094,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
         if (result_type->options.structure.struct_type == AST::Structure_Type::UNION)
         {
             assert(struct_init.arguments.size == 1, "");
-            auto& member = pass_get_info_internal<Argument_Info>(ir_generator.current_pass, struct_init.arguments[0])->member;
+            auto& member = get_info(struct_init.arguments[0])->member;
             int member_index = -1;
             for (int i = 0; i < result_type->options.structure.members.size; i++) {
                 if (result_type->options.structure.members[i].offset == member.offset) {
@@ -1227,7 +1158,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
     {
         auto mem_access = expression->options.member_access;
         auto source = ir_generator_generate_expression(ir_block, mem_access.expr);
-        auto src_type = expression_info_get_type(pass_get_info_internal<Expression_Info>(ir_generator.current_pass, mem_access.expr));
+        auto src_type = get_info(mem_access.expr)->context_ops.after_cast_type;
 
         // Handle special case of array.data, which basically becomes an address of
         if (src_type->type == Signature_Type::ARRAY)
@@ -1249,7 +1180,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
 
         // Handle normal member access
         auto member_result = type_signature_find_member_by_id(src_type, mem_access.name);
-        assert(member_result.available, "Must be avaialbe");
+        assert(member_result.available, "Must be availabe");
 
         return ir_data_access_create_member(ir_block, source, member_result.value);
     }
@@ -1257,7 +1188,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
     {
         // FUTURE: At some point this will access the Context struct for the alloc function, and then call it
         auto& new_expr = expression->options.new_expr;
-        auto type_info = pass_get_info_internal<Expression_Info>(ir_generator.current_pass, new_expr.type_expr);
+        auto type_info = get_info(new_expr.type_expr);
         assert(type_info->result_type == Expression_Result_Type::TYPE, "Hey");
         int element_size = type_info->options.type->size;
         if (new_expr.count_expr.available)
@@ -1337,7 +1268,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
 
 IR_Data_Access ir_generator_generate_expression(IR_Code_Block* ir_block, AST::Expression* expression)
 {
-    auto info = pass_get_info_internal<Expression_Info>(ir_generator.current_pass, expression);
+    auto info = get_info(expression);
     auto access = ir_generator_generate_expression_no_cast(ir_block, expression);
 
     // Apply context operations
@@ -1356,7 +1287,7 @@ IR_Data_Access ir_generator_generate_expression(IR_Code_Block* ir_block, AST::Ex
 void ir_generator_work_through_defers(IR_Code_Block* ir_block, int defer_to_index, bool rewind_stack)
 {
     auto& defers = ir_generator.defer_stack;
-    for (int i = defers.size - 1; i >= defer_to_index; i--) 
+    for (int i = defers.size - 1; i >= defer_to_index; i--)
     {
         auto block = defers[i];
         IR_Instruction instr;
@@ -1379,15 +1310,15 @@ void ir_generator_generate_block(IR_Code_Block* ir_block, AST::Code_Block* ast_b
     for (int i = 0; i < ast_block->statements.size; i++)
     {
         auto statement = ast_block->statements[i];
-        auto stat_info = pass_get_info_internal<Statement_Info>(ir_generator.current_pass, statement);
+        auto stat_info = get_info(statement);
         switch (statement->type)
         {
-        case AST::Statement_Type::DEFER: 
+        case AST::Statement_Type::DEFER:
         {
             dynamic_array_push_back(&ir_generator.defer_stack, statement->options.defer_block);
             break;
         }
-        case AST::Statement_Type::DEFINITION: 
+        case AST::Statement_Type::DEFINITION:
         {
             auto definition = statement->options.definition;
             if (definition->is_comptime) {
@@ -1465,7 +1396,7 @@ void ir_generator_generate_block(IR_Code_Block* ir_block, AST::Code_Block* ast_b
             instr.options.switch_instr.cases = dynamic_array_create_empty<IR_Switch_Case>(statement->options.switch_statement.cases.size);
 
             AST::Switch_Case* default_case = 0;
-            for (int i = 0; i < statement->options.switch_statement.cases.size; i++) 
+            for (int i = 0; i < statement->options.switch_statement.cases.size; i++)
             {
                 auto switch_case = statement->options.switch_statement.cases[i];
                 if (!switch_case->value.available) {
@@ -1473,7 +1404,7 @@ void ir_generator_generate_block(IR_Code_Block* ir_block, AST::Code_Block* ast_b
                     continue;
                 }
 
-                auto case_info = pass_get_info_internal<Case_Info>(ir_generator.current_pass, switch_case);
+                auto case_info = get_info(switch_case);
                 assert(case_info->is_valid, "");
 
                 IR_Switch_Case new_case;
@@ -1553,7 +1484,7 @@ void ir_generator_generate_block(IR_Code_Block* ir_block, AST::Code_Block* ast_b
             dynamic_array_push_back(is_continue ? &ir_generator.fill_out_continues : &ir_generator.fill_out_breaks, fill_out);
             break;
         }
-        case AST::Statement_Type::RETURN_STATEMENT: 
+        case AST::Statement_Type::RETURN_STATEMENT:
         {
             IR_Instruction instr;
             instr.type = IR_Instruction_Type::RETURN;
@@ -1576,8 +1507,8 @@ void ir_generator_generate_block(IR_Code_Block* ir_block, AST::Code_Block* ast_b
         case AST::Statement_Type::ASSIGNMENT: {
             IR_Instruction instr;
             instr.type = IR_Instruction_Type::MOVE;
-            instr.options.move.source = ir_generator_generate_expression(ir_block, statement->options.assignment.left_side);
-            instr.options.move.destination = ir_generator_generate_expression(ir_block, statement->options.assignment.right_side);
+            instr.options.move.source = ir_generator_generate_expression(ir_block, statement->options.assignment.right_side);
+            instr.options.move.destination = ir_generator_generate_expression(ir_block, statement->options.assignment.left_side);
             if ((int)instr.options.move.source.type < 0 || (int)instr.options.move.source.type > 6) {
                 panic("HEY");
             }
@@ -1614,60 +1545,38 @@ void ir_generator_generate_block(IR_Code_Block* ir_block, AST::Code_Block* ast_b
 
 
 // Queueing
-void ir_generator_generate_queued_items()
+void ir_generator_generate_queued_items(bool gen_bytecode)
 {
     Timing_Task before_task = compiler.task_current;
     SCOPE_EXIT(compiler_switch_timing_task(before_task));
     compiler_switch_timing_task(Timing_Task::CODE_GEN);
 
-    // Generate Function stubs
-    for (int i = 0; i < ir_generator.queue_functions.size; i++)
-    {
-        ModTree_Function* mod_func = ir_generator.queue_functions[i];
-        assert(mod_func->signature != 0, "");
-        assert(!mod_func->contains_errors, "");
-        if (hashtable_find_element(&ir_generator.function_mapping, mod_func) != 0) continue;
-
-        IR_Function* ir_func = new IR_Function;
-        ir_func->function_type = mod_func->signature;
-        ir_func->program = ir_generator.program;
-        ir_func->code = ir_code_block_create(ir_func);
-        dynamic_array_push_back(&ir_generator.program->functions, ir_func);
-        hashtable_insert_element(&ir_generator.function_mapping, mod_func, ir_func);
-        dynamic_array_push_back(&ir_generator.function_stubs, mod_func);
-    }
-    dynamic_array_reset(&ir_generator.queue_functions);
-
-    // Generate Globals
-    for (int i = 0; i < ir_generator.queue_globals.size; i++)
-    {
-        auto global = ir_generator.queue_globals[i];
-        if (hashtable_find_element(&ir_generator.global_mapping, global) != 0) continue;
-        dynamic_array_push_back(&ir_generator.program->globals, global->type);
-        IR_Data_Access access;
-        access.index = ir_generator.program->globals.size - 1;
-        access.is_memory_access = false;
-        access.type = IR_Data_Access_Type::GLOBAL_DATA;
-        access.option.program = ir_generator.program;
-        hashtable_insert_element(&ir_generator.global_mapping, global, access);
-    }
-    dynamic_array_reset(&ir_generator.queue_globals);
-
     // Execute schema for partial compilation (See Bytecode_Generator.hpp)
-    bytecode_generator_update_globals(compiler.bytecode_generator);
+    if (gen_bytecode) {
+        bytecode_generator_update_globals(compiler.bytecode_generator);
+    }
 
     // Generate Blocks
-    for (int i = 0; i < ir_generator.function_stubs.size; i++)
+    for (int i = 0; i < ir_generator.queue_functions.size; i++)
     {
-        ModTree_Function* mod_func = ir_generator.function_stubs[i];
-        IR_Function* ir_func = *hashtable_find_element(&ir_generator.function_mapping, mod_func);
+        auto& stub = ir_generator.queue_functions[i];
+        ModTree_Function* mod_func = stub.mod_func;
+        IR_Function* ir_func = stub.ir_func;
+        if (mod_func == 0) {
+            assert(ir_generator.program->entry_function == ir_func, "Only entry function doesn't have a mod_func!");
+            if (gen_bytecode) {
+                bytecode_generator_compile_function(compiler.bytecode_generator, ir_func);
+            }
+            continue;
+        }
         ir_generator.current_pass = mod_func->body_pass;
 
         auto body_node = (AST::Code_Block*)mod_func->body_pass->item->node;
         assert(body_node->base.type == AST::Base_Type::CODE_BLOCK, "");
         ir_generator_generate_block(ir_func->code, body_node);
 
-        if (ir_func->code->instructions.size != 0 && dynamic_array_last(&ir_func->code->instructions).type != IR_Instruction_Type::RETURN) {
+        // Add empty return
+        if (ir_func->function_type->options.function.return_type == compiler.type_system.void_type) {
             IR_Instruction return_instr;
             return_instr.type = IR_Instruction_Type::RETURN;
             return_instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_EMPTY;
@@ -1694,43 +1603,98 @@ void ir_generator_generate_queued_items()
         hashtable_reset(&ir_generator.labels_continue);
         hashtable_reset(&ir_generator.block_defer_depths);
 
-        bytecode_generator_compile_function(compiler.bytecode_generator, ir_func);
+        if (gen_bytecode) {
+            bytecode_generator_compile_function(compiler.bytecode_generator, ir_func);
+        }
     }
-    dynamic_array_reset(&ir_generator.function_stubs);
+    dynamic_array_reset(&ir_generator.queue_functions);
 
-    // Compile to Bytecode
-    bytecode_generator_update_references(compiler.bytecode_generator);
+    // Do bytecode stuff
+    if (gen_bytecode) {
+        bytecode_generator_update_references(compiler.bytecode_generator);
+    }
 }
 
 void ir_generator_queue_function(ModTree_Function* function) {
-    dynamic_array_push_back(&ir_generator.queue_functions, function);
+    if (hashtable_find_element(&ir_generator.function_mapping, function) != 0) return;
+    ir_function_create(function->signature, function);
 }
 
-void ir_generator_queue_global(ModTree_Global* global) {
-    dynamic_array_push_back(&ir_generator.queue_globals, global);
-}
-
-void ir_generator_finish()
+void ir_generator_finish(bool gen_bytecode)
 {
-    /*
-       1. Generate Global initialize function
-       2. Generate Entry function calling global_init + actual main
-       3. Set type_informations global
-    */
+    // Generate entry function
+    auto& type_system = compiler.type_system;
+    auto entry_function = ir_function_create(type_system_make_function(&type_system, {}, type_system.void_type), 0);
+    ir_generator.program->entry_function = entry_function;
 
+    // Set type_informations global
+    {
+        Constant_Result result = constant_pool_add_constant(
+            &compiler.constant_pool, 
+            type_system_make_array(
+                &type_system, type_system.type_information_type, true, type_system.internal_type_infos.size
+            ),
+            array_create_static_as_bytes(type_system.internal_type_infos.data, type_system.internal_type_infos.size)
+        );
+        assert(result.status == Constant_Status::SUCCESS, "Type information must be valid");
+        assert(type_system.types.size == type_system.internal_type_infos.size, "");
 
-    // Queue functions and globals
+        IR_Instruction move_instr;
+        move_instr.type = IR_Instruction_Type::MOVE;
+        move_instr.options.move.destination = ir_data_access_create_global(compiler.semantic_analyser->global_type_informations);
+        move_instr.options.move.source = ir_generator_generate_cast(
+            entry_function->code, ir_data_access_create_constant(result.constant),
+            ir_data_access_get_type(&move_instr.options.move.destination), Info_Cast_Type::ARRAY_TO_SLICE
+        );
+        dynamic_array_push_back(&entry_function->code->instructions, move_instr);
+    }
+
+   // Initialize all globals
+    auto& globals = compiler.semantic_analyser->program->globals;
+    for (int i = 0; i < globals.size; i++)
+    {
+        auto global = globals[i];
+        if (!global->has_initial_value) continue;
+
+        ir_generator.current_pass = global->init_pass;
+        IR_Instruction move_instr;
+        move_instr.type = IR_Instruction_Type::MOVE;
+        move_instr.options.move.destination = ir_data_access_create_global(global);
+        move_instr.options.move.source = ir_generator_generate_expression(entry_function->code, global->init_expr);
+        dynamic_array_push_back(&entry_function->code->instructions, move_instr);
+    }
+
+    // Call main
+    {
+        IR_Instruction call_instr;
+        call_instr.type = IR_Instruction_Type::FUNCTION_CALL;
+        call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
+        call_instr.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(1);
+        call_instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, ir_generator.modtree->main_function);
+        dynamic_array_push_back(&entry_function->code->instructions, call_instr);
+    }
+
+    // Exit
+    {
+        IR_Instruction exit_instr;
+        exit_instr.type = IR_Instruction_Type::RETURN;
+        exit_instr.options.return_instr.type = IR_Instruction_Return_Type::EXIT;
+        exit_instr.options.return_instr.options.exit_code = Exit_Code::SUCCESS;
+        dynamic_array_push_back(&entry_function->code->instructions, exit_instr);
+    }
+
+    // Queue entry function
+    Function_Stub entry_stub;
+    entry_stub.mod_func = 0;
+    entry_stub.ir_func = entry_function;
+    dynamic_array_push_back(&ir_generator.queue_functions, entry_stub);
+
+    // Queue and generate all functions
     for (int i = 0; i < ir_generator.modtree->functions.size; i++) {
         ir_generator_queue_function(ir_generator.modtree->functions[i]);
     }
-    for (int i = 0; i < ir_generator.modtree->globals.size; i++) {
-        ir_generator_queue_global(ir_generator.modtree->globals[i]);
-    }
-    ir_generator_generate_queued_items();
-    ir_generator.program->entry_function = *hashtable_find_element(&ir_generator.function_mapping, ir_generator.modtree->entry_function);
+    ir_generator_generate_queued_items(gen_bytecode);
 }
-
-
 
 // Generator
 IR_Generator ir_generator;
@@ -1742,15 +1706,12 @@ IR_Generator* ir_generator_initialize()
 
     ir_generator.function_mapping = hashtable_create_pointer_empty<ModTree_Function*, IR_Function*>(8);
     ir_generator.variable_mapping = hashtable_create_pointer_empty<AST::Definition*, IR_Data_Access>(8);
-    ir_generator.global_mapping = hashtable_create_pointer_empty<ModTree_Global*, IR_Data_Access>(8);
     ir_generator.labels_break = hashtable_create_pointer_empty<AST::Code_Block*, int>(8);
     ir_generator.labels_continue = hashtable_create_pointer_empty<AST::Code_Block*, int>(8);
     ir_generator.block_defer_depths = hashtable_create_pointer_empty<AST::Code_Block*, int>(8);
 
+    ir_generator.queue_functions = dynamic_array_create_empty<Function_Stub>(8);
     ir_generator.defer_stack = dynamic_array_create_empty<AST::Code_Block*>(8);
-    ir_generator.queue_functions = dynamic_array_create_empty<ModTree_Function*>(8);
-    ir_generator.queue_globals = dynamic_array_create_empty<ModTree_Global*>(8);
-    ir_generator.function_stubs = dynamic_array_create_empty<ModTree_Function*>(8);
     ir_generator.fill_out_breaks = dynamic_array_create_empty<Unresolved_Goto>(8);
     ir_generator.fill_out_continues = dynamic_array_create_empty<Unresolved_Goto>(8);
     return &ir_generator;
@@ -1766,7 +1727,6 @@ void ir_generator_reset()
     ir_generator.modtree = compiler.semantic_analyser->program;
 
     hashtable_reset(&ir_generator.variable_mapping);
-    hashtable_reset(&ir_generator.global_mapping);
     hashtable_reset(&ir_generator.function_mapping);
     hashtable_reset(&ir_generator.labels_break);
     hashtable_reset(&ir_generator.labels_continue);
@@ -1774,8 +1734,6 @@ void ir_generator_reset()
 
     dynamic_array_reset(&ir_generator.defer_stack);
     dynamic_array_reset(&ir_generator.queue_functions);
-    dynamic_array_reset(&ir_generator.queue_globals);
-    dynamic_array_reset(&ir_generator.function_stubs);
     dynamic_array_reset(&ir_generator.fill_out_breaks);
     dynamic_array_reset(&ir_generator.fill_out_continues);
 }
@@ -1787,15 +1745,12 @@ void ir_generator_destroy()
     }
     hashtable_destroy(&ir_generator.function_mapping);
     hashtable_destroy(&ir_generator.variable_mapping);
-    hashtable_destroy(&ir_generator.global_mapping);
     hashtable_destroy(&ir_generator.labels_break);
     hashtable_destroy(&ir_generator.labels_continue);
     hashtable_destroy(&ir_generator.block_defer_depths);
 
     dynamic_array_destroy(&ir_generator.defer_stack);
     dynamic_array_destroy(&ir_generator.queue_functions);
-    dynamic_array_destroy(&ir_generator.queue_globals);
-    dynamic_array_destroy(&ir_generator.function_stubs);
     dynamic_array_destroy(&ir_generator.fill_out_breaks);
     dynamic_array_destroy(&ir_generator.fill_out_continues);
 }

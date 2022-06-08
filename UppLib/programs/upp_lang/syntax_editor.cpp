@@ -17,7 +17,6 @@
 #include "semantic_analyser.hpp"
 #include "parser.hpp"
 #include "source_code.hpp"
-#include "../../win32/windows_helper_functions.hpp"
 
 // Datatypes
 enum class Editor_Mode
@@ -505,7 +504,7 @@ void syntax_editor_update()
     auto& mode = syntax_editor.mode;
 
     if (syntax_editor.input->key_pressed[(int)Key_Code::O] && syntax_editor.input->key_down[(int)Key_Code::CTRL]) {
-        auto open_file = open_file_selection_dialog();
+        auto open_file = file_io_open_file_selection_dialog();
         if (open_file.available) {
             syntax_editor_load_text_file(open_file.value.characters);
             compiler_compile(syntax_editor.root_block, false, string_create(syntax_editor.file_path));

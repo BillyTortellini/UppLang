@@ -5,25 +5,26 @@ main::()
 	a:=15// Comment at end of line
 	
 	//
-		Multi line comments start with // and
-		indentation
+		Multi line comments start with an empty line 
+		containing only '//' and indentation afterwards
 		
-		still works
+		
+		this is still a comment
 	
 	//
 		Nested comments also work, but they also require
 		another // symbol, like normal multi-line comments
 		//
 			This is a nested comment
-		This would otherwise cause problems with end of line comments
-		and anonymous blocks
+		This should probably be changed in the future
 	
-	// Working end of line comment
 	cond:=true
+	// Working end of line comment
 	if cond// Do something when cond is true
 		assert(true)
 	
 	// Anonymous block
 		x:=15+5
 		assert(x==20)
-	
+		// this isn't a multiline comment because 
+		// the // must be empty afterwards

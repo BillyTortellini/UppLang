@@ -18,10 +18,10 @@ bool enable_lexing = true;
 bool enable_parsing = true;
 bool enable_rc_gen = true;
 bool enable_analysis = true;
-bool enable_ir_gen = false;
+bool enable_ir_gen = true;
 bool enable_bytecode_gen = true;
-bool enable_c_generation = false;
-bool enable_c_compilation = true;
+bool enable_c_generation = true;
+bool enable_c_compilation = false;
 
 // Output stages
 bool output_identifiers = false;
@@ -29,12 +29,12 @@ bool output_ast = false;
 bool output_rc = false;
 bool output_type_system = false;
 bool output_root_table = false;
-bool output_ir = false;
+bool output_ir = true;
 bool output_bytecode = false;
 bool output_timing = false;
 
 // Testcases
-bool enable_testcases = false;
+bool enable_testcases = true;
 bool enable_stresstest = false;
 bool run_testcases_compiled = false;
 
@@ -254,10 +254,10 @@ void compiler_compile(Syntax_Block* source_code, bool generate_code, String proj
 
     compiler_switch_timing_task(Timing_Task::CODE_GEN);
     if (do_ir_gen) {
-        ir_generator_finish();
+        ir_generator_finish(do_bytecode_gen);
     }
     if (do_bytecode_gen) {
-        //bytecode_generator_generate(&compiler.bytecode_generator, compiler);
+        //bytecode_generator_generate(&compiler.bytecode_generator, compiler); // Currently done in ir_generator!
         bytecode_generator_set_entry_function(compiler.bytecode_generator);
     }
     if (do_c_generation) {
@@ -291,7 +291,7 @@ void compiler_compile(Syntax_Block* source_code, bool generate_code, String proj
 
         if (error_free)
         {
-            if (do_analysis && output_ir)
+            if (do_ir_gen && output_ir)
             {
                 logg("\n--------IR_PROGRAM---------\n");
                 String tmp = string_create_empty(1024);

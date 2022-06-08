@@ -199,8 +199,8 @@ Analysis_Item* analysis_item_create_empty(Analysis_Item_Type type, Analysis_Item
     item->passes = dynamic_array_create_empty<Analysis_Pass*>(1);
     item->type = type;
     item->node = node;
-    item->max_node_index = 0;
-    item->min_node_index = INT32_MAX;
+    item->max_node_index = node->allocation_index;
+    item->min_node_index = node->allocation_index;
     item->symbol = 0;
     if (parent_item != 0 && parent_item->type != Analysis_Item_Type::ROOT && type != Analysis_Item_Type::IMPORT) {
         Item_Dependency item_dependency;
@@ -590,7 +590,6 @@ void dependency_analyser_reset(Compiler* compiler)
         PREDEF_HARDCODED(hardcoded_type_of, "type_of", Hardcoded_Type::TYPE_OF);
         PREDEF_HARDCODED(hardcoded_type_info, "type_info", Hardcoded_Type::TYPE_INFO);
         PREDEF_HARDCODED(hardcoded_assert, "assert", Hardcoded_Type::ASSERT_FN);
-        PREDEF_SYMBOL(global_type_informations, "type_informations");
 #undef PREDEF_SYMBOL
 #undef PREDEF_HARDCODED
     }

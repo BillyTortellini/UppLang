@@ -998,7 +998,7 @@ void bytecode_interpreter_prepare_run(Bytecode_Interpreter* interpreter)
     interpreter->error_occured = false;
     interpreter->exit_code = Exit_Code::SUCCESS;
 
-    // Update global buffer size (Maybe we need to do something smarter when partial compilation can access globals)
+    // Update global buffer size (Maybe we need to do something smarter when partial compilation can write globals)
     if (interpreter->globals.size < interpreter->generator->global_data_size) {
         array_destroy(&interpreter->globals);
         interpreter->globals = array_create_empty<byte>(interpreter->generator->global_data_size * 2);

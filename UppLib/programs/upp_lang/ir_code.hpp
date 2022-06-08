@@ -29,8 +29,6 @@ struct IR_Data_Access
     {
         IR_Function* function; // For parameters
         IR_Code_Block* definition_block; // For variables
-        IR_Program* program; // For globals
-        Constant_Pool* constant_pool; // For constants
     } option;
     int index;
 };
@@ -233,7 +231,6 @@ struct IR_Function
 struct IR_Program
 {
     Dynamic_Array<IR_Function*> functions;
-    Dynamic_Array<Type_Signature*> globals;
     IR_Function* entry_function;
 };
 
@@ -251,6 +248,12 @@ struct Unresolved_Goto
     AST::Code_Block* break_block;
 };
 
+struct Function_Stub
+{
+    ModTree_Function* mod_func;
+    IR_Function* ir_func;
+};
+
 struct IR_Generator
 {
     IR_Program* program;
@@ -258,12 +261,9 @@ struct IR_Generator
 
     // Stuff needed for compilation
     Hashtable<AST::Definition*, IR_Data_Access> variable_mapping; 
-    Hashtable<ModTree_Global*, IR_Data_Access> global_mapping;
     Hashtable<ModTree_Function*, IR_Function*> function_mapping;
 
-    Dynamic_Array<ModTree_Function*> function_stubs;
-    Dynamic_Array<ModTree_Global*> queue_globals;
-    Dynamic_Array<ModTree_Function*> queue_functions;
+    Dynamic_Array<Function_Stub> queue_functions;
 
     Dynamic_Array<AST::Code_Block*> defer_stack;
     Dynamic_Array<Unresolved_Goto> fill_out_continues;
@@ -282,10 +282,10 @@ extern IR_Generator ir_generator;
 IR_Generator* ir_generator_initialize();
 void ir_generator_destroy();
 void ir_generator_reset();
-void ir_generator_generate_queued_items();
+
 void ir_generator_queue_function(ModTree_Function* function);
-void ir_generator_queue_global(ModTree_Global* global);
-void ir_generator_finish();
+void ir_generator_generate_queued_items(bool gen_bytecode);
+void ir_generator_finish(bool gen_bytecode);
 
 IR_Program* ir_program_create(Type_System* type_system);
 void ir_program_destroy(IR_Program* program);

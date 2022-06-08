@@ -37,13 +37,7 @@ namespace AST
 
 
 
-// Modtree
-struct ModTree_Global
-{
-    AST::Definition* definition;
-    Type_Signature* type;
-};
-
+// Modtree TODO: Rename this into something more sensible
 struct ModTree_Function
 {
     Analysis_Pass* body_pass;
@@ -51,17 +45,27 @@ struct ModTree_Function
     Symbol* symbol; // May be 0
 
     // Infos
-    bool contains_errors; // NOTE: contains_errors and is_runnable are actually 2 different things, but I only care about runnable for bake
+    bool contains_errors; // NOTE: contains_errors (No errors in this function) != is_runnable (This + all called functions are runnable)
     bool is_runnable;
     Dynamic_Array<ModTree_Function*> called_from;
     Dynamic_Array<ModTree_Function*> calls;
 };
 
+struct ModTree_Global
+{
+    Type_Signature* type;
+    int index;
+
+    bool has_initial_value;
+    Analysis_Pass* init_pass;
+    AST::Expression* init_expr;
+};
+
 struct ModTree_Program
 {
     Dynamic_Array<ModTree_Function*> functions;
-    Dynamic_Array<ModTree_Global*> globals;
-    ModTree_Function* entry_function;
+    Dynamic_Array<ModTree_Global*> globals; 
+    ModTree_Function* main_function;
 };
 
 enum class Comptime_Result_Type
@@ -252,7 +256,7 @@ enum class Info_Cast_Type
     U64_TO_POINTER,
     ENUM_TO_INT,
     INT_TO_ENUM,
-    ARRAY_SIZED_TO_UNSIZED, // Implicit
+    ARRAY_TO_SLICE, // Implicit
     TO_ANY,
     FROM_ANY,
 
@@ -280,6 +284,7 @@ enum class Expression_Result_Type
     FUNCTION,
     HARDCODED_FUNCTION,
     MODULE,
+    CONSTANT,
 };
 
 struct Argument_Info
@@ -290,21 +295,23 @@ struct Argument_Info
 
 struct Expression_Info
 {
+    // All types in "options" union are before the expression context has been applied
     Expression_Result_Type result_type;
     union
     {
-        Type_Signature* value_type; // Before casting 
+        Type_Signature* value_type;
         Type_Signature* type;
         ModTree_Function* function;
         Hardcoded_Type hardcoded;
         Symbol_Table* module_table;
+        Upp_Constant constant;
     } options;
 
+    bool contains_errors; // If this expression contains any errors (Not recursive), currently only used for comptime-calculation
     union {
         Info_Cast_Type cast_type;
     } specifics;
 
-    Optional<Upp_Constant> constant_value; // If the value is constant
     Expression_Context context; // Maybe I dont even need to store the context
     struct {
         int deref_count;
@@ -338,7 +345,7 @@ struct Code_Block_Info
 struct Case_Info
 {
     int is_valid;
-    int case_value; // Can I curretly only switch over ints/enums? I think so
+    int case_value; // Currently we only switch over enums/ints
 };
 
 union Analysis_Info
@@ -346,6 +353,8 @@ union Analysis_Info
     Expression_Info info_expr;
     Statement_Info info_stat;
     Code_Block_Info info_block;
+    Case_Info info_case;
+    Argument_Info arg_info;
 };
 
 struct Analysis_Pass
@@ -354,17 +363,8 @@ struct Analysis_Pass
     Array<Analysis_Info> infos;
 };
 
+Analysis_Info* analysis_pass_get_node_info(Analysis_Pass* pass, AST::Base* node);
 Type_Signature* expression_info_get_type(Expression_Info* info);
-
-template<typename Info_Type, typename AST_Type>
-Info_Type* pass_get_info_internal(Analysis_Pass* pass, AST_Type* node)
-{
-    assert(pass != 0, "");
-    auto& item = pass->item;
-    auto& id = node->base.allocation_index;
-    assert(id >= item->min_node_index && id <= item->max_node_index, "");
-    return (Info_Type*) &pass->infos[id - item->min_node_index];
-}
 
 
 
@@ -381,6 +381,8 @@ struct Semantic_Analyser
     Analysis_Pass* current_pass;
     Analysis_Workload* current_workload;
     ModTree_Function* current_function;
+    Expression_Info* current_expression;
+
     bool statement_reachable;
     int error_flag_count;
 
@@ -388,6 +390,8 @@ struct Semantic_Analyser
     Stack_Allocator allocator_values;
     Hashset<ModTree_Function*> visited_functions;
     Dynamic_Array<AST::Code_Block*> block_stack;
+
+    ModTree_Global* global_type_informations;
 
     Type_Signature* type_assert;
     Type_Signature* type_free;

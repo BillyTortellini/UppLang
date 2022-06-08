@@ -20,3 +20,5 @@ u64 file_io_get_current_file_time();
 
 bool file_io_write_file(const char* filepath, Array<byte> data);
 void file_io_relative_to_full_path(String* relative_path);
+
+Optional<String> file_io_open_file_selection_dialog();

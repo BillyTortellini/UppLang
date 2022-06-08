@@ -148,8 +148,14 @@ void bytecode_generator_reset(Bytecode_Generator* generator, Compiler* compiler)
 /*
     Scheme for partial compilation:
         1. Add all globals, call update_globals
+            This is required because function compilation needs to know the global offsets
+            of used globals.
         2. Call compile_function for each function
+            Will compile all functions, but references (function calls, ptr-load, gotos)
+            aren't valid until update references is called
         3. Call update references
+            This fills out the references in the instruction code, maybe this could be done
+            by interpreter before a function run...
 */
 void bytecode_generator_compile_function(Bytecode_Generator* generator, IR_Function* function);
 void bytecode_generator_update_globals(Bytecode_Generator* generator);

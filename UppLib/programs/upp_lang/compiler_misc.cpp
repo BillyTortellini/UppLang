@@ -32,6 +32,9 @@ void hardcoded_type_append_to_string(String* string, Hardcoded_Type hardcoded)
     case Hardcoded_Type::TYPE_OF:
         string_append_formated(string, "TYPE_OF");
         break;
+    case Hardcoded_Type::PRINT_I32:
+        string_append_formated(string, "PRINT_F32");
+        break;
     case Hardcoded_Type::PRINT_F32:
         string_append_formated(string, "PRINT_F32");
         break;

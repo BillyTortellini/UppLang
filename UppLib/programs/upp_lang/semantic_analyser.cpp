@@ -37,6 +37,7 @@ ModTree_Function* modtree_function_create_empty(Type_Signature* signature, Symbo
 
 ModTree_Function* modtree_function_create_empty(Type_Signature* signature, Symbol* symbol, Analysis_Pass* body_pass);
 Comptime_Result comptime_result_make_not_comptime();
+Comptime_Result expression_calculate_comptime_value(AST::Expression* expr);
 void analysis_workload_destroy(Analysis_Workload* workload);
 Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression* expression, Expression_Context context);
 Type_Signature* semantic_analyser_analyse_expression_value(AST::Expression* rc_expression, Expression_Context context);
@@ -85,32 +86,41 @@ Analysis_Pass* analysis_item_create_pass(Analysis_Item* item)
 {
     auto pass = new Analysis_Pass;
     pass->item = item;
-    int range = item->max_node_index - item->min_node_index;
-    assert(range > 0, "Hey");
+    int range = item->max_node_index - item->min_node_index + 1;
+    assert(range > 0, "");
     pass->infos = array_create_empty<Analysis_Info>(range);
     memory_set_bytes(pass->infos.data, pass->infos.size * sizeof(Analysis_Info), 0);
     dynamic_array_push_back(&item->passes, pass);
     return pass;
 }
 
+Analysis_Info* analysis_pass_get_node_info(Analysis_Pass* pass, AST::Base* node)
+{
+    assert(pass != 0, "");
+    auto& item = pass->item;
+    auto& id = node->allocation_index;
+    assert(id >= item->min_node_index && id <= item->max_node_index, "");
+    return &pass->infos[id - item->min_node_index];
+}
+
 Expression_Info* pass_get_info(AST::Expression* expression) {
-    return pass_get_info_internal<Expression_Info>(semantic_analyser.current_pass, expression);
+    return &analysis_pass_get_node_info(semantic_analyser.current_pass, to_base(expression))->info_expr;
 }
 
 Case_Info* pass_get_info(AST::Switch_Case* sw_case) {
-    return pass_get_info_internal<Case_Info>(semantic_analyser.current_pass, sw_case);
+    return &analysis_pass_get_node_info(semantic_analyser.current_pass, to_base(sw_case))->info_case;
 }
 
 Argument_Info* pass_get_info(AST::Argument* argument) {
-    return pass_get_info_internal<Argument_Info>(semantic_analyser.current_pass, argument);
+    return &analysis_pass_get_node_info(semantic_analyser.current_pass, to_base(argument))->arg_info;
 }
 
 Statement_Info* pass_get_info(AST::Statement* statement) {
-    return pass_get_info_internal<Statement_Info>(semantic_analyser.current_pass, statement);
+    return &analysis_pass_get_node_info(semantic_analyser.current_pass, to_base(statement))->info_stat;
 }
 
 Code_Block_Info* pass_get_info(AST::Code_Block* block) {
-    return pass_get_info_internal<Code_Block_Info>(semantic_analyser.current_pass, block);
+    return &analysis_pass_get_node_info(semantic_analyser.current_pass, to_base(block))->info_block;
 }
 
 
@@ -127,19 +137,19 @@ T* analysis_progress_allocate_internal(Analysis_Progress_Type type)
     return progress;
 }
 
-Function_Progress* analysis_progress_create_function(ModTree_Function* function, Analysis_Item* body_item, Analysis_Item* header_item) 
+Function_Progress* analysis_progress_create_function(Analysis_Item* body_item, Analysis_Item* header_item) 
 {
     assert(body_item->type == Analysis_Item_Type::FUNCTION_BODY && header_item->type == Analysis_Item_Type::FUNCTION, "");
     auto result = analysis_progress_allocate_internal<Function_Progress>(Analysis_Progress_Type::FUNCTION);
     result->state = Function_State::DEFINED;
-    result->function = function;
     result->body_pass = analysis_item_create_pass(body_item);
     result->header_pass = analysis_item_create_pass(header_item);
-    hashtable_insert_element(&workload_executer.progress_functions, function, result);
+    result->function = modtree_function_create_empty(0, header_item->symbol, result->body_pass);
+    hashtable_insert_element(&workload_executer.progress_functions, result->function, result);
     return result;
 }
 
-Struct_Progress* analysis_progress_create_struct(Type_Signature* struct_type, Analysis_Item* item) 
+Struct_Progress* analysis_progress_create_struct(Type_Signature* struct_type, Analysis_Item* item)
 {
     assert(item->type == Analysis_Item_Type::STRUCTURE, "");
     auto result = analysis_progress_allocate_internal<Struct_Progress>(Analysis_Progress_Type::STRUCTURE);
@@ -150,7 +160,7 @@ Struct_Progress* analysis_progress_create_struct(Type_Signature* struct_type, An
     return result;
 }
 
-Bake_Progress* analysis_progress_create_bake(Analysis_Item* item) 
+Bake_Progress* analysis_progress_create_bake(Analysis_Item* item)
 {
     assert(item->type == Analysis_Item_Type::BAKE, "");
     auto result = analysis_progress_allocate_internal<Bake_Progress>(Analysis_Progress_Type::BAKE);
@@ -162,7 +172,7 @@ Bake_Progress* analysis_progress_create_bake(Analysis_Item* item)
     return result;
 }
 
-Definition_Progress* analysis_progress_create_definition(Symbol* symbol, Analysis_Item* item) 
+Definition_Progress* analysis_progress_create_definition(Symbol* symbol, Analysis_Item* item)
 {
     assert(item->type == Analysis_Item_Type::DEFINITION, "");
     auto result = analysis_progress_allocate_internal<Definition_Progress>(Analysis_Progress_Type::DEFINITION);
@@ -179,6 +189,9 @@ void semantic_analyser_set_error_flag(bool error_due_to_unknown)
 {
     auto& analyser = semantic_analyser;
     analyser.error_flag_count += 1;
+    if (analyser.current_expression != 0) {
+        analyser.current_expression->contains_errors = true;
+    }
     if (analyser.current_function != 0)
     {
         /*
@@ -333,20 +346,29 @@ void modtree_function_destroy(ModTree_Function* function)
     delete function;
 }
 
-ModTree_Global* modtree_program_add_global(AST::Definition* definition, Type_Signature* type)
+ModTree_Global* modtree_program_add_global(Type_Signature* type)
 {
-    ModTree_Global* var = new ModTree_Global;
-    assert(type != 0, "");
-    var->type = type;
-    var->definition = definition;
-    dynamic_array_push_back(&semantic_analyser.program->globals, var);
-    return var;
+    auto global = new ModTree_Global;
+    global->type = type;
+    global->has_initial_value = false;
+    global->init_expr = 0;
+    global->init_pass = 0;
+    global->index = semantic_analyser.program->globals.size;
+    dynamic_array_push_back(&semantic_analyser.program->globals, global);
+    return global;
+}
+
+void modtree_global_set_init(ModTree_Global* global, Analysis_Pass* pass, AST::Expression* expr)
+{
+    global->has_initial_value = true;
+    global->init_expr = expr;
+    global->init_pass = pass;
 }
 
 ModTree_Program* modtree_program_create()
 {
     ModTree_Program* result = new ModTree_Program();
-    result->entry_function = 0;
+    result->main_function = 0;
     result->functions = dynamic_array_create_empty<ModTree_Function*>(16);
     result->globals = dynamic_array_create_empty<ModTree_Global*>(16);
     return result;
@@ -393,76 +415,182 @@ Comptime_Result comptime_result_make_not_comptime() {
     return result;
 }
 
-Comptime_Result expression_calculate_comptime_value(AST::Expression* expression)
+Comptime_Result comptime_result_apply_cast(Comptime_Result value, Info_Cast_Type cast_type, Type_Signature* result_type)
 {
-    return comptime_result_make_not_comptime();
-    /*
+    auto& analyser = semantic_analyser;
+    if (value.type == Comptime_Result_Type::NOT_COMPTIME) {
+        return comptime_result_make_not_comptime();
+    }
+    else if (value.type == Comptime_Result_Type::UNAVAILABLE) {
+        return comptime_result_make_unavailable(result_type);
+    }
+
+    Instruction_Type instr_type = (Instruction_Type)-1;
+    switch (cast_type)
+    {
+    case Info_Cast_Type::INVALID: return comptime_result_make_unavailable(result_type); // Invalid means an error was already logged
+    case Info_Cast_Type::NO_CAST: return value;
+    case Info_Cast_Type::FLOATS: instr_type = Instruction_Type::CAST_FLOAT_DIFFERENT_SIZE; break;
+    case Info_Cast_Type::FLOAT_TO_INT: instr_type = Instruction_Type::CAST_FLOAT_INTEGER; break;
+    case Info_Cast_Type::INT_TO_FLOAT: instr_type = Instruction_Type::CAST_INTEGER_FLOAT; break;
+    case Info_Cast_Type::INTEGERS: instr_type = Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE; break;
+    case Info_Cast_Type::ENUM_TO_INT: instr_type = Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE; break;
+    case Info_Cast_Type::INT_TO_ENUM: instr_type = Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE; break;
+    case Info_Cast_Type::POINTERS: return comptime_result_make_not_comptime();
+    case Info_Cast_Type::POINTER_TO_U64: return comptime_result_make_not_comptime();
+    case Info_Cast_Type::U64_TO_POINTER: return comptime_result_make_not_comptime();
+    case Info_Cast_Type::ARRAY_TO_SLICE: {
+        Upp_Slice_Base* slice = stack_allocator_allocate<Upp_Slice_Base>(&analyser.allocator_values);
+        slice->data_ptr = value.data;
+        slice->size = value.data_type->options.array.element_count;
+        return comptime_result_make_available(slice, result_type);
+    }
+    case Info_Cast_Type::TO_ANY: {
+        Upp_Any* any = stack_allocator_allocate<Upp_Any>(&analyser.allocator_values);
+        any->type = result_type->internal_index;
+        any->data = value.data;
+        return comptime_result_make_available(any, result_type);
+    }
+    case Info_Cast_Type::FROM_ANY: {
+        Upp_Any* given = (Upp_Any*)value.data;
+        if (given->type >= analyser.compiler->type_system.types.size) {
+            return comptime_result_make_not_comptime();
+        }
+        Type_Signature* any_type = analyser.compiler->type_system.types[given->type];
+        if (any_type != value.data_type) {
+            return comptime_result_make_not_comptime();
+        }
+        return comptime_result_make_available(given->data, any_type);
+    }
+    default: panic("");
+    }
+    if ((int)instr_type == -1) panic("");
+
+    void* result_buffer = stack_allocator_allocate_size(&analyser.allocator_values, result_type->size, result_type->alignment);
+    bytecode_execute_cast_instr(
+        instr_type, result_buffer, value.data,
+        type_signature_to_bytecode_type(result_type),
+        type_signature_to_bytecode_type(value.data_type)
+    );
+    return comptime_result_make_available(result_buffer, result_type);
+}
+
+Comptime_Result expression_calculate_comptime_value_without_context(AST::Expression* expr)
+{
     auto& analyser = semantic_analyser;
     Type_System* type_system = &analyser.compiler->type_system;
-    switch (expr->expression_type)
+    auto info = pass_get_info(expr);
+    if (info->contains_errors) {
+        return comptime_result_make_unavailable(expression_info_get_type(info));
+    }
+
+    switch (info->result_type)
     {
-    case ModTree_Expression_Type::ERROR_EXPR: {
+    case Expression_Result_Type::CONSTANT: {
+        auto& upp_const = info->options.constant;
+        return comptime_result_make_available(&compiler.constant_pool.buffer[upp_const.offset], upp_const.type);
+    }
+    case Expression_Result_Type::TYPE: {
+        return comptime_result_make_available(&info->options.type->internal_index, compiler.type_system.type_type);
+    }
+    case Expression_Result_Type::MODULE:
+    case Expression_Result_Type::FUNCTION: // TODO: Function pointer reads should work in the future
+    case Expression_Result_Type::HARDCODED_FUNCTION: {
+        return comptime_result_make_not_comptime();
+    }
+    case Expression_Result_Type::VALUE:
+        break; // Rest of function
+    default:panic("");
+    }
+
+    auto result_type = expression_info_get_type(info);
+    switch (expr->type)
+    {
+    case AST::Expression_Type::ARRAY_TYPE:
+    case AST::Expression_Type::AUTO_ENUM:
+    case AST::Expression_Type::BAKE_BLOCK:
+    case AST::Expression_Type::BAKE_EXPR:
+    case AST::Expression_Type::ENUM_TYPE:
+    case AST::Expression_Type::FUNCTION:
+    case AST::Expression_Type::LITERAL_READ:
+    case AST::Expression_Type::STRUCTURE_TYPE:
+    case AST::Expression_Type::SLICE_TYPE:
+    case AST::Expression_Type::MODULE:
+        panic("Should be handled above!");
+    case AST::Expression_Type::ERROR_EXPR: {
         return comptime_result_make_unavailable(analyser.compiler->type_system.unknown_type);
     }
-    case ModTree_Expression_Type::BINARY_OPERATION:
+    case AST::Expression_Type::SYMBOL_READ: {
+        auto symbol = expr->options.symbol_read->resolved_symbol;
+        while (symbol->type == Symbol_Type::SYMBOL_ALIAS) {
+            symbol = symbol->options.alias;
+        }
+        if (symbol->type == Symbol_Type::COMPTIME_VALUE) {
+            auto& upp_const = symbol->options.constant;
+            return comptime_result_make_available(&compiler.constant_pool.buffer[upp_const.offset], upp_const.type);
+        }
+        return comptime_result_make_not_comptime();
+    }
+    case AST::Expression_Type::BINARY_OPERATION:
     {
-        Comptime_Result left_val = modtree_expression_calculate_comptime_value(expr->options.binary_operation.left_operand);
-        Comptime_Result right_val = modtree_expression_calculate_comptime_value(expr->options.binary_operation.right_operand);
+        Comptime_Result left_val = expression_calculate_comptime_value(expr->options.binop.left);
+        Comptime_Result right_val = expression_calculate_comptime_value(expr->options.binop.right);
         if (left_val.type != Comptime_Result_Type::AVAILABLE || right_val.type != Comptime_Result_Type::AVAILABLE) {
             if (left_val.type == Comptime_Result_Type::NOT_COMPTIME || right_val.type != Comptime_Result_Type::NOT_COMPTIME) {
                 return comptime_result_make_not_comptime();
             }
             else {
-                return comptime_result_make_unavailable(expr->result_type);
+                return comptime_result_make_unavailable(result_type);
             }
         }
 
         Instruction_Type instr_type;
-        switch (expr->options.binary_operation.operation_type)
+        switch (expr->options.binop.type)
         {
-        case ModTree_Binary_Operation_Type::ADDITION: instr_type = Instruction_Type::BINARY_OP_ADDITION; break;
-        case ModTree_Binary_Operation_Type::SUBTRACTION: instr_type = Instruction_Type::BINARY_OP_SUBTRACTION; break;
-        case ModTree_Binary_Operation_Type::DIVISION: instr_type = Instruction_Type::BINARY_OP_DIVISION; break;
-        case ModTree_Binary_Operation_Type::MULTIPLICATION: instr_type = Instruction_Type::BINARY_OP_MULTIPLICATION; break;
-        case ModTree_Binary_Operation_Type::MODULO: instr_type = Instruction_Type::BINARY_OP_MODULO; break;
-        case ModTree_Binary_Operation_Type::AND: instr_type = Instruction_Type::BINARY_OP_AND; break;
-        case ModTree_Binary_Operation_Type::OR: instr_type = Instruction_Type::BINARY_OP_OR; break;
-        case ModTree_Binary_Operation_Type::EQUAL: instr_type = Instruction_Type::BINARY_OP_EQUAL; break;
-        case ModTree_Binary_Operation_Type::NOT_EQUAL: instr_type = Instruction_Type::BINARY_OP_NOT_EQUAL; break;
-        case ModTree_Binary_Operation_Type::LESS: instr_type = Instruction_Type::BINARY_OP_LESS_THAN; break;
-        case ModTree_Binary_Operation_Type::LESS_OR_EQUAL: instr_type = Instruction_Type::BINARY_OP_LESS_EQUAL; break;
-        case ModTree_Binary_Operation_Type::GREATER: instr_type = Instruction_Type::BINARY_OP_GREATER_THAN; break;
-        case ModTree_Binary_Operation_Type::GREATER_OR_EQUAL: instr_type = Instruction_Type::BINARY_OP_GREATER_EQUAL; break;
+        case AST::Binop::ADDITION: instr_type = Instruction_Type::BINARY_OP_ADDITION; break;
+        case AST::Binop::SUBTRACTION: instr_type = Instruction_Type::BINARY_OP_SUBTRACTION; break;
+        case AST::Binop::DIVISION: instr_type = Instruction_Type::BINARY_OP_DIVISION; break;
+        case AST::Binop::MULTIPLICATION: instr_type = Instruction_Type::BINARY_OP_MULTIPLICATION; break;
+        case AST::Binop::MODULO: instr_type = Instruction_Type::BINARY_OP_MODULO; break;
+        case AST::Binop::AND: instr_type = Instruction_Type::BINARY_OP_AND; break;
+        case AST::Binop::OR: instr_type = Instruction_Type::BINARY_OP_OR; break;
+        case AST::Binop::EQUAL: instr_type = Instruction_Type::BINARY_OP_EQUAL; break;
+        case AST::Binop::NOT_EQUAL: instr_type = Instruction_Type::BINARY_OP_NOT_EQUAL; break;
+        case AST::Binop::LESS: instr_type = Instruction_Type::BINARY_OP_LESS_THAN; break;
+        case AST::Binop::LESS_OR_EQUAL: instr_type = Instruction_Type::BINARY_OP_LESS_EQUAL; break;
+        case AST::Binop::GREATER: instr_type = Instruction_Type::BINARY_OP_GREATER_THAN; break;
+        case AST::Binop::GREATER_OR_EQUAL: instr_type = Instruction_Type::BINARY_OP_GREATER_EQUAL; break;
+        case AST::Binop::POINTER_EQUAL: instr_type = Instruction_Type::BINARY_OP_EQUAL; break;
+        case AST::Binop::POINTER_NOT_EQUAL: instr_type = Instruction_Type::BINARY_OP_NOT_EQUAL; break;
+        case AST::Binop::INVALID: return comptime_result_make_unavailable(result_type);
         default: panic("");
         }
 
-        void* result_buffer = stack_allocator_allocate_size(&analyser.allocator_values, expr->result_type->size, expr->result_type->alignment);
+        void* result_buffer = stack_allocator_allocate_size(&analyser.allocator_values, result_type->size, result_type->alignment);
         if (bytecode_execute_binary_instr(instr_type, type_signature_to_bytecode_type(left_val.data_type), result_buffer, left_val.data, right_val.data)) {
-            return comptime_result_make_available(result_buffer, expr->result_type);
+            return comptime_result_make_available(result_buffer, result_type);
         }
         else {
             return comptime_result_make_not_comptime();
         }
         break;
     }
-    case ModTree_Expression_Type::UNARY_OPERATION:
+    case AST::Expression_Type::UNARY_OPERATION:
     {
-        Comptime_Result value = modtree_expression_calculate_comptime_value(expr->options.unary_operation.operand);
+        Comptime_Result value = expression_calculate_comptime_value(expr->options.unop.expr);
         Instruction_Type instr_type;
-        switch (expr->options.unary_operation.operation_type)
+        switch (expr->options.unop.type)
         {
-        case ModTree_Unary_Operation_Type::LOGICAL_NOT:
-        case ModTree_Unary_Operation_Type::NEGATE: {
-            instr_type = expr->options.unary_operation.operation_type == ModTree_Unary_Operation_Type::NEGATE ?
+        case AST::Unop::NOT:
+        case AST::Unop::NEGATE: {
+            instr_type = expr->options.unop.type == AST::Unop::NEGATE ?
                 Instruction_Type::UNARY_OP_NEGATE : Instruction_Type::UNARY_OP_NOT;
             break;
         }
-        case ModTree_Unary_Operation_Type::ADDRESS_OF:
+        case AST::Unop::POINTER:
             return comptime_result_make_not_comptime();
-        case ModTree_Unary_Operation_Type::DEREFERENCE:
+        case AST::Unop::DEREFERENCE:
             return comptime_result_make_not_comptime();
-        case ModTree_Unary_Operation_Type::TEMPORARY_TO_STACK:
-            return value;
         default: panic("");
         }
 
@@ -470,93 +598,27 @@ Comptime_Result expression_calculate_comptime_value(AST::Expression* expression)
             return comptime_result_make_not_comptime();
         }
         else if (value.type == Comptime_Result_Type::UNAVAILABLE) {
-            return comptime_result_make_unavailable(expr->result_type);
+            return comptime_result_make_unavailable(result_type);
         }
 
-        void* result_buffer = stack_allocator_allocate_size(&analyser.allocator_values, expr->result_type->size, expr->result_type->alignment);
+        void* result_buffer = stack_allocator_allocate_size(&analyser.allocator_values, result_type->size, result_type->alignment);
         bytecode_execute_unary_instr(instr_type, type_signature_to_bytecode_type(value.data_type), result_buffer, value.data);
-        comptime_result_make_available(result_buffer, expr->result_type);
-        break;
+        return comptime_result_make_available(result_buffer, result_type);
     }
-    break;
-    case ModTree_Expression_Type::CONSTANT_READ: {
-        Constant_Pool* pool = &analyser.compiler->constant_pool;
-        Upp_Constant constant = expr->options.constant_read;
-        return comptime_result_make_available(&pool->buffer[constant.offset], constant.type);
+    case AST::Expression_Type::CAST: {
+        auto operand = expression_calculate_comptime_value(expr->options.cast.operand);
+        return comptime_result_apply_cast(operand, info->specifics.cast_type, result_type);
     }
-    case ModTree_Expression_Type::FUNCTION_POINTER_READ: {
-        return comptime_result_make_not_comptime(); // This will work in the future, but not currently
-    }
-    case ModTree_Expression_Type::VARIABLE_READ: {
-        return comptime_result_make_not_comptime();
-    }
-    case ModTree_Expression_Type::CAST:
+    case AST::Expression_Type::ARRAY_ACCESS:
     {
-        Comptime_Result value = modtree_expression_calculate_comptime_value(expr->options.cast.cast_argument);
-        if (value.type == Comptime_Result_Type::NOT_COMPTIME) {
-            return comptime_result_make_not_comptime();
-        }
-        else if (value.type == Comptime_Result_Type::UNAVAILABLE) {
-            return comptime_result_make_unavailable(expr->result_type);
-        }
-
-        Instruction_Type instr_type = (Instruction_Type)-1;
-        switch (expr->options.cast.type)
-        {
-        case Info_Cast_Type::FLOATS: instr_type = Instruction_Type::CAST_FLOAT_DIFFERENT_SIZE; break;
-        case Info_Cast_Type::FLOAT_TO_INT: instr_type = Instruction_Type::CAST_FLOAT_INTEGER; break;
-        case Info_Cast_Type::INT_TO_FLOAT: instr_type = Instruction_Type::CAST_INTEGER_FLOAT; break;
-        case Info_Cast_Type::INTEGERS: instr_type = Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE; break;
-        case Info_Cast_Type::ENUM_TO_INT: instr_type = Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE; break;
-        case Info_Cast_Type::INT_TO_ENUM: instr_type = Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE; break;
-        case Info_Cast_Type::POINTERS: return comptime_result_make_not_comptime();
-        case Info_Cast_Type::POINTER_TO_U64: return comptime_result_make_not_comptime();
-        case Info_Cast_Type::U64_TO_POINTER: return comptime_result_make_not_comptime();
-        case Info_Cast_Type::ARRAY_SIZED_TO_UNSIZED: {
-            Upp_Slice_Base* slice = stack_allocator_allocate<Upp_Slice_Base>(&analyser.allocator_values);
-            slice->data_ptr = value.data;
-            slice->size = value.data_type->options.array.element_count;
-            return comptime_result_make_available(slice, expr->result_type);
-        }
-        case Info_Cast_Type::TO_ANY: {
-            Upp_Any* any = stack_allocator_allocate<Upp_Any>(&analyser.allocator_values);
-            any->type = expr->result_type->internal_index;
-            any->data = value.data;
-            return comptime_result_make_available(any, expr->result_type);
-        }
-        case Info_Cast_Type::FROM_ANY: {
-            Upp_Any* given = (Upp_Any*)value.data;
-            if (given->type >= analyser.compiler->type_system.types.size) {
-                return comptime_result_make_not_comptime();
-            }
-            Type_Signature* any_type = analyser.compiler->type_system.types[given->type];
-            if (any_type != value.data_type) {
-                return comptime_result_make_not_comptime();
-            }
-            return comptime_result_make_available(given->data, any_type);
-        }
-        default: panic("");
-        }
-        if ((int)instr_type == -1) panic("");
-
-        void* result_buffer = stack_allocator_allocate_size(&analyser.allocator_values, expr->result_type->size, expr->result_type->alignment);
-        bytecode_execute_cast_instr(
-            instr_type, result_buffer, value.data,
-            type_signature_to_bytecode_type(expr->result_type),
-            type_signature_to_bytecode_type(value.data_type)
-        );
-        return comptime_result_make_available(result_buffer, expr->result_type);
-    }
-    case ModTree_Expression_Type::ARRAY_ACCESS:
-    {
-        Type_Signature* element_type = expr->result_type;
-        Comptime_Result value_array = modtree_expression_calculate_comptime_value(expr->options.array_access.array_expression);
-        Comptime_Result value_index = modtree_expression_calculate_comptime_value(expr->options.array_access.index_expression);
+        Type_Signature* element_type = result_type;
+        Comptime_Result value_array = expression_calculate_comptime_value(expr->options.array_access.array_expr);
+        Comptime_Result value_index = expression_calculate_comptime_value(expr->options.array_access.index_expr);
         if (value_array.type == Comptime_Result_Type::NOT_COMPTIME || value_index.type == Comptime_Result_Type::NOT_COMPTIME) {
             return comptime_result_make_not_comptime();
         }
         else if (value_array.type == Comptime_Result_Type::UNAVAILABLE || value_index.type == Comptime_Result_Type::UNAVAILABLE) {
-            return comptime_result_make_unavailable(expr->result_type);
+            return comptime_result_make_unavailable(result_type);
         }
         assert(value_index.data_type == type_system->i32_type, "Must be i32 currently");
 
@@ -585,37 +647,39 @@ Comptime_Result expression_calculate_comptime_value(AST::Expression* expression)
         }
         return comptime_result_make_available(&base_ptr[element_offset], element_type);
     }
-    case ModTree_Expression_Type::MEMBER_ACCESS: {
-        Struct_Member* member = &expr->options.member_access.member;
-        Comptime_Result value_struct = modtree_expression_calculate_comptime_value(expr->options.member_access.structure_expression);
+    case AST::Expression_Type::MEMBER_ACCESS: {
+        Comptime_Result value_struct = expression_calculate_comptime_value(expr->options.member_access.expr);
         if (value_struct.type == Comptime_Result_Type::NOT_COMPTIME) {
             return comptime_result_make_not_comptime();
         }
         else if (value_struct.type == Comptime_Result_Type::UNAVAILABLE) {
-            return comptime_result_make_unavailable(expr->result_type);
+            return comptime_result_make_unavailable(result_type);
         }
+        auto member = type_signature_find_member_by_id(value_struct.data_type, expr->options.member_access.name);
+        assert(member.available, "I think after analysis this member should exist");
         byte* raw_data = (byte*)value_struct.data;
-        return comptime_result_make_available(&raw_data[member->offset], expr->result_type);
+        return comptime_result_make_available(&raw_data[member.value.offset], result_type);
     }
-    case ModTree_Expression_Type::FUNCTION_CALL: {
+    case AST::Expression_Type::FUNCTION_CALL: {
         return comptime_result_make_not_comptime();
     }
-    case ModTree_Expression_Type::NEW_ALLOCATION: {
+    case AST::Expression_Type::NEW_EXPR: {
         return comptime_result_make_not_comptime(); // New is always uninitialized, so it cannot have a comptime value (Future: Maybe new with values)
     }
-    case ModTree_Expression_Type::ARRAY_INITIALIZER:
+    case AST::Expression_Type::ARRAY_INITIALIZER:
     {
-        // NOTE: Maybe this works in the futurre, but it dependes if we can always finish the struct size after analysis
         return comptime_result_make_not_comptime();
-        Type_Signature* element_type = expr->result_type->options.array.element_type;
+        // NOTE: Maybe this works in the future, but it dependes if we can always finish the struct size after analysis
+        /*
+        Type_Signature* element_type = result_type->options.array.element_type;
         if (element_type->size == 0 && element_type->alignment == 0) {
             return comptime_analysis_make_error();
         }
-        void* result_buffer = stack_allocator_allocate_size(&analyser->allocator_values, expr->result_type->size, expr->result_type->alignment);
+        void* result_buffer = stack_allocator_allocate_size(&analyser->allocator_values, result_type->size, result_type->alignment);
         for (int i = 0; i < expr->options.array_initializer.size; i++)
         {
             ModTree_Expression* element_expr = expr->options.array_initializer[i];
-            Comptime_Analysis value_element = modtree_expression_calculate_comptime_value(analyser, element_expr);
+            Comptime_Analysis value_element = expression_calculate_comptime_value(analyser, element_expr);
             if (!value_element.available) {
                 return value_element;
             }
@@ -627,18 +691,20 @@ Comptime_Result expression_calculate_comptime_value(AST::Expression* expression)
                 memory_copy(&raw[element_offset], value_element.data, element_type->size);
             }
         }
-        return comptime_analysis_make_success(result_buffer, expr->result_type);
+        return comptime_analysis_make_success(result_buffer, result_type);
+        */
     }
-    case ModTree_Expression_Type::STRUCT_INITIALIZER:
+    case AST::Expression_Type::STRUCT_INITIALIZER:
     {
         // NOTE: Maybe this works in the future
         return comptime_result_make_not_comptime();
-        Type_Signature* struct_type = expr->result_type->options.array.element_type;
-        void* result_buffer = stack_allocator_allocate_size(&analyser->allocator_values, expr->result_type->size, expr->result_type->alignment);
+        /*
+        Type_Signature* struct_type = result_type->options.array.element_type;
+        void* result_buffer = stack_allocator_allocate_size(&analyser->allocator_values, result_type->size, result_type->alignment);
         for (int i = 0; i < expr->options.struct_initializer.size; i++)
         {
             Member_Initializer* initializer = &expr->options.struct_initializer[i];
-            Comptime_Analysis value_member = modtree_expression_calculate_comptime_value(analyser, initializer->init_expr);
+            Comptime_Analysis value_member = expression_calculate_comptime_value(analyser, initializer->init_expr);
             if (!value_member.available) {
                 return value_member;
             }
@@ -648,55 +714,76 @@ Comptime_Result expression_calculate_comptime_value(AST::Expression* expression)
                 memory_copy(&raw[initializer->member.offset], value_member.data, initializer->member.type->size);
             }
         }
-        return comptime_analysis_make_success(result_buffer, expr->result_type);
+        return comptime_analysis_make_success(result_buffer, result_type);
+        */
     }
     default: panic("");
     }
+
     panic("");
     return comptime_result_make_not_comptime();
-    */
 }
 
-bool expression_is_temporary(AST::Expression* expression)
+Comptime_Result expression_calculate_comptime_value(AST::Expression* expr)
 {
-    return true;
-    /*
-    if (expression->result_type->size == 0 && expression->result_type->alignment != 0) return true;
-    switch (expression->expression_type)
-    {
-    case ModTree_Expression_Type::BINARY_OPERATION: return true;
-    case ModTree_Expression_Type::UNARY_OPERATION:
-    {
-        switch (expression->options.unary_operation.operation_type)
-        {
-        case ModTree_Unary_Operation_Type::ADDRESS_OF: return true; // The pointer is always temporary
-        case ModTree_Unary_Operation_Type::DEREFERENCE: return false; // There are special cases where memory loss is not detected, e.g. &(new int) 
-        case ModTree_Unary_Operation_Type::LOGICAL_NOT: return true;
-        case ModTree_Unary_Operation_Type::NEGATE: return true;
-        default: panic("");
-        }
-        return true;
-    }
-    case ModTree_Expression_Type::CONSTANT_READ: return true;
-    case ModTree_Expression_Type::FUNCTION_CALL: return true;
-    case ModTree_Expression_Type::VARIABLE_READ: return false;
-    case ModTree_Expression_Type::FUNCTION_POINTER_READ: return true;
-    case ModTree_Expression_Type::ARRAY_ACCESS: return modtree_expression_result_is_temporary(expression->options.array_access.array_expression);
-    case ModTree_Expression_Type::MEMBER_ACCESS: return modtree_expression_result_is_temporary(expression->options.member_access.structure_expression);
-    case ModTree_Expression_Type::NEW_ALLOCATION: return true;
-    case ModTree_Expression_Type::CAST: {
-        if (expression->options.cast.type == Info_Cast_Type::FROM_ANY) return false;
-        return true;
-    }
-    case ModTree_Expression_Type::ARRAY_INITIALIZER: return true;
-    case ModTree_Expression_Type::STRUCT_INITIALIZER: return true;
-    case ModTree_Expression_Type::ERROR_EXPR: return true;
-    default: panic("");
+    auto result_no_context = expression_calculate_comptime_value_without_context(expr);
+    if (result_no_context.type != Comptime_Result_Type::AVAILABLE) {
+        return result_no_context;
     }
 
-    panic("");
+    auto info = pass_get_info(expr);
+    if (info->context_ops.deref_count != 0 || info->context_ops.take_address_of) {
+        return comptime_result_make_not_comptime();
+    }
+
+    return comptime_result_apply_cast(result_no_context, info->context_ops.cast, info->context_ops.after_cast_type);
+}
+
+bool expression_has_memory_address(AST::Expression* expr)
+{
+    auto info = pass_get_info(expr);
+    auto type = info->context_ops.after_cast_type;
+    if (type->size == 0 && type->alignment != 0) return false; // I forgot if this case has any real use cases currently
+
+    switch (info->result_type)
+    {
+    case Expression_Result_Type::FUNCTION:
+    case Expression_Result_Type::HARDCODED_FUNCTION:
+    case Expression_Result_Type::TYPE:
+    case Expression_Result_Type::CONSTANT: // Constant memory must not be written to. (e.g. 5 = 10)
+    case Expression_Result_Type::MODULE:
+        return false;
+    case Expression_Result_Type::VALUE:
+        break;
+    default:panic("");
+    }
+
+    if (info->context_ops.cast == Info_Cast_Type::FROM_ANY) {
+        // From Any is basically a pointer dereference
+        return true;
+    }
+
+    switch (expr->type)
+    {
+    case AST::Expression_Type::SYMBOL_READ:
+        return true; // If expr->result_type is value its a global or variable read
+    case AST::Expression_Type::ARRAY_ACCESS: return expression_has_memory_address(expr->options.array_access.array_expr);
+    case AST::Expression_Type::MEMBER_ACCESS: return expression_has_memory_address(expr->options.member_access.expr);
+    case AST::Expression_Type::UNARY_OPERATION: {
+        // Dereference value must, by definition, have a memory_address
+        // There are special cases where memory loss is not detected, e.g. &(new int)
+        return expr->options.unop.type == AST::Unop::DEREFERENCE;
+    }
+    case AST::Expression_Type::CAST:
+        // From Any is basically a pointer dereference
+        return info->specifics.cast_type == Info_Cast_Type::FROM_ANY;
+    case AST::Expression_Type::ERROR_EXPR:
+        // Errors shouldn't generate other errors
+        return true;
+    }
+
+    // All other are expressions generating temporary results
     return false;
-    */
 }
 
 
@@ -746,6 +833,7 @@ void expression_info_set_error(Expression_Info* info, Type_Signature* result_typ
     info->result_type = Expression_Result_Type::VALUE;
     info->options.value_type = result_type;
     info->context_ops.after_cast_type = result_type;
+    info->contains_errors = true;
 }
 
 void expression_info_set_function(Expression_Info* info, ModTree_Function* function)
@@ -770,7 +858,8 @@ void expression_info_set_type(Expression_Info* info, Type_Signature* type)
 }
 
 void expression_info_set_constant(Expression_Info* info, Upp_Constant constant) {
-    info->constant_value = optional_make_success(constant);
+    info->result_type = Expression_Result_Type::CONSTANT;
+    info->options.constant = constant;
     info->context_ops.after_cast_type = constant.type;
 }
 
@@ -803,6 +892,7 @@ Type_Signature* expression_info_get_type(Expression_Info* info)
     auto& type_system = semantic_analyser.compiler->type_system;
     switch (info->result_type)
     {
+    case Expression_Result_Type::CONSTANT: info->options.constant.type;
     case Expression_Result_Type::VALUE: return info->options.value_type;
     case Expression_Result_Type::FUNCTION: return info->options.function->signature;
     case Expression_Result_Type::HARDCODED_FUNCTION: return hardcoded_type_to_signature(info->options.hardcoded);
@@ -1724,9 +1814,8 @@ void workload_executer_add_analysis_items(Code_Source* source)
         case Analysis_Item_Type::FUNCTION:
         {
             assert(item->options.function_body_item->node->type == AST::Base_Type::CODE_BLOCK, "");
-            auto func_progress = analysis_progress_create_function(0, item->options.function_body_item, item);
+            auto func_progress = analysis_progress_create_function(item->options.function_body_item, item);
             progress = to_base(func_progress);
-            func_progress->function = modtree_function_create_empty(0, item->symbol, func_progress->body_pass);
 
             auto header_workload = workload_executer_add_workload_empty(Analysis_Workload_Type::FUNCTION_HEADER, item, progress, true);
             auto body_workload = workload_executer_add_workload_empty(Analysis_Workload_Type::FUNCTION_BODY, item->options.function_body_item, progress, true);
@@ -1880,7 +1969,7 @@ void analysis_workload_execute(Analysis_Workload* workload)
     analyser.current_pass = 0;
     switch (workload->type)
     {
-    case Analysis_Workload_Type::PROJECT_IMPORT: 
+    case Analysis_Workload_Type::PROJECT_IMPORT:
     {
         auto import = workload->options.import;
         auto src = code_source_from_ast(to_base(import));
@@ -1941,9 +2030,13 @@ void analysis_workload_execute(Analysis_Workload* workload)
                     type = value_type;
                 }
             }
+            auto global = modtree_program_add_global(type);
+            if (definition->value.available) {
+                modtree_global_set_init(global, analyser.current_pass, definition->value.value);
+            }
+
             symbol->type = Symbol_Type::GLOBAL;
-            symbol->options.global = modtree_program_add_global(definition, type);
-            ir_generator_queue_global(symbol->options.global);
+            symbol->options.global = global;
         }
         else // Comptime definition
         {
@@ -1990,6 +2083,11 @@ void analysis_workload_execute(Analysis_Workload* workload)
 
                 symbol->type = Symbol_Type::COMPTIME_VALUE;
                 symbol->options.constant = result.constant;
+                break;
+            }
+            case Expression_Result_Type::CONSTANT: {
+                symbol->type = Symbol_Type::COMPTIME_VALUE;
+                symbol->options.constant = result->options.constant;
                 break;
             }
             case Expression_Result_Type::HARDCODED_FUNCTION:
@@ -2610,7 +2708,7 @@ Info_Cast_Type semantic_analyser_check_cast_type(Type_Signature* source_type, Ty
     else if (source_type->type == Signature_Type::ARRAY && destination_type->type == Signature_Type::SLICE)
     {
         if (source_type->options.array.element_type == destination_type->options.array.element_type) {
-            cast_type = Info_Cast_Type::ARRAY_SIZED_TO_UNSIZED;
+            cast_type = Info_Cast_Type::ARRAY_TO_SLICE;
             cast_valid = true;
         }
     }
@@ -2654,18 +2752,24 @@ void expression_info_set_cast(Expression_Info* info, Info_Cast_Type cast_type, T
     info->context_ops.cast = cast_type;
 }
 
+#define SET_ACTIVE_EXPR_INFO(new_info)\
+    Expression_Info* _backup_info = semantic_analyser.current_expression; \
+    semantic_analyser.current_expression = new_info; \
+    SCOPE_EXIT(semantic_analyser.current_expression = _backup_info);
+
 Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* expr, Expression_Context context)
 {
     auto& analyser = semantic_analyser;
     auto type_system = &analyser.compiler->type_system;
     auto info = pass_get_info(expr);
-    info->constant_value.available = false;
+    SET_ACTIVE_EXPR_INFO(info);
     info->context = context;
     info->context_ops.after_cast_type = 0;
     info->context_ops.cast = Info_Cast_Type::NO_CAST;
     info->context_ops.deref_count = 0;
     info->context_ops.take_address_of = false;
     expression_info_set_error(info, type_system->unknown_type);
+    info->contains_errors = false; // To undo the previous set error
 
 #define EXIT_VALUE(val) expression_info_set_value(info, val); return info;
 #define EXIT_TYPE(type) expression_info_set_type(info, type); return info;
@@ -2709,6 +2813,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 semantic_analyser_add_error_info(error_information_make_text("Cannot use type_of on hardcoded functions!"));
                 EXIT_ERROR(type_system->unknown_type);
             }
+            case Expression_Result_Type::CONSTANT: {
+                EXIT_TYPE(arg_result->options.constant.type);
+            }
             case Expression_Result_Type::FUNCTION: {
                 EXIT_TYPE(arg_result->options.function->signature);
             }
@@ -2739,7 +2846,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             function_signature = hardcoded_type_to_signature(function_expr_info->options.hardcoded);
             break;
         }
-        case Expression_Result_Type::VALUE: 
+        case Expression_Result_Type::VALUE:
         {
             // TODO: Check if this is comptime known, then we dont need a function pointer call
             function_signature = function_expr_info->options.type;
@@ -2750,6 +2857,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             }
             break;
         }
+        case Expression_Result_Type::CONSTANT:
         case Expression_Result_Type::MODULE:
         case Expression_Result_Type::TYPE: {
             semantic_analyser_log_error(Semantic_Error_Type::EXPECTED_CALLABLE, expr);
@@ -2834,7 +2942,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         }
         case Symbol_Type::COMPTIME_VALUE: {
             expression_info_set_constant(info, symbol->options.constant);
-            EXIT_VALUE(symbol->options.constant.type);
+            return info;
         }
         case Symbol_Type::MODULE: {
             semantic_analyser_log_error(Semantic_Error_Type::SYMBOL_MODULE_INVALID, expr);
@@ -2973,7 +3081,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         default: panic("");
         }
         expression_info_set_constant(info, literal_type, array_create_static<byte>((byte*)value_ptr, literal_type->size), to_base(expr));
-        EXIT_VALUE(literal_type);
+        return info;
     }
     case AST::Expression_Type::ENUM_TYPE:
     {
@@ -3401,8 +3509,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             EXIT_ERROR(type_system->unknown_type);
         }
         case Expression_Result_Type::VALUE:
+        case Expression_Result_Type::CONSTANT:
         {
-            Type_Signature* struct_signature = access_expr_info->options.type;
+            auto struct_signature = access_expr_info->context_ops.after_cast_type;
             if (struct_signature->type == Signature_Type::STRUCT)
             {
                 Struct_Member* found = 0;
@@ -3512,7 +3621,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 is_negate ? expression_context_make_auto_dereference() : expression_context_make_specific_type(type_system->bool_type)
             );
 
-            if (is_negate) 
+            if (is_negate)
             {
                 bool valid = false;
                 if (operand_type->type == Signature_Type::PRIMITIVE) {
@@ -3533,6 +3642,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             switch (operand_result->result_type)
             {
             case Expression_Result_Type::VALUE:
+            case Expression_Result_Type::CONSTANT:
             {
                 Type_Signature* operand_type = operand_result->context_ops.after_cast_type;
                 if (operand_type == type_system->void_type) {
@@ -3540,7 +3650,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                     EXIT_ERROR(type_system->unknown_type);
                 }
 
-                if (expression_is_temporary(unary_node.expr)) {
+                if (!expression_has_memory_address(unary_node.expr)) {
                     semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_ADDRESS_MUST_NOT_BE_OF_TEMPORARY_RESULT, expr);
                 }
                 EXIT_VALUE(type_system_make_pointer(type_system, operand_type));
@@ -3728,7 +3838,7 @@ void expression_context_apply(AST::Expression* expr, Expression_Context context)
     if (context.type == Expression_Context_Type::UNKNOWN) return;
     auto& type_system = semantic_analyser.compiler->type_system;
     auto info = pass_get_info(expr);
-    assert(info->result_type == Expression_Result_Type::VALUE, "");
+    SET_ACTIVE_EXPR_INFO(info);
     auto initial_type = expression_info_get_type(info);
     auto final_type = initial_type;
 
@@ -3770,7 +3880,7 @@ void expression_context_apply(AST::Expression* expr, Expression_Context context)
             iter = iter->options.pointer_child;
         }
 
-        if (given_pointer_depth + 1 == wanted_pointer_depth && context.type == Expression_Context_Type::SPECIFIC_TYPE) 
+        if (given_pointer_depth + 1 == wanted_pointer_depth && context.type == Expression_Context_Type::SPECIFIC_TYPE)
         {
             // Auto address of
             info->context_ops.take_address_of = true;
@@ -3779,15 +3889,15 @@ void expression_context_apply(AST::Expression* expr, Expression_Context context)
         else
         {
             // Auto-Dereference to given level
-            while (given_pointer_depth > wanted_pointer_depth)
-            {
-                info->context_ops.deref_count = given_pointer_depth - wanted_pointer_depth;
+            info->context_ops.deref_count = given_pointer_depth - wanted_pointer_depth;
+            for (int i = 0; i < info->context_ops.deref_count; i++) {
+                assert(final_type->type == Signature_Type::POINTER, "");
                 final_type = final_type->options.pointer_child;
-                given_pointer_depth--;
             }
         }
     }
 
+    info->context_ops.after_cast_type = final_type;
     // Implicit casting
     if (context.type == Expression_Context_Type::SPECIFIC_TYPE)
     {
@@ -3808,7 +3918,8 @@ Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression* expre
 {
     auto& type_system = semantic_analyser.compiler->type_system;
     auto result = semantic_analyser_analyse_expression_internal(expression, context);
-    if (result->result_type != Expression_Result_Type::VALUE) return result;
+    SET_ACTIVE_EXPR_INFO(result);
+    if (result->result_type != Expression_Result_Type::VALUE && result->result_type != Expression_Result_Type::CONSTANT) return result;
     expression_context_apply(expression, context);
     return result;
 }
@@ -3817,10 +3928,12 @@ Type_Signature* semantic_analyser_analyse_expression_type(AST::Expression* expre
 {
     auto& type_system = semantic_analyser.compiler->type_system;
     auto result = semantic_analyser_analyse_expression_any(expression, expression_context_make_auto_dereference());
+    SET_ACTIVE_EXPR_INFO(result);
     switch (result->result_type)
     {
     case Expression_Result_Type::TYPE:
         return result->options.type;
+    case Expression_Result_Type::CONSTANT: 
     case Expression_Result_Type::VALUE:
     {
         if (result->context_ops.after_cast_type == type_system.unknown_type) {
@@ -3834,25 +3947,36 @@ Type_Signature* semantic_analyser_analyse_expression_type(AST::Expression* expre
             return type_system.unknown_type;
         }
 
-        Comptime_Result comptime = expression_calculate_comptime_value(expression);
-        Type_Signature* result_type = type_system.unknown_type;
-        switch (comptime.type)
+        if (result->result_type == Expression_Result_Type::VALUE) 
         {
-        case Comptime_Result_Type::AVAILABLE:
-        {
-            u64 type_index = *(u64*)comptime.data;
+            Comptime_Result comptime = expression_calculate_comptime_value(expression);
+            Type_Signature* result_type = type_system.unknown_type;
+            switch (comptime.type)
+            {
+            case Comptime_Result_Type::AVAILABLE:
+            {
+                u64 type_index = *(u64*)comptime.data;
+                if (type_index >= type_system.internal_type_infos.size) {
+                    semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_CONTAINS_INVALID_TYPE_HANDLE, expression);
+                    return type_system.unknown_type;
+                }
+                return type_system.types[type_index];
+            }
+            case Comptime_Result_Type::UNAVAILABLE:
+                return type_system.unknown_type;
+            case Comptime_Result_Type::NOT_COMPTIME:
+                semantic_analyser_log_error(Semantic_Error_Type::TYPE_NOT_KNOWN_AT_COMPILE_TIME, expression);
+                return type_system.unknown_type;
+            default: panic("");
+            }
+        }
+        else {
+            auto type_index = upp_constant_to_value<u64>(&compiler.constant_pool, result->options.constant);
             if (type_index >= type_system.internal_type_infos.size) {
                 semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_CONTAINS_INVALID_TYPE_HANDLE, expression);
                 return type_system.unknown_type;
             }
             return type_system.types[type_index];
-        }
-        case Comptime_Result_Type::UNAVAILABLE:
-            return type_system.unknown_type;
-        case Comptime_Result_Type::NOT_COMPTIME:
-            semantic_analyser_log_error(Semantic_Error_Type::TYPE_NOT_KNOWN_AT_COMPILE_TIME, expression);
-            return type_system.unknown_type;
-        default: panic("");
         }
 
         panic("");
@@ -3875,6 +3999,7 @@ Type_Signature* semantic_analyser_analyse_expression_value(AST::Expression* expr
 {
     auto& type_system = semantic_analyser.compiler->type_system;
     auto result = semantic_analyser_analyse_expression_any(expression, context);
+    SET_ACTIVE_EXPR_INFO(result);
     switch (result->result_type)
     {
     case Expression_Result_Type::VALUE: {
@@ -3882,6 +4007,10 @@ Type_Signature* semantic_analyser_analyse_expression_value(AST::Expression* expr
     }
     case Expression_Result_Type::TYPE: {
         expression_info_set_constant(result, type_system.type_type, array_create_static_as_bytes(&result->options.type->internal_index, 1), to_base(expression));
+        break;
+    }
+    case Expression_Result_Type::CONSTANT:
+    {
         break;
     }
     case Expression_Result_Type::FUNCTION:
@@ -3946,7 +4075,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
     auto& analyser = semantic_analyser;
     auto info = pass_get_info(statement);
     info->flow = Control_Flow::SEQUENTIAL;
-    #define EXIT(flow_result) { info->flow = flow_result; return flow_result; };
+#define EXIT(flow_result) { info->flow = flow_result; return flow_result; };
 
     switch (statement->type)
     {
@@ -4032,7 +4161,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
             }
         }
 
-        if (!is_continue) 
+        if (!is_continue)
         {
             // Mark all previous Code-Blocks as Sequential flow, since they contain a path to a break
             for (int i = semantic_analyser.block_stack.size - 1; i >= 0; i--)
@@ -4229,7 +4358,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
         auto& assignment_node = statement->options.assignment;
         auto left_type = semantic_analyser_analyse_expression_value(assignment_node.left_side, expression_context_make_unknown());
         auto right_type = semantic_analyser_analyse_expression_value(assignment_node.right_side, expression_context_make_specific_type(left_type));
-        if (expression_is_temporary(assignment_node.left_side)) {
+        if (!expression_has_memory_address(assignment_node.left_side)) {
             semantic_analyser_log_error(Semantic_Error_Type::OTHERS_ASSIGNMENT_REQUIRES_MEMORY_ADDRESS, assignment_node.left_side);
         }
         EXIT(Control_Flow::SEQUENTIAL);
@@ -4331,6 +4460,7 @@ void semantic_analyser_finish()
             main_function = main_symbol->options.function;
         }
     }
+    semantic_analyser.program->main_function = main_function;
 }
 
 void semantic_analyser_reset(Compiler* compiler)
@@ -4340,6 +4470,7 @@ void semantic_analyser_reset(Compiler* compiler)
 
     // Reset analyser data
     {
+        semantic_analyser.current_expression = 0;
         semantic_analyser.compiler = compiler;
         semantic_analyser.current_pass = 0;
         semantic_analyser.current_workload = 0;
@@ -4394,15 +4525,10 @@ void semantic_analyser_reset(Compiler* compiler)
         symbol_set_type(pre->type_f64, ts->f64_type);
     }
 
-    {
-        Symbol* type_infos = pre->global_type_informations;
-        type_infos->type = Symbol_Type::VARIABLE;
-        type_infos->options.variable_type = type_system_make_slice(&type_system, type_system.type_information_type);
-    }
-
     // Initialize hardcoded_functions
     auto& analyser = semantic_analyser;
     auto& ts = type_system;
+    analyser.type_assert = type_system_make_function(&ts, { ts.bool_type }, ts.void_type);
     analyser.type_free = type_system_make_function(&ts, { ts.void_ptr_type }, ts.void_type);
     analyser.type_malloc = type_system_make_function(&ts, { ts.i32_type }, ts.void_ptr_type);
     analyser.type_type_info = type_system_make_function(&ts, { ts.type_type }, ts.type_information_type);
@@ -4416,6 +4542,9 @@ void semantic_analyser_reset(Compiler* compiler)
     analyser.type_read_f32 = type_system_make_function(&ts, {}, ts.f32_type);
     analyser.type_read_bool = type_system_make_function(&ts, {}, ts.bool_type);
     analyser.type_random_i32 = type_system_make_function(&ts, {}, ts.i32_type);
+
+    // Create predefined globals
+    analyser.global_type_informations = modtree_program_add_global(type_system_make_slice(&type_system, type_system.type_information_type));
 }
 
 Semantic_Analyser* semantic_analyser_initialize()
@@ -4674,6 +4803,9 @@ void semantic_error_append_to_string(Semantic_Error e, String* string)
                 break;
             case Expression_Result_Type::MODULE:
                 string_append_formated(string, "Module");
+                break;
+            case Expression_Result_Type::CONSTANT:
+                string_append_formated(string, "Constant");
                 break;
             case Expression_Result_Type::VALUE:
                 string_append_formated(string, "Value");

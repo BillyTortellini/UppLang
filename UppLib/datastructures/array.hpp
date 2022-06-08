@@ -25,6 +25,9 @@ Array<T> array_create_empty(int size) {
     if (size > 0) {
         result.data = new T[size];
     }
+    else {
+        result.data = 0;
+    }
     result.size = size;
     return result;
 }

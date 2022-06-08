@@ -613,10 +613,10 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             for (int i = 0; i < switch_instr->cases.size; i++)
             {
                 IR_Switch_Case* switch_case = &switch_instr->cases[i];
+                // TODO this is kinda bad, I should probably store the constant in IR_Switch_CAse
                 IR_Data_Access constant_access;
                 constant_access.is_memory_access = false;
                 constant_access.type = IR_Data_Access_Type::CONSTANT;
-                constant_access.option.constant_pool = &generator->compiler->constant_pool;
                 constant_access.index = constant_pool_add_constant(
                     &generator->compiler->constant_pool, generator->compiler->type_system.i32_type,
                     array_create_static_as_bytes(&switch_case->value, 1)
@@ -1013,8 +1013,10 @@ void bytecode_generator_compile_function(Bytecode_Generator* generator, IR_Funct
 
 void bytecode_generator_update_globals(Bytecode_Generator* generator)
 {
-    for (int i = generator->global_data_offsets.size; i < generator->ir_program->globals.size; i++) {
-        Type_Signature* signature = generator->ir_program->globals[i];
+    // Only updates newly_added globals
+    auto& globals = compiler.semantic_analyser->program->globals;
+    for (int i = generator->global_data_offsets.size; i < globals.size; i++) {
+        Type_Signature* signature = globals[i]->type;
         generator->global_data_size = align_offset_next_multiple(generator->global_data_size, signature->alignment);
         dynamic_array_push_back(&generator->global_data_offsets, generator->global_data_size);
         generator->global_data_size += signature->size;
@@ -1046,11 +1048,11 @@ void bytecode_generator_update_references(Bytecode_Generator* generator)
         Goto_Label fill_out = generator->fill_out_gotos[i];
         generator->instructions[fill_out.jmp_instruction].op1 = generator->label_locations[fill_out.label_index];
     }
+    dynamic_array_reset(&generator->fill_out_gotos);
 }
 
 void bytecode_generator_set_entry_function(Bytecode_Generator* generator)
 {
-    // Generate code for all functions
     int* entry_found = hashtable_find_element(&generator->function_locations, generator->ir_program->entry_function);
     assert(entry_found != 0, "");
     generator->entry_point_index = *entry_found;

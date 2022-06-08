@@ -971,8 +971,9 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
 
     // Create globals Definitions
     {
-        for (int i = 0; i < generator->program->globals.size; i++) {
-            Type_Signature* type = generator->program->globals[i];
+        auto& globals = compiler->semantic_analyser->program->globals;
+        for (int i = 0; i < globals.size; i++) {
+            auto type = globals[i]->type;
             c_generator_output_type_reference(generator, &generator->section_globals, type);
             string_append_formated(&generator->section_globals, " global_%d;\n", i);
         }

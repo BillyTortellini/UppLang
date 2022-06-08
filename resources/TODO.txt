@@ -1,10 +1,58 @@
-To think about:
- - Maybe always analyse struct initializer/function parameters, even if the function type is not known
+Idea:
+    Binary Operations should support auto-operations (enum, array, struct-init)
+
+Bug:
+ - Double Pointer dereference does not work
+ - Auto dereference for Slice (.data) access does not work
+ - Array initializer with 0 elements should create a slice, but it creates an array currently
+
+
+Comptime Problem:
+ - Expression-Analysis from previous analysis may have contained errors. 
+ - This sucks because in calculate comptime value I cannot rely on expression info
+   being valid, which means I may read garbage or do some stuff that I shouln't do.
+
+Problem:
+ - Calculate comptime with modtree was easy, since modtree couldn't contain errors
+ - With AST-Annotations I cannot expect that the expression was analysed without errors, since I have no way of knowing that
+ - The problem: With Annotations I don't know if errors occured/if a node has been analysed or not
+
+Context-Infos:
+  Calc-Comp calls calculate comptime recursively on child-nodes
+  Calc-Comp currently uses expression-info from analysis
+
+So some solutions that come to mind:
+ 1. Instead of Calculate Comptime and analyse-expression beeing 2 different things, I could have calculate comptime
+    as a singe call that also does analysis. E.g. analyse_expression_comptime instead of ._value ._type ._any
+     + This fits with the current theme of calling _value/_type/_any in the correct situation
+     + Expression-Context can also be applied right after an analysis
+     - I don't know if this is usable to replace analyse_any + calculate comptime calls, because
+     - Doesn't work because I cannot call analyse_expr in analyse_comptime, because both are recursive
+
+ 2. Expression Context having a Must-Be-Comptime flag + comptime value?
+     + Whatevah
+
+ 3. Have a bool visited + bool contains_errors in each analysis_info node, which has to be set during expression analysis
+    In calculate comptime we can be sure that every node we look at has been visited
+     * 
+
+ 4. Semantic analyser having an active-expression pointer, and if we log an error we set the has-error to true.
+ 
+
+
+
+
+Info:
+Do calculate comptime value
+Expression_Result_Type can now be upp_constant, everything needs this case implemented
 
 TODO:
- - Type_informations_global + type_info function
- - Global-init function, setting all global values + calling main?
+ - Testing and bug-fixing
 
+Type System remove the fucking type_system pointer from functions
+
+To think about:
+ - Maybe always analyse struct initializer/function parameters, even if the function type is not known
 
 
 
@@ -71,11 +119,6 @@ What are the most important/difficult saved things in modtree:
  - Bakes are intern functions
  - Assert is also a function -> e.g. cannot be done with modtree...
  - Global init function
-
-Symbol Data connected to modtree:
-    * Variables
-    * Globalz
-    * Functions
 
 Ideas for AST-Decorations:
  - Symbol Reads are dependent on the Analysis-Pass 
