@@ -164,11 +164,11 @@ Bake_Progress* analysis_progress_create_bake(Analysis_Item* item)
 {
     assert(item->type == Analysis_Item_Type::BAKE, "");
     auto result = analysis_progress_allocate_internal<Bake_Progress>(Analysis_Progress_Type::BAKE);
-    result->bake_function = modtree_function_create_empty(
-        type_system_make_function(&compiler.type_system, dynamic_array_create_empty<Type_Signature*>(1), compiler.type_system.void_type), 0, 0
-    );
     result->result = comptime_result_make_not_comptime();
     result->pass = analysis_item_create_pass(item);
+    result->bake_function = modtree_function_create_empty(
+        type_system_make_function(&compiler.type_system, dynamic_array_create_empty<Type_Signature*>(1), compiler.type_system.void_type), 0, result->pass 
+    );
     return result;
 }
 
@@ -239,7 +239,7 @@ Error_Information error_information_make_empty(Error_Information_Type type) {
 }
 
 Error_Information error_information_make_text(const char* text) {
-    Error_Information info = error_information_make_empty(Error_Information_Type::ARGUMENT_COUNT);
+    Error_Information info = error_information_make_empty(Error_Information_Type::EXTRA_TEXT);
     info.options.extra_text = text;
     return info;
 }
@@ -2303,18 +2303,13 @@ void analysis_workload_execute(Analysis_Workload* workload)
     }
     case Analysis_Workload_Type::BAKE_EXECUTION:
     {
+        auto& interpreter = compiler.bytecode_interpreter;
+        auto& ir_gen = compiler.ir_generator;
+
         assert(workload->progress->type == Analysis_Progress_Type::BAKE, "");
         auto progress = (Bake_Progress*)workload->progress;
-
-        auto& compiler = analyser.compiler;
         auto bake_function = progress->bake_function;
 
-        semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, progress->pass->item->node);
-        semantic_analyser_add_error_info(error_information_make_text("During transition to annotated AST bake is not implemented!"));
-        progress->result = comptime_result_make_unavailable(bake_function->signature->options.function.return_type);
-        return;
-
-        /*
         // Check if function compilation succeeded
         if (bake_function->contains_errors) {
             progress->result = comptime_result_make_unavailable(bake_function->signature->options.function.return_type);
@@ -2328,42 +2323,37 @@ void analysis_workload_execute(Analysis_Workload* workload)
             }
         }
 
-
         // Compile
-        ir_generator_queue_function(compiler->ir_generator, bake_function);
-        ir_generator_queue_global(compiler->ir_generator, analyser.global_type_informations);
-        ir_generator_generate_queued_items(compiler->ir_generator);
+        ir_generator_queue_function(bake_function);
+        ir_generator_generate_queued_items(true);
 
         // Set Global Type Informations
         {
-            bytecode_interpreter_prepare_run(compiler->bytecode_interpreter);
-            IR_Data_Access* global_access = hashtable_find_element(&compiler->ir_generator->variable_mapping, analyser.global_type_informations);
-            assert(global_access != 0 && global_access->type == IR_Data_Access_Type::GLOBAL_DATA, "");
+            bytecode_interpreter_prepare_run(interpreter);
             Upp_Slice<Internal_Type_Information>* info_slice = (Upp_Slice<Internal_Type_Information>*)
-                & compiler->bytecode_interpreter->globals.data[
-                    compiler->bytecode_generator->global_data_offsets[global_access->index]
+                &interpreter->globals.data[
+                    compiler.bytecode_generator->global_data_offsets[analyser.global_type_informations->index]
                 ];
-            info_slice->size = compiler->type_system.internal_type_infos.size;
-            info_slice->data_ptr = compiler->type_system.internal_type_infos.data;
+            info_slice->size = type_system.internal_type_infos.size;
+            info_slice->data_ptr = type_system.internal_type_infos.data;
         }
 
         // Execute
-        IR_Function* ir_func = *hashtable_find_element(&compiler->ir_generator->function_mapping, bake_function);
-        int func_start_instr_index = *hashtable_find_element(&compiler->bytecode_generator->function_locations, ir_func);
-        compiler->bytecode_interpreter->instruction_limit_enabled = true;
-        compiler->bytecode_interpreter->instruction_limit = 5000;
-        bytecode_interpreter_run_function(compiler->bytecode_interpreter, func_start_instr_index);
-        if (compiler->bytecode_interpreter->exit_code != Exit_Code::SUCCESS) {
-            semantic_analyser_log_error(Semantic_Error_Type::BAKE_FUNCTION_DID_NOT_SUCCEED, base_node);
-            semantic_analyser_add_error_info(error_information_make_exit_code(compiler->bytecode_interpreter->exit_code));
-            *result = comptime_result_make_unavailable(bake_function->signature->options.function.return_type);
-            return true;
+        IR_Function* ir_func = *hashtable_find_element(&ir_gen->function_mapping, bake_function);
+        int func_start_instr_index = *hashtable_find_element(&compiler.bytecode_generator->function_locations, ir_func);
+        interpreter->instruction_limit_enabled = true;
+        interpreter->instruction_limit = 5000;
+        bytecode_interpreter_run_function(interpreter, func_start_instr_index);
+        if (interpreter->exit_code != Exit_Code::SUCCESS) {
+            semantic_analyser_log_error(Semantic_Error_Type::BAKE_FUNCTION_DID_NOT_SUCCEED, progress->pass->item->node);
+            semantic_analyser_add_error_info(error_information_make_exit_code(interpreter->exit_code));
+            progress->result = comptime_result_make_unavailable(bake_function->signature->options.function.return_type);
+            return;
         }
 
-        void* value_ptr = compiler->bytecode_interpreter->return_register;
-        *result = comptime_result_make_available(value_ptr, bake_function->signature->options.function.return_type);
-        return true;
-        */
+        void* value_ptr = interpreter->return_register;
+        progress->result = comptime_result_make_available(value_ptr, bake_function->signature->options.function.return_type);
+        return;
     }
     default: panic("");
     }
@@ -2780,6 +2770,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
     switch (expr->type)
     {
     case AST::Expression_Type::ERROR_EXPR: {
+        semantic_analyser_set_error_flag(false);// Error due to parsing
         EXIT_ERROR(type_system->unknown_type);
     }
     case AST::Expression_Type::FUNCTION_CALL:

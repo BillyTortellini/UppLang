@@ -42,12 +42,12 @@ address_version_if::(addr:Address)->int
 // Logically we can switch over the tag, but we can also switch over the union, which does the same
 address_version_switch::(addr:Address)->int
 	switch addr
-	case.ipv4
-		return 4
-	case.ipv5
-		return 5
-	case.ipv6
-		return 6
+		case.ipv4
+			return 4
+		case.ipv5
+			return 5
+		case.ipv6
+			return 6
 
 main::()
 	// The tag is now just an enum member, and can be accessed like other members

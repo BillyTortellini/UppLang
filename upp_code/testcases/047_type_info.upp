@@ -25,10 +25,6 @@ main::()
 	assert(int_alignment==4)
 	assert(info.type==int)
 	
-	// This is implemented through a global slice containing all type informations, called type_informations
-	infos:[]Type_Information=type_informations
-	assert(infos.size>0)
-	
 	// To give an example of what could be done, lets search for a member and get its offset
 	name_offset:=member_offset(Player,"name")
 	assert(name_offset==8)

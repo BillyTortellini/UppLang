@@ -781,6 +781,9 @@ namespace AST
         bool type_correct(Symbol_Read* base) {
             return base->base.type == Base_Type::SYMBOL_READ;
         }
+        bool type_correct(Code_Block* base) {
+            return base->base.type == Base_Type::CODE_BLOCK;
+        }
     }
 
 }

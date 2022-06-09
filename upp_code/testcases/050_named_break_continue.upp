@@ -35,25 +35,25 @@ main :: ()
 		val := 0
 		break_cond := true
 		switch color
-		case .RED
-			val = 5
-			if break_cond 
-				break color
-			val = 10
-		case .GREEN:
-			
+			case .RED
+				val = 5
+				if break_cond 
+					break color
+				val = 10
+			case .GREEN
+				
 		assert(val == 5)
 		
 		// This also works inside the default block:
 		val = 0
 		switch color
-		default:
-			val = 5
-			if break_cond 
-				break color
-			val = 10
-		case .GREEN:
-			
+			default
+				val = 5
+				if break_cond 
+					break color
+				val = 10
+			case .GREEN
+				
 		assert(val == 5)
 	
 	// The continue keyword also exists for loops

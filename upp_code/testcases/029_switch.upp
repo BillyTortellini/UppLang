@@ -7,40 +7,41 @@ main::()
 	color:=Color.BLUE
 	
 	// A switch can be used to differentiate enum values
-	// The switch must exhaut all options the enum has,
+	// The switch must exhaust all options the enum has,
 	// or contain a default case. If not, this leads to a compile-time error
 	value:int=15
 	color=Color.RED
 	switch color
-	case Color.RED
-		// Every switch case has a unique scope, and there is no fall_through
-		a:int
-		value=20
-	case Color.GREEN
-		a:int=120
-	case Color.BLUE
-		a:int=130
+		case Color.RED
+			// Every switch case has a unique scope, and there is no fall_through
+			a:int
+			value=20
+		case Color.GREEN
+			a:int=120
+		case Color.BLUE
+			a:int=130
 	
 	assert(value==20)
 	
 	// Switch cases work just like normal blocks
 	color=Color.GREEN
 	switch color
-	case Color.RED
-		
-	case Color.GREEN
-		value=1
-	case Color.BLUE
-		
+		case Color.RED
+			
+		case Color.GREEN
+			value=1
+		case Color.BLUE
+			
 	
 	assert(value==1)
 	
-	//
+	
 		// Cases can also be broken out of 
-		color = Color.GREEN
-		value = 1000
+		color=Color.GREEN
+		value=1000
 		switch color color_switch:
 			case Color.RED
+				
 			case Color.GREEN
 				value=15
 				if true
@@ -48,15 +49,15 @@ main::()
 				
 				value=1
 			case Color.BLUE
-		
-		assert(value == 15)
+				
+		assert(value==15)
 	
 	// When not all cases are specified, a default statement is needed
 	switch color
-	case Color.RED
-		value=100
-	default:
-		value=12
+		case Color.RED
+			value=100
+		default
+			value=12
 	
 	assert(value==12)
 

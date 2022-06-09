@@ -314,6 +314,7 @@ namespace AST
             struct {
                 Expression* condition;
                 Dynamic_Array<Switch_Case*> cases;
+                Optional<String*> label;
             } switch_statement;
             String* break_name;
             String* continue_name;
@@ -341,6 +342,7 @@ namespace AST
         bool type_correct(Module* base);
         bool type_correct(Project_Import* base);
         bool type_correct(Symbol_Read* base);
+        bool type_correct(Code_Block* base);
     }
 
     template<typename T>

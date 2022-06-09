@@ -92,12 +92,12 @@ mini_calc::(ops:[]Any)->struct
 	while i<ops.size
 		if ops[i].type==int
 			switch status
-			case.ADD:
-				result=result+cast{int}ops[i]
-			case.SUB:
-				result=result-cast{int}ops[i]
-			case.MULT:
-				result=result*cast{int}ops[i]
+				case.ADD
+					result=result+cast{int}ops[i]
+				case.SUB
+					result=result-cast{int}ops[i]
+				case.MULT
+					result=result*cast{int}ops[i]
 		else if ops[i].type==String
 			if string_compare(cast ops[i],"+")
 				status=.ADD
