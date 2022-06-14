@@ -125,7 +125,7 @@ struct Header_Parser
 {
     C_Import_Package result_package;
     Lexer* lexer;
-    Dynamic_Array<Token> tokens;
+    Dynamic_Array<C_Token> tokens;
     int index;
     String source_code;
 
@@ -167,7 +167,7 @@ struct Header_Parser
     String* identifier_call_conv_vectorcall;
 };
 
-void print_tokens_till_newline(Dynamic_Array<Token> tokens, String source, int token_index);
+void print_tokens_till_newline(Dynamic_Array<C_Token> tokens, String source, int token_index);
 Header_Parser header_parser_create(Lexer* lexer, String source_code)
 {
     Header_Parser result;
@@ -214,7 +214,7 @@ Header_Parser header_parser_create(Lexer* lexer, String source_code)
     result.identifier_call_conv_vectorcall = identifier_pool_add(lexer->identifier_pool, string_create_static("__vectorcall"));
 
     // Create new tokens array, where lines starting with # are removed, and __pragma and __declspec compiler stuff is removed
-    result.tokens = dynamic_array_create_empty<Token>(lexer->tokens.size);
+    result.tokens = dynamic_array_create_empty<C_Token>(lexer->tokens.size);
 
     String* identifier_pragma_underscore = identifier_pool_add(lexer->identifier_pool, string_create_static("__pragma"));
     String* identifier_declspec = identifier_pool_add(lexer->identifier_pool, string_create_static("__declspec"));
@@ -222,7 +222,7 @@ Header_Parser header_parser_create(Lexer* lexer, String source_code)
     int last_line_index = -1;
     for (int i = 0; i < lexer->tokens.size; i++)
     {
-        Token* token = &lexer->tokens[i];
+        C_Token* token = &lexer->tokens[i];
         bool is_first_token_in_line = false;
         if (token->position.start.line != last_line_index) {
             last_line_index = token->position.start.line;
@@ -352,14 +352,14 @@ bool header_parser_next_is_identifier(Header_Parser* parser, String* id)
     return parser->tokens[parser->index].type == Token_Type::IDENTIFIER_NAME && parser->tokens[parser->index].attribute.id == id;
 }
 
-void print_tokens_till_newline_token_style(Dynamic_Array<Token> tokens, String source, int token_index, Lexer* lexer)
+void print_tokens_till_newline_token_style(Dynamic_Array<C_Token> tokens, String source, int token_index, Lexer* lexer)
 {
-    Token* start_tok = &tokens[token_index];
+    C_Token* start_tok = &tokens[token_index];
     String str = string_create_empty(256);
     SCOPE_EXIT(string_destroy(&str));
     for (int i = token_index; i < tokens.size; i++) 
     {
-        Token* token = &tokens[i];
+        C_Token* token = &tokens[i];
         if (start_tok->position.start.line != token->position.start.line) {
             break;
         }
@@ -388,9 +388,9 @@ void print_tokens_till_newline_token_style(Dynamic_Array<Token> tokens, String s
     logg(str.characters);
 }
 
-void print_tokens_till_newline(Dynamic_Array<Token> tokens, String source, int token_index)
+void print_tokens_till_newline(Dynamic_Array<C_Token> tokens, String source, int token_index)
 {
-    Token* token = &tokens[token_index];
+    C_Token* token = &tokens[token_index];
     int end_pos = token->source_code_index;
     for (int i = token_index + 1; i < tokens.size; i++) {
         if (tokens[i].position.start.line != token->position.start.line) {
@@ -940,10 +940,10 @@ void header_parser_skip_parenthesis(Header_Parser* parser, Token_Type open_type,
     }
     parser->index++;
     int depth = 1;
-    Token* last_token = 0;
+    C_Token* last_token = 0;
     while (depth != 0 && parser->index < parser->tokens.size)
     {
-        Token* token = &parser->tokens[parser->index];
+        C_Token* token = &parser->tokens[parser->index];
         last_token = token;
         switch (token->type)
         {
@@ -1557,8 +1557,8 @@ void header_parser_parse(Header_Parser* parser)
     String* identifier_extern_cpp = identifier_pool_add(parser->lexer->identifier_pool, string_create_static("C++"));
     while (parser->index + 2 < parser->tokens.size)
     {
-        Token* t1 = &parser->tokens[parser->index];
-        Token* t2 = &parser->tokens[parser->index + 1];
+        C_Token* t1 = &parser->tokens[parser->index];
+        C_Token* t2 = &parser->tokens[parser->index + 1];
         if (t1->type == Token_Type::EXTERN && t2->type == Token_Type::STRING_LITERAL && t2->attribute.id == identifier_extern_cpp)
         {
             /*
@@ -1583,9 +1583,9 @@ void header_parser_parse(Header_Parser* parser)
         bool depth_was_nonzero = false;
         while (parser->index + 2 < parser->tokens.size)
         {
-            Token* t1 = &parser->tokens[parser->index];
-            Token* t2 = &parser->tokens[parser->index + 1];
-            Token* t3 = &parser->tokens[parser->index + 2];
+            C_Token* t1 = &parser->tokens[parser->index];
+            C_Token* t2 = &parser->tokens[parser->index + 1];
+            C_Token* t3 = &parser->tokens[parser->index + 2];
 
             switch (t1->type)
             {

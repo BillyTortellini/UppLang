@@ -1996,8 +1996,9 @@ void analysis_workload_execute(Analysis_Workload* workload)
 
         Optional<String> file_content = file_io_load_text_file(path.characters);
         if (file_content.available) {
-            auto src = syntax_block_create_from_string(file_content.value);
-            compiler_add_source_code(src, Code_Origin::LOADED_FILE, path);
+            panic("Todo!");
+            //auto src = syntax_block_create_from_string(file_content.value);
+            compiler_add_source_code(0, Code_Origin::LOADED_FILE, path);
             success = true;
         }
         else {
@@ -3043,23 +3044,23 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         // Missing: float, nummptr
         switch (read.type)
         {
-        case AST::Literal_Type::BOOLEAN:
+        case Literal_Type::BOOLEAN:
             literal_type = type_system->bool_type;
             value_ptr = &read.options.boolean;
             break;
-        case AST::Literal_Type::FLOAT_VAL:
+        case Literal_Type::FLOAT_VAL:
             literal_type = type_system->f32_type;
             value_ptr = &read.options.float_val;
             break;
-        case AST::Literal_Type::INTEGER:
+        case Literal_Type::INTEGER:
             literal_type = type_system->i32_type;
             value_ptr = &read.options.int_val;
             break;
-        case AST::Literal_Type::NULL_VAL:
+        case Literal_Type::NULL_VAL:
             literal_type = type_system->void_ptr_type;
             value_ptr = &null_pointer;
             break;
-        case AST::Literal_Type::STRING: {
+        case Literal_Type::STRING: {
             String* string = read.options.string;
             string_buffer.character_buffer_data = string->characters;
             string_buffer.character_buffer_size = string->capacity;

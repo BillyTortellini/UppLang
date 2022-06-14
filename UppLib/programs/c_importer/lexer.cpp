@@ -116,9 +116,9 @@ Token_Attribute token_attribute_make_empty() {
     return result;
 }
 
-Token token_make(Token_Type type, Token_Attribute attribute, Text_Slice position, int index)
+C_Token token_make(Token_Type type, Token_Attribute attribute, Text_Slice position, int index)
 {
-    Token result;
+    C_Token result;
     result.type = type;
     result.attribute = attribute;
     result.position = position;
@@ -126,9 +126,9 @@ Token token_make(Token_Type type, Token_Attribute attribute, Text_Slice position
     return result;
 }
 
-Token token_make(Token_Type type, Token_Attribute attribute, int line, int character, int length, int index)
+C_Token token_make(Token_Type type, Token_Attribute attribute, int line, int character, int length, int index)
 {
-    Token result;
+    C_Token result;
     result.type = type;
     result.attribute = attribute;
     result.position = text_slice_make(text_position_make(line, character), text_position_make(line, character+length));
@@ -136,9 +136,9 @@ Token token_make(Token_Type type, Token_Attribute attribute, int line, int chara
     return result;
 }
 
-Token token_make_with_slice(Token_Type type, Token_Attribute attribute, Text_Slice slice, int length, int index)
+C_Token token_make_with_slice(Token_Type type, Token_Attribute attribute, Text_Slice slice, int length, int index)
 {
-    Token result;
+    C_Token result;
     result.type = type;
     result.attribute = attribute;
     result.position = slice;
@@ -288,8 +288,8 @@ bool character_is_letter(int c) {
 Lexer lexer_create()
 {
     Lexer lexer;
-    lexer.tokens = dynamic_array_create_empty<Token>(1024);
-    lexer.tokens_with_decoration = dynamic_array_create_empty<Token>(1024);
+    lexer.tokens = dynamic_array_create_empty<C_Token>(1024);
+    lexer.tokens_with_decoration = dynamic_array_create_empty<C_Token>(1024);
 
     lexer.keywords = hashtable_create_empty<String, Token_Type>(64, &hash_string, &string_equals);
     hashtable_insert_element(&lexer.keywords, string_create_static("if"), Token_Type::IF);
@@ -882,7 +882,7 @@ void lexer_lex(Lexer* lexer, String* code, Identifier_Pool* identifier_pool)
         }
         dynamic_array_push_back(&lexer->tokens_with_decoration, lexer->tokens[i]);
     }
-    Dynamic_Array<Token> swap = lexer->tokens_with_decoration;
+    Dynamic_Array<C_Token> swap = lexer->tokens_with_decoration;
     lexer->tokens_with_decoration = lexer->tokens;
     lexer->tokens = swap;
 }
@@ -901,7 +901,7 @@ void lexer_print(Lexer* lexer)
     string_append_formated(&msg, "Tokens: \n");
     for (int i = 0; i < lexer->tokens_with_decoration.size; i++)
     {
-        Token token = lexer->tokens_with_decoration[i];
+        C_Token token = lexer->tokens_with_decoration[i];
         string_append_formated(&msg, "\t %s (Line %d, Pos %d, size: %d)",
             token_type_to_string(token.type), token.position.start.line, token.position.start.character,
             math_maximum(token.position.end.character - token.position.start.character, 0));

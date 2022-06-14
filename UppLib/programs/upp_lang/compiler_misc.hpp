@@ -65,8 +65,8 @@ bool exit_code_is_valid(int value);
 void exit_code_append_to_string(String* string, Exit_Code code);
 
 
-// Source Code
-struct Syntax_Block;
+// Code Source
+struct Source_Code;
 namespace AST {
     struct Module;
 }
@@ -96,7 +96,7 @@ struct Code_Source
 {
     Code_Origin origin;
     String file_path;
-    Syntax_Block* source;
+    Source_Code* source;
     AST::Module* ast;
     Dynamic_Array<Analysis_Item*> analysis_items;
     Dynamic_Array<Item_Dependency> item_dependencies;

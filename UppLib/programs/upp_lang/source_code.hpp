@@ -5,8 +5,6 @@
 #include "../../datastructures/string.hpp"
 
 // Prototypes
-struct Syntax_Block;
-struct Syntax_Line;
 struct Identifier_Pool;
 
 // TYPES
@@ -52,7 +50,7 @@ enum class Operator_Type
     BOTH,
 };
 
-enum class Syntax_Keyword
+enum class Keyword
 {
     RETURN,
     BREAK,
@@ -94,150 +92,102 @@ struct Parenthesis
     bool is_open;
 };
 
-struct Token_Info
+enum class Literal_Type
 {
-    // Character information
-    int char_start;
-    int char_end;
-
-    // Layout Information
-    bool format_space_before;
-    bool format_space_after;
-
-    // Rendering Infos
-    int screen_pos;
-    int screen_size;
-    vec3 screen_color;
+    STRING,
+    INTEGER,
+    FLOAT_VAL,
+    BOOLEAN,
+    NULL_VAL,
 };
 
-struct Block_Info
+struct Literal_Value
 {
-    int indentation_level;
-    int line_start;
-    int line_end;
+    Literal_Type type;
+    union {
+        String* string;
+        int int_val;
+        bool boolean;
+        float float_val;
+    } options;
 };
 
-struct Line_Info
+struct Operator_Info
 {
-    int index; // Global line index for rendering
-    int line_end;
+    String string;
+    Operator_Type type;
+    bool space_before;
+    bool space_after;
 };
 
-struct Syntax_Position // I would use the name "Token_Position", but already in use
-{
-    Syntax_Block* block;
-    int line_index;
-    int token_index;
-};
-
-struct Syntax_Range
-{
-    Syntax_Position start;
-    Syntax_Position end;
-};
 
 
 
 // Source Code
-enum class Syntax_Token_Type
+enum class Token_Type
 {
     IDENTIFIER,
     KEYWORD,
-    LITERAL_NUMBER,
-    LITERAL_STRING,
-    LITERAL_BOOL,
-    LITERAL_NULL,
+    LITERAL,
     OPERATOR,
     PARENTHESIS,
-    UNEXPECTED_CHAR, // Unexpected Character, like | or ; \...
-    COMMENT, // Single line for now
-    DUMMY, // All empty lines have 1 tokenized dummy token, so i dont have to worry about dumb stuff
+    INVALID, // Unexpected Characters (like | or ;), strings with invalid escape sequences or invalid identifiers (5member)
+    COMMENT, // Single line for now (Required for reconstructing text from tokens)
 };
 
-struct Syntax_Token
+struct Token
 {
-    Syntax_Token_Type type;
-    Token_Info info;
+    Token_Type type;
+    int start_index;
+    int end_index; // In theory I can remove the end index since it is given by start of next token
     union {
         Syntax_Operator op;
         String* identifier;
-        String* literal_number;
-        String* comment;
-        struct {
-            String* string; // With ""
-            bool has_closure;
-        } literal_string;
-        bool literal_bool;
-        Syntax_Keyword keyword;
-        char unexpected;
+        Literal_Value literal_value;
+        Keyword keyword;
         Parenthesis parenthesis;
     } options;
 };
 
-struct Syntax_Line
+struct Source_Line
 {
-    String text;
-    Dynamic_Array<Syntax_Token> tokens;
-    Syntax_Block* parent_block;
-    Syntax_Block* follow_block;
-    Line_Info info;
+    Array<Token> tokens;
+    Optional<int> follow_block_index;
 };
 
-struct Syntax_Block
-{
-    Syntax_Line* parent_line; // 0 for root
-    Dynamic_Array<Syntax_Line*> lines; // Must be non-zero
-    Block_Info info;
+struct Source_Block {
+    Dynamic_Array<Source_Line> lines;
 };
 
+struct Source_Code {
+    Dynamic_Array<Source_Block> blocks;
+    bool delete_tokens_on_destroy;
+};
 
+struct Token_Position {
+    int block;
+    int line;
+    int token;
+};
+
+struct Token_Range {
+    Token_Position start;
+    Token_Position end;
+};
 
 // Lexer
 void lexer_initialize(Identifier_Pool* pool);
 void lexer_shutdown();
-void lexer_tokenize_block(Syntax_Block* block, int indentation);
-void lexer_tokenize_syntax_line(Syntax_Line* line);
-void lexer_reconstruct_line_text(Syntax_Line* line, int* editor_cursor);
-
-// Source Code
-Syntax_Block* syntax_block_create(Syntax_Line* parent_line);
-void syntax_block_destroy(Syntax_Block* block);
-void syntax_block_append_to_string(Syntax_Block* block, String* string, int indentation);
-Syntax_Block* syntax_block_create_from_string(String text);
-Syntax_Line* syntax_line_create(Syntax_Block* parent_block, int block_index);
-void syntax_line_destroy(Syntax_Line* line);
-void syntax_block_sanity_check(Syntax_Block* block);
+void lexer_tokenize_text(String text, Dynamic_Array<Token>* tokens);
+void lexer_tokens_to_text(Dynamic_Array<Token>* tokens, String* text);
 
 // Helpers
-String syntax_keyword_as_string(Syntax_Keyword keyword);
-String syntax_token_as_string(Syntax_Token token);
-Syntax_Token syntax_token_make_dummy();
-
-bool syntax_line_is_comment(Syntax_Line* line);
-bool syntax_line_is_multi_line_comment(Syntax_Line* line);
-bool syntax_line_is_empty(Syntax_Line* line);
-int syntax_line_index(Syntax_Line* line);
-void syntax_line_remove_token(Syntax_Line* line, int index);
-int syntax_line_character_to_token_index(Syntax_Line* line, int char_index);
-Syntax_Line* syntax_line_next_line(Syntax_Line* line);
-Syntax_Line* syntax_line_prev_line(Syntax_Line* line);
-void syntax_line_move(Syntax_Line* line, Syntax_Block* block, int index);
-void syntax_line_print_tokens(Syntax_Line* line);
-Syntax_Position syntax_line_get_start_pos(Syntax_Line* line);
-Syntax_Position syntax_line_get_end_pos(Syntax_Line* line);
-
-// Navigation stuff
-bool syntax_position_on_line(Syntax_Position pos);
-bool syntax_position_on_token(Syntax_Position pos);
-bool syntax_position_in_order(Syntax_Position a, Syntax_Position b);
-bool syntax_position_equal(Syntax_Position a, Syntax_Position b);
-Syntax_Line* syntax_position_get_line(Syntax_Position pos);
-Syntax_Token* syntax_position_get_token(Syntax_Position pos);
-Syntax_Position syntax_position_sanitize(Syntax_Position pos);
-Syntax_Position syntax_position_advance_one_line(Syntax_Position a);
-Syntax_Position syntax_position_advance_one_token(Syntax_Position a);
-bool syntax_range_contains(Syntax_Range range, Syntax_Position pos);
-
+int character_index_to_token(Dynamic_Array<Token>* tokens, int char_index);
 bool char_is_parenthesis(char c);
 Parenthesis char_to_parenthesis(char c);
 char parenthesis_to_char(Parenthesis p);
+String syntax_keyword_as_string(Keyword keyword);
+String token_get_string(Token token, String text);
+bool is_space_critical(Token* t);
+Operator_Info syntax_operator_info(Syntax_Operator op);
+

@@ -17,7 +17,7 @@ namespace Parser
 
     struct Parse_State
     {
-        Syntax_Position pos;
+        Token_Position pos;
         int allocated_count;
         int error_count;
     };
@@ -25,8 +25,7 @@ namespace Parser
     struct Parse_Info
     {
         AST::Base* allocation;
-        Syntax_Position start_pos;
-        Syntax_Position end_pos;
+        Token_Range range;
     };
 
     struct Parser
@@ -39,6 +38,14 @@ namespace Parser
 
     // Globals
     static Parser parser;
+
+    // Dummy function
+    AST::Module* execute(Source_Code* root_block) { panic("Hey"); return 0; };
+    void ast_base_get_section_token_range(AST::Base* base, Section section, Dynamic_Array<Token_Range>* ranges) {}
+    Array<Error_Message> get_error_messages() {
+        return dynamic_array_as_array(&parser.error_messages);
+    }
+
 
     // Functions
     void parser_rollback(Parse_State checkpoint)
@@ -57,8 +64,8 @@ namespace Parser
 
         Parse_State state;
         state.pos.block = 0;
-        state.pos.line_index = 0;
-        state.pos.token_index = 0;
+        state.pos.line = 0;
+        state.pos.token = 0;
         state.allocated_count = 0;
         state.error_count = 0;
         parser_rollback(state);
@@ -101,7 +108,7 @@ namespace Parser
         return result;
     }
 
-    void log_error(const char* msg, Syntax_Range range)
+    void log_error(const char* msg, Token_Range range)
     {
         Error_Message err;
         err.msg = msg;
@@ -110,37 +117,38 @@ namespace Parser
         parser.state.error_count = parser.error_messages.size;
     }
 
-    void log_error_to_pos(const char* msg, Syntax_Position pos) {
-        Syntax_Range range;
+    void log_error_to_pos(const char* msg, Token_Position pos) {
+        Token_Range range;
         range.start = parser.state.pos;
         range.end = pos;
         log_error(msg, range);
     }
 
     void log_error_range_offset(const char* msg, int token_offset) {
-        Syntax_Range range;
+        Token_Range range;
         range.start = parser.state.pos;
         range.end = range.start;
-        range.end.token_index += token_offset;
+        range.end.token += token_offset;
         log_error(msg, range);
     }
 
-    void log_error_range_offset_with_start(const char* msg, Syntax_Position start, int token_offset) {
-        Syntax_Range range;
+    void log_error_range_offset_with_start(const char* msg, Token_Position start, int token_offset) {
+        Token_Range range;
         range.start = start;
         range.end = range.start;
-        range.end.token_index += token_offset;
+        range.end.token += token_offset;
         log_error(msg, range);
     }
 
 
 
-    Syntax_Line* get_line() {
+    /*
+    Source_Line* get_line() {
         if (!syntax_position_on_line(parser.state.pos)) return 0;
         return syntax_position_get_line(parser.state.pos);
     }
 
-    Syntax_Token* get_token(int offset);
+    Token* get_token(int offset);
     bool on_follow_block() {
         auto line = get_line();
         if (line == 0) return false;
@@ -148,12 +156,12 @@ namespace Parser
         if (syntax_line_is_empty(line) && !syntax_line_is_multi_line_comment(line)) return true;
         auto& pos = parser.state.pos;
         if (pos.token_index >= line->tokens.size) return true;
-        if (get_token(0)->type == Syntax_Token_Type::COMMENT) return true;
+        if (get_token(0)->type == Token_Type::COMMENT) return true;
         return false;
     }
 
     // Returns 0 if not on token
-    Syntax_Token* get_token(int offset) {
+    Token* get_token(int offset) {
         auto line = get_line();
         if (line == 0) return 0;
         auto& tokens = line->tokens;
@@ -172,30 +180,30 @@ namespace Parser
     }
 
     // Helpers
-    bool test_token_offset(Syntax_Token_Type type, int offset) {
+    bool test_token_offset(Token_Type type, int offset) {
         auto token = get_token(offset);
         if (token == 0) return false;
         return token->type == type;
     }
 
-    bool test_token(Syntax_Token_Type type) {
+    bool test_token(Token_Type type) {
         return test_token_offset(type, 0);
     }
 
-    bool test_token_2(Syntax_Token_Type t0, Syntax_Token_Type t1) {
+    bool test_token_2(Token_Type t0, Token_Type t1) {
         return test_token_offset(t0, 0) && test_token_offset(t1, 1);
     }
 
-    bool test_token_3(Syntax_Token_Type t0, Syntax_Token_Type t1, Syntax_Token_Type t2) {
+    bool test_token_3(Token_Type t0, Token_Type t1, Token_Type t2) {
         return test_token_offset(t0, 0) && test_token_offset(t1, 1) && test_token_offset(t2, 2);
     }
 
-    bool test_token_4(Syntax_Token_Type t0, Syntax_Token_Type t1, Syntax_Token_Type t2, Syntax_Token_Type t3) {
+    bool test_token_4(Token_Type t0, Token_Type t1, Token_Type t2, Token_Type t3) {
         return test_token_offset(t0, 0) && test_token_offset(t1, 1) && test_token_offset(t2, 2) && test_token_offset(t3, 3);
     }
 
     bool test_operator_offset(Syntax_Operator op, int offset) {
-        if (!test_token_offset(Syntax_Token_Type::OPERATOR, offset))
+        if (!test_token_offset(Token_Type::OPERATOR, offset))
             return false;
         return get_token(offset)->options.op == op;
     }
@@ -204,80 +212,18 @@ namespace Parser
         return test_operator_offset(op, 0);
     }
 
-    bool test_keyword_offset(Syntax_Keyword keyword, int offset) {
-        if (!test_token_offset(Syntax_Token_Type::KEYWORD, offset))
+    bool test_keyword_offset(Keyword keyword, int offset) {
+        if (!test_token_offset(Token_Type::KEYWORD, offset))
             return false;
         return get_token(offset)->options.keyword == keyword;
     }
 
     bool test_parenthesis_offset(char c, int offset) {
         Parenthesis p = char_to_parenthesis(c);
-        if (!test_token_offset(Syntax_Token_Type::PARENTHESIS, offset))
+        if (!test_token_offset(Token_Type::PARENTHESIS, offset))
             return false;
         auto given = get_token(offset)->options.parenthesis;
         return given.is_open == p.is_open && given.type == p.type;
-    }
-
-    String* literal_string_handle_escapes(Syntax_Token* token)
-    {
-        assert(token->type == Syntax_Token_Type::LITERAL_STRING, "");
-        auto text = token->options.literal_string.string;
-
-        auto result_str = string_create_empty(text->size);
-        SCOPE_EXIT(string_destroy(&result_str));
-
-        // Parse String literal
-        bool invalid_escape_found = false;
-        bool last_was_escape = false;
-        for (int i = 1; i < text->size; i++)
-        {
-            char c = text->characters[i];
-            if (last_was_escape)
-            {
-                switch (c)
-                {
-                case 'n':
-                    string_append_character(&result_str, '\n');
-                    break;
-                case 'r':
-                    string_append_character(&result_str, '\r');
-                    break;
-                case 't':
-                    string_append_character(&result_str, '\t');
-                    break;
-                case '\\':
-                    string_append_character(&result_str, '\\');
-                    break;
-                case '\'':
-                    string_append_character(&result_str, '\'');
-                    break;
-                case '\"':
-                    string_append_character(&result_str, '\"');
-                    break;
-                case '\n':
-                    break;
-                default:
-                    invalid_escape_found = true;
-                    break;
-                }
-                last_was_escape = false;
-            }
-            else
-            {
-                if (c == '\"') {
-                    break;
-                }
-                last_was_escape = c == '\\';
-                if (!last_was_escape) {
-                    string_append_character(&result_str, c);
-                }
-            }
-        }
-        if (invalid_escape_found) {
-            log_error_range_offset("Invalid escape sequence found", 1);
-        }
-
-        return identifier_pool_add(&compiler.identifier_pool, result_str);
     }
 
     // Prototypes
@@ -304,31 +250,31 @@ namespace Parser
     }
 
     // Parsing Helpers
-    typedef bool(*token_predicate_fn)(Syntax_Token* token, void* user_data);
-    Optional<Syntax_Position> find_error_recovery_token(token_predicate_fn predicate, void* user_data, bool skip_blocks)
+    typedef bool(*token_predicate_fn)(Token* token, void* user_data);
+    Optional<Token_Position> find_error_recovery_token(token_predicate_fn predicate, void* user_data, bool skip_blocks)
     {
         Dynamic_Array<Parenthesis> parenthesis_stack = dynamic_array_create_empty<Parenthesis>(1);
         SCOPE_EXIT(dynamic_array_destroy(&parenthesis_stack));
 
-        Syntax_Position pos = parser.state.pos;
+        Token_Position pos = parser.state.pos;
         auto& lines = pos.block->lines;
-        if (pos.line_index >= lines.size) return optional_make_failure<Syntax_Position>();
+        if (pos.line_index >= lines.size) return optional_make_failure<Token_Position>();
 
         Syntax_Line* line = lines[pos.line_index];
-        Dynamic_Array<Syntax_Token>* tokens = &line->tokens;
+        Dynamic_Array<Token>* tokens = &line->tokens;
         while (true)
         {
             if (pos.token_index >= tokens->size)
             {
                 if (!(skip_blocks || parenthesis_stack.size != 0)) {
-                    return optional_make_failure<Syntax_Position>();
+                    return optional_make_failure<Token_Position>();
                 }
-                // Parenthesis aren't allowed to reach over blocks if there is no follow_block 
+                // Parenthesis aren't allowed to reach over blocks if there is no follow_block
                 if (line->follow_block == 0) {
-                    return optional_make_failure<Syntax_Position>();
+                    return optional_make_failure<Token_Position>();
                 }
                 if (pos.line_index + 1 >= lines.size) {
-                    return optional_make_failure<Syntax_Position>();
+                    return optional_make_failure<Token_Position>();
                 }
                 pos.line_index = pos.line_index + 1;
                 pos.token_index = 0;
@@ -336,11 +282,11 @@ namespace Parser
                 tokens = &line->tokens;
             }
 
-            Syntax_Token* token = &(*tokens)[pos.token_index];
+            Token* token = &(*tokens)[pos.token_index];
             if (parenthesis_stack.size == 0 && predicate(token, user_data)) {
                 return optional_make_success(pos);
             }
-            if (token->type == Syntax_Token_Type::PARENTHESIS)
+            if (token->type == Token_Type::PARENTHESIS)
             {
                 auto parenthesis = token->options.parenthesis;
                 if (parenthesis.is_open) {
@@ -396,11 +342,11 @@ namespace Parser
             if ((before_line_index == pos.line_index || pos.token_index != 0) && syntax_position_on_line(pos))
             {
                 line = lines[pos.line_index];
-                if (pos.token_index < line->tokens.size && line->tokens[pos.token_index].type != Syntax_Token_Type::COMMENT) {
+                if (pos.token_index < line->tokens.size && line->tokens[pos.token_index].type != Token_Type::COMMENT) {
                     log_error_to_pos("Unexpected Tokens, Line already parsed", syntax_line_get_end_pos(line));
                 }
                 if (line->follow_block != 0) {
-                    Syntax_Range range;
+                    Token_Range range;
                     range.start.block = line->follow_block;
                     range.start.token_index = 0;
                     range.start.line_index = 0;
@@ -440,8 +386,8 @@ namespace Parser
     bool successfull_parenthesis_exit()
     {
         auto parenthesis_pos = find_error_recovery_token(
-            [](Syntax_Token* t, void* _unused) -> bool
-            { return t->type == Syntax_Token_Type::PARENTHESIS &&
+            [](Token* t, void* _unused) -> bool
+            { return t->type == Token_Type::PARENTHESIS &&
             !t->options.parenthesis.is_open && t->options.parenthesis.type == type; },
             0, true
         );
@@ -491,13 +437,13 @@ namespace Parser
 
             // Error Recovery
             auto comma_pos = find_error_recovery_token(
-                [](Syntax_Token* t, void* _unused) -> bool
-                { return t->type == Syntax_Token_Type::OPERATOR && t->options.op == Syntax_Operator::COMMA; },
+                [](Token* t, void* _unused) -> bool
+                { return t->type == Token_Type::OPERATOR && t->options.op == Syntax_Operator::COMMA; },
                 0, true
             );
             auto parenthesis_pos = find_error_recovery_token(
-                [](Syntax_Token* t, void* _unused) -> bool
-                { return t->type == Syntax_Token_Type::PARENTHESIS &&
+                [](Token* t, void* _unused) -> bool
+                { return t->type == Token_Type::PARENTHESIS &&
                 !t->options.parenthesis.is_open && t->options.parenthesis.type == Parenthesis_Type::PARENTHESIS; },
                 0, true
             );
@@ -536,7 +482,7 @@ namespace Parser
     Optional<String*> parse_block_label(AST::Expression* related_expression)
     {
         auto result = optional_make_failure<String*>();
-        if (test_token(Syntax_Token_Type::IDENTIFIER), test_operator_offset(Syntax_Operator::COLON, 1)) {
+        if (test_token(Token_Type::IDENTIFIER), test_operator_offset(Syntax_Operator::COLON, 1)) {
             result = optional_make_success(get_token(0)->options.identifier);
             advance_token();
             advance_token();
@@ -566,7 +512,7 @@ namespace Parser
     {
         CHECKPOINT_SETUP;
         auto result = allocate_base<Argument>(parent, Base_Type::ARGUMENT);
-        if (test_token(Syntax_Token_Type::IDENTIFIER) && test_operator_offset(Syntax_Operator::ASSIGN, 1)) {
+        if (test_token(Token_Type::IDENTIFIER) && test_operator_offset(Syntax_Operator::ASSIGN, 1)) {
             result->name = optional_make_success(get_token(0)->options.identifier);
             advance_token();
             advance_token();
@@ -588,7 +534,7 @@ namespace Parser
             advance_token();
         }
 
-        if (!test_token(Syntax_Token_Type::IDENTIFIER)) CHECKPOINT_EXIT;
+        if (!test_token(Token_Type::IDENTIFIER)) CHECKPOINT_EXIT;
         result->name = get_token(0)->options.identifier;
         advance_token();
 
@@ -605,12 +551,12 @@ namespace Parser
     Switch_Case* parse_switch_case(Base* parent, bool& add_to_fill)
     {
         add_to_fill = true;
-        if (!test_keyword_offset(Syntax_Keyword::CASE, 0) && !test_keyword_offset(Syntax_Keyword::DEFAULT, 0)) {
+        if (!test_keyword_offset(Keyword::CASE, 0) && !test_keyword_offset(Keyword::DEFAULT, 0)) {
             return 0;
         }
 
         auto result = allocate_base<Switch_Case>(parent, Base_Type::SWITCH_CASE);
-        bool is_default = test_keyword_offset(Syntax_Keyword::DEFAULT, 0);
+        bool is_default = test_keyword_offset(Keyword::DEFAULT, 0);
         advance_token();
         result->value.available = false;
         if (!is_default) {
@@ -618,7 +564,7 @@ namespace Parser
         }
         result->block = parse_code_block(&result->base, 0);
 
-        // Set block label (Switch cases need special treatment because they 'Inherit' the label from the switch 
+        // Set block label (Switch cases need special treatment because they 'Inherit' the label from the switch
         assert(parent->type == Base_Type::STATEMENT && ((Statement*)parent)->type == Statement_Type::SWITCH_STATEMENT, "");
         result->block->block_id = ((Statement*)parent)->options.switch_statement.label;
         return result;
@@ -633,8 +579,8 @@ namespace Parser
             // This needs to be done before definition
             auto line = get_line();
             if ((syntax_line_is_empty(line) && !syntax_line_is_multi_line_comment(line)) ||
-                (test_token(Syntax_Token_Type::IDENTIFIER) && test_operator_offset(Syntax_Operator::COLON, 1) &&
-                    (line->tokens.size == 2 || (line->tokens.size == 3 && line->tokens[2].type == Syntax_Token_Type::COMMENT))))
+                (test_token(Token_Type::IDENTIFIER) && test_operator_offset(Syntax_Operator::COLON, 1) &&
+                    (line->tokens.size == 2 || (line->tokens.size == 3 && line->tokens[2].type == Token_Type::COMMENT))))
             {
                 result->type = Statement_Type::BLOCK;
                 result->options.block = parse_code_block(&result->base, 0);
@@ -668,11 +614,11 @@ namespace Parser
                 PARSE_SUCCESS(result);
             }
         }
-        if (test_token(Syntax_Token_Type::KEYWORD))
+        if (test_token(Token_Type::KEYWORD))
         {
             switch (get_token(0)->options.keyword)
             {
-            case Syntax_Keyword::IF:
+            case Keyword::IF:
             {
                 advance_token();
                 result->type = Statement_Type::IF_STATEMENT;
@@ -683,7 +629,7 @@ namespace Parser
 
                 auto last_if_stat = result;
                 // Parse else-if chain
-                while (test_keyword_offset(Syntax_Keyword::ELSE, 0) && test_keyword_offset(Syntax_Keyword::IF, 1))
+                while (test_keyword_offset(Keyword::ELSE, 0) && test_keyword_offset(Keyword::IF, 1))
                 {
                     advance_token();
                     auto else_block = allocate_base<AST::Code_Block>(&result->base, Base_Type::CODE_BLOCK);
@@ -701,14 +647,14 @@ namespace Parser
                     new_if.block = parse_code_block(&result->base, new_if.condition);
                     new_if.else_block.available = false;
                 }
-                if (test_keyword_offset(Syntax_Keyword::ELSE, 0))
+                if (test_keyword_offset(Keyword::ELSE, 0))
                 {
                     advance_token();
                     last_if_stat->options.if_statement.else_block = optional_make_success(parse_code_block(&last_if_stat->base, 0));
                 }
                 PARSE_SUCCESS(result);
             }
-            case Syntax_Keyword::WHILE:
+            case Keyword::WHILE:
             {
                 advance_token();
                 result->type = Statement_Type::WHILE_STATEMENT;
@@ -717,14 +663,14 @@ namespace Parser
                 loop.block = parse_code_block(&result->base, loop.condition);
                 PARSE_SUCCESS(result);
             }
-            case Syntax_Keyword::DEFER:
+            case Keyword::DEFER:
             {
                 advance_token();
                 result->type = Statement_Type::DEFER;
                 result->options.defer_block = parse_code_block(&result->base, 0);
                 PARSE_SUCCESS(result);
             }
-            case Syntax_Keyword::SWITCH:
+            case Keyword::SWITCH:
             {
                 advance_token();
                 result->type = Statement_Type::SWITCH_STATEMENT;
@@ -736,13 +682,13 @@ namespace Parser
                 parse_follow_block(&result->base, &switch_stat.cases, parse_switch_case, true);
                 PARSE_SUCCESS(result);
             }
-            case Syntax_Keyword::DELETE_KEYWORD: {
+            case Keyword::DELETE_KEYWORD: {
                 advance_token();
                 result->type = Statement_Type::DELETE_STATEMENT;
                 result->options.delete_expr = parse_expression_or_error_expr(&result->base);
                 PARSE_SUCCESS(result);
             }
-            case Syntax_Keyword::RETURN: {
+            case Keyword::RETURN: {
                 advance_token();
                 result->type = Statement_Type::RETURN_STATEMENT;
                 auto expr = parse_expression(&result->base);
@@ -752,18 +698,18 @@ namespace Parser
                 }
                 PARSE_SUCCESS(result);
             }
-            case Syntax_Keyword::CONTINUE: {
+            case Keyword::CONTINUE: {
                 advance_token();
                 result->type = Statement_Type::CONTINUE_STATEMENT;
-                if (!test_token(Syntax_Token_Type::IDENTIFIER)) CHECKPOINT_EXIT;
+                if (!test_token(Token_Type::IDENTIFIER)) CHECKPOINT_EXIT;
                 result->options.continue_name = get_token(0)->options.identifier;
                 advance_token();
                 PARSE_SUCCESS(result);
             }
-            case Syntax_Keyword::BREAK: {
+            case Keyword::BREAK: {
                 advance_token();
                 result->type = Statement_Type::BREAK_STATEMENT;
-                if (!test_token(Syntax_Token_Type::IDENTIFIER)) CHECKPOINT_EXIT;
+                if (!test_token(Token_Type::IDENTIFIER)) CHECKPOINT_EXIT;
                 result->options.break_name = get_token(0)->options.identifier;
                 advance_token();
                 PARSE_SUCCESS(result);
@@ -776,7 +722,7 @@ namespace Parser
         Enum_Member* parse_enum_member(Base * parent, bool& add_to_fill)
         {
             add_to_fill = true;
-            if (!test_token(Syntax_Token_Type::IDENTIFIER)) {
+            if (!test_token(Token_Type::IDENTIFIER)) {
                 return 0;
             }
 
@@ -800,7 +746,7 @@ namespace Parser
             auto result = allocate_base<Expression>(parent, Base_Type::EXPRESSION);
 
             // Unops
-            if (test_token(Syntax_Token_Type::OPERATOR))
+            if (test_token(Token_Type::OPERATOR))
             {
                 Unop unop;
                 bool valid = true;
@@ -821,7 +767,7 @@ namespace Parser
                 }
             }
 
-            if (test_keyword_offset(Syntax_Keyword::BAKE, 0))
+            if (test_keyword_offset(Keyword::BAKE, 0))
             {
                 advance_token();
                 if (on_follow_block()) {
@@ -838,13 +784,13 @@ namespace Parser
             {
                 bool is_cast = true;
                 Cast_Type type;
-                if (test_keyword_offset(Syntax_Keyword::CAST, 0)) {
+                if (test_keyword_offset(Keyword::CAST, 0)) {
                     type = Cast_Type::TYPE_TO_TYPE;
                 }
-                else if (test_keyword_offset(Syntax_Keyword::CAST_PTR, 0)) {
+                else if (test_keyword_offset(Keyword::CAST_PTR, 0)) {
                     type = Cast_Type::RAW_TO_PTR;
                 }
-                else if (test_keyword_offset(Syntax_Keyword::CAST_RAW, 0)) {
+                else if (test_keyword_offset(Keyword::CAST_RAW, 0)) {
                     type = Cast_Type::PTR_TO_RAW;
                 }
                 else {
@@ -887,15 +833,15 @@ namespace Parser
             }
 
             // Bases
-            if (test_token(Syntax_Token_Type::IDENTIFIER))
+            if (test_token(Token_Type::IDENTIFIER))
             {
                 Symbol_Read* final_read = allocate_base<Symbol_Read>(&result->base, Base_Type::SYMBOL_READ);
                 Symbol_Read* read = final_read;
                 read->path_child.available = false;
                 read->name = get_token(0)->options.identifier;
-                while (test_token(Syntax_Token_Type::IDENTIFIER) &&
+                while (test_token(Token_Type::IDENTIFIER) &&
                     test_operator_offset(Syntax_Operator::TILDE, 1) &&
-                    test_token_offset(Syntax_Token_Type::IDENTIFIER, 2))
+                    test_token_offset(Token_Type::IDENTIFIER, 2))
                 {
                     advance_token();
                     advance_token();
@@ -915,7 +861,7 @@ namespace Parser
             if (test_operator(Syntax_Operator::DOT))
             {
                 advance_token();
-                if (test_token(Syntax_Token_Type::IDENTIFIER)) // Member access
+                if (test_token(Token_Type::IDENTIFIER)) // Member access
                 {
                     result->type = Expression_Type::AUTO_ENUM;
                     result->options.auto_enum = get_token(0)->options.identifier;
@@ -944,7 +890,7 @@ namespace Parser
             }
 
             // Literals
-            if (test_token(Syntax_Token_Type::LITERAL_NUMBER))
+            if (test_token(Token_Type::LITERAL_NUMBER))
             {
                 auto str = get_token(0)->options.literal_number;
                 int value = 0;
@@ -999,14 +945,14 @@ namespace Parser
                 }
                 PARSE_SUCCESS(result);
             }
-            if (test_keyword_offset(Syntax_Keyword::NULL_KEYWORD, 0))
+            if (test_keyword_offset(Keyword::NULL_KEYWORD, 0))
             {
                 result->type = Expression_Type::LITERAL_READ;
                 result->options.literal_read.type = Literal_Type::NULL_VAL;
                 advance_token();
                 PARSE_SUCCESS(result);
             }
-            if (test_token(Syntax_Token_Type::LITERAL_STRING))
+            if (test_token(Token_Type::LITERAL_STRING))
             {
                 result->type = Expression_Type::LITERAL_READ;
                 result->options.literal_read.type = Literal_Type::STRING;
@@ -1014,7 +960,7 @@ namespace Parser
                 advance_token();
                 PARSE_SUCCESS(result);
             }
-            if (test_token(Syntax_Token_Type::LITERAL_BOOL)) {
+            if (test_token(Token_Type::LITERAL_BOOL)) {
                 result->type = Expression_Type::LITERAL_READ;
                 result->options.literal_read.type = Literal_Type::BOOLEAN;
                 result->options.literal_read.options.boolean = get_token(0)->options.literal_bool;
@@ -1025,8 +971,8 @@ namespace Parser
             // Parse functions + signatures
             if (test_parenthesis_offset('(', 0) && (
                 test_parenthesis_offset(')', 1) ||
-                (test_token_offset(Syntax_Token_Type::IDENTIFIER, 1) && test_operator_offset(Syntax_Operator::COLON, 2)) ||
-                (test_operator_offset(Syntax_Operator::DOLLAR, 1) && test_token_offset(Syntax_Token_Type::IDENTIFIER, 2))
+                (test_token_offset(Token_Type::IDENTIFIER, 1) && test_operator_offset(Syntax_Operator::COLON, 2)) ||
+                (test_operator_offset(Syntax_Operator::DOLLAR, 1) && test_token_offset(Token_Type::IDENTIFIER, 2))
                 ))
             {
                 result->type = Expression_Type::FUNCTION_SIGNATURE;
@@ -1066,7 +1012,7 @@ namespace Parser
             }
 
             // Keyword expressions
-            if (test_keyword_offset(Syntax_Keyword::NEW, 0))
+            if (test_keyword_offset(Keyword::NEW, 0))
             {
                 result->type = Expression_Type::NEW_EXPR;
                 result->options.new_expr.count_expr.available = false;
@@ -1079,16 +1025,16 @@ namespace Parser
                 result->options.new_expr.type_expr = parse_expression_or_error_expr(&result->base);
                 PARSE_SUCCESS(result);
             }
-            if (test_keyword_offset(Syntax_Keyword::STRUCT, 0) ||
-                test_keyword_offset(Syntax_Keyword::C_UNION, 0) ||
-                test_keyword_offset(Syntax_Keyword::UNION, 0))
+            if (test_keyword_offset(Keyword::STRUCT, 0) ||
+                test_keyword_offset(Keyword::C_UNION, 0) ||
+                test_keyword_offset(Keyword::UNION, 0))
             {
                 result->type = Expression_Type::STRUCTURE_TYPE;
                 result->options.structure.members = dynamic_array_create_empty<Definition*>(1);
-                if (test_keyword_offset(Syntax_Keyword::STRUCT, 0)) {
+                if (test_keyword_offset(Keyword::STRUCT, 0)) {
                     result->options.structure.type = AST::Structure_Type::STRUCT;
                 }
-                else if (test_keyword_offset(Syntax_Keyword::C_UNION, 0)) {
+                else if (test_keyword_offset(Keyword::C_UNION, 0)) {
                     result->options.structure.type = AST::Structure_Type::C_UNION;
                 }
                 else {
@@ -1098,14 +1044,14 @@ namespace Parser
                 parse_follow_block(&result->base, &result->options.structure.members, parse_definition, false);
                 PARSE_SUCCESS(result);
             }
-            if (test_keyword_offset(Syntax_Keyword::ENUM, 0)) {
+            if (test_keyword_offset(Keyword::ENUM, 0)) {
                 result->type = Expression_Type::ENUM_TYPE;
                 result->options.enum_members = dynamic_array_create_empty<Enum_Member*>(1);
                 advance_token();
                 parse_follow_block(&result->base, &result->options.enum_members, parse_enum_member, false);
                 PARSE_SUCCESS(result);
             }
-            if (test_keyword_offset(Syntax_Keyword::MODULE, 0)) {
+            if (test_keyword_offset(Keyword::MODULE, 0)) {
                 auto module = allocate_base<Module>(&result->base, Base_Type::MODULE);
                 module->definitions = dynamic_array_create_empty<Definition*>(1);
                 module->imports = dynamic_array_create_empty<Project_Import*>(1);
@@ -1128,7 +1074,7 @@ namespace Parser
             if (test_operator(Syntax_Operator::DOT))
             {
                 advance_token();
-                if (test_token(Syntax_Token_Type::IDENTIFIER)) // Member access
+                if (test_token(Token_Type::IDENTIFIER)) // Member access
                 {
                     result->type = Expression_Type::MEMBER_ACCESS;
                     result->options.member_access.name = get_token(0)->options.identifier;
@@ -1242,7 +1188,7 @@ namespace Parser
             {
                 Binop_Link link;
                 link.binop = Binop::INVALID;
-                if (test_token(Syntax_Token_Type::OPERATOR))
+                if (test_token(Token_Type::OPERATOR))
                 {
                     switch (get_token(0)->options.op)
                     {
@@ -1302,7 +1248,7 @@ namespace Parser
             result->is_comptime = false;
 
             if (parser.state.pos.token_index != 0) CHECKPOINT_EXIT;
-            if (!test_token(Syntax_Token_Type::IDENTIFIER)) CHECKPOINT_EXIT;
+            if (!test_token(Token_Type::IDENTIFIER)) CHECKPOINT_EXIT;
             result->name = get_token(0)->options.identifier;
             advance_token();
 
@@ -1342,7 +1288,7 @@ namespace Parser
         Definition* parse_module_item(Base * parent, bool& add_to_fill)
         {
             CHECKPOINT_SETUP;
-            if (test_keyword_offset(Syntax_Keyword::IMPORT, 0) && test_token_offset(Syntax_Token_Type::LITERAL_STRING, 1))
+            if (test_keyword_offset(Keyword::IMPORT, 0) && test_token_offset(Token_Type::LITERAL_STRING, 1))
             {
                 assert(parent->type == Base_Type::MODULE, "");
                 auto module = (Module*)parent;
@@ -1366,7 +1312,7 @@ namespace Parser
             auto child = AST::base_get_child(base, index);
             if (child == 0) return;
             auto& start = parser.parse_informations[child->allocation_index].start_pos;
-            Syntax_Position end;
+            Token_Position end;
             while (child != 0) {
                 base_correct_token_ranges(child);
                 end = parser.parse_informations[child->allocation_index].end_pos;
@@ -1387,7 +1333,7 @@ namespace Parser
             }
         }
 
-        AST::Module* execute(Syntax_Block * root_block)
+        AST::Module* execute(Source_Block* root_block)
         {
             parser.root = allocate_base<Module>(0, Base_Type::MODULE);
             parser.parse_informations[0].start_pos.block = root_block;
@@ -1404,11 +1350,7 @@ namespace Parser
 #undef PARSE_SUCCESS
 #undef SET_END_RANGE
 
-        Array<Error_Message> get_error_messages() {
-            return dynamic_array_as_array(&parser.error_messages);
-        }
-
-        void ast_base_get_section_token_range(AST::Base * base, Section section, Dynamic_Array<Syntax_Range> * ranges)
+        void ast_base_get_section_token_range(AST::Base * base, Section section, Dynamic_Array<Token_Range> * ranges)
         {
             auto& info = parser.parse_informations[base->allocation_index];
             switch (section)
@@ -1416,7 +1358,7 @@ namespace Parser
             case Section::NONE: break;
             case Section::WHOLE:
             {
-                Syntax_Range range;
+                Token_Range range;
                 range.start = info.start_pos;
                 range.end = info.end_pos;
                 dynamic_array_push_back(ranges, range);
@@ -1424,7 +1366,7 @@ namespace Parser
             }
             case Section::WHOLE_NO_CHILDREN:
             {
-                Syntax_Range range;
+                Token_Range range;
                 range.start = info.start_pos;
                 int index = 0;
                 auto child = AST::base_get_child(base, index);
@@ -1449,11 +1391,11 @@ namespace Parser
             case Section::IDENTIFIER:
             {
                 parser.state.pos = info.start_pos;
-                auto result = find_error_recovery_token([](Syntax_Token* t, void* _unused) -> bool {return t->type == Syntax_Token_Type::IDENTIFIER; }, 0, false);
+                auto result = find_error_recovery_token([](Token* t, void* _unused) -> bool {return t->type == Token_Type::IDENTIFIER; }, 0, false);
                 if (!result.available) {
                     break;
                 }
-                Syntax_Range range;
+                Token_Range range;
                 range.start = result.value;
                 range.end = range.start;
                 range.end.token_index += 1;
@@ -1464,11 +1406,11 @@ namespace Parser
             {
                 // Find next (), {} or [], and add the tokens to the ranges
                 parser.state.pos = info.start_pos;
-                auto result = find_error_recovery_token([](Syntax_Token* t, void* type) -> bool {return t->type == Syntax_Token_Type::PARENTHESIS; }, 0, false);
+                auto result = find_error_recovery_token([](Token* t, void* type) -> bool {return t->type == Token_Type::PARENTHESIS; }, 0, false);
                 if (!result.available) {
                     break;
                 }
-                Syntax_Range range;
+                Token_Range range;
                 range.start = result.value;
                 range.end = result.value;
                 range.end.token_index += 1;
@@ -1479,8 +1421,8 @@ namespace Parser
                 auto par_type = get_token(0)->options.parenthesis.type;
                 advance_token();
                 auto end_token = find_error_recovery_token(
-                    [](Syntax_Token* t, void* type) -> bool
-                    { return t->type == Syntax_Token_Type::PARENTHESIS &&
+                    [](Token* t, void* type) -> bool
+                    { return t->type == Token_Type::PARENTHESIS &&
                     !t->options.parenthesis.is_open && t->options.parenthesis.type == *((Parenthesis_Type*)type); },
                     (void*)(&par_type), true
                 );
@@ -1495,11 +1437,11 @@ namespace Parser
             }
             case Section::KEYWORD:
             {
-                auto result = find_error_recovery_token([](Syntax_Token* t, void* type) -> bool {return t->type == Syntax_Token_Type::KEYWORD; }, 0, false);
+                auto result = find_error_recovery_token([](Token* t, void* type) -> bool {return t->type == Token_Type::KEYWORD; }, 0, false);
                 if (!result.available) {
                     break;
                 }
-                Syntax_Range range;
+                Token_Range range;
                 range.start = result.value;
                 range.end = result.value;
                 range.end.token_index += 1;
@@ -1507,7 +1449,7 @@ namespace Parser
                 break;
             }
             case Section::END_TOKEN: {
-                Syntax_Range range;
+                Token_Range range;
                 range.end = info.end_pos;
                 range.start = info.end_pos;
                 range.start.token_index -= 1;
@@ -1518,4 +1460,5 @@ namespace Parser
             default: panic("");
             }
         }
-    }
+        */
+}

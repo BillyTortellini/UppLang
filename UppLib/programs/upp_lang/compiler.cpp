@@ -34,7 +34,7 @@ bool output_bytecode = false;
 bool output_timing = false;
 
 // Testcases
-bool enable_testcases = true;
+bool enable_testcases = false;
 bool enable_stresstest = false;
 bool run_testcases_compiled = false;
 
@@ -52,7 +52,7 @@ bool do_output;
 Compiler compiler;
 
 // Code_Source
-Code_Source* code_source_create(Code_Origin origin, Syntax_Block* source, String file_path)
+Code_Source* code_source_create(Code_Origin origin, Source_Code* source, String file_path)
 {
     Code_Source* result = new Code_Source;
     result->origin = origin;
@@ -181,7 +181,7 @@ Code_Source* code_source_from_ast(AST::Base* base)
     return 0;
 }
 
-void compiler_compile(Syntax_Block* source_code, bool generate_code, String project_path)
+void compiler_compile(Source_Code* source_code, bool generate_code, String project_path)
 {
     do_output= enable_output && !(output_only_on_code_gen && !generate_code);
     if (do_output) {
@@ -378,7 +378,7 @@ Exit_Code compiler_execute()
     return Exit_Code::COMPILATION_FAILED;
 }
 
-void compiler_add_source_code(Syntax_Block* source_code, Code_Origin origin, String file_path)
+void compiler_add_source_code(Source_Code* source_code, Code_Origin origin, String file_path)
 {
     bool do_lexing = enable_lexing;
     bool do_parsing = do_lexing && enable_parsing;
@@ -396,7 +396,8 @@ void compiler_add_source_code(Syntax_Block* source_code, Code_Origin origin, Str
     if (do_lexing)
     {
         compiler_switch_timing_task(Timing_Task::LEXING);
-        lexer_tokenize_block(code_source->source, 0);
+        panic("This needs to be implemented if everything works again.");
+        //lexer_tokenize_block(code_source->source, 0);
 
         if (output_identifiers) {
             logg("\n--------IDENTIFIERS:--------:\n");
@@ -585,9 +586,10 @@ void compiler_run_testcases(Timer* timer)
             continue;
         }
 
-        auto main_block = syntax_block_create_from_string(code.value);
-        SCOPE_EXIT(syntax_block_destroy(main_block));
-        compiler_compile(main_block, true, path);
+        panic("This needs fixing.");
+        //auto main_block = syntax_block_create_from_string(code.value);
+        //SCOPE_EXIT(syntax_block_destroy(main_block));
+        //compiler_compile(main_block, true, path);
         Exit_Code exit_code = compiler_execute();
         if (exit_code != Exit_Code::SUCCESS && test_case->should_succeed)
         {

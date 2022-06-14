@@ -4,21 +4,20 @@
 #include "../../datastructures/array.hpp"
 #include "source_code.hpp"
 
+struct Source_Code;
+
 namespace AST
 {
     struct Base;
     struct Module;
 }
 
-struct Syntax_Block;
-struct Syntax_Range;
-
 namespace Parser 
 {
     struct Error_Message
     {
         const char* msg;
-        Syntax_Range range;
+        Token_Range range;
     };
 
     enum class Section
@@ -35,7 +34,7 @@ namespace Parser
     void initialize();
     void reset();
     void destroy();
-    AST::Module* execute(Syntax_Block* root_block);
-    void ast_base_get_section_token_range(AST::Base* base, Section section, Dynamic_Array<Syntax_Range>* ranges);
+    AST::Module* execute(Source_Code* root_block);
+    void ast_base_get_section_token_range(AST::Base* base, Section section, Dynamic_Array<Token_Range>* ranges);
     Array<Error_Message> get_error_messages();
 }

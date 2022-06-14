@@ -19,8 +19,8 @@ struct C_Compiler;
 struct IR_Generator;
 struct Type_Signature;
 struct Dependency_Analyser;
-struct Syntax_Block;
 struct Analysis_Item;
+struct Source_Code;
 
 namespace AST
 {
@@ -78,9 +78,9 @@ extern Compiler compiler;
 Compiler* compiler_initialize(Timer* timer);
 void compiler_destroy();
 
-void compiler_compile(Syntax_Block* source_code, bool generate_code, String project_path); // Takes ownership of project path
+void compiler_compile(Source_Code* source_code, bool generate_code, String project_path); // Takes ownership of project path
 Exit_Code compiler_execute();
-void compiler_add_source_code(Syntax_Block* source_code, Code_Origin origin, String file_path); // Takes ownership of source_code and file_path
+void compiler_add_source_code(Source_Code* source_code, Code_Origin origin, String file_path); // Takes ownership of source_code and file_path
 bool compiler_errors_occured();
 Code_Source* code_source_from_ast(AST::Base* base);
 void compiler_switch_timing_task(Timing_Task task);

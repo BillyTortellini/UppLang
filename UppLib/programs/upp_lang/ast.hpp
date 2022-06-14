@@ -3,6 +3,7 @@
 #include "../../datastructures/dynamic_array.hpp"
 #include "../../utility/utils.hpp"
 #include "../../datastructures/string.hpp"
+#include "source_code.hpp"
 
 struct Symbol;
 struct Symbol_Table;
@@ -46,15 +47,6 @@ namespace AST
         PTR_TO_RAW,
         RAW_TO_PTR,
         TYPE_TO_TYPE,
-    };
-
-    enum class Literal_Type
-    {
-        STRING,
-        INTEGER,
-        FLOAT_VAL,
-        BOOLEAN,
-        NULL_VAL,
     };
 
     enum class Base_Type
@@ -216,15 +208,7 @@ namespace AST
             } cast;
             Symbol_Read* symbol_read;
             String* auto_enum;
-            struct {
-                Literal_Type type;
-                union {
-                    String* string;
-                    int int_val;
-                    bool boolean;
-                    float float_val;
-                } options;
-            } literal_read;
+            Literal_Value literal_read;
             struct {
                 Expression* array_expr;
                 Expression* index_expr;

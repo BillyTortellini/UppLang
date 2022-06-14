@@ -93,7 +93,7 @@ union Token_Attribute
     String* id;
 };
 
-struct Token
+struct C_Token
 {
     Token_Type type;
     Token_Attribute attribute;
@@ -107,8 +107,8 @@ struct Lexer
 {
     Identifier_Pool* identifier_pool;
     Hashtable<String, Token_Type> keywords;
-    Dynamic_Array<Token> tokens;
-    Dynamic_Array<Token> tokens_with_decoration; // Includes comments and whitespaces
+    Dynamic_Array<C_Token> tokens;
+    Dynamic_Array<C_Token> tokens_with_decoration; // Includes comments and whitespaces
 };
 
 bool token_type_is_keyword(Token_Type type);

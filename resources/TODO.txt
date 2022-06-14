@@ -1,9 +1,81 @@
-Ideas:
-    - Binary Operations should support auto-operations (enum, array, struct-init)
-    - Maybe always analyse struct initializer/function parameters, even if the function type is not known
-    - Downcast for Analysis_Progress?
-    - Slice/Array bounds check (Shouldn't be done in ir-code (Probably))
-    - Type System remove the fucking type_system pointer from functions
+
+TODO:
+ - Scrolling window
+ - Cursor movement + after delete
+ - Rethink Indentation Handling/Hierarchical structure
+    I am still not sure if the current implementation is the best way of action
+ - Undo-Redo + Vim-Motions with delete, change
+ - Multi-Line formating (Maybe parser based?)
+ - Maybe Immediate-Mode UI for some settings (formating, compiler options ...)?
+ - Use Compiler-Info in Editor (Jump to definition, code completion)
+
+
+Scrolling Window:
+ - Look at how positioning is done vs how it should be done
+ - We currently render: Text with colors + Background Col + Underlines
+ - I definitly want to decouple Code Highlighting from Formating/Text Layout
+ - Performance wise it would be great if I could run highlighting logic only on visible Code (Currently on screen)
+
+Requirements for Code-Representation
+ - Lines as Text
+ - Mapping from text to tokens
+ - Inserting/Deleting/Moving characters, lines, blocks
+ - Tokenization is line-independent (E.g. each line can be tokenized seperatly)
+ - Navigation with a Text-Position
+ - Parsing needs to store Start+End Position and requires Hierarchy-Infos
+ - Text/Token Animations require previous positions (Rendered) of all Tokens (Maybe of Text?) + Changelog
+
+Previously this was easier because: 
+ - Text was just one Array of Lines
+ - Tokens were just one Array and weren't structure line by line
+ - Token-Infos could just also just be stored in one array
+ - Lines could be accessed by index, and deleting lines was just array manipulation
+
+Current Hierarchy structure:
+ - The main Program is a block
+ - Blocks contain multiple lines
+ - Lines can have a follow block
+ - Lines contain an array of tokens, lines must be tokenized from start to end
+
+How about:
+ - Text just beeing an array of lines, each line having an integer for indentation level
+
+Source-Code Information required for Parsing:
+ - Tokens + Line-Hierarchy + Comments
+
+Information for Editing/Rendering:
+Difference Between Edit/Rendering: Update/Render is in another order
+ - Text
+ - Cursor Position
+ - Token Highlights
+ - Token Positions/Colors
+
+Decision for now:
+ - Own hierarchy representation for AST-Parsing which gets generated every time from Text
+    Source_Block(Array), Source_Line(per block)
+ - Gives the Editor a way to have a different representation for text if necessary
+ - This also allows filtering out multi-line comments before Parsing (Not normal comments because they can be at the end of a line)
+
+
+Editor:
+    * Has simple array of lines with indentation
+    * For parsing a Hierarchical Representation is generated each time
+    * Lexing is also different, now the editor has to manage spaces before/after the cursor
+
+
+Editor TODO:
+ * Reintegrate Compiler into Editor
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -14,7 +86,10 @@ Next features:
 
  * Named function parameters/unnamed struct initializer params
  * Bake function pointers
+ * Type System remove the fucking type_system pointer from functions
  * Formating with && as double dereference always takes it as and operator
+ * Always analyse struct initializer/function parameters, even if the function type is not known (Turning off error reporting during this)
+ * Binary Operations should support auto-operations (enum, array, struct-init)
  * Loading files introduces new symbols, which could conflict with the old ones...
  * Rethink auto pointers with pointers on the left side of assignment, maybe just use pointer assign syntax &=
  * Switch with indentation, remove case keyword

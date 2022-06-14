@@ -27,6 +27,7 @@ String string_create_substring_static(String* string, int start_pos, int end_pos
     String result;
     result.characters = string->characters + start_pos;
     result.size = end_pos - start_pos;
+    result.capacity = 0;
     return result;
 }
 
