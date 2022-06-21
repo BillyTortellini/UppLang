@@ -12,6 +12,7 @@
 #include "c_backend.hpp"
 #include "parser.hpp"
 #include "ast.hpp"
+#include "lexer.hpp"
 
 // Parser stages
 bool enable_lexing = true;
@@ -52,11 +53,11 @@ bool do_output;
 Compiler compiler;
 
 // Code_Source
-Code_Source* code_source_create(Code_Origin origin, Source_Code* source, String file_path)
+Code_Source* code_source_create(Code_Origin origin, Source_Code* code, String file_path)
 {
     Code_Source* result = new Code_Source;
     result->origin = origin;
-    result->source = source;
+    result->code = code;
     result->ast = 0;
     result->analysis_items = dynamic_array_create_empty<Analysis_Item*>(1);
     result->item_dependencies = dynamic_array_create_empty<Item_Dependency>(1);
@@ -66,6 +67,7 @@ Code_Source* code_source_create(Code_Origin origin, Source_Code* source, String 
 
 void code_source_destroy(Code_Source* source)
 {
+    token_code_destroy(&source->token_code);
     string_destroy(&source->file_path);
     for (int i = 0; i < source->analysis_items.size; i++) {
         analysis_item_destroy(source->analysis_items[i]);
@@ -396,8 +398,8 @@ void compiler_add_source_code(Source_Code* source_code, Code_Origin origin, Stri
     if (do_lexing)
     {
         compiler_switch_timing_task(Timing_Task::LEXING);
-        panic("This needs to be implemented if everything works again.");
-        //lexer_tokenize_block(code_source->source, 0);
+        source_code_tokenize_all(source_code);
+        code_source->token_code = token_code_create_from_source(source_code);
 
         if (output_identifiers) {
             logg("\n--------IDENTIFIERS:--------:\n");
@@ -408,7 +410,7 @@ void compiler_add_source_code(Source_Code* source_code, Code_Origin origin, Stri
     if (do_parsing)
     {
         compiler_switch_timing_task(Timing_Task::PARSING);
-        code_source->ast = Parser::execute(code_source->source);
+        code_source->ast = Parser::execute(&code_source->token_code);
 
         if (output_ast && do_output)
         {

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../../datastructures/string.hpp"
 #include "../../datastructures/dynamic_array.hpp"
 #include "../../datastructures/hashtable.hpp"
 #include "../../utility/utils.hpp"

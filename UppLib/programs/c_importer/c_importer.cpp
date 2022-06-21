@@ -1,7 +1,7 @@
 #include "c_importer.hpp"
 
 #include "../../utility/file_io.hpp"
-#include "lexer.hpp"
+#include "c_lexer.hpp"
 #include "../upp_lang/compiler_misc.hpp"
 #include <iostream>
 #include <cstdio>
@@ -124,7 +124,7 @@ C_Import_Type* c_import_type_system_register_type(C_Import_Type_System* system, 
 struct Header_Parser
 {
     C_Import_Package result_package;
-    Lexer* lexer;
+    C_Lexer* lexer;
     Dynamic_Array<C_Token> tokens;
     int index;
     String source_code;
@@ -168,7 +168,7 @@ struct Header_Parser
 };
 
 void print_tokens_till_newline(Dynamic_Array<C_Token> tokens, String source, int token_index);
-Header_Parser header_parser_create(Lexer* lexer, String source_code)
+Header_Parser header_parser_create(C_Lexer* lexer, String source_code)
 {
     Header_Parser result;
     result.result_package = c_import_package_create();
@@ -230,7 +230,7 @@ Header_Parser header_parser_create(Lexer* lexer, String source_code)
         }
 
         // Skip lines starting with a hashtag
-        if (is_first_token_in_line && token->type == Token_Type::HASHTAG) {
+        if (is_first_token_in_line && token->type == C_Token_Type::HASHTAG) {
             while (i < lexer->tokens.size && lexer->tokens[i].position.start.line == last_line_index) {
                 i++;
             }
@@ -238,7 +238,7 @@ Header_Parser header_parser_create(Lexer* lexer, String source_code)
             continue;
         }
 
-        if (token->type == Token_Type::IDENTIFIER_NAME)
+        if (token->type == C_Token_Type::IDENTIFIER_NAME)
         {
             if (token->attribute.id == identifier_pragma_underscore || 
                 token->attribute.id == identifier_declspec || 
@@ -247,15 +247,15 @@ Header_Parser header_parser_create(Lexer* lexer, String source_code)
                 // Skip everything afterwards if followed by a (
                 i += 1;
                 token = &lexer->tokens[i];
-                if (token->type == Token_Type::OPEN_PARENTHESIS) {
+                if (token->type == C_Token_Type::OPEN_PARENTHESIS) {
                     i++;
                     int depth = 1;
                     while (i < lexer->tokens.size) {
                         token = &lexer->tokens[i];
-                        if (token->type == Token_Type::OPEN_PARENTHESIS) {
+                        if (token->type == C_Token_Type::OPEN_PARENTHESIS) {
                             depth++;
                         }
-                        else if (token->type == Token_Type::CLOSED_PARENTHESIS) {
+                        else if (token->type == C_Token_Type::CLOSED_PARENTHESIS) {
                             depth--;
                             if (depth == 0) {
                                 break;
@@ -269,7 +269,7 @@ Header_Parser header_parser_create(Lexer* lexer, String source_code)
                 }
                 continue;
             }
-            if (token->type == Token_Type::ERROR_TOKEN) {
+            if (token->type == C_Token_Type::ERROR_TOKEN) {
                 continue;
             }
             // Skip specific tokens
@@ -311,25 +311,25 @@ void header_parser_goto_next_line(Header_Parser* parser) {
     }
 }
 
-bool header_parser_test_next_token(Header_Parser* parser, Token_Type type) {
+bool header_parser_test_next_token(Header_Parser* parser, C_Token_Type type) {
     if (parser->index >= parser->tokens.size) return false;
     return parser->tokens[parser->index].type == type;
 }
 
-bool header_parser_test_next_token_2(Header_Parser* parser, Token_Type t1, Token_Type t2) {
+bool header_parser_test_next_token_2(Header_Parser* parser, C_Token_Type t1, C_Token_Type t2) {
     if (parser->index + 1 >= parser->tokens.size) return false;
     return parser->tokens[parser->index].type == t1 &&
         parser->tokens[parser->index + 1].type == t2;
 }
 
-bool header_parser_test_next_token_3(Header_Parser* parser, Token_Type t1, Token_Type t2, Token_Type t3) {
+bool header_parser_test_next_token_3(Header_Parser* parser, C_Token_Type t1, C_Token_Type t2, C_Token_Type t3) {
     if (parser->index + 2 >= parser->tokens.size) return false;
     return parser->tokens[parser->index].type == t1 &&
         parser->tokens[parser->index + 1].type == t2 &&
         parser->tokens[parser->index + 2].type == t3;
 }
 
-bool header_parser_test_next_token_4(Header_Parser* parser, Token_Type t1, Token_Type t2, Token_Type t3, Token_Type t4) {
+bool header_parser_test_next_token_4(Header_Parser* parser, C_Token_Type t1, C_Token_Type t2, C_Token_Type t3, C_Token_Type t4) {
     if (parser->index + 3 >= parser->tokens.size) return false;
     return parser->tokens[parser->index].type == t1 &&
         parser->tokens[parser->index + 1].type == t2 &&
@@ -337,7 +337,7 @@ bool header_parser_test_next_token_4(Header_Parser* parser, Token_Type t1, Token
         parser->tokens[parser->index + 3].type == t4;
 }
 
-bool header_parser_test_next_token_5(Header_Parser* parser, Token_Type t1, Token_Type t2, Token_Type t3, Token_Type t4, Token_Type t5) {
+bool header_parser_test_next_token_5(Header_Parser* parser, C_Token_Type t1, C_Token_Type t2, C_Token_Type t3, C_Token_Type t4, C_Token_Type t5) {
     if (parser->index + 4 >= parser->tokens.size) return false;
     return parser->tokens[parser->index].type == t1 &&
         parser->tokens[parser->index + 1].type == t2 &&
@@ -349,10 +349,10 @@ bool header_parser_test_next_token_5(Header_Parser* parser, Token_Type t1, Token
 bool header_parser_next_is_identifier(Header_Parser* parser, String* id)
 {
     if (parser->index >= parser->tokens.size) return false;
-    return parser->tokens[parser->index].type == Token_Type::IDENTIFIER_NAME && parser->tokens[parser->index].attribute.id == id;
+    return parser->tokens[parser->index].type == C_Token_Type::IDENTIFIER_NAME && parser->tokens[parser->index].attribute.id == id;
 }
 
-void print_tokens_till_newline_token_style(Dynamic_Array<C_Token> tokens, String source, int token_index, Lexer* lexer)
+void print_tokens_till_newline_token_style(Dynamic_Array<C_Token> tokens, String source, int token_index, C_Lexer* lexer)
 {
     C_Token* start_tok = &tokens[token_index];
     String str = string_create_empty(256);
@@ -365,19 +365,19 @@ void print_tokens_till_newline_token_style(Dynamic_Array<C_Token> tokens, String
         }
         switch (token->type)
         {
-        case Token_Type::IDENTIFIER_NAME:
+        case C_Token_Type::IDENTIFIER_NAME:
             string_append_formated(&str, token->attribute.id->characters);
             break;
-        case Token_Type::STRING_LITERAL:
+        case C_Token_Type::STRING_LITERAL:
             string_append_formated(&str, "\"%s\"",  token->attribute.id->characters);
             break;
-        case Token_Type::BOOLEAN_LITERAL:
+        case C_Token_Type::BOOLEAN_LITERAL:
             string_append_formated(&str, "%s", token->attribute.bool_value ? "TRUE": "FALSE");
             break;
-        case Token_Type::FLOAT_LITERAL:
+        case C_Token_Type::FLOAT_LITERAL:
             string_append_formated(&str, "%3.2f", token->attribute.float_value);
             break;
-        case Token_Type::INTEGER_LITERAL:
+        case C_Token_Type::INTEGER_LITERAL:
             string_append_formated(&str, "%d", token->attribute.integer_value);
             break;
         default:
@@ -398,7 +398,7 @@ void print_tokens_till_newline(Dynamic_Array<C_Token> tokens, String source, int
             break;
         }
     }
-    String t2_content = string_create_substring(&source, token->source_code_index, end_pos);
+    String t2_content = string_create_substring(&source, token->source_code_index, end_pos + 1);
     for (int i = 0; i < t2_content.size; i++) {
         if (t2_content.characters[i] == '\n' || t2_content.characters[i] == '\r') {
             t2_content.characters[i] = '\0';
@@ -414,7 +414,7 @@ void c_import_type_append_to_string(C_Import_Type* type, String* string, int ind
 C_Type_Qualifiers header_parser_parse_type_qualifiers(Header_Parser* parser)
 {
     u8 result = 0;
-    while (parser->index < parser->tokens.size && parser->tokens[parser->index].type == Token_Type::IDENTIFIER_NAME) {
+    while (parser->index < parser->tokens.size && parser->tokens[parser->index].type == C_Token_Type::IDENTIFIER_NAME) {
         String* id = parser->tokens[parser->index].attribute.id;
         if (id == parser->identifier_atomic) {
             result = result | (u8)C_Type_Qualifiers::ATOMIC;
@@ -445,7 +445,7 @@ C_Type_Qualifiers header_parser_parse_type_qualifiers(Header_Parser* parser)
 Optional<C_Import_Type*> header_parser_parse_primitive_type(Header_Parser* parser, C_Type_Qualifiers qualifiers)
 {
     bool success = false;
-    if (!header_parser_test_next_token(parser, Token_Type::IDENTIFIER_NAME)) return optional_make_failure<C_Import_Type*>();
+    if (!header_parser_test_next_token(parser, C_Token_Type::IDENTIFIER_NAME)) return optional_make_failure<C_Import_Type*>();
 
     C_Import_Type prototype;
     prototype.qualifiers = qualifiers;
@@ -592,7 +592,7 @@ Optional<C_Import_Type*> header_parser_parse_structure(Header_Parser* parser, C_
     prototype.alignment = 0;
     prototype.qualifiers = qualifiers;
 
-    if (header_parser_test_next_token(parser, Token_Type::STRUCT)) {
+    if (header_parser_test_next_token(parser, C_Token_Type::STRUCT)) {
         prototype.type = C_Import_Type_Type::STRUCTURE;
         prototype.structure.is_union = false;
     }
@@ -615,13 +615,13 @@ Optional<C_Import_Type*> header_parser_parse_structure(Header_Parser* parser, C_
         String* id;
         bool has_name = false;
         bool has_definition = false;
-        if (header_parser_test_next_token(parser, Token_Type::IDENTIFIER_NAME))
+        if (header_parser_test_next_token(parser, C_Token_Type::IDENTIFIER_NAME))
         {
             has_name = true;
             id = parser->tokens[parser->index].attribute.id;
             parser->index++;
         }
-        if (header_parser_test_next_token(parser, Token_Type::OPEN_BRACES))
+        if (header_parser_test_next_token(parser, C_Token_Type::OPEN_BRACES))
         {
             has_definition = true;
             parser->index++;
@@ -705,31 +705,31 @@ Optional<C_Import_Type*> header_parser_parse_structure(Header_Parser* parser, C_
     int enum_counter = 0;
     while (true)
     {
-        if (header_parser_test_next_token(parser, Token_Type::CLOSED_BRACES)) {
+        if (header_parser_test_next_token(parser, C_Token_Type::CLOSED_BRACES)) {
             parser->index++;
             break;
         }
 
         if (structure_type->type == C_Import_Type_Type::ENUM)
         {
-            if (header_parser_test_next_token_2(parser, Token_Type::IDENTIFIER_NAME, Token_Type::OP_ASSIGNMENT))
+            if (header_parser_test_next_token_2(parser, C_Token_Type::IDENTIFIER_NAME, C_Token_Type::OP_ASSIGNMENT))
             {
                 C_Import_Enum_Member member;
                 member.id = parser->tokens[parser->index].attribute.id;
                 parser->index += 2;
-                if (header_parser_test_next_token(parser, Token_Type::INTEGER_LITERAL))
+                if (header_parser_test_next_token(parser, C_Token_Type::INTEGER_LITERAL))
                 {
                     member.value = parser->tokens[parser->index].attribute.integer_value;
                     enum_counter = member.value + 1;
                     parser->index++;
                 }
-                else if (header_parser_test_next_token_2(parser, Token_Type::OP_MINUS, Token_Type::INTEGER_LITERAL))
+                else if (header_parser_test_next_token_2(parser, C_Token_Type::OP_MINUS, C_Token_Type::INTEGER_LITERAL))
                 {
                     member.value = -parser->tokens[parser->index].attribute.integer_value;
                     enum_counter = member.value + 1;
                     parser->index += 2;
                 }
-                else if (header_parser_test_next_token(parser, Token_Type::IDENTIFIER_NAME))
+                else if (header_parser_test_next_token(parser, C_Token_Type::IDENTIFIER_NAME))
                 {
                     String* ref_name = parser->tokens[parser->index].attribute.id;
                     parser->index++;
@@ -758,7 +758,7 @@ Optional<C_Import_Type*> header_parser_parse_structure(Header_Parser* parser, C_
                 }
                 dynamic_array_push_back(&structure_type->enumeration.members, member);
             }
-            else if (header_parser_test_next_token(parser, Token_Type::IDENTIFIER_NAME)) {
+            else if (header_parser_test_next_token(parser, C_Token_Type::IDENTIFIER_NAME)) {
                 C_Import_Enum_Member member;
                 member.id = parser->tokens[parser->index].attribute.id;
                 member.value = enum_counter;
@@ -771,10 +771,10 @@ Optional<C_Import_Type*> header_parser_parse_structure(Header_Parser* parser, C_
                 break;
             }
 
-            if (header_parser_test_next_token(parser, Token_Type::COMMA)) {
+            if (header_parser_test_next_token(parser, C_Token_Type::COMMA)) {
                 parser->index++;
             }
-            else if (header_parser_test_next_token(parser, Token_Type::CLOSED_BRACES)) {
+            else if (header_parser_test_next_token(parser, C_Token_Type::CLOSED_BRACES)) {
                 parser->index++;
                 break;
             }
@@ -834,11 +834,11 @@ Optional<C_Import_Type*> header_parser_parse_structure(Header_Parser* parser, C_
                 }
             }
 
-            if (header_parser_test_next_token_2(parser, Token_Type::COLON, Token_Type::INTEGER_LITERAL)) {
+            if (header_parser_test_next_token_2(parser, C_Token_Type::COLON, C_Token_Type::INTEGER_LITERAL)) {
                 structure_type->structure.contains_bitfield = true;
                 parser->index += 2;
             }
-            if (!header_parser_test_next_token(parser, Token_Type::SEMICOLON)) {
+            if (!header_parser_test_next_token(parser, C_Token_Type::SEMICOLON)) {
                 success = false;
                 break;
             }
@@ -864,7 +864,7 @@ Optional<C_Import_Type*> header_parser_parse_type(Header_Parser* parser, bool re
     {
         result = header_parser_parse_structure(parser, qualifiers, register_structure_tags);
         if (!result.available) {
-            if (header_parser_test_next_token(parser, Token_Type::IDENTIFIER_NAME))
+            if (header_parser_test_next_token(parser, C_Token_Type::IDENTIFIER_NAME))
             {
                 String* id = parser->tokens[parser->index].attribute.id;
                 parser->index++;
@@ -932,7 +932,7 @@ Optional<C_Import_Type*> header_parser_parse_type(Header_Parser* parser, bool re
     return optional_make_success(changed_type);
 }
 
-void header_parser_skip_parenthesis(Header_Parser* parser, Token_Type open_type, Token_Type close_type)
+void header_parser_skip_parenthesis(Header_Parser* parser, C_Token_Type open_type, C_Token_Type close_type)
 {
     if (!header_parser_test_next_token(parser, open_type)) {
         panic("What");
@@ -947,14 +947,14 @@ void header_parser_skip_parenthesis(Header_Parser* parser, Token_Type open_type,
         last_token = token;
         switch (token->type)
         {
-        case Token_Type::OPEN_BRACES:
-        case Token_Type::OPEN_PARENTHESIS:
-        case Token_Type::OPEN_BRACKETS:
+        case C_Token_Type::OPEN_BRACES:
+        case C_Token_Type::OPEN_PARENTHESIS:
+        case C_Token_Type::OPEN_BRACKETS:
             depth++;
             break;
-        case Token_Type::CLOSED_BRACES:
-        case Token_Type::CLOSED_PARENTHESIS:
-        case Token_Type::CLOSED_BRACKETS:
+        case C_Token_Type::CLOSED_BRACES:
+        case C_Token_Type::CLOSED_PARENTHESIS:
+        case C_Token_Type::CLOSED_BRACKETS:
             depth--;
             break;
         }
@@ -970,26 +970,26 @@ C_Import_Type* header_parser_parse_array_suffix(Header_Parser* parser, C_Import_
     int size = 0;
     while (parser->index < parser->tokens.size)
     {
-        if (header_parser_test_next_token_2(parser, Token_Type::OPEN_BRACKETS, Token_Type::CLOSED_BRACKETS))
+        if (header_parser_test_next_token_2(parser, C_Token_Type::OPEN_BRACKETS, C_Token_Type::CLOSED_BRACKETS))
         {
             is_array = true;
             has_size = false;
             parser->index += 2;
             break;
         }
-        else if (header_parser_test_next_token_3(parser, Token_Type::OPEN_BRACKETS, Token_Type::INTEGER_LITERAL, Token_Type::CLOSED_BRACKETS))
+        else if (header_parser_test_next_token_3(parser, C_Token_Type::OPEN_BRACKETS, C_Token_Type::INTEGER_LITERAL, C_Token_Type::CLOSED_BRACKETS))
         {
             is_array = true;
             has_size = true;
             size = parser->tokens[parser->index + 1].attribute.integer_value;
             parser->index += 3;
         }
-        else if (header_parser_test_next_token(parser, Token_Type::OPEN_BRACKETS))
+        else if (header_parser_test_next_token(parser, C_Token_Type::OPEN_BRACKETS))
         {
             is_array = true;
             has_size = true;
             size = 1;
-            header_parser_skip_parenthesis(parser, Token_Type::OPEN_BRACKETS, Token_Type::CLOSED_BRACKETS);
+            header_parser_skip_parenthesis(parser, C_Token_Type::OPEN_BRACKETS, C_Token_Type::CLOSED_BRACKETS);
         }
         else {
             break;
@@ -1033,7 +1033,7 @@ C_Import_Type* header_parser_parse_pointer_suffix(Header_Parser* parser, C_Impor
         if (header_parser_next_is_identifier(parser, parser->identifier_unaligned)) {
             parser->index++;
         }
-        if (header_parser_test_next_token(parser, Token_Type::OP_STAR))
+        if (header_parser_test_next_token(parser, C_Token_Type::OP_STAR))
         {
             parser->index++;
             C_Type_Qualifiers qualifers = (C_Type_Qualifiers)0;
@@ -1059,7 +1059,7 @@ C_Import_Type* header_parser_parse_pointer_suffix(Header_Parser* parser, C_Impor
 Optional<Dynamic_Array<C_Import_Parameter>> header_parser_parse_parameters(Header_Parser* parser)
 {
     Checkpoint checkpoint = checkpoint_make(parser);
-    if (!header_parser_test_next_token(parser, Token_Type::OPEN_PARENTHESIS)) {
+    if (!header_parser_test_next_token(parser, C_Token_Type::OPEN_PARENTHESIS)) {
         return optional_make_failure<Dynamic_Array<C_Import_Parameter>>();
     }
     parser->index += 1;
@@ -1068,7 +1068,7 @@ Optional<Dynamic_Array<C_Import_Parameter>> header_parser_parse_parameters(Heade
     bool success = true;
     while (true)
     {
-        if (header_parser_test_next_token(parser, Token_Type::CLOSED_PARENTHESIS)) {
+        if (header_parser_test_next_token(parser, C_Token_Type::CLOSED_PARENTHESIS)) {
             parser->index++;
             break;
         }
@@ -1083,7 +1083,7 @@ Optional<Dynamic_Array<C_Import_Parameter>> header_parser_parse_parameters(Heade
         type = header_parser_parse_pointer_suffix(parser, type);
         C_Import_Parameter param;
         param.has_name = false;
-        if (header_parser_test_next_token(parser, Token_Type::IDENTIFIER_NAME)) {
+        if (header_parser_test_next_token(parser, C_Token_Type::IDENTIFIER_NAME)) {
             param.has_name = true;
             param.id = parser->tokens[parser->index].attribute.id;
             parser->index++;
@@ -1097,11 +1097,11 @@ Optional<Dynamic_Array<C_Import_Parameter>> header_parser_parse_parameters(Heade
             dynamic_array_push_back(&parameters, param);
         }
 
-        if (header_parser_test_next_token(parser, Token_Type::CLOSED_PARENTHESIS)) {
+        if (header_parser_test_next_token(parser, C_Token_Type::CLOSED_PARENTHESIS)) {
             parser->index++;
             break;
         }
-        else if (header_parser_test_next_token(parser, Token_Type::COMMA)) {
+        else if (header_parser_test_next_token(parser, C_Token_Type::COMMA)) {
             parser->index++;
             continue;
         }
@@ -1138,16 +1138,16 @@ Optional<C_Variable_Definition> header_parser_parse_variable_definition(Header_P
     bool success = true;
     SCOPE_EXIT(if (!success) { checkpoint_rewind(checkpoint); dynamic_array_destroy(&result.instances); });
     // Differentiate Function pointer definition from Variable definition
-    if (header_parser_test_next_token_2(parser, Token_Type::OPEN_PARENTHESIS, Token_Type::OP_STAR) ||
-        header_parser_test_next_token_3(parser, Token_Type::OPEN_PARENTHESIS, Token_Type::IDENTIFIER_NAME, Token_Type::OP_STAR))
+    if (header_parser_test_next_token_2(parser, C_Token_Type::OPEN_PARENTHESIS, C_Token_Type::OP_STAR) ||
+        header_parser_test_next_token_3(parser, C_Token_Type::OPEN_PARENTHESIS, C_Token_Type::IDENTIFIER_NAME, C_Token_Type::OP_STAR))
     {
-        if (parser->tokens[parser->index + 1].type == Token_Type::IDENTIFIER_NAME) {
+        if (parser->tokens[parser->index + 1].type == C_Token_Type::IDENTIFIER_NAME) {
             parser->index += 3;
         }
         else {
             parser->index += 2;
         }
-        if (!header_parser_test_next_token_2(parser, Token_Type::IDENTIFIER_NAME, Token_Type::CLOSED_PARENTHESIS)) {
+        if (!header_parser_test_next_token_2(parser, C_Token_Type::IDENTIFIER_NAME, C_Token_Type::CLOSED_PARENTHESIS)) {
             success = false;
             return optional_make_failure<C_Variable_Definition>();
         }
@@ -1198,7 +1198,7 @@ Optional<C_Variable_Definition> header_parser_parse_variable_definition(Header_P
             }
 
             // Parse instance name
-            if (header_parser_test_next_token(parser, Token_Type::IDENTIFIER_NAME))
+            if (header_parser_test_next_token(parser, C_Token_Type::IDENTIFIER_NAME))
             {
                 instance.id = parser->tokens[parser->index].attribute.id;
                 parser->index++;
@@ -1210,7 +1210,7 @@ Optional<C_Variable_Definition> header_parser_parse_variable_definition(Header_P
             instance.type = header_parser_parse_array_suffix(parser, instance.type);
             dynamic_array_push_back(&result.instances, instance);
             // Continue if necessary, TODO: Skip default initialization (struct X { int a = 5, b = 7;}
-            if (!header_parser_test_next_token(parser, Token_Type::COMMA)) {
+            if (!header_parser_test_next_token(parser, C_Token_Type::COMMA)) {
                 break;
             }
             parser->index++;
@@ -1402,7 +1402,7 @@ C_Definition_Modifiers header_parser_parse_definition_modifiers(Header_Parser* p
             modifiers = (C_Definition_Modifiers)((u8)modifiers | (u8)C_Definition_Modifiers::STATIC);
             continue;
         }
-        else if (header_parser_test_next_token(parser, Token_Type::EXTERN)) {
+        else if (header_parser_test_next_token(parser, C_Token_Type::EXTERN)) {
             parser->index++;
             modifiers = (C_Definition_Modifiers)((u8)modifiers | (u8)C_Definition_Modifiers::EXTERN);
             continue;
@@ -1455,17 +1455,17 @@ bool header_parser_parse_known_structure(Header_Parser* parser)
     if (!is_extern && var_def.instances.size == 1 &&
         !(var_def.instances[0].type->type == C_Import_Type_Type::POINTER &&
             var_def.instances[0].type->pointer_child_type->type == C_Import_Type_Type::FUNCTION_SIGNATURE
-            ) && header_parser_test_next_token(parser, Token_Type::OPEN_PARENTHESIS))
+            ) && header_parser_test_next_token(parser, C_Token_Type::OPEN_PARENTHESIS))
     {
         Optional<Dynamic_Array<C_Import_Parameter>> params = header_parser_parse_parameters(parser);
         if (params.available)
         {
-            if (header_parser_test_next_token(parser, Token_Type::OPEN_BRACES)) {
+            if (header_parser_test_next_token(parser, C_Token_Type::OPEN_BRACES)) {
                 dynamic_array_destroy(&params.value);
                 //logg("Parsed structure: False\n");
                 return false;
             }
-            else if (header_parser_test_next_token(parser, Token_Type::SEMICOLON)) {
+            else if (header_parser_test_next_token(parser, C_Token_Type::SEMICOLON)) {
                 parser->index++;
             }
             else {
@@ -1507,7 +1507,7 @@ bool header_parser_parse_known_structure(Header_Parser* parser)
             return true;
         }
     }
-    else if (header_parser_test_next_token(parser, Token_Type::SEMICOLON))
+    else if (header_parser_test_next_token(parser, C_Token_Type::SEMICOLON))
     {
         parser->index++;
         for (int i = 0; i < var_def.instances.size; i++)
@@ -1559,7 +1559,7 @@ void header_parser_parse(Header_Parser* parser)
     {
         C_Token* t1 = &parser->tokens[parser->index];
         C_Token* t2 = &parser->tokens[parser->index + 1];
-        if (t1->type == Token_Type::EXTERN && t2->type == Token_Type::STRING_LITERAL && t2->attribute.id == identifier_extern_cpp)
+        if (t1->type == C_Token_Type::EXTERN && t2->type == C_Token_Type::STRING_LITERAL && t2->attribute.id == identifier_extern_cpp)
         {
             /*
             logg("Henlo %d \n", parser->index);
@@ -1589,15 +1589,15 @@ void header_parser_parse(Header_Parser* parser)
 
             switch (t1->type)
             {
-            case Token_Type::OPEN_BRACES:
-                //case Token_Type::OPEN_PARENTHESIS:
-                //case Token_Type::OPEN_BRACKETS:
+            case C_Token_Type::OPEN_BRACES:
+                //case C_Token_Type::OPEN_PARENTHESIS:
+                //case C_Token_Type::OPEN_BRACKETS:
                 depth++;
                 depth_was_nonzero = true;
                 break;
-            case Token_Type::CLOSED_BRACES:
-                //case Token_Type::CLOSED_PARENTHESIS:
-                //case Token_Type::CLOSED_BRACKETS:
+            case C_Token_Type::CLOSED_BRACES:
+                //case C_Token_Type::CLOSED_PARENTHESIS:
+                //case C_Token_Type::CLOSED_BRACKETS:
                 depth--;
                 break;
             }
@@ -1612,16 +1612,16 @@ void header_parser_parse(Header_Parser* parser)
                     break;
                 }
                 else {
-                    if (t1->type == Token_Type::SEMICOLON) {
+                    if (t1->type == C_Token_Type::SEMICOLON) {
                         parser->index++;
                         break;
                     }
                     //if (t1->position.start.line != current_line) break;
                 }
             }
-            if (t1->type == Token_Type::EXTERN && t2->type == Token_Type::STRING_LITERAL && t2->attribute.id == identifier_extern_c)
+            if (t1->type == C_Token_Type::EXTERN && t2->type == C_Token_Type::STRING_LITERAL && t2->attribute.id == identifier_extern_c)
             {
-                if (t3->type == Token_Type::OPEN_BRACES) {
+                if (t3->type == C_Token_Type::OPEN_BRACES) {
                     parser->index += 3;
                     header_parser_parse(parser);
                     /*logg("Stepping out of parse thing: \n\t\"");
@@ -1698,9 +1698,9 @@ Optional<C_Import_Package> c_importer_parse_header(const char* file_name, Identi
     String source_code = text_file_opt.value;
 
     // Run code_source over file
-    Lexer lexer = lexer_create();
-    SCOPE_EXIT(lexer_destroy(&lexer));
-    lexer_lex(&lexer, &source_code, pool);
+    C_Lexer lexer = c_lexer_create();
+    SCOPE_EXIT(c_lexer_destroy(&lexer));
+    c_lexer_lex(&lexer, &source_code, pool);
 
     //logg("Lexing finished, Stats:\nIdentifier Count: #%d\nToken Count: #%d\n Whitespace-Token Count: %d\n",
         //code_source.identifiers.size, code_source.tokens.size, code_source.tokens_with_decoration.size - code_source.tokens.size);

@@ -4,6 +4,8 @@
 #include "../../datastructures/hashtable.hpp"
 #include "../../datastructures/string.hpp"
 
+#include "lexer.hpp"
+
 struct Type_Signature;
 struct String;
 struct Type_System;
@@ -96,7 +98,8 @@ struct Code_Source
 {
     Code_Origin origin;
     String file_path;
-    Source_Code* source;
+    Source_Code* code;
+    Token_Code token_code;
     AST::Module* ast;
     Dynamic_Array<Analysis_Item*> analysis_items;
     Dynamic_Array<Item_Dependency> item_dependencies;

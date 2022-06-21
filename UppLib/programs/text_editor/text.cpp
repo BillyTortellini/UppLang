@@ -187,7 +187,7 @@ void text_insert_string(Dynamic_Array<String>* text, Text_Position pos, String i
         char c = insertion.characters[i];
         String* line = &text->data[pos.line];
         if (c == '\n') {
-            String new_line = string_create_substring(line, pos.character, line->size - 1);
+            String new_line = string_create_substring(line, pos.character, line->size);
             string_truncate(line, pos.character);
             dynamic_array_insert_ordered(text, new_line, pos.line+1);
             pos.line += 1;
@@ -343,7 +343,7 @@ void text_insert_character_before(Dynamic_Array<String>* text, Text_Position pos
     text_position_sanitize(&pos, *text);
     String* line = &text->data[pos.line];
     if (c == '\n') {
-        String new_line = string_create_substring(line, pos.character, line->size - 1);
+        String new_line = string_create_substring(line, pos.character, line->size);
         string_truncate(line, pos.character);
         dynamic_array_insert_ordered(text, new_line, pos.line + 1);
     }

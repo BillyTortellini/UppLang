@@ -1139,7 +1139,7 @@ bool cluster_workload_check_for_cyclic_dependency(
             return *contains_loop;
         }
     }
-    hashtable_insert_element(visited, workload, false); // The boolean value changes later if we actually find a loop
+    hashtable_insert_element(visited, workload, false); // The boolean value nodes later if we actually find a loop
     bool loop_found = false;
     for (int i = 0; i < workload->reachable_clusters.size; i++)
     {
@@ -1997,6 +1997,7 @@ void analysis_workload_execute(Analysis_Workload* workload)
         Optional<String> file_content = file_io_load_text_file(path.characters);
         if (file_content.available) {
             panic("Todo!");
+            // TODO: Deal with ownership, i need to delete the file content and I need to manage ownership of source_code
             //auto src = syntax_block_create_from_string(file_content.value);
             compiler_add_source_code(0, Code_Origin::LOADED_FILE, path);
             success = true;

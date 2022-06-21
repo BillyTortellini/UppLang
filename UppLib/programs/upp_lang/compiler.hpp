@@ -7,7 +7,6 @@
 #include "type_system.hpp"
 #include "compiler_misc.hpp"
 
-struct Lexer;
 struct Compiler;
 struct AST_Parser;
 struct Semantic_Analyser;

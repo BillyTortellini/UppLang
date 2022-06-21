@@ -268,7 +268,7 @@ enum class Expression_Context_Type
 {
     UNKNOWN,             // Type is not known
     AUTO_DEREFERENCE,    // Type is not known, but we want pointer level 0 
-    SPECIFIC_TYPE,       // Type is known, pointer level changes + implicit casting enabled
+    SPECIFIC_TYPE,       // Type is known, pointer level nodes + implicit casting enabled
 };
 
 struct Expression_Context

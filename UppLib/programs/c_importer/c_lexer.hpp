@@ -5,7 +5,7 @@
 #include "../../datastructures/string.hpp"
 #include "../text_editor/text.hpp"
 
-enum class Token_Type
+enum class C_Token_Type
 {
     // Keywords
     IF,
@@ -95,7 +95,7 @@ union Token_Attribute
 
 struct C_Token
 {
-    Token_Type type;
+    C_Token_Type type;
     Token_Attribute attribute;
     // Position information
     Text_Slice position;
@@ -103,18 +103,18 @@ struct C_Token
 };
 
 struct Identifier_Pool;
-struct Lexer
+struct C_Lexer
 {
     Identifier_Pool* identifier_pool;
-    Hashtable<String, Token_Type> keywords;
+    Hashtable<String, C_Token_Type> keywords;
     Dynamic_Array<C_Token> tokens;
     Dynamic_Array<C_Token> tokens_with_decoration; // Includes comments and whitespaces
 };
 
-bool token_type_is_keyword(Token_Type type);
-const char* token_type_to_string(Token_Type type);
+bool token_type_is_keyword(C_Token_Type type);
+const char* token_type_to_string(C_Token_Type type);
 
-Lexer lexer_create();
-void lexer_destroy(Lexer* result);
-void lexer_lex(Lexer* lexer, String* code, Identifier_Pool* identifier_pool);
-void lexer_print(Lexer* result);
+C_Lexer c_lexer_create();
+void c_lexer_destroy(C_Lexer* result);
+void c_lexer_lex(C_Lexer* lexer, String* code, Identifier_Pool* identifier_pool);
+void c_lexer_print(C_Lexer* result);

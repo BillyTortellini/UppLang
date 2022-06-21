@@ -17,6 +17,7 @@ struct String
 String string_create_static(const char* content);
 String string_create_static_with_size(const char* content, int length);
 String string_create(const char* content);
+String string_copy(String other);
 String string_create_formated(const char* format, ...);
 String string_create_empty(int capacity);
 String string_create_from_string_with_extra_capacity(String* other, int extra_capacity);

@@ -37,12 +37,12 @@ String string_create_substring(String* string, int start_index, int end_index)
         return string_create_empty(32);
     }
     start_index = math_clamp(start_index, 0, string->size-1);
-    end_index = math_clamp(end_index, 0, string->size-1);
+    end_index = math_clamp(end_index, 0, string->size);
 
     String result;
-    result.capacity = end_index - start_index + 2;
+    result.capacity = end_index - start_index + 1;
     result.characters = new char[result.capacity];
-    result.size = end_index - start_index+1;
+    result.size = end_index - start_index;
     memory_copy(result.characters, &string->characters[start_index], result.size);
     result.characters[result.size] = 0;
     return result;
@@ -88,6 +88,16 @@ String string_create(const char* content) {
     result.characters = new char[result.size+1];
     result.capacity = result.size + 1;
     strcpy_s(result.characters, result.size+1, content);
+    return result;
+}
+
+String string_copy(String other) {
+    String result;
+    result.size = other.size;
+    result.characters = new char[result.size + 1];
+    result.capacity = result.size + 1;
+    memory_copy(result.characters, other.characters, other.size);
+    result.characters[result.size] = '\0';
     return result;
 }
 

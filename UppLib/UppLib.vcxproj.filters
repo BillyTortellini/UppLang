@@ -297,13 +297,19 @@
     <ClInclude Include="programs\c_importer\c_importer.hpp">
       <Filter>Header Files\Programs\C_Importer</Filter>
     </ClInclude>
-    <ClInclude Include="programs\c_importer\lexer.hpp">
-      <Filter>Header Files\Programs\C_Importer</Filter>
-    </ClInclude>
     <ClInclude Include="programs\text_editor\text.hpp">
       <Filter>Header Files\Programs\Text_Editor</Filter>
     </ClInclude>
     <ClInclude Include="programs\upp_lang\dependency_analyser.hpp">
+      <Filter>Header Files\Programs\Upp_Lang</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\c_importer\c_lexer.hpp">
+      <Filter>Header Files\Programs\C_Importer</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\upp_lang\lexer.hpp">
+      <Filter>Header Files\Programs\Upp_Lang</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\upp_lang\code_history.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
     </ClInclude>
   </ItemGroup>
@@ -488,13 +494,19 @@
     <ClCompile Include="programs\c_importer\c_importer.cpp">
       <Filter>Source Files\Programs\C_Importer</Filter>
     </ClCompile>
-    <ClCompile Include="programs\c_importer\lexer.cpp">
-      <Filter>Source Files\Programs\C_Importer</Filter>
-    </ClCompile>
     <ClCompile Include="programs\text_editor\text.cpp">
       <Filter>Source Files\Programs\Text_Editor</Filter>
     </ClCompile>
     <ClCompile Include="programs\upp_lang\dependency_analyser.cpp">
+      <Filter>Source Files\Programs\Upp_Lang</Filter>
+    </ClCompile>
+    <ClCompile Include="programs\c_importer\c_lexer.cpp">
+      <Filter>Source Files\Programs\C_Importer</Filter>
+    </ClCompile>
+    <ClCompile Include="programs\upp_lang\lexer.cpp">
+      <Filter>Source Files\Programs\Upp_Lang</Filter>
+    </ClCompile>
+    <ClCompile Include="programs\upp_lang\code_history.cpp">
       <Filter>Source Files\Programs\Upp_Lang</Filter>
     </ClCompile>
   </ItemGroup>

@@ -3,8 +3,9 @@
 #include "../../datastructures/dynamic_array.hpp"
 #include "../../datastructures/array.hpp"
 #include "source_code.hpp"
+#include "lexer.hpp"
 
-struct Source_Code;
+struct Token_Code;
 
 namespace AST
 {
@@ -34,7 +35,7 @@ namespace Parser
     void initialize();
     void reset();
     void destroy();
-    AST::Module* execute(Source_Code* root_block);
+    AST::Module* execute(Token_Code* tokens);
     void ast_base_get_section_token_range(AST::Base* base, Section section, Dynamic_Array<Token_Range>* ranges);
     Array<Error_Message> get_error_messages();
 }

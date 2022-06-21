@@ -1,13 +1,11 @@
 
 TODO:
  - Scrolling window
- - Cursor movement + after delete
- - Rethink Indentation Handling/Hierarchical structure
-    I am still not sure if the current implementation is the best way of action
+ - Cursor movement (Multiple lines) + after delete
  - Undo-Redo + Vim-Motions with delete, change
- - Multi-Line formating (Maybe parser based?)
- - Maybe Immediate-Mode UI for some settings (formating, compiler options ...)?
+ - Multi-Line formating (Maybe parser based? line trimming?)
  - Use Compiler-Info in Editor (Jump to definition, code completion)
+ - Maybe Immediate-Mode UI for some settings (formating, compiler options ...)?
 
 
 Scrolling Window:
@@ -65,16 +63,151 @@ Editor:
 
 Editor TODO:
  * Reintegrate Compiler into Editor
+ * Undo-Redo, comments, more editor features
+
+Problem: Multi-Line Comments
+    Tokenization cannot be done line by line anymore
+Solution:
+    Just have single line Comments, and have an editor feature for multi line comments
+    Also maybe have comment-handling logic to just add comments when inside a comment
+
+Decision: Second Data-Structure for parsing only (Where I remove the comments)
+Why? Because keeping these things in sync should be easy when I have my edit history.
+
+Thoughts:
+    I feel like the editor should actually use a hierarchical representation for Code,
+    and I should write abstraction functions for changes in the code.
+    Then the problem is that of indexing/adding data for e.g. rendering (Collapsing code needs boolean, animations need previous positions)
+
+
+
+
+Problem Analysis: Data structure for Source-Code (Tokens)
+Infos:
+------
+Editor and Parser require different Data for efficient processing:
+Editor:
+    String of Text for editing (Per line)
+    Render-Info for positioning, animation, color (Per token)
+    Maybe Extra Block information, like indentation, is_collapsed, ...
+    Looping over Token-Ranges and set color/draw underlines/display errors
+    Comments need to be stored in representation
+
+Parser:
+    Lines containing Tokens
+    Having follow-up information (Block follows line...)
+    Generate Mapping AST --> Tokens (Token Ranges for AST-Items)
+    Cheap Checkpoint rollbacks
+
+The main difference is that the Editor needs to store Render-Information/Editor-Information
+for some parts of the Source-Code, which is in conflict with the Requirements of the Parser
+
+Another Problem is that while Editing it should behave like a normal Text Editor, with
+each Line having its own indentation leading to edits changing the Hierarchical structure of the program
+
+I also want to only do operations on the structure through Commands which can be saved in a History.
+These Commands need to be Re- and Un-Doable, so that a traversable History can be generated.
+
+Comments/Multi-Line comments are also a crux currently, since Parsing should ignore comments
+alltogether, but I need to store them and treat them like normal tokens in the Editor
+
+
+
+Solution 0: Current Solution, generate Hierarchical representation for Parser
+-----------------------------------------------------------------------------
+
+Solution 2: Linear Code (with indentation) for both Editor+Parser
+-----------------------------------------------------------------
+
+Solution 3: Linear Code (with indentation) + Hierarchy that is kept in sync by the editor
+-----------------------------------------------------------------------------------------
+
+Solution 1: Hierarchical Code, Editor-Infos annotated
+-----------------------------------------------------
+What I am currently thinking about is having one Hierarchical Representation for Tokens,
+which contains Navigation Information (Blocks and Lines), and an easy way to annotate
+this Tree with additional information.
+
+Then the Editor would apply Hierarchical Changes to this tree (Add/Remove Block, Add/Remove lines, Add/Remove Indent)
+and have the required Editor-Informations in the Annotations
+
+Also maybe I want to have the Text and Tokens inside the Hierarchical Representation
+
+
+
+Question:
+    Shouldn't I just store the Render Info inside tokens?
+
+Source Code Design:
+Facts about the Data:
+ - Lines holding Tokens Array
+    * Maybe also Text-String
+ - Blocks containing Lines + other Blocks (Hierarchy)
+
+How do we represent the Hierarchy?
+ - Implicit (Each line has seperate indentation)
+
+
+
+Requirements:
+ - Navigation (Token_Position + next_token, previous_token, next_line, previous_line)
+ - Adding/Removing of Lines (Blocks should get destroyed if no lines exist anymore)
+ - Indentation Handling (Adding/removing indentation)
+ - Token-Layout (Position, size, color) for each token
 
 
 
 
 
+How to design a Data-Structure:
+ - Why is a Datastructure necessary/why can't items be processed one by one
+ - Which operations needs to be executed on the Structure in which frequency (Also information querying)
+ - Is it a built-once/read-only structure or is it changable
+ - Which elements need to be addressable (Handles/Pointers)
+ - Complexity-Performance tradeof
 
 
+Hierarchy:
+ + Parsing better navigation
+ + Local Changes --> Better incremental Compilation
+ + Performance scaling
+ - Bad Editor Navigation
+ - Bad Indexing (line index, block index?)
+ - Indentation based Editing is complex
+ - History Complicated
+ - Complex Datastructure
+ 
 
 
+Plan:
+ - Token-Code gets removed
+ - Source-Code gets a Code-Hierarchy that is lazily updated
+ - Source-Code gets History
+ - Code-Hierarchy is updated based on the history
+ - Hierarchy Annotations are updated based on History updates
 
+Implementation:
+ X Remove compiler integration from editor
+ X Add syntax higlighting based on tokens
+ - Implement Code-History with undo + redo
+ - Create Code-Hierarchy that generates from normal Source-Code
+ - Update Code-Hierarchy from history and timestamps
+ - Use Code-Hierarchy in editor (Render block outlines, test if it works)
+ - Change parser to use Code-Hierarchy (Remove token-code)
+ - Change Render-Information to be sparse data (Only visible tokens, either by line or block)
+ - Add Code-Folding by storing boolens per Hierarchy-Block
+ - Done!
+
+
+Problem: Tokenization can change Text in a line (Mostly removing spaces)
+
+Solutions: 
+ - Line reconstruction uses history
+ - History commands trigger lexing yeah probably
+ - Complex commands should probably not be single commands
+
+TODO:
+ - Replace is_space_critical with is_space_critical_char
 
 
 
