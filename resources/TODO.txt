@@ -206,8 +206,24 @@ Solutions:
  - History commands trigger lexing yeah probably
  - Complex commands should probably not be single commands
 
-TODO:
- - Replace is_space_critical with is_space_critical_char
+
+TODO: Record Text-Changed in Editor and only call compiler stuff when it actually has changed.
+
+Bug: Rendering of space before with Operators hello|+ or hello|)
+
+Design Decision:
+    The editor doesn't keep the tokens up to date, but it makes sure that lines are always sanitized after edits.
+    When we need updated tokens we run through the change history from the last checkpoint (Last timestamp where tokens/text was synchronized)
+        and only tokenize the lines that require tokenization
+
+
+
+
+
+
+
+
+
 
 
 

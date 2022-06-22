@@ -2,6 +2,7 @@
 
 #include "../../datastructures/string.hpp"
 #include "../../datastructures/dynamic_array.hpp"
+#include "../../datastructures/hashset.hpp"
 
 // Forward Declarations
 struct Source_Code;
@@ -87,6 +88,13 @@ void history_change_indentation(Code_History* history, int line_index, int new_i
 void history_start_complex_command(Code_History* history);
 void history_stop_complex_command(Code_History* history);
 
-void history_reconstruct_line_from_tokens(Code_History* history, int line_index);
 
 
+// Timestamps
+struct History_Timestamp
+{
+    int node_index;
+};
+
+History_Timestamp history_get_timestamp(Code_History* history);
+void history_get_changes_between(Code_History* history, History_Timestamp start, History_Timestamp end, Dynamic_Array<Code_Change>* changes);

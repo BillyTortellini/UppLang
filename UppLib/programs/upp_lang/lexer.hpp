@@ -145,14 +145,14 @@ struct Token
     } options;
 };
 
+bool char_is_space_critical(char c);
 int character_index_to_token(Dynamic_Array<Token>* tokens, int char_index);
 bool char_is_parenthesis(char c);
 Parenthesis char_to_parenthesis(char c);
 char parenthesis_to_char(Parenthesis p);
+
 String syntax_keyword_as_string(Keyword keyword);
 String token_get_string(Token token, String text);
-bool is_space_critical_char(char c);
-bool is_space_critical(Token* t);
 Operator_Info syntax_operator_info(Operator op);
 
 

@@ -25,7 +25,7 @@ void code_history_reset(Code_History* history)
     {
         History_Node root;
         root.type = History_Node_Type::NORMAL;
-        root.prev_change = 0;
+        root.prev_change = -1;
         root.next_change = -1;
         root.alt_change = -1;
         root.complex_partner = -1;
@@ -136,7 +136,7 @@ void history_undo(Code_History* history)
     auto node = &history->nodes[history->current];
     switch (node->type)
     {
-    case History_Node_Type::COMPLEX_START: 
+    case History_Node_Type::COMPLEX_START: panic("Should not happen");
     case History_Node_Type::NORMAL: {
         code_change_apply(history, &node->change, false);
         history->current = node->prev_change;
@@ -145,7 +145,7 @@ void history_undo(Code_History* history)
     case History_Node_Type::COMPLEX_END: 
     {
         // Apply all commands in reverse until we get to the start
-        assert(node->complex_partner != -1, "Complex must be finished here");
+        assert(node->complex_partner > 0, "Complex must be finished here");
         int goto_index = node->complex_partner;
         while (history->current != goto_index) 
         {
@@ -155,12 +155,10 @@ void history_undo(Code_History* history)
             history->current = node->prev_change;
         }
 
-        // Undo last change too
+        assert(history->current != 0, "Complex command cannot start with the base node!");
         node = &history->nodes[history->current];
-        if (history->current != 0) {
-            code_change_apply(history, &node->change, false);
-            history->current = node->prev_change;
-        }
+        code_change_apply(history, &node->change, false);
+        history->current = node->prev_change;
         break;
     }
     default:panic("");
@@ -183,24 +181,57 @@ void history_redo(Code_History* history)
         code_change_apply(history, &node->change, true);
         break;
     }
-    case History_Node_Type::COMPLEX_START: 
+    case History_Node_Type::COMPLEX_START:
     {
         // Apply all commands until we get to the end
         assert(node->complex_partner != -1, "Complex must be finished here");
         int goto_index = node->complex_partner;
-        do
+        while (history->current != goto_index)
         {
             assert(history->current != 0, "");
-            node = &history->nodes[history->current];
             code_change_apply(history, &node->change, true);
             history->current = node->next_change;
-        } while (history->current != goto_index);
+            node = &history->nodes[history->current];
+        }
+        // Apply the latest change
+        code_change_apply(history, &node->change, true);
         break;
     }
     default:panic("");
     }
 }
 
+void history_start_complex_command(Code_History* history)
+{
+    assert(history->complex_level >= 0, "");
+    if (history->complex_level == 0) {
+        history->complex_start = history->current;
+    }
+    history->complex_level += 1;
+}
+
+void history_stop_complex_command(Code_History* history)
+{
+    assert(history->complex_level > 0, "");
+    history->complex_level -= 1;
+    if (history->complex_level > 0) return;
+
+    int start_node_index = history->nodes[history->complex_start].next_change;
+    // Recorded complex commands with 0 or 1 entries should be ignored
+    if (start_node_index == -1 || start_node_index == history->current) return;
+
+    auto& node_start = history->nodes[start_node_index];
+    auto& node_end = history->nodes[history->current];
+
+    node_start.type = History_Node_Type::COMPLEX_START;
+    node_start.complex_partner = history->current;
+    node_end.type = History_Node_Type::COMPLEX_END;
+    node_end.complex_partner = start_node_index;
+}
+
+
+
+// Change helpers
 Code_Change code_change_create_empty(Code_Change_Type type, int line_index, bool reverse_effect)
 {
     Code_Change result;
@@ -246,7 +277,7 @@ void history_insert_text(Code_History* history, int line_index, int char_index, 
 {
     auto& code = history->code;
     assert(line_index >= 0 && line_index < code->lines.size, "");
-    const auto& line = code->lines[line_index];
+    auto& line = code->lines[line_index];
     assert(char_index >= 0 && char_index <= line.text.size, "");
 
     auto change = code_change_create_empty(Code_Change_Type::TEXT_INSERT, line_index, false);
@@ -272,108 +303,103 @@ void history_delete_text(Code_History* history, int line_index, int char_start, 
 
 void history_insert_char(Code_History* history, int line_index, int char_index, char c)
 {
-    auto& code = history->code;
-    assert(line_index >= 0 && line_index < code->lines.size, "");
-    const auto& line = code->lines[line_index];
-    assert(char_index >= 0 && char_index <= line.text.size, "");
-
-    auto change = code_change_create_empty(Code_Change_Type::TEXT_INSERT, line_index, false);
-    change.options.text_insert.char_start = char_index;
-    change.options.text_insert.text = string_create_formated("%c", c);
-    history_insert_and_apply_change(history, change);
+    char buffer[2] = { c, '\0' };
+    history_insert_text(history, line_index, char_index, string_create_static_with_size(buffer, 1));
 }
 
-void history_delete_char(Code_History* history, int line_index, int char_index)
-{
-    auto& code = history->code;
-    assert(line_index >= 0 && line_index < code->lines.size, "");
-    auto line = code->lines[line_index];
-    assert(char_index >= 0 && char_index <= line.text.size, "");
-
-    auto change = code_change_create_empty(Code_Change_Type::TEXT_INSERT, line_index, true);
-    change.options.text_insert.char_start = char_index;
-    change.options.text_insert.text = string_create_substring(&line.text, char_index, char_index + 1);
-    history_insert_and_apply_change(history, change);
+void history_delete_char(Code_History* history, int line_index, int char_index) {
+    history_delete_text(history, line_index, char_index, char_index + 1);
 }
 
-void history_start_complex_command(Code_History* history)
+
+
+// Timestamps
+History_Timestamp history_get_timestamp(Code_History* history)
 {
-    assert(history->complex_level >= 0, "");
-    if (history->complex_level == 0) {
-        history->complex_start = history->current;
-    }
-    history->complex_level += 1;
+    History_Timestamp result;
+    result.node_index = history->current;
+    return result;
 }
 
-void history_stop_complex_command(Code_History* history)
+void history_get_changes_between(Code_History* history, History_Timestamp start_stamp, History_Timestamp end_stamp, Dynamic_Array<Code_Change>* changes)
 {
-    assert(history->complex_level > 0, "");
-    history->complex_level -= 1;
-    if (history->complex_level > 0) return;
-    if (history->current == history->complex_start) {
-        history->complex_start = -1;
-        return;
-    }
+    int start = start_stamp.node_index;
+    int end = end_stamp.node_index;
 
-    auto& node_start = history->nodes[history->complex_start];
-    auto& node_end = history->nodes[history->current];
+    // Info: This is a modifier Breadth-First search, because of the tree structure we only visited each node from exactly one previous node
+    //      Also, in this search, we search from the End to the start, so we don't have to reverse the path once we found it
+    auto goto_index = array_create_empty<int>(history->nodes.size);
+    SCOPE_EXIT(array_destroy(&goto_index));
 
-    node_start.type = History_Node_Type::COMPLEX_START;
-    node_start.complex_partner = history->current;
-    node_end.type = History_Node_Type::COMPLEX_END;
-    node_end.complex_partner = history->complex_start;
-}
-
-void history_reconstruct_line_from_tokens(Code_History* history, int line_index)
-{
-    // The things that need to happen:
-    //  1. Remove all Spaces except space critical ones
-    //  2. Update token start/end-index
-    auto& line = history->code->lines[line_index];
-    auto& tokens = line.tokens;
-    auto& text = line.text;
-
-    if (tokens.size == 0 && text.size != 0) {
-        history_delete_text(history, line_index, 0, text.size);
-        return;
-    }
-
-    int token_index = 0;
-    int index = 0;
-    int space_remove_count = 0;
-
-    char prev = '!';
-    while (index < text.size)
+    // Find path
     {
-        // Update token index
-        auto token = &tokens[token_index];
-        if (index >= token->end_index && token_index + 1 < tokens.size) {
-            token_index += 1;
-            token = &tokens[token_index];
-            token->start_index -= space_remove_count;
-            token->end_index -= space_remove_count;
-        }
+        auto layer_nodes = dynamic_array_create_empty<int>(history->nodes.size);
+        SCOPE_EXIT(dynamic_array_destroy(&layer_nodes));
+        int current_layer_start = 0;
 
-        char curr = text[index];
-        char next = index + 1 < text.size ? text[index + 1] : '!';
-        SCOPE_EXIT(prev = curr);
+        // Add inital node
+        dynamic_array_push_back(&layer_nodes, end);
+        goto_index[end] = end;
 
-        if (curr == ' ' && !(is_space_critical_char(prev) && is_space_critical_char(next)))
+        // Start search
+        bool found = false;
+        while (!found)
         {
-            if (index < token->start_index) {
-                token->start_index -= 1;
-            }
-            else if (index < token->end_index) {
-                token->end_index -= 1;
-            }
+            int next_layer_start = layer_nodes.size;
+            assert(current_layer_start != next_layer_start, "Each layer must have some nodes");
+            for (int i = current_layer_start; i < layer_nodes.size; i++)
+            {
+                auto node_index = layer_nodes[i];
+                int from_index = goto_index[node_index];
+                auto& node = history->nodes[node_index];
+                if (node_index == start) {
+                    found = true;
+                    break;
+                }
 
-            // Remove char
-            history_delete_char(history, line_index, index);
-            space_remove_count += 1;
-        }
-        else {
-            index += 1;
+                // Add neighbors to next layer
+                if (node.prev_change != -1 && node.prev_change != from_index) {
+                    dynamic_array_push_back(&layer_nodes, node.prev_change);
+                    goto_index[node.prev_change] = node_index;
+                }
+                if (node.next_change != -1) 
+                {
+                    // Add all possible future paths
+                    int future_path_index = node.next_change;
+                    while (future_path_index != -1)
+                    {
+                        if (future_path_index != from_index) {
+                            dynamic_array_push_back(&layer_nodes, future_path_index);
+                            goto_index[future_path_index] = node_index;
+                        }
+                        future_path_index = history->nodes[future_path_index].alt_change;
+                    }
+                }
+            }
+            current_layer_start = next_layer_start;
         }
     }
-    assert(token_index == tokens.size - 1, "All tokens must be updated!");
+
+    // Reconstruct Log (from goto-indices)
+    dynamic_array_reset(changes);
+    {
+        int index = start;
+        while (index != end)
+        {
+            int next = goto_index[index];
+            auto& node = history->nodes[index];
+            auto& next_node = history->nodes[next];
+            if (next == node.prev_change) {
+                // To go backwards i need to revert the current change
+                Code_Change copy = node.change;
+                copy.reverse_effect = !copy.reverse_effect;
+                dynamic_array_push_back(changes, copy);
+            }
+            else {
+                // To go forwards i need to apply the next change
+                dynamic_array_push_back(changes, next_node.change);
+            }
+            index = next;
+        }
+    }
 }

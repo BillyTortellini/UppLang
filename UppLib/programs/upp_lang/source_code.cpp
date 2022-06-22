@@ -124,7 +124,6 @@ void source_code_tokenize_all(Source_Code* code)
     {
         auto& line = code->lines[i];
         lexer_tokenize_text(line.text, &line.tokens);
-        lexer_tokens_to_text(&line.tokens, &line.text);
     }
 }
 

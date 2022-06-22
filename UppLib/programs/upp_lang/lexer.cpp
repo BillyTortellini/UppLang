@@ -138,19 +138,11 @@ Parenthesis char_to_parenthesis(char c)
     return parenthesis;
 }
 
-bool is_space_critical_char(char c) {
+bool char_is_space_critical(char c) {
     return (c >= 'a' && c <= 'z') ||
         (c >= 'A' && c <= 'Z') ||
         (c >= '0' && c <= '9') ||
         (c == '_');
-}
-
-bool is_space_critical(Token* t) {
-    if (t->type == Token_Type::LITERAL) {
-        auto lit = t->options.literal_value.type;
-        return lit != Literal_Type::STRING;
-    }
-    return t->type == Token_Type::KEYWORD || t->type == Token_Type::IDENTIFIER;
 }
 
 String token_get_string(Token token, String text)
@@ -611,33 +603,3 @@ void lexer_tokenize_text(String text, Dynamic_Array<Token>* tokens)
         dynamic_array_push_back(tokens, token);
     }
 }
-
-void lexer_tokens_to_text(Dynamic_Array<Token>* tokens, String* text)
-{
-    // Recreate text from tokens, updating char start and char length
-    auto& buffer = lexer.line_buffer;
-    string_reset(&buffer);
-    string_reserve(&buffer, text->size);
-    for (int i = 0; i < tokens->size; i++)
-    {
-        auto& token = (*tokens)[i];
-        String token_text = token_get_string(token, *text);
-
-        token.start_index = buffer.size;
-        string_append_string(&buffer, &token_text);
-        token.end_index = buffer.size;
-
-        if (i + 1 < tokens->size) {
-            auto& next_token = (*tokens)[i + 1];
-            if (is_space_critical(&token) && is_space_critical(&next_token)) {
-                string_append_character(&buffer, ' ');
-            }
-        }
-    }
-
-    String swap = *text;
-    *text = buffer;
-    buffer = swap;
-}
-
-
