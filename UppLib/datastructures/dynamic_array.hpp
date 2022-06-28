@@ -183,6 +183,13 @@ T dynamic_array_last(Dynamic_Array<T>* array) {
     return (*array)[array->size - 1];
 }
 
+template<typename T>
+T dynamic_array_remove_last(Dynamic_Array<T>* array) {
+    T value = (*array)[array->size - 1];
+    array->size -= 1;
+    return value;
+}
+
 // Returns dummy index
 template <typename T>
 int dynamic_array_push_back_dummy(Dynamic_Array<T>* array)

@@ -4,14 +4,20 @@
 #include "../../datastructures/dynamic_array.hpp"
 #include "../../datastructures/hashset.hpp"
 
+#include "source_code.hpp"
+
 // Forward Declarations
 struct Source_Code;
 
 // Code History
 enum class Code_Change_Type
 {
+    BLOCK_CREATE,
+    BLOCK_MERGE,
+    BLOCK_INDEX_CHANGED,
+
     LINE_INSERT,
-    INDENTATION_CHANGE,
+
     TEXT_INSERT,
 };
 
@@ -19,19 +25,31 @@ struct Code_Change
 {
     Code_Change_Type type;
     bool reverse_effect;
-    int line_index;
     union
     {
         struct {
-            int indentation;
-        } line_insert;
+            Block_Index parent;
+            int line_index;
+            Block_Index new_block_index; // Filled by apply change
+        } block_create;
         struct {
-            int old_indentation;
-            int new_indentation;
-        } indentation_change;
+            Block_Index index;
+            Block_Index merge_other; 
+            int split_index;
+        } block_merge;
         struct {
+            Block_Index index;
+            int new_line_index;
+            int old_line_index;
+        } block_index_change;
+        struct {
+            Line_Index move_from;
+            Line_Index move_to;
+        } line_move;
+        Line_Index line_insert;
+        struct {
+            Text_Index index;
             String text;
-            int char_start;
         } text_insert;
     } options;
 };
@@ -69,6 +87,8 @@ struct Code_History
 
     int complex_level;
     int complex_start;
+
+    Dynamic_Array<Block_Index> free_blocks;
 };
 
 Code_History code_history_create(Source_Code* code);
@@ -78,15 +98,22 @@ void code_history_destroy(Code_History* history);
 void history_undo(Code_History* history);
 void history_redo(Code_History* history);
 
-void history_insert_line(Code_History* history, int line_index, int indentation);
-void history_remove_line(Code_History* history, int line_index);
-void history_insert_text(Code_History* history, int line_index, int char_index, String string);
-void history_delete_text(Code_History* history, int line_index, int char_start, int char_end);
-void history_insert_char(Code_History* history, int line_index, int char_index, char c);
-void history_delete_char(Code_History* history, int line_index, int char_index);
-void history_change_indentation(Code_History* history, int line_index, int new_indentation);
 void history_start_complex_command(Code_History* history);
 void history_stop_complex_command(Code_History* history);
+
+// Change Interface
+void history_insert_text(Code_History* history, Text_Index index, String string);
+void history_delete_text(Code_History* history, Text_Index index, int char_end);
+void history_insert_char(Code_History* history, Text_Index index, char c);
+void history_delete_char(Code_History* history, Text_Index index);
+
+void history_insert_line(Code_History* history, Line_Index line_index);
+void history_insert_line_with_text(Code_History* history, Line_Index line_index, String string);
+void history_remove_line(Code_History* history, Line_Index line_index);
+void history_add_line_indent(Code_History* history, Line_Index line_index);
+void history_remove_line_indent(Code_History* history, Line_Index line_index);
+
+void history_change_indentation(Code_History* history, int line_index, int new_indentation);
 
 
 

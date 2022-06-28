@@ -261,7 +261,10 @@ Program will become quite hard.
   * We can store information per block, because it is a consistent structure
 
 
-
+TODO: Switch to hierarchical Version:
+ - Rewrite Source Code
+ - Change History, add more changes
+ - Have a Buffer for free blocks
 
 Required Features before I can use the Langauge:
  * Incremental Compilation

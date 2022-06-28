@@ -272,7 +272,7 @@ void syntax_editor_synchronize_tokens()
         auto& change = changes[i];
         switch (change.type)
         {
-        case Code_Change_Type::INDENTATION_CHANGE: break;
+        case Code_Change_Type::ADD_INDENTATION: break;
         case Code_Change_Type::LINE_INSERT:
         {
             if (change.reverse_effect)
@@ -438,7 +438,7 @@ void syntax_editor_synchronize_hierarchy()
         int line_index = change.line_index;
         switch (change.type)
         {
-        case Code_Change_Type::INDENTATION_CHANGE: 
+        case Code_Change_Type::ADD_INDENTATION: 
         {
             int start_indent = change.reverse_effect ? change.options.indentation_change.old_indentation : change.options.indentation_change.new_indentation;
             int end_indent = !change.reverse_effect ? change.options.indentation_change.old_indentation : change.options.indentation_change.new_indentation;

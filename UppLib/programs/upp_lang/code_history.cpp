@@ -2,7 +2,9 @@
 
 #include "source_code.hpp"
 
-// Code History
+
+
+// Helpers
 void code_change_destroy(Code_Change* change)
 {
     if (change->type == Code_Change_Type::TEXT_INSERT) {
@@ -10,10 +12,65 @@ void code_change_destroy(Code_Change* change)
     }
 }
 
+Block_Index code_history_add_block(Code_History* history, Block_Index parent, int line_index)
+{
+    Block_Index new_index;
+    if (history->free_blocks.size > 0) {
+        new_index =  dynamic_array_remove_last(&history->free_blocks);
+    }
+    else {
+        new_index = block_index_make(history->code, dynamic_array_push_back_dummy(&history->free_blocks));
+    }
+
+    auto block = index_value(new_index);
+    block->children = dynamic_array_create_empty<Block_Index>(1);
+    block->lines = dynamic_array_create_empty<Source_Line>(1);
+    block->line_index = line_index;
+    block->parent = parent;
+
+    // Insert ordered into parent
+    auto parent_block = index_value(parent);
+    int i = 0;
+    while (i < parent_block->children.size)
+    {
+        auto child_block = index_value(parent_block->children[i]);
+        if (line_index <= child_block->line_index) {
+            break;
+        }
+        i++;
+    }
+    dynamic_array_insert_ordered(&parent_block->children, new_index , i);
+    return new_index;
+}
+
+void code_history_remove_block_from_hierarchy(Code_History* history, Block_Index index)
+{
+    auto block = index_value(index);
+    assert(index.block != 0, "Cannot free root block!");
+    assert(block->children.size == 0 && block->lines.size == 0, "Cannot free non-empty block");
+    source_block_destroy(block);
+    dynamic_array_push_back(&history->free_blocks, index);
+    // Remove from parent
+    auto parent_block = index_value(block->parent);
+    bool found = false;
+    for (int i = 0; i < parent_block->children.size; i++) {
+        if (parent_block->children[i].block == index.block) {
+            dynamic_array_remove_ordered(&parent_block->children, i);
+            found = true;
+            break;
+        }
+    }
+    assert(found, "");
+}
+
+
+
+// Code History
 Code_History code_history_create(Source_Code* code)
 {
     Code_History result;
     result.nodes = dynamic_array_create_empty<History_Node>(1);
+    result.free_blocks = dynamic_array_create_empty<Block_Index>(1);
     result.code = code;
     code_history_reset(&result);
     return result;
@@ -31,6 +88,7 @@ void code_history_reset(Code_History* history)
         root.complex_partner = -1;
         dynamic_array_push_back(&history->nodes, root);
     }
+    dynamic_array_reset(&history->free_blocks);
     history->current = 0;
     history->complex_level = 0;
     history->complex_start = -1;
@@ -44,12 +102,9 @@ void code_history_destroy(Code_History* history)
     dynamic_array_destroy(&history->nodes);
 }
 
-void source_code_destroy_line(Source_Line* line) {
-    string_destroy(&line->text);
-    dynamic_array_destroy(&line->tokens);
-    dynamic_array_destroy(&line->infos);
-}
 
+
+// Code Changes
 void code_change_apply(Code_History* history, Code_Change* change, bool forwards)
 {
     bool apply_change_forward = forwards;
@@ -58,47 +113,145 @@ void code_change_apply(Code_History* history, Code_Change* change, bool forwards
     }
 
     auto code = history->code;
-    auto& lines = code->lines;
-    int line_index = change->line_index;
-    assert(line_index >= 0 && line_index <= lines.size, "");
-
     switch (change->type)
     {
-    case Code_Change_Type::LINE_INSERT: 
+    case Code_Change_Type::LINE_INSERT:
     {
         auto& insert = change->options.line_insert;
-        if (apply_change_forward) 
-        {
-            Source_Line line;
-            line.indentation = insert.indentation;
-            line.text = string_create_empty(4);
-            line.tokens = dynamic_array_create_empty<Token>(1);
-            line.infos = dynamic_array_create_empty<Render_Info>(1);
-            dynamic_array_insert_ordered(&lines, line, line_index);
+        auto block = index_value(insert.block);
+        if (apply_change_forward) {
+            assert(insert.line >= 0 && insert.line <= block->lines.size, "");
+            source_line_insert_empty(insert);
         }
-        else
+        else {
+            assert(insert.line >= 0 && insert.line < block->lines.size, "");
+            source_line_destroy(&block->lines[insert.line]);
+            dynamic_array_remove_ordered(&block->lines, insert.line);
+        }
+
+        // Move all follow blocks in block
+        for (int i = 0; i < block->children.size; i++) 
         {
-            auto& line = lines[line_index];
-            source_code_destroy_line(&line);
-            dynamic_array_remove_ordered(&lines, line_index);
+            auto child_block = index_value(block->children[i]);
+            bool change_index = false;
+            if (apply_change_forward) {
+                change_index = child_block->line_index > insert.line;
+            }
+            else {
+                change_index = child_block->line_index >= insert.line;
+            }
+            if (change_index) {
+                child_block->line_index += apply_change_forward ? 1 : -1;
+            }
         }
         break;
     }
-    case Code_Change_Type::INDENTATION_CHANGE:
+    case Code_Change_Type::BLOCK_CREATE:
     {
-        auto& indent_change = change->options.indentation_change;
-        lines[line_index].indentation = apply_change_forward ? indent_change.new_indentation : indent_change.old_indentation;
+        auto& create = change->options.block_create;
+        if (apply_change_forward) {
+            create.new_block_index = code_history_add_block(history, create.parent, create.line_index);
+        }
+        else {
+            auto block = index_value(create.new_block_index);
+            create.line_index = block->line_index;
+            create.parent = block->parent;
+            code_history_remove_block_from_hierarchy(history, create.new_block_index);
+        }
+        break;
+    }
+    case Code_Change_Type::BLOCK_MERGE:
+    {
+        auto& merge = change->options.block_merge;
+        if (apply_change_forward)
+        {
+            auto into_block = index_value(merge.index);
+            auto parent_block = index_value(into_block->parent);
+
+            // Find other block
+            int merge_child_index = -1;
+            for (int i = 0; i < parent_block->children.size; i++) {
+                auto child_index = parent_block->children[i];
+                if (child_index.block == merge.index.block) {
+                    merge_child_index = i + 1;
+                    break;
+                }
+            }
+            assert(merge_child_index != -1, "");
+            assert(merge_child_index < parent_block->children.size, "Next must be valid");
+            merge.merge_other = parent_block->children[merge_child_index];
+            auto other_block = index_value(merge.merge_other);
+            assert(into_block->line_index == other_block->line_index, "Merge blocks must occupy the same line");
+
+            // Save split old_line_index for reversing this change
+            merge.split_index = into_block->lines.size;
+            // Update block indices
+            for (int i = 0; i < other_block->children.size; i++) {
+                auto child_block = index_value(other_block->children[i]);
+                child_block->line_index += into_block->lines.size;
+            }
+            // Move lines from one block to the other
+            dynamic_array_append_other(&into_block->lines, &other_block->lines);
+            dynamic_array_reset(&other_block->lines);
+            // Move child blocks from one block to the other
+            dynamic_array_append_other(&into_block->children, &other_block->children);
+            dynamic_array_reset(&other_block->children);
+            // Remove other block
+            code_history_remove_block_from_hierarchy(history, merge.merge_other);
+        }
+        else
+        {
+            // Block split
+            auto split_block = index_value(merge.index);
+            merge.merge_other = code_history_add_block(history, split_block->parent, split_block->line_index);
+            split_block = index_value(merge.index); // Refresh pointer, since adding can invalidate pointers to blocks
+            auto other_block = index_value(merge.merge_other);
+
+            // Copy blocks after split_index into new block
+            assert(merge.split_index >= 0 && merge.split_index < split_block->lines.size, "");
+            int block_cutoff = 0;
+            for (int i = 0; i < split_block->children.size; i++) {
+                auto child_block = index_value(split_block->children[i]);
+                if (child_block->line_index >= merge.split_index) {
+                    block_cutoff = i;
+                    break;
+                }
+            }
+            for (int i = block_cutoff; i < split_block->children.size; i++) {
+                dynamic_array_push_back(&other_block->children, split_block->children[i]);
+            }
+            dynamic_array_rollback_to_size(&other_block->children, block_cutoff);
+            // Copy lines to other block
+            for (int i = merge.split_index; i < split_block->lines.size; i++) {
+                dynamic_array_push_back(&other_block->lines, split_block->lines[i]);
+            }
+            dynamic_array_rollback_to_size(&other_block->lines, merge.split_index);
+        }
+        break;
+    }
+    case Code_Change_Type::BLOCK_INDEX_CHANGED:
+    {
+        auto& index_change = change->options.block_index_change;
+        auto block = index_value(index_change.index);
+        if (apply_change_forward) {
+            index_change.old_line_index = block->line_index;
+            block->line_index = index_change.new_line_index;
+        }
+        else {
+            index_change.new_line_index = block->line_index;
+            block->line_index = index_change.old_line_index;
+        }
         break;
     }
     case Code_Change_Type::TEXT_INSERT:
     {
         auto& insert = change->options.text_insert;
-        auto& line = lines[line_index];
+        auto& text = index_value(insert.index.line)->text;
         if (apply_change_forward) {
-            string_insert_string(&line.text, &insert.text, insert.char_start);
+            string_insert_string(&text, &insert.text, insert.index.pos);
         }
-        else  {
-            string_remove_substring(&line.text, insert.char_start, insert.char_start + insert.text.size);
+        else {
+            string_remove_substring(&text, insert.index.pos, insert.index.pos + insert.text.size);
         }
         break;
     }
@@ -106,7 +259,7 @@ void code_change_apply(Code_History* history, Code_Change* change, bool forwards
     }
 }
 
-void history_insert_and_apply_change(Code_History* history, Code_Change change)
+int history_insert_and_apply_change(Code_History* history, Code_Change change)
 {
     int change_index = history->nodes.size;
     History_Node node;
@@ -126,6 +279,7 @@ void history_insert_and_apply_change(Code_History* history, Code_Change change)
     history->current = history->nodes.size;
     dynamic_array_push_back(&history->nodes, node);
     code_change_apply(history, &node.change, true);
+    return change_index;
 }
 
 void history_undo(Code_History* history)
@@ -142,12 +296,12 @@ void history_undo(Code_History* history)
         history->current = node->prev_change;
         break;
     }
-    case History_Node_Type::COMPLEX_END: 
+    case History_Node_Type::COMPLEX_END:
     {
         // Apply all commands in reverse until we get to the start
         assert(node->complex_partner > 0, "Complex must be finished here");
         int goto_index = node->complex_partner;
-        while (history->current != goto_index) 
+        while (history->current != goto_index)
         {
             assert(history->current != 0, "");
             node = &history->nodes[history->current];
@@ -232,84 +386,267 @@ void history_stop_complex_command(Code_History* history)
 
 
 // Change helpers
-Code_Change code_change_create_empty(Code_Change_Type type, int line_index, bool reverse_effect)
+// TEXT
+Code_Change code_change_create_empty(Code_Change_Type type, bool reverse_effect)
 {
     Code_Change result;
     result.type = type;
-    result.line_index = line_index;
     result.reverse_effect = reverse_effect;
     return result;
 }
 
-void history_insert_line(Code_History* code, int line_index, int indentation)
+void history_insert_text(Code_History* history, Text_Index index, String string)
 {
-    auto change = code_change_create_empty(Code_Change_Type::LINE_INSERT, line_index, false);
-    change.options.line_insert.indentation = indentation;
-    history_insert_and_apply_change(code, change);
+    auto line = index_value(index.line);
+    auto change = code_change_create_empty(Code_Change_Type::TEXT_INSERT, false);
+    change.options.text_insert.index = index;
+    change.options.text_insert.text = string_copy(string);
+    history_insert_and_apply_change(history, change);
 }
 
-void history_remove_line(Code_History* history, int line_index)
+void history_delete_text(Code_History* history, Text_Index index, int char_end)
 {
-    auto& code = history->code;
-    assert(line_index >= 0 && line_index < code->lines.size, "");
-    auto& line = code->lines[line_index];
+    auto& text = index_value(index.line)->text;
+    assert(index.pos >= 0 && index.pos <= text.size, "");
+    assert(char_end >= 0 && char_end <= text.size, "");
+    assert(index.pos < char_end, "");
 
-    history_start_complex_command(history);
-    if (line.text.size != 0) {
-        history_delete_text(history, line_index, 0, line.text.size);
-    }
-    auto change = code_change_create_empty(Code_Change_Type::LINE_INSERT, line_index, true);
-    change.options.line_insert.indentation = history->code->lines[line_index].indentation;
+    auto change = code_change_create_empty(Code_Change_Type::TEXT_INSERT, true);
+    change.options.text_insert.index = index;
+    change.options.text_insert.text = string_create_substring(&text, index.pos, char_end);
     history_insert_and_apply_change(history, change);
-    history_stop_complex_command(history);
+}
+
+void history_insert_char(Code_History* history, Text_Index index, char c)
+{
+    char buffer[2] = { c, '\0' };
+    history_insert_text(history, index, string_create_static_with_size(buffer, 1));
+}
+
+void history_delete_char(Code_History* history, Text_Index index) {
+    history_delete_text(history, index, index.pos + 1);
+}
+
+
+
+// LINES
+void history_insert_line(Code_History* history, Line_Index index)
+{
+    history_start_complex_command(history);
+    SCOPE_EXIT(history_stop_complex_command(history));
+
+    auto change = code_change_create_empty(Code_Change_Type::LINE_INSERT, false);
+    change.options.line_insert = index;
+    history_insert_and_apply_change(history, change);
+}
+
+void history_insert_line_with_text(Code_History* history, Line_Index line_index, String string)
+{
+    history_insert_line(history, line_index);
+    history_insert_text(history, text_index_make(line_index, 0), string);
+}
+
+void history_remove_line(Code_History* history, Line_Index line_index)
+{
+    history_start_complex_command(history);
+    SCOPE_EXIT(history_stop_complex_command(history));
+
+    auto block = index_value(line_index.block);
+    if (block->lines.size == 1 && line_index.block.block == 0) {
+        // Cannot remove last line from root block!
+        return;
+    }
+
+    auto change = code_change_create_empty(Code_Change_Type::LINE_INSERT, true);
+    change.options.line_insert = line_index;
+    history_insert_and_apply_change(history, change);
+
+    // Recursively remove blocks
+    auto block_index = line_index.block;
+    while (block_index.block != 0)
+    {
+        block = index_value(block_index);
+        if (block->lines.size == 0 && block->children.size == 0) {
+            auto remove_change = code_change_create_empty(Code_Change_Type::BLOCK_CREATE, true);
+            remove_change.options.block_create.line_index = block->line_index;
+            remove_change.options.block_create.parent = block->parent;
+            remove_change.options.block_create.new_block_index = block_index;
+            history_insert_and_apply_change(history, change);
+        }
+        else {
+            break;
+        }
+        block_index = block->parent;
+    }
+}
+
+void history_add_line_indent(Code_History* history, Line_Index old_line_index)
+{
+    // INFO: Adding an indent results in either a move into a previous/next block (+Eventual Merge) or a create block + move
+    auto block = index_value(old_line_index.block);
+
+    // Search if we are at the start/end of a block
+    bool found_prev_block = false;
+    bool found_next_block = false;
+    Block_Index prev_block_index;
+    Block_Index next_block_index;
+    for (int i = 0; i < block->children.size; i++) 
+    {
+        auto child_block = index_value(block->children[i]);
+        if (old_line_index.line == child_block->line_index) {
+            found_prev_block = true;
+            prev_block_index = block->children[i];
+        }
+        else if (old_line_index.line + 1 == child_block->line_index) {
+            found_next_block = true;
+            next_block_index = block->children[i];
+        }
+    }
+
+    Line_Index new_line_index;
+    if (!found_prev_block && !found_next_block) {
+        // Create new block
+        auto change = code_change_create_empty(Code_Change_Type::BLOCK_CREATE, false);
+        change.options.block_create.line_index = old_line_index.line;
+        change.options.block_create.parent = old_line_index.block;
+        int change_index = history_insert_and_apply_change(history, change);
+        new_line_index.block = history->nodes[change_index].change.options.block_create.new_block_index;
+        block = index_value(old_line_index.block); // Refresh because pointer may be invalid after inserting block
+        new_line_index.line = 0;
+    }
+    else if (found_prev_block && found_next_block) {
+        // Insert into prev block and merge blocks
+        new_line_index.block = prev_block_index;
+        new_line_index.line = index_value(next_block_index)->lines.size;
+    }
+    else {
+        // Insert into the one block that was found
+        if (found_next_block) {
+            new_line_index.block = next_block_index;
+            new_line_index.line = 0;
+        }
+        else {
+            new_line_index.block = prev_block_index;
+            new_line_index.line = index_value(next_block_index)->lines.size;
+        }
+    }
+
+    // Move line from one block to the other
+    {
+        history_insert_line_with_text(history, new_line_index, index_value(old_line_index)->text);
+        history_remove_line(history, old_line_index);
+    }
+
+    if (found_prev_block && found_next_block) {
+        auto merge = code_change_create_empty(Code_Change_Type::BLOCK_MERGE, false);
+        merge.options.block_merge.index = new_line_index.block;
+        history_insert_and_apply_change(history, merge);
+    }
+}
+
+void history_remove_line_indent(Code_History* history, Line_Index index)
+{
+    // INFO: Remove indent results in either a move into a previous/next block (+Eventual Merge) or a Split block + move
+    auto block = index_value(index.block);
+
+    // Search if we are at the start/end of the block
+    bool at_block_start = false;
+    bool at_block_end = false;
+    if (index.line == 0) {
+        at_block_start = true;
+        if (block->children.size != 0 && index_value(block->children[0])->line_index == 0) {
+            at_block_start = false;
+        }
+    }
+    if (index.line == block->lines.size - 1) {
+        at_block_end = true;
+        if (block->children.size != 0 && index_value(dynamic_array_last(&block->children))->line_index == block->lines.size) {
+            at_block_end = false;
+        }
+    }
+
+    // !!! LEFTOFF: Think about the different cases that may occur when we remove a line indent!
+    auto parent_block = index_value(block->parent);
+    Line_Index new_line_pos;
+    if (at_block_start) {
+        new_line_pos = line_index_make(block->parent, block->line_index)
+    }
+    else if (at_block_end) {
+
+    }
+    else {
+        // Split block at current line
+
+    }
+
+    bool found_prev_block = false;
+    bool found_next_block = false;
+    Block_Index prev_block_index;
+    Block_Index next_block_index;
+    for (int i = 0; i < block->children.size; i++) 
+    {
+        auto child_block = index_value(block->children[i]);
+        if (old_line_index.line == child_block->line_index) {
+            found_prev_block = true;
+            prev_block_index = block->children[i];
+        }
+        else if (old_line_index.line + 1 == child_block->line_index) {
+            found_next_block = true;
+            next_block_index = block->children[i];
+        }
+    }
+
+    Line_Index new_line_index;
+    if (!found_prev_block && !found_next_block) {
+        // Create new block
+        auto change = code_change_create_empty(Code_Change_Type::BLOCK_CREATE, false);
+        change.options.block_create.line_index = old_line_index.line;
+        change.options.block_create.parent = old_line_index.block;
+        int change_index = history_insert_and_apply_change(history, change);
+        new_line_index.block = history->nodes[change_index].change.options.block_create.new_block_index;
+        block = index_value(old_line_index.block); // Refresh because pointer may be invalid after inserting block
+        new_line_index.line = 0;
+    }
+    else if (found_prev_block && found_next_block) {
+        // Insert into prev block and merge blocks
+        new_line_index.block = prev_block_index;
+        new_line_index.line = index_value(next_block_index)->lines.size;
+    }
+    else {
+        // Insert into the one block that was found
+        if (found_next_block) {
+            new_line_index.block = next_block_index;
+            new_line_index.line = 0;
+        }
+        else {
+            new_line_index.block = prev_block_index;
+            new_line_index.line = index_value(next_block_index)->lines.size;
+        }
+    }
+
+    // Move line from one block to the other
+    {
+        history_insert_line_with_text(history, new_line_index, index_value(old_line_index)->text);
+        history_remove_line(history, old_line_index);
+    }
+
+    if (found_prev_block && found_next_block) {
+        auto merge = code_change_create_empty(Code_Change_Type::BLOCK_MERGE, false);
+        merge.options.block_merge.index = new_line_index.block;
+        history_insert_and_apply_change(history, merge);
+    }
+
 }
 
 void history_change_indentation(Code_History* history, int line_index, int new_indentation)
 {
     auto& code = history->code;
-    auto change = code_change_create_empty(Code_Change_Type::INDENTATION_CHANGE, line_index, false);
+    auto change = code_change_create_empty(Code_Change_Type::ADD_INDENTATION, line_index, false);
     change.options.indentation_change.new_indentation = new_indentation;
     change.options.indentation_change.old_indentation = code->lines[line_index].indentation;
     history_insert_and_apply_change(history, change);
 }
 
-void history_insert_text(Code_History* history, int line_index, int char_index, String string)
-{
-    auto& code = history->code;
-    assert(line_index >= 0 && line_index < code->lines.size, "");
-    auto& line = code->lines[line_index];
-    assert(char_index >= 0 && char_index <= line.text.size, "");
-
-    auto change = code_change_create_empty(Code_Change_Type::TEXT_INSERT, line_index, false);
-    change.options.text_insert.char_start = char_index;
-    change.options.text_insert.text = string_copy(string);
-    history_insert_and_apply_change(history, change);
-}
-
-void history_delete_text(Code_History* history, int line_index, int char_start, int char_end)
-{
-    auto& code = history->code;
-    assert(line_index >= 0 && line_index < code->lines.size, "");
-    auto& line = code->lines[line_index];
-    assert(char_start >= 0 && char_start <= line.text.size, "");
-    assert(char_end >= 0 && char_end <= line.text.size, "");
-    assert(char_start < char_end, "");
-
-    auto change = code_change_create_empty(Code_Change_Type::TEXT_INSERT, line_index, true);
-    change.options.text_insert.char_start = char_start;
-    change.options.text_insert.text = string_create_substring(&line.text, char_start, char_end);
-    history_insert_and_apply_change(history, change);
-}
-
-void history_insert_char(Code_History* history, int line_index, int char_index, char c)
-{
-    char buffer[2] = { c, '\0' };
-    history_insert_text(history, line_index, char_index, string_create_static_with_size(buffer, 1));
-}
-
-void history_delete_char(Code_History* history, int line_index, int char_index) {
-    history_delete_text(history, line_index, char_index, char_index + 1);
-}
 
 
 
@@ -362,7 +699,7 @@ void history_get_changes_between(Code_History* history, History_Timestamp start_
                     dynamic_array_push_back(&layer_nodes, node.prev_change);
                     goto_index[node.prev_change] = node_index;
                 }
-                if (node.next_change != -1) 
+                if (node.next_change != -1)
                 {
                     // Add all possible future paths
                     int future_path_index = node.next_change;
