@@ -189,54 +189,99 @@ Plan:
 Implementation:
  X Remove compiler integration from editor
  X Add syntax higlighting based on tokens
- - Implement Code-History with undo + redo
- - Create Code-Hierarchy that generates from normal Source-Code
+ X Implement Code-History with undo + redo
+ X Create Code-Hierarchy that generates from normal Source-Code
+ X Use Code-Hierarchy in editor (Render block outlines, test if it works)
  - Update Code-Hierarchy from history and timestamps
- - Use Code-Hierarchy in editor (Render block outlines, test if it works)
- - Change parser to use Code-Hierarchy (Remove token-code)
- - Change Render-Information to be sparse data (Only visible tokens, either by line or block)
- - Add Code-Folding by storing boolens per Hierarchy-Block
+ - Change Parser to use Code-Hierarchy (Remove token-code)
  - Done!
-
-
-Problem: Tokenization can change Text in a line (Mostly removing spaces)
-
-Solutions: 
- - Line reconstruction uses history
- - History commands trigger lexing yeah probably
- - Complex commands should probably not be single commands
 
 
 TODO: Record Text-Changed in Editor and only call compiler stuff when it actually has changed.
 
-Bug: Rendering of space before with Operators hello|+ or hello|)
-
 Design Decision:
     The editor doesn't keep the tokens up to date, but it makes sure that lines are always sanitized after edits.
     When we need updated tokens we run through the change history from the last checkpoint (Last timestamp where tokens/text was synchronized)
-        and only tokenize the lines that require tokenization
+    and only tokenize the lines that require tokenization
+
+Why is a Code-Hierarchy usefull?
+--------------------------------
+I think it has to do with 'coordinates' of lines, since
+Line-Inserts/Deletes change the line numbers of all lines coming after them, even if they are not changed.
+This would mean that all Structure holding line numbers (Parser, AST-Nodes having start and end tokens) will invalidate
+their references once the line numbers changes.
+Also I think most logic concerning code is built upon the hierarchy, meaning that e.g. Iterating over the code (during parsing) would be easier in
+the hierarchy.
+
+
+
+ *** General Compiler/IDE Structure:
+If I don't want a multi-file per project structure, I almost need something like incremental compilation. (Maybe)
+Then theres the problem that I don't want to do Compile-Time Code-Execution during editing, meaning I want to store the results
+of these bakes somehow over multiple frames/edits.
+The problem here is that I want the editor to display/use Compile-Information (Errors, Warnings, Symbols, Code-Completion, Goto-Definition),
+and the Compilation Process/Semantic Analysis may be a relative slow process, but the Editor needs to stay responsive.
+
+ *** Current Thoughts on a Solution:
+Lexing and Parsing is done incrementally (By the Editor) in 'real-time', meaning that the Editor never needs to wait for AST-Parsing to be done.
+This is mostly because the Editor may need AST/Parse Information for Auto-Formating (Required for Rendering + Animations) and for Code-Views (If I implement them)
+I think this is a valid Decision because I should be able to do Parsing incrementally with the current Syntax of the Language.
+
+Maybe Semantic-Analysis is also one of the parts that can be done incrementally, but Workload-Dependency Management and Symbol Resolution will be the
+problem. (Or I at least believe so)
+
+Then the other two Parts of Compiling would be Semantic-Analysis and Code-Generation.
+In the ideal case I would also execute those two incrementally, but I believe that waiting for Analysis before querying the Code
+may be quite slow (Although Incremental Semantic-Analysis would probably be pretty fast). One of the slow parts may even be the
+#Bake and #Run parts of the code, which I wouldn't even need to rerun if everything works out.
+
+I generally believe that everything must run incrementally (Parsing + Analysis + Code Generation) eventually, since I want to be able
+to generate huge Programs with this language and the IDE requires fast Feedback for editing.
+The only thing that I am unsure about is if it is fast enough to do a complete Analysis after every edit. 
+The Answer is probably yes.
+
+And if the answer is no (No compiler feedback after every edit), I will have to draw a line somewhere (Probably after parsing)
+where a second Thread does Analysis, and compiler feedback will have to be based on a cached, old Version of Analysis-Info.
+But even with the caching and old version stuff I probably want some sort of incremental Compilation, otherwise Compiling and Running the
+Program will become quite hard.
+
+ *** Next Day Thoughts:
+ It could be that I want the Source-Code Representation to also be hierarchical, because it seems to make more sense 
+ for incremental Parsing. This would also solve the problem of having 'slow' line-editing with only a single array.
+ The real problem here is that indexing specific lines would be hard otherwise, because an insert into an block-child of a block will
+ also invalidate all line indices that come afterwards. 
+ 
+ *** Thoughts (27.06):
+ So the Problem still is if we need a Hierarchical Representation of the Code, or if Lines + Indentation are enough.
+ If we have both, we have to deal with synchronizing both datastructures, which is annoying. 
+
+ The linear version is good because it's simpler, but the Hierarchical version has several benefits:
+  * Better Editing Performance
+  * Indexing is based on changes
+  * We can store information per block, because it is a consistent structure
 
 
 
 
-
-
-
-
-
+Required Features before I can use the Langauge:
+ * Incremental Compilation
+ * Templates
+ * Context-System
+ * Symbol-Imports/Resolution
+ * Syntax-Editor features
+ * Iterators/Operator overloads (Maybe in some sort of context system?)
 
 
 
 
 Next features:
 --------------
- * Syntax-Guided Editor (Undo-Redo, copy-paste, code-completion, jump to definition, auto-formating, vim-commands)
+ * Syntax-Guided Editor (Undo-Redo, copy-paste, code-completion, jump to definition, auto-formating, vim-commands, animations, code folding)
  * Polymorphism/Generics/Templates (Template rework: No more templated modules, templated types, templated functions)
 
  * Named function parameters/unnamed struct initializer params
  * Bake function pointers
  * Type System remove the fucking type_system pointer from functions
- * Formating with && as double dereference always takes it as and operator
  * Always analyse struct initializer/function parameters, even if the function type is not known (Turning off error reporting during this)
  * Binary Operations should support auto-operations (enum, array, struct-init)
  * Loading files introduces new symbols, which could conflict with the old ones...
@@ -284,6 +329,8 @@ Features that I DON'T need for the first simple game version:
  - Annotations
  - Static Analyser
  - Macros
+
+
 
 Error messages for circular dependencies:
  - When there is no progress, and no running workload can run, we have an error.

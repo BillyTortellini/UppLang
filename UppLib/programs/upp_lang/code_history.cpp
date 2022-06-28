@@ -60,7 +60,7 @@ void code_change_apply(Code_History* history, Code_Change* change, bool forwards
     auto code = history->code;
     auto& lines = code->lines;
     int line_index = change->line_index;
-    assert(line_index >= 0 && line_index < lines.size, "");
+    assert(line_index >= 0 && line_index <= lines.size, "");
 
     switch (change->type)
     {

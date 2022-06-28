@@ -41,7 +41,8 @@ struct Syntax_Editor
     Source_Code code;
     Code_History history;
     Text_Position cursor;
-    History_Timestamp last_synchronized;
+    History_Timestamp last_token_synchronized;
+    History_Timestamp last_hierarchy_synchronized;
 
     bool space_before_cursor;
     bool space_after_cursor;
@@ -150,12 +151,14 @@ void syntax_editor_load_text_file(const char* filename)
 
     source_code_fill_from_string(&editor.code, result);
     source_code_tokenize_all(&editor.code);
+    source_code_reconstruct_blocks(&editor.code);
     editor.cursor.line_index = 0;
     editor.cursor.char_index = 0;
     editor.file_path = filename;
 
     code_history_reset(&editor.history);
-    editor.last_synchronized = history_get_timestamp(&editor.history);
+    editor.last_token_synchronized = history_get_timestamp(&editor.history);
+    editor.last_hierarchy_synchronized = history_get_timestamp(&editor.history);
 }
 
 void syntax_editor_save_text_file()
@@ -180,9 +183,17 @@ void syntax_editor_sanitize_cursor()
     cursor.line_index = math_clamp(cursor.line_index, 0, editor.mode == Editor_Mode::INPUT ? lines.size : math_maximum(0, lines.size - 1));
     auto& line = lines[cursor.line_index];
     cursor.char_index = math_clamp(cursor.char_index, 0, line.text.size);
+
+    auto& text = line.text;
+    if (string_test_char(text, editor.cursor.char_index, ' ')) {
+        editor.space_after_cursor = false;
+    }
+    if (string_test_char(text, editor.cursor.char_index - 1, ' ')) {
+        editor.space_before_cursor = false;
+    }
 }
 
-void syntax_editor_sanitize_line(int line_index)
+bool syntax_editor_sanitize_line(int line_index)
 {
     // Remove all Spaces except space critical ones
     auto& editor = syntax_editor;
@@ -196,13 +207,13 @@ void syntax_editor_sanitize_line(int line_index)
     {
         char curr = text[index];
         char next = index + 1 < text.size ? text[index + 1] : '!'; // Any non-space critical chars will do
-        char prev = index - 1 >= 0 ? text[index-1] : '!'; 
+        char prev = index - 1 >= 0 ? text[index - 1] : '!';
         if (prev == '/' && curr == '/') break; // Skip comments
         // Skip strings
-        if (curr == '"') 
+        if (curr == '"')
         {
             index += 1;
-            while (index < text.size) 
+            while (index < text.size)
             {
                 curr = text[index];
                 if (curr == '\\') {
@@ -241,9 +252,7 @@ void syntax_editor_sanitize_line(int line_index)
             editor.space_before_cursor = false;
         }
     }
-    if (changed) {
-        lexer_tokenize_text(line.text, &line.tokens);
-    }
+    return changed;
 }
 
 void syntax_editor_synchronize_tokens()
@@ -256,19 +265,20 @@ void syntax_editor_synchronize_tokens()
     // Find out which lines were changed
     Dynamic_Array<int> line_changes = dynamic_array_create_empty<int>(1);
     auto now = history_get_timestamp(&editor.history);
-    history_get_changes_between(&editor.history, editor.last_synchronized, now, &changes);
-    for (int i = 0; i < changes.size; i++) 
+    history_get_changes_between(&editor.history, editor.last_token_synchronized, now, &changes);
+    editor.last_token_synchronized = now;
+    for (int i = 0; i < changes.size; i++)
     {
         auto& change = changes[i];
         switch (change.type)
         {
         case Code_Change_Type::INDENTATION_CHANGE: break;
-        case Code_Change_Type::LINE_INSERT: 
+        case Code_Change_Type::LINE_INSERT:
         {
-            if (change.reverse_effect) 
+            if (change.reverse_effect)
             {
                 // Line deletion
-                for (int j = 0; j < line_changes.size; j++) 
+                for (int j = 0; j < line_changes.size; j++)
                 {
                     if (line_changes[j] > change.line_index) {
                         line_changes[j] -= 1;
@@ -305,20 +315,164 @@ void syntax_editor_synchronize_tokens()
         default: panic("");
         }
     }
-    editor.last_synchronized = now;
 
     // Update changed lines
     for (int i = 0; i < line_changes.size; i++)
     {
         auto index = line_changes[i];
         auto& line = lines[index];
-        syntax_editor_sanitize_line(index);
+        bool changed = syntax_editor_sanitize_line(index);
+        assert(!changed, "Syntax editor has to make sure that lines are sanitized after edits!");
         lexer_tokenize_text(line.text, &line.tokens);
         logg("Synchronized: %d\n", index);
     }
 }
 
 
+
+
+enum class Hierarchy_Change_Type
+{
+    BLOCK_CREATED,
+    BLOCK_REMOVED,
+
+    // Indentation changes
+    BLOCKS_MERGED,
+    SPLIT_BLOCK,
+
+    LINE_INSERT,
+    LINE_REMOVE,
+
+    LINE_TEXT_CHANGED,
+};
+
+struct Hierarchy_Change
+{
+
+};
+
+struct Line_Index
+{
+    int block_index;
+    int line_index;
+};
+
+struct Token_Index {
+    Line_Index line;
+    int token_index;
+};
+
+Line_Index hierarchy_line_no_to_index(Source_Code* source, int line_index)
+{
+    int block_index = 0;
+    int block_line_start = 0;
+    bool in_child_block = true;
+    // Search if line is contained inside child-blocks
+    while (in_child_block)
+    {
+        auto& block = source->blocks[block_index];
+        in_child_block = false;
+        for (int i = 0; i < block.child_blocks.size; i++) 
+        {
+            auto& child_block = source->blocks[block.child_blocks[i]];
+            int line_start = block_line_start + child_block.line_offset;
+            int line_end = line_start + child_block.block_size;
+            if (line_index >= line_start && line_index < line_end) 
+            {
+                block_index = block.child_blocks[i];
+                in_child_block = true;
+                block_line_start = line_start;
+                break;
+            }
+        }
+    }
+
+    {
+        Line_Index result;
+        result.block_index = block_index;
+        // Get line number by subtracting previous blocks
+        auto& block = source->blocks[block_index];
+        for (int i = 0; i < block.child_blocks.size; i++) {
+            auto& child_block = source->blocks[block.child_blocks[i]];
+        }
+    }
+
+
+
+
+}
+
+
+void hierarchy_add_indent(Source_Code* source, int line_index)
+{
+    /*
+    Walkthrough:
+     1. Remove from current indentation ->
+            Either Remove line(Start/end) or split block + remove line
+     2. Insert into new block (If add indent this may mean adding a new block, if remove indent this may mean deleting a new block)
+            Either insert line (start/end) or merge blocks
+    */
+}
+
+void hierarchy_change_indent(Source_Code* source, int line_index, bool add_indentation)
+{
+}
+
+
+
+
+void syntax_editor_synchronize_hierarchy()
+{
+    auto& editor = syntax_editor;
+    auto& lines = editor.code.lines;
+    Dynamic_Array<Code_Change> changes = dynamic_array_create_empty<Code_Change>(1);
+    SCOPE_EXIT(dynamic_array_destroy(&changes));
+
+    // Find out which lines were changed
+    auto now = history_get_timestamp(&editor.history);
+    history_get_changes_between(&editor.history, editor.last_hierarchy_synchronized, now, &changes);
+    editor.last_hierarchy_synchronized = now;
+    for (int i = 0; i < changes.size; i++)
+    {
+        auto& change = changes[i];
+        int line_index = change.line_index;
+        switch (change.type)
+        {
+        case Code_Change_Type::INDENTATION_CHANGE: 
+        {
+            int start_indent = change.reverse_effect ? change.options.indentation_change.old_indentation : change.options.indentation_change.new_indentation;
+            int end_indent = !change.reverse_effect ? change.options.indentation_change.old_indentation : change.options.indentation_change.new_indentation;
+            while (start_indent != end_indent) {
+                if (start_indent > end_indent) {
+                    hierarchy_change_indent(&editor.code, line_index, false);
+                    start_indent -= 1;
+                }
+                else {
+                    hierarchy_change_indent(&editor.code, line_index, true);
+                    start_indent += 1;
+                }
+            }
+            break;
+        }
+        case Code_Change_Type::LINE_INSERT:
+        {
+            if (change.reverse_effect)
+            {
+                // Line deletion
+            }
+            else {
+                // Line insertion
+            }
+            break;
+        }
+        case Code_Change_Type::TEXT_INSERT: {
+            break;
+        }
+        default: panic("");
+        }
+    }
+
+}
 
 // Commands
 void editor_enter_input_mode()
@@ -344,7 +498,6 @@ void normal_mode_handle_command(Normal_Command command)
     SCOPE_EXIT(syntax_editor_sanitize_cursor());
 
     editor.space_before_cursor = false;
-    bool text_changed = false;
     switch (command)
     {
     case Normal_Command::INSERT_AFTER: {
@@ -392,52 +545,37 @@ void normal_mode_handle_command(Normal_Command command)
         break;
     }
     case Normal_Command::DELETE_TOKEN:
+    case Normal_Command::CHANGE_TOKEN:
     {
         syntax_editor_synchronize_tokens();
         if (tokens.size == 0) {
+            if (command == Normal_Command::CHANGE_TOKEN) {
+                editor_enter_input_mode();
+            }
             break;
         }
+
         auto index = get_cursor_token_index();
-        auto token = get_cursor_token();
+        int delete_start = index > 0 ? tokens[index - 1].end_index : 0;
+        int delete_end = index + 1 < tokens.size ? tokens[index + 1].start_index : line.text.size;
         bool insert_space = false;
         if (index > 0 && index + 1 < tokens.size) {
-            insert_space = char_is_space_critical(line.text[tokens[index - 1].end_index-1]) && 
+            insert_space = char_is_space_critical(line.text[tokens[index - 1].end_index - 1]) &&
                 char_is_space_critical(line.text[tokens[index + 1].start_index]);
         }
 
         history_start_complex_command(&syntax_editor.history);
         SCOPE_EXIT(history_stop_complex_command(&syntax_editor.history));
 
-        cursor.char_index = token.start_index;
-        history_delete_text(&editor.history, cursor.line_index, token.start_index, token.end_index);
+        cursor.char_index = delete_start;
+        history_delete_text(&editor.history, cursor.line_index, delete_start, delete_end);
         if (insert_space) {
-            history_insert_char(&editor.history, cursor.line_index, cursor.char_index, ' ');
-        }
-        if (cursor.char_index != 0) {
+            history_insert_char(&editor.history, cursor.line_index, delete_start, ' ');
             cursor.char_index += 1;
         }
-        text_changed = true;
-        break;
-    }
-    case Normal_Command::CHANGE_TOKEN:
-    {
-        syntax_editor_synchronize_tokens();
-        /*
-        auto index = get_cursor_token_index();
-        if (tokens.size == 0) {
-            mode = Editor_Mode::INPUT;
-            break;
+        if (command == Normal_Command::CHANGE_TOKEN) {
+            editor_enter_input_mode();
         }
-        dynamic_array_remove_ordered(&tokens, index);
-        if (index > 0) {
-            cursor.char_index = tokens[index - 1].end_index;
-        }
-        else {
-            cursor.char_index = 0;
-        }
-        text_changed = true;
-        editor_enter_input_mode();
-        */
         break;
     }
     case Normal_Command::MOVE_LINE_START: {
@@ -487,13 +625,14 @@ void split_line_at_cursor(int indentation_offset)
     auto& line = syntax_editor.code.lines[cursor.line_index];
     auto& text = line.text;
     int cutof_index = text.size; // Text may be invalid after applying history changes
+    String cutout = string_create_substring_static(&text, pos, text.size);
 
     history_start_complex_command(&syntax_editor.history);
     SCOPE_EXIT(history_stop_complex_command(&syntax_editor.history));
 
     history_insert_line(&syntax_editor.history, cursor.line_index + 1, line.indentation + indentation_offset);
     if (pos != cutof_index) {
-        history_insert_text(&syntax_editor.history, cursor.line_index + 1, 0, string_create_substring_static(&text, pos, text.size));
+        history_insert_text(&syntax_editor.history, cursor.line_index + 1, 0, cutout);
         history_delete_text(&syntax_editor.history, cursor.line_index, pos, cutof_index);
     }
     syntax_editor_sanitize_line(cursor.line_index);
@@ -617,16 +756,17 @@ void insert_mode_handle_command(Input_Command input)
             }
         }
 
-        bool skip_move = string_test_char(text, pos - 1, ' ');
         if (skip_auto_input) {
-            pos += skip_move ? 0 : 1;
+            pos += 1;
             break;
         }
         if (insert_double_after) {
             history_insert_char(&syntax_editor.history, cursor.line_index, pos, double_char);
         }
         history_insert_char(&syntax_editor.history, cursor.line_index, pos, input.letter);
-        pos += skip_move ? 0 : 1;
+        pos += 1;
+        // Inserting delimiters between space critical tokens can lead to spaces beeing removed
+        syntax_editor_sanitize_line(cursor.line_index);
         break;
     }
     case Input_Command_Type::SPACE:
@@ -642,7 +782,7 @@ void insert_mode_handle_command(Input_Command input)
             break;
         }
         if (token.type == Token_Type::LITERAL && token.options.literal_value.type == Literal_Type::STRING) {
-            if (pos > token.start_index && pos <= token.end_index) {
+            if (pos > token.start_index && pos < token.end_index) {
                 history_insert_char(&syntax_editor.history, cursor.line_index, pos, ' ');
                 pos += 1;
             }
@@ -681,12 +821,13 @@ void insert_mode_handle_command(Input_Command input)
                 break;
             }
             // Merge this line with previous one
-            auto& prev_text = syntax_editor.code.lines[cursor.line_index - 1].text;
+            auto prev_text = syntax_editor.code.lines[cursor.line_index - 1].text;
             int new_char = prev_text.size;
             history_insert_text(&syntax_editor.history, cursor.line_index - 1, new_char, text);
             history_remove_line(&syntax_editor.history, cursor.line_index);
             cursor.line_index -= 1;
             cursor.char_index = new_char;
+            syntax_editor_sanitize_line(cursor.line_index);
             break;
         }
 
@@ -921,7 +1062,8 @@ void syntax_editor_initialize(Rendering_Core* rendering_core, Text_Renderer* tex
 
     syntax_editor.code = source_code_create();
     syntax_editor.history = code_history_create(&syntax_editor.code);
-    syntax_editor.last_synchronized = history_get_timestamp(&syntax_editor.history);
+    syntax_editor.last_token_synchronized = history_get_timestamp(&syntax_editor.history);
+    syntax_editor.last_hierarchy_synchronized = history_get_timestamp(&syntax_editor.history);
 
     syntax_editor.text_renderer = text_renderer;
     syntax_editor.rendering_core = rendering_core;
@@ -1316,6 +1458,19 @@ void syntax_editor_render_block_outline(int line_start, int line_end, int indent
     renderer_2D_add_line(syntax_editor.renderer_2D, end, l_end, vec3(0.4f), 3, 0.0f);
 }
 
+void syntax_editor_draw_block_outlines(int block_index, int parent_start_line)
+{
+    auto& blocks = syntax_editor.code.blocks;
+    auto& block = blocks[block_index];
+    int line_start = parent_start_line + block.line_offset;
+    int line_end = line_start + block.line_count;
+    syntax_editor_render_block_outline(line_start, line_end, block.indentation);
+    for (int i = 0; i < block.child_blocks.size; i++) {
+        int child_index = block.child_blocks[i];
+        syntax_editor_draw_block_outlines(child_index, line_start);
+    }
+}
+
 void syntax_editor_find_and_draw_block_outlines(int line_index, int indentation)
 {
     auto& lines = syntax_editor.code.lines;
@@ -1353,8 +1508,9 @@ void syntax_editor_render()
         {
             auto& token = line.tokens[j];
             bool on_token = cursor.line_index == i && get_cursor_token_index() == j;
-            if (on_token && syntax_editor.space_after_cursor && token.start_index == cursor.char_index) {
-                pos += 1;
+            if (on_token && token.start_index == cursor.char_index) {
+                pos += editor.space_after_cursor ? 1 : 0;
+                pos += editor.space_before_cursor ? 1 : 0;
             }
 
             Render_Info info;
@@ -1402,7 +1558,10 @@ void syntax_editor_render()
     // Draw Cursor
     {
         auto& line = syntax_editor.code.lines[cursor.line_index];
+        auto& text = line.text;
+        auto& pos = cursor.char_index;
         auto token_index = get_cursor_token_index();
+
         Render_Info info;
         if (token_index < line.infos.size) {
             info = line.infos[token_index];
@@ -1426,8 +1585,21 @@ void syntax_editor_render()
         }
         else
         {
+            // Adjust token index if we are inbetween tokens
+            if (pos > 0 && pos < text.size)
+            {
+                Token* token = &line.tokens[token_index];
+                if (pos == token->start_index && token_index > 0) {
+                    if (char_is_space_critical(text[pos - 1]) && !char_is_space_critical(text[pos])) {
+                        token_index -= 1;
+                        info = line.infos[token_index];
+                    }
+                }
+            }
+
             int cursor_pos = line.indentation * 4;
-            if (line.tokens.size != 0) {
+            if (line.tokens.size != 0)
+            {
                 auto tok_start = line.tokens[token_index].start_index;
                 int cursor_offset = cursor.char_index - tok_start;
                 cursor_pos = info.pos + cursor_offset;
@@ -1444,7 +1616,9 @@ void syntax_editor_render()
     }
 
     // Render Block outlines
-    syntax_editor_find_and_draw_block_outlines(0, 0);
+    source_code_reconstruct_blocks(&editor.code);
+    syntax_editor_draw_block_outlines(0, 0);
+    //syntax_editor_find_and_draw_block_outlines(0, 0);
 
     // Draw Text-Representation @ the bottom of the screen 
     if (true)
