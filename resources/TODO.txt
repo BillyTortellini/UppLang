@@ -261,11 +261,6 @@ Program will become quite hard.
   * We can store information per block, because it is a consistent structure
 
 
-TODO: Switch to hierarchical Version:
- - Rewrite Source Code
- - Change History, add more changes
- - Have a Buffer for free blocks
-
 Required Features before I can use the Langauge:
  * Incremental Compilation
  * Templates
@@ -275,6 +270,10 @@ Required Features before I can use the Langauge:
  * Iterators/Operator overloads (Maybe in some sort of context system?)
 
 
+TODO: Switch to hierarchical Version:
+    Removing line from root block when adding a block?
+    Blocks with no lines?
+    Do sanity check after changes
 
 
 Next features:

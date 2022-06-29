@@ -398,7 +398,7 @@ void compiler_add_source_code(Source_Code* source_code, Code_Origin origin, Stri
     if (do_lexing)
     {
         compiler_switch_timing_task(Timing_Task::LEXING);
-        source_code_tokenize_all(source_code);
+        source_code_tokenize_block(block_index_make_root(source_code), true);
         code_source->token_code = token_code_create_from_source(source_code);
 
         if (output_identifiers) {

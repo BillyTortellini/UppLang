@@ -169,6 +169,7 @@ int token_gen_generate_block(Token_Gen* generator, int indentation, int parent_l
 
 void token_gen_generate_line(Token_Gen* generator, int parent_block, int indentation)
 {
+    /*
     auto& lines = generator->source->lines;
     auto& line = lines[generator->index];
     int line_index = dynamic_array_push_back_dummy(&generator->result->blocks[parent_block].lines);
@@ -201,10 +202,12 @@ void token_gen_generate_line(Token_Gen* generator, int parent_block, int indenta
             token_line.follow_block = optional_make_success(token_gen_generate_block(generator, indentation + 1, line_index, parent_block));
         }
     }
+    */
 }
 
 int token_gen_generate_block(Token_Gen* generator, int indentation, int parent_line, int parent_block)
 {
+    /*
     Token_Block block;
     block.lines = dynamic_array_create_empty<Token_Line>(1);
     block.parent_block = parent_block;
@@ -223,6 +226,8 @@ int token_gen_generate_block(Token_Gen* generator, int indentation, int parent_l
         token_gen_generate_line(generator, block_index, indentation);
     }
     return block_index;
+    */
+    return -1;
 }
 
 Token_Code token_code_create_from_source(Source_Code* source_code)

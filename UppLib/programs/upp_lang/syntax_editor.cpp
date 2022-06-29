@@ -20,13 +20,6 @@
 #include "code_history.hpp"
 #include "lexer.hpp"
 
-// Text
-struct Text_Position
-{
-    int line_index;
-    int char_index;
-};
-
 // Editor
 enum class Editor_Mode
 {
@@ -38,9 +31,9 @@ struct Syntax_Editor
 {
     // Editing
     Editor_Mode mode;
-    Source_Code code;
+    Source_Code* code;
     Code_History history;
-    Text_Position cursor;
+    Text_Index cursor;
     History_Timestamp last_token_synchronized;
     History_Timestamp last_hierarchy_synchronized;
 
@@ -117,22 +110,16 @@ Token token_make_dummy() {
 
 int get_cursor_token_index() {
     auto& c = syntax_editor.cursor;
-    auto& line = syntax_editor.code.lines[syntax_editor.cursor.line_index];
-    return character_index_to_token(&line.tokens, syntax_editor.cursor.char_index);
+    return character_index_to_token(&index_value(c.line)->tokens, c.pos);
 }
 
 Token get_cursor_token()
 {
-    auto& line = syntax_editor.code.lines[syntax_editor.cursor.line_index];
-    int tok_index = get_cursor_token_index();
-    if (tok_index >= line.tokens.size) return token_make_dummy();
-    return line.tokens[tok_index];
-}
-
-Array<Token> get_tokens() {
     auto& c = syntax_editor.cursor;
-    auto& line = syntax_editor.code.lines[syntax_editor.cursor.line_index];
-    return dynamic_array_as_array(&line.tokens);
+    int tok_index = get_cursor_token_index();
+    auto& tokens = index_value(c.line)->tokens;
+    if (tok_index >= tokens.size) return token_make_dummy();
+    return tokens[tok_index];
 }
 
 void syntax_editor_load_text_file(const char* filename)
@@ -149,11 +136,9 @@ void syntax_editor_load_text_file(const char* filename)
         result = string_create_static("main :: (x : int) -> void \n{\n\n}");
     }
 
-    source_code_fill_from_string(&editor.code, result);
-    source_code_tokenize_all(&editor.code);
-    source_code_reconstruct_blocks(&editor.code);
-    editor.cursor.line_index = 0;
-    editor.cursor.char_index = 0;
+    source_code_fill_from_string(editor.code, result);
+    source_code_tokenize_block(block_index_make_root(editor.code), true);
+    editor.cursor = text_index_make(block_get_start_line(block_index_make_root(editor.code)), 0);
     editor.file_path = filename;
 
     code_history_reset(&editor.history);
@@ -165,7 +150,7 @@ void syntax_editor_save_text_file()
 {
     String whole_text = string_create_empty(256);
     SCOPE_EXIT(string_destroy(&whole_text));
-    source_code_append_to_string(&syntax_editor.code, &whole_text);
+    source_code_append_to_string(syntax_editor.code, &whole_text);
     auto success = file_io_write_file(syntax_editor.file_path, array_create_static((byte*)whole_text.characters, whole_text.size));
     if (!success) {
         logg("Saving file failed for path \"%s\"\n", syntax_editor.file_path);
@@ -178,28 +163,26 @@ void syntax_editor_save_text_file()
 void syntax_editor_sanitize_cursor()
 {
     auto& editor = syntax_editor;
-    auto& lines = editor.code.lines;
     auto& cursor = editor.cursor;
-    cursor.line_index = math_clamp(cursor.line_index, 0, editor.mode == Editor_Mode::INPUT ? lines.size : math_maximum(0, lines.size - 1));
-    auto& line = lines[cursor.line_index];
-    cursor.char_index = math_clamp(cursor.char_index, 0, line.text.size);
+    index_sanitize(&cursor.line);
+    auto& text = index_value(cursor.line)->text;
+    cursor.pos = math_clamp(cursor.pos, 0, editor.mode == Editor_Mode::INPUT ? text.size : math_maximum(0, text.size - 1));
 
-    auto& text = line.text;
-    if (string_test_char(text, editor.cursor.char_index, ' ')) {
+    if (string_test_char(text, cursor.pos, ' ')) {
         editor.space_after_cursor = false;
     }
-    if (string_test_char(text, editor.cursor.char_index - 1, ' ')) {
+    if (string_test_char(text, cursor.pos - 1, ' ')) {
         editor.space_before_cursor = false;
     }
 }
 
-bool syntax_editor_sanitize_line(int line_index)
+bool syntax_editor_sanitize_line(Line_Index line_index)
 {
     // Remove all Spaces except space critical ones
     auto& editor = syntax_editor;
-    auto& line = editor.code.lines[line_index];
-    auto& text = line.text;
-    auto pos = editor.cursor.char_index;
+    auto line = index_value(line_index);
+    auto& text = line->text;
+    auto pos = editor.cursor.pos;
 
     bool changed = false;
     int index = 0;
@@ -232,7 +215,7 @@ bool syntax_editor_sanitize_line(int line_index)
         }
 
         if (curr == ' ' && !(char_is_space_critical(prev) && char_is_space_critical(next))) {
-            history_delete_char(&editor.history, line_index, index);
+            history_delete_char(&editor.history, text_index_make(editor.cursor.line, index));
             changed = true;
             if (pos > index) {
                 pos -= 1;
@@ -243,14 +226,10 @@ bool syntax_editor_sanitize_line(int line_index)
         }
     }
 
-    if (editor.cursor.line_index == line_index) {
-        editor.cursor.char_index = pos;
-        if (string_test_char(text, editor.cursor.char_index, ' ')) {
-            editor.space_after_cursor = false;
-        }
-        if (string_test_char(text, editor.cursor.char_index - 1, ' ')) {
-            editor.space_before_cursor = false;
-        }
+    if (index_equals(editor.cursor.line, line_index)) 
+    {
+        editor.cursor.pos = pos;
+        syntax_editor_sanitize_cursor();
     }
     return changed;
 }
@@ -258,57 +237,97 @@ bool syntax_editor_sanitize_line(int line_index)
 void syntax_editor_synchronize_tokens()
 {
     auto& editor = syntax_editor;
-    auto& lines = editor.code.lines;
+    // Get changes since last sync
     Dynamic_Array<Code_Change> changes = dynamic_array_create_empty<Code_Change>(1);
     SCOPE_EXIT(dynamic_array_destroy(&changes));
-
-    // Find out which lines were changed
-    Dynamic_Array<int> line_changes = dynamic_array_create_empty<int>(1);
     auto now = history_get_timestamp(&editor.history);
     history_get_changes_between(&editor.history, editor.last_token_synchronized, now, &changes);
     editor.last_token_synchronized = now;
+
+    // Find out which lines were changed
+    auto line_changes = dynamic_array_create_empty<Line_Index>(1);
+    SCOPE_EXIT(dynamic_array_destroy(&line_changes));
     for (int i = 0; i < changes.size; i++)
     {
         auto& change = changes[i];
         switch (change.type)
         {
-        case Code_Change_Type::ADD_INDENTATION: break;
-        case Code_Change_Type::LINE_INSERT:
+        case Code_Change_Type::BLOCK_CREATE: 
         {
-            if (change.reverse_effect)
-            {
-                // Line deletion
-                for (int j = 0; j < line_changes.size; j++)
-                {
-                    if (line_changes[j] > change.line_index) {
-                        line_changes[j] -= 1;
-                    }
-                    if (line_changes[j] == change.line_index) {
-                        dynamic_array_swap_remove(&line_changes, j);
-                        j -= 1;
-                    }
+            if (!change.reverse_effect) break;
+            for (int j = 0; j < line_changes.size; j++) {
+                auto& line = line_changes[j];
+                if (index_equals(line.block, change.options.block_create.new_block_index)) {
+                    dynamic_array_swap_remove(&line_changes, j);
+                    j -= 1;
                 }
             }
-            else {
-                // Line insertion
-                for (int j = 0; j < line_changes.size; j++)
-                {
-                    if (line_changes[j] >= change.line_index) {
-                        line_changes[j] += 1;
+            break;
+        }
+        case Code_Change_Type::BLOCK_INDEX_CHANGED: break;
+        case Code_Change_Type::BLOCK_MERGE:
+        {
+            auto& merge = change.options.block_merge;
+            for (int j = 0; j < line_changes.size; j++)
+            {
+                auto& line = line_changes[j];
+                if (change.reverse_effect) { // Split
+                    if (index_equals(merge.index, line.block) && line.line >= merge.split_index) {
+                        line = line_index_make(merge.merge_other, line.line - merge.split_index);
+                    }
+                }
+                else { // Merge
+                    if (index_equals(merge.merge_other, line.block)) {
+                        int new_index = line.line;
+                        if (new_index > merge.split_index) {
+                            new_index -= merge.split_index;
+                        }
+                        line = line_index_make(merge.index, new_index);
                     }
                 }
             }
             break;
         }
-        case Code_Change_Type::TEXT_INSERT: {
+        case Code_Change_Type::LINE_INSERT:
+        {
+            // Update line indices in corresponding blocks
+            auto& insert = change.options.line_insert;
+            for (int j = 0; j < line_changes.size; j++)
+            {
+                auto& line = line_changes[j];
+                if (!index_equals(line.block, insert.block)) continue;
+                if (change.reverse_effect)
+                {
+                    // Line deletion
+                    if (line.line > insert.line) {
+                        line.line -= 1;
+                    }
+                    else if (line.line == insert.line) {
+                        dynamic_array_swap_remove(&line_changes, j);
+                        j -= 1;
+                    }
+                }
+                else
+                {
+                    // Line insertion
+                    if (line.line >= insert.line) {
+                        line.line += 1;
+                    }
+                }
+            }
+            break;
+        }
+        case Code_Change_Type::TEXT_INSERT: 
+        {
+            auto& changed_line = change.options.text_insert.index.line;
             bool found = false;
             for (int j = 0; j < line_changes.size; j++) {
-                if (line_changes[j] == change.line_index) {
+                if (index_equals(line_changes[j], changed_line)) {
                     found = true;
                 }
             }
             if (!found) {
-                dynamic_array_push_back(&line_changes, change.line_index);
+                dynamic_array_push_back(&line_changes, changed_line);
             }
             break;
         }
@@ -319,160 +338,18 @@ void syntax_editor_synchronize_tokens()
     // Update changed lines
     for (int i = 0; i < line_changes.size; i++)
     {
-        auto index = line_changes[i];
-        auto& line = lines[index];
+        auto& index = line_changes[i];
         bool changed = syntax_editor_sanitize_line(index);
         assert(!changed, "Syntax editor has to make sure that lines are sanitized after edits!");
-        lexer_tokenize_text(line.text, &line.tokens);
-        logg("Synchronized: %d\n", index);
+
+        auto line = index_value(line_changes[i]);
+        lexer_tokenize_text(line->text, &line->tokens);
+        logg("Synchronized: %d/%d\n", index.block.block, index.line);
     }
 }
 
 
 
-
-enum class Hierarchy_Change_Type
-{
-    BLOCK_CREATED,
-    BLOCK_REMOVED,
-
-    // Indentation changes
-    BLOCKS_MERGED,
-    SPLIT_BLOCK,
-
-    LINE_INSERT,
-    LINE_REMOVE,
-
-    LINE_TEXT_CHANGED,
-};
-
-struct Hierarchy_Change
-{
-
-};
-
-struct Line_Index
-{
-    int block_index;
-    int line_index;
-};
-
-struct Token_Index {
-    Line_Index line;
-    int token_index;
-};
-
-Line_Index hierarchy_line_no_to_index(Source_Code* source, int line_index)
-{
-    int block_index = 0;
-    int block_line_start = 0;
-    bool in_child_block = true;
-    // Search if line is contained inside child-blocks
-    while (in_child_block)
-    {
-        auto& block = source->blocks[block_index];
-        in_child_block = false;
-        for (int i = 0; i < block.child_blocks.size; i++) 
-        {
-            auto& child_block = source->blocks[block.child_blocks[i]];
-            int line_start = block_line_start + child_block.line_offset;
-            int line_end = line_start + child_block.block_size;
-            if (line_index >= line_start && line_index < line_end) 
-            {
-                block_index = block.child_blocks[i];
-                in_child_block = true;
-                block_line_start = line_start;
-                break;
-            }
-        }
-    }
-
-    {
-        Line_Index result;
-        result.block_index = block_index;
-        // Get line number by subtracting previous blocks
-        auto& block = source->blocks[block_index];
-        for (int i = 0; i < block.child_blocks.size; i++) {
-            auto& child_block = source->blocks[block.child_blocks[i]];
-        }
-    }
-
-
-
-
-}
-
-
-void hierarchy_add_indent(Source_Code* source, int line_index)
-{
-    /*
-    Walkthrough:
-     1. Remove from current indentation ->
-            Either Remove line(Start/end) or split block + remove line
-     2. Insert into new block (If add indent this may mean adding a new block, if remove indent this may mean deleting a new block)
-            Either insert line (start/end) or merge blocks
-    */
-}
-
-void hierarchy_change_indent(Source_Code* source, int line_index, bool add_indentation)
-{
-}
-
-
-
-
-void syntax_editor_synchronize_hierarchy()
-{
-    auto& editor = syntax_editor;
-    auto& lines = editor.code.lines;
-    Dynamic_Array<Code_Change> changes = dynamic_array_create_empty<Code_Change>(1);
-    SCOPE_EXIT(dynamic_array_destroy(&changes));
-
-    // Find out which lines were changed
-    auto now = history_get_timestamp(&editor.history);
-    history_get_changes_between(&editor.history, editor.last_hierarchy_synchronized, now, &changes);
-    editor.last_hierarchy_synchronized = now;
-    for (int i = 0; i < changes.size; i++)
-    {
-        auto& change = changes[i];
-        int line_index = change.line_index;
-        switch (change.type)
-        {
-        case Code_Change_Type::ADD_INDENTATION: 
-        {
-            int start_indent = change.reverse_effect ? change.options.indentation_change.old_indentation : change.options.indentation_change.new_indentation;
-            int end_indent = !change.reverse_effect ? change.options.indentation_change.old_indentation : change.options.indentation_change.new_indentation;
-            while (start_indent != end_indent) {
-                if (start_indent > end_indent) {
-                    hierarchy_change_indent(&editor.code, line_index, false);
-                    start_indent -= 1;
-                }
-                else {
-                    hierarchy_change_indent(&editor.code, line_index, true);
-                    start_indent += 1;
-                }
-            }
-            break;
-        }
-        case Code_Change_Type::LINE_INSERT:
-        {
-            if (change.reverse_effect)
-            {
-                // Line deletion
-            }
-            else {
-                // Line insertion
-            }
-            break;
-        }
-        case Code_Change_Type::TEXT_INSERT: {
-            break;
-        }
-        default: panic("");
-        }
-    }
-
-}
 
 // Commands
 void editor_enter_input_mode()
@@ -491,10 +368,10 @@ void normal_mode_handle_command(Normal_Command command)
 {
     auto& editor = syntax_editor;
     auto& cursor = editor.cursor;
-    auto& mode = editor.mode;
-    auto& line = editor.code.lines[cursor.line_index];
-    auto& tokens = line.tokens;
+    auto line = index_value(cursor.line);
+    auto& tokens = line->tokens;
 
+    SCOPE_EXIT(history_set_cursor_pos(&editor.history, editor.cursor));
     SCOPE_EXIT(syntax_editor_sanitize_cursor());
 
     editor.space_before_cursor = false;
@@ -503,45 +380,53 @@ void normal_mode_handle_command(Normal_Command command)
     case Normal_Command::INSERT_AFTER: {
         syntax_editor_synchronize_tokens();
         editor_enter_input_mode();
-        cursor.char_index = get_cursor_token().end_index;
+        cursor.pos = get_cursor_token().end_index;
         break;
     }
     case Normal_Command::INSERT_BEFORE: {
         syntax_editor_synchronize_tokens();
         editor_enter_input_mode();
-        cursor.char_index = get_cursor_token().start_index;
+        cursor.pos = get_cursor_token().start_index;
         break;
     }
     case Normal_Command::MOVE_LEFT: {
         syntax_editor_synchronize_tokens();
         auto index = get_cursor_token_index() - 1;
         if (index < 0) break;
-        cursor.char_index = tokens[index].start_index;
+        cursor.pos = tokens[index].start_index;
         break;
     }
     case Normal_Command::MOVE_RIGHT: {
         syntax_editor_synchronize_tokens();
         auto index = get_cursor_token_index() + 1;
         if (index >= tokens.size) break;
-        cursor.char_index = tokens[index].start_index;
+        cursor.pos = tokens[index].start_index;
         break;
     }
     case Normal_Command::INSERT_AT_LINE_END: {
-        cursor.char_index = line.text.size;
+        cursor.pos = line->text.size;
         editor_enter_input_mode();
         break;
     }
     case Normal_Command::INSERT_AT_LINE_START: {
-        cursor.char_index = 0;
+        cursor.pos = 0;
         editor_enter_input_mode();
         break;
     }
     case Normal_Command::UNDO: {
         history_undo(&editor.history);
+        auto cursor_history = history_get_cursor_pos(&editor.history);
+        if (cursor_history.available) {
+            cursor = cursor_history.value;
+        }
         break;
     }
     case Normal_Command::REDO: {
         history_redo(&editor.history);
+        auto cursor_history = history_get_cursor_pos(&editor.history);
+        if (cursor_history.available) {
+            cursor = cursor_history.value;
+        }
         break;
     }
     case Normal_Command::DELETE_TOKEN:
@@ -557,21 +442,21 @@ void normal_mode_handle_command(Normal_Command command)
 
         auto index = get_cursor_token_index();
         int delete_start = index > 0 ? tokens[index - 1].end_index : 0;
-        int delete_end = index + 1 < tokens.size ? tokens[index + 1].start_index : line.text.size;
+        int delete_end = index + 1 < tokens.size ? tokens[index + 1].start_index : line->text.size;
         bool insert_space = false;
         if (index > 0 && index + 1 < tokens.size) {
-            insert_space = char_is_space_critical(line.text[tokens[index - 1].end_index - 1]) &&
-                char_is_space_critical(line.text[tokens[index + 1].start_index]);
+            insert_space = char_is_space_critical(line->text[tokens[index - 1].end_index - 1]) &&
+                char_is_space_critical(line->text[tokens[index + 1].start_index]);
         }
 
         history_start_complex_command(&syntax_editor.history);
         SCOPE_EXIT(history_stop_complex_command(&syntax_editor.history));
 
-        cursor.char_index = delete_start;
-        history_delete_text(&editor.history, cursor.line_index, delete_start, delete_end);
+        cursor.pos = delete_start;
+        history_delete_text(&editor.history, text_index_make(cursor.line, delete_start), delete_end);
         if (insert_space) {
-            history_insert_char(&editor.history, cursor.line_index, delete_start, ' ');
-            cursor.char_index += 1;
+            history_insert_char(&editor.history, text_index_make(cursor.line, delete_start), ' ');
+            cursor.pos += 1;
         }
         if (command == Normal_Command::CHANGE_TOKEN) {
             editor_enter_input_mode();
@@ -579,38 +464,29 @@ void normal_mode_handle_command(Normal_Command command)
         break;
     }
     case Normal_Command::MOVE_LINE_START: {
-        cursor.char_index = 0;
+        cursor.pos = 0;
         break;
     }
     case Normal_Command::MOVE_LINE_END: {
-        cursor.char_index = line.text.size;
+        cursor.pos = line->text.size;
         break;
     }
     case Normal_Command::ADD_LINE_ABOVE:
     case Normal_Command::ADD_LINE_BELOW: {
         bool below = command == Normal_Command::ADD_LINE_BELOW;
-        int new_indent = line.indentation;
-        if (below) {
-            if (cursor.line_index + 1 < editor.code.lines.size) {
-                new_indent = editor.code.lines[cursor.line_index + 1].indentation;
-            }
-        }
-
-        history_insert_line(&editor.history, cursor.line_index + (below ? 1 : 0), new_indent);
-        cursor.char_index = 0;
-        if (below) {
-            cursor.line_index += 1;
-        }
+        auto new_line = line_index_make(cursor.line.block, below ? cursor.line.line + 1 : cursor.line.line);
+        history_insert_line(&editor.history, new_line);
+        cursor = text_index_make(new_line, 0);
         editor_enter_input_mode();
         break;
     }
     case Normal_Command::MOVE_UP: {
         // FUTURE: Use token render positions to move up/down
-        cursor.line_index -= 1;
+        cursor.line = line_index_prev(cursor.line);
         break;
     }
     case Normal_Command::MOVE_DOWN: {
-        cursor.line_index += 1;
+        cursor.line = line_index_next(cursor.line);
         break;
     }
     default: panic("");
@@ -621,33 +497,42 @@ void split_line_at_cursor(int indentation_offset)
 {
     auto& mode = syntax_editor.mode;
     auto& cursor = syntax_editor.cursor;
-    auto& pos = cursor.char_index;
-    auto& line = syntax_editor.code.lines[cursor.line_index];
-    auto& text = line.text;
+    auto line = index_value(cursor.line);
+    auto& text = line->text;
     int cutof_index = text.size; // Text may be invalid after applying history changes
-    String cutout = string_create_substring_static(&text, pos, text.size);
+    String cutout = string_create_substring_static(&text, cursor.pos, text.size);
 
     history_start_complex_command(&syntax_editor.history);
     SCOPE_EXIT(history_stop_complex_command(&syntax_editor.history));
 
-    history_insert_line(&syntax_editor.history, cursor.line_index + 1, line.indentation + indentation_offset);
-    if (pos != cutof_index) {
-        history_insert_text(&syntax_editor.history, cursor.line_index + 1, 0, cutout);
-        history_delete_text(&syntax_editor.history, cursor.line_index, pos, cutof_index);
+    Line_Index new_line_index = line_index_make(cursor.line.block, cursor.line.line + 1);
+    history_insert_line(&syntax_editor.history, new_line_index);
+    if (indentation_offset == 1) {
+        new_line_index = history_add_line_indent(&syntax_editor.history, new_line_index);
     }
-    syntax_editor_sanitize_line(cursor.line_index);
-    syntax_editor_sanitize_line(cursor.line_index + 1);
-    cursor.line_index += 1;
-    pos = 0;
+    else if (indentation_offset == -1) {
+        new_line_index = history_remove_line_indent(&syntax_editor.history, new_line_index);
+    }
+    else if (indentation_offset != 0) {
+        panic("Should not happen!");
+    }
+
+    if (cursor.pos != cutof_index) {
+        history_insert_text(&syntax_editor.history, text_index_make(new_line_index, 0), cutout);
+        history_delete_text(&syntax_editor.history, cursor, cutof_index);
+    }
+    syntax_editor_sanitize_line(cursor.line);
+    syntax_editor_sanitize_line(new_line_index);
+    cursor = text_index_make(new_line_index, 0);
 }
 
 void insert_mode_handle_command(Input_Command input)
 {
     auto& mode = syntax_editor.mode;
     auto& cursor = syntax_editor.cursor;
-    auto& line = syntax_editor.code.lines[cursor.line_index];
-    auto& text = line.text;
-    auto& pos = cursor.char_index;
+    auto line = index_value(cursor.line);
+    auto& text = line->text;
+    auto& pos = cursor.pos;
 
     history_start_complex_command(&syntax_editor.history);
     SCOPE_EXIT(history_stop_complex_command(&syntax_editor.history));
@@ -682,7 +567,7 @@ void insert_mode_handle_command(Input_Command input)
     if (input.type == Input_Command_Type::ADD_INDENTATION)
     {
         if (pos == 0) {
-            history_change_indentation(&syntax_editor.history, cursor.line_index, line.indentation + 1);
+            cursor.line = history_add_line_indent(&syntax_editor.history, cursor.line);
             return;
         }
         split_line_at_cursor(1);
@@ -690,9 +575,7 @@ void insert_mode_handle_command(Input_Command input)
     }
     if (input.type == Input_Command_Type::REMOVE_INDENTATION)
     {
-        if (line.indentation > 0) {
-            history_change_indentation(&syntax_editor.history, cursor.line_index, line.indentation - 1);
-        }
+        cursor.line = history_remove_line_indent(&syntax_editor.history, cursor.line);
         return;
     }
     if (input.type == Input_Command_Type::MOVE_LEFT) {
@@ -700,7 +583,7 @@ void insert_mode_handle_command(Input_Command input)
         return;
     }
     if (input.type == Input_Command_Type::MOVE_RIGHT) {
-        pos = math_minimum(line.text.size, pos + 1);
+        pos = math_minimum(line->text.size, pos + 1);
         return;
     }
 
@@ -761,12 +644,12 @@ void insert_mode_handle_command(Input_Command input)
             break;
         }
         if (insert_double_after) {
-            history_insert_char(&syntax_editor.history, cursor.line_index, pos, double_char);
+            history_insert_char(&syntax_editor.history, cursor, double_char);
         }
-        history_insert_char(&syntax_editor.history, cursor.line_index, pos, input.letter);
+        history_insert_char(&syntax_editor.history, cursor, input.letter);
         pos += 1;
         // Inserting delimiters between space critical tokens can lead to spaces beeing removed
-        syntax_editor_sanitize_line(cursor.line_index);
+        syntax_editor_sanitize_line(cursor.line);
         break;
     }
     case Input_Command_Type::SPACE:
@@ -776,14 +659,14 @@ void insert_mode_handle_command(Input_Command input)
         auto token = get_cursor_token();
         if (token.type == Token_Type::COMMENT) {
             if (pos > token.start_index + 1) {
-                history_insert_char(&syntax_editor.history, cursor.line_index, pos, ' ');
+                history_insert_char(&syntax_editor.history, cursor, ' ');
                 pos += 1;
             }
             break;
         }
         if (token.type == Token_Type::LITERAL && token.options.literal_value.type == Literal_Type::STRING) {
             if (pos > token.start_index && pos < token.end_index) {
-                history_insert_char(&syntax_editor.history, cursor.line_index, pos, ' ');
+                history_insert_char(&syntax_editor.history, cursor, ' ');
                 pos += 1;
             }
             break;
@@ -792,7 +675,7 @@ void insert_mode_handle_command(Input_Command input)
         char c = text[pos - 1];
         if (pos < text.size) {
             if (char_is_space_critical(c) && char_is_space_critical(text[pos])) {
-                history_insert_char(&syntax_editor.history, cursor.line_index, pos, ' ');
+                history_insert_char(&syntax_editor.history, cursor, ' ');
                 pos += 1;
                 break;
             }
@@ -817,25 +700,25 @@ void insert_mode_handle_command(Input_Command input)
 
         if (pos == 0)
         {
-            if (cursor.line_index == 0) {
+            auto prev_line = line_index_prev(cursor.line);
+            if (index_equals(prev_line, cursor.line)) {
+                // We are at the first line in the code
                 break;
             }
             // Merge this line with previous one
-            auto prev_text = syntax_editor.code.lines[cursor.line_index - 1].text;
-            int new_char = prev_text.size;
-            history_insert_text(&syntax_editor.history, cursor.line_index - 1, new_char, text);
-            history_remove_line(&syntax_editor.history, cursor.line_index);
-            cursor.line_index -= 1;
-            cursor.char_index = new_char;
-            syntax_editor_sanitize_line(cursor.line_index);
+            Text_Index insert_index = text_index_make(prev_line, index_value(prev_line)->text.size);
+            history_insert_text(&syntax_editor.history, insert_index, text);
+            history_remove_line(&syntax_editor.history, cursor.line);
+            cursor = insert_index;
+            syntax_editor_sanitize_line(cursor.line);
             break;
         }
 
         syntax_editor.space_after_cursor = string_test_char(text, pos, ' ') || syntax_editor.space_after_cursor;
-        history_delete_char(&syntax_editor.history, cursor.line_index, pos - 1);
+        history_delete_char(&syntax_editor.history, text_index_make(cursor.line, pos-1));
         pos -= 1;
         syntax_editor.space_before_cursor = string_test_char(text, pos - 1, ' ');
-        syntax_editor_sanitize_line(cursor.line_index);
+        syntax_editor_sanitize_line(cursor.line);
         break;
     }
     case Input_Command_Type::NUMBER_LETTER:
@@ -844,14 +727,14 @@ void insert_mode_handle_command(Input_Command input)
         int insert_pos = pos;
         if (syntax_editor.space_before_cursor) {
             syntax_editor.space_before_cursor = false;
-            history_insert_char(&syntax_editor.history, cursor.line_index, pos, ' ');
+            history_insert_char(&syntax_editor.history, cursor, ' ');
             pos += 1;
         }
-        history_insert_char(&syntax_editor.history, cursor.line_index, pos, input.letter);
+        history_insert_char(&syntax_editor.history, cursor, input.letter);
         pos += 1;
         if (syntax_editor.space_after_cursor) {
             syntax_editor.space_after_cursor = false;
-            history_insert_char(&syntax_editor.history, cursor.line_index, pos, ' ');
+            history_insert_char(&syntax_editor.history, cursor, ' ');
         }
         break;
     }
@@ -871,7 +754,6 @@ void syntax_editor_update()
             syntax_editor_load_text_file(open_file.value.characters);
             //compiler_compile(syntax_editor.root_block, false, string_create(syntax_editor.file_path));
         }
-        return;
     }
     if (syntax_editor.input->key_pressed[(int)Key_Code::S] && syntax_editor.input->key_down[(int)Key_Code::CTRL]) {
         syntax_editor_save_text_file();
@@ -1004,17 +886,17 @@ void syntax_editor_update()
         }
     }
 
-    // Tokenize all lines for now
     syntax_editor_synchronize_tokens();
     if (syntax_editor.input->key_pressed[(int)Key_Code::F5] && false)
     {
+        // Compile and display error messages
         auto ast_errors = Parser::get_error_messages();
         for (int i = 0; i < ast_errors.size; i++) {
             auto& error = ast_errors[i];
             logg("AST_Error: %s\n", error.msg);
         }
 
-        compiler_compile(&syntax_editor.code, true, string_create(syntax_editor.file_path));
+        compiler_compile(syntax_editor.code, true, string_create(syntax_editor.file_path));
 
         if (!compiler_errors_occured()) {
             auto exit_code = compiler_execute();
@@ -1048,20 +930,17 @@ void syntax_editor_update()
         }
     }
     else {
-        //compiler_compile(&syntax_editor.code, false, string_create(syntax_editor.file_path));
+        //compiler_compile(syntax_editor.code, false, string_create(syntax_editor.file_path));
     }
 }
 
 void syntax_editor_initialize(Rendering_Core* rendering_core, Text_Renderer* text_renderer, Renderer_2D* renderer_2D, Input* input, Timer* timer)
 {
     memory_zero(&syntax_editor);
-    syntax_editor.cursor.char_index = 0;
-    syntax_editor.cursor.line_index = 0;
-    syntax_editor.mode = Editor_Mode::NORMAL;
     syntax_editor.context_text = string_create_empty(256);
 
     syntax_editor.code = source_code_create();
-    syntax_editor.history = code_history_create(&syntax_editor.code);
+    syntax_editor.history = code_history_create(syntax_editor.code);
     syntax_editor.last_token_synchronized = history_get_timestamp(&syntax_editor.history);
     syntax_editor.last_hierarchy_synchronized = history_get_timestamp(&syntax_editor.history);
 
@@ -1069,6 +948,8 @@ void syntax_editor_initialize(Rendering_Core* rendering_core, Text_Renderer* tex
     syntax_editor.rendering_core = rendering_core;
     syntax_editor.renderer_2D = renderer_2D;
     syntax_editor.input = input;
+    syntax_editor.mode = Editor_Mode::NORMAL;
+    syntax_editor.cursor = text_index_make(line_index_make(block_index_make(syntax_editor.code, 0), 0), 0);
 
     compiler_initialize(timer);
     compiler_run_testcases(timer);
@@ -1078,7 +959,7 @@ void syntax_editor_initialize(Rendering_Core* rendering_core, Text_Renderer* tex
 void syntax_editor_destroy()
 {
     auto& editor = syntax_editor;
-    source_code_destroy(&editor.code);
+    source_code_destroy(editor.code);
     compiler_destroy();
     string_destroy(&syntax_editor.context_text);
 }
@@ -1329,11 +1210,11 @@ void syntax_editor_find_syntax_highlights(AST::Base* base)
 }
 
 
-void operator_space_before_after(int line_index, int token_index, bool& space_before, bool& space_after)
+void operator_space_before_after(Token_Index index, bool& space_before, bool& space_after)
 {
-    auto& tokens = syntax_editor.code.lines[line_index].tokens;
-    assert(tokens[token_index].type == Token_Type::OPERATOR, "");
-    auto& op_info = syntax_operator_info(tokens[token_index].options.op);
+    auto& tokens = index_value(index.line)->tokens;
+    assert(tokens[index.token].type == Token_Type::OPERATOR, "");
+    auto& op_info = syntax_operator_info(tokens[index.token].options.op);
     space_before = false;
     space_after = false;
 
@@ -1343,11 +1224,11 @@ void operator_space_before_after(int line_index, int token_index, bool& space_be
     {
         // Current approximation for is_binop: The current and previous type has to be a value
         use_info = false;
-        if (token_index > 0 && token_index + 1 < tokens.size)
+        if (index.token > 0 && index.token + 1 < tokens.size)
         {
             bool prev_is_value = false;
             {
-                const auto& t = tokens[token_index - 1];
+                const auto& t = tokens[index.token - 1];
                 if (t.type == Token_Type::IDENTIFIER || t.type == Token_Type::LITERAL) {
                     prev_is_value = true;
                 }
@@ -1357,7 +1238,7 @@ void operator_space_before_after(int line_index, int token_index, bool& space_be
             }
             bool next_is_value = false;
             {
-                const auto& t = tokens[token_index + 1];
+                const auto& t = tokens[index.token + 1];
                 if (t.type == Token_Type::IDENTIFIER || t.type == Token_Type::LITERAL) {
                     next_is_value = true;
                 }
@@ -1385,15 +1266,17 @@ void operator_space_before_after(int line_index, int token_index, bool& space_be
     }
 }
 
-bool display_space_after_token(int line_index, int token_index)
+bool display_space_after_token(Token_Index index)
 {
-    auto& line = syntax_editor.code.lines[line_index];
-    auto& tokens = line.tokens;
-    auto& text = line.text;
-    if (token_index + 1 >= tokens.size) return false;
+    auto line = index_value(index.line);
+    auto& text = line->text;
+    auto& tokens = line->tokens;
 
-    auto& a = tokens[token_index];
-    auto& b = tokens[token_index + 1];
+    // No space after final line token
+    if (index.token + 1 >= tokens.size) return false;
+
+    auto& a = tokens[index.token];
+    auto& b = tokens[index.token + 1];
 
     // Space critical tokens
     if (string_test_char(text, a.end_index, ' ')) {
@@ -1419,7 +1302,7 @@ bool display_space_after_token(int line_index, int token_index)
     if (a.type == Token_Type::OPERATOR)
     {
         bool unused, space_after;
-        operator_space_before_after(line_index, token_index, unused, space_after);
+        operator_space_before_after(index, unused, space_after);
         if (space_after) {
             return true;
         }
@@ -1429,7 +1312,7 @@ bool display_space_after_token(int line_index, int token_index)
     if (b.type == Token_Type::OPERATOR)
     {
         bool unused, space_before;
-        operator_space_before_after(line_index, token_index + 1, space_before, unused);
+        operator_space_before_after(token_index_make(index.line, index.token+1), space_before, unused);
         if (space_before) {
             return true;
         }
@@ -1458,34 +1341,116 @@ void syntax_editor_render_block_outline(int line_start, int line_end, int indent
     renderer_2D_add_line(syntax_editor.renderer_2D, end, l_end, vec3(0.4f), 3, 0.0f);
 }
 
-void syntax_editor_draw_block_outlines(int block_index, int parent_start_line)
+void syntax_editor_layout_line(Line_Index line_index, int screen_index, int indentation)
 {
-    auto& blocks = syntax_editor.code.blocks;
-    auto& block = blocks[block_index];
-    int line_start = parent_start_line + block.line_offset;
-    int line_end = line_start + block.line_count;
-    syntax_editor_render_block_outline(line_start, line_end, block.indentation);
-    for (int i = 0; i < block.child_blocks.size; i++) {
-        int child_index = block.child_blocks[i];
-        syntax_editor_draw_block_outlines(child_index, line_start);
+    auto& editor = syntax_editor;
+    auto& cursor = editor.cursor;
+    auto line = index_value(line_index);
+    line->render_index = screen_index;
+    line->render_indent = indentation;
+
+    dynamic_array_reset(&line->infos);
+    int pos = indentation * 4;
+    for (int i = 0; i < line->tokens.size; i++)
+    {
+        auto& token = line->tokens[i];
+        bool on_token = index_equals(cursor.line, line_index) && get_cursor_token_index() == i;
+        if (on_token && token.start_index == cursor.pos) {
+            pos += editor.space_after_cursor ? 1 : 0;
+            pos += editor.space_before_cursor ? 1 : 0;
+        }
+
+        Render_Info info;
+        info.line = line->render_index;
+        info.pos = pos;
+        info.size = token.end_index - token.start_index;
+        info.color = Syntax_Color::TEXT;
+        switch (token.type)
+        {
+        case Token_Type::COMMENT: info.color = Syntax_Color::COMMENT; break;
+        case Token_Type::INVALID: info.color = vec3(1.0f, 0.8f, 0.8f); break;
+        case Token_Type::KEYWORD: info.color = Syntax_Color::KEYWORD; break;
+        case Token_Type::IDENTIFIER: info.color = Syntax_Color::IDENTIFIER_FALLBACK; break;
+        case Token_Type::LITERAL: {
+            switch (token.options.literal_value.type)
+            {
+            case Literal_Type::BOOLEAN: info.color = vec3(0.5f, 0.5f, 1.0f); break;
+            case Literal_Type::STRING: info.color = Syntax_Color::STRING; break;
+            case Literal_Type::INTEGER:
+            case Literal_Type::FLOAT_VAL:
+            case Literal_Type::NULL_VAL:
+                info.color = Syntax_Color::LITERAL_NUMBER; break;
+            default: panic("");
+            }
+            break;
+        }
+        }
+        pos += info.size;
+
+        if (on_token && syntax_editor.space_before_cursor) {
+            pos += 1;
+        }
+
+        if (display_space_after_token(token_index_make(line_index, i))) {
+            pos += 1;
+        }
+        dynamic_array_push_back(&line->infos, info);
     }
 }
 
-void syntax_editor_find_and_draw_block_outlines(int line_index, int indentation)
+void syntax_editor_layout_block(Block_Index block_index, int* screen_index, int indentation)
 {
-    auto& lines = syntax_editor.code.lines;
-    for (int i = line_index; i < lines.size; i++)
+    auto block = index_value(block_index);
+    block->render_start = *screen_index;
+    block->render_indent = indentation;
+
+    int child_index = 0;
+    for (int i = 0; i < block->lines.size; i++)
     {
-        auto& line = lines[i];
-        if (line.indentation < indentation) {
-            syntax_editor_render_block_outline(line_index, i, indentation);
-            return;
+        if (child_index < block->children.size)
+        {
+            auto next_child = index_value(block->children[child_index]);
+            if (next_child->line_index == i) {
+                syntax_editor_layout_block(block->children[child_index], screen_index, indentation + 1);
+                child_index++;
+            }
         }
-        else if (line.indentation > indentation) {
-            syntax_editor_find_and_draw_block_outlines(i, line.indentation);
+        syntax_editor_layout_line(line_index_make(block_index, i), *screen_index, indentation);
+        *screen_index += 1;
+    }
+    if (child_index < block->children.size) {
+        syntax_editor_layout_block(block->children[child_index], screen_index, indentation + 1);
+        child_index += 1;
+        assert(child_index == block->children.size, "All must be iterated by now");
+    }
+    block->render_end = *screen_index;
+}
+
+void syntax_editor_render_block(Block_Index block_index)
+{
+    auto block = index_value(block_index);
+    // Render lines
+    for (int i = 0; i < block->lines.size; i++)
+    {
+        auto line = block->lines[i];
+        for (int j = 0; j < line.tokens.size; j++)
+        {
+            auto& token = line.tokens[j];
+            auto& info = line.infos[j];
+            auto str = token_get_string(token, line.text);
+            syntax_editor_draw_string(str, info.color, info.line, info.pos);
         }
     }
-    syntax_editor_render_block_outline(line_index, lines.size, indentation);
+
+    // Render child-blocks
+    for (int i = 0; i < block->children.size; i++) {
+        syntax_editor_render_block(block->children[i]);
+    }
+
+    // Render block outline
+    if (block_index.block != 0) {
+        syntax_editor_render_block_outline(block->render_start, block->render_end, block->render_indent);
+    }
 }
 
 void syntax_editor_render()
@@ -1499,77 +1464,26 @@ void syntax_editor_render()
 
     // Layout Source Code
     syntax_editor_sanitize_cursor();
-    for (int i = 0; i < editor.code.lines.size; i++)
-    {
-        auto& line = editor.code.lines[i];
-        dynamic_array_reset(&line.infos);
-        int pos = line.indentation * 4;
-        for (int j = 0; j < line.tokens.size; j++)
-        {
-            auto& token = line.tokens[j];
-            bool on_token = cursor.line_index == i && get_cursor_token_index() == j;
-            if (on_token && token.start_index == cursor.char_index) {
-                pos += editor.space_after_cursor ? 1 : 0;
-                pos += editor.space_before_cursor ? 1 : 0;
-            }
-
-            Render_Info info;
-            info.line = i;
-            info.pos = pos;
-            info.size = token.end_index - token.start_index;
-            info.color = Syntax_Color::TEXT;
-            switch (token.type)
-            {
-            case Token_Type::COMMENT: info.color = Syntax_Color::COMMENT; break;
-            case Token_Type::INVALID: info.color = vec3(1.0f, 0.8f, 0.8f); break;
-            case Token_Type::KEYWORD: info.color = Syntax_Color::KEYWORD; break;
-            case Token_Type::IDENTIFIER: info.color = Syntax_Color::IDENTIFIER_FALLBACK; break;
-            case Token_Type::LITERAL: {
-                switch (token.options.literal_value.type)
-                {
-                case Literal_Type::BOOLEAN: info.color = vec3(0.5f, 0.5f, 1.0f); break;
-                case Literal_Type::STRING: info.color = Syntax_Color::STRING; break;
-                case Literal_Type::INTEGER:
-                case Literal_Type::FLOAT_VAL:
-                case Literal_Type::NULL_VAL:
-                    info.color = Syntax_Color::LITERAL_NUMBER; break;
-                default: panic("");
-                }
-                break;
-            }
-            }
-            pos += info.size;
-
-            if (on_token && syntax_editor.space_before_cursor) {
-                pos += 1;
-            }
-
-            // Check for space critical tokens
-            if (j + 1 < line.tokens.size) {
-                auto& next_token = line.tokens[j + 1];
-                if (display_space_after_token(i, j)) {
-                    pos += 1;
-                }
-            }
-            dynamic_array_push_back(&line.infos, info);
-        }
-    }
+    int screen_index = 0;
+    syntax_editor_layout_block(block_index_make_root(editor.code), &screen_index, 0);
 
     // Draw Cursor
     {
-        auto& line = syntax_editor.code.lines[cursor.line_index];
-        auto& text = line.text;
-        auto& pos = cursor.char_index;
+        auto line = index_value(cursor.line);
+        auto& text = line->text;
+        auto& tokens = line->tokens;
+        auto& infos = line->infos;
+        auto& pos = cursor.pos;
         auto token_index = get_cursor_token_index();
 
         Render_Info info;
-        if (token_index < line.infos.size) {
-            info = line.infos[token_index];
+        if (token_index < infos.size) {
+            info = infos[token_index];
         }
         else {
-            info.pos = line.indentation * 4;
+            info.pos = line->render_indent * 4;
             info.size = 1;
-            info.line = cursor.line_index;
+            info.line = line->render_index;
         }
 
         if (editor.mode == Editor_Mode::NORMAL)
@@ -1578,30 +1492,30 @@ void syntax_editor_render()
             int box_end = math_maximum(info.pos + info.size, box_start + 1);
             //int box_end = box_start + 1;
             for (int i = box_start; i < box_end; i++) {
-                syntax_editor_draw_character_box(vec3(0.2f), cursor.line_index, i);
+                syntax_editor_draw_character_box(vec3(0.2f), info.line, i);
             }
-            syntax_editor_draw_cursor_line(Syntax_Color::COMMENT, cursor.line_index, box_start);
-            syntax_editor_draw_cursor_line(Syntax_Color::COMMENT, cursor.line_index, box_end);
+            syntax_editor_draw_cursor_line(Syntax_Color::COMMENT, info.line, box_start);
+            syntax_editor_draw_cursor_line(Syntax_Color::COMMENT, info.line, box_end);
         }
         else
         {
             // Adjust token index if we are inbetween tokens
             if (pos > 0 && pos < text.size)
             {
-                Token* token = &line.tokens[token_index];
+                Token* token = &tokens[token_index];
                 if (pos == token->start_index && token_index > 0) {
                     if (char_is_space_critical(text[pos - 1]) && !char_is_space_critical(text[pos])) {
                         token_index -= 1;
-                        info = line.infos[token_index];
+                        info = infos[token_index];
                     }
                 }
             }
 
-            int cursor_pos = line.indentation * 4;
-            if (line.tokens.size != 0)
+            int cursor_pos = line->render_indent * 4;
+            if (tokens.size != 0)
             {
-                auto tok_start = line.tokens[token_index].start_index;
-                int cursor_offset = cursor.char_index - tok_start;
+                auto tok_start = tokens[token_index].start_index;
+                int cursor_offset = cursor.pos - tok_start;
                 cursor_pos = info.pos + cursor_offset;
 
                 if (editor.space_after_cursor && cursor_offset == 0) {
@@ -1611,25 +1525,20 @@ void syntax_editor_render()
             if (editor.space_before_cursor && !editor.space_after_cursor) {
                 cursor_pos += 1;
             }
-            syntax_editor_draw_cursor_line(Syntax_Color::COMMENT, cursor.line_index, cursor_pos);
+            syntax_editor_draw_cursor_line(Syntax_Color::COMMENT, line->render_index, cursor_pos);
         }
     }
-
-    // Render Block outlines
-    source_code_reconstruct_blocks(&editor.code);
-    syntax_editor_draw_block_outlines(0, 0);
-    //syntax_editor_find_and_draw_block_outlines(0, 0);
 
     // Draw Text-Representation @ the bottom of the screen 
     if (true)
     {
         int line_index = 2.0f / editor.character_size.y - 1;
-        syntax_editor_draw_string(editor.code.lines[cursor.line_index].text, Syntax_Color::TEXT, line_index, 0);
+        syntax_editor_draw_string(index_value(cursor.line)->text, Syntax_Color::TEXT, line_index, 0);
         if (editor.mode == Editor_Mode::NORMAL) {
-            syntax_editor_draw_character_box(Syntax_Color::COMMENT, line_index, cursor.char_index);
+            syntax_editor_draw_character_box(Syntax_Color::COMMENT, line_index, cursor.pos);
         }
         else {
-            syntax_editor_draw_cursor_line(Syntax_Color::COMMENT, line_index, cursor.char_index);
+            syntax_editor_draw_cursor_line(Syntax_Color::COMMENT, line_index, cursor.pos);
         }
     }
 
@@ -1725,17 +1634,7 @@ void syntax_editor_render()
     //syntax_editor_find_syntax_highlights(&compiler.main_source->ast->base);
 
     // Render Source Code
-    for (int i = 0; i < editor.code.lines.size; i++)
-    {
-        auto& line = editor.code.lines[i];
-        for (int j = 0; j < line.tokens.size; j++)
-        {
-            auto& token = line.tokens[j];
-            auto& info = line.infos[j];
-            auto str = token_get_string(token, line.text);
-            syntax_editor_draw_string(str, info.color, info.line, info.pos);
-        }
-    }
+    syntax_editor_render_block(block_index_make_root(editor.code));
 
     // Render Primitives
     renderer_2D_render(editor.renderer_2D, editor.rendering_core);

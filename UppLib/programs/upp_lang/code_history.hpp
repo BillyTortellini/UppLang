@@ -77,6 +77,9 @@ struct History_Node
 
     // Complex info
     int complex_partner;
+
+    // Cursor info
+    Optional<Text_Index> cursor_index;
 };
 
 struct Code_History
@@ -95,11 +98,14 @@ Code_History code_history_create(Source_Code* code);
 void code_history_reset(Code_History* history);
 void code_history_destroy(Code_History* history);
 
-void history_undo(Code_History* history);
+void history_undo(Code_History* history); // Returns appropriate cursor position
 void history_redo(Code_History* history);
 
 void history_start_complex_command(Code_History* history);
 void history_stop_complex_command(Code_History* history);
+
+void history_set_cursor_pos(Code_History* history, Text_Index cursor);
+Optional<Text_Index> history_get_cursor_pos(Code_History* history);
 
 // Change Interface
 void history_insert_text(Code_History* history, Text_Index index, String string);
@@ -110,10 +116,8 @@ void history_delete_char(Code_History* history, Text_Index index);
 void history_insert_line(Code_History* history, Line_Index line_index);
 void history_insert_line_with_text(Code_History* history, Line_Index line_index, String string);
 void history_remove_line(Code_History* history, Line_Index line_index);
-void history_add_line_indent(Code_History* history, Line_Index line_index);
-void history_remove_line_indent(Code_History* history, Line_Index line_index);
-
-void history_change_indentation(Code_History* history, int line_index, int new_indentation);
+Line_Index history_add_line_indent(Code_History* history, Line_Index line_index);
+Line_Index history_remove_line_indent(Code_History* history, Line_Index line_index);
 
 
 
