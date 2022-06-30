@@ -57,6 +57,9 @@ struct Source_Block
     Dynamic_Array<Source_Line> lines;
     int line_index; // Relative to parent start
 
+    // Allocation Info
+    bool valid;
+
     // Rendering
     int render_start;
     int render_end;
@@ -90,6 +93,7 @@ Line_Index line_index_make(Block_Index block, int line);
 Token_Index token_index_make(Line_Index line, int token);
 Text_Index text_index_make(Line_Index line, int pos);
 
+Source_Block* index_value_unsafe(Block_Index index);
 Source_Block* index_value(Block_Index index);
 Source_Line* index_value(Line_Index index);
 Token* index_value(Token_Index index);

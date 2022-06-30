@@ -143,6 +143,7 @@ void dynamic_array_remove_range_ordered(Dynamic_Array<T>* a, int start_index, in
 
 template<typename T>
 void dynamic_array_rollback_to_size(Dynamic_Array<T>* a, int size) {
+    assert(a->size >= size, "Can only make array smaller");
     a->size = size;
 }
 

@@ -275,6 +275,35 @@ TODO: Switch to hierarchical Version:
     Blocks with no lines?
     Do sanity check after changes
 
+Stuff to check:
+ * Adding lines/removing lines                         X
+ * Changing line text
+ * Adding indentation (At block start/end)
+ * Undo redo indentations
+ * Add/Remove indentation between blocks (Merge)
+ * Delete line between blocks
+ * Cursor movement
+ * Add line/remove line                                X
+
+Bugs:
+ - Undo complex did not find complex start (Rare casche)
+ - Insert line move index is kinda weird
+ - Check out merges with add indent
+
+Problem:
+    Block-Merge is done in Delete-Line, but the line-indices cannot be simply reverted
+    Adding/Removing lines (Line indices) isn't a revertable action currently.
+    I think I cannot add lines after a block for example, if it is the last block in the line
+    TODO:
+        Think about what inserting/deleting a line does to blocks.
+        Check if this is actually revertable
+
+Solution:
+    Apply Change (insert/delete line) should not adjust follow child blocks, this has to be done by insert/remove line
+
+
+
+
 
 Next features:
 --------------

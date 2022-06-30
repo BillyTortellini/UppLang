@@ -57,6 +57,7 @@ void source_code_reset(Source_Code* code)
     root.children = dynamic_array_create_empty<Block_Index>(1);
     root.lines = dynamic_array_create_empty<Source_Line>(1);
     root.line_index = 0;
+    root.valid = true;
     root.parent = block_index_make(code, -1);
     dynamic_array_push_back(&code->blocks, root);
 
@@ -173,9 +174,11 @@ void source_block_check_sanity(Block_Index index)
         assert(child_block->line_index >= 0 && child_block->line_index <= block->lines.size, "Must be in parent line range");
         if (i + 1 < block->children.size)
         {
-            auto next_index = block->children[i];
+            auto next_index = block->children[i + 1];
             auto next_block = index_value(next_index);
-            assert(next_block->line_index != child_block->line_index, "Blocks with the same line index must be merged!");
+            assert(next_block->line_index != child_block->line_index, "Block line numbers must be different");
+            assert(next_block->line_index > child_block->line_index, "Block line numbers must be increasing");
+            logg("Fuck you");
         }
         source_block_check_sanity(child_index);
     }
@@ -190,8 +193,15 @@ void source_code_sanity_check(Source_Code* code)
 
 
 // Index Functions
-Source_Block* index_value(Block_Index index) {
+Source_Block* index_value_unsafe(Block_Index index) {
+    // DOCS: Only use this function when sanitizing values or if you need to manipulate blocks at a low level
     return &index.code->blocks[index.block];
+}
+
+Source_Block* index_value(Block_Index index) {
+    auto block = index_value_unsafe(index);
+    assert(block->valid, "");
+    return block;
 }
 
 Source_Line* index_value(Line_Index index) {
@@ -244,7 +254,8 @@ Text_Index text_index_make(Line_Index line, int pos)
 bool index_valid(Block_Index index)
 {
     auto& blocks = index.code->blocks;
-    return index.block >= 0 && index.block < blocks.size;
+    auto block = index_value_unsafe(index);
+    return index.block >= 0 && index.block < blocks.size && block->valid;
 }
 
 bool index_valid(Line_Index index)
@@ -272,6 +283,11 @@ void index_sanitize(Block_Index* index)
 {
     auto& blocks = index->code->blocks;
     index->block = math_clamp(index->block, 0, blocks.size - 1);
+    auto block = index_value_unsafe(*index);
+    while (!block->valid) {
+        index->block = block->parent.block;
+        block = index_value_unsafe(*index);
+    }
 }
 
 void index_sanitize(Line_Index* index)

@@ -362,6 +362,7 @@ void editor_leave_input_mode()
 {
     syntax_editor.mode = Editor_Mode::NORMAL;
     history_stop_complex_command(&syntax_editor.history);
+    history_set_cursor_pos(&syntax_editor.history, syntax_editor.cursor);
 }
 
 void normal_mode_handle_command(Normal_Command command)
@@ -472,7 +473,11 @@ void normal_mode_handle_command(Normal_Command command)
         break;
     }
     case Normal_Command::ADD_LINE_ABOVE:
-    case Normal_Command::ADD_LINE_BELOW: {
+    case Normal_Command::ADD_LINE_BELOW: 
+    {
+        history_start_complex_command(&editor.history);
+        SCOPE_EXIT(history_stop_complex_command(&editor.history));
+
         bool below = command == Normal_Command::ADD_LINE_BELOW;
         auto new_line = line_index_make(cursor.line.block, below ? cursor.line.line + 1 : cursor.line.line);
         history_insert_line(&editor.history, new_line);
@@ -1407,12 +1412,15 @@ void syntax_editor_layout_block(Block_Index block_index, int* screen_index, int 
     int child_index = 0;
     for (int i = 0; i < block->lines.size; i++)
     {
-        if (child_index < block->children.size)
+        while (child_index < block->children.size)
         {
             auto next_child = index_value(block->children[child_index]);
             if (next_child->line_index == i) {
                 syntax_editor_layout_block(block->children[child_index], screen_index, indentation + 1);
                 child_index++;
+            }
+            else {
+                break;
             }
         }
         syntax_editor_layout_line(line_index_make(block_index, i), *screen_index, indentation);
@@ -1420,8 +1428,7 @@ void syntax_editor_layout_block(Block_Index block_index, int* screen_index, int 
     }
     if (child_index < block->children.size) {
         syntax_editor_layout_block(block->children[child_index], screen_index, indentation + 1);
-        child_index += 1;
-        assert(child_index == block->children.size, "All must be iterated by now");
+        assert(child_index + 1 >= block->children.size, "All must be iterated by now");
     }
     block->render_end = *screen_index;
 }

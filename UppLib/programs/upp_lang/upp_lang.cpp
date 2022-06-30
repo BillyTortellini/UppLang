@@ -276,7 +276,7 @@ void upp_lang_main()
         // Input Handling
         Input* input = window_get_input(window);
         {
-            if (!window_handle_messages(window, false)) {
+            if (!window_handle_messages(window, true)) {
                 break;
             }
             if (input->close_request_issued || input->key_pressed[(int)Key_Code::ESCAPE]) {

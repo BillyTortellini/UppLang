@@ -22,11 +22,13 @@ Block_Index code_history_add_block(Code_History* history, Block_Index parent, in
         new_index = block_index_make(history->code, dynamic_array_push_back_dummy(&history->code->blocks));
     }
 
-    auto block = index_value(new_index);
+    // INFO: Don't use index_value here, because 
+    auto block = index_value_unsafe(new_index);
     block->children = dynamic_array_create_empty<Block_Index>(1);
     block->lines = dynamic_array_create_empty<Source_Line>(1);
     block->line_index = line_index;
     block->parent = parent;
+    block->valid = true;
 
     // Insert ordered into parent
     auto parent_block = index_value(parent);
@@ -34,7 +36,7 @@ Block_Index code_history_add_block(Code_History* history, Block_Index parent, in
     while (i < parent_block->children.size)
     {
         auto child_block = index_value(parent_block->children[i]);
-        if (line_index <= child_block->line_index) {
+        if (line_index < child_block->line_index) {
             break;
         }
         i++;
@@ -47,9 +49,11 @@ void code_history_remove_block_from_hierarchy(Code_History* history, Block_Index
 {
     auto block = index_value(index);
     assert(index.block != 0, "Cannot free root block!");
+    assert(block->valid, "Block must be valid!");
     assert(block->children.size == 0 && block->lines.size == 0, "Cannot free non-empty block");
     source_block_destroy(block);
     dynamic_array_push_back(&history->free_blocks, index);
+    block->valid = false;
     // Remove from parent
     auto parent_block = index_value(block->parent);
     bool found = false;
@@ -103,6 +107,63 @@ void code_history_destroy(Code_History* history)
     dynamic_array_destroy(&history->nodes);
 }
 
+void code_history_sanity_check(Code_History* history)
+{
+    bool inside_complex = false;
+    int complex_start = -1;
+    for (int i = 0; i < history->nodes.size; i++) 
+    {
+        auto& node = history->nodes[i];
+        switch (node.type)
+        {
+        case History_Node_Type::NORMAL:
+            break;
+        case History_Node_Type::COMPLEX_START: {
+            assert(!inside_complex, "Cannot have 2 complex starts back to back");
+            inside_complex = true;
+            complex_start = i;
+            assert(node.complex_partner != -1, "Hey");
+            auto& end_node = history->nodes[node.complex_partner];
+            assert(end_node.type == History_Node_Type::COMPLEX_END && end_node.complex_partner == i, "");
+            break;
+        }
+        case History_Node_Type::COMPLEX_END: {
+            assert(inside_complex, "Complex end must have a start");
+            inside_complex = false;
+            complex_start = -1;
+            assert(node.complex_partner != -1, "Hey");
+            auto& start_node = history->nodes[node.complex_partner];
+            assert(start_node.type == History_Node_Type::COMPLEX_START && start_node.complex_partner == i, "");
+            break;
+        }
+        default:panic("");
+        }
+
+        if (inside_complex && node.type != History_Node_Type::COMPLEX_START) {
+            assert(node.alt_change == -1, "No alternates inside complex commands!");
+        }
+        if (i == 0) continue;
+        const auto& prev_node = history->nodes[node.prev_change];
+        if (prev_node.next_change != i) 
+        {
+            auto prev_next_node = history->nodes[prev_node.next_change];
+            bool found_in_alts = false;
+            while (prev_next_node.alt_change != -1) {
+                if (prev_next_node.alt_change == i) {
+                    found_in_alts = true;
+                    break;
+                }
+                prev_next_node = history->nodes[prev_next_node.alt_change];
+            }
+            assert(found_in_alts, "Alternative path must be correct");
+        }
+        
+        if (node.next_change != -1) {
+            const auto& next_node = history->nodes[node.next_change];
+            assert(next_node.prev_change == i, "Next and prev must always be correct");
+        }
+    }
+}
 
 
 // Code Changes
@@ -128,15 +189,6 @@ void code_change_apply(Code_History* history, Code_Change* change, bool forwards
             assert(insert.line >= 0 && insert.line < block->lines.size, "");
             source_line_destroy(&block->lines[insert.line]);
             dynamic_array_remove_ordered(&block->lines, insert.line);
-        }
-
-        // Move all follow blocks in block
-        for (int i = 0; i < block->children.size; i++) 
-        {
-            auto child_block = index_value(block->children[i]);
-            if (child_block->line_index > insert.line) {
-                child_block->line_index += apply_change_forward ? 1 : -1;
-            }
         }
         break;
     }
@@ -179,17 +231,17 @@ void code_change_apply(Code_History* history, Code_Change* change, bool forwards
 
             // Save split old_line_index for reversing this change
             merge.split_index = into_block->lines.size;
-            // Update block indices
+            // Move child blocks
             for (int i = 0; i < other_block->children.size; i++) {
                 auto child_block = index_value(other_block->children[i]);
-                child_block->line_index += into_block->lines.size;
+                child_block->parent = merge.index;
+                child_block->line_index += merge.split_index;
+                dynamic_array_push_back(&into_block->children, other_block->children[i]);
             }
+            dynamic_array_reset(&other_block->children);
             // Move lines from one block to the other
             dynamic_array_append_other(&into_block->lines, &other_block->lines);
             dynamic_array_reset(&other_block->lines);
-            // Move child blocks from one block to the other
-            dynamic_array_append_other(&into_block->children, &other_block->children);
-            dynamic_array_reset(&other_block->children);
             // Remove other block
             code_history_remove_block_from_hierarchy(history, merge.merge_other);
         }
@@ -203,23 +255,27 @@ void code_change_apply(Code_History* history, Code_Change* change, bool forwards
 
             // Copy blocks after split_index into new block
             assert(merge.split_index >= 0 && merge.split_index < split_block->lines.size, "");
-            int block_cutoff = 0;
-            for (int i = 0; i < split_block->children.size; i++) {
-                auto child_block = index_value(split_block->children[i]);
-                if (child_block->line_index >= merge.split_index) {
-                    block_cutoff = i;
-                    break;
+            int block_cutoff = split_block->children.size;
+            for (int i = 0; i < split_block->children.size; i++) 
+            {
+                auto child_index = split_block->children[i];
+                auto child_block = index_value(child_index);
+                if (child_block->line_index >= merge.split_index) 
+                {
+                    if (i < block_cutoff) {
+                        block_cutoff = i;
+                    }
+                    child_block->parent = merge.merge_other;
+                    child_block->line_index -= merge.split_index;
+                    dynamic_array_push_back(&other_block->children, child_index);
                 }
             }
-            for (int i = block_cutoff; i < split_block->children.size; i++) {
-                dynamic_array_push_back(&other_block->children, split_block->children[i]);
-            }
-            dynamic_array_rollback_to_size(&other_block->children, block_cutoff);
+            dynamic_array_rollback_to_size(&split_block->children, block_cutoff);
             // Copy lines to other block
             for (int i = merge.split_index; i < split_block->lines.size; i++) {
                 dynamic_array_push_back(&other_block->lines, split_block->lines[i]);
             }
-            dynamic_array_rollback_to_size(&other_block->lines, merge.split_index);
+            dynamic_array_rollback_to_size(&split_block->lines, merge.split_index);
         }
         break;
     }
@@ -250,6 +306,10 @@ void code_change_apply(Code_History* history, Code_Change* change, bool forwards
         break;
     }
     default: panic("");
+    }
+
+    if (history->complex_level == 0) {
+        code_history_sanity_check(history);
     }
 }
 
@@ -312,6 +372,9 @@ void history_undo(Code_History* history)
     }
     default:panic("");
     }
+
+    source_code_sanity_check(history->code);
+    code_history_sanity_check(history);
 }
 
 void history_redo(Code_History* history)
@@ -348,6 +411,9 @@ void history_redo(Code_History* history)
     }
     default:panic("");
     }
+
+    source_code_sanity_check(history->code);
+    code_history_sanity_check(history);
 }
 
 void history_start_complex_command(Code_History* history)
@@ -377,18 +443,21 @@ void history_stop_complex_command(Code_History* history)
     node_end.type = History_Node_Type::COMPLEX_END;
     node_end.complex_partner = start_node_index;
 
+    assert(history->current > start_node_index, "Must be true");
     source_code_sanity_check(history->code);
+    code_history_sanity_check(history);
 }
 
 void history_set_cursor_pos(Code_History* history, Text_Index cursor)
 {
-    auto node = history->nodes[history->current];
+    auto& node = history->nodes[history->current];
+    if (node.cursor_index.available) return;
     node.cursor_index = optional_make_success(cursor);
 }
 
 Optional<Text_Index> history_get_cursor_pos(Code_History* history)
 {
-    auto node = history->nodes[history->current];
+    auto& node = history->nodes[history->current];
     return node.cursor_index;
 }
 
@@ -407,9 +476,6 @@ Code_Change code_change_create_empty(Code_Change_Type type, bool reverse_effect)
 
 void history_insert_text(Code_History* history, Text_Index index, String string)
 {
-    source_code_sanity_check(history->code);
-    SCOPE_EXIT(source_code_sanity_check(history->code));
-
     auto line = index_value(index.line);
     auto change = code_change_create_empty(Code_Change_Type::TEXT_INSERT, false);
     change.options.text_insert.index = index;
@@ -457,9 +523,26 @@ void history_insert_line(Code_History* history, Line_Index index)
     history_start_complex_command(history);
     SCOPE_EXIT(history_stop_complex_command(history));
 
-    auto change = code_change_create_empty(Code_Change_Type::LINE_INSERT, false);
-    change.options.line_insert = index;
-    history_insert_and_apply_change(history, change);
+    {
+        auto change = code_change_create_empty(Code_Change_Type::LINE_INSERT, false);
+        change.options.line_insert = index;
+        history_insert_and_apply_change(history, change);
+    }
+
+    // Move all follow blocks in block
+    auto block = index_value(index.block);
+    for (int i = 0; i < block->children.size; i++)
+    {
+        auto child_index = block->children[i];
+        auto child_block = index_value(child_index);
+        if (child_block->line_index >= index.line) {
+            auto move = code_change_create_empty(Code_Change_Type::BLOCK_INDEX_CHANGED, false);
+            move.options.block_index_change.index = child_index;
+            move.options.block_index_change.new_line_index = child_block->line_index + 1;
+            move.options.block_index_change.old_line_index = child_block->line_index;
+            history_insert_and_apply_change(history, move);
+        }
+    }
 }
 
 void history_insert_line_with_text(Code_History* history, Line_Index line_index, String string)
@@ -473,28 +556,48 @@ void history_remove_line(Code_History* history, Line_Index line_index)
     history_start_complex_command(history);
     SCOPE_EXIT(history_stop_complex_command(history));
 
+    {
+        auto line = index_value(line_index);
+        if (line->text.size != 0) {
+            history_delete_text(history, text_index_make(line_index, 0), line->text.size);
+        }
+    }
+
+    {
+        auto change = code_change_create_empty(Code_Change_Type::LINE_INSERT, true);
+        change.options.line_insert = line_index;
+        history_insert_and_apply_change(history, change);
+    }
+
+    // Move all follow blocks one back and merge blocks that fall together
+    int last_child_line = -1;
     auto block = index_value(line_index.block);
-
-    auto change = code_change_create_empty(Code_Change_Type::LINE_INSERT, true);
-    change.options.line_insert = line_index;
-    history_insert_and_apply_change(history, change);
-
-    // Merge blocks if 2 fall together
-    for (int i = 0; i + 1 < block->children.size; i++) 
+    for (int i = 0; i < block->children.size; i++)
     {
         auto child_index = block->children[i];
-        auto child = index_value(child_index);
-        auto next_index = block->children[i + 1];
-        auto next_child = index_value(next_index);
-        if (next_child->line_index == child->line_index) 
+        auto child_block = index_value(child_index);
+        if (child_block->line_index > line_index.line) 
         {
-            auto merge = code_change_create_empty(Code_Change_Type::BLOCK_MERGE, false);
-            merge.options.block_merge.index = child_index;
-            merge.options.block_merge.merge_other = next_index;
-            merge.options.block_merge.split_index = child->lines.size;
-            history_insert_and_apply_change(history, merge);
-            break; // We break here because removing a line can only result in 1 merge
+            auto move = code_change_create_empty(Code_Change_Type::BLOCK_INDEX_CHANGED, false);
+            move.options.block_index_change.index = child_index;
+            move.options.block_index_change.new_line_index = child_block->line_index - 1;
+            move.options.block_index_change.old_line_index = child_block->line_index;
+            history_insert_and_apply_change(history, move);
+
+            if (last_child_line == child_block->line_index)
+            {
+                // Merge
+                auto merge_index = block->children[i - 1];
+                auto merge_block = index_value(merge_index);
+
+                auto merge = code_change_create_empty(Code_Change_Type::BLOCK_MERGE, false);
+                merge.options.block_merge.index = merge_index;
+                merge.options.block_merge.merge_other = child_index;
+                merge.options.block_merge.split_index = merge_block->lines.size;
+                history_insert_and_apply_change(history, merge);
+            }
         }
+        last_child_line = child_block->line_index;
     }
 
     // Recursively remove blocks
@@ -507,7 +610,7 @@ void history_remove_line(Code_History* history, Line_Index line_index)
             remove_change.options.block_create.line_index = block->line_index;
             remove_change.options.block_create.parent = block->parent;
             remove_change.options.block_create.new_block_index = block_index;
-            history_insert_and_apply_change(history, change);
+            history_insert_and_apply_change(history, remove_change);
         }
         else {
             break;
@@ -566,7 +669,7 @@ Line_Index history_add_line_indent(Code_History* history, Line_Index old_line_in
         new_line_index.line = 0;
     }
     else if (found_prev_block && found_next_block) {
-        // Insert into prev block and merge blocks
+        // Insert into prev block and merge (Merging happens in delete line)
         new_line_index.block = prev_block_index;
         new_line_index.line = index_value(next_block_index)->lines.size;
     }
@@ -589,12 +692,6 @@ Line_Index history_add_line_indent(Code_History* history, Line_Index old_line_in
     {
         history_insert_line_with_text(history, new_line_index, index_value(old_line_index)->text);
         history_remove_line(history, old_line_index);
-    }
-
-    if (found_prev_block && found_next_block) {
-        auto merge = code_change_create_empty(Code_Change_Type::BLOCK_MERGE, false);
-        merge.options.block_merge.index = new_line_index.block;
-        history_insert_and_apply_change(history, merge);
     }
 
     return new_line_index;
@@ -628,14 +725,15 @@ Line_Index history_remove_line_indent(Code_History* history, Line_Index index)
     auto parent_block = index_value(block->parent);
     Line_Index new_line_pos = line_index_make(block->parent, block->line_index);
     bool move_block_after = false;
+    bool move_block_forwards = true;
     Block_Index move_block_index;
     if (at_block_start) {
-        move_block_after = true;
-        move_block_index = index.block;
+        move_block_after = false;
     }
     else if (at_block_end) {
-        move_block_after = false;
-        // Do nothing
+        move_block_after = true;
+        move_block_index = index.block;
+        move_block_forwards = false;
     }
     else {
         new_line_pos = line_index_make(block->parent, block->line_index);
@@ -647,7 +745,8 @@ Line_Index history_remove_line_indent(Code_History* history, Line_Index index)
         int change_index = history_insert_and_apply_change(history, split);
 
         move_block_after = true;
-        move_block_index = history->nodes[change_index].change.options.block_merge.merge_other;
+        move_block_index = index.block;
+        move_block_forwards = false;
 
         // Update block pointers since split may invalidate references
         block = index_value(index.block);
@@ -660,13 +759,13 @@ Line_Index history_remove_line_indent(Code_History* history, Line_Index index)
         history_remove_line(history, index);
     }
 
-    if (move_block_after)
+    if (move_block_after && index_valid(move_block_index)) // Index may be invalid if the block has been removed by remove_line
     {
         auto move_block = index_value(move_block_index);
         auto move = code_change_create_empty(Code_Change_Type::BLOCK_INDEX_CHANGED, false);
         move.options.block_index_change.index = move_block_index;
-        move.options.block_index_change.new_line_index = move_block->line_index + 1;
-        move.options.block_index_change.new_line_index = move_block->line_index;
+        move.options.block_index_change.new_line_index = move_block->line_index + (move_block_forwards ? 1 : -1);
+        move.options.block_index_change.old_line_index = move_block->line_index;
         history_insert_and_apply_change(history, move);
     }
 
