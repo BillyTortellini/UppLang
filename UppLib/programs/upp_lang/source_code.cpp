@@ -178,7 +178,6 @@ void source_block_check_sanity(Block_Index index)
             auto next_block = index_value(next_index);
             assert(next_block->line_index != child_block->line_index, "Block line numbers must be different");
             assert(next_block->line_index > child_block->line_index, "Block line numbers must be increasing");
-            logg("Fuck you");
         }
         source_block_check_sanity(child_index);
     }

@@ -254,7 +254,7 @@ void syntax_editor_synchronize_tokens()
         {
         case Code_Change_Type::BLOCK_CREATE: 
         {
-            if (!change.reverse_effect) break;
+            if (change.apply_forwards) break;
             for (int j = 0; j < line_changes.size; j++) {
                 auto& line = line_changes[j];
                 if (index_equals(line.block, change.options.block_create.new_block_index)) {
@@ -271,18 +271,22 @@ void syntax_editor_synchronize_tokens()
             for (int j = 0; j < line_changes.size; j++)
             {
                 auto& line = line_changes[j];
-                if (change.reverse_effect) { // Split
-                    if (index_equals(merge.index, line.block) && line.line >= merge.split_index) {
-                        line = line_index_make(merge.merge_other, line.line - merge.split_index);
-                    }
-                }
-                else { // Merge
+                if (change.apply_forwards) 
+                {
+                    // Merge
                     if (index_equals(merge.merge_other, line.block)) {
                         int new_index = line.line;
                         if (new_index > merge.split_index) {
                             new_index -= merge.split_index;
                         }
                         line = line_index_make(merge.index, new_index);
+                    }
+                }
+                else 
+                { 
+                    // Split
+                    if (index_equals(merge.index, line.block) && line.line >= merge.split_index) {
+                        line = line_index_make(merge.merge_other, line.line - merge.split_index);
                     }
                 }
             }
@@ -296,7 +300,14 @@ void syntax_editor_synchronize_tokens()
             {
                 auto& line = line_changes[j];
                 if (!index_equals(line.block, insert.block)) continue;
-                if (change.reverse_effect)
+                if (change.apply_forwards)
+                {
+                    // Line insertion
+                    if (line.line >= insert.line) {
+                        line.line += 1;
+                    }
+                }
+                else
                 {
                     // Line deletion
                     if (line.line > insert.line) {
@@ -307,17 +318,10 @@ void syntax_editor_synchronize_tokens()
                         j -= 1;
                     }
                 }
-                else
-                {
-                    // Line insertion
-                    if (line.line >= insert.line) {
-                        line.line += 1;
-                    }
-                }
             }
             break;
         }
-        case Code_Change_Type::TEXT_INSERT: 
+        case Code_Change_Type::TEXT_INSERT:
         {
             auto& changed_line = change.options.text_insert.index.line;
             bool found = false;
@@ -473,14 +477,14 @@ void normal_mode_handle_command(Normal_Command command)
         break;
     }
     case Normal_Command::ADD_LINE_ABOVE:
-    case Normal_Command::ADD_LINE_BELOW: 
+    case Normal_Command::ADD_LINE_BELOW:
     {
         history_start_complex_command(&editor.history);
         SCOPE_EXIT(history_stop_complex_command(&editor.history));
 
         bool below = command == Normal_Command::ADD_LINE_BELOW;
         auto new_line = line_index_make(cursor.line.block, below ? cursor.line.line + 1 : cursor.line.line);
-        history_insert_line(&editor.history, new_line);
+        history_insert_line(&editor.history, new_line, below);
         cursor = text_index_make(new_line, 0);
         editor_enter_input_mode();
         break;
@@ -511,7 +515,7 @@ void split_line_at_cursor(int indentation_offset)
     SCOPE_EXIT(history_stop_complex_command(&syntax_editor.history));
 
     Line_Index new_line_index = line_index_make(cursor.line.block, cursor.line.line + 1);
-    history_insert_line(&syntax_editor.history, new_line_index);
+    history_insert_line(&syntax_editor.history, new_line_index, true);
     if (indentation_offset == 1) {
         new_line_index = history_add_line_indent(&syntax_editor.history, new_line_index);
     }
@@ -720,7 +724,7 @@ void insert_mode_handle_command(Input_Command input)
         }
 
         syntax_editor.space_after_cursor = string_test_char(text, pos, ' ') || syntax_editor.space_after_cursor;
-        history_delete_char(&syntax_editor.history, text_index_make(cursor.line, pos-1));
+        history_delete_char(&syntax_editor.history, text_index_make(cursor.line, pos - 1));
         pos -= 1;
         syntax_editor.space_before_cursor = string_test_char(text, pos - 1, ' ');
         syntax_editor_sanitize_line(cursor.line);
@@ -1317,7 +1321,7 @@ bool display_space_after_token(Token_Index index)
     if (b.type == Token_Type::OPERATOR)
     {
         bool unused, space_before;
-        operator_space_before_after(token_index_make(index.line, index.token+1), space_before, unused);
+        operator_space_before_after(token_index_make(index.line, index.token + 1), space_before, unused);
         if (space_before) {
             return true;
         }

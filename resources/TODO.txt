@@ -61,24 +61,11 @@ Editor:
     * Lexing is also different, now the editor has to manage spaces before/after the cursor
 
 
-Editor TODO:
- * Reintegrate Compiler into Editor
- * Undo-Redo, comments, more editor features
-
 Problem: Multi-Line Comments
     Tokenization cannot be done line by line anymore
 Solution:
     Just have single line Comments, and have an editor feature for multi line comments
     Also maybe have comment-handling logic to just add comments when inside a comment
-
-Decision: Second Data-Structure for parsing only (Where I remove the comments)
-Why? Because keeping these things in sync should be easy when I have my edit history.
-
-Thoughts:
-    I feel like the editor should actually use a hierarchical representation for Code,
-    and I should write abstraction functions for changes in the code.
-    Then the problem is that of indexing/adding data for e.g. rendering (Collapsing code needs boolean, animations need previous positions)
-
 
 
 
@@ -166,7 +153,6 @@ How to design a Data-Structure:
  - Which elements need to be addressable (Handles/Pointers)
  - Complexity-Performance tradeof
 
-
 Hierarchy:
  + Parsing better navigation
  + Local Changes --> Better incremental Compilation
@@ -177,28 +163,6 @@ Hierarchy:
  - History Complicated
  - Complex Datastructure
  
-
-
-Plan:
- - Token-Code gets removed
- - Source-Code gets a Code-Hierarchy that is lazily updated
- - Source-Code gets History
- - Code-Hierarchy is updated based on the history
- - Hierarchy Annotations are updated based on History updates
-
-Implementation:
- X Remove compiler integration from editor
- X Add syntax higlighting based on tokens
- X Implement Code-History with undo + redo
- X Create Code-Hierarchy that generates from normal Source-Code
- X Use Code-Hierarchy in editor (Render block outlines, test if it works)
- - Update Code-Hierarchy from history and timestamps
- - Change Parser to use Code-Hierarchy (Remove token-code)
- - Done!
-
-
-TODO: Record Text-Changed in Editor and only call compiler stuff when it actually has changed.
-
 Design Decision:
     The editor doesn't keep the tokens up to date, but it makes sure that lines are always sanitized after edits.
     When we need updated tokens we run through the change history from the last checkpoint (Last timestamp where tokens/text was synchronized)
@@ -261,19 +225,15 @@ Program will become quite hard.
   * We can store information per block, because it is a consistent structure
 
 
-Required Features before I can use the Langauge:
+Required Features before I can use the Language:
  * Incremental Compilation
  * Templates
  * Context-System
  * Symbol-Imports/Resolution
- * Syntax-Editor features
+ * Syntax-Editor features (Goto definition, Code-Completion, Refactor-Name maybe, ...)
  * Iterators/Operator overloads (Maybe in some sort of context system?)
 
 
-TODO: Switch to hierarchical Version:
-    Removing line from root block when adding a block?
-    Blocks with no lines?
-    Do sanity check after changes
 
 Stuff to check:
  * Adding lines/removing lines                         X
@@ -282,24 +242,14 @@ Stuff to check:
  * Undo redo indentations
  * Add/Remove indentation between blocks (Merge)
  * Delete line between blocks
- * Cursor movement
+ * Cursor movement                                     X
  * Add line/remove line                                X
 
-Bugs:
- - Undo complex did not find complex start (Rare casche)
- - Insert line move index is kinda weird
- - Check out merges with add indent
 
-Problem:
-    Block-Merge is done in Delete-Line, but the line-indices cannot be simply reverted
-    Adding/Removing lines (Line indices) isn't a revertable action currently.
-    I think I cannot add lines after a block for example, if it is the last block in the line
-    TODO:
-        Think about what inserting/deleting a line does to blocks.
-        Check if this is actually revertable
-
-Solution:
-    Apply Change (insert/delete line) should not adjust follow child blocks, this has to be done by insert/remove line
+TODO: After history:
+    Load from string,
+    Append to string
+    Check if syncro indices are correct
 
 
 
@@ -381,7 +331,7 @@ need to log an error. But if the Type is wrong, we log an error
 This also implies that I need an Array-Type with unknown size, because I don't want to
 report an error on [unkown comptime int]byte
 
-Hashtable :: (Key_Type: Type, Value_Type: Type, resize_percent: float)
+Hashtable :: struct (Key_Type: Type, Value_Type: Type, resize_percent: float)
     entries: []Entries;
     count: int;
 
