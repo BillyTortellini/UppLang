@@ -5,7 +5,6 @@
 #include "source_code.hpp"
 #include "lexer.hpp"
 
-struct Token_Code;
 
 namespace AST
 {
@@ -31,11 +30,21 @@ namespace Parser
         NONE,              // Not quite sure if this is usefull at all
         END_TOKEN,         // To display that something is missing
     };
+    struct Parse_Info
+    {
+        AST::Base* allocation;
+        Token_Range range;
+        Token_Range bounding_range;
+    };
+
 
     void initialize();
     void reset();
     void destroy();
-    AST::Module* execute(Token_Code* tokens);
+    AST::Module* execute(Source_Code* code);
+
+    Parse_Info* get_parse_info(AST::Base* base);
     void ast_base_get_section_token_range(AST::Base* base, Section section, Dynamic_Array<Token_Range>* ranges);
     Array<Error_Message> get_error_messages();
+    AST::Base* find_smallest_enclosing_node(AST::Base* base, Token_Index index);
 }

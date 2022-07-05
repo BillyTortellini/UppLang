@@ -17,22 +17,22 @@
 // Parser stages
 bool enable_lexing = true;
 bool enable_parsing = true;
-bool enable_rc_gen = true;
+bool enable_dependency_analysis = true;
 bool enable_analysis = true;
 bool enable_ir_gen = true;
 bool enable_bytecode_gen = true;
-bool enable_c_generation = true;
+bool enable_c_generation = false;
 bool enable_c_compilation = false;
 
 // Output stages
 bool output_identifiers = false;
-bool output_ast = false;
-bool output_rc = false;
+bool output_ast = true;
+bool output_dependency_analysis = false;
 bool output_type_system = false;
 bool output_root_table = false;
 bool output_ir = true;
 bool output_bytecode = false;
-bool output_timing = false;
+bool output_timing = true;
 
 // Testcases
 bool enable_testcases = false;
@@ -62,12 +62,15 @@ Code_Source* code_source_create(Code_Origin origin, Source_Code* code, String fi
     result->analysis_items = dynamic_array_create_empty<Analysis_Item*>(1);
     result->item_dependencies = dynamic_array_create_empty<Item_Dependency>(1);
     result->file_path = file_path;
+    dynamic_array_push_back(&compiler.code_sources, result);
     return result;
 }
 
 void code_source_destroy(Code_Source* source)
 {
-    token_code_destroy(&source->token_code);
+    if (source->origin != Code_Origin::MAIN_PROJECT) {
+        source_code_destroy(source->code);
+    }
     string_destroy(&source->file_path);
     for (int i = 0; i < source->analysis_items.size; i++) {
         analysis_item_destroy(source->analysis_items[i]);
@@ -101,7 +104,7 @@ Compiler* compiler_initialize(Timer* timer)
     compiler.c_compiler = new C_Compiler;
     *compiler.c_compiler = c_compiler_create();
 
-    compiler.code_sources = dynamic_array_create_empty<Code_Source*>(16);
+    compiler.code_sources = dynamic_array_create_empty<Code_Source*>(1);
     return &compiler;
 }
 
@@ -206,7 +209,7 @@ void compiler_compile(Source_Code* source_code, bool generate_code, String proje
 
     compiler_switch_timing_task(Timing_Task::RESET);
     {
-        // ! Identifier pool is currently not being reset at all
+        // NOTE: Identifier pool is not beeing reset because Syntax-Editor already does incremental lexing
         compiler.id_size = identifier_pool_add(&compiler.identifier_pool, string_create_static("size"));
         compiler.id_data = identifier_pool_add(&compiler.identifier_pool, string_create_static("data"));
         compiler.id_tag = identifier_pool_add(&compiler.identifier_pool, string_create_static("tag"));
@@ -214,7 +217,8 @@ void compiler_compile(Source_Code* source_code, bool generate_code, String proje
         compiler.id_type_of = identifier_pool_add(&compiler.identifier_pool, string_create_static("type_of"));
         compiler.id_type_info = identifier_pool_add(&compiler.identifier_pool, string_create_static("type_info"));
 
-        // Reset data (FUTURE: Watch out for incremental compilation, pools should not be reset then)
+        // FUTURE: When we have incremental compilation we cannot just reset everything anymore
+        // Reset Data
         constant_pool_destroy(&compiler.constant_pool);
         compiler.constant_pool = constant_pool_create(&compiler.type_system);
         extern_sources_destroy(&compiler.extern_sources);
@@ -239,7 +243,7 @@ void compiler_compile(Source_Code* source_code, bool generate_code, String proje
     file_io_relative_to_full_path(&project_path);
     hashset_insert_element(&compiler.semantic_analyser->loaded_filenames, project_path);
     compiler_add_source_code(source_code, Code_Origin::MAIN_PROJECT, project_path);
-    bool do_analysis = enable_lexing && enable_parsing && enable_rc_gen && enable_analysis;
+    bool do_analysis = enable_lexing && enable_parsing && enable_dependency_analysis && enable_analysis;
 
     compiler_switch_timing_task(Timing_Task::ANALYSIS);
     if (do_analysis) {
@@ -259,7 +263,7 @@ void compiler_compile(Source_Code* source_code, bool generate_code, String proje
         ir_generator_finish(do_bytecode_gen);
     }
     if (do_bytecode_gen) {
-        //bytecode_generator_generate(&compiler.bytecode_generator, compiler); // Currently done in ir_generator!
+        // INFO: Bytecode Gen is currently controlled by ir-generator
         bytecode_generator_set_entry_function(compiler.bytecode_generator);
     }
     if (do_c_generation) {
@@ -317,6 +321,7 @@ void compiler_compile(Source_Code* source_code, bool generate_code, String proje
     compiler_switch_timing_task(Timing_Task::FINISH);
     if (do_output && output_timing && generate_code)
     {
+        double sum = timer_current_time_in_seconds(compiler.timer) - time_compile_start;
         logg("\n-------- TIMINGS ---------\n");
         logg("reset       ... %3.2fms\n", (float)(compiler.time_reset) * 1000);
         if (enable_lexing) {
@@ -325,7 +330,7 @@ void compiler_compile(Source_Code* source_code, bool generate_code, String proje
         if (enable_parsing) {
             logg("parsing     ... %3.2fms\n", (float)(compiler.time_parsing) * 1000);
         }
-        if (enable_rc_gen) {
+        if (enable_dependency_analysis) {
             logg("rc_gen      ... %3.2fms\n", (float)(compiler.time_rc_gen) * 1000);
         }
         if (enable_analysis) {
@@ -338,7 +343,6 @@ void compiler_compile(Source_Code* source_code, bool generate_code, String proje
         if (do_output) {
             logg("output      ... %3.2fms\n", (float)(compiler.time_output) * 1000);
         }
-        double sum = timer_current_time_in_seconds(compiler.timer) - time_compile_start;
         logg("--------------------------\n");
         logg("sum         ... %3.2fms\n", (float)(sum) * 1000);
         logg("--------------------------\n");
@@ -350,7 +354,7 @@ Exit_Code compiler_execute()
     bool do_execution =
         enable_lexing &&
         enable_parsing &&
-        enable_rc_gen &&
+        enable_dependency_analysis &&
         enable_analysis &&
         enable_ir_gen &&
         enable_execution;
@@ -384,13 +388,12 @@ void compiler_add_source_code(Source_Code* source_code, Code_Origin origin, Stri
 {
     bool do_lexing = enable_lexing;
     bool do_parsing = do_lexing && enable_parsing;
-    bool do_rc_gen = do_parsing && enable_rc_gen;
+    bool do_dependency_analysis = do_parsing && enable_dependency_analysis;
 
     Timing_Task before = compiler.task_current;
     SCOPE_EXIT(compiler_switch_timing_task(before));
 
     Code_Source* code_source = code_source_create(origin, source_code, file_path);
-    dynamic_array_push_back(&compiler.code_sources, code_source);
     if (origin == Code_Origin::MAIN_PROJECT) {
         compiler.main_source = code_source;
     }
@@ -399,9 +402,9 @@ void compiler_add_source_code(Source_Code* source_code, Code_Origin origin, Stri
     {
         compiler_switch_timing_task(Timing_Task::LEXING);
         source_code_tokenize_block(block_index_make_root(source_code), true);
-        code_source->token_code = token_code_create_from_source(source_code);
 
         if (output_identifiers) {
+            compiler_switch_timing_task(Timing_Task::OUTPUT);
             logg("\n--------IDENTIFIERS:--------:\n");
             identifier_pool_print(&compiler.identifier_pool);
         }
@@ -410,25 +413,27 @@ void compiler_add_source_code(Source_Code* source_code, Code_Origin origin, Stri
     if (do_parsing)
     {
         compiler_switch_timing_task(Timing_Task::PARSING);
-        code_source->ast = Parser::execute(&code_source->token_code);
+        code_source->ast = Parser::execute(code_source->code);
 
         if (output_ast && do_output)
         {
+            compiler_switch_timing_task(Timing_Task::OUTPUT);
             logg("\n");
             logg("--------AST PARSE RESULT--------:\n");
             AST::base_print(&code_source->ast->base);
         }
     }
 
-    if (do_rc_gen)
+    if (do_dependency_analysis)
     {
         compiler_switch_timing_task(Timing_Task::RC_GEN);
         dependency_analyser_analyse(code_source);
         compiler_switch_timing_task(Timing_Task::ANALYSIS);
         workload_executer_add_analysis_items(code_source);
 
-        if (output_rc && do_output)
+        if (output_dependency_analysis && do_output)
         {
+            compiler_switch_timing_task(Timing_Task::OUTPUT);
             String printed_items = string_create_empty(256);
             SCOPE_EXIT(string_destroy(&printed_items));
             dependency_analyser_append_to_string(&printed_items);
@@ -600,7 +605,7 @@ void compiler_run_testcases(Timer* timer)
             string_append_formated(&result, "\n");
             if (exit_code == Exit_Code::COMPILATION_FAILED)
             {
-                auto& parse_errors = Parser::get_error_messages();
+                auto parse_errors = Parser::get_error_messages();
                 for (int i = 0; i < parse_errors.size; i++) {
                     auto& e = parse_errors[i];
                     string_append_formated(&result, "    Parse Error: %s\n", e.msg);

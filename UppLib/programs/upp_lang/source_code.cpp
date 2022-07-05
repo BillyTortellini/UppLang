@@ -25,6 +25,33 @@ void source_line_destroy(Source_Line* line) {
     dynamic_array_destroy(&line->infos);
 }
 
+Block_Index source_block_insert_empty(Block_Index parent_index, int line_index)
+{
+    Source_Block new_block;
+    new_block.children = dynamic_array_create_empty<Block_Index>(1);
+    new_block.lines = dynamic_array_create_empty<Source_Line>(1);
+    new_block.line_index = line_index;
+    new_block.valid = true;
+    new_block.parent = parent_index;
+    dynamic_array_push_back(&parent_index.code->blocks, new_block);
+    auto new_block_index = block_index_make(parent_index.code, parent_index.code->blocks.size - 1);
+
+    // Insert ordered into parent
+    auto parent_block = index_value(parent_index);
+    int i = 0;
+    while (i < parent_block->children.size)
+    {
+        auto child_block = index_value(parent_block->children[i]);
+        if (line_index < child_block->line_index) {
+            break;
+        }
+        i++;
+    }
+    dynamic_array_insert_ordered(&parent_block->children, new_block_index, i);
+    
+    return new_block_index;
+}
+
 void source_block_destroy(Source_Block* block)
 {
     for (int i = 0; i < block->lines.size; i++) {
@@ -73,76 +100,113 @@ void source_code_destroy(Source_Code* code)
     dynamic_array_destroy(&code->blocks);
 }
 
-void source_code_fill_from_string(Source_Code* code, String text)
+void source_block_fill_from_string(Block_Index parent_index, String text, int* text_index, int indentation)
 {
-    return;
-    /*
-    // Get all characters into the string
-    int index = 0;
-    source_code_reset(code);
-    if (text.size == 0) {
-        source_line_insert_empty(code, 0, 0);
-        return;
+    Block_Index block_index;
+    if (indentation == 0) {
+        assert(parent_index.block == 0, "");
+        block_index = parent_index;
+    }
+    else {
+        auto parent_block = index_value(parent_index);
+        block_index = source_block_insert_empty(parent_index, parent_block->lines.size);
     }
 
     // Parse all lines
+    auto& index = *text_index;
     while (index < text.size)
     {
         // Find indentation level
+        int indent_start_index = index;
         int line_indent = 0;
         while (index < text.size && text.characters[index] == '\t') {
             line_indent += 1;
             index += 1;
         }
-        // Find line end
-        int line_start_index = index;
-        int line_end_index = index;
-        while (true)
-        {
-            if (index >= text.size) {
-                line_end_index = index;
-                break;
-            }
-            char c = text.characters[index];
-            if (c == '\n') {
-                line_end_index = index;
-                index += 1;
-                break;
-            }
-            if (c == '\t' || c == '\r') {
-                index += 1;
-                continue;
-            }
-            index += 1;
+        if (line_indent > indentation) {
+            index = indent_start_index;
+            source_block_fill_from_string(block_index, text, text_index, indentation + 1);
+            continue;
+        }
+        else if (line_indent < indentation) {
+            index = indent_start_index;
+            return;
         }
 
-        {
-            Source_Line line;
-            line.indentation = line_indent;
-            line.text = string_create_substring(&text, line_start_index, line_end_index);
-            line.tokens = dynamic_array_create_empty<Token>(1);
-            line.infos = dynamic_array_create_empty<Render_Info>(1);
-            dynamic_array_push_back(&code->lines, line);
+        // Find line end
+        int line_start_index = index;
+        while (index < text.size && text.characters[index] != '\n') {
+            index += 1;
+        }
+        int line_end_index = index;
+        if (index != text.size) {
+            index += 1; // Skip "
+        }
+
+        auto line_index = line_index_make(block_index, index_value(block_index)->lines.size);
+        source_line_insert_empty(line_index);
+        String substring = string_create_substring_static(&text, line_start_index, line_end_index);
+        string_append_string(&index_value(line_index)->text, &substring);
+    }
+}
+
+void source_code_fill_from_string(Source_Code* code, String text)
+{
+    // Reset
+    {
+        source_code_reset(code);
+        auto& root_block = code->blocks[0];
+        source_line_destroy(&root_block.lines[0]);
+        dynamic_array_reset(&root_block.lines);
+    }
+
+    int text_index = 0;
+    source_block_fill_from_string(block_index_make_root(code), text, &text_index, 0);
+
+    // Check if root block not empty
+    {
+        auto& root_block = code->blocks[0];
+        if (root_block.lines.size == 0 && root_block.children.size == 0) {
+            source_line_insert_empty(line_index_make(block_index_make_root(code), 0));
         }
     }
-    */
+}
+
+void source_block_append_to_string(Block_Index index, String* text, int indentation)
+{
+    auto block = index_value(index);
+    int child_index = 0;
+    for (int i = 0; i < block->lines.size; i++)
+    {
+        while (child_index < block->children.size)
+        {
+            auto next_child = index_value(block->children[child_index]);
+            if (next_child->line_index == i) {
+                source_block_append_to_string(block->children[child_index], text, indentation + 1);
+                child_index++;
+            }
+            else {
+                break;
+            }
+        }
+
+        auto& line = block->lines[i];
+        for (int j = 0; j < indentation; j++) {
+            string_append_formated(text, "\t");
+        }
+        string_append_string(text, &line.text);
+        string_append_formated(text, "\n");
+    }
+
+    if (child_index < block->children.size) {
+        source_block_append_to_string(block->children[child_index], text, indentation + 1);
+        assert(child_index + 1 >= block->children.size, "All must be iterated by now");
+    }
 }
 
 void source_code_append_to_string(Source_Code* code, String* text)
 {
-    /*
-    for (int i = 0; i < code->lines.size; i++)
-    {
-        auto& line = code->lines[i];
-        for (int j = 0; j < line.indentation; j++) {
-            string_append_formated(text, "\t");
-        }
-        string_append_string(text, &line.text);
-        if (i != code->lines.size - 1) {
-            string_append_formated(text, "\n");
-        }
-    }
-    */
+    source_block_append_to_string(block_index_make_root(code), text, 0);
 }
 
 void source_code_tokenize_block(Block_Index index, bool recursive)
@@ -170,7 +234,7 @@ void source_block_check_sanity(Block_Index index)
     {
         auto child_index = block->children[i];
         auto child_block = index_value(child_index);
-        assert(index_equals(child_block->parent, index), "Parent/Child connections must be correct!");
+        assert(index_equal(child_block->parent, index), "Parent/Child connections must be correct!");
         assert(child_block->line_index >= 0 && child_block->line_index <= block->lines.size, "Must be in parent line range");
         if (i + 1 < block->children.size)
         {
@@ -235,11 +299,49 @@ Line_Index line_index_make(Block_Index block, int line) {
     return index;
 }
 
-Token_Index token_index_make(Line_Index line, int token) {
-    Token_Index index;
-    index.line = line;
-    index.token = token;
-    return index;
+Line_Index line_index_make_root(Source_Code* code) {
+    return line_index_make(block_index_make_root(code), 0);
+}
+
+Line_Index line_index_make_first_in_block(Block_Index block_index)
+{
+    auto block = index_value(block_index);
+    while (true)
+    {
+        if (block->children.size != 0) {
+            auto first_index = block->children[0];
+            auto first_block = index_value(first_index);
+            if (first_block->line_index == 0) {
+                block_index = first_index;
+                block = first_block;
+                continue;
+            }
+        }
+        break;
+    }
+    assert(block->lines.size > 0, "Hey");
+    return line_index_make(block_index, 0);
+
+}
+
+Line_Index line_index_make_last_in_block(Block_Index block_index)
+{
+    auto block = index_value(block_index);
+    while (true)
+    {
+        if (block->children.size != 0) {
+            auto last_index = dynamic_array_last(&block->children);
+            auto last_block = index_value(last_index);
+            if (last_block->line_index == block->lines.size) {
+                block_index = last_index;
+                block = last_block;
+                continue;
+            }
+        }
+        break;
+    }
+    assert(block->lines.size > 0, "Hey");
+    return line_index_make(block_index, block->lines.size - 1);
 }
 
 Text_Index text_index_make(Line_Index line, int pos)
@@ -250,11 +352,53 @@ Text_Index text_index_make(Line_Index line, int pos)
     return index;
 }
 
+Token_Index token_index_make(Line_Index line, int token) {
+    Token_Index index;
+    index.line = line;
+    index.token = token;
+    return index;
+}
+
+Token_Index token_index_make_root(Source_Code* code) {
+    return token_index_make(line_index_make_root(code), 0);
+}
+
+Token_Index token_index_make_line_end(Line_Index index) {
+    auto line = index_value(index);
+    return token_index_make(index, line->tokens.size);
+}
+
+Token_Index token_index_make_block_start(Block_Index index) {
+    return token_index_make(line_index_make_first_in_block(index), 0);
+}
+
+Token_Index token_index_make_block_end(Block_Index index) {
+    return token_index_make_line_end(line_index_make_last_in_block(index));
+}
+
+Token_Range token_range_make(Token_Index start, Token_Index end) {
+    Token_Range range;
+    range.start = start;
+    range.end = end;
+    return range;
+}
+
+Token_Range token_range_make_offset(Token_Index start, int offset) {
+    Token_Range range;
+    range.start = start;
+    range.end = token_index_advance(start, offset);
+    return range;
+}
+
+Token_Range token_range_make_block(Block_Index block_index) {
+    return token_range_make(token_index_make_block_start(block_index), token_index_make_block_end(block_index));
+}
+
 bool index_valid(Block_Index index)
 {
     auto& blocks = index.code->blocks;
     auto block = index_value_unsafe(index);
-    return index.block >= 0 && index.block < blocks.size && block->valid;
+    return index.block >= 0 && index.block < blocks.size&& block->valid;
 }
 
 bool index_valid(Line_Index index)
@@ -316,20 +460,35 @@ void index_sanitize(Text_Index* index)
     index->pos = math_clamp(index->pos, 0, text.size);
 }
 
-bool index_equals(Block_Index a, Block_Index b) {
+bool index_equal(Block_Index a, Block_Index b)
+{
     assert(a.code == b.code, "");
     return a.block == b.block;
 }
 
-bool index_equals(Line_Index a, Line_Index b) {
-    if (!index_equals(a.block, b.block)) return false;
+bool index_equal(Line_Index a, Line_Index b)
+{
+    if (!index_equal(a.block, b.block)) return false;
     return a.line == b.line;
 }
 
-int index_compare(Line_Index a, Line_Index b) 
+bool index_equal(Token_Index a, Token_Index b)
+{
+    if (!index_equal(a.line, b.line)) return false;
+    return a.token == b.token;
+}
+
+bool index_equal(Text_Index a, Text_Index b)
+{
+    if (!index_equal(a.line, b.line)) return false;
+    return a.pos == b.pos;
+}
+
+
+int index_compare(Line_Index a, Line_Index b)
 {
     assert(a.block.code == b.block.code, "");
-    if (a.block.block == b.block.block) 
+    if (a.block.block == b.block.block)
     {
         if (a.line == b.line) return 0;
         return a.line < b.line ? 1 : -1;
@@ -340,7 +499,7 @@ int index_compare(Line_Index a, Line_Index b)
     auto a_block = index_value(a.block);
     auto b_block = index_value(b.block);
 
-    while (a_block->parent.block != b_block->parent.block) 
+    while (a_block->parent.block != b_block->parent.block)
     {
         if (a_block->parent.block == b.block.block) {
             return a_block->line_index <= b.line ? 1 : -1;
@@ -349,7 +508,7 @@ int index_compare(Line_Index a, Line_Index b)
             return b_block->line_index > a.line ? 1 : -1;
         }
 
-        if (a_indent > b_indent) 
+        if (a_indent > b_indent)
         {
             a = line_index_make(a_block->parent, a_block->line_index);
             a_block = index_value(a.block);
@@ -361,8 +520,43 @@ int index_compare(Line_Index a, Line_Index b)
             b_indent -= 1;
         }
     }
-    panic("");
-    return -2;
+    return a.line < b.line ? 1 : -1;
+}
+
+int index_compare(Token_Index a, Token_Index b)
+{
+    int line_cmp = index_compare(a.line, b.line);
+    if (line_cmp != 0) {
+        return line_cmp;
+    }
+
+    if (a.token < b.token) {
+        return 1;
+    }
+    else if (a.token == b.token) {
+        return 0;
+    }
+    else {
+        return -1;
+    }
+}
+
+bool token_range_contains(Token_Range range, Token_Index index) 
+{
+    // INFO: This function is not a simple compare anymore because we also want to handle
+    //        1. Ranges with size 0
+    //        2. Ranges at the end of a line
+    if (index_compare(range.start, range.end) == 0 && index_compare(range.start.line, index.line) == 0) {
+        auto& tokens = index_value(index.line)->tokens;
+        if (token_index_is_last_in_line(range.start)) {
+            return index.token >= tokens.size - 1;
+        }
+        return index.token == range.start.token;
+    }
+    if (token_index_is_last_in_line(range.end)) {
+        range.end = token_index_advance(range.end, 1);
+    }
+    return index_compare(range.start, index) >= 0 && index_compare(index, range.end) > 0;
 }
 
 
@@ -399,12 +593,23 @@ Line_Index block_get_end_line(Block_Index block_index)
         if (last_child->line_index != block->lines.size) {
             break;
         }
-        block_index = block->children[block->children.size-1];
+        block_index = block->children[block->children.size - 1];
         block = last_child;
     }
 
-    return line_index_make(block_index, block->lines.size-1);
+    return line_index_make(block_index, block->lines.size - 1);
 }
+
+int block_index_get_indentation(Block_Index block_index)
+{
+    int indentation = 0;
+    while (block_index.block != 0) {
+        indentation += 1;
+        block_index = index_value(block_index)->parent;
+    }
+    return indentation;
+}
+
 
 Line_Index line_index_next(Line_Index index)
 {
@@ -473,14 +678,57 @@ Line_Index line_index_prev(Line_Index index)
     return line_index_make(block->parent, block->line_index - 1);
 }
 
-int block_index_get_indentation(Block_Index block_index) 
+Optional<Block_Index> line_index_block_before(Line_Index index)
 {
-    int indentation = 0;
-    while (block_index.block != 0) {
-        indentation += 1;
-        block_index = index_value(block_index)->parent;
+    auto block = index_value(index.block);
+    for (int i = 0; i < block->children.size; i++) {
+        auto child_index = block->children[i];
+        auto child_block = index_value(child_index);
+        if (index.line == child_block->line_index) {
+            return optional_make_success(child_index);
+        }
     }
-    return indentation;
+    return optional_make_failure<Block_Index>();
+}
+
+Optional<Block_Index> line_index_block_after(Line_Index index)
+{
+    auto block = index_value(index.block);
+    for (int i = 0; i < block->children.size; i++) {
+        auto child_index = block->children[i];
+        auto child_block = index_value(child_index);
+        if (index.line + 1 == child_block->line_index) {
+            return optional_make_success(child_index);
+        }
+    }
+    return optional_make_failure<Block_Index>();
+}
+
+bool line_index_is_last_in_block(Line_Index index)
+{
+    auto block = index_value(index.block);
+    return index.line >= block->lines.size - 1;
+}
+
+Token_Index token_index_advance(Token_Index index, int offset)
+{
+    index.token += offset;
+    return index;
+}
+
+Token_Index token_index_next(Token_Index index) {
+    return token_index_advance(index, 1);
+}
+
+Token_Index token_index_prev(Token_Index index) {
+    return token_index_advance(index, -1);
+}
+
+bool token_index_is_last_in_line(Token_Index index)
+{
+    auto line = index_value(index.line);
+    assert(index.token <= line->tokens.size, "");
+    return index.token == line->tokens.size;
 }
 
 

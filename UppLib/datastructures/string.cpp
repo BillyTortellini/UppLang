@@ -13,7 +13,7 @@ String string_create_static_with_size(const char* content, int length)
     String result;
     result.size = length;
     result.characters = const_cast<char*>(content);
-    result.capacity = length+1;
+    result.capacity = 0;
     return result;
 }
 
@@ -59,7 +59,7 @@ String string_create_static(const char* content)
     String result;
     result.characters = const_cast<char*>(content);
     result.size = (int)strlen(content);
-    result.capacity = result.size + 1;
+    result.capacity = 0;
     return result;
 }
 
@@ -130,7 +130,7 @@ void string_create_from_filepath_to_path_and_filename(String* path, String* file
 }
 
 void string_destroy(String* string) {
-    if (string->characters != 0) {
+    if (string->capacity != 0) {
         delete[] string->characters;
     }
 }
@@ -235,7 +235,7 @@ void string_append_formated(String* string, const char* format, ...)
     string_reserve(string, string->size + message_length + 1);
     int ret_val = vsnprintf(string->characters + string->size, string->capacity - string->size, format, args);
     if (ret_val < 0) {
-        logg("Shit?\n");
+        panic("Shouldn't happen");
     }
     string->size = string->size + message_length;
     /*

@@ -21,6 +21,19 @@
 #include "lexer.hpp"
 
 // Editor
+struct Error_Display
+{
+    String message;
+    Token_Range range;
+};
+
+Error_Display error_display_make(String msg, Token_Range range) {
+    Error_Display result;
+    result.message = msg;
+    result.range = range;
+    return result;
+}
+
 enum class Editor_Mode
 {
     NORMAL,
@@ -39,9 +52,11 @@ struct Syntax_Editor
 
     bool space_before_cursor;
     bool space_after_cursor;
+    bool code_changed_since_last_compile;
 
     // Rendering
     String context_text;
+    Dynamic_Array<Error_Display> errors;
 
     Input* input;
     Rendering_Core* rendering_core;
@@ -226,7 +241,7 @@ bool syntax_editor_sanitize_line(Line_Index line_index)
         }
     }
 
-    if (index_equals(editor.cursor.line, line_index)) 
+    if (index_equal(editor.cursor.line, line_index)) 
     {
         editor.cursor.pos = pos;
         syntax_editor_sanitize_cursor();
@@ -243,6 +258,9 @@ void syntax_editor_synchronize_tokens()
     auto now = history_get_timestamp(&editor.history);
     history_get_changes_between(&editor.history, editor.last_token_synchronized, now, &changes);
     editor.last_token_synchronized = now;
+    if (changes.size != 0) {
+        editor.code_changed_since_last_compile = true;
+    }
 
     // Find out which lines were changed
     auto line_changes = dynamic_array_create_empty<Line_Index>(1);
@@ -257,7 +275,7 @@ void syntax_editor_synchronize_tokens()
             if (change.apply_forwards) break;
             for (int j = 0; j < line_changes.size; j++) {
                 auto& line = line_changes[j];
-                if (index_equals(line.block, change.options.block_create.new_block_index)) {
+                if (index_equal(line.block, change.options.block_create.new_block_index)) {
                     dynamic_array_swap_remove(&line_changes, j);
                     j -= 1;
                 }
@@ -274,7 +292,7 @@ void syntax_editor_synchronize_tokens()
                 if (change.apply_forwards) 
                 {
                     // Merge
-                    if (index_equals(merge.merge_other, line.block)) {
+                    if (index_equal(merge.merge_other, line.block)) {
                         int new_index = line.line;
                         if (new_index > merge.split_index) {
                             new_index -= merge.split_index;
@@ -285,7 +303,7 @@ void syntax_editor_synchronize_tokens()
                 else 
                 { 
                     // Split
-                    if (index_equals(merge.index, line.block) && line.line >= merge.split_index) {
+                    if (index_equal(merge.index, line.block) && line.line >= merge.split_index) {
                         line = line_index_make(merge.merge_other, line.line - merge.split_index);
                     }
                 }
@@ -299,7 +317,7 @@ void syntax_editor_synchronize_tokens()
             for (int j = 0; j < line_changes.size; j++)
             {
                 auto& line = line_changes[j];
-                if (!index_equals(line.block, insert.block)) continue;
+                if (!index_equal(line.block, insert.block)) continue;
                 if (change.apply_forwards)
                 {
                     // Line insertion
@@ -326,7 +344,7 @@ void syntax_editor_synchronize_tokens()
             auto& changed_line = change.options.text_insert.index.line;
             bool found = false;
             for (int j = 0; j < line_changes.size; j++) {
-                if (index_equals(line_changes[j], changed_line)) {
+                if (index_equal(line_changes[j], changed_line)) {
                     found = true;
                 }
             }
@@ -446,24 +464,35 @@ void normal_mode_handle_command(Normal_Command command)
         }
 
         auto index = get_cursor_token_index();
-        int delete_start = index > 0 ? tokens[index - 1].end_index : 0;
-        int delete_end = index + 1 < tokens.size ? tokens[index + 1].start_index : line->text.size;
-        bool insert_space = false;
-        if (index > 0 && index + 1 < tokens.size) {
-            insert_space = char_is_space_critical(line->text[tokens[index - 1].end_index - 1]) &&
-                char_is_space_critical(line->text[tokens[index + 1].start_index]);
+
+        bool critical_before = false;
+        if (index > 0) {
+            critical_before = char_is_space_critical(line->text[tokens[index - 1].end_index - 1]);
+        }
+        bool critical_after = false;
+        if (index + 1 < tokens.size) {
+            critical_after = char_is_space_critical(line->text[tokens[index + 1].start_index]);
         }
 
         history_start_complex_command(&syntax_editor.history);
         SCOPE_EXIT(history_stop_complex_command(&syntax_editor.history));
 
+        // Delete
+        int delete_start = index > 0 ? tokens[index - 1].end_index : 0;
+        int delete_end = index + 1 < tokens.size ? tokens[index + 1].start_index : line->text.size;
         cursor.pos = delete_start;
         history_delete_text(&editor.history, text_index_make(cursor.line, delete_start), delete_end);
-        if (insert_space) {
+
+        // Re-Enter critical spaces
+        if (critical_before && critical_after) {
             history_insert_char(&editor.history, text_index_make(cursor.line, delete_start), ' ');
             cursor.pos += 1;
         }
         if (command == Normal_Command::CHANGE_TOKEN) {
+            if (!(critical_before && critical_after)) {
+                editor.space_before_cursor = critical_before;
+            }
+            editor.space_after_cursor = critical_after;
             editor_enter_input_mode();
         }
         break;
@@ -710,7 +739,7 @@ void insert_mode_handle_command(Input_Command input)
         if (pos == 0)
         {
             auto prev_line = line_index_prev(cursor.line);
-            if (index_equals(prev_line, cursor.line)) {
+            if (index_equal(prev_line, cursor.line)) {
                 // We are at the first line in the code
                 break;
             }
@@ -752,8 +781,12 @@ void insert_mode_handle_command(Input_Command input)
     syntax_editor_sanitize_cursor();
 }
 
+
+
+// Syntax Editor
 void syntax_editor_update()
 {
+    auto& editor = syntax_editor;
     auto& input = syntax_editor.input;
     auto& mode = syntax_editor.mode;
 
@@ -896,17 +929,65 @@ void syntax_editor_update()
     }
 
     syntax_editor_synchronize_tokens();
-    if (syntax_editor.input->key_pressed[(int)Key_Code::F5] && false)
+    bool build_and_run = syntax_editor.input->key_pressed[(int)Key_Code::F5];
+    if (syntax_editor.code_changed_since_last_compile || build_and_run) 
     {
-        // Compile and display error messages
-        auto ast_errors = Parser::get_error_messages();
-        for (int i = 0; i < ast_errors.size; i++) {
-            auto& error = ast_errors[i];
-            logg("AST_Error: %s\n", error.msg);
+        compiler_compile(syntax_editor.code, build_and_run, string_create(syntax_editor.file_path));
+        syntax_editor.code_changed_since_last_compile = false;
+
+        // Collect errors from all compiler stages
+        {
+            for (int i = 0; i < editor.errors.size; i++) {
+                string_destroy(&editor.errors[i].message);
+            }
+            dynamic_array_reset(&editor.errors);
+
+            // Parse Errors
+            auto parse_errors = Parser::get_error_messages();
+            for (int i = 0; i < parse_errors.size; i++) {
+                auto& error = parse_errors[i];
+                dynamic_array_push_back(&editor.errors, error_display_make(string_create_static(error.msg), error.range));
+            }
+
+            auto error_ranges = dynamic_array_create_empty<Token_Range>(1);
+            SCOPE_EXIT(dynamic_array_destroy(&error_ranges));
+
+            // Dependency Errors
+            for (int i = 0; i < compiler.dependency_analyser->errors.size; i++)
+            {
+                auto& error = compiler.dependency_analyser->errors[i];
+                auto& node = error.error_node;
+                if (node == 0) continue;
+                if (code_source_from_ast(node) != compiler.main_source) continue;
+                dynamic_array_reset(&error_ranges);
+                Parser::ast_base_get_section_token_range(node, Parser::Section::IDENTIFIER, &error_ranges);
+                for (int j = 0; j < error_ranges.size; j++) {
+                    auto& range = error_ranges[j];
+                    dynamic_array_push_back(&editor.errors, error_display_make(string_create_static("Symbol already exists"), range));
+                }
+            }
+
+            // Semantic Analysis Errors
+            for (int i = 0; i < compiler.semantic_analyser->errors.size; i++)
+            {
+                auto& error = compiler.semantic_analyser->errors[i];
+                auto& node = error.error_node;
+                dynamic_array_reset(&error_ranges);
+                if (node == 0) continue;
+                if (code_source_from_ast(node) != compiler.main_source) continue;
+                Parser::ast_base_get_section_token_range(node, semantic_error_get_section(error), &error_ranges);
+                for (int j = 0; j < error_ranges.size; j++) {
+                    auto& range = error_ranges[j];
+                    String string = string_create_empty(4);
+                    semantic_error_append_to_string(error, &string);
+                    dynamic_array_push_back(&editor.errors, error_display_make(string, range));
+                }
+            }
         }
-
-        compiler_compile(syntax_editor.code, true, string_create(syntax_editor.file_path));
-
+    }
+    if (build_and_run)
+    {
+        // Display error messages or run the program
         if (!compiler_errors_occured()) {
             auto exit_code = compiler_execute();
             String output = string_create_empty(256);
@@ -914,32 +995,14 @@ void syntax_editor_update()
             exit_code_append_to_string(&output, exit_code);
             logg("\nProgram Exit with Code: %s\n", output.characters);
         }
-        else
-        {
+        else {
             // Print errors
-            auto parse_errors = Parser::get_error_messages();
-            for (int i = 0; i < parse_errors.size; i++) {
-                logg("Parse Error: \"%s\"\n", parse_errors[i].msg);
-            }
-            for (int i = 0; i < compiler.dependency_analyser->errors.size; i++) {
-                Symbol_Error error = compiler.dependency_analyser->errors[i];
-                logg("Symbol error: Redefinition of \"%s\"\n", error.existing_symbol->id->characters);
-            }
-            {
-                String tmp = string_create_empty(256);
-                SCOPE_EXIT(string_destroy(&tmp));
-                for (int i = 0; i < compiler.semantic_analyser->errors.size; i++)
-                {
-                    Semantic_Error e = compiler.semantic_analyser->errors[i];
-                    semantic_error_append_to_string(e, &tmp);
-                    logg("Semantic Error: %s\n", tmp.characters);
-                    string_reset(&tmp);
-                }
+            logg("Could not run program, there were errors:\n");
+            for (int i = 0; i < editor.errors.size; i++) {
+                auto error = editor.errors[i];
+                logg("\t%s\n", error.message.characters);
             }
         }
-    }
-    else {
-        //compiler_compile(syntax_editor.code, false, string_create(syntax_editor.file_path));
     }
 }
 
@@ -947,11 +1010,13 @@ void syntax_editor_initialize(Rendering_Core* rendering_core, Text_Renderer* tex
 {
     memory_zero(&syntax_editor);
     syntax_editor.context_text = string_create_empty(256);
+    syntax_editor.errors = dynamic_array_create_empty<Error_Display>(1);
 
     syntax_editor.code = source_code_create();
     syntax_editor.history = code_history_create(syntax_editor.code);
     syntax_editor.last_token_synchronized = history_get_timestamp(&syntax_editor.history);
     syntax_editor.last_hierarchy_synchronized = history_get_timestamp(&syntax_editor.history);
+    syntax_editor.code_changed_since_last_compile = true;
 
     syntax_editor.text_renderer = text_renderer;
     syntax_editor.rendering_core = rendering_core;
@@ -969,13 +1034,19 @@ void syntax_editor_destroy()
 {
     auto& editor = syntax_editor;
     source_code_destroy(editor.code);
-    compiler_destroy();
+    code_history_destroy(&editor.history);
     string_destroy(&syntax_editor.context_text);
+    compiler_destroy();
+    for (int i = 0; i < editor.errors.size; i++) {
+        string_destroy(&editor.errors[i].message);
+    }
+    dynamic_array_destroy(&editor.errors);
 }
 
 
 
-// Rendering
+// RENDERING
+// Draw Commands
 vec2 text_to_screen_coord(int line, int character)
 {
     auto editor = &syntax_editor;
@@ -1013,7 +1084,7 @@ void syntax_editor_draw_underline(int line, int character, int length, vec3 colo
     renderer_2D_add_rectangle(syntax_editor.renderer_2D, cursor, size, color, 0.0f);
 }
 
-void syntax_editor_draw_cursor_line(vec3 color, int line, int character)
+void syntax_editor_draw_cursor_line(int line, int character, vec3 color)
 {
     auto editor = &syntax_editor;
     float w = editor->rendering_core->render_information.viewport_width;
@@ -1033,11 +1104,13 @@ void syntax_editor_draw_cursor_line(vec3 color, int line, int character)
     renderer_2D_add_rectangle(editor->renderer_2D, cursor, size, color, 0.0f);
 }
 
-void syntax_editor_draw_character_box(vec3 color, int line, int character)
+void syntax_editor_draw_text_background(int line, int character, int length, vec3 color)
 {
-    auto editor = &syntax_editor;
-    float w = editor->rendering_core->render_information.viewport_width;
-    float h = editor->rendering_core->render_information.viewport_height;
+    auto& editor = syntax_editor;
+    auto offset = editor.character_size * vec2(0.0f, 0.5f);
+
+    float w = editor.rendering_core->render_information.viewport_width;
+    float h = editor.rendering_core->render_information.viewport_height;
     vec2 scaling_factor;
     if (w > h) {
         scaling_factor = vec2(w / h, 1.0f);
@@ -1045,11 +1118,14 @@ void syntax_editor_draw_character_box(vec3 color, int line, int character)
     else {
         scaling_factor = vec2(1.0f, h / w);
     }
-    vec2 size = editor->character_size * scaling_factor;
+
+    vec2 char_size = editor.character_size * scaling_factor;
     vec2 edge_point = vec2(-1.0f, 1.0f) * scaling_factor;
-    vec2 cursor = edge_point + vec2(character * size.x, -line * size.y);
+    vec2 cursor = edge_point + vec2(character * char_size.x, -line * char_size.y);
+
+    vec2 size = char_size * vec2((float)length, 1.0f);
     cursor = cursor + size * vec2(0.5f, -0.5f);
-    renderer_2D_add_rectangle(editor->renderer_2D, cursor, size, color, 0.0f);
+    renderer_2D_add_rectangle(editor.renderer_2D, cursor, size, color, 0.0f);
 }
 
 void syntax_editor_draw_string(String string, vec3 color, int line, int character)
@@ -1099,11 +1175,24 @@ void syntax_editor_draw_string_in_box(String string, vec3 text_color, vec3 box_c
     renderer_2D_add_rectangle(editor->renderer_2D, cursor, size, box_color, 0.0f);
 }
 
-
-
-void syntax_editor_base_set_section_color(AST::Base* base, Parser::Section section, vec3 color)
+void syntax_editor_draw_block_outline(int line_start, int line_end, int indentation)
 {
-    /*
+    if (indentation == 0) return;
+    auto offset = syntax_editor.character_size * vec2(0.5f, 1.0f);
+    vec2 start = text_to_screen_coord(line_start, (indentation - 1) * 4) + offset;
+    vec2 end = text_to_screen_coord(line_end, (indentation - 1) * 4) + offset;
+    start.y -= syntax_editor.character_size.y * 0.1;
+    end.y += syntax_editor.character_size.y * 0.1;
+    renderer_2D_add_line(syntax_editor.renderer_2D, start, end, vec3(0.4f), 3, 0.0f);
+    vec2 l_end = end + vec2(syntax_editor.character_size.x * 0.5f, 0.0f);
+    renderer_2D_add_line(syntax_editor.renderer_2D, end, l_end, vec3(0.4f), 3, 0.0f);
+}
+
+
+
+// Syntax Highlighting
+void syntax_highlighting_set_section_text_color(AST::Base* base, Parser::Section section, vec3 color)
+{
     assert(base != 0, "");
     auto ranges = dynamic_array_create_empty<Token_Range>(1);
     SCOPE_EXIT(dynamic_array_destroy(&ranges));
@@ -1112,77 +1201,67 @@ void syntax_editor_base_set_section_color(AST::Base* base, Parser::Section secti
     Parser::ast_base_get_section_token_range(node, section, &ranges);
     for (int i = 0; i < ranges.size; i++)
     {
-        auto range = ranges[i];
-        // TODO: Currently looping over all tokens in a range only works if start and end is in one line
-        if (range.start.block == range.end.block && range.start.line == range.end.line)
-        {
-            Token_Position iter = range.start;
-            auto token_code = &compiler.main_source->token_code;
-            while (token_position_get_token(iter, token_code) != 0 && iter.token < range.end.token) {
-                token_position_get_token(iter, token_code)->info.screen_color = color;
-                iter.token_index += 1;
+        const auto& range = ranges[i];
+        auto iter = range.start;
+        while (!index_equal(iter, range.end)) {
+            if (token_index_is_last_in_line(iter)) {
+                iter = token_index_make(line_index_next(iter.line), 0);
+                continue;
             }
+            auto line = index_value(iter.line);
+            line->infos[iter.token].color = color;
+            iter = token_index_next(iter);
         }
     }
 }
 
-void syntax_editor_underline_syntax_range(Token_Range range)
+void syntax_highlighting_mark_range(Token_Range range, vec3 normal_color, vec3 empty_range_color, bool underline)
 {
-    /*
-    auto index = syntax_position_sanitize(range.start);
-    auto end = syntax_position_sanitize(range.end);
+    auto index = range.start;
+    auto end = range.end;
 
-    assert(syntax_position_in_order(index, end), "hey");
-    if (syntax_position_equal(index, end)) {
-        auto line_info = syntax_position_get_line(index)->info;
-        if (syntax_position_on_token(index)) {
-            auto& info = syntax_position_get_token(index)->info;
-            syntax_editor_draw_underline(line_info.index, info.screen_pos, info.screen_size, vec3(1.0f, 0.0f, 0.0f));
+    typedef void (*draw_fn)(int line, int character, int length, vec3 color);
+    draw_fn draw_mark = underline ? syntax_editor_draw_underline : syntax_editor_draw_text_background;
+
+    assert(index_compare(index, end) >= 0, "hey");
+    if (index_equal(index, end))
+    {
+        auto line = index_value(index.line);
+        if (token_index_is_last_in_line(index)) {
+            draw_mark(line->render_index, line->render_end_pos, 1, empty_range_color);
         }
         else {
-            syntax_editor_draw_underline(line_info.index, line_info.line_end, 1, vec3(1.0f, 0.0f, 0.0f));
+            auto& info = line->infos[index.token];
+            draw_mark(line->render_index, info.pos, info.size, normal_color);
         }
         return;
     }
 
-    auto line_start = index;
+    bool quit_loop = false;
     while (true)
     {
-        auto line = syntax_position_get_line(line_start);
-        auto next = syntax_position_advance_one_token(index);
-        if (next.line_index != index.line_index)
-        {
-            // Draw underline from start token to end of line
-            if (syntax_position_on_token(line_start)) {
-                int start_char = syntax_position_get_token(line_start)->info.screen_pos;
-                int end_char = line->info.line_end;
-                syntax_editor_draw_underline(line->info.index, start_char, end_char - start_char, vec3(1.0f, 0.0f, 0.0f));
+        auto line = index_value(index.line);
+
+        int draw_start = line->render_start_pos;
+        int draw_end = line->render_end_pos;
+        if (!token_index_is_last_in_line(index)) {
+            draw_start = line->infos[index.token].pos;
+        }
+        if (index_equal(index.line, end.line)) {
+            if (end.token - 1 >= 0) {
+                const auto& info = line->infos[end.token - 1];
+                draw_end = info.pos + info.size;
             }
-            line_start = next;
         }
 
-        if (syntax_position_equal(next, end))
-        {
-            int start_char = line->parent_block->info.indentation_level * 4;
-            if (syntax_position_on_token(line_start)) {
-                start_char = syntax_position_get_token(line_start)->info.screen_pos;
-            }
-            int end_char = line->info.line_end;
-            if (syntax_position_on_token(end)) {
-                auto& info = syntax_position_get_token(end)->info;
-                end_char = info.screen_pos + info.screen_size;
-            }
-            syntax_editor_draw_underline(line->info.index, start_char, end_char - start_char, vec3(1.0f, 0.0f, 0.0f));
+        if (draw_start != draw_end) {
+            draw_mark(line->render_index, draw_start, draw_end - draw_start, normal_color);
+        }
+        if (index_equal(index.line, end.line)) {
             break;
         }
-
-        if (syntax_position_equal(next, index)) {
-            logg("SHouldn't happen");
-            break;
-        }
-        index = next;
+        index = token_index_make(line_index_next(index.line), 0);
     }
-    */
 }
 
 void syntax_editor_find_syntax_highlights(AST::Base* base)
@@ -1193,7 +1272,7 @@ void syntax_editor_find_syntax_highlights(AST::Base* base)
         auto definition = (AST::Definition*) base;
         if (definition->symbol != 0) {
             auto color = symbol_type_to_color(definition->symbol->type);
-            syntax_editor_base_set_section_color(base, Parser::Section::IDENTIFIER, color);
+            syntax_highlighting_set_section_text_color(base, Parser::Section::IDENTIFIER, color);
         }
         break;
     }
@@ -1201,7 +1280,7 @@ void syntax_editor_find_syntax_highlights(AST::Base* base)
         auto read = (AST::Symbol_Read*) base;
         if (read->resolved_symbol != 0) {
             auto color = symbol_type_to_color(read->resolved_symbol->type);
-            syntax_editor_base_set_section_color(base, Parser::Section::IDENTIFIER, color);
+            syntax_highlighting_set_section_text_color(base, Parser::Section::IDENTIFIER, color);
         }
         break;
     }
@@ -1219,11 +1298,13 @@ void syntax_editor_find_syntax_highlights(AST::Base* base)
 }
 
 
+
+// Code Layout 
 void operator_space_before_after(Token_Index index, bool& space_before, bool& space_after)
 {
     auto& tokens = index_value(index.line)->tokens;
     assert(tokens[index.token].type == Token_Type::OPERATOR, "");
-    auto& op_info = syntax_operator_info(tokens[index.token].options.op);
+    auto op_info = syntax_operator_info(tokens[index.token].options.op);
     space_before = false;
     space_after = false;
 
@@ -1337,19 +1418,6 @@ bool display_space_after_token(Token_Index index)
     return false;
 }
 
-void syntax_editor_render_block_outline(int line_start, int line_end, int indentation)
-{
-    if (indentation == 0) return;
-    auto offset = syntax_editor.character_size * vec2(0.5f, 1.0f);
-    vec2 start = text_to_screen_coord(line_start, (indentation - 1) * 4) + offset;
-    vec2 end = text_to_screen_coord(line_end, (indentation - 1) * 4) + offset;
-    start.y -= syntax_editor.character_size.y * 0.1;
-    end.y += syntax_editor.character_size.y * 0.1;
-    renderer_2D_add_line(syntax_editor.renderer_2D, start, end, vec3(0.4f), 3, 0.0f);
-    vec2 l_end = end + vec2(syntax_editor.character_size.x * 0.5f, 0.0f);
-    renderer_2D_add_line(syntax_editor.renderer_2D, end, l_end, vec3(0.4f), 3, 0.0f);
-}
-
 void syntax_editor_layout_line(Line_Index line_index, int screen_index, int indentation)
 {
     auto& editor = syntax_editor;
@@ -1357,13 +1425,14 @@ void syntax_editor_layout_line(Line_Index line_index, int screen_index, int inde
     auto line = index_value(line_index);
     line->render_index = screen_index;
     line->render_indent = indentation;
+    line->render_start_pos = indentation * 4;
 
     dynamic_array_reset(&line->infos);
     int pos = indentation * 4;
     for (int i = 0; i < line->tokens.size; i++)
     {
         auto& token = line->tokens[i];
-        bool on_token = index_equals(cursor.line, line_index) && get_cursor_token_index() == i;
+        bool on_token = index_equal(cursor.line, line_index) && get_cursor_token_index() == i;
         if (on_token && token.start_index == cursor.pos) {
             pos += editor.space_after_cursor ? 1 : 0;
             pos += editor.space_before_cursor ? 1 : 0;
@@ -1400,11 +1469,12 @@ void syntax_editor_layout_line(Line_Index line_index, int screen_index, int inde
             pos += 1;
         }
 
-        if (display_space_after_token(token_index_make(line_index, i))) {
+        if (display_space_after_token(token_index_make(line_index, i)) && i != line->tokens.size - 1) {
             pos += 1;
         }
         dynamic_array_push_back(&line->infos, info);
     }
+    line->render_end_pos = pos;
 }
 
 void syntax_editor_layout_block(Block_Index block_index, int* screen_index, int indentation)
@@ -1437,6 +1507,8 @@ void syntax_editor_layout_block(Block_Index block_index, int* screen_index, int 
     block->render_end = *screen_index;
 }
 
+
+// Rendering
 void syntax_editor_render_block(Block_Index block_index)
 {
     auto block = index_value(block_index);
@@ -1460,7 +1532,7 @@ void syntax_editor_render_block(Block_Index block_index)
 
     // Render block outline
     if (block_index.block != 0) {
-        syntax_editor_render_block_outline(block->render_start, block->render_end, block->render_indent);
+        syntax_editor_draw_block_outline(block->render_start, block->render_end, block->render_indent);
     }
 }
 
@@ -1477,6 +1549,65 @@ void syntax_editor_render()
     syntax_editor_sanitize_cursor();
     int screen_index = 0;
     syntax_editor_layout_block(block_index_make_root(editor.code), &screen_index, 0);
+
+    // Draw Text-Representation @ the bottom of the screen 
+    if (true)
+    {
+        int line_index = 2.0f / editor.character_size.y - 1;
+        syntax_editor_draw_string(index_value(cursor.line)->text, Syntax_Color::TEXT, line_index, 0);
+        if (editor.mode == Editor_Mode::NORMAL) {
+            syntax_editor_draw_text_background(line_index, cursor.pos, 1, Syntax_Color::COMMENT);
+        }
+        else {
+            syntax_editor_draw_cursor_line(line_index, cursor.pos, Syntax_Color::COMMENT);
+        }
+    }
+
+    bool show_context_info = false;
+    auto& context = syntax_editor.context_text;
+    string_reset(&context);
+
+    // Draw error messages
+    Token_Index cursor_token_index = token_index_make(syntax_editor.cursor.line, get_cursor_token_index());
+    for (int i = 0; i < editor.errors.size; i++)
+    {
+        auto& error = editor.errors[i];
+        syntax_highlighting_mark_range(error.range, vec3(1.0f, 0.0f, 0.0f), vec3(1.0f, 1.0f, 0.0f), true);
+        if (token_range_contains(error.range, cursor_token_index)) {
+            show_context_info = true;
+            if (context.size != 0) {
+                string_append(&context, "\n\n");
+            }
+            string_append_string(&context, &error.message);
+        }
+    }
+
+    // Highlight smallest enclosing node
+    {
+        auto node = Parser::find_smallest_enclosing_node(&compiler.main_source->ast->base, cursor_token_index);
+        auto info = Parser::get_parse_info(node);
+        syntax_highlighting_mark_range(info->range, vec3(0.3f), vec3(0.3f), false);
+        if (!show_context_info)
+        {
+            show_context_info = true;
+            AST::base_append_to_string(node, &context);
+        }
+    }
+
+    // Draw context
+    if (show_context_info)
+    {
+        auto line = index_value(cursor_token_index.line);
+        int char_index = 0;
+        if (!token_index_is_last_in_line(cursor_token_index)) {
+            auto& info = line->infos[cursor_token_index.token];
+            char_index = info.pos + (cursor.pos - index_value(cursor_token_index)->start_index);
+        }
+        syntax_editor_draw_string_in_box(context, vec3(1.0f), vec3(0.2f), line->render_index + 1, char_index, 0.8f);
+    }
+
+    // Syntax Highlighting
+    syntax_editor_find_syntax_highlights(&compiler.main_source->ast->base);
 
     // Draw Cursor
     {
@@ -1501,12 +1632,9 @@ void syntax_editor_render()
         {
             int box_start = info.pos;
             int box_end = math_maximum(info.pos + info.size, box_start + 1);
-            //int box_end = box_start + 1;
-            for (int i = box_start; i < box_end; i++) {
-                syntax_editor_draw_character_box(vec3(0.2f), info.line, i);
-            }
-            syntax_editor_draw_cursor_line(Syntax_Color::COMMENT, info.line, box_start);
-            syntax_editor_draw_cursor_line(Syntax_Color::COMMENT, info.line, box_end);
+            syntax_editor_draw_text_background(info.line, box_start, box_end - box_start, vec3(0.2f));
+            syntax_editor_draw_cursor_line(info.line, box_start, Syntax_Color::COMMENT);
+            syntax_editor_draw_cursor_line(info.line, box_end, Syntax_Color::COMMENT);
         }
         else
         {
@@ -1536,113 +1664,9 @@ void syntax_editor_render()
             if (editor.space_before_cursor && !editor.space_after_cursor) {
                 cursor_pos += 1;
             }
-            syntax_editor_draw_cursor_line(Syntax_Color::COMMENT, line->render_index, cursor_pos);
+            syntax_editor_draw_cursor_line(line->render_index, cursor_pos, Syntax_Color::COMMENT);
         }
     }
-
-    // Draw Text-Representation @ the bottom of the screen 
-    if (true)
-    {
-        int line_index = 2.0f / editor.character_size.y - 1;
-        syntax_editor_draw_string(index_value(cursor.line)->text, Syntax_Color::TEXT, line_index, 0);
-        if (editor.mode == Editor_Mode::NORMAL) {
-            syntax_editor_draw_character_box(Syntax_Color::COMMENT, line_index, cursor.pos);
-        }
-        else {
-            syntax_editor_draw_cursor_line(Syntax_Color::COMMENT, line_index, cursor.pos);
-        }
-    }
-
-    bool show_context_info = false;
-    auto& context = syntax_editor.context_text;
-    string_reset(&context);
-
-    // Draw error messages
-    /*
-    {
-        Syntax_Position cursor_pos;
-        cursor_pos.block = syntax_editor.cursor_line->parent_block;
-        cursor_pos.line_index = syntax_line_index(syntax_editor.cursor_line);
-        cursor_pos.token_index = get_cursor_token_index();
-
-        // Parser errors
-        auto parse_errors = Parser::get_error_messages();
-        for (int i = 0; i < parse_errors.size; i++)
-        {
-            auto& error = parse_errors[i];
-            syntax_editor_underline_syntax_range(error.range);
-            if (syntax_range_contains(error.range, cursor_pos)) {
-                show_context_info = true;
-                if (context.size != 0) {
-                    string_append(&context, "\n\n");
-                }
-                string_append_formated(&context, error.msg);
-            }
-        }
-
-        // Semantic Analysis Errors
-        auto error_ranges = dynamic_array_create_empty<Syntax_Range>(1);
-        SCOPE_EXIT(dynamic_array_destroy(&error_ranges));
-
-        for (int i = 0; i < compiler.dependency_analyser->errors.size; i++)
-        {
-            auto& error = compiler.dependency_analyser->errors[i];
-            auto& node = error.error_node;
-            dynamic_array_reset(&error_ranges);
-            if (node == 0) continue;
-            if (code_source_from_ast(node) != compiler.main_source) continue;
-            Parser::ast_base_get_section_token_range(node, Parser::Section::IDENTIFIER, &error_ranges);
-            for (int j = 0; j < error_ranges.size; j++)
-            {
-                auto& range = error_ranges[j];
-                syntax_editor_underline_syntax_range(range);
-                if (syntax_range_contains(range, cursor_pos)) {
-                    show_context_info = true;
-                    if (context.size != 0) {
-                        string_append(&context, "\n\n");
-                    }
-                    string_append_formated(&context, "Symbol already exists");
-                }
-            }
-        }
-
-        for (int i = 0; i < compiler.semantic_analyser->errors.size; i++)
-        {
-            auto& error = compiler.semantic_analyser->errors[i];
-            auto& node = error.error_node;
-            dynamic_array_reset(&error_ranges);
-            if (node == 0) continue;
-            if (code_source_from_ast(node) != compiler.main_source) continue;
-            Parser::ast_base_get_section_token_range(node, semantic_error_get_section(error), &error_ranges);
-            for (int j = 0; j < error_ranges.size; j++)
-            {
-                auto& range = error_ranges[j];
-                syntax_editor_underline_syntax_range(range);
-                if (syntax_range_contains(range, cursor_pos)) {
-                    show_context_info = true;
-                    if (context.size != 0) {
-                        string_append(&context, "\n\n");
-                    }
-                    semantic_error_append_to_string(error, &context);
-                }
-            }
-        }
-    }
-    */
-
-    // Draw context
-    /*
-    if (show_context_info || true)
-    {
-        auto& info = get_cursor_token().info;
-        int cursor_char = info.screen_pos + (cursor - info.char_start);
-        int cursor_line = editor.cursor_line->info.index;
-        syntax_editor_draw_string_in_box(context, vec3(1.0f), vec3(0.2f), cursor_line + 1, cursor_char, 0.8f);
-    }
-    */
-
-    // Syntax Highlighting
-    //syntax_editor_find_syntax_highlights(&compiler.main_source->ast->base);
 
     // Render Source Code
     syntax_editor_render_block(block_index_make_root(editor.code));

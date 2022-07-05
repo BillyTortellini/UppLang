@@ -3759,6 +3759,10 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         bool types_are_valid = true;
         if (left_type != right_type)
         {
+            if (left_type == type_system->unknown_type || right_type == type_system->unknown_type) {
+                EXIT_ERROR(type_system->unknown_type);
+            }
+
             auto left_cast = semantic_analyser_check_cast_type(left_type, right_type, true);
             auto right_cast = semantic_analyser_check_cast_type(right_type, left_type, true);
             if (left_cast != Info_Cast_Type::INVALID) {

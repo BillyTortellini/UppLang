@@ -12,20 +12,15 @@ namespace Parser
     struct Binop_Link
     {
         Binop binop;
+        Token_Index token_index;
         Expression* expr;
     };
 
     struct Parse_State
     {
-        Token_Position pos;
+        Token_Index pos;
         int allocated_count;
         int error_count;
-    };
-
-    struct Parse_Info
-    {
-        AST::Base* allocation;
-        Token_Range range;
     };
 
     struct Parser
@@ -33,18 +28,16 @@ namespace Parser
         Parse_State state;
         Dynamic_Array<Parse_Info> parse_informations;
         Dynamic_Array<Error_Message> error_messages;
-        Token_Code* code;
+        Source_Code* code;
         AST::Module* root;
     };
 
     // Globals
     static Parser parser;
 
-    Array<Error_Message> get_error_messages() {
-        return dynamic_array_as_array(&parser.error_messages);
-    }
 
-    // Functions
+
+    // Parser Functions
     void parser_rollback(Parse_State checkpoint)
     {
         for (int i = checkpoint.allocated_count; i < parser.parse_informations.size; i++) {
@@ -60,8 +53,7 @@ namespace Parser
         parser.root = 0;
 
         Parse_State state;
-        state.pos.line = 0;
-        state.pos.token = 0;
+        state.pos = token_index_make_root(parser.code);
         state.allocated_count = 0;
         state.error_count = 0;
         parser_rollback(state);
@@ -83,10 +75,10 @@ namespace Parser
         dynamic_array_destroy(&parser.error_messages);
     }
 
-    // Allocations
     template<typename T>
     T* allocate_base(Base* parent, Base_Type type)
     {
+        // PERF: A block allocator could probably be used here
         auto result = new T;
         memory_zero(result);
         Base* base = &result->base;
@@ -104,6 +96,94 @@ namespace Parser
         return result;
     }
 
+    Parse_Info* get_parse_info(AST::Base* base) {
+        return &parser.parse_informations[base->allocation_index];
+    }
+
+    void base_correct_token_ranges(Base* base)
+    {
+        /*
+        DOCU: 
+          This function does a Post-Processing on Token-Ranges to correct invalid ranges,
+          which are generated the following way:
+            1. Parse syntax block steps out of current block (Line-Index becomes invalid (line_index == block.lines.size)
+                and the parent items of the syntax_block therefore get an invalid end_index.
+            2. Expressions that go over multiple ranges have their end index at the start of another line.
+               Instead, the end index should be at the end of the previous line
+          It also generates bounding ranges, which are used to efficiently find
+        FUTURE: Maybe the parser can handle these problems and we don't need a Post-Processing step
+        */
+
+        auto& info = *get_parse_info(base);
+        auto& range = info.range;
+        info.bounding_range = range;
+
+        // Correct Invalid ranges
+        {
+            auto& end = range.end;
+            auto block = index_value(end.line.block);
+            assert(end.line.line <= block->lines.size, "Cannot be greater");
+            if (end.line.line == block->lines.size) {
+                end = token_index_make_block_end(end.line.block);
+            }
+            else if (end.token == 0 && !index_equal(end, range.start)) {
+                end = token_index_make_line_end(line_index_prev(end.line));
+            }
+        }
+        assert(index_valid(range.start), "Jo");
+        assert(index_valid(range.end), "Jo");
+
+        // Iterate over all children
+        {
+            int index = 0;
+            auto child = AST::base_get_child(base, index);
+            if (child == 0) return;
+
+            Token_Index min = range.start;
+            Token_Index max = range.end;
+            while (child != 0) 
+            {
+                base_correct_token_ranges(child);
+
+                auto child_range = get_parse_info(child)->bounding_range;
+                if (index_compare(min, child_range.start) < 0) {
+                    min = child_range.start;
+                }
+                if (index_compare(child_range.end, max) < 0) {
+                    max = child_range.end;
+                }
+
+                index += 1;
+                child = AST::base_get_child(base, index);
+            }
+            info.bounding_range = token_range_make(min, max);
+        }
+
+        // Check that start/end is in order
+        int order = index_compare(range.start, range.end);
+        assert(order != -1, "Ranges must be in order");
+        if (order == 0) {
+            // INFO: There are only 2 AST-Nodes which are allowed to have a 0 sized token range:
+            //       Error-Expressions and Code-Blocks
+            if (base->type == AST::Base_Type::EXPRESSION) {
+                auto expr = base_downcast<Expression>(base);
+                assert(expr->type == AST::Expression_Type::ERROR_EXPR, "Only error expression may have 0-sized token range");
+            }
+            else if (base->type == AST::Base_Type::CODE_BLOCK) {
+            }
+            else {
+                panic("See comment before");
+            }
+        }
+    }
+
+
+
+    // Error reporting
+    Array<Error_Message> get_error_messages() {
+        return dynamic_array_as_array(&parser.error_messages);
+    }
+
     void log_error(const char* msg, Token_Range range)
     {
         Error_Message err;
@@ -113,103 +193,65 @@ namespace Parser
         parser.state.error_count = parser.error_messages.size;
     }
 
-    void log_error_to_pos(const char* msg, Token_Position pos) {
-        Token_Range range;
-        range.start = parser.state.pos;
-        range.end = pos;
-        log_error(msg, range);
+    void log_error_to_pos(const char* msg, Token_Index pos) {
+        log_error(msg, token_range_make(parser.state.pos, pos));
+    }
+
+    void log_error_range_offset_with_start(const char* msg, Token_Index start, int token_offset) {
+        log_error(msg, token_range_make(start, token_index_advance(start, token_offset)));
     }
 
     void log_error_range_offset(const char* msg, int token_offset) {
-        Token_Range range;
-        range.start = parser.state.pos;
-        range.end = range.start;
-        range.end.token += token_offset;
-        log_error(msg, range);
-    }
-
-    void log_error_range_offset_with_start(const char* msg, Token_Position start, int token_offset) {
-        Token_Range range;
-        range.start = start;
-        range.end = range.start;
-        range.end.token += token_offset;
-        log_error(msg, range);
+        log_error_range_offset_with_start(msg, parser.state.pos, token_offset);
     }
 
 
 
     // Positional Stuff
-    bool on_block() {
-        auto& p = parser.state.pos;
-        return p.block >= 0 && p.block < parser.code->blocks.size;
-    }
-
-    Token_Block* get_block() {
-        assert(on_block(), "");
-        auto& p = parser.state.pos;
-        return &parser.code->blocks[p.block];
-    }
-
     bool on_line() {
         auto& p = parser.state.pos;
-        if (!on_block()) return false;
-        return p.line >= 0 && p.line < get_block()->lines.size;
+        return index_valid(parser.state.pos.line);
     }
 
-    Token_Line* get_line() {
-        assert(on_line(), "");
-        auto& p = parser.state.pos;
-        return &get_block()->lines[p.line];
-    }
-
-    bool on_token() {
-        auto& p = parser.state.pos;
-        if (!on_line()) return false;
-        return p.token >= 0 && p.token < get_line()->tokens.size;
+    Token* get_token(int offset) {
+        return index_value(token_index_advance(parser.state.pos, offset));
     }
 
     Token* get_token() {
-        assert(on_token(), "");
-        auto& p = parser.state.pos;
-        return &get_line()->tokens[p.token];
+        return index_value(parser.state.pos);
+    }
+
+    Source_Line* get_line() {
+        return index_value(parser.state.pos.line);
     }
 
     int remaining_line_tokens() {
-        if (!on_line()) return 0;
         auto& p = parser.state.pos;
-        return get_line()->tokens.size - p.token;
+        if (!index_valid(p)) return 0;
+        return index_value(p.line)->tokens.size - p.token;
     }
 
     bool on_follow_block() {
-        if (!on_line()) return false;
-        auto line = get_line();
-        if (!line->follow_block.available) return false;
+        auto& pos = parser.state.pos;
+        if (!line_index_block_after(pos.line).available) return false;
         return remaining_line_tokens() == 0;
     }
 
-    // Returns 0 if not on token
-    Token* get_token(int offset) 
-    {
-        if (offset >= remaining_line_tokens()) return 0;
-        return &get_line()->tokens[parser.state.pos.token + offset];
-    }
-
     void advance_token() {
-        parser.state.pos.token += 1;
+        parser.state.pos = token_index_next(parser.state.pos);
     }
 
     void advance_line() {
-        parser.state.pos.line += 1;
+        parser.state.pos.line.line += 1;
         parser.state.pos.token = 0;
     }
 
 
 
-    // Helpers
+    // Token Testing functions
     bool test_token_offset(Token_Type type, int offset) {
         if (offset >= remaining_line_tokens()) return false;
         auto token = get_token(offset);
-        if (token == 0) return false;
         return token->type == type;
     }
 
@@ -245,6 +287,10 @@ namespace Parser
         return get_token(offset)->options.keyword == keyword;
     }
 
+    bool test_keyword(Keyword keyword) {
+        return test_keyword_offset(keyword, 0);
+    }
+
     bool test_parenthesis_offset(char c, int offset) {
         Parenthesis p = char_to_parenthesis(c);
         if (!test_token_offset(Token_Type::PARENTHESIS, offset))
@@ -253,19 +299,16 @@ namespace Parser
         return given.is_open == p.is_open && given.type == p.type;
     }
 
+    bool test_parenthesis(char c) {
+        return test_parenthesis_offset(c, 0);
+    }
 
 
-    // Prototypes
-    Definition* parse_definition(Base* parent, bool& add_to_fill);
-    Statement* parse_statement(Base* parent, bool& add_to_fill);
-    Definition* parse_module_item(Base* parent, bool& add_to_fill);
-    Expression* parse_expression(Base* parent);
-    Expression* parse_expression_or_error_expr(Base* parent);
-    Expression* parse_single_expression(Base* parent);
-    Expression* parse_single_expression_or_error(Base* parent);
 
+    // Parsing Helpers
 #define CHECKPOINT_SETUP \
-        if (get_token(0) == 0) {return 0;}\
+        if (!index_valid(parser.state.pos)) {return 0;}\
+        if (token_index_is_last_in_line(parser.state.pos)) {return 0;}\
         auto checkpoint = parser.state;\
         bool _error_exit = false;\
         SCOPE_EXIT(if (_error_exit) parser_rollback(checkpoint););
@@ -278,155 +321,153 @@ namespace Parser
         return val; \
     }
 
-    // Parsing Helpers
     typedef bool(*token_predicate_fn)(Token* token, void* user_data);
-    Optional<Token_Position> find_error_recovery_token(token_predicate_fn predicate, void* user_data, bool skip_blocks)
+    Optional<Token_Index> search_token(Token_Index start, token_predicate_fn predicate, void* user_data, bool starting_inside_parenthesis)
     {
+        // IDEA: Maybe I can move this whole function to source_code, since it could be used outside of parsing
+        // PERF: The parenthesis stack can be held in the parser, and just be resetted here
         Dynamic_Array<Parenthesis> parenthesis_stack = dynamic_array_create_empty<Parenthesis>(1);
         SCOPE_EXIT(dynamic_array_destroy(&parenthesis_stack));
 
-        Token_Position pos = parser.state.pos;
-        auto block = token_position_get_block(pos, parser.code);
-        if (block == 0) return optional_make_failure<Token_Position>();
-        auto& lines = block->lines;
-
-        auto line = &lines[pos.line];
-        Array<Token> tokens = line->tokens;
+        Token_Index pos = start;
         while (true)
         {
-            if (pos.token >= tokens.size)
+            // End of line handling
+            if (token_index_is_last_in_line(pos))
             {
-                if (!(skip_blocks || parenthesis_stack.size != 0)) {
-                    return optional_make_failure<Token_Position>();
+                if (!(starting_inside_parenthesis || parenthesis_stack.size != 0)) {
+                    return optional_make_failure<Token_Index>();
                 }
                 // Parenthesis aren't allowed to reach over blocks if there is no follow_block
-                if (!line->follow_block.available) {
-                    return optional_make_failure<Token_Position>();
+                if (!line_index_block_after(pos.line).available) {
+                    return optional_make_failure<Token_Index>();
                 }
-                if (pos.line + 1 >= lines.size) {
-                    return optional_make_failure<Token_Position>();
+                if (line_index_is_last_in_block(pos.line)) {
+                    return optional_make_failure<Token_Index>();
                 }
-                pos.line = pos.line + 1;
+                pos.line.line += 1;
                 pos.token = 0;
-                line = &lines[pos.line];
-                tokens = line->tokens;
             }
 
-            Token* token = &tokens[pos.token];
-            if (parenthesis_stack.size == 0 && predicate(token, user_data)) {
-                return optional_make_success(pos);
-            }
-            if (token->type == Token_Type::PARENTHESIS)
+            auto token = index_value(pos);
+            if (parenthesis_stack.size != 0)
             {
-                auto parenthesis = token->options.parenthesis;
-                if (parenthesis.is_open) {
-                    dynamic_array_push_back(&parenthesis_stack, parenthesis);
-                }
-                else if (parenthesis_stack.size > 0) {
-                    auto last = dynamic_array_last(&parenthesis_stack);
-                    if (last.type == parenthesis.type) {
-                        dynamic_array_rollback_to_size(&parenthesis_stack, parenthesis_stack.size - 1);
+                if (token->type == Token_Type::PARENTHESIS)
+                {
+                    auto parenthesis = token->options.parenthesis;
+                    if (parenthesis.is_open) {
+                        dynamic_array_push_back(&parenthesis_stack, parenthesis);
+                    }
+                    else if (parenthesis_stack.size > 0) {
+                        auto last = dynamic_array_last(&parenthesis_stack);
+                        if (last.type == parenthesis.type) {
+                            dynamic_array_rollback_to_size(&parenthesis_stack, parenthesis_stack.size - 1);
+                        }
                     }
                 }
             }
-            pos.token += 1;
+            else if (predicate(token, user_data)) {
+                return optional_make_success(pos);
+            }
+            pos = token_index_next(pos);
         }
-    }
-
-    Token_Position position_make_line_end(int block, int line_index) {
-        Token_Position pos;
-        pos.block = block;
-        pos.line = line_index;
-        auto line = token_position_get_line(pos, parser.code);
-        if (line == 0) {
-            pos.token = 0;
-            return pos;
-        }
-        pos.token = line->tokens.size;
-        return pos;
     }
 
     template<typename T>
-    void parse_syntax_block(int block_index, Base* parent, Dynamic_Array<T*>* fill_array, T* (*parse_fn)(Base* parent, bool& add_to_fill))
+    void parse_syntax_block(Block_Index block_index, Base* parent, Dynamic_Array<T*>* fill_array, T* (*parse_fn)(Base* parent, bool& add_to_fill))
     {
         // Setup parser position at block start
-        Token_Position& pos = parser.state.pos;
-        pos.block = block_index;
-        pos.line = 0;
-        pos.token = 0;
-        parser.parse_informations[parent->allocation_index].range.start = pos;
+        auto& pos = parser.state.pos;
+        pos = token_index_make(line_index_make(block_index, 0), 0);
+        parser.parse_informations[parent->allocation_index].range.start = pos; // Set base item start
 
-        // Parse block
-        while (true)
+        // Parse all lines
+        auto block = index_value(pos.line.block);
+        while (pos.line.line < block->lines.size)
         {
-            auto line = token_position_get_line(pos, parser.code);
-            if (line == 0) break;
-
+            auto line = index_value(pos.line);
             auto before_line_index = pos.line;
             pos.token = 0;
+
             // Skip empty lines
-            if (line->tokens.size == 0 && !line->follow_block.available) {
-                pos.line += 1;
+            if (line->tokens.size == 0 && !line_index_block_after(pos.line).available) {
+                advance_line();
                 continue;
             }
 
             // Parse line
             bool add_to_array;
             T* line_item = parse_fn(parent, add_to_array);
-            if (add_to_array)
-            {
-                if (line_item != 0) {
-                    dynamic_array_push_back(fill_array, line_item);
-                }
-                else {
-                    log_error_to_pos("Couldn't parse line", position_make_line_end(pos.block, pos.line));
-                }
+            if (line_item == 0) {
+                log_error_to_pos("Couldn't parse line", token_index_make_line_end(pos.line));
+            }
+            else if (add_to_array) {
+                dynamic_array_push_back(fill_array, line_item);
             }
 
-            // Check if whole line was parsed
-            if (before_line_index == pos.line || pos.token != 0)
+            // Check if whole line was parsed, e.g. check parse_fn movement
+            if (before_line_index.line == pos.line.line || pos.token != 0)
             {
-                line = token_position_get_line(pos, parser.code); // Requery line because parse_fn could have changed line index
-                if (line == 0) {
+                if (pos.line.line >= block->lines.size) {
                     break;
                 }
-                if (pos.token < line->tokens.size) {
-                    log_error_to_pos("Unexpected Tokens, Line already parsed", position_make_line_end(pos.block, pos.line));
+                if (line_item != 0)
+                {
+                    line = index_value(pos.line); // Requery line because parse_fn could have changed line index
+                    if (pos.token < line->tokens.size) {
+                        log_error_to_pos("Unexpected Tokens, Line already parsed", token_index_make_line_end(pos.line));
+                    }
                 }
-                if (line->follow_block.available) {
-                    log_error_to_pos("Unexpected follow block, Line already parsed", position_make_line_end(pos.block, pos.line));
+                auto block_after = line_index_block_after(pos.line);
+                if (block_after.available) {
+                    if (line_item == 0) {
+                        log_error("Couldn't parse block header", token_range_make_block(block_after.value));
+                    }
+                    else {
+                        log_error("Block header did not require follow block", token_range_make_block(block_after.value));
+                    }
                 }
-                pos.line += 1;
-                pos.token = 0;
+                advance_line();
             }
         }
-        parser.parse_informations[parent->allocation_index].range.end = pos;
+        parser.parse_informations[parent->allocation_index].range.end = token_index_make_block_end(pos.line.block); // Set base item end
     }
 
     template<typename T>
     void parse_follow_block(Base* parent, Dynamic_Array<T*>* fill_array, T* (*parse_fn)(Base* parent, bool& add_to_fill), bool parse_if_not_on_end)
     {
-        auto line = get_line();
-        assert(line != 0, "");
-        // Check if at end of line
-        if (!line->follow_block.available || (!parse_if_not_on_end && !on_follow_block())) {
-            log_error_range_offset("Expected Follow Block", 1);
+        auto& pos = parser.state.pos;
+
+        auto follow_block_opt = line_index_block_after(pos.line);
+        if (!follow_block_opt.available) {
+            log_error_range_offset("Expected Follow Block", 0);
             return;
         }
-        if (!on_follow_block()) {
-            log_error_range_offset("Parsing follow block, ignoring rest of line", line->tokens.size - parser.state.pos.token);
+        if (!parse_if_not_on_end && !on_follow_block()) {
+            log_error_to_pos("Parsing follow block, ignoring rest of line", token_index_make_line_end(pos.line));
         }
-        auto next_pos = parser.state.pos;
-        next_pos.line += 1;
-        next_pos.token = 0;
-        parse_syntax_block(line->follow_block.value, parent, fill_array, parse_fn);
-        parser.state.pos = next_pos;
+
+        advance_line();
+        auto backup_pos = parser.state.pos;
+        parse_syntax_block(follow_block_opt.value, parent, fill_array, parse_fn);
+        parser.state.pos = backup_pos;
     }
 
     template<Parenthesis_Type type>
-    bool successfull_parenthesis_exit()
+    bool finish_parenthesis()
     {
-        auto parenthesis_pos = find_error_recovery_token(
+        // Check if we are on the parenthesis exit
+        Parenthesis closing;
+        closing.type = type;
+        closing.is_open = false;
+        if (test_parenthesis(parenthesis_to_char(closing))) {
+            advance_token();
+            return true;
+        }
+
+        // Check if we can find the parenthesis exit
+        auto parenthesis_pos = search_token(
+            parser.state.pos,
             [](Token* t, void* _unused) -> bool
             { return t->type == Token_Type::PARENTHESIS &&
             !t->options.parenthesis.is_open && t->options.parenthesis.type == type; },
@@ -435,15 +476,17 @@ namespace Parser
         if (!parenthesis_pos.available) {
             return false;
         }
+        log_error_to_pos("Parenthesis context was already finished, unexpected tokens afterwards", parenthesis_pos.value);
         parser.state.pos = parenthesis_pos.value;
         advance_token();
         return true;
     }
 
-    // Parser position must be on Open Parenthesis for this to work
+    // DOCU: Parser position must be on Open Parenthesis for this to work
     template<typename T>
     void parse_parenthesis_comma_seperated(Base* parent, Dynamic_Array<T*>* fill_array, T* (*parse_fn)(Base* parent), Parenthesis_Type type)
     {
+        // Check for open parenthesis
         char closing_char;
         auto open_parenthesis_pos = parser.state.pos;
         {
@@ -476,50 +519,69 @@ namespace Parser
                 }
             }
 
-            // Error Recovery
-            auto comma_pos = find_error_recovery_token(
+            // ERROR RECOVERY
+            // Find possible Recovery points
+            auto comma_pos = search_token(
+                parser.state.pos,
                 [](Token* t, void* _unused) -> bool
                 { return t->type == Token_Type::OPERATOR && t->options.op == Operator::COMMA; },
                 0, true
             );
-            auto parenthesis_pos = find_error_recovery_token(
+            auto parenthesis_pos = search_token(
+                parser.state.pos,
                 [](Token* t, void* _unused) -> bool
                 { return t->type == Token_Type::PARENTHESIS &&
                 !t->options.parenthesis.is_open && t->options.parenthesis.type == Parenthesis_Type::PARENTHESIS; },
                 0, true
             );
-            enum class Error_Start { COMMA, PARENTHESIS, NOT_FOUND } tactic;
-            tactic = Error_Start::NOT_FOUND;
+
+            // Select Recovery point
+            Optional<Token_Index> recovery_point = optional_make_failure<Token_Index>();
             if (comma_pos.available && parenthesis_pos.available) {
-                tactic = token_position_in_order(comma_pos.value, parenthesis_pos.value, parser.code) ? Error_Start::COMMA : Error_Start::PARENTHESIS;
+                // Select earlier recovery point
+                if (index_compare(comma_pos.value, parenthesis_pos.value)) {
+                    recovery_point = optional_make_success(comma_pos.value);
+                }
+                else {
+                    recovery_point = optional_make_success(parenthesis_pos.value);
+                }
             }
             else if (comma_pos.available) {
-                tactic = Error_Start::COMMA;
+                recovery_point = optional_make_success(comma_pos.value);
             }
             else if (parenthesis_pos.available) {
-                tactic = Error_Start::PARENTHESIS;
+                recovery_point = optional_make_success(parenthesis_pos.value);
             }
 
-            if (tactic == Error_Start::COMMA) {
-                log_error_to_pos("Couldn't parse list item", comma_pos.value);
-                parser.state.pos = comma_pos.value;
+            if (recovery_point.available) {
+                log_error_to_pos("Couldn't parse list item", recovery_point.value);
+                parser.state.pos = recovery_point.value;
                 advance_token();
             }
-            else if (tactic == Error_Start::PARENTHESIS) {
-                log_error_to_pos("Couldn't parse list item", parenthesis_pos.value);
-                parser.state.pos = parenthesis_pos.value;
-            }
-            else {
-                log_error_range_offset_with_start("Couldn't find closing_parenthesis", open_parenthesis_pos, 1);
-                // TODO: Think/Test this case
-                auto line = get_line();
-                if (line == 0) return;
-                parser.state.pos.token = line->tokens.size; // Goto end of line for now
+            else
+            {
+                // INFO: In this case there is no end to the parenthesis we are in,
+                //       so we log an error to the end of the line and stop parsing
+                auto line_end = token_index_make_line_end(parser.state.pos.line);
+                log_error_to_pos("Couldn't find closing_parenthesis", line_end);
+                parser.state.pos = line_end;
                 return;
             }
         }
     }
 
+
+
+    // Prototypes
+    Definition* parse_definition(Base* parent, bool& add_to_fill);
+    Statement* parse_statement(Base* parent, bool& add_to_fill);
+    Definition* parse_module_item(Base* parent, bool& add_to_fill);
+    Expression* parse_expression(Base* parent);
+    Expression* parse_expression_or_error_expr(Base* parent);
+    Expression* parse_single_expression(Base* parent);
+    Expression* parse_single_expression_or_error(Base* parent);
+
+    // Parsing
     Optional<String*> parse_block_label(AST::Expression* related_expression)
     {
         Optional<String*> result = optional_make_failure<String*>();
@@ -539,13 +601,12 @@ namespace Parser
         return result;
     }
 
-    // Parsing
     Code_Block* parse_code_block(Base* parent, AST::Expression* related_expression)
     {
         auto result = allocate_base<Code_Block>(parent, Base_Type::CODE_BLOCK);
         result->statements = dynamic_array_create_empty<Statement*>(1);
         result->block_id = parse_block_label(related_expression);
-        parse_follow_block(parent, &result->statements, parse_statement, true);
+        parse_follow_block(&result->base, &result->statements, parse_statement, true);
         PARSE_SUCCESS(result);
     }
 
@@ -608,23 +669,26 @@ namespace Parser
         // Set block label (Switch cases need special treatment because they 'Inherit' the label from the switch
         assert(parent->type == Base_Type::STATEMENT && ((Statement*)parent)->type == Statement_Type::SWITCH_STATEMENT, "");
         result->block->block_id = ((Statement*)parent)->options.switch_statement.label;
-        return result;
+        PARSE_SUCCESS(result);
     }
 
     Statement* parse_statement(Base* parent, bool& add_to_fill)
     {
         CHECKPOINT_SETUP;
-
         auto result = allocate_base<Statement>(parent, Base_Type::STATEMENT);
+
         {
-            // This needs to be done before definition
+            // Check for Anonymous Blocks
+            // INFO: This needs to be done before definition
             auto line = get_line();
             if ((line->tokens.size == 0) ||
                 (line->tokens.size == 2 && test_token(Token_Type::IDENTIFIER) && test_operator_offset(Operator::COLON, 1)))
             {
-                result->type = Statement_Type::BLOCK;
-                result->options.block = parse_code_block(&result->base, 0);
-                PARSE_SUCCESS(result);
+                if (line_index_block_after(parser.state.pos.line).available) {
+                    result->type = Statement_Type::BLOCK;
+                    result->options.block = parse_code_block(&result->base, 0);
+                    PARSE_SUCCESS(result);
+                }
             }
         }
 
@@ -654,6 +718,7 @@ namespace Parser
                 PARSE_SUCCESS(result);
             }
         }
+
         if (test_token(Token_Type::KEYWORD))
         {
             switch (get_token(0)->options.keyword)
@@ -780,7 +845,7 @@ namespace Parser
 
     Expression* parse_single_expression_no_postop(Base* parent)
     {
-        // Note: Single expression no postop means pre-ops + bases, e.g.
+        // DOCU: Parses Pre-Ops + Bases, but no postops
         // --*x   -> is 3 pre-ops + base x
         CHECKPOINT_SETUP;
         auto result = allocate_base<Expression>(parent, Base_Type::EXPRESSION);
@@ -846,7 +911,7 @@ namespace Parser
                 {
                     advance_token();
                     cast.to_type = optional_make_success(parse_single_expression_or_error(&result->base));
-                    if (!successfull_parenthesis_exit<Parenthesis_Type::BRACES>()) CHECKPOINT_EXIT;
+                    if (!finish_parenthesis<Parenthesis_Type::BRACES>()) CHECKPOINT_EXIT;
                 }
 
                 cast.operand = parse_single_expression_or_error(&result->base);
@@ -867,7 +932,7 @@ namespace Parser
 
             result->type = Expression_Type::ARRAY_TYPE;
             result->options.array_type.size_expr = parse_expression_or_error_expr(&result->base);
-            if (!successfull_parenthesis_exit<Parenthesis_Type::BRACKETS>()) CHECKPOINT_EXIT;
+            if (!finish_parenthesis<Parenthesis_Type::BRACKETS>()) CHECKPOINT_EXIT;
             result->options.array_type.type_expr = parse_single_expression_or_error(&result->base);
             PARSE_SUCCESS(result);
         }
@@ -957,13 +1022,16 @@ namespace Parser
                 signature.return_value = optional_make_success(parse_expression_or_error_expr((Base*)result));
             }
 
+            // Check if its a function or just a function signature
             if (!on_follow_block()) {
                 PARSE_SUCCESS(result);
             }
 
-            // Check if its a function or just a function signature
             auto signature_expr = result;
+            SET_END_RANGE(signature_expr);
+
             result = allocate_base<Expression>(parent, Base_Type::EXPRESSION);
+            get_parse_info(&result->base)->range.start = get_parse_info(&signature_expr->base)->range.start;
             result->type = Expression_Type::FUNCTION;
             auto& function = result->options.function;
             function.body = parse_code_block(&result->base, 0);
@@ -977,7 +1045,7 @@ namespace Parser
             parser_rollback(checkpoint); // This is pretty stupid, but needed to reset result
             advance_token();
             result = parse_expression_or_error_expr(parent);
-            if (!successfull_parenthesis_exit<Parenthesis_Type::PARENTHESIS>()) CHECKPOINT_EXIT;
+            if (!finish_parenthesis<Parenthesis_Type::PARENTHESIS>()) CHECKPOINT_EXIT;
             PARSE_SUCCESS(result);
         }
 
@@ -990,7 +1058,7 @@ namespace Parser
             if (test_parenthesis_offset('[', 0)) {
                 advance_token();
                 result->options.new_expr.count_expr = optional_make_success(parse_expression_or_error_expr(&result->base));
-                if (!successfull_parenthesis_exit<Parenthesis_Type::BRACKETS>()) CHECKPOINT_EXIT;
+                if (!finish_parenthesis<Parenthesis_Type::BRACKETS>()) CHECKPOINT_EXIT;
             }
             result->options.new_expr.type_expr = parse_expression_or_error_expr(&result->base);
             PARSE_SUCCESS(result);
@@ -1038,6 +1106,8 @@ namespace Parser
 
     Expression* parse_post_operator_internal(Expression* child)
     {
+        // DOCU: Internal means that we don't add the result of this expression to the parameter child,
+        //       but rather to the parent of the child
         CHECKPOINT_SETUP;
         // Post operators
         auto result = allocate_base<Expression>(child->base.parent, Base_Type::EXPRESSION);
@@ -1078,7 +1148,7 @@ namespace Parser
             result->type = Expression_Type::ARRAY_ACCESS;
             result->options.array_access.array_expr = child;
             result->options.array_access.index_expr = parse_expression_or_error_expr(&result->base);
-            if (!successfull_parenthesis_exit<Parenthesis_Type::BRACKETS>()) CHECKPOINT_EXIT;
+            if (!finish_parenthesis<Parenthesis_Type::BRACKETS>()) CHECKPOINT_EXIT;
             PARSE_SUCCESS(result);
         }
         else if (test_parenthesis_offset('(', 0)) // Function call
@@ -1095,7 +1165,7 @@ namespace Parser
 
     Expression* parse_single_expression(Base* parent)
     {
-        // This function only does post-op parsing
+        // DOCU: This function parses: Pre-Ops + Base + Post-Op
         Expression* child = parse_single_expression_no_postop(parent);
         if (child == 0) return child;
         Expression* post_op = parse_post_operator_internal(child);
@@ -1113,7 +1183,7 @@ namespace Parser
         if (expr != 0) {
             return expr;
         }
-        log_error_range_offset("Expected Single Expression", 1);
+        log_error_range_offset("Expected Single Expression", 0);
         expr = allocate_base<AST::Expression>(parent, AST::Base_Type::EXPRESSION);
         expr->type = Expression_Type::ERROR_EXPR;
         return expr;
@@ -1138,6 +1208,10 @@ namespace Parser
                 result->options.binop.left->base.parent = &result->base;
                 result->options.binop.right->base.parent = &result->base;
                 expr = result;
+
+                auto& range = parser.parse_informations[result->base.allocation_index].range;
+                range.start = link.token_index;
+                range.end = token_index_next(link.token_index);
             }
             else {
                 break;
@@ -1152,12 +1226,14 @@ namespace Parser
         Expression* start_expr = parse_single_expression(parent);
         if (start_expr == 0) return 0;
 
+        // PERF: The arrays could be stored in the parser, and just get reseted here
         Dynamic_Array<Binop_Link> links = dynamic_array_create_empty<Binop_Link>(1);
         SCOPE_EXIT(dynamic_array_destroy(&links));
         while (true)
         {
             Binop_Link link;
             link.binop = Binop::INVALID;
+            link.token_index = parser.state.pos;
             if (test_token(Token_Type::OPERATOR))
             {
                 switch (get_token(0)->options.op)
@@ -1194,7 +1270,7 @@ namespace Parser
         int index = 0;
         Expression* result = parse_priority_level(start_expr, 0, &links, &index);
         result->base.parent = parent;
-        PARSE_SUCCESS(result);
+        return result; // INFO: Don't use PARSE SUCCESS, since this would overwrite the token-ranges set by parse_priority_level
     }
 
     Expression* parse_expression_or_error_expr(Base* parent)
@@ -1203,7 +1279,7 @@ namespace Parser
         if (expr != 0) {
             return expr;
         }
-        log_error_range_offset("Expected Expression", 1);
+        log_error_range_offset("Expected Expression", 0);
         expr = allocate_base<AST::Expression>(parent, AST::Base_Type::EXPRESSION);
 
         expr->type = Expression_Type::ERROR_EXPR;
@@ -1212,6 +1288,7 @@ namespace Parser
 
     Definition* parse_definition(Base* parent, bool& add_to_fill)
     {
+        // INFO: Definitions cannot start in the middle of a line
         add_to_fill = true;
         CHECKPOINT_SETUP;
         auto result = allocate_base<Definition>(parent, AST::Base_Type::DEFINITION);
@@ -1222,7 +1299,6 @@ namespace Parser
         result->name = get_token(0)->options.identifier;
         advance_token();
 
-        int prev_line_index = parser.state.pos.line;
         if (test_operator(Operator::COLON))
         {
             advance_token();
@@ -1248,9 +1324,6 @@ namespace Parser
         else {
             CHECKPOINT_EXIT;
         }
-
-        // Definitions are one line long, so everything afterwards here is an error
-        // But this should be handled by block parser if i'm not mistaken
 
         PARSE_SUCCESS(result);
     }
@@ -1280,51 +1353,27 @@ namespace Parser
         return parse_definition(parent, add_to_fill);
     }
 
-    void base_correct_token_ranges(Base* base)
-    {
-        int index = 0;
-        auto child = AST::base_get_child(base, index);
-        if (child == 0) return;
-        Token_Position child_start = parser.parse_informations[child->allocation_index].range.start;
-        Token_Position child_end;
-        while (child != 0) {
-            base_correct_token_ranges(child);
-            child_end = parser.parse_informations[child->allocation_index].range.end;
-            index += 1;
-            child = AST::base_get_child(base, index);
-        }
-
-        auto& info = parser.parse_informations[base->allocation_index];
-        token_position_sanitize(&child_start, parser.code);
-        token_position_sanitize(&child_end, parser.code);
-        token_position_sanitize(&info.range.start, parser.code);
-        token_position_sanitize(&info.range.end, parser.code);
-        if (token_position_in_order(child_start, info.range.start, parser.code)) {
-            info.range.start = child_start;
-        }
-        if (token_position_in_order(info.range.end, child_end, parser.code)) {
-            info.range.end = child_end;
-        }
-    }
-
-    AST::Module* execute(Token_Code* tokens)
-    {
-        assert(tokens->blocks.size != 0, "");
-        parser.code = tokens;
-        parser.root = allocate_base<Module>(0, Base_Type::MODULE);
-        parser.parse_informations[0].range.start.block = 0;
-        parser.root->definitions = dynamic_array_create_empty<Definition*>(1);
-        parser.root->imports = dynamic_array_create_empty<Project_Import*>(1);
-        parse_syntax_block<Definition>(0, &parser.root->base, &parser.root->definitions, parse_module_item);
-        SET_END_RANGE(parser.root);
-        base_correct_token_ranges(&parser.root->base);
-        return parser.root;
-    }
-
 #undef CHECKPOINT_EXIT
 #undef CHECKPOINT_SETUP
 #undef PARSE_SUCCESS
 #undef SET_END_RANGE
+
+
+
+    AST::Module* execute(Source_Code* code)
+    {
+        parser.code = code;
+
+        // Create/Parse root module
+        parser.root = allocate_base<Module>(0, Base_Type::MODULE);
+        parser.root->definitions = dynamic_array_create_empty<Definition*>(1);
+        parser.root->imports = dynamic_array_create_empty<Project_Import*>(1);
+        parse_syntax_block(block_index_make_root(parser.code), &parser.root->base, &parser.root->definitions, parse_module_item);
+
+        // Correct token ranges (TODO: Check if this is necessary)
+        base_correct_token_ranges(&parser.root->base);
+        return parser.root;
+    }
 
     void ast_base_get_section_token_range(AST::Base* base, Section section, Dynamic_Array<Token_Range>* ranges)
     {
@@ -1346,7 +1395,7 @@ namespace Parser
             while (child != 0)
             {
                 auto& child_info = parser.parse_informations[child->allocation_index];
-                if (!token_position_are_equal(range.start, child_info.range.start)) {
+                if (!index_equal(range.start, child_info.range.start)) {
                     range.end = child_info.range.start;
                     dynamic_array_push_back(ranges, range);
                 }
@@ -1355,7 +1404,7 @@ namespace Parser
                 index += 1;
                 child = AST::base_get_child(base, index);
             }
-            if (!token_position_are_equal(range.start, info.range.end)) {
+            if (!index_equal(range.start, info.range.end)) {
                 range.end = info.range.end;
                 dynamic_array_push_back(ranges, range);
             }
@@ -1363,37 +1412,27 @@ namespace Parser
         }
         case Section::IDENTIFIER:
         {
-            parser.state.pos = info.range.start;
-            auto result = find_error_recovery_token([](Token* t, void* _unused) -> bool {return t->type == Token_Type::IDENTIFIER; }, 0, false);
+            auto result = search_token(info.range.start, [](Token* t, void* _unused) -> bool {return t->type == Token_Type::IDENTIFIER; }, 0, false);
             if (!result.available) {
                 break;
             }
-            Token_Range range;
-            range.start = result.value;
-            range.end = range.start;
-            range.end.token += 1;
-            dynamic_array_push_back(ranges, range);
+            dynamic_array_push_back(ranges, token_range_make_offset(result.value, 1));
             break;
         }
         case Section::ENCLOSURE:
         {
             // Find next (), {} or [], and add the tokens to the ranges
-            parser.state.pos = info.range.start;
-            auto result = find_error_recovery_token([](Token* t, void* type) -> bool {return t->type == Token_Type::PARENTHESIS; }, 0, false);
+            auto result = search_token(info.range.start, [](Token* t, void* type) -> bool {return t->type == Token_Type::PARENTHESIS; }, 0, false);
             if (!result.available) {
                 break;
             }
-            Token_Range range;
-            range.start = result.value;
-            range.end = result.value;
-            range.end.token += 1;
-            dynamic_array_push_back(ranges, range);
+            dynamic_array_push_back(ranges, token_range_make_offset(result.value, 1));
 
             // Find closing parenthesis
-            parser.state.pos = result.value;
-            auto par_type = get_token(0)->options.parenthesis.type;
+            auto par_type = index_value(result.value)->options.parenthesis.type;
             advance_token();
-            auto end_token = find_error_recovery_token(
+            auto end_token = search_token(
+                result.value,
                 [](Token* t, void* type) -> bool
                 { return t->type == Token_Type::PARENTHESIS &&
                 !t->options.parenthesis.is_open && t->options.parenthesis.type == *((Parenthesis_Type*)type); },
@@ -1402,35 +1441,43 @@ namespace Parser
             if (!end_token.available) {
                 break;
             }
-            range.start = end_token.value;
-            range.end = end_token.value;
-            range.end.token += 1;
-            dynamic_array_push_back(ranges, range);
+            dynamic_array_push_back(ranges, token_range_make_offset(end_token.value, 1));
             break;
         }
         case Section::KEYWORD:
         {
-            auto result = find_error_recovery_token([](Token* t, void* type) -> bool {return t->type == Token_Type::KEYWORD; }, 0, false);
+            auto result = search_token(info.range.start, [](Token* t, void* type) -> bool {return t->type == Token_Type::KEYWORD; }, 0, false);
             if (!result.available) {
                 break;
             }
-            Token_Range range;
-            range.start = result.value;
-            range.end = result.value;
-            range.end.token += 1;
-            dynamic_array_push_back(ranges, range);
+            dynamic_array_push_back(ranges, token_range_make_offset(result.value, 1));
             break;
         }
         case Section::END_TOKEN: {
-            Token_Range range;
-            range.end = info.range.end;
-            range.start = info.range.end;
-            range.start.token -= 1;
+            Token_Range range = token_range_make(token_index_advance(info.range.end, -1), info.range.end);
             assert(range.start.token > 0, "Hey");
             dynamic_array_push_back(ranges, range);
             break;
         }
         default: panic("");
         }
+    }
+
+    AST::Base* find_smallest_enclosing_node(AST::Base* base, Token_Index index)
+    {
+        int child_index= 0;
+        AST::Base* child = AST::base_get_child(base, child_index);
+        if (child == 0) {
+            return base;
+        }
+        while (child != 0) {
+            auto& child_range = get_parse_info(child)->bounding_range;
+            if (token_range_contains(child_range, index)) {
+                return find_smallest_enclosing_node(child, index);
+            }
+            child_index += 1;
+            child = AST::base_get_child(base, child_index);
+        }
+        return base;
     }
 }

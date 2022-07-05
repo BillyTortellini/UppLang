@@ -1,19 +1,114 @@
 
+
+
+
+
+Now:
+----
+  - Context-Info (Show variable type, maybe function params)
+  - Highlight variable instances
+  - Jump to Definition
+  - Code-Completion
+
+
 TODO:
- - Scrolling window
- - Cursor movement (Multiple lines) + after delete
- - Undo-Redo + Vim-Motions with delete, change
- - Multi-Line formating (Maybe parser based? line trimming?)
- - Use Compiler-Info in Editor (Jump to definition, code completion)
- - Maybe Immediate-Mode UI for some settings (formating, compiler options ...)?
+-----
+ - Add IDE-Features (Syntax-highlighting, jump to definition)
+ - Code-Completion
+ - Move forward with:
+    * Language-Features (Templates, named parameters, QOL stuff) 
+    * Editor-Features (Copy-Paste, Vim-Commands)
+    * Incremental Compilation
 
 
-Scrolling Window:
- - Look at how positioning is done vs how it should be done
- - We currently render: Text with colors + Background Col + Underlines
- - I definitly want to decouple Code Highlighting from Formating/Text Layout
- - Performance wise it would be great if I could run highlighting logic only on visible Code (Currently on screen)
 
+Next features:
+--------------
+ * Syntax-Guided Editor (Undo-Redo, copy-paste, code-completion, jump to definition, auto-formating, vim-commands, animations, code folding)
+ * Polymorphism/Generics/Templates (Template rework: No more templated modules, templated types, templated functions)
+
+ * Named function parameters/unnamed struct initializer params
+ * Bake function pointers
+ * Type System switch to global
+ * Always analyse struct initializer/function parameters, even if the function type is not known (Turning off error reporting during this)
+ * Binary Operations should support auto-operations (enum, array, struct-init)
+ * Loading files introduces new symbols, which could conflict with the old ones...
+ * Rethink auto pointers with pointers on the left side of assignment, maybe just use pointer assign syntax &=
+ * Switch with indentation, remove case keyword
+ * Switch case variables 
+ * Error messages using the AST::Display
+ * Auto block-ids (if cond_var) should not work if there are 2 instances where we use the same cond, then just disable auto ids (Parser thing)
+ * For loop and looping over arrays/slices pls
+ * Slices as varargs, e.g. printf(a: string, values: []Any ...)
+ * Conversion function to pointer and back
+ * Literal overhaul (Integers, floats, strings?, arrays are u64, array access with any int...)
+ * Array bounds check
+ * Expression-Blocks
+
+ * Macros and Iteration 
+ * Generating source code with runtime code execution (#insert_code {return "what the fuck";})
+ * Annotations (Used in generating source code)
+ * Static Analyser
+
+ * New with values?
+ * Interpreter upgrade, call C-Functions, Custom allocator, check memory access
+ * Function overhaul, e.g. Non-Pointer parameters constant, Named parameter values in function calls
+ * Read-only variables
+ * Struct unpacking syntax, ignore syntax 
+     index, found := find_elem(arr, 2);
+     index, _ = find_elem(arr, 3);
+     _ = Hashtable~insert();
+     - Analysis can be out of order in e.g. Parameter analysis, which may make things like Polymorphic Types easier.
+     union {ipv4: int; ipv5: _};
+
+
+Required Features before I can use the Language:
+ * Syntax-Editor features 
+ * Incremental Compilation
+ * Templates
+ * Context-System
+ * Symbol-Imports/Resolution
+ * Iterators/Operator overloads (Maybe in some sort of context system?)
+
+
+----------------------------------------------------------
+--- RANT ABOUT COMPILER/EDITOR STRUCTURE + PERFORMANCE ---
+----------------------------------------------------------
+ *** General Compiler/IDE Structure:
+If I don't want a multi-file per project structure, I almost need something like incremental compilation. (Maybe)
+Then theres the problem that I don't want to do Compile-Time Code-Execution during editing, meaning I want to store the results
+of these bakes somehow over multiple frames/edits.
+The problem here is that I want the editor to display/use Compile-Information (Errors, Warnings, Symbols, Code-Completion, Goto-Definition),
+and the Compilation Process/Semantic Analysis may be a relative slow process, but the Editor needs to stay responsive.
+
+ *** Current Thoughts on a Solution:
+Lexing and Parsing is done incrementally (By the Editor) in 'real-time', meaning that the Editor never needs to wait for AST-Parsing to be done.
+This is mostly because the Editor may need AST/Parse Information for Auto-Formating (Required for Rendering + Animations) and for Code-Views (If I implement them)
+I think this is a valid Decision because I should be able to do Parsing incrementally with the current Syntax of the Language.
+
+Maybe Semantic-Analysis is also one of the parts that can be done incrementally, but Workload-Dependency Management and Symbol Resolution will be the
+problem. (Or I at least believe so)
+
+Then the other two Parts of Compiling would be Semantic-Analysis and Code-Generation.
+In the ideal case I would also execute those two incrementally, but I believe that waiting for Analysis before querying the Code
+may be quite slow (Although Incremental Semantic-Analysis would probably be pretty fast). One of the slow parts may even be the
+#Bake and #Run parts of the code, which I wouldn't even need to rerun if everything works out.
+
+I generally believe that everything must run incrementally (Parsing + Analysis + Code Generation) eventually, since I want to be able
+to generate huge Programs with this language and the IDE requires fast Feedback for editing.
+The only thing that I am unsure about is if it is fast enough to do a complete Analysis after every edit. 
+The Answer is probably yes.
+
+And if the answer is no (No compiler feedback after every edit), I will have to draw a line somewhere (Probably after parsing)
+where a second Thread does Analysis, and compiler feedback will have to be based on a cached, old Version of Analysis-Info.
+But even with the caching and old version stuff I probably want some sort of incremental Compilation, otherwise Compiling and Running the
+Program will become quite hard.
+
+
+
+-----------------------------------------------------------
+--- RANT ABOUT DATASTRUCTURE FOR CODE (Editor + Parser) ---
+-----------------------------------------------------------
 Requirements for Code-Representation
  - Lines as Text
  - Mapping from text to tokens
@@ -142,10 +237,6 @@ Requirements:
  - Indentation Handling (Adding/removing indentation)
  - Token-Layout (Position, size, color) for each token
 
-
-
-
-
 How to design a Data-Structure:
  - Why is a Datastructure necessary/why can't items be processed one by one
  - Which operations needs to be executed on the Structure in which frequency (Also information querying)
@@ -177,38 +268,6 @@ their references once the line numbers changes.
 Also I think most logic concerning code is built upon the hierarchy, meaning that e.g. Iterating over the code (during parsing) would be easier in
 the hierarchy.
 
-
-
- *** General Compiler/IDE Structure:
-If I don't want a multi-file per project structure, I almost need something like incremental compilation. (Maybe)
-Then theres the problem that I don't want to do Compile-Time Code-Execution during editing, meaning I want to store the results
-of these bakes somehow over multiple frames/edits.
-The problem here is that I want the editor to display/use Compile-Information (Errors, Warnings, Symbols, Code-Completion, Goto-Definition),
-and the Compilation Process/Semantic Analysis may be a relative slow process, but the Editor needs to stay responsive.
-
- *** Current Thoughts on a Solution:
-Lexing and Parsing is done incrementally (By the Editor) in 'real-time', meaning that the Editor never needs to wait for AST-Parsing to be done.
-This is mostly because the Editor may need AST/Parse Information for Auto-Formating (Required for Rendering + Animations) and for Code-Views (If I implement them)
-I think this is a valid Decision because I should be able to do Parsing incrementally with the current Syntax of the Language.
-
-Maybe Semantic-Analysis is also one of the parts that can be done incrementally, but Workload-Dependency Management and Symbol Resolution will be the
-problem. (Or I at least believe so)
-
-Then the other two Parts of Compiling would be Semantic-Analysis and Code-Generation.
-In the ideal case I would also execute those two incrementally, but I believe that waiting for Analysis before querying the Code
-may be quite slow (Although Incremental Semantic-Analysis would probably be pretty fast). One of the slow parts may even be the
-#Bake and #Run parts of the code, which I wouldn't even need to rerun if everything works out.
-
-I generally believe that everything must run incrementally (Parsing + Analysis + Code Generation) eventually, since I want to be able
-to generate huge Programs with this language and the IDE requires fast Feedback for editing.
-The only thing that I am unsure about is if it is fast enough to do a complete Analysis after every edit. 
-The Answer is probably yes.
-
-And if the answer is no (No compiler feedback after every edit), I will have to draw a line somewhere (Probably after parsing)
-where a second Thread does Analysis, and compiler feedback will have to be based on a cached, old Version of Analysis-Info.
-But even with the caching and old version stuff I probably want some sort of incremental Compilation, otherwise Compiling and Running the
-Program will become quite hard.
-
  *** Next Day Thoughts:
  It could be that I want the Source-Code Representation to also be hierarchical, because it seems to make more sense 
  for incremental Parsing. This would also solve the problem of having 'slow' line-editing with only a single array.
@@ -223,75 +282,13 @@ Program will become quite hard.
   * Better Editing Performance
   * Indexing is based on changes
   * We can store information per block, because it is a consistent structure
-
-
-Required Features before I can use the Language:
- * Incremental Compilation
- * Templates
- * Context-System
- * Symbol-Imports/Resolution
- * Syntax-Editor features (Goto definition, Code-Completion, Refactor-Name maybe, ...)
- * Iterators/Operator overloads (Maybe in some sort of context system?)
-
-
-
-Stuff to check:
- * Adding lines/removing lines                         X
- * Changing line text
- * Adding indentation (At block start/end)
- * Undo redo indentations
- * Add/Remove indentation between blocks (Merge)
- * Delete line between blocks
- * Cursor movement                                     X
- * Add line/remove line                                X
-
-
-TODO: After history:
-    Load from string,
-    Append to string
-    Check if syncro indices are correct
+----------------------------------------------------------------------------
+----------------------------------------------------------------------------
 
 
 
 
 
-Next features:
---------------
- * Syntax-Guided Editor (Undo-Redo, copy-paste, code-completion, jump to definition, auto-formating, vim-commands, animations, code folding)
- * Polymorphism/Generics/Templates (Template rework: No more templated modules, templated types, templated functions)
-
- * Named function parameters/unnamed struct initializer params
- * Bake function pointers
- * Type System remove the fucking type_system pointer from functions
- * Always analyse struct initializer/function parameters, even if the function type is not known (Turning off error reporting during this)
- * Binary Operations should support auto-operations (enum, array, struct-init)
- * Loading files introduces new symbols, which could conflict with the old ones...
- * Rethink auto pointers with pointers on the left side of assignment, maybe just use pointer assign syntax &=
- * Switch with indentation, remove case keyword
- * Switch case variables 
- * Error messages using the AST::Display
- * Auto block-ids (if cond_var) should not work if there are 2 instances where we use the same cond, then just disable auto ids (Parser thing)
- * For loop and looping over arrays/slices pls
- * Slices as varargs, e.g. printf(a: string, values: []Any ...)
- * Conversion function to pointer and back
- * Literal overhaul (Integers, floats, strings?, arrays are u64, array access with any int...)
- * Array bounds check
-
- * Macros and Iteration 
- * Generating source code with runtime code execution (#insert_code {return "what the fuck";})
- * Annotations (Used in generating source code)
- * Static Analyser
-
- * New with values?
- * Interpreter upgrade, call C-Functions, Custom allocator, check memory access
- * Function overhaul, e.g. Non-Pointer parameters constant, Named parameter values in function calls
- * Read-only variables
- * Struct unpacking syntax, ignore syntax 
-     index, found := find_elem(arr, 2);
-     index, _ = find_elem(arr, 3);
-     _ = Hashtable~insert();
-     - Analysis can be out of order in e.g. Parameter analysis, which may make things like Polymorphic Types easier.
-     union {ipv4: int; ipv5: _};
 
 General Plan for Implementation:
 --------------------------------

@@ -311,6 +311,7 @@ namespace AST
     Base* base_get_child(Base* node, int child_index);
     void base_enumerate_children(Base* node, Dynamic_Array<Base*>* fill);
     void base_print(Base* node);
+    void base_append_to_string(Base* base, String* str);
 
     void symbol_read_append_to_string(Symbol_Read* read, String* string);
     int binop_priority(Binop binop);
