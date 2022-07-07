@@ -675,19 +675,19 @@ IR_Data_Access ir_data_access_create_constant_i32(i32 value) {
 
 // Code Gen
 Expression_Info* get_info(AST::Expression* node) {
-    return &analysis_pass_get_node_info(ir_generator.current_pass, &node->base)->info_expr;
+    return &analysis_pass_get_info(ir_generator.current_pass, &node->base)->info_expr;
 }
 
 Statement_Info* get_info(AST::Statement* node) {
-    return &analysis_pass_get_node_info(ir_generator.current_pass, &node->base)->info_stat;
+    return &analysis_pass_get_info(ir_generator.current_pass, &node->base)->info_stat;
 }
 
 Argument_Info* get_info(AST::Argument* node) {
-    return &analysis_pass_get_node_info(ir_generator.current_pass, &node->base)->arg_info;
+    return &analysis_pass_get_info(ir_generator.current_pass, &node->base)->arg_info;
 }
 
 Case_Info* get_info(AST::Switch_Case* node) {
-    return &analysis_pass_get_node_info(ir_generator.current_pass, &node->base)->info_case;
+    return &analysis_pass_get_info(ir_generator.current_pass, &node->base)->info_case;
 }
 
 IR_Data_Access ir_generator_generate_cast(IR_Code_Block* ir_block, IR_Data_Access source, Type_Signature* result_type, Info_Cast_Type cast_type)

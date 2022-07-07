@@ -57,18 +57,16 @@ Operator_Info syntax_operator_info(Operator op)
     return operator_info_make("what", Operator_Type::BINOP, true, true);
 }
 
-int character_index_to_token(Dynamic_Array<Token>* tokens, int char_index)
+int character_index_to_token(Dynamic_Array<Token>* tokens, int char_index, bool after_cursor)
 {
-    int cursor_token = 0;
-    for (int i = tokens->size - 1; i >= 0; i--)
-    {
+    for (int i = tokens->size - 1; i >= 0; i--) {
         auto& token = (*tokens)[i];
-        if (char_index >= token.start_index) {
-            cursor_token = i;
-            break;
+        if ((after_cursor && char_index >= token.start_index) ||
+            (!after_cursor && char_index > token.start_index)) {
+            return i;
         }
     }
-    return cursor_token;
+    return 0;
 }
 
 String syntax_keyword_as_string(Keyword keyword)

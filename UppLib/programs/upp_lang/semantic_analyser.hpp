@@ -363,7 +363,12 @@ struct Analysis_Pass
     Array<Analysis_Info> infos;
 };
 
-Analysis_Info* analysis_pass_get_node_info(Analysis_Pass* pass, AST::Base* node);
+Analysis_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Base* node);
+Expression_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Expression* expression);
+Case_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Switch_Case* sw_case);
+Argument_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Argument* argument);
+Statement_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Statement* statement);
+Code_Block_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Code_Block* block);
 Type_Signature* expression_info_get_type(Expression_Info* info);
 
 

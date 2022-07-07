@@ -70,6 +70,7 @@ struct Compiler
     String* id_main;
     String* id_type_of;
     String* id_type_info;
+    String* id_empty_string;
 };
 
 extern Compiler compiler;

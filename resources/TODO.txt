@@ -1,23 +1,28 @@
+Code Completion Design Analysis:
+--------------------------------
+Implementation:
+ * Show a list of available symbols in the current Scope  X
+ * Filter list by considering already typed characters    X
+ * Move filtering from rendering to insert mode           X
+ * Add Key-Input to insert best suited match              X
+ * On member-access, search through members               X
+ * Design: What to do when we press the code-completion button, when does code completion appear
+ * Check that Error-Expressions work, e.g. inside function
+ * Better Code-Completion by considering Context, and ranking available Symbols (Rank by distance)
+    Ideas for Ranking:
+     - Correct Symbol type 
+     - Upper/Lower-Case correct
+     - Maybe some fuzzy string search if no results are found
+     - Symbol-Table distance (lokals before globals)
+ * Think about when to display Code-Completion, maybe on keystroke, maybe always after typing
 
-
-
-
-
-Now:
-----
-  - Context-Info (Show variable type, maybe function params)
-  - Highlight variable instances
-  - Jump to Definition
-  - Code-Completion
 
 
 TODO:
 -----
- - Add IDE-Features (Syntax-highlighting, jump to definition)
- - Code-Completion
  - Move forward with:
     * Language-Features (Templates, named parameters, QOL stuff) 
-    * Editor-Features (Copy-Paste, Vim-Commands)
+    * Editor-Features (Camera-Movemento, Copy-Paste, Vim-Commands, Command Recording, Code-Folding)
     * Incremental Compilation
 
 

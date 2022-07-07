@@ -146,7 +146,7 @@ struct Token
 };
 
 bool char_is_space_critical(char c);
-int character_index_to_token(Dynamic_Array<Token>* tokens, int char_index);
+int character_index_to_token(Dynamic_Array<Token>* tokens, int char_index, bool after_cursor);
 bool char_is_parenthesis(char c);
 Parenthesis char_to_parenthesis(char c);
 char parenthesis_to_char(Parenthesis p);

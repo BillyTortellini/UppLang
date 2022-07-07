@@ -3,6 +3,11 @@
 #include "source_code.hpp"
 
 
+// PERF:
+// Since _almost_ all edits happen as Complex_Commands, I could 
+// compress changes inside Complex Commands, e.g. Insert 3 chars + delete 1 char -> Insert 1 string of size 2
+// Also strings are currently copied, and char inserts are also strings, but since we don't need resizable strings
+// we could just store them in a stack allocator with offset
 
 // Helpers
 void code_change_destroy(Code_Change* change)

@@ -76,7 +76,7 @@ struct Symbol
 
     String* id;
     Symbol_Table* origin_table;
-    AST::Base* definition_node;
+    AST::Base* definition_node; // Note: This is a base because it could be either AST::Definition or AST::Parameter
     Analysis_Item* origin_item;
     Dynamic_Array<Symbol_Dependency*> references;
 };

@@ -94,7 +94,7 @@ Analysis_Pass* analysis_item_create_pass(Analysis_Item* item)
     return pass;
 }
 
-Analysis_Info* analysis_pass_get_node_info(Analysis_Pass* pass, AST::Base* node)
+Analysis_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Base* node)
 {
     assert(pass != 0, "");
     auto& item = pass->item;
@@ -103,24 +103,46 @@ Analysis_Info* analysis_pass_get_node_info(Analysis_Pass* pass, AST::Base* node)
     return &pass->infos[id - item->min_node_index];
 }
 
+Expression_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Expression* expression) {
+    return &analysis_pass_get_info(pass, to_base(expression))->info_expr;
+}
+
+Case_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Switch_Case* sw_case) {
+    return &analysis_pass_get_info(pass, to_base(sw_case))->info_case;
+}
+
+Argument_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Argument* argument) {
+    return &analysis_pass_get_info(pass, to_base(argument))->arg_info;
+}
+
+Statement_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Statement* statement) {
+    return &analysis_pass_get_info(pass, to_base(statement))->info_stat;
+}
+
+Code_Block_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Code_Block* block) {
+    return &analysis_pass_get_info(pass, to_base(block))->info_block;
+}
+
+
+// Helpers
 Expression_Info* pass_get_info(AST::Expression* expression) {
-    return &analysis_pass_get_node_info(semantic_analyser.current_pass, to_base(expression))->info_expr;
+    return analysis_pass_get_info(semantic_analyser.current_pass, expression);
 }
 
 Case_Info* pass_get_info(AST::Switch_Case* sw_case) {
-    return &analysis_pass_get_node_info(semantic_analyser.current_pass, to_base(sw_case))->info_case;
+    return analysis_pass_get_info(semantic_analyser.current_pass, sw_case);
 }
 
 Argument_Info* pass_get_info(AST::Argument* argument) {
-    return &analysis_pass_get_node_info(semantic_analyser.current_pass, to_base(argument))->arg_info;
+    return analysis_pass_get_info(semantic_analyser.current_pass, argument);
 }
 
 Statement_Info* pass_get_info(AST::Statement* statement) {
-    return &analysis_pass_get_node_info(semantic_analyser.current_pass, to_base(statement))->info_stat;
+    return analysis_pass_get_info(semantic_analyser.current_pass, statement);
 }
 
 Code_Block_Info* pass_get_info(AST::Code_Block* block) {
-    return &analysis_pass_get_node_info(semantic_analyser.current_pass, to_base(block))->info_block;
+    return analysis_pass_get_info(semantic_analyser.current_pass, block);
 }
 
 

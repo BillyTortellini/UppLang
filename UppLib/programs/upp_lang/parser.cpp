@@ -110,13 +110,13 @@ namespace Parser
                 and the parent items of the syntax_block therefore get an invalid end_index.
             2. Expressions that go over multiple ranges have their end index at the start of another line.
                Instead, the end index should be at the end of the previous line
+               Maybe I need to think more about this, but this shouldn't be true for code-blocks
           It also generates bounding ranges, which are used to efficiently find
         FUTURE: Maybe the parser can handle these problems and we don't need a Post-Processing step
         */
 
         auto& info = *get_parse_info(base);
         auto& range = info.range;
-        info.bounding_range = range;
 
         // Correct Invalid ranges
         {
@@ -126,38 +126,42 @@ namespace Parser
             if (end.line.line == block->lines.size) {
                 end = token_index_make_block_end(end.line.block);
             }
-            else if (end.token == 0 && !index_equal(end, range.start)) {
-                end = token_index_make_line_end(line_index_prev(end.line));
-            }
+            //else if (end.token == 0 && !index_equal(end, range.start) && base->type != Base_Type::CODE_BLOCK && base->type != Base_Type::MODULE) {
+                //end = token_index_make_line_end(line_index_prev(end.line));
+            //}
         }
         assert(index_valid(range.start), "Jo");
         assert(index_valid(range.end), "Jo");
+        info.bounding_range = range;
 
-        // Iterate over all children
+        // Iterate over all children + Calculate bounding ranges
         {
             int index = 0;
             auto child = AST::base_get_child(base, index);
             if (child == 0) return;
 
-            Token_Index min = range.start;
-            Token_Index max = range.end;
+            auto& bounding = info.bounding_range;
             while (child != 0) 
             {
                 base_correct_token_ranges(child);
 
                 auto child_range = get_parse_info(child)->bounding_range;
-                if (index_compare(min, child_range.start) < 0) {
-                    min = child_range.start;
+                if (index_compare(bounding.start, child_range.start) < 0) {
+                    bounding.start = child_range.start;
                 }
-                if (index_compare(child_range.end, max) < 0) {
-                    max = child_range.end;
+                if (index_compare(child_range.end, bounding.end) < 0) {
+                    bounding.end = child_range.end;
                 }
 
                 index += 1;
                 child = AST::base_get_child(base, index);
             }
-            info.bounding_range = token_range_make(min, max);
         }
+
+        assert(index_valid(range.start), "Jo");
+        assert(index_valid(range.end), "Jo");
+        assert(index_valid(info.bounding_range.start), "Jo");
+        assert(index_valid(info.bounding_range.end), "Jo");
 
         // Check that start/end is in order
         int order = index_compare(range.start, range.end);
@@ -347,6 +351,7 @@ namespace Parser
                 }
                 pos.line.line += 1;
                 pos.token = 0;
+                continue;
             }
 
             auto token = index_value(pos);
@@ -945,20 +950,29 @@ namespace Parser
             read->path_child.available = false;
             read->name = get_token(0)->options.identifier;
             while (test_token(Token_Type::IDENTIFIER) &&
-                test_operator_offset(Operator::TILDE, 1) &&
-                test_token_offset(Token_Type::IDENTIFIER, 2))
+                test_operator_offset(Operator::TILDE, 1))
             {
                 advance_token();
                 advance_token();
                 read->path_child = optional_make_success(allocate_base<Symbol_Read>(&read->base, Base_Type::SYMBOL_READ));
-                read->path_child.value->name = get_token(0)->options.identifier;
+                if (test_token(Token_Type::IDENTIFIER)) {
+                    read->path_child.value->name = get_token(0)->options.identifier;
+                }
+                else {
+                    auto& pos = parser.state.pos;
+                    log_error("Expected identifier", token_range_make(token_index_advance(pos, -1), pos));
+                    read->path_child.value->name = compiler.id_empty_string;
+                }
+
                 read = read->path_child.value;
                 SET_END_RANGE(read);
             }
 
             result->type = Expression_Type::SYMBOL_READ;
             result->options.symbol_read = final_read;
-            advance_token();
+            if (test_token(Token_Type::IDENTIFIER)) {
+                advance_token();
+            }
             SET_END_RANGE(final_read);
             PARSE_SUCCESS(result);
         }
@@ -966,14 +980,7 @@ namespace Parser
         if (test_operator(Operator::DOT))
         {
             advance_token();
-            if (test_token(Token_Type::IDENTIFIER)) // Member access
-            {
-                result->type = Expression_Type::AUTO_ENUM;
-                result->options.auto_enum = get_token(0)->options.identifier;
-                advance_token();
-                PARSE_SUCCESS(result);
-            }
-            else if (test_parenthesis_offset('{', 0)) // Struct Initializer
+            if (test_parenthesis_offset('{', 0)) // Struct Initializer
             {
                 result->type = Expression_Type::STRUCT_INITIALIZER;
                 auto& init = result->options.struct_initializer;
@@ -989,6 +996,20 @@ namespace Parser
                 init.type_expr = optional_make_failure<Expression*>();
                 init.values = dynamic_array_create_empty<Expression*>(1);
                 parse_parenthesis_comma_seperated(&result->base, &init.values, parse_expression, Parenthesis_Type::BRACKETS);
+                PARSE_SUCCESS(result);
+            }
+            else
+            {
+                result->type = Expression_Type::AUTO_ENUM;
+                if (test_token(Token_Type::IDENTIFIER)) {
+                    result->options.auto_enum = get_token(0)->options.identifier;
+                    advance_token();
+                }
+                else {
+                    auto& pos = parser.state.pos;
+                    log_error("Missing member name", token_range_make(token_index_advance(pos, -1), pos));
+                    result->options.auto_enum = compiler.id_empty_string;
+                }
                 PARSE_SUCCESS(result);
             }
             CHECKPOINT_EXIT;
@@ -1114,15 +1135,7 @@ namespace Parser
         if (test_operator(Operator::DOT))
         {
             advance_token();
-            if (test_token(Token_Type::IDENTIFIER)) // Member access
-            {
-                result->type = Expression_Type::MEMBER_ACCESS;
-                result->options.member_access.name = get_token(0)->options.identifier;
-                result->options.member_access.expr = child;
-                advance_token();
-                PARSE_SUCCESS(result);
-            }
-            else if (test_parenthesis_offset('{', 0)) // Struct Initializer
+            if (test_parenthesis_offset('{', 0)) // Struct Initializer
             {
                 result->type = Expression_Type::STRUCT_INITIALIZER;
                 auto& init = result->options.struct_initializer;
@@ -1138,6 +1151,21 @@ namespace Parser
                 init.type_expr = optional_make_success(child);
                 init.values = dynamic_array_create_empty<Expression*>(1);
                 parse_parenthesis_comma_seperated(&result->base, &init.values, parse_expression, Parenthesis_Type::BRACKETS);
+                PARSE_SUCCESS(result);
+            }
+            else 
+            {
+                result->type = Expression_Type::MEMBER_ACCESS;
+                result->options.member_access.expr = child;
+                if (test_token(Token_Type::IDENTIFIER)) {
+                    result->options.member_access.name = get_token(0)->options.identifier;
+                    advance_token();
+                }
+                else {
+                    auto& pos = parser.state.pos;
+                    log_error("Missing member name", token_range_make(token_index_advance(pos, -1), pos));
+                    result->options.member_access.name = compiler.id_empty_string;
+                }
                 PARSE_SUCCESS(result);
             }
             CHECKPOINT_EXIT;
