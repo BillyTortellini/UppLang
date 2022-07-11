@@ -1,28 +1,48 @@
 Code Completion Design Analysis:
 --------------------------------
-Implementation:
- * Show a list of available symbols in the current Scope  X
- * Filter list by considering already typed characters    X
- * Move filtering from rendering to insert mode           X
- * Add Key-Input to insert best suited match              X
- * On member-access, search through members               X
- * Design: What to do when we press the code-completion button, when does code completion appear
- * Check that Error-Expressions work, e.g. inside function
- * Better Code-Completion by considering Context, and ranking available Symbols (Rank by distance)
-    Ideas for Ranking:
-     - Correct Symbol type 
-     - Upper/Lower-Case correct
-     - Maybe some fuzzy string search if no results are found
-     - Symbol-Table distance (lokals before globals)
- * Think about when to display Code-Completion, maybe on keystroke, maybe always after typing
+Enter Code-Completion Mode when pressing the Code-Completion button (E.g. CTRL+Space)
+When we have multiple options to select pressing one key advances all
+
+Questions: When to enter/exit code-completion?
+    Maybe just have a toggle (CTRL+Space) for code completion, and don't exit until that toggle is off
+
+Maybe we can always have code-completion except when we type definitions?
+    Maybe we can enter/exit this mode when in insert-mode with shortcuts
+And if we change definitions we can also change all occurances?
+    Thats probably a bit too far
+Also I want a 'Recursive' add-indent (Ctrl+Tab)/remove-indent(Shift+Ctrl+Tab) and I 
+want my multi line comments back (E.g. Lexer has a tokenize all and tokenize line checks all parent blocks for comment start)
+
+
+RANT:
+-----
+After adding Code-Suggestions (Editor views a list of symbols that start the same as you have already typed)
+there was a decision to make on how to 'Select' one of the Suggestions and insert it into code
+ 1. Having a 'Insert Suggestion' Key
+ 2. Custom Completion Mode where everything gets inserted as you type
+
+Completion Mode Afterthoughts:
+At first I thought that completion mode may be insane because you could just always
+be in completion mode, and you would never have to type identifiers out again.
+But this causes problems:
+ - Definitions: To type new identifiers we cannot have code-completion
+ - Keywords: I could add keywords to code completion, but most of the time you just want to write them out
+Also there is the problem that Completion-Mode does not allow for 'fuzzy' search, meaning that
+it doesn't allow 'browsing' of code.
+
+New Design Ideas:
+Have a simple 'fuzzy' string search, that checks that all characters are typed correctly
+Always display completion ideas, and insert the first search when we hit insert_completions
 
 
 
 TODO:
 -----
+ - Multi-Line Comments
+ - Reintegrate Test-Cases
  - Move forward with:
-    * Language-Features (Templates, named parameters, QOL stuff) 
-    * Editor-Features (Camera-Movemento, Copy-Paste, Vim-Commands, Command Recording, Code-Folding)
+    * Editor-Features (Camera-Movemento, Parser-Based Formating, Andimations, CTRL-W Insert mode, Copy-Paste, Vim-Commands, Command Recording, Code-Folding)
+    * Language-Features (Templates, named parameters, QOL stuff)
     * Incremental Compilation
 
 

@@ -549,9 +549,6 @@ void history_insert_text(Code_History* history, Text_Index index, String string)
 
 void history_delete_text(Code_History* history, Text_Index index, int char_end)
 {
-    source_code_sanity_check(history->code);
-    SCOPE_EXIT(source_code_sanity_check(history->code));
-
     auto& text = index_value(index.line)->text;
     assert(index.pos >= 0 && index.pos <= text.size, "");
     assert(char_end >= 0 && char_end <= text.size, "");

@@ -21,6 +21,16 @@
 #include "lexer.hpp"
 
 // Editor
+struct Fuzzy_Search
+{
+    String option;
+    int preamble_length;
+    bool is_longer;
+    bool substrings_in_order;
+    bool all_characters_contained;
+    int substring_count;
+};
+
 struct Error_Display
 {
     String message;
@@ -37,7 +47,7 @@ Error_Display error_display_make(String msg, Token_Range range) {
 enum class Editor_Mode
 {
     NORMAL,
-    INPUT,
+    INSERT,
 };
 
 struct Syntax_Editor
@@ -57,8 +67,7 @@ struct Syntax_Editor
     bool space_before_cursor;
     bool space_after_cursor;
 
-    bool show_code_completion;
-    Dynamic_Array<String> code_completion_suggestions;
+    Dynamic_Array<Fuzzy_Search> code_completion_suggestions;
 
     // Rendering
     String context_text;
@@ -73,26 +82,27 @@ struct Syntax_Editor
     vec2 character_size;
 };
 
-enum class Input_Command_Type
+enum class Insert_Command_Type
 {
     IDENTIFIER_LETTER,
     NUMBER_LETTER,
     DELIMITER_LETTER,
     SPACE,
+    BACKSPACE,
+
+    EXIT_INSERT_MODE,
     ENTER,
     ENTER_REMOVE_ONE_INDENT,
-    EXIT_INSERT_MODE,
-    BACKSPACE,
     ADD_INDENTATION,
     REMOVE_INDENTATION,
     MOVE_LEFT,
     MOVE_RIGHT,
-    INSERT_CODE_SUGGESTION,
+    INSERT_CODE_COMPLETION,
 };
 
-struct Input_Command
+struct Insert_Command
 {
-    Input_Command_Type type;
+    Insert_Command_Type type;
     char letter;
 };
 
@@ -188,7 +198,7 @@ void syntax_editor_sanitize_cursor()
     auto& cursor = editor.cursor;
     index_sanitize(&cursor.line);
     auto& text = index_value(cursor.line)->text;
-    cursor.pos = math_clamp(cursor.pos, 0, editor.mode == Editor_Mode::INPUT ? text.size : math_maximum(0, text.size - 1));
+    cursor.pos = math_clamp(cursor.pos, 0, editor.mode == Editor_Mode::INSERT ? text.size : math_maximum(0, text.size - 1));
 
     if (string_test_char(text, cursor.pos, ' ')) {
         editor.space_after_cursor = false;
@@ -523,18 +533,17 @@ Symbol_Table* code_query_get_ast_node_symbol_table(AST::Base* base)
 
 
 // Commands
-void editor_enter_input_mode()
+void editor_enter_insert_mode()
 {
-    syntax_editor.mode = Editor_Mode::INPUT;
+    syntax_editor.mode = Editor_Mode::INSERT;
     history_start_complex_command(&syntax_editor.history);
 }
 
-void editor_leave_input_mode()
+void editor_leave_insert_mode()
 {
     syntax_editor.mode = Editor_Mode::NORMAL;
     history_stop_complex_command(&syntax_editor.history);
     history_set_cursor_pos(&syntax_editor.history, syntax_editor.cursor);
-    syntax_editor.show_code_completion = false;
     dynamic_array_reset(&syntax_editor.code_completion_suggestions);
 }
 
@@ -574,7 +583,7 @@ void editor_remove_token(int token_index)
         history_insert_char(&editor.history, text_index_make(cursor.line, delete_start), ' ');
         cursor.pos += 1;
     }
-    if (editor.mode == Editor_Mode::INPUT) {
+    if (editor.mode == Editor_Mode::INSERT) {
         if (!(critical_before && critical_after)) {
             editor.space_before_cursor = critical_before;
         }
@@ -582,115 +591,7 @@ void editor_remove_token(int token_index)
     }
 }
 
-void normal_mode_handle_command(Normal_Command command)
-{
-    auto& editor = syntax_editor;
-    auto& cursor = editor.cursor;
-    auto line = index_value(cursor.line);
-    auto& tokens = line->tokens;
-
-    SCOPE_EXIT(history_set_cursor_pos(&editor.history, editor.cursor));
-    SCOPE_EXIT(syntax_editor_sanitize_cursor());
-
-    editor.space_before_cursor = false;
-    switch (command)
-    {
-    case Normal_Command::INSERT_AFTER: {
-        syntax_editor_synchronize_tokens();
-        editor_enter_input_mode();
-        cursor.pos = get_cursor_token(true).end_index;
-        break;
-    }
-    case Normal_Command::INSERT_BEFORE: {
-        syntax_editor_synchronize_tokens();
-        editor_enter_input_mode();
-        cursor.pos = get_cursor_token(true).start_index;
-        break;
-    }
-    case Normal_Command::MOVE_LEFT: {
-        syntax_editor_synchronize_tokens();
-        auto index = get_cursor_token_index(false);
-        if (index < 0) break;
-        cursor.pos = tokens[index].start_index;
-        break;
-    }
-    case Normal_Command::MOVE_RIGHT: {
-        syntax_editor_synchronize_tokens();
-        auto index = get_cursor_token_index(true) + 1;
-        if (index >= tokens.size) break;
-        cursor.pos = tokens[index].start_index;
-        break;
-    }
-    case Normal_Command::INSERT_AT_LINE_END: {
-        cursor.pos = line->text.size;
-        editor_enter_input_mode();
-        break;
-    }
-    case Normal_Command::INSERT_AT_LINE_START: {
-        cursor.pos = 0;
-        editor_enter_input_mode();
-        break;
-    }
-    case Normal_Command::UNDO: {
-        history_undo(&editor.history);
-        auto cursor_history = history_get_cursor_pos(&editor.history);
-        if (cursor_history.available) {
-            cursor = cursor_history.value;
-        }
-        break;
-    }
-    case Normal_Command::REDO: {
-        history_redo(&editor.history);
-        auto cursor_history = history_get_cursor_pos(&editor.history);
-        if (cursor_history.available) {
-            cursor = cursor_history.value;
-        }
-        break;
-    }
-    case Normal_Command::DELETE_TOKEN:
-    case Normal_Command::CHANGE_TOKEN:
-    {
-        if (command == Normal_Command::CHANGE_TOKEN) {
-            editor_enter_input_mode();
-        }
-        editor_remove_token(get_cursor_token_index(true));
-        break;
-    }
-    case Normal_Command::MOVE_LINE_START: {
-        cursor.pos = 0;
-        break;
-    }
-    case Normal_Command::MOVE_LINE_END: {
-        cursor.pos = line->text.size;
-        break;
-    }
-    case Normal_Command::ADD_LINE_ABOVE:
-    case Normal_Command::ADD_LINE_BELOW:
-    {
-        history_start_complex_command(&editor.history);
-        SCOPE_EXIT(history_stop_complex_command(&editor.history));
-
-        bool below = command == Normal_Command::ADD_LINE_BELOW;
-        auto new_line = line_index_make(cursor.line.block, below ? cursor.line.line + 1 : cursor.line.line);
-        history_insert_line(&editor.history, new_line, below);
-        cursor = text_index_make(new_line, 0);
-        editor_enter_input_mode();
-        break;
-    }
-    case Normal_Command::MOVE_UP: {
-        // FUTURE: Use token render positions to move up/down
-        cursor.line = line_index_prev(cursor.line);
-        break;
-    }
-    case Normal_Command::MOVE_DOWN: {
-        cursor.line = line_index_next(cursor.line);
-        break;
-    }
-    default: panic("");
-    }
-}
-
-void split_line_at_cursor(int indentation_offset)
+void editor_split_line_at_cursor(int indentation_offset)
 {
     auto& mode = syntax_editor.mode;
     auto& cursor = syntax_editor.cursor;
@@ -723,55 +624,129 @@ void split_line_at_cursor(int indentation_offset)
     cursor = text_index_make(new_line_index, 0);
 }
 
-Optional<String> input_mode_get_identifier_start()
+String code_completion_get_partially_typed_word()
 {
+    syntax_editor_synchronize_tokens();
+    if (syntax_editor.space_after_cursor) {
+        return string_create_static("");
+    }
     auto token = get_cursor_token(false);
-    String string;
+    String result;
     if (token.type == Token_Type::IDENTIFIER) {
-        string = *token.options.identifier;
+        result = *token.options.identifier;
     }
     else if (token.type == Token_Type::KEYWORD) {
-        string = syntax_keyword_as_string(token.options.keyword);
+        result = syntax_keyword_as_string(token.options.keyword);
     }
     else {
-        return optional_make_failure<String>();
+        return string_create_static("");
     }
 
     auto pos = syntax_editor.cursor.pos;
     if (pos < token.end_index) {
-        string = string_create_substring_static(&string, 0, token.end_index - pos);
-        if (string.size == 0) return optional_make_failure<String>();
+        result = string_create_substring_static(&result, 0, token.end_index - pos);
     }
-    return optional_make_success(string);
+    return result;
 }
 
-bool token_is_space_critical(Token t)
+bool code_completion_fuzzy_in_order(Fuzzy_Search* a, Fuzzy_Search* b)
 {
-    if (t.type == Token_Type::LITERAL) {
-        auto type = t.options.literal_value.type;
-        return type != Literal_Type::STRING;
+    if (a->is_longer != b->is_longer) {
+        return b->is_longer;
     }
-    return t.type == Token_Type::IDENTIFIER || t.type == Token_Type::KEYWORD;
+    if (a->all_characters_contained != b->all_characters_contained) {
+        return a->all_characters_contained;
+    }
+    if (a->preamble_length != b->preamble_length) {
+        return a->preamble_length > b->preamble_length;
+    }
+    if (a->substring_count != b->substring_count) {
+        return a->substring_count < b->substring_count;
+    }
+    if (a->substrings_in_order != b->substrings_in_order) {
+        return a->substrings_in_order;
+    }
+    return string_in_order(&a->option, &b->option);
 }
 
-void insert_mode_show_code_suggestions()
+void code_completion_add_and_rank(String option, String typed)
+{
+    Fuzzy_Search result;
+    result.option = option;
+    result.is_longer = typed.size > option.size;
+    result.substring_count = 0;
+    result.substrings_in_order = true;
+    result.preamble_length = 0;
+    result.all_characters_contained = true;
+    if (option.size == 0) {
+        return;
+    }
+    if (typed.size == 0) {
+        dynamic_array_push_back(&syntax_editor.code_completion_suggestions, result);
+        return;
+    }
+
+    int last_sub_start = -1;
+    int typed_index = 0;
+    while (typed_index < typed.size)
+    {
+        // Find maximum substring
+        int max_length = 0;
+        int max_start_index = 0;
+        for (int start = 0; start < option.size; start++)
+        {
+            int length = 0;
+            while (start + length < option.size && typed_index + length < typed.size)
+            {
+                auto char_o = option[start + length];
+                auto char_t = typed[typed_index + length];
+                if (char_o != char_t) {
+                    break;
+                }
+                length += 1;
+            }
+            if (length > max_length) {
+                max_length = length;
+                max_start_index = start;
+            }
+        }
+
+        // Add to statistic
+        result.substring_count += 1;
+        if (max_start_index == 0 && typed_index == 0) {
+            result.preamble_length = max_length;
+        }
+        if (max_length == 0) {
+            result.all_characters_contained = false;
+            typed_index += 1;
+            continue;
+        }
+        if (max_start_index <= last_sub_start) {
+            result.substrings_in_order = false;
+        }
+        last_sub_start = max_start_index;
+        typed_index += max_length;
+    }
+
+    dynamic_array_push_back(&syntax_editor.code_completion_suggestions, result);
+    return;
+}
+
+void code_completion_find_suggestions()
 {
     auto& editor = syntax_editor;
     auto& suggestions = editor.code_completion_suggestions;
-
     dynamic_array_reset(&suggestions);
-    syntax_editor_synchronize_tokens();
-    if (editor.mode != Editor_Mode::INPUT) {
-        editor.show_code_completion = false;
+    if (editor.mode != Editor_Mode::INSERT) {
         return;
     }
-    editor.show_code_completion = true;
-    syntax_editor_synchronize_with_compiler(false);
+    auto partially_typed = code_completion_get_partially_typed_word();
 
     // Check if we are on special node
-    Token_Index cursor_token_index = token_index_make(syntax_editor.cursor.line, get_cursor_token_index(true));
+    syntax_editor_synchronize_with_compiler(false);
+    Token_Index cursor_token_index = token_index_make(syntax_editor.cursor.line, get_cursor_token_index(false));
     auto node = Parser::find_smallest_enclosing_node(&compiler.main_source->ast->base, cursor_token_index);
-    
+
     bool fill_from_symbol_table = false;
     Symbol_Table* specific_table = 0;
 
@@ -780,34 +755,37 @@ void insert_mode_show_code_suggestions()
         auto expr = AST::base_downcast<AST::Expression>(node);
         auto pass = code_query_get_ast_node_analysis_pass(node);
         Type_Signature* type = 0;
-        if (expr->type == AST::Expression_Type::MEMBER_ACCESS && pass != 0)  {
+        if (expr->type == AST::Expression_Type::MEMBER_ACCESS && pass != 0) {
             type = expression_info_get_type(analysis_pass_get_info(pass, expr->options.member_access.expr));
         }
         else if (expr->type == AST::Expression_Type::AUTO_ENUM && pass != 0) {
             type = expression_info_get_type(analysis_pass_get_info(pass, expr));
         }
+        else {
+            fill_from_symbol_table = true;
+        }
 
-        if (type != 0) 
+        if (type != 0)
         {
             switch (type->type)
             {
             case Signature_Type::ARRAY:
             case Signature_Type::SLICE: {
-                dynamic_array_push_back(&suggestions, string_create_static("data"));
-                dynamic_array_push_back(&suggestions, string_create_static("size"));
+                code_completion_add_and_rank(string_create_static("data"), partially_typed);
+                code_completion_add_and_rank(string_create_static("size"), partially_typed);
                 break;
             }
             case Signature_Type::STRUCT: {
                 for (int i = 0; i < type->options.structure.members.size; i++) {
                     auto& mem = type->options.structure.members[i];
-                    dynamic_array_push_back(&suggestions, *mem.id);
+                    code_completion_add_and_rank(*mem.id, partially_typed);
                 }
                 break;
             }
             case Signature_Type::ENUM:
                 for (int i = 0; i < type->options.enum_type.members.size; i++) {
                     auto& mem = type->options.enum_type.members[i];
-                    dynamic_array_push_back(&suggestions, *mem.id);
+                    code_completion_add_and_rank(*mem.id, partially_typed);
                 }
                 break;
             }
@@ -823,6 +801,11 @@ void insert_mode_show_code_suggestions()
     }
     else {
         fill_from_symbol_table = true;
+    }
+
+    // Early exit if nothing has been typed (And we aren't on member access or similar)
+    if (partially_typed.size == 0 && fill_from_symbol_table && specific_table == 0) {
+        return;
     }
 
     // Find all available symbols
@@ -842,7 +825,7 @@ void insert_mode_show_code_suggestions()
             while (hashtable_iterator_has_next(&iter))
             {
                 Symbol* symbol = (*iter.value);
-                dynamic_array_push_back(&suggestions, *symbol->id);
+                code_completion_add_and_rank(*symbol->id, partially_typed);
                 hashtable_iterator_next(&iter);
             }
             symbol_table = symbol_table->parent;
@@ -854,25 +837,143 @@ void insert_mode_show_code_suggestions()
         }
     }
 
-    // Find already typed characters
-    syntax_editor_synchronize_tokens();
-
-    // Filter suggestions by already typed
-    auto already_typed = input_mode_get_identifier_start();
-    if (already_typed.available)
+    if (suggestions.size == 0) return;
+    // Sort by ranking
+    dynamic_array_bubble_sort(suggestions, code_completion_fuzzy_in_order);
+    // Cut off at appropriate point
+    int last_cutoff = 1;
+    auto& last_sug = suggestions[0];
+    const int MIN_CUTTOFF_VALUE = 3;
+    for (int i = 1; i < suggestions.size; i++)
     {
-        auto& start_str = already_typed.value;
-        for (int i = 0; i < suggestions.size; i++) {
-            auto str = suggestions[i];
-            if (!string_compare_substring(&str, 0, &start_str) || string_equals(&str, &start_str)) {
-                dynamic_array_swap_remove(&suggestions, i);
-                i = i - 1;
-            }
+        auto& sug = suggestions[i];
+        bool valid_cutoff = false;
+        if (last_sug.is_longer != sug.is_longer) valid_cutoff = true;
+        if (last_sug.substrings_in_order != sug.substrings_in_order) valid_cutoff = true;
+        if (last_sug.preamble_length != sug.preamble_length) valid_cutoff = true;
+        if (last_sug.all_characters_contained != sug.all_characters_contained) valid_cutoff = true;
+        if (last_sug.substring_count != sug.substring_count) valid_cutoff = true;
+        if (valid_cutoff && i >= MIN_CUTTOFF_VALUE) {
+            dynamic_array_rollback_to_size(&suggestions, i);
+            return;
         }
     }
 }
 
-void insert_mode_handle_command(Input_Command input)
+
+
+void normal_command_execute(Normal_Command command)
+{
+    auto& editor = syntax_editor;
+    auto& cursor = editor.cursor;
+    auto line = index_value(cursor.line);
+    auto& tokens = line->tokens;
+
+    SCOPE_EXIT(history_set_cursor_pos(&editor.history, editor.cursor));
+    SCOPE_EXIT(syntax_editor_sanitize_cursor());
+
+    editor.space_before_cursor = false;
+    switch (command)
+    {
+    case Normal_Command::INSERT_AFTER: {
+        syntax_editor_synchronize_tokens();
+        editor_enter_insert_mode();
+        cursor.pos = get_cursor_token(true).end_index;
+        break;
+    }
+    case Normal_Command::INSERT_BEFORE: {
+        syntax_editor_synchronize_tokens();
+        editor_enter_insert_mode();
+        cursor.pos = get_cursor_token(true).start_index;
+        break;
+    }
+    case Normal_Command::MOVE_LEFT: {
+        syntax_editor_synchronize_tokens();
+        if (tokens.size == 0) {
+            cursor.pos = 0;
+            break;
+        }
+        auto index = get_cursor_token_index(false);
+        cursor.pos = tokens[index].start_index;
+        break;
+    }
+    case Normal_Command::MOVE_RIGHT: {
+        syntax_editor_synchronize_tokens();
+        auto index = get_cursor_token_index(true) + 1;
+        if (index >= tokens.size) break;
+        cursor.pos = tokens[index].start_index;
+        break;
+    }
+    case Normal_Command::INSERT_AT_LINE_END: {
+        cursor.pos = line->text.size;
+        editor_enter_insert_mode();
+        break;
+    }
+    case Normal_Command::INSERT_AT_LINE_START: {
+        cursor.pos = 0;
+        editor_enter_insert_mode();
+        break;
+    }
+    case Normal_Command::UNDO: {
+        history_undo(&editor.history);
+        auto cursor_history = history_get_cursor_pos(&editor.history);
+        if (cursor_history.available) {
+            cursor = cursor_history.value;
+        }
+        break;
+    }
+    case Normal_Command::REDO: {
+        history_redo(&editor.history);
+        auto cursor_history = history_get_cursor_pos(&editor.history);
+        if (cursor_history.available) {
+            cursor = cursor_history.value;
+        }
+        break;
+    }
+    case Normal_Command::DELETE_TOKEN:
+    case Normal_Command::CHANGE_TOKEN:
+    {
+        if (command == Normal_Command::CHANGE_TOKEN) {
+            editor_enter_insert_mode();
+        }
+        editor_remove_token(get_cursor_token_index(true));
+        break;
+    }
+    case Normal_Command::MOVE_LINE_START: {
+        cursor.pos = 0;
+        break;
+    }
+    case Normal_Command::MOVE_LINE_END: {
+        cursor.pos = line->text.size;
+        break;
+    }
+    case Normal_Command::ADD_LINE_ABOVE:
+    case Normal_Command::ADD_LINE_BELOW:
+    {
+        history_start_complex_command(&editor.history);
+        SCOPE_EXIT(history_stop_complex_command(&editor.history));
+
+        bool below = command == Normal_Command::ADD_LINE_BELOW;
+        auto new_line = line_index_make(cursor.line.block, below ? cursor.line.line + 1 : cursor.line.line);
+        history_insert_line(&editor.history, new_line, below);
+        cursor = text_index_make(new_line, 0);
+        editor_enter_insert_mode();
+        break;
+    }
+    case Normal_Command::MOVE_UP: {
+        // FUTURE: Use token render positions to move up/down
+        cursor.line = line_index_prev(cursor.line);
+        break;
+    }
+    case Normal_Command::MOVE_DOWN: {
+        cursor.line = line_index_next(cursor.line);
+        break;
+    }
+    default: panic("");
+    }
+}
+
+void insert_command_execute(Insert_Command input)
 {
     auto& editor = syntax_editor;
     auto& mode = editor.mode;
@@ -884,105 +985,66 @@ void insert_mode_handle_command(Input_Command input)
     history_start_complex_command(&editor.history);
     SCOPE_EXIT(history_stop_complex_command(&editor.history));
 
-    assert(mode == Editor_Mode::INPUT, "");
+    assert(mode == Editor_Mode::INSERT, "");
     syntax_editor_sanitize_cursor();
     SCOPE_EXIT(syntax_editor_sanitize_cursor());
 
     // Reset Space before/after cursor
-    if (input.type != Input_Command_Type::IDENTIFIER_LETTER && input.type != Input_Command_Type::BACKSPACE && input.type != Input_Command_Type::NUMBER_LETTER) {
+    if (input.type != Insert_Command_Type::IDENTIFIER_LETTER && input.type != Insert_Command_Type::BACKSPACE && input.type != Insert_Command_Type::NUMBER_LETTER) {
         syntax_editor.space_before_cursor = false;
-        if (input.type != Input_Command_Type::DELIMITER_LETTER) {
+        if (input.type != Insert_Command_Type::DELIMITER_LETTER) {
             syntax_editor.space_after_cursor = false;
         }
     }
-    SCOPE_EXIT(
-        if (input.type == Input_Command_Type::IDENTIFIER_LETTER || input.type == Input_Command_Type::NUMBER_LETTER ||
-            input.type == Input_Command_Type::DELIMITER_LETTER || input.type == Input_Command_Type::BACKSPACE) {
-            insert_mode_show_code_suggestions();
-        }
-    );
+    SCOPE_EXIT(code_completion_find_suggestions());
 
     // Handle Universal Inputs
     switch (input.type)
     {
-    case Input_Command_Type::INSERT_CODE_SUGGESTION:
-    {
-        if (!editor.show_code_completion) break;
+    case Insert_Command_Type::INSERT_CODE_COMPLETION: {
         auto& suggestions = editor.code_completion_suggestions;
         if (suggestions.size == 0) break;
-
-        String replace_string = suggestions[0];
-        if (suggestions.size > 1)
-        {
-            /*
-            If we have multiple suggestions that start with the same characters,
-            I want to loop over all suggestions and insert the characters up to a difference
-            */
-            int index = 0;
-            bool keep_checking = true;
-            while (keep_checking)
-            {
-                char c = replace_string.characters[index];
-                for (int i = 1; i < editor.code_completion_suggestions.size; i++)
-                {
-                    auto str = editor.code_completion_suggestions[i];
-                    if (!string_test_char(str, index, c)) {
-                        keep_checking = false;
-                        break;
-                    }
-                }
-                if (keep_checking) {
-                    index += 1;
-                }
-            }
-            if (index == 0) {
-                return;
-            }
-            replace_string = string_create_substring_static(&replace_string, 0, index);
-        }
-
+        String replace_string = suggestions[0].option;
         // Remove current token
         editor_remove_token(get_cursor_token_index(false));
         // Insert suggestion instead
-        history_insert_text(&editor.history, cursor, replace_string);
-        cursor.pos += replace_string.size;
-        // Update suggestions
-        insert_mode_show_code_suggestions();
+        history_insert_text(&editor.history, editor.cursor, replace_string);
+        editor.cursor.pos += replace_string.size;
         break;
     }
-    case Input_Command_Type::EXIT_INSERT_MODE: {
-        editor_leave_input_mode();
+    case Insert_Command_Type::EXIT_INSERT_MODE: {
+        editor_leave_insert_mode();
         break;
     }
-    case Input_Command_Type::ENTER: {
-        split_line_at_cursor(0);
+    case Insert_Command_Type::ENTER: {
+        editor_split_line_at_cursor(0);
         break;
     }
-    case Input_Command_Type::ENTER_REMOVE_ONE_INDENT: {
-        split_line_at_cursor(-1);
+    case Insert_Command_Type::ENTER_REMOVE_ONE_INDENT: {
+        editor_split_line_at_cursor(-1);
         break;
     }
-    case Input_Command_Type::ADD_INDENTATION: {
+    case Insert_Command_Type::ADD_INDENTATION: {
         if (pos == 0) {
             cursor.line = history_add_line_indent(&syntax_editor.history, cursor.line);
             break;
         }
-        split_line_at_cursor(1);
+        editor_split_line_at_cursor(1);
         break;
     }
-    case Input_Command_Type::REMOVE_INDENTATION: {
+    case Insert_Command_Type::REMOVE_INDENTATION: {
         cursor.line = history_remove_line_indent(&syntax_editor.history, cursor.line);
         break;
     }
-    case Input_Command_Type::MOVE_LEFT: {
+    case Insert_Command_Type::MOVE_LEFT: {
         pos = math_maximum(0, pos - 1);
         break;
     }
-    case Input_Command_Type::MOVE_RIGHT: {
+    case Insert_Command_Type::MOVE_RIGHT: {
         pos = math_minimum(line->text.size, pos + 1);
         break;
     }
-    case Input_Command_Type::DELIMITER_LETTER:
+    case Insert_Command_Type::DELIMITER_LETTER:
     {
         bool insert_double_after = false;
         bool skip_auto_input = false;
@@ -1045,7 +1107,7 @@ void insert_mode_handle_command(Input_Command input)
         syntax_editor_sanitize_line(cursor.line);
         break;
     }
-    case Input_Command_Type::SPACE:
+    case Insert_Command_Type::SPACE:
     {
         if (pos == 0) break;
         syntax_editor_synchronize_tokens();
@@ -1079,7 +1141,7 @@ void insert_mode_handle_command(Input_Command input)
         }
         break;
     }
-    case Input_Command_Type::BACKSPACE:
+    case Insert_Command_Type::BACKSPACE:
     {
         if (syntax_editor.space_before_cursor) {
             syntax_editor.space_before_cursor = false;
@@ -1114,8 +1176,8 @@ void insert_mode_handle_command(Input_Command input)
         syntax_editor_sanitize_line(cursor.line);
         break;
     }
-    case Input_Command_Type::NUMBER_LETTER:
-    case Input_Command_Type::IDENTIFIER_LETTER:
+    case Insert_Command_Type::NUMBER_LETTER:
+    case Insert_Command_Type::IDENTIFIER_LETTER:
     {
         int insert_pos = pos;
         if (syntax_editor.space_before_cursor) {
@@ -1158,54 +1220,51 @@ void syntax_editor_update()
     for (int i = 0; i < input->key_messages.size; i++)
     {
         Key_Message msg = input->key_messages[i];
-        if (mode == Editor_Mode::INPUT)
+        if (mode == Editor_Mode::INSERT)
         {
-            Input_Command input;
-            if (msg.character == 32 && msg.key_down) {
-                input.type = Input_Command_Type::SPACE;
+            Insert_Command input;
+            if (msg.key_code == Key_Code::SPACE && msg.key_down) {
+                input.type = msg.ctrl_down ? Insert_Command_Type::INSERT_CODE_COMPLETION : Insert_Command_Type::SPACE;
             }
             else if (msg.key_code == Key_Code::L && msg.key_down && msg.ctrl_down) {
-                input.type = Input_Command_Type::EXIT_INSERT_MODE;
+                input.type = Insert_Command_Type::EXIT_INSERT_MODE;
             }
             else if (msg.key_code == Key_Code::ARROW_LEFT && msg.key_down) {
-                input.type = Input_Command_Type::MOVE_LEFT;
+                input.type = Insert_Command_Type::MOVE_LEFT;
             }
             else if (msg.key_code == Key_Code::ARROW_RIGHT && msg.key_down) {
-                input.type = Input_Command_Type::MOVE_RIGHT;
+                input.type = Insert_Command_Type::MOVE_RIGHT;
             }
             else if (msg.key_code == Key_Code::BACKSPACE && msg.key_down) {
-                input.type = Input_Command_Type::BACKSPACE;
-            }
-            else if (msg.key_code == Key_Code::N && msg.key_down && msg.ctrl_down) {
-                input.type = Input_Command_Type::INSERT_CODE_SUGGESTION;
+                input.type = Insert_Command_Type::BACKSPACE;
             }
             else if (msg.key_code == Key_Code::RETURN && msg.key_down) {
                 if (msg.shift_down) {
-                    input.type = Input_Command_Type::ENTER_REMOVE_ONE_INDENT;
+                    input.type = Insert_Command_Type::ENTER_REMOVE_ONE_INDENT;
                 }
                 else {
-                    input.type = Input_Command_Type::ENTER;
+                    input.type = Insert_Command_Type::ENTER;
                 }
             }
             else if (char_is_letter(msg.character) || msg.character == '_') {
-                input.type = Input_Command_Type::IDENTIFIER_LETTER;
+                input.type = Insert_Command_Type::IDENTIFIER_LETTER;
                 input.letter = msg.character;
             }
             else if (char_is_digit(msg.character)) {
-                input.type = Input_Command_Type::NUMBER_LETTER;
+                input.type = Insert_Command_Type::NUMBER_LETTER;
                 input.letter = msg.character;
             }
             else if (msg.key_code == Key_Code::TAB && msg.key_down) {
                 if (msg.shift_down) {
-                    input.type = Input_Command_Type::REMOVE_INDENTATION;
+                    input.type = Insert_Command_Type::REMOVE_INDENTATION;
                 }
                 else {
-                    input.type = Input_Command_Type::ADD_INDENTATION;
+                    input.type = Insert_Command_Type::ADD_INDENTATION;
                 }
             }
             else if (msg.key_down && msg.character != -1) {
                 if (string_contains_character(characters_get_non_identifier_non_whitespace(), msg.character)) {
-                    input.type = Input_Command_Type::DELIMITER_LETTER;
+                    input.type = Insert_Command_Type::DELIMITER_LETTER;
                     input.letter = msg.character;
                 }
                 else {
@@ -1215,7 +1274,7 @@ void syntax_editor_update()
             else {
                 continue;
             }
-            insert_mode_handle_command(input);
+            insert_command_execute(input);
         }
         else
         {
@@ -1281,7 +1340,7 @@ void syntax_editor_update()
             else {
                 continue;
             }
-            normal_mode_handle_command(command);
+            normal_command_execute(command);
         }
     }
 
@@ -1314,8 +1373,7 @@ void syntax_editor_initialize(Rendering_Core* rendering_core, Text_Renderer* tex
     syntax_editor.context_text = string_create_empty(256);
     syntax_editor.errors = dynamic_array_create_empty<Error_Display>(1);
     syntax_editor.token_range_buffer = dynamic_array_create_empty<Token_Range>(1);
-    syntax_editor.code_completion_suggestions = dynamic_array_create_empty<String>(1);
-    syntax_editor.show_code_completion = false;
+    syntax_editor.code_completion_suggestions = dynamic_array_create_empty<Fuzzy_Search>(1);
 
     syntax_editor.code = source_code_create();
     syntax_editor.history = code_history_create(syntax_editor.code);
@@ -1905,13 +1963,15 @@ void syntax_editor_render()
     }
 
     // Draw Code-Completion
-    if (editor.show_code_completion)
+    if (editor.code_completion_suggestions.size != 0 && editor.mode == Editor_Mode::INSERT)
     {
+        auto& suggestions = syntax_editor.code_completion_suggestions;
         show_context_info = true;
         string_reset(&context);
-        for (int i = 0; i < editor.code_completion_suggestions.size; i++) {
-            auto str = editor.code_completion_suggestions[i];
-            string_append_string(&context, &str);
+        for (int i = 0; i < editor.code_completion_suggestions.size; i++)
+        {
+            auto sugg = editor.code_completion_suggestions[i];
+            string_append_string(&context, &sugg.option);
             if (i != editor.code_completion_suggestions.size - 1) {
                 string_append_formated(&context, "\n");
             }

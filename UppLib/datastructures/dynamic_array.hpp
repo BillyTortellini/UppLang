@@ -201,3 +201,11 @@ int dynamic_array_push_back_dummy(Dynamic_Array<T>* array)
     array->size++;
     return array->size - 1;
 }
+
+template<typename T>
+void dynamic_array_bubble_sort(Dynamic_Array<T> array, bool (*in_order_fn)(T* a, T* b))
+{
+    auto simple_array = dynamic_array_as_array(&array);
+    array_bubble_sort(simple_array, in_order_fn);
+}
+

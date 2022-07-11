@@ -167,13 +167,13 @@ namespace Parser
         int order = index_compare(range.start, range.end);
         assert(order != -1, "Ranges must be in order");
         if (order == 0) {
-            // INFO: There are only 2 AST-Nodes which are allowed to have a 0 sized token range:
-            //       Error-Expressions and Code-Blocks
+            // INFO: There are only 3 AST-Nodes which are allowed to have a 0 sized token range:
+            //       Error-Expressions, Code-Blocks and Symbol-Reads (Empty reads
             if (base->type == AST::Base_Type::EXPRESSION) {
                 auto expr = base_downcast<Expression>(base);
                 assert(expr->type == AST::Expression_Type::ERROR_EXPR, "Only error expression may have 0-sized token range");
             }
-            else if (base->type == AST::Base_Type::CODE_BLOCK) {
+            else if (base->type == AST::Base_Type::CODE_BLOCK || base->type == AST::Base_Type::SYMBOL_READ) {
             }
             else {
                 panic("See comment before");

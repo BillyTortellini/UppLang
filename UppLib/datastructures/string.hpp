@@ -25,6 +25,7 @@ String string_create_substring(String* string, int start_index, int end_index);
 String string_create_substring_static(String* string, int start_pos, int end_pos);
 bool string_equals(String* s1, String* s2);
 bool string_equals_cstring(String* string, const char* compare);
+bool string_in_order(String* s1, String* s2);
 void string_clear(String* string);
 void string_set_characters(String* string, const char* characters);
 void string_create_from_filepath_to_path_and_filename(String* path, String* filename, const char* filepath);

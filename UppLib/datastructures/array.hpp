@@ -98,3 +98,18 @@ Array<T> array_make_slice(Array<T>* array, int start_index, int end_index)
     result.size = end_index - start_index;
     return result;
 }
+
+template<typename T>
+void array_bubble_sort(Array<T> array, bool (*in_order_fn)(T* a, T* b))
+{
+    for (int i = 0; i < array.size; i++)
+    {
+        for (int j = i + 1; j < array.size; j++) {
+            if (!in_order_fn(&array[i], &array[j])) {
+                T swap = array[i];
+                array[i] = array[j];
+                array[j] = swap;
+            }
+        }
+    }
+}
