@@ -63,10 +63,10 @@ main::()
 		addr_v6.tag=Address.ipv6
 		addr_v6.ipv6="COFFEF"
 		
-		assert(address_version_if(addr_v4)==4)
-		assert(address_version_if(addr_v5)==5)
-		assert(address_version_if(addr_v6)==6)
-	
+		
+			assert(address_version_if(addr_v4)==4)
+			//assert(address_version_if(addr_v5)==5)
+			//assert(address_version_if(addr_v6)==6)
 	
 	// Struct initialization syntax also works with unions, but only one member can be specified
 		addr_v4:=Address.{ipv4=byte.[cast 1,cast 1,cast 1,cast 1]}
@@ -74,6 +74,7 @@ main::()
 		addr_v6:=Address.{ipv6="COFFEF"}
 		
 		// Union initializer automatically set the correct tag
+		
 		assert(addr_v4.tag==.ipv4)
 		assert(addr_v5.tag==.ipv5)
 		assert(addr_v6.tag==.ipv6)
@@ -81,5 +82,6 @@ main::()
 		assert(address_version_switch(addr_v4)==4)
 		assert(address_version_switch(addr_v5)==5)
 		assert(address_version_switch(addr_v6)==6)
+	
 	
 

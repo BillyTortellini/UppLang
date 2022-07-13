@@ -143,6 +143,22 @@ bool char_is_space_critical(char c) {
         (c == '_');
 }
 
+String token_type_as_string(Token_Type type)
+{
+    switch (type)
+    {
+    case Token_Type::IDENTIFIER: return string_create_static("IDENTIFIER");
+            case Token_Type::KEYWORD: return string_create_static("KEYWORD");
+            case Token_Type::LITERAL: return string_create_static("LITERAL");
+            case Token_Type::OPERATOR: return string_create_static("OPERATOR");
+            case Token_Type::PARENTHESIS: return string_create_static("PARENTHESIS");
+            case Token_Type::INVALID: return string_create_static("INVALID");
+            case Token_Type::COMMENT: return string_create_static("COMMENT");
+    }
+    panic("Hey");
+    return string_create_static("Hey");
+}
+
 String token_get_string(Token token, String text)
 {
     if (token.type == Token_Type::OPERATOR) {
@@ -180,6 +196,17 @@ void lexer_initialize(Identifier_Pool* pool)
 void lexer_shutdown() {
     hashtable_destroy(&lexer.keyword_table);
     string_destroy(&lexer.line_buffer);
+}
+
+void lexer_tokenize_text_as_comment(String text, Dynamic_Array<Token>* tokens)
+{
+    dynamic_array_reset(tokens);
+    if (text.size == 0) return;
+    Token token;
+    token.start_index = 0;
+    token.end_index = text.size;
+    token.type = Token_Type::COMMENT;
+    dynamic_array_push_back(tokens, token);
 }
 
 void lexer_tokenize_text(String text, Dynamic_Array<Token>* tokens)

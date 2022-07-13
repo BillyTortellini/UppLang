@@ -101,8 +101,12 @@ void source_line_insert_empty(Line_Index index);
 // Utility
 void source_code_fill_from_string(Source_Code* code, String text);
 void source_code_append_to_string(Source_Code* code, String* text);
-void source_code_tokenize_block(Block_Index index, bool recursive);
+void source_code_tokenize(Source_Code* code);
+void source_code_tokenize_line(Line_Index line_index);
 void source_code_sanity_check(Source_Code* code);
+bool source_block_inside_comment(Block_Index block_index);
+bool source_line_is_comment(Line_Index line_index);
+bool source_line_is_multi_line_comment_start(Line_Index line_index);
 
 
 

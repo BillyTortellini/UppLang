@@ -151,6 +151,7 @@ bool char_is_parenthesis(char c);
 Parenthesis char_to_parenthesis(char c);
 char parenthesis_to_char(Parenthesis p);
 
+String token_type_as_string(Token_Type type);
 String syntax_keyword_as_string(Keyword keyword);
 String token_get_string(Token token, String text);
 Operator_Info syntax_operator_info(Operator op);
@@ -161,4 +162,5 @@ Operator_Info syntax_operator_info(Operator op);
 void lexer_initialize(Identifier_Pool* pool);
 void lexer_shutdown();
 void lexer_tokenize_text(String text, Dynamic_Array<Token>* tokens);
+void lexer_tokenize_text_as_comment(String text, Dynamic_Array<Token>* tokens);
 

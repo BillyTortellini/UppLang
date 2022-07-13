@@ -1,45 +1,21 @@
-Code Completion Design Analysis:
---------------------------------
-Enter Code-Completion Mode when pressing the Code-Completion button (E.g. CTRL+Space)
-When we have multiple options to select pressing one key advances all
-
-Questions: When to enter/exit code-completion?
-    Maybe just have a toggle (CTRL+Space) for code completion, and don't exit until that toggle is off
-
-Maybe we can always have code-completion except when we type definitions?
-    Maybe we can enter/exit this mode when in insert-mode with shortcuts
-And if we change definitions we can also change all occurances?
-    Thats probably a bit too far
-Also I want a 'Recursive' add-indent (Ctrl+Tab)/remove-indent(Shift+Ctrl+Tab) and I 
-want my multi line comments back (E.g. Lexer has a tokenize all and tokenize line checks all parent blocks for comment start)
 
 
-RANT:
------
-After adding Code-Suggestions (Editor views a list of symbols that start the same as you have already typed)
-there was a decision to make on how to 'Select' one of the Suggestions and insert it into code
- 1. Having a 'Insert Suggestion' Key
- 2. Custom Completion Mode where everything gets inserted as you type
-
-Completion Mode Afterthoughts:
-At first I thought that completion mode may be insane because you could just always
-be in completion mode, and you would never have to type identifiers out again.
-But this causes problems:
- - Definitions: To type new identifiers we cannot have code-completion
- - Keywords: I could add keywords to code completion, but most of the time you just want to write them out
-Also there is the problem that Completion-Mode does not allow for 'fuzzy' search, meaning that
-it doesn't allow 'browsing' of code.
-
-New Design Ideas:
-Have a simple 'fuzzy' string search, that checks that all characters are typed correctly
-Always display completion ideas, and insert the first search when we hit insert_completions
+Problem: Blocks with only block children:
+ - 1st: Token range is fugged
 
 
 
 TODO:
------
- - Multi-Line Comments
+ - Multi-Line Comments (Recursive Add-Indent)
  - Reintegrate Test-Cases
+ - Smarter Code-Formating (Splitting long lines + merging short blocks)
+    Probalby Requires a rework of Formating in general
+ - Camera commands (move cursor + move camera)
+ - Code-Rendering Rework (Only format whats visible)
+
+
+TODO:
+-----
  - Move forward with:
     * Editor-Features (Camera-Movemento, Parser-Based Formating, Andimations, CTRL-W Insert mode, Copy-Paste, Vim-Commands, Command Recording, Code-Folding)
     * Language-Features (Templates, named parameters, QOL stuff)
@@ -94,6 +70,49 @@ Required Features before I can use the Language:
  * Context-System
  * Symbol-Imports/Resolution
  * Iterators/Operator overloads (Maybe in some sort of context system?)
+
+
+ -------------------------------
+Code Completion Design Analysis:
+--------------------------------
+Enter Code-Completion Mode when pressing the Code-Completion button (E.g. CTRL+Space)
+When we have multiple options to select pressing one key advances all
+
+Questions: When to enter/exit code-completion?
+    Maybe just have a toggle (CTRL+Space) for code completion, and don't exit until that toggle is off
+
+Maybe we can always have code-completion except when we type definitions?
+    Maybe we can enter/exit this mode when in insert-mode with shortcuts
+And if we change definitions we can also change all occurances?
+    Thats probably a bit too far
+Also I want a 'Recursive' add-indent (Ctrl+Tab)/remove-indent(Shift+Ctrl+Tab) and I 
+want my multi line comments back (E.g. Lexer has a tokenize all and tokenize line checks all parent blocks for comment start)
+
+
+RANT:
+-----
+After adding Code-Suggestions (Editor views a list of symbols that start the same as you have already typed)
+there was a decision to make on how to 'Select' one of the Suggestions and insert it into code
+ 1. Having a 'Insert Suggestion' Key
+ 2. Custom Completion Mode where everything gets inserted as you type
+
+Completion Mode Afterthoughts:
+At first I thought that completion mode may be insane because you could just always
+be in completion mode, and you would never have to type identifiers out again.
+But this causes problems:
+ - Definitions: To type new identifiers we cannot have code-completion
+ - Keywords: I could add keywords to code completion, but most of the time you just want to write them out
+Also there is the problem that Completion-Mode does not allow for 'fuzzy' search, meaning that
+it doesn't allow 'browsing' of code.
+
+New Design Ideas:
+Have a simple 'fuzzy' string search, that checks that all characters are typed correctly
+Always display completion ideas, and insert the first search when we hit insert_completions
+
+Completion Mode #2:
+After writing an identifier, and if it is not a definition + not a keyword,
+always apply my fuzzy code completion because it is nice
+
 
 
 ----------------------------------------------------------

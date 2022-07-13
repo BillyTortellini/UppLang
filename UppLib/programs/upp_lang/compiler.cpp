@@ -35,7 +35,7 @@ bool output_bytecode = false;
 bool output_timing = true;
 
 // Testcases
-bool enable_testcases = false;
+bool enable_testcases = true;
 bool enable_stresstest = false;
 bool run_testcases_compiled = false;
 
@@ -387,6 +387,7 @@ Exit_Code compiler_execute()
 
 void compiler_add_source_code(Source_Code* source_code, Code_Origin origin, String file_path)
 {
+    // DOCU: Compiler takes ownership of source_code if the Code-Origin isn't main
     bool do_lexing = enable_lexing;
     bool do_parsing = do_lexing && enable_parsing;
     bool do_dependency_analysis = do_parsing && enable_dependency_analysis;
@@ -402,7 +403,7 @@ void compiler_add_source_code(Source_Code* source_code, Code_Origin origin, Stri
     if (do_lexing)
     {
         compiler_switch_timing_task(Timing_Task::LEXING);
-        source_code_tokenize_block(block_index_make_root(source_code), true);
+        source_code_tokenize(source_code);
 
         if (output_identifiers) {
             compiler_switch_timing_task(Timing_Task::OUTPUT);
@@ -594,10 +595,10 @@ void compiler_run_testcases(Timer* timer)
             continue;
         }
 
-        panic("This needs fixing.");
-        //auto main_block = syntax_block_create_from_string(code.value);
-        //SCOPE_EXIT(syntax_block_destroy(main_block));
-        //compiler_compile(main_block, true, path);
+        auto source_code = source_code_create();
+        source_code_fill_from_string(source_code, code.value);
+        SCOPE_EXIT(source_code_destroy(source_code));
+        compiler_compile(source_code, true, path);
         Exit_Code exit_code = compiler_execute();
         if (exit_code != Exit_Code::SUCCESS && test_case->should_succeed)
         {

@@ -2017,11 +2017,12 @@ void analysis_workload_execute(Analysis_Workload* workload)
         }
 
         Optional<String> file_content = file_io_load_text_file(path.characters);
+        SCOPE_EXIT(file_io_unload_text_file(&file_content));
         if (file_content.available) {
-            panic("Todo!");
-            // TODO: Deal with ownership, i need to delete the file content and I need to manage ownership of source_code
-            //auto src = syntax_block_create_from_string(file_content.value);
-            compiler_add_source_code(0, Code_Origin::LOADED_FILE, path);
+            // INFO: In this case the compiler takes the 
+            auto source_code = source_code_create();
+            source_code_fill_from_string(source_code, file_content.value);
+            compiler_add_source_code(source_code, Code_Origin::LOADED_FILE, path);
             success = true;
         }
         else {
@@ -2355,7 +2356,7 @@ void analysis_workload_execute(Analysis_Workload* workload)
         {
             bytecode_interpreter_prepare_run(interpreter);
             Upp_Slice<Internal_Type_Information>* info_slice = (Upp_Slice<Internal_Type_Information>*)
-                &interpreter->globals.data[
+                & interpreter->globals.data[
                     compiler.bytecode_generator->global_data_offsets[analyser.global_type_informations->index]
                 ];
             info_slice->size = type_system.internal_type_infos.size;
@@ -3952,7 +3953,7 @@ Type_Signature* semantic_analyser_analyse_expression_type(AST::Expression* expre
     {
     case Expression_Result_Type::TYPE:
         return result->options.type;
-    case Expression_Result_Type::CONSTANT: 
+    case Expression_Result_Type::CONSTANT:
     case Expression_Result_Type::VALUE:
     {
         if (result->context_ops.after_cast_type == type_system.unknown_type) {
@@ -3966,7 +3967,7 @@ Type_Signature* semantic_analyser_analyse_expression_type(AST::Expression* expre
             return type_system.unknown_type;
         }
 
-        if (result->result_type == Expression_Result_Type::VALUE) 
+        if (result->result_type == Expression_Result_Type::VALUE)
         {
             Comptime_Result comptime = expression_calculate_comptime_value(expression);
             Type_Signature* result_type = type_system.unknown_type;

@@ -2,7 +2,7 @@
 
 main::()
 	// Single line comment
-	a:=15// Comment at end of line
+	a:=15
 	
 	//
 		Multi line comments start with an empty line 

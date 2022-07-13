@@ -232,7 +232,12 @@ namespace Parser
     int remaining_line_tokens() {
         auto& p = parser.state.pos;
         if (!index_valid(p)) return 0;
-        return index_value(p.line)->tokens.size - p.token;
+        auto tokens = index_value(p.line)->tokens;
+        int remaining = tokens.size - p.token;
+        if (tokens.size != 0 && tokens[tokens.size - 1].type == Token_Type::COMMENT) {
+            remaining -= 1;
+        }
+        return remaining;
     }
 
     bool on_follow_block() {
@@ -312,7 +317,7 @@ namespace Parser
     // Parsing Helpers
 #define CHECKPOINT_SETUP \
         if (!index_valid(parser.state.pos)) {return 0;}\
-        if (token_index_is_last_in_line(parser.state.pos)) {return 0;}\
+        if (token_index_is_last_in_line(parser.state.pos) && !on_follow_block()) {return 0;}\
         auto checkpoint = parser.state;\
         bool _error_exit = false;\
         SCOPE_EXIT(if (_error_exit) parser_rollback(checkpoint););
@@ -378,68 +383,101 @@ namespace Parser
         }
     }
 
-    template<typename T>
-    void parse_syntax_block(Block_Index block_index, Base* parent, Dynamic_Array<T*>* fill_array, T* (*parse_fn)(Base* parent, bool& add_to_fill))
+    template<typename Container_Node_Type>
+    void parse_source_block(Block_Index block_index, Container_Node_Type* parent, 
+        void (*item_parse_fn)(Container_Node_Type* parent), void (*block_parse_fn)(Container_Node_Type* parent, Block_Index index))
     {
+        // DOCU: Parse syntax block does not advance the parser position. All calling functions must manually set the cursor after this block
+        //       after calling this function
+        //       Both item_parse_fn and block_parse_fn do not need to advance the parser position/line index
+
         // Setup parser position at block start
         auto& pos = parser.state.pos;
         pos = token_index_make(line_index_make(block_index, 0), 0);
-        parser.parse_informations[parent->allocation_index].range.start = pos; // Set base item start
+        parser.parse_informations[parent->base.allocation_index].range = token_range_make_block(block_index);
 
-        // Parse all lines
         auto block = index_value(pos.line.block);
+        // Check for special cases
+        if (block->lines.size == 0) {
+            assert(block->children.size == 1, "This is the only case where block->lines can be 0");
+        }
+        if (block->children.size != 0) {
+            auto first_child_block = index_value(block->children[0]);
+            if (first_child_block->line_index == 0) {
+                auto rewind_pos = pos;
+                block_parse_fn(parent, block->children[0]);
+                pos = rewind_pos;
+            }
+        }
+        // Parse all lines
         while (pos.line.line < block->lines.size)
         {
             auto line = index_value(pos.line);
             auto before_line_index = pos.line;
             pos.token = 0;
 
-            // Skip empty lines
-            if (line->tokens.size == 0 && !line_index_block_after(pos.line).available) {
-                advance_line();
-                continue;
+            // Skip empty lines/Lines that are only comments
+            {
+                auto block_after = line_index_block_after(pos.line);
+                if (line->tokens.size == 0 || source_line_is_comment(pos.line)) {
+                    if (block_after.available && !source_line_is_multi_line_comment_start(pos.line)) {
+                        auto rewind_pos = pos;
+                        block_parse_fn(parent, block_after.value);
+                        pos = rewind_pos;
+                    }
+                    advance_line();
+                    continue;
+                }
             }
 
             // Parse line
-            bool add_to_array;
-            T* line_item = parse_fn(parent, add_to_array);
-            if (line_item == 0) {
-                log_error_to_pos("Couldn't parse line", token_index_make_line_end(pos.line));
-            }
-            else if (add_to_array) {
-                dynamic_array_push_back(fill_array, line_item);
-            }
+            item_parse_fn(parent);
 
-            // Check if whole line was parsed, e.g. check parse_fn movement
-            if (before_line_index.line == pos.line.line || pos.token != 0)
-            {
-                if (pos.line.line >= block->lines.size) {
-                    break;
-                }
-                if (line_item != 0)
-                {
-                    line = index_value(pos.line); // Requery line because parse_fn could have changed line index
-                    if (pos.token < line->tokens.size) {
-                        log_error_to_pos("Unexpected Tokens, Line already parsed", token_index_make_line_end(pos.line));
-                    }
-                }
-                auto block_after = line_index_block_after(pos.line);
+            if (pos.line.line >= block->lines.size) break;
+            // Check if we moved/skipped tokens
+            bool changed_lines = before_line_index.line != pos.line.line;
+            auto block_after = line_index_block_after(pos.line);
+            auto& tokens = index_value(pos.line)->tokens;
+            if (!changed_lines && pos.token == 0) {
+                // Log error if we didn't move
+                log_error_to_pos("Could't parse line item", token_index_make_line_end(pos.line));
                 if (block_after.available) {
-                    if (line_item == 0) {
-                        log_error("Couldn't parse block header", token_range_make_block(block_after.value));
-                    }
-                    else {
-                        log_error("Block header did not require follow block", token_range_make_block(block_after.value));
-                    }
+                    log_error("Couldn't parse block header", token_range_make_block(block_after.value));
                 }
                 advance_line();
+                continue;
+            }
+            else if (token_index_is_last_in_line(pos)) {
+                if (block_after.available) {
+                    log_error("Follow block wasn't required by block header", token_range_make_block(block_after.value));
+                }
+                advance_line();
+                continue;
+            }
+            else if (changed_lines && pos.token == 0) {
+                continue;
+            }
+            else if (pos.token != 0 && tokens[pos.token].type == Token_Type::COMMENT) {
+                if (block_after.available) {
+                    log_error("Block header contains errors", token_range_make_block(block_after.value));
+                }
+                advance_line();
+                continue;
+            }
+            else {
+                log_error_to_pos("Unexpected Tokens, Line already parsed", token_index_make_line_end(pos.line));
+                if (block_after.available) {
+                    log_error("Block header contains errors", token_range_make_block(block_after.value));
+                }
+                advance_line();
+                continue;
             }
         }
-        parser.parse_informations[parent->allocation_index].range.end = token_index_make_block_end(pos.line.block); // Set base item end
     }
 
-    template<typename T>
-    void parse_follow_block(Base* parent, Dynamic_Array<T*>* fill_array, T* (*parse_fn)(Base* parent, bool& add_to_fill), bool parse_if_not_on_end)
+    template<typename Container_Node_Type>
+    void parse_follow_block(bool parse_next_block_if_not_on_line_end, Container_Node_Type* parent,
+        void (*item_parse_fn)(Container_Node_Type* parent), void (*block_parse_fn)(Container_Node_Type* parent, Block_Index index))
     {
         auto& pos = parser.state.pos;
 
@@ -448,13 +486,13 @@ namespace Parser
             log_error_range_offset("Expected Follow Block", 0);
             return;
         }
-        if (!parse_if_not_on_end && !on_follow_block()) {
+        if (!parse_next_block_if_not_on_line_end && !on_follow_block()) {
             log_error_to_pos("Parsing follow block, ignoring rest of line", token_index_make_line_end(pos.line));
         }
 
         advance_line();
         auto backup_pos = parser.state.pos;
-        parse_syntax_block(follow_block_opt.value, parent, fill_array, parse_fn);
+        parse_source_block(follow_block_opt.value, parent, item_parse_fn, block_parse_fn);
         parser.state.pos = backup_pos;
     }
 
@@ -578,13 +616,97 @@ namespace Parser
 
 
     // Prototypes
-    Definition* parse_definition(Base* parent, bool& add_to_fill);
-    Statement* parse_statement(Base* parent, bool& add_to_fill);
-    Definition* parse_module_item(Base* parent, bool& add_to_fill);
+    Project_Import* parse_project_import(Base* parent);
+    Definition* parse_definition(Base* parent);
+    Statement* parse_statement(Base* parent);
+    Enum_Member* parse_enum_member(Base* parent);
+    Project_Import* parse_project_import(Base* parent);
+    Switch_Case* parse_switch_case(Base* parent);
+
     Expression* parse_expression(Base* parent);
     Expression* parse_expression_or_error_expr(Base* parent);
     Expression* parse_single_expression(Base* parent);
     Expression* parse_single_expression_or_error(Base* parent);
+
+    void parse_item_fn_statement(Code_Block* parent);
+    void parse_item_fn_module_item(Module* parent);
+
+    // Parse Item/Block Functions
+    void parse_block_fn_anonymous_block_in_code_block(Code_Block* parent, Block_Index block_index)
+    {
+        auto code_block = allocate_base<Code_Block>(&parent->base, Base_Type::CODE_BLOCK);
+        code_block->statements = dynamic_array_create_empty<Statement*>(1);
+        code_block->block_id = optional_make_failure<String*>();
+
+        auto statement = allocate_base<Statement>(&parent->base, Base_Type::STATEMENT);
+        statement->type = Statement_Type::BLOCK;
+        statement->options.block = code_block;
+
+        parse_source_block(block_index, code_block, parse_item_fn_statement, parse_block_fn_anonymous_block_in_code_block);
+        SET_END_RANGE(code_block);
+        SET_END_RANGE(statement);
+        dynamic_array_push_back(&parent->statements, statement);
+    }
+
+    void parse_block_fn_anonymous_module_block(Module* parent, Block_Index block_index) {
+        parse_source_block(block_index, parent, parse_item_fn_module_item, parse_block_fn_anonymous_module_block);
+    }
+
+    template<typename Parent_Type>
+    void parse_block_fn_error_on_block(Parent_Type* _unused, Block_Index block_index) {
+        log_error("Anonymous blocks aren't allowed in this context", token_range_make_block(block_index));
+    }
+
+    void parse_item_fn_statement(Code_Block* parent)
+    {
+        auto statement = parse_statement(&parent->base);
+        if (statement != 0) {
+            dynamic_array_push_back(&parent->statements, statement);
+        }
+    }
+
+    void parse_item_fn_module_item(Module* parent)
+    {
+        auto definition = parse_definition(&parent->base);
+        if (definition != 0) {
+            dynamic_array_push_back(&parent->definitions, definition);
+            return;
+        }
+        auto project_import = parse_project_import(&parent->base);
+        if (project_import != 0) {
+            dynamic_array_push_back(&parent->imports, project_import);
+            return;
+        }
+    }
+
+    void parse_item_fn_enum_member(Expression* parent)
+    {
+        assert(parent->type == Expression_Type::ENUM_TYPE, "");
+        auto member = parse_enum_member(&parent->base);
+        if (member != 0) {
+            dynamic_array_push_back(&parent->options.enum_members, member);
+        }
+    }
+
+    void parse_item_fn_struct_member(Expression* parent)
+    {
+        assert(parent->type == Expression_Type::STRUCTURE_TYPE, "");
+        auto member = parse_definition(&parent->base);
+        if (member != 0) {
+            dynamic_array_push_back(&parent->options.structure.members, member);
+        }
+    }
+
+    void parse_item_fn_switch_case(Statement* parent)
+    {
+        assert(parent->type == Statement_Type::SWITCH_STATEMENT, "");
+        auto sw_case = parse_switch_case(&parent->base);
+        if (sw_case != 0) {
+            dynamic_array_push_back(&parent->options.switch_statement.cases, sw_case);
+        }
+    }
+
+
 
     // Parsing
     Optional<String*> parse_block_label(AST::Expression* related_expression)
@@ -611,7 +733,7 @@ namespace Parser
         auto result = allocate_base<Code_Block>(parent, Base_Type::CODE_BLOCK);
         result->statements = dynamic_array_create_empty<Statement*>(1);
         result->block_id = parse_block_label(related_expression);
-        parse_follow_block(&result->base, &result->statements, parse_statement, true);
+        parse_follow_block(true, result, parse_item_fn_statement, parse_block_fn_anonymous_block_in_code_block);
         PARSE_SUCCESS(result);
     }
 
@@ -655,9 +777,8 @@ namespace Parser
         PARSE_SUCCESS(result);
     }
 
-    Switch_Case* parse_switch_case(Base* parent, bool& add_to_fill)
+    Switch_Case* parse_switch_case(Base* parent)
     {
-        add_to_fill = true;
         if (!test_keyword_offset(Keyword::CASE, 0) && !test_keyword_offset(Keyword::DEFAULT, 0)) {
             return 0;
         }
@@ -677,7 +798,7 @@ namespace Parser
         PARSE_SUCCESS(result);
     }
 
-    Statement* parse_statement(Base* parent, bool& add_to_fill)
+    Statement* parse_statement(Base* parent)
     {
         CHECKPOINT_SETUP;
         auto result = allocate_base<Statement>(parent, Base_Type::STATEMENT);
@@ -686,27 +807,32 @@ namespace Parser
             // Check for Anonymous Blocks
             // INFO: This needs to be done before definition
             auto line = get_line();
-            if ((line->tokens.size == 0) ||
-                (line->tokens.size == 2 && test_token(Token_Type::IDENTIFIER) && test_operator_offset(Operator::COLON, 1)))
+            if ((line->tokens.size == 1 && test_token(Token_Type::COMMENT)) ||
+                (line->tokens.size == 2 && test_token(Token_Type::IDENTIFIER) && test_operator_offset(Operator::COLON, 1)) ||
+                (line->tokens.size == 3 && test_token(Token_Type::IDENTIFIER) && test_operator_offset(Operator::COLON, 1) && test_token_offset(Token_Type::COMMENT, 3)))
             {
-                if (line_index_block_after(parser.state.pos.line).available) {
+                if (line_index_block_after(parser.state.pos.line).available)
+                {
+                    auto block_id = optional_make_failure<String*>();
+                    if (test_token(Token_Type::IDENTIFIER)) {
+                        block_id = optional_make_success(get_token()->options.identifier);
+                    }
                     result->type = Statement_Type::BLOCK;
                     result->options.block = parse_code_block(&result->base, 0);
+                    result->options.block->block_id = block_id;
                     PARSE_SUCCESS(result);
                 }
             }
         }
 
         {
-            bool _unused;
-            auto definition = parse_definition(&result->base, _unused);
+            auto definition = parse_definition(&result->base);
             if (definition != 0) {
                 result->type = Statement_Type::DEFINITION;
                 result->options.definition = definition;
                 PARSE_SUCCESS(result);
             }
         }
-
         {
             auto expr = parse_expression(&result->base);
             if (expr != 0)
@@ -741,27 +867,32 @@ namespace Parser
                 // Parse else-if chain
                 while (test_keyword_offset(Keyword::ELSE, 0) && test_keyword_offset(Keyword::IF, 1))
                 {
-                    advance_token();
-                    auto else_block = allocate_base<AST::Code_Block>(&result->base, Base_Type::CODE_BLOCK);
-                    else_block->statements = dynamic_array_create_empty<Statement*>(1);
-                    else_block->block_id = optional_make_failure<String*>();
-                    auto new_if_stat = allocate_base<AST::Statement>(&result->base, Base_Type::STATEMENT);
-                    new_if_stat->type = Statement_Type::IF_STATEMENT;
-                    dynamic_array_push_back(&else_block->statements, new_if_stat);
-                    last_if_stat->options.if_statement.else_block = optional_make_success(else_block);
-                    last_if_stat = new_if_stat;
+                    auto implicit_else_block = allocate_base<AST::Code_Block>(&last_if_stat->base, Base_Type::CODE_BLOCK);
+                    implicit_else_block->statements = dynamic_array_create_empty<Statement*>(1);
+                    implicit_else_block->block_id = optional_make_failure<String*>();
 
+                    auto new_if_stat = allocate_base<AST::Statement>(&last_if_stat->base, Base_Type::STATEMENT);
                     advance_token();
+                    advance_token();
+                    new_if_stat->type = Statement_Type::IF_STATEMENT;
                     auto& new_if = new_if_stat->options.if_statement;
                     new_if.condition = parse_expression_or_error_expr(&new_if_stat->base);
-                    new_if.block = parse_code_block(&result->base, new_if.condition);
+                    new_if.block = parse_code_block(&last_if_stat->base, new_if.condition);
                     new_if.else_block.available = false;
+                    SET_END_RANGE(implicit_else_block);
+                    SET_END_RANGE(new_if_stat);
+
+                    dynamic_array_push_back(&implicit_else_block->statements, new_if_stat);
+                    last_if_stat->options.if_statement.else_block = optional_make_success(implicit_else_block);
+                    last_if_stat = new_if_stat;
+
                 }
                 if (test_keyword_offset(Keyword::ELSE, 0))
                 {
                     advance_token();
                     last_if_stat->options.if_statement.else_block = optional_make_success(parse_code_block(&last_if_stat->base, 0));
                 }
+                // NOTE: Here we return result, not last if stat
                 PARSE_SUCCESS(result);
             }
             case Keyword::WHILE:
@@ -789,7 +920,7 @@ namespace Parser
                 switch_stat.cases = dynamic_array_create_empty<Switch_Case*>(1);
                 switch_stat.label.available = false;
                 switch_stat.label = parse_block_label(switch_stat.condition);
-                parse_follow_block(&result->base, &switch_stat.cases, parse_switch_case, true);
+                parse_follow_block(true, result, parse_item_fn_switch_case, parse_block_fn_error_on_block<Statement>);
                 PARSE_SUCCESS(result);
             }
             case Keyword::DELETE_KEYWORD: {
@@ -829,9 +960,8 @@ namespace Parser
         CHECKPOINT_EXIT;
     }
 
-    Enum_Member* parse_enum_member(Base* parent, bool& add_to_fill)
+    Enum_Member* parse_enum_member(Base* parent)
     {
-        add_to_fill = true;
         if (!test_token(Token_Type::IDENTIFIER)) {
             return 0;
         }
@@ -1100,14 +1230,14 @@ namespace Parser
                 result->options.structure.type = AST::Structure_Type::UNION;
             }
             advance_token();
-            parse_follow_block(&result->base, &result->options.structure.members, parse_definition, false);
+            parse_follow_block(false, result, parse_item_fn_struct_member, parse_block_fn_error_on_block<Expression>);
             PARSE_SUCCESS(result);
         }
         if (test_keyword_offset(Keyword::ENUM, 0)) {
             result->type = Expression_Type::ENUM_TYPE;
             result->options.enum_members = dynamic_array_create_empty<Enum_Member*>(1);
             advance_token();
-            parse_follow_block(&result->base, &result->options.enum_members, parse_enum_member, false);
+            parse_follow_block(false, result, parse_item_fn_enum_member, parse_block_fn_error_on_block);
             PARSE_SUCCESS(result);
         }
         if (test_keyword_offset(Keyword::MODULE, 0)) {
@@ -1115,7 +1245,7 @@ namespace Parser
             module->definitions = dynamic_array_create_empty<Definition*>(1);
             module->imports = dynamic_array_create_empty<Project_Import*>(1);
             advance_token();
-            parse_follow_block(&module->base, &module->definitions, parse_module_item, false);
+            parse_follow_block(false, module, parse_item_fn_module_item, parse_block_fn_anonymous_module_block);
 
             result->type = Expression_Type::MODULE;
             result->options.module = module;
@@ -1153,7 +1283,7 @@ namespace Parser
                 parse_parenthesis_comma_seperated(&result->base, &init.values, parse_expression, Parenthesis_Type::BRACKETS);
                 PARSE_SUCCESS(result);
             }
-            else 
+            else
             {
                 result->type = Expression_Type::MEMBER_ACCESS;
                 result->options.member_access.expr = child;
@@ -1314,10 +1444,29 @@ namespace Parser
         PARSE_SUCCESS(expr);
     }
 
-    Definition* parse_definition(Base* parent, bool& add_to_fill)
+    Project_Import* parse_project_import(Base* parent)
+    {
+        CHECKPOINT_SETUP;
+        if (test_keyword_offset(Keyword::IMPORT, 0) && test_token_offset(Token_Type::LITERAL, 1))
+        {
+            if (get_token(1)->options.literal_value.type != Literal_Type::STRING) {
+                CHECKPOINT_EXIT;
+            }
+
+            assert(parent->type == Base_Type::MODULE, "");
+            auto module = (Module*)parent;
+            auto import = allocate_base<Project_Import>(parent, Base_Type::PROJECT_IMPORT);
+            import->filename = get_token(1)->options.literal_value.options.string;
+            advance_token();
+            advance_token();
+            PARSE_SUCCESS(import);
+        }
+        CHECKPOINT_EXIT;
+    }
+
+    Definition* parse_definition(Base* parent)
     {
         // INFO: Definitions cannot start in the middle of a line
-        add_to_fill = true;
         CHECKPOINT_SETUP;
         auto result = allocate_base<Definition>(parent, AST::Base_Type::DEFINITION);
         result->is_comptime = false;
@@ -1356,31 +1505,6 @@ namespace Parser
         PARSE_SUCCESS(result);
     }
 
-    Definition* parse_module_item(Base* parent, bool& add_to_fill)
-    {
-        CHECKPOINT_SETUP;
-        if (test_keyword_offset(Keyword::IMPORT, 0) && test_token_offset(Token_Type::LITERAL, 1))
-        {
-            if (get_token(1)->options.literal_value.type != Literal_Type::STRING) {
-                CHECKPOINT_EXIT;
-            }
-
-            assert(parent->type == Base_Type::MODULE, "");
-            auto module = (Module*)parent;
-            auto import = allocate_base<Project_Import>(parent, Base_Type::PROJECT_IMPORT);
-            import->filename = get_token(1)->options.literal_value.options.string;
-            advance_token();
-            advance_token();
-            SET_END_RANGE(import);
-            dynamic_array_push_back(&module->imports, import);
-
-            add_to_fill = false;
-            return 0;
-        }
-
-        return parse_definition(parent, add_to_fill);
-    }
-
 #undef CHECKPOINT_EXIT
 #undef CHECKPOINT_SETUP
 #undef PARSE_SUCCESS
@@ -1396,7 +1520,7 @@ namespace Parser
         parser.root = allocate_base<Module>(0, Base_Type::MODULE);
         parser.root->definitions = dynamic_array_create_empty<Definition*>(1);
         parser.root->imports = dynamic_array_create_empty<Project_Import*>(1);
-        parse_syntax_block(block_index_make_root(parser.code), &parser.root->base, &parser.root->definitions, parse_module_item);
+        parse_source_block(block_index_make_root(parser.code), parser.root, parse_item_fn_module_item, parse_block_fn_anonymous_module_block);
 
         // Correct token ranges (TODO: Check if this is necessary)
         base_correct_token_ranges(&parser.root->base);
@@ -1493,7 +1617,7 @@ namespace Parser
 
     AST::Base* find_smallest_enclosing_node(AST::Base* base, Token_Index index)
     {
-        int child_index= 0;
+        int child_index = 0;
         AST::Base* child = AST::base_get_child(base, child_index);
         if (child == 0) {
             return base;

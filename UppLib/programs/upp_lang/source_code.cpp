@@ -170,6 +170,7 @@ void source_code_fill_from_string(Source_Code* code, String text)
             source_line_insert_empty(line_index_make(block_index_make_root(code), 0));
         }
     }
+    source_code_sanity_check(code);
 }
 
 void source_block_append_to_string(Block_Index index, String* text, int indentation)
@@ -204,22 +205,82 @@ void source_block_append_to_string(Block_Index index, String* text, int indentat
     }
 }
 
-void source_code_append_to_string(Source_Code* code, String* text)
-{
+void source_code_append_to_string(Source_Code* code, String* text) {
     source_block_append_to_string(block_index_make_root(code), text, 0);
 }
 
-void source_code_tokenize_block(Block_Index index, bool recursive)
+bool source_line_is_comment(Line_Index line_index)
 {
+    auto text = index_value(line_index)->text;
+    if (text.size < 2) return false;
+    if (text[0] != '/' || text[1] != '/') return false;
+    return true;
+}
+
+bool source_line_is_multi_line_comment_start(Line_Index line_index)
+{
+    if (!source_line_is_comment(line_index)) return false;
+    auto text = index_value(line_index)->text;
+    for (int i = 2; i < text.size; i++) {
+        char c = text[i];
+        if (c != ' ' && c != '\r' && c != '\t') return false;
+    }
+    return true;
+}
+
+bool source_block_is_comment_block(Block_Index block_index)
+{
+    auto block = index_value(block_index);
+    if (block->parent.block == -1) return false;
+    if (block->line_index == 0) return false;
+    return source_line_is_multi_line_comment_start(line_index_make(block->parent, block->line_index - 1));
+}
+
+bool source_block_inside_comment(Block_Index block_index)
+{
+    if (source_block_is_comment_block(block_index)) return true;
+    auto block = index_value(block_index);
+    if (block->parent.block != -1) {
+        return source_block_inside_comment(block->parent);
+    }
+    return false;
+}
+
+void source_code_tokenize_line(Line_Index index)
+{
+    auto line = index_value(index);
+    if (source_block_inside_comment(index.block)) {
+        lexer_tokenize_text_as_comment(line->text, &line->tokens);
+    }
+    else {
+        lexer_tokenize_text(line->text, &line->tokens);
+    }
+}
+
+void source_code_tokenize_block(Block_Index index, bool inside_comment)
+{
+    if (source_block_is_comment_block(index)) {
+        inside_comment = true;
+    }
     auto block = index_value(index);
     for (int i = 0; i < block->lines.size; i++) {
-        auto& line = block->lines[i];
-        lexer_tokenize_text(line.text, &line.tokens);
+        auto line = &block->lines[i];
+        if (inside_comment) {
+            lexer_tokenize_text_as_comment(line->text, &line->tokens);
+        }
+        else {
+            lexer_tokenize_text(line->text, &line->tokens);
+        }
     }
-    if (!recursive) return;
     for (int i = 0; i < block->children.size; i++) {
-        source_code_tokenize_block(block->children[i], recursive);
+        source_code_tokenize_block(block->children[i], inside_comment);
     }
+}
+
+void source_code_tokenize(Source_Code* code)
+{
+    auto root_index = block_index_make_root(code);
+    source_code_tokenize_block(root_index, false);
 }
 
 void source_block_check_sanity(Block_Index index)
@@ -541,11 +602,12 @@ int index_compare(Token_Index a, Token_Index b)
     }
 }
 
-bool token_range_contains(Token_Range range, Token_Index index) 
+bool token_range_contains(Token_Range range, Token_Index index)
 {
     // INFO: This function is not a simple compare anymore because we also want to handle
     //        1. Ranges with size 0
     //        2. Ranges at the end of a line
+    if (range.start.line.block.code != index.line.block.code) return false; // Handle multiple files
     if (index_compare(range.start, range.end) == 0 && index_compare(range.start.line, index.line) == 0) {
         auto& tokens = index_value(index.line)->tokens;
         if (token_index_is_last_in_line(range.start)) {
