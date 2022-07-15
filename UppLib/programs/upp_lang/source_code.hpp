@@ -59,9 +59,9 @@ struct Source_Line
 {
     String text;
     Dynamic_Array<Token> tokens;
-    Dynamic_Array<Render_Info> infos;
 
     // Rendering
+    Dynamic_Array<Render_Info> infos;
     int render_index;
     int render_indent;
     int render_start_pos;
@@ -107,6 +107,7 @@ void source_code_sanity_check(Source_Code* code);
 bool source_block_inside_comment(Block_Index block_index);
 bool source_line_is_comment(Line_Index line_index);
 bool source_line_is_multi_line_comment_start(Line_Index line_index);
+bool source_line_is_end_of_block(Line_Index line_index);
 
 
 

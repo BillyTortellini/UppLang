@@ -342,6 +342,9 @@ namespace Parser
         while (true)
         {
             // End of line handling
+            if (source_line_is_end_of_block(pos.line)) {
+                return optional_make_failure<Token_Index>();
+            }
             if (token_index_is_last_in_line(pos))
             {
                 if (!(starting_inside_parenthesis || parenthesis_stack.size != 0)) {
@@ -394,7 +397,7 @@ namespace Parser
         // Setup parser position at block start
         auto& pos = parser.state.pos;
         pos = token_index_make(line_index_make(block_index, 0), 0);
-        parser.parse_informations[parent->base.allocation_index].range = token_range_make_block(block_index);
+        parser.parse_informations[parent->base.allocation_index].range.end = token_index_make_block_end(block_index);
 
         auto block = index_value(pos.line.block);
         // Check for special cases
@@ -635,6 +638,7 @@ namespace Parser
     void parse_block_fn_anonymous_block_in_code_block(Code_Block* parent, Block_Index block_index)
     {
         auto code_block = allocate_base<Code_Block>(&parent->base, Base_Type::CODE_BLOCK);
+        get_parse_info(&code_block->base)->range = token_range_make_block(block_index);
         code_block->statements = dynamic_array_create_empty<Statement*>(1);
         code_block->block_id = optional_make_failure<String*>();
 
@@ -731,6 +735,10 @@ namespace Parser
     Code_Block* parse_code_block(Base* parent, AST::Expression* related_expression)
     {
         auto result = allocate_base<Code_Block>(parent, Base_Type::CODE_BLOCK);
+        auto follow_block_opt = line_index_block_after(parser.state.pos.line);
+        if (follow_block_opt.available) {
+            get_parse_info(&result->base)->range = token_range_make_block(follow_block_opt.value);
+        }
         result->statements = dynamic_array_create_empty<Statement*>(1);
         result->block_id = parse_block_label(related_expression);
         parse_follow_block(true, result, parse_item_fn_statement, parse_block_fn_anonymous_block_in_code_block);
@@ -918,7 +926,6 @@ namespace Parser
                 auto& switch_stat = result->options.switch_statement;
                 switch_stat.condition = parse_expression_or_error_expr(&result->base);
                 switch_stat.cases = dynamic_array_create_empty<Switch_Case*>(1);
-                switch_stat.label.available = false;
                 switch_stat.label = parse_block_label(switch_stat.condition);
                 parse_follow_block(true, result, parse_item_fn_switch_case, parse_block_fn_error_on_block<Statement>);
                 PARSE_SUCCESS(result);
@@ -1520,9 +1527,12 @@ namespace Parser
         parser.root = allocate_base<Module>(0, Base_Type::MODULE);
         parser.root->definitions = dynamic_array_create_empty<Definition*>(1);
         parser.root->imports = dynamic_array_create_empty<Project_Import*>(1);
+        get_parse_info(&parser.root->base)->range = token_range_make_block(block_index_make_root(parser.code));
         parse_source_block(block_index_make_root(parser.code), parser.root, parse_item_fn_module_item, parse_block_fn_anonymous_module_block);
 
-        // Correct token ranges (TODO: Check if this is necessary)
+        // Correct token ranges 
+        // NOTE: This Step is indeed necessary because Token-Indices can be ambiguous, 
+        // but it probably could be done during parsing (e.g. on PARSER_SUCCESS) and not as an post processing step 
         base_correct_token_ranges(&parser.root->base);
         return parser.root;
     }

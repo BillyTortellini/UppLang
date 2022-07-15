@@ -2030,7 +2030,7 @@ void syntax_editor_render()
     }
 
     // Draw Text-Representation @ the bottom of the screen 
-    if (true)
+    if (false)
     {
         int line_index = 2.0f / editor.character_size.y - 1;
         syntax_editor_draw_string(index_value(cursor.line)->text, Syntax_Color::TEXT, line_index, 0);
@@ -2060,6 +2060,14 @@ void syntax_editor_render()
             }
             string_append_string(&context, &error.message);
         }
+    }
+
+    if (!show_context_info)
+    {
+        show_context_info = true;
+        auto node = Parser::find_smallest_enclosing_node(&compiler.main_source->ast->base, cursor_token_index);
+        auto info = Parser::get_parse_info(node);
+        AST::base_append_to_string(node, &context);
     }
 
     // Draw Code-Completion

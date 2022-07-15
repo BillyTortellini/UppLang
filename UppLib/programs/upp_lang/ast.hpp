@@ -84,6 +84,7 @@ namespace AST
         Base base;
         String* name;
         Optional<Symbol_Read*> path_child;
+
         Symbol* resolved_symbol;
     };
 
@@ -92,6 +93,7 @@ namespace AST
         Base base;
         Dynamic_Array<Definition*> definitions;
         Dynamic_Array<Project_Import*> imports;
+
         Symbol_Table* symbol_table;
     };
 
@@ -105,11 +107,12 @@ namespace AST
     struct Definition
     {
         Base base;
-        Symbol* symbol;
         bool is_comptime; // :: instead of :=
         String* name;
         Optional<Expression*> type;
         Optional<Expression*> value;
+
+        Symbol* symbol;
     };
 
     struct Argument
@@ -122,19 +125,21 @@ namespace AST
     struct Parameter
     {
         Base base;
-        Symbol* symbol;
         bool is_comptime; // $ at the start
         String* name;
         Expression* type;
         Optional<Expression*> default_value;
+
+        Symbol* symbol;
     };
 
     struct Code_Block
     {
         Base base;
-        Symbol_Table* symbol_table;
         Dynamic_Array<Statement*> statements;
         Optional<String*> block_id;
+
+        Symbol_Table* symbol_table;
     };
 
     enum class Structure_Type {

@@ -3,6 +3,7 @@
 #include "../../datastructures/dynamic_array.hpp"
 #include "../../datastructures/array.hpp"
 #include "source_code.hpp"
+#include "code_history.hpp"
 #include "lexer.hpp"
 
 
@@ -42,6 +43,7 @@ namespace Parser
     void reset();
     void destroy();
     AST::Module* execute(Source_Code* code);
+    AST::Module* execute_incrementally(Code_History* history);
 
     Parse_Info* get_parse_info(AST::Base* base);
     void ast_base_get_section_token_range(AST::Base* base, Section section, Dynamic_Array<Token_Range>* ranges);

@@ -228,6 +228,13 @@ bool source_line_is_multi_line_comment_start(Line_Index line_index)
     return true;
 }
 
+bool source_line_is_end_of_block(Line_Index line_index)
+{
+    auto block = index_value(line_index.block);
+    assert(line_index.line <= block->lines.size, "");
+    return line_index.line == block->lines.size;
+}
+
 bool source_block_is_comment_block(Block_Index block_index)
 {
     auto block = index_value(block_index);
@@ -549,23 +556,29 @@ bool index_equal(Text_Index a, Text_Index b)
 int index_compare(Line_Index a, Line_Index b)
 {
     assert(a.block.code == b.block.code, "");
-    if (a.block.block == b.block.block)
+    if (index_equal(a.block, b.block))
     {
         if (a.line == b.line) return 0;
         return a.line < b.line ? 1 : -1;
     }
 
-    int a_indent = block_index_get_indentation(a.block);
-    int b_indent = block_index_get_indentation(b.block);
     auto a_block = index_value(a.block);
     auto b_block = index_value(b.block);
+    if (index_equal(a_block->parent, b.block)) {
+        return a_block->line_index <= b.line ? 1 : -1;
+    }
+    else if (index_equal(a.block, b_block->parent)) {
+        return b_block->line_index > a.line ? 1 : -1;
+    }
 
-    while (a_block->parent.block != b_block->parent.block)
+    int a_indent = block_index_get_indentation(a.block);
+    int b_indent = block_index_get_indentation(b.block);
+    while (!index_equal(a_block->parent, b_block->parent))
     {
-        if (a_block->parent.block == b.block.block) {
+        if (index_equal(a_block->parent, b.block)) {
             return a_block->line_index <= b.line ? 1 : -1;
         }
-        else if (b_block->parent.block == a.block.block) {
+        else if (index_equal(a.block, b_block->parent)) {
             return b_block->line_index > a.line ? 1 : -1;
         }
 
@@ -581,7 +594,7 @@ int index_compare(Line_Index a, Line_Index b)
             b_indent -= 1;
         }
     }
-    return a.line < b.line ? 1 : -1;
+    return a_block->line_index < b_block->line_index ? 1 : -1;
 }
 
 int index_compare(Token_Index a, Token_Index b)

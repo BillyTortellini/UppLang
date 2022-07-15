@@ -1,18 +1,114 @@
 
 
-Problem: Blocks with only block children:
- - 1st: Token range is fugged
+Incremental Compilation General Thoughts:
+-----------------------------------------
+To have the fastest possible compile-times, I want to have incremental-compilation,
+which means that I only want to recompile the parts of the code that have changed since
+the last compilation, and reuse as much Information from previous compiles as possible. 
 
+Since the Compiler works in different Stages, each stage needs to support incremental compilation.
+All Stages:
+ - Input (From editor or from file)
+    Output = Source-Code split into blocks and lines(Text)
+ - Tokenization
+    Output = Tokens in Lines in Blocks
+ - Parsing
+    Output = AST for each input 
+ - Analysis
+    Output = Annotated AST (Analysis Passes) + Modtree_Program
+ - Code-Generation 
+    Output = IR_Code + Bytecode + C-Code
+
+For each stage we need to make a Decision:
+How Granular should the change detection be?
+    The changed objects could be Files, Blocks, Lines
+    We could have 'simple' detection like: Item removed, item added, item changed,
+    or we could have more sophisticated detection like: Item moved, item renamed, item merged...
+
+This means logical Decisions need to be made on the Granularity of the Change-Detection based on the 
+different Compiler-Stages.
+
+There is an obvious Trade-of between Granularity, Efficient-Change detection and efficient compilation.
+The more granular the Change-Detection, the harded/slower it is to find all Changes, but 
+more granular Detection leads to better performance in compilation, since fewer Items need to be compiled.
+
+Another Question is how to detect the changes. For this to work we need to generate
+a change-log to the previous Version, and update our current version accordingly. 
+One solution is to generate the new version independent of the previous version (E.g. parse the whole file again),
+and then generate the Change-Log based on a diff between the two.
+But it will be a lot faster to build diffs from previous diffs, e.g. we build the AST-Diff from the Source_Code-Diff
+we have from the Editor, but there may be situations where we don't have a change log available (E.g. loading a different file, file changed)
+In these cases re-analysing the item and doing a diff will probably be the best solution.
+It may also be usefull to combine Diff-ing, Change-Log and the previous Version so that we can filter out Changes that didn't have any effect,
+like adding a comment inside a function, which requires the AST to be reparsed, but the resulting AST used by the Analyser will be the same.
+
+Another problem is that of Dependencies and references. Tokenization and AST-Parsing aren't really affected by this,
+but Analysis and Code-Generation are. For example, adding a struct member requires all function that use this struct to be
+recompiled, same with function calls when parameters change. For this we will probably need
+to change the Dependency_Analyser to keep all references, and update accordingly, which will most likely be the hardest part when
+implementing incremental compilation.
+
+Yet another problem is that of Handles between stages. This includes:
+ - Token-Ranges connect the AST to the Source-Code
+ - AST-Node Pointer and Analysis-Passes connect the Semantic_Analysis to the AST
+ - IR functions/globals have pointer to modtree-functions/pointers
+
+Now lets take a look at which Granularity we'll be using at each stage, and how I plan to detect Changes
+ - Input: Source-Code
+     Here we get the Difference from the Editor-History, so we have exact information on how the text changed. (Single character inserts/removes)
+     If we have project-imports (E.g. file loads), we need to check if the file has changed (File-Listener or check last-access time) and
+     if it changed we could either do a diff to the previous version (to have incremental parsing), or we just reanalyze the whole file,
+     which is probably the best solution for now since loaded files rarely change during editing (Except when we are editing 2 projects at once),
+     but this isn't something the editor can handle currently.
+ - Tokenization:
+     Since our Syntax is designed that each line can be tokenized independently, and we cannot simply re-tokenize single tokens
+     because the line-context is importent (E.g. adding a " at the start makes the whole line a string-token), 
+     it makes sense to actually have a looser Granularity and compress the exact Text-Changes to line inserts/line-removes + line-changes
+ - Parsing:
+     The parser keeps track of bounding ranges for each ast-node, which would enable us to reparse individual ast-nodes, but
+     parsing is also context-sensitive, and differs from tokenization because AST-Nodes regularly span multiple lines/blocks (E.g. Modules, code-blocks, structs...)
+     This seems especially annoying when we edit the header of a block, since parsing all child items depends heavily on the Context the header provides.
+     I currently believe that caching should be done on a block level, where we store the previous result + the Context the block was parsed in
+     The currently valid block contexts are: 
+        1. Module blocks, containing
+            Imports
+            Definitions
+        2. Code-Block, containing
+            Statements
+        3. Enum-Block, containing
+            Enums
+        4. Struct-Block, containing
+            Definitions
+        5. Switch-Block, containing
+            cases
+     After incremental parsing we also need to know which ast-items were added/removed/changed. Do we need changed, or can we represent it by removed/added?
+ - Analysis:
+   
+
+Think about: Different Compile-Types:
+ - Parse only (Maybe for editing, e.g. formating code based on Parse-Info)
+ - Analyse only (Used by editor for Syntax-Highlighting and Error reporting)
+ - Analyse and run Bakes (Since we don't want to run bakes during editing)
+ - Generate_Code (For running the program)
+
+When to execute Compile-Time-Code-Execution (#bake, maybe #run in the future)?
 
 
 TODO:
- - Multi-Line Comments (Recursive Add-Indent)
- - Reintegrate Test-Cases
+ - Incremental Compilation:
+    - Parser
+    - Rework Analysis-Item/Analysis-Pass things 
+ - Named Parameters + Templates, switch over unions custom variable, remove case statement
+ - Templates
+ - Symbol Import, Templates, using
+
+
+Better Editor Experience:
+ - Auto complete with partially typed == Keywords destroys the keyword
+ - Code-Rendering Rework/Formating Rework (Only format whats visible)
  - Smarter Code-Formating (Splitting long lines + merging short blocks)
     Probalby Requires a rework of Formating in general
  - Camera commands (move cursor + move camera)
- - Code-Rendering Rework (Only format whats visible)
-
 
 TODO:
 -----
@@ -70,6 +166,32 @@ Required Features before I can use the Language:
  * Context-System
  * Symbol-Imports/Resolution
  * Iterators/Operator overloads (Maybe in some sort of context system?)
+
+
+
+------------------------------
+ THOUGHTS ON RENDERING/EDITOR
+------------------------------
+Rendering only whats visible:
+    Rendering + Formating are 2 different things
+    Formating currently is just figuring out token displacements (spaces between tokens, space before/after cursor) and line-indices
+
+Current Rendering Features
+    - Rendering Tokens with Formating
+    - Underlining pieces
+    - Changing background color of pieces
+    - Setting color of Tokens
+    - Displaying Block-Indentation lines
+    - Showing context info (Text box with text)
+
+Thoughts:
+---------
+The formating/layout is importent for cursor movement, so it is required to synchronize the formating
+before some operations (Mainly movement operations)
+So it seems like formating should also be done by looking at the changes and reformating the lines that have changed.
+
+And there is the Questions what the Output of formating is/how it is saved. 
+Because I can still do the 'final' output in rendering
 
 
  -------------------------------

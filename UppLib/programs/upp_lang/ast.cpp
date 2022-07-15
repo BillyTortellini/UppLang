@@ -122,6 +122,8 @@ namespace AST
             break;
         }
         case Base_Type::ENUM_MEMBER: {
+            auto enum_member = (Enum_Member*)node;
+            FILL_OPTIONAL(enum_member->value);
             break;
         }
         case Base_Type::ARGUMENT: {
@@ -359,7 +361,11 @@ namespace AST
             FILL(sw_case->block);
             break;
         }
-        case Base_Type::ENUM_MEMBER: break;
+        case Base_Type::ENUM_MEMBER: {
+            auto enum_member = (Enum_Member*)node;
+            FILL_OPTIONAL(enum_member->value);
+            break;
+        }
         case Base_Type::PROJECT_IMPORT: {
             break;
         }
