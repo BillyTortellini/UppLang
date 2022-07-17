@@ -340,7 +340,7 @@ int history_insert_and_apply_change(Code_History* history, Code_Change change)
 void history_undo(Code_History* history)
 {
     assert(history->complex_level == 0, "Cannot undo/redo inside a complex command");
-    if (history->current == 0) return; // Base node
+    if (history->current == 0) return; // Node node
     SCOPE_EXIT(code_history_sanity_check(history));
 
     auto node = &history->nodes[history->current];

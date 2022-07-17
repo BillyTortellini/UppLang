@@ -1,0 +1,104 @@
+//
+	A thing that people seem to enjoy about the Syntax of 
+	Dynamically typed languages is that you don't need to specify the type
+	of a variable to use it. In Upp I try to emulate this by with the following features:
+	
+	1. Type Inference (Definitions)
+	  x := 15 // type is deduced from expression, beeing an int
+	2. Pointer Usage
+	  x := 15 + integer_pointer // Pointer is beeing dereference automatically
+	3. Casts
+	  x: int = cast 15.5 // Cast from float to int is done through context
+	4. Auto-Expressions (Struct initializer, array-initializer, enum)
+	  a: Person = .{name="Frank", age=32}
+	  b: Color = .RED
+	  x: []int = .[1, 2, 3]
+	
+	This is done by tracking the context of the Expression
+
+Sum::struct
+	a:int
+	b:int
+
+// Member accesses on pointers automatically dereference
+calc_sum1::(sum:Sum)->int
+	return sum.a+sum.b
+calc_sum2::(sum:*Sum)->int
+	return sum.a+sum.b
+calc_sum3::(sum:**Sum)->int
+	return sum.a+sum.b
+calc_sum4::(sum:***Sum)->int
+	return sum.a+sum.b
+
+mult_and_change_sum::(sum:*Sum)
+	sum.a=sum.a*sum.b
+
+main::()
+	// When we know the usage context, pointers are interchangable with other types, and are
+	// automatically dereferenced.
+		a:int=5
+		b:int=7
+		res:int=a+b
+		assert(res==12)
+		
+		ap:*int=*a
+		bp:*int=*b
+		assert(ap!=bp)
+		
+		res=ap+b
+		assert(res==12)
+		
+		res=a*bp
+		assert(res==35)
+		
+		res_bool:bool=ap<bp
+		assert(res_bool==true)
+	
+	// This is especially usefull if we think about passing parameters to functions that take pointers
+		sum:Sum
+		sum.a=5
+		sum.b=7
+		
+		sum_p:=*sum
+		sum_pp:=*sum_p
+		sum_ppp:=*sum_pp
+		sum_pppp:=*sum_ppp
+		
+		res:int
+		assert(calc_sum1(sum)==12)
+		assert(calc_sum1(sum_p)==12)
+		assert(calc_sum1(sum_pp)==12)
+		assert(calc_sum1(sum_ppp)==12)
+		
+		assert(calc_sum1(sum_pppp)==12)
+		assert(calc_sum2(sum_pppp)==12)
+		assert(calc_sum3(sum_pppp)==12)
+		assert(calc_sum4(sum_pppp)==12)
+	
+	// Currently the only operations where this doesn't exactly apply are pointer comparisons and casts to u64
+	// In these cases, Pointer Comparison and Raw-Casts need to be used
+		val1:float=17.5
+		val2:float=20.0
+		
+		a:*float=*val1
+		b:*float=*val1
+		
+		assert(a*==b)
+		b=*val2
+		assert(a*!=b)
+		
+		
+		i:i32=128
+		p:*i32=*i
+		i_cast:u64=cast{u64}i
+		p_cast:u64=cast_raw p
+		assert(i_cast!=p_cast)
+	
+	
+	// This isn't only true for dereferences, it also works with Address_Of *
+		sum:Sum
+		sum.a=15
+		sum.b=3
+		
+		mult_and_change_sum(sum)
+		assert(sum.a==45)

@@ -1,0 +1,60 @@
+print_any::(any:Any)
+	info:=type_info(any.type)
+	if any.type==String
+		print_string(cast{*String}any.data)
+		return
+	
+	switch info.options
+		case.primitive
+			prim:=info.options.primitive
+			switch prim
+				case.integer
+					val:i32=0
+					if info.size==1
+						val=cast{*i8}any.data
+					else if info.size==2
+						val=cast{*i16}any.data
+					else if info.size==4
+						val=cast{*i32}any.data
+					else if info.size==8
+						val=cast&(cast{*i64}any.data)
+					print_i32(val)
+				case.floating_point
+					val:float=0.0
+					if info.size==4
+						val=cast{*float}any.data
+					else
+						val=cast&(cast{*f64}any.data)
+					print_f32(val)
+				case.boolean
+					print_bool(cast{*bool}any.data)
+		case.structure
+			structure:=info.options.structure
+			if structure.name.size!=0
+				print_string(structure.name)
+			else
+				print_string("UNNAMED_STRUCT")
+		default
+			print_string("NOT_IMPLEMENTED")
+
+print_char::(c:u8)
+	buffer:[2]u8=.[c,cast 0]
+	string:String
+	string.size=1
+	string.character_buffer=buffer
+	print_string(string)
+
+print_formated::(string:String,args:[]Any)
+	i:=0
+	arg_index:=0
+	while i<string.size
+		char:=string.character_buffer[i]
+		if char=="%".character_buffer[0]
+			if arg_index<args.size
+				print_any(args[arg_index])
+				arg_index=arg_index+1
+			else
+				print_string("ARGS_OUT_OF_RANGE")
+		else
+			print_char(char)
+		i=i+1

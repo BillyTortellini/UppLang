@@ -1,0 +1,10 @@
+Player::struct
+	name:String
+	age:int
+	alive:bool
+
+main::()
+	//
+		The cool thing about the struct initialier is:
+		all members must be initialized, otherwise there is an error
+	p1:=Player.{name="Herb",alive=true}

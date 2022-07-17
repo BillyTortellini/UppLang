@@ -1,0 +1,48 @@
+main::()
+	//
+		Defer also works with named breaks/continues, making
+		the combination of the two features a very good tool for error handling/cleanup
+	
+	// Continue defer
+		i:=0
+		even_count:=0
+		while i<10 i_loop:
+			defer
+				i=i+1
+			if i%2==0
+				continue i_loop
+			even_count=even_count+1
+		assert(even_count==5)
+	
+	// Break defer
+		// If the defer is not reached, it won't be executed 
+		val:=0
+		block:
+			if true
+				break block
+			defer
+				val=10
+		assert(val==0)
+		
+		// If it is reached, it is executed at the break
+		val=0
+		block:
+			defer
+				val=10
+			if true
+				break block
+			val=100
+		assert(val==10)
+		
+		// Defers aren't executed if the break is in the wrong scope
+		val=0
+		block:
+			defer
+				val=10
+			inner:
+				if true
+					break inner
+			assert(val==0)
+		assert(val==10)
+	
+

@@ -1,0 +1,76 @@
+fib::(n:int)->int
+	if n<2
+		return 1
+	return fib(n-1)+fib(n-2)
+
+factorial::(n:int)->int
+	if n<1
+		return 1
+	return factorial(n-1)*factorial(n-2)
+
+Helpers::module
+	adder::(a:int,b:int)->int
+		return a+b
+	
+	print_factorial::(n:int)
+		res:=factorial(n)
+		print_i32(res)
+
+Math::module
+	maximum::(a:int,b:int)->int
+		if a>b
+			return a
+		return b
+	
+	minimum::(a:int,b:int)->int
+		if a<b
+			return a
+		return b
+	
+	clamp::(x:int,min:int,max:int)->int
+		if min>=max
+			return min
+		if x<min
+			return min
+		if x>max
+			return max
+		return x
+
+main::()
+	y:=15
+	ya:=12
+	
+	max_buffer_size:=100
+	y=Helpers~adder(10,10)
+	
+	Player::struct
+		age:int
+		alive:bool
+		name:String
+	
+	player_print::(p:Player)
+		print_string(p.name)
+		print_string(" ")
+		print_i32(p.age)
+		print_string(" ")
+		if p.alive
+			print_string("Alive!")
+		else
+			print_string("Dead!")
+	
+	player_pass_time::(p:*Player)
+		p.age=p.age+1
+		p.alive=p.age>100
+	
+	player:=Player.{age=15,alive=false,name="Frank"}
+	player_pass_time(player)
+	player_print(player)
+	
+	Color::enum
+		RED
+		GREEN
+		BLUE
+	
+	c:Color
+
+

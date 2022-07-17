@@ -1,0 +1,8 @@
+Player :: struct
+	name: String
+	age: int
+	alive: bool
+
+main :: ()
+	// Struct members also must not be set twice
+	p1 := Player.{name = "Herb",  name = "Frank", alive = true}

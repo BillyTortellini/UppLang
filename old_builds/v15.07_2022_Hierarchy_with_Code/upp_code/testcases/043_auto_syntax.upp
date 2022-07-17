@@ -1,0 +1,48 @@
+Player::struct
+	name:String
+	age:int
+	alive:bool
+
+add_ints::(ints:[]int)->int
+	i:=0
+	sum:=0
+	while i<ints.size
+		sum=sum+ints[i]
+		i=i+1
+	return sum
+
+Color::enum
+	RED
+	GREEN
+	BLUE
+
+main::()
+	//
+		The following Operations also have shorthand notations so
+		that the type is not necessary anymore
+		Enum Access:Color.RED --> .RED
+		Struct Initializer: Player.{...} --> .{...}
+		Array Initalizer:int.[...] --> .[...]
+		
+		This only works if the type of the resulting value
+		can be infered from the usage context
+	
+	sum:=add_ints(.[1,2,3,4])
+	assert(sum==10)
+	
+	p:Player=.{name="What",age=17,alive=true}
+	assert(p.age==17)
+	
+	color:Color=.RED
+	assert(color==Color.RED)
+	
+	value:=0
+	switch color
+		case.GREEN
+			value=2
+		case.BLUE
+			value=3
+		case.RED
+			value=1
+	assert(value==1)
+

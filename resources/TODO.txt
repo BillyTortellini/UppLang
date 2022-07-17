@@ -1,5 +1,18 @@
 
 
+Incremental Parsing:
+--------------------
+
+
+Implementation:
+ 1. Implement caching loaded-file imports in Compiler (E.g. file-loading, tokenization + parsing)
+    Do this to test the 'flow' of incremental compilation
+ 2. Implement Incremental Parsing by reusing already parsed blocks from previous parses
+ 3. Add Change-Log to parser
+
+
+
+
 Incremental Compilation General Thoughts:
 -----------------------------------------
 To have the fastest possible compile-times, I want to have incremental-compilation,

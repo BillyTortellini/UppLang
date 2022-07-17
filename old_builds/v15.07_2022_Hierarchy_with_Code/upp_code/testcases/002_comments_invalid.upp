@@ -1,0 +1,14 @@
+
+main::()
+	// Multi line comments must start
+		with an empty line
+	x:=15
+	//
+		This works
+	y:=15// 
+		this doesn't work
+	assert(y==15)
+	
+
+
+

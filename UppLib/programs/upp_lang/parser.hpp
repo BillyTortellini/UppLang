@@ -9,18 +9,63 @@
 
 namespace AST
 {
-    struct Base;
+    struct Node;
     struct Module;
 }
 
 namespace Parser 
 {
+    // PARSER
+    void initialize();
+    void reset();
+    void destroy();
+
+    // Parse Pass (Incremental Parsing)
     struct Error_Message
     {
         const char* msg;
         Token_Range range;
     };
 
+    struct Line_Node
+    {
+        int line_start;
+        int line_count;
+        AST::Node* node;
+    };
+
+    enum class Block_Context
+    {
+        STATEMENTS,
+        STRUCT,
+        SWITCH,
+        MODULE,
+        ENUM,
+    };
+
+    struct Block_Parse
+    {
+        Block_Context context;
+        Block_Index index;
+        Dynamic_Array<Line_Node> nodes;
+    };
+
+    struct Parse_Pass
+    {
+        Source_Code* code;
+        AST::Module* root;
+        Dynamic_Array<Error_Message> error_messages;
+        Dynamic_Array<Block_Parse> block_parses;
+        History_Timestamp timestamp;
+    };
+
+    Parse_Pass* execute_clean(Source_Code* code);
+    void parse_pass_destroy(Parse_Pass* pass);
+    void execute_incremental(Parse_Pass* pass, Code_History* history);
+
+
+
+    // Utility
     enum class Section
     {
         WHOLE,             // Every character, including child text
@@ -31,22 +76,7 @@ namespace Parser
         NONE,              // Not quite sure if this is usefull at all
         END_TOKEN,         // To display that something is missing
     };
-    struct Parse_Info
-    {
-        AST::Base* allocation;
-        Token_Range range;
-        Token_Range bounding_range;
-    };
 
-
-    void initialize();
-    void reset();
-    void destroy();
-    AST::Module* execute(Source_Code* code);
-    AST::Module* execute_incrementally(Code_History* history);
-
-    Parse_Info* get_parse_info(AST::Base* base);
-    void ast_base_get_section_token_range(AST::Base* base, Section section, Dynamic_Array<Token_Range>* ranges);
-    Array<Error_Message> get_error_messages();
-    AST::Base* find_smallest_enclosing_node(AST::Base* base, Token_Index index);
+    void ast_base_get_section_token_range(AST::Node* base, Section section, Dynamic_Array<Token_Range>* ranges);
+    AST::Node* find_smallest_enclosing_node(AST::Node* base, Token_Index index);
 }

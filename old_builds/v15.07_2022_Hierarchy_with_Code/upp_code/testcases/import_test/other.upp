@@ -1,0 +1,4 @@
+#import"recursive.upp"
+
+mul_2::(a:int)->int
+	return recursive_mul_2(a)

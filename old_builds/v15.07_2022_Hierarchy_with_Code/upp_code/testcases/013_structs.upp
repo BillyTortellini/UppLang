@@ -1,0 +1,29 @@
+Player::struct
+	name:String
+	age:int
+	alive:bool
+
+player_make::(name:String,age:int,alive:bool)->Player
+	p:Player
+	p.name=name
+	p.age=age
+	p.alive=alive
+	return p
+
+player_combine::(p1:Player,p2:Player)->Player
+	p:Player
+	p.name=p1.name
+	p.age=p1.age+p2.age
+	p.alive=p1.alive||p2.alive
+	return p
+
+main::()
+	p1:=player_make("Hans",32,true)
+	p2:=player_make("Dead",132,false)
+	p3:=player_make("Fred",2000,true)
+	p4:=player_combine(p1,p2)
+	
+	assert(p1.age==32&&p1.alive==true)
+	assert(p2.age==132&&p2.alive==false)
+	assert(p3.age==2000&&p3.alive==true)
+	assert(p4.age==164&&p4.alive==true)

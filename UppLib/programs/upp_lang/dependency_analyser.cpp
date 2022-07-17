@@ -3,7 +3,7 @@
 #include "compiler_misc.hpp"
 #include "compiler.hpp"
 #include "semantic_analyser.hpp"
-#include "ast.hpp"
+#include "parser.hpp"
 
 // Globals
 static Dependency_Analyser dependency_analyser;
@@ -12,7 +12,7 @@ static Dependency_Analyser dependency_analyser;
 Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool only_current_scope, Symbol_Dependency* reference, Analysis_Item* searching_from);
 
 // SYMBOL TABLE FUNCTIONS
-Symbol_Table* symbol_table_create(Symbol_Table* parent, AST::Base* definition_node)
+Symbol_Table* symbol_table_create(Symbol_Table* parent, AST::Node* definition_node)
 {
     auto& analyser = dependency_analyser;
     Symbol_Table* result = new Symbol_Table;
@@ -39,7 +39,7 @@ void symbol_table_destroy(Symbol_Table* symbol_table)
     delete symbol_table;
 }
 
-Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbol_Type type, AST::Base* definition_node, Analysis_Item* analysis_item)
+Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbol_Type type, AST::Node* definition_node, Analysis_Item* analysis_item)
 {
     assert(id != 0, "HEY");
 
@@ -190,7 +190,7 @@ void symbol_table_append_to_string(String* string, Symbol_Table* table, bool pri
 
 
 // DEPENDENCY ANALYSIS
-Analysis_Item* analysis_item_create_empty(Analysis_Item_Type type, Analysis_Item* parent_item, AST::Base* node)
+Analysis_Item* analysis_item_create_empty(Analysis_Item_Type type, Analysis_Item* parent_item, AST::Node* node)
 {
     auto& analyser = dependency_analyser;
     auto& src = analyser.code_source;
@@ -199,8 +199,7 @@ Analysis_Item* analysis_item_create_empty(Analysis_Item_Type type, Analysis_Item
     item->passes = dynamic_array_create_empty<Analysis_Pass*>(1);
     item->type = type;
     item->node = node;
-    item->max_node_index = node->allocation_index;
-    item->min_node_index = node->allocation_index;
+    item->ast_node_count = 0;
     item->symbol = 0;
     if (parent_item != 0 && parent_item->type != Analysis_Item_Type::ROOT && type != Analysis_Item_Type::IMPORT) {
         Item_Dependency item_dependency;
@@ -306,7 +305,7 @@ void dependency_analyser_append_to_string(String* string) {
     }
 }
 
-void dependency_analyser_log_error(Symbol* existing_symbol, AST::Base* error_node)
+void dependency_analyser_log_error(Symbol* existing_symbol, AST::Node* error_node)
 {
     Symbol_Error error;
     error.error_node = error_node;
@@ -314,7 +313,7 @@ void dependency_analyser_log_error(Symbol* existing_symbol, AST::Base* error_nod
     dynamic_array_push_back(&dependency_analyser.errors, error);
 }
 
-void analyse_ast_base(AST::Base* base)
+void analyse_ast_base(AST::Node* base)
 {
     using namespace AST;
     auto& analyser = dependency_analyser;
@@ -325,17 +324,17 @@ void analyse_ast_base(AST::Base* base)
     Analysis_Item* _backup_item = analyser.analysis_item;
     SCOPE_EXIT(analyser.analysis_item = _backup_item);
 
-    analyser.analysis_item->max_node_index = math_maximum(analyser.analysis_item->max_node_index, base->allocation_index);
-    analyser.analysis_item->min_node_index = math_minimum(analyser.analysis_item->min_node_index, base->allocation_index);
+    base->analysis_item_index = analyser.analysis_item->ast_node_count;
+    analyser.analysis_item->ast_node_count += 1;
 
     switch (base->type)
     {
-    case Base_Type::ENUM_MEMBER: break;
-    case Base_Type::PROJECT_IMPORT: {
+    case Node_Type::ENUM_MEMBER: break;
+    case Node_Type::PROJECT_IMPORT: {
         analysis_item_create_empty(Analysis_Item_Type::IMPORT, 0, base);
         break;
     }
-    case Base_Type::MODULE: {
+    case Node_Type::MODULE: {
         auto module = (Module*)base;
         if (base->parent != 0) {
             module->symbol_table = symbol_table_create(analyser.symbol_table, base);
@@ -346,7 +345,7 @@ void analyse_ast_base(AST::Base* base)
         analyser.symbol_table = module->symbol_table;
         break;
     }
-    case Base_Type::EXPRESSION:
+    case Node_Type::EXPRESSION:
     {
         auto expr = (Expression*)base;
         auto& dep_type = analyser.dependency_type;
@@ -382,7 +381,7 @@ void analyse_ast_base(AST::Base* base)
             auto& function = expr->options.function;
             Analysis_Item* function_item = analysis_item_create_empty(Analysis_Item_Type::FUNCTION, analyser.analysis_item, base);
             function_item->options.function_body_item = analysis_item_create_empty(Analysis_Item_Type::FUNCTION_BODY, 0, &function.body->base);
-            if (base->parent->type == Base_Type::DEFINITION) {
+            if (base->parent->type == Node_Type::DEFINITION) {
                 auto def = (Definition*)base->parent;
                 if (def->value.available && def->value.value == expr && def->is_comptime) {
                     function_item->symbol = def->symbol;
@@ -405,7 +404,7 @@ void analyse_ast_base(AST::Base* base)
             Analysis_Item* struct_item = analysis_item_create_empty(Analysis_Item_Type::STRUCTURE, analyser.analysis_item, base);
             analyser.analysis_item = struct_item;
             analyser.dependency_type = Dependency_Type::MEMBER_IN_MEMORY;
-            if (base->parent->type == Base_Type::DEFINITION) {
+            if (base->parent->type == Node_Type::DEFINITION) {
                 auto def = (Definition*)base->parent;
                 if (def->value.available && def->value.value == expr && def->is_comptime) {
                     struct_item->symbol = def->symbol;
@@ -436,20 +435,20 @@ void analyse_ast_base(AST::Base* base)
         }
         break;
     }
-    case Base_Type::SWITCH_CASE: break;
-    case Base_Type::ARGUMENT: break;
-    case Base_Type::STATEMENT: break;
-    case Base_Type::CODE_BLOCK: {
+    case Node_Type::SWITCH_CASE: break;
+    case Node_Type::ARGUMENT: break;
+    case Node_Type::STATEMENT: break;
+    case Node_Type::CODE_BLOCK: {
         auto block = (Code_Block*)base;
         block->symbol_table = symbol_table_create(analyser.symbol_table, base);
         analyser.symbol_table = block->symbol_table;
         break;
     }
-    case Base_Type::DEFINITION:
+    case Node_Type::DEFINITION:
     {
         auto definition = (Definition*)base;
         definition->symbol = symbol_table_define_symbol(analyser.symbol_table, definition->name, Symbol_Type::UNRESOLVED, base, analyser.analysis_item);
-        if (!definition->is_comptime && definition->base.parent->type == Base_Type::STATEMENT) {
+        if (!definition->is_comptime && definition->base.parent->type == Node_Type::STATEMENT) {
             definition->symbol->type = Symbol_Type::VARIABLE_UNDEFINED;
             break;
         }
@@ -470,13 +469,13 @@ void analyse_ast_base(AST::Base* base)
         analyser.analysis_item = item;
         break;
     }
-    case Base_Type::PARAMETER:
+    case Node_Type::PARAMETER:
     {
         auto param = (Parameter*)base;
         param->symbol = symbol_table_define_symbol(analyser.symbol_table, param->name, Symbol_Type::VARIABLE_UNDEFINED, base, analyser.analysis_item);
         break;
     }
-    case Base_Type::SYMBOL_READ:
+    case Node_Type::SYMBOL_READ:
     {
         auto symbol_read = (Symbol_Read*)base;
         Symbol_Dependency dep;
@@ -493,7 +492,7 @@ void analyse_ast_base(AST::Base* base)
 
     // Iterate over children
     int index = 0;
-    Base* child = base_get_child(base, index);
+    Node* child = base_get_child(base, index);
     while (child != 0)
     {
         analyse_ast_base(child);
@@ -509,7 +508,7 @@ Dependency_Analyser* dependency_analyser_initialize()
     dependency_analyser.root_symbol_table = 0;
     dependency_analyser.compiler = 0;
     dependency_analyser.code_source = 0;
-    dependency_analyser.mapping_ast_to_items = hashtable_create_pointer_empty<AST::Base*, Analysis_Item*>(1);
+    dependency_analyser.mapping_ast_to_items = hashtable_create_pointer_empty<AST::Node*, Analysis_Item*>(1);
     return &dependency_analyser;
 }
 
@@ -597,12 +596,13 @@ void dependency_analyser_reset(Compiler* compiler)
 
 void dependency_analyser_analyse(Code_Source* code_source)
 {
+    // Analyse
     auto& analyser = dependency_analyser;
     analyser.code_source = code_source;
     analyser.dependency_type = Dependency_Type::NORMAL;
     analyser.symbol_table = analyser.root_symbol_table;
-    analyser.analysis_item = analysis_item_create_empty(Analysis_Item_Type::ROOT, 0, &code_source->ast->base);
-    analyse_ast_base(&code_source->ast->base);
+    analyser.analysis_item = analysis_item_create_empty(Analysis_Item_Type::ROOT, 0, AST::upcast(code_source->parse_pass->root));
+    analyse_ast_base(AST::upcast(code_source->parse_pass->root));
 }
 
 

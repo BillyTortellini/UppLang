@@ -20,12 +20,20 @@ struct Type_Signature;
 struct Dependency_Analyser;
 struct Analysis_Item;
 struct Source_Code;
+struct Code_History;
 
 namespace AST
 {
-    struct Base;
+    struct Node;
     struct Module;
+    struct Project_Import;
 }
+
+enum class Compile_Type
+{
+    ANALYSIS_ONLY,
+    BUILD_CODE,
+};
 
 // Compiler
 struct Compiler
@@ -34,6 +42,7 @@ struct Compiler
     Dynamic_Array<Code_Source*> code_sources;
     Code_Source* main_source;
     bool generate_code; // This indicates if we want to compile (E.g. user pressed CTRL-B or F5)
+    Hashtable<String, Code_Source*> cached_imports;
 
     // Helpers
     Identifier_Pool identifier_pool;
@@ -54,6 +63,7 @@ struct Compiler
     Timer* timer;
     Timing_Task task_current;
     double task_last_start_time;
+    double time_compile_start;
     double time_lexing;
     double time_parsing;
     double time_rc_gen;
@@ -78,10 +88,12 @@ extern Compiler compiler;
 Compiler* compiler_initialize(Timer* timer);
 void compiler_destroy();
 
-void compiler_compile(Source_Code* source_code, bool generate_code, String project_path); // Takes ownership of project path
+void compiler_compile_clean(Source_Code* source_code, Compile_Type compile_type, String project_file); // Takes ownership of project file
+void compiler_compile_incremental(Code_History* history, Compile_Type compile_type);
+bool compiler_add_project_import(AST::Project_Import* project_import);
 Exit_Code compiler_execute();
-void compiler_add_source_code(Source_Code* source_code, Code_Origin origin, String file_path); // Takes ownership of source_code and file_path
+
 bool compiler_errors_occured();
-Code_Source* code_source_from_ast(AST::Base* base);
+Code_Source* compiler_find_ast_code_source(AST::Node* base);
 void compiler_switch_timing_task(Timing_Task task);
 void compiler_run_testcases(Timer* timer);

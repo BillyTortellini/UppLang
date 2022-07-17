@@ -1,0 +1,21 @@
+RGBA::c_union
+	value:i32
+	raw:[4]byte
+
+main::()
+	// C_Unions are as expected, the same as Unions in C.
+	rgba:RGBA
+	rgba.raw[0]=cast 1
+	rgba.raw[1]=cast 1
+	rgba.raw[2]=cast 1
+	rgba.raw[3]=cast 1
+	assert(rgba.raw[0]==1&&rgba.raw[1]==1&&rgba.raw[2]==1&&rgba.raw[3]==1)
+	
+	// When writing to value, this
+	// also writes to raw, as they occupy the same memory
+	rgba.value=0
+	assert(rgba.raw[0]==0&&rgba.raw[1]==0&&rgba.raw[2]==0&&rgba.raw[3]==0)
+	
+	// The size of the type is also only 4 bytes,
+	// which confirmes that the members must overlap
+	assert(type_info(RGBA).size==4)

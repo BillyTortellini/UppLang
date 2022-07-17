@@ -1,0 +1,10 @@
+Color::enum
+	RED
+	GREEN::15
+	BLUE
+	YELLOW::13
+	YELLOW2
+	YELLOW3
+
+main::()
+	

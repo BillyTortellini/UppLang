@@ -363,7 +363,7 @@ struct Analysis_Pass
     Array<Analysis_Info> infos;
 };
 
-Analysis_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Base* node);
+Analysis_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Node* node);
 Expression_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Expression* expression);
 Case_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Switch_Case* sw_case);
 Argument_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Argument* argument);
@@ -391,7 +391,6 @@ struct Semantic_Analyser
     bool statement_reachable;
     int error_flag_count;
 
-    Hashset<String> loaded_filenames;
     Stack_Allocator allocator_values;
     Hashset<ModTree_Function*> visited_functions;
     Dynamic_Array<AST::Code_Block*> block_stack;
@@ -629,12 +628,12 @@ struct Error_Information
 struct Semantic_Error
 {
     Semantic_Error_Type type;
-    AST::Base* error_node;
+    AST::Node* error_node;
     Dynamic_Array<Error_Information> information;
 };
 
 void semantic_analyser_add_error_info(Error_Information info);
-void semantic_analyser_log_error(Semantic_Error_Type type, AST::Base* node);
+void semantic_analyser_log_error(Semantic_Error_Type type, AST::Node* node);
 void semantic_analyser_set_error_flag(bool error_due_to_unknown);
 void semantic_error_append_to_string(Semantic_Error e, String* string);
 Parser::Section semantic_error_get_section(Semantic_Error e);

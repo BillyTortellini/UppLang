@@ -1,0 +1,1611 @@
+
+
+Incremental Compilation General Thoughts:
+-----------------------------------------
+To have the fastest possible compile-times, I want to have incremental-compilation,
+which means that I only want to recompile the parts of the code that have changed since
+the last compilation, and reuse as much Information from previous compiles as possible. 
+
+Since the Compiler works in different Stages, each stage needs to support incremental compilation.
+All Stages:
+ - Input (From editor or from file)
+    Output = Source-Code split into blocks and lines(Text)
+ - Tokenization
+    Output = Tokens in Lines in Blocks
+ - Parsing
+    Output = AST for each input 
+ - Analysis
+    Output = Annotated AST (Analysis Passes) + Modtree_Program
+ - Code-Generation 
+    Output = IR_Code + Bytecode + C-Code
+
+For each stage we need to make a Decision:
+How Granular should the change detection be?
+    The changed objects could be Files, Blocks, Lines
+    We could have 'simple' detection like: Item removed, item added, item changed,
+    or we could have more sophisticated detection like: Item moved, item renamed, item merged...
+
+This means logical Decisions need to be made on the Granularity of the Change-Detection based on the 
+different Compiler-Stages.
+
+There is an obvious Trade-of between Granularity, Efficient-Change detection and efficient compilation.
+The more granular the Change-Detection, the harded/slower it is to find all Changes, but 
+more granular Detection leads to better performance in compilation, since fewer Items need to be compiled.
+
+Another Question is how to detect the changes. For this to work we need to generate
+a change-log to the previous Version, and update our current version accordingly. 
+One solution is to generate the new version independent of the previous version (E.g. parse the whole file again),
+and then generate the Change-Log based on a diff between the two.
+But it will be a lot faster to build diffs from previous diffs, e.g. we build the AST-Diff from the Source_Code-Diff
+we have from the Editor, but there may be situations where we don't have a change log available (E.g. loading a different file, file changed)
+In these cases re-analysing the item and doing a diff will probably be the best solution.
+It may also be usefull to combine Diff-ing, Change-Log and the previous Version so that we can filter out Changes that didn't have any effect,
+like adding a comment inside a function, which requires the AST to be reparsed, but the resulting AST used by the Analyser will be the same.
+
+Another problem is that of Dependencies and references. Tokenization and AST-Parsing aren't really affected by this,
+but Analysis and Code-Generation are. For example, adding a struct member requires all function that use this struct to be
+recompiled, same with function calls when parameters change. For this we will probably need
+to change the Dependency_Analyser to keep all references, and update accordingly, which will most likely be the hardest part when
+implementing incremental compilation.
+
+Yet another problem is that of Handles between stages. This includes:
+ - Token-Ranges connect the AST to the Source-Code
+ - AST-Node Pointer and Analysis-Passes connect the Semantic_Analysis to the AST
+ - IR functions/globals have pointer to modtree-functions/pointers
+
+Now lets take a look at which Granularity we'll be using at each stage, and how I plan to detect Changes
+ - Input: Source-Code
+     Here we get the Difference from the Editor-History, so we have exact information on how the text changed. (Single character inserts/removes)
+     If we have project-imports (E.g. file loads), we need to check if the file has changed (File-Listener or check last-access time) and
+     if it changed we could either do a diff to the previous version (to have incremental parsing), or we just reanalyze the whole file,
+     which is probably the best solution for now since loaded files rarely change during editing (Except when we are editing 2 projects at once),
+     but this isn't something the editor can handle currently.
+ - Tokenization:
+     Since our Syntax is designed that each line can be tokenized independently, and we cannot simply re-tokenize single tokens
+     because the line-context is importent (E.g. adding a " at the start makes the whole line a string-token), 
+     it makes sense to actually have a looser Granularity and compress the exact Text-Changes to line inserts/line-removes + line-changes
+ - Parsing:
+     The parser keeps track of bounding ranges for each ast-node, which would enable us to reparse individual ast-nodes, but
+     parsing is also context-sensitive, and differs from tokenization because AST-Nodes regularly span multiple lines/blocks (E.g. Modules, code-blocks, structs...)
+     This seems especially annoying when we edit the header of a block, since parsing all child items depends heavily on the Context the header provides.
+     I currently believe that caching should be done on a block level, where we store the previous result + the Context the block was parsed in
+     The currently valid block contexts are: 
+        1. Module blocks, containing
+            Imports
+            Definitions
+        2. Code-Block, containing
+            Statements
+        3. Enum-Block, containing
+            Enums
+        4. Struct-Block, containing
+            Definitions
+        5. Switch-Block, containing
+            cases
+     After incremental parsing we also need to know which ast-items were added/removed/changed. Do we need changed, or can we represent it by removed/added?
+ - Analysis:
+   
+
+Think about: Different Compile-Types:
+ - Parse only (Maybe for editing, e.g. formating code based on Parse-Info)
+ - Analyse only (Used by editor for Syntax-Highlighting and Error reporting)
+ - Analyse and run Bakes (Since we don't want to run bakes during editing)
+ - Generate_Code (For running the program)
+
+When to execute Compile-Time-Code-Execution (#bake, maybe #run in the future)?
+
+
+TODO:
+ - Incremental Compilation:
+    - Parser
+    - Rework Analysis-Item/Analysis-Pass things 
+ - Named Parameters + Templates, switch over unions custom variable, remove case statement
+ - Templates
+ - Symbol Import, Templates, using
+
+
+Better Editor Experience:
+ - Auto complete with partially typed == Keywords destroys the keyword
+ - Code-Rendering Rework/Formating Rework (Only format whats visible)
+ - Smarter Code-Formating (Splitting long lines + merging short blocks)
+    Probalby Requires a rework of Formating in general
+ - Camera commands (move cursor + move camera)
+
+TODO:
+-----
+ - Move forward with:
+    * Editor-Features (Camera-Movemento, Parser-Based Formating, Andimations, CTRL-W Insert mode, Copy-Paste, Vim-Commands, Command Recording, Code-Folding)
+    * Language-Features (Templates, named parameters, QOL stuff)
+    * Incremental Compilation
+
+
+
+Next features:
+--------------
+ * Syntax-Guided Editor (Undo-Redo, copy-paste, code-completion, jump to definition, auto-formating, vim-commands, animations, code folding)
+ * Polymorphism/Generics/Templates (Template rework: No more templated modules, templated types, templated functions)
+
+ * Named function parameters/unnamed struct initializer params
+ * Bake function pointers
+ * Type System switch to global
+ * Always analyse struct initializer/function parameters, even if the function type is not known (Turning off error reporting during this)
+ * Binary Operations should support auto-operations (enum, array, struct-init)
+ * Loading files introduces new symbols, which could conflict with the old ones...
+ * Rethink auto pointers with pointers on the left side of assignment, maybe just use pointer assign syntax &=
+ * Switch with indentation, remove case keyword
+ * Switch case variables 
+ * Error messages using the AST::Display
+ * Auto block-ids (if cond_var) should not work if there are 2 instances where we use the same cond, then just disable auto ids (Parser thing)
+ * For loop and looping over arrays/slices pls
+ * Slices as varargs, e.g. printf(a: string, values: []Any ...)
+ * Conversion function to pointer and back
+ * Literal overhaul (Integers, floats, strings?, arrays are u64, array access with any int...)
+ * Array bounds check
+ * Expression-Blocks
+
+ * Macros and Iteration 
+ * Generating source code with runtime code execution (#insert_code {return "what the fuck";})
+ * Annotations (Used in generating source code)
+ * Static Analyser
+
+ * New with values?
+ * Interpreter upgrade, call C-Functions, Custom allocator, check memory access
+ * Function overhaul, e.g. Non-Pointer parameters constant, Named parameter values in function calls
+ * Read-only variables
+ * Struct unpacking syntax, ignore syntax 
+     index, found := find_elem(arr, 2);
+     index, _ = find_elem(arr, 3);
+     _ = Hashtable~insert();
+     - Analysis can be out of order in e.g. Parameter analysis, which may make things like Polymorphic Types easier.
+     union {ipv4: int; ipv5: _};
+
+
+Required Features before I can use the Language:
+ * Syntax-Editor features 
+ * Incremental Compilation
+ * Templates
+ * Context-System
+ * Symbol-Imports/Resolution
+ * Iterators/Operator overloads (Maybe in some sort of context system?)
+
+
+
+------------------------------
+ THOUGHTS ON RENDERING/EDITOR
+------------------------------
+Rendering only whats visible:
+    Rendering + Formating are 2 different things
+    Formating currently is just figuring out token displacements (spaces between tokens, space before/after cursor) and line-indices
+
+Current Rendering Features
+    - Rendering Tokens with Formating
+    - Underlining pieces
+    - Changing background color of pieces
+    - Setting color of Tokens
+    - Displaying Block-Indentation lines
+    - Showing context info (Text box with text)
+
+Thoughts:
+---------
+The formating/layout is importent for cursor movement, so it is required to synchronize the formating
+before some operations (Mainly movement operations)
+So it seems like formating should also be done by looking at the changes and reformating the lines that have changed.
+
+And there is the Questions what the Output of formating is/how it is saved. 
+Because I can still do the 'final' output in rendering
+
+
+ -------------------------------
+Code Completion Design Analysis:
+--------------------------------
+Enter Code-Completion Mode when pressing the Code-Completion button (E.g. CTRL+Space)
+When we have multiple options to select pressing one key advances all
+
+Questions: When to enter/exit code-completion?
+    Maybe just have a toggle (CTRL+Space) for code completion, and don't exit until that toggle is off
+
+Maybe we can always have code-completion except when we type definitions?
+    Maybe we can enter/exit this mode when in insert-mode with shortcuts
+And if we change definitions we can also change all occurances?
+    Thats probably a bit too far
+Also I want a 'Recursive' add-indent (Ctrl+Tab)/remove-indent(Shift+Ctrl+Tab) and I 
+want my multi line comments back (E.g. Lexer has a tokenize all and tokenize line checks all parent blocks for comment start)
+
+
+RANT:
+-----
+After adding Code-Suggestions (Editor views a list of symbols that start the same as you have already typed)
+there was a decision to make on how to 'Select' one of the Suggestions and insert it into code
+ 1. Having a 'Insert Suggestion' Key
+ 2. Custom Completion Mode where everything gets inserted as you type
+
+Completion Mode Afterthoughts:
+At first I thought that completion mode may be insane because you could just always
+be in completion mode, and you would never have to type identifiers out again.
+But this causes problems:
+ - Definitions: To type new identifiers we cannot have code-completion
+ - Keywords: I could add keywords to code completion, but most of the time you just want to write them out
+Also there is the problem that Completion-Mode does not allow for 'fuzzy' search, meaning that
+it doesn't allow 'browsing' of code.
+
+New Design Ideas:
+Have a simple 'fuzzy' string search, that checks that all characters are typed correctly
+Always display completion ideas, and insert the first search when we hit insert_completions
+
+Completion Mode #2:
+After writing an identifier, and if it is not a definition + not a keyword,
+always apply my fuzzy code completion because it is nice
+
+
+
+----------------------------------------------------------
+--- RANT ABOUT COMPILER/EDITOR STRUCTURE + PERFORMANCE ---
+----------------------------------------------------------
+ *** General Compiler/IDE Structure:
+If I don't want a multi-file per project structure, I almost need something like incremental compilation. (Maybe)
+Then theres the problem that I don't want to do Compile-Time Code-Execution during editing, meaning I want to store the results
+of these bakes somehow over multiple frames/edits.
+The problem here is that I want the editor to display/use Compile-Information (Errors, Warnings, Symbols, Code-Completion, Goto-Definition),
+and the Compilation Process/Semantic Analysis may be a relative slow process, but the Editor needs to stay responsive.
+
+ *** Current Thoughts on a Solution:
+Lexing and Parsing is done incrementally (By the Editor) in 'real-time', meaning that the Editor never needs to wait for AST-Parsing to be done.
+This is mostly because the Editor may need AST/Parse Information for Auto-Formating (Required for Rendering + Animations) and for Code-Views (If I implement them)
+I think this is a valid Decision because I should be able to do Parsing incrementally with the current Syntax of the Language.
+
+Maybe Semantic-Analysis is also one of the parts that can be done incrementally, but Workload-Dependency Management and Symbol Resolution will be the
+problem. (Or I at least believe so)
+
+Then the other two Parts of Compiling would be Semantic-Analysis and Code-Generation.
+In the ideal case I would also execute those two incrementally, but I believe that waiting for Analysis before querying the Code
+may be quite slow (Although Incremental Semantic-Analysis would probably be pretty fast). One of the slow parts may even be the
+#Bake and #Run parts of the code, which I wouldn't even need to rerun if everything works out.
+
+I generally believe that everything must run incrementally (Parsing + Analysis + Code Generation) eventually, since I want to be able
+to generate huge Programs with this language and the IDE requires fast Feedback for editing.
+The only thing that I am unsure about is if it is fast enough to do a complete Analysis after every edit. 
+The Answer is probably yes.
+
+And if the answer is no (No compiler feedback after every edit), I will have to draw a line somewhere (Probably after parsing)
+where a second Thread does Analysis, and compiler feedback will have to be based on a cached, old Version of Analysis-Info.
+But even with the caching and old version stuff I probably want some sort of incremental Compilation, otherwise Compiling and Running the
+Program will become quite hard.
+
+
+
+-----------------------------------------------------------
+--- RANT ABOUT DATASTRUCTURE FOR CODE (Editor + Parser) ---
+-----------------------------------------------------------
+Requirements for Code-Representation
+ - Lines as Text
+ - Mapping from text to tokens
+ - Inserting/Deleting/Moving characters, lines, blocks
+ - Tokenization is line-independent (E.g. each line can be tokenized seperatly)
+ - Navigation with a Text-Position
+ - Parsing needs to store Start+End Position and requires Hierarchy-Infos
+ - Text/Token Animations require previous positions (Rendered) of all Tokens (Maybe of Text?) + Changelog
+
+Previously this was easier because: 
+ - Text was just one Array of Lines
+ - Tokens were just one Array and weren't structure line by line
+ - Token-Infos could just also just be stored in one array
+ - Lines could be accessed by index, and deleting lines was just array manipulation
+
+Current Hierarchy structure:
+ - The main Program is a block
+ - Blocks contain multiple lines
+ - Lines can have a follow block
+ - Lines contain an array of tokens, lines must be tokenized from start to end
+
+How about:
+ - Text just beeing an array of lines, each line having an integer for indentation level
+
+Source-Code Information required for Parsing:
+ - Tokens + Line-Hierarchy + Comments
+
+Information for Editing/Rendering:
+Difference Between Edit/Rendering: Update/Render is in another order
+ - Text
+ - Cursor Position
+ - Token Highlights
+ - Token Positions/Colors
+
+Decision for now:
+ - Own hierarchy representation for AST-Parsing which gets generated every time from Text
+    Source_Block(Array), Source_Line(per block)
+ - Gives the Editor a way to have a different representation for text if necessary
+ - This also allows filtering out multi-line comments before Parsing (Not normal comments because they can be at the end of a line)
+
+
+Editor:
+    * Has simple array of lines with indentation
+    * For parsing a Hierarchical Representation is generated each time
+    * Lexing is also different, now the editor has to manage spaces before/after the cursor
+
+
+Problem: Multi-Line Comments
+    Tokenization cannot be done line by line anymore
+Solution:
+    Just have single line Comments, and have an editor feature for multi line comments
+    Also maybe have comment-handling logic to just add comments when inside a comment
+
+
+
+Problem Analysis: Data structure for Source-Code (Tokens)
+Infos:
+------
+Editor and Parser require different Data for efficient processing:
+Editor:
+    String of Text for editing (Per line)
+    Render-Info for positioning, animation, color (Per token)
+    Maybe Extra Block information, like indentation, is_collapsed, ...
+    Looping over Token-Ranges and set color/draw underlines/display errors
+    Comments need to be stored in representation
+
+Parser:
+    Lines containing Tokens
+    Having follow-up information (Block follows line...)
+    Generate Mapping AST --> Tokens (Token Ranges for AST-Items)
+    Cheap Checkpoint rollbacks
+
+The main difference is that the Editor needs to store Render-Information/Editor-Information
+for some parts of the Source-Code, which is in conflict with the Requirements of the Parser
+
+Another Problem is that while Editing it should behave like a normal Text Editor, with
+each Line having its own indentation leading to edits changing the Hierarchical structure of the program
+
+I also want to only do operations on the structure through Commands which can be saved in a History.
+These Commands need to be Re- and Un-Doable, so that a traversable History can be generated.
+
+Comments/Multi-Line comments are also a crux currently, since Parsing should ignore comments
+alltogether, but I need to store them and treat them like normal tokens in the Editor
+
+
+
+Solution 0: Current Solution, generate Hierarchical representation for Parser
+-----------------------------------------------------------------------------
+
+Solution 2: Linear Code (with indentation) for both Editor+Parser
+-----------------------------------------------------------------
+
+Solution 3: Linear Code (with indentation) + Hierarchy that is kept in sync by the editor
+-----------------------------------------------------------------------------------------
+
+Solution 1: Hierarchical Code, Editor-Infos annotated
+-----------------------------------------------------
+What I am currently thinking about is having one Hierarchical Representation for Tokens,
+which contains Navigation Information (Blocks and Lines), and an easy way to annotate
+this Tree with additional information.
+
+Then the Editor would apply Hierarchical Changes to this tree (Add/Remove Block, Add/Remove lines, Add/Remove Indent)
+and have the required Editor-Informations in the Annotations
+
+Also maybe I want to have the Text and Tokens inside the Hierarchical Representation
+
+
+
+Question:
+    Shouldn't I just store the Render Info inside tokens?
+
+Source Code Design:
+Facts about the Data:
+ - Lines holding Tokens Array
+    * Maybe also Text-String
+ - Blocks containing Lines + other Blocks (Hierarchy)
+
+How do we represent the Hierarchy?
+ - Implicit (Each line has seperate indentation)
+
+
+
+Requirements:
+ - Navigation (Token_Position + next_token, previous_token, next_line, previous_line)
+ - Adding/Removing of Lines (Blocks should get destroyed if no lines exist anymore)
+ - Indentation Handling (Adding/removing indentation)
+ - Token-Layout (Position, size, color) for each token
+
+How to design a Data-Structure:
+ - Why is a Datastructure necessary/why can't items be processed one by one
+ - Which operations needs to be executed on the Structure in which frequency (Also information querying)
+ - Is it a built-once/read-only structure or is it changable
+ - Which elements need to be addressable (Handles/Pointers)
+ - Complexity-Performance tradeof
+
+Hierarchy:
+ + Parsing better navigation
+ + Local Changes --> Better incremental Compilation
+ + Performance scaling
+ - Bad Editor Navigation
+ - Bad Indexing (line index, block index?)
+ - Indentation based Editing is complex
+ - History Complicated
+ - Complex Datastructure
+ 
+Design Decision:
+    The editor doesn't keep the tokens up to date, but it makes sure that lines are always sanitized after edits.
+    When we need updated tokens we run through the change history from the last checkpoint (Last timestamp where tokens/text was synchronized)
+    and only tokenize the lines that require tokenization
+
+Why is a Code-Hierarchy usefull?
+--------------------------------
+I think it has to do with 'coordinates' of lines, since
+Line-Inserts/Deletes change the line numbers of all lines coming after them, even if they are not changed.
+This would mean that all Structure holding line numbers (Parser, AST-Nodes having start and end tokens) will invalidate
+their references once the line numbers changes.
+Also I think most logic concerning code is built upon the hierarchy, meaning that e.g. Iterating over the code (during parsing) would be easier in
+the hierarchy.
+
+ *** Next Day Thoughts:
+ It could be that I want the Source-Code Representation to also be hierarchical, because it seems to make more sense 
+ for incremental Parsing. This would also solve the problem of having 'slow' line-editing with only a single array.
+ The real problem here is that indexing specific lines would be hard otherwise, because an insert into an block-child of a block will
+ also invalidate all line indices that come afterwards. 
+ 
+ *** Thoughts (27.06):
+ So the Problem still is if we need a Hierarchical Representation of the Code, or if Lines + Indentation are enough.
+ If we have both, we have to deal with synchronizing both datastructures, which is annoying. 
+
+ The linear version is good because it's simpler, but the Hierarchical version has several benefits:
+  * Better Editing Performance
+  * Indexing is based on changes
+  * We can store information per block, because it is a consistent structure
+----------------------------------------------------------------------------
+----------------------------------------------------------------------------
+
+
+
+
+
+
+General Plan for Implementation:
+--------------------------------
+I currently feel like I should be programming something with the language I have created.
+I am currently at the point where I would like to select the features needed before I can
+create a simple application, which would be:
+ - Templates (Datastructures)
+ - Syntax-Based Editor
+ - Module/Project System
+ - Context for Allocators
+ - Iterator Syntax, custom iterators for stuff
+ - Literal overhaul, u64 for array size, automatic array bounds checks
+
+Features that I DON'T need for the first simple game version:
+ - Comptime Code generation
+ - Annotations
+ - Static Analyser
+ - Macros
+
+
+
+Error messages for circular dependencies:
+ - When there is no progress, and no running workload can run, we have an error.
+   This error could either be because we are waiting for a symbol, or because
+   a circular dependency exists. 
+   This means we then need to check for circular dependencies, and if one
+   exists, we must report the error and resolve the circular dependency.
+
+
+
+For unknown-spreading, we also need an Unknown Comptime-Value, where
+we know the Type of the comptime-value, but it is currently unknown
+
+Because if the Comptime-Value is unknown, but the type is right, we dont
+need to log an error. But if the Type is wrong, we log an error
+
+This also implies that I need an Array-Type with unknown size, because I don't want to
+report an error on [unkown comptime int]byte
+
+Hashtable :: struct (Key_Type: Type, Value_Type: Type, resize_percent: float)
+    entries: []Entries;
+    count: int;
+
+create :: () -> Hashtable
+
+double_array :: (Key_Type: *$T, Value_Type: T)
+    
+double_array :: (ip, i)
+
+
+
+
+The Job of the Semantic Analyser:
+ - Globals, Functions, Extern-Functions and entry function
+ - Determine the Type of all expressions
+ - Error Reportin
+
+What are the most important/difficult saved things in modtree:
+ - Expression result type + cast information
+ - Modtree_Function (Called From/Calls, contains errors/is_runnable)
+ - Modtree Parameter/modtree variable (For symbols to have a reference to)
+ - Comptime results
+ - Block control flow
+ - Blocks (break/continue ids) are resolved
+ - Extern Functions
+ - Bakes are intern functions
+ - Assert is also a function -> e.g. cannot be done with modtree...
+ - Global init function
+
+Ideas for AST-Decorations:
+ - Symbol Reads are dependent on the Analysis-Pass 
+ - Merge Analysis-Pass with analysis Progress
+
+Relations between
+ - Analysis Item
+    Partition of AST into Items with Symbol-Dependencies
+ - Analysis Workload
+    Through Symbol Dependencies and internal Dependencies workloads depend on other workloads
+ - Analysis Progress
+    Progress of Functions, Definitions, Types to create dependencies between workloads
+ - Analysis Pass
+    One instance of an Analysis-Item with AST-Annotations
+
+
+
+Why are AST-Decorations better than generating Code directly during Analysis:
+ - Simpler analysis because I can split order of execution and order of analysis
+ - Modtree currently has to duplicate AST-Structure, which isn't necessary with Decorations, modtree can be removed later
+ - Analysis can be out of order in e.g. Parameter analysis, which may make things like Polymorphic Types easier.
+ - Switching to stop and go will be easier
+ - Allocation are easier, since I can do it with passes/arrays
+ - Code-Generation is easier with Instruction/Register based code than with Modtree's Tree-Based code (Temporary values, return + defer...)
+
+Problems:
+ - AST-Nodes may need to be traversed multiple times (Macros, Templates), which is why I cannot
+   just write the Analysis Informatio into the AST-Nodes
+ - Code-Generation Step afterwards is more involved then current IR-Gen from Modtree
+ - If I need to save Analysis-Information which is not easily saveable into the AST-Structure, it will be more
+    complicated to store this data. 
+ - Modtree removes all type-related things from AST (Enums, structs...), which the analyser still needs to annotate
+
+
+
+
+
+
+DECISIONS:
+----------
+I want to have bake as it's own Workload, since the usefulness isn't too great currently.
+Also I don't want to worry about definign Symbols in coming Analysis-Passes, since this is
+also a Use-Case for a later Time.
+
+Dependencies and Polymorphism:
+    Currently you can have 2 Dependencies on a Function: Header-Analysed or Compiled (Bake)
+    If we have a bake workload depending on a function, we would automatically add it to the
+    Compiled workload. 
+
+    How to Instanciate a Polymorphic-Function?
+    First you create a new Body-Workload for the Function, where a mapping of all Polymorphic-Parameters
+    to their Values is stored. This Body-Workload requires the Body of the Parent-Polymorphic Function to be finished.
+    This ensures that all Symbol-Reads are done for the Body, and the Analysis can begin.
+    To continue analysing the current Item the Instance-Workload isn't required to be finished.
+
+
+
+
+IMPL:
+-----
+Parameter depends on Comptime:
+    doubler :: (a: T, $T: Type) -> Type
+    array_double :: (a: [Count], $Count: int) 
+Comptime depends on Comptime:
+    weird :: ($a: T, $T: Type) 
+Circular dependency:
+    fugg :: ($A: B, $B: A) 
+
+Changes TODO:
+Poly Analysis:
+    - Somehow extract the dependencies between parameters 
+        I only get this information during Symbol-Resolution in the Function_Header Workload
+    - Analyse Comptime parameters first, afterwards normal parameters
+
+This isn't that hard of a problem with implicit Polymorphism, since there the RC-Analyser
+can alread set the Symbol to Type Implicit_Poly_Param (Or something like this)
+
+But how do I store the Type of a parameter depending on Polymorphic-Arguments after Poly-Analysis/What to do during Instanciation
+    doubler :: (a: T, $T: Type)
+    doubler :: (a: *T, $T: Type)
+Well I need to store it as a Polymorphic Type 
+
+Idea:
+    New Signature_Type: Polymorphic Type
+
+
+Polymorphic Procedures Implementation Plan:
+-------------------------------------------
+Lets start off with the simplest polymorphic function
+    foo :: ($count: int)
+    foo :: ($T: Type) {
+        x: Type;
+    }
+    foo :: (a: [count]int, $count: int)
+    foo :: (a: $T)
+    foo :: (a: *T, b: $T)
+    foo :: (a: table.Key_Type, table: Hashtable)
+    foo :: (a: $T, b: #bake mallest_member_type(T))
+
+I obviously cannot determine the final Type-Signature of the Polymorphic function without an Instance of it.
+But, similarly to analysing the body without knowing the types, I should try to analyse as much of the
+header as I can before analysing the body.
+
+This is only required so I have more information about the parameter types. Otherwise I could just set the
+parameter types to Unknown for all parameters during the body analysis
+
+foo :: (a: [count]int, $count: int)
+    1. Determine dependencies of the parameters
+        a: Has a Dependency on the 2nd parameter of the function
+        count: No dependencies on any other arguments
+    2. Do DAG and find analysis order, save for later
+        count, a
+    3. Analyse parameters in the given order, if no order is found, log error and analyse anyway
+
+This sucks again:
+    foo :: (a: (x: $T, y: T) -> (T), value: int)
+    foo :: (a: [$T]T) 
+
+
+
+The problem with something like
+    foo :: (x: *$T) {}
+    i: int = 5;
+    a := foo(&i);
+
+Ok, since I have the 
+    x: Hashtable(int) = initialize...
+    foo :: (table: *Hashtable) {}
+    bar :: (table: *$T) {}
+    foo(x);     // In this context I can see that I require a pointer level of one above my own, so I work with that
+    foo(xp);    // In this context, I see that I require a pointer level of 1, so I just keep what I have
+    foo(xpp);   // Given: Pointer Depth 2, wanted: A singular pointer level, 
+    bar(x);     // Requires pointer, so we do address-of, T = Hashtable
+    bar(xp);    // Match *, match T = Hashtable
+    bar(xpp);   // Match *, match T = *Hashtable
+
+Since we have Auto-Dereference + Auto-Address_Of, do we have ambiguities?
+    ipp: **int;
+    foo :: (a: *$T);
+    foo(ippp);  // T = **int
+    foo(ipp);   // T = *int
+    foo(ip);    // T = int
+    foo(i);     // T = int
+
+The questions I am having are:
+    How to Analyse + Store Parameters during Header-Analysis?
+    What to do when Instanciating a Polymorphic-Function?
+
+
+
+Type-Constructors:
+    - T                 ID
+    - *T                Pointer
+    - [5]T              Array
+    - []T               Slice
+    - (x: T)            Function-Signature
+    - struct {a: T}     Struct
+    - Enum {RED :: 5}   Enum
+Type-Constructors form a tree
+
+Features Simple to hard:
+------------------------
+Comptime Parameters:
+    foo :: ($count: int) {return count * 2;}
+        Problem: During Header-Analysis, count value is unknown, but type is known
+    foo :: ($count: int) {return #bake(int) {return fib(5);}}
+        Problem: Do I want to execute bakes during analysis? I do not think so.
+    foo :: ($count: int) {a: [count]int}
+        Array with correct type, but unknown size, do I need an extra type for that -> I think so
+    foo :: ($T: Type) {a: T; return get_t_value(a);}
+        Since I don't know the type of a, I also cannot determine if get_t_value works.
+    bar :: ($T: Type, a: foo(T)) 
+        Here foo should work with T, since T is unknown, but there should be an error when trying
+        to use the return type of foo as a Type. Then the parameter A is set to Unknown
+
+Parameter Referencing:
+    foo :: (array: [Count]T, $T: Type, $count: int) {}
+        A new Symbol-Table is needed where parameter names can reference other parameter names.
+        It is reasonable to define Comptime Arguments as Comptime-Symbols with an unknown Comptime value
+        Here the order of evaluation in the parameters is given by which parameter references other parameters
+    foo :: ($T: B, $B: *T) {}
+        The Dependencies of parameters may contain Cycles, which need to be reported as errors
+    foo :: ($T: Type) -> T
+        With referencing it is also possible that the return-value can reference Comptime arguments
+    foo :: ($T: Type, $count: int) -> [count]T
+        But the return type cannot create new Polymorphic Parameters, so in this case it can always be analysed last
+    foo :: ($T: Type, member_value: #bake(Type)(return smallest_member(T)))
+        Bakes can also occur in types, but they must not be executed during analysis.
+        Or, to put it more precisely: If a bake contains an unknown Type, it should not be executed
+    bar :: (x: foo(int))
+        In this case I have a dependency on the header analysis of foo, and I would need to instanciate it
+    bar :: ($T: Type, x: foo(T))
+        Here I need to instanciate foo during analysis with an Unknown-Type
+
+Implicit Type-Parameter Deduction:
+    foo :: (x: T, $T: Type)
+    foo(i);
+        Here the parameter T is not given by the caller. But T is a type, and it is referenced
+        by another parameter, so we can try to deduce the type. So we can analyse the x parameter
+        to find that the Type of the parameter is int, and now we can set T to int.
+    foo(i, int)
+        If a comptime argument is given, it is evaluated first. 
+    foo(i, *int)
+        Expression-Context can then be used again to do Auto-Address_Of
+        
+
+    foo :: (x: Count, $Count: int)
+        This already results in an error during Header-Analysis, so this function cannot be called
+    foo :: (x: [Count]int, $Count: int)
+    foo(int.[1, 2, 3])
+        In Theory we could deduce the count, since it is related to the given type of the argument, but
+        this should result in an error. This is also the only case where a Comptime-Parameter that
+        is not a Type could be deduced, but I this is a small edge case and this should not work.
+
+    foo(i, *int)
+        During Instanciation, we first need to check if any of the Polymorphic-Parameters is already given.
+        If so, we can set it and analyse the other parameters. If a parameter is not explicitly given, it
+        a reference must exist in one of the other parameters or there is an error. If a reference in another
+        parameter exists, we need to try to parse the other parameter
+    bar :: (a: [Count]T, $Count: int, $T: Type) {}
+    bar(int.[1, 2, 3]);
+        No parameter is given, so we know we need to deduce Count and Type from Parameter a
+        For me this seems like we need to treat Value Parameters different from Type-Parameters.
+        Because Type-Inference is definitly something I want, but value inference seems wrong, when
+        looking at the following example
+    bar :: (a: [Count + 1]int, $Count: int)
+    bar(int.[1, 2, 3, 4, 5])
+        Here a Human could deduce that Count = 4, but if this cannot work in all cases,
+        since expressions can represent arbitrarily complex functions
+    bar(.[1, 2, 3], T = int)
+        A parameter is given, meaning that we first evaluate the parameter, and afterwards we fit the Count
+        Expressions which require Expression-Context (Auto-Array/-Struct/-Enum + casts) 
+    bar :: (a: [Count]T, b: T, $Count: int, $T: Type) {}
+    bar()
+
+Polymorphic Datatypes:
+    Holder :: struct(T: Type) {value: T;}
+        Analysing the parameters of a polymorphic struct is the same as those of functions
+        Only on structures it is implicit that all parameters are comptime.
+    Holder :: struct(T: Type, count: int, default_value: [count]Type) {value: [count]T}
+        We can again reference other parameters, so we need a dependency cycle resolve
+    Holder :: struct(T: Type, node: Node(T)) {}
+        During analysis we may require instanciation of other Polymorphic Objects with unknown types
+    x: Holder(String).Value_Type
+        Comptime-Parameters of value types should be accessible via member access, and the access is Comptime-Known
+    x: Holder;
+        The usage of the struct without the comptime parameters results in an error.
+
+Implicit Polymorphic Type-Parameters:
+    foo :: (a: $T)
+        foo(i)
+    foo :: ($T: Type, a: T)
+        The upper line does the exact same thing as the lower one, but the function may now be
+        called more conveniently
+        
+
+    
+
+Polymorphic Datatypes as parameters:
+    foo :: (x: Holder(int)) {}
+        Poly-Types may be used as parameter types, requiring an analysis
+    foo :: ($T: Type, x: Holder(T), y: x.T)
+        They may need to be instanciated during analysis with incomplete information
+    foo :: (x: Holder)
+        Usage of incomplete Types is allowed only in other polymorphic parameters
+        This makes the function/datatype that references them also automatically polymorphic
+    Hashtable_Info :: struct(x: Hashtable)
+        table: *type_of(x)
+        smallest_key: x.Key_Type
+
+
+
+
+
+
+
+
+
+Comptime Argument: $ before the argument name
+    foo :: ($bar: int) {
+Implicit Polymorphic Type: $ before a Type-Name
+    foo :: (bar: $T)
+
+I think only having Comptime Arguments would not be that hard, although we already get Dependency Problems
+    foo :: ($count: int, a: [count]byte) 
+
+Hashset :: struct(Key_Type: Type, hash_fn: (a: Key_Type) -> u64)
+
+Sized_Array :: struct(Value_Type: Type, Size: int, default_value: [Size]Type)
+    a: [Size]Value_Type
+
+size_array_init :: (a: $T/Sized_Array, x: [a.Size]a.Value_Type)
+    
+
+Instanciation
+    foo :: ($count: int)
+    foo(15);
+
+Signature-Analysis Order is dependent on 
+
+What happens during Signature Analysis?
+    I set a boolean to indicate that polymorpic types are allowed in this context, then I analyse the header
+
+What happens during Header-Analysis?
+    First we need to check if the function is polymorphic or if it isn't polymorphic
+    I think I want to ignore the type signature during analysis of a 
+
+What happens when Instanciating?
+
+First off all, this requires that the header analysis knows which parameters are polymorphic.
+
+Problem: Header parsing needs to parse the function signature.
+Function Signatures alone can also be Expressions.
+Can normal function signatures have parameter names/comptime arguments/default arguments?
+    bin_op_function: (a: int, b: int) -> int;
+    bin_op_function = add_ints;
+    bin_op_function = sub_ints;
+
+    bin_op_function: ($count: int, c: int) -> int 
+    bin_op_function: (a: int = 5)
+
+So in RC_Code, the Parameter names + information about comptime + default values.
+Normally a function signature returns a Signature_Type, but when we detect that there
+are Polymorphic Arguments involved 
+
+I also think that all functions require parameters names, otherwise it is unspecified wheater
+    (int)
+is a function taking an integer, or just Type int in parenthesis.
+If you want to have a pointer somewhere, and don't write names, just use an alias
+    int_fn_type :: (a: int)
+    x_fn: int_fn_type = print_double
+    bin_op_fn_type :: (a: int, b: int) -> int
+    y_fn: bin_op_fn_type = add_int
+
+
+
+
+
+
+
+
+
+
+    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+------------------
+----- OTHERS -----
+------------------
+
+Metaprogramming:
+    In metaprogramming, the Coder creates a piece of code that creates other pieces of Code.
+    This is useful in Situations where we otherwise would need to have Code-Duplication,
+    or where the generation of the Code could be automated (E.g. Serialization, Printing, Simple Constructor/Destructor logic)
+
+    Compile-Time Code execution is also a means to:
+     - Replace traditional Build-Systems
+     - Metaprogramming
+     - Advanced Error detection/handling
+     - Code-Modifications (Automated logging, timing)
+
+Design Discussion: Templates (OLD)
+----------------------------
+Open Questions:
+ * Functions inside templated functions
+ * How does type-checking work for templated functions 
+
+Why are templates usefull/what purpose do they have?
+They are usefull because there are multiple usecases where a programmer wants to reuse the same Code with
+just change some small things about it. For example, to have a typesave Container, withouth templates, 
+one would either need other metaprogramming capabilities (E.g. Macros in C, some code-generation tool...)
+or sacrifice Type-Safety/Speed (E.g. use Any-Type, Java Object...). 
+This is especially true if you want Code that works on multiple types, but requires instances of the type to be on the stack,
+since this cannot easily be done without metaprogramming or custom assembly.
+Although the main use of this is with containers, it is also usefull for values, e.g. for Vectors, or Conditionall-Compilation, 
+or calling different functions without function pointers
+
+Lets first look at how other languages approach this problem:
+    Zig: There is the concept of comptime parameters, and types can be returned from functions, which are automatically
+    executed at compiletime I guess?
+    fn List(comptime T: type) type {
+        return struct {
+            items: []T,
+            len: usize,
+        };
+    }
+
+    C/C++: Here you use custom template syntax to indicate that the function/struct is using templates
+    template<typename T, int count>
+    struct Array {
+        T data[count];
+    };
+
+    Odin: 
+    If you put a $ before the variable definition, this means that it must be compile time known:
+    foo :: ($T: Type, slice: []T, index: int) -> T {
+        return slice[index];
+    }
+    foo(int, int.[1, 2, 3], 2); // Returns 3
+
+    If you put the $ before a parameter type, this means that the type is infered from the passed parameter
+    foo :: (slice: []$T, index: int) -> T {
+        return slice[index];
+    }
+    foo(int.[1, 2, 3], 1); // Returns 2;
+
+    Jai:
+    This is basically the same as in Odin, but there are also:
+     * #modify
+     * #bake (For parameters)
+
+How do I want to approach this problem?
+Probably the same as in Jai and Odin, but since I also have comptime code execution it will
+be more similar to Jai. 
+
+Two things that bother me:
+It seems like both Jai and Odin are kind-of using Duck-Typing in their Generic approach:
+    add :: (a: $T, b: T) -> T {return a + b;}
+    return_mem_x :: (a: $T) -> int {return a.x;}
+I don't understand how this can be analysed to check if the code is correct, e.g.
+    foo :: (a: $T)
+    {
+        x := a.x;
+        // Or
+        y := bar(a);
+        info := type_info(y);
+        x = other_fn(x, 15);
+        a.x = a.x * x;
+        x.value = 15;
+    }
+To be fair this seems possible to implement, template types are just able to be used in operations, e.g., but the result is not specified
+
+Mem_Interface :: struct(T: Type) {
+    access_mem: (value: *T) -> int;
+}
+But my first thought was that all operations on templated types must also be specified, except assignment
+    foo :: (a: $T, $interface: Mem_Interface(T))
+    {
+        x := interface.access_mem(a);
+    }
+
+But do I actually have any good reasons why this shouldn't be allowed?
+ * Without this, I can check that the templated thing works without Problems --> Probably wrong because of bake/modifiy
+ * With this, I already have easily defined interfaces/traits in the language for metaprogramming
+
+foo :: (a: $T)
+{
+    #run {
+        if (type_info(T).size < 8) {
+            Compiler~error("Size of Type must be greater than 8");
+        }
+    }
+    x := false;
+    y := x + 5; // Obviously I want this 2 error now
+    a :: size_of(T);
+    #insert {
+        str := "x = x + 1;";
+        return str;
+    }
+    #if a > 16
+    {
+    }
+    #else
+    {
+    }
+}
+// To be fair, until I have some crazy stuff, I probably just want to analyse and check if I can detect
+// any errors.
+
+partial_order :: (left: $T, right: T) -> bool;
+sort_array :: (array: []$T, less_fn: (a: T, b: T) -> bool)
+{
+    if less_fn(array[j], array[j])
+    {
+    }
+}
+
+The reason that C++ has Contracts, Java has Interfaces + Generict matching thing and Rust has Traits is that
+in Polymorphic/Templated/Generic Code it is sometimes requires that a given type has some given properties.
+These could be:
+    * has a member of name x of type int
+    * has a member-function with a given signature
+    * has a given unary operator defined on it
+    * has an overloaded operator defined
+
+In Jai and Odin, it seems like you just get an error, but I feel like I just want to pass a constant function as parameter to
+handle these cases. Maybe I should checkout what Zig does.
+
+
+
+All extern source declarations:
+#load "whatever.upp";
+#extern "cstdio" { ID0 ID1 ID2 }
+#extern fn_name :: (); 
+#extern lib "test.lib"; 
+
+/*
+To be fair at some point I want to be able to load extern sources from code.
+#run {
+    Compiler~load_project("basic_datastructures.upp");
+    Compiler~define_extern_header("adder", (a:int, b:int)->int);
+    Compiler~load_c_header("cstdio");
+    Compiler~add_lib("test.lib");
+}
+*/
+
+
+
+
+
+Design Discussion: Constant/Readonly definitions + Constant Propagation
+-----------------------------------------------------------------------
+Lexicography:
+    Constant ... A value known at compile-time. Can be used for optimizations
+    Readonly ... A readonly variable that is only initialized once, at declaration. The value of this variable cannot/should not change
+
+I obviously want to have Constant values, because multiple systems build on it, like templates, bake and compile-time execution.
+The syntax is also pretty much set in stone right now, with it being quite similar to the variable definition syntax.
+
+Constant Syntax works well because it supports type, functions and variables (And later maybe modules, but we will see about that):
+    x :: 5; // Comptime integer
+    x: u64: cast 5; 
+    x :: #bake(Node) {...; return list.head;};
+    x :: () -> int {};
+    int_fn :: () -> int;
+    x :: struct {}
+    x: struct{a: int};
+
+Why would I want a Readonly System in the language?
+ * Parameters should not be changable, to allow the compiler to do optimizations with big structs (e.g. pass as pointer)
+ * Comptime values should not be changable, because accessing them will at some point result in an error (Readonly pages in C-compilation)
+ * Constant propagation would be a lot easier (Readonly variables can be better propagated then normal variables)
+ * Readonly variables may be a cleaner solution in Code sometimes
+
+Design questions:
+ * Syntax for readonly
+ * Pointer interaction with readonly
+ * Struct/Union interaction with readonly
+ * Should strings be readonly
+ * Casting from/to readonly
+ * Transitive readonly?
+
+Thoughts:
+    // Readonly values:
+    x: readonly float = 3.2; // WORKS
+    add :: readonly (a: int, b: int) -> int {return a + b;} // ERROR: expected type, not function
+    Node :: readonly struct {value: int};                   // WORKS: Node now cannot be changed...
+
+    // Readonly values cannot be changed
+    x = 12.0;                      // ERROR, x is readonly
+    node: readonly Node;           // ERROR, node is not initialized
+    node: readonly Node = .{...};
+    node.next &= whatever_node;    // ERROR, member accesses are not allowed on readonly variables
+    xp :&= x;                      // WORKS, xp is now a pointer to readonly int
+    xp = 5;                        // ERROR, trying to write to readonly value
+    ip: *int = 5;                  
+    ip &= x;                       // ERROR, cannot cast from *readonly int to *int
+
+    // Pointers to Readonly values can also not be changed
+    x: readonly int = 5;
+    xp :&= x;
+    xp = 7;                        // ERROR, trying to write to readonly int
+    i := 5;                         
+    xp = i;                        // WORKS,
+
+    // Because readonly usually requires things to be initialized, it can also be added afterwards
+    // This will cause problems with the constant propagation, but should still be possible to implement.
+    x: int = 5;
+    xp :&= x;
+    x = x + 7;
+    readonly x;
+    xp = 7; // Now the readonly value changed to 7, but it still cannot be changed through the x symbol;
+
+    // Constant structs:
+
+    // Pointers/Slices inside structs:
+    Node :: struct {
+        value: int;
+        next: &Node;
+    }
+    head: Node;
+    head = Node.{value = 0; next &= null;};
+    head.value += 1;
+    readonly head;
+
+    x := head.value + 1;  // WORKS, reading values is not a problem
+    head.value += 1;      // ERROR, Everything that is accessed on a const type is now also const 
+    x := head.next.value; // WORKS, 
+
+
+
+
+-------------------------------
+--- IMPLEMENTATION THOUGHTS ---
+-------------------------------
+RUNNABLE/STRUCT_REACHABLE: 
+--------------------------
+The problem both bake and Compile/Runnable share is that the workload depends
+on other Workloads of the same type, e.g.
+   * Runnable requires all called functions to be runnable
+   * Reachable requires all referenced/contained members to be reachable
+
+This would work fine with a dependency graph, but the problem here is that
+ - Circular Dependencies are NOT an Error, but rather something that happens often
+
+This structure seems to imply that these Workloads need to be executed in Clusters, 
+where one Cluster is a Set of Workloads that are all reachable from one to another, which is what 
+I have done currently. 
+
+
+
+CONTROL_FLOW:
+-------------
+Flow Types:
+    * Sequential 
+    * Stops      
+    * Returns 
+
+Break behavior:
+ - If a break is reachable, all blocks up to the broken block have sequential flow
+
+Loop behavior
+    Sequential, (Is fine)                               -> Return Sequential
+    Stops       (must also be fine because of continue) -> Return Sequential
+    Returns     (Error because loop only runs once)     -> Return Returns
+
+Conditional Rules:
+ - If all branches return the same flow, the result-flow is that flow
+ - If one branch is sequential, the result is sequential
+ - Otherwise we have a mix of Stops and Return, which results in Stops
+
+ 
+
+DEFERS:
+-------
+Defer: Mechanics are perfectly fine as they were before.
+Triggers:
+ - SCOPE/FUNCTION End
+ - Return
+ - Break/Continue --> Resolves it to the correct outer scope.
+
+Defer stuff to think about
+ - No defers inside other defers (I think this should work...)
+ - Continue/Break lables must be in the given defer --> I don't think thats true because Defer currently stay in the same scope
+ - Returns inside defers are not allowed? (I feel like the usecases of that are very limited)
+ - Flow of defer? With no return
+
+So current Solution:
+ - No Defers inside Defers
+ - No Break/Continue/Return inside defer (Control-Flow Changes)
+
+Implementation:
+ - Keep a stack of Modtree_Blocks as active defer blocks
+ - Keep a stack of active defers (RC_Statement_Blcoks) 
+ - ModTree_Blocks contain the start_defer index 
+ - And then I can reevaluate defer on each of those blocks
+
+
+
+
+
+
+
+
+
+
+---------------------------
+------ ISSUE TRACKER ------
+---------------------------
+Long-Term Goals:
+----------------
+ * Debugger
+ * Language features
+ * Editor features (Search and replace, jump to definition, show context info, refactoring, Code LOD)
+ * Maybe implementing Syntax guided Editor
+
+More Language features to implement:
+------------------------------------
+ * Tag-System (For constant values, but also other stuff)
+   ------- These features are for convenience, but they are not top priority ------
+ * Array bounds checking would be good
+ * Macro-System
+ * Iterators
+ * Location-Information (Filename, line_number...)
+ * Using statement
+ * Context (Used for memory allocations, useful in Multi-Threading)
+ * Array size should be u64, then iteration is more tedious (casting), but with iterators it should be fine
+ * Literal overhaul (What is a float, what isnt...)
+ * Loop statements, maybe loop over array syntax
+ * Variation for simple Dynamic dispatch  (Like interfaces in OO..., similar to dynamic in Rust)
+
+Editor features to implement:
+-----------------------------
+ * Code-Completion using current symbol table
+ * Search and Replace
+ * CTRL-R for replace word --> I would need Shift-R, since control R is already Redo
+ * Visual Mode/Blockmode (Multicursor)/Visual Line
+ * Multi-Window support (Multiple Tabs/Vertical or Horizontal splits, Tabs with shift-Tab)
+ * Jump to definition with string search (Maybe Ctrl-F)
+ * Undo/Redo Tree History
+ * Command recording (@ stuff with vim, altough this could maybe be done better)
+ * Tab for indentation/Ctrl-Tab for no indentation
+ * Formating with = should remove unneccessary whitespaces/add them where needed, and should ignore comments.
+    Actually, this should not be hard even without lexer, since we can count the parenthesis, spaces and other stuff...
+ * UTF-8 Support?
+
+Editor-Bugs:
+------------
+ * Alt-Gr spamming still cancels commands (win32 nonsense)
+ * Undo-Redo cursor position still sucks a little (Hint: Save positions after/before command)
+ * Non ASCII chars destroy some motions (Currently disabled) (Program crashes)
+
+ Vision for the Programming Language:
+ ------------------------------------
+  * Metaprogramming with Compile-Time code execution
+  * Static-Analyser with information exchange
+  * Code-Visualizations in Editor (Maybe syntax guided editor)
+
+Ideas that need to be tested:
+-----------------------------
+ * Implicit parameters in functions, some way of not having to call with all parameters?
+ * Using compile-time code-execution for compiler-controll, metaprogramming and static analysis
+ * Strong Code-Analysis (Analysing all possible values), with Warning System and user input
+ * Tag-System (For const, but also other information, generated by user and compiler)
+ * Visualizations for Code, better navigation, module system
+ * Non-Destructive Code-Editing for larger modules
+
+ * Tag for not used anymore for variables
+ * Compiler supported Dynamic-Array type
+ * Hot-Reloading Code
+ * Stack-Analysis for Debug information (Or others? E.g. logging)
+ * Redirect debug output to application window
+ * Error-Handling with the most recent build of the language 
+
+Code Improvements that should be made (When I have time):
+----------------------------------------------------
+Hashing type signatures for lookup, not array search, or maybe use Graph-like data structure
+
+Differentiation between errors and Warnings
+
+Intermediate Code should keep positional information, so should the bytecode (Will be necessary for the debugger)
+
+At some point the editor should not render at 60 FPS, but rather update when necessary.
+Asynchronous Editor-Compiler architecture, lexing/parse/analysing in background when code gets bigger
+
+
+
+
+
+----------------------------
+------ RANTS/THOUGHTS ------
+----------------------------
+
+Syntax Design-Principles:
+-------------------------
+Some characteristics I want:
+    - Compression based length (Often used constructs should be short, others can be long)
+    - Easy to remember
+    - Similar things should look similarly, different things should look different
+    - Refactoring should be easy
+    - Small refactorings should not cause unpredictable errors
+
+Rant: On Serializability
+------------------------
+In C and C++, the program does not have access to type-information, meaning that something like automatic serialization is not possible inside the language.
+    You could still do this by writing custom tools, which parse the code again (e.g. with clang) to get this type-information
+    and create files containing serialization code (Was done by Valve Physics Engine Programmers), but this is -very- tedious and error-prone.
+Even if this works, you cannot serialize all data, mainly because of pointers/references, which is the reason you cannot just memcopy data for serialization.
+To solve this, some changes to C/C++ are required:
+    - Dynamically Allocated arrays must have a size member (e.g. Slices in Upp have a size)
+    - Void* may not be used inside these structures (You don't have any type information about that), which is solved with the Any-Type
+A problem that still exists is that function pointers will not work/require special serialization effort.
+
+Design Questions:
+-----------------
+ - Do anonymous structs duck-type?
+        No, if this is useful, just define the struct
+ - Should the unpacking syntax be allowed for structs as well?
+        Yes, why should it not, makes refactoring easier
+ - Named argument passing?
+        This seems to overlap a lot with struct initilization, since struct initialization IS basically just
+        calling a function, but the function exists already for each Struct type
+        Maybe I want struct initialization to require naming the arguments, and not for functions
+        Not exactly the same, since Union initialization is 
+ - With anonymous structs, how are they instanciated?
+
+Design Ideas:
+-------------
+ - Function parameters are constant, parameters may be passed as pointers if they are too big
+ - Functions can only return one value, but it may be an anonymous struct
+ - Function return value cannot be dropped, ignore syntax (_ = do_smth();)
+ - Unpacking syntax for anonymous structs (x, y = returns_anonymous();)
+
+Design: Multiple returns:
+-------------------------
+I feel like I want a clear destinction between in, out and in-out parameters of functions
+    in: Normal, non-pointer parameters, passed as values
+    in-out: Pointer parameters
+    out: Return-values
+
+In C you cannot have a clear distinction between these three, because: 
+    - You dont want to pass huge structs/unions by pointer  --> Therefore pointer arguments may be in
+        In C++ you have constant references, do_smth(const int& smth)
+        In Rust/Zig arguments are always constant, and the compiler decides wheter or not they are passed as pointers
+    - You cannot have multiple return values                --> Either have a parameter-pointer that is written to, or create and return a struct
+        Either support multiple return values, or some tuple types/anonymous structs as returns
+
+
+Thoughts on pointers:
+---------------------
+UPDATE:
+Pointers acting exactly the same as values is, I think, a great idea. The only problem we have are
+situation where a pointer operation could also be used instead of a value operation. 
+The question I am having is wheter or not I want to have special syntax to solve this problem. 
+The current operations that accept both pointers and values are:
+    - Equals-Comparisons (== and !=)
+    - Cast to u64 (cast(u64))
+
+Pointers are essential in Computer programming, and I want them in the language
+Null seems to be an issue for a lot of programmers, but this should be handled by the static analyzor
+Pointers are used for call by reference,
+Pointers are also used to have multiple return values
+Pointers are also used to not pass huge structures by value, since this requires copying
+
+If you think about function parameters as either in, out or in_out parameters,
+pointers in C basically combine all of those into one feature.
+This makes some APIs kinda shitty, because seeing a pointer does not provide the user
+information about nullable, if its an in, out or in_out value. 
+
+In Upp I think I want a distinction of these type by having the following:
+ - Non-Pointer parameters are constant (So that huge structs can be passed internally by pointer without requiring a copy), 
+    although I have to think about constant pointers inside of structs
+ - Pointer parameters could in theory be all types of parameters (in, out, in_out), but should only be used for in_out
+    which is definitly something that is gonna be required quite often
+ - With multiple return values there is no need to use pointers for return values
+
+In C pointers are also used as arrays, with pointer arithmetic being a thing (- and + being defined for pointers)
+This also leads to the use of stacked pointers, (char** argv, where argv is actually an array to char*, so []String in my language)
+The operations required on pointers in C are:
+    - Address-Of    int* xp = &x;
+    - Dereference   *xp = *xp + 1;
+    - Array-Access  item = xp[2];
+    - Arithmetic    item = *(xp + 2);
+                    ip   = xp + 2;
+                    diff = ip - x;
+
+I would like to be pointers to be as interchangable with values as possible, to do that I want
+to pass around the expected_type of expressions 
+
+
+
+
+Syntax what operators are in use:
+---------------------------------
+    +   ... Addition
+    -   ... Subtraction, Unary negate
+    *   ... Multiplication/Address Of/Pointer type constructor
+    &   ... Dereference
+    /   ... Division
+    %   ... Modulo
+    !   ... Logical not
+
+    <   ... Less 
+    >   ... Greater
+    <=  ... Less Equals
+    >=  ... Greater Equals
+    ==  ... Equals
+    !=  ... Not Equals
+
+    &&  ... Logical And
+    ||  ... Logical Or
+
+    ()  ... Function call/Function definition
+    []  ... Array definition/Index operation
+    {}  ... Code Block operation
+    <>  ... Template argument parenthesis
+
+    "   ... String delimiters
+    #   ... Extern declarations (#load)
+    .   ... Member access/Auto access
+    ;   ... Statement delimiter
+    ,   ... List item delimiter
+
+    :   ... Variable definition
+    :=  ... Define-Infer
+    ::  ... Constant Definition
+    ->  ... Function return value
+
+    //  ... Single line comment
+    /*  ... Multiline comment start
+    */  ... Multiline comment end
+
+Currently unused but plans exist:
+    _   ... Unused value in multiple returns
+    '   ... Char delimiter (Not implemented yet)
+    $   ... Fast Template declaration (Not implemented yet)
+    @   ... Annotations
+    \   ... String delimiters
+
+Open Characters and normal usage
+    ~   ... Bitwise Negate
+    ^   ... Bitwise XOR
+    &   ... Bitwise And
+    |   ... Bitwise Or
+    >>  ... Bitshift right
+    <<  ... Bitshift left
+    ?   ... Ternary Operator
+    °   ... Nothing
+    
+
+
+
+
+Ideas that just come to mind:
+-----------------------------
+PrintF Debugging could be replaced with memory visualizer
+'Destructors' could be generated with metaprogramming, simple initializors too
+Advanced initializers could also be generated with metaprogramming and Annotations
+Differentiate States and Tags in the language
+Should we have compile-time known arguments, are they the same as template args?
+Context struct could live in thread-local memory
+Syntax guided editor would be cool I guess
+Are stacked pointers a reasonable idea (**int)? Where would i use them
+Automated parameter deduction (Like macros taking names from outer scope)
+Meta-Programming code modifications may be easy if executed code must be unmodified, and only finaly code is modified
+Strings should probably just be byte slices (int + pointer) and be immutable, and we'll just have a String_Builder for output
+
+Code Ideas:
+-----------
+Type_System should maybe do more, like templates, parameter names, struct names
+Symbol template infos add info if symbol is templated
+Maybe think about making initializers helpers for expressions/statements?
+Const expression evaluation maybe after creation?
+Redo template syntax, only allow on functions/structs
+Delete IR_Code, just use modtree for translation
+Functions may just be compile time known function pointers?
+Hardcoded functions should be removed at some point
+AST_Node only really needs type and child information for processing, parent and tokenrange could be in another array and multiple structures could exist for this
+ModTree and IR_Code Structure is probably not final, but well see when we know more
+Workload-Structure may be easier if we could analyse the dependencies beforehand -->
+    Maybe implement pre-analysis step, so that Workloads dont need Pauses/Wait for dependencies
+Custom allocator for Bytecode-Interpreter, check pointers if they are in range, have custom boolean
+    which can be toggled to indicate that C-Functions may be called
+Initialize all variables to zero in Bytecode
+
+Thought Run-Down:
+-----------------
+Maybe remove single statement blocks, e.g. if (bool) return false;
+Just replace these with if (cond) {return false;}
+
+Anonymous structs:
+    x: struct {name: String; value: int;};
+    x.name = "Henlo";
+    x.value = 5;
+    x = .{name = "Henlo"; value = 15;};
+
+Return value may be struct
+    find_elem(...) -> struct{found: bool; index: int;}
+    return .{found = true; index = 15;};
+
+Values may be left explicitly uninitialized
+    .{found = _, index = 15};
+
+Struct unpacking syntax
+    found, index := find_elem(...);
+    f2, _ := find_elem(...);
+
+Return values must be explicitly ignored:
+    _ = hashtable_add_element(whatever...);
+
+Lambda support
+    x := () {print_string("What");};
+    adder := (x: int, y: int) -> int {return x + y;};
+
+Choosing enum type
+    Something :: enum<int> {}
+    Smaller :: enum<byte> {}
+
+Expression_Blocks?
+    UPDATE: Currently i think these are a bad idea, because return does something else inside these blocks,
+        and I could introduce the concept of yield, which would return a value, but I don't think this is necessarily useful.
+        The Idea behind expression blocks would be to give more purpose to an unnamed block. E.g.
+
+        The 2 main use cases I have for these are :
+            * a short way to write if's and switches
+            * Make sure some values are initialized
+
+            The main use cases I can think of are:
+                * a short way to write if's and switches
+                * Makes sure values are going to be initialized
+                * Gives purpose to values (E.g. you know where the values are going to be used)
+
+            Problems:
+                * Syntax overlap inside if, switch, while --> Not true with extra syntax, e.g. #{}
+                * They may be quite unnecessary, because function can do the same thing
+                * ModTree_Code's structure of expressions and statements isn't exactly build for this
+                * Would definitly need some experimentation
+
+        fn_call(15, {if condition {yield make_unknown();} yield make_known(condition);});
+
+    found, index: bool, int = {
+        
+    }
+
+    of 
+    expression.index, expression.is_templated = {
+
+    };
+
+    x = {switch color {case .RED: return 5; case .GREEN: return 2;}}
+    x = {if a return 4; return 2;}
+    z = 32 + {if alive return 17; return -2;}
+    min_member: *Struct_Member = 0;
+    {
+        curr_min: *Struct_Member = members[0];
+        loop mem in members {
+            if mem.val < curr_min.value curr_min = mem;
+        }
+        if (curr_min.alive != 0) {
+            min_member = curr_min;
+        }
+    }
+    
+    // Why could this be useful? Because it gives the code block a distinct purpose, and its impossible to not set the values 
+    found, member: bool, *Member = 
+    {
+        ret_type :: struct {f: bool; mem: *Member};
+        loop a in array {
+            if condition_met(a) {
+                return ret_type{f = true, mem = a};
+            }
+        }
+        return ret_type{f = false, mem = _};
+    } 
+
+    // Also some things can be typed rather quickly
+    based_num := {if is_based return 69; return 0;};
+
+NOTES:
+------
+ * Next stuff:
+    - Jump to definition fix --> A separate analysis/code generation phase would be nice
+    - Code_Completion
+ * Improve Language:
+    - Compile time code-evaluation
+    - Tag-System + Static Analyis
+ * Improve Editor:
+    - Multiple projects
+    - Code-Completion
+    - Search and Replace
+
+
+Metaprogramming features:
+-------------------------
+ * Templates (Types for Containers, Functions/Values for algorithms and interfaces)
+ * Macro System (Iterators, Scope_Break, Variable_Define, Code_Insertion... lots of convenience functions)
+ * Defer
+ * #if (Conditional Compilation)
+ * Currying
+ * AST-Manipulation (Compile time Execution)
+ * Generating source-code (Compile time Execution)
+
+
+
+
+
+
+
+

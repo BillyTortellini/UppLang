@@ -3,12 +3,15 @@
 #include "ast.hpp"
 #include "syntax_editor.hpp"
 #include "compiler.hpp"
+#include "code_history.hpp"
 
 namespace Parser
 {
     // Types
     using namespace AST;
 
+
+    // Parser Helpers
     struct Binop_Link
     {
         Binop binop;
@@ -26,10 +29,8 @@ namespace Parser
     struct Parser
     {
         Parse_State state;
-        Dynamic_Array<Parse_Info> parse_informations;
-        Dynamic_Array<Error_Message> error_messages;
-        Source_Code* code;
-        AST::Module* root;
+        Dynamic_Array<AST::Node*> allocated_nodes;
+        Parse_Pass* pass;
     };
 
     // Globals
@@ -40,67 +41,55 @@ namespace Parser
     // Parser Functions
     void parser_rollback(Parse_State checkpoint)
     {
-        for (int i = checkpoint.allocated_count; i < parser.parse_informations.size; i++) {
-            AST::base_destroy(parser.parse_informations[i].allocation);
+        for (int i = checkpoint.allocated_count; i < parser.allocated_nodes.size; i++) {
+            AST::base_destroy(parser.allocated_nodes[i]);
         }
-        dynamic_array_rollback_to_size(&parser.parse_informations, checkpoint.allocated_count);
-        dynamic_array_rollback_to_size(&parser.error_messages, checkpoint.error_count);
+        dynamic_array_rollback_to_size(&parser.allocated_nodes, checkpoint.allocated_count);
+        if (parser.pass != 0) {
+            dynamic_array_rollback_to_size(&parser.pass->error_messages, checkpoint.error_count);
+        }
         parser.state = checkpoint;
     }
 
     void reset()
     {
-        parser.root = 0;
+        parser.pass = 0;
 
         Parse_State state;
-        state.pos = token_index_make_root(parser.code);
         state.allocated_count = 0;
         state.error_count = 0;
         parser_rollback(state);
-
-        dynamic_array_reset(&parser.error_messages);
     }
 
     void initialize()
     {
-        parser.parse_informations = dynamic_array_create_empty<Parse_Info>(32);
-        parser.error_messages = dynamic_array_create_empty<Error_Message>(4);
+        parser.allocated_nodes = dynamic_array_create_empty<AST::Node*>(32);
         reset();
     }
 
     void destroy()
     {
         reset();
-        dynamic_array_destroy(&parser.parse_informations);
-        dynamic_array_destroy(&parser.error_messages);
+        dynamic_array_destroy(&parser.allocated_nodes);
     }
 
     template<typename T>
-    T* allocate_base(Base* parent, Base_Type type)
+    T* allocate_base(Node* parent, Node_Type type)
     {
         // PERF: A block allocator could probably be used here
         auto result = new T;
         memory_zero(result);
-        Base* base = &result->base;
+        Node* base = &result->base;
         base->parent = parent;
         base->type = type;
-        base->allocation_index = parser.parse_informations.size;
-
-        Parse_Info info;
-        info.allocation = base;
-        info.range.start = parser.state.pos;
-        info.range.end = parser.state.pos;
-        dynamic_array_push_back(&parser.parse_informations, info);
-        parser.state.allocated_count = parser.parse_informations.size;
+        base->analysis_item_index = -1;
+        base->range.start = parser.state.pos;
+        base->range.end = parser.state.pos;
 
         return result;
     }
 
-    Parse_Info* get_parse_info(AST::Base* base) {
-        return &parser.parse_informations[base->allocation_index];
-    }
-
-    void base_correct_token_ranges(Base* base)
+    void base_correct_token_ranges(Node* base)
     {
         /*
         DOCU: 
@@ -115,8 +104,8 @@ namespace Parser
         FUTURE: Maybe the parser can handle these problems and we don't need a Post-Processing step
         */
 
-        auto& info = *get_parse_info(base);
-        auto& range = info.range;
+        auto& range = base->range;
+        auto& bounding_range = base->bounding_range;
 
         // Correct Invalid ranges
         {
@@ -126,13 +115,13 @@ namespace Parser
             if (end.line.line == block->lines.size) {
                 end = token_index_make_block_end(end.line.block);
             }
-            //else if (end.token == 0 && !index_equal(end, range.start) && base->type != Base_Type::CODE_BLOCK && base->type != Base_Type::MODULE) {
+            //else if (end.token == 0 && !index_equal(end, range.start) && base->type != Node_Type::CODE_BLOCK && base->type != Node_Type::MODULE) {
                 //end = token_index_make_line_end(line_index_prev(end.line));
             //}
         }
         assert(index_valid(range.start), "Jo");
         assert(index_valid(range.end), "Jo");
-        info.bounding_range = range;
+        bounding_range = range;
 
         // Iterate over all children + Calculate bounding ranges
         {
@@ -140,17 +129,16 @@ namespace Parser
             auto child = AST::base_get_child(base, index);
             if (child == 0) return;
 
-            auto& bounding = info.bounding_range;
             while (child != 0) 
             {
                 base_correct_token_ranges(child);
 
-                auto child_range = get_parse_info(child)->bounding_range;
-                if (index_compare(bounding.start, child_range.start) < 0) {
-                    bounding.start = child_range.start;
+                auto child_range = child->bounding_range;
+                if (index_compare(bounding_range.start, child_range.start) < 0) {
+                    bounding_range.start = child_range.start;
                 }
-                if (index_compare(child_range.end, bounding.end) < 0) {
-                    bounding.end = child_range.end;
+                if (index_compare(child_range.end, bounding_range.end) < 0) {
+                    bounding_range.end = child_range.end;
                 }
 
                 index += 1;
@@ -160,8 +148,8 @@ namespace Parser
 
         assert(index_valid(range.start), "Jo");
         assert(index_valid(range.end), "Jo");
-        assert(index_valid(info.bounding_range.start), "Jo");
-        assert(index_valid(info.bounding_range.end), "Jo");
+        assert(index_valid(bounding_range.start), "Jo");
+        assert(index_valid(bounding_range.end), "Jo");
 
         // Check that start/end is in order
         int order = index_compare(range.start, range.end);
@@ -169,11 +157,11 @@ namespace Parser
         if (order == 0) {
             // INFO: There are only 3 AST-Nodes which are allowed to have a 0 sized token range:
             //       Error-Expressions, Code-Blocks and Symbol-Reads (Empty reads
-            if (base->type == AST::Base_Type::EXPRESSION) {
-                auto expr = base_downcast<Expression>(base);
+            if (base->type == AST::Node_Type::EXPRESSION) {
+                auto expr = downcast<Expression>(base);
                 assert(expr->type == AST::Expression_Type::ERROR_EXPR, "Only error expression may have 0-sized token range");
             }
-            else if (base->type == AST::Base_Type::CODE_BLOCK || base->type == AST::Base_Type::SYMBOL_READ) {
+            else if (base->type == AST::Node_Type::CODE_BLOCK || base->type == AST::Node_Type::SYMBOL_READ) {
             }
             else {
                 panic("See comment before");
@@ -184,17 +172,13 @@ namespace Parser
 
 
     // Error reporting
-    Array<Error_Message> get_error_messages() {
-        return dynamic_array_as_array(&parser.error_messages);
-    }
-
     void log_error(const char* msg, Token_Range range)
     {
         Error_Message err;
         err.msg = msg;
         err.range = range;
-        dynamic_array_push_back(&parser.error_messages, err);
-        parser.state.error_count = parser.error_messages.size;
+        dynamic_array_push_back(&parser.pass->error_messages, err);
+        parser.state.error_count = parser.pass->error_messages.size;
     }
 
     void log_error_to_pos(const char* msg, Token_Index pos) {
@@ -323,10 +307,10 @@ namespace Parser
         SCOPE_EXIT(if (_error_exit) parser_rollback(checkpoint););
 
 #define CHECKPOINT_EXIT {_error_exit = true; return 0;}
-#define SET_END_RANGE(val) parser.parse_informations[val->base.allocation_index].range.end = parser.state.pos;
+#define SET_END_RANGE(val) val->base.range.end = parser.state.pos;
 #define PARSE_SUCCESS(val) { \
-        if (val->base.type == Base_Type::CODE_BLOCK) return val; \
-        parser.parse_informations[val->base.allocation_index].range.end = parser.state.pos; \
+        if (val->base.type == Node_Type::CODE_BLOCK) return val; \
+        val->base.range.end = parser.state.pos; \
         return val; \
     }
 
@@ -397,7 +381,7 @@ namespace Parser
         // Setup parser position at block start
         auto& pos = parser.state.pos;
         pos = token_index_make(line_index_make(block_index, 0), 0);
-        parser.parse_informations[parent->base.allocation_index].range.end = token_index_make_block_end(block_index);
+        parent->base.range.end = token_index_make_block_end(block_index);
 
         auto block = index_value(pos.line.block);
         // Check for special cases
@@ -530,7 +514,7 @@ namespace Parser
 
     // DOCU: Parser position must be on Open Parenthesis for this to work
     template<typename T>
-    void parse_parenthesis_comma_seperated(Base* parent, Dynamic_Array<T*>* fill_array, T* (*parse_fn)(Base* parent), Parenthesis_Type type)
+    void parse_parenthesis_comma_seperated(Node* parent, Dynamic_Array<T*>* fill_array, T* (*parse_fn)(Node* parent), Parenthesis_Type type)
     {
         // Check for open parenthesis
         char closing_char;
@@ -619,17 +603,17 @@ namespace Parser
 
 
     // Prototypes
-    Project_Import* parse_project_import(Base* parent);
-    Definition* parse_definition(Base* parent);
-    Statement* parse_statement(Base* parent);
-    Enum_Member* parse_enum_member(Base* parent);
-    Project_Import* parse_project_import(Base* parent);
-    Switch_Case* parse_switch_case(Base* parent);
+    Project_Import* parse_project_import(Node* parent);
+    Definition* parse_definition(Node* parent);
+    Statement* parse_statement(Node* parent);
+    Enum_Member* parse_enum_member(Node* parent);
+    Project_Import* parse_project_import(Node* parent);
+    Switch_Case* parse_switch_case(Node* parent);
 
-    Expression* parse_expression(Base* parent);
-    Expression* parse_expression_or_error_expr(Base* parent);
-    Expression* parse_single_expression(Base* parent);
-    Expression* parse_single_expression_or_error(Base* parent);
+    Expression* parse_expression(Node* parent);
+    Expression* parse_expression_or_error_expr(Node* parent);
+    Expression* parse_single_expression(Node* parent);
+    Expression* parse_single_expression_or_error(Node* parent);
 
     void parse_item_fn_statement(Code_Block* parent);
     void parse_item_fn_module_item(Module* parent);
@@ -637,12 +621,12 @@ namespace Parser
     // Parse Item/Block Functions
     void parse_block_fn_anonymous_block_in_code_block(Code_Block* parent, Block_Index block_index)
     {
-        auto code_block = allocate_base<Code_Block>(&parent->base, Base_Type::CODE_BLOCK);
-        get_parse_info(&code_block->base)->range = token_range_make_block(block_index);
+        auto code_block = allocate_base<Code_Block>(&parent->base, Node_Type::CODE_BLOCK);
+        code_block->base.range = token_range_make_block(block_index);
         code_block->statements = dynamic_array_create_empty<Statement*>(1);
         code_block->block_id = optional_make_failure<String*>();
 
-        auto statement = allocate_base<Statement>(&parent->base, Base_Type::STATEMENT);
+        auto statement = allocate_base<Statement>(&parent->base, Node_Type::STATEMENT);
         statement->type = Statement_Type::BLOCK;
         statement->options.block = code_block;
 
@@ -732,12 +716,12 @@ namespace Parser
         return result;
     }
 
-    Code_Block* parse_code_block(Base* parent, AST::Expression* related_expression)
+    Code_Block* parse_code_block(Node* parent, AST::Expression* related_expression)
     {
-        auto result = allocate_base<Code_Block>(parent, Base_Type::CODE_BLOCK);
+        auto result = allocate_base<Code_Block>(parent, Node_Type::CODE_BLOCK);
         auto follow_block_opt = line_index_block_after(parser.state.pos.line);
         if (follow_block_opt.available) {
-            get_parse_info(&result->base)->range = token_range_make_block(follow_block_opt.value);
+            result->base.range = token_range_make_block(follow_block_opt.value);
         }
         result->statements = dynamic_array_create_empty<Statement*>(1);
         result->block_id = parse_block_label(related_expression);
@@ -745,10 +729,10 @@ namespace Parser
         PARSE_SUCCESS(result);
     }
 
-    Argument* parse_argument(Base* parent)
+    Argument* parse_argument(Node* parent)
     {
         CHECKPOINT_SETUP;
-        auto result = allocate_base<Argument>(parent, Base_Type::ARGUMENT);
+        auto result = allocate_base<Argument>(parent, Node_Type::ARGUMENT);
         if (test_token(Token_Type::IDENTIFIER) && test_operator_offset(Operator::ASSIGN, 1)) {
             result->name = optional_make_success(get_token(0)->options.identifier);
             advance_token();
@@ -761,10 +745,10 @@ namespace Parser
         PARSE_SUCCESS(result);
     }
 
-    Parameter* parse_parameter(Base* parent)
+    Parameter* parse_parameter(Node* parent)
     {
         CHECKPOINT_SETUP;
-        auto result = allocate_base<Parameter>(parent, Base_Type::PARAMETER);
+        auto result = allocate_base<Parameter>(parent, Node_Type::PARAMETER);
         result->is_comptime = false;
         if (test_operator(Operator::DOLLAR)) {
             result->is_comptime = true;
@@ -777,21 +761,21 @@ namespace Parser
 
         if (!test_operator(Operator::COLON)) CHECKPOINT_EXIT;
         advance_token();
-        result->type = parse_expression_or_error_expr((Base*)result);
+        result->type = parse_expression_or_error_expr((Node*)result);
 
         if (test_operator(Operator::ASSIGN)) {
-            result->type = parse_expression_or_error_expr((Base*)result);
+            result->type = parse_expression_or_error_expr((Node*)result);
         }
         PARSE_SUCCESS(result);
     }
 
-    Switch_Case* parse_switch_case(Base* parent)
+    Switch_Case* parse_switch_case(Node* parent)
     {
         if (!test_keyword_offset(Keyword::CASE, 0) && !test_keyword_offset(Keyword::DEFAULT, 0)) {
             return 0;
         }
 
-        auto result = allocate_base<Switch_Case>(parent, Base_Type::SWITCH_CASE);
+        auto result = allocate_base<Switch_Case>(parent, Node_Type::SWITCH_CASE);
         bool is_default = test_keyword_offset(Keyword::DEFAULT, 0);
         advance_token();
         result->value.available = false;
@@ -801,15 +785,15 @@ namespace Parser
         result->block = parse_code_block(&result->base, 0);
 
         // Set block label (Switch cases need special treatment because they 'Inherit' the label from the switch
-        assert(parent->type == Base_Type::STATEMENT && ((Statement*)parent)->type == Statement_Type::SWITCH_STATEMENT, "");
+        assert(parent->type == Node_Type::STATEMENT && ((Statement*)parent)->type == Statement_Type::SWITCH_STATEMENT, "");
         result->block->block_id = ((Statement*)parent)->options.switch_statement.label;
         PARSE_SUCCESS(result);
     }
 
-    Statement* parse_statement(Base* parent)
+    Statement* parse_statement(Node* parent)
     {
         CHECKPOINT_SETUP;
-        auto result = allocate_base<Statement>(parent, Base_Type::STATEMENT);
+        auto result = allocate_base<Statement>(parent, Node_Type::STATEMENT);
 
         {
             // Check for Anonymous Blocks
@@ -875,11 +859,11 @@ namespace Parser
                 // Parse else-if chain
                 while (test_keyword_offset(Keyword::ELSE, 0) && test_keyword_offset(Keyword::IF, 1))
                 {
-                    auto implicit_else_block = allocate_base<AST::Code_Block>(&last_if_stat->base, Base_Type::CODE_BLOCK);
+                    auto implicit_else_block = allocate_base<AST::Code_Block>(&last_if_stat->base, Node_Type::CODE_BLOCK);
                     implicit_else_block->statements = dynamic_array_create_empty<Statement*>(1);
                     implicit_else_block->block_id = optional_make_failure<String*>();
 
-                    auto new_if_stat = allocate_base<AST::Statement>(&last_if_stat->base, Base_Type::STATEMENT);
+                    auto new_if_stat = allocate_base<AST::Statement>(&last_if_stat->base, Node_Type::STATEMENT);
                     advance_token();
                     advance_token();
                     new_if_stat->type = Statement_Type::IF_STATEMENT;
@@ -967,14 +951,14 @@ namespace Parser
         CHECKPOINT_EXIT;
     }
 
-    Enum_Member* parse_enum_member(Base* parent)
+    Enum_Member* parse_enum_member(Node* parent)
     {
         if (!test_token(Token_Type::IDENTIFIER)) {
             return 0;
         }
 
         CHECKPOINT_SETUP;
-        auto result = allocate_base<Enum_Member>(parent, Base_Type::ENUM_MEMBER);
+        auto result = allocate_base<Enum_Member>(parent, Node_Type::ENUM_MEMBER);
         result->name = get_token(0)->options.identifier;
         advance_token();
         if (test_operator(Operator::DEFINE_COMPTIME))
@@ -985,12 +969,12 @@ namespace Parser
         PARSE_SUCCESS(result);
     }
 
-    Expression* parse_single_expression_no_postop(Base* parent)
+    Expression* parse_single_expression_no_postop(Node* parent)
     {
         // DOCU: Parses Pre-Ops + Bases, but no postops
         // --*x   -> is 3 pre-ops + base x
         CHECKPOINT_SETUP;
-        auto result = allocate_base<Expression>(parent, Base_Type::EXPRESSION);
+        auto result = allocate_base<Expression>(parent, Node_Type::EXPRESSION);
 
         // Unops
         if (test_token(Token_Type::OPERATOR))
@@ -1082,7 +1066,7 @@ namespace Parser
         // Bases
         if (test_token(Token_Type::IDENTIFIER))
         {
-            Symbol_Read* final_read = allocate_base<Symbol_Read>(&result->base, Base_Type::SYMBOL_READ);
+            Symbol_Read* final_read = allocate_base<Symbol_Read>(&result->base, Node_Type::SYMBOL_READ);
             Symbol_Read* read = final_read;
             read->path_child.available = false;
             read->name = get_token(0)->options.identifier;
@@ -1091,7 +1075,7 @@ namespace Parser
             {
                 advance_token();
                 advance_token();
-                read->path_child = optional_make_success(allocate_base<Symbol_Read>(&read->base, Base_Type::SYMBOL_READ));
+                read->path_child = optional_make_success(allocate_base<Symbol_Read>(&read->base, Node_Type::SYMBOL_READ));
                 if (test_token(Token_Type::IDENTIFIER)) {
                     read->path_child.value->name = get_token(0)->options.identifier;
                 }
@@ -1177,7 +1161,7 @@ namespace Parser
             // Parse Return value
             if (test_operator(Operator::ARROW)) {
                 advance_token();
-                signature.return_value = optional_make_success(parse_expression_or_error_expr((Base*)result));
+                signature.return_value = optional_make_success(parse_expression_or_error_expr((Node*)result));
             }
 
             // Check if its a function or just a function signature
@@ -1188,13 +1172,13 @@ namespace Parser
             auto signature_expr = result;
             SET_END_RANGE(signature_expr);
 
-            result = allocate_base<Expression>(parent, Base_Type::EXPRESSION);
-            get_parse_info(&result->base)->range.start = get_parse_info(&signature_expr->base)->range.start;
+            result = allocate_base<Expression>(parent, Node_Type::EXPRESSION);
+            result->base.range.start = signature_expr->base.range.start;
             result->type = Expression_Type::FUNCTION;
             auto& function = result->options.function;
             function.body = parse_code_block(&result->base, 0);
             function.signature = signature_expr;
-            signature_expr->base.parent = (Base*)result;
+            signature_expr->base.parent = (Node*)result;
             PARSE_SUCCESS(result);
         }
 
@@ -1248,7 +1232,7 @@ namespace Parser
             PARSE_SUCCESS(result);
         }
         if (test_keyword_offset(Keyword::MODULE, 0)) {
-            auto module = allocate_base<Module>(&result->base, Base_Type::MODULE);
+            auto module = allocate_base<Module>(&result->base, Node_Type::MODULE);
             module->definitions = dynamic_array_create_empty<Definition*>(1);
             module->imports = dynamic_array_create_empty<Project_Import*>(1);
             advance_token();
@@ -1268,7 +1252,7 @@ namespace Parser
         //       but rather to the parent of the child
         CHECKPOINT_SETUP;
         // Post operators
-        auto result = allocate_base<Expression>(child->base.parent, Base_Type::EXPRESSION);
+        auto result = allocate_base<Expression>(child->base.parent, Node_Type::EXPRESSION);
         if (test_operator(Operator::DOT))
         {
             advance_token();
@@ -1328,9 +1312,9 @@ namespace Parser
         CHECKPOINT_EXIT;
     }
 
-    Expression* parse_single_expression(Base* parent)
+    Expression* parse_single_expression(Node* parent)
     {
-        // DOCU: This function parses: Pre-Ops + Base + Post-Op
+        // DOCU: This function parses: Pre-Ops + Node + Post-Op
         Expression* child = parse_single_expression_no_postop(parent);
         if (child == 0) return child;
         Expression* post_op = parse_post_operator_internal(child);
@@ -1342,14 +1326,14 @@ namespace Parser
         return child;
     }
 
-    Expression* parse_single_expression_or_error(Base* parent)
+    Expression* parse_single_expression_or_error(Node* parent)
     {
         auto expr = parse_single_expression(parent);
         if (expr != 0) {
             return expr;
         }
         log_error_range_offset("Expected Single Expression", 0);
-        expr = allocate_base<AST::Expression>(parent, AST::Base_Type::EXPRESSION);
+        expr = allocate_base<AST::Expression>(parent, AST::Node_Type::EXPRESSION);
         expr->type = Expression_Type::ERROR_EXPR;
         return expr;
     }
@@ -1365,7 +1349,7 @@ namespace Parser
             }
             else if (op_prio == priority_level) {
                 *index = *index + 1;
-                Expression* result = allocate_base<Expression>(0, Base_Type::EXPRESSION);
+                Expression* result = allocate_base<Expression>(0, Node_Type::EXPRESSION);
                 result->type = Expression_Type::BINARY_OPERATION;
                 result->options.binop.type = link.binop;
                 result->options.binop.left = expr;
@@ -1374,7 +1358,7 @@ namespace Parser
                 result->options.binop.right->base.parent = &result->base;
                 expr = result;
 
-                auto& range = parser.parse_informations[result->base.allocation_index].range;
+                auto& range = result->base.range;
                 range.start = link.token_index;
                 range.end = token_index_next(link.token_index);
             }
@@ -1385,7 +1369,7 @@ namespace Parser
         return expr;
     }
 
-    Expression* parse_expression(Base* parent)
+    Expression* parse_expression(Node* parent)
     {
         CHECKPOINT_SETUP;
         Expression* start_expr = parse_single_expression(parent);
@@ -1438,20 +1422,20 @@ namespace Parser
         return result; // INFO: Don't use PARSE SUCCESS, since this would overwrite the token-ranges set by parse_priority_level
     }
 
-    Expression* parse_expression_or_error_expr(Base* parent)
+    Expression* parse_expression_or_error_expr(Node* parent)
     {
         auto expr = parse_expression(parent);
         if (expr != 0) {
             return expr;
         }
         log_error_range_offset("Expected Expression", 0);
-        expr = allocate_base<AST::Expression>(parent, AST::Base_Type::EXPRESSION);
+        expr = allocate_base<AST::Expression>(parent, AST::Node_Type::EXPRESSION);
 
         expr->type = Expression_Type::ERROR_EXPR;
         PARSE_SUCCESS(expr);
     }
 
-    Project_Import* parse_project_import(Base* parent)
+    Project_Import* parse_project_import(Node* parent)
     {
         CHECKPOINT_SETUP;
         if (test_keyword_offset(Keyword::IMPORT, 0) && test_token_offset(Token_Type::LITERAL, 1))
@@ -1460,9 +1444,9 @@ namespace Parser
                 CHECKPOINT_EXIT;
             }
 
-            assert(parent->type == Base_Type::MODULE, "");
+            assert(parent->type == Node_Type::MODULE, "");
             auto module = (Module*)parent;
-            auto import = allocate_base<Project_Import>(parent, Base_Type::PROJECT_IMPORT);
+            auto import = allocate_base<Project_Import>(parent, Node_Type::PROJECT_IMPORT);
             import->filename = get_token(1)->options.literal_value.options.string;
             advance_token();
             advance_token();
@@ -1471,11 +1455,11 @@ namespace Parser
         CHECKPOINT_EXIT;
     }
 
-    Definition* parse_definition(Base* parent)
+    Definition* parse_definition(Node* parent)
     {
         // INFO: Definitions cannot start in the middle of a line
         CHECKPOINT_SETUP;
-        auto result = allocate_base<Definition>(parent, AST::Base_Type::DEFINITION);
+        auto result = allocate_base<Definition>(parent, AST::Node_Type::DEFINITION);
         result->is_comptime = false;
 
         if (parser.state.pos.token != 0) CHECKPOINT_EXIT;
@@ -1486,24 +1470,24 @@ namespace Parser
         if (test_operator(Operator::COLON))
         {
             advance_token();
-            result->type = optional_make_success(parse_expression_or_error_expr((Base*)result));
+            result->type = optional_make_success(parse_expression_or_error_expr((Node*)result));
 
             bool is_assign = test_operator(Operator::ASSIGN);
             if (is_assign || test_operator(Operator::COLON)) {
                 result->is_comptime = !is_assign;
                 advance_token();
-                result->value = optional_make_success(parse_expression_or_error_expr((Base*)result));
+                result->value = optional_make_success(parse_expression_or_error_expr((Node*)result));
             }
         }
         else if (test_operator(Operator::DEFINE_COMPTIME)) {
             advance_token();
             result->is_comptime = true;
-            result->value = optional_make_success(parse_expression_or_error_expr((Base*)result));
+            result->value = optional_make_success(parse_expression_or_error_expr((Node*)result));
         }
         else if (test_operator(Operator::DEFINE_INFER)) {
             advance_token();
             result->is_comptime = false;
-            result->value = optional_make_success(parse_expression_or_error_expr((Base*)result));
+            result->value = optional_make_success(parse_expression_or_error_expr((Node*)result));
         }
         else {
             CHECKPOINT_EXIT;
@@ -1519,62 +1503,114 @@ namespace Parser
 
 
 
-    AST::Module* execute(Source_Code* code)
+    Parse_Pass* execute_clean(Source_Code* code)
     {
-        parser.code = code;
+        Parse_Pass* pass = new Parse_Pass;
+        pass->block_parses = dynamic_array_create_empty<Block_Parse>(1);
+        pass->code = code;
+        pass->error_messages = dynamic_array_create_empty<Error_Message>(1);
+        pass->timestamp.node_index = 0;
+        parser.pass = pass;
 
         // Create/Parse root module
-        parser.root = allocate_base<Module>(0, Base_Type::MODULE);
-        parser.root->definitions = dynamic_array_create_empty<Definition*>(1);
-        parser.root->imports = dynamic_array_create_empty<Project_Import*>(1);
-        get_parse_info(&parser.root->base)->range = token_range_make_block(block_index_make_root(parser.code));
-        parse_source_block(block_index_make_root(parser.code), parser.root, parse_item_fn_module_item, parse_block_fn_anonymous_module_block);
+        pass->root = allocate_base<Module>(0, Node_Type::MODULE);
+        pass->root->definitions = dynamic_array_create_empty<Definition*>(1);
+        pass->root->imports = dynamic_array_create_empty<Project_Import*>(1);
+        parse_source_block(block_index_make_root(code), pass->root, parse_item_fn_module_item, parse_block_fn_anonymous_module_block);
+        pass->root->base.range = token_range_make_block(block_index_make_root(code));
+        pass->root->base.bounding_range = pass->root->base.range;
 
         // Correct token ranges 
         // NOTE: This Step is indeed necessary because Token-Indices can be ambiguous, 
         // but it probably could be done during parsing (e.g. on PARSER_SUCCESS) and not as an post processing step 
-        base_correct_token_ranges(&parser.root->base);
-        return parser.root;
+        base_correct_token_ranges(AST::upcast(pass->root));
+        return pass;
     }
 
-    void ast_base_get_section_token_range(AST::Base* base, Section section, Dynamic_Array<Token_Range>* ranges)
+    void block_parse_destroy(Block_Parse* parse) {
+        dynamic_array_destroy(&parse->nodes);
+    }
+
+    void parse_pass_destroy(Parse_Pass* pass)
     {
-        auto& info = parser.parse_informations[base->allocation_index];
+        dynamic_array_destroy(&pass->error_messages);
+        for (int i = 0; i < pass->block_parses.size; i++) {
+            block_parse_destroy(&pass->block_parses[i]);
+        }
+        dynamic_array_destroy(&pass->block_parses);
+    }
+
+    void parse_pass_reset(Parse_Pass* pass)
+    {
+        for (int i = 0; i < pass->block_parses.size; i++) {
+            block_parse_destroy(&pass->block_parses[i]);
+        }
+        dynamic_array_reset(&pass->block_parses);
+        dynamic_array_reset(&pass->error_messages);
+        pass->root = 0;
+    }
+
+    void execute_incremental(Parse_Pass* pass, Code_History* history)
+    {
+        parse_pass_reset(pass);
+
+        auto code = history->code;
+        parser.pass = pass;
+        parser.state.error_count = 0;
+
+        // TODO: Change this
+        // Create/Parse root module
+        pass->root = allocate_base<Module>(0, Node_Type::MODULE);
+        pass->root->definitions = dynamic_array_create_empty<Definition*>(1);
+        pass->root->imports = dynamic_array_create_empty<Project_Import*>(1);
+        parse_source_block(block_index_make_root(code), pass->root, parse_item_fn_module_item, parse_block_fn_anonymous_module_block);
+        pass->root->base.range = token_range_make_block(block_index_make_root(code));
+        pass->root->base.bounding_range = pass->root->base.range;
+
+        // Correct token ranges 
+        // NOTE: This Step is indeed necessary because Token-Indices can be ambiguous, 
+        // but it probably could be done during parsing (e.g. on PARSER_SUCCESS) and not as an post processing step 
+        base_correct_token_ranges(AST::upcast(pass->root));
+    }
+
+
+
+    void ast_base_get_section_token_range(AST::Node* base, Section section, Dynamic_Array<Token_Range>* ranges)
+    {
         switch (section)
         {
         case Section::NONE: break;
         case Section::WHOLE:
         {
-            dynamic_array_push_back(ranges, info.range);
+            dynamic_array_push_back(ranges, base->range);
             break;
         }
         case Section::WHOLE_NO_CHILDREN:
         {
             Token_Range range;
-            range.start = info.range.start;
+            range.start = base->range.start;
             int index = 0;
             auto child = AST::base_get_child(base, index);
             while (child != 0)
             {
-                auto& child_info = parser.parse_informations[child->allocation_index];
-                if (!index_equal(range.start, child_info.range.start)) {
-                    range.end = child_info.range.start;
+                if (!index_equal(range.start, child->range.start)) {
+                    range.end = child->range.start;
                     dynamic_array_push_back(ranges, range);
                 }
-                range.start = child_info.range.end;
+                range.start = child->range.end;
 
                 index += 1;
                 child = AST::base_get_child(base, index);
             }
-            if (!index_equal(range.start, info.range.end)) {
-                range.end = info.range.end;
+            if (!index_equal(range.start, base->range.end)) {
+                range.end = base->range.end;
                 dynamic_array_push_back(ranges, range);
             }
             break;
         }
         case Section::IDENTIFIER:
         {
-            auto result = search_token(info.range.start, [](Token* t, void* _unused) -> bool {return t->type == Token_Type::IDENTIFIER; }, 0, false);
+            auto result = search_token(base->range.start, [](Token* t, void* _unused) -> bool {return t->type == Token_Type::IDENTIFIER; }, 0, false);
             if (!result.available) {
                 break;
             }
@@ -1584,7 +1620,7 @@ namespace Parser
         case Section::ENCLOSURE:
         {
             // Find next (), {} or [], and add the tokens to the ranges
-            auto result = search_token(info.range.start, [](Token* t, void* type) -> bool {return t->type == Token_Type::PARENTHESIS; }, 0, false);
+            auto result = search_token(base->range.start, [](Token* t, void* type) -> bool {return t->type == Token_Type::PARENTHESIS; }, 0, false);
             if (!result.available) {
                 break;
             }
@@ -1608,7 +1644,7 @@ namespace Parser
         }
         case Section::KEYWORD:
         {
-            auto result = search_token(info.range.start, [](Token* t, void* type) -> bool {return t->type == Token_Type::KEYWORD; }, 0, false);
+            auto result = search_token(base->range.start, [](Token* t, void* type) -> bool {return t->type == Token_Type::KEYWORD; }, 0, false);
             if (!result.available) {
                 break;
             }
@@ -1616,7 +1652,7 @@ namespace Parser
             break;
         }
         case Section::END_TOKEN: {
-            Token_Range range = token_range_make(token_index_advance(info.range.end, -1), info.range.end);
+            Token_Range range = token_range_make(token_index_advance(base->range.end, -1), base->range.end);
             assert(range.start.token > 0, "Hey");
             dynamic_array_push_back(ranges, range);
             break;
@@ -1625,15 +1661,15 @@ namespace Parser
         }
     }
 
-    AST::Base* find_smallest_enclosing_node(AST::Base* base, Token_Index index)
+    AST::Node* find_smallest_enclosing_node(AST::Node* base, Token_Index index)
     {
         int child_index = 0;
-        AST::Base* child = AST::base_get_child(base, child_index);
+        AST::Node* child = AST::base_get_child(base, child_index);
         if (child == 0) {
             return base;
         }
         while (child != 0) {
-            auto& child_range = get_parse_info(child)->bounding_range;
+            auto& child_range = child->bounding_range;
             if (token_range_contains(child_range, index)) {
                 return find_smallest_enclosing_node(child, index);
             }

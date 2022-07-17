@@ -1078,7 +1078,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
             return ir_data_access_create_global(symbol->options.global);
         }
         case Symbol_Type::VARIABLE: {
-            return *hashtable_find_element(&ir_generator.variable_mapping, AST::base_downcast<AST::Definition>(symbol->definition_node));
+            return *hashtable_find_element(&ir_generator.variable_mapping, AST::downcast<AST::Definition>(symbol->definition_node));
         }
         case Symbol_Type::PARAMETER: {
             IR_Data_Access access;
@@ -1635,7 +1635,7 @@ void ir_generator_generate_queued_items(bool gen_bytecode)
         {
             auto base_node = mod_func->body_pass->item->node;
             AST::Code_Block* body_node = 0;
-            if (base_node->type == AST::Base_Type::EXPRESSION)
+            if (base_node->type == AST::Node_Type::EXPRESSION)
             {
                 auto body_expr = (AST::Expression*)base_node;
                 if (body_expr->type == AST::Expression_Type::BAKE_EXPR) {
@@ -1654,7 +1654,7 @@ void ir_generator_generate_queued_items(bool gen_bytecode)
                 }
             }
             else {
-                body_node = AST::base_downcast<AST::Code_Block>(base_node);
+                body_node = AST::downcast<AST::Code_Block>(base_node);
             }
 
             // Generate function body

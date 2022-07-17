@@ -49,7 +49,7 @@ namespace AST
         TYPE_TO_TYPE,
     };
 
-    enum class Base_Type
+    enum class Node_Type
     {
         EXPRESSION,
         STATEMENT,
@@ -66,22 +66,24 @@ namespace AST
         SWITCH_CASE,    // Expression 
     };
 
-    struct Base
+    struct Node
     {
-        Base_Type type;
-        Base* parent;
-        int allocation_index;
+        Node_Type type;
+        Node* parent;
+        Token_Range range;
+        Token_Range bounding_range;
+        int analysis_item_index;
     };
 
     struct Project_Import
     {
-        Base base;
+        Node base;
         String* filename;
     };
 
     struct Symbol_Read
     {
-        Base base;
+        Node base;
         String* name;
         Optional<Symbol_Read*> path_child;
 
@@ -90,7 +92,7 @@ namespace AST
 
     struct Module
     {
-        Base base;
+        Node base;
         Dynamic_Array<Definition*> definitions;
         Dynamic_Array<Project_Import*> imports;
 
@@ -99,14 +101,14 @@ namespace AST
 
     struct Enum_Member
     {
-        Base base;
+        Node base;
         String* name;
         Optional<Expression*> value;
     };
 
     struct Definition
     {
-        Base base;
+        Node base;
         bool is_comptime; // :: instead of :=
         String* name;
         Optional<Expression*> type;
@@ -117,14 +119,14 @@ namespace AST
 
     struct Argument
     {
-        Base base;
+        Node base;
         Optional<String*> name;
         Expression* value;
     };
 
     struct Parameter
     {
-        Base base;
+        Node base;
         bool is_comptime; // $ at the start
         String* name;
         Expression* type;
@@ -135,7 +137,7 @@ namespace AST
 
     struct Code_Block
     {
-        Base base;
+        Node base;
         Dynamic_Array<Statement*> statements;
         Optional<String*> block_id;
 
@@ -183,7 +185,7 @@ namespace AST
 
     struct Expression
     {
-        Base base;
+        Node base;
         Expression_Type type;
         union
         {
@@ -255,7 +257,7 @@ namespace AST
 
     struct Switch_Case
     {
-        Base base;
+        Node base;
         Optional<Expression*> value; // Default-Case if value not available
         Code_Block* block;
     };
@@ -279,7 +281,7 @@ namespace AST
 
     struct Statement
     {
-        Base base;
+        Node base;
         Statement_Type type;
         union
         {
@@ -312,11 +314,11 @@ namespace AST
         } options;
     };
 
-    void base_destroy(Base* node);
-    Base* base_get_child(Base* node, int child_index);
-    void base_enumerate_children(Base* node, Dynamic_Array<Base*>* fill);
-    void base_print(Base* node);
-    void base_append_to_string(Base* base, String* str);
+    void base_destroy(Node* node);
+    Node* base_get_child(Node* node, int child_index);
+    void base_enumerate_children(Node* node, Dynamic_Array<Node*>* fill);
+    void base_print(Node* node);
+    void base_append_to_string(Node* base, String* str);
 
     void symbol_read_append_to_string(Symbol_Read* read, String* string);
     int binop_priority(Binop binop);
@@ -336,11 +338,16 @@ namespace AST
     }
 
     template<typename T>
-    T* base_downcast(Base* node)
+    T* downcast(Node* node)
     {
         T* result = (T*)node;
         assert(Helpers::type_correct(result), "Heyy");
         return result;
+    }
+
+    template<typename T>
+    AST::Node* upcast(T* node) {
+        return &node->base;
     }
 }
 

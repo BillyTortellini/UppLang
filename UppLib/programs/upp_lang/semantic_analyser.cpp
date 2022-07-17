@@ -51,7 +51,18 @@ void analysis_workload_append_to_string(Analysis_Workload* workload, String* str
 
 
 // HELPERS
-#define to_base(x) (&x->base)
+Analysis_Progress* upcast(Struct_Progress* progress) {
+    return &progress->base;
+}
+Analysis_Progress* upcast(Function_Progress* progress) {
+    return &progress->base;
+}
+Analysis_Progress* upcast(Bake_Progress* progress) {
+    return &progress->base;
+}
+Analysis_Progress* upcast(Definition_Progress* progress) {
+    return &progress->base;
+}
 
 Type_Signature* hardcoded_type_to_signature(Hardcoded_Type type)
 {
@@ -86,41 +97,38 @@ Analysis_Pass* analysis_item_create_pass(Analysis_Item* item)
 {
     auto pass = new Analysis_Pass;
     pass->item = item;
-    int range = item->max_node_index - item->min_node_index + 1;
-    assert(range > 0, "");
-    pass->infos = array_create_empty<Analysis_Info>(range);
+    assert(item->ast_node_count > 0, "");
+    pass->infos = array_create_empty<Analysis_Info>(item->ast_node_count);
     memory_set_bytes(pass->infos.data, pass->infos.size * sizeof(Analysis_Info), 0);
     dynamic_array_push_back(&item->passes, pass);
     return pass;
 }
 
-Analysis_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Base* node)
+Analysis_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Node* node)
 {
     assert(pass != 0, "");
     auto& item = pass->item;
-    auto& id = node->allocation_index;
-    assert(id >= item->min_node_index && id <= item->max_node_index, "");
-    return &pass->infos[id - item->min_node_index];
+    return &pass->infos[node->analysis_item_index];
 }
 
 Expression_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Expression* expression) {
-    return &analysis_pass_get_info(pass, to_base(expression))->info_expr;
+    return &analysis_pass_get_info(pass, AST::upcast(expression))->info_expr;
 }
 
 Case_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Switch_Case* sw_case) {
-    return &analysis_pass_get_info(pass, to_base(sw_case))->info_case;
+    return &analysis_pass_get_info(pass, AST::upcast(sw_case))->info_case;
 }
 
 Argument_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Argument* argument) {
-    return &analysis_pass_get_info(pass, to_base(argument))->arg_info;
+    return &analysis_pass_get_info(pass, AST::upcast(argument))->arg_info;
 }
 
 Statement_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Statement* statement) {
-    return &analysis_pass_get_info(pass, to_base(statement))->info_stat;
+    return &analysis_pass_get_info(pass, AST::upcast(statement))->info_stat;
 }
 
 Code_Block_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Code_Block* block) {
-    return &analysis_pass_get_info(pass, to_base(block))->info_block;
+    return &analysis_pass_get_info(pass, AST::upcast(block))->info_block;
 }
 
 
@@ -230,7 +238,7 @@ void semantic_analyser_set_error_flag(bool error_due_to_unknown)
     }
 }
 
-void semantic_analyser_log_error(Semantic_Error_Type type, AST::Base* node) {
+void semantic_analyser_log_error(Semantic_Error_Type type, AST::Node* node) {
     Semantic_Error error;
     error.type = type;
     error.error_node = node;
@@ -240,11 +248,11 @@ void semantic_analyser_log_error(Semantic_Error_Type type, AST::Base* node) {
 }
 
 void semantic_analyser_log_error(Semantic_Error_Type type, AST::Expression* node) {
-    semantic_analyser_log_error(type, to_base(node));
+    semantic_analyser_log_error(type, AST::upcast(node));
 }
 
 void semantic_analyser_log_error(Semantic_Error_Type type, AST::Statement* node) {
-    semantic_analyser_log_error(type, to_base(node));
+    semantic_analyser_log_error(type, AST::upcast(node));
 }
 
 void semantic_analyser_add_error_info(Error_Information info) {
@@ -885,7 +893,7 @@ void expression_info_set_constant(Expression_Info* info, Upp_Constant constant) 
     info->context_ops.after_cast_type = constant.type;
 }
 
-void expression_info_set_constant(Expression_Info* info, Type_Signature* signature, Array<byte> bytes, AST::Base* error_report_node)
+void expression_info_set_constant(Expression_Info* info, Type_Signature* signature, Array<byte> bytes, AST::Node* error_report_node)
 {
     auto& analyser = semantic_analyser;
     Constant_Result result = constant_pool_add_constant(&analyser.compiler->constant_pool, signature, bytes);
@@ -1812,7 +1820,7 @@ void workload_executer_add_analysis_items(Code_Source* source)
         {
         case Analysis_Item_Type::IMPORT: {
             auto workload = workload_executer_add_workload_empty(Analysis_Workload_Type::PROJECT_IMPORT, item, 0, false);
-            workload->options.import = AST::base_downcast<AST::Project_Import>(item->node);
+            workload->options.import = AST::downcast<AST::Project_Import>(item->node);
             break;
         }
         case Analysis_Item_Type::ROOT:
@@ -1821,7 +1829,7 @@ void workload_executer_add_analysis_items(Code_Source* source)
         }
         case Analysis_Item_Type::BAKE:
         {
-            progress = to_base(analysis_progress_create_bake(item));
+            progress = upcast(analysis_progress_create_bake(item));
             auto analysis_workload = workload_executer_add_workload_empty(Analysis_Workload_Type::BAKE_ANALYSIS, item, progress, true);
             auto execute_workload = workload_executer_add_workload_empty(Analysis_Workload_Type::BAKE_EXECUTION, item, progress, false);
             analysis_workload_add_dependency_internal(execute_workload, analysis_workload, 0);
@@ -1829,15 +1837,15 @@ void workload_executer_add_analysis_items(Code_Source* source)
         }
         case Analysis_Item_Type::DEFINITION:
         {
-            progress = to_base(analysis_progress_create_definition(item->symbol, item));
+            progress = upcast(analysis_progress_create_definition(item->symbol, item));
             workload_executer_add_workload_empty(Analysis_Workload_Type::DEFINITION, item, progress, true);
             break;
         }
         case Analysis_Item_Type::FUNCTION:
         {
-            assert(item->options.function_body_item->node->type == AST::Base_Type::CODE_BLOCK, "");
+            assert(item->options.function_body_item->node->type == AST::Node_Type::CODE_BLOCK, "");
             auto func_progress = analysis_progress_create_function(item->options.function_body_item, item);
-            progress = to_base(func_progress);
+            progress = upcast(func_progress);
 
             auto header_workload = workload_executer_add_workload_empty(Analysis_Workload_Type::FUNCTION_HEADER, item, progress, true);
             auto body_workload = workload_executer_add_workload_empty(Analysis_Workload_Type::FUNCTION_BODY, item->options.function_body_item, progress, true);
@@ -1866,13 +1874,13 @@ void workload_executer_add_analysis_items(Code_Source* source)
         }
         case Analysis_Item_Type::STRUCTURE:
         {
-            assert(item->node->type == AST::Base_Type::EXPRESSION, "");
+            assert(item->node->type == AST::Node_Type::EXPRESSION, "");
             Type_Signature* struct_type = type_system_make_struct_empty(
                 &semantic_analyser.compiler->type_system, item->symbol,
                 ((AST::Expression*)item->node)->options.structure.type
             );
 
-            progress = to_base(analysis_progress_create_struct(struct_type, item));
+            progress = upcast(analysis_progress_create_struct(struct_type, item));
             auto workload = workload_executer_add_workload_empty(Analysis_Workload_Type::STRUCT_ANALYSIS, item, progress, true);
             auto reachable_workload = workload_executer_add_workload_empty(Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE, item, progress, false);
             reachable_workload->options.struct_reachable.struct_types = dynamic_array_create_empty<Type_Signature*>(1);
@@ -1993,40 +2001,8 @@ void analysis_workload_execute(Analysis_Workload* workload)
     {
     case Analysis_Workload_Type::PROJECT_IMPORT:
     {
-        auto import = workload->options.import;
-        auto src = code_source_from_ast(to_base(import));
-
-        String path = string_create(src->file_path.characters);
-        file_io_relative_to_full_path(&path);
-        bool success = false;
-        SCOPE_EXIT(if (!success) { string_destroy(&path); });
-
-        Optional<int> last_pos = string_find_character_index_reverse(&path, '/', path.size - 1);
-        if (last_pos.available) {
-            string_truncate(&path, last_pos.value + 1);
-        }
-        else {
-            string_reset(&path);
-        }
-        string_append_string(&path, import->filename);
-        file_io_relative_to_full_path(&path);
-
-        if (!hashset_insert_element(&analyser.loaded_filenames, path)) {
-            // Project is already imported
-            break;
-        }
-
-        Optional<String> file_content = file_io_load_text_file(path.characters);
-        SCOPE_EXIT(file_io_unload_text_file(&file_content));
-        if (file_content.available) {
-            // INFO: In this case the compiler takes the 
-            auto source_code = source_code_create();
-            source_code_fill_from_string(source_code, file_content.value);
-            compiler_add_source_code(source_code, Code_Origin::LOADED_FILE, path);
-            success = true;
-        }
-        else {
-            semantic_analyser_log_error(Semantic_Error_Type::OTHERS_COULD_NOT_LOAD_FILE, to_base(import));
+        if (!compiler_add_project_import(workload->options.import)) {
+            semantic_analyser_log_error(Semantic_Error_Type::OTHERS_COULD_NOT_LOAD_FILE, AST::upcast(workload->options.import));
         }
         break;
     }
@@ -2034,7 +2010,7 @@ void analysis_workload_execute(Analysis_Workload* workload)
     {
         assert(workload->progress->type == Analysis_Progress_Type::DEFINITION, "");
         auto progress = (Definition_Progress*)workload->progress;
-        assert(progress->pass->item->node->type == AST::Base_Type::DEFINITION, "");
+        assert(progress->pass->item->node->type == AST::Node_Type::DEFINITION, "");
         auto definition = (AST::Definition*)progress->pass->item->node;
         assert(!(!definition->type.available && !definition->value.available), "Syntax should not allow no type and no definition!");
         analyser.current_pass = progress->pass;
@@ -2070,7 +2046,7 @@ void analysis_workload_execute(Analysis_Workload* workload)
                 semantic_analyser_log_error(Semantic_Error_Type::COMPTIME_DEFINITION_MUST_BE_INFERED, definition->type.value);
             }
             if (!definition->value.available) {
-                semantic_analyser_log_error(Semantic_Error_Type::COMPTIME_DEFINITION_REQUIRES_INITAL_VALUE, to_base(definition));
+                semantic_analyser_log_error(Semantic_Error_Type::COMPTIME_DEFINITION_REQUIRES_INITAL_VALUE, AST::upcast(definition));
                 return;
             }
 
@@ -2155,7 +2131,7 @@ void analysis_workload_execute(Analysis_Workload* workload)
         assert(workload->progress->type == Analysis_Progress_Type::FUNCTION, "");
         auto progress = (Function_Progress*)workload->progress;
         auto& base_node = progress->header_pass->item->node;
-        assert(base_node->type == AST::Base_Type::EXPRESSION && ((AST::Expression*)base_node)->type == AST::Expression_Type::FUNCTION, "");
+        assert(base_node->type == AST::Node_Type::EXPRESSION && ((AST::Expression*)base_node)->type == AST::Expression_Type::FUNCTION, "");
         auto& header = ((AST::Expression*)base_node)->options.function;
 
         ModTree_Function* function = progress->function;
@@ -2172,7 +2148,7 @@ void analysis_workload_execute(Analysis_Workload* workload)
             auto param = signature_node.parameters[i];
             Symbol* symbol = param->symbol;
             if (param->is_comptime) {
-                semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, to_base(param));
+                semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, AST::upcast(param));
                 semantic_analyser_add_error_info(error_information_make_text("Currently comptime parameters not supported!"));
             }
             symbol->type = Symbol_Type::PARAMETER;
@@ -2196,7 +2172,7 @@ void analysis_workload_execute(Analysis_Workload* workload)
         assert(workload->progress->type == Analysis_Progress_Type::FUNCTION, "");
         auto progress = (Function_Progress*)workload->progress;
         auto& base_node = progress->body_pass->item->node;
-        assert(base_node->type == AST::Base_Type::CODE_BLOCK, "");
+        assert(base_node->type == AST::Node_Type::CODE_BLOCK, "");
         auto code_block = ((AST::Code_Block*)base_node);
 
         auto function = progress->function;
@@ -2249,7 +2225,7 @@ void analysis_workload_execute(Analysis_Workload* workload)
         analyser.current_pass = progress->pass;
 
         auto& base_node = progress->pass->item->node;
-        assert(base_node->type == AST::Base_Type::EXPRESSION && ((AST::Expression*)base_node)->type == AST::Expression_Type::STRUCTURE_TYPE, "");
+        assert(base_node->type == AST::Node_Type::EXPRESSION && ((AST::Expression*)base_node)->type == AST::Expression_Type::STRUCTURE_TYPE, "");
         auto& struct_node = ((AST::Expression*)base_node)->options.structure;
         Type_Signature* struct_signature = progress->struct_type;
 
@@ -2257,10 +2233,10 @@ void analysis_workload_execute(Analysis_Workload* workload)
         {
             auto member_node = struct_node.members[i];
             if (member_node->value.available) {
-                semantic_analyser_log_error(Semantic_Error_Type::STRUCT_MEMBER_MUST_NOT_HAVE_VALUE, to_base(member_node));
+                semantic_analyser_log_error(Semantic_Error_Type::STRUCT_MEMBER_MUST_NOT_HAVE_VALUE, AST::upcast(member_node));
             }
             if (!member_node->type.available) {
-                semantic_analyser_log_error(Semantic_Error_Type::STRUCT_MEMBER_REQUIRES_TYPE, to_base(member_node->value.value));
+                semantic_analyser_log_error(Semantic_Error_Type::STRUCT_MEMBER_REQUIRES_TYPE, AST::upcast(member_node->value.value));
                 continue;
             }
 
@@ -2303,7 +2279,7 @@ void analysis_workload_execute(Analysis_Workload* workload)
         analyser.current_function = progress->bake_function;
 
         auto& base_node = progress->pass->item->node;
-        assert(base_node->type == AST::Base_Type::EXPRESSION, "");
+        assert(base_node->type == AST::Node_Type::EXPRESSION, "");
         auto expr = ((AST::Expression*) base_node);
         if (expr->type == AST::Expression_Type::BAKE_BLOCK)
         {
@@ -2311,7 +2287,7 @@ void analysis_workload_execute(Analysis_Workload* workload)
             progress->bake_function->signature = type_system_make_function(&type_system, {}, type_system.void_type);
             auto flow = semantic_analyser_analyse_block(expr->options.bake_block);
             if (flow != Control_Flow::RETURNS) {
-                semantic_analyser_log_error(Semantic_Error_Type::OTHERS_MISSING_RETURN_STATEMENT, to_base(expr->options.bake_block));
+                semantic_analyser_log_error(Semantic_Error_Type::OTHERS_MISSING_RETURN_STATEMENT, AST::upcast(expr->options.bake_block));
             }
         }
         else if (expr->type == AST::Expression_Type::BAKE_EXPR)
@@ -3096,7 +3072,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         }
         default: panic("");
         }
-        expression_info_set_constant(info, literal_type, array_create_static<byte>((byte*)value_ptr, literal_type->size), to_base(expr));
+        expression_info_set_constant(info, literal_type, array_create_static<byte>((byte*)value_ptr, literal_type->size), AST::upcast(expr));
         return info;
     }
     case AST::Expression_Type::ENUM_TYPE:
@@ -3142,11 +3118,11 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             {
                 auto other = &enum_type->options.enum_type.members[j];
                 if (other->id == member->id) {
-                    semantic_analyser_log_error(Semantic_Error_Type::ENUM_MEMBER_NAME_MUST_BE_UNIQUE, to_base(expr));
+                    semantic_analyser_log_error(Semantic_Error_Type::ENUM_MEMBER_NAME_MUST_BE_UNIQUE, AST::upcast(expr));
                     semantic_analyser_add_error_info(error_information_make_id(other->id));
                 }
                 if (other->value == member->value) {
-                    semantic_analyser_log_error(Semantic_Error_Type::ENUM_VALUE_MUST_BE_UNIQUE, to_base(expr));
+                    semantic_analyser_log_error(Semantic_Error_Type::ENUM_VALUE_MUST_BE_UNIQUE, AST::upcast(expr));
                     semantic_analyser_add_error_info(error_information_make_id(other->id));
                 }
             }
@@ -3165,7 +3141,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
     {
         Analysis_Progress* progress;
         {
-            Analysis_Item** item_opt = hashtable_find_element(&analyser.compiler->dependency_analyser->mapping_ast_to_items, to_base(expr));
+            Analysis_Item** item_opt = hashtable_find_element(&analyser.compiler->dependency_analyser->mapping_ast_to_items, AST::upcast(expr));
             assert(item_opt != 0, "");
             Analysis_Progress** progress_opt = hashtable_find_element(&workload_executer.progress_items, *item_opt);
             assert(progress_opt != 0, "");
@@ -3195,7 +3171,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             {
             case Comptime_Result_Type::AVAILABLE: {
                 expression_info_set_constant(
-                    info, bake_result->data_type, array_create_static((byte*)bake_result->data, bake_result->data_type->size), to_base(expr)
+                    info, bake_result->data_type, array_create_static((byte*)bake_result->data, bake_result->data_type->size), AST::upcast(expr)
                 );
                 return info;
             }
@@ -3224,7 +3200,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         {
             auto& param = sig.parameters[i];
             if (param->is_comptime) {
-                semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, to_base(param));
+                semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, AST::upcast(param));
                 semantic_analyser_add_error_info(error_information_make_text("Comptime parameters aren't implemented yet :)"));
             }
             else {
@@ -3339,7 +3315,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         {
             auto& argument = init_node.arguments[i];
             if (!argument->name.available) {
-                semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE_NAMED_ARGUMENTS, to_base(argument));
+                semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE_NAMED_ARGUMENTS, AST::upcast(argument));
                 continue;
             }
             String* member_id = argument->name.value;
@@ -3359,7 +3335,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             }
             else {
                 arg_info->valid = false;
-                semantic_analyser_log_error(Semantic_Error_Type::STRUCT_INITIALIZER_MEMBER_DOES_NOT_EXIST, to_base(argument));
+                semantic_analyser_log_error(Semantic_Error_Type::STRUCT_INITIALIZER_MEMBER_DOES_NOT_EXIST, AST::upcast(argument));
                 semantic_analyser_add_error_info(error_information_make_id(member_id));
                 // TODO: Find out if we want to analyse expressions even if we don't have the context for it
             }
@@ -3379,7 +3355,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             {
                 auto& member = pass_get_info(init_node.arguments[0])->member;
                 if (member.offset == struct_signature->options.structure.tag_member.offset) {
-                    semantic_analyser_log_error(Semantic_Error_Type::STRUCT_INITIALIZER_CANNOT_SET_UNION_TAG, to_base(init_node.arguments[0]));
+                    semantic_analyser_log_error(Semantic_Error_Type::STRUCT_INITIALIZER_CANNOT_SET_UNION_TAG, AST::upcast(init_node.arguments[0]));
                 }
             }
         }
@@ -3397,8 +3373,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                     auto other = pass_get_info(init_node.arguments[j]);
                     if (!other->valid) continue;
                     if (info->member.id == other->member.id) {
-                        semantic_analyser_log_error(Semantic_Error_Type::STRUCT_INITIALIZER_MEMBER_INITIALIZED_TWICE, to_base(init_node.arguments[j]));
-                        semantic_analyser_log_error(Semantic_Error_Type::STRUCT_INITIALIZER_MEMBER_INITIALIZED_TWICE, to_base(init_node.arguments[i]));
+                        semantic_analyser_log_error(Semantic_Error_Type::STRUCT_INITIALIZER_MEMBER_INITIALIZED_TWICE, AST::upcast(init_node.arguments[j]));
+                        semantic_analyser_log_error(Semantic_Error_Type::STRUCT_INITIALIZER_MEMBER_INITIALIZED_TWICE, AST::upcast(init_node.arguments[i]));
                     }
                 }
             }
@@ -4026,7 +4002,7 @@ Type_Signature* semantic_analyser_analyse_expression_value(AST::Expression* expr
         return result->context_ops.after_cast_type; // Here context was already applied, so we return
     }
     case Expression_Result_Type::TYPE: {
-        expression_info_set_constant(result, type_system.type_type, array_create_static_as_bytes(&result->options.type->internal_index, 1), to_base(expression));
+        expression_info_set_constant(result, type_system.type_type, array_create_static_as_bytes(&result->options.type->internal_index, 1), AST::upcast(expression));
         break;
     }
     case Expression_Result_Type::CONSTANT:
@@ -4061,7 +4037,7 @@ Type_Signature* semantic_analyser_analyse_expression_value(AST::Expression* expr
 // STATEMENTS
 bool code_block_is_while(AST::Code_Block* block)
 {
-    if (block != 0 && block->base.parent->type == AST::Base_Type::STATEMENT) {
+    if (block != 0 && block->base.parent->type == AST::Node_Type::STATEMENT) {
         auto parent = (AST::Statement*) block->base.parent;
         return parent->type == AST::Statement_Type::WHILE_STATEMENT;
     }
@@ -4070,7 +4046,7 @@ bool code_block_is_while(AST::Code_Block* block)
 
 bool code_block_is_defer(AST::Code_Block* block)
 {
-    if (block != 0 && block->base.parent->type == AST::Base_Type::STATEMENT) {
+    if (block != 0 && block->base.parent->type == AST::Node_Type::STATEMENT) {
         auto parent = (AST::Statement*) block->base.parent;
         return parent->type == AST::Statement_Type::DEFER;
     }
@@ -4335,7 +4311,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
                 auto other_info = pass_get_info(other_case);
                 if (!other_info->is_valid) continue;
                 if (case_info->case_value == other_info->case_value) {
-                    semantic_analyser_log_error(Semantic_Error_Type::SWITCH_CASE_MUST_BE_UNIQUE, to_base(other_case));
+                    semantic_analyser_log_error(Semantic_Error_Type::SWITCH_CASE_MUST_BE_UNIQUE, AST::upcast(other_case));
                     is_unique = false;
                     break;
                 }
@@ -4464,11 +4440,11 @@ void semantic_analyser_finish()
     auto& type_system = semantic_analyser.compiler->type_system;
     // Check if main is defined
     Symbol* main_symbol = symbol_table_find_symbol(
-        semantic_analyser.compiler->main_source->ast->symbol_table, compiler.id_main, false, 0, 0
+        compiler.main_source->parse_pass->root->symbol_table, compiler.id_main, false, 0, 0
     );
     ModTree_Function* main_function = 0;
     if (main_symbol == 0) {
-        semantic_analyser_log_error(Semantic_Error_Type::MAIN_NOT_DEFINED, (AST::Base*)0);
+        semantic_analyser_log_error(Semantic_Error_Type::MAIN_NOT_DEFINED, (AST::Node*)0);
     }
     else
     {
@@ -4503,7 +4479,6 @@ void semantic_analyser_reset(Compiler* compiler)
         dynamic_array_reset(&semantic_analyser.errors);
         dynamic_array_reset(&semantic_analyser.block_stack);
         stack_allocator_reset(&semantic_analyser.allocator_values);
-        hashset_reset(&semantic_analyser.loaded_filenames);
         hashset_reset(&semantic_analyser.visited_functions);
 
         workload_executer_destroy();
@@ -4572,7 +4547,6 @@ Semantic_Analyser* semantic_analyser_initialize()
     semantic_analyser.errors = dynamic_array_create_empty<Semantic_Error>(64);
     semantic_analyser.block_stack = dynamic_array_create_empty<AST::Code_Block*>(8);
     semantic_analyser.allocator_values = stack_allocator_create_empty(2048);
-    semantic_analyser.loaded_filenames = hashset_create_empty<String>(32, hash_string, string_equals);
     semantic_analyser.visited_functions = hashset_create_pointer_empty<ModTree_Function*>(32);
     semantic_analyser.workload_executer = workload_executer_initialize();
     semantic_analyser.program = 0;
@@ -4588,7 +4562,6 @@ void semantic_analyser_destroy()
     dynamic_array_destroy(&semantic_analyser.block_stack);
 
     stack_allocator_destroy(&semantic_analyser.allocator_values);
-    hashset_destroy(&semantic_analyser.loaded_filenames);
     hashset_destroy(&semantic_analyser.visited_functions);
 
     if (semantic_analyser.program != 0) {

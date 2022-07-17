@@ -2,26 +2,26 @@
 
 namespace AST
 {
-    void base_destroy(Base* node)
+    void base_destroy(Node* node)
     {
         switch (node->type)
         {
-        case Base_Type::SWITCH_CASE: 
-        case Base_Type::PROJECT_IMPORT: 
-        case Base_Type::PARAMETER: 
-        case Base_Type::ARGUMENT: 
-        case Base_Type::SYMBOL_READ: 
-        case Base_Type::ENUM_MEMBER: 
-        case Base_Type::DEFINITION: 
+        case Node_Type::SWITCH_CASE: 
+        case Node_Type::PROJECT_IMPORT: 
+        case Node_Type::PARAMETER: 
+        case Node_Type::ARGUMENT: 
+        case Node_Type::SYMBOL_READ: 
+        case Node_Type::ENUM_MEMBER: 
+        case Node_Type::DEFINITION: 
             break;
-        case Base_Type::CODE_BLOCK: {
+        case Node_Type::CODE_BLOCK: {
             auto block = (Code_Block*)node;
             if (block->statements.data != 0) {
                 dynamic_array_destroy(&block->statements);
             }
             break;
         }
-        case Base_Type::MODULE: {
+        case Node_Type::MODULE: {
             auto module = (Module*)node;
             if (module->definitions.data != 0) {
                 dynamic_array_destroy(&module->definitions);
@@ -31,7 +31,7 @@ namespace AST
             }
             break;
         }
-        case Base_Type::EXPRESSION:
+        case Node_Type::EXPRESSION:
         {
             auto expr = (Expression*)node;
             switch (expr->type)
@@ -77,7 +77,7 @@ namespace AST
             }
             break;
         }
-        case Base_Type::STATEMENT: {
+        case Node_Type::STATEMENT: {
             auto stat = (Statement*)node;
             switch (stat->type)
             {
@@ -96,7 +96,7 @@ namespace AST
         delete node;
     }
     
-    Base* base_get_child(Base* node, int child_index)
+    Node* base_get_child(Node* node, int child_index)
     {
         int index = 0;
 #define FILL(x) { if (child_index == index) {return &x->base;} else {index += 1;}}
@@ -104,54 +104,54 @@ namespace AST
 #define FILL_ARRAY(x) {if (child_index < index + x.size) {return &x[child_index - index]->base;} else {index += x.size;}}
         switch (node->type)
         {
-        case Base_Type::SWITCH_CASE: {
+        case Node_Type::SWITCH_CASE: {
             auto sw_case = (Switch_Case*)node;
             FILL_OPTIONAL(sw_case->value);
             FILL(sw_case->block);
             break;
         }
-        case Base_Type::PARAMETER: {
+        case Node_Type::PARAMETER: {
             auto param = (Parameter*)node;
             FILL(param->type);
             FILL_OPTIONAL(param->default_value);
             break;
         }
-        case Base_Type::SYMBOL_READ: {
+        case Node_Type::SYMBOL_READ: {
             auto read = (Symbol_Read*)node;
             FILL_OPTIONAL(read->path_child);
             break;
         }
-        case Base_Type::ENUM_MEMBER: {
+        case Node_Type::ENUM_MEMBER: {
             auto enum_member = (Enum_Member*)node;
             FILL_OPTIONAL(enum_member->value);
             break;
         }
-        case Base_Type::ARGUMENT: {
+        case Node_Type::ARGUMENT: {
             auto arg = (Argument*)node;
             FILL(arg->value);
             break;
         }
-        case Base_Type::CODE_BLOCK: {
+        case Node_Type::CODE_BLOCK: {
             auto block = (Code_Block*)node;
             FILL_ARRAY(block->statements);
             break;
         }
-        case Base_Type::DEFINITION: {
+        case Node_Type::DEFINITION: {
             auto def = (Definition*)node;
             FILL_OPTIONAL(def->type);
             FILL_OPTIONAL(def->value);
             break;
         }
-        case Base_Type::PROJECT_IMPORT: {
+        case Node_Type::PROJECT_IMPORT: {
             break;
         }
-        case Base_Type::MODULE: {
+        case Node_Type::MODULE: {
             auto module = (Module*)node;
             FILL_ARRAY(module->imports);
             FILL_ARRAY(module->definitions);
             break;
         }
-        case Base_Type::EXPRESSION:
+        case Node_Type::EXPRESSION:
         {
             auto expr = (Expression*)node;
             switch (expr->type)
@@ -271,7 +271,7 @@ namespace AST
             }
             break;
         }
-        case Base_Type::STATEMENT:
+        case Node_Type::STATEMENT:
         {
             auto stat = (Statement*)node;
             switch (stat->type)
@@ -348,61 +348,61 @@ namespace AST
 #undef FILL_ARRAY
     }
 
-    void base_enumerate_children(Base* node, Dynamic_Array<Base*>* fill)
+    void base_enumerate_children(Node* node, Dynamic_Array<Node*>* fill)
     {
 #define FILL(x) {dynamic_array_push_back(fill, &x->base);};
 #define FILL_OPTIONAL(x) if (x.available) {dynamic_array_push_back(fill, &x.value->base);}
 #define FILL_ARRAY(x) for (int i = 0; i < x.size; i++) {dynamic_array_push_back(fill, &x[i]->base);}
         switch (node->type)
         {
-        case Base_Type::SWITCH_CASE: {
+        case Node_Type::SWITCH_CASE: {
             auto sw_case = (Switch_Case*)node;
             FILL_OPTIONAL(sw_case->value);
             FILL(sw_case->block);
             break;
         }
-        case Base_Type::ENUM_MEMBER: {
+        case Node_Type::ENUM_MEMBER: {
             auto enum_member = (Enum_Member*)node;
             FILL_OPTIONAL(enum_member->value);
             break;
         }
-        case Base_Type::PROJECT_IMPORT: {
+        case Node_Type::PROJECT_IMPORT: {
             break;
         }
-        case Base_Type::PARAMETER: {
+        case Node_Type::PARAMETER: {
             auto param = (Parameter*)node;
             FILL(param->type);
             FILL_OPTIONAL(param->default_value);
             break;
         }
-        case Base_Type::SYMBOL_READ: {
+        case Node_Type::SYMBOL_READ: {
             auto read = (Symbol_Read*)node;
             FILL_OPTIONAL(read->path_child);
             break;
         }
-        case Base_Type::ARGUMENT: {
+        case Node_Type::ARGUMENT: {
             auto arg = (Argument*)node;
             FILL(arg->value);
             break;
         }
-        case Base_Type::CODE_BLOCK: {
+        case Node_Type::CODE_BLOCK: {
             auto block = (Code_Block*)node;
             FILL_ARRAY(block->statements);
             break;
         }
-        case Base_Type::DEFINITION: {
+        case Node_Type::DEFINITION: {
             auto def = (Definition*)node;
             FILL_OPTIONAL(def->type);
             FILL_OPTIONAL(def->value);
             break;
         }
-        case Base_Type::MODULE: {
+        case Node_Type::MODULE: {
             auto module = (Module*)node;
             FILL_ARRAY(module->imports);
             FILL_ARRAY(module->definitions);
             break;
         }
-        case Base_Type::EXPRESSION:
+        case Node_Type::EXPRESSION:
         {
             auto expr = (Expression*)node;
             switch (expr->type)
@@ -522,7 +522,7 @@ namespace AST
             }
             break;
         }
-        case Base_Type::STATEMENT:
+        case Node_Type::STATEMENT:
         {
             auto stat = (Statement*)node;
             switch (stat->type)
@@ -598,26 +598,26 @@ namespace AST
 #undef FILL_ARRAY
     }
 
-    void base_append_to_string(Base* base, String* str)
+    void base_append_to_string(Node* base, String* str)
     {
         switch (base->type)
         {
-        case Base_Type::DEFINITION:
+        case Node_Type::DEFINITION:
             string_append_formated(str, "DEFINITION ");
             string_append_string(str, ((Definition*)base)->name);
             break;
-        case Base_Type::PROJECT_IMPORT:
+        case Node_Type::PROJECT_IMPORT:
             string_append_formated(str, "IMPORT ");
             string_append_string(str, ((Project_Import*)base)->filename);
             break;
-        case Base_Type::SYMBOL_READ:
+        case Node_Type::SYMBOL_READ:
             string_append_formated(str, "SYMBOL_READ ");
             string_append_string(str, ((Symbol_Read*)base)->name);
             break;
-        case Base_Type::SWITCH_CASE: string_append_formated(str, "SWITCH_CASE"); break;
-        case Base_Type::CODE_BLOCK: string_append_formated(str, "CODE_BLOCK"); break;
-        case Base_Type::MODULE: string_append_formated(str, "MODULE"); break;
-        case Base_Type::ARGUMENT: {
+        case Node_Type::SWITCH_CASE: string_append_formated(str, "SWITCH_CASE"); break;
+        case Node_Type::CODE_BLOCK: string_append_formated(str, "CODE_BLOCK"); break;
+        case Node_Type::MODULE: string_append_formated(str, "MODULE"); break;
+        case Node_Type::ARGUMENT: {
             string_append_formated(str, "ARGUMENT");
             auto arg = (Argument*)base;
             if (arg->name.available) {
@@ -626,19 +626,19 @@ namespace AST
             }
             break;
         }
-        case Base_Type::ENUM_MEMBER: {
+        case Node_Type::ENUM_MEMBER: {
             auto mem = (Enum_Member*)base;
             string_append_formated(str, "ENUM_MEMBER ");
             string_append_string(str, mem->name);
             break;
         }
-        case Base_Type::PARAMETER: {
+        case Node_Type::PARAMETER: {
             auto param = (Parameter*)base;
             string_append_formated(str, "PARAMETER ");
             string_append_string(str, param->name);
             break;
         }
-        case Base_Type::EXPRESSION:
+        case Node_Type::EXPRESSION:
         {
             auto expr = (Expression*)base;
             switch (expr->type)
@@ -669,7 +669,7 @@ namespace AST
             }
             break;
         }
-        case Base_Type::STATEMENT:
+        case Node_Type::STATEMENT:
         {
             auto stat = (Statement*)base;
             switch (stat->type)
@@ -694,10 +694,10 @@ namespace AST
         }
     }
 
-    void base_append_to_string_recursive(Base* base, String* str, int indentation)
+    void base_append_to_string_recursive(Node* base, String* str, int indentation)
     {
         base_append_to_string(base, str);
-        Dynamic_Array<Base*> children = dynamic_array_create_empty<Base*>(1);
+        Dynamic_Array<Node*> children = dynamic_array_create_empty<Node*>(1);
         SCOPE_EXIT(dynamic_array_destroy(&children));
         base_enumerate_children(base, &children);
 
@@ -716,7 +716,7 @@ namespace AST
         }
     }
 
-    void base_print(Base* node)
+    void base_print(Node* node)
     {
         String text = string_create_empty(1024);
         SCOPE_EXIT(string_destroy(&text));
@@ -761,34 +761,34 @@ namespace AST
     namespace Helpers
     {
         bool type_correct(Definition* base) {
-            return base->base.type == Base_Type::DEFINITION;
+            return base->base.type == Node_Type::DEFINITION;
         }
         bool type_correct(Switch_Case* base) {
-            return base->base.type == Base_Type::SWITCH_CASE;
+            return base->base.type == Node_Type::SWITCH_CASE;
         }
         bool type_correct(Argument* base) {
-            return base->base.type == Base_Type::ARGUMENT;
+            return base->base.type == Node_Type::ARGUMENT;
         }
         bool type_correct(Parameter* base) {
-            return base->base.type == Base_Type::PARAMETER;
+            return base->base.type == Node_Type::PARAMETER;
         }
         bool type_correct(Expression* base) {
-            return base->base.type == Base_Type::EXPRESSION;
+            return base->base.type == Node_Type::EXPRESSION;
         }
         bool type_correct(Enum_Member* base) {
-            return base->base.type == Base_Type::ENUM_MEMBER;
+            return base->base.type == Node_Type::ENUM_MEMBER;
         }
         bool type_correct(Module* base) {
-            return base->base.type == Base_Type::MODULE;
+            return base->base.type == Node_Type::MODULE;
         }
         bool type_correct(Project_Import* base) {
-            return base->base.type == Base_Type::PROJECT_IMPORT;
+            return base->base.type == Node_Type::PROJECT_IMPORT;
         }
         bool type_correct(Symbol_Read* base) {
-            return base->base.type == Base_Type::SYMBOL_READ;
+            return base->base.type == Node_Type::SYMBOL_READ;
         }
         bool type_correct(Code_Block* base) {
-            return base->base.type == Base_Type::CODE_BLOCK;
+            return base->base.type == Node_Type::CODE_BLOCK;
         }
     }
 

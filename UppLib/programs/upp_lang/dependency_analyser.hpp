@@ -21,7 +21,7 @@ struct Analysis_Pass;
 
 namespace AST
 {
-    struct Base;
+    struct Node;
     struct Expression;
     struct Statement;
     struct Code_Block;
@@ -76,7 +76,7 @@ struct Symbol
 
     String* id;
     Symbol_Table* origin_table;
-    AST::Base* definition_node; // Note: This is a base because it could be either AST::Definition or AST::Parameter
+    AST::Node* definition_node; // Note: This is a base because it could be either AST::Definition or AST::Parameter
     Analysis_Item* origin_item;
     Dynamic_Array<Symbol_Dependency*> references;
 };
@@ -90,7 +90,7 @@ struct Symbol_Table
 struct Symbol_Error
 {
     Symbol* existing_symbol;
-    AST::Base* error_node;
+    AST::Node* error_node;
 };
 
 struct Predefined_Symbols
@@ -132,7 +132,7 @@ struct Predefined_Symbols
     Symbol* error_symbol;
 };
 
-Symbol_Table* symbol_table_create(Symbol_Table* parent, AST::Base* definition_node);
+Symbol_Table* symbol_table_create(Symbol_Table* parent, AST::Node* definition_node);
 void symbol_table_destroy(Symbol_Table* symbol_table);
 void symbol_table_append_to_string(String* string, Symbol_Table* table, bool print_root);
 void symbol_append_to_string(Symbol* symbol, String* string);
@@ -168,9 +168,8 @@ struct Analysis_Item
     Symbol* symbol; // Optional
 
     Dynamic_Array<Analysis_Pass*> passes;
-    AST::Base* node;
-    int min_node_index;
-    int max_node_index;
+    AST::Node* node;
+    int ast_node_count;
 
     union {
         Analysis_Item* function_body_item;
@@ -185,7 +184,7 @@ struct Dependency_Analyser
     Symbol_Table* root_symbol_table;
     Predefined_Symbols predefined_symbols;
     Dynamic_Array<Symbol_Error> errors;
-    Hashtable<AST::Base*, Analysis_Item*> mapping_ast_to_items;
+    Hashtable<AST::Node*, Analysis_Item*> mapping_ast_to_items;
 
     // Used during analysis
     Compiler* compiler;
@@ -203,5 +202,5 @@ void dependency_analyser_reset(Compiler* compiler);
 void dependency_analyser_analyse(Code_Source* code_source);
 
 void analysis_item_destroy(Analysis_Item* item);
-void dependency_analyser_log_error(Symbol* existing_symbol, AST::Base* error_node);
+void dependency_analyser_log_error(Symbol* existing_symbol, AST::Node* error_node);
 void dependency_analyser_append_to_string(String* string);

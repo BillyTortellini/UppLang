@@ -73,6 +73,9 @@ struct Source_Code;
 namespace AST {
     struct Module;
 }
+namespace Parser {
+    struct Parse_Pass;
+}
 
 enum class Dependency_Type
 {
@@ -85,7 +88,6 @@ enum class Code_Origin
 {
     MAIN_PROJECT,
     LOADED_FILE,
-    GENERATED
 };
 
 struct Item_Dependency
@@ -99,8 +101,10 @@ struct Code_Source
 {
     Code_Origin origin;
     String file_path;
+    bool analysed;
+
     Source_Code* code;
-    AST::Module* ast;
+    Parser::Parse_Pass* parse_pass;
     Dynamic_Array<Analysis_Item*> analysis_items;
     Dynamic_Array<Item_Dependency> item_dependencies;
 };

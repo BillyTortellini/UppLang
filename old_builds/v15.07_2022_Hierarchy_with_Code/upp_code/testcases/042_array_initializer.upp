@@ -1,0 +1,35 @@
+Player::struct
+	name:String
+	age:int
+	alive:bool
+
+add_ints::(ints:[]int)->int
+	i:=0
+	sum:=0
+	while i<ints.size
+		sum=sum+ints[i]
+		i=i+1
+	return sum
+
+main::()
+	// Array init syntax
+	x:[5]int=int.[0,1,2,3,4]
+	assert(x[0]==0&&x[1]==1&&x[2]==2)
+	assert(x.size==5)
+	y:=int.[1,2,3]
+	assert(y.size==3)
+	
+	// This can be used to call functions,
+	// since arrays are automatically cast to slices
+	sum:=add_ints(int.[2,4,8,16])
+	assert(sum==30)
+	
+	// Logically also works with structs and struct initializers
+	players:=Player.[Player.{name="Fred",age=5,alive=true},Player.{name="Mart",age=6,alive=false}]
+	assert(players[0].age==5&&!players[1].alive)
+	
+	// Since there is no 0 sized array (Types without a size do no exist)
+	// empty array initializers return a Slice of size 0 and nullptr
+	slice:=int.[]
+	assert(slice.size==0&&cast_raw slice.data==cast{u64}0)
+

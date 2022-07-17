@@ -1,0 +1,868 @@
+Goal: Make Indentation-editing'feel' good
+Task #1: 
+    Return should remove lines
+Task #2:
+    Tab on empty lines should do something correct
+Task #3:
+    Shift-Tab to remove one indentation should work
+Task #4:
+    Tab, enter, shift-enter should work inside a line
+
+if x > 5 
+    if y > 20 && cond
+        print("Digga")
+    wellerman := get_fish(.WHALE)
+
+main :: (a: int, b: int, c: struct  
+    alive: int
+    name: string
+x: int, y: int)
+    return a + b
+
+
+
+Physics :: module 
+    Rigid_Body :: module
+        update :: () ...
+    update_all :: () ...
+
+Physics :: module
+    update_all :: () ...
+    Rigid_Body :: module
+        update :: () ...
+
+Theres a difference if its only one line
+
+Deleting before b:
+a
+    b
+    c
+-
+ab
+    c
+-------
+a
+    b
+        c
+-
+ab
+    c
+-------
+a 
+    b
+        c
+    d
+-
+ab
+    
+        c
+    d
+-------
+
+
+The 2 Operations do different things:
+ * Delete
+    Basically copies the line to the previous one, creating
+    an anonymous block to not destroy the structure
+ * Remove Indent
+    moves the line completely out of the module, to keep the order
+
+
+
+Discovery: 
+I think I found the problem with a hierarchical representation:
+Sometimes Scopes will automatically melt together in some unexpected Ways while Editing. 
+The Question: Do I allow these operations, or should i just restrict the editing to 
+not let something like this happen?
+
+
+DISCUSSION:
+-----------
+Current Idea to Explore:
+    - Formating is only a Rendering-Effect
+    - Source Code is a trimmed version of Plaintext
+
+This has the following usefull Properties:
+    - Fewer Keystrokes
+    - No Thinking about Formating
+    - Dynamic Switching between different Formating Options
+    - May allow better Syntax
+    - Easier and better Parsing
+        * Incremental Parsing
+        * Real-time possibility
+    - Better Way of displaying Program-Information (Errors/maybe even Visualization)
+
+The Problems I am currently facing:
+    - Formating works very good for individual Lines, but not for multiple Lines
+    - Indentation (Hierarchical Code Structure) is very fragile with Code
+    - Scopes with Tabs vs. {} vs. something else?
+    - Comments/Text(E.g. String literals) is easier in a Text-Based Editor, and requires special handling in my case
+
+The Idea that may solve this:
+    - Replace assumption about Source-Code Representation (Code = Plain Text) with
+      a hierarchical Representation
+    - Modify Editor-Commands to handle this structure
+
+Rambling:
+---------
+When first designing this language, I wanted a great Base-Language, which in itself is't that exciting,
+but I as I thoguht about the Killer-Features I found the three Pillars upon which Future-Features would be built: 
+    * Comptime-Code Execution
+    * Built-in Static-Analyser 
+    * IDE with Code-Visualizations, fitted to Language-Syntax
+At first this project started as a Vim-like Text-Editor, then most of the time was spent programming the language.
+Since quite a while I am stuck on the Text-Editor, Code-Representation, Formating and ease of use.
+The general Idea for a custom Editor that isn't based on Text comes from the Dion-Systems Demo.
+
+I started out by trying to work with another Representation than Text, going from a Syntax-Tree approach
+to a purely Token based approach, which didn't work out greatly because they are very restrictive
+in how you input code. This isn't really a big deal when creating Code, but this severly limits
+how you can modify code.
+After these Tests I just wanted to get back to having a working IDE, but I wanted to change
+the Syntax to Python-Style, since this would (in my mind then) allow for better Parsing, and also
+for Features like Code-Folding. During Implementing this, I still didn't want to give up
+on the Idea of a better Editor than normal Text-Editors, with automated Line-Formating and displaying
+visual Gaps where obvious things were missing. And to bring us the the Present State of things,
+after lots of experimenting with Live-Formating, I got to a seemingly good solution which I am
+happy with for Lines. Now the next big thing is to figure out if a similar System (Completely live, automated Formating)
+would work for Lines and the Hierarchical Structure of Structured Programming.
+    
+
+
+Design-Discussion: Scopes with {}/Indentation/different Code-Representation
+---------------------------------------------------------------------------
+Here I want to find out how editing of hierarchical Structures (Source-Code)
+should be, how they can be implemented and their strenghts/weaknesses.
+To do this, I look at the 2 most popular models in Text-Based Programming ({} vs Indentation)
+and then think about ways to create a model that may use another models that provides the same benefits
+
+Also thinking more abstractly about the problem, this isn't about only Scopes and Lines,
+this is generally applyable for Hierarchical Structures containing Lists of other Items
+
+The three Editing-Operations I want to compare are:
+    - Creating Scopes
+        a;b;c; -> a;{b;};c;
+    - Scope Collapse (Removing the scope)
+        a;{b;c;}d; -> a;b;c;d;
+    - Merging Scopes
+        {a;}{b;}     -> {a; b;}
+    - Moving Content between Scopes (Copy-Paste)
+        a; {b; c;} -> a; c; {b;}
+    - Moving Scopes between Scopes
+        {a;} {b; {c;}} -> {a; {c;}} {b;}
+
+Parenthesis Evaluation (Start/End-Token approach, Scopes have Borders):    
+    - Unlimited Influence (Whole Code base is unstable to edits)
+    + Flexible/Intuitive Editing Options
+    + Moving Scopes
+    + Merging Scopes (Border can be moved)
+    - Good Editing Options 
+        * Scope-Borders can be moved around
+        * Merging Scopes is easy, e.g. "{a;}{b;}" -> "{a;b;}"
+    - Auto-Formating will be very unstable
+
+Indentation Evaluation (Each item basically gets a Scope-Depth as an identifier)
+    + Limited Influence (Each scope-depth only affects one line/item)
+    + Less visual Clutter
+    - More writing (Scope-Depth for every line)
+    - Cannot express multiple Scopes in a single Line (Lambas, anonymous Types),
+        since this would require unlimited Parenthesis-Range, or some sort of End-Token
+    - Scope-Collaps is unstable (One wrong indent breaks Blocks)
+    - Moving Content and Moving Scopes requires additional logic
+
+Hierarchical Structure Thing:
+-----------------------------
+Let's start to design the hierarchical Structure by figuring out how to create the Hierarchy first,
+gathering Questions along the way, and afterwards looking at how Editing would work
+
+main :: ()  
+    x:=15+12
+    a:=5
+    if cond print("Hello")
+    a,b: int = 5;
+    exec_binop(a,b,.->  
+        if a > b 
+            return b
+        else 
+            return a;
+    , 12)
+
+    exec_binop(a,b,.->\t if a>b\t return b)
+    exec_binop(.->
+        return a + b
+    , a, b)
+
+    exec_binop(a, b, .->{return a + b;})
+    
+    
+
+Questions:
+How do you start a new Indentation?
+    Per Button-Press (Tab)
+How do you exit an Indentation?
+    - Normal Mode: Moving the Cursor out of it
+    - Insert Mode: Button-Press (Shift-Enter?)
+Do I want a special Type of Indentation when it is connected to the previous line?
+What are possible cursor positions?
+Multiple Scopes in a single line (Lambdas)?
+What about Parenthesis/Multi-Line Comments/String Literals?
+Mechanics of empty lines?
+Are all Scopes connected to an item before them?
+Copy-Paste between Scopes/Moving Scopes?
+How does this get Serialized to write to disk?
+Could this replace normal Parenthesis, or could Lists of items always be replaced like this?
+How does this affect parsing?
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Decisions:
+ - Ignore the issue that you some combinations of Anonymous Types/Lamdas aren't
+    valid in a Enter/Tab language.
+
+
+
+Idea I may have come up with: Tab after a structure that requires a Block indicates that the next statement is connected
+to this statement. But then it is questionable how we would end a block
+
+main :: () \t print(Hello_World)
+x:=
+
+main :: (struct '\t' x:int
+y:int
+z:int
+,a, b, c)
+
+// Display
+main :: (y: struct {y: int | z: int}, a: int, b: *float, c: [10]*bool)
+
+I mean this would just replace {} with a tab inside a thing...
+
+The Idea is that there is a difference between an empty line starting with a tab, and a line 
+Another Idea is to just replace Tabs with {}, so we have no ; but {}
+Then the rendering can handle the indentation
+        
+
+
+
+
+Formating in Programming Languages:
+-----------------------------------
+ * Whitespaces between Tokens
+ * Line wrapping on long lines
+ * Parenthesis style
+
+
+Syntax and Language Features:
+-----------------------------
+At the core of this language there are features that it provides to the Programmer,
+and then there is the Syntax that is required to express these features.
+
+Going from Machine Code to Assembly, we already see that the thing we want to create
+is a list of instructions that go into the computer
+    i8_add rax, rbx, rcx
+    pop rax
+    push rbx
+    mov8 rax, memory_of(rbx)
+
+On a very basic level, the Language allows you to define Things with names:
+    Definition:
+        name :: Thing
+        name <- Thing
+        var name = Thing
+A lot of languages have different Syntax for defining different Types of things
+    Function definition
+        int main(int argc, char** argv) {}
+        fn main(int argc, char** argv) -> int {}
+        proc main(int, char**) -> int
+        def main(a, b):
+    Structs
+        struct x {int x; int y;};
+        class Name:
+        const Name = struct {}
+    Modifiers
+        x :: int
+        x: int
+        int x
+        const int x
+        const x = struct {}
+
+Some Things that we have learned from transitioning from Machine-Code are:
+    Naming Things
+        * Allows us to have reference in the language
+        * Adds Meaning/Intent of the Programmer (Documentation)
+    Variables
+        * Replace automatic Register-Allocation 
+        * No need to manage writing to Stack, Heap, Global Memory
+    Types
+        * Operations are now type dependent, so we don't need to write instructions that set the type (multiply_uint8)
+        * Basic types (int, float, bool)
+        * Advanced types (pointer, array, struct, union, function type)
+        * Adds Intent to Memory
+        * More Security 
+    Structured Programming 
+        * Hierarchical Program Structure
+        * Replaces gotos with if-else/loops
+        * Adds Intent of the Programmer
+
+
+
+Features in my Language that the Syntax has to allow:
+    Functions
+        Parameters
+        Return Type
+    Code Blocks
+    Statements
+    Expressions
+    Variables
+        Global
+        Comptime Global
+        Local
+    Types
+    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+TODO:
+-----
+ * Parsing and new AST + Displaying Gaps
+ * Compiler Re-integration
+ * Replace RC-Code with AST + extra Analysis data
+ * Seperate Semantic-Analysis/Code Generation (IR-Code)
+ * Proper Line by line movement incorporating Render-Position
+ * Maybe Seperate Rendering Logic (Gaps before/after with critical spaces to another) as another stage
+
+        
+
+Parsing Goals:
+ - Iterable Tree with parent information
+ - Token-Mapping
+ - Reporting Errors and Gaps
+ - 'Countable' Statement/Expression Nodes (So Semantic Information can be attached)
+ - Support for multiple File-Loading (Adding another file/root to the AST)
+ - Code-Completion Support
+
+Parsing Logic: Recursive Descent (With rollback)
+    Test if something is parsable, e.g. parse_argument, parse_expression
+    rollback to a specific point if something doesn't work
+    Error recovery based on Parenthesis and commas
+
+
+
+
+Design Hour: Meaning of Tabs/Enters
+-----------------------------------
+fib :: (a: int, b: int) -> int
+    return a + b;
+
+main :: ()
+    suc, a := fib(1, 2);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+IDEAS:
+------
+    To solve Tabs/Lines vs {}/; I could use the same approach I have for rendering Tokens:
+    Text as the underlying Data-Representation, but the Rendering is free to Position the Pieces anywhere and
+    add extra Visual Elements like Gaps, Block-Delimiters ({}) and others.
+
+    If this works, almost every text element now has a single Defined purpose, and we don't have to
+    think about the distinction of Chars as Formating vs Semantic meaning, 
+    because Space ' ' = Token Delimiter, Enter '\n' = Statement Delimiter, Tab '\t' = Block Delimiter
+    and Formating is entirely done by the Formater
+
+    Open Problems/Questions:
+        Does Formating across multi-lines require Parsing (AST)?
+        How is Editing/Navigation affected when Space/Tab/Enter behave differently?
+        Is there a consistent way to have multi-line statements in other multi line statements? (E.g. Anonymous structs in function call)
+
+    This way the Formater could determine when we want to split specific operations into multiple lines
+        x := very_long_function_name(named_argument_0 = (32 + 100) * fibonacci(17), named_argument_12 = get_value_of(this=15)[5].member0, named_switch = false)
+    to
+        x := very_long_function_name(
+            named_argument_0 = (32 + 100) * fibonacci(17), 
+            named_argument_12 = get_value_of(
+                this=15
+            )[5].member0, 
+            named_switch = false
+        )
+    and it could allow Statement blocks to be inline if they are very short (Here the {}/; are just extra visual Elements, not actually represented in the text)
+        if cond
+            x += 1
+            print("Cond is true")
+        else 
+            x -= 1
+            print("Cond is false")
+    to
+        if cond: {x += 1; print("Cond is true")}
+        else     {x -= 1; print("Cond is false")}
+    Another Example
+        execute_binop(5, 7, .-> 
+                z := 15 + a
+                return z * 2 + b
+        )
+        execute_binop(5, 7, .-> {z := 15+a; return z * 2 + b;})
+
+
+    execute_binop :: (x: int, y: int, op: (a: int, b: int) -> int) -> int
+        return op(a, b)
+
+    add :: (a: int, b: int) -> int
+        return a + b
+
+    add :: (a: int, b: int) -> int {return a + b}
+
+    main :: ()
+        a := 5
+        b := 7
+        execute_binop(a, b, add)
+        execute_binop(a, b, .-> {return a + b} )
+        execute_binop(a, b, .-> return a + b)
+
+Debate: Semicolon/{} vs Tabs/Lines
+    With the Semicolon/{} Combo, we can write blocks inline
+        for (i := 0; i < 15; i += 1)
+        RGB :: struct
+            r: float; g: float; b: float
+        defer {x += 2 * y; delete y;}
+        exec_binop(5, 7, .-> {return a + b;})
+    Automated Formating can detect indent by looking at the Parenthesis Structure,
+    meaning that you cannot have indent/block Errors, but therefore the Parenthesis-Structure
+    may contain errors, which may spread across the whole text-file
+    
+    Tabs/Line-Breaks are normally ignored by the Lexer/Parser, and are just for Formating.
+    But since 99% of the time Statements are formated into a new-line, and {} are only
+    used with correct indentation, we could just use Indentation and Line-Breaks
+    for determining Statement-Borders and Block-Structure
+
+    This enables less writing (Since we dont need the Delimiters ; and {}) 
+    and frees up the Operators {} and ; for other purposes
+
+Influence Range of Enclosures (Parenthesis, Comments, Strings, Chars) is also important to note here, since there are 3 Options:
+    - Line-Only,              Start/End of Enclosure must be on the same line
+    - Global,                 Start/End may be on different lines entirely
+    - Multi-Line Indent-Only: Lines between Parenthesis must have a higher indent than the parenthesis start indent
+
+    // Line-Only: WORKS, ML-IO: WORKS, Global:WORKS
+    x := foo(z: what)
+
+    // Line-Only: ERROR, ML-IO: WORKS, Global:WORKS
+    x := foo(
+        z: what)
+
+    // Line-Only: ERROR, ML-IO: WORKS, Global:WORKS
+    x := foo(
+        z: what
+    )
+
+    // Line-Only: ERROR, ML-IO: ERROR, Global:WORKS
+    x := foo(
+    z: what)
+
+Convenience Syntax:
+    Typical For Loop implementation
+        loop i: int; i < 10; i += 1
+    Break/Continue with iterator identifier
+        loop a in array
+            if a > 15
+                break a
+            print(a)
+    Expression Block/yield: (Needs more work)
+        x := .{if cond {return a;} else b;}
+    Auto Lambda signature with .->
+        execute_binop(5, 7, (a: int, b: int) -> int {return a + b})
+        execute_binop(5, 7, .-> {return a + b})
+        
+
+Anonymous struct inside a function definition
+
+Semicolon/Braces Version:
+    find :: (table: Table, value: Value) -> struct {a: int; b: int} {
+        return .{1, 2};
+    }
+
+Tab/Enter Version:
+    find :: (table: Table, value: Value) -> struct 
+        a: int
+        b: int
+        return .{1, 2}
+
+Other Example
+    member_offset(struct {a: int; b: int}, "a");
+    member_offset(struct
+        a: int
+        b: int
+    , "a")
+
+x: enum {RED, GREEN, BLUE};
+x = .RED;
+y: type_of(x) = .GREEN;
+
+x: enum
+    RED
+    GREEN
+    BLUE
+    = 15
+
+
+Ok, so this is a serious problem since some things cannot be parsed smartly.
+Let's try to figure out which Constructs are affected by this:
+
+Constructs that have their own Scope (Enter + Indentation):
+    * Structs, Enums, Modules
+    * Functions, Lambdas
+    * if-else, while, switch, defer Statements
+And the only things allowed in expressions are:
+    * Structs, Enums, Lambdas
+
+This is basically the same problem that I am having with 2 anonymous blocks one after another
+    { x: int; } {x: int;}
+    main :: ()
+        prev()
+            x: int
+            x: int
+2 anonymous would be easy to fix by just not allowing such constructs in the language,
+but to my problem lambdas and anonymous Types seem usefull
+
+Maybe something that alleviates the problem is to allow the first line of a structure to determine
+the indent of the following structure
+
+    find :: (table: Table, value: Value) -> struct 
+            a: int
+            b: int
+        return .{1, 2}
+    find :: (table: Table, value: Value) ->
+        struct
+            a: int
+            b: int
+        return .{1, 2}
+
+The problem here is (I think) that we use Enter('\n') as a seperator for too many different things
+The most common Separators we have in Programming are:
+    ,   ... Parameter separator
+    ;   ... Statement separator
+    {}  ... Block containment
+    ()  ... Parameter containment
+    []  ... Array containment
+    ' ' ... Identifier/Keyword/Number/Operator Seperator
+
+Structured Programming (No Gotos) contains the following:
+    Hierarchical Program Structure (Nested Blocks)
+
+The thing I want to achieve is that a programmer NEVER needs to worry about Formating,
+which has the following benefits:
+    - Less Typing of useless characters
+    - Formating can be changed for each situation
+    - One clear way to write a piece of code
+
+The Question is if this is an achievable Goal, because of some special cases
+    - Empty lines between statements
+    - Comments
+    - Nested Structures
+    
+
+
+
+Parsing Problems:
+What happens if the indentation is wrong?
+    What :: struct
+            x: int
+        y: int
+
+Address :: union
+    ipv4: [4]byte
+    ipv5: struct 
+        addr: string
+        value: u64
+    ipv6: string
+
+Nested Structures are only a problem if we have 2 Constructs that require a enter + indent in the same line
+Address :: struct
+    x: (a: int, b: int) -> int
+        return a + b
+
+The main issues here are:
+    Anonymous modules (Irrelevant)
+    Anonymous Structs/Enums
+    Lambdas
+
+exec(1, 4, .-> {return a + b;})
+exec(1, 4, 
+    .->
+        return a + b
+)
+x: struct{a: int; b: int}
+    
+
+        
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Current formating approach:
+    - Data-Representation is String
+    - Editing is done on String
+    - After Editing the Lexer _always_ trims String into a correct, Tokenized-Format
+    - Rendering is done on Tokens, not on Text (For formating, displaying additional infos, etc.)
+    - Each line can be independently tokenized
+
+
+
+
+
+
+Other Approaches:
+    * Data-Representation is Tokens
+        Restricted Editing (Start/End of Tokens, Token seperation, ...)
+        Cannot use normal Text-Editor Logic
+    * Data-Representation is Tree
+        Restricted Editing
+        Only valid Syntax allowed
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Editor Formal Specification:
+----------------------------
+Automated Formating
+Display of Missing Gaps
+Smart wrapping of long lines
+
+
+
+
+
+Elements of Text in a Programming-Language:
+    * Identifiers (Connections between pieces)
+    * Operators, single and multi-character
+    * Parenthesis
+    * Keywords
+    * Spaces
+    * Newlines
+    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Dion Notes:
+They mentioned that they tried using a Hole-Based approach, but
+having Errors is usefull. Maybe they mean the same thing that I did,
+which was that Editing is easier if you can introduce Errors during changes.
+
+Also it seemed like he was able to do a normal Copy-Paste which introduced Errors.
+
+The Problem I tried to solve with my Syntax-Editor was to
+reparse the program after inserting some new Tokens inbetween, 
+which seems to be a very hard Problem, even if we have a Syntax-Driven Approach
+
+My current Approach also was to have non Token-based editing of an AST-Tree
+It looks like even Dion is still Token-Based, since they can copy-paste wrong stuff from
+one Place to another
+
+The Question is then, when does what get parsed, and when are Tree-Operations performed?
+
+
+
+Current Thoughts:
+I don't know how to Implement a Syntax-Based Editor that allows nice editing
+
+To be fair I feel like I currently want a Indentation-Based Syntax-Style
+
+The 2 Brace Styles I use are:
+    if cond {
+        foo()
+        bar()
+        baz = sqrt(foo())
+    }
+And
+    if cond 
+    {
+        foo()
+        bar()
+        baz = sqrt(foo())
+    }
+
+    if x < 5
+        print("Hello")
+    baz()
+To be Fair I also do 
+    foo(
+        15, 
+        32, 
+        64
+        what, what, what
+    );
+
+For Compilers/Error-Messages it would be great if all statements ended with a New-Line
+and all Blocks ended when the indentation changes
+
+Also, the Code editor can store the Text Hierarchically based on indentation
+This would also allow for easy Folding, and the promised 'Code Level-of-Detail'
+
+Indentation-Style
+-----------------
+Pros:
+  - Less writing, simpler reading
+  - Parenthesis Influence is limited, e.g. (), {}, [], ""
+  - Better Parsing -> Better Error detection, better Auto-Completion
+  - Text-Storage Better
+  - Easier Editing (Since you don't need to worry about deleting {})
+
+Indentation-Style Problems:
+ - No Statements in Expressions (Lambdas)
+ - Function Type vs Function Definition
+ - Anonymous Blocks vs Whitespace inbetween
+ - Multi-line Comments have the same problem as parenthesis
+ - Multi-Line Expression
+ - Copy-Pasting between Indentation-Levels
+ - Changing Indentation of big blocks (Functions)
+ - Strings
+
+Things I don't like about Python-Style:
+ - All statements starting a block have a Colon at the end
+    while x < 5:
+    if x < 5:
+ - Lambdas kinda suck
+ - No Multi-Line Comments, no nested comments
+ - Multi-Line Expressions require \, meaning that I need to reformat a lot if I change things
+
+
+ main :: () {
+        if x < 5
+        bar
+        baz 
+        boo
+        foo
+        fuck
+        while what
+            the fuck
+
+ }
+

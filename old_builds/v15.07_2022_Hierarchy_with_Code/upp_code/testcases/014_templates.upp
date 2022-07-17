@@ -1,0 +1,21 @@
+module Test<K, V>
+{
+	Node :: struct {
+		key: K;
+		value: V;
+	}
+	
+	make :: (key: K, value: V) -> Node<K, V>
+	{
+		result: Node<K, V>;
+		result.key = key;
+		result.value = value;
+		return result;
+	}
+}
+
+main :: ()
+{
+	a := Test<int, bool>~make(32, false);
+	b := Test<bool, float>~make(false, 12.0);
+}

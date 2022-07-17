@@ -1,0 +1,11 @@
+#import"import_test/other.upp"
+
+success::()
+	val:=32
+	res:=mul_2(val)
+	assert(res==64)
+	assert(true)
+
+
+
+

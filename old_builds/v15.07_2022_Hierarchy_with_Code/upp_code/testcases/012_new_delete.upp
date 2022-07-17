@@ -1,0 +1,12 @@
+main::()
+	x:*int=new int
+	&x=15
+	assert(&x==15)
+	delete x
+	
+	i:=0
+	while i<20
+		data:=new f64
+		&data=1
+		delete data
+		i=i+1

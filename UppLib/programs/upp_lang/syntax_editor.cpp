@@ -179,7 +179,7 @@ void syntax_editor_load_text_file(const char* filename)
     code_history_reset(&editor.history);
     editor.last_token_synchronized = history_get_timestamp(&editor.history);
     editor.code_changed_since_last_compile = true;
-    compiler_compile(editor.code, false, string_create(syntax_editor.file_path));
+    compiler_compile_clean(editor.code, Compile_Type::ANALYSIS_ONLY, string_create(syntax_editor.file_path));
 }
 
 void syntax_editor_save_text_file()
@@ -409,7 +409,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
     }
     syntax_editor.code_changed_since_last_compile = false;
     syntax_editor.last_compile_was_with_code_gen = generate_code;
-    compiler_compile(syntax_editor.code, generate_code, string_create(syntax_editor.file_path));
+    compiler_compile_incremental(&syntax_editor.history, (generate_code ? Compile_Type::BUILD_CODE : Compile_Type::ANALYSIS_ONLY));
 
     // Collect errors from all compiler stages
     {
@@ -419,10 +419,13 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
         dynamic_array_reset(&editor.errors);
 
         // Parse Errors
-        auto parse_errors = Parser::get_error_messages();
-        for (int i = 0; i < parse_errors.size; i++) {
-            auto& error = parse_errors[i];
-            dynamic_array_push_back(&editor.errors, error_display_make(string_create_static(error.msg), error.range));
+        for (int i = 0; i < compiler.code_sources.size; i++)
+        {
+            auto parse_errors = compiler.code_sources[i]->parse_pass->error_messages;
+            for (int j = 0; j < parse_errors.size; j++) {
+                auto& error = parse_errors[j];
+                dynamic_array_push_back(&editor.errors, error_display_make(string_create_static(error.msg), error.range));
+            }
         }
 
         auto error_ranges = dynamic_array_create_empty<Token_Range>(1);
@@ -434,7 +437,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
             auto& error = compiler.dependency_analyser->errors[i];
             auto& node = error.error_node;
             if (node == 0) continue;
-            if (code_source_from_ast(node) != compiler.main_source) continue;
+            if (compiler_find_ast_code_source(node) != compiler.main_source) continue;
             dynamic_array_reset(&error_ranges);
             Parser::ast_base_get_section_token_range(node, Parser::Section::IDENTIFIER, &error_ranges);
             for (int j = 0; j < error_ranges.size; j++) {
@@ -450,7 +453,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
             auto& node = error.error_node;
             dynamic_array_reset(&error_ranges);
             if (node == 0) continue;
-            if (code_source_from_ast(node) != compiler.main_source) continue;
+            if (compiler_find_ast_code_source(node) != compiler.main_source) continue;
             Parser::ast_base_get_section_token_range(node, semantic_error_get_section(error), &error_ranges);
             for (int j = 0; j < error_ranges.size; j++) {
                 auto& range = error_ranges[j];
@@ -464,27 +467,27 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 
 
 // Code Queries
-Symbol* code_query_get_ast_node_symbol(AST::Base* base)
+Symbol* code_query_get_ast_node_symbol(AST::Node* base)
 {
     switch (base->type)
     {
-    case AST::Base_Type::DEFINITION: {
-        auto definition = AST::base_downcast<AST::Definition>(base);
+    case AST::Node_Type::DEFINITION: {
+        auto definition = AST::downcast<AST::Definition>(base);
         return definition->symbol;
     }
-    case AST::Base_Type::SYMBOL_READ: {
-        auto read = AST::base_downcast<AST::Symbol_Read>(base);
+    case AST::Node_Type::SYMBOL_READ: {
+        auto read = AST::downcast<AST::Symbol_Read>(base);
         return read->resolved_symbol;
     }
-    case AST::Base_Type::PARAMETER: {
-        auto param = AST::base_downcast<AST::Parameter>(base);
+    case AST::Node_Type::PARAMETER: {
+        auto param = AST::downcast<AST::Parameter>(base);
         return param->symbol;
     }
     }
     return 0;
 }
 
-Analysis_Pass* code_query_get_ast_node_analysis_pass(AST::Base* base)
+Analysis_Pass* code_query_get_ast_node_analysis_pass(AST::Node* base)
 {
     auto& mappings = compiler.dependency_analyser->mapping_ast_to_items;
     Analysis_Item* item = 0;
@@ -504,7 +507,7 @@ Analysis_Pass* code_query_get_ast_node_analysis_pass(AST::Base* base)
     return item->passes[0];
 }
 
-Symbol_Table* code_query_get_ast_node_symbol_table(AST::Base* base)
+Symbol_Table* code_query_get_ast_node_symbol_table(AST::Node* base)
 {
     /*
     The three Nodes that have Symbol tables are:
@@ -516,16 +519,16 @@ Symbol_Table* code_query_get_ast_node_symbol_table(AST::Base* base)
     {
         switch (base->type)
         {
-        case AST::Base_Type::MODULE: {
-            auto module = AST::base_downcast<AST::Module>(base);
+        case AST::Node_Type::MODULE: {
+            auto module = AST::downcast<AST::Module>(base);
             return module->symbol_table;
         }
-        case AST::Base_Type::CODE_BLOCK: {
-            auto block = AST::base_downcast<AST::Code_Block>(base);
+        case AST::Node_Type::CODE_BLOCK: {
+            auto block = AST::downcast<AST::Code_Block>(base);
             return block->symbol_table;
         }
-        case AST::Base_Type::EXPRESSION: {
-            auto expr = AST::base_downcast<AST::Expression>(base);
+        case AST::Node_Type::EXPRESSION: {
+            auto expr = AST::downcast<AST::Expression>(base);
             if (expr->type == AST::Expression_Type::FUNCTION) {
                 return expr->options.function.symbol_table;
             }
@@ -758,14 +761,14 @@ void code_completion_find_suggestions()
     // Check if we are on special node
     syntax_editor_synchronize_with_compiler(false);
     Token_Index cursor_token_index = token_index_make(syntax_editor.cursor.line, get_cursor_token_index(false));
-    auto node = Parser::find_smallest_enclosing_node(&compiler.main_source->ast->base, cursor_token_index);
+    auto node = Parser::find_smallest_enclosing_node(&compiler.main_source->parse_pass->root->base, cursor_token_index);
 
     bool fill_from_symbol_table = false;
     Symbol_Table* specific_table = 0;
 
-    if (node->type == AST::Base_Type::EXPRESSION)
+    if (node->type == AST::Node_Type::EXPRESSION)
     {
-        auto expr = AST::base_downcast<AST::Expression>(node);
+        auto expr = AST::downcast<AST::Expression>(node);
         auto pass = code_query_get_ast_node_analysis_pass(node);
         Type_Signature* type = 0;
         if (expr->type == AST::Expression_Type::MEMBER_ACCESS && pass != 0) {
@@ -808,9 +811,9 @@ void code_completion_find_suggestions()
             }
         }
     }
-    else if (node->parent != 0 && node->parent->type == AST::Base_Type::SYMBOL_READ)
+    else if (node->parent != 0 && node->parent->type == AST::Node_Type::SYMBOL_READ)
     {
-        auto parent_read = AST::base_downcast<AST::Symbol_Read>(node->parent);
+        auto parent_read = AST::downcast<AST::Symbol_Read>(node->parent);
         if (parent_read->resolved_symbol->type == Symbol_Type::MODULE) {
             specific_table = parent_read->resolved_symbol->options.module_table;
         }
@@ -1667,7 +1670,7 @@ void syntax_highlighting_mark_range(Token_Range range, vec3 normal_color, vec3 e
     }
 }
 
-void syntax_highlighting_mark_section(AST::Base* base, Parser::Section section, vec3 normal_color, vec3 empty_range_color, bool underline)
+void syntax_highlighting_mark_section(AST::Node* base, Parser::Section section, vec3 normal_color, vec3 empty_range_color, bool underline)
 {
     assert(base != 0, "");
     auto ranges = syntax_editor.token_range_buffer;
@@ -1680,7 +1683,7 @@ void syntax_highlighting_mark_section(AST::Base* base, Parser::Section section, 
     }
 }
 
-void syntax_highlighting_set_section_text_color(AST::Base* base, Parser::Section section, vec3 color)
+void syntax_highlighting_set_section_text_color(AST::Node* base, Parser::Section section, vec3 color)
 {
     assert(base != 0, "");
     auto ranges = syntax_editor.token_range_buffer;
@@ -1704,7 +1707,7 @@ void syntax_highlighting_set_section_text_color(AST::Base* base, Parser::Section
     }
 }
 
-void syntax_highlighting_set_symbol_colors(AST::Base* base)
+void syntax_highlighting_set_symbol_colors(AST::Node* base)
 {
     Symbol* symbol = code_query_get_ast_node_symbol(base);
     if (symbol != 0) {
@@ -1981,10 +1984,10 @@ void syntax_editor_render_block(Block_Index block_index)
     }
 }
 
-bool syntax_editor_display_analysis_info(AST::Base* node)
+bool syntax_editor_display_analysis_info(AST::Node* node)
 {
-    if (node->type != AST::Base_Type::EXPRESSION) return false;
-    auto expr = AST::base_downcast<AST::Expression>(node);
+    if (node->type != AST::Node_Type::EXPRESSION) return false;
+    auto expr = AST::downcast<AST::Expression>(node);
     if (expr->type != AST::Expression_Type::MEMBER_ACCESS) return false;
 
     auto pass = code_query_get_ast_node_analysis_pass(node);
@@ -2065,8 +2068,7 @@ void syntax_editor_render()
     if (!show_context_info)
     {
         show_context_info = true;
-        auto node = Parser::find_smallest_enclosing_node(&compiler.main_source->ast->base, cursor_token_index);
-        auto info = Parser::get_parse_info(node);
+        auto node = Parser::find_smallest_enclosing_node(&compiler.main_source->parse_pass->root->base, cursor_token_index);
         AST::base_append_to_string(node, &context);
     }
 
@@ -2088,8 +2090,7 @@ void syntax_editor_render()
 
     // Display Hover Information
     {
-        auto node = Parser::find_smallest_enclosing_node(&compiler.main_source->ast->base, cursor_token_index);
-        auto info = Parser::get_parse_info(node);
+        auto node = Parser::find_smallest_enclosing_node(&compiler.main_source->parse_pass->root->base, cursor_token_index);
 
         if (!show_context_info) {
             show_context_info = syntax_editor_display_analysis_info(node);
@@ -2154,7 +2155,7 @@ void syntax_editor_render()
         string_append_string(&context, &str);
     }
     // Syntax Highlighting
-    syntax_highlighting_set_symbol_colors(&compiler.main_source->ast->base);
+    syntax_highlighting_set_symbol_colors(&compiler.main_source->parse_pass->root->base);
 
     // Draw Cursor
     {

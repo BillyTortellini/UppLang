@@ -1,0 +1,30 @@
+// Comments can be located at any scope!
+
+main::()
+	// Single line comment
+	a:=15
+	
+	//
+		Multi line comments start with an empty line 
+		containing only '//' and indentation afterwards
+		
+		
+		this is still a comment
+	
+	//
+		Nested comments also work, but they also require
+		another // symbol, like normal multi-line comments
+		//
+			This is a nested comment
+		This should probably be changed in the future
+	
+	cond:=true
+	// Working end of line comment
+	if cond// Do something when cond is true
+		assert(true)
+	
+	// Anonymous block
+		x:=15+5
+		assert(x==20)
+		// this isn't a multiline comment because 
+		// the // must be empty afterwards
