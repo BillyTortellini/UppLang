@@ -95,40 +95,40 @@ Type_Signature* hardcoded_type_to_signature(Hardcoded_Type type)
 // Analysis Info
 Analysis_Pass* analysis_item_create_pass(Analysis_Item* item)
 {
-    auto pass = new Analysis_Pass;
-    pass->item = item;
+    auto source_parse = new Analysis_Pass;
+    source_parse->item = item;
     assert(item->ast_node_count > 0, "");
-    pass->infos = array_create_empty<Analysis_Info>(item->ast_node_count);
-    memory_set_bytes(pass->infos.data, pass->infos.size * sizeof(Analysis_Info), 0);
-    dynamic_array_push_back(&item->passes, pass);
-    return pass;
+    source_parse->infos = array_create_empty<Analysis_Info>(item->ast_node_count);
+    memory_set_bytes(source_parse->infos.data, source_parse->infos.size * sizeof(Analysis_Info), 0);
+    dynamic_array_push_back(&item->passes, source_parse);
+    return source_parse;
 }
 
-Analysis_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Node* node)
+Analysis_Info* analysis_pass_get_info(Analysis_Pass* source_parse, AST::Node* node)
 {
-    assert(pass != 0, "");
-    auto& item = pass->item;
-    return &pass->infos[node->analysis_item_index];
+    assert(source_parse != 0, "");
+    auto& item = source_parse->item;
+    return &source_parse->infos[node->analysis_item_index];
 }
 
-Expression_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Expression* expression) {
-    return &analysis_pass_get_info(pass, AST::upcast(expression))->info_expr;
+Expression_Info* analysis_pass_get_info(Analysis_Pass* source_parse, AST::Expression* expression) {
+    return &analysis_pass_get_info(source_parse, AST::upcast(expression))->info_expr;
 }
 
-Case_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Switch_Case* sw_case) {
-    return &analysis_pass_get_info(pass, AST::upcast(sw_case))->info_case;
+Case_Info* analysis_pass_get_info(Analysis_Pass* source_parse, AST::Switch_Case* sw_case) {
+    return &analysis_pass_get_info(source_parse, AST::upcast(sw_case))->info_case;
 }
 
-Argument_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Argument* argument) {
-    return &analysis_pass_get_info(pass, AST::upcast(argument))->arg_info;
+Argument_Info* analysis_pass_get_info(Analysis_Pass* source_parse, AST::Argument* argument) {
+    return &analysis_pass_get_info(source_parse, AST::upcast(argument))->arg_info;
 }
 
-Statement_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Statement* statement) {
-    return &analysis_pass_get_info(pass, AST::upcast(statement))->info_stat;
+Statement_Info* analysis_pass_get_info(Analysis_Pass* source_parse, AST::Statement* statement) {
+    return &analysis_pass_get_info(source_parse, AST::upcast(statement))->info_stat;
 }
 
-Code_Block_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Code_Block* block) {
-    return &analysis_pass_get_info(pass, AST::upcast(block))->info_block;
+Code_Block_Info* analysis_pass_get_info(Analysis_Pass* source_parse, AST::Code_Block* block) {
+    return &analysis_pass_get_info(source_parse, AST::upcast(block))->info_block;
 }
 
 
@@ -184,7 +184,7 @@ Struct_Progress* analysis_progress_create_struct(Type_Signature* struct_type, An
     assert(item->type == Analysis_Item_Type::STRUCTURE, "");
     auto result = analysis_progress_allocate_internal<Struct_Progress>(Analysis_Progress_Type::STRUCTURE);
     result->state = Struct_State::DEFINED;
-    result->pass = analysis_item_create_pass(item);
+    result->source_parse = analysis_item_create_pass(item);
     result->struct_type = struct_type;
     hashtable_insert_element(&workload_executer.progress_structs, struct_type, result);
     return result;
@@ -195,9 +195,9 @@ Bake_Progress* analysis_progress_create_bake(Analysis_Item* item)
     assert(item->type == Analysis_Item_Type::BAKE, "");
     auto result = analysis_progress_allocate_internal<Bake_Progress>(Analysis_Progress_Type::BAKE);
     result->result = comptime_result_make_not_comptime();
-    result->pass = analysis_item_create_pass(item);
+    result->source_parse = analysis_item_create_pass(item);
     result->bake_function = modtree_function_create_empty(
-        type_system_make_function(&compiler.type_system, dynamic_array_create_empty<Type_Signature*>(1), compiler.type_system.void_type), 0, result->pass 
+        type_system_make_function(&compiler.type_system, dynamic_array_create_empty<Type_Signature*>(1), compiler.type_system.void_type), 0, result->source_parse 
     );
     return result;
 }
@@ -207,7 +207,7 @@ Definition_Progress* analysis_progress_create_definition(Symbol* symbol, Analysi
     assert(item->type == Analysis_Item_Type::DEFINITION, "");
     auto result = analysis_progress_allocate_internal<Definition_Progress>(Analysis_Progress_Type::DEFINITION);
     result->symbol = symbol;
-    result->pass = analysis_item_create_pass(item);
+    result->source_parse = analysis_item_create_pass(item);
     hashtable_insert_element(&workload_executer.progress_definitions, symbol, result);
     return result;
 }
@@ -388,11 +388,11 @@ ModTree_Global* modtree_program_add_global(Type_Signature* type)
     return global;
 }
 
-void modtree_global_set_init(ModTree_Global* global, Analysis_Pass* pass, AST::Expression* expr)
+void modtree_global_set_init(ModTree_Global* global, Analysis_Pass* source_parse, AST::Expression* expr)
 {
     global->has_initial_value = true;
     global->init_expr = expr;
-    global->init_pass = pass;
+    global->init_pass = source_parse;
 }
 
 ModTree_Program* modtree_program_create()
@@ -1018,61 +1018,64 @@ void analysis_workload_destroy(Analysis_Workload* workload)
 
 void symbol_dependency_set_error_symbol(Symbol_Dependency* symbol_dep)
 {
-    symbol_dep->resolved_symbol = compiler.dependency_analyser->predefined_symbols.error_symbol;
     AST::Symbol_Read* read = symbol_dep->read;
-    while (read != 0)
+    while (true)
     {
-        if (read->resolved_symbol == 0 || !read->path_child.available) {
-            read->resolved_symbol = compiler.dependency_analyser->predefined_symbols.error_symbol;
-        }
-        if (read->path_child.available) {
+        if (read->path_child.available)
+        {
+            if (read->resolved_symbol == 0) {
+                read->resolved_symbol = compiler.dependency_analyser->predefined_symbols.error_symbol;
+            }
             read = read->path_child.value;
         }
-        else {
-            read = 0;
+        else
+        {
+            read->resolved_symbol = compiler.dependency_analyser->predefined_symbols.error_symbol;
+            return;
         }
     }
 }
 
-bool symbol_dependency_try_resolve(Symbol_Dependency* symbol_dep)
+Symbol* symbol_dependency_try_resolve(Symbol_Dependency* symbol_dep)
 {
-    if (symbol_dep->resolved_symbol != 0) return true;
     auto& analyser = semantic_analyser;
-    AST::Symbol_Read* read = symbol_dep->read;
-    Symbol_Table* table = symbol_dep->symbol_table;
+    auto table = symbol_dep->symbol_table;
+    auto read = symbol_dep->read;
+
     while (true)
     {
-        bool is_path = read->path_child.available;
-        auto& symbol = read->resolved_symbol;
-        if (symbol == 0) {
-            symbol = symbol_table_find_symbol(table, read->name, read != symbol_dep->read, is_path ? 0 : symbol_dep, symbol_dep->item);
+        // Skip parts of a Path that are already resolved (This function may be called multiple times on the same dependency)
+        if (read->resolved_symbol != 0) {
+            read = read->path_child.value;
+            continue;
         }
-        if (is_path)
+
+        // Try to resolve symbol
+        bool inside_path = read != symbol_dep->read;
+        read->resolved_symbol = symbol_table_find_symbol(table, read->name, inside_path, inside_path ? 0 : symbol_dep, symbol_dep->item);
+        if (read->path_child.available) 
         {
-            if (symbol == 0) {
-                return false;
+            if (read->resolved_symbol == 0 || read->resolved_symbol->type == Symbol_Type::UNRESOLVED) {
+                return 0;
             }
-            if (symbol->type == Symbol_Type::UNRESOLVED) {
-                return false;
-            }
-            if (symbol->type == Symbol_Type::MODULE) {
-                read->resolved_symbol = symbol;
-                table = symbol->options.module_table;
+            if (read->resolved_symbol != 0 && read->resolved_symbol->type == Symbol_Type::MODULE) {
+                table = read->resolved_symbol->options.module_table;
                 read = read->path_child.value;
                 continue;
             }
-
-            semantic_analyser_log_error(Semantic_Error_Type::SYMBOL_EXPECTED_MODUL_IN_IDENTIFIER_PATH, &read->base);
-            semantic_analyser_add_error_info(error_information_make_symbol(symbol));
-            symbol_dependency_set_error_symbol(symbol_dep);
-            return true;
+            else {
+                semantic_analyser_log_error(Semantic_Error_Type::SYMBOL_EXPECTED_MODUL_IN_IDENTIFIER_PATH, &read->base);
+                semantic_analyser_add_error_info(error_information_make_symbol(read->resolved_symbol));
+                symbol_dependency_set_error_symbol(symbol_dep);
+                return read->resolved_symbol;
+            }
         }
         else {
-            symbol_dep->resolved_symbol = symbol;
-            read->resolved_symbol = symbol;
-            return true;
+            return read->resolved_symbol;
         }
     }
+    panic("hey");
+    return 0;
 }
 
 void analysis_workload_add_dependency_internal(Analysis_Workload* workload, Analysis_Workload* dependency, Symbol_Dependency* symbol_read)
@@ -1133,7 +1136,7 @@ void workload_executer_move_dependency(Analysis_Workload* move_from, Analysis_Wo
     dynamic_array_destroy(&info.symbol_reads);
 }
 
-void workload_executer_remove_dependency(Analysis_Workload* workload, Analysis_Workload* depends_on, bool add_if_runnable)
+void workload_executer_remove_dependency(Analysis_Workload* workload, Analysis_Workload* depends_on, bool allow_add_to_runnables)
 {
     auto graph = &workload_executer;
     Workload_Pair pair = workload_pair_create(workload, depends_on);
@@ -1143,7 +1146,7 @@ void workload_executer_remove_dependency(Analysis_Workload* workload, Analysis_W
     list_remove_node(&depends_on->dependents, info->dependent_node);
     dynamic_array_destroy(&info->symbol_reads);
     bool worked = hashtable_remove_element(&graph->workload_dependencies, pair);
-    if (add_if_runnable && workload->dependencies.count == 0 && workload->symbol_dependencies.size == 0) {
+    if (allow_add_to_runnables && workload->dependencies.count == 0 && workload->symbol_dependencies.size == 0) {
         dynamic_array_push_back(&graph->runnable_workloads, workload);
     }
 }
@@ -1169,7 +1172,7 @@ bool cluster_workload_check_for_cyclic_dependency(
             return *contains_loop;
         }
     }
-    hashtable_insert_element(visited, workload, false); // The boolean value nodes later if we actually find a loop
+    hashtable_insert_element(visited, workload, false); // The boolean value items later if we actually find a loop
     bool loop_found = false;
     for (int i = 0; i < workload->reachable_clusters.size; i++)
     {
@@ -1393,27 +1396,23 @@ void workload_executer_resolve()
             for (int j = 0; j < workload->symbol_dependencies.size; j++)
             {
                 Symbol_Dependency* dep = workload->symbol_dependencies[j];
-                if (dep->resolved_symbol == 0) {
-                    symbol_dependency_try_resolve(dep);
-                    if (dep->resolved_symbol == 0) {
-                        continue;
-                    }
-                    executer.progress_was_made = true;
+                Symbol* symbol = symbol_dependency_try_resolve(dep);
+                if (symbol == 0) {
+                    continue;
                 }
-                auto& symbol = dep->resolved_symbol;
 
-                bool symbol_read_ready = true;
+                bool dependency_resolved = true;
                 switch (symbol->type)
                 {
                 case Symbol_Type::UNRESOLVED:
                 {
                     Definition_Progress** progress = hashtable_find_element(&executer.progress_definitions, symbol);
                     if (progress != 0) {
-                        symbol_read_ready = true;
+                        dependency_resolved = true;
                         analysis_workload_add_dependency_internal(workload, (*progress)->definition_workload, dep);
                     }
                     else {
-                        symbol_read_ready = false;
+                        dependency_resolved = false;
                     }
                     break;
                 }
@@ -1440,7 +1439,7 @@ void workload_executer_resolve()
                             }
                         }
                         else {
-                            assert(type->size != 0 && type->alignment != 0, "");
+                            assert(!(type->size == 0 && type->alignment == 0), "");
                         }
                     }
                     break;
@@ -1448,7 +1447,7 @@ void workload_executer_resolve()
                 default: break;
                 }
 
-                if (symbol_read_ready) {
+                if (dependency_resolved) {
                     dynamic_array_swap_remove(&workload->symbol_dependencies, j);
                     j = j - 1;
                 }
@@ -1597,7 +1596,7 @@ void workload_executer_resolve()
 
             while (!loop_found)
             {
-                // Remove all nodes that are already confirmed to have no cycles (E.g nodes from last loop run)
+                // Remove all items that are already confirmed to have no cycles (E.g items from last loop run)
                 for (int i = 0; i < layers.size; i++) {
                     hashset_remove_element(&unvisited, layers[i]);
                 }
@@ -2010,10 +2009,10 @@ void analysis_workload_execute(Analysis_Workload* workload)
     {
         assert(workload->progress->type == Analysis_Progress_Type::DEFINITION, "");
         auto progress = (Definition_Progress*)workload->progress;
-        assert(progress->pass->item->node->type == AST::Node_Type::DEFINITION, "");
-        auto definition = (AST::Definition*)progress->pass->item->node;
+        assert(progress->source_parse->item->node->type == AST::Node_Type::DEFINITION, "");
+        auto definition = (AST::Definition*)progress->source_parse->item->node;
         assert(!(!definition->type.available && !definition->value.available), "Syntax should not allow no type and no definition!");
-        analyser.current_pass = progress->pass;
+        analyser.current_pass = progress->source_parse;
 
         Symbol* symbol = definition->symbol;
         if (!definition->is_comptime) // Global variable definition
@@ -2222,9 +2221,9 @@ void analysis_workload_execute(Analysis_Workload* workload)
     {
         assert(workload->progress->type == Analysis_Progress_Type::STRUCTURE, "");
         auto progress = (Struct_Progress*)workload->progress;
-        analyser.current_pass = progress->pass;
+        analyser.current_pass = progress->source_parse;
 
-        auto& base_node = progress->pass->item->node;
+        auto& base_node = progress->source_parse->item->node;
         assert(base_node->type == AST::Node_Type::EXPRESSION && ((AST::Expression*)base_node)->type == AST::Expression_Type::STRUCTURE_TYPE, "");
         auto& struct_node = ((AST::Expression*)base_node)->options.structure;
         Type_Signature* struct_signature = progress->struct_type;
@@ -2275,10 +2274,10 @@ void analysis_workload_execute(Analysis_Workload* workload)
     {
         assert(workload->progress->type == Analysis_Progress_Type::BAKE, "");
         auto progress = (Bake_Progress*)workload->progress;
-        analyser.current_pass = progress->pass;
+        analyser.current_pass = progress->source_parse;
         analyser.current_function = progress->bake_function;
 
-        auto& base_node = progress->pass->item->node;
+        auto& base_node = progress->source_parse->item->node;
         assert(base_node->type == AST::Node_Type::EXPRESSION, "");
         auto expr = ((AST::Expression*) base_node);
         if (expr->type == AST::Expression_Type::BAKE_BLOCK)
@@ -2346,7 +2345,7 @@ void analysis_workload_execute(Analysis_Workload* workload)
         interpreter->instruction_limit = 5000;
         bytecode_interpreter_run_function(interpreter, func_start_instr_index);
         if (interpreter->exit_code != Exit_Code::SUCCESS) {
-            semantic_analyser_log_error(Semantic_Error_Type::BAKE_FUNCTION_DID_NOT_SUCCEED, progress->pass->item->node);
+            semantic_analyser_log_error(Semantic_Error_Type::BAKE_FUNCTION_DID_NOT_SUCCEED, progress->source_parse->item->node);
             semantic_analyser_add_error_info(error_information_make_exit_code(interpreter->exit_code));
             progress->result = comptime_result_make_unavailable(bake_function->signature->options.function.return_type);
             return;
@@ -2526,7 +2525,7 @@ void analysis_workload_append_to_string(Analysis_Workload* workload, String* str
         break;
     }
     case Analysis_Workload_Type::DEFINITION: {
-        AST::Definition* definition = (AST::Definition*) ((Definition_Progress*)workload->progress)->pass->item->node;
+        AST::Definition* definition = (AST::Definition*) ((Definition_Progress*)workload->progress)->source_parse->item->node;
         if (definition->is_comptime) {
             string_append_formated(string, "Comptime \"%s\"", definition->symbol->id->characters);
         }
@@ -2569,7 +2568,7 @@ void analysis_workload_append_to_string(Analysis_Workload* workload, String* str
         break;
     }
     case Analysis_Workload_Type::STRUCT_ANALYSIS: {
-        Symbol* symbol = ((Struct_Progress*)workload->progress)->pass->item->symbol;
+        Symbol* symbol = ((Struct_Progress*)workload->progress)->source_parse->item->symbol;
         const char* struct_id = symbol == 0 ? "Anonymous_Struct" : symbol->id->characters;
         string_append_formated(string, "Struct-Analysis \"%s\"", struct_id);
         break;
@@ -4440,7 +4439,7 @@ void semantic_analyser_finish()
     auto& type_system = semantic_analyser.compiler->type_system;
     // Check if main is defined
     Symbol* main_symbol = symbol_table_find_symbol(
-        compiler.main_source->parse_pass->root->symbol_table, compiler.id_main, false, 0, 0
+        compiler.main_source->source_parse->root->symbol_table, compiler.id_main, false, 0, 0
     );
     ModTree_Function* main_function = 0;
     if (main_symbol == 0) {

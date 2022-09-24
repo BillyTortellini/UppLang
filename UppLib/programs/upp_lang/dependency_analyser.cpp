@@ -68,9 +68,9 @@ Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbo
 
 Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool only_current_scope, Symbol_Dependency* dependency, Analysis_Item* searching_from)
 {
-    if (dependency != 0 && dependency->resolved_symbol != 0) {
+    if (dependency != 0 && dependency->read->resolved_symbol != 0) {
         panic("Symbol already found, I dont know if this path has a use case");
-        return dependency->resolved_symbol;
+        return dependency->read->resolved_symbol;
     }
     Symbol** found = hashtable_find_element(&table->symbols, id);
     if (found == 0) {
@@ -149,9 +149,6 @@ void symbol_append_to_string(Symbol* symbol, String* string)
     case Symbol_Type::HARDCODED_FUNCTION:
         string_append_formated(string, "Hardcoded Function");
         break;
-    case Symbol_Type::EXTERN_FUNCTION:
-        string_append_formated(string, "Extern Function");
-        break;
     case Symbol_Type::FUNCTION:
         string_append_formated(string, "Function");
         break;
@@ -217,9 +214,9 @@ Analysis_Item* analysis_item_create_empty(Analysis_Item_Type type, Analysis_Item
 void analysis_item_destroy(Analysis_Item* item)
 {
     for (int i = 0; i < item->passes.size; i++) {
-        auto& pass = item->passes[i];
-        array_destroy(&pass->infos);
-        delete pass;
+        auto& source_parse = item->passes[i];
+        array_destroy(&source_parse->infos);
+        delete source_parse;
     }
     dynamic_array_destroy(&item->passes);
     dynamic_array_destroy(&item->symbol_dependencies);
@@ -376,6 +373,19 @@ void analyse_ast_base(AST::Node* base)
             analyse_ast_base(&array.size_expr->base);
             return;
         }
+        case Expression_Type::MODULE:
+        {
+            auto& module = expr->options.module;
+            analyse_ast_base(AST::upcast(module));
+            if (base->parent->type == Node_Type::DEFINITION) {
+                auto def = (Definition*)base->parent;
+                if (def->value.available && def->value.value == expr && def->is_comptime) {
+                    def->symbol->type = Symbol_Type::MODULE;
+                    def->symbol->options.module_table = module->symbol_table;
+                }
+            }
+            return; // Because we already analysed the child
+        }
         case Expression_Type::FUNCTION:
         {
             auto& function = expr->options.function;
@@ -455,6 +465,7 @@ void analyse_ast_base(AST::Node* base)
         if (definition->value.available && definition->is_comptime)
         {
             auto child = definition->value.value;
+            // Don't create analysis items for functions/struct types here
             if (child->type == Expression_Type::FUNCTION || child->type == Expression_Type::STRUCTURE_TYPE) {
                 analyse_ast_base(&child->base);
                 if (definition->type.available) {
@@ -477,11 +488,11 @@ void analyse_ast_base(AST::Node* base)
     }
     case Node_Type::SYMBOL_READ:
     {
-        auto symbol_read = (Symbol_Read*)base;
+        auto symbol_read = AST::downcast<Symbol_Read>(base);
+        symbol_read->resolved_symbol = 0;
         Symbol_Dependency dep;
         dep.item = analyser.analysis_item;
         dep.read = symbol_read;
-        dep.resolved_symbol = 0;
         dep.symbol_table = analyser.symbol_table;
         dep.type = analyser.dependency_type;
         dynamic_array_push_back(&analyser.analysis_item->symbol_dependencies, dep);
@@ -601,8 +612,8 @@ void dependency_analyser_analyse(Code_Source* code_source)
     analyser.code_source = code_source;
     analyser.dependency_type = Dependency_Type::NORMAL;
     analyser.symbol_table = analyser.root_symbol_table;
-    analyser.analysis_item = analysis_item_create_empty(Analysis_Item_Type::ROOT, 0, AST::upcast(code_source->parse_pass->root));
-    analyse_ast_base(AST::upcast(code_source->parse_pass->root));
+    analyser.analysis_item = analysis_item_create_empty(Analysis_Item_Type::ROOT, 0, AST::upcast(code_source->source_parse->root));
+    analyse_ast_base(AST::upcast(code_source->source_parse->root));
 }
 
 

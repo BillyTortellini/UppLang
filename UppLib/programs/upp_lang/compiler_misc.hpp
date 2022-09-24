@@ -74,7 +74,7 @@ namespace AST {
     struct Module;
 }
 namespace Parser {
-    struct Parse_Pass;
+    struct Source_Parse;
 }
 
 enum class Dependency_Type
@@ -104,7 +104,7 @@ struct Code_Source
     bool analysed;
 
     Source_Code* code;
-    Parser::Parse_Pass* parse_pass;
+    Parser::Source_Parse* source_parse;
     Dynamic_Array<Analysis_Item*> analysis_items;
     Dynamic_Array<Item_Dependency> item_dependencies;
 };

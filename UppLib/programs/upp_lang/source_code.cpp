@@ -100,6 +100,47 @@ void source_code_destroy(Source_Code* code)
     dynamic_array_destroy(&code->blocks);
 }
 
+void source_text_remove_invalid_whitespaces(String& text)
+{
+    // NOTE: This is a copy paste from syntax-editor
+    int index = 0;
+    while (index < text.size)
+    {
+        char curr = text[index];
+        char next = index + 1 < text.size ? text[index + 1] : '!'; // Any non-space critical chars will do
+        char prev = index - 1 >= 0 ? text[index - 1] : '!';
+        if (prev == '/' && curr == '/') break; // Skip comments
+        // Skip strings
+        if (curr == '"')
+        {
+            index += 1;
+            while (index < text.size)
+            {
+                curr = text[index];
+                if (curr == '\\') {
+                    index += 2;
+                    continue;
+                }
+                if (curr == '"') {
+                    index += 1;
+                    prev = curr;
+                    break;
+                }
+                index += 1;
+                prev = curr;
+            }
+            continue;
+        }
+
+        if (curr == ' ' && !(char_is_space_critical(prev) && char_is_space_critical(next))) {
+            string_remove_character(&text, index);
+        }
+        else {
+            index += 1;
+        }
+    }
+}
+
 void source_block_fill_from_string(Block_Index parent_index, String text, int* text_index, int indentation)
 {
     Block_Index block_index;
@@ -146,6 +187,7 @@ void source_block_fill_from_string(Block_Index parent_index, String text, int* t
         auto line_index = line_index_make(block_index, index_value(block_index)->lines.size);
         source_line_insert_empty(line_index);
         String substring = string_create_substring_static(&text, line_start_index, line_end_index);
+        source_text_remove_invalid_whitespaces(substring);
         string_append_string(&index_value(line_index)->text, &substring);
     }
 }
@@ -776,6 +818,20 @@ Optional<Block_Index> line_index_block_after(Line_Index index)
             return optional_make_success(child_index);
         }
     }
+    return optional_make_failure<Block_Index>();
+}
+
+Optional<Block_Index> line_index_block_after_incremental(Line_Index index, int& child_block_index)
+{
+    auto block = index_value(index.block);
+    if (child_block_index >= block->children.size) return optional_make_failure<Block_Index>();
+    auto next_child_block = index_value(block->children[child_block_index]);
+    while (next_child_block->line_index <= index.line) {
+        child_block_index += 1;
+        if (child_block_index >= block->children.size) return optional_make_failure<Block_Index>();
+        next_child_block = index_value(block->children[child_block_index]);
+    }
+    if (next_child_block->line_index == index.line + 1) return optional_make_success(block->children[child_block_index]);
     return optional_make_failure<Block_Index>();
 }
 

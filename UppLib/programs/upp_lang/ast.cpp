@@ -766,6 +766,9 @@ namespace AST
         bool type_correct(Switch_Case* base) {
             return base->base.type == Node_Type::SWITCH_CASE;
         }
+        bool type_correct(Statement* base) {
+            return base->base.type == Node_Type::STATEMENT;
+        }
         bool type_correct(Argument* base) {
             return base->base.type == Node_Type::ARGUMENT;
         }

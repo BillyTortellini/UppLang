@@ -327,6 +327,7 @@ namespace AST
     {
         bool type_correct(Definition* base);
         bool type_correct(Switch_Case* base);
+        bool type_correct(Statement* base);
         bool type_correct(Argument* base);
         bool type_correct(Parameter* base);
         bool type_correct(Expression* base);

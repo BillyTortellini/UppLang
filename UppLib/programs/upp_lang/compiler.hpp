@@ -94,6 +94,7 @@ bool compiler_add_project_import(AST::Project_Import* project_import);
 Exit_Code compiler_execute();
 
 bool compiler_errors_occured();
+Source_Code* compiler_find_ast_source_code(AST::Node* base);
 Code_Source* compiler_find_ast_code_source(AST::Node* base);
 void compiler_switch_timing_task(Timing_Task task);
 void compiler_run_testcases(Timer* timer);

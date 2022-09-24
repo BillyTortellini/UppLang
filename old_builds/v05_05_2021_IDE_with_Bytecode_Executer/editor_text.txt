@@ -6,5 +6,7 @@ fib :: (n: int) -> int
 
 main :: () -> int
 {
+    a:=fib(10);
+    b := a * 2 + fib(5);
     return fib(10);
 }

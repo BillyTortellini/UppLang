@@ -282,12 +282,12 @@ Array<float> distance_field_create_from_bool_array(Array<byte> source, int width
             }
         }
     }
-    // First horizontal pass
+    // First horizontal source_parse
     for (int y = 0; y < width; y++) {
         distance_field_horizontal_pass(array_create_static<float>(&distances[y*width], width));
     }
     float_array_transpose(distances, width);
-    // Second horizontal pass
+    // Second horizontal source_parse
     for (int y = 0; y < width; y++) {
         distance_field_horizontal_pass(array_create_static<float>(&distances[y*width], width));
     }

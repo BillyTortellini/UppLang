@@ -10,6 +10,7 @@ u64 hash_i32(i32* i);
 u64 hash_i64(i64* i);
 u64 hash_u64(u64* i);
 u64 hash_pointer(void* ptr);
+u64 hash_combine(u64 a, u64 b);
 
 bool equals_i32(i32* a, i32* b);
 bool equals_i64(i64* a, i64* b);

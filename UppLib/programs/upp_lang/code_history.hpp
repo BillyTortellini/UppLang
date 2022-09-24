@@ -71,7 +71,7 @@ struct History_Node
     // Payload
     Code_Change change;
 
-    // Linkage to other nodes
+    // Linkage to other items
     int next_change;
     int alt_change; // For 'other' history-path
     int prev_change;
@@ -86,7 +86,7 @@ struct History_Node
 struct Code_History
 {
     Source_Code* code;
-    Dynamic_Array<History_Node> nodes;
+    Dynamic_Array<History_Node> items;
     int current;
 
     int complex_level;

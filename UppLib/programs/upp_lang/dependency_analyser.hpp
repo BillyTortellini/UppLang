@@ -40,7 +40,6 @@ enum class Symbol_Type
     SYMBOL_ALIAS,          // Comptime definition pointing at another symbol
 
     HARDCODED_FUNCTION,
-    EXTERN_FUNCTION,
     FUNCTION,
     TYPE,
     COMPTIME_VALUE,
@@ -145,7 +144,6 @@ struct Symbol_Dependency
 {
     Dependency_Type type;
     AST::Symbol_Read* read;
-    Symbol* resolved_symbol;
     Symbol_Table* symbol_table;
     Analysis_Item* item;
 };

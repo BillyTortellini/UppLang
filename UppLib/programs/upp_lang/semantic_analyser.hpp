@@ -108,7 +108,7 @@ enum class Struct_State
 struct Struct_Progress
 {
     Analysis_Progress base;
-    Analysis_Pass* pass;
+    Analysis_Pass* source_parse;
 
     Struct_State state;
     Type_Signature* struct_type;
@@ -120,7 +120,7 @@ struct Struct_Progress
 struct Bake_Progress
 {
     Analysis_Progress base;
-    Analysis_Pass* pass;
+    Analysis_Pass* source_parse;
 
     ModTree_Function* bake_function;
     Comptime_Result result;
@@ -132,7 +132,7 @@ struct Bake_Progress
 struct Definition_Progress
 {
     Analysis_Progress base;
-    Analysis_Pass* pass;
+    Analysis_Pass* source_parse;
     Analysis_Workload* definition_workload;
     Symbol* symbol;
 };
@@ -268,7 +268,7 @@ enum class Expression_Context_Type
 {
     UNKNOWN,             // Type is not known
     AUTO_DEREFERENCE,    // Type is not known, but we want pointer level 0 
-    SPECIFIC_TYPE,       // Type is known, pointer level nodes + implicit casting enabled
+    SPECIFIC_TYPE,       // Type is known, pointer level items + implicit casting enabled
 };
 
 struct Expression_Context
@@ -363,12 +363,12 @@ struct Analysis_Pass
     Array<Analysis_Info> infos;
 };
 
-Analysis_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Node* node);
-Expression_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Expression* expression);
-Case_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Switch_Case* sw_case);
-Argument_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Argument* argument);
-Statement_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Statement* statement);
-Code_Block_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Code_Block* block);
+Analysis_Info* analysis_pass_get_info(Analysis_Pass* source_parse, AST::Node* node);
+Expression_Info* analysis_pass_get_info(Analysis_Pass* source_parse, AST::Expression* expression);
+Case_Info* analysis_pass_get_info(Analysis_Pass* source_parse, AST::Switch_Case* sw_case);
+Argument_Info* analysis_pass_get_info(Analysis_Pass* source_parse, AST::Argument* argument);
+Statement_Info* analysis_pass_get_info(Analysis_Pass* source_parse, AST::Statement* statement);
+Code_Block_Info* analysis_pass_get_info(Analysis_Pass* source_parse, AST::Code_Block* block);
 Type_Signature* expression_info_get_type(Expression_Info* info);
 
 

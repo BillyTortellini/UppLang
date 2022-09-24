@@ -164,6 +164,9 @@ int block_index_get_indentation(Block_Index block);
 Line_Index line_index_next(Line_Index index);
 Line_Index line_index_prev(Line_Index index);
 Optional<Block_Index> line_index_block_after(Line_Index index);
+// DOCU: This is a more efficient version of line_index_block_after, which can be used
+//       when we loop over all lines of a block, since it requires a count of already parsed blocks
+Optional<Block_Index> line_index_block_after_incremental(Line_Index index, int& child_block_index);
 Optional<Block_Index> line_index_block_before(Line_Index index);
 bool line_index_is_last_in_block(Line_Index index);
 

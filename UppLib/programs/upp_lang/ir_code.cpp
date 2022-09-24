@@ -1071,7 +1071,11 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
     }
     case AST::Expression_Type::SYMBOL_READ:
     {
-        auto symbol = expression->options.symbol_read->resolved_symbol;
+        auto read = expression->options.symbol_read;
+        while (read->path_child.available) {
+            read = read->path_child.value;
+        }
+        auto symbol = read->resolved_symbol;
         switch (symbol->type)
         {
         case Symbol_Type::GLOBAL: {
@@ -1578,7 +1582,7 @@ void ir_generator_generate_block(IR_Code_Block* ir_block, AST::Code_Block* ast_b
         }
         case AST::Statement_Type::DELETE_STATEMENT:
         {
-            // FUTURE: At some point this will access the Context struct for the free func, and also pass the size
+            // FUTURE: At some point this will access the Context struct for the free func, and also source_parse the size
             IR_Instruction instr;
             instr.type = IR_Instruction_Type::FUNCTION_CALL;
             instr.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;

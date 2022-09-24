@@ -1220,7 +1220,7 @@ void polygon_2d_union(Polygon2D* p0, Polygon2D* p1)
 
 void polygon_2d_cleanup_near_points_and_colinear_points(Polygon2D* p, float dist, float coplanar_dist)
 {
-    // First pass: Remove points that are too close together
+    // First source_parse: Remove points that are too close together
     for (int i = 0; i < p->positions.size && p->positions.size > 3; i++) {
         vec2 a = p->positions[i];
         vec2 b = p->positions[math_modulo(i + 1, p->positions.size)];
@@ -1232,7 +1232,7 @@ void polygon_2d_cleanup_near_points_and_colinear_points(Polygon2D* p, float dist
         }
     }
 
-    // Second pass: For each two lines, check if they are *almost* in the same direction, if so, remove
+    // Second source_parse: For each two lines, check if they are *almost* in the same direction, if so, remove
     for (int i = 0; i < p->positions.size; i++) {
         vec2 prev = p->positions[math_modulo(i - 1, p->positions.size)];
         vec2 curr = p->positions[math_modulo(i, p->positions.size)];

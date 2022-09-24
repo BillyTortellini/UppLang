@@ -11,7 +11,7 @@ struct Dependency_Node
 
 struct Dependency_Graph
 {
-    Dynamic_Array<Dependency_Node> nodes;
+    Dynamic_Array<Dependency_Node> items;
     Dynamic_Array<int> execution_order;
 };
 

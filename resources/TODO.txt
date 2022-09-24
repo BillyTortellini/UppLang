@@ -1,15 +1,70 @@
 
 
+What if two line items fall into the same line?
+ - 
+
+If I do precise inter-block changes, what needs to happen for each change?
+
+First off, how will to algorithm to re-evaluate Items look like:
+  Go through all lines/items simultaniously
+   * If a line was added, parse the line, check if its an item, check if the next item needs reparsing
+   * If an item is marked as removed, remove the item from the list?
+   * If a item was changed
+
+What about lines that aren't items yet? e.g. Empty-lines, lines with errors?
+There is no error statement, so how do they work? Just save it as an added line?
+Removed lines don't matter if there are no items
+
+
+Notes from last time:
+---------------------
+I may need to think more about what Informations the parser actually needs for incremental compilation,
+since we both need to 
+ 1. Update Block-Parse Structure
+      * Keep line indices up to date (decrement by one on delete, increment by one after insert)
+         - Necessary for Line-Items and Line-Changes!
+      * Remove line items that no longer exist (Line-Deletes) (Or mark them to be removed)
+      * Remove Blocks that no longer exist
+ 2. Keep track of parts that need to be reparsed
+      * Full blocks if necessary (Probably on merge)
+      * Single line items that need reparsing (including follow items if necessary)
+
+After finding all differences and reparsing the respective line-items,
+the block-children need to be reset for parent items
+
+Do i need to know which line items changed, or which lines changed?
+Probably lines
+    
+how to remove already parsed nodes
+ --> How are nodes allocated
+
+Next thing todo:
+----------------
+Incremental Parsing needs to loop over all changes in the code-history similar to text editor, but
+instead of changed lines, we need the following information:
+- Removed Blocks (To remove cached blocks)
+- Block-Reparse information (What needs to be reparsed inside a block)
+- Either full block, or:
+ * Added/Changed lines by up-to-date index (So we can reparse line items)
+ * Removed lines by old index (To remove line-items from cached block)
+
 Incremental Parsing:
 --------------------
-
-
 Implementation:
  1. Implement caching loaded-file imports in Compiler (E.g. file-loading, tokenization + parsing)
     Do this to test the 'flow' of incremental compilation
- 2. Implement Incremental Parsing by reusing already parsed blocks from previous parses
- 3. Add Change-Log to parser
+ 2. Implement Block-based parsing, where blocks return an array of line-items
+ 3. Implement Incremental Parsing by reusing already parsed blocks from previous parses
+ 4. Only reparse lines in a block that have changed.
+ 5. Provide detailed changes by comparing the new parsed ast-item to the previously parsed
+ 6. Add Change-Log to parser
 
+
+This means:
+-----------
+1. Write parsed-blocks to cache
+2. Invalidate blocks where things change.
+3. Use cache-lookups to parse blocks
 
 
 

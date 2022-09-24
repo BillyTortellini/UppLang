@@ -1,6 +1,7 @@
 #include "code_history.hpp"
 
 #include "source_code.hpp"
+#include <functional>
 
 
 // PERF:
@@ -78,7 +79,7 @@ void code_history_remove_block_from_hierarchy(Code_History* history, Block_Index
 Code_History code_history_create(Source_Code* code)
 {
     Code_History result;
-    result.nodes = dynamic_array_create_empty<History_Node>(1);
+    result.items = dynamic_array_create_empty<History_Node>(1);
     result.free_blocks = dynamic_array_create_empty<Block_Index>(1);
     result.code = code;
     code_history_reset(&result);
@@ -87,7 +88,7 @@ Code_History code_history_create(Source_Code* code)
 
 void code_history_reset(Code_History* history)
 {
-    dynamic_array_reset(&history->nodes);
+    dynamic_array_reset(&history->items);
     {
         History_Node root;
         root.type = History_Node_Type::NORMAL;
@@ -96,7 +97,7 @@ void code_history_reset(Code_History* history)
         root.alt_change = -1;
         root.complex_partner = -1;
         root.cursor_index = optional_make_success(text_index_make(line_index_make(block_index_make_root(history->code), 0), 0));
-        dynamic_array_push_back(&history->nodes, root);
+        dynamic_array_push_back(&history->items, root);
     }
     dynamic_array_reset(&history->free_blocks);
     history->current = 0;
@@ -106,10 +107,10 @@ void code_history_reset(Code_History* history)
 
 void code_history_destroy(Code_History* history)
 {
-    for (int i = 0; i < history->nodes.size; i++) {
-        code_change_destroy(&history->nodes[i].change);
+    for (int i = 0; i < history->items.size; i++) {
+        code_change_destroy(&history->items[i].change);
     }
-    dynamic_array_destroy(&history->nodes);
+    dynamic_array_destroy(&history->items);
 }
 
 void code_history_sanity_check(Code_History* history)
@@ -117,9 +118,9 @@ void code_history_sanity_check(Code_History* history)
     source_code_sanity_check(history->code);
     bool inside_complex = false;
     int complex_start = -1;
-    for (int i = 0; i < history->nodes.size; i++) 
+    for (int i = 0; i < history->items.size; i++) 
     {
-        auto& node = history->nodes[i];
+        auto& node = history->items[i];
         switch (node.type)
         {
         case History_Node_Type::NORMAL:
@@ -129,7 +130,7 @@ void code_history_sanity_check(Code_History* history)
             inside_complex = true;
             complex_start = i;
             assert(node.complex_partner != -1, "Hey");
-            auto& end_node = history->nodes[node.complex_partner];
+            auto& end_node = history->items[node.complex_partner];
             assert(end_node.type == History_Node_Type::COMPLEX_END && end_node.complex_partner == i, "");
             break;
         }
@@ -138,7 +139,7 @@ void code_history_sanity_check(Code_History* history)
             inside_complex = false;
             complex_start = -1;
             assert(node.complex_partner != -1, "Hey");
-            auto& start_node = history->nodes[node.complex_partner];
+            auto& start_node = history->items[node.complex_partner];
             assert(start_node.type == History_Node_Type::COMPLEX_START && start_node.complex_partner == i, "");
             break;
         }
@@ -149,23 +150,23 @@ void code_history_sanity_check(Code_History* history)
             assert(node.alt_change == -1, "No alternates inside complex commands!");
         }
         if (i == 0) continue;
-        const auto& prev_node = history->nodes[node.prev_change];
+        const auto& prev_node = history->items[node.prev_change];
         if (prev_node.next_change != i) 
         {
-            auto prev_next_node = history->nodes[prev_node.next_change];
+            auto prev_next_node = history->items[prev_node.next_change];
             bool found_in_alts = false;
             while (prev_next_node.alt_change != -1) {
                 if (prev_next_node.alt_change == i) {
                     found_in_alts = true;
                     break;
                 }
-                prev_next_node = history->nodes[prev_next_node.alt_change];
+                prev_next_node = history->items[prev_next_node.alt_change];
             }
             assert(found_in_alts, "Alternative path must be correct");
         }
         
         if (node.next_change != -1) {
-            const auto& next_node = history->nodes[node.next_change];
+            const auto& next_node = history->items[node.next_change];
             assert(next_node.prev_change == i, "Next and prev must always be correct");
         }
     }
@@ -315,7 +316,7 @@ void code_change_apply(Code_History* history, Code_Change* change, bool forwards
 
 int history_insert_and_apply_change(Code_History* history, Code_Change change)
 {
-    int change_index = history->nodes.size;
+    int change_index = history->items.size;
     History_Node node;
     node.change = change;
     node.next_change = -1;
@@ -325,15 +326,15 @@ int history_insert_and_apply_change(Code_History* history, Code_Change change)
     node.complex_partner = -1;
     node.cursor_index = optional_make_failure<Text_Index>();
 
-    auto& current_node = history->nodes[history->current];
+    auto& current_node = history->items[history->current];
     if (current_node.next_change != -1) {
         node.alt_change = current_node.next_change;
     }
     current_node.next_change = change_index;
 
-    history->current = history->nodes.size;
-    dynamic_array_push_back(&history->nodes, node);
-    code_change_apply(history, &history->nodes[change_index].change, true);
+    history->current = history->items.size;
+    dynamic_array_push_back(&history->items, node);
+    code_change_apply(history, &history->items[change_index].change, true);
     return change_index;
 }
 
@@ -343,7 +344,7 @@ void history_undo(Code_History* history)
     if (history->current == 0) return; // Node node
     SCOPE_EXIT(code_history_sanity_check(history));
 
-    auto node = &history->nodes[history->current];
+    auto node = &history->items[history->current];
     switch (node->type)
     {
     case History_Node_Type::COMPLEX_START: panic("Should not happen");
@@ -360,13 +361,13 @@ void history_undo(Code_History* history)
         while (history->current != goto_index)
         {
             assert(history->current != 0, "");
-            node = &history->nodes[history->current];
+            node = &history->items[history->current];
             code_change_apply(history, &node->change, false);
             history->current = node->prev_change;
         }
 
         assert(history->current != 0, "Complex command cannot start with the base node!");
-        node = &history->nodes[history->current];
+        node = &history->items[history->current];
         code_change_apply(history, &node->change, false);
         history->current = node->prev_change;
         break;
@@ -380,10 +381,10 @@ void history_redo(Code_History* history)
     assert(history->complex_level == 0, "Cannot undo/redo inside a complex command");
     SCOPE_EXIT(code_history_sanity_check(history));
 
-    auto node = &history->nodes[history->current];
+    auto node = &history->items[history->current];
     if (node->next_change == -1) return;
     history->current = node->next_change;
-    node = &history->nodes[history->current];
+    node = &history->items[history->current];
 
     switch (node->type)
     {
@@ -402,7 +403,7 @@ void history_redo(Code_History* history)
             assert(history->current != 0, "");
             code_change_apply(history, &node->change, true);
             history->current = node->next_change;
-            node = &history->nodes[history->current];
+            node = &history->items[history->current];
         }
         // Apply the latest change
         code_change_apply(history, &node->change, true);
@@ -427,12 +428,12 @@ void history_stop_complex_command(Code_History* history)
     history->complex_level -= 1;
     if (history->complex_level > 0) return;
 
-    int start_node_index = history->nodes[history->complex_start].next_change;
+    int start_node_index = history->items[history->complex_start].next_change;
     // Recorded complex commands with 0 or 1 entries should be ignored
     if (start_node_index == -1 || start_node_index == history->current) return;
 
-    auto& node_start = history->nodes[start_node_index];
-    auto& node_end = history->nodes[history->current];
+    auto& node_start = history->items[start_node_index];
+    auto& node_end = history->items[history->current];
 
     node_start.type = History_Node_Type::COMPLEX_START;
     node_start.complex_partner = history->current;
@@ -445,14 +446,14 @@ void history_stop_complex_command(Code_History* history)
 
 void history_set_cursor_pos(Code_History* history, Text_Index cursor)
 {
-    auto& node = history->nodes[history->current];
+    auto& node = history->items[history->current];
     if (node.cursor_index.available) return;
     node.cursor_index = optional_make_success(cursor);
 }
 
 Optional<Text_Index> history_get_cursor_pos(Code_History* history)
 {
-    auto& node = history->nodes[history->current];
+    auto& node = history->items[history->current];
     return node.cursor_index;
 }
 
@@ -486,7 +487,7 @@ Block_Index history_internal_add_block(Code_History* history, Line_Index line_in
     change.options.block_create.line_index = line_index.line;
     change.options.block_create.parent = line_index.block;
     int change_index = history_insert_and_apply_change(history, change);
-    return history->nodes[change_index].change.options.block_create.new_block_index;
+    return history->items[change_index].change.options.block_create.new_block_index;
 }
 
 void history_internal_merge_collapsed_blocks(Code_History* history, Block_Index block_index)
@@ -528,7 +529,7 @@ Block_Index history_internal_split_block(Code_History* history, Block_Index spli
     split.options.block_merge.split_index = split_index;
     split.options.block_merge.block_split_index = block_split_index;
     int change_index = history_insert_and_apply_change(history, split);
-    return history->nodes[change_index].change.options.block_merge.merge_other;
+    return history->items[change_index].change.options.block_merge.merge_other;
 }
 
 void history_internal_remove_block(Code_History* history, Block_Index index)
@@ -783,12 +784,12 @@ void history_get_changes_between(Code_History* history, History_Timestamp start_
 
     // Info: This is a modifier Breadth-First search, because of the tree structure we only visited each node from exactly one previous node
     //      Also, in this search, we search from the End to the start, so we don't have to reverse the path once we found it
-    auto goto_index = array_create_empty<int>(history->nodes.size);
+    auto goto_index = array_create_empty<int>(history->items.size);
     SCOPE_EXIT(array_destroy(&goto_index));
 
     // Find path
     {
-        auto layer_nodes = dynamic_array_create_empty<int>(history->nodes.size);
+        auto layer_nodes = dynamic_array_create_empty<int>(history->items.size);
         SCOPE_EXIT(dynamic_array_destroy(&layer_nodes));
         int current_layer_start = 0;
 
@@ -806,7 +807,7 @@ void history_get_changes_between(Code_History* history, History_Timestamp start_
             {
                 auto node_index = layer_nodes[i];
                 int from_index = goto_index[node_index];
-                auto& node = history->nodes[node_index];
+                auto& node = history->items[node_index];
                 if (node_index == start) {
                     found = true;
                     break;
@@ -827,7 +828,7 @@ void history_get_changes_between(Code_History* history, History_Timestamp start_
                             dynamic_array_push_back(&layer_nodes, future_path_index);
                             goto_index[future_path_index] = node_index;
                         }
-                        future_path_index = history->nodes[future_path_index].alt_change;
+                        future_path_index = history->items[future_path_index].alt_change;
                     }
                 }
             }
@@ -842,8 +843,8 @@ void history_get_changes_between(Code_History* history, History_Timestamp start_
         while (index != end)
         {
             int next = goto_index[index];
-            auto& node = history->nodes[index];
-            auto& next_node = history->nodes[next];
+            auto& node = history->items[index];
+            auto& next_node = history->items[next];
             if (next == node.prev_change) {
                 // To go backwards i need to revert the current change
                 Code_Change copy = node.change;
@@ -858,3 +859,4 @@ void history_get_changes_between(Code_History* history, History_Timestamp start_
         }
     }
 }
+

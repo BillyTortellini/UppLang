@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../datastructures/dynamic_array.hpp"
+#include "../../datastructures/hashtable.hpp"
 #include "../../datastructures/array.hpp"
 #include "source_code.hpp"
 #include "code_history.hpp"
@@ -20,17 +21,17 @@ namespace Parser
     void reset();
     void destroy();
 
-    // Parse Pass (Incremental Parsing)
+    // Parse Items (Incremental Parsing)
     struct Error_Message
     {
         const char* msg;
         Token_Range range;
     };
 
-    struct Line_Node
+    struct Line_Item
     {
-        int line_start;
-        int line_count;
+        int line_start; // May be -1 if its the first block in a new block
+        int line_count; 
         AST::Node* node;
     };
 
@@ -47,21 +48,21 @@ namespace Parser
     {
         Block_Context context;
         Block_Index index;
-        Dynamic_Array<Line_Node> nodes;
+        Dynamic_Array<Line_Item> items;
     };
 
-    struct Parse_Pass
+    struct Source_Parse
     {
         Source_Code* code;
         AST::Module* root;
         Dynamic_Array<Error_Message> error_messages;
-        Dynamic_Array<Block_Parse> block_parses;
+        Hashtable<Block_Index, Block_Parse*> block_parses;
         History_Timestamp timestamp;
     };
 
-    Parse_Pass* execute_clean(Source_Code* code);
-    void parse_pass_destroy(Parse_Pass* pass);
-    void execute_incremental(Parse_Pass* pass, Code_History* history);
+    Source_Parse* execute_clean(Source_Code* code);
+    void execute_incremental(Source_Parse* source_parse, Code_History* history);
+    void source_parse_destroy(Source_Parse* source_parse);
 
 
 

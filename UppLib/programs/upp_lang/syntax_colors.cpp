@@ -25,7 +25,6 @@ vec3 symbol_type_to_color(Symbol_Type type)
     switch (type)
     {
     case Symbol_Type::HARDCODED_FUNCTION: return Syntax_Color::FUNCTION; 
-    case Symbol_Type::EXTERN_FUNCTION: return Syntax_Color::FUNCTION; 
     case Symbol_Type::FUNCTION: return Syntax_Color::FUNCTION; 
     case Symbol_Type::MODULE: return Syntax_Color::MODULE; 
     case Symbol_Type::TYPE: return Syntax_Color::TYPE; 
