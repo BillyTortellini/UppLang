@@ -477,6 +477,7 @@ void history_internal_change_block_index(Code_History* history, Block_Index inde
     move.options.block_index_change.index = index;
     move.options.block_index_change.new_line_index = block->line_index + (increase_index ? 1 : -1);
     move.options.block_index_change.old_line_index = block->line_index;
+    move.options.block_index_change.parent_index = block->parent;
     history_insert_and_apply_change(history, move);
     assert(block->line_index >= 0, "");
 }
@@ -501,6 +502,8 @@ void history_internal_merge_collapsed_blocks(Code_History* history, Block_Index 
         if (last_child_line == child_block->line_index)
         {
             auto merge = code_change_create_empty(Code_Change_Type::BLOCK_MERGE, true);
+            merge.options.block_merge.parent_index = block->parent;
+            merge.options.block_merge.line_number_in_parent = block->line_index;
             merge.options.block_merge.index = block->children[i - 1];
             merge.options.block_merge.merge_other = child_index;
             history_insert_and_apply_change(history, merge);
@@ -528,6 +531,8 @@ Block_Index history_internal_split_block(Code_History* history, Block_Index spli
     split.options.block_merge.index = split_block;
     split.options.block_merge.split_index = split_index;
     split.options.block_merge.block_split_index = block_split_index;
+    split.options.block_merge.parent_index = block->parent;
+    split.options.block_merge.line_number_in_parent = block->line_index;
     int change_index = history_insert_and_apply_change(history, split);
     return history->items[change_index].change.options.block_merge.merge_other;
 }

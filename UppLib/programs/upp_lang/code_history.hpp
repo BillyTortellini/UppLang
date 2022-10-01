@@ -37,11 +37,15 @@ struct Code_Change
             Block_Index merge_other; 
             int split_index;
             int block_split_index;
+
+            Block_Index parent_index; // Note: not required by un/redo, but by other applications (incremental parsing)
+            int line_number_in_parent;
         } block_merge;
         struct {
             Block_Index index;
             int new_line_index;
             int old_line_index;
+            Block_Index parent_index;  // Note: not required by un/redo, but by other applications (incremental parsing)
         } block_index_change;
         struct {
             Line_Index move_from;

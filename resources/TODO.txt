@@ -1,7 +1,21 @@
 
 
-What if two line items fall into the same line?
- - 
+Ideas:
+ * Input-Replay for Editor Test-cases 
+     Record sequence of button inputs, beeing able to replay them with the same state.
+ * Child-Blocks at line 0 should be changed
+     Instead have each line of a block either be a line or a block reference
+     Maybe even change the whole structure into something similar to a triangle-mesh? 
+     There also seems to be a lot of trouble with ranges with this, where is a block index start/end?
+ * Block merge/split in editor history could maybe be done smarter by just having add/delete lines and add/delete blocks
+
+Note:
+    If a block has changed, I probably should always check if there is a block at index 0
+    
+
+    
+
+
 
 If I do precise inter-block changes, what needs to happen for each change?
 

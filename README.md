@@ -26,7 +26,7 @@ Currently there is no documentation about all features of the Language itself, b
 * 047_type_info.upp
 * 050_named_break_continue.upp
 
-At the moment the only way to get proper syntax highlighting for the Test-Case Code is to copy-paste it into the editors save file (upp_code/editor_text.upp) and running the editor.
+At the moment the only way to get proper syntax highlighting for the Test-Case Code is to open it in the editor (Shortcut CTRL+O, open file)
 
 # Progress
 

@@ -97,9 +97,14 @@ Analysis_Pass* analysis_item_create_pass(Analysis_Item* item)
 {
     auto source_parse = new Analysis_Pass;
     source_parse->item = item;
-    assert(item->ast_node_count > 0, "");
-    source_parse->infos = array_create_empty<Analysis_Info>(item->ast_node_count);
-    memory_set_bytes(source_parse->infos.data, source_parse->infos.size * sizeof(Analysis_Info), 0);
+    if (item->ast_node_count == 0) {
+        // NOTE(Martin): This was done in a quick fix for structs/unions where there was no tab afterwards...
+        source_parse->infos = array_create_empty<Analysis_Info>(1);
+    }
+    else {
+        source_parse->infos = array_create_empty<Analysis_Info>(item->ast_node_count);
+        memory_set_bytes(source_parse->infos.data, source_parse->infos.size * sizeof(Analysis_Info), 0);
+    }
     dynamic_array_push_back(&item->passes, source_parse);
     return source_parse;
 }

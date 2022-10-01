@@ -49,6 +49,8 @@ namespace Parser
         Block_Context context;
         Block_Index index;
         Dynamic_Array<Line_Item> items;
+        AST::Node* parent;
+        int line_count;
     };
 
     struct Source_Parse
