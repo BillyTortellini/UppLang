@@ -259,7 +259,7 @@ namespace AST
     {
         Node base;
         Optional<Expression*> value; // Default-Case if value not available
-        Code_Block* block;
+        Code_Block* block_index;
     };
 
     enum class Statement_Type
@@ -286,7 +286,7 @@ namespace AST
         union
         {
             Expression* expression;
-            Code_Block* block;
+            Code_Block* block_index;
             Definition* definition;
             struct {
                 Expression* left_side;
@@ -295,12 +295,12 @@ namespace AST
             Code_Block* defer_block;
             struct {
                 Expression* condition;
-                Code_Block* block;
+                Code_Block* block_index;
                 Optional<Code_Block*> else_block;
             } if_statement;
             struct {
                 Expression* condition;
-                Code_Block* block;
+                Code_Block* block_index;
             } while_statement;
             struct {
                 Expression* condition;

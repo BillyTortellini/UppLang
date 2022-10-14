@@ -11,7 +11,38 @@ Ideas:
 
 Note:
     If a block has changed, I probably should always check if there is a block at index 0
+
+Decision:
+ - Blocks now hold arrays of either lines or blocks
     
+
+New Hierarchical Code-Design:
+-----------------------------
+Current Design:
+ - Blocks hold 
+
+Design-Goals/Requirements:
+ * Editor Requirements:
+    - Line-based editing
+    - Auto-Formating
+    - Code-Folding, Block-Focus, Navigation, Advanced-Information display
+ * Undo-Redo (History)
+ * Incremental Parsing
+     - Indexing from AST to Source-Code (With ranges)
+     - Difference generation from history
+ * Huge code-files 
+
+Simple array of lines + indentation per line:
+ + History commands easy (Add/remove indentation, change line text)
+ + Editing is easy
+ - Scales badly with huge code files
+ - Line-Indices are absolute, every single index changes after a certain one
+ - Blocks need to be identifyable for incremental parsing
+
+Hierarchy:
+ - History is hard (Merging/splitting blcoks)
+ - Editing is hard
+ + Scales good with huge code files
 
     
 

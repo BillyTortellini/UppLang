@@ -31,7 +31,7 @@ C_Compiler c_compiler_create()
         if (file_content.available)
         {
             String string = file_content.value;
-            // Each line contains a name, and is separated by \n
+            // Each line_index contains a name, and is separated by \n
             int i = 0;
             bool parsing_name = true;
             while (i < string.size)
@@ -631,7 +631,7 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
                 IR_Switch_Case* switch_case = &switch_instr->cases[i];
                 string_add_indentation(output, indentation_level);
                 string_append_formated(output, "case %d: \n", switch_case->value);
-                c_generator_output_code_block(generator, output, switch_case->block, indentation_level + 1, false);
+                c_generator_output_code_block(generator, output, switch_case->block_index, indentation_level + 1, false);
                 string_add_indentation(output, indentation_level);
                 string_append_formated(output, "break;\n");
             }
@@ -670,7 +670,7 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
         }
         case IR_Instruction_Type::BLOCK:
         {
-            c_generator_output_code_block(generator, output, instr->options.block, indentation_level + 1, false);
+            c_generator_output_code_block(generator, output, instr->options.block_index, indentation_level + 1, false);
             break;
         }
         case IR_Instruction_Type::GOTO: {

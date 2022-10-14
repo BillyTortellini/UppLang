@@ -26,7 +26,7 @@ static Workload_Executer workload_executer;
 // PROTOTYPES
 /*
 void analysis_workload_add_dependency_internal(Analysis_Workload* workload, Analysis_Workload* dependency, Symbol_Dependency* symbol_read);
-void modtree_block_destroy(ModTree_Block* block);
+void modtree_block_destroy(ModTree_Block* block_index);
 void modtree_function_destroy(ModTree_Function* function);
 void modtree_statement_destroy(ModTree_Statement* statement);
 ModTree_Expression* semantic_analyser_cast_implicit_if_possible( ModTree_Expression* expression, Type_Signature* destination_type);
@@ -132,8 +132,8 @@ Statement_Info* analysis_pass_get_info(Analysis_Pass* source_parse, AST::Stateme
     return &analysis_pass_get_info(source_parse, AST::upcast(statement))->info_stat;
 }
 
-Code_Block_Info* analysis_pass_get_info(Analysis_Pass* source_parse, AST::Code_Block* block) {
-    return &analysis_pass_get_info(source_parse, AST::upcast(block))->info_block;
+Code_Block_Info* analysis_pass_get_info(Analysis_Pass* source_parse, AST::Code_Block* block_index) {
+    return &analysis_pass_get_info(source_parse, AST::upcast(block_index))->info_block;
 }
 
 
@@ -154,8 +154,8 @@ Statement_Info* pass_get_info(AST::Statement* statement) {
     return analysis_pass_get_info(semantic_analyser.current_pass, statement);
 }
 
-Code_Block_Info* pass_get_info(AST::Code_Block* block) {
-    return analysis_pass_get_info(semantic_analyser.current_pass, block);
+Code_Block_Info* pass_get_info(AST::Code_Block* block_index) {
+    return analysis_pass_get_info(semantic_analyser.current_pass, block_index);
 }
 
 
@@ -1177,7 +1177,7 @@ bool cluster_workload_check_for_cyclic_dependency(
             return *contains_loop;
         }
     }
-    hashtable_insert_element(visited, workload, false); // The boolean value items later if we actually find a loop
+    hashtable_insert_element(visited, workload, false); // The boolean value nodes later if we actually find a loop
     bool loop_found = false;
     for (int i = 0; i < workload->reachable_clusters.size; i++)
     {
@@ -1545,7 +1545,7 @@ void workload_executer_resolve()
                 List_Node<Analysis_Workload*>* node = workload->dependents.head;
                 while (node != 0) {
                     Analysis_Workload* dependent = node->value;
-                    node = node->next; // INFO: This is required before remove_dependency, since remove will remove items from the list
+                    node = node->next; // INFO: This is required before remove_dependency, since remove will remove nodes from the list
                     workload_executer_remove_dependency(dependent, workload, true);
                 }
                 assert(workload->dependents.count == 0, "");
@@ -1601,7 +1601,7 @@ void workload_executer_resolve()
 
             while (!loop_found)
             {
-                // Remove all items that are already confirmed to have no cycles (E.g items from last loop run)
+                // Remove all nodes that are already confirmed to have no cycles (E.g nodes from last loop run)
                 for (int i = 0; i < layers.size; i++) {
                     hashset_remove_element(&unvisited, layers[i]);
                 }
@@ -4039,19 +4039,19 @@ Type_Signature* semantic_analyser_analyse_expression_value(AST::Expression* expr
 
 
 // STATEMENTS
-bool code_block_is_while(AST::Code_Block* block)
+bool code_block_is_while(AST::Code_Block* block_index)
 {
-    if (block != 0 && block->base.parent->type == AST::Node_Type::STATEMENT) {
-        auto parent = (AST::Statement*) block->base.parent;
+    if (block_index != 0 && block_index->base.parent->type == AST::Node_Type::STATEMENT) {
+        auto parent = (AST::Statement*) block_index->base.parent;
         return parent->type == AST::Statement_Type::WHILE_STATEMENT;
     }
     return false;
 }
 
-bool code_block_is_defer(AST::Code_Block* block)
+bool code_block_is_defer(AST::Code_Block* block_index)
 {
-    if (block != 0 && block->base.parent->type == AST::Node_Type::STATEMENT) {
-        auto parent = (AST::Statement*) block->base.parent;
+    if (block_index != 0 && block_index->base.parent->type == AST::Node_Type::STATEMENT) {
+        auto parent = (AST::Statement*) block_index->base.parent;
         return parent->type == AST::Statement_Type::DEFER;
     }
     return false;
@@ -4061,8 +4061,8 @@ bool inside_defer()
 {
     for (int i = semantic_analyser.block_stack.size - 1; i > 0; i--)
     {
-        auto block = semantic_analyser.block_stack[i];
-        if (code_block_is_defer(block)) {
+        auto block_index = semantic_analyser.block_stack[i];
+        if (code_block_is_defer(block_index)) {
             return true;
         }
     }
@@ -4154,7 +4154,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
         }
         else
         {
-            info->specifics.block = found_block;
+            info->specifics.block_index = found_block;
             if (is_continue && !code_block_is_while(found_block)) {
                 semantic_analyser_log_error(Semantic_Error_Type::CONTINUE_REQUIRES_LOOP_BLOCK, statement);
                 EXIT(Control_Flow::SEQUENTIAL);
@@ -4166,13 +4166,13 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
             // Mark all previous Code-Blocks as Sequential flow, since they contain a path to a break
             for (int i = semantic_analyser.block_stack.size - 1; i >= 0; i--)
             {
-                auto block = semantic_analyser.block_stack[i];
-                auto prev = pass_get_info(block);
+                auto block_index = semantic_analyser.block_stack[i];
+                auto prev = pass_get_info(block_index);
                 if (!prev->control_flow_locked && semantic_analyser.statement_reachable) {
                     prev->control_flow_locked = true;
                     prev->flow = Control_Flow::SEQUENTIAL;
                 }
-                if (block == found_block) break;
+                if (block_index == found_block) break;
             }
         }
         EXIT(Control_Flow::STOPS);
@@ -4197,7 +4197,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
     }
     case AST::Statement_Type::BLOCK:
     {
-        auto flow = semantic_analyser_analyse_block(statement->options.block);
+        auto flow = semantic_analyser_analyse_block(statement->options.block_index);
         EXIT(flow);
     }
     case AST::Statement_Type::IF_STATEMENT:
@@ -4207,13 +4207,13 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
         auto condition_type = semantic_analyser_analyse_expression_value(
             if_node.condition, expression_context_make_specific_type(type_system.bool_type)
         );
-        auto true_flow = semantic_analyser_analyse_block(statement->options.if_statement.block);
+        auto true_flow = semantic_analyser_analyse_block(statement->options.if_statement.block_index);
         Control_Flow false_flow;
         if (if_node.else_block.available) {
             false_flow = semantic_analyser_analyse_block(statement->options.if_statement.else_block.value);
         }
         else {
-            EXIT(Control_Flow::SEQUENTIAL;) // If no else, if is always sequential, since it's possible to skip the block
+            EXIT(Control_Flow::SEQUENTIAL;) // If no else, if is always sequential, since it's possible to skip the block_index
         }
 
         // Combine flows as given by conditional flow rules
@@ -4248,7 +4248,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
             auto& case_node = switch_node.cases[i];
             auto case_info = pass_get_info(case_node);
             case_info->is_valid = false;
-            auto case_flow = semantic_analyser_analyse_block(case_node->block);
+            auto case_flow = semantic_analyser_analyse_block(case_node->block_index);
             if (i == 0) {
                 switch_flow = case_flow;
             }
@@ -4338,7 +4338,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
         auto& while_node = statement->options.while_statement;
         semantic_analyser_analyse_expression_value(while_node.condition, expression_context_make_specific_type(type_system.bool_type));
 
-        auto flow = semantic_analyser_analyse_block(while_node.block);
+        auto flow = semantic_analyser_analyse_block(while_node.block_index);
         if (flow == Control_Flow::RETURNS) {
             EXIT(flow);
         }
@@ -4401,18 +4401,18 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 #undef EXIT
 }
 
-Control_Flow semantic_analyser_analyse_block(AST::Code_Block* block)
+Control_Flow semantic_analyser_analyse_block(AST::Code_Block* block_index)
 {
-    auto block_info = pass_get_info(block);
+    auto block_info = pass_get_info(block_index);
     block_info->control_flow_locked = false;
     block_info->flow = Control_Flow::SEQUENTIAL;
 
-    if (block->block_id.available)
+    if (block_index->block_id.available)
     {
         for (int i = 0; i < semantic_analyser.block_stack.size; i++) {
             auto prev = semantic_analyser.block_stack[i];
-            if (prev != 0 && prev->block_id.available && prev->block_id.value == block->block_id.value) {
-                semantic_analyser_log_error(Semantic_Error_Type::LABEL_ALREADY_IN_USE, &block->base);
+            if (prev != 0 && prev->block_id.available && prev->block_id.value == block_index->block_id.value) {
+                semantic_analyser_log_error(Semantic_Error_Type::LABEL_ALREADY_IN_USE, &block_index->base);
             }
         }
     }
@@ -4421,10 +4421,10 @@ Control_Flow semantic_analyser_analyse_block(AST::Code_Block* block)
     bool rewind_reachable = semantic_analyser.statement_reachable;
     SCOPE_EXIT(dynamic_array_rollback_to_size(&semantic_analyser.block_stack, rewind_block_count));
     SCOPE_EXIT(semantic_analyser.statement_reachable = rewind_reachable);
-    dynamic_array_push_back(&semantic_analyser.block_stack, block);
-    for (int i = 0; i < block->statements.size; i++)
+    dynamic_array_push_back(&semantic_analyser.block_stack, block_index);
+    for (int i = 0; i < block_index->statements.size; i++)
     {
-        Control_Flow flow = semantic_analyser_analyse_statement(block->statements[i]);
+        Control_Flow flow = semantic_analyser_analyse_statement(block_index->statements[i]);
         if (flow != Control_Flow::SEQUENTIAL) {
             semantic_analyser.statement_reachable = false;
             if (!block_info->control_flow_locked) {

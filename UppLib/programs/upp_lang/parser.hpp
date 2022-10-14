@@ -30,7 +30,7 @@ namespace Parser
 
     struct Line_Item
     {
-        int line_start; // May be -1 if its the first block in a new block
+        int line_start; // May be -1 if its the first block_index in a new block_index
         int line_count; 
         AST::Node* node;
     };

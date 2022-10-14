@@ -128,7 +128,7 @@ enum class Token_Type
     OPERATOR,
     PARENTHESIS,
     INVALID, // Unexpected Characters (like | or ;), strings with invalid escape sequences or invalid identifiers (5member)
-    COMMENT, // Single line for now (Required for reconstructing text from tokens)
+    COMMENT, // Single line_index for now (Required for reconstructing text from tokens)
 };
 
 struct Token

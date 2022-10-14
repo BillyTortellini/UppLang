@@ -563,7 +563,7 @@ bool compiler_errors_occured() {
 }
 
 Source_Code* compiler_find_ast_source_code(AST::Node* base) {
-    return base->range.start.line.block.code;
+    return base->range.start.line_index.block_index.code;
 }
 
 Code_Source* compiler_find_ast_code_source(AST::Node* base)

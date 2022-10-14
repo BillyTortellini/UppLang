@@ -124,8 +124,8 @@ void text_renderer_add_text_from_layout(
     float descender = atlas->descender * scaling_factor.y;
     float distance_field_scaling;
     {
-        float line_pixel_size_in_atlas = ((atlas->ascender - atlas->descender) / 64.0f); // In pixel per line
-        float line_size_on_screen = layout->relative_height * renderer->screen_height; // In pixel per line
+        float line_pixel_size_in_atlas = ((atlas->ascender - atlas->descender) / 64.0f); // In pixel per line_index
+        float line_size_on_screen = layout->relative_height * renderer->screen_height; // In pixel per line_index
         distance_field_scaling = line_size_on_screen / line_pixel_size_in_atlas;
     }
 
@@ -360,11 +360,11 @@ float text_renderer_cm_to_relative_height(Text_Renderer* renderer, Rendering_Cor
 
     Text positioning, and size metrics:
     Per Font Face information:
-        Baseline        ...     Horizontal or vertical line on which characters are placed
+        Baseline        ...     Horizontal or vertical line_index on which characters are placed
         Pen/Origin      ...     Current position on the baseline (Is always on baseline)
         Ascent          ...     Per character information on height of the character from the baseline (Always positive)
         Descent         ...     Per character information on the lowest part from the baseline (Always negative)
-        Linespace       ...     How much the baseline should shift in a new line, should be linespace = ascent - descent + linegap
+        Linespace       ...     How much the baseline should shift in a new line_index, should be linespace = ascent - descent + linegap
         Linegap         ...     Per font information, additional space that should exist between lines
         BoundingBox     ...     Bounding box of all glyphs
     Per Glyph informations

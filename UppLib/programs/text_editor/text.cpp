@@ -23,17 +23,17 @@ void text_reset(Dynamic_Array<String>* text) {
     dynamic_array_push_back(text, string_create_empty(16));
 }
 
-void text_delete_line(Dynamic_Array<String>* text, int line) {
-    if (line == 0 && text->size == 1) return;
-    if (line < 0 || line > text->size) return;
-    string_destroy(&text->data[line]);
-    dynamic_array_remove_ordered(text, line);
+void text_delete_line(Dynamic_Array<String>* text, int line_index) {
+    if (line_index == 0 && text->size == 1) return;
+    if (line_index < 0 || line_index > text->size) return;
+    string_destroy(&text->data[line_index]);
+    dynamic_array_remove_ordered(text, line_index);
 }
 
-Text_Position text_position_make(int line, int character)
+Text_Position text_position_make(int line_index, int character)
 {
     Text_Position pos;
-    pos.line = line;
+    pos.line_index = line_index;
     pos.character = character;
     return pos;
 }
@@ -46,17 +46,17 @@ Text_Position text_position_make_end(Dynamic_Array<String>* text) {
     return text_position_make(text->size-1, text->data[text->size-1].size);
 }
 
-Text_Position text_position_make_line_end(Dynamic_Array<String>* text, int line) {
-    return text_position_make(line, text->data[line].size);
+Text_Position text_position_make_line_end(Dynamic_Array<String>* text, int line_index) {
+    return text_position_make(line_index, text->data[line_index].size);
 }
 
 bool text_position_are_equal(Text_Position a, Text_Position b) {
-    return a.line == b.line && a.character == b.character;
+    return a.line_index == b.line_index && a.character == b.character;
 }
 
 void text_position_sanitize(Text_Position* pos, Dynamic_Array<String> text) {
-    pos->line = math_clamp(pos->line, 0, math_maximum(0, text.size-1));
-    pos->character = math_clamp(pos->character, 0, text[pos->line].size);
+    pos->line_index = math_clamp(pos->line_index, 0, math_maximum(0, text.size-1));
+    pos->character = math_clamp(pos->character, 0, text[pos->line_index].size);
 }
 
 Text_Position text_position_previous(Text_Position pos, Dynamic_Array<String> text) {
@@ -66,26 +66,26 @@ Text_Position text_position_previous(Text_Position pos, Dynamic_Array<String> te
         return result;
     }
     else {
-        if (pos.line == 0) return pos;
+        if (pos.line_index == 0) return pos;
         else {
-            pos.line--;
-            pos.character = text.data[pos.line].size;
+            pos.line_index--;
+            pos.character = text.data[pos.line_index].size;
             return pos;
         }
     }
 }
 
 Text_Position text_position_next(Text_Position pos, Dynamic_Array<String> text) {
-    String* line = &text[pos.line];
+    String* line_index = &text[pos.line_index];
     Text_Position next = pos;
-    if (pos.character < line->size) next.character++;
-    else if (pos.line < text.size - 1) { next.line++; next.character = 0; }
+    if (pos.character < line_index->size) next.character++;
+    else if (pos.line_index < text.size - 1) { next.line_index++; next.character = 0; }
     return next;
 }
 
 bool text_position_are_in_order(Text_Position* a, Text_Position* b) {
-    if (b->line > a->line) return true;
-    else if (b->line < a->line) return false;
+    if (b->line_index > a->line_index) return true;
+    else if (b->line_index < a->line_index) return false;
     else {
         return b->character >= a->character;
     }
@@ -112,11 +112,11 @@ bool text_slice_contains_position(Text_Slice slice, Text_Position pos, Dynamic_A
         text_position_are_in_order(&pos, &end);
 }
 
-Text_Slice text_slice_make_line(Dynamic_Array<String> text, int line)
+Text_Slice text_slice_make_line(Dynamic_Array<String> text, int line_index)
 {
-    if (line < 0 || line >= text.size) return text_slice_make(text_position_make(0, 0), text_position_make(0, 0));
-    String* str = &text[line];
-    return text_slice_make(text_position_make(line, 0), text_position_make(line, str->size));
+    if (line_index < 0 || line_index >= text.size) return text_slice_make(text_position_make(0, 0), text_position_make(0, 0));
+    String* str = &text[line_index];
+    return text_slice_make(text_position_make(line_index, 0), text_position_make(line_index, str->size));
 }
 
 void text_slice_sanitize(Text_Slice* slice, Dynamic_Array<String> text) {
@@ -132,27 +132,27 @@ void text_slice_sanitize(Text_Slice* slice, Dynamic_Array<String> text) {
 void text_append_slice_to_string(Dynamic_Array<String> text, Text_Slice slice, String* string)
 {
     text_slice_sanitize(&slice, text);
-    if (slice.start.line == slice.end.line) { // Special case if slice is only in one line
-        String* line = &text[slice.start.line];
+    if (slice.start.line_index == slice.end.line_index) { // Special case if slice is only in one line_index
+        String* line_index = &text[slice.start.line_index];
         string_append_character_array(string,
-            array_create_static(line->characters + slice.start.character, slice.end.character - slice.start.character));
+            array_create_static(line_index->characters + slice.start.character, slice.end.character - slice.start.character));
         return;
     }
 
-    // Append from start line to end
-    String* start_line = &text[slice.start.line];
+    // Append from start line_index to end
+    String* start_line = &text[slice.start.line_index];
     string_append_character_array(string,
         array_create_static(start_line->characters + slice.start.character, start_line->size - slice.start.character));
     string_append_character(string, '\n');
 
     // Append lines between start and end
-    for (int i = slice.start.line+1; i < slice.end.line; i++) {
+    for (int i = slice.start.line_index+1; i < slice.end.line_index; i++) {
         string_append_string(string, &text[i]);
         string_append_character(string, '\n');
     }
 
     // Append from endline start to end
-    String* end_line = &text[slice.end.line];
+    String* end_line = &text[slice.end.line_index];
     string_append_character_array(string, array_create_static(end_line->characters, slice.end.character));
 }
 
@@ -165,9 +165,9 @@ Text_Slice text_calculate_insertion_string_slice(Dynamic_Array<String>* text, Te
     // Dumb implementation: Go through each character and add it to the current position
     for (int i = 0; i < insertion.size; i++) {
         char c = insertion.characters[i];
-        String* line = &text->data[pos.line];
+        String* line_index = &text->data[pos.line_index];
         if (c == '\n') {
-            pos.line += 1;
+            pos.line_index += 1;
             pos.character = 0;
         }
         else {
@@ -185,19 +185,19 @@ void text_insert_string(Dynamic_Array<String>* text, Text_Position pos, String i
     // Dumb implementation: Go through each character and add it to the current position
     for (int i = 0; i < insertion.size; i++) {
         char c = insertion.characters[i];
-        String* line = &text->data[pos.line];
+        String* line_index = &text->data[pos.line_index];
         if (c == '\n') {
-            String new_line = string_create_substring(line, pos.character, line->size);
-            string_truncate(line, pos.character);
-            dynamic_array_insert_ordered(text, new_line, pos.line+1);
-            pos.line += 1;
+            String new_line = string_create_substring(line_index, pos.character, line_index->size);
+            string_truncate(line_index, pos.character);
+            dynamic_array_insert_ordered(text, new_line, pos.line_index+1);
+            pos.line_index += 1;
             pos.character = 0;
         }
         else if (c == '\r') {
 
         }
         else {
-            string_insert_character_before(line, c, pos.character);
+            string_insert_character_before(line_index, c, pos.character);
             pos.character++;
         }
     }
@@ -206,20 +206,20 @@ void text_insert_string(Dynamic_Array<String>* text, Text_Position pos, String i
 void text_delete_slice(Dynamic_Array<String>* text, Text_Slice slice)
 {
     text_slice_sanitize(&slice, *text);
-    if (slice.end.line == slice.start.line)
+    if (slice.end.line_index == slice.start.line_index)
     {
-        String* line = &text->data[slice.end.line];
-        string_remove_substring(line, slice.start.character, slice.end.character);
+        String* line_index = &text->data[slice.end.line_index];
+        string_remove_substring(line_index, slice.start.character, slice.end.character);
         return;
     }
 
-    String* start_line = &text->data[slice.start.line];
-    String* end_line = &text->data[slice.end.line];
+    String* start_line = &text->data[slice.start.line_index];
+    String* end_line = &text->data[slice.end.line_index];
     string_remove_substring(start_line, slice.start.character, start_line->size);
     string_remove_substring(end_line, 0, slice.end.character);
     string_append_string(start_line, end_line);
-    for (int i = slice.start.line + 1; i <= slice.end.line; i++) {
-        text_delete_line(text, slice.start.line + 1);
+    for (int i = slice.start.line_index + 1; i <= slice.end.line_index; i++) {
+        text_delete_line(text, slice.start.line_index + 1);
     }
 }
 
@@ -239,13 +239,13 @@ void text_append_to_string(Dynamic_Array<String>* text, String* result)
 
 char text_get_character_after(Dynamic_Array<String>* text, Text_Position pos)
 {
-    String* line = &text->data[pos.line];
-    if (pos.character >= line->size) {
-        if (pos.line == text->size - 1) return '\0';
+    String* line_index = &text->data[pos.line_index];
+    if (pos.character >= line_index->size) {
+        if (pos.line_index == text->size - 1) return '\0';
         return '\n';
     }
     else {
-        return text->data[pos.line].characters[pos.character];
+        return text->data[pos.line_index].characters[pos.character];
     }
 }
 
@@ -257,14 +257,14 @@ bool text_check_correctness(Dynamic_Array<String> text)
     }
 
     for (int i = 0; i < text.size; i++) {
-        String* line = &text[i];
-        if (line->characters == 0) {
+        String* line_index = &text[i];
+        if (line_index->characters == 0) {
             logg("Correctness failed, text on line #%d is NULL\n", i);
             return false;
         }
-        if (strlen(line->characters) != line->size) {
+        if (strlen(line_index->characters) != line_index->size) {
             logg("Correctness failed, line #%d length/size (%d) does not match string size(%d):\"%s\"",
-                i, line->size, strlen(line->characters), line->characters);
+                i, line_index->size, strlen(line_index->characters), line_index->characters);
             return false;
         }
     }
@@ -341,14 +341,14 @@ void test_text_editor()
 void text_insert_character_before(Dynamic_Array<String>* text, Text_Position pos, char c)
 {
     text_position_sanitize(&pos, *text);
-    String* line = &text->data[pos.line];
+    String* line_index = &text->data[pos.line_index];
     if (c == '\n') {
-        String new_line = string_create_substring(line, pos.character, line->size);
-        string_truncate(line, pos.character);
-        dynamic_array_insert_ordered(text, new_line, pos.line + 1);
+        String new_line = string_create_substring(line_index, pos.character, line_index->size);
+        string_truncate(line_index, pos.character);
+        dynamic_array_insert_ordered(text, new_line, pos.line_index + 1);
     }
     else {
-        string_insert_character_before(line, c, pos.character);
+        string_insert_character_before(line_index, c, pos.character);
     }
 }
 
@@ -376,8 +376,8 @@ void text_iterator_set_position(Text_Iterator* it, Text_Position pos)
 
 bool text_iterator_has_next(Text_Iterator* it)
 {
-    String* line = &it->text->data[it->position.line];
-    return it->position.character < line->size || it->position.line < it->text->size - 1;
+    String* line_index = &it->text->data[it->position.line_index];
+    return it->position.character < line_index->size || it->position.line_index < it->text->size - 1;
 }
 
 void text_iterator_advance(Text_Iterator* it)

@@ -177,7 +177,7 @@ void street_generate_hotspot_points(DynamicArray<vec2>* to_fill, int point_count
     What to do next:
         Think about datastructure (for rays)
         Ray Intersection inside world
-        Place mainstreet as straight line, and grow some smaller streets from it
+        Place mainstreet as straight line_index, and grow some smaller streets from it
         Place mainstreet better
         Add buildings
         Building generation
@@ -277,9 +277,9 @@ void streetnetwork_destroy(StreetNetwork* network) {
 void streetnetwork_place_buildings_random(StreetNetwork* network, float radius) {
     dynamic_array_reset(&network->buildings);
     for (int i = 0; i < network->lines.size; i++) {
-        StreetLine& line = network->lines[i];
-        vec2 a = network->positions[line.start];
-        vec2 b = network->positions[line.end];
+        StreetLine& line_index = network->lines[i];
+        vec2 a = network->positions[line_index.start];
+        vec2 b = network->positions[line_index.end];
         vec2 normal = vector_normalize(vector_rotate_90_degree_clockwise(b - a));
         int building_count = vector_length(b - a) / (radius * 2.0f * 1.2f);
         for (int j = 0; j < building_count; j++) {
@@ -357,7 +357,7 @@ Optional<float> line_segment_ray_intersection(vec2 a, vec2 b, vec2 o, vec2 d)
 struct Intersection
 {
     bool intersected;
-    int line_index; // Intersected line index in associated network
+    int line_index; // Intersected line_index index in associated network
     vec2 position;
     float t;
 };
@@ -579,10 +579,10 @@ void streetnetwork_grow_main_road(StreetNetwork* network, float split_distance, 
     bool found = false;
     int line_index;
     for (int i = 0; i < network->lines.size; i++) {
-        StreetLine& line = network->lines[i];
-        if (!line.main_road) continue;
-        vec2 a = network->positions[line.start];
-        vec2 b = network->positions[line.end];
+        StreetLine& line_index = network->lines[i];
+        if (!line_index.main_road) continue;
+        vec2 a = network->positions[line_index.start];
+        vec2 b = network->positions[line_index.end];
         if (vector_distance_between(a, b) > split_distance) {
             found = true;
             line_index = i;
@@ -590,15 +590,15 @@ void streetnetwork_grow_main_road(StreetNetwork* network, float split_distance, 
     }
     if (!found) return;
 
-    // Split line
-    StreetLine line = network->lines[line_index];
-    vec2 a = network->positions[line.start];
-    vec2 b = network->positions[line.end];
+    // Split line_index
+    StreetLine line_index = network->lines[line_index];
+    vec2 a = network->positions[line_index.start];
+    vec2 b = network->positions[line_index.end];
     vec2 middle = (a + b) / 2.0f;
     dynamic_array_swap_remove(&network->lines, line_index);
     dynamic_array_push_back(&network->positions, middle);
-    dynamic_array_push_back(&network->lines, streetline_make(line.start, network->positions.size - 1, true));
-    dynamic_array_push_back(&network->lines, streetline_make(network->positions.size - 1, line.end, true));
+    dynamic_array_push_back(&network->lines, streetline_make(line_index.start, network->positions.size - 1, true));
+    dynamic_array_push_back(&network->lines, streetline_make(network->positions.size - 1, line_index.end, true));
     // Start growing smoll branches
     vec2 normal = vector_rotate_90_degree_clockwise(vector_normalize(b - a));
     int middle_index = network->positions.size - 1;
@@ -1123,7 +1123,7 @@ void polygon_2d_union_new(Polygon2D* p0, Polygon2D* p1)
 
 void polygon_2d_union(Polygon2D* p0, Polygon2D* p1)
 {
-    // Walk along p0, intersect line with all other lines in p1, if int
+    // Walk along p0, intersect line_index with all other lines in p1, if int
     Dynamic_Array<vec2> points = dynamic_array_create_empty<vec2>(16);
     SCOPE_EXIT(dynamic_array_destroy(&points));
     int start_index = -1;

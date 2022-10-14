@@ -397,7 +397,7 @@ Bounding_Box2 text_editor_get_character_bounding_box(Text_Editor* editor, Text_P
 {
     float glyph_advance = text_renderer_get_cursor_advance(editor->renderer, editor->last_text_height);
     vec2 cursor_pos = vec2(glyph_advance * (pos.character - editor->first_rendered_char), 0.0f) +
-        vec2(editor->last_editor_region.min.x, editor->last_editor_region.max.y - ((pos.line - editor->first_rendered_line) + 1.0f) * editor->last_text_height);
+        vec2(editor->last_editor_region.min.x, editor->last_editor_region.max.y - ((pos.line_index - editor->first_rendered_line) + 1.0f) * editor->last_text_height);
     vec2 cursor_size = vec2(glyph_advance, editor->last_text_height);
 
     Bounding_Box2 result;
@@ -415,18 +415,18 @@ void text_editor_render(Text_Editor* editor, Rendering_Core* core, Bounding_Box2
     float time = core->render_information.current_time_in_seconds;
 
     float text_height = 2.0f * (editor->line_size_cm) / (height / (float)dpi * 2.54f);
-    // Calculate minimum and maximum line in viewport
+    // Calculate minimum and maximum line_index in viewport
     int max_line_count = (editor_region.max.y - editor_region.min.y) / text_height;
-    if (editor->cursor_position.line < editor->first_rendered_line) {
-        editor->first_rendered_line = editor->cursor_position.line;
+    if (editor->cursor_position.line_index < editor->first_rendered_line) {
+        editor->first_rendered_line = editor->cursor_position.line_index;
     }
     int last_line = math_minimum(editor->first_rendered_line + max_line_count - 1, editor->text.size - 1);
-    if (editor->cursor_position.line > last_line) {
-        last_line = editor->cursor_position.line;
+    if (editor->cursor_position.line_index > last_line) {
+        last_line = editor->cursor_position.line_index;
         editor->first_rendered_line = last_line - max_line_count + 1;
     }
 
-    // Draw line numbers (Reduces the editor viewport for the text)
+    // Draw line_index numbers (Reduces the editor viewport for the text)
     {
         string_reset(&editor->line_count_buffer);
         string_append_formated(&editor->line_count_buffer, "%d ", editor->text.size);
@@ -435,20 +435,20 @@ void text_editor_render(Text_Editor* editor, Rendering_Core* core, Bounding_Box2
         vec2 line_pos = vec2(editor_region.min.x, editor_region.max.y - text_height);
         for (int i = editor->first_rendered_line; i <= last_line; i++)
         {
-            // Do line number formating
+            // Do line_index number formating
             string_reset(&editor->line_count_buffer);
-            if (i == editor->cursor_position.line) {
+            if (i == editor->cursor_position.line_index) {
                 string_append_formated(&editor->line_count_buffer, "%d", i);
             }
             else {
-                int offset_to_cursor = math_absolute(editor->cursor_position.line - i);
+                int offset_to_cursor = math_absolute(editor->cursor_position.line_index - i);
                 string_append_formated(&editor->line_count_buffer, "%d", offset_to_cursor);
                 while (editor->line_count_buffer.size < line_number_char_count) {
                     string_insert_character_before(&editor->line_count_buffer, ' ', 0);
                 }
             }
 
-            // Trim line number if we are outside of the text_region
+            // Trim line_index number if we are outside of the text_region
             Text_Layout* layout = text_renderer_calculate_text_layout(editor->renderer, &editor->line_count_buffer, text_height, 1.0f);
             for (int j = layout->character_positions.size - 1; j >= 0; j--) {
                 Bounding_Box2 positioned_char = layout->character_positions[j].bounding_box;
@@ -469,7 +469,7 @@ void text_editor_render(Text_Editor* editor, Rendering_Core* core, Bounding_Box2
     editor->last_editor_region = editor_region;
     editor->last_text_height = text_height;
 
-    // Calculate the first and last character to be drawn in any line (Viewport)
+    // Calculate the first and last character to be drawn in any line_index (Viewport)
     int max_character_count = (editor_region.max.x - editor_region.min.x) / text_renderer_get_cursor_advance(editor->renderer, text_height);
     if (editor->cursor_position.character < editor->first_rendered_char) {
         editor->first_rendered_char = editor->cursor_position.character;
@@ -485,8 +485,8 @@ void text_editor_render(Text_Editor* editor, Rendering_Core* core, Bounding_Box2
     vec2 line_pos = vec2(editor_region.min.x, editor_region.max.y - text_height);
     for (int i = editor->first_rendered_line; i <= last_line; i++)
     {
-        String* line = &editor->text[i];
-        String truncated_line = string_create_substring_static(line, editor->first_rendered_char, last_char + 1);
+        String* line_index = &editor->text[i];
+        String truncated_line = string_create_substring_static(line_index, editor->first_rendered_char, last_char + 1);
         Text_Layout* line_layout = text_renderer_calculate_text_layout(editor->renderer, &truncated_line, text_height, 1.0f);
         for (int j = 0; j < editor->text_highlights.data[i].size; j++)
         {
@@ -551,13 +551,13 @@ Text_Highlight text_highlight_make(vec3 text_color, vec4 background_color, int c
 
 void text_editor_add_highlight_from_slice(Text_Editor* editor, Text_Slice slice, vec3 text_color, vec4 background_color)
 {
-    for (int line = slice.start.line; line <= slice.end.line; line++) {
+    for (int line_index = slice.start.line_index; line_index <= slice.end.line_index; line_index++) {
         int start_character = 0;
-        int end_character = editor->text[line].size;
-        if (line == slice.start.line) start_character = slice.start.character;
-        if (line == slice.end.line) end_character = slice.end.character;
+        int end_character = editor->text[line_index].size;
+        if (line_index == slice.start.line_index) start_character = slice.start.character;
+        if (line_index == slice.end.line_index) end_character = slice.end.character;
         if (start_character != end_character) {
-            text_editor_add_highlight(editor, text_highlight_make(text_color, background_color, start_character, end_character), line);
+            text_editor_add_highlight(editor, text_highlight_make(text_color, background_color, start_character, end_character), line_index);
         }
     }
 }
@@ -719,13 +719,13 @@ Text_Position movement_evaluate_at_position(Movement movement, Text_Position pos
         switch (movement.type)
         {
         case Movement_Type::MOVE_DOWN: {
-            pos.line += 1;
+            pos.line_index += 1;
             pos.character = editor->horizontal_position;
             set_horizontal_pos = false;
             break;
         }
         case Movement_Type::MOVE_UP: {
-            pos.line -= 1;
+            pos.line_index -= 1;
             pos.character = editor->horizontal_position;
             set_horizontal_pos = false;
             break;
@@ -739,8 +739,8 @@ Text_Position movement_evaluate_at_position(Movement movement, Text_Position pos
             break;
         }
         case Movement_Type::TO_END_OF_LINE: {
-            String* line = &editor->text.data[pos.line];
-            pos.character = line->size;
+            String* line_index = &editor->text.data[pos.line_index];
+            pos.character = line_index->size;
             editor->horizontal_position = 10000; // Look at jk movements after $ to understand this
             set_horizontal_pos = false;
             break;
@@ -833,26 +833,26 @@ Text_Position movement_evaluate_at_position(Movement movement, Text_Position pos
             break;
         }
         case Movement_Type::NEXT_PARAGRAPH: {
-            int line = pos.line;
-            while (line < editor->text.size && string_contains_only_characters_in_set(&editor->text.data[line], whitespace_characters, false)) {
-                line++;
+            int line_index = pos.line_index;
+            while (line_index < editor->text.size && string_contains_only_characters_in_set(&editor->text.data[line_index], whitespace_characters, false)) {
+                line_index++;
             }
-            while (line < editor->text.size && !string_contains_only_characters_in_set(&editor->text.data[line], whitespace_characters, false)) {
-                line++;
+            while (line_index < editor->text.size && !string_contains_only_characters_in_set(&editor->text.data[line_index], whitespace_characters, false)) {
+                line_index++;
             }
-            pos.line = line;
+            pos.line_index = line_index;
             pos.character = 0;
             break;
         }
         case Movement_Type::PREVIOUS_PARAGRAPH: {
-            int line = pos.line;
-            while (line > 0 && string_contains_only_characters_in_set(&editor->text.data[line], whitespace_characters, false)) {
-                line--;
+            int line_index = pos.line_index;
+            while (line_index > 0 && string_contains_only_characters_in_set(&editor->text.data[line_index], whitespace_characters, false)) {
+                line_index--;
             }
-            while (line > 0 && !string_contains_only_characters_in_set(&editor->text.data[line], whitespace_characters, false)) {
-                line--;
+            while (line_index > 0 && !string_contains_only_characters_in_set(&editor->text.data[line_index], whitespace_characters, false)) {
+                line_index--;
             }
-            pos.line = line;
+            pos.line_index = line_index;
             pos.character = 0;
             break;
         }
@@ -968,7 +968,7 @@ Text_Position movement_evaluate_at_position(Movement movement, Text_Position pos
             break;
         }
         case Movement_Type::GOTO_LINE_NUMBER: {
-            pos.line = movement.repeat_count;
+            pos.line_index = movement.repeat_count;
             repeat_movement = false;
             break;
         }
@@ -1056,16 +1056,16 @@ Text_Slice motion_evaluate_at_position(Motion motion, Text_Position pos, Text_Ed
         break;
     }
     case Motion_Type::PARAGRAPH: {
-        int paragraph_start = pos.line;
-        int paragraph_end = pos.line;
+        int paragraph_start = pos.line_index;
+        int paragraph_end = pos.line_index;
         while (paragraph_start > 0) {
-            String* line = &editor->text.data[paragraph_start];
-            if (string_contains_only_characters_in_set(line, string_create_static(" \t"), false)) break;
+            String* line_index = &editor->text.data[paragraph_start];
+            if (string_contains_only_characters_in_set(line_index, string_create_static(" \t"), false)) break;
             paragraph_start--;
         }
         while (paragraph_end < editor->text.size) {
-            String* line = &editor->text.data[paragraph_end];
-            if (string_contains_only_characters_in_set(line, string_create_static(" \t"), false)) break;
+            String* line_index = &editor->text.data[paragraph_end];
+            if (string_contains_only_characters_in_set(line_index, string_create_static(" \t"), false)) break;
             paragraph_end++;
         }
         result.start = text_position_make(paragraph_start, 0);
@@ -1173,7 +1173,7 @@ Parse_Result<int> key_messages_parse_repeat_count(Array<Key_Message> messages)
     for (int i = 0; i < messages.size; i++)
     {
         Key_Message* msg = &messages[i];
-        if (i == 0 && msg->character == '0') { // Special case, because 0 returns you back to start of the line
+        if (i == 0 && msg->character == '0') { // Special case, because 0 returns you back to start of the line_index
             return parse_result_make_success(1, 0);
         }
         //if (msg->character == 0 || !msg->key_down) { message_index++; continue; };
@@ -1544,9 +1544,9 @@ Parse_Result<Normal_Mode_Command> key_messages_parse_normal_mode_command(Array<K
 void text_editor_clamp_cursor(Text_Editor* editor)
 {
     text_position_sanitize(&editor->cursor_position, editor->text);
-    String* line = &editor->text[editor->cursor_position.line];
-    if (line->size != 0 && editor->mode == Text_Editor_Mode::NORMAL) {
-        editor->cursor_position.character = math_clamp(editor->cursor_position.character, 0, line->size - 1);
+    String* line_index = &editor->text[editor->cursor_position.line_index];
+    if (line_index->size != 0 && editor->mode == Text_Editor_Mode::NORMAL) {
+        editor->cursor_position.character = math_clamp(editor->cursor_position.character, 0, line_index->size - 1);
     }
 }
 
@@ -1569,22 +1569,22 @@ void insert_mode_exit(Text_Editor* editor) {
 
 int text_editor_find_line_indentation(Text_Editor* editor, int line_number, bool count_parenthesis)
 {
-    // If the selected line is empty (Only contains spaces, we will have to go up the lines until we find an non-empty line upwards)
+    // If the selected line_index is empty (Only contains spaces, we will have to go up the lines until we find an non-empty line_index upwards)
     bool last_character_was_open_parenthesis = false;
     {
-        String* line = &editor->text[line_number];
-        while (line_number >= 0 && string_contains_only_characters_in_set(line, string_create_static(" "), false)) {
+        String* line_index = &editor->text[line_number];
+        while (line_number >= 0 && string_contains_only_characters_in_set(line_index, string_create_static(" "), false)) {
             line_number--;
             if (line_number == -1) return 0;
-            line = &editor->text[line_number];
+            line_index = &editor->text[line_number];
         }
 
-        int char_pos = line->size - 1;
+        int char_pos = line_index->size - 1;
         bool found = false;
         char found_char = ' ';
         while (char_pos >= 0)
         {
-            char c = line->characters[char_pos];
+            char c = line_index->characters[char_pos];
             if (c != ' ') {
                 found = true;
                 found_char = c;
@@ -1602,7 +1602,7 @@ int text_editor_find_line_indentation(Text_Editor* editor, int line_number, bool
     Text_Position start_pos = text_position_make(line_number, 0);
     Text_Iterator it = text_iterator_make(&editor->text, start_pos);
     text_iterator_skip_characters_in_set(&it, string_create_static(" "), true);
-    if (it.position.line != line_number) {
+    if (it.position.line_index != line_number) {
         panic("I dont think this can happen, text must be wrong!");
         return 0;
     }
@@ -1614,10 +1614,10 @@ int text_editor_find_line_indentation(Text_Editor* editor, int line_number, bool
 void text_editor_set_line_indentation(Text_Editor* editor, int line_number, int indentation)
 {
     if (line_number < 0 || line_number >= editor->text.size || indentation < 0) return;
-    String* line = &editor->text[line_number];
+    String* line_index = &editor->text[line_number];
     int current_line_indentation = 0;
-    for (int i = 0; i < line->size; i++) {
-        if (line->characters[i] == ' ') {
+    for (int i = 0; i < line_index->size; i++) {
+        if (line_index->characters[i] == ' ') {
             current_line_indentation = i + 1;
         }
         else break;
@@ -1631,7 +1631,7 @@ void text_editor_set_line_indentation(Text_Editor* editor, int line_number, int 
         for (int i = 0; i < diff; i++) {
             text_history_insert_character(&editor->history, text_position_make(line_number, 0), ' ');
         }
-        if (editor->cursor_position.line == line_number) {
+        if (editor->cursor_position.line_index == line_number) {
             editor->cursor_position.character += diff;
         }
         text_editor_clamp_cursor(editor);
@@ -1639,12 +1639,12 @@ void text_editor_set_line_indentation(Text_Editor* editor, int line_number, int 
     else if (current_line_indentation > indentation)
     {
         int diff = current_line_indentation - indentation;
-        if (editor->cursor_position.line == line_number) {
+        if (editor->cursor_position.line_index == line_number) {
             editor->cursor_position.character -= diff;
             text_editor_clamp_cursor(editor);
         }
         for (int i = 0; i < diff; i++) {
-            char c = line->characters[0];
+            char c = line_index->characters[0];
             if (c != ' ') panic("Should not happen");
             text_history_delete_character(&editor->history, text_position_make(line_number, 0));
         }
@@ -1676,7 +1676,7 @@ void normal_mode_command_execute(Normal_Mode_Command command, Text_Editor* edito
     {
     case Normal_Mode_Command_Type::CHANGE_LINE: {
         text_history_start_record_complex_command(&editor->history);
-        text_history_delete_slice(&editor->history, text_slice_make_line(editor->text, editor->cursor_position.line));
+        text_history_delete_slice(&editor->history, text_slice_make_line(editor->text, editor->cursor_position.line_index));
         insert_mode_enter(editor);
         text_history_stop_record_complex_command(&editor->history);
         editor->cursor_position.character = 0;
@@ -1701,7 +1701,7 @@ void normal_mode_command_execute(Normal_Mode_Command command, Text_Editor* edito
     case Normal_Mode_Command_Type::DELETE_CHARACTER: {
         Text_Position next = editor->cursor_position;
         for (int i = 0; i < command.repeat_count; i++) {
-            if (editor->text[editor->cursor_position.line].size != 0) {
+            if (editor->text[editor->cursor_position.line_index].size != 0) {
                 text_history_delete_character(&editor->history, editor->cursor_position);
                 text_editor_clamp_cursor(editor);
             }
@@ -1717,9 +1717,9 @@ void normal_mode_command_execute(Normal_Mode_Command command, Text_Editor* edito
         Text_Position delete_end = editor->cursor_position;
         delete_end.character = 0;
         for (int i = 0; i < command.repeat_count; i++) {
-            delete_end.line++;
+            delete_end.line_index++;
         }
-        bool delete_last_line = delete_end.line >= editor->text.size;
+        bool delete_last_line = delete_end.line_index >= editor->text.size;
         text_position_sanitize(&delete_end, editor->text);
 
         string_reset(&editor->yanked_string);
@@ -1745,9 +1745,9 @@ void normal_mode_command_execute(Normal_Mode_Command command, Text_Editor* edito
         if (command.motion.motion_type == Motion_Type::MOVEMENT &&
             (command.motion.movement.type == Movement_Type::MOVE_UP || command.motion.movement.type == Movement_Type::MOVE_DOWN))
         {
-            // Handle this as an line delete
-            int line_start = editor->cursor_position.line;
-            int line_end = editor->cursor_position.line;
+            // Handle this as an line_index delete
+            int line_start = editor->cursor_position.line_index;
+            int line_end = editor->cursor_position.line_index;
             if (command.motion.movement.type == Movement_Type::MOVE_UP) {
                 line_start -= command.repeat_count * command.motion.repeat_count * command.motion.movement.repeat_count;
             }
@@ -1756,7 +1756,7 @@ void normal_mode_command_execute(Normal_Mode_Command command, Text_Editor* edito
             }
             Text_Position start = text_position_make(line_start, 0);
             Text_Position end = text_position_make(line_end + 1, 0);
-            if (end.line >= editor->text.size) {
+            if (end.line_index >= editor->text.size) {
                 end = text_position_make_end(&editor->text);
                 text_position_sanitize(&start, editor->text);
                 start = text_position_previous(start, editor->text);
@@ -1795,7 +1795,7 @@ void normal_mode_command_execute(Normal_Mode_Command command, Text_Editor* edito
         break;
     }
     case Normal_Mode_Command_Type::ENTER_INSERT_MODE_LINE_END: {
-        editor->cursor_position.character = editor->text[editor->cursor_position.line].size;
+        editor->cursor_position.character = editor->text[editor->cursor_position.line_index].size;
         insert_mode_enter(editor);
         save_as_last_command = true;
         break;
@@ -1811,9 +1811,9 @@ void normal_mode_command_execute(Normal_Mode_Command command, Text_Editor* edito
     }
     case Normal_Mode_Command_Type::ENTER_INSERT_MODE_NEW_LINE_ABOVE: {
         Text_Position new_pos;
-        new_pos.line = editor->cursor_position.line;
+        new_pos.line_index = editor->cursor_position.line_index;
         new_pos.character = 0;
-        int indentation = text_editor_find_line_indentation(editor, math_maximum(0, new_pos.line - 1), true);
+        int indentation = text_editor_find_line_indentation(editor, math_maximum(0, new_pos.line_index - 1), true);
         text_history_start_record_complex_command(&editor->history);
         text_history_insert_character(&editor->history, new_pos, '\n');
         for (int i = 0; i < indentation; i++) {
@@ -1829,12 +1829,12 @@ void normal_mode_command_execute(Normal_Mode_Command command, Text_Editor* edito
     }
     case Normal_Mode_Command_Type::ENTER_INSERT_MODE_NEW_LINE_BELOW: {
         Text_Position new_pos;
-        new_pos.line = editor->cursor_position.line;
-        new_pos.character = editor->text[new_pos.line].size;
-        int indentation = text_editor_find_line_indentation(editor, new_pos.line, true);
+        new_pos.line_index = editor->cursor_position.line_index;
+        new_pos.character = editor->text[new_pos.line_index].size;
+        int indentation = text_editor_find_line_indentation(editor, new_pos.line_index, true);
         text_history_start_record_complex_command(&editor->history);
         text_history_insert_character(&editor->history, new_pos, '\n');
-        new_pos.line += 1;
+        new_pos.line_index += 1;
         new_pos.character = 0;
         for (int i = 0; i < indentation; i++) {
             text_history_insert_character(&editor->history, new_pos, ' ');
@@ -1897,13 +1897,13 @@ void normal_mode_command_execute(Normal_Mode_Command command, Text_Editor* edito
         break;
     }
     case Normal_Mode_Command_Type::REPLACE_CHARACTER: {
-        String* line = &editor->text[editor->cursor_position.line];
-        if (line->size == 0) {
+        String* line_index = &editor->text[editor->cursor_position.line_index];
+        if (line_index->size == 0) {
             text_history_insert_character(&editor->history, editor->cursor_position, command.character);
             break;
         }
         text_history_start_record_complex_command(&editor->history);
-        bool forward = editor->cursor_position.character == line->size - 1;
+        bool forward = editor->cursor_position.character == line_index->size - 1;
         text_history_delete_character(&editor->history, editor->cursor_position);
         if (forward) {
             Text_Position next = text_position_next(editor->cursor_position, editor->text);
@@ -1944,9 +1944,9 @@ void normal_mode_command_execute(Normal_Mode_Command command, Text_Editor* edito
         if (command.motion.motion_type == Motion_Type::MOVEMENT &&
             (command.motion.movement.type == Movement_Type::MOVE_UP || command.motion.movement.type == Movement_Type::MOVE_DOWN))
         {
-            // Handle this as an line delete
-            int line_start = editor->cursor_position.line;
-            int line_end = editor->cursor_position.line;
+            // Handle this as an line_index delete
+            int line_start = editor->cursor_position.line_index;
+            int line_end = editor->cursor_position.line_index;
             if (command.motion.movement.type == Movement_Type::MOVE_UP) {
                 line_start -= command.repeat_count * command.motion.repeat_count * command.motion.movement.repeat_count;
             }
@@ -1955,7 +1955,7 @@ void normal_mode_command_execute(Normal_Mode_Command command, Text_Editor* edito
             }
             Text_Position start = text_position_make(line_start, 0);
             Text_Position end = text_position_make(line_end + 1, 0);
-            if (end.line >= editor->text.size) {
+            if (end.line_index >= editor->text.size) {
                 end = text_position_make_end(&editor->text);
                 text_position_sanitize(&start, editor->text);
                 start = text_position_previous(start, editor->text);
@@ -1980,7 +1980,7 @@ void normal_mode_command_execute(Normal_Mode_Command command, Text_Editor* edito
         Text_Position delete_end = editor->cursor_position;
         delete_end.character = 0;
         for (int i = 0; i < command.repeat_count; i++) {
-            delete_end.line++;
+            delete_end.line_index++;
         }
         text_position_sanitize(&delete_end, editor->text);
         Text_Slice slice = text_slice_make(delete_start, delete_end);
@@ -2007,7 +2007,7 @@ void normal_mode_command_execute(Normal_Mode_Command command, Text_Editor* edito
         else {
             for (int i = 0; i < editor->yanked_string.size-1; i++) {
                 if (editor->yanked_string.characters[i] == '\n') {
-                    next_edit_pos.line++;
+                    next_edit_pos.line_index++;
                 }
                 else {
                     next_edit_pos.character++;
@@ -2029,7 +2029,7 @@ void normal_mode_command_execute(Normal_Mode_Command command, Text_Editor* edito
         if (editor->last_yank_was_line) {
             insert_pos = editor->cursor_position;
             insert_pos.character = 0;
-            insert_pos.line++;
+            insert_pos.line_index++;
             text_position_sanitize(&insert_pos, editor->text);
             next_edit_pos = insert_pos;
             for (int i = 0; i < editor->yanked_string.size; i++) {
@@ -2041,7 +2041,7 @@ void normal_mode_command_execute(Normal_Mode_Command command, Text_Editor* edito
         else {
             for (int i = 0; i < editor->yanked_string.size-1; i++) {
                 if (editor->yanked_string.characters[i] == '\n') {
-                    next_edit_pos.line++;
+                    next_edit_pos.line_index++;
                 }
                 else {
                     next_edit_pos.character++;
@@ -2057,45 +2057,45 @@ void normal_mode_command_execute(Normal_Mode_Command command, Text_Editor* edito
         break;
     }
     case Normal_Mode_Command_Type::MOVE_VIEWPORT_CURSOR_TOP: {
-        editor->first_rendered_line = editor->cursor_position.line;
+        editor->first_rendered_line = editor->cursor_position.line_index;
         break;
     }
     case Normal_Mode_Command_Type::MOVE_VIEWPORT_CURSOR_CENTER: {
         int line_count = (editor->last_editor_region.max.y - editor->last_editor_region.min.y) / editor->last_text_height;
-        editor->first_rendered_line = math_maximum(0, editor->cursor_position.line - line_count / 2);
+        editor->first_rendered_line = math_maximum(0, editor->cursor_position.line_index - line_count / 2);
         break;
     }
     case Normal_Mode_Command_Type::MOVE_VIEWPORT_CURSOR_BOTTOM: {
         int line_count = (editor->last_editor_region.max.y - editor->last_editor_region.min.y) / editor->last_text_height;
-        editor->first_rendered_line = math_maximum(0, editor->cursor_position.line - line_count);
+        editor->first_rendered_line = math_maximum(0, editor->cursor_position.line_index - line_count);
         break;
     }
     case Normal_Mode_Command_Type::MOVE_CURSOR_VIEWPORT_TOP: {
-        editor->cursor_position.line = editor->first_rendered_line;
+        editor->cursor_position.line_index = editor->first_rendered_line;
         break;
     }
     case Normal_Mode_Command_Type::MOVE_CURSOR_VIEWPORT_CENTER: {
         int line_count = (editor->last_editor_region.max.y - editor->last_editor_region.min.y) / editor->last_text_height;
-        editor->cursor_position.line = editor->first_rendered_line + line_count / 2;
+        editor->cursor_position.line_index = editor->first_rendered_line + line_count / 2;
         text_editor_clamp_cursor(editor);
         break;
     }
     case Normal_Mode_Command_Type::MOVE_CURSOR_VIEWPORT_BOTTOM: {
         int line_count = (editor->last_editor_region.max.y - editor->last_editor_region.min.y) / editor->last_text_height;
-        editor->cursor_position.line = editor->first_rendered_line + line_count - 1;
+        editor->cursor_position.line_index = editor->first_rendered_line + line_count - 1;
         text_editor_clamp_cursor(editor);
         break;
     }
     case Normal_Mode_Command_Type::SCROLL_DOWNWARDS_HALF_PAGE: {
         int line_count = (editor->last_editor_region.max.y - editor->last_editor_region.min.y) / editor->last_text_height;
-        editor->cursor_position.line += line_count / 2;
+        editor->cursor_position.line_index += line_count / 2;
         text_editor_clamp_cursor(editor);
         editor->first_rendered_line = math_minimum(editor->text.size - 1, editor->first_rendered_line + line_count / 2);
         break;
     }
     case Normal_Mode_Command_Type::SCROLL_UPWARDS_HALF_PAGE: {
         int line_count = (editor->last_editor_region.max.y - editor->last_editor_region.min.y) / editor->last_text_height;
-        editor->cursor_position.line -= line_count / 2;
+        editor->cursor_position.line_index -= line_count / 2;
         text_editor_clamp_cursor(editor);
         editor->first_rendered_line = math_maximum(0, editor->first_rendered_line - line_count / 2);
         break;
@@ -2138,7 +2138,7 @@ void insert_mode_handle_message(Text_Editor* editor, Key_Message* msg)
     else if (msg->key_code == Key_Code::W && msg->key_down && msg->ctrl_down)
     {
         if (editor->cursor_position.character == 0) {
-            if (editor->cursor_position.line != 0) {
+            if (editor->cursor_position.line_index != 0) {
                 Text_Position previous = text_position_previous(editor->cursor_position, editor->text);
                 text_history_delete_character(&editor->history, previous);
                 editor->cursor_position = previous;
@@ -2165,7 +2165,7 @@ void insert_mode_handle_message(Text_Editor* editor, Key_Message* msg)
             }
             if (all_whitespaces) {
                 pos.character = 0;
-                pos.line = editor->cursor_position.line;
+                pos.line_index = editor->cursor_position.line_index;
                 text_history_delete_slice(&editor->history, text_slice_make(pos, editor->cursor_position));
                 editor->cursor_position = pos;
             }
@@ -2189,34 +2189,34 @@ void insert_mode_handle_message(Text_Editor* editor, Key_Message* msg)
         // Do some stupid formating
         if (string_contains_character(string_create_static("}])"), msg->character))
         {
-            // Check if the line before is empty, if it is, find the matching parenthesis and put current parenthesis on this level
-            String* line = &editor->text[editor->cursor_position.line];
+            // Check if the line_index before is empty, if it is, find the matching parenthesis and put current parenthesis on this level
+            String* line_index = &editor->text[editor->cursor_position.line_index];
             bool before_is_whitespace = true;
             for (int i = 0; i < editor->cursor_position.character - 1; i++) {
-                if (text_get_character_after(&editor->text, text_position_make(editor->cursor_position.line, i)) != ' ') {
+                if (text_get_character_after(&editor->text, text_position_make(editor->cursor_position.line_index, i)) != ' ') {
                     before_is_whitespace = false;
                     break;
                 }
             }
             if (before_is_whitespace)
             {
-                Text_Position closing_pos = text_position_make(editor->cursor_position.line, editor->cursor_position.character - 1);
+                Text_Position closing_pos = text_position_make(editor->cursor_position.line_index, editor->cursor_position.character - 1);
                 Movement mov;
                 mov.repeat_count = 1;
                 mov.type = Movement_Type::JUMP_ENCLOSURE;
                 Text_Position other_pos = movement_evaluate_at_position(mov, closing_pos, editor);
-                int target_indentation = text_editor_find_line_indentation(editor, other_pos.line, false);
-                text_editor_set_line_indentation(editor, editor->cursor_position.line, target_indentation);
+                int target_indentation = text_editor_find_line_indentation(editor, other_pos.line_index, false);
+                text_editor_set_line_indentation(editor, editor->cursor_position.line_index, target_indentation);
             }
         }
     }
     else if (msg->key_code == Key_Code::RETURN && msg->key_down)
     {
-        int indentation = text_editor_find_line_indentation(editor, editor->cursor_position.line, true);
+        int indentation = text_editor_find_line_indentation(editor, editor->cursor_position.line_index, true);
         text_history_insert_character(&editor->history, editor->cursor_position, '\n');
-        editor->cursor_position.line++;
+        editor->cursor_position.line_index++;
         editor->cursor_position.character = 0;
-        text_editor_set_line_indentation(editor, editor->cursor_position.line, indentation);
+        text_editor_set_line_indentation(editor, editor->cursor_position.line_index, indentation);
     }
     else if (msg->key_code == Key_Code::BACKSPACE && msg->key_down)
     {
@@ -2297,7 +2297,7 @@ void text_editor_update(Text_Editor* editor, Input* input, double current_time)
 
     if (editor->text_changed)
     {
-        if (math_absolute(editor->last_change_position.line - editor->cursor_position.line) > 8) {
+        if (math_absolute(editor->last_change_position.line_index - editor->cursor_position.line_index) > 8) {
             if (editor->jump_history_index != 0) {
                 text_editor_record_jump(editor, editor->jump_history[editor->jump_history_index - 1].jump_end, editor->cursor_position);
             }

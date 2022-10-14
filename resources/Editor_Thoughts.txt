@@ -75,7 +75,6 @@ Sometimes Scopes will automatically melt together in some unexpected Ways while 
 The Question: Do I allow these operations, or should i just restrict the editing to 
 not let something like this happen?
 
-
 DISCUSSION:
 -----------
 Current Idea to Explore:
@@ -853,6 +852,7 @@ Things I don't like about Python-Style:
  - No Multi-Line Comments, no nested comments
  - Multi-Line Expressions require \, meaning that I need to reformat a lot if I change things
 
+adder :: (fn: (a: int, b: int) -> int) 
 
  main :: () {
         if x < 5

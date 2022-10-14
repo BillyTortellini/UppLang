@@ -176,7 +176,7 @@ template<typename T>
 Array<T> dynamic_array_make_slice(Dynamic_Array<T>* array, int start_index, int end_index)
 {
     Array<T> result = dynamic_array_as_array(array);
-    return array_make_slice(result, start_index, end_index);
+    return array_make_slice<T>(&result, start_index, end_index);
 }
 
 template<typename T>

@@ -126,12 +126,12 @@ C_Token token_make(C_Token_Type type, Token_Attribute attribute, Text_Slice posi
     return result;
 }
 
-C_Token token_make(C_Token_Type type, Token_Attribute attribute, int line, int character, int length, int index)
+C_Token token_make(C_Token_Type type, Token_Attribute attribute, int line_index, int character, int length, int index)
 {
     C_Token result;
     result.type = type;
     result.attribute = attribute;
-    result.position = text_slice_make(text_position_make(line, character), text_position_make(line, character+length));
+    result.position = text_slice_make(text_position_make(line_index, character), text_position_make(line_index, character+length));
     result.source_code_index = index;
     return result;
 }
@@ -149,7 +149,7 @@ C_Token token_make_with_slice(C_Token_Type type, Token_Attribute attribute, Text
 bool code_parse_comments(C_Lexer* lexer, String* code, int* index, int* character_pos, int* line_number)
 {
     if (*index + 1 >= code->size) return false;
-    // Single line comments
+    // Single line_index comments
     int start_index = *index;
     int start_char = *character_pos;
     int line_start = *line_number;
@@ -903,7 +903,7 @@ void c_lexer_print(C_Lexer* lexer)
     {
         C_Token token = lexer->tokens_with_decoration[i];
         string_append_formated(&msg, "\t %s (Line %d, Pos %d, size: %d)",
-            token_type_to_string(token.type), token.position.start.line, token.position.start.character,
+            token_type_to_string(token.type), token.position.start.line_index, token.position.start.character,
             math_maximum(token.position.end.character - token.position.start.character, 0));
         if (token.type == C_Token_Type::IDENTIFIER_NAME) {
             string_append_formated(&msg, " = %s", token.attribute.id->characters);

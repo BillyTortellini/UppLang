@@ -12,12 +12,9 @@ struct Source_Code;
 // Code History
 enum class Code_Change_Type
 {
-    BLOCK_CREATE,
+    BLOCK_INSERT,
     BLOCK_MERGE,
-    BLOCK_INDEX_CHANGED,
-
     LINE_INSERT,
-
     TEXT_INSERT,
 };
 
@@ -28,29 +25,15 @@ struct Code_Change
     union
     {
         struct {
-            Block_Index parent;
-            int line_index;
-            Block_Index new_block_index; // Filled by apply change
-        } block_create;
+            Line_Index line_index;
+            Block_Index new_block_index; // Filled by apply change forward
+        } block_insert;
         struct {
-            Block_Index index;
-            Block_Index merge_other; 
-            int split_index;
-            int block_split_index;
-
-            Block_Index parent_index; // Note: not required by un/redo, but by other applications (incremental parsing)
-            int line_number_in_parent;
+            Block_Index into_block_index;
+            Block_Index from_block_index;
+            Line_Index from_line_index;
+            int into_line_count;
         } block_merge;
-        struct {
-            Block_Index index;
-            int new_line_index;
-            int old_line_index;
-            Block_Index parent_index;  // Note: not required by un/redo, but by other applications (incremental parsing)
-        } block_index_change;
-        struct {
-            Line_Index move_from;
-            Line_Index move_to;
-        } line_move;
         Line_Index line_insert;
         struct {
             Text_Index index;
@@ -58,8 +41,6 @@ struct Code_Change
         } text_insert;
     } options;
 };
-
-
 
 enum class History_Node_Type
 {
@@ -75,7 +56,7 @@ struct History_Node
     // Payload
     Code_Change change;
 
-    // Linkage to other items
+    // Linkage to other nodes
     int next_change;
     int alt_change; // For 'other' history-path
     int prev_change;
@@ -90,13 +71,11 @@ struct History_Node
 struct Code_History
 {
     Source_Code* code;
-    Dynamic_Array<History_Node> items;
+    Dynamic_Array<History_Node> nodes;
     int current;
 
     int complex_level;
     int complex_start;
-
-    Dynamic_Array<Block_Index> free_blocks;
 };
 
 Code_History code_history_create(Source_Code* code);
@@ -118,8 +97,8 @@ void history_delete_text(Code_History* history, Text_Index index, int char_end);
 void history_insert_char(Code_History* history, Text_Index index, char c);
 void history_delete_char(Code_History* history, Text_Index index);
 
-void history_insert_line(Code_History* history, Line_Index line_index, bool before_line_block);
-void history_insert_line_with_text(Code_History* history, Line_Index line_index, bool before_line_index, String string);
+void history_insert_line(Code_History* history, Line_Index line_index);
+void history_insert_line_with_text(Code_History* history, Line_Index line_index, String string);
 void history_remove_line(Code_History* history, Line_Index line_index);
 Line_Index history_add_line_indent(Code_History* history, Line_Index line_index);
 Line_Index history_remove_line_indent(Code_History* history, Line_Index line_index);

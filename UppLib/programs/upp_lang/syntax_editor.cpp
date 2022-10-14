@@ -41,7 +41,7 @@ Error_Display error_display_make(String msg, Token_Range range) {
     Error_Display result;
     result.message = msg;
     result.range = range;
-    result.from_main_source = compiler.main_source->code == range.start.line.block.code;
+    result.from_main_source = compiler.main_source->code == range.start.line_index.block_index.code;
     return result;
 }
 
@@ -145,14 +145,14 @@ Token token_make_dummy() {
 
 int get_cursor_token_index(bool after_cursor) {
     auto& c = syntax_editor.cursor;
-    return character_index_to_token(&index_value(c.line)->tokens, c.pos, after_cursor);
+    return character_index_to_token(&index_value_text(c.line_index)->tokens, c.pos, after_cursor);
 }
 
 Token get_cursor_token(bool after_cursor)
 {
     auto& c = syntax_editor.cursor;
     int tok_index = get_cursor_token_index(after_cursor);
-    auto& tokens = index_value(c.line)->tokens;
+    auto& tokens = index_value_text(c.line_index)->tokens;
     if (tok_index >= tokens.size) return token_make_dummy();
     return tokens[tok_index];
 }
@@ -171,7 +171,7 @@ void syntax_editor_load_text_file(const char* filename)
         result = string_create_static("main :: (x : int) -> void \n{\n\n}");
     }
 
-    editor.cursor = text_index_make(block_get_start_line(block_index_make_root(editor.code)), 0);
+    editor.cursor = text_index_make(block_get_first_text_line(block_index_make_root(editor.code)), 0);
     editor.file_path = filename;
 
     source_code_fill_from_string(editor.code, result);
@@ -200,8 +200,12 @@ void syntax_editor_sanitize_cursor()
 {
     auto& editor = syntax_editor;
     auto& cursor = editor.cursor;
-    index_sanitize(&cursor.line);
-    auto& text = index_value(cursor.line)->text;
+    index_sanitize(&cursor.line_index);
+    if (index_value(cursor.line_index)->is_block_reference) {
+        cursor.line_index = block_get_first_text_line(index_value(cursor.line_index)->options.block_index);
+        cursor.pos = 0;
+    }
+    auto& text = index_value_text(cursor.line_index)->text;
     cursor.pos = math_clamp(cursor.pos, 0, editor.mode == Editor_Mode::INSERT ? text.size : math_maximum(0, text.size - 1));
 
     if (string_test_char(text, cursor.pos, ' ')) {
@@ -214,14 +218,13 @@ void syntax_editor_sanitize_cursor()
 
 bool syntax_editor_sanitize_line(Line_Index line_index)
 {
-    if (source_block_inside_comment(line_index.block)) {
+    if (source_block_inside_comment(line_index.block_index)) {
         return false;
     }
 
     // Remove all Spaces except space critical ones
     auto& editor = syntax_editor;
-    auto line = index_value(line_index);
-    auto& text = line->text;
+    auto& text = index_value_text(line_index)->text;
     auto pos = editor.cursor.pos;
 
     bool changed = false;
@@ -255,7 +258,7 @@ bool syntax_editor_sanitize_line(Line_Index line_index)
         }
 
         if (curr == ' ' && !(char_is_space_critical(prev) && char_is_space_critical(next))) {
-            history_delete_char(&editor.history, text_index_make(editor.cursor.line, index));
+            history_delete_char(&editor.history, text_index_make(editor.cursor.line_index, index));
             changed = true;
             if (pos > index) {
                 pos -= 1;
@@ -266,7 +269,7 @@ bool syntax_editor_sanitize_line(Line_Index line_index)
         }
     }
 
-    if (index_equal(editor.cursor.line, line_index)) 
+    if (index_equal(editor.cursor.line_index, line_index)) 
     {
         editor.cursor.pos = pos;
         syntax_editor_sanitize_cursor();
@@ -290,83 +293,50 @@ void syntax_editor_synchronize_tokens()
     // Find out which lines were changed
     auto line_changes = dynamic_array_create_empty<Line_Index>(1);
     SCOPE_EXIT(dynamic_array_destroy(&line_changes));
+    auto helper_add_delete_line_item = [&line_changes](Line_Index new_line_index, bool is_insert) -> void {
+        for (int i = 0; i < line_changes.size; i++) {
+            auto& line_index = line_changes[i];
+            if (!index_equal(line_index.block_index, new_line_index.block_index)) {
+                continue;
+            }
+            if (is_insert) {
+                if (line_index.line_index >= new_line_index.line_index) {
+                    line_index.line_index += 1;
+                }
+            }
+            else {
+                if (line_index.line_index == new_line_index.line_index) {
+                    dynamic_array_swap_remove(&line_changes, i);
+                    i = i - 1;
+                    continue;
+                }
+                if (line_index.line_index > new_line_index.line_index) {
+                    line_index.line_index -= 1;
+                }
+            }
+        }
+    };
+
     for (int i = 0; i < changes.size; i++)
     {
         auto& change = changes[i];
         switch (change.type)
         {
-        case Code_Change_Type::BLOCK_CREATE: 
-        {
-            if (change.apply_forwards) break;
-            for (int j = 0; j < line_changes.size; j++) {
-                auto& line = line_changes[j];
-                if (index_equal(line.block, change.options.block_create.new_block_index)) {
-                    dynamic_array_swap_remove(&line_changes, j);
-                    j -= 1;
-                }
-            }
+        case Code_Change_Type::BLOCK_INSERT: {
+            helper_add_delete_line_item(change.options.block_insert.line_index, change.apply_forwards);
             break;
         }
-        case Code_Change_Type::BLOCK_INDEX_CHANGED: break;
-        case Code_Change_Type::BLOCK_MERGE:
-        {
-            auto& merge = change.options.block_merge;
-            for (int j = 0; j < line_changes.size; j++)
-            {
-                auto& line = line_changes[j];
-                if (change.apply_forwards) 
-                {
-                    // Merge
-                    if (index_equal(merge.merge_other, line.block)) {
-                        int new_index = line.line;
-                        if (new_index > merge.split_index) {
-                            new_index -= merge.split_index;
-                        }
-                        line = line_index_make(merge.index, new_index);
-                    }
-                }
-                else 
-                { 
-                    // Split
-                    if (index_equal(merge.index, line.block) && line.line >= merge.split_index) {
-                        line = line_index_make(merge.merge_other, line.line - merge.split_index);
-                    }
-                }
-            }
+        case Code_Change_Type::BLOCK_MERGE: {
+            helper_add_delete_line_item(change.options.block_merge.from_line_index, change.apply_forwards);
             break;
         }
-        case Code_Change_Type::LINE_INSERT:
-        {
-            // Update line indices in corresponding blocks
-            auto& insert = change.options.line_insert;
-            for (int j = 0; j < line_changes.size; j++)
-            {
-                auto& line = line_changes[j];
-                if (!index_equal(line.block, insert.block)) continue;
-                if (change.apply_forwards)
-                {
-                    // Line insertion
-                    if (line.line >= insert.line) {
-                        line.line += 1;
-                    }
-                }
-                else
-                {
-                    // Line deletion
-                    if (line.line > insert.line) {
-                        line.line -= 1;
-                    }
-                    else if (line.line == insert.line) {
-                        dynamic_array_swap_remove(&line_changes, j);
-                        j -= 1;
-                    }
-                }
-            }
+        case Code_Change_Type::LINE_INSERT: {
+            helper_add_delete_line_item(change.options.line_insert, change.apply_forwards);
             break;
         }
         case Code_Change_Type::TEXT_INSERT:
         {
-            auto& changed_line = change.options.text_insert.index.line;
+            auto& changed_line = change.options.text_insert.index.line_index;
             bool found = false;
             for (int j = 0; j < line_changes.size; j++) {
                 if (index_equal(line_changes[j], changed_line)) {
@@ -390,7 +360,7 @@ void syntax_editor_synchronize_tokens()
         assert(!changed, "Syntax editor has to make sure that lines are sanitized after edits!");
 
         source_code_tokenize_line(line_changes[i]);
-        logg("Synchronized: %d/%d\n", index.block.block, index.line);
+        logg("Synchronized: %d/%d\n", index.block_index.block_index, index.line_index);
     }
 }
 
@@ -524,8 +494,8 @@ Symbol_Table* code_query_get_ast_node_symbol_table(AST::Node* base)
             return module->symbol_table;
         }
         case AST::Node_Type::CODE_BLOCK: {
-            auto block = AST::downcast<AST::Code_Block>(base);
-            return block->symbol_table;
+            auto block_index = AST::downcast<AST::Code_Block>(base);
+            return block_index->symbol_table;
         }
         case AST::Node_Type::EXPRESSION: {
             auto expr = AST::downcast<AST::Expression>(base);
@@ -561,7 +531,7 @@ void editor_remove_token(int token_index)
 {
     auto& editor = syntax_editor;
     auto& cursor = editor.cursor;
-    auto line = index_value(cursor.line);
+    auto line = index_value_text(cursor.line_index);
 
     syntax_editor_synchronize_tokens();
     auto& tokens = line->tokens;
@@ -586,11 +556,11 @@ void editor_remove_token(int token_index)
     int delete_start = token_index > 0 ? tokens[token_index - 1].end_index : 0;
     int delete_end = token_index + 1 < tokens.size ? tokens[token_index + 1].start_index : line->text.size;
     cursor.pos = delete_start;
-    history_delete_text(&editor.history, text_index_make(cursor.line, delete_start), delete_end);
+    history_delete_text(&editor.history, text_index_make(cursor.line_index, delete_start), delete_end);
 
     // Re-Enter critical spaces
     if (critical_before && critical_after) {
-        history_insert_char(&editor.history, text_index_make(cursor.line, delete_start), ' ');
+        history_insert_char(&editor.history, text_index_make(cursor.line_index, delete_start), ' ');
         cursor.pos += 1;
     }
     if (editor.mode == Editor_Mode::INSERT) {
@@ -605,16 +575,15 @@ void editor_split_line_at_cursor(int indentation_offset)
 {
     auto& mode = syntax_editor.mode;
     auto& cursor = syntax_editor.cursor;
-    auto line = index_value(cursor.line);
-    auto& text = line->text;
+    auto& text = index_value_text(cursor.line_index)->text;
     int cutof_index = text.size; // Text may be invalid after applying history changes
     String cutout = string_create_substring_static(&text, cursor.pos, text.size);
 
     history_start_complex_command(&syntax_editor.history);
     SCOPE_EXIT(history_stop_complex_command(&syntax_editor.history));
 
-    Line_Index new_line_index = line_index_make(cursor.line.block, cursor.line.line + 1);
-    history_insert_line(&syntax_editor.history, new_line_index, true);
+    Line_Index new_line_index = line_index_make(cursor.line_index.block_index, cursor.line_index.line_index + 1);
+    history_insert_line(&syntax_editor.history, new_line_index);
     if (indentation_offset == 1) {
         new_line_index = history_add_line_indent(&syntax_editor.history, new_line_index);
     }
@@ -629,7 +598,6 @@ void editor_split_line_at_cursor(int indentation_offset)
         history_insert_text(&syntax_editor.history, text_index_make(new_line_index, 0), cutout);
         history_delete_text(&syntax_editor.history, cursor, cutof_index);
     }
-    syntax_editor_sanitize_line(cursor.line);
     syntax_editor_sanitize_line(new_line_index);
     cursor = text_index_make(new_line_index, 0);
 }
@@ -760,7 +728,7 @@ void code_completion_find_suggestions()
 
     // Check if we are on special node
     syntax_editor_synchronize_with_compiler(false);
-    Token_Index cursor_token_index = token_index_make(syntax_editor.cursor.line, get_cursor_token_index(false));
+    Token_Index cursor_token_index = token_index_make(syntax_editor.cursor.line_index, get_cursor_token_index(false));
     auto node = Parser::find_smallest_enclosing_node(&compiler.main_source->source_parse->root->base, cursor_token_index);
 
     bool fill_from_symbol_table = false;
@@ -887,16 +855,16 @@ void code_completion_insert_suggestion()
     if (suggestions.size == 0) return;
     if (editor.cursor.pos == 0) return;
     String replace_string = suggestions[0].option;
-    auto line = index_value(editor.cursor.line);
+    auto line = index_value(editor.cursor.line_index);
     // Remove current token
     int token_index = get_cursor_token_index(false);
-    int start_pos = line->tokens[token_index].start_index;
-    history_delete_text(&editor.history, text_index_make(editor.cursor.line, start_pos), editor.cursor.pos);
+    int start_pos = index_value_text(editor.cursor.line_index)->tokens[token_index].start_index;
+    history_delete_text(&editor.history, text_index_make(editor.cursor.line_index, start_pos), editor.cursor.pos);
     // Insert suggestion instead
     editor.cursor.pos = start_pos;
     history_insert_text(&editor.history, editor.cursor, replace_string);
     editor.cursor.pos += replace_string.size;
-    syntax_editor_sanitize_line(editor.cursor.line);
+    syntax_editor_sanitize_line(editor.cursor.line_index);
 }
 
 
@@ -905,7 +873,7 @@ void normal_command_execute(Normal_Command command)
 {
     auto& editor = syntax_editor;
     auto& cursor = editor.cursor;
-    auto line = index_value(cursor.line);
+    auto line = index_value_text(cursor.line_index);
     auto& tokens = line->tokens;
 
     SCOPE_EXIT(history_set_cursor_pos(&editor.history, editor.cursor));
@@ -993,19 +961,19 @@ void normal_command_execute(Normal_Command command)
         SCOPE_EXIT(history_stop_complex_command(&editor.history));
 
         bool below = command == Normal_Command::ADD_LINE_BELOW;
-        auto new_line = line_index_make(cursor.line.block, below ? cursor.line.line + 1 : cursor.line.line);
-        history_insert_line(&editor.history, new_line, below);
+        auto new_line = line_index_make(cursor.line_index.block_index, below ? cursor.line_index.line_index + 1 : cursor.line_index.line_index);
+        history_insert_line(&editor.history, new_line);
         cursor = text_index_make(new_line, 0);
         editor_enter_insert_mode();
         break;
     }
     case Normal_Command::MOVE_UP: {
         // FUTURE: Use token render positions to move up/down
-        cursor.line = line_index_prev(cursor.line);
+        cursor.line_index = line_index_prev(cursor.line_index);
         break;
     }
     case Normal_Command::MOVE_DOWN: {
-        cursor.line = line_index_next(cursor.line);
+        cursor.line_index = line_index_next(cursor.line_index);
         break;
     }
     default: panic("");
@@ -1017,7 +985,7 @@ void insert_command_execute(Insert_Command input)
     auto& editor = syntax_editor;
     auto& mode = editor.mode;
     auto& cursor = editor.cursor;
-    auto line = index_value(cursor.line);
+    auto line = index_value_text(cursor.line_index);
     auto& text = line->text;
     auto& pos = cursor.pos;
 
@@ -1091,14 +1059,14 @@ void insert_command_execute(Insert_Command input)
     }
     case Insert_Command_Type::ADD_INDENTATION: {
         if (pos == 0) {
-            cursor.line = history_add_line_indent(&syntax_editor.history, cursor.line);
+            cursor.line_index = history_add_line_indent(&syntax_editor.history, cursor.line_index);
             break;
         }
         editor_split_line_at_cursor(1);
         break;
     }
     case Insert_Command_Type::REMOVE_INDENTATION: {
-        cursor.line = history_remove_line_indent(&syntax_editor.history, cursor.line);
+        cursor.line_index = history_remove_line_indent(&syntax_editor.history, cursor.line_index);
         break;
     }
     case Insert_Command_Type::MOVE_LEFT: {
@@ -1117,7 +1085,7 @@ void insert_command_execute(Insert_Command input)
         if (char_is_parenthesis(input.letter))
         {
             Parenthesis p = char_to_parenthesis(input.letter);
-            // Check if line is properly parenthesised with regards to the one token I currently am on
+            // Check if line_index is properly parenthesised with regards to the one token I currently am on
             // This is easy to check, but design wise I feel like I only want to check the token I am on
             if (p.is_open)
             {
@@ -1169,7 +1137,7 @@ void insert_command_execute(Insert_Command input)
         history_insert_char(&syntax_editor.history, cursor, input.letter);
         pos += 1;
         // Inserting delimiters between space critical tokens can lead to spaces beeing removed
-        syntax_editor_sanitize_line(cursor.line);
+        syntax_editor_sanitize_line(cursor.line_index);
         break;
     }
     case Insert_Command_Type::SPACE:
@@ -1220,25 +1188,25 @@ void insert_command_execute(Insert_Command input)
 
         if (pos == 0)
         {
-            auto prev_line = line_index_prev(cursor.line);
-            if (index_equal(prev_line, cursor.line)) {
-                // We are at the first line in the code
+            auto prev_line = line_index_prev(cursor.line_index);
+            if (index_equal(prev_line, cursor.line_index)) {
+                // We are at the first line_index in the code
                 break;
             }
-            // Merge this line with previous one
-            Text_Index insert_index = text_index_make(prev_line, index_value(prev_line)->text.size);
+            // Merge this line_index with previous one
+            Text_Index insert_index = text_index_make(prev_line, index_value_text(prev_line)->text.size);
             history_insert_text(&syntax_editor.history, insert_index, text);
-            history_remove_line(&syntax_editor.history, cursor.line);
+            history_remove_line(&syntax_editor.history, cursor.line_index);
             cursor = insert_index;
-            syntax_editor_sanitize_line(cursor.line);
+            syntax_editor_sanitize_line(cursor.line_index);
             break;
         }
 
         syntax_editor.space_after_cursor = string_test_char(text, pos, ' ') || syntax_editor.space_after_cursor;
-        history_delete_char(&syntax_editor.history, text_index_make(cursor.line, pos - 1));
+        history_delete_char(&syntax_editor.history, text_index_make(cursor.line_index, pos - 1));
         pos -= 1;
         syntax_editor.space_before_cursor = string_test_char(text, pos - 1, ' ');
-        syntax_editor_sanitize_line(cursor.line);
+        syntax_editor_sanitize_line(cursor.line_index);
         break;
     }
     case Insert_Command_Type::NUMBER_LETTER:
@@ -1477,7 +1445,7 @@ void syntax_editor_destroy()
 
 // RENDERING
 // Draw Commands
-vec2 text_to_screen_coord(int line, int character)
+vec2 text_to_screen_coord(int line_index, int character)
 {
     auto editor = &syntax_editor;
     float w = editor->rendering_core->render_information.viewport_width;
@@ -1491,11 +1459,11 @@ vec2 text_to_screen_coord(int line, int character)
     }
     vec2 char_size = editor->character_size * scaling_factor;
     vec2 line_start = vec2(-1.0f, 1.0f) * scaling_factor;
-    vec2 cursor = line_start + vec2(character * char_size.x, -(line + 1) * char_size.y);
+    vec2 cursor = line_start + vec2(character * char_size.x, -(line_index + 1) * char_size.y);
     return cursor;
 }
 
-void syntax_editor_draw_underline(int line, int character, int length, vec3 color)
+void syntax_editor_draw_underline(int line_index, int character, int length, vec3 color)
 {
     float w = syntax_editor.rendering_core->render_information.viewport_width;
     float h = syntax_editor.rendering_core->render_information.viewport_height;
@@ -1509,12 +1477,12 @@ void syntax_editor_draw_underline(int line, int character, int length, vec3 colo
     vec2 char_size = syntax_editor.character_size * scaling_factor;
     vec2 size = char_size * vec2((float)length, 1 / 8.0f);
     vec2 edge_point = vec2(-1.0f, 1.0f) * scaling_factor;
-    vec2 cursor = edge_point + vec2(character * char_size.x, -(line + 1) * char_size.y);
+    vec2 cursor = edge_point + vec2(character * char_size.x, -(line_index + 1) * char_size.y);
     cursor = cursor + size * vec2(0.5f, 0.5f);
     renderer_2D_add_rectangle(syntax_editor.renderer_2D, cursor, size, color, 0.0f);
 }
 
-void syntax_editor_draw_cursor_line(int line, int character, vec3 color)
+void syntax_editor_draw_cursor_line(int line_index, int character, vec3 color)
 {
     auto editor = &syntax_editor;
     float w = editor->rendering_core->render_information.viewport_width;
@@ -1529,12 +1497,12 @@ void syntax_editor_draw_cursor_line(int line, int character, vec3 color)
     vec2 char_size = editor->character_size * scaling_factor;
     vec2 size = char_size * vec2(0.1f, 1.0f);
     vec2 edge_point = vec2(-1.0f, 1.0f) * scaling_factor;
-    vec2 cursor = edge_point + vec2(character * char_size.x, -(line + 1) * char_size.y);
+    vec2 cursor = edge_point + vec2(character * char_size.x, -(line_index + 1) * char_size.y);
     cursor = cursor + size * vec2(0.5f, 0.5f);
     renderer_2D_add_rectangle(editor->renderer_2D, cursor, size, color, 0.0f);
 }
 
-void syntax_editor_draw_text_background(int line, int character, int length, vec3 color)
+void syntax_editor_draw_text_background(int line_index, int character, int length, vec3 color)
 {
     auto& editor = syntax_editor;
     auto offset = editor.character_size * vec2(0.0f, 0.5f);
@@ -1551,22 +1519,22 @@ void syntax_editor_draw_text_background(int line, int character, int length, vec
 
     vec2 char_size = editor.character_size * scaling_factor;
     vec2 edge_point = vec2(-1.0f, 1.0f) * scaling_factor;
-    vec2 cursor = edge_point + vec2(character * char_size.x, -line * char_size.y);
+    vec2 cursor = edge_point + vec2(character * char_size.x, -line_index * char_size.y);
 
     vec2 size = char_size * vec2((float)length, 1.0f);
     cursor = cursor + size * vec2(0.5f, -0.5f);
     renderer_2D_add_rectangle(editor.renderer_2D, cursor, size, color, 0.0f);
 }
 
-void syntax_editor_draw_string(String string, vec3 color, int line, int character)
+void syntax_editor_draw_string(String string, vec3 color, int line_index, int character)
 {
     auto editor = &syntax_editor;
-    vec2 pos = vec2(-1.0f, 1.0f) + vec2(character, -(line + 1)) * editor->character_size;
+    vec2 pos = vec2(-1.0f, 1.0f) + vec2(character, -(line_index + 1)) * editor->character_size;
     text_renderer_set_color(editor->text_renderer, color);
     text_renderer_add_text(editor->text_renderer, &string, pos, editor->character_size.y, 1.0f);
 }
 
-void syntax_editor_draw_string_in_box(String string, vec3 text_color, vec3 box_color, int line, int character, float text_size)
+void syntax_editor_draw_string_in_box(String string, vec3 text_color, vec3 box_color, int line_index, int character, float text_size)
 {
     int text_width = 0;
     int max_text_width = 0;
@@ -1584,7 +1552,7 @@ void syntax_editor_draw_string_in_box(String string, vec3 text_color, vec3 box_c
     }
 
     auto editor = &syntax_editor;
-    vec2 pos = vec2(-1.0f, 1.0f) + vec2(character, -line) * editor->character_size + vec2(0.0f, -editor->character_size.y * text_size * text_height);
+    vec2 pos = vec2(-1.0f, 1.0f) + vec2(character, -line_index) * editor->character_size + vec2(0.0f, -editor->character_size.y * text_size * text_height);
     text_renderer_set_color(editor->text_renderer, text_color);
     text_renderer_add_text(editor->text_renderer, &string, pos, editor->character_size.y * text_size, 1.0f);
 
@@ -1599,7 +1567,7 @@ void syntax_editor_draw_string_in_box(String string, vec3 text_color, vec3 box_c
     }
     vec2 size = editor->character_size * scaling_factor;
     vec2 edge_point = vec2(-1.0f, 1.0f) * scaling_factor;
-    vec2 cursor = edge_point + vec2(character * size.x, -line * size.y);
+    vec2 cursor = edge_point + vec2(character * size.x, -line_index * size.y);
     size = size * vec2(max_text_width, text_height) * text_size;
     cursor = cursor + size * vec2(0.5f, -0.5f);
     renderer_2D_add_rectangle(editor->renderer_2D, cursor, size, box_color, 0.0f);
@@ -1626,14 +1594,14 @@ void syntax_highlighting_mark_range(Token_Range range, vec3 normal_color, vec3 e
     auto index = range.start;
     auto end = range.end;
 
-    typedef void (*draw_fn)(int line, int character, int length, vec3 color);
+    typedef void (*draw_fn)(int line_index, int character, int length, vec3 color);
     draw_fn draw_mark = underline ? syntax_editor_draw_underline : syntax_editor_draw_text_background;
 
     assert(index_compare(index, end) >= 0, "hey");
     if (index_equal(index, end))
     {
-        auto line = index_value(index.line);
-        if (token_index_is_last_in_line(index)) {
+        auto line = index_value_text(index.line_index);
+        if (token_index_is_end_of_line(index)) {
             draw_mark(line->render_index, line->render_end_pos, 1, empty_range_color);
         }
         else {
@@ -1646,14 +1614,14 @@ void syntax_highlighting_mark_range(Token_Range range, vec3 normal_color, vec3 e
     bool quit_loop = false;
     while (true)
     {
-        auto line = index_value(index.line);
+        auto line = index_value_text(index.line_index);
 
         int draw_start = line->render_start_pos;
         int draw_end = line->render_end_pos;
-        if (!token_index_is_last_in_line(index)) {
+        if (!token_index_is_end_of_line(index)) {
             draw_start = line->infos[index.token].pos;
         }
-        if (index_equal(index.line, end.line)) {
+        if (index_equal(index.line_index, end.line_index)) {
             if (end.token - 1 >= 0) {
                 const auto& info = line->infos[end.token - 1];
                 draw_end = info.pos + info.size;
@@ -1663,10 +1631,10 @@ void syntax_highlighting_mark_range(Token_Range range, vec3 normal_color, vec3 e
         if (draw_start != draw_end) {
             draw_mark(line->render_index, draw_start, draw_end - draw_start, normal_color);
         }
-        if (index_equal(index.line, end.line)) {
+        if (index_equal(index.line_index, end.line_index)) {
             break;
         }
-        index = token_index_make(line_index_next(index.line), 0);
+        index = token_index_make(line_index_next(index.line_index), 0);
     }
 }
 
@@ -1696,11 +1664,11 @@ void syntax_highlighting_set_section_text_color(AST::Node* base, Parser::Section
         const auto& range = ranges[i];
         auto iter = range.start;
         while (!index_equal(iter, range.end)) {
-            if (token_index_is_last_in_line(iter)) {
-                iter = token_index_make(line_index_next(iter.line), 0);
+            if (token_index_is_end_of_line(iter)) {
+                iter = token_index_make(line_index_next(iter.line_index), 0);
                 continue;
             }
-            auto line = index_value(iter.line);
+            auto line = index_value_text(iter.line_index);
             line->infos[iter.token].color = color;
             iter = token_index_next(iter);
         }
@@ -1731,7 +1699,7 @@ void syntax_highlighting_set_symbol_colors(AST::Node* base)
 // Code Layout 
 void operator_space_before_after(Token_Index index, bool& space_before, bool& space_after)
 {
-    auto& tokens = index_value(index.line)->tokens;
+    auto& tokens = index_value_text(index.line_index)->tokens;
     assert(tokens[index.token].type == Token_Type::OPERATOR, "");
     auto op_info = syntax_operator_info(tokens[index.token].options.op);
     space_before = false;
@@ -1787,11 +1755,11 @@ void operator_space_before_after(Token_Index index, bool& space_before, bool& sp
 
 bool display_space_after_token(Token_Index index)
 {
-    auto line = index_value(index.line);
+    auto line = index_value_text(index.line_index);
     auto& text = line->text;
     auto& tokens = line->tokens;
 
-    // No space after final line token
+    // No space after final line_index token
     if (index.token + 1 >= tokens.size) return false;
 
     auto& a = tokens[index.token];
@@ -1802,7 +1770,7 @@ bool display_space_after_token(Token_Index index)
         return true;
     }
 
-    // End of line comments
+    // End of line_index comments
     if (b.type == Token_Type::COMMENT) {
         return true;
     }
@@ -1831,7 +1799,7 @@ bool display_space_after_token(Token_Index index)
     if (b.type == Token_Type::OPERATOR)
     {
         bool unused, space_before;
-        operator_space_before_after(token_index_make(index.line, index.token + 1), space_before, unused);
+        operator_space_before_after(token_index_make(index.line_index, index.token + 1), space_before, unused);
         if (space_before) {
             return true;
         }
@@ -1851,7 +1819,7 @@ void syntax_editor_layout_line(Line_Index line_index, int screen_index, int inde
 {
     auto& editor = syntax_editor;
     auto& cursor = editor.cursor;
-    auto line = index_value(line_index);
+    auto line = index_value_text(line_index);
     line->render_index = screen_index;
     line->render_indent = indentation;
     line->render_start_pos = indentation * 4;
@@ -1861,14 +1829,14 @@ void syntax_editor_layout_line(Line_Index line_index, int screen_index, int inde
     for (int i = 0; i < line->tokens.size; i++)
     {
         auto& token = line->tokens[i];
-        bool on_token = index_equal(cursor.line, line_index) && get_cursor_token_index(true) == i;
+        bool on_token = index_equal(cursor.line_index, line_index) && get_cursor_token_index(true) == i;
         if (on_token && token.start_index == cursor.pos) {
             pos += editor.space_after_cursor ? 1 : 0;
             pos += editor.space_before_cursor ? 1 : 0;
         }
 
         Render_Info info;
-        info.line = line->render_index;
+        info.line_index = line->render_index;
         info.pos = pos;
         info.size = token.end_index - token.start_index;
         info.color = Syntax_Color::TEXT;
@@ -1912,45 +1880,39 @@ void syntax_editor_layout_block(Block_Index block_index, int* screen_index, int 
     block->render_start = *screen_index;
     block->render_indent = indentation;
 
-    int child_index = 0;
     for (int i = 0; i < block->lines.size; i++)
     {
-        while (child_index < block->children.size)
-        {
-            auto next_child = index_value(block->children[child_index]);
-            if (next_child->line_index == i) {
-                syntax_editor_layout_block(block->children[child_index], screen_index, indentation + 1);
-                child_index++;
-            }
-            else {
-                break;
-            }
+        auto& line = block->lines[i];
+        if (line.is_block_reference) {
+            syntax_editor_layout_block(line.options.block_index, screen_index, indentation + 1);
         }
-        syntax_editor_layout_line(line_index_make(block_index, i), *screen_index, indentation);
-        *screen_index += 1;
-    }
-    if (child_index < block->children.size) {
-        syntax_editor_layout_block(block->children[child_index], screen_index, indentation + 1);
-        assert(child_index + 1 >= block->children.size, "All must be iterated by now");
+        else {
+            syntax_editor_layout_line(line_index_make(block_index, i), *screen_index, indentation);
+            *screen_index += 1;
+        }
     }
     block->render_end = *screen_index;
 }
 
 void syntax_editor_layout_apply_camera_offset(Block_Index block_index)
 {
-    auto block = index_value(block_index);
+    auto block= index_value(block_index);
     block->render_start -= syntax_editor.camera_start_line;
     block->render_end -= syntax_editor.camera_start_line;
 
-    for (int i = 0; i < block->lines.size; i++) {
+    for (int i = 0; i < block->lines.size; i++)
+    {
         auto& line = block->lines[i];
-        line.render_index -= syntax_editor.camera_start_line;
-        for (int j = 0; j < line.infos.size; j++) {
-            line.infos[j].line -= syntax_editor.camera_start_line;
+        if (line.is_block_reference) {
+            syntax_editor_layout_apply_camera_offset(line.options.block_index);
         }
-    }
-    for (int i = 0; i < block->children.size; i++) {
-        syntax_editor_layout_apply_camera_offset(block->children[i]);
+        else {
+            auto& text = line.options.text;
+            text.render_index -= syntax_editor.camera_start_line;
+            for (int j = 0; j < text.infos.size; j++) {
+                text.infos[j].line_index -= syntax_editor.camera_start_line;
+            }
+        }
     }
 }
 
@@ -1963,25 +1925,22 @@ void syntax_editor_render_block(Block_Index block_index)
     // Render lines
     for (int i = 0; i < block->lines.size; i++)
     {
-        auto line = block->lines[i];
-        for (int j = 0; j < line.tokens.size; j++)
-        {
-            auto& token = line.tokens[j];
-            auto& info = line.infos[j];
-            auto str = token_get_string(token, line.text);
-            syntax_editor_draw_string(str, info.color, info.line, info.pos);
+        auto line= block->lines[i];
+        if (line.is_block_reference) {
+            syntax_editor_render_block(line.options.block_index);
+        }
+        else {
+            auto& text = line.options.text;
+            for (int j = 0; j < text.tokens.size; j++)
+            {
+                auto& token = text.tokens[j];
+                auto& info = text.infos[j];
+                auto str = token_get_string(token, text.text);
+                syntax_editor_draw_string(str, info.color, info.line_index, info.pos);
+            }
         }
     }
-
-    // Render child-blocks
-    for (int i = 0; i < block->children.size; i++) {
-        syntax_editor_render_block(block->children[i]);
-    }
-
-    // Render block outline
-    if (block_index.block != 0) {
-        syntax_editor_draw_block_outline(block->render_start, block->render_end, block->render_indent);
-    }
+    syntax_editor_draw_block_outline(block->render_start, block->render_end, block->render_indent);
 }
 
 bool syntax_editor_display_analysis_info(AST::Node* node)
@@ -2020,7 +1979,7 @@ void syntax_editor_render()
         int visible_start = editor.camera_start_line;
         int visible_end = visible_start + line_count;
 
-        auto cursor_line = index_value(cursor.line)->render_index;
+        auto cursor_line = index_value_text(cursor.line_index)->render_index;
         editor.last_cursor_line = cursor_line;
         if (cursor_line < visible_start) {
             editor.camera_start_line = cursor_line;
@@ -2036,7 +1995,7 @@ void syntax_editor_render()
     if (false)
     {
         int line_index = 2.0f / editor.character_size.y - 1;
-        syntax_editor_draw_string(index_value(cursor.line)->text, Syntax_Color::TEXT, line_index, 0);
+        syntax_editor_draw_string(index_value_text(cursor.line_index)->text, Syntax_Color::TEXT, line_index, 0);
         if (editor.mode == Editor_Mode::NORMAL) {
             syntax_editor_draw_text_background(line_index, cursor.pos, 1, Syntax_Color::COMMENT);
         }
@@ -2050,7 +2009,7 @@ void syntax_editor_render()
     string_reset(&context);
 
     // Draw error messages
-    Token_Index cursor_token_index = token_index_make(syntax_editor.cursor.line, get_cursor_token_index(true));
+    Token_Index cursor_token_index = token_index_make(syntax_editor.cursor.line_index, get_cursor_token_index(true));
     for (int i = 0; i < editor.errors.size; i++)
     {
         auto& error = editor.errors[i];
@@ -2161,7 +2120,7 @@ void syntax_editor_render()
 
     // Draw Cursor
     {
-        auto line = index_value(cursor.line);
+        auto line = index_value_text(cursor.line_index);
         auto& text = line->text;
         auto& tokens = line->tokens;
         auto& infos = line->infos;
@@ -2175,16 +2134,16 @@ void syntax_editor_render()
         else {
             info.pos = line->render_indent * 4;
             info.size = 1;
-            info.line = line->render_index;
+            info.line_index = line->render_index;
         }
 
         if (editor.mode == Editor_Mode::NORMAL)
         {
             int box_start = info.pos;
             int box_end = math_maximum(info.pos + info.size, box_start + 1);
-            syntax_editor_draw_text_background(info.line, box_start, box_end - box_start, vec3(0.2f));
-            syntax_editor_draw_cursor_line(info.line, box_start, Syntax_Color::COMMENT);
-            syntax_editor_draw_cursor_line(info.line, box_end, Syntax_Color::COMMENT);
+            syntax_editor_draw_text_background(info.line_index, box_start, box_end - box_start, vec3(0.2f));
+            syntax_editor_draw_cursor_line(info.line_index, box_start, Syntax_Color::COMMENT);
+            syntax_editor_draw_cursor_line(info.line_index, box_end, Syntax_Color::COMMENT);
         }
         else
         {
@@ -2228,10 +2187,10 @@ void syntax_editor_render()
     // Draw context
     if (show_context_info)
     {
-        Token_Index display_index = token_index_make(syntax_editor.cursor.line, get_cursor_token_index(false));
-        auto line = index_value(display_index.line);
+        Token_Index display_index = token_index_make(syntax_editor.cursor.line_index, get_cursor_token_index(false));
+        auto line = index_value_text(display_index.line_index);
         int char_index = 0;
-        if (!token_index_is_last_in_line(display_index)) {
+        if (!token_index_is_end_of_line(display_index)) {
             auto& info = line->infos[display_index.token];
             char_index = info.pos; // + (cursor.pos - index_value(cursor_token_index)->start_index);
         }

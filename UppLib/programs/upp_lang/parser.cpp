@@ -10,8 +10,6 @@ namespace Parser
     // Types
     using namespace AST;
 
-
-    // Parser Helpers
     struct Binop_Link
     {
         Binop binop;
@@ -34,9 +32,9 @@ namespace Parser
         Block_Parse empty_block_parse;
     };
 
+
     // Globals
     static Parser parser;
-
 
 
     // Parser Functions
@@ -84,7 +82,7 @@ namespace Parser
     template<typename T>
     T* allocate_base(Node* parent, Node_Type type)
     {
-        // PERF: A block allocator could probably be used here
+        // PERF: A block_index allocator could probably be used here
         auto result = new T;
         memory_zero(result);
         Node* base = &result->base;
@@ -106,12 +104,12 @@ namespace Parser
         DOCU: 
           This function does a Post-Processing on Token-Ranges to correct invalid ranges,
           which are generated the following way:
-            1. Parse syntax block steps out of current block (Line-Index becomes invalid (line_index == block.lines.size)
-                and the parent items of the syntax_block therefore get an invalid end_index.
-            2. Expressions that go over multiple ranges have their end index at the start of another line.
-               Instead, the end index should be at the end of the previous line
+            1. Parse syntax block steps out of current block (Line-Index becomes invalid (line_index == block_index.lines.size)
+                and the parent nodes of the syntax_block therefore get an invalid end_index.
+            2. Expressions that go over multiple ranges have their end index at the start of another line_index.
+               Instead, the end index should be at the end of the previous line_index
                Maybe I need to think more about this, but this shouldn't be true for code-blocks
-          It also generates bounding ranges, which are used to efficiently find
+          It also generates bounding ranges, which are used to efficiently map from tokens to nodes
         FUTURE: Maybe the parser can handle these problems and we don't need a Post-Processing step
         */
 
@@ -120,14 +118,20 @@ namespace Parser
 
         // Correct Invalid ranges
         {
+            if (index_value(range.start.line_index)->is_block_reference) {
+                range.start = token_index_make_block_start(index_value(range.start.line_index)->options.block_index);
+            }
             auto& end = range.end;
-            auto block = index_value(end.line.block);
-            assert(end.line.line <= block->lines.size, "Cannot be greater");
-            if (end.line.line == block->lines.size) {
-                end = token_index_make_block_end(end.line.block);
+            auto block = index_value(end.line_index.block_index);
+            assert(end.line_index.line_index <= block->lines.size, "Cannot be greater");
+            if (end.line_index.line_index == block->lines.size) {
+                end = token_index_make_block_end(end.line_index.block_index);
+            }
+            if (index_value(end.line_index)->is_block_reference) {
+                end = token_index_make_block_end(index_value(end.line_index)->options.block_index);
             }
             //else if (end.token == 0 && !index_equal(end, range.start) && base->type != Node_Type::CODE_BLOCK && base->type != Node_Type::MODULE) {
-                //end = token_index_make_line_end(line_index_prev(end.line));
+                //end = token_index_make_line_end(line_index_prev(end.line_index));
             //}
         }
         assert(index_valid(range.start), "Jo");
@@ -209,11 +213,6 @@ namespace Parser
 
 
     // Positional Stuff
-    bool on_line() {
-        auto& p = parser.state.pos;
-        return index_valid(parser.state.pos.line);
-    }
-
     Token* get_token(int offset) {
         return index_value(token_index_advance(parser.state.pos, offset));
     }
@@ -223,13 +222,14 @@ namespace Parser
     }
 
     Source_Line* get_line() {
-        return index_value(parser.state.pos.line);
+        return index_value(parser.state.pos.line_index);
     }
 
     int remaining_line_tokens() {
         auto& p = parser.state.pos;
-        if (!index_valid(p)) return 0;
-        auto tokens = index_value(p.line)->tokens;
+        if (!index_valid(p)) return 0; // May happen when we step out of block
+        if (index_value(p.line_index)->is_block_reference) return 0; 
+        auto tokens = index_value_text(p.line_index)->tokens;
         int remaining = tokens.size - p.token;
         if (tokens.size != 0 && tokens[tokens.size - 1].type == Token_Type::COMMENT) {
             remaining -= 1;
@@ -239,17 +239,12 @@ namespace Parser
 
     bool on_follow_block() {
         auto& pos = parser.state.pos;
-        if (!line_index_block_after(pos.line).available) return false;
+        if (!line_index_block_after(pos.line_index).available) return false;
         return remaining_line_tokens() == 0;
     }
 
     void advance_token() {
         parser.state.pos = token_index_next(parser.state.pos);
-    }
-
-    void advance_line() {
-        parser.state.pos.line.line += 1;
-        parser.state.pos.token = 0;
     }
 
 
@@ -314,7 +309,7 @@ namespace Parser
     // Parsing Helpers
 #define CHECKPOINT_SETUP \
         if (!index_valid(parser.state.pos)) {return 0;}\
-        if (token_index_is_last_in_line(parser.state.pos) && !on_follow_block()) {return 0;}\
+        if (token_index_is_end_of_line(parser.state.pos) && !on_follow_block()) {return 0;}\
         auto checkpoint = parser.state;\
         bool _error_exit = false;\
         SCOPE_EXIT(if (_error_exit) parser_rollback(checkpoint););
@@ -338,23 +333,23 @@ namespace Parser
         Token_Index pos = start;
         while (true)
         {
-            // End of line handling
-            if (source_line_is_end_of_block(pos.line)) {
+            // End of line_index handling
+            if (line_index_is_end_of_block(pos.line_index)) {
                 return optional_make_failure<Token_Index>();
             }
-            if (token_index_is_last_in_line(pos))
+            if (token_index_is_end_of_line(pos))
             {
                 if (!(starting_inside_parenthesis || parenthesis_stack.size != 0)) {
                     return optional_make_failure<Token_Index>();
                 }
                 // Parenthesis aren't allowed to reach over blocks if there is no follow_block
-                if (!line_index_block_after(pos.line).available) {
+                if (!line_index_block_after(pos.line_index).available) {
                     return optional_make_failure<Token_Index>();
                 }
-                if (line_index_is_last_in_block(pos.line)) {
+                if (line_index_is_end_of_block(pos.line_index)) {
                     return optional_make_failure<Token_Index>();
                 }
-                pos.line.line += 1;
+                pos.line_index.line_index += 1;
                 pos.token = 0;
                 continue;
             }
@@ -491,8 +486,8 @@ namespace Parser
             else
             {
                 // INFO: In this case there is no end to the parenthesis we are in,
-                //       so we log an error to the end of the line and stop parsing
-                auto line_end = token_index_make_line_end(parser.state.pos.line);
+                //       so we log an error to the end of the line_index and stop parsing
+                auto line_end = token_index_make_line_end(parser.state.pos.line_index);
                 log_error_to_pos("Couldn't find closing_parenthesis", line_end);
                 parser.state.pos = line_end;
                 return;
@@ -501,59 +496,33 @@ namespace Parser
     }
 
 
-
     // Prototypes
-    Project_Import* parse_project_import(Node* parent);
-    Definition* parse_definition(Node* parent);
-    Statement* parse_statement(Node* parent);
-    Enum_Member* parse_enum_member(Node* parent);
-    Project_Import* parse_project_import(Node* parent);
-    Switch_Case* parse_switch_case(Node* parent);
-
+    Optional<String*> parse_block_label(AST::Expression* related_expression);
+    void parse_follow_block(AST::Node* parent, Block_Context context);
+    Code_Block* parse_code_block(Node* parent, AST::Expression* related_expression);
+    Block_Parse* parse_source_block(AST::Node* parent, Block_Index block_index, Block_Context context);
     Expression* parse_expression(Node* parent);
     Expression* parse_expression_or_error_expr(Node* parent);
     Expression* parse_single_expression(Node* parent);
     Expression* parse_single_expression_or_error(Node* parent);
 
 
-
     // Block Parsing
-    Block_Parse* parse_source_block(AST::Node* parent, Block_Index block_index, Block_Context context);
-
-    void block_parse_add_item_if_not_null(Block_Parse* parse, int line_start, int line_count, AST::Node* node)
-    {
-        if (node == 0) return;
-        Line_Item item;
-        item.line_start = line_start;
-        item.line_count = line_count;
-        item.node = node;
-        dynamic_array_push_back(&parse->items, item);
-    }
-
-    template<typename T>
-    void block_parse_fill_array(Block_Parse* block_parse, Dynamic_Array<T*>* fill)
-    {
-        for (int i = 0; i < block_parse->items.size; i++) {
-            dynamic_array_push_back(fill, AST::downcast<T>(block_parse->items[i].node));
-        }
-    }
-
     namespace Block_Items
     {
-        // Parse Item/Block Functions
+        // Anonymous block functions
         AST::Node* parse_anonymous_block(AST::Node* parent, Block_Index block_index)
         {
             auto statement = allocate_base<Statement>(parent, Node_Type::STATEMENT);
             statement->type = Statement_Type::BLOCK;
             statement->base.range = token_range_make_block(block_index);
 
-            auto& code_block = statement->options.block;
+            auto& code_block = statement->options.block_index;
             code_block = allocate_base<Code_Block>(AST::upcast(statement), Node_Type::CODE_BLOCK);
             code_block->base.range = token_range_make_block(block_index);
             code_block->statements = dynamic_array_create_empty<Statement*>(1);
             code_block->block_id = optional_make_failure<String*>();
-
-            block_parse_fill_array(parse_source_block(AST::upcast(code_block), block_index, Block_Context::STATEMENTS), &code_block->statements);
+            parse_source_block(AST::upcast(code_block), block_index, Block_Context::STATEMENTS);
             return AST::upcast(statement);
         }
 
@@ -561,6 +530,70 @@ namespace Parser
             log_error("Anonymous blocks aren't allowed in this context", token_range_make_block(block_index));
             return 0;
         }
+
+
+        // Block Item functions
+        Project_Import* parse_project_import(Node* parent)
+        {
+            CHECKPOINT_SETUP;
+            if (test_keyword_offset(Keyword::IMPORT, 0) && test_token_offset(Token_Type::LITERAL, 1))
+            {
+                if (get_token(1)->options.literal_value.type != Literal_Type::STRING) {
+                    CHECKPOINT_EXIT;
+                }
+
+                assert(parent->type == Node_Type::MODULE, "");
+                auto module = (Module*)parent;
+                auto import = allocate_base<Project_Import>(parent, Node_Type::PROJECT_IMPORT);
+                import->filename = get_token(1)->options.literal_value.options.string;
+                advance_token();
+                advance_token();
+                PARSE_SUCCESS(import);
+            }
+            CHECKPOINT_EXIT;
+        }
+
+        Definition* parse_definition(Node* parent)
+        {
+            // INFO: Definitions cannot start in the middle of a line_index
+            CHECKPOINT_SETUP;
+            auto result = allocate_base<Definition>(parent, AST::Node_Type::DEFINITION);
+            result->is_comptime = false;
+
+            if (parser.state.pos.token != 0) CHECKPOINT_EXIT;
+            if (!test_token(Token_Type::IDENTIFIER)) CHECKPOINT_EXIT;
+            result->name = get_token(0)->options.identifier;
+            advance_token();
+
+            if (test_operator(Operator::COLON))
+            {
+                advance_token();
+                result->type = optional_make_success(parse_expression_or_error_expr((Node*)result));
+
+                bool is_assign = test_operator(Operator::ASSIGN);
+                if (is_assign || test_operator(Operator::COLON)) {
+                    result->is_comptime = !is_assign;
+                    advance_token();
+                    result->value = optional_make_success(parse_expression_or_error_expr((Node*)result));
+                }
+            }
+            else if (test_operator(Operator::DEFINE_COMPTIME)) {
+                advance_token();
+                result->is_comptime = true;
+                result->value = optional_make_success(parse_expression_or_error_expr((Node*)result));
+            }
+            else if (test_operator(Operator::DEFINE_INFER)) {
+                advance_token();
+                result->is_comptime = false;
+                result->value = optional_make_success(parse_expression_or_error_expr((Node*)result));
+            }
+            else {
+                CHECKPOINT_EXIT;
+            }
+
+            PARSE_SUCCESS(result);
+        }
+
 
         AST::Node* parse_module_item(AST::Node* parent)
         {
@@ -574,27 +607,229 @@ namespace Parser
             }
             return nullptr;
         }
+
+        Switch_Case* parse_switch_case(Node* parent)
+        {
+            if (!test_keyword_offset(Keyword::CASE, 0) && !test_keyword_offset(Keyword::DEFAULT, 0)) {
+                return 0;
+            }
+
+            auto result = allocate_base<Switch_Case>(parent, Node_Type::SWITCH_CASE);
+            bool is_default = test_keyword_offset(Keyword::DEFAULT, 0);
+            advance_token();
+            result->value.available = false;
+            if (!is_default) {
+                result->value = optional_make_success(parse_expression_or_error_expr(&result->base));
+            }
+            result->block_index = parse_code_block(&result->base, 0);
+
+            // Set block_index label (Switch cases need special treatment because they 'Inherit' the label from the switch
+            assert(parent->type == Node_Type::STATEMENT && ((Statement*)parent)->type == Statement_Type::SWITCH_STATEMENT, "");
+            result->block_index->block_id = ((Statement*)parent)->options.switch_statement.label;
+            PARSE_SUCCESS(result);
+        }
+
+        Statement* parse_statement(Node* parent)
+        {
+            CHECKPOINT_SETUP;
+            auto result = allocate_base<Statement>(parent, Node_Type::STATEMENT);
+
+            {
+                // Check for Anonymous Blocks
+                // INFO: This needs to be done before definition
+                // This is still required for blocks that have a identifier
+                auto& tokens = get_line()->options.text.tokens;
+                if ((tokens.size == 1 && test_token(Token_Type::COMMENT)) ||
+                    (tokens.size == 2 && test_token(Token_Type::IDENTIFIER) && test_operator_offset(Operator::COLON, 1)) ||
+                    (tokens.size == 3 && test_token(Token_Type::IDENTIFIER) && test_operator_offset(Operator::COLON, 1) && test_token_offset(Token_Type::COMMENT, 3)))
+                {
+                    if (line_index_block_after(parser.state.pos.line_index).available)
+                    {
+                        auto block_id = optional_make_failure<String*>();
+                        if (test_token(Token_Type::IDENTIFIER)) {
+                            block_id = optional_make_success(get_token()->options.identifier);
+                        }
+                        result->type = Statement_Type::BLOCK;
+                        result->options.block_index = parse_code_block(&result->base, 0);
+                        result->options.block_index->block_id = block_id;
+                        PARSE_SUCCESS(result);
+                    }
+                }
+            }
+
+            {
+                auto definition = parse_definition(&result->base);
+                if (definition != 0) {
+                    result->type = Statement_Type::DEFINITION;
+                    result->options.definition = definition;
+                    PARSE_SUCCESS(result);
+                }
+            }
+            {
+                auto expr = parse_expression(&result->base);
+                if (expr != 0)
+                {
+                    if (test_operator(Operator::ASSIGN)) {
+                        result->type = Statement_Type::ASSIGNMENT;
+                        result->options.assignment.left_side = expr;
+                        advance_token();
+                        result->options.assignment.right_side = parse_expression_or_error_expr(&result->base);
+                        PARSE_SUCCESS(result);
+                    }
+                    result->type = Statement_Type::EXPRESSION_STATEMENT;
+                    result->options.expression = expr;
+                    PARSE_SUCCESS(result);
+                }
+            }
+
+            if (test_token(Token_Type::KEYWORD))
+            {
+                switch (get_token(0)->options.keyword)
+                {
+                case Keyword::IF:
+                {
+                    advance_token();
+                    result->type = Statement_Type::IF_STATEMENT;
+                    auto& if_stat = result->options.if_statement;
+                    if_stat.condition = parse_expression_or_error_expr(&result->base);
+                    if_stat.block_index = parse_code_block(&result->base, if_stat.condition);
+                    if_stat.else_block.available = false;
+
+                    auto last_if_stat = result;
+                    // Parse else-if chain
+                    while (test_keyword_offset(Keyword::ELSE, 0) && test_keyword_offset(Keyword::IF, 1))
+                    {
+                        auto implicit_else_block = allocate_base<AST::Code_Block>(&last_if_stat->base, Node_Type::CODE_BLOCK);
+                        implicit_else_block->statements = dynamic_array_create_empty<Statement*>(1);
+                        implicit_else_block->block_id = optional_make_failure<String*>();
+
+                        auto new_if_stat = allocate_base<AST::Statement>(&last_if_stat->base, Node_Type::STATEMENT);
+                        advance_token();
+                        advance_token();
+                        new_if_stat->type = Statement_Type::IF_STATEMENT;
+                        auto& new_if = new_if_stat->options.if_statement;
+                        new_if.condition = parse_expression_or_error_expr(&new_if_stat->base);
+                        new_if.block_index = parse_code_block(&last_if_stat->base, new_if.condition);
+                        new_if.else_block.available = false;
+                        SET_END_RANGE(implicit_else_block);
+                        SET_END_RANGE(new_if_stat);
+
+                        dynamic_array_push_back(&implicit_else_block->statements, new_if_stat);
+                        last_if_stat->options.if_statement.else_block = optional_make_success(implicit_else_block);
+                        last_if_stat = new_if_stat;
+
+                    }
+                    if (test_keyword_offset(Keyword::ELSE, 0))
+                    {
+                        advance_token();
+                        last_if_stat->options.if_statement.else_block = optional_make_success(parse_code_block(&last_if_stat->base, 0));
+                    }
+                    // NOTE: Here we return result, not last if stat
+                    PARSE_SUCCESS(result);
+                }
+                case Keyword::WHILE:
+                {
+                    advance_token();
+                    result->type = Statement_Type::WHILE_STATEMENT;
+                    auto& loop = result->options.while_statement;
+                    loop.condition = parse_expression_or_error_expr(&result->base);
+                    loop.block_index = parse_code_block(&result->base, loop.condition);
+                    PARSE_SUCCESS(result);
+                }
+                case Keyword::DEFER:
+                {
+                    advance_token();
+                    result->type = Statement_Type::DEFER;
+                    result->options.defer_block = parse_code_block(&result->base, 0);
+                    PARSE_SUCCESS(result);
+                }
+                case Keyword::SWITCH:
+                {
+                    advance_token();
+                    result->type = Statement_Type::SWITCH_STATEMENT;
+                    auto& switch_stat = result->options.switch_statement;
+                    switch_stat.condition = parse_expression_or_error_expr(&result->base);
+                    switch_stat.cases = dynamic_array_create_empty<Switch_Case*>(1);
+                    switch_stat.label = parse_block_label(switch_stat.condition);
+                    parse_follow_block(AST::upcast(result), Block_Context::SWITCH);
+                    PARSE_SUCCESS(result);
+                }
+                case Keyword::DELETE_KEYWORD: {
+                    advance_token();
+                    result->type = Statement_Type::DELETE_STATEMENT;
+                    result->options.delete_expr = parse_expression_or_error_expr(&result->base);
+                    PARSE_SUCCESS(result);
+                }
+                case Keyword::RETURN: {
+                    advance_token();
+                    result->type = Statement_Type::RETURN_STATEMENT;
+                    auto expr = parse_expression(&result->base);
+                    result->options.return_value.available = false;
+                    if (expr != 0) {
+                        result->options.return_value = optional_make_success(expr);
+                    }
+                    PARSE_SUCCESS(result);
+                }
+                case Keyword::CONTINUE: {
+                    advance_token();
+                    result->type = Statement_Type::CONTINUE_STATEMENT;
+                    if (!test_token(Token_Type::IDENTIFIER)) CHECKPOINT_EXIT;
+                    result->options.continue_name = get_token(0)->options.identifier;
+                    advance_token();
+                    PARSE_SUCCESS(result);
+                }
+                case Keyword::BREAK: {
+                    advance_token();
+                    result->type = Statement_Type::BREAK_STATEMENT;
+                    if (!test_token(Token_Type::IDENTIFIER)) CHECKPOINT_EXIT;
+                    result->options.break_name = get_token(0)->options.identifier;
+                    advance_token();
+                    PARSE_SUCCESS(result);
+                }
+                }
+            }
+            CHECKPOINT_EXIT;
+        }
+
+        Enum_Member* parse_enum_member(Node* parent)
+        {
+            if (!test_token(Token_Type::IDENTIFIER)) {
+                return 0;
+            }
+
+            CHECKPOINT_SETUP;
+            auto result = allocate_base<Enum_Member>(parent, Node_Type::ENUM_MEMBER);
+            result->name = get_token(0)->options.identifier;
+            advance_token();
+            if (test_operator(Operator::DEFINE_COMPTIME))
+            {
+                advance_token();
+                result->value = optional_make_success(parse_expression_or_error_expr(&result->base));
+            }
+            PARSE_SUCCESS(result);
+        }
+
     };
 
     /*
     Rulz of se syndax:
      * Blocks are indicated by indentation, or something like that
-     * Blocks are only used for ordered lists of items (E.g. statements, defintions, module-items)
-     * A line can only contain:
-       - A single block-item
+     * Blocks are only used for ordered lists of nodes (E.g. statements, defintions, module-nodes)
+     * A line_index can only contain:
+       - A single block_index-item
        - Be empty
        - Be a comment
-       
 
 
-        Options when parsing a single line:
+
+        Options when parsing a single line_index:
         What could happen:
          - Comments
          - Empty lines
 
 
-         - On error, I'm always finished with the line
-         - Error, but line parsed
+         - On error, I'm always finished with the line_index
+         - Error, but line_index parsed
          - Line item parsed successfully
 
     */
@@ -602,7 +837,7 @@ namespace Parser
     Line_Item parse_line_item(Line_Index line_index, Block_Context context, AST::Node* parent, int& child_block_index)
     {
         Line_Item result;
-        result.line_start = line_index.line;
+        result.line_start = line_index.line_index;
         result.line_count = 1;
         result.node = 0;
 
@@ -635,85 +870,95 @@ namespace Parser
 
         //auto rewind_pos = parser.state.pos;
         //SCOPE_EXIT(if (result.node == 0) { parser.state.pos = rewind_pos; });
-        //auto block = index_value(line_index.block);
-        //// Check 0 block if requested
-        //if (line_index.line == -1) {
-        //    if (block->children.size == 0) {
-        //        return result; // Return if 0 block doesn't exist
+        //auto block_index = index_value(line_index.block_index);
+        //// Check 0 block_index if requested
+        //if (line_index.line_index == -1) {
+        //    if (block_index->children.size == 0) {
+        //        return result; // Return if 0 block_index doesn't exist
         //    }
-        //    auto zero_block = index_value(block->children[0]);
+        //    auto zero_block = index_value(block_index->children[0]);
         //    if (zero_block->line_index != 0) {
-        //        return result; // Return if 0 block doesn't exist
+        //        return result; // Return if 0 block_index doesn't exist
         //    }
-        //    auto block_result = block_parse_fn(parent, block->children[0]);
+        //    auto block_result = block_parse_fn(parent, block_index->children[0]);
         //    if (block_result != 0) {
         //        result.node = block_result;
         //        return result;
         //    }
         //    else {
-        //        log_error("Couldn't parse block", token_range_make_block(block->children[0]));
+        //        log_error("Couldn't parse block_index", token_range_make_block(block_index->children[0]));
         //    }
         //}
 
-        //// Parse line item
+        //// Parse line_index item
         //// Skip empty lines/Lines that are only comments
         //auto block_after = line_index_block_after_incremental(line_index, child_block_index);
-        //auto line = index_value(line_index);
-        //if (line->tokens.size == 0 || source_line_is_comment(line_index)) {
+        //auto line_index = index_value(line_index);
+        //if (line_index->tokens.size == 0 || source_line_is_comment(line_index)) {
         //    if (block_after.available && !source_line_is_multi_line_comment_start(line_index)) {
         //        auto rewind_pos = pos;
-        //        block_parse_add_item_if_not_null(block_parse, pos.line.line, 1, block_parse_fn(parent, block_after.value));
+        //        block_parse_add_item_if_not_null(block_parse, pos.line_index.line_index, 1, block_parse_fn(parent, block_after.value));
         //        pos = rewind_pos;
         //    }
         //    advance_line();
         //    continue;
         //}
 
-        //// Parse line
+        //// Parse line_index
         //auto line_node = line_parse_fn(parent);
-        //if (pos.line.line >= block->lines.size) {
-        //    block_parse_add_item_if_not_null(block_parse, before_line_index.line, math_maximum(1, block->lines.size - before_line_index.line), line_node);
+        //if (pos.line_index.line_index >= block_index->lines.size) {
+        //    block_parse_add_item_if_not_null(block_parse, before_line_index.line_index, math_maximum(1, block_index->lines.size - before_line_index.line_index), line_node);
         //    break;
         //}
 
         //// Check if position was advanced correctly
-        //auto& tokens = index_value(pos.line)->tokens;
+        //auto& tokens = index_value(pos.line_index)->tokens;
         //bool skip_to_next_line = false;
         //if (line_node != 0) 
         //{
         //    if (token_index_is_last_in_line(pos)) {
         //        skip_to_next_line = true;
         //    }
-        //    else if (pos.token == line->tokens.size - 1 && tokens[pos.token].type == Token_Type::COMMENT) {
+        //    else if (pos.token == line_index->tokens.size - 1 && tokens[pos.token].type == Token_Type::COMMENT) {
         //        skip_to_next_line = true;
         //    }
-        //    else if (!(pos.token == 0 && before_line_index.line != pos.line.line)) {
-        //        log_error_to_pos("Unexpected Tokens, Line already parsed", token_index_make_line_end(pos.line));
+        //    else if (!(pos.token == 0 && before_line_index.line_index != pos.line_index.line_index)) {
+        //        log_error_to_pos("Unexpected Tokens, Line already parsed", token_index_make_line_end(pos.line_index));
         //        skip_to_next_line = true;
         //    }
         //}
         //else {
-        //    log_error_to_pos("Could't parse line item", token_index_make_line_end(pos.line));
+        //    log_error_to_pos("Could't parse line_index item", token_index_make_line_end(pos.line_index));
         //    skip_to_next_line = true;
         //}
 
         //if (skip_to_next_line) {
-        //    block_after = line_index_block_after_incremental(pos.line, child_block_index);
-        //    if (block_after.available && !source_line_is_multi_line_comment_start(pos.line)) {
-        //        log_error("Follow block was not required by block header", token_range_make_block(block_after.value));
+        //    block_after = line_index_block_after_incremental(pos.line_index, child_block_index);
+        //    if (block_after.available && !source_line_is_multi_line_comment_start(pos.line_index)) {
+        //        log_error("Follow block_index was not required by block_index header", token_range_make_block(block_after.value));
         //    }
         //    advance_line();
         //}
-        //block_parse_add_item_if_not_null(block_parse, before_line_index.line, math_maximum(1, pos.line.line - before_line_index.line), line_node);
+        //block_parse_add_item_if_not_null(block_parse, before_line_index.line_index, math_maximum(1, pos.line_index.line_index - before_line_index.line_index), line_node);
+    }
+
+    void block_parse_add_item_if_not_null(Block_Parse* parse, int line_start, int line_count, AST::Node* node)
+    {
+        if (node == 0) return;
+        Line_Item item;
+        item.line_start = line_start;
+        item.line_count = line_count;
+        item.node = node;
+        dynamic_array_push_back(&parse->items, item);
     }
 
     Block_Parse* parse_source_block(AST::Node* parent, Block_Index block_index, Block_Context context)
     {
-        // DOCU: This function does not handle stepping out of the block at then end of parsing.
-        //       All calling functions must manually set the cursor after this block after calling this function
-        //       Both item_parse_fn and block_parse_fn don't have to advance the parser position/line index
+        // DOCU: This function does not handle stepping out of the block_index at the end of parsing.
+        //       All calling functions must manually set the cursor after this block_index after calling this function
+        //       Both item_parse_fn and block_parse_fn don't have to advance the parser position/line_index index
 
-        // TODO: incremental parsing, check if this block is already parsed
+        // TODO: incremental parsing, check if this block_index is already parsed
         auto block_parse = new Block_Parse;
         block_parse->context = context;
         block_parse->index = block_index;
@@ -722,9 +967,7 @@ namespace Parser
         block_parse->parent = parent;
         hashtable_insert_element(&parser.state.source_parse->block_parses, block_index, block_parse);
 
-        // Setup parser position at block start
-        auto& pos = parser.state.pos;
-        pos = token_index_make(line_index_make(block_index, 0), 0);
+        // Set end range
         parent->range.end = token_index_make_block_end(block_index);
 
         // Determine parse functions
@@ -735,125 +978,114 @@ namespace Parser
         switch (context)
         {
         case Block_Context::ENUM:
-            line_parse_fn = (line_parse_fn_type)parse_enum_member;
+            line_parse_fn = (line_parse_fn_type)Block_Items::parse_enum_member;
             break;
         case Block_Context::MODULE:
             line_parse_fn = Block_Items::parse_module_item;
             break;
         case Block_Context::STATEMENTS:
             block_parse_fn = Block_Items::parse_anonymous_block;
-            line_parse_fn = (line_parse_fn_type)parse_statement;
+            line_parse_fn = (line_parse_fn_type)Block_Items::parse_statement;
             break;
         case Block_Context::STRUCT:
-            line_parse_fn = (line_parse_fn_type)parse_definition;
+            line_parse_fn = (line_parse_fn_type)Block_Items::parse_definition;
             break;
         case Block_Context::SWITCH:
-            line_parse_fn = (line_parse_fn_type)parse_switch_case;
+            line_parse_fn = (line_parse_fn_type)Block_Items::parse_switch_case;
             break;
         default: panic("");
         }
 
-        auto block = index_value(pos.line.block);
-        // Check for special cases
-        if (block->lines.size == 0) {
-            assert(block->children.size == 1, "This is the only case where block->lines can be 0");
-        }
-        // Handle blocks at position 0
-        if (block->children.size != 0)
-        {
-            auto first_child_block = index_value(block->children[0]);
-            if (first_child_block->line_index == 0) {
-                auto rewind_pos = pos;
-                auto result = block_parse_fn(parent, block->children[0]);
-                if (result != 0) {
-                    block_parse_add_item_if_not_null(block_parse, 0, 1, result);
-                }
-                else {
-                    log_error("Couldn't parse block", token_range_make_block(block->children[0]));
-                }
-                pos = rewind_pos;
-            }
-        }
-
-        int child_block_index = 0;
         // Parse all lines
-        while (pos.line.line < block->lines.size)
+        auto block = index_value(block_index);
+        Line_Index line_index = line_index_make(block_index, 0);
+        while (line_index.line_index < block->lines.size)
         {
-            auto line = index_value(pos.line);
-            auto before_line_index = pos.line;
+            auto& pos = parser.state.pos;
             pos.token = 0;
+            pos.line_index = line_index;
 
-            // Skip empty lines/Lines that are only comments
-            auto block_after = line_index_block_after_incremental(pos.line, child_block_index);
-            if (line->tokens.size == 0 || source_line_is_comment(pos.line)) {
-                if (block_after.available && !source_line_is_multi_line_comment_start(pos.line)) {
-                    auto rewind_pos = pos;
-                    block_parse_add_item_if_not_null(block_parse, pos.line.line, 1, block_parse_fn(parent, block_after.value));
-                    pos = rewind_pos;
-                }
-                advance_line();
+            auto line = index_value(line_index);
+            if (line->is_block_reference) {
+                // Block parses either report the error themselves, or they parse everything as statements
+                auto item = block_parse_fn(parent, line->options.block_index);
+                block_parse_add_item_if_not_null(block_parse, line_index.line_index, 1, item);
+                line_index.line_index += 1;
                 continue;
             }
 
-            // Parse line
+            // Skip empty lines + comments
+            auto& text = line->options.text;
+            auto block_after = line_index_block_after(line_index);
+            if (block_after.available && source_line_is_multi_line_comment_start(line_index)) {
+                line_index.line_index += 2;
+                continue;
+            }
+            if (source_line_is_comment(line_index) || text.tokens.size == 0) {
+                line_index.line_index += 1;
+                continue;
+            }
+
+            // Parse line node
             auto line_node = line_parse_fn(parent);
-            if (pos.line.line >= block->lines.size) {
-                block_parse_add_item_if_not_null(block_parse, before_line_index.line, math_maximum(1, block->lines.size - before_line_index.line), line_node);
+            if (line_node == 0) {
+                // Line nodes don't report errors themselves if no parsing was possible
+                log_error_to_pos("Could't parse line item", token_index_make_line_end(pos.line_index));
+                line_index.line_index += 1;
+                if (block_after.available) {
+                    log_error("Couldn't parse block header!", token_range_make_block(block_after.value));
+                    line_index.line_index += 1;
+                }
+                continue;
+            }
+            block_parse_add_item_if_not_null(block_parse, line_index.line_index, math_maximum(1, pos.line_index.line_index - line_index.line_index), line_node);
+            assert(line_index.line_index != pos.line_index.line_index || pos.token != 0, "If an item was parsed/not null, the position _must_ have chagned");
+
+            // Check if position was advanced correctly
+            if (pos.line_index.line_index >= block->lines.size) { // Break if we stepped out of block
+                line_index.line_index = pos.line_index.line_index;
                 break;
             }
 
-            // Check if position was advanced correctly
-            auto& tokens = index_value(pos.line)->tokens;
-            bool skip_to_next_line = false;
-            if (line_node != 0) 
-            {
-                if (token_index_is_last_in_line(pos)) {
-                    skip_to_next_line = true;
-                }
-                else if (pos.token == line->tokens.size - 1 && tokens[pos.token].type == Token_Type::COMMENT) {
-                    skip_to_next_line = true;
-                }
-                else if (!(pos.token == 0 && before_line_index.line != pos.line.line)) {
-                    log_error_to_pos("Unexpected Tokens, Line already parsed", token_index_make_line_end(pos.line));
-                    skip_to_next_line = true;
-                }
-            }
-            else {
-                log_error_to_pos("Could't parse line item", token_index_make_line_end(pos.line));
-                skip_to_next_line = true;
+            if (pos.token == 0) {
+                line_index.line_index = pos.line_index.line_index;
+                continue;
             }
 
-            if (skip_to_next_line) {
-                block_after = line_index_block_after_incremental(pos.line, child_block_index);
-                if (block_after.available && !source_line_is_multi_line_comment_start(pos.line)) {
-                    log_error("Follow block was not required by block header", token_range_make_block(block_after.value));
-                }
-                advance_line();
+            if (remaining_line_tokens() > 0) {
+                log_error_to_pos("Unexpected Tokens, Line already parsed", token_index_make_line_end(pos.line_index));
             }
-            block_parse_add_item_if_not_null(block_parse, before_line_index.line, math_maximum(1, pos.line.line - before_line_index.line), line_node);
+            // Goto next line
+            line_index = pos.line_index;
+            line_index.line_index += 1;
         }
 
         return block_parse;
     }
 
-    Block_Parse* parse_follow_block(AST::Node* parent, Block_Context context, bool ignore_remaining_line_tokens)
+    void parse_follow_block(AST::Node* parent, Block_Context context)
     {
         auto& pos = parser.state.pos;
 
-        auto follow_block_opt = line_index_block_after(pos.line);
-        if (!follow_block_opt.available) {
-            log_error_range_offset("Expected Follow Block", 0);
-            return &parser.empty_block_parse;
+        auto block = index_value(pos.line_index.block_index);
+        if (pos.line_index.line_index + 1 >= block->lines.size) {
+            log_error_range_offset("Expected Follow Block, but found end of block", 0);
+            return;
         }
-        if (!ignore_remaining_line_tokens && !on_follow_block()) {
-            log_error_to_pos("Parsing follow block, ignoring rest of line", token_index_make_line_end(pos.line));
+        auto& next_line_item = block->lines[pos.line_index.line_index + 1];
+        if (!next_line_item.is_block_reference) {
+            log_error_range_offset("Expected Follow block", 0);
+            return;
         }
 
-        advance_line();
-        auto backup_pos = parser.state.pos;
-        auto block_parse = parse_source_block(parent, follow_block_opt.value, context);
-        parser.state.pos = backup_pos;
-        return block_parse;
+        auto line = index_value_text(pos.line_index);
+        if (pos.token < line->tokens.size && !test_token(Token_Type::COMMENT)) {
+            log_error_to_pos("Unexpected tokens, parsing next block", token_index_make_line_end(pos.line_index));
+        }
+
+        auto next_pos = token_index_make(line_index_make(pos.line_index.block_index, pos.line_index.line_index + 2), 0);
+        parse_source_block(parent, next_line_item.options.block_index, context);
+        parser.state.pos = next_pos;
     }
 
 
@@ -868,7 +1100,7 @@ namespace Parser
             advance_token();
         }
         else if (related_expression != 0 && related_expression->type == Expression_Type::SYMBOL_READ && !related_expression->options.symbol_read->path_child.available) {
-            // This is an experimental feature: give the block the name of the condition if possible,
+            // This is an experimental feature: give the block_index the name of the condition if possible,
             // e.g. switch color
             //      case .RED
             //          break color
@@ -881,17 +1113,13 @@ namespace Parser
     Code_Block* parse_code_block(Node* parent, AST::Expression* related_expression)
     {
         auto result = allocate_base<Code_Block>(parent, Node_Type::CODE_BLOCK);
-        auto follow_block_opt = line_index_block_after(parser.state.pos.line);
+        auto follow_block_opt = line_index_block_after(parser.state.pos.line_index);
         if (follow_block_opt.available) {
             result->base.range = token_range_make_block(follow_block_opt.value);
         }
         result->statements = dynamic_array_create_empty<Statement*>(1);
         result->block_id = parse_block_label(related_expression);
-        auto block_parse = parse_follow_block(AST::upcast(result), Block_Context::STATEMENTS, true);
-        for (int i = 0; i < block_parse->items.size; i++) {
-            auto& node = block_parse->items[i].node;
-            dynamic_array_push_back(&result->statements, AST::downcast<AST::Statement>(node));
-        }
+        parse_follow_block(AST::upcast(result), Block_Context::STATEMENTS);
         PARSE_SUCCESS(result);
     }
 
@@ -931,206 +1159,6 @@ namespace Parser
 
         if (test_operator(Operator::ASSIGN)) {
             result->type = parse_expression_or_error_expr((Node*)result);
-        }
-        PARSE_SUCCESS(result);
-    }
-
-    Switch_Case* parse_switch_case(Node* parent)
-    {
-        if (!test_keyword_offset(Keyword::CASE, 0) && !test_keyword_offset(Keyword::DEFAULT, 0)) {
-            return 0;
-        }
-
-        auto result = allocate_base<Switch_Case>(parent, Node_Type::SWITCH_CASE);
-        bool is_default = test_keyword_offset(Keyword::DEFAULT, 0);
-        advance_token();
-        result->value.available = false;
-        if (!is_default) {
-            result->value = optional_make_success(parse_expression_or_error_expr(&result->base));
-        }
-        result->block = parse_code_block(&result->base, 0);
-
-        // Set block label (Switch cases need special treatment because they 'Inherit' the label from the switch
-        assert(parent->type == Node_Type::STATEMENT && ((Statement*)parent)->type == Statement_Type::SWITCH_STATEMENT, "");
-        result->block->block_id = ((Statement*)parent)->options.switch_statement.label;
-        PARSE_SUCCESS(result);
-    }
-
-    Statement* parse_statement(Node* parent)
-    {
-        CHECKPOINT_SETUP;
-        auto result = allocate_base<Statement>(parent, Node_Type::STATEMENT);
-
-        {
-            // Check for Anonymous Blocks
-            // INFO: This needs to be done before definition
-            auto line = get_line();
-            if ((line->tokens.size == 1 && test_token(Token_Type::COMMENT)) ||
-                (line->tokens.size == 2 && test_token(Token_Type::IDENTIFIER) && test_operator_offset(Operator::COLON, 1)) ||
-                (line->tokens.size == 3 && test_token(Token_Type::IDENTIFIER) && test_operator_offset(Operator::COLON, 1) && test_token_offset(Token_Type::COMMENT, 3)))
-            {
-                if (line_index_block_after(parser.state.pos.line).available)
-                {
-                    auto block_id = optional_make_failure<String*>();
-                    if (test_token(Token_Type::IDENTIFIER)) {
-                        block_id = optional_make_success(get_token()->options.identifier);
-                    }
-                    result->type = Statement_Type::BLOCK;
-                    result->options.block = parse_code_block(&result->base, 0);
-                    result->options.block->block_id = block_id;
-                    PARSE_SUCCESS(result);
-                }
-            }
-        }
-
-        {
-            auto definition = parse_definition(&result->base);
-            if (definition != 0) {
-                result->type = Statement_Type::DEFINITION;
-                result->options.definition = definition;
-                PARSE_SUCCESS(result);
-            }
-        }
-        {
-            auto expr = parse_expression(&result->base);
-            if (expr != 0)
-            {
-                if (test_operator(Operator::ASSIGN)) {
-                    result->type = Statement_Type::ASSIGNMENT;
-                    result->options.assignment.left_side = expr;
-                    advance_token();
-                    result->options.assignment.right_side = parse_expression_or_error_expr(&result->base);
-                    PARSE_SUCCESS(result);
-                }
-                result->type = Statement_Type::EXPRESSION_STATEMENT;
-                result->options.expression = expr;
-                PARSE_SUCCESS(result);
-            }
-        }
-
-        if (test_token(Token_Type::KEYWORD))
-        {
-            switch (get_token(0)->options.keyword)
-            {
-            case Keyword::IF:
-            {
-                advance_token();
-                result->type = Statement_Type::IF_STATEMENT;
-                auto& if_stat = result->options.if_statement;
-                if_stat.condition = parse_expression_or_error_expr(&result->base);
-                if_stat.block = parse_code_block(&result->base, if_stat.condition);
-                if_stat.else_block.available = false;
-
-                auto last_if_stat = result;
-                // Parse else-if chain
-                while (test_keyword_offset(Keyword::ELSE, 0) && test_keyword_offset(Keyword::IF, 1))
-                {
-                    auto implicit_else_block = allocate_base<AST::Code_Block>(&last_if_stat->base, Node_Type::CODE_BLOCK);
-                    implicit_else_block->statements = dynamic_array_create_empty<Statement*>(1);
-                    implicit_else_block->block_id = optional_make_failure<String*>();
-
-                    auto new_if_stat = allocate_base<AST::Statement>(&last_if_stat->base, Node_Type::STATEMENT);
-                    advance_token();
-                    advance_token();
-                    new_if_stat->type = Statement_Type::IF_STATEMENT;
-                    auto& new_if = new_if_stat->options.if_statement;
-                    new_if.condition = parse_expression_or_error_expr(&new_if_stat->base);
-                    new_if.block = parse_code_block(&last_if_stat->base, new_if.condition);
-                    new_if.else_block.available = false;
-                    SET_END_RANGE(implicit_else_block);
-                    SET_END_RANGE(new_if_stat);
-
-                    dynamic_array_push_back(&implicit_else_block->statements, new_if_stat);
-                    last_if_stat->options.if_statement.else_block = optional_make_success(implicit_else_block);
-                    last_if_stat = new_if_stat;
-
-                }
-                if (test_keyword_offset(Keyword::ELSE, 0))
-                {
-                    advance_token();
-                    last_if_stat->options.if_statement.else_block = optional_make_success(parse_code_block(&last_if_stat->base, 0));
-                }
-                // NOTE: Here we return result, not last if stat
-                PARSE_SUCCESS(result);
-            }
-            case Keyword::WHILE:
-            {
-                advance_token();
-                result->type = Statement_Type::WHILE_STATEMENT;
-                auto& loop = result->options.while_statement;
-                loop.condition = parse_expression_or_error_expr(&result->base);
-                loop.block = parse_code_block(&result->base, loop.condition);
-                PARSE_SUCCESS(result);
-            }
-            case Keyword::DEFER:
-            {
-                advance_token();
-                result->type = Statement_Type::DEFER;
-                result->options.defer_block = parse_code_block(&result->base, 0);
-                PARSE_SUCCESS(result);
-            }
-            case Keyword::SWITCH:
-            {
-                advance_token();
-                result->type = Statement_Type::SWITCH_STATEMENT;
-                auto& switch_stat = result->options.switch_statement;
-                switch_stat.condition = parse_expression_or_error_expr(&result->base);
-                switch_stat.cases = dynamic_array_create_empty<Switch_Case*>(1);
-                switch_stat.label = parse_block_label(switch_stat.condition);
-                block_parse_fill_array(parse_follow_block(AST::upcast(result), Block_Context::SWITCH, true), &switch_stat.cases);
-                PARSE_SUCCESS(result);
-            }
-            case Keyword::DELETE_KEYWORD: {
-                advance_token();
-                result->type = Statement_Type::DELETE_STATEMENT;
-                result->options.delete_expr = parse_expression_or_error_expr(&result->base);
-                PARSE_SUCCESS(result);
-            }
-            case Keyword::RETURN: {
-                advance_token();
-                result->type = Statement_Type::RETURN_STATEMENT;
-                auto expr = parse_expression(&result->base);
-                result->options.return_value.available = false;
-                if (expr != 0) {
-                    result->options.return_value = optional_make_success(expr);
-                }
-                PARSE_SUCCESS(result);
-            }
-            case Keyword::CONTINUE: {
-                advance_token();
-                result->type = Statement_Type::CONTINUE_STATEMENT;
-                if (!test_token(Token_Type::IDENTIFIER)) CHECKPOINT_EXIT;
-                result->options.continue_name = get_token(0)->options.identifier;
-                advance_token();
-                PARSE_SUCCESS(result);
-            }
-            case Keyword::BREAK: {
-                advance_token();
-                result->type = Statement_Type::BREAK_STATEMENT;
-                if (!test_token(Token_Type::IDENTIFIER)) CHECKPOINT_EXIT;
-                result->options.break_name = get_token(0)->options.identifier;
-                advance_token();
-                PARSE_SUCCESS(result);
-            }
-            }
-        }
-        CHECKPOINT_EXIT;
-    }
-
-    Enum_Member* parse_enum_member(Node* parent)
-    {
-        if (!test_token(Token_Type::IDENTIFIER)) {
-            return 0;
-        }
-
-        CHECKPOINT_SETUP;
-        auto result = allocate_base<Enum_Member>(parent, Node_Type::ENUM_MEMBER);
-        result->name = get_token(0)->options.identifier;
-        advance_token();
-        if (test_operator(Operator::DEFINE_COMPTIME))
-        {
-            advance_token();
-            result->value = optional_make_success(parse_expression_or_error_expr(&result->base));
         }
         PARSE_SUCCESS(result);
     }
@@ -1387,14 +1415,14 @@ namespace Parser
                 result->options.structure.type = AST::Structure_Type::UNION;
             }
             advance_token();
-            block_parse_fill_array(parse_follow_block(AST::upcast(result), Block_Context::STRUCT, true), &result->options.structure.members);
+            parse_follow_block(AST::upcast(result), Block_Context::STRUCT);
             PARSE_SUCCESS(result);
         }
         if (test_keyword_offset(Keyword::ENUM, 0)) {
             result->type = Expression_Type::ENUM_TYPE;
             result->options.enum_members = dynamic_array_create_empty<Enum_Member*>(1);
             advance_token();
-            block_parse_fill_array(parse_follow_block(AST::upcast(result), Block_Context::ENUM, true), &result->options.enum_members);
+            parse_follow_block(AST::upcast(result), Block_Context::ENUM);
             PARSE_SUCCESS(result);
         }
         if (test_keyword_offset(Keyword::MODULE, 0)) {
@@ -1402,20 +1430,7 @@ namespace Parser
             module->definitions = dynamic_array_create_empty<Definition*>(1);
             module->imports = dynamic_array_create_empty<Project_Import*>(1);
             advance_token();
-
-            auto block_parse = parse_follow_block(AST::upcast(module), Block_Context::MODULE, true);
-            for (int i = 0; i < block_parse->items.size; i++) {
-                auto node = block_parse->items[i].node;
-                if (node->type == AST::Node_Type::DEFINITION) {
-                    dynamic_array_push_back(&module->definitions, AST::downcast<Definition>(node));
-                }
-                else if (node->type == AST::Node_Type::PROJECT_IMPORT) {
-                    dynamic_array_push_back(&module->imports, AST::downcast<Project_Import>(node));
-                }
-                else {
-                    panic("");
-                }
-            }
+            parse_follow_block(AST::upcast(module), Block_Context::MODULE);
 
             result->type = Expression_Type::MODULE;
             result->options.module = module;
@@ -1614,67 +1629,6 @@ namespace Parser
         PARSE_SUCCESS(expr);
     }
 
-    Project_Import* parse_project_import(Node* parent)
-    {
-        CHECKPOINT_SETUP;
-        if (test_keyword_offset(Keyword::IMPORT, 0) && test_token_offset(Token_Type::LITERAL, 1))
-        {
-            if (get_token(1)->options.literal_value.type != Literal_Type::STRING) {
-                CHECKPOINT_EXIT;
-            }
-
-            assert(parent->type == Node_Type::MODULE, "");
-            auto module = (Module*)parent;
-            auto import = allocate_base<Project_Import>(parent, Node_Type::PROJECT_IMPORT);
-            import->filename = get_token(1)->options.literal_value.options.string;
-            advance_token();
-            advance_token();
-            PARSE_SUCCESS(import);
-        }
-        CHECKPOINT_EXIT;
-    }
-
-    Definition* parse_definition(Node* parent)
-    {
-        // INFO: Definitions cannot start in the middle of a line
-        CHECKPOINT_SETUP;
-        auto result = allocate_base<Definition>(parent, AST::Node_Type::DEFINITION);
-        result->is_comptime = false;
-
-        if (parser.state.pos.token != 0) CHECKPOINT_EXIT;
-        if (!test_token(Token_Type::IDENTIFIER)) CHECKPOINT_EXIT;
-        result->name = get_token(0)->options.identifier;
-        advance_token();
-
-        if (test_operator(Operator::COLON))
-        {
-            advance_token();
-            result->type = optional_make_success(parse_expression_or_error_expr((Node*)result));
-
-            bool is_assign = test_operator(Operator::ASSIGN);
-            if (is_assign || test_operator(Operator::COLON)) {
-                result->is_comptime = !is_assign;
-                advance_token();
-                result->value = optional_make_success(parse_expression_or_error_expr((Node*)result));
-            }
-        }
-        else if (test_operator(Operator::DEFINE_COMPTIME)) {
-            advance_token();
-            result->is_comptime = true;
-            result->value = optional_make_success(parse_expression_or_error_expr((Node*)result));
-        }
-        else if (test_operator(Operator::DEFINE_INFER)) {
-            advance_token();
-            result->is_comptime = false;
-            result->value = optional_make_success(parse_expression_or_error_expr((Node*)result));
-        }
-        else {
-            CHECKPOINT_EXIT;
-        }
-
-        PARSE_SUCCESS(result);
-    }
-
 #undef CHECKPOINT_EXIT
 #undef CHECKPOINT_SETUP
 #undef PARSE_SUCCESS
@@ -1740,174 +1694,6 @@ namespace Parser
         base_correct_token_ranges(AST::upcast(root));
     }
 
-    bool block_index_equal(Block_Index* a, Block_Index* b) {
-        return index_equal(*a, *b);
-    }
-    u64 block_index_hash(Block_Index* a) {
-        return hash_combine(hash_pointer(a->code), hash_i32(&a->block));
-    }
-
-    Source_Parse* execute_clean(Source_Code* code)
-    {
-        Source_Parse* source_parse = new Source_Parse;
-        source_parse->block_parses = hashtable_create_empty<Block_Index, Block_Parse*>(1, block_index_hash, block_index_equal);
-        source_parse->code = code;
-        source_parse->error_messages = dynamic_array_create_empty<Error_Message>(1);
-        source_parse->timestamp.node_index = 0;
-
-        parser.state.source_parse = source_parse;
-        parser.state.error_count = 0;
-
-        parse_root();
-        return source_parse;
-    }
-
-
-    // Incremental Block-Parsing
-    enum class Line_Status_Type {
-        ORIGINAL,
-        ADDED
-    };
-
-    struct Line_Status
-    {
-        Line_Status_Type type;
-        int original_id;
-        bool changed;
-    };
-
-    struct Block_Difference {
-        int block_index;
-        bool block_parse_exists;
-        Dynamic_Array<Line_Status> line_states;
-    };
-
-    struct Source_Difference {
-        Source_Parse* source_parse;
-        Dynamic_Array<Block_Index> removed_blocks;
-        Dynamic_Array<Block_Difference> block_differences;
-    };
-
-    void block_difference_add_line(Block_Difference* block_difference, int line_number)
-    {
-        if (!block_difference->block_parse_exists) {
-            return;
-        }
-        Line_Status status;
-        status.type = Line_Status_Type::ADDED;
-        status.original_id = -1;
-        status.changed = false;
-        dynamic_array_insert_ordered(&block_difference->line_states, status, line_number);
-    }
-
-    void block_difference_remove_line(Block_Difference* block_difference, int line_number) {
-        if (!block_difference->block_parse_exists) {
-            return;
-        }
-        dynamic_array_remove_ordered(&block_difference->line_states, line_number);
-    }
-
-    void block_difference_change_line(Block_Difference* block_difference, int line_number) {
-        if (!block_difference->block_parse_exists) {
-            return;
-        }
-        auto& status = block_difference->line_states[line_number];
-        status.changed = true;
-    }
-
-    Block_Difference* source_difference_get_or_create_block_difference(Source_Difference* differences, Block_Index block_index)
-    {
-        Block_Difference* block_difference = 0;
-        for (int i = 0; i < differences->block_differences.size; i++) {
-            if (differences->block_differences[i].block_index == block_index.block) {
-                block_difference = &differences->block_differences[i];
-                break;
-            }
-        }
-        bool block_was_removed = false;
-        for (int i = 0; i < differences->removed_blocks.size; i++) {
-            if (differences->removed_blocks[i].block == block_index.block) {
-                block_was_removed = true;
-                break;
-            }
-        }
-        if (block_difference == 0) {
-            Block_Parse** block_parse = hashtable_find_element(&differences->source_parse->block_parses, block_index);
-
-            Block_Difference new_diff;
-            new_diff.block_index = block_index.block;
-            new_diff.block_parse_exists = block_parse != 0 && !block_was_removed;
-            if (new_diff.block_parse_exists) {
-                new_diff.line_states = dynamic_array_create_empty<Line_Status>(1);
-                for (int i = 0; i < (*block_parse)->line_count; i++) {
-                    Line_Status line_state;
-                    line_state.type = Line_Status_Type::ORIGINAL;
-                    line_state.original_id = i;
-                    line_state.changed = false;
-                    dynamic_array_push_back(&new_diff.line_states, line_state);
-                }
-            }
-            else {
-                new_diff.line_states = dynamic_array_create_empty<Line_Status>(1);
-            }
-            dynamic_array_push_back(&differences->block_differences, new_diff);
-            block_difference = &differences->block_differences[differences->block_differences.size - 1];
-        }
-        return block_difference;
-    }
-
-    void source_differences_remove_block(Source_Difference* differences, Block_Index block, Block_Index parent_block, int block_line_index)
-    {
-        // Add to removed-blocks set if its not in there
-        {
-            int index = -1;
-            auto& removed = differences->removed_blocks;
-            for (int i = 0; i < removed.size; i++) {
-                if (removed[i].block == block.block) {
-                    index = i;
-                    break;
-                }
-            }
-            if (index == -1) {
-                dynamic_array_push_back(&removed, block);
-            }
-        }
-
-        // Remove block-difference if existing
-        {
-            int index = -1;
-            auto& block_diffs = differences->block_differences;
-            for (int i = 0; i < block_diffs.size; i++) {
-                if (block_diffs[i].block_index == block.block) {
-                    index = i;
-                    break;
-                }
-            }
-            if (index != -1) {
-                dynamic_array_destroy(&block_diffs[index].line_states);
-                dynamic_array_remove_ordered(&block_diffs, index);
-            }
-        }
-
-        // Mark parent-line for updating
-        {
-            assert(block.block != 0, "Root block cannot be removed");
-            Block_Difference* parent_diff = source_difference_get_or_create_block_difference(differences, parent_block);
-            if (block_line_index != 0) {
-                // Note: This is because of blocks at line 0 
-                block_difference_change_line(parent_diff, block_line_index - 1);
-            }
-        }
-    }
-
-    void source_differences_add_block(Source_Difference* differences, Block_Index parent_block_index, int line_number)
-    {
-        Block_Difference* parent_diff = source_difference_get_or_create_block_difference(differences, parent_block_index);
-        if (line_number != 0) {
-            block_difference_change_line(parent_diff, line_number - 1);
-        }
-    }
-
     void block_parse_remove_items_from_ast(Block_Parse* block_parse) {
         switch (block_parse->context)
         {
@@ -1935,8 +1721,8 @@ namespace Parser
             if (block_parse->parent->type != AST::Node_Type::CODE_BLOCK) {
                 break;
             }
-            auto block = AST::downcast<AST::Code_Block>(block_parse->parent);
-            dynamic_array_reset(&block->statements);
+            auto block_index = AST::downcast<AST::Code_Block>(block_parse->parent);
+            dynamic_array_reset(&block_index->statements);
             break;
         }
         case Block_Context::STRUCT: {
@@ -2005,10 +1791,10 @@ namespace Parser
             if (block_parse->parent->type != AST::Node_Type::CODE_BLOCK) {
                 break;
             }
-            auto block = AST::downcast<AST::Code_Block>(block_parse->parent);
+            auto block_index = AST::downcast<AST::Code_Block>(block_parse->parent);
             for (int i = 0; i < block_parse->items.size; i++) {
                 auto& item = block_parse->items[i].node;
-                dynamic_array_push_back(&block->statements, AST::downcast<AST::Statement>(item));
+                dynamic_array_push_back(&block_index->statements, AST::downcast<AST::Statement>(item));
             }
             break;
         }
@@ -2044,12 +1830,189 @@ namespace Parser
         }
     }
 
+    bool block_index_equal(Block_Index* a, Block_Index* b) {
+        return index_equal(*a, *b);
+    }
+    u64 block_index_hash(Block_Index* a) {
+        return hash_combine(hash_pointer(a->code), hash_i32(&a->block_index));
+    }
+
+    Source_Parse* execute_clean(Source_Code* code)
+    {
+        Source_Parse* source_parse = new Source_Parse;
+        source_parse->block_parses = hashtable_create_empty<Block_Index, Block_Parse*>(1, block_index_hash, block_index_equal);
+        source_parse->code = code;
+        source_parse->error_messages = dynamic_array_create_empty<Error_Message>(1);
+        source_parse->timestamp.node_index = 0;
+
+        parser.state.source_parse = source_parse;
+        parser.state.error_count = 0;
+
+        parse_root();
+
+        // Add block parse items to things...
+        {
+            auto iter = hashtable_iterator_create(&source_parse->block_parses);
+            while (hashtable_iterator_has_next(&iter)) {
+                auto block_parse = *iter.value;
+                block_parse_remove_items_from_ast(block_parse);
+                block_parse_add_items_to_ast(block_parse);
+                hashtable_iterator_next(&iter);
+            }
+        }
+
+        return source_parse;
+    }
+
+
+    // Incremental Block-Parsing
+    enum class Line_Status_Type {
+        ORIGINAL,
+        ADDED
+    };
+
+    struct Line_Status
+    {
+        Line_Status_Type type;
+        int original_id;
+        bool changed;
+    };
+
+    struct Block_Difference {
+        int block_index;
+        bool block_parse_exists;
+        Dynamic_Array<Line_Status> line_states;
+    };
+
+    struct Source_Difference {
+        Source_Parse* source_parse;
+        Dynamic_Array<Block_Index> removed_blocks;
+        Dynamic_Array<Block_Difference> block_differences;
+    };
+
+    void block_difference_add_line(Block_Difference* block_difference, int line_number)
+    {
+        if (!block_difference->block_parse_exists) {
+            return;
+        }
+        Line_Status status;
+        status.type = Line_Status_Type::ADDED;
+        status.original_id = -1;
+        status.changed = false;
+        dynamic_array_insert_ordered(&block_difference->line_states, status, line_number);
+    }
+
+    void block_difference_remove_line(Block_Difference* block_difference, int line_number) {
+        if (!block_difference->block_parse_exists) {
+            return;
+        }
+        dynamic_array_remove_ordered(&block_difference->line_states, line_number);
+    }
+
+    void block_difference_change_line(Block_Difference* block_difference, int line_number) {
+        if (!block_difference->block_parse_exists) {
+            return;
+        }
+        auto& status = block_difference->line_states[line_number];
+        status.changed = true;
+    }
+
+    Block_Difference* source_difference_get_or_create_block_difference(Source_Difference* differences, Block_Index block_index)
+    {
+        Block_Difference* block_difference = 0;
+        for (int i = 0; i < differences->block_differences.size; i++) {
+            if (differences->block_differences[i].block_index == block_index.block_index) {
+                block_difference = &differences->block_differences[i];
+                break;
+            }
+        }
+        bool block_was_removed = false;
+        for (int i = 0; i < differences->removed_blocks.size; i++) {
+            if (differences->removed_blocks[i].block_index == block_index.block_index) {
+                block_was_removed = true;
+                break;
+            }
+        }
+        if (block_difference == 0) {
+            Block_Parse** block_parse = hashtable_find_element(&differences->source_parse->block_parses, block_index);
+
+            Block_Difference new_diff;
+            new_diff.block_index = block_index.block_index;
+            new_diff.block_parse_exists = block_parse != 0 && !block_was_removed;
+            if (new_diff.block_parse_exists) {
+                new_diff.line_states = dynamic_array_create_empty<Line_Status>(1);
+                for (int i = 0; i < (*block_parse)->line_count; i++) {
+                    Line_Status line_state;
+                    line_state.type = Line_Status_Type::ORIGINAL;
+                    line_state.original_id = i;
+                    line_state.changed = false;
+                    dynamic_array_push_back(&new_diff.line_states, line_state);
+                }
+            }
+            else {
+                new_diff.line_states = dynamic_array_create_empty<Line_Status>(1);
+            }
+            dynamic_array_push_back(&differences->block_differences, new_diff);
+            block_difference = &differences->block_differences[differences->block_differences.size - 1];
+        }
+        return block_difference;
+    }
+
+    void source_differences_remove_block(Source_Difference* differences, Block_Index block_index, Line_Index block_line_index)
+    {
+        // Add to removed-blocks set if its not in there
+        {
+            int index = -1;
+            auto& removed = differences->removed_blocks;
+            for (int i = 0; i < removed.size; i++) {
+                if (removed[i].block_index == block_index.block_index) {
+                    index = i;
+                    break;
+                }
+            }
+            if (index == -1) {
+                dynamic_array_push_back(&removed, block_index);
+            }
+        }
+
+        // Remove block_index-difference if existing
+        {
+            int index = -1;
+            auto& block_diffs = differences->block_differences;
+            for (int i = 0; i < block_diffs.size; i++) {
+                if (block_diffs[i].block_index == block_index.block_index) {
+                    index = i;
+                    break;
+                }
+            }
+            if (index != -1) {
+                dynamic_array_destroy(&block_diffs[index].line_states);
+                dynamic_array_remove_ordered(&block_diffs, index);
+            }
+        }
+
+        // Mark parent-line_index for updating
+        {
+            assert(block_index.block_index != 0, "Root block cannot be removed");
+            Block_Difference* parent_diff = source_difference_get_or_create_block_difference(differences, block_line_index.block_index);
+            block_difference_change_line(parent_diff, block_line_index.line_index);
+        }
+    }
+
+    void source_differences_add_block(Source_Difference* differences, Block_Index parent_block_index, int line_number)
+    {
+        Block_Difference* parent_diff = source_difference_get_or_create_block_difference(differences, parent_block_index);
+        if (line_number != 0) {
+            block_difference_change_line(parent_diff, line_number - 1);
+        }
+    }
+
     void execute_incremental(Source_Parse* source_parse, Code_History* history)
     {
         // Incremental Parsing needs to loop over all changes in the code-history similar to text editor token updates, 
         // but instead of just knowing the changed lines, we need the following information:
         // - Removed Blocks (To remove cached blocks)
-        // - Block-Reparse information for changed Blcoks per line (What needs to be reparsed inside a block)
+        // - Block-Reparse information for changed Blcoks per line_index (What needs to be reparsed inside a block_index)
         //     Added, changed and deleted lines
 
         // Get changes since last sync
@@ -2070,108 +2033,94 @@ namespace Parser
             for (int i = 0; i < differences.block_differences.size; i++) {
                 dynamic_array_destroy(&differences.block_differences[i].line_states);
             }
-            dynamic_array_destroy(&differences.block_differences);
-            dynamic_array_destroy(&differences.removed_blocks);
+        dynamic_array_destroy(&differences.block_differences);
+        dynamic_array_destroy(&differences.removed_blocks);
         );
 
         // Fill source-differences
-        for (int i = 0; i < changes.size; i++)
-        {
-            auto& change = changes[i];
-            switch (change.type)
-            {
-            case Code_Change_Type::BLOCK_CREATE:
-            {
-                auto& create = change.options.block_create;
-                if (change.apply_forwards) {
-                    source_differences_add_block(&differences, create.parent, create.line_index);
-                }
-                else {
-                    source_differences_remove_block(&differences, create.new_block_index, create.parent, create.line_index);
-                }
-                break;
-            }
-            case Code_Change_Type::BLOCK_INDEX_CHANGED:
-            {
-                // NOTE: Block index changes only happen if a line is deleted before or after, but since we already handle line delets,
-                //       we don't need to worry about that. !!! this has to change if block indices may change with future updates!
-                //auto& index_change = change.options.block_index_change;
-                //auto parent_diff = source_difference_get_or_create_block_difference(&differences, index_change.parent_index);
-                //if (index_change.new_line_index != 0) {
-                //    block_difference_change_line(parent_diff, index_change.new_line_index - 1);
-                //}
-                //if (index_change.old_line_index != 0) {
-                //    block_difference_change_line(parent_diff, index_change.old_line_index - 1);
-                //}
-                break;
-            }
-            case Code_Change_Type::BLOCK_MERGE:
-            {
-                auto& merge = change.options.block_merge;
-                if (change.apply_forwards) {
-                    source_differences_remove_block(&differences, merge.merge_other, merge.parent_index, merge.line_number_in_parent);
-                    source_differences_remove_block(&differences, merge.index, merge.parent_index, merge.line_number_in_parent);
-                    source_differences_add_block(&differences, merge.parent_index, merge.line_number_in_parent);
-                }
-                else {
-                    source_differences_remove_block(&differences, merge.index, merge.parent_index, merge.line_number_in_parent);
-                    source_differences_add_block(&differences, merge.parent_index, merge.line_number_in_parent);
-                    // Note: since adding blocks doesn't do a lot, maybe this is the correct way to go.
-                }
-                break;
-            }
-            case Code_Change_Type::LINE_INSERT: {
-                auto& insert = change.options.line_insert;
-                auto block_difference = source_difference_get_or_create_block_difference(&differences, insert.block);
-                if (change.apply_forwards) {
-                    block_difference_add_line(block_difference, insert.line);
-                }
-                else {
-                    block_difference_remove_line(block_difference, insert.line);
-                }
-                break;
-            }
-            case Code_Change_Type::TEXT_INSERT: 
-            {
-                auto& text_insert = change.options.text_insert;
-                auto block_difference = source_difference_get_or_create_block_difference(&differences, text_insert.index.line.block);
-                block_difference_change_line(block_difference, text_insert.index.line.line);
-                break;
-            }
-            default: panic("");
-            }
-        }
+        //for (int i = 0; i < changes.size; i++)
+        //{
+        //    auto& change = changes[i];
+        //    switch (change.type)
+        //    {
+        //    case Code_Change_Type::BLOCK_INSERT:
+        //    {
+        //        auto& insert = change.options.block_insert;
+        //        if (change.apply_forwards) {
+        //            source_differences_add_block(&differences, insert.line_index.block_index, insert.line_index.line_index);
+        //        }
+        //        else {
+        //            source_differences_remove_block(&differences, insert.new_block_index, insert.line_index);
+        //        }
+        //        break;
+        //    }
+        //    case Code_Change_Type::BLOCK_MERGE:
+        //    {
+        //        auto& merge = change.options.block_merge;
+        //        if (change.apply_forwards) {
+        //            source_differences_remove_block(&differences, merge.from_block_index, merge.from_line_index);
+        //            source_differences_remove_block(&differences, merge.index, merge.parent_index, merge.line_number_in_parent);
+        //            source_differences_add_block(&differences, merge.parent_index, merge.line_number_in_parent);
+        //        }
+        //        else {
+        //            source_differences_remove_block(&differences, merge.index, merge.parent_index, merge.line_number_in_parent);
+        //            source_differences_add_block(&differences, merge.parent_index, merge.line_number_in_parent);
+        //            // Note: since adding blocks doesn't do a lot, maybe this is the correct way to go.
+        //        }
+        //        break;
+        //    }
+        //    case Code_Change_Type::LINE_INSERT: {
+        //        auto& insert = change.options.line_insert;
+        //        auto block_difference = source_difference_get_or_create_block_difference(&differences, insert.block_index);
+        //        if (change.apply_forwards) {
+        //            block_difference_add_line(block_difference, insert.line_index);
+        //        }
+        //        else {
+        //            block_difference_remove_line(block_difference, insert.line_index);
+        //        }
+        //        break;
+        //    }
+        //    case Code_Change_Type::TEXT_INSERT: 
+        //    {
+        //        auto& text_insert = change.options.text_insert;
+        //        auto block_difference = source_difference_get_or_create_block_difference(&differences, text_insert.index.line_index.block_index);
+        //        block_difference_change_line(block_difference, text_insert.index.line_index.line_index);
+        //        break;
+        //    }
+        //    default: panic("");
+        //    }
+        //}
 
-        // Print source differences
-        {
-            String tmp = string_create_empty(512);
-            SCOPE_EXIT(string_destroy(&tmp));
-            string_append_formated(&tmp, "Removed blocks: ");
-            for (int i = 0; i < differences.removed_blocks.size; i++) {
-                string_append_formated(&tmp, "%d ", differences.removed_blocks[i].block);
-            }
-            string_append_formated(&tmp, "\n");
-            for (int i = 0; i < differences.block_differences.size; i++) {
-                auto& block_diff = differences.block_differences[i];
-                string_append_formated(&tmp, "Block_Difference of block #%d:\n", block_diff.block_index);
-                if (!block_diff.block_parse_exists) {
-                    string_append_formated(&tmp, "    NEW BLOCK, no line changes\n");
-                }
-                else {
-                    for (int j = 0; j < block_diff.line_states.size; j++) {
-                        auto& line_state = block_diff.line_states[j];
-                        string_append_formated(&tmp, "    #%d: ", j);
-                        if (line_state.type == Line_Status_Type::ORIGINAL) {
-                            string_append_formated(&tmp, "ORIGIAL(%2d) %s\n", line_state.original_id, (line_state.changed ? "was changed" : ""));
-                        }
-                        else {
-                            string_append_formated(&tmp, "ADDED\n");
-                        }
-                    }
-                }
-            }
-            logg("Source Differences: \n%s\n\n", tmp.characters);
-        }
+        //// Print source differences
+        //{
+        //    String tmp = string_create_empty(512);
+        //    SCOPE_EXIT(string_destroy(&tmp));
+        //    string_append_formated(&tmp, "Removed blocks: ");
+        //    for (int i = 0; i < differences.removed_blocks.size; i++) {
+        //        string_append_formated(&tmp, "%d ", differences.removed_blocks[i].block_index);
+        //    }
+        //    string_append_formated(&tmp, "\n");
+        //    for (int i = 0; i < differences.block_differences.size; i++) {
+        //        auto& block_diff = differences.block_differences[i];
+        //        string_append_formated(&tmp, "Block_Difference of block #%d:\n", block_diff.block_index);
+        //        if (!block_diff.block_parse_exists) {
+        //            string_append_formated(&tmp, "    NEW BLOCK, no line changes\n");
+        //        }
+        //        else {
+        //            for (int j = 0; j < block_diff.line_states.size; j++) {
+        //                auto& line_state = block_diff.line_states[j];
+        //                string_append_formated(&tmp, "    #%d: ", j);
+        //                if (line_state.type == Line_Status_Type::ORIGINAL) {
+        //                    string_append_formated(&tmp, "ORIGIAL(%2d) %s\n", line_state.original_id, (line_state.changed ? "was changed" : ""));
+        //                }
+        //                else {
+        //                    string_append_formated(&tmp, "ADDED\n");
+        //                }
+        //            }
+        //        }
+        //    }
+        //    logg("Source Differences: \n%s\n\n", tmp.characters);
+        //}
 
 
 
@@ -2179,13 +2128,13 @@ namespace Parser
         // !UPDATE AST with diff-information
         // 1. Remove removed blocks...
         //for (int i = 0; i < differences.removed_blocks.size; i++) {
-        //    // Check if the block was parsed
+        //    // Check if the block_index was parsed
         //    auto block_parse = hashtable_find_element(&source_parse->block_parses, differences.removed_blocks[i]);
-        //    if (block_parse== 0) { // block was not parsed
+        //    if (block_parse== 0) { // block_index was not parsed
         //        continue;
         //    }
 
-        //    // Remove items from parent node
+        //    // Remove nodes from parent node
         //    block_parse_remove_items_from_ast(*block_parse);
         //    // Remove block_parse
         //    block_parse_destroy(*block_parse);
@@ -2196,7 +2145,7 @@ namespace Parser
         //for (int i = 0; i < differences.block_differences.size; i++)
         //{
         //    auto& block_difference = differences.block_differences[i];
-        //    // Ignore new blocks for now... (NOTE: not sure if i even need to save them if the line is marked for updating...)
+        //    // Ignore new blocks for now... (NOTE: not sure if i even need to save them if the line_index is marked for updating...)
         //    Block_Parse* block_parse;
         //    {
         //        if (!block_difference.block_parse_exists) {
@@ -2221,21 +2170,21 @@ namespace Parser
         //        if (line_index >= block_difference.line_states.size) {
         //            break;
         //        }
-        //        if (next_original_item_index >= block_parse->items.size) {
-        //            // TODO: check if the lines have changed till the end and add new items if necessary
+        //        if (next_original_item_index >= block_parse->nodes.size) {
+        //            // TODO: check if the lines have changed till the end and add new nodes if necessary
         //            break;
         //        }
-        //        // Check if all the line items haven't changed till the end
-        //        block_parse->items[]
+        //        // Check if all the line_index nodes haven't changed till the end
+        //        block_parse->nodes[]
         //        if ()
 
         //    }
         //}
-        // TODO: check for block 0
+        // TODO: check for block_index 0
 
 
-        // 3. Re-Add items from changed blocks
-        
+        // 3. Re-Add nodes from changed blocks
+
 
 
 
@@ -2249,10 +2198,22 @@ namespace Parser
 
         // TODO: Change this to be incremental
         parse_root();
+
+        // Add block parse items to things...
+        {
+            auto iter = hashtable_iterator_create(&source_parse->block_parses);
+            while (hashtable_iterator_has_next(&iter)) {
+                auto block_parse = *iter.value;
+                block_parse_remove_items_from_ast(block_parse);
+                block_parse_add_items_to_ast(block_parse);
+                hashtable_iterator_next(&iter);
+            }
+        }
     }
 
 
 
+    // AST queries based on Token-Indices
     void ast_base_get_section_token_range(AST::Node* base, Section section, Dynamic_Array<Token_Range>* ranges)
     {
         switch (section)

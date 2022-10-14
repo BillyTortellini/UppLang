@@ -157,7 +157,7 @@ Optional<Glyph_Atlas> glyph_atlas_create_from_font_file(
         information.glyph_height = face->glyph->metrics.height + character_margin*128;
 
         // Calculate position in glyph_atlas
-        if (atlas_cursor_x + glyph_bitmap.width + padding >= atlas_bitmap.width) {// Jump to next line if not enough space is in current line
+        if (atlas_cursor_x + glyph_bitmap.width + padding >= atlas_bitmap.width) {// Jump to next line_index if not enough space is in current line_index
             atlas_cursor_x = padding; // Sets it back to the leftmost pos
             atlas_cursor_y += atlas_max_line_height + padding;
             atlas_max_line_height = 0;

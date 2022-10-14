@@ -7,13 +7,13 @@
 //       This means that the character may also be string->size, or 0
 struct Text_Position
 {
-    int line; // Starts at 0
+    int line_index; // Starts at 0
     int character; // Starts at 0
 };
-Text_Position text_position_make(int line, int character);
+Text_Position text_position_make(int line_index, int character);
 Text_Position text_position_make_start();
 Text_Position text_position_make_end(Dynamic_Array<String>* text);
-Text_Position text_position_make_line_end(Dynamic_Array<String>* text, int line);
+Text_Position text_position_make_line_end(Dynamic_Array<String>* text, int line_index);
 bool text_position_are_equal(Text_Position a, Text_Position b);
 void text_position_sanitize(Text_Position* pos, Dynamic_Array<String> text);
 Text_Position text_position_next(Text_Position pos, Dynamic_Array<String> text);
@@ -26,7 +26,7 @@ struct Text_Slice {
 };
 Text_Slice text_slice_make(Text_Position start, Text_Position end);
 void text_slice_sanitize(Text_Slice* slice, Dynamic_Array<String> text); 
-Text_Slice text_slice_make_line(Dynamic_Array<String> text, int line);
+Text_Slice text_slice_make_line(Dynamic_Array<String> text, int line_index);
 Text_Slice text_slice_make_character_after(Text_Position pos, Dynamic_Array<String> text);
 bool text_slice_contains_position(Text_Slice slice, Text_Position pos, Dynamic_Array<String> text);
 
@@ -38,7 +38,7 @@ Text_Slice text_calculate_insertion_string_slice(Dynamic_Array<String>* text, Te
 void text_insert_string(Dynamic_Array<String>* text, Text_Position pos, String insertion);
 void text_insert_character_before(Dynamic_Array<String>* text, Text_Position pos, char c);
 void text_delete_slice(Dynamic_Array<String>* text, Text_Slice slice);
-void text_delete_line(Dynamic_Array<String>* text, int line);
+void text_delete_line(Dynamic_Array<String>* text, int line_index);
 void text_append_slice_to_string(Dynamic_Array<String> text, Text_Slice slice, String* string);
 void text_set_string(Dynamic_Array<String>* text, String* string);
 void text_append_to_string(Dynamic_Array<String>* text, String* result);

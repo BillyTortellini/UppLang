@@ -224,14 +224,14 @@ Header_Parser header_parser_create(C_Lexer* lexer, String source_code)
     {
         C_Token* token = &lexer->tokens[i];
         bool is_first_token_in_line = false;
-        if (token->position.start.line != last_line_index) {
-            last_line_index = token->position.start.line;
+        if (token->position.start.line_index != last_line_index) {
+            last_line_index = token->position.start.line_index;
             is_first_token_in_line = true;
         }
 
         // Skip lines starting with a hashtag
         if (is_first_token_in_line && token->type == C_Token_Type::HASHTAG) {
-            while (i < lexer->tokens.size && lexer->tokens[i].position.start.line == last_line_index) {
+            while (i < lexer->tokens.size && lexer->tokens[i].position.start.line_index == last_line_index) {
                 i++;
             }
             i--;
@@ -304,9 +304,9 @@ bool header_parser_is_finished(Header_Parser* parser) {
 
 void header_parser_goto_next_line(Header_Parser* parser) {
     if (!header_parser_is_finished(parser)) return;
-    int line = parser->tokens[parser->index].position.start.line;
+    int line_index = parser->tokens[parser->index].position.start.line_index;
     parser->index++;
-    while (header_parser_is_finished(parser) && parser->tokens[parser->index].position.start.line == line) {
+    while (header_parser_is_finished(parser) && parser->tokens[parser->index].position.start.line_index == line_index) {
         parser->index++;
     }
 }
@@ -360,7 +360,7 @@ void print_tokens_till_newline_token_style(Dynamic_Array<C_Token> tokens, String
     for (int i = token_index; i < tokens.size; i++) 
     {
         C_Token* token = &tokens[i];
-        if (start_tok->position.start.line != token->position.start.line) {
+        if (start_tok->position.start.line_index != token->position.start.line_index) {
             break;
         }
         switch (token->type)
@@ -393,7 +393,7 @@ void print_tokens_till_newline(Dynamic_Array<C_Token> tokens, String source, int
     C_Token* token = &tokens[token_index];
     int end_pos = token->source_code_index;
     for (int i = token_index + 1; i < tokens.size; i++) {
-        if (tokens[i].position.start.line != token->position.start.line) {
+        if (tokens[i].position.start.line_index != token->position.start.line_index) {
             end_pos = tokens[i].source_code_index;
             break;
         }
@@ -1578,7 +1578,7 @@ void header_parser_parse(Header_Parser* parser)
             parser->index = rewind_index;
         }
 
-        int current_line = parser->tokens[parser->index].position.start.line;
+        int current_line = parser->tokens[parser->index].position.start.line_index;
         int depth = 0;
         bool depth_was_nonzero = false;
         while (parser->index + 2 < parser->tokens.size)
@@ -1616,7 +1616,7 @@ void header_parser_parse(Header_Parser* parser)
                         parser->index++;
                         break;
                     }
-                    //if (t1->position.start.line != current_line) break;
+                    //if (t1->position.start.line_index != current_line) break;
                 }
             }
             if (t1->type == C_Token_Type::EXTERN && t2->type == C_Token_Type::STRING_LITERAL && t2->attribute.id == identifier_extern_c)
