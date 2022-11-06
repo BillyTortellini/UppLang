@@ -380,6 +380,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
     syntax_editor.code_changed_since_last_compile = false;
     syntax_editor.last_compile_was_with_code_gen = generate_code;
     compiler_compile_incremental(&syntax_editor.history, (generate_code ? Compile_Type::BUILD_CODE : Compile_Type::ANALYSIS_ONLY));
+    //compiler_compile_clean(syntax_editor.code, (generate_code ? Compile_Type::BUILD_CODE : Compile_Type::ANALYSIS_ONLY), string_create(syntax_editor.file_path));
 
     // Collect errors from all compiler stages
     {
@@ -391,7 +392,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
         // Parse Errors
         for (int i = 0; i < compiler.code_sources.size; i++)
         {
-            auto parse_errors = compiler.code_sources[i]->source_parse->error_messages;
+            auto& parse_errors = compiler.code_sources[i]->source_parse->error_messages;
             for (int j = 0; j < parse_errors.size; j++) {
                 auto& error = parse_errors[j];
                 dynamic_array_push_back(&editor.errors, error_display_make(string_create_static(error.msg), error.range));
@@ -494,8 +495,8 @@ Symbol_Table* code_query_get_ast_node_symbol_table(AST::Node* base)
             return module->symbol_table;
         }
         case AST::Node_Type::CODE_BLOCK: {
-            auto block_index = AST::downcast<AST::Code_Block>(base);
-            return block_index->symbol_table;
+            auto block = AST::downcast<AST::Code_Block>(base);
+            return block->symbol_table;
         }
         case AST::Node_Type::EXPRESSION: {
             auto expr = AST::downcast<AST::Expression>(base);
@@ -1005,7 +1006,7 @@ void insert_command_execute(Insert_Command input)
     }
     SCOPE_EXIT(code_completion_find_suggestions());
     // Experimental: Automatically complete identifier if we are about to enter some seperation afterwards
-    if (true)
+    if (false)
     {
         bool complete_current = false;
         switch (input.type)
@@ -1045,7 +1046,7 @@ void insert_command_execute(Insert_Command input)
         break;
     }
     case Insert_Command_Type::EXIT_INSERT_MODE: {
-        code_completion_insert_suggestion();
+        //code_completion_insert_suggestion();
         editor_leave_insert_mode();
         break;
     }

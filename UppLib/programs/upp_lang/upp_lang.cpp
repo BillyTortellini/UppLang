@@ -73,24 +73,24 @@ void test_things()
 
     // Block allocator
     {
-        Block_Allocator<Dummy> block_index = block_allocator_create_empty<Dummy>(4);
-        SCOPE_EXIT(block_allocator_destroy(&block_index));
+        Block_Allocator<Dummy> block = block_allocator_create_empty<Dummy>(4);
+        SCOPE_EXIT(block_allocator_destroy(&block));
         const int count = 200;
         Dummy* dummies[count];
 
         for (int loops = 0; loops < 100; loops++) 
         {
             for (int i = 0; i < count; i++) {
-                dummies[i] = block_allocator_allocate(&block_index);
+                dummies[i] = block_allocator_allocate(&block);
                 *dummies[i] = dummy_make_random(&random);
             }
 
             // Deallocate all
             for (int i = count - 1; i >= 0; i--) {
-                block_allocator_deallocate(&block_index, dummies[i]);
+                block_allocator_deallocate(&block, dummies[i]);
             }
         }
-        assert(block_index.used_block_count == 0, "HEY");
+        assert(block.used_block_count == 0, "HEY");
     }
 
     // Stack allocator

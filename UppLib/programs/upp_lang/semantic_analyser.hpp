@@ -332,7 +332,7 @@ struct Statement_Info
 {
     Control_Flow flow;
     struct {
-        AST::Code_Block* block_index; // Continue/break
+        AST::Code_Block* block; // Continue/break
     } specifics;
 };
 
@@ -368,7 +368,7 @@ Expression_Info* analysis_pass_get_info(Analysis_Pass* source_parse, AST::Expres
 Case_Info* analysis_pass_get_info(Analysis_Pass* source_parse, AST::Switch_Case* sw_case);
 Argument_Info* analysis_pass_get_info(Analysis_Pass* source_parse, AST::Argument* argument);
 Statement_Info* analysis_pass_get_info(Analysis_Pass* source_parse, AST::Statement* statement);
-Code_Block_Info* analysis_pass_get_info(Analysis_Pass* source_parse, AST::Code_Block* block_index);
+Code_Block_Info* analysis_pass_get_info(Analysis_Pass* source_parse, AST::Code_Block* block);
 Type_Signature* expression_info_get_type(Expression_Info* info);
 
 

@@ -819,7 +819,7 @@ bool window_handle_messages(Window* window, bool block_until_next_message)
                 DispatchMessage(&msg);
             }
         }
-        else { // Just return if we should not block_index
+        else { // Just return if we should not block
             return true;
         }
     }

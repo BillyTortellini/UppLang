@@ -631,7 +631,7 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
                 IR_Switch_Case* switch_case = &switch_instr->cases[i];
                 string_add_indentation(output, indentation_level);
                 string_append_formated(output, "case %d: \n", switch_case->value);
-                c_generator_output_code_block(generator, output, switch_case->block_index, indentation_level + 1, false);
+                c_generator_output_code_block(generator, output, switch_case->block, indentation_level + 1, false);
                 string_add_indentation(output, indentation_level);
                 string_append_formated(output, "break;\n");
             }
@@ -670,7 +670,7 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
         }
         case IR_Instruction_Type::BLOCK:
         {
-            c_generator_output_code_block(generator, output, instr->options.block_index, indentation_level + 1, false);
+            c_generator_output_code_block(generator, output, instr->options.block, indentation_level + 1, false);
             break;
         }
         case IR_Instruction_Type::GOTO: {

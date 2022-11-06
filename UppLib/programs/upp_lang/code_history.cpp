@@ -397,6 +397,9 @@ Block_Index history_internal_split_block(Code_History* history, Block_Index spli
 // Public interface
 void history_insert_text(Code_History* history, Text_Index index, String string)
 {
+    if (string.size == 0) {
+        return;
+    }
     auto line_index = index_value(index.line_index);
     auto change = code_change_create_empty(Code_Change_Type::TEXT_INSERT, true);
     change.options.text_insert.index = index;
@@ -406,6 +409,9 @@ void history_insert_text(Code_History* history, Text_Index index, String string)
 
 void history_delete_text(Code_History* history, Text_Index index, int char_end)
 {
+    if (index.pos == char_end) {
+        return;
+    }
     auto& text = index_value_text(index.line_index)->text;
     assert(index.pos >= 0 && index.pos <= text.size, "");
     assert(char_end >= 0 && char_end <= text.size, "");
@@ -495,7 +501,7 @@ void history_remove_line(Code_History* history, Line_Index line_index)
         block_index = block->parent;
     }
 
-    // Add empty line_index to root block_index if we deleted the last root line_index
+    // Add empty line_index to root block if we deleted the last root line_index
     auto root_index = block_index_make_root(history->code);
     auto root_block = index_value(root_index);
     if (root_block->lines.size == 0) {
@@ -547,7 +553,7 @@ Line_Index history_add_line_indent(Code_History* history, Line_Index old_line_in
     }
     else
     {
-        // Create new block_index
+        // Create new block
         auto new_block = history_internal_add_block(history, old_line_index);
         old_line_index.line_index += 1;
         new_line_index = line_index_make(new_block, 0);
@@ -562,11 +568,11 @@ Line_Index history_remove_line_indent(Code_History* history, Line_Index index)
     source_code_sanity_check(history->code);
     SCOPE_EXIT(source_code_sanity_check(history->code));
 
-    // INFO: Remove indent results in either a move into a previous/next block_index (+Eventual Merge) or a Split block_index + move
+    // INFO: Remove indent results in either a move into a previous/next block (+Eventual Merge) or a Split block + move
     if (index.block_index.block_index == 0) return index; // Cannot remove line index in root block!
     auto block = index_value(index.block_index);
 
-    // Search if we are at the start/end of the block_index
+    // Search if we are at the start/end of the block
     Line_Index move_to_index = block_index_to_line_index(index.block_index);
     if (index.line_index == 0) {
     }

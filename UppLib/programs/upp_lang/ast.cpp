@@ -15,9 +15,9 @@ namespace AST
         case Node_Type::DEFINITION: 
             break;
         case Node_Type::CODE_BLOCK: {
-            auto block_index = (Code_Block*)node;
-            if (block_index->statements.data != 0) {
-                dynamic_array_destroy(&block_index->statements);
+            auto block = (Code_Block*)node;
+            if (block->statements.data != 0) {
+                dynamic_array_destroy(&block->statements);
             }
             break;
         }
@@ -107,7 +107,7 @@ namespace AST
         case Node_Type::SWITCH_CASE: {
             auto sw_case = (Switch_Case*)node;
             FILL_OPTIONAL(sw_case->value);
-            FILL(sw_case->block_index);
+            FILL(sw_case->block);
             break;
         }
         case Node_Type::PARAMETER: {
@@ -132,8 +132,8 @@ namespace AST
             break;
         }
         case Node_Type::CODE_BLOCK: {
-            auto block_index = (Code_Block*)node;
-            FILL_ARRAY(block_index->statements);
+            auto block = (Code_Block*)node;
+            FILL_ARRAY(block->statements);
             break;
         }
         case Node_Type::DEFINITION: {
@@ -282,8 +282,8 @@ namespace AST
                 break;
             }
             case Statement_Type::BLOCK: {
-                auto block_index = stat->options.block_index;
-                FILL(block_index);
+                auto block = stat->options.block;
+                FILL(block);
                 break;
             }
             case Statement_Type::ASSIGNMENT: {
@@ -305,14 +305,14 @@ namespace AST
             case Statement_Type::IF_STATEMENT: {
                 auto if_stat = stat->options.if_statement;
                 FILL(if_stat.condition);
-                FILL(if_stat.block_index);
+                FILL(if_stat.block);
                 FILL_OPTIONAL(if_stat.else_block);
                 break;
             }
             case Statement_Type::WHILE_STATEMENT: {
                 auto while_stat = stat->options.while_statement;
                 FILL(while_stat.condition);
-                FILL(while_stat.block_index);
+                FILL(while_stat.block);
                 break;
             }
             case Statement_Type::BREAK_STATEMENT: {
@@ -358,7 +358,7 @@ namespace AST
         case Node_Type::SWITCH_CASE: {
             auto sw_case = (Switch_Case*)node;
             FILL_OPTIONAL(sw_case->value);
-            FILL(sw_case->block_index);
+            FILL(sw_case->block);
             break;
         }
         case Node_Type::ENUM_MEMBER: {
@@ -386,8 +386,8 @@ namespace AST
             break;
         }
         case Node_Type::CODE_BLOCK: {
-            auto block_index = (Code_Block*)node;
-            FILL_ARRAY(block_index->statements);
+            auto block = (Code_Block*)node;
+            FILL_ARRAY(block->statements);
             break;
         }
         case Node_Type::DEFINITION: {
@@ -533,8 +533,8 @@ namespace AST
                 break;
             }
             case Statement_Type::BLOCK: {
-                auto block_index = stat->options.block_index;
-                FILL(block_index);
+                auto block = stat->options.block;
+                FILL(block);
                 break;
             }
             case Statement_Type::ASSIGNMENT: {
@@ -556,14 +556,14 @@ namespace AST
             case Statement_Type::IF_STATEMENT: {
                 auto if_stat = stat->options.if_statement;
                 FILL(if_stat.condition);
-                FILL(if_stat.block_index);
+                FILL(if_stat.block);
                 FILL_OPTIONAL(if_stat.else_block);
                 break;
             }
             case Statement_Type::WHILE_STATEMENT: {
                 auto while_stat = stat->options.while_statement;
                 FILL(while_stat.condition);
-                FILL(while_stat.block_index);
+                FILL(while_stat.block);
                 break;
             }
             case Statement_Type::BREAK_STATEMENT: {
@@ -651,7 +651,19 @@ namespace AST
             case Expression_Type::BAKE_BLOCK: string_append_formated(str, "BAKE_BLOCK"); break;
             case Expression_Type::BAKE_EXPR: string_append_formated(str, "BAKE_EXPR"); break;
             case Expression_Type::SYMBOL_READ: string_append_formated(str, "SYMBOL_READ "); break;
-            case Expression_Type::LITERAL_READ: string_append_formated(str, "LITERAL_READ"); break;
+            case Expression_Type::LITERAL_READ: {
+                string_append_formated(str, "LITERAL_READ "); 
+                auto& read = expr->options.literal_read;
+                switch (read.type) {
+                case Literal_Type::BOOLEAN: string_append_formated(str, read.options.boolean ? "true" : "false"); break;
+                case Literal_Type::INTEGER: string_append_formated(str, "%d", read.options.int_val); break;
+                case Literal_Type::FLOAT_VAL: string_append_formated(str, "%f", read.options.float_val); break;
+                case Literal_Type::NULL_VAL: string_append_formated(str, "null"); break;
+                case Literal_Type::STRING: string_append_formated(str, "%s", read.options.string->characters); break;
+                default: panic("");
+                }
+                break; 
+            }
             case Expression_Type::ARRAY_ACCESS: string_append_formated(str, "ARRAY_ACCESS"); break;
             case Expression_Type::MEMBER_ACCESS: string_append_formated(str, "MEMBER_ACCESS"); break;
             case Expression_Type::MODULE: string_append_formated(str, "MODULE"); break;

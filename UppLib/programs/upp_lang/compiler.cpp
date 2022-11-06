@@ -512,7 +512,8 @@ Exit_Code compiler_execute()
         else
         {
             double bytecode_start = timer_current_time_in_seconds(compiler.timer);
-            compiler.bytecode_interpreter->instruction_limit_enabled = false;
+            compiler.bytecode_interpreter->instruction_limit_enabled = true;
+            compiler.bytecode_interpreter->instruction_limit = 10000;
             bytecode_interpreter_run_function(compiler.bytecode_interpreter, compiler.bytecode_generator->entry_point_index);
             double bytecode_end = timer_current_time_in_seconds(compiler.timer);
             float bytecode_time = (bytecode_end - bytecode_start);
@@ -563,7 +564,10 @@ bool compiler_errors_occured() {
 }
 
 Source_Code* compiler_find_ast_source_code(AST::Node* base) {
-    return base->range.start.line_index.block_index.code;
+    if (base->range.start.type == AST::Node_Position_Type::TOKEN_INDEX) {
+        return base->range.start.options.block_index.code;
+    }
+    return base->range.start.options.token_index.line_index.block_index.code;
 }
 
 Code_Source* compiler_find_ast_code_source(AST::Node* base)

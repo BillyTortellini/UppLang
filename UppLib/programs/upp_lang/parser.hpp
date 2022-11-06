@@ -22,15 +22,18 @@ namespace Parser
     void destroy();
 
     // Parse Items (Incremental Parsing)
+    struct Block_Parse;
     struct Error_Message
     {
         const char* msg;
         Token_Range range;
+        Block_Parse* block_parse;
+        int origin_line_index; // May not be the same as the line index of token_range. Required for incremental parsing
     };
 
     struct Line_Item
     {
-        int line_start; // May be -1 if its the first block_index in a new block_index
+        int line_start;
         int line_count; 
         AST::Node* node;
     };
@@ -49,6 +52,8 @@ namespace Parser
         Block_Context context;
         Block_Index index;
         Dynamic_Array<Line_Item> items;
+        Dynamic_Array<Block_Parse*> child_block_parses;
+        Block_Parse* parent_parse;
         AST::Node* parent;
         int line_count;
     };

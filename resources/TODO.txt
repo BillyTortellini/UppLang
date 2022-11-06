@@ -1,4 +1,30 @@
 
+TODO: Incremental parsing:
+ - Token ranges currently wrong
+ - Correctness of parsing 
+ - AST-Node allocation/deallocation...
+ - Something about the auto-
+ 
+Incremental parser Problems:
+ - Errors and nodes that aren't connected anymore to the tree
+nodes that aren't connected to the tree just need to not be reachable in the AST
+Errors shouldn't display.
+
+How do I know if a node is/isn't connected anymore?
+ - I can store old/new parent node, and if I parse over a block and it is still the same,
+    then the block was removed. Indicate removed blocks by setting their parent_node to NULL
+ - If I don't parse over the block, then it is removed.
+
+How are errors inside a block removed again?
+
+Once the whole incremental reparse Jazz works, I should probably refactor everything by thinking about the information
+that is really needed.
+
+How to gather all errorz?
+ --> Loop over all block-parses, check if they were removed
+How to know if a block-parse is removed or not?
+I could also do a foreach error, check the block parent and check if all block-parses are connected
+--> This seems like a reasonable thing to do, and you could cache that.
 
 Ideas:
  * Input-Replay for Editor Test-cases 

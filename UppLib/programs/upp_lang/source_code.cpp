@@ -47,7 +47,7 @@ Block_Index source_block_insert_empty_block(Line_Index line_index)
 
     // Insert ordered into parent
     auto parent_block = index_value(line_index.block_index);
-    assert(line_index.line_index > 0 && line_index.line_index <= parent_block->lines.size, "Index must be valid");
+    assert(line_index.line_index >= 0 && line_index.line_index <= parent_block->lines.size, "Index must be valid");
     dynamic_array_insert_ordered(&parent_block->lines, new_line, line_index.line_index);
     return new_index;
 }
@@ -108,7 +108,7 @@ void source_code_reset(Source_Code* code)
     dynamic_array_reset(&code->block_buffer);
     dynamic_array_reset(&code->free_blocks);
 
-    // Insert root block_index
+    // Insert root block
     Source_Block root;
     root.lines = dynamic_array_create_empty<Source_Line>(1);
     root.valid = true;
@@ -195,7 +195,7 @@ void source_code_fill_from_string(Source_Code* code, String text)
     int text_index = 0;
     source_block_fill_from_string(block_index_make_root(code), text, &text_index, 0);
 
-    // Check if root block_index not empty (E.g. empty text)
+    // Check if root block not empty (E.g. empty text)
     {
         auto& root_block = code->block_buffer[0];
         if (root_block.lines.size == 0) {
@@ -388,9 +388,9 @@ bool source_block_inside_comment(Block_Index block_index)
 
 bool source_index_is_end_of_line(Line_Index line_index)
 {
-    auto block_index = index_value(line_index.block_index);
-    assert(line_index.line_index <= block_index->lines.size, "");
-    return line_index.line_index == block_index->lines.size;
+    auto block = index_value(line_index.block_index);
+    assert(line_index.line_index <= block->lines.size, "");
+    return line_index.line_index == block->lines.size;
 }
 
 
@@ -403,9 +403,9 @@ Source_Block* index_value_unsafe(Block_Index index) {
 }
 
 Source_Block* index_value(Block_Index index) {
-    auto block_index = index_value_unsafe(index);
-    assert(block_index->valid, "");
-    return block_index;
+    auto block = index_value_unsafe(index);
+    assert(block->valid, "");
+    return block;
 }
 
 Source_Line* index_value(Line_Index index) {

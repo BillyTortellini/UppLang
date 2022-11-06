@@ -49,6 +49,28 @@ namespace AST
         TYPE_TO_TYPE,
     };
 
+    enum class Node_Position_Type
+    {
+        TOKEN_INDEX,
+        BLOCK_START,
+        BLOCK_END
+    };
+
+    struct Node_Position
+    {
+        Node_Position_Type type;
+        union {
+            Block_Index block_index;
+            Token_Index token_index;
+        } options;
+    };
+
+    struct Node_Range
+    {
+        Node_Position start;
+        Node_Position end;
+    };
+
     enum class Node_Type
     {
         EXPRESSION,
@@ -70,8 +92,8 @@ namespace AST
     {
         Node_Type type;
         Node* parent;
-        Token_Range range;
-        Token_Range bounding_range;
+        Node_Range range;
+        Node_Range bounding_range;
         int analysis_item_index;
     };
 
@@ -259,7 +281,7 @@ namespace AST
     {
         Node base;
         Optional<Expression*> value; // Default-Case if value not available
-        Code_Block* block_index;
+        Code_Block* block;
     };
 
     enum class Statement_Type
@@ -286,7 +308,7 @@ namespace AST
         union
         {
             Expression* expression;
-            Code_Block* block_index;
+            Code_Block* block;
             Definition* definition;
             struct {
                 Expression* left_side;
@@ -295,12 +317,12 @@ namespace AST
             Code_Block* defer_block;
             struct {
                 Expression* condition;
-                Code_Block* block_index;
+                Code_Block* block;
                 Optional<Code_Block*> else_block;
             } if_statement;
             struct {
                 Expression* condition;
-                Code_Block* block_index;
+                Code_Block* block;
             } while_statement;
             struct {
                 Expression* condition;

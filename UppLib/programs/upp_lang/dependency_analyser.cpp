@@ -449,9 +449,9 @@ void analyse_ast_base(AST::Node* base)
     case Node_Type::ARGUMENT: break;
     case Node_Type::STATEMENT: break;
     case Node_Type::CODE_BLOCK: {
-        auto block_index = (Code_Block*)base;
-        block_index->symbol_table = symbol_table_create(analyser.symbol_table, base);
-        analyser.symbol_table = block_index->symbol_table;
+        auto block = (Code_Block*)base;
+        block->symbol_table = symbol_table_create(analyser.symbol_table, base);
+        analyser.symbol_table = block->symbol_table;
         break;
     }
     case Node_Type::DEFINITION:

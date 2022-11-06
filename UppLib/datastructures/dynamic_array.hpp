@@ -65,6 +65,15 @@ void dynamic_array_push_back(Dynamic_Array<T>* array, T item) {
     array->size++;
 }
 
+template<typename T>
+Dynamic_Array<T> array_to_dynamic_array(Array<T>* value) {
+    Dynamic_Array<T> result;
+    result.data = value->data;
+    result.size = value->size;
+    result.capacity = value->size;
+    return result;
+}
+
 template <typename T>
 void dynamic_array_append_other(Dynamic_Array<T>* array, Dynamic_Array<T>* other) {
     dynamic_array_reserve(array, array->size + other->size);

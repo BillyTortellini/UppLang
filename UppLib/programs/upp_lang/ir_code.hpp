@@ -171,7 +171,7 @@ struct IR_Code_Block
 struct IR_Switch_Case
 {
     int value;
-    IR_Code_Block* block_index;
+    IR_Code_Block* block;
 };
 
 struct IR_Instruction_Switch
@@ -215,7 +215,7 @@ struct IR_Instruction
         IR_Instruction_Address_Of address_of;
         IR_Instruction_Unary_OP unary_op;
         IR_Instruction_Binary_OP binary_op;
-        IR_Code_Block* block_index;
+        IR_Code_Block* block;
         int label_index;
     } options;
 };
@@ -243,7 +243,7 @@ struct Type_Signature;
 
 struct Unresolved_Goto
 {
-    IR_Code_Block* block_index;
+    IR_Code_Block* block;
     int instruction_index;
     AST::Code_Block* break_block;
 };

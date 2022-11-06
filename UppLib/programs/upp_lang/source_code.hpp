@@ -93,8 +93,8 @@ struct Source_Block
 
 struct Source_Code
 {
-    // Note: Blocks are stored with a free list, so that undo/redo can recreate the exact same block_index indices
-    Dynamic_Array<Source_Block> block_buffer; // Block 0 is _always_ the root block_index
+    // Note: Blocks are stored with a free list, so that undo/redo can recreate the exact same block indices
+    Dynamic_Array<Source_Block> block_buffer; // Block 0 is _always_ the root block
     Dynamic_Array<int> free_blocks; // Free list for blocks
 };
 
@@ -104,7 +104,7 @@ void source_code_reset(Source_Code* code);
 
 // Manipulation Helpers
 void source_line_destroy(Source_Line* line_index);
-void source_block_destroy(Source_Block* block_index);
+void source_block_destroy(Source_Block* block);
 void source_block_insert_line(Line_Index line_index);
 Block_Index source_block_insert_empty_block(Line_Index line_index);
 void source_code_remove_empty_block(Block_Index block_index);

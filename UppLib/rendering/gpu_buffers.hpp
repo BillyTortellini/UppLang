@@ -3,6 +3,7 @@
 #include "opengl_function_pointers.hpp"
 #include "../datastructures/array.hpp"
 #include "../utility/datatypes.hpp"
+#include "../datastructures/dynamic_array.hpp"
 
 struct Rendering_Core;
 

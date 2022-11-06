@@ -2,7 +2,6 @@
 
 #include <initializer_list>
 #include "../utility/utils.hpp"
-#include "dynamic_array.hpp"
 #include "../math/scalars.hpp"
 
 template<typename T>
@@ -47,18 +46,6 @@ template<typename T>
 Array<T> array_create_copy(T* data, int size) {
     Array<T> result = array_create_empty<T>(size);
     memory_copy(result.data, data, size * sizeof(T));
-    return result;
-}
-
-template<typename T>
-struct Dynamic_Array;
-
-template<typename T>
-Dynamic_Array<T> array_to_dynamic_array(Array<T>* value) {
-    Dynamic_Array<T> result;
-    result.data = value->data;
-    result.size = value->size;
-    result.capacity = value->size;
     return result;
 }
 

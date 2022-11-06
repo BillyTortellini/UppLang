@@ -91,7 +91,7 @@ T* block_allocator_allocate(Block_Allocator<T>* allocator)
         return 0;
     }
 
-    // Remove block_index
+    // Remove block
     curr->next->prev = curr->prev;
     allocator->current_block = curr->next;
     allocator->current_block->prev = 0;

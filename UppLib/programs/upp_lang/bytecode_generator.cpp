@@ -636,7 +636,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 );
             }
 
-            // Generate default block_index
+            // Generate default block
             bytecode_generator_generate_code_block(generator, switch_instr->default_block);
             dynamic_array_push_back(&jmp_to_switch_end_indices, 
                 bytecode_generator_add_instruction(generator, instruction_make_1(Instruction_Type::JUMP, PLACEHOLDER))
@@ -647,7 +647,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             {
                 IR_Switch_Case* switch_case = &switch_instr->cases[i];
                 generator->instructions[case_jump_indices[i]].op1 = generator->instructions.size;
-                bytecode_generator_generate_code_block(generator, switch_case->block_index);
+                bytecode_generator_generate_code_block(generator, switch_case->block);
                 dynamic_array_push_back(&jmp_to_switch_end_indices,
                     bytecode_generator_add_instruction(generator, instruction_make_1(Instruction_Type::JUMP, PLACEHOLDER))
                 );
@@ -698,7 +698,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             break;
         }
         case IR_Instruction_Type::BLOCK:
-            bytecode_generator_generate_code_block(generator, instr->options.block_index);
+            bytecode_generator_generate_code_block(generator, instr->options.block);
             break;
         case IR_Instruction_Type::LABEL: {
             while (generator->label_locations.size <= instr->options.label_index) {
