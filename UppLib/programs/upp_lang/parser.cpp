@@ -2211,6 +2211,8 @@ namespace Parser
                 block_parse = *block_parse_opt;
             }
 
+            assert(block_difference.line_states.size == index_value(block_parse->index)->lines.size, "");
+
             struct Item_Change {
                 bool needs_reparse; // If any of the lines have changed or were deleted
                 bool was_deleted;
@@ -2383,8 +2385,6 @@ namespace Parser
                 if (line_index < block->lines.size && index_value(line_index_make(block_parse->index, line_index))->is_block_reference) {
                     reparse_infos[line_index].needs_reparse = true;
                 }
-
-                block_parse->line_count = block->lines.size;
             }
 
             // Remove errors in changed lines
@@ -2426,20 +2426,35 @@ namespace Parser
                     }
                 }
             }
+            block_parse->line_count = block->lines.size;
 
-            // Update old items array, remove deleted items, update node-ranges
+            // Update old items array, remove deleted items, update node-ranges, update errors from this item
             block_parse_remove_items_from_ast(block_parse);
             for (int i = original_item_changes.size - 1; i >= 0; i--) {
                 auto& change = original_item_changes[i];
+                auto& item = block_parse->items[i];
                 // TODO: Cleanup/free old item
                 if (change.was_deleted) {
                     dynamic_array_remove_ordered(&block_parse->items, i);
                 }
                 else if (change.was_reparsed) {
-                    block_parse->items[i] = change.reparse_item;
+                    item = change.reparse_item;
                 }
                 else if (change.new_line_start != block_parse->items[i].line_start) {
+                    auto index_update_helper = [&](int& line, Block_Index block_index) {
+                        if (line >= item.line_start && line < item.line_start + item.line_count &&
+                            index_equal(block_index, block_parse->index)) 
+                        {
+                            line = change.new_line_start + (line - item.line_start);
+                        }
+                    };
                     auto& item = block_parse->items[i];
+                    for (int j = 0; j < source_parse->error_messages.size; j++) {
+                        auto& error = source_parse->error_messages[j];
+                        index_update_helper(error.origin_line_index, block_parse->index);
+                        index_update_helper(error.range.start.line_index.line_index, error.range.start.line_index.block_index);
+                        index_update_helper(error.range.end.line_index.line_index, error.range.end.line_index.block_index);
+                    }
                     ast_node_update_node_range_in_block(item.node, change.new_line_start - item.line_start, block_parse->index);
                     item.line_start = change.new_line_start;
                 }
