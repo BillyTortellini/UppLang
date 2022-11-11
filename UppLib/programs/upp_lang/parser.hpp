@@ -6,6 +6,7 @@
 #include "source_code.hpp"
 #include "code_history.hpp"
 #include "lexer.hpp"
+#include "ast.hpp"
 
 
 namespace AST
@@ -26,7 +27,7 @@ namespace Parser
     struct Error_Message
     {
         const char* msg;
-        Token_Range range;
+        AST::Node_Range range;
         Block_Parse* block_parse;
         int origin_line_index; // May not be the same as the line index of token_range. Required for incremental parsing
     };

@@ -5,83 +5,6 @@
 #include "compiler.hpp"
 #include "code_history.hpp"
 
-Token_Index node_position_to_token_index(AST::Node_Position pos) {
-    switch (pos.type)
-    {
-    case AST::Node_Position_Type::TOKEN_INDEX:
-        return pos.options.token_index;
-    case AST::Node_Position_Type::BLOCK_START:
-        return token_index_make_block_start(pos.options.block_index);
-    case AST::Node_Position_Type::BLOCK_END:
-        return token_index_make_block_end(pos.options.block_index);
-    }
-    panic("");
-    return token_index_make(line_index_make(block_index_make_root(0), 0), 0);
-}
-
-Token_Range node_range_to_token_range(AST::Node_Range range) {
-    return token_range_make(node_position_to_token_index(range.start), node_position_to_token_index(range.end));
-}
-
-int node_position_compare(AST::Node_Position a, AST::Node_Position b) {
-    return index_compare(node_position_to_token_index(a), node_position_to_token_index(b));
-}
-
-AST::Node_Position node_position_make_token_index(Token_Index index) {
-    AST::Node_Position result;
-    auto line = index_value(index.line_index);
-    if (line->is_block_reference) {
-        result.type = AST::Node_Position_Type::BLOCK_START;
-        result.options.block_index = line->options.block_index;
-        return result;
-    }
-    result.type = AST::Node_Position_Type::TOKEN_INDEX;
-    result.options.token_index = index;
-    return result;
-}
-
-AST::Node_Position node_position_make_block_end(Block_Index block_index) {
-    AST::Node_Position result;
-    result.type = AST::Node_Position_Type::BLOCK_END;
-    result.options.block_index = block_index;
-    return result;
-}
-
-AST::Node_Position node_position_make_block_start(Block_Index block_index) {
-    AST::Node_Position result;
-    result.type = AST::Node_Position_Type::BLOCK_START;
-    result.options.block_index = block_index;
-    return result;
-}
-
-AST::Node_Position node_position_make_end_of_line(Line_Index line_index) {
-    auto line = index_value(line_index);
-    if (line->is_block_reference) {
-       return node_position_make_block_end(line->options.block_index);
-    }
-    else {
-        return node_position_make_token_index(token_index_make_line_end(line_index));
-    }
-}
-
-AST::Node_Position node_position_make_start_of_line(Line_Index line_index) {
-    auto line = index_value(line_index);
-    if (line->is_block_reference) {
-       return node_position_make_block_start(line->options.block_index);
-    }
-    else {
-        return node_position_make_token_index(token_index_make_line_start(line_index));
-    }
-}
-
-AST::Node_Range node_range_make_block(Block_Index index)
-{
-    AST::Node_Range result;
-    result.start = node_position_make_block_start(index);
-    result.end = node_position_make_block_end(index);
-    return result;
-}
-
 namespace Parser
 {
     // Types
@@ -175,7 +98,7 @@ namespace Parser
 
 
     // Error reporting
-    void log_error(const char* msg, Token_Range range)
+    void log_error(const char* msg, Node_Range range)
     {
         Error_Message err;
         err.msg = msg;
@@ -189,11 +112,11 @@ namespace Parser
     }
 
     void log_error_to_pos(const char* msg, Token_Index pos) {
-        log_error(msg, token_range_make(parser.state.pos, pos));
+        log_error(msg, node_range_make(node_position_make_token_index(parser.state.pos), node_position_make_token_index(pos)));
     }
 
     void log_error_range_offset_with_start(const char* msg, Token_Index start, int token_offset) {
-        log_error(msg, token_range_make(start, token_index_advance(start, token_offset)));
+        log_error(msg, node_range_make(start, token_index_advance(start, token_offset)));
     }
 
     void log_error_range_offset(const char* msg, int token_offset) {
@@ -315,6 +238,7 @@ namespace Parser
         }
     }
 
+    int counter = 0;
     void node_finalize_range(AST::Node* node) {
         // NOTE: This Step is indeed necessary because Token-Indices can be ambiguous, 
         /*
@@ -356,6 +280,7 @@ namespace Parser
         node_calculate_bounding_range(node);
 
         // Sanity-Check that start/end is in order
+        counter++;
         int order = index_compare(node_position_to_token_index(range.start), node_position_to_token_index(range.end));
         assert(order != -1, "Ranges must be in order");
         if (order == 0) {
@@ -589,7 +514,7 @@ namespace Parser
         AST::base_destroy(node);
     }
 
-    void block_parse_destroy(Block_Parse* block_parse, bool remove_from_hashtable)
+    void block_parse_destroy(Block_Parse* block_parse)
     {
         auto& source_parse = parser.state.source_parse;
         logg("Removing block_parse of block %d\n", block_parse->index.block_index);
@@ -606,14 +531,12 @@ namespace Parser
 
         // Remove all child blocks (In reverse order since children remove themselves from this array)
         for (int i = block_parse->child_block_parses.size - 1; i >= 0; i--) {
-            block_parse_destroy(block_parse->child_block_parses[i], remove_from_hashtable);
+            block_parse_destroy(block_parse->child_block_parses[i]);
         }
 
         // Remove nodes from parent node
         block_parse_remove_items_from_ast(block_parse);
-        if (remove_from_hashtable) {
-            hashtable_remove_element(&source_parse->block_parses, block_parse->index);
-        }
+        hashtable_remove_element(&source_parse->block_parses, block_parse->index);
         // Destroy all child-items
         for (int i = 0; i < block_parse->items.size; i++) {
             ast_node_destroy_recursively(block_parse->items[i].node);
@@ -645,7 +568,7 @@ namespace Parser
         if (block_parse == 0) { // block was not parsed
             return;
         }
-        block_parse_destroy(*block_parse, true);
+        block_parse_destroy(*block_parse);
     }
 
     namespace Block_Items
@@ -669,7 +592,7 @@ namespace Parser
         }
 
         AST::Node* parse_block_as_error(AST::Node* parent, Block_Index block_index) {
-            log_error("Anonymous blocks aren't allowed in this context", token_range_make_block(block_index));
+            log_error("Anonymous blocks aren't allowed in this context", node_range_make_block(block_index));
             block_index_remove_block_parse(block_index);
             return 0;
         }
@@ -993,7 +916,7 @@ namespace Parser
                 block_index_remove_block_parse(block_index);
             }
             else {
-                log_error("Invalid block, previous line wasn't empty and didn't require a follow block!", token_range_make_block(index_value(pos.line_index)->options.block_index));
+                log_error("Invalid block, previous line wasn't empty and didn't require a follow block!", node_range_make_block(index_value(pos.line_index)->options.block_index));
                 block_index_remove_block_parse(block_index);
             }
             return result;
@@ -1325,7 +1248,7 @@ namespace Parser
                 }
                 else {
                     auto& pos = parser.state.pos;
-                    log_error("Expected identifier", token_range_make(token_index_advance(pos, -1), pos));
+                    log_error("Expected identifier", node_range_make(token_index_advance(pos, -1), pos));
                     read->path_child.value->name = compiler.id_empty_string;
                 }
 
@@ -1372,7 +1295,7 @@ namespace Parser
                 }
                 else {
                     auto& pos = parser.state.pos;
-                    log_error("Missing member name", token_range_make(token_index_advance(pos, -1), pos));
+                    log_error("Missing member name", node_range_make(token_index_advance(pos, -1), pos));
                     result->options.auto_enum = compiler.id_empty_string;
                 }
                 PARSE_SUCCESS(result);
@@ -1529,7 +1452,7 @@ namespace Parser
                 }
                 else {
                     auto& pos = parser.state.pos;
-                    log_error("Missing member name", token_range_make(token_index_advance(pos, -1), pos));
+                    log_error("Missing member name", node_range_make(token_index_advance(pos, -1), pos));
                     result->options.member_access.name = compiler.id_empty_string;
                 }
                 PARSE_SUCCESS(result);
@@ -1976,6 +1899,8 @@ namespace Parser
             line_state.is_original_item_line = false;
             line_state.original_item_index = -1;
             line_state.original_item_line = -1;
+            line_state.needs_reparse = false;
+            line_state.was_reparsed = false;
             dynamic_array_push_back(&new_diff.line_states, line_state);
         }
         for (int i = 0; i < (*block_parse)->items.size; i++) {
@@ -2092,12 +2017,6 @@ namespace Parser
 
     void execute_incremental(Source_Parse* source_parse, Code_History* history)
     {
-        // Incremental Parsing needs to loop over all changes in the code-history similar to text editor token updates, 
-        // but instead of just knowing the changed lines, we need the following information:
-        // - Removed Blocks (To remove cached blocks)
-        // - Block-Reparse information for changed Blocks per line_index (What needs to be reparsed inside a block)
-        //     Added, changed and deleted lines
-
         // Get changes since last sync
         Dynamic_Array<Code_Change> changes = dynamic_array_create_empty<Code_Change>(1);
         SCOPE_EXIT(dynamic_array_destroy(&changes));
@@ -2107,6 +2026,9 @@ namespace Parser
         if (changes.size == 0) {
             return;
         }
+
+        // Prepare for re-parsing
+        parser_prepare_parsing(source_parse);
 
         Source_Difference differences;
         differences.source_parse = source_parse;
@@ -2141,11 +2063,10 @@ namespace Parser
             {
                 auto& merge = change.options.block_merge;
                 if (change.apply_forwards) {
+                    auto into_line_index = line_index_make(merge.from_line_index.block_index, merge.from_line_index.line_index - 1);
                     source_differences_remove_block(&differences, merge.from_block_index, merge.from_line_index);
-                    source_differences_remove_block(
-                        &differences, merge.into_block_index, line_index_make(merge.from_line_index.block_index, merge.from_line_index.line_index - 1)
-                    );
-                    source_difference_insert_new_line(&differences, merge.from_line_index);
+                    source_differences_remove_block(&differences, merge.into_block_index, into_line_index);
+                    source_difference_insert_new_line(&differences, into_line_index);
                 }
                 else {
                     // Remove lines after split
@@ -2205,8 +2126,6 @@ namespace Parser
             block_index_remove_block_parse(differences.removed_blocks[i]);
         }
 
-        // Prepare for parsing
-        parser_prepare_parsing(source_parse);
         // Reparse changed blocks
         for (int i = 0; i < differences.block_differences.size; i++)
         {
@@ -2242,7 +2161,7 @@ namespace Parser
                 int expected_original_line = 0;
                 for (int line_index = 0; line_index < block_difference.line_states.size; line_index++)
                 {
-                    auto line_status = block_difference.line_states[line_index];
+                    auto& line_status = block_difference.line_states[line_index];
                     // Check if we are on the start of a original item
                     if (line_status.is_original_item_line && line_status.original_item_line == 0)
                     {
@@ -2269,12 +2188,25 @@ namespace Parser
                     }
 
                     bool mark_previous_potential_multiline_items_as_reparse = false;
-                    if (line_status.is_original && line_status.original_id != expected_original_line) {
-                        // Note that this lines doesn't need a reparse, since only previous lines were deleted
-                        mark_previous_potential_multiline_items_as_reparse = true;
-                        expected_original_line = line_status.original_id + 1;
+                    if (line_status.is_original) {
+                        if (line_status.original_id == expected_original_line) {
+                            expected_original_line += 1;
+                        }
+                        else {
+                            // Note that this lines doesn't need a reparse, since only previous lines were deleted
+                            mark_previous_potential_multiline_items_as_reparse = true;
+                            expected_original_line = line_status.original_id + 1;
+                        }
                     }
-                    if (!line_status.is_original || line_status.was_changed) {
+                    if (!line_status.is_original) {
+                        auto watch_line_index = line_index_make(block_parse->index, line_index);
+                        auto line = index_value(watch_line_index);
+                        if (!(source_line_is_comment(watch_line_index) || (!line->is_block_reference && line->options.text.tokens.size == 0))) {
+                            mark_previous_potential_multiline_items_as_reparse = true;
+                            line_status.needs_reparse = true;
+                        }
+                    }
+                    else if (line_status.was_changed) {
                         mark_previous_potential_multiline_items_as_reparse = true;
                         line_status.needs_reparse = true;
                     }
@@ -2414,8 +2346,12 @@ namespace Parser
                     for (int j = 0; j < source_parse->error_messages.size; j++) {
                         auto& error = source_parse->error_messages[j];
                         index_update_helper(error.origin_line_index, block_parse->index);
-                        index_update_helper(error.range.start.line_index.line_index, error.range.start.line_index.block_index);
-                        index_update_helper(error.range.end.line_index.line_index, error.range.end.line_index.block_index);
+                        if (error.range.start.type == AST::Node_Position_Type::TOKEN_INDEX) {
+                            index_update_helper(error.range.start.options.token_index.line_index.line_index, error.range.start.options.token_index.line_index.block_index);
+                        }
+                        if (error.range.end.type == AST::Node_Position_Type::TOKEN_INDEX) {
+                            index_update_helper(error.range.end.options.token_index.line_index.line_index, error.range.end.options.token_index.line_index.block_index);
+                        }
                     }
                     ast_node_update_node_range_in_block(item.node, change.new_line_start - item.line_start, block_parse->index);
                     item.line_start = change.new_line_start;
@@ -2455,36 +2391,6 @@ namespace Parser
 
         logg("INCREMENTAL REPARSE RESULT: \n----------------------\n");
         AST::base_print(AST::upcast(source_parse->root));
-
-        /*
-        Things to Test:
-         * Adding new blocks/new indentations
-         * Removing AST-Items
-         * Nodes with attached block parses (altered/removed nodes)
-         * Blocks at block-start
-
-        Things that definitly don't work:
-         * AST-Node allocations/deallocations --> This seems reasonably easy to solve..., just remove nodes + children...
-
-        What needs to be done:
-         - Remove errors of parts/lines that were reparsed/removed
-         - Errors may be on lines with no line-items, I think
-         - Errors are also rolled back during parsing
-         - The new generated errors should not be deleted
-         - Do error token-ranges need to be updated?
-
-        Things that may not work out correctly:
-         - Error messages (Note: error ranges are currently invalid, since errors are reset on reparse)
-         - AST-Node allocation
-         - Token ranges of moved items --> Actually, this seems to work
-         - Token ranges of parent items that point at the end of a block
-         - Removing a node that has a block-parse attached to it...
-         - Lines after all items/the last lines in a block
-
-        How to do errors?
-            Usually errors come from a parse-item
-        How to do allocations?
-        */
     }
 
 

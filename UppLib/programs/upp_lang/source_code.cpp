@@ -324,11 +324,11 @@ void source_block_check_sanity(Block_Index index)
     for (int i = 0; i < block->lines.size; i++)
     {
         auto& line = block->lines[i];
+        assert(!(last_was_block && line.is_block_reference), "No two blocks are allowed to follow one another!");
+        last_was_block = line.is_block_reference;
         if (!line.is_block_reference) {
-            last_was_block = false;
             continue;
         }
-        assert(!last_was_block, "No two blocks are allowed to follow one another!");
         auto child_index = line.options.block_index;
         auto child_block = index_value(child_index);
         assert(index_equal(child_block->parent, index), "Parent/Child connections must be correct!");
@@ -637,21 +637,16 @@ int index_compare(Line_Index a, Line_Index b)
         return a.line_index < b.line_index ? 1 : -1;
     }
 
-    auto a_block = index_value(a.block_index);
-    auto b_block = index_value(b.block_index);
     int a_indent = block_index_get_indentation(a.block_index);
     int b_indent = block_index_get_indentation(b.block_index);
-    while (!index_equal(a_block->parent, b_block->parent))
+    while (!index_equal(a.block_index, b.block_index))
     {
-        if (a_indent > b_indent)
-        {
+        if (a_indent > b_indent) {
             a = block_index_to_line_index(a.block_index);
-            a_block = index_value(a.block_index);
             a_indent -= 1;
         }
         else {
             b = block_index_to_line_index(b.block_index);
-            b_block = index_value(b.block_index);
             b_indent -= 1;
         }
     }

@@ -51,6 +51,18 @@ enum class Editor_Mode
     INSERT,
 };
 
+struct Input_Replay
+{
+    String code_state_initial;
+    String code_state_afterwards;
+    Dynamic_Array<Key_Message> recorded_inputs;
+    bool currently_recording;
+    bool currently_replaying;
+    Editor_Mode start_mode;
+    Text_Index cursor_start;
+};
+
+
 struct Syntax_Editor
 {
     // Editing
@@ -68,6 +80,7 @@ struct Syntax_Editor
     bool space_after_cursor;
 
     Dynamic_Array<Fuzzy_Search> code_completion_suggestions;
+    Input_Replay input_replay;
 
     // Rendering
     String context_text;
@@ -133,6 +146,24 @@ enum class Normal_Command
 static Syntax_Editor syntax_editor;
 
 
+// InputReplay
+Input_Replay input_replay_create()
+{
+    Input_Replay result;
+    result.code_state_initial = string_create_empty(1);
+    result.code_state_afterwards = string_create_empty(1);
+    result.recorded_inputs = dynamic_array_create_empty<Key_Message>(1);
+    result.currently_recording = false;
+    result.currently_replaying = false;
+    return result;
+}
+
+void input_replay_destroy(Input_Replay* replay)
+{
+    string_destroy(&replay->code_state_afterwards);
+    string_destroy(&replay->code_state_initial);
+    dynamic_array_destroy(&replay->recorded_inputs);
+}
 
 // Helpers
 Token token_make_dummy() {
@@ -157,6 +188,19 @@ Token get_cursor_token(bool after_cursor)
     return tokens[tok_index];
 }
 
+void syntax_editor_set_text(String string)
+{
+    auto& editor = syntax_editor;
+    editor.cursor = text_index_make(block_get_first_text_line(block_index_make_root(editor.code)), 0);
+
+    source_code_fill_from_string(editor.code, string);
+    source_code_tokenize(editor.code);
+    code_history_reset(&editor.history);
+    editor.last_token_synchronized = history_get_timestamp(&editor.history);
+    editor.code_changed_since_last_compile = true;
+    compiler_compile_clean(editor.code, Compile_Type::ANALYSIS_ONLY, string_create(syntax_editor.file_path));
+}
+
 void syntax_editor_load_text_file(const char* filename)
 {
     auto& editor = syntax_editor;
@@ -166,20 +210,12 @@ void syntax_editor_load_text_file(const char* filename)
     String result;
     if (content.available) {
         result = content.value;
+        editor.file_path = filename;
     }
     else {
         result = string_create_static("main :: (x : int) -> void \n{\n\n}");
     }
-
-    editor.cursor = text_index_make(block_get_first_text_line(block_index_make_root(editor.code)), 0);
-    editor.file_path = filename;
-
-    source_code_fill_from_string(editor.code, result);
-    source_code_tokenize(editor.code);
-    code_history_reset(&editor.history);
-    editor.last_token_synchronized = history_get_timestamp(&editor.history);
-    editor.code_changed_since_last_compile = true;
-    compiler_compile_clean(editor.code, Compile_Type::ANALYSIS_ONLY, string_create(syntax_editor.file_path));
+    syntax_editor_set_text(result);
 }
 
 void syntax_editor_save_text_file()
@@ -395,7 +431,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
             auto& parse_errors = compiler.code_sources[i]->source_parse->error_messages;
             for (int j = 0; j < parse_errors.size; j++) {
                 auto& error = parse_errors[j];
-                dynamic_array_push_back(&editor.errors, error_display_make(string_create_static(error.msg), error.range));
+                dynamic_array_push_back(&editor.errors, error_display_make(string_create_static(error.msg), AST::node_range_to_token_range(error.range)));
             }
         }
 
@@ -714,6 +750,10 @@ void code_completion_find_suggestions()
     auto& suggestions = editor.code_completion_suggestions;
     dynamic_array_reset(&suggestions);
     if (editor.mode != Editor_Mode::INSERT || editor.cursor.pos == 0) {
+        return;
+    }
+
+    if (editor.input_replay.currently_recording || editor.input_replay.currently_replaying) {
         return;
     }
 
@@ -1234,11 +1274,188 @@ void insert_command_execute(Insert_Command input)
 
 
 // Syntax Editor
+void syntax_editor_process_key_message(Key_Message& msg)
+{
+    auto& mode = syntax_editor.mode;
+    if (mode == Editor_Mode::INSERT)
+    {
+        Insert_Command input;
+        if (msg.key_code == Key_Code::SPACE && msg.key_down) {
+            input.type = msg.ctrl_down ? Insert_Command_Type::INSERT_CODE_COMPLETION : Insert_Command_Type::SPACE;
+        }
+        else if (msg.key_code == Key_Code::L && msg.key_down && msg.ctrl_down) {
+            input.type = Insert_Command_Type::EXIT_INSERT_MODE;
+        }
+        else if (msg.key_code == Key_Code::ARROW_LEFT && msg.key_down) {
+            input.type = Insert_Command_Type::MOVE_LEFT;
+        }
+        else if (msg.key_code == Key_Code::ARROW_RIGHT && msg.key_down) {
+            input.type = Insert_Command_Type::MOVE_RIGHT;
+        }
+        else if (msg.key_code == Key_Code::BACKSPACE && msg.key_down) {
+            input.type = Insert_Command_Type::BACKSPACE;
+        }
+        else if (msg.key_code == Key_Code::RETURN && msg.key_down) {
+            if (msg.shift_down) {
+                input.type = Insert_Command_Type::ENTER_REMOVE_ONE_INDENT;
+            }
+            else {
+                input.type = Insert_Command_Type::ENTER;
+            }
+        }
+        else if (char_is_letter(msg.character) || msg.character == '_') {
+            input.type = Insert_Command_Type::IDENTIFIER_LETTER;
+            input.letter = msg.character;
+        }
+        else if (char_is_digit(msg.character)) {
+            input.type = Insert_Command_Type::NUMBER_LETTER;
+            input.letter = msg.character;
+        }
+        else if (msg.key_code == Key_Code::TAB && msg.key_down) {
+            if (msg.shift_down) {
+                input.type = Insert_Command_Type::REMOVE_INDENTATION;
+            }
+            else {
+                input.type = Insert_Command_Type::ADD_INDENTATION;
+            }
+        }
+        else if (msg.key_down && msg.character != -1) {
+            if (string_contains_character(characters_get_non_identifier_non_whitespace(), msg.character)) {
+                input.type = Insert_Command_Type::DELIMITER_LETTER;
+                input.letter = msg.character;
+            }
+            else {
+                return;
+            }
+        }
+        else {
+            return;
+        }
+        insert_command_execute(input);
+    }
+    else
+    {
+        syntax_editor.space_before_cursor = false;
+        syntax_editor.space_after_cursor = false;
+        Normal_Command command;
+        if (msg.key_code == Key_Code::L && msg.key_down) {
+            command = Normal_Command::MOVE_RIGHT;
+        }
+        else if (msg.key_code == Key_Code::H && msg.key_down) {
+            command = Normal_Command::MOVE_LEFT;
+        }
+        else if (msg.key_code == Key_Code::J && msg.key_down) {
+            command = Normal_Command::MOVE_DOWN;
+        }
+        else if (msg.key_code == Key_Code::K && msg.key_down) {
+            command = Normal_Command::MOVE_UP;
+        }
+        else if (msg.key_code == Key_Code::O && msg.key_down) {
+            if (msg.shift_down) {
+                command = Normal_Command::ADD_LINE_ABOVE;
+            }
+            else {
+                command = Normal_Command::ADD_LINE_BELOW;
+            }
+        }
+        else if (msg.key_code == Key_Code::NUM_0 && msg.key_down) {
+            command = Normal_Command::MOVE_LINE_START;
+        }
+        else if (msg.key_code == Key_Code::NUM_4 && msg.key_down && msg.shift_down) {
+            command = Normal_Command::MOVE_LINE_END;
+        }
+        else if (msg.key_code == Key_Code::A && msg.key_down) {
+            if (msg.shift_down) {
+                command = Normal_Command::INSERT_AT_LINE_END;
+            }
+            else {
+                command = Normal_Command::INSERT_AFTER;
+            }
+        }
+        else if (msg.key_code == Key_Code::I && msg.key_down) {
+            if (msg.shift_down) {
+                command = Normal_Command::INSERT_AT_LINE_START;
+            }
+            else {
+                command = Normal_Command::INSERT_BEFORE;
+            }
+        }
+        else if (msg.key_code == Key_Code::R && msg.key_down) {
+            if (msg.ctrl_down) {
+                command = Normal_Command::REDO;
+            }
+            else {
+                command = Normal_Command::CHANGE_TOKEN;
+            }
+        }
+        else if (msg.key_code == Key_Code::X && msg.key_down) {
+            command = Normal_Command::DELETE_TOKEN;
+        }
+        else if (msg.key_code == Key_Code::U && msg.key_down) {
+            command = Normal_Command::UNDO;
+        }
+        else {
+            return;
+        }
+        normal_command_execute(command);
+    }
+}
+
 void syntax_editor_update()
 {
     auto& editor = syntax_editor;
     auto& input = syntax_editor.input;
     auto& mode = syntax_editor.mode;
+
+    // Handle input replay
+    {
+        auto& replay = editor.input_replay;
+        if (editor.input->key_pressed[(int)Key_Code::F9]) {
+            if (replay.currently_recording) {
+                logg("Ending recording of inputs, captures: %d messages!\n", replay.recorded_inputs.size);
+                replay.currently_recording = false;
+                string_reset(&replay.code_state_afterwards);
+                source_code_append_to_string(editor.code, &replay.code_state_afterwards);
+            }
+            else {
+                logg("Started recording keyboard inputs!", replay.recorded_inputs.size);
+                replay.currently_recording = true;
+                replay.cursor_start = editor.cursor;
+                replay.start_mode = editor.mode;
+                string_reset(&replay.code_state_initial);
+                source_code_append_to_string(editor.code, &replay.code_state_initial);
+                dynamic_array_reset(&replay.recorded_inputs);
+            }
+        }
+        if (editor.input->key_pressed[(int)Key_Code::F10]) {
+            if (replay.currently_recording) {
+                logg("Cannot replay recorded inputs, since we are CURRENTLY RECORDING!\n");
+            }
+            else {
+                replay.currently_replaying = true;
+                SCOPE_EXIT(replay.currently_replaying = false);
+                // Set new state
+                syntax_editor_set_text(replay.code_state_initial);
+                editor.cursor = replay.cursor_start;
+                editor.mode = replay.start_mode;
+                for (int i = 0; i < replay.recorded_inputs.size; i++) {
+                    syntax_editor_process_key_message(replay.recorded_inputs[i]);
+                }
+                auto text_afterwards = string_create_empty(256);
+                SCOPE_EXIT(string_destroy(&text_afterwards));
+                source_code_append_to_string(editor.code, &text_afterwards);
+                if (!string_equals(&text_afterwards, &replay.code_state_afterwards)) {
+                    logg("Replaying the events did not end in the same output!\n");
+                }
+                else {
+                    logg("Replay successfull, everything happened as expected");
+                }
+            }
+        }
+        if (replay.currently_recording) {
+            dynamic_array_append_other(&replay.recorded_inputs, &input->key_messages);
+        }
+    }
 
     if (syntax_editor.input->key_pressed[(int)Key_Code::O] && syntax_editor.input->key_down[(int)Key_Code::CTRL]) {
         auto open_file = file_io_open_file_selection_dialog();
@@ -1250,131 +1467,8 @@ void syntax_editor_update()
         syntax_editor_save_text_file();
     }
 
-    for (int i = 0; i < input->key_messages.size; i++)
-    {
-        Key_Message msg = input->key_messages[i];
-        if (mode == Editor_Mode::INSERT)
-        {
-            Insert_Command input;
-            if (msg.key_code == Key_Code::SPACE && msg.key_down) {
-                input.type = msg.ctrl_down ? Insert_Command_Type::INSERT_CODE_COMPLETION : Insert_Command_Type::SPACE;
-            }
-            else if (msg.key_code == Key_Code::L && msg.key_down && msg.ctrl_down) {
-                input.type = Insert_Command_Type::EXIT_INSERT_MODE;
-            }
-            else if (msg.key_code == Key_Code::ARROW_LEFT && msg.key_down) {
-                input.type = Insert_Command_Type::MOVE_LEFT;
-            }
-            else if (msg.key_code == Key_Code::ARROW_RIGHT && msg.key_down) {
-                input.type = Insert_Command_Type::MOVE_RIGHT;
-            }
-            else if (msg.key_code == Key_Code::BACKSPACE && msg.key_down) {
-                input.type = Insert_Command_Type::BACKSPACE;
-            }
-            else if (msg.key_code == Key_Code::RETURN && msg.key_down) {
-                if (msg.shift_down) {
-                    input.type = Insert_Command_Type::ENTER_REMOVE_ONE_INDENT;
-                }
-                else {
-                    input.type = Insert_Command_Type::ENTER;
-                }
-            }
-            else if (char_is_letter(msg.character) || msg.character == '_') {
-                input.type = Insert_Command_Type::IDENTIFIER_LETTER;
-                input.letter = msg.character;
-            }
-            else if (char_is_digit(msg.character)) {
-                input.type = Insert_Command_Type::NUMBER_LETTER;
-                input.letter = msg.character;
-            }
-            else if (msg.key_code == Key_Code::TAB && msg.key_down) {
-                if (msg.shift_down) {
-                    input.type = Insert_Command_Type::REMOVE_INDENTATION;
-                }
-                else {
-                    input.type = Insert_Command_Type::ADD_INDENTATION;
-                }
-            }
-            else if (msg.key_down && msg.character != -1) {
-                if (string_contains_character(characters_get_non_identifier_non_whitespace(), msg.character)) {
-                    input.type = Insert_Command_Type::DELIMITER_LETTER;
-                    input.letter = msg.character;
-                }
-                else {
-                    continue;
-                }
-            }
-            else {
-                continue;
-            }
-            insert_command_execute(input);
-        }
-        else
-        {
-            syntax_editor.space_before_cursor = false;
-            syntax_editor.space_after_cursor = false;
-            Normal_Command command;
-            if (msg.key_code == Key_Code::L && msg.key_down) {
-                command = Normal_Command::MOVE_RIGHT;
-            }
-            else if (msg.key_code == Key_Code::H && msg.key_down) {
-                command = Normal_Command::MOVE_LEFT;
-            }
-            else if (msg.key_code == Key_Code::J && msg.key_down) {
-                command = Normal_Command::MOVE_DOWN;
-            }
-            else if (msg.key_code == Key_Code::K && msg.key_down) {
-                command = Normal_Command::MOVE_UP;
-            }
-            else if (msg.key_code == Key_Code::O && msg.key_down) {
-                if (msg.shift_down) {
-                    command = Normal_Command::ADD_LINE_ABOVE;
-                }
-                else {
-                    command = Normal_Command::ADD_LINE_BELOW;
-                }
-            }
-            else if (msg.key_code == Key_Code::NUM_0 && msg.key_down) {
-                command = Normal_Command::MOVE_LINE_START;
-            }
-            else if (msg.key_code == Key_Code::NUM_4 && msg.key_down && msg.shift_down) {
-                command = Normal_Command::MOVE_LINE_END;
-            }
-            else if (msg.key_code == Key_Code::A && msg.key_down) {
-                if (msg.shift_down) {
-                    command = Normal_Command::INSERT_AT_LINE_END;
-                }
-                else {
-                    command = Normal_Command::INSERT_AFTER;
-                }
-            }
-            else if (msg.key_code == Key_Code::I && msg.key_down) {
-                if (msg.shift_down) {
-                    command = Normal_Command::INSERT_AT_LINE_START;
-                }
-                else {
-                    command = Normal_Command::INSERT_BEFORE;
-                }
-            }
-            else if (msg.key_code == Key_Code::R && msg.key_down) {
-                if (msg.ctrl_down) {
-                    command = Normal_Command::REDO;
-                }
-                else {
-                    command = Normal_Command::CHANGE_TOKEN;
-                }
-            }
-            else if (msg.key_code == Key_Code::X && msg.key_down) {
-                command = Normal_Command::DELETE_TOKEN;
-            }
-            else if (msg.key_code == Key_Code::U && msg.key_down) {
-                command = Normal_Command::UNDO;
-            }
-            else {
-                continue;
-            }
-            normal_command_execute(command);
-        }
+    for (int i = 0; i < input->key_messages.size; i++) {
+        syntax_editor_process_key_message(input->key_messages[i]);
     }
 
     bool build_and_run = syntax_editor.input->key_pressed[(int)Key_Code::F5];
@@ -1400,7 +1494,7 @@ void syntax_editor_update()
     }
 }
 
-void syntax_editor_initialize(Rendering_Core* rendering_core, Text_Renderer* text_renderer, Renderer_2D* renderer_2D, Input* input, Timer* timer)
+void syntax_editor_initialize(Rendering_Core * rendering_core, Text_Renderer * text_renderer, Renderer_2D * renderer_2D, Input * input, Timer * timer)
 {
     memory_zero(&syntax_editor);
     syntax_editor.context_text = string_create_empty(256);
@@ -1421,6 +1515,8 @@ void syntax_editor_initialize(Rendering_Core* rendering_core, Text_Renderer* tex
     syntax_editor.cursor = text_index_make(line_index_make(block_index_make(syntax_editor.code, 0), 0), 0);
     syntax_editor.camera_start_line = 0;
     syntax_editor.last_line_count = 100;
+
+    syntax_editor.input_replay = input_replay_create();
 
     compiler_initialize(timer);
     compiler_run_testcases(timer);
@@ -1639,7 +1735,7 @@ void syntax_highlighting_mark_range(Token_Range range, vec3 normal_color, vec3 e
     }
 }
 
-void syntax_highlighting_mark_section(AST::Node* base, Parser::Section section, vec3 normal_color, vec3 empty_range_color, bool underline)
+void syntax_highlighting_mark_section(AST::Node * base, Parser::Section section, vec3 normal_color, vec3 empty_range_color, bool underline)
 {
     assert(base != 0, "");
     auto ranges = syntax_editor.token_range_buffer;
@@ -1652,7 +1748,7 @@ void syntax_highlighting_mark_section(AST::Node* base, Parser::Section section, 
     }
 }
 
-void syntax_highlighting_set_section_text_color(AST::Node* base, Parser::Section section, vec3 color)
+void syntax_highlighting_set_section_text_color(AST::Node * base, Parser::Section section, vec3 color)
 {
     assert(base != 0, "");
     auto ranges = syntax_editor.token_range_buffer;
@@ -1676,7 +1772,7 @@ void syntax_highlighting_set_section_text_color(AST::Node* base, Parser::Section
     }
 }
 
-void syntax_highlighting_set_symbol_colors(AST::Node* base)
+void syntax_highlighting_set_symbol_colors(AST::Node * base)
 {
     Symbol* symbol = code_query_get_ast_node_symbol(base);
     if (symbol != 0) {
@@ -1897,7 +1993,7 @@ void syntax_editor_layout_block(Block_Index block_index, int* screen_index, int 
 
 void syntax_editor_layout_apply_camera_offset(Block_Index block_index)
 {
-    auto block= index_value(block_index);
+    auto block = index_value(block_index);
     block->render_start -= syntax_editor.camera_start_line;
     block->render_end -= syntax_editor.camera_start_line;
 
@@ -1926,7 +2022,7 @@ void syntax_editor_render_block(Block_Index block_index)
     // Render lines
     for (int i = 0; i < block->lines.size; i++)
     {
-        auto line= block->lines[i];
+        auto line = block->lines[i];
         if (line.is_block_reference) {
             syntax_editor_render_block(line.options.block_index);
         }
@@ -1944,7 +2040,7 @@ void syntax_editor_render_block(Block_Index block_index)
     syntax_editor_draw_block_outline(block->render_start, block->render_end, block->render_indent);
 }
 
-bool syntax_editor_display_analysis_info(AST::Node* node)
+bool syntax_editor_display_analysis_info(AST::Node * node)
 {
     if (node->type != AST::Node_Type::EXPRESSION) return false;
     auto expr = AST::downcast<AST::Expression>(node);

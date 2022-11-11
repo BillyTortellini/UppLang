@@ -71,6 +71,19 @@ namespace AST
         Node_Position end;
     };
 
+    Token_Index node_position_to_token_index(Node_Position pos);
+    int node_position_compare(Node_Position a, Node_Position b);
+    Node_Position node_position_make_token_index(Token_Index index);
+    Node_Position node_position_make_block_end(Block_Index block_index);
+    Node_Position node_position_make_block_start(Block_Index block_index);
+    Node_Position node_position_make_end_of_line(Line_Index line_index);
+    Node_Position node_position_make_start_of_line(Line_Index line_index);
+
+    Node_Range node_range_make(Node_Position a, Node_Position b);
+    Node_Range node_range_make(Token_Index a, Token_Index b);
+    Node_Range node_range_make_block(Block_Index index);
+    Token_Range node_range_to_token_range(Node_Range range);
+
     enum class Node_Type
     {
         EXPRESSION,

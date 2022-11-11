@@ -1,3 +1,15 @@
+
+Implementation Plan (Features):
+-------------------------------
+ * Keyboard recorder/replay (Testing multiple inputs in a single frame, creates testcases)
+ * Named arguments in function calls
+ * Templates/Generics/Whatever (Simple version without too much dependency complications)
+ * C-Integration (Calling c function, beeing able to create a win32 window)
+ * Incremental Analysis + Code-Gen
+ * Better namespace stuff probably (Importing symbols from namespaces...)
+ * Editor features (movements, motions, ...)
+ * Loops
+
 Incremental Reparsing refactor:
 -------------------------------
 What information do I need for reparse, what should I get from block-differences?

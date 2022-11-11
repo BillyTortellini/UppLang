@@ -155,10 +155,10 @@ void code_change_apply(Code_History* history, Code_Change* change, bool forwards
     case Code_Change_Type::BLOCK_MERGE:
     {
         auto& merge = change->options.block_merge;
-        auto& from_lines = index_value(merge.from_block_index)->lines;
         auto& into_lines = index_value(merge.into_block_index)->lines;
-        if (change->apply_forwards)
+        if (apply_change_forward)
         {
+            auto& from_lines = index_value(merge.from_block_index)->lines;
             merge.into_line_count = into_lines.size;
             merge.from_line_index = block_index_to_line_index(merge.from_block_index);
             dynamic_array_append_other(&into_lines, &from_lines);
@@ -166,8 +166,11 @@ void code_change_apply(Code_History* history, Code_Change* change, bool forwards
             source_code_remove_empty_block(merge.from_block_index);
         }
         else {
+            merge.from_line_index = block_index_to_line_index(merge.into_block_index);
+            merge.from_line_index.line_index += 1;
             merge.from_block_index = source_block_insert_empty_block(merge.from_line_index);
             auto slice = dynamic_array_make_slice(&into_lines, merge.into_line_count, into_lines.size);
+            auto& from_lines = index_value(merge.from_block_index)->lines;
             dynamic_array_append_other(&from_lines, &array_to_dynamic_array(&slice));
             dynamic_array_rollback_to_size(&into_lines, merge.into_line_count);
         }
@@ -525,7 +528,7 @@ Line_Index history_add_line_indent(Code_History* history, Line_Index old_line_in
     bool found_next_block = false;
     Block_Index prev_block_index;
     Block_Index next_block_index;
-    if (old_line_index.line_index - 1 > 0) {
+    if (old_line_index.line_index - 1 >= 0) {
         auto& prev_line = block->lines[old_line_index.line_index - 1];
         if (prev_line.is_block_reference) {
             found_prev_block = true;
