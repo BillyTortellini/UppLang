@@ -305,6 +305,7 @@ struct Expression_Info
         Hardcoded_Type hardcoded;
         Symbol_Table* module_table;
         Upp_Constant constant;
+        int argument_index;
     } options;
 
     bool contains_errors; // If this expression contains any errors (Not recursive), currently only used for comptime-calculation
@@ -312,8 +313,8 @@ struct Expression_Info
         Info_Cast_Type cast_type;
     } specifics;
 
-    Expression_Context context; // Maybe I dont even need to store the context
-    struct {
+    Expression_Context context; // Maybe I don't even want to store the context
+    struct { // Info for code-gen
         int deref_count;
         bool take_address_of;
         Info_Cast_Type cast;

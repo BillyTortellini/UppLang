@@ -1,28 +1,92 @@
 
+
+Polymorphism/Generics/Templates:
+--------------------------------
+1. Comptime parameters for functions
+    add_fixed :: (a: int, $value: int) -> int
+        // Note that value should be usable as comptime value
+        buffer: [value]int
+        return a + value
+
+    add_fixed(15, 32 * 100)
+
+    This already requires us to be able to analyse a function multiple times.
+    Also comptime value de-duplication would be good.
+
+    This also gets us back to the question what we want to analyse 
+
+2. Type parameters should also work
+    
+
+Main usage for templates:
+ - Generic data-structures (E.g. dynamic-array, hashtable)
+ - Math library (vectors, matrices, ...)
+
+This means that symbols can now also be comptime functions
+
+Hashable :: struct
+   type: Type
+   hash: (T: Type) -> u64
+   equals: (T: Type) -> bool
+
+Hashtable :: struct(Hashable: Hashable, Value_Type: Type)
+    entries: []struct
+        valid: bool
+        key: Hashable.type
+        value: Value_Type
+        hash: u64
+    element_count: u32
+    
+    
+
+
+
+
+
+
+
+
+
+
+Named-Function arguments (Also struct initializer):
+---------------------------------------------------
+Given: 
+    Caller: list of arguments (With and without names), which we can analyze
+
+Problem:
+    We don't store parameter-names for functions, where should they be stored?
+    The problem here is that we probably also want to support all function calls? Function pointer, hardcoded functions, normal functions:
+        - Hardcoded-Functions
+        - Type_of, size_of, new
+        Type-Signature
+
+Plan:
+    Verschiedene type-signatures für verschiedenen namen von parametern.
+    Eigene funktion für vergleichen von type_signature pointern, die ausbessern
+Ist es ein problem wenn wir mehrere type-signatures haben?
+
+TODO:
+    1. Type_Signature equal funktion schreiben, alle == ausbessern DONE
+    2. Namen in type_signature abspeichern (E.g. type_signature_create_function mit anderen argumenten)
+     --> Immer wenn eine neue type-signature kommt, muss ich die vergleichen können, nicht vergessen!
+    4. type-signature equal bei funktionen muss dann namen auch vergleichen, sonst nur pointer vergleich
+        --> Wir machens jetz sou dass funktionen zeugs haben können jo
+    5. Funktion call logic für parameter/argumente einbauen
+
+
+
 Implementation Plan (Features):
 -------------------------------
- * Keyboard recorder/replay (Testing multiple inputs in a single frame, creates testcases)
- * Named arguments in function calls
  * Templates/Generics/Whatever (Simple version without too much dependency complications)
  * C-Integration (Calling c function, beeing able to create a win32 window)
- * Incremental Analysis + Code-Gen
+ * Keyboard recorder/replay (Testing multiple inputs in a single frame, creates testcases, maybe with saving and replaying for tests?)
+ t status
+ * Named arguments in function calls
  * Better namespace stuff probably (Importing symbols from namespaces...)
  * Editor features (movements, motions, ...)
  * Loops
+ * Incremental Analysis + Code-Gen
 
-Incremental Reparsing refactor:
--------------------------------
-What information do I need for reparse, what should I get from block-differences?
-
-TODO:
------
- - Refactor the reparser, make it simpler
-
-
-Ideas:
- * Input-Replay for Editor Test-cases 
-     Record sequence of button inputs, beeing able to replay them with the same state.
- * Block merge/split in editor history could maybe be done smarter by just having add/delete lines and add/delete blocks
 
 
 Design-Goals/Requirements:
@@ -63,57 +127,6 @@ First off, how will to algorithm to re-evaluate Items look like:
 What about lines that aren't items yet? e.g. Empty-lines, lines with errors?
 There is no error statement, so how do they work? Just save it as an added line?
 Removed lines don't matter if there are no items
-
-
-Notes from last time:
----------------------
-I may need to think more about what Informations the parser actually needs for incremental compilation,
-since we both need to 
- 1. Update Block-Parse Structure
-      * Keep line indices up to date (decrement by one on delete, increment by one after insert)
-         - Necessary for Line-Items and Line-Changes!
-      * Remove line items that no longer exist (Line-Deletes) (Or mark them to be removed)
-      * Remove Blocks that no longer exist
- 2. Keep track of parts that need to be reparsed
-      * Full blocks if necessary (Probably on merge)
-      * Single line items that need reparsing (including follow items if necessary)
-
-After finding all differences and reparsing the respective line-items,
-the block-children need to be reset for parent items
-
-Do i need to know which line items changed, or which lines changed?
-Probably lines
-    
-how to remove already parsed nodes
- --> How are nodes allocated
-
-Next thing todo:
-----------------
-Incremental Parsing needs to loop over all changes in the code-history similar to text editor, but
-instead of changed lines, we need the following information:
-- Removed Blocks (To remove cached blocks)
-- Block-Reparse information (What needs to be reparsed inside a block)
-- Either full block, or:
- * Added/Changed lines by up-to-date index (So we can reparse line items)
- * Removed lines by old index (To remove line-items from cached block)
-
-Incremental Parsing:
---------------------
-Implementation:
- 1. Implement caching loaded-file imports in Compiler (E.g. file-loading, tokenization + parsing)
-    Do this to test the 'flow' of incremental compilation
- 2. Implement Block-based parsing, where blocks return an array of line-items
- 3. Implement Incremental Parsing by reusing already parsed blocks from previous parses
- 4. Only reparse lines in a block that have changed.
- 5. Provide detailed changes by comparing the new parsed ast-item to the previously parsed
- 6. Add Change-Log to parser
-
-
-This means:
------------
-1. Write parsed-blocks to cache
-2. Invalidate blocks where things change.
-3. Use cache-lookups to parse blocks
 
 
 
@@ -211,28 +224,12 @@ Think about: Different Compile-Types:
 When to execute Compile-Time-Code-Execution (#bake, maybe #run in the future)?
 
 
-TODO:
- - Incremental Compilation:
-    - Parser
-    - Rework Analysis-Item/Analysis-Pass things 
- - Named Parameters + Templates, switch over unions custom variable, remove case statement
- - Templates
- - Symbol Import, Templates, using
-
-
 Better Editor Experience:
  - Auto complete with partially typed == Keywords destroys the keyword
  - Code-Rendering Rework/Formating Rework (Only format whats visible)
  - Smarter Code-Formating (Splitting long lines + merging short blocks)
     Probalby Requires a rework of Formating in general
  - Camera commands (move cursor + move camera)
-
-TODO:
------
- - Move forward with:
-    * Editor-Features (Camera-Movemento, Parser-Based Formating, Andimations, CTRL-W Insert mode, Copy-Paste, Vim-Commands, Command Recording, Code-Folding)
-    * Language-Features (Templates, named parameters, QOL stuff)
-    * Incremental Compilation
 
 
 

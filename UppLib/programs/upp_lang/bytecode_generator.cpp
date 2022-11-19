@@ -486,9 +486,9 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             // Put arguments into the correct place on the stack
             int pointer_offset = bytecode_generator_create_temporary_stack_offset(generator, generator->compiler->type_system.void_ptr_type);
             int argument_stack_offset = align_offset_next_multiple(generator->current_stack_offset, 16); // I think 16 is the hightest i have
-            for (int i = 0; i < function_sig->options.function.parameter_types.size; i++)
+            for (int i = 0; i < function_sig->options.function.parameters.size; i++)
             {
-                Type_Signature* parameter_sig = function_sig->options.function.parameter_types[i];
+                Type_Signature* parameter_sig = function_sig->options.function.parameters[i].type;
                 argument_stack_offset = align_offset_next_multiple(argument_stack_offset, parameter_sig->alignment);
                 IR_Data_Access* argument_access = &call->arguments[i];
 
@@ -958,7 +958,16 @@ void bytecode_generator_generate_function_code(Bytecode_Generator* generator, IR
     {
         int stack_offset_index = *hashtable_find_element(&generator->function_parameter_stack_offset_index, function);
         Dynamic_Array<int>* parameter_offsets = &generator->stack_offsets[stack_offset_index];
-        int parameter_stack_size = stack_offsets_calculate(&function->function_type->options.function.parameter_types, parameter_offsets, 0);
+
+        auto& function_parameters = function->function_type->options.function.parameters;
+        Array<Type_Signature*> parameter_types = array_create_empty<Type_Signature*>(function_parameters.size);
+        SCOPE_EXIT(array_destroy(&parameter_types));
+        for (int i = 0; i < function_parameters.size; i++) {
+            parameter_types[i] = function_parameters[i].type;
+        }
+        auto dyn_param_types = array_to_dynamic_array(&parameter_types);
+
+        int parameter_stack_size = stack_offsets_calculate(&dyn_param_types, parameter_offsets, 0);
         // Adjust stack_offsets since parameter offsets are negative
         parameter_stack_size = align_offset_next_multiple(parameter_stack_size, 8); // Adjust for pointer alignment of return address
         for (int i = 0; i < parameter_offsets->size; i++) {

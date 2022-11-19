@@ -4,10 +4,12 @@
 
 using AST::Structure_Type;
 
+Type_Signature* type_system_register_type(Type_System* system, Type_Signature signature);
+
 void type_signature_destroy(Type_Signature* sig) 
 {
     if (sig->type == Signature_Type::FUNCTION) {
-        auto& params = sig->options.function.parameter_types;
+        auto& params = sig->options.function.parameters;
         if (params.data != 0 && params.capacity != 0) {
             dynamic_array_destroy(&params);
         }
@@ -93,9 +95,9 @@ void type_signature_append_to_string_with_children(String* string, Type_Signatur
     }
     case Signature_Type::FUNCTION:
         string_append_formated(string, "(");
-        for (int i = 0; i < signature->options.function.parameter_types.size; i++) {
-            type_signature_append_to_string_with_children(string, signature->options.function.parameter_types[i], print_child);
-            if (i != signature->options.function.parameter_types.size - 1) {
+        for (int i = 0; i < signature->options.function.parameters.size; i++) {
+            type_signature_append_to_string_with_children(string, signature->options.function.parameters[i].type, print_child);
+            if (i != signature->options.function.parameters.size - 1) {
                 string_append_formated(string, ", ");
             }
         }
@@ -586,22 +588,28 @@ Type_Signature* type_system_register_type(Type_System* system, Type_Signature si
                 case Signature_Type::UNKNOWN_TYPE: are_equal = true; break;
                 case Signature_Type::PRIMITIVE: are_equal = sig1->options.primitive.type == sig2->options.primitive.type &&
                     sig1->options.primitive.is_signed == sig2->options.primitive.is_signed && sig1->size == sig2->size; break;
-                case Signature_Type::POINTER: are_equal = sig1->options.pointer_child == sig2->options.pointer_child; break;
+                case Signature_Type::POINTER: are_equal = type_signature_equals(sig1->options.pointer_child, sig2->options.pointer_child); break;
                 case Signature_Type::STRUCT: are_equal = false; break;
                 case Signature_Type::ENUM: are_equal = false; break;
                 case Signature_Type::TEMPLATE_TYPE: are_equal = false; break;
-                case Signature_Type::ARRAY: are_equal = sig1->options.array.element_type == sig2->options.array.element_type &&
+                case Signature_Type::ARRAY: are_equal = type_signature_equals(sig1->options.array.element_type, sig2->options.array.element_type) &&
                     sig1->options.array.element_count == sig2->options.array.element_count; break;
-                case Signature_Type::SLICE: are_equal = sig1->options.array.element_type == sig2->options.array.element_type; break;
+                case Signature_Type::SLICE: are_equal = type_signature_equals(sig1->options.array.element_type, sig2->options.array.element_type); break;
                 case Signature_Type::FUNCTION:
                 {
                     are_equal = true;
-                    if (sig1->options.function.return_type != sig2->options.function.return_type ||
-                        sig1->options.function.parameter_types.size != sig2->options.function.parameter_types.size) {
+                    if (!type_signature_equals(sig1->options.function.return_type, sig2->options.function.return_type) ||
+                        sig1->options.function.parameters.size != sig2->options.function.parameters.size) {
                         are_equal = false; break;
                     }
-                    for (int i = 0; i < sig1->options.function.parameter_types.size; i++) {
-                        if (sig1->options.function.parameter_types[i] != sig2->options.function.parameter_types[i]) {
+                    for (int i = 0; i < sig1->options.function.parameters.size; i++) {
+                        auto& param1 = sig1->options.function.parameters[i];
+                        auto& param2 = sig2->options.function.parameters[i];
+                        if (!type_signature_equals(param1.type, param2.type) || !param1.name.available != param2.name.available) {
+                            are_equal = false;
+                            break;
+                        }
+                        if (param1.name.available && param1.name.value != param2.name.value) {
                             are_equal = false;
                             break;
                         }
@@ -640,11 +648,11 @@ Type_Signature* type_system_register_type(Type_System* system, Type_Signature si
 
         case Signature_Type::FUNCTION:
         {
-            int param_count = signature.options.function.parameter_types.size;
+            int param_count = signature.options.function.parameters.size;
             info.options.function.parameters.data_ptr = new u64[param_count];
             info.options.function.parameters.size = param_count;
             for (int i = 0; i < param_count; i++) {
-                Type_Signature* param = signature.options.function.parameter_types[i];
+                Type_Signature* param = signature.options.function.parameters[i].type;
                 u64* info_param = &info.options.function.parameters.data_ptr[i];
                 *info_param = param->internal_index;
             }
@@ -887,20 +895,20 @@ Type_Signature* type_system_make_slice(Type_System* system, Type_Signature* elem
     return type_system_register_type(system, result);
 }
 
-Type_Signature* type_system_make_function(Type_System* system, Dynamic_Array<Type_Signature*> parameter_types, Type_Signature* return_type)
+Type_Signature* type_system_make_function(Type_System* system, Dynamic_Array<Function_Parameter> parameter_types, Type_Signature* return_type)
 {
     Type_Signature result;
     result.type = Signature_Type::FUNCTION;
     result.alignment = 8;
     result.size = 8;
-    result.options.function.parameter_types = parameter_types;
+    result.options.function.parameters = parameter_types;
     result.options.function.return_type = return_type;
     return type_system_register_type(system, result);
 }
 
-Type_Signature* type_system_make_function(Type_System* system, std::initializer_list<Type_Signature*> parameter_types, Type_Signature* return_type)
+Type_Signature* type_system_make_function(Type_System* system, std::initializer_list<Function_Parameter> parameter_types, Type_Signature* return_type)
 {
-    Dynamic_Array<Type_Signature*> params = dynamic_array_create_empty<Type_Signature*>(1);
+    Dynamic_Array<Function_Parameter> params = dynamic_array_create_empty<Function_Parameter>(1);
     for (auto& param : parameter_types) {
         dynamic_array_push_back(&params, param);
     }
@@ -996,4 +1004,9 @@ Optional<Struct_Member> type_signature_find_member_by_id(Type_Signature* type, S
     }
     }
     return optional_make_failure<Struct_Member>();
+}
+
+bool type_signature_equals(Type_Signature* a, Type_Signature* b)
+{
+    return a == b;
 }

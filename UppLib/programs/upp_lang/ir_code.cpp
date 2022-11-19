@@ -136,7 +136,7 @@ void ir_data_access_append_to_string(IR_Data_Access* access, String* string, IR_
         break;
     }
     case IR_Data_Access_Type::PARAMETER: {
-        Type_Signature* sig = access->option.function->function_type->options.function.parameter_types[access->index];
+        Type_Signature* sig = access->option.function->function_type->options.function.parameters[access->index].type;
         string_append_formated(string, "Param #%d, type: ", access->index);
         type_signature_append_to_string(string, sig);
         break;
@@ -553,7 +553,7 @@ Type_Signature* ir_data_access_get_type(IR_Data_Access* access)
         sig = access->option.definition_block->registers[access->index];
         break;
     case IR_Data_Access_Type::PARAMETER:
-        sig = access->option.function->function_type->options.function.parameter_types[access->index];
+        sig = access->option.function->function_type->options.function.parameters[access->index].type;
         break;
     default: panic("Hey!");
     }
@@ -1020,7 +1020,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
             {
                 IR_Data_Access index_access = ir_generator_generate_expression(ir_block, call.arguments[0]->value);
                 auto index_type = ir_data_access_get_type(&index_access);
-                if (index_type == type_system->type_type) {
+                if (type_signature_equals(index_type, type_system->type_type)) {
                     index_access = ir_generator_generate_cast(ir_block, index_access, type_system->i32_type, Info_Cast_Type::INTEGERS);
                 }
                 else {
@@ -1668,7 +1668,7 @@ void ir_generator_generate_queued_items(bool gen_bytecode)
         }
 
         // Add empty return
-        if (ir_func->function_type->options.function.return_type == compiler.type_system.void_type) {
+        if (type_signature_equals(ir_func->function_type->options.function.return_type, compiler.type_system.void_type)) {
             IR_Instruction return_instr;
             return_instr.type = IR_Instruction_Type::RETURN;
             return_instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_EMPTY;

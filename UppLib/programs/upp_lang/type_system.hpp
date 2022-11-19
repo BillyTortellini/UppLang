@@ -51,6 +51,12 @@ struct Enum_Item
     int value;
 };
 
+struct Function_Parameter
+{
+    Optional<String*> name;
+    Type_Signature* type;
+};
+
 struct Type_Signature
 {
     Signature_Type type;
@@ -64,7 +70,7 @@ struct Type_Signature
             bool is_signed;
         } primitive;
         struct {
-            Dynamic_Array<Type_Signature*> parameter_types;
+            Dynamic_Array<Function_Parameter> parameters;
             Type_Signature* return_type; // If this is void type, then function has no return value
         } function;
         Type_Signature* pointer_child;
@@ -261,18 +267,22 @@ void type_system_destroy(Type_System* system);
 void type_system_add_primitives(Type_System* system, Identifier_Pool* pool, Predefined_Symbols* predefined);
 void type_system_reset(Type_System* system);
 
-Type_Signature* type_system_register_type(Type_System* system, Type_Signature signature);
 void type_system_finish_type(Type_System* system, Type_Signature* type);
 
 Type_Signature* type_system_make_primitive(Type_System* system, Primitive_Type type, int size, bool is_signed);
 Type_Signature* type_system_make_pointer(Type_System* system, Type_Signature* child_type);
 Type_Signature* type_system_make_slice(Type_System* system, Type_Signature* element_type);
 Type_Signature* type_system_make_array(Type_System* system, Type_Signature* element_type, bool count_known, int element_count);
-Type_Signature* type_system_make_function(Type_System* system, Dynamic_Array<Type_Signature*> parameter_types, Type_Signature* return_type);
-Type_Signature* type_system_make_function(Type_System* system, std::initializer_list<Type_Signature*> parameter_types, Type_Signature* return_type);
+// Note: Takes ownership of parameter_types!
+Type_Signature* type_system_make_function(Type_System* system, Dynamic_Array<Function_Parameter> parameter_types, Type_Signature* return_type);
+Type_Signature* type_system_make_function(Type_System* system, std::initializer_list<Function_Parameter> parameter_types, Type_Signature* return_type);
 Type_Signature* type_system_make_template(Type_System* system, String* id);
 Type_Signature* type_system_make_enum_empty(Type_System* system, String* id);
 Type_Signature* type_system_make_struct_empty(Type_System* system, Symbol* symbol, AST::Structure_Type struct_type);
+
+
+bool type_signature_equals(Type_Signature* a, Type_Signature* b);
+
 void type_system_print(Type_System* system);
 Optional<Enum_Item> enum_type_find_member_by_value(Type_Signature* enum_type, int value);
 Optional<Struct_Member> type_signature_find_member_by_id(Type_Signature* type, String* id); // Valid for both structs, unions and slices

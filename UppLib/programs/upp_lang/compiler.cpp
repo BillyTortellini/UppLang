@@ -35,7 +35,7 @@ bool output_bytecode = false;
 bool output_timing = true;
 
 // Testcases
-bool enable_testcases = false;
+bool enable_testcases = true;
 bool enable_stresstest = false;
 bool run_testcases_compiled = false;
 

@@ -338,9 +338,9 @@ void c_generator_register_type_name(C_Generator* generator, Type_Signature* type
         string_append_formated(&tmp, "typedef ");
         c_generator_output_type_reference(generator, &tmp, type->options.function.return_type);
         string_append_formated(&tmp, " (*%s)(", type_name.characters);
-        for (int i = 0; i < type->options.function.parameter_types.size; i++) {
-            c_generator_output_type_reference(generator, &tmp, type->options.function.parameter_types[i]);
-            if (i != type->options.function.parameter_types.size - 1) {
+        for (int i = 0; i < type->options.function.parameters.size; i++) {
+            c_generator_output_type_reference(generator, &tmp, type->options.function.parameters[i].type);
+            if (i != type->options.function.parameters.size - 1) {
                 string_append_formated(&tmp, ", ");
             }
         }
@@ -864,7 +864,7 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
     // Create all Type_Signatures
     for (int i = 0; i < generator->compiler->type_system.types.size; i++) {
         Type_Signature* type = generator->compiler->type_system.types[i];
-        if (type == generator->compiler->type_system.unknown_type) continue;
+        if (type_signature_equals(type, generator->compiler->type_system.unknown_type)) continue;
         c_generator_register_type_name(generator, generator->compiler->type_system.types[i]);
     }
 
@@ -986,10 +986,10 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
         Type_Signature* function_signature = function->function_signature;
         c_generator_output_type_reference(generator, &generator->section_function_prototypes, function_signature->options.function.return_type);
         string_append_formated(&generator->section_function_prototypes, " %s(", function->id->characters);
-        for (int j = 0; j < function->function_signature->options.function.parameter_types.size; j++) {
-            Type_Signature* param_type = function->function_signature->options.function.parameter_types[j];
+        for (int j = 0; j < function->function_signature->options.function.parameters.size; j++) {
+            Type_Signature* param_type = function->function_signature->options.function.parameters[j].type;
             c_generator_output_type_reference(generator, &generator->section_function_prototypes, param_type);
-            if (j != function->function_signature->options.function.parameter_types.size - 1) {
+            if (j != function->function_signature->options.function.parameters.size - 1) {
                 string_append_formated(&generator->section_function_prototypes, ", ");
             }
         }
@@ -1012,10 +1012,10 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
         }
 
         string_append_formated(&generator->section_function_prototypes, "(");
-        for (int j = 0; j < function->function_type->options.function.parameter_types.size; j++) {
-            Type_Signature* param_type = function->function_type->options.function.parameter_types[j];
+        for (int j = 0; j < function->function_type->options.function.parameters.size; j++) {
+            Type_Signature* param_type = function->function_type->options.function.parameters[j].type;
             c_generator_output_type_reference(generator, &generator->section_function_prototypes, param_type);
-            if (j != function->function_type->options.function.parameter_types.size - 1) {
+            if (j != function->function_type->options.function.parameters.size - 1) {
                 string_append_formated(&generator->section_function_prototypes, ", ");
             }
         }
@@ -1037,8 +1037,8 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
             string_append_formated(&generator->section_function_implementations, function_name->characters);
         }
         string_append_formated(&generator->section_function_implementations, "(");
-        for (int j = 0; j < function->function_type->options.function.parameter_types.size; j++) {
-            Type_Signature* param_type = function->function_type->options.function.parameter_types[j];
+        for (int j = 0; j < function->function_type->options.function.parameters.size; j++) {
+            Type_Signature* param_type = function->function_type->options.function.parameters[j].type;
             c_generator_output_type_reference(generator, &generator->section_function_implementations, param_type);
             string_append_formated(&generator->section_function_implementations, " ");
             IR_Data_Access access;
@@ -1047,7 +1047,7 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
             access.index = j;
             access.option.function = function;
             c_generator_output_data_access(generator, &generator->section_function_implementations, access);
-            if (j != function->function_type->options.function.parameter_types.size - 1) {
+            if (j != function->function_type->options.function.parameters.size - 1) {
                 string_append_formated(&generator->section_function_implementations, ", ");
             }
         }
