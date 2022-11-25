@@ -2118,7 +2118,7 @@ namespace Parser
                     }
                 }
             }
-            logg("Source Differences: \n%s\n\n", tmp.characters);
+            //logg("Source Differences: \n%s\n\n", tmp.characters);
         }
 
         // Remove removed blocks (Deletes all ast-nodes)
@@ -2249,7 +2249,7 @@ namespace Parser
                     continue;
                 }
 
-                logg("Reparsing block : %d, line: %d\n", block_parse->index.block_index, line_index);
+                //logg("Reparsing block : %d, line: %d\n", block_parse->index.block_index, line_index);
                 auto line_item = parse_line_item(line_index_make(block_parse->index, line_index), block_parse->context, block_parse->parent);
                 if (reparse_info.is_original_item_line && reparse_info.original_item_line == 0) {
                     if (line_item.node != 0) {
@@ -2310,7 +2310,7 @@ namespace Parser
                     if (error.block_parse == block_parse) {
                         auto& line_change = original_line_changes[error.origin_line_index];
                         if (line_change.was_changed || line_change.was_deleted) {
-                             logg("Removing error message: %s\n", error.msg);
+                            //logg("Removing error message: %s\n", error.msg);
                             dynamic_array_swap_remove(&source_parse->error_messages, i);
                             i -= 1;
                             continue;
@@ -2389,8 +2389,8 @@ namespace Parser
             }
         }
 
-        logg("INCREMENTAL REPARSE RESULT: \n----------------------\n");
-        AST::base_print(AST::upcast(source_parse->root));
+        //logg("INCREMENTAL REPARSE RESULT: \n----------------------\n");
+        //AST::base_print(AST::upcast(source_parse->root));
     }
 
 

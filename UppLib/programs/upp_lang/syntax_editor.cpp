@@ -1463,8 +1463,12 @@ void syntax_editor_update()
             syntax_editor_load_text_file(open_file.value.characters);
         }
     }
-    if (syntax_editor.input->key_pressed[(int)Key_Code::S] && syntax_editor.input->key_down[(int)Key_Code::CTRL]) {
+    else if (syntax_editor.input->key_pressed[(int)Key_Code::S] && syntax_editor.input->key_down[(int)Key_Code::CTRL]) {
         syntax_editor_save_text_file();
+    }
+    else if (syntax_editor.input->key_pressed[(int)Key_Code::F8]) {
+        compiler_run_testcases(compiler.timer, true);
+        syntax_editor_load_text_file(editor.file_path);
     }
 
     for (int i = 0; i < input->key_messages.size; i++) {
@@ -1519,7 +1523,7 @@ void syntax_editor_initialize(Rendering_Core * rendering_core, Text_Renderer * t
     syntax_editor.input_replay = input_replay_create();
 
     compiler_initialize(timer);
-    compiler_run_testcases(timer);
+    compiler_run_testcases(timer, false);
     syntax_editor_load_text_file("upp_code/editor_text.upp");
 }
 
@@ -2121,12 +2125,12 @@ void syntax_editor_render()
         }
     }
 
-    if (!show_context_info)
-    {
-        show_context_info = true;
-        auto node = Parser::find_smallest_enclosing_node(&compiler.main_source->source_parse->root->base, cursor_token_index);
-        AST::base_append_to_string(node, &context);
-    }
+    //if (!show_context_info)
+    //{
+    //    show_context_info = true;
+    //    auto node = Parser::find_smallest_enclosing_node(&compiler.main_source->source_parse->root->base, cursor_token_index);
+    //    AST::base_append_to_string(node, &context);
+    //}
 
     // Draw Code-Completion
     if (editor.code_completion_suggestions.size != 0 && editor.mode == Editor_Mode::INSERT)
@@ -2191,7 +2195,7 @@ void syntax_editor_render()
                     type = hardcoded_type_to_signature(symbol->options.hardcoded);
                     break;
                 case Symbol_Type::PARAMETER:
-                    type = symbol->options.parameter_type;
+                    type = symbol->options.parameter.type;
                     break;
                 case Symbol_Type::TYPE:
                     type = symbol->options.type;

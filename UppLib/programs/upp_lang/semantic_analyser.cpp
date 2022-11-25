@@ -369,6 +369,9 @@ ModTree_Function* modtree_function_create_empty(Type_Signature* signature, Symbo
     function->calls = dynamic_array_create_empty<ModTree_Function*>(1);
     function->contains_errors = false;
     function->is_runnable = true;
+    function->is_polymorphic = false;
+    function->polymorphic_base = 0;
+    function->polymorphic_instance_index = -1;
 
     dynamic_array_push_back(&semantic_analyser.program->functions, function);
     return function;
@@ -529,6 +532,7 @@ Comptime_Result expression_calculate_comptime_value_without_context(AST::Express
         return comptime_result_make_available(&info->options.type->internal_index, compiler.type_system.type_type);
     }
     case Expression_Result_Type::MODULE:
+    case Expression_Result_Type::POLYMORPHIC_FUNCTION:
     case Expression_Result_Type::FUNCTION: // TODO: Function pointer reads should work in the future
     case Expression_Result_Type::HARDCODED_FUNCTION: {
         return comptime_result_make_not_comptime();
@@ -563,6 +567,24 @@ Comptime_Result expression_calculate_comptime_value_without_context(AST::Express
         if (symbol->type == Symbol_Type::COMPTIME_VALUE) {
             auto& upp_const = symbol->options.constant;
             return comptime_result_make_available(&compiler.constant_pool.buffer[upp_const.offset], upp_const.type);
+        }
+        else if (symbol->type == Symbol_Type::PARAMETER && symbol->options.parameter.is_polymorphic) {
+            // TODO: Check if we are in polymorphic instanciation, if so, we need to take the value here
+            // Note: Accessing parameters should only be available in a function header (Parameters referencing each other --> Always unknown?) or body
+            assert(
+                analyser.current_function->is_polymorphic || analyser.current_function->polymorphic_base != 0, 
+                "Cannot access polymorphic parameter if current function is not polymorphic!"
+            ); // May be wrong for function header
+            const auto& poly_value = analyser.current_function->polymorphic_base->instances[analyser.current_function->polymorphic_instance_index].parameter_values[symbol->options.parameter.index];
+            if (poly_value.is_not_set) {
+                return comptime_result_make_unavailable(symbol->options.parameter.type);
+            }
+            else {
+                return comptime_result_make_available(&compiler.constant_pool.buffer[poly_value.constant.offset], poly_value.constant.type);
+            }
+        }
+        else if (symbol->type == Symbol_Type::ERROR_SYMBOL) {
+            return comptime_result_make_unavailable(type_system->unknown_type);
         }
         return comptime_result_make_not_comptime();
     }
@@ -784,6 +806,7 @@ bool expression_has_memory_address(AST::Expression* expr)
     {
     case Expression_Result_Type::FUNCTION:
     case Expression_Result_Type::HARDCODED_FUNCTION:
+    case Expression_Result_Type::POLYMORPHIC_FUNCTION:
     case Expression_Result_Type::TYPE:
     case Expression_Result_Type::CONSTANT: // Constant memory must not be written to. (e.g. 5 = 10)
     case Expression_Result_Type::MODULE:
@@ -898,6 +921,12 @@ void expression_info_set_constant(Expression_Info* info, Upp_Constant constant) 
     info->context_ops.after_cast_type = constant.type;
 }
 
+void expression_info_set_polymorphic_function(Expression_Info* info, Polymorphic_Function* poly_function) {
+    info->result_type = Expression_Result_Type::POLYMORPHIC_FUNCTION;
+    info->options.polymorphic_function = poly_function;
+    info->context_ops.after_cast_type = compiler.type_system.unknown_type;
+}
+
 void expression_info_set_constant(Expression_Info* info, Type_Signature* signature, Array<byte> bytes, AST::Node* error_report_node)
 {
     auto& analyser = semantic_analyser;
@@ -931,8 +960,10 @@ Type_Signature* expression_info_get_type(Expression_Info* info)
     case Expression_Result_Type::VALUE: return info->options.value_type;
     case Expression_Result_Type::FUNCTION: return info->options.function->signature;
     case Expression_Result_Type::HARDCODED_FUNCTION: return hardcoded_type_to_signature(info->options.hardcoded);
-    case Expression_Result_Type::MODULE: return type_system.unknown_type;
     case Expression_Result_Type::TYPE: return type_system.type_type;
+    case Expression_Result_Type::POLYMORPHIC_FUNCTION:
+    case Expression_Result_Type::MODULE: 
+        return type_system.unknown_type;
     default: panic("");
     }
     return type_system.unknown_type;
@@ -1051,6 +1082,9 @@ Symbol* symbol_dependency_try_resolve(Symbol_Dependency* symbol_dep)
     {
         // Skip parts of a Path that are already resolved (This function may be called multiple times on the same dependency)
         if (read->resolved_symbol != 0) {
+            if (!read->path_child.available) {
+                return read->resolved_symbol;
+            }
             read = read->path_child.value;
             continue;
         }
@@ -1862,12 +1896,6 @@ void workload_executer_add_analysis_items(Code_Source* source)
             compile_workload->options.cluster_compile.functions = dynamic_array_create_empty<ModTree_Function*>(1);
             dynamic_array_push_back(&compile_workload->options.cluster_compile.functions, func_progress->function);
             analysis_workload_add_dependency_internal(compile_workload, body_workload, 0);
-
-            if (item->symbol != 0) {
-                Symbol* symbol = item->symbol;
-                symbol->type = Symbol_Type::FUNCTION;
-                symbol->options.function = func_progress->function;
-            }
             break;
         }
         case Analysis_Item_Type::FUNCTION_BODY:
@@ -2114,6 +2142,11 @@ void analysis_workload_execute(Analysis_Workload* workload)
                 }
                 break;
             }
+            case Expression_Result_Type::POLYMORPHIC_FUNCTION: {
+                symbol->type = Symbol_Type::POLYMORPHIC_FUNCTION;
+                symbol->options.polymorphic_function = result->options.polymorphic_function;
+                break;
+            }
             case Expression_Result_Type::MODULE: {
                 symbol->type = Symbol_Type::MODULE;
                 symbol->options.module_table = result->options.module_table;
@@ -2146,30 +2179,68 @@ void analysis_workload_execute(Analysis_Workload* workload)
 
         // Analyse parameters
         Dynamic_Array<Function_Parameter> param_types = dynamic_array_create_empty<Function_Parameter>(math_maximum(0, signature_node.parameters.size));
+        int polymorphic_count = 0;
         for (int i = 0; i < signature_node.parameters.size; i++)
         {
             auto param = signature_node.parameters[i];
             Symbol* symbol = param->symbol;
-            if (param->is_comptime) {
-                semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, AST::upcast(param));
-                semantic_analyser_add_error_info(error_information_make_text("Currently comptime parameters not supported!"));
-            }
             symbol->type = Symbol_Type::PARAMETER;
-            symbol->options.parameter_type = semantic_analyser_analyse_expression_type(param->type);
-            symbol->options.parameter_index = i;
+            symbol->options.parameter.type = semantic_analyser_analyse_expression_type(param->type);
+            symbol->options.parameter.index = i - polymorphic_count;
+            symbol->options.parameter.is_polymorphic = param->is_comptime;
+
+            if (param->is_comptime) {
+                symbol->options.parameter.index = polymorphic_count;
+                polymorphic_count += 1;
+                continue; // TODO: Do something here, don't add to signature parameters
+            }
 
             Function_Parameter func_param;
             func_param.name = optional_make_success(param->name);
-            func_param.type = symbol->options.parameter_type;
+            func_param.type = symbol->options.parameter.type;
             dynamic_array_push_back(&param_types, func_param);
         }
-
         Type_Signature* return_type = analyser.compiler->type_system.void_type;
         if (signature_node.return_value.available) {
             return_type = semantic_analyser_analyse_expression_type(signature_node.return_value.value);
         }
         function->signature = type_system_make_function(&type_system, param_types, return_type);
 
+        Polymorphic_Function* poly_function = 0;
+        if (polymorphic_count > 0 ) {
+            // Create poly function
+            poly_function = new Polymorphic_Function();
+            poly_function->instances = dynamic_array_create_empty<Polymorphic_Instance>(1);
+            poly_function->parameters = dynamic_array_as_array(&signature_node.parameters);
+            dynamic_array_push_back(&analyser.polymorphic_functions, poly_function);
+
+            // Create instance
+            Polymorphic_Instance base_instance;
+            base_instance.parameter_values = array_create_empty<Polymorphic_Value>(polymorphic_count);
+            for (int i = 0; i < base_instance.parameter_values.size; i++) {
+                base_instance.parameter_values[i].is_not_set = true;
+                base_instance.function = function;
+            }
+            dynamic_array_push_back(&poly_function->instances, base_instance);
+
+            // Mark function as polymorphic instance
+            function->is_runnable = false;
+            function->is_polymorphic = true;
+            function->polymorphic_base = poly_function;
+            function->polymorphic_instance_index = 0;
+        }
+
+        if (function->symbol != 0) {
+            Symbol* symbol = function->symbol;
+            if (polymorphic_count > 0) {
+                symbol->type = Symbol_Type::POLYMORPHIC_FUNCTION;
+                symbol->options.polymorphic_function = poly_function;
+            }
+            else {
+                symbol->type = Symbol_Type::FUNCTION;
+                symbol->options.function = function;
+            }
+        }
         // Advance Progress
         progress->state = Function_State::HEADER_ANALYSED;
         break;
@@ -2788,7 +2859,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
     info->context_ops.cast = Info_Cast_Type::NO_CAST;
     info->context_ops.deref_count = 0;
     info->context_ops.take_address_of = false;
-    expression_info_set_error(info, type_system->unknown_type);
+    expression_info_set_error(info, type_system->unknown_type); // Just initialize with some values
     info->contains_errors = false; // To undo the previous set error
 
 #define EXIT_VALUE(val) expression_info_set_value(info, val); return info;
@@ -2843,6 +2914,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             case Expression_Result_Type::TYPE: {
                 EXIT_TYPE(type_system->type_type);
             }
+            case Expression_Result_Type::POLYMORPHIC_FUNCTION:
             case Expression_Result_Type::MODULE: {
                 semantic_analyser_log_error(Semantic_Error_Type::INVALID_EXPRESSION_TYPE, arg->value);
                 semantic_analyser_add_error_info(error_information_make_expression_result_type(arg_result->result_type));
@@ -2865,6 +2937,72 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         case Expression_Result_Type::HARDCODED_FUNCTION:
         {
             function_signature = hardcoded_type_to_signature(function_expr_info->options.hardcoded);
+            break;
+        }
+        case Expression_Result_Type::POLYMORPHIC_FUNCTION: {
+            //auto poly_function = function_expr_info->options.polymorphic_function;
+            //auto& arguments = call.arguments;
+            //if (arguments.size != poly_function->parameters.size) {
+            //    break;
+            //}
+
+            //// Evaluate polymorphic parameter...
+            //bool success = true;
+            //Array<Polymorphic_Value> poly_values = array_create_empty<Polymorphic_Value>(poly_function->parameters.size);
+            //SCOPE_EXIT(if (!success) { array_destroy(&poly_values); });
+            //for (int i = 0; i < poly_function->parameters.size; i++) {
+            //    auto& parameter = poly_function->parameters[i];
+            //    if (!parameter->is_comptime) {
+            //        continue;
+            //    }
+            //    auto& poly_value = poly_values[parameter->symbol->options.parameter.index];
+
+            //    semantic_analyser_analyse_expression_value(
+            //        arguments[i]->value, expression_context_make_specific_type(parameter->symbol->options.parameter.type)
+            //    );
+            //    auto comptime_result = expression_calculate_comptime_value(arguments[i]->value);
+            //    switch (comptime_result.type)
+            //    {
+            //    case Comptime_Result_Type::AVAILABLE: {
+            //        Constant_Result result = constant_pool_add_constant(
+            //            &semantic_analyser.compiler->constant_pool, 
+            //            comptime_result.data_type, 
+            //            array_create_static((byte*)comptime_result.data, comptime_result.data_type->size)
+            //        );
+            //        if (result.status != Constant_Status::SUCCESS) {
+            //            semantic_analyser_log_error(Semantic_Error_Type::CONSTANT_POOL_ERROR, AST::upcast(arguments[i]->value));
+            //            semantic_analyser_add_error_info(error_information_make_constant_status(result.status));
+            //            poly_value.is_not_set = true;
+            //            success = false;
+            //            break;
+            //        }
+            //        poly_value.is_not_set = false;
+            //        poly_value.constant = result.constant;
+            //        break;
+            //    }
+            //    case Comptime_Result_Type::UNAVAILABLE: {
+            //        poly_value.is_not_set = true;
+            //        break;
+            //    }
+            //    case Comptime_Result_Type::NOT_COMPTIME:
+            //        semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, AST::upcast(arguments[i]->value));
+            //        semantic_analyser_add_error_info(error_information_make_text("For instanciation values must be comptime!"));
+            //        success = false;
+            //        break;
+            //    }
+            //}
+
+            //// Instanciate polymorphic function
+            //if (success) {
+            //    // Create new modtree function
+            //    ModTree_Function* function = modtree_function_create_empty()
+            //    // Create body + cluster-compile workload
+            //}
+
+            // TODO: set function signature, ignore polymorphic parameters when evaluating arguments...
+            
+            semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, AST::upcast(expr));
+            semantic_analyser_add_error_info(error_information_make_text("Cannot instanciate polymorphic functions yet ^^"));
             break;
         }
         case Expression_Result_Type::VALUE:
@@ -2955,7 +3093,22 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             EXIT_VALUE(symbol->options.variable_type);
         }
         case Symbol_Type::PARAMETER: {
-            EXIT_VALUE(symbol->options.parameter_type);
+            if (symbol->options.parameter.is_polymorphic) {
+                //semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, expr);
+                //semantic_analyser_add_error_info(error_information_make_text("Polymorphic parameters are not supported yet"));
+                //EXIT_ERROR(type_system->unknown_type);
+                assert(
+                    analyser.current_function->is_polymorphic || analyser.current_function->polymorphic_base != 0, 
+                    "Accessing polymorphic parameters can only be done in the functions instance!"
+                );
+                const auto& poly_value = analyser.current_function->polymorphic_base->instances[analyser.current_function->polymorphic_instance_index].parameter_values[symbol->options.parameter.index];
+                if (poly_value.is_not_set) {
+                    EXIT_ERROR(symbol->options.parameter.type);
+                }
+                expression_info_set_constant(info, poly_value.constant);
+                return info;
+            }
+            EXIT_VALUE(symbol->options.parameter.type);
         }
         case Symbol_Type::COMPTIME_VALUE: {
             expression_info_set_constant(info, symbol->options.constant);
@@ -2965,6 +3118,14 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             semantic_analyser_log_error(Semantic_Error_Type::SYMBOL_MODULE_INVALID, expr);
             semantic_analyser_add_error_info(error_information_make_symbol(symbol));
             EXIT_ERROR(type_system->unknown_type);
+        }
+        case Symbol_Type::POLYMORPHIC_FUNCTION: {
+            expression_info_set_polymorphic_function(info, symbol->options.polymorphic_function);
+            return info;
+            //semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, expr);
+            //semantic_analyser_add_error_info(error_information_make_symbol(symbol));
+            //semantic_analyser_add_error_info(error_information_make_text("Cannot address polymorphic functions currently!"));
+            //EXIT_ERROR(type_system->unknown_type);
         }
         default: panic("HEY");
         }
@@ -3523,6 +3684,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         }
         case Expression_Result_Type::FUNCTION:
         case Expression_Result_Type::HARDCODED_FUNCTION:
+        case Expression_Result_Type::POLYMORPHIC_FUNCTION:
         case Expression_Result_Type::MODULE: {
             semantic_analyser_log_error(Semantic_Error_Type::INVALID_EXPRESSION_TYPE, member_node.expr);
             semantic_analyser_add_error_info(error_information_make_expression_result_type(access_expr_info->result_type));
@@ -3559,7 +3721,12 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 if (struct_signature->type == Signature_Type::ARRAY)
                 {
                     if (member_node.name == compiler.id_size) {
-                        expression_info_set_constant_i32(info, struct_signature->options.array.element_count);
+                        if (struct_signature->options.array.count_known) {
+                            expression_info_set_constant_i32(info, struct_signature->options.array.element_count);
+                        }
+                        else {
+                            EXIT_ERROR(type_system->i32_type);
+                        }
                         return info;
                     }
                     else
@@ -3679,6 +3846,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 EXIT_TYPE(type_system_make_pointer(type_system, operand_result->options.type));
             }
             case Expression_Result_Type::FUNCTION:
+            case Expression_Result_Type::POLYMORPHIC_FUNCTION:
             case Expression_Result_Type::HARDCODED_FUNCTION:
             case Expression_Result_Type::MODULE: {
                 semantic_analyser_log_error(Semantic_Error_Type::INVALID_EXPRESSION_TYPE, expr);
@@ -4008,6 +4176,7 @@ Type_Signature* semantic_analyser_analyse_expression_type(AST::Expression* expre
     }
     case Expression_Result_Type::MODULE:
     case Expression_Result_Type::HARDCODED_FUNCTION:
+    case Expression_Result_Type::POLYMORPHIC_FUNCTION:
     case Expression_Result_Type::FUNCTION: {
         semantic_analyser_log_error(Semantic_Error_Type::EXPECTED_TYPE, expression);
         semantic_analyser_add_error_info(error_information_make_expression_result_type(result->result_type));
@@ -4047,6 +4216,7 @@ Type_Signature* semantic_analyser_analyse_expression_value(AST::Expression* expr
         semantic_analyser_log_error(Semantic_Error_Type::OTHERS_CANNOT_TAKE_ADDRESS_OF_HARDCODED_FUNCTION, expression);
         return type_system.unknown_type;
     }
+    case Expression_Result_Type::POLYMORPHIC_FUNCTION:
     case Expression_Result_Type::MODULE:
     {
         semantic_analyser_log_error(Semantic_Error_Type::EXPECTED_VALUE, expression);
@@ -4509,6 +4679,16 @@ void semantic_analyser_reset(Compiler* compiler)
         stack_allocator_reset(&semantic_analyser.allocator_values);
         hashset_reset(&semantic_analyser.visited_functions);
 
+        for (int i = 0; i < semantic_analyser.polymorphic_functions.size; i++) {
+            auto& poly_function = semantic_analyser.polymorphic_functions[i];
+            for (int j = 0; j < poly_function->instances.size; j++) {
+                auto& instance = poly_function->instances[j];
+                array_destroy(&instance.parameter_values);
+            }
+            delete poly_function;
+        }
+        dynamic_array_reset(&semantic_analyser.polymorphic_functions);
+
         workload_executer_destroy();
         semantic_analyser.workload_executer = workload_executer_initialize();
 
@@ -4583,6 +4763,7 @@ Semantic_Analyser* semantic_analyser_initialize()
     semantic_analyser.allocator_values = stack_allocator_create_empty(2048);
     semantic_analyser.visited_functions = hashset_create_pointer_empty<ModTree_Function*>(32);
     semantic_analyser.workload_executer = workload_executer_initialize();
+    semantic_analyser.polymorphic_functions = dynamic_array_create_empty<Polymorphic_Function*>(1);
     semantic_analyser.program = 0;
     return &semantic_analyser;
 }
@@ -4594,6 +4775,16 @@ void semantic_analyser_destroy()
     }
     dynamic_array_destroy(&semantic_analyser.errors);
     dynamic_array_destroy(&semantic_analyser.block_stack);
+
+    for (int i = 0; i < semantic_analyser.polymorphic_functions.size; i++) {
+        auto& poly_function = semantic_analyser.polymorphic_functions[i];
+        for (int j = 0; j < poly_function->instances.size; j++) {
+            auto& instance = poly_function->instances[j];
+            array_destroy(&instance.parameter_values);
+        }
+        delete poly_function;
+    }
+    dynamic_array_destroy(&semantic_analyser.polymorphic_functions);
 
     stack_allocator_destroy(&semantic_analyser.allocator_values);
     hashset_destroy(&semantic_analyser.visited_functions);
@@ -4827,6 +5018,9 @@ void semantic_error_append_to_string(Semantic_Error e, String* string)
             {
             case Expression_Result_Type::HARDCODED_FUNCTION:
                 string_append_formated(string, "Hardcoded function");
+                break;
+            case Expression_Result_Type::POLYMORPHIC_FUNCTION:
+                string_append_formated(string, "Polymorphic function");
                 break;
             case Expression_Result_Type::MODULE:
                 string_append_formated(string, "Module");

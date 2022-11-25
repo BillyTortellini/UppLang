@@ -11,6 +11,7 @@
 #include "dependency_analyser.hpp"
 
 struct Type_Signature;
+struct Polymorphic_Function;
 struct Symbol;
 struct Compiler;
 struct Symbol_Table;
@@ -49,6 +50,10 @@ struct ModTree_Function
     bool is_runnable;
     Dynamic_Array<ModTree_Function*> called_from;
     Dynamic_Array<ModTree_Function*> calls;
+
+    bool is_polymorphic; // If it is an instance from a polymorphic function
+    Polymorphic_Function* polymorphic_base;
+    int polymorphic_instance_index;
 };
 
 struct ModTree_Global
@@ -81,6 +86,26 @@ struct Comptime_Result
     void* data;
     Type_Signature* data_type;
 };
+
+struct Polymorphic_Value
+{
+    bool is_not_set; // E.g. during base analysis
+    Upp_Constant constant;
+};
+
+struct Polymorphic_Instance
+{
+    Array<Polymorphic_Value> parameter_values;
+    ModTree_Function* function;
+};
+
+struct Polymorphic_Function
+{
+    int polymorphic_parameter_count;
+    Array<AST::Parameter*> parameters;
+    Dynamic_Array<Polymorphic_Instance> instances;
+};
+
 
 
 
@@ -283,6 +308,7 @@ enum class Expression_Result_Type
     TYPE,
     FUNCTION,
     HARDCODED_FUNCTION,
+    POLYMORPHIC_FUNCTION,
     MODULE,
     CONSTANT,
 };
@@ -302,6 +328,7 @@ struct Expression_Info
         Type_Signature* value_type;
         Type_Signature* type;
         ModTree_Function* function;
+        Polymorphic_Function* polymorphic_function;
         Hardcoded_Type hardcoded;
         Symbol_Table* module_table;
         Upp_Constant constant;
@@ -388,6 +415,8 @@ struct Semantic_Analyser
     Analysis_Workload* current_workload;
     ModTree_Function* current_function;
     Expression_Info* current_expression;
+
+    Dynamic_Array<Polymorphic_Function*> polymorphic_functions;
 
     bool statement_reachable;
     int error_flag_count;

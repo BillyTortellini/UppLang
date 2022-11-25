@@ -6,6 +6,7 @@
 #include "type_system.hpp"
 
 struct ModTree_Function;
+struct Polymorphic_Function;
 struct ModTree_Global;
 struct Type_Signature;
 struct Dependency_Analyser;
@@ -41,6 +42,7 @@ enum class Symbol_Type
 
     HARDCODED_FUNCTION,
     FUNCTION,
+    POLYMORPHIC_FUNCTION,
     TYPE,
     COMPTIME_VALUE,
     VARIABLE,
@@ -58,13 +60,15 @@ struct Symbol
         Type_Signature* variable_type;
         Symbol_Table* module_table;
         ModTree_Function* function;
+        Polymorphic_Function* polymorphic_function;
         Hardcoded_Type hardcoded;
         Type_Signature* type;
         ModTree_Global* global;
         struct {
-            Type_Signature* parameter_type;
-            int parameter_index;
-        };
+            Type_Signature* type;
+            int index;
+            bool is_polymorphic;
+        } parameter;
         Upp_Constant constant;
         Symbol* alias;
         struct {
@@ -75,8 +79,8 @@ struct Symbol
 
     String* id;
     Symbol_Table* origin_table;
-    AST::Node* definition_node; // Note: This is a base because it could be either AST::Definition or AST::Parameter
     Analysis_Item* origin_item;
+    AST::Node* definition_node; // Note: This is a base because it could be either AST::Definition or AST::Parameter
     Dynamic_Array<Symbol_Dependency*> references;
 };
 
@@ -131,7 +135,7 @@ struct Predefined_Symbols
     Symbol* error_symbol;
 };
 
-Symbol_Table* symbol_table_create(Symbol_Table* parent, AST::Node* definition_node);
+Symbol_Table* symbol_table_create(Symbol_Table* parent);
 void symbol_table_destroy(Symbol_Table* symbol_table);
 void symbol_table_append_to_string(String* string, Symbol_Table* table, bool print_root);
 void symbol_append_to_string(Symbol* symbol, String* string);

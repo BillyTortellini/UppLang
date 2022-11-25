@@ -97,4 +97,4 @@ bool compiler_errors_occured();
 Source_Code* compiler_find_ast_source_code(AST::Node* base);
 Code_Source* compiler_find_ast_code_source(AST::Node* base);
 void compiler_switch_timing_task(Timing_Task task);
-void compiler_run_testcases(Timer* timer);
+void compiler_run_testcases(Timer* timer, bool force_run);

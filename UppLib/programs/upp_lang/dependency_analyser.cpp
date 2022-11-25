@@ -12,7 +12,7 @@ static Dependency_Analyser dependency_analyser;
 Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool only_current_scope, Symbol_Dependency* reference, Analysis_Item* searching_from);
 
 // SYMBOL TABLE FUNCTIONS
-Symbol_Table* symbol_table_create(Symbol_Table* parent, AST::Node* definition_node)
+Symbol_Table* symbol_table_create(Symbol_Table* parent)
 {
     auto& analyser = dependency_analyser;
     Symbol_Table* result = new Symbol_Table;
@@ -72,37 +72,45 @@ Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool only_curr
         panic("Symbol already found, I dont know if this path has a use case");
         return dependency->read->resolved_symbol;
     }
-    Symbol** found = hashtable_find_element(&table->symbols, id);
-    if (found == 0) {
-        if (!only_current_scope && table->parent != 0) {
-            return symbol_table_find_symbol(table->parent, id, only_current_scope, dependency, searching_from);
+    Symbol* symbol = nullptr;
+    {
+        Symbol** found = hashtable_find_element(&table->symbols, id);
+        if (found == 0) {
+            if (!only_current_scope && table->parent != 0) {
+                symbol = symbol_table_find_symbol(table->parent, id, only_current_scope, dependency, searching_from);
+            }
         }
-        return nullptr;
-    }
-    if ((*found)->origin_item == 0) {
-        return *found;
+        else {
+            symbol = *found;
+        }
+        if (symbol == nullptr) {
+            return nullptr;
+        }
     }
 
     // Variables/Parameters need special treatment since we have inner definitions that cannot 'see' outer function variables
-    Symbol_Type sym_type = (*found)->type;
-    Analysis_Item* definition_item = (*found)->origin_item;
-    if (searching_from != 0 && searching_from != definition_item &&
-        (sym_type == Symbol_Type::VARIABLE_UNDEFINED || sym_type == Symbol_Type::VARIABLE))
+    Symbol_Type sym_type = symbol->type;
+    Analysis_Item* definition_item = symbol->origin_item;
+    if (searching_from != 0 && definition_item != 0 && searching_from != definition_item &&
+        (sym_type == Symbol_Type::VARIABLE_UNDEFINED || sym_type == Symbol_Type::VARIABLE || sym_type == Symbol_Type::PARAMETER) &&
+        !(definition_item->type == Analysis_Item_Type::FUNCTION && definition_item->options.function_body_item == searching_from))
     {
-        // Check if we are in the body of the definition function
-        if (definition_item != 0 && !(definition_item->type == Analysis_Item_Type::FUNCTION && definition_item->options.function_body_item == searching_from)) 
-        {
-            if (!only_current_scope && table->parent != 0) {
-                return symbol_table_find_symbol(table->parent, id, only_current_scope, dependency, searching_from);
+        // Trying to access variable/parameter from not inside the body, continue search in upper symbol tables
+        if (!only_current_scope && table->parent != 0) {
+            symbol = symbol_table_find_symbol(table->parent, id, only_current_scope, dependency, searching_from);
+            if (symbol == nullptr) {
+                return nullptr;
             }
+        }
+        else {
             return nullptr;
         }
     }
 
     if (dependency != 0) {
-        dynamic_array_push_back(&((*found)->references), dependency);
+        dynamic_array_push_back(&(symbol->references), dependency);
     }
-    return *found;
+    return symbol;
 }
 
 void symbol_append_to_string(Symbol* symbol, String* string)
@@ -124,6 +132,9 @@ void symbol_append_to_string(Symbol* symbol, String* string)
         break;
     case Symbol_Type::PARAMETER:
         string_append_formated(string, "Parameter");
+        break;
+    case Symbol_Type::POLYMORPHIC_FUNCTION:
+        string_append_formated(string, "Polymorphic Function");
         break;
     case Symbol_Type::UNRESOLVED:
         string_append_formated(string, "Unresolved");
@@ -334,7 +345,7 @@ void analyse_ast_base(AST::Node* base)
     case Node_Type::MODULE: {
         auto module = (Module*)base;
         if (base->parent != 0) {
-            module->symbol_table = symbol_table_create(analyser.symbol_table, base);
+            module->symbol_table = symbol_table_create(analyser.symbol_table);
         }
         else {
             module->symbol_table = analyser.root_symbol_table;
@@ -399,7 +410,7 @@ void analyse_ast_base(AST::Node* base)
                 }
             }
 
-            function.symbol_table = symbol_table_create(analyser.symbol_table, base);
+            function.symbol_table = symbol_table_create(analyser.symbol_table);
             analyser.symbol_table = function.symbol_table;
             analyser.analysis_item = function_item;
             analyse_ast_base(&function.signature->base);
@@ -450,7 +461,7 @@ void analyse_ast_base(AST::Node* base)
     case Node_Type::STATEMENT: break;
     case Node_Type::CODE_BLOCK: {
         auto block = (Code_Block*)base;
-        block->symbol_table = symbol_table_create(analyser.symbol_table, base);
+        block->symbol_table = symbol_table_create(analyser.symbol_table);
         analyser.symbol_table = block->symbol_table;
         break;
     }
@@ -552,7 +563,7 @@ void dependency_analyser_reset(Compiler* compiler)
 
     dependency_analyser.compiler = compiler;
     dependency_analyser.dependency_type = Dependency_Type::NORMAL;
-    dependency_analyser.root_symbol_table = symbol_table_create(0, 0);
+    dependency_analyser.root_symbol_table = symbol_table_create(0);
     dependency_analyser.analysis_item = 0;
     dependency_analyser.symbol_table = dependency_analyser.root_symbol_table;
     // Set predefined symbols

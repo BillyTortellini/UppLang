@@ -159,6 +159,7 @@ void constant_pool_destroy(Constant_Pool* pool);
 Constant_Result constant_pool_add_constant(Constant_Pool* pool, Type_Signature* signature, Array<byte> bytes);
 bool constant_pool_compare_constants(Constant_Pool* pool, Upp_Constant a, Upp_Constant b);
 const char* constant_status_to_string(Constant_Status status);
+void* upp_constant_get_pointer(Constant_Pool* pool, Upp_Constant constant);
 template<typename T>
 T upp_constant_to_value(Constant_Pool* pool, Upp_Constant constant)
 {

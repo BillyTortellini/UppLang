@@ -176,6 +176,11 @@ const char* constant_status_to_string(Constant_Status status)
     return 0;
 }
 
+void* upp_constant_get_pointer(Constant_Pool* pool, Upp_Constant constant)
+{
+    return (void*)&pool->buffer[constant.offset];
+}
+
 bool type_signature_contains_references(Type_Signature* signature)
 {
     switch (signature->type)

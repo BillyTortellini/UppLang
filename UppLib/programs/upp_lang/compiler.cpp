@@ -35,7 +35,7 @@ bool output_bytecode = false;
 bool output_timing = true;
 
 // Testcases
-bool enable_testcases = true;
+bool enable_testcases = false;
 bool enable_stresstest = false;
 bool run_testcases_compiled = false;
 
@@ -599,9 +599,9 @@ Test_Case test_case_make(const char* name, bool should_success)
     return result;
 }
 
-void compiler_run_testcases(Timer* timer)
+void compiler_run_testcases(Timer* timer, bool force_run)
 {
-    if (!enable_testcases) return;
+    if (!enable_testcases && !force_run) return;
     bool i_enable_lexing = enable_lexing;
     SCOPE_EXIT(enable_lexing = i_enable_lexing;);
     bool i_enable_parsing = enable_parsing;

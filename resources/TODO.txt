@@ -1,4 +1,57 @@
 
+TODO:
+ * Being able to instanciate polymorphic functions --> 
+    1. Expression_Result_Type probably needs Polymorphic function now   X
+    2. We need some method of determining (on function call) which parameters are comptime and which aren't (currently only stored in ast)  X
+        * When we have infered polymorphics we probably want to get a suitable datastructure for that
+    3. When we have function calls to polymorphic functions, we need to comptime-analyse the comptime values, create upp-constants,
+       and instanciate the polymorphic function. This means creating a new ModTree-Function, and
+       creating a new body + compile workload (Which depend on the base function + need to check that base functio doesn't contain errors)
+
+Observation:
+    * Currently if array size is not available, maybe I just want to set it to error for the time being
+      It should probably be handled as unknown, but i guess here we have one problem: 
+
+There are Expression_Results currently include
+    * Constant (A known constant, e.g. bake, comptime definition, literals)
+    * Value ()
+
+Implementation Plan:
+Add polymorphic parameters (Values):
+    test :: ($x: int)
+        print_i32(x)
+
+ONLY Base analysis should work for starters, this means no function calls, but the initial
+analysis should be working with unknown values. 
+
+E.g. Parameter symbols (x) should be polymorphic parameters
+
+Question: Should analysis of a polymorphic parameter return a 
+    Expression_Result_Type::CONSTANT or
+    Expression_Result_Type::VALUE?
+When evaluating a comptime expression, I always need to check for polymorphic parameters, since they are UNKNOWN
+
+buffer_size :: 32 + int // Evaluates to not evaluable, what is the definition then?
+
+
+        
+
+DONE:
+ * Polymorphic functions should store their polymorphic parameters in a list (For caching)
+ * Treat base-analysis as Instanciation with all values set to unknown, lookup instance values when analysing the function
+ * Comptime functions should not be generated to ir-code!
+ * Check out how comptime stuff currently works
+
+
+
+
+
+
+
+Implementation:
+Store function as polymorphic, add symbol to whatever, errors.
+
+Theres still the question if i want to 
 
 Polymorphism/Generics/Templates:
 --------------------------------

@@ -908,6 +908,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
         return access;
     }
     case Expression_Result_Type::HARDCODED_FUNCTION:
+    case Expression_Result_Type::POLYMORPHIC_FUNCTION:
     case Expression_Result_Type::MODULE:
         panic("must not happen");
     case Expression_Result_Type::VALUE:
@@ -1049,6 +1050,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
             call_instr.options.call.options.hardcoded.signature = hardcoded_type_to_signature(hardcoded);
             break;
         }
+        case Expression_Result_Type::POLYMORPHIC_FUNCTION:
         case Expression_Result_Type::TYPE:
         case Expression_Result_Type::MODULE: {
             panic("Must not happen after semantic analysis!");
@@ -1088,7 +1090,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
             IR_Data_Access access;
             access.type = IR_Data_Access_Type::PARAMETER;
             access.is_memory_access = false;
-            access.index = symbol->options.parameter_index;
+            access.index = symbol->options.parameter.index;
             access.option.function = ir_block->function;
             return access;
         }
@@ -1708,6 +1710,9 @@ void ir_generator_generate_queued_items(bool gen_bytecode)
 }
 
 void ir_generator_queue_function(ModTree_Function* function) {
+    if (!function->is_runnable) {
+        return;
+    }
     if (hashtable_find_element(&ir_generator.function_mapping, function) != 0) return;
     ir_function_create(function->signature, function);
 }
