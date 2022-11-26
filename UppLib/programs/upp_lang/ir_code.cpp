@@ -1050,7 +1050,15 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
             call_instr.options.call.options.hardcoded.signature = hardcoded_type_to_signature(hardcoded);
             break;
         }
-        case Expression_Result_Type::POLYMORPHIC_FUNCTION:
+        case Expression_Result_Type::POLYMORPHIC_FUNCTION: 
+        {
+            auto poly = call_info->options.polymorphic;
+            auto function = poly.function->instances[poly.instance_index].function;
+            assert(function->is_runnable && !function->is_polymorphic, "Instances that reach ir-generator must not be polymorphic!");
+            call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
+            call_instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, function);
+            break;
+        }
         case Expression_Result_Type::TYPE:
         case Expression_Result_Type::MODULE: {
             panic("Must not happen after semantic analysis!");
@@ -1061,11 +1069,15 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
 
         // Generate arguments (Currently they MUST be in correct order)
         call_instr.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(call.arguments.size);
+        auto function_signature = get_info(expression)->specifics.function_call_signature;
+        for (int i = 0; i < function_signature->options.function.parameters.size; i++) {
+            dynamic_array_push_back_dummy(&call_instr.options.call.arguments);
+        }
         for (int j = 0; j < call.arguments.size; j++) {
-            dynamic_array_push_back(
-                &call_instr.options.call.arguments,
-                ir_generator_generate_expression(ir_block, call.arguments[j]->value)
-            );
+            auto info = get_info(call.arguments[j]);
+            if (info->valid) { // Skip invalid arguments (Polymorphic/constant values)
+                call_instr.options.call.arguments[info->argument_index] = ir_generator_generate_expression(ir_block, call.arguments[j]->value);
+            }
         }
 
         dynamic_array_push_back(&ir_block->instructions, call_instr);

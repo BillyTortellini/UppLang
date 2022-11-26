@@ -1,4 +1,43 @@
 
+
+TODO:
+ - Analyse non-comptime arguments in polymorphic function need to be disabled (Already analysed)
+        Currently there is a active/disabled thing for arguments in expression info
+        Is only used by semantic analyser to check which/if all struct-members are initialized in struct initializer.
+        For named parameters and stuff we will also need some additional info, to determine the evaluation order!
+ - IR_Code need to know which function was picked during the analysis + which arguments to analyse (E.g. skip over comptime ones)
+ - Body-Workload needs to check if the base instance body was successfull, otherwise we can error out !
+
+Refactors:
+    * Modtree_Function could also hold the Function-Progress, since we don't ever create a modtree function out of nothing...
+        In the same spirit type_signature struct could hold a struct-progress (May be null for auto-generated structs), 
+        and definitions maybe too?
+    * Removing Analysis_Progress as base for (funciton-, definition-, bake-, ... progresses), since it could be replaced by something simpler
+
+Polymorphic Instanciation Questions:
+    * How is the function signature calculated?
+        Later I probably need to create a new analysis pass for the function header, but for now I can just use the signature of the base function
+    * Where is the function symbol used? Can multiple functions reference the same symbol?
+        Doesn't matter
+    * I need to create a new workload, how is this done from outside the workload executer?
+        Should work on the fly without any problems
+
+    * Progress_Items maps Analysis_Items to a progress, why is this necessary again?
+        Also there is currently a check when adding a body workload that it definitly gets inserted here
+    * Why do I need the analysis progress stuff again?
+        Seems to be only used in add_analysis_items, to add Analysis_Item dependencies (e.g. inner stuff I think)
+
+    * I need to generate a function-progress for this function (I think), is this currently possible for poly-instances?
+        Yes, because i can just generate a functio progress...
+
+    * Do I need to touch progress_was_made in workload_executer?
+        I guess not since I alrady make progress by executing the workload
+    * Do I need a Cluster_Compile workload or is this one added after the body analysis?
+        No, I need it
+    * Does Cluster_Compile check if the function is runnable?
+    * Before body analysis I need to check if the base analysis succeeded
+
+
 TODO:
  * Being able to instanciate polymorphic functions --> 
     1. Expression_Result_Type probably needs Polymorphic function now   X

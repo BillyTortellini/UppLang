@@ -95,45 +95,45 @@ Type_Signature* hardcoded_type_to_signature(Hardcoded_Type type)
 // Analysis Info
 Analysis_Pass* analysis_item_create_pass(Analysis_Item* item)
 {
-    auto source_parse = new Analysis_Pass;
-    source_parse->item = item;
+    auto pass = new Analysis_Pass;
+    pass->item = item;
     if (item->ast_node_count == 0) {
         // NOTE(Martin): This was done in a quick fix for structs/unions where there was no tab afterwards...
-        source_parse->infos = array_create_empty<Analysis_Info>(1);
+        pass->infos = array_create_empty<Analysis_Info>(1);
     }
     else {
-        source_parse->infos = array_create_empty<Analysis_Info>(item->ast_node_count);
-        memory_set_bytes(source_parse->infos.data, source_parse->infos.size * sizeof(Analysis_Info), 0);
+        pass->infos = array_create_empty<Analysis_Info>(item->ast_node_count);
+        memory_set_bytes(pass->infos.data, pass->infos.size * sizeof(Analysis_Info), 0);
     }
-    dynamic_array_push_back(&item->passes, source_parse);
-    return source_parse;
+    dynamic_array_push_back(&item->passes, pass);
+    return pass;
 }
 
-Analysis_Info* analysis_pass_get_info(Analysis_Pass* source_parse, AST::Node* node)
+Analysis_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Node* node)
 {
-    assert(source_parse != 0, "");
-    auto& item = source_parse->item;
-    return &source_parse->infos[node->analysis_item_index];
+    assert(pass != 0, "");
+    auto& item = pass->item;
+    return &pass->infos[node->analysis_item_index];
 }
 
-Expression_Info* analysis_pass_get_info(Analysis_Pass* source_parse, AST::Expression* expression) {
-    return &analysis_pass_get_info(source_parse, AST::upcast(expression))->info_expr;
+Expression_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Expression* expression) {
+    return &analysis_pass_get_info(pass, AST::upcast(expression))->info_expr;
 }
 
-Case_Info* analysis_pass_get_info(Analysis_Pass* source_parse, AST::Switch_Case* sw_case) {
-    return &analysis_pass_get_info(source_parse, AST::upcast(sw_case))->info_case;
+Case_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Switch_Case* sw_case) {
+    return &analysis_pass_get_info(pass, AST::upcast(sw_case))->info_case;
 }
 
-Argument_Info* analysis_pass_get_info(Analysis_Pass* source_parse, AST::Argument* argument) {
-    return &analysis_pass_get_info(source_parse, AST::upcast(argument))->arg_info;
+Argument_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Argument* argument) {
+    return &analysis_pass_get_info(pass, AST::upcast(argument))->arg_info;
 }
 
-Statement_Info* analysis_pass_get_info(Analysis_Pass* source_parse, AST::Statement* statement) {
-    return &analysis_pass_get_info(source_parse, AST::upcast(statement))->info_stat;
+Statement_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Statement* statement) {
+    return &analysis_pass_get_info(pass, AST::upcast(statement))->info_stat;
 }
 
-Code_Block_Info* analysis_pass_get_info(Analysis_Pass* source_parse, AST::Code_Block* block) {
-    return &analysis_pass_get_info(source_parse, AST::upcast(block))->info_block;
+Code_Block_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Code_Block* block) {
+    return &analysis_pass_get_info(pass, AST::upcast(block))->info_block;
 }
 
 
@@ -174,12 +174,14 @@ T* analysis_progress_allocate_internal(Analysis_Progress_Type type)
 
 Function_Progress* analysis_progress_create_function(Analysis_Item* body_item, Analysis_Item* header_item) 
 {
-    assert(body_item->type == Analysis_Item_Type::FUNCTION_BODY && header_item->type == Analysis_Item_Type::FUNCTION, "");
+    assert(body_item->type == Analysis_Item_Type::FUNCTION_BODY && (header_item == 0 || header_item->type == Analysis_Item_Type::FUNCTION), "");
     auto result = analysis_progress_allocate_internal<Function_Progress>(Analysis_Progress_Type::FUNCTION);
     result->state = Function_State::DEFINED;
     result->body_pass = analysis_item_create_pass(body_item);
-    result->header_pass = analysis_item_create_pass(header_item);
-    result->function = modtree_function_create_empty(0, header_item->symbol, result->body_pass);
+    if (header_item != 0) {
+        result->header_pass = analysis_item_create_pass(header_item);
+    }
+    result->function = modtree_function_create_empty(0, (header_item == 0 ? 0 : header_item->symbol), result->body_pass);
     hashtable_insert_element(&workload_executer.progress_functions, result->function, result);
     return result;
 }
@@ -189,7 +191,7 @@ Struct_Progress* analysis_progress_create_struct(Type_Signature* struct_type, An
     assert(item->type == Analysis_Item_Type::STRUCTURE, "");
     auto result = analysis_progress_allocate_internal<Struct_Progress>(Analysis_Progress_Type::STRUCTURE);
     result->state = Struct_State::DEFINED;
-    result->source_parse = analysis_item_create_pass(item);
+    result->pass = analysis_item_create_pass(item);
     result->struct_type = struct_type;
     hashtable_insert_element(&workload_executer.progress_structs, struct_type, result);
     return result;
@@ -200,9 +202,9 @@ Bake_Progress* analysis_progress_create_bake(Analysis_Item* item)
     assert(item->type == Analysis_Item_Type::BAKE, "");
     auto result = analysis_progress_allocate_internal<Bake_Progress>(Analysis_Progress_Type::BAKE);
     result->result = comptime_result_make_not_comptime();
-    result->source_parse = analysis_item_create_pass(item);
+    result->pass = analysis_item_create_pass(item);
     result->bake_function = modtree_function_create_empty(
-        type_system_make_function(&compiler.type_system, {}, compiler.type_system.void_type), 0, result->source_parse
+        type_system_make_function(&compiler.type_system, {}, compiler.type_system.void_type), 0, result->pass
     );
     return result;
 }
@@ -212,7 +214,7 @@ Definition_Progress* analysis_progress_create_definition(Symbol* symbol, Analysi
     assert(item->type == Analysis_Item_Type::DEFINITION, "");
     auto result = analysis_progress_allocate_internal<Definition_Progress>(Analysis_Progress_Type::DEFINITION);
     result->symbol = symbol;
-    result->source_parse = analysis_item_create_pass(item);
+    result->pass = analysis_item_create_pass(item);
     hashtable_insert_element(&workload_executer.progress_definitions, symbol, result);
     return result;
 }
@@ -396,11 +398,11 @@ ModTree_Global* modtree_program_add_global(Type_Signature* type)
     return global;
 }
 
-void modtree_global_set_init(ModTree_Global* global, Analysis_Pass* source_parse, AST::Expression* expr)
+void modtree_global_set_init(ModTree_Global* global, Analysis_Pass* pass, AST::Expression* expr)
 {
     global->has_initial_value = true;
     global->init_expr = expr;
-    global->init_pass = source_parse;
+    global->init_pass = pass;
 }
 
 ModTree_Program* modtree_program_create()
@@ -921,9 +923,10 @@ void expression_info_set_constant(Expression_Info* info, Upp_Constant constant) 
     info->context_ops.after_cast_type = constant.type;
 }
 
-void expression_info_set_polymorphic_function(Expression_Info* info, Polymorphic_Function* poly_function) {
+void expression_info_set_polymorphic_function(Expression_Info* info, Polymorphic_Function* poly_function, int instance_index) {
     info->result_type = Expression_Result_Type::POLYMORPHIC_FUNCTION;
-    info->options.polymorphic_function = poly_function;
+    info->options.polymorphic.function = poly_function;
+    info->options.polymorphic.instance_index = instance_index;
     info->context_ops.after_cast_type = compiler.type_system.unknown_type;
 }
 
@@ -962,6 +965,8 @@ Type_Signature* expression_info_get_type(Expression_Info* info)
     case Expression_Result_Type::HARDCODED_FUNCTION: return hardcoded_type_to_signature(info->options.hardcoded);
     case Expression_Result_Type::TYPE: return type_system.type_type;
     case Expression_Result_Type::POLYMORPHIC_FUNCTION:
+        return info->options.polymorphic.function->instances[info->options.polymorphic.instance_index].function->signature;
+        break;
     case Expression_Result_Type::MODULE: 
         return type_system.unknown_type;
     default: panic("");
@@ -1576,6 +1581,7 @@ void workload_executer_resolve()
             {
                 workload->is_finished = true;
                 List_Node<Analysis_Workload*>* node = workload->dependents.head;
+                // Loop over all dependents and remove this workload from that list
                 while (node != 0) {
                     Analysis_Workload* dependent = node->value;
                     node = node->next; // INFO: This is required before remove_dependency, since remove will remove nodes from the list
@@ -1701,7 +1707,6 @@ void workload_executer_resolve()
                     dynamic_array_push_back(&layer_start_indices, layers.size);
                 }
             }
-
 
             // Handle the loop
             if (loop_found)
@@ -2041,10 +2046,10 @@ void analysis_workload_execute(Analysis_Workload* workload)
     {
         assert(workload->progress->type == Analysis_Progress_Type::DEFINITION, "");
         auto progress = (Definition_Progress*)workload->progress;
-        assert(progress->source_parse->item->node->type == AST::Node_Type::DEFINITION, "");
-        auto definition = (AST::Definition*)progress->source_parse->item->node;
+        assert(progress->pass->item->node->type == AST::Node_Type::DEFINITION, "");
+        auto definition = (AST::Definition*)progress->pass->item->node;
         assert(!(!definition->type.available && !definition->value.available), "Syntax should not allow no type and no definition!");
-        analyser.current_pass = progress->source_parse;
+        analyser.current_pass = progress->pass;
 
         Symbol* symbol = definition->symbol;
         if (!definition->is_comptime) // Global variable definition
@@ -2144,7 +2149,8 @@ void analysis_workload_execute(Analysis_Workload* workload)
             }
             case Expression_Result_Type::POLYMORPHIC_FUNCTION: {
                 symbol->type = Symbol_Type::POLYMORPHIC_FUNCTION;
-                symbol->options.polymorphic_function = result->options.polymorphic_function;
+                // TODO: Currently we cannot have a symbol pointing at a polymorphic Instance, only at the base. (Not necessary until currying/partial instanciations)
+                symbol->options.polymorphic_function = result->options.polymorphic.function;
                 break;
             }
             case Expression_Result_Type::MODULE: {
@@ -2254,6 +2260,13 @@ void analysis_workload_execute(Analysis_Workload* workload)
         auto code_block = ((AST::Code_Block*)base_node);
 
         auto function = progress->function;
+        if (function->polymorphic_base != 0) {
+            if (!function->polymorphic_base->instances[0].function->contains_errors) {
+                function->contains_errors = true;
+                progress->state = Function_State::BODY_ANALYSED;
+                break;
+            }
+        }
         analyser.current_function = function;
         analyser.current_pass = progress->body_pass;
 
@@ -2300,9 +2313,9 @@ void analysis_workload_execute(Analysis_Workload* workload)
     {
         assert(workload->progress->type == Analysis_Progress_Type::STRUCTURE, "");
         auto progress = (Struct_Progress*)workload->progress;
-        analyser.current_pass = progress->source_parse;
+        analyser.current_pass = progress->pass;
 
-        auto& base_node = progress->source_parse->item->node;
+        auto& base_node = progress->pass->item->node;
         assert(base_node->type == AST::Node_Type::EXPRESSION && ((AST::Expression*)base_node)->type == AST::Expression_Type::STRUCTURE_TYPE, "");
         auto& struct_node = ((AST::Expression*)base_node)->options.structure;
         Type_Signature* struct_signature = progress->struct_type;
@@ -2353,10 +2366,10 @@ void analysis_workload_execute(Analysis_Workload* workload)
     {
         assert(workload->progress->type == Analysis_Progress_Type::BAKE, "");
         auto progress = (Bake_Progress*)workload->progress;
-        analyser.current_pass = progress->source_parse;
+        analyser.current_pass = progress->pass;
         analyser.current_function = progress->bake_function;
 
-        auto& base_node = progress->source_parse->item->node;
+        auto& base_node = progress->pass->item->node;
         assert(base_node->type == AST::Node_Type::EXPRESSION, "");
         auto expr = ((AST::Expression*) base_node);
         if (expr->type == AST::Expression_Type::BAKE_BLOCK)
@@ -2424,7 +2437,7 @@ void analysis_workload_execute(Analysis_Workload* workload)
         interpreter->instruction_limit = 5000;
         bytecode_interpreter_run_function(interpreter, func_start_instr_index);
         if (interpreter->exit_code != Exit_Code::SUCCESS) {
-            semantic_analyser_log_error(Semantic_Error_Type::BAKE_FUNCTION_DID_NOT_SUCCEED, progress->source_parse->item->node);
+            semantic_analyser_log_error(Semantic_Error_Type::BAKE_FUNCTION_DID_NOT_SUCCEED, progress->pass->item->node);
             semantic_analyser_add_error_info(error_information_make_exit_code(interpreter->exit_code));
             progress->result = comptime_result_make_unavailable(bake_function->signature->options.function.return_type);
             return;
@@ -2604,7 +2617,7 @@ void analysis_workload_append_to_string(Analysis_Workload* workload, String* str
         break;
     }
     case Analysis_Workload_Type::DEFINITION: {
-        AST::Definition* definition = (AST::Definition*) ((Definition_Progress*)workload->progress)->source_parse->item->node;
+        AST::Definition* definition = (AST::Definition*) ((Definition_Progress*)workload->progress)->pass->item->node;
         if (definition->is_comptime) {
             string_append_formated(string, "Comptime \"%s\"", definition->symbol->id->characters);
         }
@@ -2647,7 +2660,7 @@ void analysis_workload_append_to_string(Analysis_Workload* workload, String* str
         break;
     }
     case Analysis_Workload_Type::STRUCT_ANALYSIS: {
-        Symbol* symbol = ((Struct_Progress*)workload->progress)->source_parse->item->symbol;
+        Symbol* symbol = ((Struct_Progress*)workload->progress)->pass->item->symbol;
         const char* struct_id = symbol == 0 ? "Anonymous_Struct" : symbol->id->characters;
         string_append_formated(string, "Struct-Analysis \"%s\"", struct_id);
         break;
@@ -2880,6 +2893,14 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         auto& call = expr->options.call;
         auto function_expr_info = semantic_analyser_analyse_expression_any(call.expr, expression_context_make_auto_dereference());
 
+        // Initialize all argument infos as valid 
+        for (int i = 0; i < call.arguments.size; i++) {
+            auto argument = pass_get_info(call.arguments[i]);
+            argument->valid = true;
+            argument->argument_index = i;
+        }
+        info->specifics.function_call_signature = 0;
+
         // Handle Type-Of (Or in the future other compiler given functions)
         if (function_expr_info->result_type == Expression_Result_Type::HARDCODED_FUNCTION && function_expr_info->options.hardcoded == Hardcoded_Type::TYPE_OF)
         {
@@ -2940,69 +2961,105 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             break;
         }
         case Expression_Result_Type::POLYMORPHIC_FUNCTION: {
-            //auto poly_function = function_expr_info->options.polymorphic_function;
-            //auto& arguments = call.arguments;
-            //if (arguments.size != poly_function->parameters.size) {
-            //    break;
-            //}
+            auto poly_function = function_expr_info->options.polymorphic.function;
+            auto& arguments = call.arguments;
+            if (arguments.size != poly_function->parameters.size) {
+                // TODO: In theory I could do something smarter here, with default values and named parameters I will need to do something else
+                semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, AST::upcast(expr));
+                semantic_analyser_add_error_info(error_information_make_text("Polymorphic arguments weren't filled out!"));
 
-            //// Evaluate polymorphic parameter...
-            //bool success = true;
-            //Array<Polymorphic_Value> poly_values = array_create_empty<Polymorphic_Value>(poly_function->parameters.size);
-            //SCOPE_EXIT(if (!success) { array_destroy(&poly_values); });
-            //for (int i = 0; i < poly_function->parameters.size; i++) {
-            //    auto& parameter = poly_function->parameters[i];
-            //    if (!parameter->is_comptime) {
-            //        continue;
-            //    }
-            //    auto& poly_value = poly_values[parameter->symbol->options.parameter.index];
+                function_signature = 0;
+                break;
+            }
 
-            //    semantic_analyser_analyse_expression_value(
-            //        arguments[i]->value, expression_context_make_specific_type(parameter->symbol->options.parameter.type)
-            //    );
-            //    auto comptime_result = expression_calculate_comptime_value(arguments[i]->value);
-            //    switch (comptime_result.type)
-            //    {
-            //    case Comptime_Result_Type::AVAILABLE: {
-            //        Constant_Result result = constant_pool_add_constant(
-            //            &semantic_analyser.compiler->constant_pool, 
-            //            comptime_result.data_type, 
-            //            array_create_static((byte*)comptime_result.data, comptime_result.data_type->size)
-            //        );
-            //        if (result.status != Constant_Status::SUCCESS) {
-            //            semantic_analyser_log_error(Semantic_Error_Type::CONSTANT_POOL_ERROR, AST::upcast(arguments[i]->value));
-            //            semantic_analyser_add_error_info(error_information_make_constant_status(result.status));
-            //            poly_value.is_not_set = true;
-            //            success = false;
-            //            break;
-            //        }
-            //        poly_value.is_not_set = false;
-            //        poly_value.constant = result.constant;
-            //        break;
-            //    }
-            //    case Comptime_Result_Type::UNAVAILABLE: {
-            //        poly_value.is_not_set = true;
-            //        break;
-            //    }
-            //    case Comptime_Result_Type::NOT_COMPTIME:
-            //        semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, AST::upcast(arguments[i]->value));
-            //        semantic_analyser_add_error_info(error_information_make_text("For instanciation values must be comptime!"));
-            //        success = false;
-            //        break;
-            //    }
-            //}
+            // Evaluate polymorphic parameter...
+            bool success = true;
+            Array<Polymorphic_Value> poly_values = array_create_empty<Polymorphic_Value>(poly_function->parameters.size);
+            SCOPE_EXIT(if (!success) { array_destroy(&poly_values); });
+            for (int i = 0; i < poly_function->parameters.size; i++) {
+                auto& parameter = poly_function->parameters[i];
+                if (!parameter->is_comptime) {
+                    continue;
+                }
+                auto& poly_value = poly_values[parameter->symbol->options.parameter.index];
+                pass_get_info(arguments[i])->valid = false;
 
-            //// Instanciate polymorphic function
-            //if (success) {
-            //    // Create new modtree function
-            //    ModTree_Function* function = modtree_function_create_empty()
-            //    // Create body + cluster-compile workload
-            //}
+                semantic_analyser_analyse_expression_value(
+                    arguments[i]->value, expression_context_make_specific_type(parameter->symbol->options.parameter.type)
+                );
+                auto comptime_result = expression_calculate_comptime_value(arguments[i]->value);
+                switch (comptime_result.type)
+                {
+                case Comptime_Result_Type::AVAILABLE: {
+                    Constant_Result result = constant_pool_add_constant(
+                        &semantic_analyser.compiler->constant_pool, 
+                        comptime_result.data_type, 
+                        array_create_static((byte*)comptime_result.data, comptime_result.data_type->size)
+                    );
+                    if (result.status != Constant_Status::SUCCESS) {
+                        semantic_analyser_log_error(Semantic_Error_Type::CONSTANT_POOL_ERROR, AST::upcast(arguments[i]->value));
+                        semantic_analyser_add_error_info(error_information_make_constant_status(result.status));
+                        poly_value.is_not_set = true;
+                        success = false;
+                        break;
+                    }
+                    poly_value.is_not_set = false;
+                    poly_value.constant = result.constant;
+                    break;
+                }
+                case Comptime_Result_Type::UNAVAILABLE: {
+                    poly_value.is_not_set = true;
+                    break;
+                }
+                case Comptime_Result_Type::NOT_COMPTIME:
+                    semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, AST::upcast(arguments[i]->value));
+                    semantic_analyser_add_error_info(error_information_make_text("For instanciation values must be comptime!"));
+                    success = false;
+                    break;
+                }
+            }
 
-            // TODO: set function signature, ignore polymorphic parameters when evaluating arguments...
-            
-            semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, AST::upcast(expr));
-            semantic_analyser_add_error_info(error_information_make_text("Cannot instanciate polymorphic functions yet ^^"));
+            // Instanciate polymorphic function
+            if (success) {
+                // Note: Function header needs to be re-analysed later when parameters can reference each other!
+                //       This means having a new pass for the header, and analysing it again with comptime values
+
+                // Create new function
+                auto base_progress = *hashtable_find_element(&workload_executer.progress_functions, poly_function->instances[0].function);
+                auto body_item = base_progress->body_pass->item;
+                function_signature = poly_function->instances[0].function->signature; 
+
+                auto function_progress = analysis_progress_create_function(body_item, 0); // Note: don' create header pass for now!
+                function_progress->header_pass = base_progress->header_pass;
+                function_progress->state = Function_State::HEADER_ANALYSED;
+                function_progress->function->polymorphic_base = poly_function;
+                function_progress->function->polymorphic_instance_index = poly_function->instances.size;
+                function_progress->function->signature = function_signature;
+
+                // Create body and compile workload
+                auto body_workload = workload_executer_add_workload_empty(Analysis_Workload_Type::FUNCTION_BODY, body_item, upcast(function_progress), false);
+                analysis_workload_add_dependency_internal(body_workload, base_progress->body_workload, 0);
+                auto compile_workload = workload_executer_add_workload_empty(
+                    Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE, body_item, upcast(function_progress), false
+                );
+                compile_workload->options.cluster_compile.functions = dynamic_array_create_empty<ModTree_Function*>(1);
+                dynamic_array_push_back(&compile_workload->options.cluster_compile.functions, function_progress->function);
+                analysis_workload_add_dependency_internal(compile_workload, body_workload, 0);
+
+                // Add function as polymorphic instance
+                Polymorphic_Instance instance;
+                instance.function = function_progress->function;
+                instance.parameter_values = poly_values;
+                dynamic_array_push_back(&poly_function->instances, instance);
+
+                // Set expression info to instanciation, so that ir-generator can pick the corresponding modtree-function
+                function_expr_info->options.polymorphic.instance_index = function_progress->function->polymorphic_instance_index;
+            }
+            else {
+                success = false;
+                semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, AST::upcast(expr));
+                semantic_analyser_add_error_info(error_information_make_text("Some values couldn't be calculated at comptime!"));
+            }
             break;
         }
         case Expression_Result_Type::VALUE:
@@ -3026,6 +3083,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         }
         default: panic("");
         }
+        info->specifics.function_call_signature = function_signature;
 
         // Handle unknown function
         auto& arguments = call.arguments;
@@ -3039,16 +3097,22 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
         // Analyse arguments
         auto& parameters = function_signature->options.function.parameters;
-        if (arguments.size != parameters.size) {
+        int valid_argument_count = 0;
+        for (int i = 0; i < arguments.size; i++) {
+            auto info = pass_get_info(arguments[i]);
+            if (info->valid) {
+                semantic_analyser_analyse_expression_value(
+                    arguments[i]->value,
+                    expression_context_make_specific_type(function_signature->options.function.parameters[i].type)
+                );
+                info->argument_index = valid_argument_count;
+                valid_argument_count += 1;
+            }
+        }
+        if (valid_argument_count != parameters.size) {
             semantic_analyser_log_error(Semantic_Error_Type::FUNCTION_CALL_ARGUMENT_SIZE_MISMATCH, expr);
             semantic_analyser_add_error_info(error_information_make_argument_count(arguments.size, parameters.size));
             semantic_analyser_add_error_info(error_information_make_function_type(function_signature));
-        }
-        for (int i = 0; i < arguments.size; i++) {
-            semantic_analyser_analyse_expression_value(
-                arguments[i]->value,
-                expression_context_make_specific_type(function_signature->options.function.parameters[i].type)
-            );
         }
         EXIT_VALUE(function_signature->options.function.return_type);
     }
@@ -3120,7 +3184,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             EXIT_ERROR(type_system->unknown_type);
         }
         case Symbol_Type::POLYMORPHIC_FUNCTION: {
-            expression_info_set_polymorphic_function(info, symbol->options.polymorphic_function);
+            expression_info_set_polymorphic_function(info, symbol->options.polymorphic_function, 0);
             return info;
             //semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, expr);
             //semantic_analyser_add_error_info(error_information_make_symbol(symbol));
@@ -3331,6 +3395,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             assert(item_opt != 0, "");
             Analysis_Progress** progress_opt = hashtable_find_element(&workload_executer.progress_items, *item_opt);
             assert(progress_opt != 0, "");
+            assert((*progress_opt)->type == Analysis_Progress_Type::BAKE, "Shouldn't bake always have a bake progress or am I missing something?");
             progress = *progress_opt;
         }
 

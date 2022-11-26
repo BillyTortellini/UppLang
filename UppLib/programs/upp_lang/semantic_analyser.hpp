@@ -43,7 +43,7 @@ struct ModTree_Function
 {
     Analysis_Pass* body_pass;
     Type_Signature* signature;
-    Symbol* symbol; // May be 0
+    Symbol* symbol; // May be 0, is only used for aliases and pretty printing
 
     // Infos
     bool contains_errors; // NOTE: contains_errors (No errors in this function) != is_runnable (This + all called functions are runnable)
@@ -133,7 +133,7 @@ enum class Struct_State
 struct Struct_Progress
 {
     Analysis_Progress base;
-    Analysis_Pass* source_parse;
+    Analysis_Pass* pass;
 
     Struct_State state;
     Type_Signature* struct_type;
@@ -145,7 +145,7 @@ struct Struct_Progress
 struct Bake_Progress
 {
     Analysis_Progress base;
-    Analysis_Pass* source_parse;
+    Analysis_Pass* pass;
 
     ModTree_Function* bake_function;
     Comptime_Result result;
@@ -157,7 +157,7 @@ struct Bake_Progress
 struct Definition_Progress
 {
     Analysis_Progress base;
-    Analysis_Pass* source_parse;
+    Analysis_Pass* pass;
     Analysis_Workload* definition_workload;
     Symbol* symbol;
 };
@@ -315,7 +315,8 @@ enum class Expression_Result_Type
 
 struct Argument_Info
 {
-    bool valid;
+    bool valid; // Used in both polymorphic functions/named parameters and struct initializer
+    int argument_index; // For named arguments/parameters this gives the according parameter index
     Struct_Member member; // For struct initializer
 };
 
@@ -328,7 +329,10 @@ struct Expression_Info
         Type_Signature* value_type;
         Type_Signature* type;
         ModTree_Function* function;
-        Polymorphic_Function* polymorphic_function;
+        struct {
+            Polymorphic_Function* function;
+            int instance_index; // If the function was instanciated from parent, otherwise 0 (base instance)
+        } polymorphic;
         Hardcoded_Type hardcoded;
         Symbol_Table* module_table;
         Upp_Constant constant;
@@ -338,6 +342,7 @@ struct Expression_Info
     bool contains_errors; // If this expression contains any errors (Not recursive), currently only used for comptime-calculation
     union {
         Info_Cast_Type cast_type;
+        Type_Signature* function_call_signature; // Somewhat usefull when not all arguments in a call are used (polymorphic funcitons, later named/default args)
     } specifics;
 
     Expression_Context context; // Maybe I don't even want to store the context
@@ -391,12 +396,12 @@ struct Analysis_Pass
     Array<Analysis_Info> infos;
 };
 
-Analysis_Info* analysis_pass_get_info(Analysis_Pass* source_parse, AST::Node* node);
-Expression_Info* analysis_pass_get_info(Analysis_Pass* source_parse, AST::Expression* expression);
-Case_Info* analysis_pass_get_info(Analysis_Pass* source_parse, AST::Switch_Case* sw_case);
-Argument_Info* analysis_pass_get_info(Analysis_Pass* source_parse, AST::Argument* argument);
-Statement_Info* analysis_pass_get_info(Analysis_Pass* source_parse, AST::Statement* statement);
-Code_Block_Info* analysis_pass_get_info(Analysis_Pass* source_parse, AST::Code_Block* block);
+Analysis_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Node* node);
+Expression_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Expression* expression);
+Case_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Switch_Case* sw_case);
+Argument_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Argument* argument);
+Statement_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Statement* statement);
+Code_Block_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Code_Block* block);
 Type_Signature* expression_info_get_type(Expression_Info* info);
 
 
