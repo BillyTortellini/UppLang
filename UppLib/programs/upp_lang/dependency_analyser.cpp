@@ -411,9 +411,9 @@ void analyse_ast_base(AST::Node* base)
             }
 
             function.symbol_table = symbol_table_create(analyser.symbol_table);
-            analyser.symbol_table = function.symbol_table;
             analyser.analysis_item = function_item;
-            analyse_ast_base(&function.signature->base);
+            analyser.symbol_table = function.symbol_table; // For now we will use the normal symbol table for signature analysis (E.g. no referencing between parameters!)
+            analyse_ast_base(&function.signature->base); 
 
             analyser.analysis_item = function_item->options.function_body_item;
             analyse_ast_base(&function.body->base);
@@ -494,7 +494,8 @@ void analyse_ast_base(AST::Node* base)
     case Node_Type::PARAMETER:
     {
         auto param = (Parameter*)base;
-        param->symbol = symbol_table_define_symbol(analyser.symbol_table, param->name, Symbol_Type::VARIABLE_UNDEFINED, base, analyser.analysis_item);
+        // TODO: When polymorphic parameters can access each other in a header, this needs to be changes to Variable_Undefined!
+        param->symbol = symbol_table_define_symbol(analyser.symbol_table, param->name, Symbol_Type::UNRESOLVED, base, analyser.analysis_item);
         break;
     }
     case Node_Type::SYMBOL_READ:

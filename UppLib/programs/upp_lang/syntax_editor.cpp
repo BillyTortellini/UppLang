@@ -2053,7 +2053,11 @@ bool syntax_editor_display_analysis_info(AST::Node * node)
     auto source_parse = code_query_get_ast_node_analysis_pass(node);
     if (source_parse == 0) return false;
 
-    auto expr_type = expression_info_get_type(analysis_pass_get_info(source_parse, expr));
+    auto expression_info = analysis_pass_get_info(source_parse, expr);
+    if (expression_info->contains_errors) {
+        return false;
+    }
+    auto expr_type = expression_info_get_type(expression_info);
     string_append_formated(&syntax_editor.context_text, "Expr Result-Type: ");
     type_signature_append_to_string(&syntax_editor.context_text, expr_type);
     return true;

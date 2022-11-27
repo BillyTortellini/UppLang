@@ -31,7 +31,12 @@ void type_signature_append_to_string_with_children(String* string, Type_Signatur
         string_append_formated(string, "VOID");
         break;
     case Signature_Type::ARRAY:
-        string_append_formated(string, "[%d]", signature->options.array.element_count);
+        if (signature->options.array.count_known) {
+            string_append_formated(string, "[%d]", signature->options.array.element_count);
+        }
+        else {
+            string_append_formated(string, "[Unknown]", signature->options.array.element_count);
+        }
         type_signature_append_to_string_with_children(string, signature->options.array.element_type, print_child);
         break;
     case Signature_Type::SLICE:
@@ -593,7 +598,7 @@ Type_Signature* type_system_register_type(Type_System* system, Type_Signature si
                 case Signature_Type::ENUM: are_equal = false; break;
                 case Signature_Type::TEMPLATE_TYPE: are_equal = false; break;
                 case Signature_Type::ARRAY: are_equal = type_signature_equals(sig1->options.array.element_type, sig2->options.array.element_type) &&
-                    sig1->options.array.element_count == sig2->options.array.element_count; break;
+                    sig1->options.array.element_count == sig2->options.array.element_count && sig1->options.array.count_known == sig2->options.array.count_known; break;
                 case Signature_Type::SLICE: are_equal = type_signature_equals(sig1->options.array.element_type, sig2->options.array.element_type); break;
                 case Signature_Type::FUNCTION:
                 {

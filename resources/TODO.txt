@@ -1,4 +1,9 @@
 
+Check/Todo NEW:
+ * Recursive instanciations need to be disabled (Even de-duplication isn't done!)
+ * De-duplicate instanciations
+ * Better errors (e.g. show where instanciation happens + instaciation values)
+
 
 TODO:
  - Analyse non-comptime arguments in polymorphic function need to be disabled (Already analysed)

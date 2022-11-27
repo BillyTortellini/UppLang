@@ -308,7 +308,7 @@ void history_stop_complex_command(Code_History* history)
 
     int start_node_index = history->nodes[history->complex_start].next_change;
     // Recorded complex commands with 0 or 1 entries should be ignored
-    if (start_node_index == -1 || start_node_index == history->current) return;
+    if (start_node_index == -1 || start_node_index == history->current || history->current == history->complex_start) return;
 
     auto& node_start = history->nodes[start_node_index];
     auto& node_end = history->nodes[history->current];

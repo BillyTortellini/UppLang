@@ -888,6 +888,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
     auto info = get_info(expression);
     auto result_type = expression_info_get_type(info);
     auto type_system = &compiler.type_system;
+    assert(!info->contains_errors, "Cannot contain errors!"); 
 
     // Handle different expression results
     switch (info->result_type)
@@ -1725,6 +1726,7 @@ void ir_generator_queue_function(ModTree_Function* function) {
     if (!function->is_runnable) {
         return;
     }
+    assert((function->polymorphic_base == 0 || function->polymorphic_instance_index != 0), "Function cannot be polymorhic here!");
     if (hashtable_find_element(&ir_generator.function_mapping, function) != 0) return;
     ir_function_create(function->signature, function);
 }

@@ -231,17 +231,10 @@ void semantic_analyser_set_error_flag(bool error_due_to_unknown)
     }
     if (analyser.current_function != 0)
     {
-        /*
-        if (analyser.current_function->type == ModTree_Function_Type::POLYMORPHIC_BASE) {
-            if (!error_due_to_unknown) {
-                analyser.current_function->contains_errors = true;
-            }
-        }
-        else {
-        }
-        */
-        analyser.current_function->contains_errors = true;
         analyser.current_function->is_runnable = false;
+        if (!error_due_to_unknown) {
+            analyser.current_function->contains_errors = true;
+        }
     }
 }
 
@@ -595,7 +588,7 @@ Comptime_Result expression_calculate_comptime_value_without_context(AST::Express
         Comptime_Result left_val = expression_calculate_comptime_value(expr->options.binop.left);
         Comptime_Result right_val = expression_calculate_comptime_value(expr->options.binop.right);
         if (left_val.type != Comptime_Result_Type::AVAILABLE || right_val.type != Comptime_Result_Type::AVAILABLE) {
-            if (left_val.type == Comptime_Result_Type::NOT_COMPTIME || right_val.type != Comptime_Result_Type::NOT_COMPTIME) {
+            if (left_val.type == Comptime_Result_Type::NOT_COMPTIME && right_val.type != Comptime_Result_Type::NOT_COMPTIME) {
                 return comptime_result_make_not_comptime();
             }
             else {
@@ -2261,8 +2254,10 @@ void analysis_workload_execute(Analysis_Workload* workload)
 
         auto function = progress->function;
         if (function->polymorphic_base != 0) {
-            if (!function->polymorphic_base->instances[0].function->contains_errors) {
+            // Note: I think I cannot just set contains errors to 
+            if (function->polymorphic_instance_index != 0 && function->polymorphic_base->instances[0].function->contains_errors) {
                 function->contains_errors = true;
+                function->is_runnable = false;
                 progress->state = Function_State::BODY_ANALYSED;
                 break;
             }
@@ -2884,7 +2879,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
     switch (expr->type)
     {
     case AST::Expression_Type::ERROR_EXPR: {
-        semantic_analyser_set_error_flag(false);// Error due to parsing
+        semantic_analyser_set_error_flag(false);// Error due to parsing, dont log error message because we already have parse error messages
         EXIT_ERROR(type_system->unknown_type);
     }
     case AST::Expression_Type::FUNCTION_CALL:
@@ -3035,6 +3030,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 function_progress->function->polymorphic_base = poly_function;
                 function_progress->function->polymorphic_instance_index = poly_function->instances.size;
                 function_progress->function->signature = function_signature;
+                function_progress->function->body_pass = function_progress->body_pass;
 
                 // Create body and compile workload
                 auto body_workload = workload_executer_add_workload_empty(Analysis_Workload_Type::FUNCTION_BODY, body_item, upcast(function_progress), false);
@@ -3395,7 +3391,6 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             assert(item_opt != 0, "");
             Analysis_Progress** progress_opt = hashtable_find_element(&workload_executer.progress_items, *item_opt);
             assert(progress_opt != 0, "");
-            assert((*progress_opt)->type == Analysis_Progress_Type::BAKE, "Shouldn't bake always have a bake progress or am I missing something?");
             progress = *progress_opt;
         }
 
