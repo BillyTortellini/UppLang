@@ -218,6 +218,11 @@ bool constant_pool_compare_constants(Constant_Pool* pool, Upp_Constant a, Upp_Co
         otherwise memory_compare cannot be used here, since the padding bytes may be uninitialized and therefore random
 
         Also, I could implement a deep comparison, but the use cases for that seem unclear
+
+        TODO: I definitly want to de-duplicate constant values, since they cannot be modified this will not change
+        anything about the logic of the program. For example, integer values like 0, 1, -1... will appear alot in
+        programs, so we shouldn't store them lots of times in constant memory.
+        After de-duplication (probably with a hashmap), it should be possible to compare two constants by looking at their indices!
     */
 
     if (a.type != b.type) return false;

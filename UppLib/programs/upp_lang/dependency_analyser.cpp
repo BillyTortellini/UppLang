@@ -495,7 +495,7 @@ void analyse_ast_base(AST::Node* base)
     {
         auto param = (Parameter*)base;
         // TODO: When polymorphic parameters can access each other in a header, this needs to be changes to Variable_Undefined!
-        param->symbol = symbol_table_define_symbol(analyser.symbol_table, param->name, Symbol_Type::UNRESOLVED, base, analyser.analysis_item);
+        param->symbol = symbol_table_define_symbol(analyser.symbol_table, param->name, Symbol_Type::VARIABLE_UNDEFINED, base, analyser.analysis_item);
         break;
     }
     case Node_Type::SYMBOL_READ:

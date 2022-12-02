@@ -97,6 +97,8 @@ struct Polymorphic_Instance
 {
     Array<Polymorphic_Value> parameter_values;
     ModTree_Function* function;
+    ModTree_Function* instanciation_site; // Where the instance comes from
+    int recursive_instanciation_depth;
 };
 
 struct Polymorphic_Function

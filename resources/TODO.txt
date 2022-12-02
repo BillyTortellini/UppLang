@@ -1,8 +1,43 @@
 
 Check/Todo NEW:
- * Recursive instanciations need to be disabled (Even de-duplication isn't done!)
+ * Poly-Parameters accessing other poly-parameters
+    1. Parameter-Symbols need to be able to 'see' each other
+        test :: ($T: Type, a: T)     --> function_signature: (a: unknown)
+        test :: ($C: int, a: [C]int) --> function signature: (a: [Unknown]int)
+
+        test :: (a: int, b: a) // Error, accessing a non-polymorphic parameter in function header
+        test :: (b: a, a: int) // Error, accessing something...
+        Just implement this and throw an error when we encounter these symbols
+    X. Make instanciations in correct order work
+        test :: ($T: Type, a: T) // E.g. when analysing the function, we 
+    2. Instanciations need to work.
+        I:   Generate all poly-values
+        II:  Check if already instanciated
+        III: Re-analyse function header with polymorphic values 
+        IV:  Continue as normal ^^
+    3. Parameter order is gonna get be importent
+        test :: (a: T, $T: Type) --> function signature of base: a: Unknown
+        test :: (a: T, $T: int) --> Error: Expected type, found int (a: T)
+        test :: (a: [C]int, $C: int) --> function signature: (a: [Unknown]int)
+    4. There may be dependencies between the poly-parameters:
+        test :: ($T: Type, $C: int, $A: [C]T) // A should be [Unknown]Unknown
+        test :: ($T: Type, $C: Type, $A: [C]T) // Error, expected int in array!
+        test :: ($T: Type, $C: T, $A: [C]int) // C is unkown type, works
+    x. Return type should also be included (Can only read poly-params, not create them)
+        test :: ($T: Type) -> T // signature: () -> Unknown
+
+ * Implicit poly-parameters
+ * Better errors (e.g. show where instanciation happens + instaciation values) --> See ya later
+
+DONE:
+ * Polymorphic functios instanciation other polymorphic functions
  * De-duplicate instanciations
- * Better errors (e.g. show where instanciation happens + instaciation values)
+ * Assigning a void type to a variable...
+ * Recursive instanciations need to be handled
+    1. Instances remember their instanciation site + their instance depth (E.g. instanciated inside another polymorphic function)
+    2. Before instancing, we check if the new instance-depth would be greater than some value, if it is, we need to error out
+    3. For errors, we could search for an instancing loop, and if we find one, we can report it, otherwise...
+    4. The most 'ideal' version is to search for loops + limit the instance depth.
 
 
 TODO:

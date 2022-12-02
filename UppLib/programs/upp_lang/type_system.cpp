@@ -44,7 +44,7 @@ void type_signature_append_to_string_with_children(String* string, Type_Signatur
         type_signature_append_to_string_with_children(string, signature->options.array.element_type, print_child);
         break;
     case Signature_Type::UNKNOWN_TYPE:
-        string_append_formated(string, "ERROR-Type");
+        string_append_formated(string, "Unknown-Type");
         break;
     case Signature_Type::TYPE_TYPE:
         string_append_formated(string, "TYPE_TYPE");
