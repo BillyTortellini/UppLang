@@ -1,4 +1,48 @@
 
+
+
+
+STILL TOP PRIORITY:
+    Think about Problems, but do it in the SIMPLEST, even if NOT MOST-EFFICIENT Way
+
+
+Polymorphic Functions:
+    a :: ($T: Type, a: T, b: T)
+
+
+TODO:
+    There should be a way to analyse expressions when the context is unknown,
+    which doesn't show context-errors but still analyses the expressions for other unrelated errors
+
+Polymorphism stages:
+    * Symbol Resolution
+        - Parameter Types should be able to 'see' other parameter symbols
+        - Parameters must only be able to access comptime parameters
+        - Inner definitions (functions, structs, parameters) should not be able to access parameters
+    * Function Declaration Parsing
+        - No cyclic dependencies between parameters, otherwise error + quit analysis (Could do better somehow)
+        - First comptime parameters need to be parsed, afterwards normal parameters (to get base-function signature)
+    * Base case analysis
+        - Unknowns must not cause Errors during base analysis
+        - If errors occur in base analysis function instanciation should be impossible
+    * Function instanciations (calls)
+        - If parameter count is invalid, return
+        - First comptime parameters need to be analysed in dependency order
+        - Dependent Polymorphic-Parameter types need to be resolved before each parameter is analysed (Given the now known comptime values)
+        - The type-signature of the function needs to be resolved after poly-parameters, normal parameter analysis can happen now
+        - Function body workload must only execute if base analysis succeeded, otherwise we can stop the workload
+        - Recursive instanciations must be impossible (depth limit)
+        - De-duplicating instances with same comptime values (General comptime value de-duplication would be nice)
+    * IR-Generator
+        - Function calls that instanciate functions need to reference which function was instanciated
+        - Comptime arguments need to be flagged so that code-gen doesn't include them
+
+
+
+Given:
+    * Polymorphic function Header
+    * Function call with function arguments
+
 Check/Todo NEW:
  * Poly-Parameters accessing other poly-parameters
     1. Parameter-Symbols need to be able to 'see' each other

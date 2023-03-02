@@ -2184,10 +2184,6 @@ void syntax_editor_render()
                 show_context_info = true;
                 string_append_string(&context, symbol->id);
                 string_append_formated(&context, " ");
-                while (symbol->type == Symbol_Type::SYMBOL_ALIAS) {
-                    string_append_formated(&context, " alias of %s ", symbol->options.alias->id->characters);
-                    symbol = symbol->options.alias;
-                }
                 Type_Signature* type = 0;
                 switch (symbol->type)
                 {
@@ -2198,9 +2194,17 @@ void syntax_editor_render()
                 case Symbol_Type::HARDCODED_FUNCTION:
                     type = hardcoded_type_to_signature(symbol->options.hardcoded);
                     break;
-                case Symbol_Type::PARAMETER:
-                    type = symbol->options.parameter.type;
+                case Symbol_Type::PARAMETER: {
+                    auto function = symbol->options.parameter.function;
+                    if (symbol->options.parameter.is_polymorphic) {
+                        auto& base = symbol->options.parameter.function->polymorphic_base;
+                        type = base->parameters[symbol->options.parameter.index].base_type;
+                    }
+                    else {
+                        type = function->signature->options.function.parameters[symbol->options.parameter.index].type;
+                    }
                     break;
+                }
                 case Symbol_Type::TYPE:
                     type = symbol->options.type;
                     break;

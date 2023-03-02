@@ -38,7 +38,6 @@ enum class Symbol_Type
 {
     UNRESOLVED,            // An Analysis Item exists for this Symbol, but it hasn't advance yet (Function without header analysis, struct not started...)
     VARIABLE_UNDEFINED,    // A variable/parameter/global that hasn't been defined yet
-    SYMBOL_ALIAS,          // Comptime definition pointing at another symbol
 
     HARDCODED_FUNCTION,
     FUNCTION,
@@ -65,9 +64,9 @@ struct Symbol
         Type_Signature* type;
         ModTree_Global* global;
         struct {
-            Type_Signature* type;
-            int index;
             bool is_polymorphic;
+            int index; // If not polymorphic, index in function signature, otherwise index in polymorphic evaluation order 
+            ModTree_Function* function; 
         } parameter;
         Upp_Constant constant;
         Symbol* alias;

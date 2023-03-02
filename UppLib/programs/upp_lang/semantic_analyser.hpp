@@ -101,10 +101,18 @@ struct Polymorphic_Instance
     int recursive_instanciation_depth;
 };
 
+struct Polymorphic_Parameter
+{
+    AST::Parameter* node;
+    int index_in_header; // E.g. (a: int, $T: Type) 2
+    Type_Signature* base_type; // Type of parameter in base form (May be unknown if it depends on another poly-parameter)
+};
+
 struct Polymorphic_Function
 {
-    int polymorphic_parameter_count;
-    Array<AST::Parameter*> parameters;
+    int parameter_count;
+    bool is_valid; // If not valid, we never instanciate and other stuff
+    Array<Polymorphic_Parameter> parameters; // In the order of evalulation
     Dynamic_Array<Polymorphic_Instance> instances;
 };
 
@@ -422,6 +430,7 @@ struct Semantic_Analyser
     Analysis_Workload* current_workload;
     ModTree_Function* current_function;
     Expression_Info* current_expression;
+    Array<Polymorphic_Value> current_polymorphic_values;
 
     Dynamic_Array<Polymorphic_Function*> polymorphic_functions;
 
