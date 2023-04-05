@@ -19,7 +19,7 @@
 #include "source_code.hpp"
 
 // GLOBALS
-bool PRINT_DEPENDENCIES = false;
+bool PRINT_DEPENDENCIES = true;
 static Semantic_Analyser semantic_analyser;
 static Workload_Executer workload_executer;
 
@@ -44,7 +44,7 @@ Type_Signature* semantic_analyser_analyse_expression_value(AST::Expression* rc_e
 Type_Signature* semantic_analyser_analyse_expression_type(AST::Expression* rc_expression);
 Control_Flow semantic_analyser_analyse_block(AST::Code_Block* code_block);
 
-void analysis_workload_execute(Analysis_Workload* workload);
+bool workload_executer_switch_to_workload(Analysis_Workload* workload);
 void analysis_workload_add_struct_dependency(Struct_Progress* my_workload, Struct_Progress* other_progress, Dependency_Type type, Symbol_Dependency* symbol_read);
 void analysis_workload_append_to_string(Analysis_Workload* workload, String* string);
 
@@ -1566,7 +1566,8 @@ void workload_executer_resolve()
                 string_destroy(&tmp);
             }
 
-            analysis_workload_execute(workload);
+            bool finished = workload_executer_switch_to_workload(workload);
+            assert(finished, "Currently we don't make use of the start/stop features of fibers!");
             // Note: After a workload executes, it may have added new dependencies to itself
             if (workload->dependencies.count == 0)
             {
@@ -1784,6 +1785,7 @@ Analysis_Workload* workload_executer_add_workload_empty(Analysis_Workload_Type t
     workload->type = type;
     workload->progress = progress;
     workload->is_finished = false;
+    workload->was_started = false;
     workload->cluster = 0;
     workload->dependencies = list_create<Analysis_Workload*>();
     workload->dependents = list_create<Analysis_Workload*>();
@@ -2017,13 +2019,15 @@ void analysis_workload_check_if_runnable(Analysis_Workload* workload)
     }
 }
 
-void analysis_workload_execute(Analysis_Workload* workload)
+void analysis_workload_entry(void* userdata)
 {
+    Analysis_Workload* workload = (Analysis_Workload*)userdata;
     auto& analyser = semantic_analyser;
     auto& type_system = analyser.compiler->type_system;
     analyser.current_workload = workload;
     analyser.current_function = 0;
     analyser.current_pass = 0;
+
     switch (workload->type)
     {
     case Analysis_Workload_Type::PROJECT_IMPORT:
@@ -2588,8 +2592,8 @@ void analysis_workload_execute(Analysis_Workload* workload)
     }
     default: panic("");
     }
-    return;
 
+    return;
     // OLD EXTERN IMPORTS
     /*
 case Analysis_Workload_Type::EXTERN_HEADER_IMPORT:
@@ -2743,6 +2747,18 @@ case Analysis_Workload_Type::EXTERN_FUNCTION_DECLARATION:
     break;
 }
 */
+
+
+
+}
+
+bool workload_executer_switch_to_workload(Analysis_Workload* workload)
+{
+    if (!workload->was_started) {
+        workload->fiber_handle = fiber_pool_get_handle(compiler.fiber_pool, analysis_workload_entry, workload);
+        workload->was_started = true;
+    }
+    return fiber_pool_switch_to_handel(workload->fiber_handle);
 
 }
 

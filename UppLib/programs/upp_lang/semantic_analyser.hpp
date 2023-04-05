@@ -215,6 +215,8 @@ struct Analysis_Workload
     Analysis_Workload_Type type;
     Analysis_Progress* progress;
     bool is_finished;
+    bool was_started;
+    Fiber_Pool_Handle fiber_handle;
 
     // Dependencies
     List<Analysis_Workload*> dependencies;

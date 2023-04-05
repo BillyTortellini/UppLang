@@ -164,3 +164,84 @@ void process_result_destroy(Optional<Process_Result>* result)
         string_destroy(&result->value.output);
     }
 }
+
+
+bool fiber_initialize() {
+    return ConvertThreadToFiber(0) != 0;
+}
+
+Fiber_Handle fiber_get_current() {
+    Fiber_Handle result;
+    result.handle = GetCurrentFiber();
+    return result;
+}
+
+Fiber_Handle fiber_create(fiber_entry_fn entry_fn, void* user_data) {
+    Fiber_Handle result;
+    result.handle = CreateFiber(0, entry_fn, user_data);
+    if (result.handle == 0) {
+        panic("Fiber creation failed!");
+    }
+    return result;
+}
+
+void fiber_switch_to(Fiber_Handle fiber) {
+    // Just assert we aren't switching to the current fiber
+    assert(fiber.handle != GetCurrentFiber(), "Cannot switch to current fiber!");
+    SwitchToFiber(fiber.handle);
+}
+
+void fiber_delete(Fiber_Handle fiber) {
+    DeleteFiber(fiber.handle);
+}
+
+
+struct User_Data
+{
+    int fiber_index;
+    Fiber_Handle next_fiber;
+};
+
+void fiber_entry(void* userdata) {
+    User_Data data = *((User_Data*)userdata);
+    logg("Fiber %d printing!\n", data.fiber_index);
+    fiber_switch_to(data.next_fiber);
+}
+
+void test_fibers()
+{
+    if (!fiber_initialize()) {
+        panic("Fiber initializtion failed!");
+    }
+    logg("Fibers successfully initialized");
+    
+    Fiber_Handle current = fiber_get_current();
+
+    User_Data fiber1_data;
+    User_Data fiber2_data;
+
+    Fiber_Handle fiber1 = fiber_create(&fiber_entry, &fiber1_data);
+    SCOPE_EXIT(fiber_delete(fiber1));
+    Fiber_Handle fiber2 = fiber_create(&fiber_entry, &fiber2_data);
+    SCOPE_EXIT(fiber_delete(fiber2));
+
+    fiber1_data.fiber_index = 1;
+    fiber1_data.next_fiber = fiber2;
+    fiber2_data.fiber_index = 2;
+    fiber2_data.next_fiber = current;
+
+    logg("Switching to first fiber!");
+    fiber_switch_to(fiber1);
+    logg("Just returned from swich to!");
+}
+
+
+
+
+
+
+
+
+
+
+

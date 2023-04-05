@@ -97,6 +97,7 @@ Compiler* compiler_initialize(Timer* timer)
     compiler.constant_pool = constant_pool_create(&compiler.type_system);
     compiler.extern_sources = extern_sources_create();
     compiler.cached_imports = hashtable_create_empty<String, Code_Source*>(1, hash_string, string_equals);
+    compiler.fiber_pool = fiber_pool_create();
 
     Parser::initialize();
     lexer_initialize(&compiler.identifier_pool);
@@ -122,6 +123,8 @@ void compiler_destroy()
 {
     Parser::destroy();
     lexer_shutdown();
+    fiber_pool_destroy(compiler.fiber_pool);
+    compiler.fiber_pool = 0;
 
     type_system_destroy(&compiler.type_system);
     identifier_pool_destroy(&compiler.identifier_pool);
@@ -270,6 +273,7 @@ void compiler_prepare_compile(bool incremental, Compile_Type compile_type)
 
         // FUTURE: When we have incremental compilation we cannot just reset everything anymore
         // Reset Data
+        fiber_pool_check_all_handles_completed(compiler.fiber_pool);
         constant_pool_destroy(&compiler.constant_pool);
         compiler.constant_pool = constant_pool_create(&compiler.type_system);
         extern_sources_destroy(&compiler.extern_sources);

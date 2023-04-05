@@ -3,6 +3,7 @@
 #include "../../datastructures/dynamic_array.hpp"
 #include "../../datastructures/hashtable.hpp"
 #include "../../datastructures/string.hpp"
+#include "../../win32/process.hpp"
 
 #include "lexer.hpp"
 #include "type_system.hpp"
@@ -205,5 +206,23 @@ Identifier_Pool identifier_pool_create();
 void identifier_pool_destroy(Identifier_Pool* pool);
 String* identifier_pool_add(Identifier_Pool* pool, String identifier);
 void identifier_pool_print(Identifier_Pool* pool);
+
+
+
+// Fiber Pool
+struct Fiber_Pool;
+struct Fiber_Pool_Handle { // Handle to a fiber from a fiber pool
+    Fiber_Pool* pool;
+    int pool_index;
+}; 
+
+Fiber_Pool* fiber_pool_create();
+void fiber_pool_destroy(Fiber_Pool* pool);
+Fiber_Pool_Handle fiber_pool_get_handle(Fiber_Pool* pool, fiber_entry_fn entry_fn, void* userdata);
+bool fiber_pool_switch_to_handel(Fiber_Pool_Handle handle); // Returns true if fiber finished, or if fiber waits for more stuff to happen
+void fiber_pool_switch_to_main_fiber(Fiber_Pool* pool);
+void fiber_pool_check_all_handles_completed(Fiber_Pool* pool);
+void fiber_pool_test(); // Just tests the fiber pool if everything works correctly
+
 
 

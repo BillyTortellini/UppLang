@@ -46,6 +46,8 @@ struct Compiler
 
     // Helpers
     Identifier_Pool identifier_pool;
+    Fiber_Pool* fiber_pool;
+
     Constant_Pool constant_pool;
     Type_System type_system;
     Extern_Sources extern_sources;

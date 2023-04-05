@@ -1,0 +1,39 @@
+
+#import"printing.upp"
+
+double::(value:T,$T:Type)->T
+	return value+value
+
+adder::(a:T,$T:Type,b:T)->T
+	return a+b
+
+//
+	Vector::struct(D:int, T: Type)
+		elements: [D]T
+	
+	binop :: (a:Vector($D, $T), b: Vector(D, T), op: (x: T, y: T) -> T) -> Vecotr(D, T)
+		result: Vector($D, $T)
+		for i := 0; i < D; i += 1
+			result[i] = binop(a[i], b[i])
+	
+	general_addition :: (a: T, b: T) -> T
+		return a + b
+
+print_static_array::($T:Type,array:[SIZE]T,$SIZE:int)
+	i:=0
+	while i<SIZE
+		print_any(array[i])
+		if i!=SIZE-1
+			print_string(", ")
+		i=i+1
+	print_line()
+
+main::()
+	x:=double(cast{u32}5,u32)
+	print_line()
+	
+	print_static_array(float,.[1,2,3],3)
+	
+	
+
+

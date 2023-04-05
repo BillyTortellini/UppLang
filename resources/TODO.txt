@@ -1,5 +1,15 @@
 
 
+TODO: Fibers and new Dependency-System:
+ 1. Workloads should execute as fibers (Then the fibers will never have to 'pause', because all dependencies are resolved before)
+ 2. Then dependencies should be added at symbol read, not when workloads are generated, and the fibers
+        should stop when a dependency is generated at symbol read
+ 3. Dependency_Analyser should be removed, and a new workload (Analyse source_code/module) should be added that does the same stuff,
+        e.g. creating new workloads for definitions/functions/structs, Symbol_Reads should only execute if all 'symbol-tables' it traverses
+        are filled, e.g. a Workload for 'Symbol-table' filled.
+    This also requires that structs keep track of Dependency-Type, e.g. In-Memory, Normal, Pointer
+ 4. Rework Workload execution with Clustering, maybe it's easier with 'Event-Type' workloads
+
 
 
 STILL TOP PRIORITY:

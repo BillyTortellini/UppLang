@@ -158,7 +158,7 @@ enum class Analysis_Item_Type
     FUNCTION,
     FUNCTION_BODY,
     BAKE,
-    ROOT, // At unexpected global scope
+    ROOT, // At unexpected global scope (TODO: needs clarification!)
     IMPORT
 };
 

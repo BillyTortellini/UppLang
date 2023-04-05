@@ -510,5 +510,196 @@ void identifier_pool_print(Identifier_Pool* pool)
 
 
 
+// FIBER POOL
+struct Fiber_Startup_Info // Just a helper struct for setting up initial fibers in pool
+{
+    Fiber_Pool* pool;
+    int index_in_pool;
+};
+
+struct Fiber_Info
+{
+    Fiber_Handle handle;
+    bool has_task_to_run; // If the fiber is currently executing a task or if its waiting for a new one
+    fiber_entry_fn next_entry;
+    void* next_userdata;
+};
+
+struct Fiber_Pool
+{
+    Fiber_Handle main_fiber; // Fiber that created the fiber pool
+    Dynamic_Array<Fiber_Info> allocated_fibers;
+    Dynamic_Array<int> next_free_index;
+};
+
+Fiber_Pool* fiber_pool_create() {
+    Fiber_Pool* pool = new Fiber_Pool;
+    pool->allocated_fibers = dynamic_array_create_empty<Fiber_Info>(1);
+    pool->next_free_index = dynamic_array_create_empty<int>(1);
+    if (!fiber_initialize()) {
+        panic("Couldn't create fiber_pool, fiber initialization failed!\n");
+    }
+    pool->main_fiber = fiber_get_current();
+    return pool;
+}
+
+void fiber_pool_destroy(Fiber_Pool* pool) {
+    for (int i = 0; i < pool->allocated_fibers.size; i++) {
+        fiber_delete(pool->allocated_fibers[i].handle);
+    }
+    dynamic_array_destroy(&pool->allocated_fibers);
+    dynamic_array_destroy(&pool->next_free_index);
+    delete pool;
+}
+
+void fiber_pool_instance_entry(void* userdata) {
+    // Copy startup info to local stack
+    Fiber_Startup_Info startup = *((Fiber_Startup_Info*)userdata);
+    auto pool = startup.pool;
+    // Switch to main fiber after copy and wait for commands
+    fiber_switch_to(pool->main_fiber);
+
+    while (true)
+    {
+        Fiber_Info info = pool->allocated_fibers[startup.index_in_pool];
+        assert(info.has_task_to_run, "Trying to run a fiber without a given task!");
+        if (info.next_entry == 0) {
+            panic("Fiber pool instance started without properly setting the entryfn, should never happen!");
+            break;
+        }
+        info.next_entry(info.next_userdata);
+        pool->allocated_fibers[startup.index_in_pool].has_task_to_run = false;
+
+        // When the fiber's job finishes, we add it back to the pool, and switch to the main fiber
+        dynamic_array_push_back(&pool->next_free_index, startup.index_in_pool);
+        pool->allocated_fibers[startup.index_in_pool].next_entry = 0; // Just for error detection
+        pool->allocated_fibers[startup.index_in_pool].next_userdata = 0;
+        fiber_switch_to(pool->main_fiber);
+    }
+}
+
+Fiber_Pool_Handle fiber_pool_get_handle(Fiber_Pool* pool, fiber_entry_fn entry_fn, void* userdata) {
+    // Setup new fiber if no free one is in pool
+    if (pool->next_free_index.size == 0)
+    {
+        Fiber_Startup_Info startup;
+        Fiber_Info info;
+        info.handle = fiber_create(fiber_pool_instance_entry, &startup); // Note: startup is not filled out yet, but the pointer is still valid!
+        info.next_entry = 0;
+        info.next_userdata = 0;
+        info.has_task_to_run = false;
+        dynamic_array_push_back(&pool->allocated_fibers, info);
+        dynamic_array_push_back(&pool->next_free_index, pool->allocated_fibers.size - 1);
+
+        // Switch to fiber so it can grab its startup info, see 'fiber_pool_instance_entry'
+        startup.pool = pool;
+        startup.index_in_pool = pool->allocated_fibers.size - 1;
+        fiber_switch_to(info.handle);
+    }
+
+    // Grab fiber from pool and setup to run the given function
+    Fiber_Pool_Handle handle;
+    handle.pool = pool;
+    handle.pool_index = pool->next_free_index[pool->next_free_index.size - 1];
+    pool->next_free_index.size = pool->next_free_index.size - 1; // Pop
+
+    Fiber_Info* info = &pool->allocated_fibers[handle.pool_index];
+    assert(!info->has_task_to_run, "We seem to be grabbing a function thats currently running!");
+    info->next_entry = entry_fn;
+    info->next_userdata = userdata;
+    info->has_task_to_run = true;
+
+    return handle;
+}
+
+bool fiber_pool_switch_to_handel(Fiber_Pool_Handle handle)
+{
+    Fiber_Info* info = &handle.pool->allocated_fibers[handle.pool_index];
+    assert(info->has_task_to_run, "Fiber_Pool_Handle seems to be invalid, e.g. the task was already finished\n");
+    fiber_switch_to(info->handle);
+    // After return, return if task has completed
+    info = &handle.pool->allocated_fibers[handle.pool_index]; // Refresh info pointer, just in case 
+    return !info->has_task_to_run;
+}
+
+void fiber_pool_check_all_handles_completed(Fiber_Pool* pool) {
+    for (int i = 0; i < pool->allocated_fibers.size; i++) {
+        auto& info = pool->allocated_fibers[i];
+        assert(!info.has_task_to_run, "Task must be completed!\n");
+        info.next_entry = 0;
+        info.next_userdata = 0;
+
+        // Check that fiber is in next_free_entry list
+        bool found = false;
+        for (int j = 0; j < pool->next_free_index.size; j++) {
+            if (pool->next_free_index[j] == i) {
+                found = true;
+                break;
+            }
+        }
+        assert(found, "Finished fiber must be in next_free_entry list!\n");
+    }
+
+    // Reset next_free entry list
+    assert(pool->next_free_index.size == pool->allocated_fibers.size, "Must be the same, since all fibers should be completed!\n");
+    dynamic_array_reset(&pool->next_free_index);
+    for (int i = 0; i < pool->allocated_fibers.size; i++) {
+        dynamic_array_push_back(&pool->next_free_index, i);
+    }
+}
+
+void fiber_pool_switch_to_main_fiber(Fiber_Pool* pool)
+{
+    fiber_switch_to(pool->main_fiber);
+}
+
+
+
+// Fiber Pool test
+void test_print_int_task(void* userdata)
+{
+    int value = *((int*)userdata);
+    logg("Fiber with userdata #%d working\n", value);
+}
+
+void test_pause_3_task(void* userdata)
+{
+    Fiber_Pool* pool = (Fiber_Pool*)userdata;
+    logg("Wait 1\n");
+    fiber_pool_switch_to_main_fiber(pool);
+    logg("Wait 2\n");
+    fiber_pool_switch_to_main_fiber(pool);
+    logg("Wait 3\n");
+    fiber_pool_switch_to_main_fiber(pool);
+    logg("Finish\n");
+}
+
+void fiber_pool_test()
+{
+    Fiber_Pool* pool = fiber_pool_create();
+    SCOPE_EXIT(fiber_pool_destroy(pool));
+
+    int a = 1;
+    int b = 2;
+    int c = 3;
+    Fiber_Pool_Handle handle1 = fiber_pool_get_handle(pool, test_print_int_task, &a);
+    Fiber_Pool_Handle handle2 = fiber_pool_get_handle(pool, test_print_int_task, &b);
+    bool finished = fiber_pool_switch_to_handel(handle1);
+    assert(finished, "Must be finished now\n");
+    finished = fiber_pool_switch_to_handel(handle2);
+    assert(finished, "Must be finished now\n");
+
+    Fiber_Pool_Handle pausing = fiber_pool_get_handle(pool, test_pause_3_task, pool);
+    finished = false;
+    while (!finished) {
+        logg("switch to pausing\n");
+        finished = fiber_pool_switch_to_handel(pausing);
+    }
+    logg("Returned from pausing!\n");
+    
+    assert(pool->allocated_fibers.size == 2, "Must not have allocated 3, since only max of 2 fibers at a time were active\n");
+}
+
+
 
 
