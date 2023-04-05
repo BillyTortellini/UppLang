@@ -1146,29 +1146,32 @@ void workload_executer_move_dependency(Analysis_Workload* move_from, Analysis_Wo
 {
     auto graph = &workload_executer;
     assert(move_from != move_to, "");
+
+    // Remove old dependency
     Workload_Pair original_pair = workload_pair_create(move_from, dependency);
-    Workload_Pair new_pair = workload_pair_create(move_to, dependency);
     Dependency_Information info = *hashtable_find_element(&graph->workload_dependencies, original_pair);
     hashtable_remove_element(&graph->workload_dependencies, original_pair);
     list_remove_node(&move_from->dependencies, info.dependency_node);
     list_remove_node(&dependency->dependents, info.dependent_node);
 
+    // Add new dependency, reusing old information in the process
+    Workload_Pair new_pair = workload_pair_create(move_to, dependency);
     Dependency_Information* new_infos = hashtable_find_element(&graph->workload_dependencies, new_pair);
     if (new_infos == 0) {
         Dependency_Information new_info;
         new_info.dependency_node = list_add_at_end(&move_to->dependencies, dependency);
-        new_info.dependent_node = list_add_at_end(&move_from->dependents, move_to);
-        new_info.symbol_reads = info.symbol_reads;
+        new_info.dependent_node = list_add_at_end(&dependency->dependents, move_to);
+        new_info.symbol_reads = info.symbol_reads; // Note: Takes ownership
         new_info.only_symbol_read_dependency = info.only_symbol_read_dependency;
         hashtable_insert_element(&graph->workload_dependencies, new_pair, new_info);
-        return;
     }
-
-    dynamic_array_append_other(&new_infos->symbol_reads, &info.symbol_reads);
-    if (new_infos->only_symbol_read_dependency) {
-        new_infos->only_symbol_read_dependency = info.only_symbol_read_dependency;
+    else {
+        dynamic_array_append_other(&new_infos->symbol_reads, &info.symbol_reads);
+        if (new_infos->only_symbol_read_dependency) {
+            new_infos->only_symbol_read_dependency = info.only_symbol_read_dependency;
+        }
+        dynamic_array_destroy(&info.symbol_reads);
     }
-    dynamic_array_destroy(&info.symbol_reads);
 }
 
 void workload_executer_remove_dependency(Analysis_Workload* workload, Analysis_Workload* depends_on, bool allow_add_to_runnables)
@@ -1239,6 +1242,7 @@ void analysis_workload_add_cluster_dependency(Analysis_Workload* add_to_workload
         return;
     }
 
+    // Check if clusters form loops after new dependency
     Hashtable<Analysis_Workload*, bool> visited = hashtable_create_pointer_empty<Analysis_Workload*, bool>(1);
     SCOPE_EXIT(hashtable_destroy(&visited));
     Dynamic_Array<Analysis_Workload*> workloads_to_merge = dynamic_array_create_empty<Analysis_Workload*>(1);
@@ -1250,7 +1254,7 @@ void analysis_workload_add_cluster_dependency(Analysis_Workload* add_to_workload
         return;
     }
 
-    // Merge all workloads together
+    // Merge all workloads into merge_into workload
     for (int i = 0; i < workloads_to_merge.size; i++)
     {
         Analysis_Workload* merge_cluster = workloads_to_merge[i];
@@ -1301,12 +1305,7 @@ void analysis_workload_add_cluster_dependency(Analysis_Workload* add_to_workload
             dynamic_array_reset(&merge_cluster->options.struct_reachable.struct_types);
             break;
         }
-        case Analysis_Workload_Type::DEFINITION:
-        case Analysis_Workload_Type::FUNCTION_BODY:
-        case Analysis_Workload_Type::FUNCTION_HEADER:
-        case Analysis_Workload_Type::STRUCT_ANALYSIS:
-            panic("Clustering only on function clusters and reachable resolve cluster!");
-        default: panic("");
+        default: panic("Clustering only on function clusters and reachable resolve cluster!");
         }
 
         // Add reachables to merged
@@ -1328,16 +1327,10 @@ void analysis_workload_add_cluster_dependency(Analysis_Workload* add_to_workload
         else
         {
             // Remove doubles
-            bool found = false;
             for (int j = i + 1; j < merge_into->reachable_clusters.size; j++) {
                 if (merge_into->reachable_clusters[j] == reachable) {
-                    found = true;
-                    break;
+                    dynamic_array_swap_remove(&merge_into->reachable_clusters, j);
                 }
-            }
-            if (found) {
-                dynamic_array_swap_remove(&merge_into->reachable_clusters, i);
-                i = i - 1;
             }
         }
     }
@@ -1503,46 +1496,86 @@ void workload_executer_resolve()
         {
             String tmp = string_create_empty(256);
             SCOPE_EXIT(string_destroy(&tmp));
-            string_append_formated(&tmp, "Workload Execution Round %d\n---------------------\n", round_no);
-            string_append_formated(&tmp, "Symbol waiting workloads:\n");
+            string_append_formated(&tmp, "\n\n--------------------\nWorkload Execution Round %d\n---------------------\n", round_no);
             for (int i = 0; i < executer.waiting_for_symbols_workloads.size; i++)
             {
+                if (i == 0) {
+                    string_append_formated(&tmp, "Symbol waiting workloads:\n");
+                }
                 auto workload = executer.waiting_for_symbols_workloads[i];
                 if (workload->is_finished) continue;
+                string_append_formated(&tmp, "  ");
                 analysis_workload_append_to_string(workload, &tmp);
                 string_append_formated(&tmp, "\n");
                 for (int j = 0; j < workload->symbol_dependencies.size; j++) {
                     auto& dep = workload->symbol_dependencies[j];
-                    string_append_formated(&tmp, "  ");
+                    string_append_formated(&tmp, "    ");
                     AST::symbol_read_append_to_string(dep->read, &tmp);
                     string_append_formated(&tmp, "\n");
                 }
             }
 
-            string_append_formated(&tmp, "Runnable workloads:\n");
             for (int i = 0; i < executer.runnable_workloads.size; i++)
             {
+                if (i == 0) {
+                    string_append_formated(&tmp, "Runnable workloads:\n");
+                }
                 auto workload = executer.runnable_workloads[i];
                 if (workload->is_finished) continue;
+                string_append_formated(&tmp, "  ");
                 analysis_workload_append_to_string(workload, &tmp);
                 string_append_formated(&tmp, "\n");
-            }
 
-            string_append_formated(&tmp, "\nWorkloads with dependencies:\n");
-            for (int i = 0; i < executer.all_workloads.size; i++)
-            {
-                Analysis_Workload* workload = executer.all_workloads[i];
-                if (workload->is_finished || workload->dependencies.count == 0) continue;
-                analysis_workload_append_to_string(workload, &tmp);
-                string_append_formated(&tmp, "\n");
-                List_Node<Analysis_Workload*>* dependency_node = workload->dependencies.head;
-                while (dependency_node != 0) {
-                    SCOPE_EXIT(dependency_node = dependency_node->next);
-                    Analysis_Workload* dependency = dependency_node->value;
-                    string_append_formated(&tmp, "  ");
-                    analysis_workload_append_to_string(dependency, &tmp);
+                // Append dependents
+                List_Node<Analysis_Workload*>* dependent_node = workload->dependents.head;
+                while (dependent_node != 0) {
+                    SCOPE_EXIT(dependent_node = dependent_node->next);
+                    Analysis_Workload* dependent = dependent_node->value;
+                    string_append_formated(&tmp, "    ");
+                    analysis_workload_append_to_string(dependent, &tmp);
                     string_append_formated(&tmp, "\n");
                 }
+            }
+
+            for (int i = 0; i < executer.all_workloads.size; i++)
+            {
+                if (i == 0) {
+                    string_append_formated(&tmp, "\nWorkloads with dependencies:\n");
+                }
+                Analysis_Workload* workload = executer.all_workloads[i];
+                if (workload->is_finished || workload->dependencies.count == 0) continue;
+                string_append_formated(&tmp, "  ");
+                analysis_workload_append_to_string(workload, &tmp);
+                string_append_formated(&tmp, "\n");
+                // Print dependencies
+                {
+                    List_Node<Analysis_Workload*>* dependency_node = workload->dependencies.head;
+                    if (dependency_node != 0) {
+                        string_append_formated(&tmp, "    Depends On:\n");
+                    }
+                    while (dependency_node != 0) {
+                        SCOPE_EXIT(dependency_node = dependency_node->next);
+                        Analysis_Workload* dependency = dependency_node->value;
+                        string_append_formated(&tmp, "      ");
+                        analysis_workload_append_to_string(dependency, &tmp);
+                        string_append_formated(&tmp, "\n");
+                    }
+                }
+                // Dependents
+                {
+                    List_Node<Analysis_Workload*>* dependent_node = workload->dependents.head;
+                    if (dependent_node != 0) {
+                        string_append_formated(&tmp, "    Dependents:\n");
+                    }
+                    while (dependent_node != 0) {
+                        SCOPE_EXIT(dependent_node = dependent_node->next);
+                        Analysis_Workload* dependent = dependent_node->value;
+                        string_append_formated(&tmp, "      ");
+                        analysis_workload_append_to_string(dependent, &tmp);
+                        string_append_formated(&tmp, "\n");
+                    }
+                }
+
             }
 
             logg("%s", tmp.characters);
@@ -1584,7 +1617,12 @@ void workload_executer_resolve()
             }
         }
         dynamic_array_reset(&executer.runnable_workloads);
-        if (executer.progress_was_made) continue;
+        if (executer.progress_was_made) {
+            if (PRINT_DEPENDENCIES) {
+                logg("Progress was made!");
+            }
+            continue;
+        }
 
         // Check if all workloads finished
         {
@@ -1739,9 +1777,15 @@ void workload_executer_resolve()
                 }
                 assert(only_reads_was_found, "");
                 executer.progress_was_made = true;
+                if (PRINT_DEPENDENCIES) {
+                    logg("Resolved cyclic dependency loop!");
+                }
             }
         }
         if (executer.progress_was_made) {
+            if (PRINT_DEPENDENCIES) {
+                logg("Progress was made!");
+            }
             continue;
         }
 
