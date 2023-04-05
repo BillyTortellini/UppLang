@@ -34,6 +34,7 @@ namespace Parser
 namespace AST
 {
     struct Code_Block;
+    struct Symbol_Read;
 }
 
 
@@ -202,14 +203,21 @@ enum class Analysis_Workload_Type
     FUNCTION_HEADER,
     FUNCTION_BODY,
     FUNCTION_CLUSTER_COMPILE,
+
     STRUCT_ANALYSIS,
     STRUCT_REACHABLE_RESOLVE,
+
     BAKE_ANALYSIS,
     BAKE_EXECUTION,
+
     DEFINITION,
+
     PROJECT_IMPORT,
 };
 
+struct Expression_Info;
+struct Modtree_Function;
+struct Analysis_Pass;
 struct Analysis_Workload
 {
     Analysis_Workload_Type type;
@@ -218,10 +226,16 @@ struct Analysis_Workload
     bool was_started;
     Fiber_Pool_Handle fiber_handle;
 
+    // Information required to be consistent during workload switches
+    Analysis_Pass* current_pass;
+    ModTree_Function* current_function; 
+    Expression_Info* current_expression;
+    Array<Polymorphic_Value> current_polymorphic_values;
+    bool statement_reachable;
+
     // Dependencies
     List<Analysis_Workload*> dependencies;
     List<Analysis_Workload*> dependents;
-    Dynamic_Array<Symbol_Dependency*> symbol_dependencies;
 
     // Note: Clustering is required for Workloads where cyclic dependencies on the same workload-type are allowed,
     //       like recursive functions or structs containing pointers to themselves
@@ -240,6 +254,9 @@ struct Analysis_Workload
         struct {
             AST::Project_Import* import;
         };
+        struct {
+            Dynamic_Array<AST::Code_Block*> block_stack;
+        } function_body;
     } options;
 };
 
@@ -255,7 +272,7 @@ struct Dependency_Information
     List_Node<Analysis_Workload*>* dependent_node;
     // Information for cyclic resolve
     bool only_symbol_read_dependency;
-    Dynamic_Array<Symbol_Dependency*> symbol_reads;
+    Dynamic_Array<AST::Symbol_Read*> symbol_reads;
 };
 
 struct Workload_Executer
@@ -425,23 +442,12 @@ struct Semantic_Analyser
     Dynamic_Array<Semantic_Error> errors;
     ModTree_Program* program;
 
-    // Temporary stuff needed for analysis
+    // Stuff required for analysis
     Compiler* compiler;
     Workload_Executer* workload_executer;
-    Analysis_Pass* current_pass;
-    Analysis_Workload* current_workload;
-    ModTree_Function* current_function;
-    Expression_Info* current_expression;
-    Array<Polymorphic_Value> current_polymorphic_values;
-
     Dynamic_Array<Polymorphic_Function*> polymorphic_functions;
-
-    bool statement_reachable;
-    int error_flag_count;
-
     Stack_Allocator allocator_values;
-    Hashset<ModTree_Function*> visited_functions;
-    Dynamic_Array<AST::Code_Block*> block_stack;
+    Analysis_Workload* current_workload;
 
     ModTree_Global* global_type_informations;
 

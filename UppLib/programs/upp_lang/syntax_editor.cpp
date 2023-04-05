@@ -484,7 +484,7 @@ Symbol* code_query_get_ast_node_symbol(AST::Node* base)
     }
     case AST::Node_Type::SYMBOL_READ: {
         auto read = AST::downcast<AST::Symbol_Read>(base);
-        return read->resolved_symbol;
+        return read->symbol;
     }
     case AST::Node_Type::PARAMETER: {
         auto param = AST::downcast<AST::Parameter>(base);
@@ -823,8 +823,8 @@ void code_completion_find_suggestions()
     else if (node->parent != 0 && node->parent->type == AST::Node_Type::SYMBOL_READ)
     {
         auto parent_read = AST::downcast<AST::Symbol_Read>(node->parent);
-        if (parent_read->resolved_symbol->type == Symbol_Type::MODULE) {
-            specific_table = parent_read->resolved_symbol->options.module_table;
+        if (parent_read->symbol->type == Symbol_Type::MODULE) {
+            specific_table = parent_read->symbol->options.module_table;
         }
         fill_from_symbol_table = true;
     }
@@ -2167,7 +2167,7 @@ void syntax_editor_render()
             // Highlight all instances of the symbol
             vec3 color = vec3(1.0f, 1.0f, 0.3f) * 0.3f;
             for (int i = 0; i < symbol->references.size; i++) {
-                auto node = &symbol->references[i]->read->base;
+                auto node = &symbol->references[i]->base;
                 if (compiler_find_ast_source_code(node) != editor.code)
                     continue;
                 syntax_highlighting_mark_section(node, Parser::Section::IDENTIFIER, color, color, false);

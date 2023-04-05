@@ -1,14 +1,18 @@
 
 
+Look at current symbol resolution inside of functions (e.g. inner functions and schtuff)
+
 TODO: Fibers and new Dependency-System:
- 1. Workloads should execute as fibers (Then the fibers will never have to 'pause', because all dependencies are resolved before)
- 2. Then dependencies should be added at symbol read, not when workloads are generated, and the fibers
-        should stop when a dependency is generated at symbol read
- 3. Dependency_Analyser should be removed, and a new workload (Analyse source_code/module) should be added that does the same stuff,
+ 1. Workloads should execute as fibers (Then the fibers will never have to 'pause', because all dependencies are resolved before) X
+ 2. Symbol resolution should now happen during analysis, and may possibly pause the execution of the current workload
+    NOTE: Don't forget about global values like current_workload, current_function etc.
+          Also about helper dynamic arrays, that I didn't want to allocate more often...
+ 4. Dependency_Analyser should be removed, and a new workload (Analyse source_code/module) should be added that does the same stuff,
         e.g. creating new workloads for definitions/functions/structs, Symbol_Reads should only execute if all 'symbol-tables' it traverses
         are filled, e.g. a Workload for 'Symbol-table' filled.
     This also requires that structs keep track of Dependency-Type, e.g. In-Memory, Normal, Pointer
- 4. Rework Workload execution with Clustering, maybe it's easier with 'Event-Type' workloads
+ 5. Reintegrate file-loading, this time Symbol-tables may have dependencies and need to wait until e.g. a file is loaded!
+ *. Rework Workload execution with Clustering, maybe it's easier with 'Event-Type' workloads
 
 
 

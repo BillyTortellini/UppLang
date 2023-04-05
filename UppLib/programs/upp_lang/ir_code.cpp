@@ -1090,7 +1090,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
         while (read->path_child.available) {
             read = read->path_child.value;
         }
-        auto symbol = read->resolved_symbol;
+        auto symbol = read->symbol;
         switch (symbol->type)
         {
         case Symbol_Type::GLOBAL: {

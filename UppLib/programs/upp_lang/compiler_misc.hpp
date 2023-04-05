@@ -6,7 +6,6 @@
 #include "../../win32/process.hpp"
 
 #include "lexer.hpp"
-#include "type_system.hpp"
 
 struct Type_Signature;
 struct String;

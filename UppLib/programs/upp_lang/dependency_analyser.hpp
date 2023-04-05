@@ -16,7 +16,6 @@ struct Symbol;
 struct Symbol_Table;
 struct Symbol_Data;
 struct Analysis_Item;
-struct Symbol_Dependency;
 struct Code_Source;
 struct Analysis_Pass;
 
@@ -36,7 +35,7 @@ namespace AST
 // Symbol Table
 enum class Symbol_Type
 {
-    UNRESOLVED,            // An Analysis Item exists for this Symbol, but it hasn't advance yet (Function without header analysis, struct not started...)
+    UNRESOLVED,            // An Analysis Item/Analysis-Progress exists for this Symbol, but it isn't usable yet (Function without header analysis, struct not started...)
     VARIABLE_UNDEFINED,    // A variable/parameter/global that hasn't been defined yet
 
     HARDCODED_FUNCTION,
@@ -78,14 +77,15 @@ struct Symbol
 
     String* id;
     Symbol_Table* origin_table;
-    Analysis_Item* origin_item;
     AST::Node* definition_node; // Note: This is a base because it could be either AST::Definition or AST::Parameter
-    Dynamic_Array<Symbol_Dependency*> references;
+    bool internal;  // Internal symbols are only valid if referenced in the same internal scope (Variables, parameters). Required for anonymous structs or functions.
+    Dynamic_Array<AST::Symbol_Read*> references;
 };
 
 struct Symbol_Table
 {
     Symbol_Table* parent;
+    bool internal; // Internal symbol tables can access internal variables of the parent symbol table (Currently only Code-Blocks). See Symbol
     Hashtable<String*, Symbol*> symbols;
 };
 
@@ -134,23 +134,15 @@ struct Predefined_Symbols
     Symbol* error_symbol;
 };
 
-Symbol_Table* symbol_table_create(Symbol_Table* parent);
+Symbol_Table* symbol_table_create(Symbol_Table* parent, bool is_internal);
 void symbol_table_destroy(Symbol_Table* symbol_table);
 void symbol_table_append_to_string(String* string, Symbol_Table* table, bool print_root);
 void symbol_append_to_string(Symbol* symbol, String* string);
-Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool only_current_scope, Symbol_Dependency* dependency, Analysis_Item* searching_from);
+Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool search_parents, bool interals_ok, AST::Symbol_Read* reference);
 
 
 
 // Analysis Items
-struct Symbol_Dependency
-{
-    Dependency_Type type;
-    AST::Symbol_Read* read;
-    Symbol_Table* symbol_table;
-    Analysis_Item* item;
-};
-
 enum class Analysis_Item_Type
 {
     DEFINITION,
@@ -158,14 +150,13 @@ enum class Analysis_Item_Type
     FUNCTION,
     FUNCTION_BODY,
     BAKE,
-    ROOT, // At unexpected global scope (TODO: needs clarification!)
     IMPORT
 };
 
 struct Analysis_Item
 {
     Analysis_Item_Type type;
-    Dynamic_Array<Symbol_Dependency> symbol_dependencies;
+    Dynamic_Array<AST::Symbol_Read*> symbol_reads;
     Symbol* symbol; // Optional
 
     Dynamic_Array<Analysis_Pass*> passes;

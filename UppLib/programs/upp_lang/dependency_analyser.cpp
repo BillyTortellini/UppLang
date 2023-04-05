@@ -4,21 +4,22 @@
 #include "compiler.hpp"
 #include "semantic_analyser.hpp"
 #include "parser.hpp"
+#include "ast.hpp"
 
 // Globals
 static Dependency_Analyser dependency_analyser;
 
 // PROTOTYPES
-Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool only_current_scope, Symbol_Dependency* reference, Analysis_Item* searching_from);
 
 // SYMBOL TABLE FUNCTIONS
-Symbol_Table* symbol_table_create(Symbol_Table* parent)
+Symbol_Table* symbol_table_create(Symbol_Table* parent, bool is_internal)
 {
     auto& analyser = dependency_analyser;
     Symbol_Table* result = new Symbol_Table;
     dynamic_array_push_back(&analyser.allocated_symbol_tables, result);
     result->parent = parent;
-    result->symbols = hashtable_create_pointer_empty<String*, Symbol*>(4);
+    result->symbols = hashtable_create_pointer_empty<String*, Symbol*>(1);
+    result->internal = is_internal;
     return result;
 }
 
@@ -39,12 +40,12 @@ void symbol_table_destroy(Symbol_Table* symbol_table)
     delete symbol_table;
 }
 
-Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbol_Type type, AST::Node* definition_node, Analysis_Item* analysis_item)
+Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbol_Type type, AST::Node* definition_node, bool is_internal)
 {
     assert(id != 0, "HEY");
 
-    // Check if already defined in same scope
-    Symbol* found_symbol = symbol_table_find_symbol(symbol_table, id, false, 0, analysis_item);
+    // Check if already defined in same scope, if so, use temporary id
+    Symbol* found_symbol = symbol_table_find_symbol(symbol_table, id, false, true, 0);
     if (found_symbol != 0) {
         auto& analyser = dependency_analyser;
         dependency_analyser_log_error(found_symbol, definition_node);
@@ -54,61 +55,46 @@ Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbo
         id = identifier_pool_add(&analyser.compiler->identifier_pool, temp_identifer);
     }
 
+    // Create new symbol
     Symbol* new_sym = new Symbol;
     new_sym->definition_node = definition_node;
     new_sym->id = id;
     new_sym->type = type;
     new_sym->origin_table = symbol_table;
-    new_sym->references = dynamic_array_create_empty<Symbol_Dependency*>(1);
-    new_sym->origin_item = dependency_analyser.analysis_item;
+    new_sym->internal = is_internal;
+    new_sym->references = dynamic_array_create_empty<AST::Symbol_Read*>(1);
 
     hashtable_insert_element(&symbol_table->symbols, id, new_sym);
     return new_sym;
 }
 
-Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool only_current_scope, Symbol_Dependency* dependency, Analysis_Item* searching_from)
+Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool search_parents, bool internals_ok, AST::Symbol_Read* reference)
 {
-    if (dependency != 0 && dependency->read->resolved_symbol != 0) {
+    // Sanity check
+    if (reference != 0 && reference->symbol != 0) {
         panic("Symbol already found, I dont know if this path has a use case");
-        return dependency->read->resolved_symbol;
+        return reference->symbol;
     }
+
+    // Search for symbol
     Symbol* symbol = nullptr;
     {
         Symbol** found = hashtable_find_element(&table->symbols, id);
-        if (found == 0) {
-            if (!only_current_scope && table->parent != 0) {
-                symbol = symbol_table_find_symbol(table->parent, id, only_current_scope, dependency, searching_from);
-            }
-        }
-        else {
+        if (found != 0) {
             symbol = *found;
-        }
-        if (symbol == nullptr) {
-            return nullptr;
-        }
-    }
-
-    // Variables/Parameters need special treatment since we have inner definitions that cannot 'see' outer function variables
-    Symbol_Type sym_type = symbol->type;
-    Analysis_Item* definition_item = symbol->origin_item;
-    if (searching_from != 0 && definition_item != 0 && searching_from != definition_item &&
-        (sym_type == Symbol_Type::VARIABLE_UNDEFINED || sym_type == Symbol_Type::VARIABLE || sym_type == Symbol_Type::PARAMETER) &&
-        !(definition_item->type == Analysis_Item_Type::FUNCTION && definition_item->options.function_body_item == searching_from))
-    {
-        // Trying to access variable/parameter from not inside the body, continue search in upper symbol tables
-        if (!only_current_scope && table->parent != 0) {
-            symbol = symbol_table_find_symbol(table->parent, id, only_current_scope, dependency, searching_from);
-            if (symbol == nullptr) {
-                return nullptr;
+            if (symbol->internal && !internals_ok) { // Keep searching if internal was found
+                symbol = 0; 
             }
         }
-        else {
-            return nullptr;
+
+        if (symbol == 0 && search_parents && table->parent != 0) {
+            symbol = symbol_table_find_symbol(table->parent, id, true, internals_ok && table->internal, reference);
         }
     }
 
-    if (dependency != 0) {
-        dynamic_array_push_back(&(symbol->references), dependency);
+    // Add reference to reference list
+    if (reference != 0 && symbol != 0) {
+        dynamic_array_push_back(&(symbol->references), reference);
     }
     return symbol;
 }
@@ -200,13 +186,13 @@ Analysis_Item* analysis_item_create_empty(Analysis_Item_Type type, Analysis_Item
     auto& analyser = dependency_analyser;
     auto& src = analyser.code_source;
     Analysis_Item* item = new Analysis_Item;
-    item->symbol_dependencies = dynamic_array_create_empty<Symbol_Dependency>(1);
     item->passes = dynamic_array_create_empty<Analysis_Pass*>(1);
     item->type = type;
     item->node = node;
     item->ast_node_count = 0;
     item->symbol = 0;
-    if (parent_item != 0 && parent_item->type != Analysis_Item_Type::ROOT && type != Analysis_Item_Type::IMPORT) {
+    item->symbol_reads = dynamic_array_create_empty<AST::Symbol_Read*>(1);
+    if (parent_item != 0 && type != Analysis_Item_Type::IMPORT) {
         Item_Dependency item_dependency;
         item_dependency.dependent = parent_item;
         item_dependency.depends_on = item;
@@ -226,8 +212,8 @@ void analysis_item_destroy(Analysis_Item* item)
         array_destroy(&source_parse->infos);
         delete source_parse;
     }
+    dynamic_array_destroy(&item->symbol_reads);
     dynamic_array_destroy(&item->passes);
-    dynamic_array_destroy(&item->symbol_dependencies);
     delete item;
 }
 
@@ -245,9 +231,6 @@ void analysis_item_append_to_string(Analysis_Item* item, String* string, int ind
     {
     case Analysis_Item_Type::IMPORT:
         string_append_formated(string, "Import");
-        break;
-    case Analysis_Item_Type::ROOT:
-        string_append_formated(string, "Root");
         break;
     case Analysis_Item_Type::DEFINITION:
         string_append_formated(string, "\"%s\" Definition", item->symbol->id->characters);
@@ -273,21 +256,21 @@ void analysis_item_append_to_string(Analysis_Item* item, String* string, int ind
     default: panic("");
     }
 
-    if (item->symbol_dependencies.size != 0) {
-        string_append_formated(string, ": ", item->symbol_dependencies.size);
+    if (item->symbol_reads.size != 0) {
+        string_append_formated(string, ": ", item->symbol_reads.size);
     }
-    for (int i = 0; i < item->symbol_dependencies.size; i++)
+    for (int i = 0; i < item->symbol_reads.size; i++)
     {
-        auto& dep = item->symbol_dependencies[i];
-        AST::symbol_read_append_to_string(dep.read, string);
-        switch (dep.type)
+        auto& read = item->symbol_reads[i];
+        AST::symbol_read_append_to_string(read, string);
+        switch (read->type)
         {
         case Dependency_Type::NORMAL: break;
         case Dependency_Type::MEMBER_IN_MEMORY: string_append_formated(string, "(Member_In_Memory)"); break;
         case Dependency_Type::MEMBER_REFERENCE: string_append_formated(string, "(Member_Reference)"); break;
         default: panic("");
         }
-        if (i != item->symbol_dependencies.size - 1) {
+        if (i != item->symbol_reads.size - 1) {
             string_append_formated(string, ", ");
         }
     }
@@ -329,8 +312,13 @@ void analyse_ast_base(AST::Node* base)
     Analysis_Item* _backup_item = analyser.analysis_item;
     SCOPE_EXIT(analyser.analysis_item = _backup_item);
 
-    base->analysis_item_index = analyser.analysis_item->ast_node_count;
-    analyser.analysis_item->ast_node_count += 1;
+    if (analyser.analysis_item != 0) {
+        base->analysis_item_index = analyser.analysis_item->ast_node_count;
+        analyser.analysis_item->ast_node_count += 1;
+    }
+    else {
+        base->analysis_item_index = 0;
+    }
 
     switch (base->type)
     {
@@ -342,7 +330,7 @@ void analyse_ast_base(AST::Node* base)
     case Node_Type::MODULE: {
         auto module = (Module*)base;
         if (base->parent != 0) {
-            module->symbol_table = symbol_table_create(analyser.symbol_table);
+            module->symbol_table = symbol_table_create(analyser.symbol_table, false);
         }
         else {
             module->symbol_table = analyser.root_symbol_table;
@@ -407,9 +395,9 @@ void analyse_ast_base(AST::Node* base)
                 }
             }
 
-            function.symbol_table = symbol_table_create(analyser.symbol_table);
+            function.symbol_table = symbol_table_create(analyser.symbol_table, false);
             analyser.analysis_item = function_item;
-            analyser.symbol_table = function.symbol_table; // For now we will use the normal symbol table for signature analysis (E.g. no referencing between parameters!)
+            analyser.symbol_table = function.symbol_table;
             analyse_ast_base(&function.signature->base); 
 
             analyser.analysis_item = function_item->options.function_body_item;
@@ -458,7 +446,7 @@ void analyse_ast_base(AST::Node* base)
     case Node_Type::STATEMENT: break;
     case Node_Type::CODE_BLOCK: {
         auto block = (Code_Block*)base;
-        block->symbol_table = symbol_table_create(analyser.symbol_table);
+        block->symbol_table = symbol_table_create(analyser.symbol_table, true);
         analyser.symbol_table = block->symbol_table;
         break;
     }
@@ -496,15 +484,23 @@ void analyse_ast_base(AST::Node* base)
     }
     case Node_Type::SYMBOL_READ:
     {
+        // NOTE: Currently it's kinda ugly that we have symbol_reads which are paths,
+        //       because now the question always is how to set analysis information for the path-parts of the AST.
         auto symbol_read = AST::downcast<Symbol_Read>(base);
-        symbol_read->resolved_symbol = 0;
-        Symbol_Dependency dep;
-        dep.item = analyser.analysis_item;
-        dep.read = symbol_read;
-        dep.symbol_table = analyser.symbol_table;
-        dep.type = analyser.dependency_type;
-        dynamic_array_push_back(&analyser.analysis_item->symbol_dependencies, dep);
-        return; // We return here because we don't want to iterate over all children
+        auto iter = symbol_read;
+        while (true) {
+            iter->symbol_table = analyser.symbol_table;
+            iter->symbol = 0;
+            iter->item = analyser.analysis_item;
+            iter->type = analyser.dependency_type;
+
+            if (!iter->path_child.available) {
+                break;
+            }
+            iter = iter->path_child.value;
+        }
+        dynamic_array_push_back(&analyser.analysis_item->symbol_reads, symbol_read);
+        return; // We return here because we don't want to iterate over Path-Children
     }
     default: panic("");
     }
@@ -560,7 +556,7 @@ void dependency_analyser_reset(Compiler* compiler)
 
     dependency_analyser.compiler = compiler;
     dependency_analyser.dependency_type = Dependency_Type::NORMAL;
-    dependency_analyser.root_symbol_table = symbol_table_create(0);
+    dependency_analyser.root_symbol_table = symbol_table_create(0, false);
     dependency_analyser.analysis_item = 0;
     dependency_analyser.symbol_table = dependency_analyser.root_symbol_table;
     // Set predefined symbols
@@ -620,7 +616,7 @@ void dependency_analyser_analyse(Code_Source* code_source)
     analyser.code_source = code_source;
     analyser.dependency_type = Dependency_Type::NORMAL;
     analyser.symbol_table = analyser.root_symbol_table;
-    analyser.analysis_item = analysis_item_create_empty(Analysis_Item_Type::ROOT, 0, AST::upcast(code_source->source_parse->root));
+    analyser.analysis_item = 0;
     analyse_ast_base(AST::upcast(code_source->source_parse->root));
 }
 
