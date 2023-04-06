@@ -1060,7 +1060,8 @@ void symbol_read_set_error_symbol(AST::Symbol_Read* read)
     }
 }
 
-Symbol* symbol_read_resolve(AST::Symbol_Read* path)
+// Resolves the whole path (e.g. Symbol_Read* and all children)
+Symbol* symbol_read_resolve_path(AST::Symbol_Read* path)
 {
     auto& analyser = semantic_analyser;
     auto table = path->symbol_table;
@@ -1792,6 +1793,11 @@ void workload_executer_add_analysis_items(Code_Source* source)
             assert(item->options.function_body_item->node->type == AST::Node_Type::CODE_BLOCK, "");
             auto func_progress = analysis_progress_create_function(item->options.function_body_item, item);
             progress = upcast(func_progress);
+
+            if (item->symbol != 0) {
+                item->symbol->type = Symbol_Type::FUNCTION;
+                item->symbol->options.function = func_progress->function;
+            }
 
             auto header_workload = workload_executer_add_workload_empty(Analysis_Workload_Type::FUNCTION_HEADER, item, progress);
             auto body_workload = workload_executer_add_workload_empty(Analysis_Workload_Type::FUNCTION_BODY, item->options.function_body_item, progress);
@@ -3306,11 +3312,11 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         //       because instances already have to wait for their parent analysis to be completed, e.g. symbols to be resolved.
         if (read->symbol == 0)  // Symbol isn't resolved yet
         {
-            Symbol* symbol = symbol_read_resolve(read);
+            Symbol* symbol = symbol_read_resolve_path(read);
             assert(symbol != 0, "In error cases this should be set to error, never 0!");
             AST::Symbol_Read* read_end = read;
-            while (read->path_child.available) {
-                read_end = read->path_child.value;
+            while (read_end->path_child.available) {
+                read_end = read_end->path_child.value;
             }
 
             // Check if the symbol read introduces any dependencies
@@ -3328,6 +3334,14 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             case Symbol_Type::FUNCTION:
             {
                 Function_Progress** progress = hashtable_find_element(&executer.progress_functions, symbol->options.function);
+                assert(progress != 0, "Must not happen with current dependency system!");
+                analysis_workload_add_dependency_internal(workload, (*progress)->header_workload, read_end);
+                break;
+            }
+            case Symbol_Type::POLYMORPHIC_FUNCTION:
+            {
+                // Note: This isn't tested, not sure if this works/has a use case
+                Function_Progress** progress = hashtable_find_element(&executer.progress_functions, symbol->options.polymorphic_function->instances[0].function);
                 assert(progress != 0, "Must not happen with current dependency system!");
                 analysis_workload_add_dependency_internal(workload, (*progress)->header_workload, read_end);
                 break;

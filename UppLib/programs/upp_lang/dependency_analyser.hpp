@@ -35,8 +35,8 @@ namespace AST
 // Symbol Table
 enum class Symbol_Type
 {
-    UNRESOLVED,            // An Analysis Item/Analysis-Progress exists for this Symbol, but it isn't usable yet (Function without header analysis, struct not started...)
-    VARIABLE_UNDEFINED,    // A variable/parameter/global that hasn't been defined yet
+    UNRESOLVED,              // An Analysis Item/Analysis-Progress exists for this Symbol, but it isn't usable yet (Function without header analysis, struct not started...)
+    VARIABLE_UNDEFINED,      // A variable/parameter/global that hasn't been defined yet
 
     HARDCODED_FUNCTION,
     FUNCTION,

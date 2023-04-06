@@ -78,6 +78,7 @@ Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool search_pa
 
     // Search for symbol
     Symbol* symbol = nullptr;
+    bool add_reference = true;
     {
         Symbol** found = hashtable_find_element(&table->symbols, id);
         if (found != 0) {
@@ -89,11 +90,12 @@ Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool search_pa
 
         if (symbol == 0 && search_parents && table->parent != 0) {
             symbol = symbol_table_find_symbol(table->parent, id, true, internals_ok && table->internal, reference);
+            add_reference = false; // Don't add reference, since this is was already done in recursive call
         }
     }
 
     // Add reference to reference list
-    if (reference != 0 && symbol != 0) {
+    if (reference != 0 && symbol != 0 && add_reference) {
         dynamic_array_push_back(&(symbol->references), reference);
     }
     return symbol;
@@ -453,9 +455,10 @@ void analyse_ast_base(AST::Node* base)
     case Node_Type::DEFINITION:
     {
         auto definition = (Definition*)base;
-        definition->symbol = symbol_table_define_symbol(analyser.symbol_table, definition->name, Symbol_Type::UNRESOLVED, base, analyser.analysis_item);
+        definition->symbol = symbol_table_define_symbol(analyser.symbol_table, definition->name, Symbol_Type::UNRESOLVED, base, false);
         if (!definition->is_comptime && definition->base.parent->type == Node_Type::STATEMENT) {
             definition->symbol->type = Symbol_Type::VARIABLE_UNDEFINED;
+            definition->symbol->internal = true;
             break;
         }
         if (definition->value.available && definition->is_comptime)
@@ -479,7 +482,7 @@ void analyse_ast_base(AST::Node* base)
     case Node_Type::PARAMETER:
     {
         auto param = (Parameter*)base;
-        param->symbol = symbol_table_define_symbol(analyser.symbol_table, param->name, Symbol_Type::VARIABLE_UNDEFINED, base, analyser.analysis_item);
+        param->symbol = symbol_table_define_symbol(analyser.symbol_table, param->name, Symbol_Type::VARIABLE_UNDEFINED, base, true);
         break;
     }
     case Node_Type::SYMBOL_READ:
@@ -566,7 +569,7 @@ void dependency_analyser_reset(Compiler* compiler)
         auto& pool = analyser.compiler->identifier_pool;
         auto& predef = analyser.predefined_symbols;
 
-#define PREDEF_SYMBOL(name, c_str) predef.name = symbol_table_define_symbol(root, identifier_pool_add(&compiler->identifier_pool, string_create_static(c_str)), Symbol_Type::UNRESOLVED, 0, 0);
+#define PREDEF_SYMBOL(name, c_str) predef.name = symbol_table_define_symbol(root, identifier_pool_add(&compiler->identifier_pool, string_create_static(c_str)), Symbol_Type::UNRESOLVED, 0, false);
 #define PREDEF_HARDCODED(name, c_str, hardcoded_type) PREDEF_SYMBOL(name, c_str); predef.name->type = Symbol_Type::HARDCODED_FUNCTION; predef.name->options.hardcoded = hardcoded_type;
         PREDEF_SYMBOL(error_symbol, "0_ERROR_SYMBOL"); // This placeholder can never be an identifier, becuase it starts with a number
         predef.error_symbol->type = Symbol_Type::ERROR_SYMBOL;

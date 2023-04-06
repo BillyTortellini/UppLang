@@ -35,7 +35,7 @@ bool output_bytecode = false;
 bool output_timing = true;
 
 // Testcases
-bool enable_testcases = false;
+bool enable_testcases = true;
 bool enable_stresstest = false;
 bool run_testcases_compiled = false;
 
@@ -727,6 +727,7 @@ void compiler_run_testcases(Timer* timer, bool force_run)
     for (int i = 0; i < test_case_count; i++)
     {
         Test_Case* test_case = &test_cases[i];
+        logg("Testcase: %s\n", test_case->name);
         String path = string_create_formated("upp_code/testcases/%s", test_case->name);
         Optional<String> code = file_io_load_text_file(path.characters);
         SCOPE_EXIT(file_io_unload_text_file(&code));
