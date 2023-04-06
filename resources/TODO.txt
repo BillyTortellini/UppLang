@@ -1,16 +1,40 @@
 
 
-Look at current symbol resolution inside of functions (e.g. inner functions and schtuff)
+WORK NEXT:
+    - Remove analysis passes
+    - Probalby remove analysis item/dependency system
+    - Structs and struct dependnecies
 
 TODO: Fibers and new Dependency-System:
- 1. Workloads should execute as fibers (Then the fibers will never have to 'pause', because all dependencies are resolved before) X
- 2. Symbol resolution should now happen during analysis, and may possibly pause the execution of the current workload
-    NOTE: Don't forget about global values like current_workload, current_function etc.
-          Also about helper dynamic arrays, that I didn't want to allocate more often...
+ 1. X Workloads should execute as fibers (Then the fibers will never have to 'pause', because all dependencies are resolved before) X
+ 2. X Symbol resolution should now happen during analysis, and may possibly pause the execution of the current workload             X
+      NOTE: Don't forget about global values like current_workload, current_function etc.
+          Also about helper dynamic arrays, that I didn't want to allocate more often... 
  4. Dependency_Analyser should be removed, and a new workload (Analyse source_code/module) should be added that does the same stuff,
         e.g. creating new workloads for definitions/functions/structs, Symbol_Reads should only execute if all 'symbol-tables' it traverses
         are filled, e.g. a Workload for 'Symbol-table' filled.
     This also requires that structs keep track of Dependency-Type, e.g. In-Memory, Normal, Pointer
+
+    Implementation Plan:
+        - Remove Dependency analyser, disable structs for the time...
+    How should struct dependencies look like? Do I even need clustering for structs?
+
+    What does the Dependency analyser currently do?
+        - Installs symbol tables
+        - Defines symbols inside Symbols (Initially as unresolved)
+        - Gathres for all Analysis-Items (Inner functions, anonymous structs and bakes)
+        - Analysis-Passes are currently required for annotating AST with Type-Infos (and may be done multiple times with templating...)
+            * This is also the basis for the Code-Editor to access semantic-information for an AST
+            * Also required by Code-Generation, since the code-gen doesn't do any semantic analysis on it's own
+
+    Current Structure for Progress:
+        * Analysis_Progress
+        * Analysis_Items
+
+
+    How will the new 'Module'-Analysis handle these things?
+        - Symbol tables can be installed 'on-the-fly' for modules
+
  5. Reintegrate file-loading, this time Symbol-tables may have dependencies and need to wait until e.g. a file is loaded!
  *. Rework Workload execution with Clustering, maybe it's easier with 'Event-Type' workloads
 

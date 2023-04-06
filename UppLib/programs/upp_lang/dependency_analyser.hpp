@@ -17,7 +17,6 @@ struct Symbol_Table;
 struct Symbol_Data;
 struct Analysis_Item;
 struct Code_Source;
-struct Analysis_Pass;
 
 namespace AST
 {
@@ -121,7 +120,6 @@ struct Analysis_Item
     Dynamic_Array<AST::Symbol_Read*> symbol_reads;
     Symbol* symbol; // Optional
 
-    Dynamic_Array<Analysis_Pass*> passes;
     AST::Node* node;
     int ast_node_count;
 
@@ -137,7 +135,6 @@ struct Dependency_Analyser
     // Output
     Symbol_Table* root_symbol_table;
     Dynamic_Array<Symbol_Error> errors;
-    Hashtable<AST::Node*, Analysis_Item*> mapping_ast_to_items;
 
     // Used during analysis
     Compiler* compiler;

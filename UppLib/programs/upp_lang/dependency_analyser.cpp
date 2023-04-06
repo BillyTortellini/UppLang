@@ -188,7 +188,6 @@ Analysis_Item* analysis_item_create_empty(Analysis_Item_Type type, Analysis_Item
     auto& analyser = dependency_analyser;
     auto& src = analyser.code_source;
     Analysis_Item* item = new Analysis_Item;
-    item->passes = dynamic_array_create_empty<Analysis_Pass*>(1);
     item->type = type;
     item->node = node;
     item->ast_node_count = 0;
@@ -202,20 +201,12 @@ Analysis_Item* analysis_item_create_empty(Analysis_Item_Type type, Analysis_Item
         dynamic_array_push_back(&src->item_dependencies, item_dependency);
     }
     dynamic_array_push_back(&src->analysis_items, item);
-    bool worked = hashtable_insert_element(&dependency_analyser.mapping_ast_to_items, node, item);
-    assert(worked, "");
     return item;
 }
 
 void analysis_item_destroy(Analysis_Item* item)
 {
-    for (int i = 0; i < item->passes.size; i++) {
-        auto& source_parse = item->passes[i];
-        array_destroy(&source_parse->infos);
-        delete source_parse;
-    }
     dynamic_array_destroy(&item->symbol_reads);
-    dynamic_array_destroy(&item->passes);
     delete item;
 }
 
@@ -526,7 +517,6 @@ Dependency_Analyser* dependency_analyser_initialize()
     dependency_analyser.root_symbol_table = 0;
     dependency_analyser.compiler = 0;
     dependency_analyser.code_source = 0;
-    dependency_analyser.mapping_ast_to_items = hashtable_create_pointer_empty<AST::Node*, Analysis_Item*>(1);
     return &dependency_analyser;
 }
 
@@ -535,7 +525,6 @@ void dependency_analyser_destroy()
     // Destroy results
     auto& analyser = dependency_analyser;
     dynamic_array_destroy(&analyser.errors);
-    hashtable_destroy(&dependency_analyser.mapping_ast_to_items);
 
     // Destroy allocations
     for (int i = 0; i < dependency_analyser.allocated_symbol_tables.size; i++) {
@@ -549,7 +538,6 @@ void dependency_analyser_reset(Compiler* compiler)
     // Reset results
     auto& analyser = dependency_analyser;
     dynamic_array_reset(&dependency_analyser.errors);
-    hashtable_reset(&analyser.mapping_ast_to_items);
 
     // Reset allocations
     for (int i = 0; i < dependency_analyser.allocated_symbol_tables.size; i++) {

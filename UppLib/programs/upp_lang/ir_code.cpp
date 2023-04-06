@@ -675,19 +675,19 @@ IR_Data_Access ir_data_access_create_constant_i32(i32 value) {
 
 // Code Gen
 Expression_Info* get_info(AST::Expression* node) {
-    return &analysis_pass_get_info(ir_generator.current_pass, &node->base)->info_expr;
+    return workload_get_node_info(ir_generator.current_workload, node, Info_Query::READ_NOT_NULL);
 }
 
 Statement_Info* get_info(AST::Statement* node) {
-    return &analysis_pass_get_info(ir_generator.current_pass, &node->base)->info_stat;
+    return workload_get_node_info(ir_generator.current_workload, node, Info_Query::READ_NOT_NULL);
 }
 
 Argument_Info* get_info(AST::Argument* node) {
-    return &analysis_pass_get_info(ir_generator.current_pass, &node->base)->arg_info;
+    return workload_get_node_info(ir_generator.current_workload, node, Info_Query::READ_NOT_NULL);
 }
 
 Case_Info* get_info(AST::Switch_Case* node) {
-    return &analysis_pass_get_info(ir_generator.current_pass, &node->base)->info_case;
+    return workload_get_node_info(ir_generator.current_workload, node, Info_Query::READ_NOT_NULL);
 }
 
 IR_Data_Access ir_generator_generate_cast(IR_Code_Block* ir_block, IR_Data_Access source, Type_Signature* result_type, Info_Cast_Type cast_type)
@@ -1326,6 +1326,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
 
     panic("HEY");
     IR_Data_Access unused;
+    unused.type = IR_Data_Access_Type::REGISTER; // Just to get rid of error message
     return unused;
 }
 
@@ -1651,36 +1652,32 @@ void ir_generator_generate_queued_items(bool gen_bytecode)
             }
             continue;
         }
-        ir_generator.current_pass = mod_func->body_pass;
+        ir_generator.current_workload = mod_func->code_workload;
 
         {
-            auto base_node = mod_func->body_pass->item->node;
-            AST::Code_Block* body_node = 0;
-            if (base_node->type == AST::Node_Type::EXPRESSION)
+            assert(mod_func->code_workload != 0, "");
+            if (mod_func->code_workload->type == Analysis_Workload_Type::BAKE_ANALYSIS)
             {
-                auto body_expr = (AST::Expression*)base_node;
-                if (body_expr->type == AST::Expression_Type::BAKE_EXPR) {
+                auto bake_node = mod_func->code_workload->options.bake_node;
+                if (bake_node->type == AST::Expression_Type::BAKE_EXPR) {
                     IR_Instruction return_instr;
                     return_instr.type = IR_Instruction_Type::RETURN;
                     return_instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_DATA;
-                    return_instr.options.return_instr.options.return_value = ir_generator_generate_expression(ir_func->code, body_expr->options.bake_expr);
+                    return_instr.options.return_instr.options.return_value = ir_generator_generate_expression(ir_func->code, bake_node->options.bake_expr);
                     dynamic_array_push_back(&ir_func->code->instructions, return_instr);
-                    body_node = 0; // So we don't generate body code, see below
                 }
-                else if (body_expr->type == AST::Expression_Type::BAKE_BLOCK) {
-                    body_node = body_expr->options.bake_block;
+                else if (bake_node->type == AST::Expression_Type::BAKE_BLOCK) {
+                    ir_generator_generate_block(ir_func->code, bake_node->options.bake_block);
                 }
                 else {
                     panic("Shoudn't happen!");
                 }
             }
-            else {
-                body_node = AST::downcast<AST::Code_Block>(base_node);
+            else if (mod_func->code_workload->type == Analysis_Workload_Type::FUNCTION_BODY) {
+                ir_generator_generate_block(ir_func->code, mod_func->code_workload->options.function_body.block);
             }
-
-            // Generate function body
-            if (body_node != 0) {
-                ir_generator_generate_block(ir_func->code, body_node);
+            else {
+                panic("");
             }
         }
 
@@ -1769,7 +1766,7 @@ void ir_generator_finish(bool gen_bytecode)
         auto global = globals[i];
         if (!global->has_initial_value) continue;
 
-        ir_generator.current_pass = global->init_pass;
+        ir_generator.current_workload = global->definition_workload;
         IR_Instruction move_instr;
         move_instr.type = IR_Instruction_Type::MOVE;
         move_instr.options.move.destination = ir_data_access_create_global(global);

@@ -23,7 +23,6 @@ struct Error_Information;
 struct Dependency_Analyser;
 struct Analysis_Workload;
 struct Analysis_Progress;
-struct Analysis_Pass;
 struct Analysis_Item;
 
 namespace Parser
@@ -33,6 +32,7 @@ namespace Parser
 
 namespace AST
 {
+    struct Node;
     struct Code_Block;
     struct Symbol_Read;
 }
@@ -42,9 +42,9 @@ namespace AST
 // Modtree TODO: Rename this into something more sensible
 struct ModTree_Function
 {
-    Analysis_Pass* body_pass;
     Type_Signature* signature;
     Symbol* symbol; // May be 0, is only used for aliases and pretty printing
+    Analysis_Workload* code_workload; // Workload that generated the semantic info required for code-gen (Either Function-body or Bake-Analysis)
 
     // Infos
     bool contains_errors; // NOTE: contains_errors (No errors in this function) != is_runnable (This + all called functions are runnable)
@@ -63,8 +63,8 @@ struct ModTree_Global
     int index;
 
     bool has_initial_value;
-    Analysis_Pass* init_pass;
     AST::Expression* init_expr;
+    Analysis_Workload* definition_workload; // For code generation
 };
 
 struct ModTree_Program
@@ -144,7 +144,6 @@ enum class Struct_State
 struct Struct_Progress
 {
     Analysis_Progress base;
-    Analysis_Pass* pass;
 
     Struct_State state;
     Type_Signature* struct_type;
@@ -156,7 +155,6 @@ struct Struct_Progress
 struct Bake_Progress
 {
     Analysis_Progress base;
-    Analysis_Pass* pass;
 
     ModTree_Function* bake_function;
     Comptime_Result result;
@@ -168,7 +166,6 @@ struct Bake_Progress
 struct Definition_Progress
 {
     Analysis_Progress base;
-    Analysis_Pass* pass;
     Analysis_Workload* definition_workload;
     Symbol* symbol;
 };
@@ -184,8 +181,6 @@ enum class Function_State
 struct Function_Progress
 {
     Analysis_Progress base;
-    Analysis_Pass* header_pass;
-    Analysis_Pass* body_pass;
 
     Function_State state;
     ModTree_Function* function;
@@ -217,9 +212,9 @@ enum class Analysis_Workload_Type
 
 struct Expression_Info;
 struct Modtree_Function;
-struct Analysis_Pass;
 struct Analysis_Workload
 {
+    Analysis_Item* item;
     Analysis_Workload_Type type;
     Analysis_Progress* progress;
     bool is_finished;
@@ -227,10 +222,9 @@ struct Analysis_Workload
     Fiber_Pool_Handle fiber_handle;
 
     // Information required to be consistent during workload switches
-    Analysis_Pass* current_pass;
     ModTree_Function* current_function; 
     Expression_Info* current_expression;
-    Array<Polymorphic_Value> current_polymorphic_values;
+    Array<Polymorphic_Value> current_polymorphic_values; // NOTE: Non-owning 'pointer' to array
     bool statement_reachable;
 
     // Dependencies
@@ -251,11 +245,14 @@ struct Analysis_Workload
             Dynamic_Array<Type_Signature*> struct_types;
             Dynamic_Array<Type_Signature*> unfinished_array_types;
         } struct_reachable;
-        struct {
-            AST::Project_Import* import;
-        };
+        AST::Project_Import* import;
+        AST::Definition* definition;
+        AST::Expression* function_node;
+        AST::Expression* bake_node;
+        AST::Expression* struct_node;
         struct {
             Dynamic_Array<AST::Code_Block*> block_stack;
+            AST::Code_Block* block;
         } function_body;
     } options;
 };
@@ -419,18 +416,19 @@ union Analysis_Info
     Argument_Info arg_info;
 };
 
-struct Analysis_Pass
+enum class Info_Query
 {
-    Analysis_Item* item;
-    Array<Analysis_Info> infos;
+    CREATE,
+    READ_NOT_NULL, // Value must be there, otherwise panic
+    TRY_READ,      // May return 0
 };
 
-Analysis_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Node* node);
-Expression_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Expression* expression);
-Case_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Switch_Case* sw_case);
-Argument_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Argument* argument);
-Statement_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Statement* statement);
-Code_Block_Info* analysis_pass_get_info(Analysis_Pass* pass, AST::Code_Block* block);
+Expression_Info* workload_get_node_info(Analysis_Workload* workload, AST::Expression* expression, Info_Query query);
+Case_Info*       workload_get_node_info(Analysis_Workload* workload, AST::Switch_Case* sw_case,   Info_Query query);
+Argument_Info*   workload_get_node_info(Analysis_Workload* workload, AST::Argument* argument,     Info_Query query);
+Statement_Info*  workload_get_node_info(Analysis_Workload* workload, AST::Statement* statement,   Info_Query query);
+Code_Block_Info* workload_get_node_info(Analysis_Workload* workload, AST::Code_Block* block,      Info_Query query);
+
 Type_Signature* expression_info_get_type(Expression_Info* info);
 
 
@@ -480,15 +478,28 @@ struct Predefined_Symbols
     Symbol* error_symbol;
 };
 
+struct AST_Info_Key
+{
+    Analysis_Workload* workload;
+    AST::Node* base;
+};
+
+struct Node_Workloads
+{
+    Dynamic_Array<Analysis_Workload*> workloads;
+    AST::Node* base;
+};
+
 struct Semantic_Analyser
 {
     // Result
     Dynamic_Array<Semantic_Error> errors;
     ModTree_Program* program;
+    Hashtable<AST::Node*, Node_Workloads> ast_to_workload_mapping;
+    Hashtable<AST_Info_Key, Analysis_Info*> ast_to_info_mapping;
 
     // Stuff required for analysis
     Predefined_Symbols predefined_symbols;
-
     Workload_Executer* workload_executer;
     Dynamic_Array<Polymorphic_Function*> polymorphic_functions;
     Stack_Allocator allocator_values;
