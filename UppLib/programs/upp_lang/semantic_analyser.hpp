@@ -436,6 +436,50 @@ Type_Signature* expression_info_get_type(Expression_Info* info);
 
 
 // ANALYSER
+struct Predefined_Symbols
+{
+    // Symbols for primitive types
+    Symbol* type_bool;
+    Symbol* type_int;
+    Symbol* type_float;
+    Symbol* type_u8;
+    Symbol* type_u16;
+    Symbol* type_u32;
+    Symbol* type_u64;
+    Symbol* type_i8;
+    Symbol* type_i16;
+    Symbol* type_i32;
+    Symbol* type_i64;
+    Symbol* type_f32;
+    Symbol* type_f64;
+    Symbol* type_byte;
+    Symbol* type_void;
+
+    // Symbols for 'compiler' provided structs
+    Symbol* type_string;
+    Symbol* type_type;
+    Symbol* type_type_information;
+    Symbol* type_any;
+    Symbol* type_empty;
+
+    // Symbols for hardcoded types
+    Symbol* hardcoded_type_info;
+    Symbol* hardcoded_type_of;
+    Symbol* hardcoded_assert;
+    Symbol* hardcoded_print_bool;
+    Symbol* hardcoded_print_i32;
+    Symbol* hardcoded_print_f32;
+    Symbol* hardcoded_print_string;
+    Symbol* hardcoded_print_line;
+    Symbol* hardcoded_read_i32;
+    Symbol* hardcoded_read_f32;
+    Symbol* hardcoded_read_bool;
+    Symbol* hardcoded_random_i32;
+
+    // Error-Symbol (Used when Symbol-Reads cannot be resolved, e.g. symbol not defined)
+    Symbol* error_symbol;
+};
+
 struct Semantic_Analyser
 {
     // Result
@@ -443,33 +487,19 @@ struct Semantic_Analyser
     ModTree_Program* program;
 
     // Stuff required for analysis
-    Compiler* compiler;
+    Predefined_Symbols predefined_symbols;
+
     Workload_Executer* workload_executer;
     Dynamic_Array<Polymorphic_Function*> polymorphic_functions;
     Stack_Allocator allocator_values;
     Analysis_Workload* current_workload;
 
     ModTree_Global* global_type_informations;
-
-    Type_Signature* type_assert;
-    Type_Signature* type_free;
-    Type_Signature* type_malloc;
-    Type_Signature* type_type_of;
-    Type_Signature* type_type_info;
-    Type_Signature* type_print_bool;
-    Type_Signature* type_print_i32;
-    Type_Signature* type_print_f32;
-    Type_Signature* type_print_line;
-    Type_Signature* type_print_string;
-    Type_Signature* type_read_i32;
-    Type_Signature* type_read_f32;
-    Type_Signature* type_read_bool;
-    Type_Signature* type_random_i32;
 };
 
 Semantic_Analyser* semantic_analyser_initialize();
 void semantic_analyser_destroy();
-void semantic_analyser_reset(Compiler* compiler);
+void semantic_analyser_reset();
 void semantic_analyser_finish();
 Type_Signature* hardcoded_type_to_signature(Hardcoded_Type type);
 

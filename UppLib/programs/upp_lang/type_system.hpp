@@ -15,6 +15,9 @@ namespace AST
     struct Definition;
 }
 
+
+
+// TYPE SIGNATURES
 enum class Primitive_Type
 {
     INTEGER = 1,
@@ -101,8 +104,7 @@ void type_signature_append_to_string(String* string, Type_Signature* signature);
 void type_signature_append_value_to_string(Type_Signature* type, byte* value_ptr, String* string);
 
 
-
-
+// C++ TYPE REPRESENTATIONS
 
 // An array as it is currently defined in the upp-language
 template<typename T>
@@ -133,6 +135,9 @@ struct Upp_Any
     u64 type;
 };
 
+
+
+// TYPE-INFORMATION STRUCTS (Usable in Upp)
 struct Internal_Type_Primitive
 {
     bool is_signed;
@@ -229,18 +234,9 @@ struct Internal_Type_Information
 
 
 
-
-
-
-struct Type_System
+struct Predefined_Types
 {
-    Timer* timer;
-    double register_time;
-
-    Dynamic_Array<Type_Signature*> types;
-    Dynamic_Array<Internal_Type_Information> internal_type_infos;
-    u64 next_internal_index;
-
+    // Primitive types
     Type_Signature* unknown_type;
     Type_Signature* bool_type;
     Type_Signature* i8_type;
@@ -254,35 +250,65 @@ struct Type_System
     Type_Signature* f32_type;
     Type_Signature* f64_type;
     Type_Signature* void_type;
+
+    // Prebuilt structs/types used by compiler
     Type_Signature* void_ptr_type;
     Type_Signature* string_type;
     Type_Signature* empty_struct_type;
     Type_Signature* type_type;
     Type_Signature* type_information_type;
     Type_Signature* any_type;
+
+    // Types for built-in/hardcoded functions
+    Type_Signature* type_assert;
+    Type_Signature* type_free;
+    Type_Signature* type_malloc;
+    Type_Signature* type_type_of;
+    Type_Signature* type_type_info;
+    Type_Signature* type_print_bool;
+    Type_Signature* type_print_i32;
+    Type_Signature* type_print_f32;
+    Type_Signature* type_print_line;
+    Type_Signature* type_print_string;
+    Type_Signature* type_read_i32;
+    Type_Signature* type_read_f32;
+    Type_Signature* type_read_bool;
+    Type_Signature* type_random_i32;
+};
+
+// TYPE SYSTEM
+struct Type_System
+{
+    Timer* timer;
+    double register_time;
+
+    Dynamic_Array<Type_Signature*> types;
+    Dynamic_Array<Internal_Type_Information> internal_type_infos;
+    u64 next_internal_index;
+    Predefined_Types predefined_types;
 };
 
 Type_System type_system_create(Timer* timer);
 void type_system_destroy(Type_System* system);
-void type_system_add_primitives(Type_System* system, Identifier_Pool* pool, Predefined_Symbols* predefined);
 void type_system_reset(Type_System* system);
+void type_system_add_predefined_types(Type_System* system);
 
-void type_system_finish_type(Type_System* system, Type_Signature* type);
-
+Type_Signature* type_system_register_type(Type_System* system, Type_Signature signature);
 Type_Signature* type_system_make_primitive(Type_System* system, Primitive_Type type, int size, bool is_signed);
 Type_Signature* type_system_make_pointer(Type_System* system, Type_Signature* child_type);
 Type_Signature* type_system_make_slice(Type_System* system, Type_Signature* element_type);
 Type_Signature* type_system_make_array(Type_System* system, Type_Signature* element_type, bool count_known, int element_count);
+Type_Signature* type_system_make_template(Type_System* system, String* id);
 // Note: Takes ownership of parameter_types!
 Type_Signature* type_system_make_function(Type_System* system, Dynamic_Array<Function_Parameter> parameter_types, Type_Signature* return_type);
 Type_Signature* type_system_make_function(Type_System* system, std::initializer_list<Function_Parameter> parameter_types, Type_Signature* return_type);
-Type_Signature* type_system_make_template(Type_System* system, String* id);
+// Note: empty types need to be finished before they are used!
 Type_Signature* type_system_make_enum_empty(Type_System* system, String* id);
 Type_Signature* type_system_make_struct_empty(Type_System* system, Symbol* symbol, AST::Structure_Type struct_type);
-
+void struct_add_member(Type_Signature* struct_sig, String* id, Type_Signature* member_type);
+void type_system_finish_type(Type_System* system, Type_Signature* type);
 
 bool type_signature_equals(Type_Signature* a, Type_Signature* b);
-
 void type_system_print(Type_System* system);
 Optional<Enum_Item> enum_type_find_member_by_value(Type_Signature* enum_type, int value);
 Optional<Struct_Member> type_signature_find_member_by_id(Type_Signature* type, String* id); // Valid for both structs, unions and slices

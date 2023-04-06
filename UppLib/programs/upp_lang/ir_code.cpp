@@ -666,7 +666,7 @@ IR_Data_Access ir_data_access_create_constant(Upp_Constant constant)
 
 IR_Data_Access ir_data_access_create_constant_i32(i32 value) {
     return ir_data_access_create_constant(
-        compiler.type_system.i32_type,
+        compiler.type_system.predefined_types.i32_type,
         array_create_static((byte*)&value, sizeof(i32))
     );
 }
@@ -694,6 +694,7 @@ IR_Data_Access ir_generator_generate_cast(IR_Code_Block* ir_block, IR_Data_Acces
 {
     if (cast_type == Info_Cast_Type::NO_CAST) return source;
     auto type_system = &compiler.type_system;
+    auto& types = type_system->predefined_types;
     auto source_type = ir_data_access_get_type(&source);
     auto make_simple_cast = [](IR_Code_Block* ir_block, IR_Data_Access source, Type_Signature* result_type, IR_Cast_Type cast_type) -> IR_Data_Access
     {
@@ -778,18 +779,18 @@ IR_Data_Access ir_generator_generate_cast(IR_Code_Block* ir_block, IR_Data_Acces
     {
         // Check if type matches given type, if not error out
         IR_Data_Access access_operand = source;
-        IR_Data_Access access_valid_cast = ir_data_access_create_intermediate(ir_block, compiler.type_system.bool_type);
+        IR_Data_Access access_valid_cast = ir_data_access_create_intermediate(ir_block, types.bool_type);
         IR_Data_Access access_result = ir_data_access_create_intermediate(ir_block, result_type);
         {
             IR_Instruction cmp_instr;
             cmp_instr.type = IR_Instruction_Type::BINARY_OP;
             cmp_instr.options.binary_op.type = AST::Binop::EQUAL;
             cmp_instr.options.binary_op.operand_left = ir_data_access_create_constant(
-                type_system->type_type,
+                types.type_type,
                 array_create_static_as_bytes<u64>(&result_type->internal_index, 1)
             );
             cmp_instr.options.binary_op.operand_right = ir_data_access_create_member(ir_block, access_operand,
-                compiler.type_system.any_type->options.structure.members[1]
+                types.any_type->options.structure.members[1]
             );
             cmp_instr.options.binary_op.destination = access_valid_cast;
             dynamic_array_push_back(&ir_block->instructions, cmp_instr);
@@ -807,7 +808,7 @@ IR_Data_Access ir_generator_generate_cast(IR_Code_Block* ir_block, IR_Data_Acces
         {
             // True_Branch
             IR_Data_Access any_data_access = ir_data_access_create_member(branch_valid, access_operand,
-                compiler.type_system.any_type->options.structure.members[0]
+                types.any_type->options.structure.members[0]
             );
             {
                 IR_Instruction cast_instr;
@@ -849,8 +850,8 @@ IR_Data_Access ir_generator_generate_cast(IR_Code_Block* ir_block, IR_Data_Acces
             operand_access = instr.options.move.destination;
         }
 
-        IR_Data_Access any_access = ir_data_access_create_intermediate(ir_block, compiler.type_system.any_type);
-        Type_Signature* any_type = compiler.type_system.any_type;
+        IR_Data_Access any_access = ir_data_access_create_intermediate(ir_block, types.any_type);
+        Type_Signature* any_type = types.any_type;
         // Set data
         {
             IR_Instruction instr;
@@ -871,7 +872,7 @@ IR_Data_Access ir_generator_generate_cast(IR_Code_Block* ir_block, IR_Data_Acces
                 ir_block, any_access, any_type->options.structure.members[1]
             );
             instr.options.move.source = ir_data_access_create_constant(
-                compiler.type_system.type_type,
+                types.type_type,
                 array_create_static_as_bytes(&source_type->internal_index, 1)
             );
             dynamic_array_push_back(&ir_block->instructions, instr);
@@ -888,6 +889,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
     auto info = get_info(expression);
     auto result_type = expression_info_get_type(info);
     auto type_system = &compiler.type_system;
+    auto& types = type_system->predefined_types;
     assert(!info->contains_errors, "Cannot contain errors!"); 
 
     // Handle different expression results
@@ -896,7 +898,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
     case Expression_Result_Type::CONSTANT:
         return ir_data_access_create_constant(info->options.constant);
     case Expression_Result_Type::TYPE:
-        return ir_data_access_create_constant(type_system->u64_type, array_create_static_as_bytes(&result_type->internal_index, 1));
+        return ir_data_access_create_constant(types.u64_type, array_create_static_as_bytes(&result_type->internal_index, 1));
     case Expression_Result_Type::FUNCTION: {
         // Function pointer read
         auto access = ir_data_access_create_intermediate(ir_block, result_type);
@@ -1022,8 +1024,8 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
             {
                 IR_Data_Access index_access = ir_generator_generate_expression(ir_block, call.arguments[0]->value);
                 auto index_type = ir_data_access_get_type(&index_access);
-                if (type_signature_equals(index_type, type_system->type_type)) {
-                    index_access = ir_generator_generate_cast(ir_block, index_access, type_system->i32_type, Info_Cast_Type::INTEGERS);
+                if (type_signature_equals(index_type, types.type_type)) {
+                    index_access = ir_generator_generate_cast(ir_block, index_access, types.i32_type, Info_Cast_Type::INTEGERS);
                 }
                 else {
                     panic("Should be type_type!");
@@ -1032,7 +1034,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
                 // Array index access
                 IR_Instruction instr;
                 instr.type = IR_Instruction_Type::ADDRESS_OF;
-                instr.options.address_of.destination = ir_data_access_create_intermediate(ir_block, type_system_make_pointer(type_system, type_system->type_information_type));
+                instr.options.address_of.destination = ir_data_access_create_intermediate(ir_block, type_system_make_pointer(type_system, types.type_information_type));
                 instr.options.address_of.type = IR_Instruction_Address_Of_Type::ARRAY_ELEMENT;
                 instr.options.address_of.source = ir_data_access_create_global(compiler.semantic_analyser->global_type_informations);
                 instr.options.address_of.options.index_access = index_access;
@@ -1268,7 +1270,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
             IR_Instruction mult_instr;
             mult_instr.type = IR_Instruction_Type::BINARY_OP;
             mult_instr.options.binary_op.type = AST::Binop::MULTIPLICATION;
-            mult_instr.options.binary_op.destination = ir_data_access_create_intermediate(ir_block, type_system->i32_type);
+            mult_instr.options.binary_op.destination = ir_data_access_create_intermediate(ir_block, types.i32_type);
             mult_instr.options.binary_op.operand_left = ir_data_access_create_constant_i32(element_size);
             mult_instr.options.binary_op.operand_right = array_size_access;
             dynamic_array_push_back(&ir_block->instructions, mult_instr);
@@ -1683,7 +1685,7 @@ void ir_generator_generate_queued_items(bool gen_bytecode)
         }
 
         // Add empty return
-        if (type_signature_equals(ir_func->function_type->options.function.return_type, compiler.type_system.void_type)) {
+        if (type_signature_equals(ir_func->function_type->options.function.return_type, compiler.type_system.predefined_types.void_type)) {
             IR_Instruction return_instr;
             return_instr.type = IR_Instruction_Type::RETURN;
             return_instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_EMPTY;
@@ -1735,7 +1737,7 @@ void ir_generator_finish(bool gen_bytecode)
 {
     // Generate entry function
     auto& type_system = compiler.type_system;
-    auto entry_function = ir_function_create(type_system_make_function(&type_system, {}, type_system.void_type), 0);
+    auto entry_function = ir_function_create(type_system_make_function(&type_system, {}, type_system.predefined_types.void_type), 0);
     ir_generator.program->entry_function = entry_function;
 
     // Set type_informations global
@@ -1743,7 +1745,7 @@ void ir_generator_finish(bool gen_bytecode)
         Constant_Result result = constant_pool_add_constant(
             &compiler.constant_pool,
             type_system_make_array(
-                &type_system, type_system.type_information_type, true, type_system.internal_type_infos.size
+                &type_system, type_system.predefined_types.type_information_type, true, type_system.internal_type_infos.size
             ),
             array_create_static_as_bytes(type_system.internal_type_infos.data, type_system.internal_type_infos.size)
         );

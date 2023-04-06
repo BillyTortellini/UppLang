@@ -299,12 +299,12 @@ void compiler_prepare_compile(bool incremental, Compile_Type compile_type)
 
         // Reset stages
         type_system_reset(&compiler.type_system);
+        type_system_add_predefined_types(&compiler.type_system);
         dependency_analyser_reset(&compiler);
-        type_system_add_primitives(&compiler.type_system, &compiler.identifier_pool, &compiler.dependency_analyser->predefined_symbols);
         if (!incremental) {
             Parser::reset();
         }
-        semantic_analyser_reset(&compiler);
+        semantic_analyser_reset();
         ir_generator_reset();
         bytecode_generator_reset(compiler.bytecode_generator, &compiler);
         bytecode_interpreter_reset(compiler.bytecode_interpreter, &compiler);

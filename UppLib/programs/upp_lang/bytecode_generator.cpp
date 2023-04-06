@@ -118,6 +118,7 @@ int bytecode_generator_create_temporary_stack_offset(Bytecode_Generator* generat
 int bytecode_generator_data_access_to_stack_offset(Bytecode_Generator* generator, IR_Data_Access access)
 {
     Type_Signature* access_type = ir_data_access_get_type(&access);
+    auto& types = compiler.type_system.predefined_types;
 
     int stack_offset = 0;
     switch (access.type)
@@ -127,7 +128,7 @@ int bytecode_generator_data_access_to_stack_offset(Bytecode_Generator* generator
         load_instruction.instruction_type = Instruction_Type::READ_CONSTANT;
         load_instruction.op2 = generator->compiler->constant_pool.constants[access.index].offset;
         if (access.is_memory_access) {
-            load_instruction.op1 = bytecode_generator_create_temporary_stack_offset(generator, generator->compiler->type_system.void_ptr_type);
+            load_instruction.op1 = bytecode_generator_create_temporary_stack_offset(generator, types.void_ptr_type);
             load_instruction.op3 = 8;
         }
         else {
@@ -143,7 +144,7 @@ int bytecode_generator_data_access_to_stack_offset(Bytecode_Generator* generator
         load_instruction.instruction_type = Instruction_Type::READ_GLOBAL;
         load_instruction.op2 = generator->global_data_offsets[access.index];
         if (access.is_memory_access) {
-            load_instruction.op1 = bytecode_generator_create_temporary_stack_offset(generator, generator->compiler->type_system.void_ptr_type);
+            load_instruction.op1 = bytecode_generator_create_temporary_stack_offset(generator, types.void_ptr_type);
             load_instruction.op3 = 8;
         }
         else {
@@ -350,7 +351,7 @@ int bytecode_generator_get_pointer_to_access(Bytecode_Generator* generator, IR_D
         offset = generator->compiler->constant_pool.constants[access.index].offset;
         break;
     }
-    load_instr.op1 = bytecode_generator_create_temporary_stack_offset(generator, generator->compiler->type_system.void_ptr_type);
+    load_instr.op1 = bytecode_generator_create_temporary_stack_offset(generator, compiler.type_system.predefined_types.void_ptr_type);
     load_instr.op2 = offset;
     bytecode_generator_add_instruction(generator, load_instr);
     return load_instr.op1;
@@ -454,6 +455,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
         hashtable_insert_element(&generator->code_block_register_stack_offset_index, code_block, generator->stack_offsets.size - 1);
     }
 
+    auto& types = compiler.type_system.predefined_types;
     const int PLACEHOLDER = 0;
     // Generate instructions
     for (int i = 0; i < code_block->instructions.size; i++)
@@ -484,7 +486,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             }
 
             // Put arguments into the correct place on the stack
-            int pointer_offset = bytecode_generator_create_temporary_stack_offset(generator, generator->compiler->type_system.void_ptr_type);
+            int pointer_offset = bytecode_generator_create_temporary_stack_offset(generator, compiler.type_system.predefined_types.void_ptr_type);
             int argument_stack_offset = align_offset_next_multiple(generator->current_stack_offset, 16); // I think 16 is the hightest i have
             for (int i = 0; i < function_sig->options.function.parameters.size; i++)
             {
@@ -585,7 +587,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             }
 
             // Load return value to destination
-            if (function_sig->options.function.return_type != generator->compiler->type_system.void_type) {
+            if (function_sig->options.function.return_type != types.void_type) {
                 bytecode_generator_add_instruction_and_set_destination(
                     generator, call->destination,
                     instruction_make_2(Instruction_Type::LOAD_RETURN_VALUE, PLACEHOLDER, function_sig->options.function.return_type->size)
@@ -603,7 +605,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             */
             IR_Instruction_Switch* switch_instr = &instr->options.switch_instr;
             int condition_stack_offset = bytecode_generator_data_access_to_stack_offset(generator, switch_instr->condition_access);
-            int cmp_result_stack_offset = bytecode_generator_create_temporary_stack_offset(generator, generator->compiler->type_system.bool_type);
+            int cmp_result_stack_offset = bytecode_generator_create_temporary_stack_offset(generator, types.bool_type);
 
             Dynamic_Array<int> case_jump_indices = dynamic_array_create_empty<int>(switch_instr->cases.size);
             Dynamic_Array<int> jmp_to_switch_end_indices = dynamic_array_create_empty<int>(switch_instr->cases.size + 1);
@@ -618,7 +620,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 constant_access.is_memory_access = false;
                 constant_access.type = IR_Data_Access_Type::CONSTANT;
                 constant_access.index = constant_pool_add_constant(
-                    &generator->compiler->constant_pool, generator->compiler->type_system.i32_type,
+                    &generator->compiler->constant_pool, types.i32_type,
                     array_create_static_as_bytes(&switch_case->value, 1)
                 ).constant.constant_index;
                 int constant_stack_offset = bytecode_generator_data_access_to_stack_offset(generator, constant_access);
@@ -811,7 +813,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             case IR_Instruction_Address_Of_Type::DATA: {
                 int pointer_offset = bytecode_generator_get_pointer_to_access(generator, address_of->source);
                 bytecode_generator_write_stack_offset_to_destination(
-                    generator, pointer_offset, generator->compiler->type_system.void_ptr_type, address_of->destination
+                    generator, pointer_offset, types.void_ptr_type, address_of->destination
                 );
                 break;
             }

@@ -95,45 +95,7 @@ struct Symbol_Error
     AST::Node* error_node;
 };
 
-struct Predefined_Symbols
-{
-    Symbol* type_bool;
-    Symbol* type_int;
-    Symbol* type_float;
-    Symbol* type_u8;
-    Symbol* type_u16;
-    Symbol* type_u32;
-    Symbol* type_u64;
-    Symbol* type_i8;
-    Symbol* type_i16;
-    Symbol* type_i32;
-    Symbol* type_i64;
-    Symbol* type_f32;
-    Symbol* type_f64;
-    Symbol* type_byte;
-    Symbol* type_void;
-    Symbol* type_string;
-    Symbol* type_type;
-    Symbol* type_type_information;
-    Symbol* type_any;
-    Symbol* type_empty;
-
-    Symbol* hardcoded_type_info;
-    Symbol* hardcoded_type_of;
-    Symbol* hardcoded_assert;
-    Symbol* hardcoded_print_bool;
-    Symbol* hardcoded_print_i32;
-    Symbol* hardcoded_print_f32;
-    Symbol* hardcoded_print_string;
-    Symbol* hardcoded_print_line;
-    Symbol* hardcoded_read_i32;
-    Symbol* hardcoded_read_f32;
-    Symbol* hardcoded_read_bool;
-    Symbol* hardcoded_random_i32;
-
-    Symbol* error_symbol;
-};
-
+Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbol_Type type, AST::Node* definition_node, bool is_internal);
 Symbol_Table* symbol_table_create(Symbol_Table* parent, bool is_internal);
 void symbol_table_destroy(Symbol_Table* symbol_table);
 void symbol_table_append_to_string(String* string, Symbol_Table* table, bool print_root);
@@ -174,7 +136,6 @@ struct Dependency_Analyser
 
     // Output
     Symbol_Table* root_symbol_table;
-    Predefined_Symbols predefined_symbols;
     Dynamic_Array<Symbol_Error> errors;
     Hashtable<AST::Node*, Analysis_Item*> mapping_ast_to_items;
 

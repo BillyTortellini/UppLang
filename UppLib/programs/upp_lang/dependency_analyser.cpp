@@ -562,54 +562,6 @@ void dependency_analyser_reset(Compiler* compiler)
     dependency_analyser.root_symbol_table = symbol_table_create(0, false);
     dependency_analyser.analysis_item = 0;
     dependency_analyser.symbol_table = dependency_analyser.root_symbol_table;
-    // Set predefined symbols
-    {
-        auto& analyser = dependency_analyser;
-        auto& root = analyser.root_symbol_table;
-        auto& pool = analyser.compiler->identifier_pool;
-        auto& predef = analyser.predefined_symbols;
-
-#define PREDEF_SYMBOL(name, c_str) predef.name = symbol_table_define_symbol(root, identifier_pool_add(&compiler->identifier_pool, string_create_static(c_str)), Symbol_Type::UNRESOLVED, 0, false);
-#define PREDEF_HARDCODED(name, c_str, hardcoded_type) PREDEF_SYMBOL(name, c_str); predef.name->type = Symbol_Type::HARDCODED_FUNCTION; predef.name->options.hardcoded = hardcoded_type;
-        PREDEF_SYMBOL(error_symbol, "0_ERROR_SYMBOL"); // This placeholder can never be an identifier, becuase it starts with a number
-        predef.error_symbol->type = Symbol_Type::ERROR_SYMBOL;
-
-        PREDEF_SYMBOL(type_bool, "bool");
-        PREDEF_SYMBOL(type_int, "int");
-        PREDEF_SYMBOL(type_float, "float");
-        PREDEF_SYMBOL(type_u8, "u8");
-        PREDEF_SYMBOL(type_u16, "u16");
-        PREDEF_SYMBOL(type_u32, "u32");
-        PREDEF_SYMBOL(type_u64, "u64");
-        PREDEF_SYMBOL(type_i8, "i8");
-        PREDEF_SYMBOL(type_i16, "i16");
-        PREDEF_SYMBOL(type_i32, "i32");
-        PREDEF_SYMBOL(type_i64, "i64");
-        PREDEF_SYMBOL(type_f32, "f32");
-        PREDEF_SYMBOL(type_f64, "f64");
-        PREDEF_SYMBOL(type_byte, "byte");
-        PREDEF_SYMBOL(type_void, "void");
-        PREDEF_SYMBOL(type_string, "String");
-        PREDEF_SYMBOL(type_type, "Type");
-        PREDEF_SYMBOL(type_type_information, "Type_Information");
-        PREDEF_SYMBOL(type_any, "Any");
-        PREDEF_SYMBOL(type_empty, "_");
-
-        PREDEF_HARDCODED(hardcoded_print_bool, "print_bool", Hardcoded_Type::PRINT_BOOL);
-        PREDEF_HARDCODED(hardcoded_print_i32, "print_i32", Hardcoded_Type::PRINT_I32);
-        PREDEF_HARDCODED(hardcoded_print_f32, "print_f32", Hardcoded_Type::PRINT_F32);
-        PREDEF_HARDCODED(hardcoded_print_string, "print_string", Hardcoded_Type::PRINT_STRING);
-        PREDEF_HARDCODED(hardcoded_print_line, "print_line", Hardcoded_Type::PRINT_LINE);
-        PREDEF_HARDCODED(hardcoded_read_i32, "read_i32", Hardcoded_Type::PRINT_I32);
-        PREDEF_HARDCODED(hardcoded_read_f32, "read_f32", Hardcoded_Type::READ_F32);
-        PREDEF_HARDCODED(hardcoded_read_bool, "read_bool", Hardcoded_Type::READ_BOOL);
-        PREDEF_HARDCODED(hardcoded_random_i32, "random_i32", Hardcoded_Type::RANDOM_I32);
-        PREDEF_HARDCODED(hardcoded_type_of, "type_of", Hardcoded_Type::TYPE_OF);
-        PREDEF_HARDCODED(hardcoded_type_info, "type_info", Hardcoded_Type::TYPE_INFO);
-        PREDEF_HARDCODED(hardcoded_assert, "assert", Hardcoded_Type::ASSERT_FN);
-#undef PREDEF_SYMBOL
-#undef PREDEF_HARDCODED
-    }
 }
 
 void dependency_analyser_analyse(Code_Source* code_source)

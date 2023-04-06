@@ -303,199 +303,9 @@ void type_signature_append_to_string(String* string, Type_Signature* signature) 
 
 
 
-void struct_add_member(Type_Signature* struct_sig, Identifier_Pool* pool, const char* name, Type_Signature* member_type)
-{
-    Struct_Member member;
-    member.id = identifier_pool_add(pool, string_create_static(name));
-    member.offset = 0;
-    member.type = member_type;
-    dynamic_array_push_back(&struct_sig->options.structure.members, member);
-}
-
-template<typename T>
-void assert_similarity(Type_Signature* signature) {
-    assert(signature->size == sizeof(T) && signature->alignment == alignof(T), "");
-}
 /*
     TYPE_SYSTEM
 */
-
-void type_system_add_primitives(Type_System* system, Identifier_Pool* pool, Predefined_Symbols* predefined)
-{
-    system->bool_type = type_system_make_primitive(system, Primitive_Type::BOOLEAN, 1, false);
-    system->i8_type = type_system_make_primitive(system, Primitive_Type::INTEGER, 1, true);
-    system->i16_type = type_system_make_primitive(system, Primitive_Type::INTEGER, 2, true);
-    system->i32_type = type_system_make_primitive(system, Primitive_Type::INTEGER, 4, true);
-    system->i64_type = type_system_make_primitive(system, Primitive_Type::INTEGER, 8, true);
-    system->u8_type = type_system_make_primitive(system, Primitive_Type::INTEGER, 1, false);
-    system->u16_type = type_system_make_primitive(system, Primitive_Type::INTEGER, 2, false);
-    system->u32_type = type_system_make_primitive(system, Primitive_Type::INTEGER, 4, false);
-    system->u64_type = type_system_make_primitive(system, Primitive_Type::INTEGER, 8, false);
-    system->f32_type = type_system_make_primitive(system, Primitive_Type::FLOAT, 4, true);
-    system->f64_type = type_system_make_primitive(system, Primitive_Type::FLOAT, 8, true);
-    {
-        Type_Signature error_type;
-        error_type.size = 1;
-        error_type.alignment = 1;
-        error_type.type = Signature_Type::UNKNOWN_TYPE;
-        system->unknown_type = type_system_register_type(system, error_type);
-
-        Type_Signature void_type;
-        void_type.type = Signature_Type::VOID_TYPE;
-        void_type.size = 0;
-        void_type.alignment = 1;
-        system->void_type = type_system_register_type(system, void_type);
-
-        Type_Signature void_ptr_type;
-        void_ptr_type.type = Signature_Type::POINTER;
-        void_ptr_type.size = 8;
-        void_ptr_type.alignment = 8;
-        void_ptr_type.options.pointer_child = system->void_type;
-        system->void_ptr_type = type_system_register_type(system, void_ptr_type);
-
-        Type_Signature type_type;
-        type_type.type = Signature_Type::TYPE_TYPE;
-        type_type.size = 8;
-        type_type.alignment = 8;
-        system->type_type = type_system_register_type(system, type_type);
-    }
-
-    // Empty structure
-    {
-        system->empty_struct_type = type_system_make_struct_empty(system, predefined->type_empty, Structure_Type::STRUCT);
-        type_system_finish_type(system, system->empty_struct_type);
-    }
-
-    // String
-    {
-        system->string_type = type_system_make_struct_empty(system, predefined->type_string, Structure_Type::STRUCT);
-        struct_add_member(system->string_type, pool, "character_buffer", type_system_make_slice(system, system->u8_type));
-        struct_add_member(system->string_type, pool, "size", system->i32_type);
-        type_system_finish_type(system, system->string_type);
-        assert_similarity<Upp_String>(system->string_type);
-    }
-
-    // Any
-    {
-        system->any_type = type_system_make_struct_empty(system, predefined->type_any, Structure_Type::STRUCT);
-        struct_add_member(system->any_type, pool, "data", system->void_ptr_type);
-        struct_add_member(system->any_type, pool, "type", system->type_type);
-        type_system_finish_type(system, system->any_type);
-        assert_similarity<Upp_Any>(system->any_type);
-    }
-
-    {
-        Type_Signature* option_type = type_system_make_struct_empty(
-            system, 0, Structure_Type::UNION
-        );
-        struct_add_member(option_type, pool, "void_type", system->empty_struct_type);
-        struct_add_member(option_type, pool, "type", system->empty_struct_type);
-        struct_add_member(option_type, pool, "pointer", system->type_type);
-        // Array
-        {
-            Type_Signature* array_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
-            struct_add_member(array_type, pool, "element_type", system->type_type);
-            struct_add_member(array_type, pool, "size", system->i32_type);
-            type_system_finish_type(system, array_type);
-            struct_add_member(option_type, pool, "array", array_type);
-            assert_similarity<Internal_Type_Array>(array_type);
-        }
-        // Slice
-        {
-            Type_Signature* slice_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
-            struct_add_member(slice_type, pool, "element_type", system->type_type);
-            type_system_finish_type(system, slice_type);
-            struct_add_member(option_type, pool, "slice", slice_type);
-            assert_similarity<Internal_Type_Slice>(slice_type);
-        }
-        // Primitive
-        {
-            Type_Signature* primitive_type = type_system_make_struct_empty(system, 0, Structure_Type::UNION);
-            {
-                Type_Signature* integer_info_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
-                struct_add_member(integer_info_type, pool, "is_signed", system->bool_type);
-                type_system_finish_type(system, integer_info_type);
-                struct_add_member(primitive_type, pool, "integer", integer_info_type);
-            }
-            struct_add_member(primitive_type, pool, "floating_point", system->empty_struct_type);
-            struct_add_member(primitive_type, pool, "boolean", system->empty_struct_type);
-            type_system_finish_type(system, primitive_type);
-            struct_add_member(option_type, pool, "primitive", primitive_type);
-            assert_similarity<Internal_Type_Primitive>(primitive_type);
-        }
-        // Function
-        {
-            Type_Signature* function_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
-            struct_add_member(function_type, pool, "parameter_types", type_system_make_slice(system, system->type_type));
-            struct_add_member(function_type, pool, "return_type", system->type_type);
-            type_system_finish_type(system, function_type);
-            struct_add_member(option_type, pool, "function", function_type);
-            assert_similarity<Internal_Type_Function>(function_type);
-        }
-        // Struct
-        {
-            Type_Signature* struct_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
-            {
-                Type_Signature* struct_member_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
-                struct_add_member(struct_member_type, pool, "name", system->string_type);
-                struct_add_member(struct_member_type, pool, "type", system->type_type);
-                struct_add_member(struct_member_type, pool, "offset", system->i32_type);
-                type_system_finish_type(system, struct_member_type);
-                struct_add_member(struct_type, pool, "members", type_system_make_slice(system, struct_member_type));
-                assert_similarity<Internal_Type_Struct_Member>(struct_member_type);
-            }
-            struct_add_member(struct_type, pool, "name", system->string_type);
-            {
-                Type_Signature* structure_type_type = type_system_make_struct_empty(system, 0, Structure_Type::UNION);
-                struct_add_member(structure_type_type, pool, "structure", system->empty_struct_type);
-                struct_add_member(structure_type_type, pool, "union_untagged", system->empty_struct_type);
-                {
-                    Type_Signature* union_tagged_struct = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
-                    struct_add_member(union_tagged_struct, pool, "tag_member_index", system->i32_type);
-                    type_system_finish_type(system, union_tagged_struct);
-                    struct_add_member(structure_type_type, pool, "union_tagged", union_tagged_struct);
-                }
-                type_system_finish_type(system, structure_type_type);
-                struct_add_member(struct_type, pool, "type", structure_type_type);
-                assert_similarity<Internal_Structure_Type>(structure_type_type);
-            }
-            type_system_finish_type(system, struct_type);
-            struct_add_member(option_type, pool, "structure", struct_type);
-            assert_similarity<Internal_Type_Struct>(struct_type);
-        }
-        // ENUM
-        {
-            Type_Signature* enum_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
-            {
-                Type_Signature* enum_member_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
-                struct_add_member(enum_member_type, pool, "name", system->string_type);
-                struct_add_member(enum_member_type, pool, "value", system->i32_type);
-                type_system_finish_type(system, enum_member_type);
-                struct_add_member(enum_type, pool, "members", type_system_make_slice(system, enum_member_type));
-                assert_similarity<Internal_Type_Enum_Member>(enum_member_type);
-            }
-            struct_add_member(enum_type, pool, "name", system->string_type);
-            type_system_finish_type(system, enum_type);
-            struct_add_member(option_type, pool, "enumeration", enum_type);
-            assert_similarity<Internal_Type_Enum>(enum_type);
-        }
-        type_system_finish_type(system, option_type);
-        assert_similarity<Internal_Type_Info_Options>(option_type);
-
-        // Type Information
-        {
-            Type_Signature* type_info_type = type_system_make_struct_empty(system, predefined->type_type_information ,Structure_Type::STRUCT);
-            struct_add_member(type_info_type, pool, "type", system->type_type);
-            struct_add_member(type_info_type, pool, "size", system->i32_type);
-            struct_add_member(type_info_type, pool, "alignment", system->i32_type);
-            struct_add_member(type_info_type, pool, "options", option_type);
-            type_system_finish_type(system, type_info_type);
-            system->type_information_type = type_info_type;
-            assert_similarity<Internal_Type_Information>(type_info_type);
-        }
-    }
-}
-
 Type_System type_system_create(Timer* timer)
 {
     Type_System result;
@@ -510,6 +320,11 @@ void type_system_destroy(Type_System* system) {
     type_system_reset(system);
     dynamic_array_destroy(&system->types);
     dynamic_array_destroy(&system->internal_type_infos);
+}
+
+template<typename T>
+void test_type_similarity(Type_Signature* signature) {
+    assert(signature->size == sizeof(T) && signature->alignment == alignof(T), "");
 }
 
 void type_system_reset(Type_System* system)
@@ -551,6 +366,218 @@ void type_system_reset(Type_System* system)
     dynamic_array_reset(&system->internal_type_infos);
 }
 
+void type_system_add_predefined_types(Type_System* system)
+{
+    Predefined_Types* types = &system->predefined_types;
+
+    types->bool_type = type_system_make_primitive(system, Primitive_Type::BOOLEAN, 1, false);
+    types->i8_type = type_system_make_primitive(system, Primitive_Type::INTEGER, 1, true);
+    types->i16_type = type_system_make_primitive(system, Primitive_Type::INTEGER, 2, true);
+    types->i32_type = type_system_make_primitive(system, Primitive_Type::INTEGER, 4, true);
+    types->i64_type = type_system_make_primitive(system, Primitive_Type::INTEGER, 8, true);
+    types->u8_type = type_system_make_primitive(system, Primitive_Type::INTEGER, 1, false);
+    types->u16_type = type_system_make_primitive(system, Primitive_Type::INTEGER, 2, false);
+    types->u32_type = type_system_make_primitive(system, Primitive_Type::INTEGER, 4, false);
+    types->u64_type = type_system_make_primitive(system, Primitive_Type::INTEGER, 8, false);
+    types->f32_type = type_system_make_primitive(system, Primitive_Type::FLOAT, 4, true);
+    types->f64_type = type_system_make_primitive(system, Primitive_Type::FLOAT, 8, true);
+    {
+        Type_Signature error_type;
+        error_type.size = 1;
+        error_type.alignment = 1;
+        error_type.type = Signature_Type::UNKNOWN_TYPE;
+        types->unknown_type = type_system_register_type(system, error_type);
+
+        Type_Signature void_type;
+        void_type.type = Signature_Type::VOID_TYPE;
+        void_type.size = 0;
+        void_type.alignment = 1;
+        types->void_type = type_system_register_type(system, void_type);
+
+        Type_Signature void_ptr_type;
+        void_ptr_type.type = Signature_Type::POINTER;
+        void_ptr_type.size = 8;
+        void_ptr_type.alignment = 8;
+        void_ptr_type.options.pointer_child = types->void_type;
+        types->void_ptr_type = type_system_register_type(system, void_ptr_type);
+
+        Type_Signature type_type;
+        type_type.type = Signature_Type::TYPE_TYPE;
+        type_type.size = 8;
+        type_type.alignment = 8;
+        types->type_type = type_system_register_type(system, type_type);
+    }
+
+    using AST::Structure_Type;
+    // Empty structure
+    {
+        types->empty_struct_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
+        type_system_finish_type(system, types->empty_struct_type);
+    }
+
+    auto add_member_cstr = [&](Type_Signature* struct_type, const char* member_name, Type_Signature* member_type) {
+        String* id = identifier_pool_add(&compiler.identifier_pool, string_create_static(member_name));
+        struct_add_member(struct_type, id, member_type);
+    };
+
+    // String
+    {
+        types->string_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
+        add_member_cstr(types->string_type, "character_buffer", type_system_make_slice(system, types->u8_type));
+        add_member_cstr(types->string_type, "size", types->i32_type);
+        type_system_finish_type(system, types->string_type);
+        test_type_similarity<Upp_String>(types->string_type);
+    }
+
+    // Any
+    {
+        types->any_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
+        add_member_cstr(types->any_type, "data", types->void_ptr_type);
+        add_member_cstr(types->any_type, "type", types->type_type);
+        type_system_finish_type(system, types->any_type);
+        test_type_similarity<Upp_Any>(types->any_type);
+    }
+
+    // Type Information
+    {
+        Type_Signature* option_type = type_system_make_struct_empty(
+            system, 0, Structure_Type::UNION
+        );
+        add_member_cstr(option_type, "void_type", types->empty_struct_type);
+        add_member_cstr(option_type, "type", types->empty_struct_type);
+        add_member_cstr(option_type, "pointer", types->type_type);
+        // Array
+        {
+            Type_Signature* array_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
+            add_member_cstr(array_type, "element_type", types->type_type);
+            add_member_cstr(array_type, "size", types->i32_type);
+            type_system_finish_type(system, array_type);
+            add_member_cstr(option_type, "array", array_type);
+            test_type_similarity<Internal_Type_Array>(array_type);
+        }
+        // Slice
+        {
+            Type_Signature* slice_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
+            add_member_cstr(slice_type, "element_type", types->type_type);
+            type_system_finish_type(system, slice_type);
+            add_member_cstr(option_type, "slice", slice_type);
+            test_type_similarity<Internal_Type_Slice>(slice_type);
+        }
+        // Primitive
+        {
+            Type_Signature* primitive_type = type_system_make_struct_empty(system, 0, Structure_Type::UNION);
+            {
+                Type_Signature* integer_info_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
+                add_member_cstr(integer_info_type, "is_signed", types->bool_type);
+                type_system_finish_type(system, integer_info_type);
+                add_member_cstr(primitive_type, "integer", integer_info_type);
+            }
+            add_member_cstr(primitive_type, "floating_point", types->empty_struct_type);
+            add_member_cstr(primitive_type, "boolean", types->empty_struct_type);
+            type_system_finish_type(system, primitive_type);
+            add_member_cstr(option_type, "primitive", primitive_type);
+            test_type_similarity<Internal_Type_Primitive>(primitive_type);
+        }
+        // Function
+        {
+            Type_Signature* function_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
+            add_member_cstr(function_type, "parameter_types", type_system_make_slice(system, types->type_type));
+            add_member_cstr(function_type, "return_type", types->type_type);
+            type_system_finish_type(system, function_type);
+            add_member_cstr(option_type, "function", function_type);
+            test_type_similarity<Internal_Type_Function>(function_type);
+        }
+        // Struct
+        {
+            Type_Signature* struct_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
+            {
+                Type_Signature* struct_member_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
+                add_member_cstr(struct_member_type, "name", types->string_type);
+                add_member_cstr(struct_member_type, "type", types->type_type);
+                add_member_cstr(struct_member_type, "offset", types->i32_type);
+                type_system_finish_type(system, struct_member_type);
+                add_member_cstr(struct_type, "members", type_system_make_slice(system, struct_member_type));
+                test_type_similarity<Internal_Type_Struct_Member>(struct_member_type);
+            }
+            add_member_cstr(struct_type, "name", types->string_type);
+            {
+                Type_Signature* structure_type_type = type_system_make_struct_empty(system, 0, Structure_Type::UNION);
+                add_member_cstr(structure_type_type, "structure", types->empty_struct_type);
+                add_member_cstr(structure_type_type, "union_untagged", types->empty_struct_type);
+                {
+                    Type_Signature* union_tagged_struct = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
+                    add_member_cstr(union_tagged_struct, "tag_member_index", types->i32_type);
+                    type_system_finish_type(system, union_tagged_struct);
+                    add_member_cstr(structure_type_type, "union_tagged", union_tagged_struct);
+                }
+                type_system_finish_type(system, structure_type_type);
+                add_member_cstr(struct_type, "type", structure_type_type);
+                test_type_similarity<Internal_Structure_Type>(structure_type_type);
+            }
+            type_system_finish_type(system, struct_type);
+            add_member_cstr(option_type, "structure", struct_type);
+            test_type_similarity<Internal_Type_Struct>(struct_type);
+        }
+        // ENUM
+        {
+            Type_Signature* enum_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
+            {
+                Type_Signature* enum_member_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
+                add_member_cstr(enum_member_type, "name", types->string_type);
+                add_member_cstr(enum_member_type, "value", types->i32_type);
+                type_system_finish_type(system, enum_member_type);
+                add_member_cstr(enum_type, "members", type_system_make_slice(system, enum_member_type));
+                test_type_similarity<Internal_Type_Enum_Member>(enum_member_type);
+            }
+            add_member_cstr(enum_type, "name", types->string_type);
+            type_system_finish_type(system, enum_type);
+            add_member_cstr(option_type, "enumeration", enum_type);
+            test_type_similarity<Internal_Type_Enum>(enum_type);
+        }
+        type_system_finish_type(system, option_type);
+        test_type_similarity<Internal_Type_Info_Options>(option_type);
+
+        // Type Information
+        {
+            Type_Signature* type_info_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
+            add_member_cstr(type_info_type, "type", types->type_type);
+            add_member_cstr(type_info_type, "size", types->i32_type);
+            add_member_cstr(type_info_type, "alignment", types->i32_type);
+            add_member_cstr(type_info_type, "options", option_type);
+            type_system_finish_type(system, type_info_type);
+            types->type_information_type = type_info_type;
+            test_type_similarity<Internal_Type_Information>(type_info_type);
+        }
+    }
+
+    // Hardcoded Functions
+    {
+        auto& ts = *system;
+        auto make_param = [&](Type_Signature* signature, const char* name) -> Function_Parameter {
+            Function_Parameter param;
+            param.type = signature;
+            param.name = optional_make_success(identifier_pool_add(&compiler.identifier_pool, string_create_static(name)));
+            return param;
+        };
+        types->type_assert = type_system_make_function(&ts, { make_param(types->bool_type, "condition") }, types->void_type);
+        types->type_free = type_system_make_function(&ts, { make_param(types->void_ptr_type, "pointer") }, types->void_type);
+        types->type_malloc = type_system_make_function(&ts, { make_param(types->i32_type, "size") }, types->void_ptr_type);
+        types->type_type_info = type_system_make_function(&ts, { make_param(types->type_type, "type_id") }, types->type_information_type);
+        types->type_type_of = type_system_make_function(&ts, { make_param(types->empty_struct_type, "type") }, types->type_type); // I am not sure if this is valid...
+        types->type_print_bool = type_system_make_function(&ts, { make_param(types->bool_type, "value") }, types->void_type);
+        types->type_print_i32 = type_system_make_function(&ts, { make_param(types->i32_type, "value") }, types->void_type);
+        types->type_print_f32 = type_system_make_function(&ts, { make_param(types->f32_type, "value") }, types->void_type);
+        types->type_print_line = type_system_make_function(&ts, {}, types->void_type);
+        types->type_print_string = type_system_make_function(&ts, { make_param(types->string_type, "value") }, types->void_type);
+        types->type_read_i32 = type_system_make_function(&ts, {}, types->void_type);
+        types->type_read_f32 = type_system_make_function(&ts, {}, types->void_type);
+        types->type_read_bool = type_system_make_function(&ts, {}, types->void_type);
+        types->type_random_i32 = type_system_make_function(&ts, {}, types->void_type);
+    }
+}
+
+
+
 Internal_Type_Options_Tag signature_type_to_internal_type(Signature_Type type)
 {
     switch (type)
@@ -573,7 +600,7 @@ Internal_Type_Options_Tag signature_type_to_internal_type(Signature_Type type)
     return Internal_Type_Options_Tag::ARRAY;
 }
 
-Type_Signature* type_system_register_type(Type_System* system, Type_Signature signature)
+Type_Signature* type_system_register_type(Type_System * system, Type_Signature signature)
 {
     double reg_start_time = timer_current_time_in_seconds(system->timer);
     if (signature.type != Signature_Type::STRUCT)
@@ -697,7 +724,7 @@ Type_Signature* type_system_register_type(Type_System* system, Type_Signature si
     return new_sig;
 }
 
-void type_system_finish_type(Type_System* system, Type_Signature* type)
+void type_system_finish_type(Type_System * system, Type_Signature * type)
 {
     assert(type->internal_index < system->internal_type_infos.size, "");
     assert(system->internal_type_infos.size == system->types.size, "");
@@ -777,16 +804,18 @@ void type_system_finish_type(Type_System* system, Type_Signature* type)
             }
             type_system_finish_type(system, tag_type);
 
+            auto& types = system->predefined_types;
+
             Struct_Member union_tag;
             union_tag.id = compiler.id_tag;
-            offset = math_round_next_multiple(offset, system->i32_type->alignment);
+            offset = math_round_next_multiple(offset, types.i32_type->alignment);
             union_tag.offset = offset;
             union_tag.type = tag_type;
             dynamic_array_push_back(&type->options.structure.members, union_tag);
             type->options.structure.tag_member = type->options.structure.members[type->options.structure.members.size - 1];
 
-            offset += system->i32_type->size;
-            alignment = math_maximum(alignment, system->i32_type->alignment);
+            offset += types.i32_type->size;
+            alignment = math_maximum(alignment, types.i32_type->alignment);
         }
 
         // Finish type
@@ -845,7 +874,7 @@ void type_system_finish_type(Type_System* system, Type_Signature* type)
     internal_info->options.tag = signature_type_to_internal_type(type->type);
 }
 
-Type_Signature* type_system_make_primitive(Type_System* system, Primitive_Type type, int size, bool is_signed)
+Type_Signature* type_system_make_primitive(Type_System * system, Primitive_Type type, int size, bool is_signed)
 {
     Type_Signature result;
     result.type = Signature_Type::PRIMITIVE;
@@ -856,7 +885,7 @@ Type_Signature* type_system_make_primitive(Type_System* system, Primitive_Type t
     return type_system_register_type(system, result);
 }
 
-Type_Signature* type_system_make_pointer(Type_System* system, Type_Signature* child_type)
+Type_Signature* type_system_make_pointer(Type_System * system, Type_Signature * child_type)
 {
     Type_Signature result;
     result.type = Signature_Type::POINTER;
@@ -866,7 +895,7 @@ Type_Signature* type_system_make_pointer(Type_System* system, Type_Signature* ch
     return type_system_register_type(system, result);
 }
 
-Type_Signature* type_system_make_array(Type_System* system, Type_Signature* element_type, bool count_known, int element_count)
+Type_Signature* type_system_make_array(Type_System * system, Type_Signature * element_type, bool count_known, int element_count)
 {
     assert(!(count_known && element_count < 0), "Hey");
     Type_Signature result;
@@ -884,7 +913,7 @@ Type_Signature* type_system_make_array(Type_System* system, Type_Signature* elem
     return type_system_register_type(system, result);
 }
 
-Type_Signature* type_system_make_slice(Type_System* system, Type_Signature* element_type)
+Type_Signature* type_system_make_slice(Type_System * system, Type_Signature * element_type)
 {
     Type_Signature result;
     result.type = Signature_Type::SLICE;
@@ -895,12 +924,12 @@ Type_Signature* type_system_make_slice(Type_System* system, Type_Signature* elem
     result.options.slice.data_member.type = type_system_make_pointer(system, element_type);
     result.options.slice.data_member.offset = 0;
     result.options.slice.size_member.id = compiler.id_size;
-    result.options.slice.size_member.type = system->i32_type;
+    result.options.slice.size_member.type = system->predefined_types.i32_type;
     result.options.slice.size_member.offset = 8;
     return type_system_register_type(system, result);
 }
 
-Type_Signature* type_system_make_function(Type_System* system, Dynamic_Array<Function_Parameter> parameter_types, Type_Signature* return_type)
+Type_Signature* type_system_make_function(Type_System * system, Dynamic_Array<Function_Parameter> parameter_types, Type_Signature * return_type)
 {
     Type_Signature result;
     result.type = Signature_Type::FUNCTION;
@@ -911,7 +940,7 @@ Type_Signature* type_system_make_function(Type_System* system, Dynamic_Array<Fun
     return type_system_register_type(system, result);
 }
 
-Type_Signature* type_system_make_function(Type_System* system, std::initializer_list<Function_Parameter> parameter_types, Type_Signature* return_type)
+Type_Signature* type_system_make_function(Type_System * system, std::initializer_list<Function_Parameter> parameter_types, Type_Signature * return_type)
 {
     Dynamic_Array<Function_Parameter> params = dynamic_array_create_empty<Function_Parameter>(1);
     for (auto& param : parameter_types) {
@@ -920,7 +949,7 @@ Type_Signature* type_system_make_function(Type_System* system, std::initializer_
     return type_system_make_function(system, params, return_type);
 }
 
-Type_Signature* type_system_make_template(Type_System* system, String* id)
+Type_Signature* type_system_make_template(Type_System * system, String * id)
 {
     Type_Signature result;
     result.size = 1;
@@ -930,7 +959,7 @@ Type_Signature* type_system_make_template(Type_System* system, String* id)
     return type_system_register_type(system, result);
 }
 
-Type_Signature* type_system_make_struct_empty(Type_System* system, Symbol* symbol, Structure_Type struct_type)
+Type_Signature* type_system_make_struct_empty(Type_System * system, Symbol * symbol, Structure_Type struct_type)
 {
     Type_Signature result;
     result.type = Signature_Type::STRUCT;
@@ -945,7 +974,7 @@ Type_Signature* type_system_make_struct_empty(Type_System* system, Symbol* symbo
     return type_system_register_type(system, result);
 }
 
-Type_Signature* type_system_make_enum_empty(Type_System* system, String* id)
+Type_Signature* type_system_make_enum_empty(Type_System * system, String * id)
 {
     Type_Signature result;
     result.type = Signature_Type::ENUM;
@@ -956,7 +985,7 @@ Type_Signature* type_system_make_enum_empty(Type_System* system, String* id)
     return type_system_register_type(system, result);
 }
 
-void type_system_print(Type_System* system)
+void type_system_print(Type_System * system)
 {
     String msg = string_create_empty(256);
     SCOPE_EXIT(string_destroy(&msg));
@@ -972,7 +1001,7 @@ void type_system_print(Type_System* system)
     logg("%s", msg.characters);
 }
 
-Optional<Enum_Item> enum_type_find_member_by_value(Type_Signature* enum_type, int value)
+Optional<Enum_Item> enum_type_find_member_by_value(Type_Signature * enum_type, int value)
 {
     assert(enum_type->type == Signature_Type::ENUM, "");
     for (int i = 0; i < enum_type->options.enum_type.members.size; i++) {
@@ -982,7 +1011,7 @@ Optional<Enum_Item> enum_type_find_member_by_value(Type_Signature* enum_type, in
     return optional_make_failure<Enum_Item>();
 }
 
-Optional<Struct_Member> type_signature_find_member_by_id(Type_Signature* type, String* id)
+Optional<Struct_Member> type_signature_find_member_by_id(Type_Signature * type, String * id)
 {
     switch (type->type)
     {
@@ -1011,7 +1040,17 @@ Optional<Struct_Member> type_signature_find_member_by_id(Type_Signature* type, S
     return optional_make_failure<Struct_Member>();
 }
 
-bool type_signature_equals(Type_Signature* a, Type_Signature* b)
+bool type_signature_equals(Type_Signature * a, Type_Signature * b)
 {
     return a == b;
 }
+
+void struct_add_member(Type_Signature * struct_sig, String * id, Type_Signature * member_type)
+{
+    Struct_Member member;
+    member.id = id;
+    member.offset = 0;
+    member.type = member_type;
+    dynamic_array_push_back(&struct_sig->options.structure.members, member);
+}
+

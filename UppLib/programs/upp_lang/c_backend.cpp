@@ -542,7 +542,7 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
                 break;
             default: panic("hey");
             }
-            if (function_sig->options.function.return_type != generator->compiler->type_system.void_type) {
+            if (function_sig->options.function.return_type != generator->compiler->type_system.predefined_types.void_type) {
                 c_generator_output_data_access(generator, output, call->destination);
                 string_append_formated(output, " = ");
                 c_generator_output_cast(generator, output, call->destination);
@@ -851,20 +851,21 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
     }
 
     // Create known type_signatures
+    auto& types = generator->compiler->type_system.predefined_types;
     {
         String type_str = string_create("Type_Type");
-        hashtable_insert_element(&generator->translation_type_to_name, generator->compiler->type_system.type_type, type_str);
+        hashtable_insert_element(&generator->translation_type_to_name, types.type_type, type_str);
         String str = string_create("Unsized_Array_U8");
-        Type_Signature* sig = type_system_make_slice(&generator->compiler->type_system, generator->compiler->type_system.u8_type);
+        Type_Signature* sig = type_system_make_slice(&generator->compiler->type_system, types.u8_type);
         hashtable_insert_element(&generator->translation_type_to_name, sig, str);
         String str_str = string_create("Upp_String");
-        hashtable_insert_element(&generator->translation_type_to_name, generator->compiler->type_system.string_type, str_str);
+        hashtable_insert_element(&generator->translation_type_to_name, types.string_type, str_str);
     }
 
     // Create all Type_Signatures
     for (int i = 0; i < generator->compiler->type_system.types.size; i++) {
         Type_Signature* type = generator->compiler->type_system.types[i];
-        if (type_signature_equals(type, generator->compiler->type_system.unknown_type)) continue;
+        if (type_signature_equals(type, types.unknown_type)) continue;
         c_generator_register_type_name(generator, generator->compiler->type_system.types[i]);
     }
 

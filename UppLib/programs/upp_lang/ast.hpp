@@ -107,7 +107,7 @@ namespace AST
     {
         Node_Type type;
         Node* parent;
-        Node_Range range;
+        Node_Range range; // Note: It would be more memory efficient to just have a line-span + token-span or something along those lines...
         Node_Range bounding_range;
         int analysis_item_index;
     };
