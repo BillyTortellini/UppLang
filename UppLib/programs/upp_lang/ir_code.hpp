@@ -11,7 +11,7 @@ struct IR_Code_Block;
 struct IR_Program;
 struct Type_Signature;
 struct Constant_Pool;
-struct Analysis_Workload;
+struct Workload_Base;
 
 enum class IR_Data_Access_Type
 {
@@ -274,7 +274,7 @@ struct IR_Generator
     Hashtable<AST::Code_Block*, int> block_defer_depths;
 
     int next_label_index;
-    Analysis_Workload* current_workload;
+    Workload_Base* current_workload;
 };
 
 extern IR_Generator ir_generator;

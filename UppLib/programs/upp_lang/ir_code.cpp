@@ -1659,7 +1659,7 @@ void ir_generator_generate_queued_items(bool gen_bytecode)
             assert(mod_func->code_workload != 0, "");
             if (mod_func->code_workload->type == Analysis_Workload_Type::BAKE_ANALYSIS)
             {
-                auto bake_node = mod_func->code_workload->options.bake_node;
+                auto bake_node = ((Workload_Bake_Analysis*)mod_func->code_workload)->bake_node;
                 if (bake_node->type == AST::Expression_Type::BAKE_EXPR) {
                     IR_Instruction return_instr;
                     return_instr.type = IR_Instruction_Type::RETURN;
@@ -1675,7 +1675,7 @@ void ir_generator_generate_queued_items(bool gen_bytecode)
                 }
             }
             else if (mod_func->code_workload->type == Analysis_Workload_Type::FUNCTION_BODY) {
-                ir_generator_generate_block(ir_func->code, mod_func->code_workload->options.function_body.block);
+                ir_generator_generate_block(ir_func->code, ((Workload_Function_Body*) mod_func->code_workload)->block);
             }
             else {
                 panic("");
@@ -1767,7 +1767,7 @@ void ir_generator_finish(bool gen_bytecode)
         auto global = globals[i];
         if (!global->has_initial_value) continue;
 
-        ir_generator.current_workload = global->definition_workload;
+        ir_generator.current_workload = &global->definition_workload->base;
         IR_Instruction move_instr;
         move_instr.type = IR_Instruction_Type::MOVE;
         move_instr.options.move.destination = ir_data_access_create_global(global);

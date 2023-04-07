@@ -20,8 +20,11 @@ enum class Constant_Status;
 struct Semantic_Error;
 struct Error_Information;
 struct Dependency_Analyser;
-struct Analysis_Workload;
+struct Workload_Base;
 struct Analysis_Progress;
+struct Workload_Base;
+struct Expression_Info;
+struct Workload_Definition;
 
 namespace Parser
 {
@@ -41,8 +44,8 @@ namespace AST
 struct ModTree_Function
 {
     Type_Signature* signature;
-    Symbol* symbol; // May be 0, is only used for aliases and pretty printing
-    Analysis_Workload* code_workload; // Workload that generated the semantic info required for code-gen (Either Function-body or Bake-Analysis)
+    Symbol* symbol; // May be 0 (e.g. anonymous functions)
+    Workload_Base* code_workload; // Workload that generated the semantic info required for code-gen (Either Function-body or Bake-Analysis)
 
     // Infos
     bool contains_errors; // NOTE: contains_errors (No errors in this function) != is_runnable (This + all called functions are runnable)
@@ -62,7 +65,7 @@ struct ModTree_Global
 
     bool has_initial_value;
     AST::Expression* init_expr;
-    Analysis_Workload* definition_workload; // For code generation
+    Workload_Definition* definition_workload; // For code generation
 };
 
 struct ModTree_Program
@@ -107,8 +110,10 @@ struct Polymorphic_Parameter
     Type_Signature* base_type; // Type of parameter in base form (May be unknown if it depends on another poly-parameter)
 };
 
+struct Function_Progress;
 struct Polymorphic_Function
 {
+    Function_Progress* progress;
     int parameter_count;
     bool is_valid; // If not valid, we never instanciate and other stuff
     Array<Polymorphic_Parameter> parameters; // In the order of evalulation
@@ -118,79 +123,11 @@ struct Polymorphic_Function
 
 
 
-// Analysis Progress
-enum class Analysis_Progress_Type
-{
-    FUNCTION,
-    STRUCTURE,
-    BAKE,
-    DEFINITION,
-};
+// WORKLOADS
+struct Struct_Progress;
+struct Function_Progress;
+struct Bake_Progress;
 
-struct Analysis_Progress
-{
-    Analysis_Progress_Type type;
-};
-
-enum class Struct_State
-{
-    DEFINED,
-    SIZE_KNOWN,
-    FINISHED
-};
-
-struct Struct_Progress
-{
-    Analysis_Progress base;
-
-    Struct_State state;
-    Type_Signature* struct_type;
-
-    Analysis_Workload* analysis_workload;
-    Analysis_Workload* reachable_resolve_workload;
-};
-
-struct Bake_Progress
-{
-    Analysis_Progress base;
-
-    ModTree_Function* bake_function;
-    Comptime_Result result;
-
-    Analysis_Workload* analysis_workload;
-    Analysis_Workload* execute_workload;
-};
-
-struct Definition_Progress
-{
-    Analysis_Progress base;
-    Analysis_Workload* definition_workload;
-    Symbol* symbol;
-};
-
-enum class Function_State
-{
-    DEFINED,
-    HEADER_ANALYSED,
-    BODY_ANALYSED,
-    FINISHED, // Compiled if no errors occured
-};
-
-struct Function_Progress
-{
-    Analysis_Progress base;
-
-    Function_State state;
-    ModTree_Function* function;
-
-    Analysis_Workload* header_workload;
-    Analysis_Workload* body_workload;
-    Analysis_Workload* compile_workload;
-};
-
-
-
-// Workload Executer
 enum class Dependency_Type
 {
     NORMAL,
@@ -217,19 +154,17 @@ enum class Analysis_Workload_Type
     PROJECT_IMPORT,
 };
 
-struct Expression_Info;
-struct Modtree_Function;
-struct Analysis_Workload
+struct Workload_Base
 {
     Analysis_Workload_Type type;
-    Analysis_Progress* progress;
     bool is_finished;
     bool was_started;
     Fiber_Pool_Handle fiber_handle;
-    Symbol_Table* parent_table; // At creation time of this workload
+    Symbol_Table* parent_table; // Active table at time of workload creation
 
     // Information required to be consistent during workload switches
     // Note: These members are automatically set in functions like analyse_expression, analyse_statement...
+    //       Also note that some of these may not be set depending on the workload type
     ModTree_Function* current_function; 
     Expression_Info* current_expression;
     Array<Polymorphic_Value> current_polymorphic_values; // NOTE: Non-owning 'pointer' to array
@@ -237,51 +172,146 @@ struct Analysis_Workload
     Symbol_Table* current_symbol_table;
 
     // Dependencies
-    List<Analysis_Workload*> dependencies;
-    List<Analysis_Workload*> dependents;
+    List<Workload_Base*> dependencies;
+    List<Workload_Base*> dependents;
 
     // Note: Clustering is required for Workloads where cyclic dependencies on the same workload-type are allowed,
     //       like recursive functions or structs containing pointers to themselves
-    Analysis_Workload* cluster;
-    Dynamic_Array<Analysis_Workload*> reachable_clusters;
-
-    // Payload
-    struct {
-        struct {
-            Dynamic_Array<ModTree_Function*> functions;
-        } cluster_compile;
-        struct {
-            Dynamic_Array<Type_Signature*> struct_types;
-            Dynamic_Array<Type_Signature*> unfinished_array_types;
-        } struct_reachable;
-        AST::Project_Import* import;
-        AST::Definition* definition;
-        struct {
-            Dynamic_Array<AST::Code_Block*> block_stack;
-            AST::Code_Block* block;
-        } function_body;
-        AST::Expression* function_node;
-        AST::Expression* bake_node;
-        struct {
-            AST::Expression* struct_node;
-            Dependency_Type dependency_type;
-        } structure;
-        struct {
-            AST::Module* node;
-        } module;
-    } options;
+    // FUTURE: Maybe we can rework clustering to be a little more genera and easier to use
+    Workload_Base* cluster;
+    Dynamic_Array<Workload_Base*> reachable_clusters;
 };
 
+struct Workload_Module_Analysis
+{
+    Workload_Base base;
+    AST::Module* module_node;
+};
+
+struct Workload_Project_Import
+{
+    Workload_Base base;
+    AST::Project_Import* import;
+};
+
+struct Workload_Function_Header
+{
+    Workload_Base base;
+    Function_Progress* progress;
+    AST::Expression* function_node;
+};
+
+struct Workload_Function_Body
+{
+    Workload_Base base;
+    Function_Progress* progress;
+    Dynamic_Array<AST::Code_Block*> block_stack;
+    AST::Code_Block* block;
+};
+
+struct Workload_Function_Cluster_Compile
+{
+    Workload_Base base;
+    Function_Progress* progress;
+    Dynamic_Array<ModTree_Function*> functions;
+};
+
+struct Workload_Struct_Analysis
+{
+    Workload_Base base;
+    Struct_Progress* progress;
+    AST::Expression* struct_node;
+    Dependency_Type dependency_type;
+};
+
+struct Workload_Struct_Reachable_Resolve
+{
+    Workload_Base base;
+    Struct_Progress* progress;
+    Dynamic_Array<Type_Signature*> struct_types;
+    Dynamic_Array<Type_Signature*> unfinished_array_types;
+};
+
+struct Workload_Definition
+{
+    Workload_Base base;
+    AST::Definition* definition_node;
+};
+
+struct Workload_Bake_Analysis
+{
+    Workload_Base base;
+    Bake_Progress* progress;
+    AST::Expression* bake_node;
+};
+
+struct Workload_Bake_Execution
+{
+    Workload_Base base;
+    Bake_Progress* progress;
+    AST::Expression* bake_node;
+};
+
+
+
+// ANALYSIS_PROGRESS
+enum class Analysis_Progress_Type
+{
+    FUNCTION,
+    STRUCTURE,
+    BAKE,
+};
+
+struct Analysis_Progress
+{
+    Analysis_Progress_Type type;
+};
+
+struct Struct_Progress
+{
+    Analysis_Progress base;
+
+    Type_Signature* struct_type;
+
+    Workload_Struct_Analysis* analysis_workload;
+    Workload_Struct_Reachable_Resolve* reachable_resolve_workload;
+};
+
+struct Bake_Progress
+{
+    Analysis_Progress base;
+
+    ModTree_Function* bake_function;
+    Comptime_Result result;
+
+    Workload_Bake_Analysis* analysis_workload;
+    Workload_Bake_Execution* execute_workload;
+};
+
+struct Function_Progress
+{
+    Analysis_Progress base;
+
+    ModTree_Function* function;
+
+    Workload_Function_Header* header_workload;
+    Workload_Function_Body* body_workload;
+    Workload_Function_Cluster_Compile* compile_workload;
+};
+
+
+
+// WORKLOAD EXECUTER
 struct Workload_Pair
 {
-    Analysis_Workload* workload;
-    Analysis_Workload* depends_on;
+    Workload_Base* workload;
+    Workload_Base* depends_on;
 };
 
 struct Dependency_Information
 {
-    List_Node<Analysis_Workload*>* dependency_node;
-    List_Node<Analysis_Workload*>* dependent_node;
+    List_Node<Workload_Base*>* dependency_node;
+    List_Node<Workload_Base*>* dependent_node;
     // Information for cyclic resolve
     bool only_symbol_read_dependency;
     Dynamic_Array<AST::Symbol_Read*> symbol_reads;
@@ -289,16 +319,14 @@ struct Dependency_Information
 
 struct Workload_Executer
 {
-    Dynamic_Array<Analysis_Workload*> all_workloads;
-    Dynamic_Array<Analysis_Workload*> waiting_for_symbols_workloads;
-    Dynamic_Array<Analysis_Workload*> runnable_workloads;
-    Dynamic_Array<Analysis_Workload*> finished_workloads;
+    Dynamic_Array<Workload_Base*> all_workloads;
+    Dynamic_Array<Workload_Base*> runnable_workloads;
+    Dynamic_Array<Workload_Base*> finished_workloads;
     bool progress_was_made;
 
     Hashtable<Workload_Pair, Dependency_Information> workload_dependencies;
     Hashtable<Type_Signature*, Struct_Progress*> progress_structs;
     Hashtable<ModTree_Function*, Function_Progress*> progress_functions;
-    Hashtable<Symbol*, Definition_Progress*> progress_definitions;
 
     // Allocations
     Dynamic_Array<Analysis_Progress*> allocated_progresses;
@@ -437,11 +465,11 @@ enum class Info_Query
     TRY_READ,      // May return 0
 };
 
-Expression_Info* workload_get_node_info(Analysis_Workload* workload, AST::Expression* expression, Info_Query query);
-Case_Info*       workload_get_node_info(Analysis_Workload* workload, AST::Switch_Case* sw_case,   Info_Query query);
-Argument_Info*   workload_get_node_info(Analysis_Workload* workload, AST::Argument* argument,     Info_Query query);
-Statement_Info*  workload_get_node_info(Analysis_Workload* workload, AST::Statement* statement,   Info_Query query);
-Code_Block_Info* workload_get_node_info(Analysis_Workload* workload, AST::Code_Block* block,      Info_Query query);
+Expression_Info* workload_get_node_info(Workload_Base* workload, AST::Expression* expression, Info_Query query);
+Case_Info*       workload_get_node_info(Workload_Base* workload, AST::Switch_Case* sw_case,   Info_Query query);
+Argument_Info*   workload_get_node_info(Workload_Base* workload, AST::Argument* argument,     Info_Query query);
+Statement_Info*  workload_get_node_info(Workload_Base* workload, AST::Statement* statement,   Info_Query query);
+Code_Block_Info* workload_get_node_info(Workload_Base* workload, AST::Code_Block* block,      Info_Query query);
 
 Type_Signature* expression_info_get_type(Expression_Info* info);
 
@@ -494,13 +522,13 @@ struct Predefined_Symbols
 
 struct AST_Info_Key
 {
-    Analysis_Workload* workload;
+    Workload_Base* workload;
     AST::Node* base;
 };
 
 struct Node_Workloads
 {
-    Dynamic_Array<Analysis_Workload*> workloads;
+    Dynamic_Array<Workload_Base*> workloads;
     AST::Node* base;
 };
 
@@ -523,7 +551,7 @@ struct Semantic_Analyser
     Workload_Executer* workload_executer;
     Dynamic_Array<Polymorphic_Function*> polymorphic_functions;
     Stack_Allocator allocator_values;
-    Analysis_Workload* current_workload;
+    Workload_Base* current_workload;
 
     ModTree_Global* global_type_informations;
 };
@@ -732,7 +760,7 @@ struct Error_Information
             Type_Signature* struct_signature;
             String* member_id;
         } invalid_member;
-        Analysis_Workload* cycle_workload;
+        Workload_Base* cycle_workload;
         struct {
             Type_Signature* left_type;
             Type_Signature* right_type;

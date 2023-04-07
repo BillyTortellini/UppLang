@@ -5,10 +5,12 @@
 #include "../../datastructures/hashtable.hpp"
 #include "compiler_misc.hpp" // Upp_Constant
 
+struct Function_Progress;
 struct ModTree_Function;
 struct Polymorphic_Function;
 struct ModTree_Global;
 struct Type_Signature;
+struct Workload_Definition;
 
 struct Symbol;
 struct Symbol_Table;
@@ -25,7 +27,7 @@ namespace AST
 // Symbol Table
 enum class Symbol_Type
 {
-    UNRESOLVED,              // An Analysis Item/Analysis-Progress exists for this Symbol, but it isn't usable yet (Function without header analysis, struct not started...)
+    DEFINITION_UNFINISHED,              // A Definition that isn't ready yet (global variable or comptime value)
     VARIABLE_UNDEFINED,      // A variable/parameter/global that hasn't been defined yet
 
     HARDCODED_FUNCTION,
@@ -47,7 +49,8 @@ struct Symbol
     {
         Type_Signature* variable_type;
         Symbol_Table* module_table;
-        ModTree_Function* function;
+        Function_Progress* function;
+        Workload_Definition* definition_workload;
         Polymorphic_Function* polymorphic_function;
         Hardcoded_Type hardcoded;
         Type_Signature* type;

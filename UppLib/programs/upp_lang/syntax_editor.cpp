@@ -485,7 +485,7 @@ Symbol* code_query_get_ast_node_symbol(AST::Node* base)
     return 0;
 }
 
-Analysis_Workload* code_query_get_ast_node_workload(AST::Node* base)
+Workload_Base* code_query_get_ast_node_workload(AST::Node* base)
 {
     auto& mappings = compiler.semantic_analyser->ast_to_workload_mapping;
     while (base != 0)
@@ -2187,13 +2187,14 @@ void syntax_editor_render()
                     break;
                 case Symbol_Type::PARAMETER: {
                     auto function = symbol->options.parameter.function;
-                    if (symbol->options.parameter.is_polymorphic) {
-                        auto& base = symbol->options.parameter.function->polymorphic_base;
-                        type = base->parameters[symbol->options.parameter.index].base_type;
-                    }
-                    else {
-                        type = function->signature->options.function.parameters[symbol->options.parameter.index].type;
-                    }
+                    type = function->signature->options.function.parameters[symbol->options.parameter.index].type;
+                    // if (symbol->options.parameter.is_polymorphic) {
+                    //     auto base = function->polymorphic_base;
+                    //     type = base->parameters[symbol->options.parameter.index].base_type;
+                    // }
+                    // else {
+                    //     type = function->signature->options.function.parameters[symbol->options.parameter.index].type;
+                    // }
                     break;
                 }
                 case Symbol_Type::TYPE:

@@ -104,10 +104,6 @@ Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool search_pa
 void symbol_append_to_string(Symbol* symbol, String* string)
 {
     string_append_formated(string, "%s ", symbol->id->characters);
-    if (symbol->type == Symbol_Type::UNRESOLVED) {
-        string_append_formated(string, "Analysis not finished!");
-        return;
-    }
     switch (symbol->type)
     {
     case Symbol_Type::VARIABLE_UNDEFINED:
@@ -124,8 +120,8 @@ void symbol_append_to_string(Symbol* symbol, String* string)
     case Symbol_Type::POLYMORPHIC_FUNCTION:
         string_append_formated(string, "Polymorphic Function");
         break;
-    case Symbol_Type::UNRESOLVED:
-        string_append_formated(string, "Unresolved");
+    case Symbol_Type::DEFINITION_UNFINISHED:
+        string_append_formated(string, "Definition Unfinished");
         break;
     case Symbol_Type::VARIABLE:
         string_append_formated(string, "Variable");
