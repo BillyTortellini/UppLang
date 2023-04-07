@@ -1,5 +1,5 @@
 #include "syntax_colors.hpp"
-#include "dependency_analyser.hpp"
+#include "symbol_table.hpp"
 
 namespace Syntax_Color
 {

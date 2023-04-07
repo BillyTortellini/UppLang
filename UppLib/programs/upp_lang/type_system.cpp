@@ -1,6 +1,6 @@
 #include "type_system.hpp"
 #include "compiler.hpp"
-#include "dependency_analyser.hpp"
+#include "symbol_table.hpp"
 
 using AST::Structure_Type;
 

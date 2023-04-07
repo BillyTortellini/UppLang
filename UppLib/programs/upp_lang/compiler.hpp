@@ -17,8 +17,6 @@ struct C_Generator;
 struct C_Compiler;
 struct IR_Generator;
 struct Type_Signature;
-struct Dependency_Analyser;
-struct Analysis_Item;
 struct Source_Code;
 struct Code_History;
 
@@ -53,7 +51,6 @@ struct Compiler
     Extern_Sources extern_sources;
 
     // Stages
-    Dependency_Analyser* dependency_analyser;
     Semantic_Analyser* semantic_analyser;
     IR_Generator* ir_generator;
     Bytecode_Generator* bytecode_generator;
@@ -68,7 +65,6 @@ struct Compiler
     double time_compile_start;
     double time_lexing;
     double time_parsing;
-    double time_rc_gen;
     double time_analysing;
     double time_code_gen;
     double time_output;

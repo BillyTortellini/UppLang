@@ -2,6 +2,7 @@
 #include "compiler.hpp"
 #include "bytecode_generator.hpp"
 #include "ast.hpp"
+#include "symbol_table.hpp"
 
 void ir_generator_generate_block(IR_Code_Block* ir_block, AST::Code_Block* ast_block);
 IR_Data_Access ir_generator_generate_expression(IR_Code_Block* ir_block, AST::Expression* expression);

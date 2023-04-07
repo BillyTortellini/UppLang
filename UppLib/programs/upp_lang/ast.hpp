@@ -8,7 +8,6 @@
 
 struct Symbol;
 struct Symbol_Table;
-struct Analysis_Item;
 
 namespace AST
 {
@@ -109,7 +108,6 @@ namespace AST
         Node* parent;
         Node_Range range; // Note: It would be more memory efficient to just have a line-span + token-span or something along those lines...
         Node_Range bounding_range;
-        int analysis_item_index;
     };
 
     struct Project_Import
@@ -125,10 +123,7 @@ namespace AST
         Optional<Symbol_Read*> path_child;
 
         // NOTE: During refactoring this is now inside symbol read (previously in Symbol-Dependency)
-        Dependency_Type type;
         Symbol* symbol; // Note: is null until discovered!
-        Symbol_Table* symbol_table;
-        Analysis_Item* item;
     };
 
     struct Module

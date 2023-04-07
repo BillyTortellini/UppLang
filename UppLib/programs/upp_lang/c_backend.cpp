@@ -9,6 +9,7 @@
 #include "semantic_analyser.hpp"
 #include "../../win32/process.hpp"
 #include "ir_code.hpp"
+#include "symbol_table.hpp"
 
 void c_generator_output_cast_with_type(C_Generator* generator, String* output, Type_Signature* type);
 

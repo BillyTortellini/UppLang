@@ -1,32 +1,23 @@
 #pragma once
 
+#include "../../datastructures/string.hpp"
 #include "../../datastructures/dynamic_array.hpp"
 #include "../../datastructures/hashtable.hpp"
-#include "compiler_misc.hpp"
-#include "type_system.hpp"
+#include "compiler_misc.hpp" // Upp_Constant
 
 struct ModTree_Function;
 struct Polymorphic_Function;
 struct ModTree_Global;
 struct Type_Signature;
-struct Dependency_Analyser;
 
-struct Compiler;
 struct Symbol;
 struct Symbol_Table;
 struct Symbol_Data;
-struct Analysis_Item;
-struct Code_Source;
 
 namespace AST
 {
     struct Node;
-    struct Expression;
-    struct Statement;
-    struct Code_Block;
     struct Symbol_Read;
-    struct Definition;
-    struct Module;
 }
 
 
@@ -101,56 +92,3 @@ void symbol_table_append_to_string(String* string, Symbol_Table* table, bool pri
 void symbol_append_to_string(Symbol* symbol, String* string);
 Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool search_parents, bool interals_ok, AST::Symbol_Read* reference);
 
-
-
-// Analysis Items
-enum class Analysis_Item_Type
-{
-    DEFINITION,
-    STRUCTURE,
-    FUNCTION,
-    FUNCTION_BODY,
-    BAKE,
-    IMPORT
-};
-
-struct Analysis_Item
-{
-    Analysis_Item_Type type;
-    Dynamic_Array<AST::Symbol_Read*> symbol_reads;
-    Symbol* symbol; // Optional
-
-    AST::Node* node;
-    int ast_node_count;
-
-    union {
-        Analysis_Item* function_body_item;
-    } options;
-};
-
-struct Dependency_Analyser
-{
-    Code_Source* code_source;
-
-    // Output
-    Symbol_Table* root_symbol_table;
-    Dynamic_Array<Symbol_Error> errors;
-
-    // Used during analysis
-    Compiler* compiler;
-    Symbol_Table* symbol_table;
-    Analysis_Item* analysis_item;
-    Dependency_Type dependency_type;
-
-    // Allocations, TODO: Use actual allocators
-    Dynamic_Array<Symbol_Table*> allocated_symbol_tables;
-};
-
-Dependency_Analyser* dependency_analyser_initialize();
-void dependency_analyser_destroy();
-void dependency_analyser_reset(Compiler* compiler);
-void dependency_analyser_analyse(Code_Source* code_source);
-
-void analysis_item_destroy(Analysis_Item* item);
-void dependency_analyser_log_error(Symbol* existing_symbol, AST::Node* error_node);
-void dependency_analyser_append_to_string(String* string);

@@ -41,6 +41,14 @@ ScopeExit<F> makeScopeExit(F f) {
 #define SCOPE_EXIT(code) \
     auto STRING_JOIN2(_scope_exit_, __LINE__) = makeScopeExit([&](){code;})
 
+#define RESTORE_ON_SCOPE_EXIT_WITH_NAME(backup_var_name, value, new_value) \
+    auto backup_var_name = value; \
+    SCOPE_EXIT(value = backup_var_name); \
+    value = new_value;
+
+#define RESTORE_ON_SCOPE_EXIT(value, new_value) \
+    RESTORE_ON_SCOPE_EXIT_WITH_NAME(STRING_JOIN2(_backup_, __LINE__), value, new_value);
+
 /*
     Optional
 */

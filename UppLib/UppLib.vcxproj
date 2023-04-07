@@ -50,7 +50,7 @@
     <ClInclude Include="programs\upp_lang\lexer.hpp" />
     <ClInclude Include="programs\upp_lang\parser.hpp" />
     <ClInclude Include="programs\upp_lang\semantic_analyser.hpp" />
-    <ClInclude Include="programs\upp_lang\dependency_analyser.hpp" />
+    <ClInclude Include="programs\upp_lang\symbol_table.hpp" />
     <ClInclude Include="programs\upp_lang\source_code.hpp" />
     <ClInclude Include="programs\upp_lang\syntax_colors.hpp" />
     <ClInclude Include="programs\upp_lang\syntax_editor.hpp" />
@@ -118,7 +118,7 @@
     <ClCompile Include="programs\upp_lang\lexer.cpp" />
     <ClCompile Include="programs\upp_lang\parser.cpp" />
     <ClCompile Include="programs\upp_lang\semantic_analyser.cpp" />
-    <ClCompile Include="programs\upp_lang\dependency_analyser.cpp" />
+    <ClCompile Include="programs\upp_lang\symbol_table.cpp" />
     <ClCompile Include="programs\upp_lang\source_code.cpp" />
     <ClCompile Include="programs\upp_lang\syntax_colors.cpp" />
     <ClCompile Include="programs\upp_lang\syntax_editor.cpp" />

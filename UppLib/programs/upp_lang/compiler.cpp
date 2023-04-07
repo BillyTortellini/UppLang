@@ -4,8 +4,6 @@
 #include "../../utility/file_io.hpp"
 
 #include "semantic_analyser.hpp"
-#include "dependency_analyser.hpp"
-#include "semantic_analyser.hpp"
 #include "ir_code.hpp"
 #include "bytecode_generator.hpp"
 #include "bytecode_interpreter.hpp"
@@ -13,11 +11,11 @@
 #include "parser.hpp"
 #include "ast.hpp"
 #include "lexer.hpp"
+#include "symbol_table.hpp"
 
 // Parser stages
 bool enable_lexing = true;
 bool enable_parsing = true;
-bool enable_dependency_analysis = true;
 bool enable_analysis = true;
 bool enable_ir_gen = true;
 bool enable_bytecode_gen = true;
@@ -27,7 +25,6 @@ bool enable_c_compilation = false;
 // Output stages
 bool output_identifiers = false;
 bool output_ast = true;
-bool output_dependency_analysis = false;
 bool output_type_system = false;
 bool output_root_table = false;
 bool output_ir = true;
@@ -35,7 +32,7 @@ bool output_bytecode = false;
 bool output_timing = true;
 
 // Testcases
-bool enable_testcases = true;
+bool enable_testcases = false;
 bool enable_stresstest = false;
 bool run_testcases_compiled = false;
 
@@ -62,8 +59,6 @@ Code_Source* code_source_create_empty(Code_Origin origin, Source_Code* code, Str
     result->code = code;
     result->source_parse = 0;
     result->analysed = false;
-    result->analysis_items = dynamic_array_create_empty<Analysis_Item*>(1);
-    result->item_dependencies = dynamic_array_create_empty<Item_Dependency>(1);
     result->file_path = file_path;
     dynamic_array_push_back(&compiler.code_sources, result);
     hashtable_insert_element(&compiler.cached_imports, file_path, result);
@@ -79,11 +74,6 @@ void code_source_destroy(Code_Source* source)
     if (source->source_parse != 0) {
         Parser::source_parse_destroy(source->source_parse);
     }
-    for (int i = 0; i < source->analysis_items.size; i++) {
-        analysis_item_destroy(source->analysis_items[i]);
-    }
-    dynamic_array_destroy(&source->analysis_items);
-    dynamic_array_destroy(&source->item_dependencies);
     delete source;
 }
 
@@ -103,7 +93,6 @@ Compiler* compiler_initialize(Timer* timer)
     lexer_initialize(&compiler.identifier_pool);
 
     compiler.type_system = type_system_create(timer);
-    compiler.dependency_analyser = dependency_analyser_initialize();
     compiler.semantic_analyser = semantic_analyser_initialize();
     compiler.ir_generator = ir_generator_initialize();
     compiler.bytecode_generator = new Bytecode_Generator;
@@ -138,7 +127,6 @@ void compiler_destroy()
     dynamic_array_destroy(&compiler.code_sources);
     hashtable_destroy(&compiler.cached_imports);
 
-    dependency_analyser_destroy();
     semantic_analyser_destroy();
     ir_generator_destroy();
     bytecode_generator_destroy(compiler.bytecode_generator);
@@ -200,28 +188,8 @@ void compiler_analyse_code(Code_Source* source)
 
     Timing_Task before = compiler.task_current;
     SCOPE_EXIT(compiler_switch_timing_task(before));
-    compiler_switch_timing_task(Timing_Task::RC_GEN);
-
-    for (int i = 0; i < source->analysis_items.size; i++) {
-        analysis_item_destroy(source->analysis_items[i]);
-    }
-    dynamic_array_reset(&source->analysis_items);
-    dynamic_array_reset(&source->item_dependencies);
-
-    dependency_analyser_analyse(source);
     compiler_switch_timing_task(Timing_Task::ANALYSIS);
-    workload_executer_add_analysis_items(source);
-
-    if (output_dependency_analysis && do_output)
-    {
-        compiler_switch_timing_task(Timing_Task::OUTPUT);
-        String printed_items = string_create_empty(256);
-        SCOPE_EXIT(string_destroy(&printed_items));
-        dependency_analyser_append_to_string(&printed_items);
-        logg("\n");
-        logg("--------RC_ANALYSIS_ITEMS--------:\n");
-        logg("\n%s\n", printed_items.characters);
-    }
+    workload_executer_add_module_discovery(source->source_parse->root);
 }
 
 void code_source_analyse_clean(Code_Source* source)
@@ -252,7 +220,6 @@ void compiler_prepare_compile(bool incremental, Compile_Type compile_type)
         compiler.time_code_gen = 0;
         compiler.time_lexing = 0;
         compiler.time_parsing = 0;
-        compiler.time_rc_gen = 0;
         compiler.time_reset = 0;
         compiler.time_code_exec = 0;
         compiler.time_output = 0;
@@ -300,10 +267,10 @@ void compiler_prepare_compile(bool incremental, Compile_Type compile_type)
         // Reset stages
         type_system_reset(&compiler.type_system);
         type_system_add_predefined_types(&compiler.type_system);
-        dependency_analyser_reset(&compiler);
         if (!incremental) {
             Parser::reset();
         }
+
         semantic_analyser_reset();
         ir_generator_reset();
         bytecode_generator_reset(compiler.bytecode_generator, &compiler);
@@ -313,7 +280,7 @@ void compiler_prepare_compile(bool incremental, Compile_Type compile_type)
 
 void compiler_finish_compile()
 {
-    bool do_analysis = enable_lexing && enable_parsing && enable_dependency_analysis && enable_analysis;
+    bool do_analysis = enable_lexing && enable_parsing && enable_analysis;
     if (do_analysis) {
         compiler_switch_timing_task(Timing_Task::ANALYSIS);
         workload_executer_resolve();
@@ -360,7 +327,7 @@ void compiler_finish_compile()
             logg("\n--------ROOT TABLE RESULT---------\n");
             String root_table = string_create_empty(1024);
             SCOPE_EXIT(string_destroy(&root_table));
-            symbol_table_append_to_string(&root_table, compiler.dependency_analyser->root_symbol_table, false);
+            symbol_table_append_to_string(&root_table, compiler.semantic_analyser->root_symbol_table, false);
             logg("%s", root_table.characters);
         }
 
@@ -398,9 +365,6 @@ void compiler_finish_compile()
         }
         if (enable_parsing) {
             logg("parsing     ... %3.2fms\n", (float)(compiler.time_parsing) * 1000);
-        }
-        if (enable_dependency_analysis) {
-            logg("rc_gen      ... %3.2fms\n", (float)(compiler.time_rc_gen) * 1000);
         }
         if (enable_analysis) {
             logg("analysis    ... %3.2fms\n", (float)(compiler.time_analysing) * 1000);
@@ -496,7 +460,6 @@ Exit_Code compiler_execute()
     bool do_execution =
         enable_lexing &&
         enable_parsing &&
-        enable_dependency_analysis &&
         enable_analysis &&
         enable_ir_gen &&
         enable_execution;
@@ -539,7 +502,6 @@ void compiler_switch_timing_task(Timing_Task task)
     {
     case Timing_Task::LEXING: add_to = &compiler.time_lexing; break;
     case Timing_Task::PARSING: add_to = &compiler.time_parsing; break;
-    case Timing_Task::RC_GEN: add_to = &compiler.time_rc_gen; break;
     case Timing_Task::ANALYSIS: add_to = &compiler.time_analysing; break;
     case Timing_Task::CODE_GEN: add_to = &compiler.time_code_gen; break;
     case Timing_Task::CODE_EXEC: add_to = &compiler.time_code_exec; break;
@@ -560,7 +522,7 @@ void compiler_switch_timing_task(Timing_Task task)
 }
 
 bool compiler_errors_occured() {
-    if (compiler.semantic_analyser->errors.size > 0 || compiler.dependency_analyser->errors.size > 0) return true;
+    if (compiler.semantic_analyser->errors.size > 0) return true;
     for (int i = 0; i < compiler.code_sources.size; i++) {
         if (compiler.code_sources[i]->source_parse->error_messages.size > 0) return true;
     }
@@ -756,12 +718,6 @@ void compiler_run_testcases(Timer* timer, bool force_run)
                         auto& e = parser_errors[i];
                         string_append_formated(&result, "    Parse Error: %s\n", e.msg);
                     }
-                }
-
-                auto& dependency_errors = compiler.dependency_analyser->errors;
-                for (int i = 0; i < dependency_errors.size; i++) {
-                    auto& e = dependency_errors[i];
-                    string_append_formated(&result, "    Symbol Error: %s\n", e.existing_symbol->id->characters);
                 }
 
                 String tmp = string_create_empty(256);

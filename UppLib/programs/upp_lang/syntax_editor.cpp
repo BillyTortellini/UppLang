@@ -13,7 +13,7 @@
 #include "syntax_colors.hpp"
 #include "compiler.hpp"
 #include "ast.hpp"
-#include "dependency_analyser.hpp"
+#include "symbol_table.hpp"
 #include "semantic_analyser.hpp"
 #include "parser.hpp"
 #include "source_code.hpp"
@@ -415,8 +415,8 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
     }
     syntax_editor.code_changed_since_last_compile = false;
     syntax_editor.last_compile_was_with_code_gen = generate_code;
-    compiler_compile_incremental(&syntax_editor.history, (generate_code ? Compile_Type::BUILD_CODE : Compile_Type::ANALYSIS_ONLY));
-    //compiler_compile_clean(syntax_editor.code, (generate_code ? Compile_Type::BUILD_CODE : Compile_Type::ANALYSIS_ONLY), string_create(syntax_editor.file_path));
+    //compiler_compile_incremental(&syntax_editor.history, (generate_code ? Compile_Type::BUILD_CODE : Compile_Type::ANALYSIS_ONLY));
+    compiler_compile_clean(syntax_editor.code, (generate_code ? Compile_Type::BUILD_CODE : Compile_Type::ANALYSIS_ONLY), string_create(syntax_editor.file_path));
 
     // Collect errors from all compiler stages
     {
@@ -437,21 +437,6 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 
         auto error_ranges = dynamic_array_create_empty<Token_Range>(1);
         SCOPE_EXIT(dynamic_array_destroy(&error_ranges));
-
-        // Dependency Errors
-        for (int i = 0; i < compiler.dependency_analyser->errors.size; i++)
-        {
-            auto& error = compiler.dependency_analyser->errors[i];
-            auto& node = error.error_node;
-            if (node == 0) continue;
-            if (compiler_find_ast_code_source(node) != compiler.main_source) continue;
-            dynamic_array_reset(&error_ranges);
-            Parser::ast_base_get_section_token_range(node, Parser::Section::IDENTIFIER, &error_ranges);
-            for (int j = 0; j < error_ranges.size; j++) {
-                auto& range = error_ranges[j];
-                dynamic_array_push_back(&editor.errors, error_display_make(string_create_static("Symbol already exists"), range));
-            }
-        }
 
         // Semantic Analysis Errors
         for (int i = 0; i < compiler.semantic_analyser->errors.size; i++)
@@ -480,6 +465,12 @@ Symbol* code_query_get_ast_node_symbol(AST::Node* base)
     {
     case AST::Node_Type::DEFINITION: {
         auto definition = AST::downcast<AST::Definition>(base);
+        if (definition->symbol != 0) { // Just for debuggin purposes
+            int val = (i32)definition->symbol->type;
+            if (val > 20 || val < 0) {
+                return 0;
+            }
+        }
         return definition->symbol;
     }
     case AST::Node_Type::SYMBOL_READ: {
@@ -539,7 +530,7 @@ Symbol_Table* code_query_get_ast_node_symbol_table(AST::Node* base)
         }
         base = base->parent;
     }
-    return compiler.dependency_analyser->root_symbol_table;
+    return compiler.semantic_analyser->root_symbol_table;
 }
 
 

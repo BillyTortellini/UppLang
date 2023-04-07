@@ -10,13 +10,11 @@
 struct Type_Signature;
 struct String;
 struct Type_System;
-struct Analysis_Item;
 
 enum class Timing_Task
 {
     LEXING,
     PARSING,
-    RC_GEN,
     ANALYSIS,
     CODE_GEN,
     RESET,
@@ -77,24 +75,10 @@ namespace Parser {
     struct Source_Parse;
 }
 
-enum class Dependency_Type
-{
-    NORMAL,
-    MEMBER_IN_MEMORY,
-    MEMBER_REFERENCE,
-};
-
 enum class Code_Origin
 {
     MAIN_PROJECT,
     LOADED_FILE,
-};
-
-struct Item_Dependency
-{
-    Analysis_Item* dependent;
-    Analysis_Item* depends_on;
-    Dependency_Type type;
 };
 
 struct Code_Source
@@ -105,8 +89,6 @@ struct Code_Source
 
     Source_Code* code;
     Parser::Source_Parse* source_parse;
-    Dynamic_Array<Analysis_Item*> analysis_items;
-    Dynamic_Array<Item_Dependency> item_dependencies;
 };
 
 

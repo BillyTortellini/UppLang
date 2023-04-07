@@ -88,7 +88,6 @@ namespace Parser
         Node* base = &result->base;
         base->parent = parent;
         base->type = type;
-        base->analysis_item_index = -1;
         base->range.start = node_position_make_token_index(parser.state.pos);
         base->range.end = base->range.start;
 

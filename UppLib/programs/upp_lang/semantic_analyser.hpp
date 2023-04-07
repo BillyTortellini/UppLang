@@ -8,13 +8,12 @@
 
 #include "type_system.hpp"
 #include "compiler_misc.hpp"
-#include "dependency_analyser.hpp"
 
 struct Type_Signature;
 struct Polymorphic_Function;
 struct Symbol;
-struct Compiler;
 struct Symbol_Table;
+struct Compiler;
 struct ModTree_Function;
 struct Upp_Constant;
 enum class Constant_Status;
@@ -23,7 +22,6 @@ struct Error_Information;
 struct Dependency_Analyser;
 struct Analysis_Workload;
 struct Analysis_Progress;
-struct Analysis_Item;
 
 namespace Parser
 {
@@ -193,8 +191,17 @@ struct Function_Progress
 
 
 // Workload Executer
+enum class Dependency_Type
+{
+    NORMAL,
+    MEMBER_IN_MEMORY,
+    MEMBER_REFERENCE,
+};
+
 enum class Analysis_Workload_Type
 {
+    MODULE_ANALYSIS,
+
     FUNCTION_HEADER,
     FUNCTION_BODY,
     FUNCTION_CLUSTER_COMPILE,
@@ -214,18 +221,20 @@ struct Expression_Info;
 struct Modtree_Function;
 struct Analysis_Workload
 {
-    Analysis_Item* item;
     Analysis_Workload_Type type;
     Analysis_Progress* progress;
     bool is_finished;
     bool was_started;
     Fiber_Pool_Handle fiber_handle;
+    Symbol_Table* parent_table; // At creation time of this workload
 
     // Information required to be consistent during workload switches
+    // Note: These members are automatically set in functions like analyse_expression, analyse_statement...
     ModTree_Function* current_function; 
     Expression_Info* current_expression;
     Array<Polymorphic_Value> current_polymorphic_values; // NOTE: Non-owning 'pointer' to array
     bool statement_reachable;
+    Symbol_Table* current_symbol_table;
 
     // Dependencies
     List<Analysis_Workload*> dependencies;
@@ -247,13 +256,19 @@ struct Analysis_Workload
         } struct_reachable;
         AST::Project_Import* import;
         AST::Definition* definition;
-        AST::Expression* function_node;
-        AST::Expression* bake_node;
-        AST::Expression* struct_node;
         struct {
             Dynamic_Array<AST::Code_Block*> block_stack;
             AST::Code_Block* block;
         } function_body;
+        AST::Expression* function_node;
+        AST::Expression* bake_node;
+        struct {
+            AST::Expression* struct_node;
+            Dependency_Type dependency_type;
+        } structure;
+        struct {
+            AST::Module* node;
+        } module;
     } options;
 };
 
@@ -281,7 +296,6 @@ struct Workload_Executer
     bool progress_was_made;
 
     Hashtable<Workload_Pair, Dependency_Information> workload_dependencies;
-    Hashtable<Analysis_Item*, Analysis_Progress*> progress_items;
     Hashtable<Type_Signature*, Struct_Progress*> progress_structs;
     Hashtable<ModTree_Function*, Function_Progress*> progress_functions;
     Hashtable<Symbol*, Definition_Progress*> progress_definitions;
@@ -291,7 +305,7 @@ struct Workload_Executer
 };
 
 void workload_executer_resolve();
-void workload_executer_add_analysis_items(Code_Source* source);
+void workload_executer_add_module_discovery(AST::Module* module);
 
 
 
@@ -433,7 +447,7 @@ Type_Signature* expression_info_get_type(Expression_Info* info);
 
 
 
-// ANALYSER
+// HELPERS
 struct Predefined_Symbols
 {
     // Symbols for primitive types
@@ -490,6 +504,9 @@ struct Node_Workloads
     AST::Node* base;
 };
 
+
+
+// ANALYSER
 struct Semantic_Analyser
 {
     // Result
@@ -499,6 +516,9 @@ struct Semantic_Analyser
     Hashtable<AST_Info_Key, Analysis_Info*> ast_to_info_mapping;
 
     // Stuff required for analysis
+    Symbol_Table* root_symbol_table;
+    Dynamic_Array<Symbol_Table*> allocated_symbol_tables;
+
     Predefined_Symbols predefined_symbols;
     Workload_Executer* workload_executer;
     Dynamic_Array<Polymorphic_Function*> polymorphic_functions;
@@ -512,6 +532,7 @@ Semantic_Analyser* semantic_analyser_initialize();
 void semantic_analyser_destroy();
 void semantic_analyser_reset();
 void semantic_analyser_finish();
+
 Type_Signature* hardcoded_type_to_signature(Hardcoded_Type type);
 
 
@@ -582,6 +603,7 @@ enum class Semantic_Error_Type
 
     SYMBOL_EXPECTED_MODUL_IN_IDENTIFIER_PATH,
     SYMBOL_EXPECTED_TYPE_ON_TYPE_IDENTIFIER,
+    SYMBOL_ALREADY_DEFINED,
     SYMBOL_MODULE_INVALID,
 
     SYMBOL_TABLE_UNRESOLVED_SYMBOL,
