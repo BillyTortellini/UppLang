@@ -1,32 +1,11 @@
 
 
-DONE:
-    - Rework Analysis-Progress/-Workload structure (More type-safety, better helper functions for workload creation!)
-    - Inner definitions
-    - Anonymous definitions
-    - Bakes and bake workloads --> Bake-Analysis should also just be code analysis workload...
-    - Block stack should be created on block_analysis if not set correctly, because used in Function_Body and in Bake_Analysis
-    - File Loading/Symbol tables...
-
-
 TODO Later:
     - Templates should work again
-    - Error logging should be simpler!
-    - Allround better dealing with void type: Add void_type allowed boolean to analyse_expression
-
-    - Modtree-functions should include the process
-    - Struct dependency types --> New Type for user-struct, which includes the progress --> therefore we can wait for dependencies!
-    - Creating empty functions and structs could be done better by type system
-    - Project imports and Symbol resolution beeing smartah (e.g. symbol resolution may produce dependency)
-
-
-WORK NEXT:
+    - Symbol-Resolution and Symbol tables should not be inside AST, but rather in Analysis_Info
     - Maybe rework struct dependencies (Do we need clustering, are event-type workloads a thing?)
+    - Error logging inteface should be simpler...
 
-TODO: Fibers and new Dependency-System:
- 1. X Workloads should execute as fibers (Then the fibers will never have to 'pause', because all dependencies are resolved before) X
- 2. X Symbol resolution should now happen during analysis, and may possibly pause the execution of the current workload             X
- 5. Reintegrate file-loading, this time Symbol-tables may have dependencies and need to wait until e.g. a file is loaded!
 
 
 

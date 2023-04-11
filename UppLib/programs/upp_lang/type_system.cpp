@@ -411,7 +411,7 @@ void type_system_add_predefined_types(Type_System* system)
     using AST::Structure_Type;
     // Empty structure
     {
-        types->empty_struct_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
+        types->empty_struct_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT, 0);
         type_system_finish_type(system, types->empty_struct_type);
     }
 
@@ -422,7 +422,7 @@ void type_system_add_predefined_types(Type_System* system)
 
     // String
     {
-        types->string_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
+        types->string_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT, 0);
         add_member_cstr(types->string_type, "character_buffer", type_system_make_slice(system, types->u8_type));
         add_member_cstr(types->string_type, "size", types->i32_type);
         type_system_finish_type(system, types->string_type);
@@ -431,7 +431,7 @@ void type_system_add_predefined_types(Type_System* system)
 
     // Any
     {
-        types->any_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
+        types->any_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT, 0);
         add_member_cstr(types->any_type, "data", types->void_ptr_type);
         add_member_cstr(types->any_type, "type", types->type_type);
         type_system_finish_type(system, types->any_type);
@@ -440,15 +440,13 @@ void type_system_add_predefined_types(Type_System* system)
 
     // Type Information
     {
-        Type_Signature* option_type = type_system_make_struct_empty(
-            system, 0, Structure_Type::UNION
-        );
+        Type_Signature* option_type = type_system_make_struct_empty(system, 0, Structure_Type::UNION, 0);
         add_member_cstr(option_type, "void_type", types->empty_struct_type);
         add_member_cstr(option_type, "type", types->empty_struct_type);
         add_member_cstr(option_type, "pointer", types->type_type);
         // Array
         {
-            Type_Signature* array_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
+            Type_Signature* array_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT, 0);
             add_member_cstr(array_type, "element_type", types->type_type);
             add_member_cstr(array_type, "size", types->i32_type);
             type_system_finish_type(system, array_type);
@@ -457,7 +455,7 @@ void type_system_add_predefined_types(Type_System* system)
         }
         // Slice
         {
-            Type_Signature* slice_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
+            Type_Signature* slice_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT, 0);
             add_member_cstr(slice_type, "element_type", types->type_type);
             type_system_finish_type(system, slice_type);
             add_member_cstr(option_type, "slice", slice_type);
@@ -465,9 +463,9 @@ void type_system_add_predefined_types(Type_System* system)
         }
         // Primitive
         {
-            Type_Signature* primitive_type = type_system_make_struct_empty(system, 0, Structure_Type::UNION);
+            Type_Signature* primitive_type = type_system_make_struct_empty(system, 0, Structure_Type::UNION, 0);
             {
-                Type_Signature* integer_info_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
+                Type_Signature* integer_info_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT, 0);
                 add_member_cstr(integer_info_type, "is_signed", types->bool_type);
                 type_system_finish_type(system, integer_info_type);
                 add_member_cstr(primitive_type, "integer", integer_info_type);
@@ -480,7 +478,7 @@ void type_system_add_predefined_types(Type_System* system)
         }
         // Function
         {
-            Type_Signature* function_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
+            Type_Signature* function_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT, 0);
             add_member_cstr(function_type, "parameter_types", type_system_make_slice(system, types->type_type));
             add_member_cstr(function_type, "return_type", types->type_type);
             type_system_finish_type(system, function_type);
@@ -489,9 +487,9 @@ void type_system_add_predefined_types(Type_System* system)
         }
         // Struct
         {
-            Type_Signature* struct_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
+            Type_Signature* struct_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT, 0);
             {
-                Type_Signature* struct_member_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
+                Type_Signature* struct_member_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT, 0);
                 add_member_cstr(struct_member_type, "name", types->string_type);
                 add_member_cstr(struct_member_type, "type", types->type_type);
                 add_member_cstr(struct_member_type, "offset", types->i32_type);
@@ -501,11 +499,11 @@ void type_system_add_predefined_types(Type_System* system)
             }
             add_member_cstr(struct_type, "name", types->string_type);
             {
-                Type_Signature* structure_type_type = type_system_make_struct_empty(system, 0, Structure_Type::UNION);
+                Type_Signature* structure_type_type = type_system_make_struct_empty(system, 0, Structure_Type::UNION, 0);
                 add_member_cstr(structure_type_type, "structure", types->empty_struct_type);
                 add_member_cstr(structure_type_type, "union_untagged", types->empty_struct_type);
                 {
-                    Type_Signature* union_tagged_struct = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
+                    Type_Signature* union_tagged_struct = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT, 0);
                     add_member_cstr(union_tagged_struct, "tag_member_index", types->i32_type);
                     type_system_finish_type(system, union_tagged_struct);
                     add_member_cstr(structure_type_type, "union_tagged", union_tagged_struct);
@@ -520,9 +518,9 @@ void type_system_add_predefined_types(Type_System* system)
         }
         // ENUM
         {
-            Type_Signature* enum_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
+            Type_Signature* enum_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT, 0);
             {
-                Type_Signature* enum_member_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
+                Type_Signature* enum_member_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT, 0);
                 add_member_cstr(enum_member_type, "name", types->string_type);
                 add_member_cstr(enum_member_type, "value", types->i32_type);
                 type_system_finish_type(system, enum_member_type);
@@ -539,7 +537,7 @@ void type_system_add_predefined_types(Type_System* system)
 
         // Type Information
         {
-            Type_Signature* type_info_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT);
+            Type_Signature* type_info_type = type_system_make_struct_empty(system, 0, Structure_Type::STRUCT, 0);
             add_member_cstr(type_info_type, "type", types->type_type);
             add_member_cstr(type_info_type, "size", types->i32_type);
             add_member_cstr(type_info_type, "alignment", types->i32_type);
@@ -929,6 +927,32 @@ Type_Signature* type_system_make_slice(Type_System * system, Type_Signature * el
     return type_system_register_type(system, result);
 }
 
+Type_Signature type_system_make_function_empty(Type_System* system)
+{
+    Type_Signature result;
+    result.internal_index = -1;
+    result.type = Signature_Type::FUNCTION;
+    result.alignment = 8;
+    result.size = 8;
+    result.options.function.parameters = dynamic_array_create_empty<Function_Parameter>(1);
+    result.options.function.return_type = system->predefined_types.void_type;
+    return result;
+}
+
+void empty_function_add_parameter(Type_Signature* function_signature, String* name, Type_Signature* type) {
+    assert(function_signature->type == Signature_Type::FUNCTION && function_signature->internal_index == -1, "Must still be empty");
+    Function_Parameter param;
+    param.name = optional_make_success(name);
+    param.type = type;
+    dynamic_array_push_back(&function_signature->options.function.parameters, param);
+}
+
+Type_Signature* empty_function_finish(Type_System* system, Type_Signature function_signature, Type_Signature* return_type) {
+    assert(function_signature.type == Signature_Type::FUNCTION && function_signature.internal_index == -1, "Must still be empty");
+    function_signature.options.function.return_type = return_type;
+    return type_system_register_type(system, function_signature);
+}
+
 Type_Signature* type_system_make_function(Type_System * system, Dynamic_Array<Function_Parameter> parameter_types, Type_Signature * return_type)
 {
     Type_Signature result;
@@ -959,7 +983,7 @@ Type_Signature* type_system_make_template(Type_System * system, String * id)
     return type_system_register_type(system, result);
 }
 
-Type_Signature* type_system_make_struct_empty(Type_System * system, Symbol * symbol, Structure_Type struct_type)
+Type_Signature* type_system_make_struct_empty(Type_System * system, Symbol * symbol, Structure_Type struct_type, Struct_Progress* progress)
 {
     Type_Signature result;
     result.type = Signature_Type::STRUCT;
@@ -971,6 +995,7 @@ Type_Signature* type_system_make_struct_empty(Type_System * system, Symbol * sym
     result.options.structure.tag_member.type = 0;
     result.options.structure.struct_type = struct_type;
     result.options.structure.members = dynamic_array_create_empty<Struct_Member>(2);
+    result.options.structure.progress = progress;
     return type_system_register_type(system, result);
 }
 

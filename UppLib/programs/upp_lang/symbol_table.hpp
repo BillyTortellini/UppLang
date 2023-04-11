@@ -5,16 +5,19 @@
 #include "../../datastructures/hashtable.hpp"
 #include "compiler_misc.hpp" // Upp_Constant
 
-struct Function_Progress;
-struct ModTree_Function;
-struct Polymorphic_Function;
+// struct Function_Progress;
+// struct Polymorphic_Base;
 struct ModTree_Global;
 struct Type_Signature;
 struct Workload_Definition;
+struct Workload_Function_Parameter;
 
 struct Symbol;
 struct Symbol_Table;
 struct Symbol_Data;
+
+struct Function_Progress;
+struct Polymorphic_Base;
 
 namespace AST
 {
@@ -27,8 +30,8 @@ namespace AST
 // Symbol Table
 enum class Symbol_Type
 {
-    DEFINITION_UNFINISHED,              // A Definition that isn't ready yet (global variable or comptime value)
-    VARIABLE_UNDEFINED,      // A variable/parameter/global that hasn't been defined yet
+    DEFINITION_UNFINISHED, // A Definition that isn't ready yet (global variable or comptime value)
+    VARIABLE_UNDEFINED,    // A variable/parameter/global that hasn't been defined yet
 
     HARDCODED_FUNCTION,
     FUNCTION,
@@ -51,21 +54,18 @@ struct Symbol
         Symbol_Table* module_table;
         Function_Progress* function;
         Workload_Definition* definition_workload;
-        Polymorphic_Function* polymorphic_function;
+        Polymorphic_Base* polymorphic_function;
         Hardcoded_Type hardcoded;
         Type_Signature* type;
         ModTree_Global* global;
         struct {
             bool is_polymorphic;
-            int index; // If not polymorphic, index in function signature, otherwise index in polymorphic evaluation order 
-            ModTree_Function* function; 
+            int ast_index;  // Index in ast_signature_node
+            int type_index; // Index in function_signature
+            Workload_Function_Parameter* workload;
         } parameter;
         Upp_Constant constant;
         Symbol* alias;
-        struct {
-            bool is_parameter;
-            int parameter_index;
-        } variable_undefined;
     } options;
 
     String* id;

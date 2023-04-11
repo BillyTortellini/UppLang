@@ -107,12 +107,7 @@ void symbol_append_to_string(Symbol* symbol, String* string)
     switch (symbol->type)
     {
     case Symbol_Type::VARIABLE_UNDEFINED:
-        if (symbol->options.variable_undefined.is_parameter) {
-            string_append_formated(string, "Parameter Undefined (#%d)", symbol->options.variable_undefined.parameter_index);
-        }
-        else {
-            string_append_formated(string, "Variable Undefined");
-        }
+        string_append_formated(string, "Variable Undefined");
         break;
     case Symbol_Type::PARAMETER:
         string_append_formated(string, "Parameter");

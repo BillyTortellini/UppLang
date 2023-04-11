@@ -8,6 +8,7 @@
 
 struct Identifier_Pool;
 struct Symbol;
+struct Struct_Progress;
 struct Predefined_Symbols;
 struct Timer;
 namespace AST
@@ -89,9 +90,11 @@ struct Type_Signature
         } slice;
         struct {
             Dynamic_Array<Struct_Member> members;
-            Symbol* symbol; // May be null
             AST::Structure_Type struct_type;
             Struct_Member tag_member;
+
+            Symbol* symbol; // May be null
+            Struct_Progress* progress; // May be null
         } structure;
         struct {
             Dynamic_Array<Enum_Item> members;
@@ -300,11 +303,13 @@ Type_Signature* type_system_make_slice(Type_System* system, Type_Signature* elem
 Type_Signature* type_system_make_array(Type_System* system, Type_Signature* element_type, bool count_known, int element_count);
 Type_Signature* type_system_make_template(Type_System* system, String* id);
 // Note: Takes ownership of parameter_types!
-Type_Signature* type_system_make_function(Type_System* system, Dynamic_Array<Function_Parameter> parameter_types, Type_Signature* return_type);
 Type_Signature* type_system_make_function(Type_System* system, std::initializer_list<Function_Parameter> parameter_types, Type_Signature* return_type);
+Type_Signature type_system_make_function_empty(Type_System* system);
+void empty_function_add_parameter(Type_Signature* function_signature, String* name, Type_Signature* type);
+Type_Signature* empty_function_finish(Type_System* system, Type_Signature function_signature, Type_Signature* return_type);
 // Note: empty types need to be finished before they are used!
 Type_Signature* type_system_make_enum_empty(Type_System* system, String* id);
-Type_Signature* type_system_make_struct_empty(Type_System* system, Symbol* symbol, AST::Structure_Type struct_type);
+Type_Signature* type_system_make_struct_empty(Type_System* system, Symbol* symbol, AST::Structure_Type struct_type, Struct_Progress* progress);
 void struct_add_member(Type_Signature* struct_sig, String* id, Type_Signature* member_type);
 void type_system_finish_type(Type_System* system, Type_Signature* type);
 

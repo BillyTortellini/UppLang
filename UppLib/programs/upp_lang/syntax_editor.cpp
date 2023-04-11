@@ -2186,15 +2186,7 @@ void syntax_editor_render()
                     type = hardcoded_type_to_signature(symbol->options.hardcoded);
                     break;
                 case Symbol_Type::PARAMETER: {
-                    auto function = symbol->options.parameter.function;
-                    type = function->signature->options.function.parameters[symbol->options.parameter.index].type;
-                    // if (symbol->options.parameter.is_polymorphic) {
-                    //     auto base = function->polymorphic_base;
-                    //     type = base->parameters[symbol->options.parameter.index].base_type;
-                    // }
-                    // else {
-                    //     type = function->signature->options.function.parameters[symbol->options.parameter.index].type;
-                    // }
+                    type = symbol->options.parameter.workload->base_type;
                     break;
                 }
                 case Symbol_Type::TYPE:
