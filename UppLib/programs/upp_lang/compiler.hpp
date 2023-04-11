@@ -88,7 +88,7 @@ void compiler_destroy();
 
 void compiler_compile_clean(Source_Code* source_code, Compile_Type compile_type, String project_file); // Takes ownership of project file
 void compiler_compile_incremental(Code_History* history, Compile_Type compile_type);
-bool compiler_add_project_import(AST::Project_Import* project_import);
+Code_Source* compiler_add_project_import(AST::Project_Import* project_import);
 Exit_Code compiler_execute();
 
 bool compiler_errors_occured();

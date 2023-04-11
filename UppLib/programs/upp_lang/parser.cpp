@@ -105,7 +105,7 @@ namespace Parser
         err.block_parse = parser.state.block_parse;
         err.origin_line_index = parser.state.pos.line_index.line_index;
         assert(index_equal(parser.state.block_parse->index, parser.state.pos.line_index.block_index), "Current line index must be inside current block parse");
-        logg("Logging error %s for block_parse %p\n", msg, err.block_parse);
+        // logg("Logging error %s for block_parse %p\n", msg, err.block_parse);
         dynamic_array_push_back(&parser.new_error_messages, err);
         parser.state.error_count = parser.new_error_messages.size;
     }
@@ -516,13 +516,13 @@ namespace Parser
     void block_parse_destroy(Block_Parse* block_parse)
     {
         auto& source_parse = parser.state.source_parse;
-        logg("Removing block_parse of block %d\n", block_parse->index.block_index);
+        // logg("Removing block_parse of block %d\n", block_parse->index.block_index);
         // Remove error messages created in this block
         for (int j = 0; j < source_parse->error_messages.size; j++) {
             auto& error = source_parse->error_messages[j];
             if (error.block_parse == block_parse) {
                 dynamic_array_swap_remove(&source_parse->error_messages, j);
-                logg("Removing error message: %s\n", error.msg);
+                // logg("Removing error message: %s\n", error.msg);
                 j -= 1;
                 continue;
             }
@@ -993,7 +993,7 @@ namespace Parser
         }
 
         auto block_parse = new Block_Parse;
-        logg("Create new block parse for: %d %p\n", block_index.block_index, block_parse);
+        // logg("Create new block parse for: %d %p\n", block_index.block_index, block_parse);
         block_parse->context = context;
         block_parse->index = block_index;
         block_parse->items = dynamic_array_create_empty<Line_Item>(1);

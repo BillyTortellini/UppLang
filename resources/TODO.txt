@@ -1,19 +1,24 @@
 
 
-TODO:
+DONE:
     - Rework Analysis-Progress/-Workload structure (More type-safety, better helper functions for workload creation!)
+    - Inner definitions
+    - Anonymous definitions
+    - Bakes and bake workloads --> Bake-Analysis should also just be code analysis workload...
+    - Block stack should be created on block_analysis if not set correctly, because used in Function_Body and in Bake_Analysis
+
 
 TODO Later:
-    - Anonymous definitions
-    - Bakes and bake workloads
-    - Block stack should be created on block_analysis if not set correctly, because used in Function_Body and in Bake_Analysis
+    - File Loading/Symbol tables...
+    - Templates should work again
+    - Error logging should be simpler!
+    - Allround better dealing with void type: Add void_type allowed boolean to analyse_expression
 
     - Modtree-functions should include the process
     - Struct dependency types --> New Type for user-struct, which includes the progress --> therefore we can wait for dependencies!
     - Creating empty functions and structs could be done better by type system
     - Project imports and Symbol resolution beeing smartah (e.g. symbol resolution may produce dependency)
 
-    - Allround better dealing with void type: Add void_type allowed boolean to analyse_expression
 
 WORK NEXT:
     - Maybe rework struct dependencies (Do we need clustering, are event-type workloads a thing?)

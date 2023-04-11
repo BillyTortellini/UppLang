@@ -1675,7 +1675,7 @@ void ir_generator_generate_queued_items(bool gen_bytecode)
                 }
             }
             else if (mod_func->code_workload->type == Analysis_Workload_Type::FUNCTION_BODY) {
-                ir_generator_generate_block(ir_func->code, ((Workload_Function_Body*) mod_func->code_workload)->block);
+                ir_generator_generate_block(ir_func->code, ((Workload_Function_Body*) mod_func->code_workload)->body_node);
             }
             else {
                 panic("");

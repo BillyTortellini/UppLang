@@ -176,7 +176,7 @@ void compiler_parse_code(Code_Source* source)
     }
 }
 
-void compiler_analyse_code(Code_Source* source)
+void compiler_analyse_code(Code_Source* source, bool add_discovery_workload)
 {
     if (source->analysed) return;
     source->analysed = true;
@@ -189,10 +189,12 @@ void compiler_analyse_code(Code_Source* source)
     Timing_Task before = compiler.task_current;
     SCOPE_EXIT(compiler_switch_timing_task(before));
     compiler_switch_timing_task(Timing_Task::ANALYSIS);
-    workload_executer_add_module_discovery(source->source_parse->root);
+    if (add_discovery_workload) {
+        workload_executer_add_module_discovery(source->source_parse->root);
+    }
 }
 
-void code_source_analyse_clean(Code_Source* source)
+void code_source_analyse_clean(Code_Source* source, bool add_discovery_workload)
 {
     Timing_Task before = compiler.task_current;
     SCOPE_EXIT(compiler_switch_timing_task(before));
@@ -201,7 +203,7 @@ void code_source_analyse_clean(Code_Source* source)
     compiler_switch_timing_task(Timing_Task::PARSING);
     compiler_parse_code(source);
     compiler_switch_timing_task(Timing_Task::ANALYSIS);
-    compiler_analyse_code(source);
+    compiler_analyse_code(source, add_discovery_workload);
 }
 
 
@@ -388,7 +390,7 @@ void compiler_compile_clean(Source_Code* source_code, Compile_Type compile_type,
 
     file_io_relative_to_full_path(&project_file);
     compiler.main_source = code_source_create_empty(Code_Origin::MAIN_PROJECT, source_code, project_file);
-    code_source_analyse_clean(compiler.main_source);
+    code_source_analyse_clean(compiler.main_source, true);
 
     compiler_finish_compile();
 }
@@ -405,11 +407,11 @@ void compiler_compile_incremental(Code_History* history, Compile_Type compile_ty
     compiler_switch_timing_task(Timing_Task::PARSING);
     Parser::execute_incremental(source->source_parse, history);
     compiler_switch_timing_task(Timing_Task::ANALYSIS);
-    compiler_analyse_code(source);
+    compiler_analyse_code(source, true);
     compiler_finish_compile();
 }
 
-bool compiler_add_project_import(AST::Project_Import* project_import)
+Code_Source* compiler_add_project_import(AST::Project_Import* project_import)
 {
     auto src = compiler_find_ast_code_source(&project_import->base);
 
@@ -436,8 +438,8 @@ bool compiler_add_project_import(AST::Project_Import* project_import)
         Code_Source** cached_code = hashtable_find_element(&compiler.cached_imports, path);
         if (cached_code != 0) {
             // Project is already imported
-            compiler_analyse_code(*cached_code);
-            return true;
+            compiler_analyse_code(*cached_code, false);
+            return *cached_code;
         }
     }
 
@@ -448,11 +450,11 @@ bool compiler_add_project_import(AST::Project_Import* project_import)
         source_code_fill_from_string(source_code, file_content.value);
 
         Code_Source* code_source = code_source_create_empty(Code_Origin::LOADED_FILE, source_code, path);
-        code_source_analyse_clean(code_source);
+        code_source_analyse_clean(code_source, false);
         success = true;
-        return true;
+        return code_source;
     }
-    return false;
+    return 0;
 }
 
 Exit_Code compiler_execute()

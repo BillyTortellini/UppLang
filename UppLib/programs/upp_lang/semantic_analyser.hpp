@@ -150,8 +150,6 @@ enum class Analysis_Workload_Type
     BAKE_EXECUTION,
 
     DEFINITION,
-
-    PROJECT_IMPORT,
 };
 
 struct Workload_Base
@@ -170,6 +168,7 @@ struct Workload_Base
     Array<Polymorphic_Value> current_polymorphic_values; // NOTE: Non-owning 'pointer' to array
     bool statement_reachable;
     Symbol_Table* current_symbol_table;
+    Dynamic_Array<AST::Code_Block*> block_stack; // NOTE: This is here because it is required by Bake-Analysis and code-block, also for statement blocks...
 
     // Dependencies
     List<Workload_Base*> dependencies;
@@ -188,12 +187,6 @@ struct Workload_Module_Analysis
     AST::Module* module_node;
 };
 
-struct Workload_Project_Import
-{
-    Workload_Base base;
-    AST::Project_Import* import;
-};
-
 struct Workload_Function_Header
 {
     Workload_Base base;
@@ -205,8 +198,7 @@ struct Workload_Function_Body
 {
     Workload_Base base;
     Function_Progress* progress;
-    Dynamic_Array<AST::Code_Block*> block_stack;
-    AST::Code_Block* block;
+    AST::Code_Block* body_node;
 };
 
 struct Workload_Function_Cluster_Compile
