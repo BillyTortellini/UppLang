@@ -185,6 +185,7 @@ struct Workload_Module_Analysis
 {
     Workload_Base base;
     AST::Module* module_node;
+    Hashset<AST::Module*> visited;
 };
 
 struct Workload_Function_Header

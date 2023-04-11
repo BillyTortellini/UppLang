@@ -24,7 +24,7 @@ static Semantic_Analyser semantic_analyser;
 static Workload_Executer workload_executer;
 
 // PROTOTYPES
-void semantic_analyser_do_module_discovery(AST::Module* module_node);
+void semantic_analyser_do_module_discovery(AST::Module* module_node, bool add_to_root);
 ModTree_Function* modtree_function_create_empty(Type_Signature* signature, Symbol* symbol);
 Comptime_Result comptime_result_make_not_comptime();
 Comptime_Result expression_calculate_comptime_value(AST::Expression* expr);
@@ -1203,6 +1203,9 @@ void analysis_workload_destroy(Workload_Base* workload)
         auto cluster = downcast<Workload_Function_Cluster_Compile>(workload);
         dynamic_array_destroy(&cluster->functions);
     }
+    else if (workload->type == Analysis_Workload_Type::MODULE_ANALYSIS) {
+        hashset_destroy(&downcast<Workload_Module_Analysis>(workload)->visited);
+    }
     delete workload;
 }
 
@@ -1896,7 +1899,7 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
                 // FUTURE: Here I should probably add another workload, but since this would require some sort of cluster analysis, it's recursive for now
                 // Set symbol
                 symbol->type = Symbol_Type::MODULE;
-                semantic_analyser_do_module_discovery(value->options.module);
+                semantic_analyser_do_module_discovery(value->options.module, false);
                 symbol->options.module_table = value->options.module->symbol_table;
                 break;
             }
@@ -1936,14 +1939,29 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
     }
 }
 
-void semantic_analyser_do_module_discovery(AST::Module* module_node)
+void semantic_analyser_do_module_discovery(AST::Module* module_node, bool add_to_root)
 {
     // TODO: Run over the whole module + probably submodules and generate workloads...
     //       Also for now install the symbol tables where they need to be...
     // Define symbol for module? No, should be done by parent!
     // FUTURE: Symbol tables should also be analysis information, not in the AST!
+
+    // Prevent cyclic module analysis (caused by imports)
+    {
+        auto visited = &downcast<Workload_Module_Analysis>(semantic_analyser.current_workload)->visited;
+        if (hashset_contains(visited, module_node)) {
+            return;
+        }
+        hashset_insert_element(visited, module_node);
+    }
+
     Workload_Base* workload = semantic_analyser.current_workload;
-    module_node->symbol_table = symbol_table_create(workload->current_symbol_table, false);
+    if (!add_to_root) {
+        module_node->symbol_table = symbol_table_create(workload->current_symbol_table, false);
+    }
+    else {
+        module_node->symbol_table = semantic_analyser.root_symbol_table;
+    }
     RESTORE_ON_SCOPE_EXIT(workload->current_symbol_table, module_node->symbol_table);
 
     // Handle imports
@@ -1956,7 +1974,8 @@ void semantic_analyser_do_module_discovery(AST::Module* module_node)
             continue;
         }
 
-        // Add import to symbol-table
+        // Note: Currently all imports add their symbols to the root table (Only one 'global' scope)
+        semantic_analyser_do_module_discovery(code->source_parse->root, true);
     }
 
     // Create workloads for definitions
@@ -1984,7 +2003,7 @@ void analysis_workload_entry(void* userdata)
     {
     case Analysis_Workload_Type::MODULE_ANALYSIS:
     {
-        semantic_analyser_do_module_discovery(downcast<Workload_Module_Analysis>(workload)->module_node);
+        semantic_analyser_do_module_discovery(downcast<Workload_Module_Analysis>(workload)->module_node, true);
         break;
     }
     case Analysis_Workload_Type::DEFINITION:
@@ -2777,6 +2796,7 @@ void analysis_workload_append_to_string(Workload_Base* workload, String* string)
 void workload_executer_add_module_discovery(AST::Module* module)
 {
     auto workload = workload_executer_allocate_workload<Workload_Module_Analysis>(upcast(module));
+    workload->visited = hashset_create_pointer_empty<AST::Module*>(1);
     workload->module_node = module;
 }
 

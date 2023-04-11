@@ -6,10 +6,10 @@ DONE:
     - Anonymous definitions
     - Bakes and bake workloads --> Bake-Analysis should also just be code analysis workload...
     - Block stack should be created on block_analysis if not set correctly, because used in Function_Body and in Bake_Analysis
+    - File Loading/Symbol tables...
 
 
 TODO Later:
-    - File Loading/Symbol tables...
     - Templates should work again
     - Error logging should be simpler!
     - Allround better dealing with void type: Add void_type allowed boolean to analyse_expression
