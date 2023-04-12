@@ -19,6 +19,7 @@ enum class Constant_Status;
 struct Semantic_Error;
 struct Error_Information;
 struct Expression_Info;
+struct Analysis_Pass;
 
 struct Workload_Definition;
 struct Workload_Base;
@@ -160,6 +161,7 @@ struct Workload_Base
     Array<Polymorphic_Value> current_polymorphic_values; // NOTE: Non-owning 'pointer' to array
     bool statement_reachable;
     Symbol_Table* current_symbol_table;
+    Analysis_Pass* current_pass;
     Dynamic_Array<AST::Code_Block*> block_stack; // NOTE: This is here because it is required by Bake-Analysis and code-block, also for statement blocks...
 
     // Dependencies
@@ -463,11 +465,11 @@ enum class Info_Query
     TRY_READ,      // May return 0
 };
 
-Expression_Info* workload_get_node_info(Workload_Base* workload, AST::Expression* expression, Info_Query query);
-Case_Info* workload_get_node_info(Workload_Base* workload, AST::Switch_Case* sw_case, Info_Query query);
-Argument_Info* workload_get_node_info(Workload_Base* workload, AST::Argument* argument, Info_Query query);
-Statement_Info* workload_get_node_info(Workload_Base* workload, AST::Statement* statement, Info_Query query);
-Code_Block_Info* workload_get_node_info(Workload_Base* workload, AST::Code_Block* block, Info_Query query);
+Expression_Info* pass_get_node_info(Analysis_Pass* pass, AST::Expression* node, Info_Query query);
+Case_Info* pass_get_node_info(Analysis_Pass* pass, AST::Switch_Case* node, Info_Query query);
+Argument_Info* pass_get_node_info(Analysis_Pass* pass, AST::Argument* node, Info_Query query);
+Statement_Info* pass_get_node_info(Analysis_Pass* pass, AST::Statement* node, Info_Query query);
+Code_Block_Info* pass_get_node_info(Analysis_Pass* pass, AST::Code_Block* node, Info_Query query);
 
 Type_Signature* expression_info_get_type(Expression_Info* info);
 
@@ -518,15 +520,21 @@ struct Predefined_Symbols
     Symbol* error_symbol;
 };
 
+// I currently need this so that a workload can analyse the same node multiple times
+struct Analysis_Pass 
+{
+    Workload_Base* origin_workload;
+};
+
 struct AST_Info_Key
 {
-    Workload_Base* workload;
+    Analysis_Pass* pass;
     AST::Node* base;
 };
 
-struct Node_Workloads
+struct Node_Passes
 {
-    Dynamic_Array<Workload_Base*> workloads;
+    Dynamic_Array<Analysis_Pass*> passes;
     AST::Node* base;
 };
 
@@ -538,12 +546,13 @@ struct Semantic_Analyser
     // Result
     Dynamic_Array<Semantic_Error> errors;
     ModTree_Program* program;
-    Hashtable<AST::Node*, Node_Workloads> ast_to_workload_mapping;
+    Hashtable<AST::Node*, Node_Passes> ast_to_pass_mapping;
     Hashtable<AST_Info_Key, Analysis_Info*> ast_to_info_mapping;
 
     // Stuff required for analysis
     Symbol_Table* root_symbol_table;
     Dynamic_Array<Symbol_Table*> allocated_symbol_tables;
+    Dynamic_Array<Analysis_Pass*> allocated_passes;
 
     Predefined_Symbols predefined_symbols;
     Workload_Executer* workload_executer;

@@ -1,5 +1,41 @@
 
 
+
+* Bugs remain with type type...
+Also I need to reanalyse the header multiple times, so I will create something like an 'active'-analysis pass
+
+
+Problems:
+
+foo :: ($T: Type, a: T) -> T // a is a completely normal parameter, nothing polymorphic about it
+    return a * 2 // Here a is never read as a polymorphic symbol...
+
+What the fugg is this supposed to mean? That parameter types are always coupled to the current workload? ... Maybe
+Well I cannot set the parameter type of the symbol to something else, since this would sugg with the current workload system.
+
+
+Features that I may want to do next:
+    - Symbol-Imports with using, so that namespaces can be used reasonably, for Symbols, e.g. using A~* or using x.a
+    - Struct polymorphism
+    - Implicit Polymorphism in functions (e.g. (x: $T, y: T)), return value also...
+    - Struct inner definitions + dot-calls
+    - Function overloading + selecting the correct function
+    - Named function arguments, maybe named returns?
+    - Multiple returns/multiple assignment
+    - Conditional compilation (Symbol tables cannot be queried until the comptime value is resolved)
+    - Support for better Union-types (e.g. better switch statement, also subtypes of unions)
+    - Incremental Semantic Analysis (--> leads to caching #bakes)
+    - For-Loops (for i := 0; i < 10; i += 1), foreach (for a in array)
+    - Reintegrate C-compilation + Rework C-Importer to just generate an Upp-file with definitions
+    - Context system?
+    - ImGui for Editor (Rendering rework)
+    - Code-Editor features (auto formatting, visual mode, motions and delete...)
+    - Expression blocks, implicit lambdas (.->)
+    - Annotations for structs, queriable in type-system
+    - Custom iterators
+    - Operator overloads, some kind of context for casts stuff...
+
+
 TODO Later:
     - Templates should work again
     - Symbol-Resolution and Symbol tables should not be inside AST, but rather in Analysis_Info

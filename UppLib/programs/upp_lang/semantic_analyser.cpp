@@ -120,9 +120,9 @@ Type_Signature* hardcoded_type_to_signature(Hardcoded_Type type)
 
 
 // Analysis Info
-Analysis_Info* workload_get_base_info(Workload_Base* workload, AST::Node* node, Info_Query query) {
+Analysis_Info* pass_get_base_info(Analysis_Pass* pass, AST::Node* node, Info_Query query) {
     AST_Info_Key key;
-    key.workload = workload;
+    key.pass = pass;
     key.base = node;
     switch (query)
     {
@@ -152,47 +152,47 @@ Analysis_Info* workload_get_base_info(Workload_Base* workload, AST::Node* node, 
     return 0;
 }
 
-Expression_Info* workload_get_node_info(Workload_Base* workload, AST::Expression* node, Info_Query query) {
-    return &workload_get_base_info(workload, AST::upcast(node), query)->info_expr;
+Expression_Info* pass_get_node_info(Analysis_Pass* pass, AST::Expression* node, Info_Query query) {
+    return &pass_get_base_info(pass, AST::upcast(node), query)->info_expr;
 }
 
-Case_Info* workload_get_node_info(Workload_Base* workload, AST::Switch_Case* node, Info_Query query) {
-    return &workload_get_base_info(workload, AST::upcast(node), query)->info_case;
+Case_Info* pass_get_node_info(Analysis_Pass* pass, AST::Switch_Case* node, Info_Query query) {
+    return &pass_get_base_info(pass, AST::upcast(node), query)->info_case;
 }
 
-Argument_Info* workload_get_node_info(Workload_Base* workload, AST::Argument* node, Info_Query query) {
-    return &workload_get_base_info(workload, AST::upcast(node), query)->arg_info;
+Argument_Info* pass_get_node_info(Analysis_Pass* pass, AST::Argument* node, Info_Query query) {
+    return &pass_get_base_info(pass, AST::upcast(node), query)->arg_info;
 }
 
-Statement_Info* workload_get_node_info(Workload_Base* workload, AST::Statement* node, Info_Query query) {
-    return &workload_get_base_info(workload, AST::upcast(node), query)->info_stat;
+Statement_Info* pass_get_node_info(Analysis_Pass* pass, AST::Statement* node, Info_Query query) {
+    return &pass_get_base_info(pass, AST::upcast(node), query)->info_stat;
 }
 
-Code_Block_Info* workload_get_node_info(Workload_Base* workload, AST::Code_Block* node, Info_Query query) {
-    return &workload_get_base_info(workload, AST::upcast(node), query)->info_block;
+Code_Block_Info* pass_get_node_info(Analysis_Pass* pass, AST::Code_Block* node, Info_Query query) {
+    return &pass_get_base_info(pass, AST::upcast(node), query)->info_block;
 }
 
 
 
 // Helpers
 Expression_Info* get_info(AST::Expression* expression, bool create = false) {
-    return workload_get_node_info(semantic_analyser.current_workload, expression, create ? Info_Query::CREATE : Info_Query::READ_NOT_NULL);
+    return pass_get_node_info(semantic_analyser.current_workload->current_pass, expression, create ? Info_Query::CREATE : Info_Query::READ_NOT_NULL);
 }
 
 Case_Info* get_info(AST::Switch_Case* sw_case, bool create = false) {
-    return workload_get_node_info(semantic_analyser.current_workload, sw_case, create ? Info_Query::CREATE : Info_Query::READ_NOT_NULL);
+    return pass_get_node_info(semantic_analyser.current_workload->current_pass, sw_case, create ? Info_Query::CREATE : Info_Query::READ_NOT_NULL);
 }
 
 Argument_Info* get_info(AST::Argument* argument, bool create = false) {
-    return workload_get_node_info(semantic_analyser.current_workload, argument, create ? Info_Query::CREATE : Info_Query::READ_NOT_NULL);
+    return pass_get_node_info(semantic_analyser.current_workload->current_pass, argument, create ? Info_Query::CREATE : Info_Query::READ_NOT_NULL);
 }
 
 Statement_Info* get_info(AST::Statement* statement, bool create = false) {
-    return workload_get_node_info(semantic_analyser.current_workload, statement, create ? Info_Query::CREATE : Info_Query::READ_NOT_NULL);
+    return pass_get_node_info(semantic_analyser.current_workload->current_pass, statement, create ? Info_Query::CREATE : Info_Query::READ_NOT_NULL);
 }
 
 Code_Block_Info* get_info(AST::Code_Block* block, bool create = false) {
-    return workload_get_node_info(semantic_analyser.current_workload, block, create ? Info_Query::CREATE : Info_Query::READ_NOT_NULL);
+    return pass_get_node_info(semantic_analyser.current_workload->current_pass, block, create ? Info_Query::CREATE : Info_Query::READ_NOT_NULL);
 }
 
 
@@ -395,13 +395,34 @@ Polymorphic_Base* polymorphic_base_create(Function_Progress* progress, int param
     instance->progress = progress;
     dynamic_array_push_back(&base->instances, instance);
     progress->poly_instance = instance;
-    progress->function->is_runnable = false;
+    progress->function->is_runnable = false; 
 
     return base;
 }
 
 
 
+Analysis_Pass* analysis_pass_allocate(Workload_Base* origin, AST::Node* mapping_node)
+{
+    Analysis_Pass* result = new Analysis_Pass;
+    dynamic_array_push_back(&semantic_analyser.allocated_passes, result);
+    result->origin_workload = origin;
+    // Add mapping to workload 
+    if (mapping_node) {
+        Node_Passes* workloads_opt = hashtable_find_element(&semantic_analyser.ast_to_pass_mapping, mapping_node);
+        if (workloads_opt == 0) {
+            Node_Passes passes;
+            passes.base = mapping_node;
+            passes.passes = dynamic_array_create_empty<Analysis_Pass*>(1);
+            dynamic_array_push_back(&passes.passes, result);
+            hashtable_insert_element(&semantic_analyser.ast_to_pass_mapping, mapping_node, passes);
+        }
+        else {
+            dynamic_array_push_back(&workloads_opt->passes, result);
+        }
+    }
+    return result;
+}
 
 // Analysis Progress
 template<typename T>
@@ -432,6 +453,7 @@ T* workload_executer_allocate_workload(AST::Node* mapping_node)
     workload->dependents = list_create<Workload_Base*>();
     workload->reachable_clusters = dynamic_array_create_empty<Workload_Base*>(1);
     workload->block_stack = dynamic_array_create_empty<AST::Code_Block*>(1);
+    workload->current_pass = analysis_pass_allocate(workload, mapping_node);
     workload->parent_table = semantic_analyser.root_symbol_table;
     if (semantic_analyser.current_workload != 0 && semantic_analyser.current_workload->current_symbol_table != 0) {
         workload->parent_table = semantic_analyser.current_workload->current_symbol_table;
@@ -440,21 +462,6 @@ T* workload_executer_allocate_workload(AST::Node* mapping_node)
     // Add to workload queue
     dynamic_array_push_back(&executer.all_workloads, workload);
     dynamic_array_push_back(&executer.runnable_workloads, workload); // Note: There exists a check for dependencies before executing runnable workloads, so this is ok
-
-    // Add mapping to workload 
-    if (mapping_node) {
-        Node_Workloads* workloads_opt = hashtable_find_element(&semantic_analyser.ast_to_workload_mapping, mapping_node);
-        if (workloads_opt == 0) {
-            Node_Workloads new_workloads;
-            new_workloads.base = mapping_node;
-            new_workloads.workloads = dynamic_array_create_empty<Workload_Base*>(1);
-            dynamic_array_push_back(&new_workloads.workloads, workload);
-            hashtable_insert_element(&semantic_analyser.ast_to_workload_mapping, mapping_node, new_workloads);
-        }
-        else {
-            dynamic_array_push_back(&workloads_opt->workloads, workload);
-        }
-    }
 
     return result;
 }
@@ -530,7 +537,7 @@ Function_Progress* function_progress_create(Symbol* symbol, AST::Expression* fun
     return progress;
 }
 
-Function_Progress* function_progress_create_polymorphic_instance(Polymorphic_Instance* empty_instance, Expression_Info* instance_expr_info)
+Function_Progress* function_progress_create_polymorphic_instance(Polymorphic_Instance* empty_instance, Expression_Info* instance_expr_info, Analysis_Pass* header_pass)
 {
     // Check if we have already instanciated the function with given parameters
     {
@@ -560,7 +567,7 @@ Function_Progress* function_progress_create_polymorphic_instance(Polymorphic_Ins
 
                 // Set expression info to instanciation, so that ir-generator can pick the corresponding modtree-function
                 logg("Found matching instance %d, not re-instanciating!\n", i);
-                assert(instance_expr_info->options.polymorphic.base == empty_instance->base, "Base must match!");
+                assert(instance_expr_info->options.polymorphic.base == instance->base, "Base must match!");
                 instance_expr_info->options.polymorphic.instance = instance;
                 return instance->progress;
             }
@@ -576,6 +583,7 @@ Function_Progress* function_progress_create_polymorphic_instance(Polymorphic_Ins
     Type_Signature* function_signature = 0;
     {
         RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->current_polymorphic_values, empty_instance->parameter_values);
+        RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->current_pass, header_pass);
         auto& signature_node = empty_instance->base->progress->header_workload->function_node->options.function.signature->options.function_signature;
 
         Type_Signature unfinished = type_system_make_function_empty(&compiler.type_system);
@@ -887,30 +895,28 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
             auto& upp_const = symbol->options.constant;
             return comptime_result_make_available(&compiler.constant_pool.buffer[upp_const.offset], upp_const.type);
         }
-        else if (symbol->type == Symbol_Type::PARAMETER && symbol->options.parameter.is_polymorphic) {
-            assert(
-                analyser.current_workload->type == Analysis_Workload_Type::FUNCTION_BODY ||
-                analyser.current_workload->type == Analysis_Workload_Type::FUNCTION_HEADER,
-                "Accessing poly-parameters should only be possible in functions"
-            );
-
-            // Check if we are in the base analysis for Parameter-Dependencies
-            auto current_workload = analyser.current_workload;
-            auto param_workload = symbol->options.parameter.workload;
-            if (current_workload->type == Analysis_Workload_Type::FUNCTION_PARAMETER) {
+        else if (symbol->type == Symbol_Type::PARAMETER && symbol->options.parameter.is_polymorphic) 
+        {
+            auto& param = symbol->options.parameter;
+            if (analyser.current_workload->type == Analysis_Workload_Type::FUNCTION_PARAMETER ||
+                analyser.current_workload->type == Analysis_Workload_Type::FUNCTION_HEADER) 
+            {
                 // This means we are currently analysing the same header, e.g. the parameter cannot be set yet
-                return comptime_result_make_unavailable(param_workload->base_type);
+                return comptime_result_make_unavailable(param.workload->base_type);
+            }
+            else if (analyser.current_workload->type == Analysis_Workload_Type::FUNCTION_BODY) {
+                // Check if the value is set (e.g. if we are in the base-body or in an instance-body)
+                const auto& poly_value = analyser.current_workload->current_polymorphic_values[param.workload->execution_order_index];
+                if (poly_value.is_not_set) { // Is the case if we are in the body analysis of the base-function
+                    return comptime_result_make_unavailable(param.workload->base_type);
+                }
+                return comptime_result_make_available(&compiler.constant_pool.buffer[poly_value.constant.offset], poly_value.constant.type);
             }
             else {
-                // Check if the value is set (e.g. if we are in the base analysis or in an instance)
-                const auto& poly_value = current_workload->current_polymorphic_values[param_workload->execution_order_index];
-                if (poly_value.is_not_set) {
-                    return comptime_result_make_unavailable(param_workload->base_type);
-                }
-                else {
-                    return comptime_result_make_available(&compiler.constant_pool.buffer[poly_value.constant.offset], poly_value.constant.type);
-                }
+                panic("In which hellish landscape are we where we access parameters outside of body/header analysis");
             }
+            panic("Must not happen");
+            return comptime_result_make_unavailable(types.unknown_type);
         }
         else if (symbol->type == Symbol_Type::ERROR_SYMBOL) {
             return comptime_result_make_unavailable(types.unknown_type);
@@ -3139,11 +3145,11 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             if (empty_instance == 0) {
                 break;
             }
-            RESTORE_ON_SCOPE_EXIT(analyser.current_workload->current_polymorphic_values, empty_instance->parameter_values);
 
             // Evaluate polymorphic parameters
             bool success = true;
             SCOPE_EXIT(if (!success) { polymorpic_instance_destroy_empty(empty_instance); });
+            Analysis_Pass* header_pass = analysis_pass_allocate(semantic_analyser.current_workload, upcast(expr));
             // Evaluate polymorphic parameters in evaluation order
             for (int i = 0; i < poly_header->parameter_order.size; i++)
             {
@@ -3154,9 +3160,20 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 get_info(argument)->valid = false;
 
                 // Re-analyse base-header to get valid poly-argument type (Since this type can change with filled out polymorphic values)
-                Type_Signature* argument_type = semantic_analyser_analyse_expression_type(parameter->param_node->type);
+                Type_Signature* argument_type = 0;
+                {
+                    RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->current_pass, header_pass);
+                    RESTORE_ON_SCOPE_EXIT(analyser.current_workload->current_polymorphic_values, empty_instance->parameter_values);
+                    argument_type = semantic_analyser_analyse_expression_type(parameter->param_node->type);
+                }
 
-                semantic_analyser_analyse_expression_value(argument->value, expression_context_make_specific_type(argument_type));
+                if (type_signature_equals(argument_type, types.type_type)) {
+                    // In this case we are looking for a comptime value for a type, so well call analyse type
+                    auto result = semantic_analyser_analyse_expression_type(argument->value);
+                }
+                else {
+                    semantic_analyser_analyse_expression_value(argument->value, expression_context_make_specific_type(argument_type));
+                }
                 auto comptime_result = expression_calculate_comptime_value(argument->value);
                 switch (comptime_result.type)
                 {
@@ -3201,7 +3218,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             }
 
             // NOTE: Now there should be no more errors
-            function_signature = function_progress_create_polymorphic_instance(empty_instance, function_expr_info)->function->signature;
+            function_signature = function_progress_create_polymorphic_instance(empty_instance, function_expr_info, header_pass)->function->signature;
 
             break;
         }
@@ -3233,6 +3250,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         if (function_signature == 0) {
             // Analyse all expressions with unknown context
             for (int i = 0; i < arguments.size; i++) {
+                if (!get_info(arguments[i])->valid) { // Skip already analysed
+                    continue;
+                }
                 semantic_analyser_analyse_expression_value(arguments[i]->value, expression_context_make_unknown());
             }
             EXIT_ERROR(types.unknown_type);
@@ -3374,34 +3394,36 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         }
         case Symbol_Type::PARAMETER: {
             auto& param = symbol->options.parameter;
-            assert((analyser.current_workload->type == Analysis_Workload_Type::FUNCTION_BODY ||
-                analyser.current_workload->type == Analysis_Workload_Type::FUNCTION_HEADER ||
-                analyser.current_workload->type == Analysis_Workload_Type::FUNCTION_PARAMETER),
-                "Parameters can only be accessed in corresponding body/header!"
-            );
-            if (param.is_polymorphic)
+            if (analyser.current_workload->type == Analysis_Workload_Type::FUNCTION_PARAMETER ||
+                analyser.current_workload->type == Analysis_Workload_Type::FUNCTION_HEADER) 
             {
-                if (analyser.current_workload->type == Analysis_Workload_Type::FUNCTION_PARAMETER ||
-                    analyser.current_workload->type == Analysis_Workload_Type::FUNCTION_HEADER) {
-                    EXIT_ERROR(param.workload->base_type);
-                }
-                const auto& poly_value = analyser.current_workload->current_polymorphic_values[param.workload->execution_order_index];
-                if (poly_value.is_not_set) {
-                    EXIT_ERROR(param.workload->base_type);
-                }
-                expression_info_set_constant(info, poly_value.constant);
-                return info;
-            }
-            else
-            {
-                if (analyser.current_workload->type == Analysis_Workload_Type::FUNCTION_HEADER) {
-                    semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, expr);
+                // This means we are in the base analysis and just found a parameter-dependency
+                if (!param.is_polymorphic) {
                     semantic_analyser_add_error_info(error_information_make_text("Function headers cannot access normal parameters!"));
-                    EXIT_ERROR(types.unknown_type);
+                    EXIT_ERROR(param.workload->base_type);
                 }
                 EXIT_VALUE(param.workload->base_type);
             }
+            else if (analyser.current_workload->type == Analysis_Workload_Type::FUNCTION_BODY) {
+                // Inside function body, where we either access the function signature, or a polymorphic value
+                if (param.is_polymorphic) {
+                    const auto& poly_value = analyser.current_workload->current_polymorphic_values[param.workload->execution_order_index];
+                    if (poly_value.is_not_set) { // Is the case if we are in the body analysis of the base-function
+                        EXIT_ERROR(param.workload->base_type);
+                    }
+                    expression_info_set_constant(info, poly_value.constant);
+                    return info;
+                }
+                else {
+                    EXIT_VALUE(analyser.current_workload->current_function->signature->options.function.parameters[param.type_index].type);
+                }
+            }
+            else {
+                panic("In which hellish landscape are we where we access parameters outside of body/header analysis");
+            }
+
             panic("Cannot happen!");
+            break;
         }
         case Symbol_Type::COMPTIME_VALUE: {
             expression_info_set_constant(info, symbol->options.constant);
@@ -3617,10 +3639,10 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         // Search for already generated workloads on this node
         Workload_Base* workload = 0;
         {
-            auto workloads = hashtable_find_element(&semantic_analyser.ast_to_workload_mapping, AST::upcast(expr));
-            if (workloads != 0) {
-                assert(workloads->workloads.size == 1, "With the current system, only one workload should ever exist for a anonymous definition!");
-                workload = workloads->workloads[0];
+            auto passes = hashtable_find_element(&semantic_analyser.ast_to_pass_mapping, AST::upcast(expr));
+            if (passes != 0) {
+                assert(passes->passes.size == 1, "With the current system, only one workload should ever exist for a anonymous definition!");
+                workload = passes->passes[0]->origin_workload;
             }
         }
 
@@ -5117,13 +5139,19 @@ void semantic_analyser_reset()
             hashtable_reset(&semantic_analyser.ast_to_info_mapping);
         }
         {
-            auto iter = hashtable_iterator_create(&semantic_analyser.ast_to_workload_mapping);
+            auto iter = hashtable_iterator_create(&semantic_analyser.ast_to_pass_mapping);
             while (hashtable_iterator_has_next(&iter)) {
-                Node_Workloads* workloads = iter.value;
-                dynamic_array_destroy(&workloads->workloads);
+                Node_Passes* passes = iter.value;
+                dynamic_array_destroy(&passes->passes);
                 hashtable_iterator_next(&iter);
             }
-            hashtable_reset(&semantic_analyser.ast_to_workload_mapping);
+            hashtable_reset(&semantic_analyser.ast_to_pass_mapping);
+        }
+        {
+            for (int i = 0; i < semantic_analyser.allocated_passes.size; i++) {
+                delete semantic_analyser.allocated_passes[i];
+            }
+            dynamic_array_reset(&semantic_analyser.allocated_passes);
         }
     }
 
@@ -5197,11 +5225,11 @@ void semantic_analyser_reset()
 }
 
 u64 ast_info_key_hash(AST_Info_Key* key) {
-    return hash_combine(hash_pointer(key->base), hash_pointer(key->workload));
+    return hash_combine(hash_pointer(key->base), hash_pointer(key->pass));
 }
 
 bool ast_info_equals(AST_Info_Key* a, AST_Info_Key* b) {
-    return a->base == b->base && a->workload == b->workload;
+    return a->base == b->base && a->pass == b->pass;
 }
 
 Semantic_Analyser* semantic_analyser_initialize()
@@ -5211,7 +5239,8 @@ Semantic_Analyser* semantic_analyser_initialize()
     semantic_analyser.workload_executer = workload_executer_initialize();
     semantic_analyser.polymorphic_functions = dynamic_array_create_empty<Polymorphic_Base*>(1);
     semantic_analyser.program = 0;
-    semantic_analyser.ast_to_workload_mapping = hashtable_create_pointer_empty<AST::Node*, Node_Workloads>(1);
+    semantic_analyser.ast_to_pass_mapping = hashtable_create_pointer_empty<AST::Node*, Node_Passes>(1);
+    semantic_analyser.allocated_passes = dynamic_array_create_empty<Analysis_Pass*>(1);
     semantic_analyser.ast_to_info_mapping = hashtable_create_empty<AST_Info_Key, Analysis_Info*>(1, ast_info_key_hash, ast_info_equals);
     semantic_analyser.allocated_symbol_tables = dynamic_array_create_empty<Symbol_Table*>(16);
     return &semantic_analyser;
@@ -5238,13 +5267,19 @@ void semantic_analyser_destroy()
         hashtable_destroy(&semantic_analyser.ast_to_info_mapping);
     }
     {
-        auto iter = hashtable_iterator_create(&semantic_analyser.ast_to_workload_mapping);
+        auto iter = hashtable_iterator_create(&semantic_analyser.ast_to_pass_mapping);
         while (hashtable_iterator_has_next(&iter)) {
-            Node_Workloads* workloads = iter.value;
-            dynamic_array_destroy(&workloads->workloads);
+            Node_Passes* workloads = iter.value;
+            dynamic_array_destroy(&workloads->passes);
             hashtable_iterator_next(&iter);
         }
-        hashtable_destroy(&semantic_analyser.ast_to_workload_mapping);
+        hashtable_destroy(&semantic_analyser.ast_to_pass_mapping);
+    }
+    {
+        for (int i = 0; i < semantic_analyser.allocated_passes.size; i++) {
+            delete semantic_analyser.allocated_passes[i];
+        }
+        dynamic_array_destroy(&semantic_analyser.allocated_passes);
     }
 
     for (int i = 0; i < semantic_analyser.polymorphic_functions.size; i++) {

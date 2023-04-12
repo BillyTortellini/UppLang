@@ -485,15 +485,15 @@ Symbol* code_query_get_ast_node_symbol(AST::Node* base)
     return 0;
 }
 
-Workload_Base* code_query_get_ast_node_workload(AST::Node* base)
+Analysis_Pass* code_query_get_analysis_pass(AST::Node* base)
 {
-    auto& mappings = compiler.semantic_analyser->ast_to_workload_mapping;
+    auto& mappings = compiler.semantic_analyser->ast_to_pass_mapping;
     while (base != 0)
     {
-        auto node_workloads = hashtable_find_element(&mappings, base);
-        if (node_workloads != 0) {
-            assert(node_workloads->workloads.size != 0, "");
-            return node_workloads->workloads[0];
+        auto passes = hashtable_find_element(&mappings, base);
+        if (passes != 0) {
+            assert(passes->passes.size != 0, "");
+            return passes->passes[0];
         }
         base = base->parent;
     }
@@ -764,11 +764,11 @@ void code_completion_find_suggestions()
     if (node->type == AST::Node_Type::EXPRESSION)
     {
         auto expr = AST::downcast<AST::Expression>(node);
-        auto workload = code_query_get_ast_node_workload(node);
+        auto pass = code_query_get_analysis_pass(node);
         Type_Signature* type = 0;
         fill_from_symbol_table = true;
-        if (expr->type == AST::Expression_Type::MEMBER_ACCESS && workload != 0) {
-            auto info = workload_get_node_info(workload, expr->options.member_access.expr, Info_Query::TRY_READ);
+        if (expr->type == AST::Expression_Type::MEMBER_ACCESS && pass != 0) {
+            auto info = pass_get_node_info(pass, expr->options.member_access.expr, Info_Query::TRY_READ);
             if (info != 0) {
                 type = expression_info_get_type(info);
                 if (info->result_type == Expression_Result_Type::TYPE) {
@@ -777,8 +777,8 @@ void code_completion_find_suggestions()
                 }
             }
         }
-        else if (expr->type == AST::Expression_Type::AUTO_ENUM && workload != 0) {
-            auto info = workload_get_node_info(workload, expr, Info_Query::TRY_READ);
+        else if (expr->type == AST::Expression_Type::AUTO_ENUM && pass != 0) {
+            auto info = pass_get_node_info(pass, expr, Info_Query::TRY_READ);
             if (info != 0) {
                 type = expression_info_get_type(info);
                 fill_from_symbol_table = false;
@@ -2041,10 +2041,10 @@ bool syntax_editor_display_analysis_info(AST::Node * node)
     auto expr = AST::downcast<AST::Expression>(node);
     if (expr->type != AST::Expression_Type::MEMBER_ACCESS) return false;
 
-    auto workload = code_query_get_ast_node_workload(node);
-    if (workload == 0) return false;
+    auto pass = code_query_get_analysis_pass(node);
+    if (pass == 0) return false;
 
-    auto expression_info = workload_get_node_info(workload, expr, Info_Query::TRY_READ);
+    auto expression_info = pass_get_node_info(pass, expr, Info_Query::TRY_READ);
     if (expression_info == 0 || expression_info->contains_errors) {
         return false;
     }

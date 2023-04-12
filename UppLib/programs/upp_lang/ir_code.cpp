@@ -676,19 +676,19 @@ IR_Data_Access ir_data_access_create_constant_i32(i32 value) {
 
 // Code Gen
 Expression_Info* get_info(AST::Expression* node) {
-    return workload_get_node_info(ir_generator.current_workload, node, Info_Query::READ_NOT_NULL);
+    return pass_get_node_info(ir_generator.current_pass, node, Info_Query::READ_NOT_NULL);
 }
 
 Statement_Info* get_info(AST::Statement* node) {
-    return workload_get_node_info(ir_generator.current_workload, node, Info_Query::READ_NOT_NULL);
+    return pass_get_node_info(ir_generator.current_pass, node, Info_Query::READ_NOT_NULL);
 }
 
 Argument_Info* get_info(AST::Argument* node) {
-    return workload_get_node_info(ir_generator.current_workload, node, Info_Query::READ_NOT_NULL);
+    return pass_get_node_info(ir_generator.current_pass, node, Info_Query::READ_NOT_NULL);
 }
 
 Case_Info* get_info(AST::Switch_Case* node) {
-    return workload_get_node_info(ir_generator.current_workload, node, Info_Query::READ_NOT_NULL);
+    return pass_get_node_info(ir_generator.current_pass, node, Info_Query::READ_NOT_NULL);
 }
 
 IR_Data_Access ir_generator_generate_cast(IR_Code_Block* ir_block, IR_Data_Access source, Type_Signature* result_type, Info_Cast_Type cast_type)
@@ -1652,7 +1652,7 @@ void ir_generator_generate_queued_items(bool gen_bytecode)
             }
             continue;
         }
-        ir_generator.current_workload = mod_func->code_workload;
+        ir_generator.current_pass = mod_func->code_workload->current_pass;
 
         {
             assert(mod_func->code_workload != 0, "");
@@ -1768,7 +1768,7 @@ void ir_generator_finish(bool gen_bytecode)
         auto global = globals[i];
         if (!global->has_initial_value) continue;
 
-        ir_generator.current_workload = &global->definition_workload->base;
+        ir_generator.current_pass = global->definition_workload->base.current_pass;
         IR_Instruction move_instr;
         move_instr.type = IR_Instruction_Type::MOVE;
         move_instr.options.move.destination = ir_data_access_create_global(global);
