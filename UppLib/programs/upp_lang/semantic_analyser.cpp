@@ -32,6 +32,7 @@ void analysis_workload_destroy(Workload_Base* workload);
 Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression* expression, Expression_Context context);
 Type_Signature* semantic_analyser_analyse_expression_value(AST::Expression* rc_expression, Expression_Context context);
 Type_Signature* semantic_analyser_analyse_expression_type(AST::Expression* rc_expression);
+Type_Signature* semantic_analyser_try_convert_value_to_type(AST::Expression* expression, bool log_error);
 Control_Flow semantic_analyser_analyse_block(AST::Code_Block* code_block);
 
 bool workload_executer_switch_to_workload(Workload_Base* workload);
@@ -617,6 +618,7 @@ Function_Progress* function_progress_create_polymorphic_instance(Polymorphic_Ins
     progress->body_workload->body_node = base_progress->body_workload->body_node;
     progress->body_workload->progress = progress;
     progress->body_workload->base.parent_table = base_progress->header_workload->function_node->options.function.symbol_table;
+    progress->body_workload->base.current_polymorphic_values = empty_instance->parameter_values;
     progress->function->code_workload = upcast(progress->body_workload);
 
     progress->compile_workload = workload_executer_allocate_workload<Workload_Function_Cluster_Compile>(0);
@@ -2752,6 +2754,13 @@ void analysis_workload_append_to_string(Workload_Base* workload, String* string)
         string_append_formated(string, "Bake-Execution");
         break;
     }
+    case Analysis_Workload_Type::FUNCTION_PARAMETER: {
+        auto param = downcast<Workload_Function_Parameter>(workload);
+        Symbol* symbol = param->header->progress->function->symbol;
+        const char* fn_id = symbol == 0 ? "Lambda" : symbol->id->characters;
+        string_append_formated(string, "Paramter: %s of %s", param->param_node->name->characters, fn_id);
+        break;
+    }
     case Analysis_Workload_Type::FUNCTION_BODY: {
         Symbol* symbol = downcast<Workload_Function_Body>(workload)->progress->function->symbol;
         const char* fn_id = symbol == 0 ? "Lambda" : symbol->id->characters;
@@ -3400,7 +3409,10 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 // This means we are in the base analysis and just found a parameter-dependency
                 if (!param.is_polymorphic) {
                     semantic_analyser_add_error_info(error_information_make_text("Function headers cannot access normal parameters!"));
-                    EXIT_ERROR(param.workload->base_type);
+                    EXIT_VALUE(param.workload->base_type);
+                }
+                else if (type_signature_equals(param.workload->base_type, types.type_type)) { // Not sure if this is a hack or required...
+                    EXIT_TYPE(types.unknown_type);
                 }
                 EXIT_VALUE(param.workload->base_type);
             }
@@ -4213,6 +4225,13 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             case Expression_Result_Type::VALUE:
             case Expression_Result_Type::CONSTANT:
             {
+                // Check if it's actually a type, since the * can be used both as address of and as pointer type...
+                // Note: Maybe this should already be done in analyse_expression_any, but I'm not sure yet
+                auto maybe_type = semantic_analyser_try_convert_value_to_type(unary_node.expr, false);
+                if (maybe_type != 0) {
+                    EXIT_TYPE(type_system_make_pointer(type_system, maybe_type));
+                }
+
                 Type_Signature* operand_type = operand_result->context_ops.after_cast_type;
                 if (!expression_has_memory_address(unary_node.expr)) {
                     semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_ADDRESS_MUST_NOT_BE_OF_TEMPORARY_RESULT, expr);
@@ -4510,13 +4529,11 @@ Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression* expre
     return result;
 }
 
-Type_Signature* semantic_analyser_analyse_expression_type(AST::Expression* expression)
+Type_Signature* semantic_analyser_try_convert_value_to_type(AST::Expression* expression, bool log_error)
 {
     auto& type_system = compiler.type_system;
     auto& types = type_system.predefined_types;
-    auto result = semantic_analyser_analyse_expression_any(expression, expression_context_make_auto_dereference());
-    SET_ACTIVE_EXPR_INFO(result);
-
+    auto result = get_info(expression);
     switch (result->result_type)
     {
     case Expression_Result_Type::TYPE:
@@ -4530,9 +4547,14 @@ Type_Signature* semantic_analyser_analyse_expression_type(AST::Expression* expre
         }
         if (!type_signature_equals(result->context_ops.after_cast_type, types.type_type))
         {
-            semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_IS_NOT_A_TYPE, expression);
-            semantic_analyser_add_error_info(error_information_make_given_type(result->context_ops.after_cast_type));
-            return types.unknown_type;
+            if (log_error) {
+                semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_IS_NOT_A_TYPE, expression);
+                semantic_analyser_add_error_info(error_information_make_given_type(result->context_ops.after_cast_type));
+                return types.unknown_type;
+            }
+            else {
+                return 0;
+            }
         }
 
         if (result->result_type == Expression_Result_Type::VALUE)
@@ -4545,22 +4567,33 @@ Type_Signature* semantic_analyser_analyse_expression_type(AST::Expression* expre
             {
                 u64 type_index = *(u64*)comptime.data;
                 if (type_index >= type_system.internal_type_infos.size) {
-                    semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_CONTAINS_INVALID_TYPE_HANDLE, expression);
-                    return types.unknown_type;
+                    if (log_error) {
+                        semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_CONTAINS_INVALID_TYPE_HANDLE, expression);
+                        return types.unknown_type;
+                    }
+                    else {
+                        return 0;
+                    }
                 }
                 return type_system.types[type_index];
             }
             case Comptime_Result_Type::UNAVAILABLE:
                 return types.unknown_type;
             case Comptime_Result_Type::NOT_COMPTIME:
-                semantic_analyser_log_error(Semantic_Error_Type::TYPE_NOT_KNOWN_AT_COMPILE_TIME, expression);
-                return types.unknown_type;
+                if (log_error) {
+                    semantic_analyser_log_error(Semantic_Error_Type::TYPE_NOT_KNOWN_AT_COMPILE_TIME, expression);
+                    return types.unknown_type;
+                }
+                else {
+                    return 0;
+                }
             default: panic("");
             }
         }
         else {
             auto type_index = upp_constant_to_value<u64>(&compiler.constant_pool, result->options.constant);
             if (type_index >= type_system.internal_type_infos.size) {
+                // Note: Always log this error, because this should never happen!
                 semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_CONTAINS_INVALID_TYPE_HANDLE, expression);
                 return types.unknown_type;
             }
@@ -4574,14 +4607,26 @@ Type_Signature* semantic_analyser_analyse_expression_type(AST::Expression* expre
     case Expression_Result_Type::HARDCODED_FUNCTION:
     case Expression_Result_Type::POLYMORPHIC_FUNCTION:
     case Expression_Result_Type::FUNCTION: {
-        semantic_analyser_log_error(Semantic_Error_Type::EXPECTED_TYPE, expression);
-        semantic_analyser_add_error_info(error_information_make_expression_result_type(result->result_type));
-        return types.unknown_type;
+        if (log_error) {
+            semantic_analyser_log_error(Semantic_Error_Type::EXPECTED_TYPE, expression);
+            semantic_analyser_add_error_info(error_information_make_expression_result_type(result->result_type));
+            return types.unknown_type;
+        }
+        return 0;
     }
     default: panic("");
     }
-    panic("");
-    return types.unknown_type;
+    panic("Shouldn't happen");
+    return 0;
+}
+
+Type_Signature* semantic_analyser_analyse_expression_type(AST::Expression* expression)
+{
+    auto& type_system = compiler.type_system;
+    auto& types = type_system.predefined_types;
+    auto result = semantic_analyser_analyse_expression_any(expression, expression_context_make_auto_dereference());
+    SET_ACTIVE_EXPR_INFO(result);
+    return semantic_analyser_try_convert_value_to_type(expression, true);
 }
 
 Type_Signature* semantic_analyser_analyse_expression_value(AST::Expression* expression, Expression_Context context)
