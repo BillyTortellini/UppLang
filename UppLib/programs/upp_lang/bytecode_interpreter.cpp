@@ -681,7 +681,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
         }
         break;
     case Instruction_Type::CALL_FUNCTION: {
-        if (&interpreter->stack[interpreter->stack.size - 1] - interpreter->stack_pointer < interpreter->generator->maximum_function_stack_depth) {
+        if (&interpreter->stack[interpreter->stack.size - 1] - interpreter->stack_pointer <= interpreter->generator->maximum_function_stack_depth) {
             interpreter->exit_code = Exit_Code::STACK_OVERFLOW;
             return true;
         }
