@@ -70,12 +70,6 @@ Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbo
 
 Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool search_parents, bool internals_ok, AST::Symbol_Read* reference)
 {
-    // Sanity check
-    if (reference != 0 && reference->symbol != 0) {
-        panic("Symbol already found, I dont know if this path has a use case");
-        return reference->symbol;
-    }
-
     // Search for symbol
     Symbol* symbol = nullptr;
     bool add_reference = true;

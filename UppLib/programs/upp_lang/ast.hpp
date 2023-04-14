@@ -6,9 +6,6 @@
 #include "compiler_misc.hpp"
 #include "source_code.hpp"
 
-struct Symbol;
-struct Symbol_Table;
-
 namespace AST
 {
     struct Expression;
@@ -121,9 +118,6 @@ namespace AST
         Node base;
         String* name;
         Optional<Symbol_Read*> path_child;
-
-        // NOTE: During refactoring this is now inside symbol read (previously in Symbol-Dependency)
-        Symbol* symbol; // Note: is null until discovered!
     };
 
     struct Module
@@ -131,8 +125,6 @@ namespace AST
         Node base;
         Dynamic_Array<Definition*> definitions;
         Dynamic_Array<Project_Import*> imports;
-
-        Symbol_Table* symbol_table;
     };
 
     struct Enum_Member
@@ -149,8 +141,6 @@ namespace AST
         String* name;
         Optional<Expression*> type;
         Optional<Expression*> value;
-
-        Symbol* symbol;
     };
 
     struct Argument
@@ -167,8 +157,6 @@ namespace AST
         String* name;
         Expression* type;
         Optional<Expression*> default_value;
-
-        Symbol* symbol;
     };
 
     struct Code_Block
@@ -176,8 +164,6 @@ namespace AST
         Node base;
         Dynamic_Array<Statement*> statements;
         Optional<String*> block_id;
-
-        Symbol_Table* symbol_table;
     };
 
     enum class Structure_Type {
@@ -264,7 +250,6 @@ namespace AST
             struct {
                 Expression* signature;
                 Code_Block* body;
-                Symbol_Table* symbol_table;
             } function;
             struct {
                 Dynamic_Array<Parameter*> parameters;

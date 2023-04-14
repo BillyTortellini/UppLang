@@ -691,6 +691,14 @@ Case_Info* get_info(AST::Switch_Case* node) {
     return pass_get_node_info(ir_generator.current_pass, node, Info_Query::READ_NOT_NULL);
 }
 
+Symbol* get_info(AST::Symbol_Read* node) {
+    return pass_get_node_info(ir_generator.current_pass, node, Info_Query::READ_NOT_NULL)->symbol;
+}
+
+Symbol* get_info(AST::Definition* node) {
+    return pass_get_node_info(ir_generator.current_pass, node, Info_Query::READ_NOT_NULL)->symbol;
+}
+
 IR_Data_Access ir_generator_generate_cast(IR_Code_Block* ir_block, IR_Data_Access source, Type_Signature* result_type, Info_Cast_Type cast_type)
 {
     if (cast_type == Info_Cast_Type::NO_CAST) return source;
@@ -913,7 +921,6 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
     }
     case Expression_Result_Type::HARDCODED_FUNCTION:
     case Expression_Result_Type::POLYMORPHIC_FUNCTION:
-    case Expression_Result_Type::MODULE:
         panic("must not happen");
     case Expression_Result_Type::VALUE:
         break; // Rest of this function
@@ -1062,8 +1069,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
             call_instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, function);
             break;
         }
-        case Expression_Result_Type::TYPE:
-        case Expression_Result_Type::MODULE: {
+        case Expression_Result_Type::TYPE: {
             panic("Must not happen after semantic analysis!");
             break;
         }
@@ -1092,7 +1098,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
         while (read->path_child.available) {
             read = read->path_child.value;
         }
-        auto symbol = read->symbol;
+        auto symbol = get_info(read);
         switch (symbol->type)
         {
         case Symbol_Type::GLOBAL: {
@@ -1389,8 +1395,9 @@ void ir_generator_generate_block(IR_Code_Block* ir_block, AST::Code_Block* ast_b
                 // Comptime definitions should be already handled
                 continue;
             }
-            assert(definition->symbol->type == Symbol_Type::VARIABLE, "");
-            auto var_type = definition->symbol->options.variable_type;
+            auto symbol = get_info(definition);
+            assert(symbol->type == Symbol_Type::VARIABLE, "");
+            auto var_type = symbol->options.variable_type;
             dynamic_array_push_back(&ir_block->registers, var_type);
 
             IR_Data_Access access;

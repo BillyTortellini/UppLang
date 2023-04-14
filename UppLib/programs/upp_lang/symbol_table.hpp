@@ -21,8 +21,8 @@ struct Polymorphic_Base;
 
 namespace AST
 {
-    struct Node;
     struct Symbol_Read;
+    struct Node;
 }
 
 

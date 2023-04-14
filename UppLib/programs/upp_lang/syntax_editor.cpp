@@ -396,7 +396,7 @@ void syntax_editor_synchronize_tokens()
         assert(!changed, "Syntax editor has to make sure that lines are sanitized after edits!");
 
         source_code_tokenize_line(line_changes[i]);
-        logg("Synchronized: %d/%d\n", index.block_index.block_index, index.line_index);
+        //logg("Synchronized: %d/%d\n", index.block_index.block_index, index.line_index);
     }
 }
 
@@ -415,8 +415,8 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
     }
     syntax_editor.code_changed_since_last_compile = false;
     syntax_editor.last_compile_was_with_code_gen = generate_code;
-    //compiler_compile_incremental(&syntax_editor.history, (generate_code ? Compile_Type::BUILD_CODE : Compile_Type::ANALYSIS_ONLY));
-    compiler_compile_clean(syntax_editor.code, (generate_code ? Compile_Type::BUILD_CODE : Compile_Type::ANALYSIS_ONLY), string_create(syntax_editor.file_path));
+    compiler_compile_incremental(&syntax_editor.history, (generate_code ? Compile_Type::BUILD_CODE : Compile_Type::ANALYSIS_ONLY));
+    //compiler_compile_clean(syntax_editor.code, (generate_code ? Compile_Type::BUILD_CODE : Compile_Type::ANALYSIS_ONLY), string_create(syntax_editor.file_path));
 
     // Collect errors from all compiler stages
     {
@@ -459,29 +459,44 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 
 
 // Code Queries
+Analysis_Pass* code_query_get_analysis_pass(AST::Node* base);
 Symbol* code_query_get_ast_node_symbol(AST::Node* base)
 {
+    if (base->type != AST::Node_Type::DEFINITION &&
+        base->type != AST::Node_Type::SYMBOL_READ &&
+        base->type != AST::Node_Type::PARAMETER) {
+        return 0;
+    }
+
+    auto pass = code_query_get_analysis_pass(base);
+    if (pass == 0) return 0;
     switch (base->type)
     {
     case AST::Node_Type::DEFINITION: {
-        auto definition = AST::downcast<AST::Definition>(base);
-        if (definition->symbol != 0) { // Just for debuggin purposes
-            int val = (i32)definition->symbol->type;
-            if (val > 20 || val < 0) {
-                return 0;
-            }
+        auto info = pass_get_node_info(pass, AST::downcast<AST::Definition>(base), Info_Query::TRY_READ);
+        if (info == 0) {
+            return 0;
         }
-        return definition->symbol;
+        return info->symbol;
     }
     case AST::Node_Type::SYMBOL_READ: {
         auto read = AST::downcast<AST::Symbol_Read>(base);
-        return read->symbol;
+        auto info = pass_get_node_info(pass, AST::downcast<AST::Symbol_Read>(base), Info_Query::TRY_READ);
+        if (info == 0) {
+            return 0;
+        }
+        return info->symbol;
     }
     case AST::Node_Type::PARAMETER: {
         auto param = AST::downcast<AST::Parameter>(base);
-        return param->symbol;
+        auto info = pass_get_node_info(pass, AST::downcast<AST::Parameter>(base), Info_Query::TRY_READ);
+        if (info == 0) {
+            return 0;
+        }
+        return info->symbol;
     }
     }
+    panic("");
     return 0;
 }
 
@@ -508,29 +523,36 @@ Symbol_Table* code_query_get_ast_node_symbol_table(AST::Node* base)
         - Function (Parameter symbol are here
         - Code-Block
     */
+    Symbol_Table* table = compiler.semantic_analyser->root_symbol_table;
+    Analysis_Pass* pass = code_query_get_analysis_pass(base);
+    if (pass == 0) return table;
     while (base != 0)
     {
         switch (base->type)
         {
         case AST::Node_Type::MODULE: {
-            auto module = AST::downcast<AST::Module>(base);
-            return module->symbol_table;
+            auto info = pass_get_node_info(pass, AST::downcast<AST::Module>(base), Info_Query::TRY_READ);
+            if (info == 0) { break; }
+            return info->symbol_table;
         }
         case AST::Node_Type::CODE_BLOCK: {
-            auto block = AST::downcast<AST::Code_Block>(base);
+            auto block = pass_get_node_info(pass, AST::downcast<AST::Code_Block>(base), Info_Query::TRY_READ);
+            if (block == 0) { break; }
             return block->symbol_table;
         }
         case AST::Node_Type::EXPRESSION: {
             auto expr = AST::downcast<AST::Expression>(base);
             if (expr->type == AST::Expression_Type::FUNCTION) {
-                return expr->options.function.symbol_table;
+                if (pass->origin_workload->type == Analysis_Workload_Type::FUNCTION_HEADER) {
+                    return ((Workload_Function_Header*)(pass->origin_workload))->progress->function->parameter_table;
+                }
             }
             break;
         }
         }
         base = base->parent;
     }
-    return compiler.semantic_analyser->root_symbol_table;
+    return table;
 }
 
 
@@ -761,6 +783,7 @@ void code_completion_find_suggestions()
     bool fill_from_symbol_table = false;
     Symbol_Table* specific_table = 0;
 
+    // Check for specific contexts where we can fill the suggestions more smartly (e.g. when typing struct member, module-path, auto-enum, ...)
     if (node->type == AST::Node_Type::EXPRESSION)
     {
         auto expr = AST::downcast<AST::Expression>(node);
@@ -814,10 +837,16 @@ void code_completion_find_suggestions()
     else if (node->parent != 0 && node->parent->type == AST::Node_Type::SYMBOL_READ)
     {
         auto parent_read = AST::downcast<AST::Symbol_Read>(node->parent);
-        if (parent_read->symbol->type == Symbol_Type::MODULE) {
-            specific_table = parent_read->symbol->options.module_table;
+        auto pass = code_query_get_analysis_pass(node);
+        if (pass == 0) {
+            fill_from_symbol_table = true;
         }
-        fill_from_symbol_table = true;
+        else {
+            auto info = pass_get_node_info(pass, parent_read, Info_Query::TRY_READ);
+            if (info != 0 && info->symbol != 0) {
+                specific_table = info->symbol->options.module_table;
+            }
+        }
     }
     else {
         fill_from_symbol_table = true;
@@ -2203,7 +2232,7 @@ void syntax_editor_render()
         }
     }
 
-    if (!show_context_info) {
+    if (!show_context_info && false) {
         show_context_info = true;
         auto str = token_type_as_string(get_cursor_token(false).type);
         string_append_string(&context, &str);

@@ -1,20 +1,10 @@
 
 
-
-* Bugs remain with type type...
-Also I need to reanalyse the header multiple times, so I will create something like an 'active'-analysis pass
-
-
-Problems:
-
-foo :: ($T: Type, a: T) -> T // a is a completely normal parameter, nothing polymorphic about it
-    return a * 2 // Here a is never read as a polymorphic symbol...
-
-What the fugg is this supposed to mean? That parameter types are always coupled to the current workload? ... Maybe
-Well I cannot set the parameter type of the symbol to something else, since this would sugg with the current workload system.
-
+BUGS:
+ - Stack overflow in bytecode interpreter seems to fugg everything up
 
 Features that I may want to do next:
+    - Symbol-Resolves and symbol tables should not be part of AST, but rather of Analysis_Info
     - Symbol-Imports with using, so that namespaces can be used reasonably, for Symbols, e.g. using A~* or using x.a
     - Struct polymorphism
     - Implicit Polymorphism in functions (e.g. (x: $T, y: T)), return value also...
