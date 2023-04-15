@@ -21,7 +21,7 @@ struct Polymorphic_Base;
 
 namespace AST
 {
-    struct Symbol_Read;
+    struct Symbol_Lookup;
     struct Node;
 }
 
@@ -72,7 +72,7 @@ struct Symbol
     Symbol_Table* origin_table;
     AST::Node* definition_node; // Note: This is a base because it could be either AST::Definition or AST::Parameter
     bool internal;  // Internal symbols are only valid if referenced in the same internal scope (Variables, parameters). Required for anonymous structs or functions.
-    Dynamic_Array<AST::Symbol_Read*> references;
+    Dynamic_Array<AST::Symbol_Lookup*> references;
 };
 
 struct Symbol_Table
@@ -93,5 +93,5 @@ Symbol_Table* symbol_table_create(Symbol_Table* parent, bool is_internal);
 void symbol_table_destroy(Symbol_Table* symbol_table);
 void symbol_table_append_to_string(String* string, Symbol_Table* table, bool print_root);
 void symbol_append_to_string(Symbol* symbol, String* string);
-Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool search_parents, bool interals_ok, AST::Symbol_Read* reference);
+Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool search_parents, bool interals_ok, AST::Symbol_Lookup* reference);
 

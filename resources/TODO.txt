@@ -1,10 +1,160 @@
 
 
-BUGS:
- - Stack overflow in bytecode interpreter seems to fugg everything up
+Maybe some initial rules for using:
+Use cases:
+    Invalid                       using Symbol_Read            using B
+    Adds last symbol to table     using Symbol_Path            using B~a
+    Import all                    using Symbol_Path~*          using Output~*
+    Alias                         using Symbol_Path as ID      using Output~print_line
+    Alias Normal                  using Symbol_Read as ID      using y as x
+    File Import (All symbols)     using String_Literal         using "library.upp"
+    File Import (As module)       using String_Literal as ID   using "library.upp" as Quick_Mathz
+
+So what is
+    using B~*
+    using A as B
+
+    // Note: Alias cycles possible
+    using A as B
+    using B as A
+
+Order of eggsecution is:
+    1. Define all se symbolz (Definitions + using/aliases)
+
+
+Design Question: 
+    - What happens in an order-dependent (Code-Block) Situation? when are the using Symbols added?
+        Example:
+            main :: ()
+                x := 15
+                using a as b
+                a := 17
+
+        I think that I want inner-definitions to not be able to access the usings (Code-Block),
+        and that they are evaluated in order. I think this is a good idea because otherwise
+        you cannot really do variable renamings, and later on using struct will also not be possible for variables.
+
+    - Are usings transitive? When I do using A~* will all usings in A also be imported?
+        Example:
+            World :: module
+                using Utility~log
+                using Datastructures~List
+                test :: ()
+                    log("Starting World test now")
+
+                add_items(items: List) 
+                    do_smth()
+
+            main :: ()
+                using World~*
+                test() // Should work
+                log()  // ?
+
+        I don't think they need to be transitive, which means that the code is probably going to be a little bit more complicated
+
+    - How/when are symbol-overloads handled? With using it's a lot simpler to have the same symbol imported twice!
+
+
+Implementation Problems:
+    What about:
+        using A as B
+        using Somewhere~*
+    Here we need to have somewhere already imported before I can lookup up the alias
+
+    What about
+        Bar :: module
+            Foo :: module
+        Baz :: module
+            Foo :: module
+                
+        using Foo~*
+        using Bar~*
+        vs.
+        using Foo~Bar~*
+
+        
+    When do we do the lookup where the using is pointing? Should that be a workload?
+    Ideas for using: 
+    Aliases: 
+    So using require a Symbol-Lookup/Path lookup (To find if the symbol exists to where it's pointing)
+
+
+            
+
+
+using/import implementation
+
+using "../common_datastructures.upp" // Imports all symbols into this symbol table
+using x as y // A 'normal' alias
+using "console_output.upp" as Output
+
+using as 
+
+// Maybe i should keep using the import thing for this?
+import "library.upp"
+import "library.upp" as Image_Loading
+
+import A as B          // Make new alias for the thing that is a 
+
+// What about structs
+Dynamic_Array :: struct(T: Type)
+    buffer: []T
+    size: int
+
+    create :: (initial_capacity := 1) -> result: Dynamic_Array($T)
+        using result
+        buffer = new [initial_capacity]T
+        size = 0
+        return result;
+        
+Player :: struct
+    name: String
+    age: int
+    alive: bool
+    exp: float
+
+main :: ()
+    player := Player.{"Frank", 15, true, 100}
+    using player~name
+    print_string(name)
+
+    using player
+    using player~*
+    using Output~print_line
+   
+
+
+Image_Loading~load_file("digg.png")
+
+using Output~print_formated
+
+using Datastructures~Dynamic_Array
+
+using Printing~* // New syntax for using: Symbol_Read can have * at the end...
+
+// I think I would rather have a Symbol_Path and a Symbol_Read independently,
+// everything should work with the Symbol_Path
+
+x := Dynamic_Array~create()
+x := Dynamic_Array~create_from_template(template, 64)
+x := Dynamic_Array~create_from_array(.[15, 32, 100])
+
+x.add(10, 32, 100)
+elem, worked = x.pop() // Remove  
+elem = x.last
+
+new_buffer := Dynamic_Array~create_template(Type.INVALID, 256)
+Dynamic_Array~last(&new_buffer)
+Dynamic_Array~pop(_newbuffer)
+
+print_formated("Hell world")
+output~print_formated("hello world")
+
+Printing~print_formated
+
+
 
 Features that I may want to do next:
-    - Symbol-Resolves and symbol tables should not be part of AST, but rather of Analysis_Info
     - Symbol-Imports with using, so that namespaces can be used reasonably, for Symbols, e.g. using A~* or using x.a
     - Struct polymorphism
     - Implicit Polymorphism in functions (e.g. (x: $T, y: T)), return value also...
@@ -17,7 +167,7 @@ Features that I may want to do next:
     - Incremental Semantic Analysis (--> leads to caching #bakes)
     - For-Loops (for i := 0; i < 10; i += 1), foreach (for a in array)
     - Reintegrate C-compilation + Rework C-Importer to just generate an Upp-file with definitions
-    - Context system?
+    - Context system? (Allocators and others)
     - ImGui for Editor (Rendering rework)
     - Code-Editor features (auto formatting, visual mode, motions and delete...)
     - Expression blocks, implicit lambdas (.->)

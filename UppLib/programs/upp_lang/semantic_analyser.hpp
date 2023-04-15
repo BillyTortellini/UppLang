@@ -38,7 +38,7 @@ namespace AST
 {
     struct Node;
     struct Code_Block;
-    struct Symbol_Read;
+    struct Path_Lookup;
 }
 
 
@@ -320,7 +320,7 @@ struct Dependency_Information
     List_Node<Workload_Base*>* dependent_node;
     // Information for cyclic resolve
     bool only_symbol_read_dependency;
-    Dynamic_Array<AST::Symbol_Read*> symbol_reads;
+    Dynamic_Array<AST::Symbol_Lookup*> symbol_lookups;
 };
 
 struct Workload_Executer
@@ -462,7 +462,11 @@ struct Definition_Info {
     Symbol* symbol;
 };
 
-struct Symbol_Read_Info {
+struct Symbol_Lookup_Info {
+    Symbol* symbol; // Resolved symbol
+};
+
+struct Path_Lookup_Info {
     Symbol* symbol; // Resolved symbol
 };
 
@@ -479,7 +483,8 @@ union Analysis_Info
     Argument_Info arg_info;
     Parameter_Info param_info;
     Definition_Info definition_info;
-    Symbol_Read_Info read_info;
+    Symbol_Lookup_Info symbol_lookup_info;
+    Path_Lookup_Info path_info;
     Module_Info module_info;
 };
 
@@ -495,9 +500,10 @@ Case_Info* pass_get_node_info(Analysis_Pass* pass, AST::Switch_Case* node, Info_
 Argument_Info* pass_get_node_info(Analysis_Pass* pass, AST::Argument* node, Info_Query query);
 Statement_Info* pass_get_node_info(Analysis_Pass* pass, AST::Statement* node, Info_Query query);
 Code_Block_Info* pass_get_node_info(Analysis_Pass* pass, AST::Code_Block* node, Info_Query query);
-Symbol_Read_Info* pass_get_node_info(Analysis_Pass* pass, AST::Symbol_Read* node, Info_Query query);
+Symbol_Lookup_Info* pass_get_node_info(Analysis_Pass* pass, AST::Symbol_Lookup* node, Info_Query query);
 Definition_Info* pass_get_node_info(Analysis_Pass* pass, AST::Definition* node, Info_Query query);
 Parameter_Info* pass_get_node_info(Analysis_Pass* pass, AST::Parameter* node, Info_Query query);
+Path_Lookup_Info* pass_get_node_info(Analysis_Pass* pass, AST::Path_Lookup* node, Info_Query query);
 Module_Info* pass_get_node_info(Analysis_Pass* pass, AST::Module* node, Info_Query query);
 
 Type_Signature* expression_info_get_type(Expression_Info* info);

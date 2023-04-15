@@ -463,7 +463,8 @@ Analysis_Pass* code_query_get_analysis_pass(AST::Node* base);
 Symbol* code_query_get_ast_node_symbol(AST::Node* base)
 {
     if (base->type != AST::Node_Type::DEFINITION &&
-        base->type != AST::Node_Type::SYMBOL_READ &&
+        base->type != AST::Node_Type::PATH_LOOKUP &&
+        base->type != AST::Node_Type::SYMBOL_LOOKUP &&
         base->type != AST::Node_Type::PARAMETER) {
         return 0;
     }
@@ -474,26 +475,19 @@ Symbol* code_query_get_ast_node_symbol(AST::Node* base)
     {
     case AST::Node_Type::DEFINITION: {
         auto info = pass_get_node_info(pass, AST::downcast<AST::Definition>(base), Info_Query::TRY_READ);
-        if (info == 0) {
-            return 0;
-        }
-        return info->symbol;
+        return info == 0 ? 0 : info->symbol;
     }
-    case AST::Node_Type::SYMBOL_READ: {
-        auto read = AST::downcast<AST::Symbol_Read>(base);
-        auto info = pass_get_node_info(pass, AST::downcast<AST::Symbol_Read>(base), Info_Query::TRY_READ);
-        if (info == 0) {
-            return 0;
-        }
-        return info->symbol;
+    case AST::Node_Type::SYMBOL_LOOKUP: {
+        auto info = pass_get_node_info(pass, AST::downcast<AST::Symbol_Lookup>(base), Info_Query::TRY_READ);
+        return info == 0 ? 0 : info->symbol;
+    }
+    case AST::Node_Type::PATH_LOOKUP: {
+        auto info = pass_get_node_info(pass, AST::downcast<AST::Path_Lookup>(base), Info_Query::TRY_READ);
+        return info == 0 ? 0 : info->symbol;
     }
     case AST::Node_Type::PARAMETER: {
-        auto param = AST::downcast<AST::Parameter>(base);
         auto info = pass_get_node_info(pass, AST::downcast<AST::Parameter>(base), Info_Query::TRY_READ);
-        if (info == 0) {
-            return 0;
-        }
-        return info->symbol;
+        return info == 0 ? 0 : info->symbol;
     }
     }
     panic("");
@@ -834,17 +828,32 @@ void code_completion_find_suggestions()
             }
         }
     }
-    else if (node->parent != 0 && node->parent->type == AST::Node_Type::SYMBOL_READ)
+    else if (node->parent != 0 && node->parent->type == AST::Node_Type::PATH_LOOKUP)
     {
-        auto parent_read = AST::downcast<AST::Symbol_Read>(node->parent);
+        auto lookup = AST::downcast<AST::Symbol_Lookup>(node); 
+        auto path = AST::downcast<AST::Path_Lookup>(node->parent);
         auto pass = code_query_get_analysis_pass(node);
-        if (pass == 0) {
+        fill_from_symbol_table = true;
+        if (pass != 0) 
+        {
+            // Find previous part of the current path
+            int prev_index = -1;
+            for (int i = 0; i < path->parts.size; i++) {
+                if (path->parts[i] == lookup) {
+                    prev_index = i - 1;
+                }
+            }
+            // Try to get symbol table from there
             fill_from_symbol_table = true;
-        }
-        else {
-            auto info = pass_get_node_info(pass, parent_read, Info_Query::TRY_READ);
-            if (info != 0 && info->symbol != 0) {
-                specific_table = info->symbol->options.module_table;
+            if (prev_index != -1) {
+                auto info = pass_get_node_info(pass, path->parts[prev_index], Info_Query::TRY_READ);
+                if (info != 0) {
+                    auto symbol = info->symbol;
+                    if (symbol->type == Symbol_Type::MODULE) {
+                        fill_from_symbol_table = false;
+                        specific_table = symbol->options.module_table;
+                    }
+                }
             }
         }
     }

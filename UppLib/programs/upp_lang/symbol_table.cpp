@@ -62,13 +62,13 @@ Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbo
     new_sym->type = type;
     new_sym->origin_table = symbol_table;
     new_sym->internal = is_internal;
-    new_sym->references = dynamic_array_create_empty<AST::Symbol_Read*>(1);
+    new_sym->references = dynamic_array_create_empty<AST::Symbol_Lookup*>(1);
 
     hashtable_insert_element(&symbol_table->symbols, id, new_sym);
     return new_sym;
 }
 
-Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool search_parents, bool internals_ok, AST::Symbol_Read* reference)
+Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool search_parents, bool internals_ok, AST::Symbol_Lookup* reference)
 {
     // Search for symbol
     Symbol* symbol = nullptr;

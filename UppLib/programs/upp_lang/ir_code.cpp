@@ -691,7 +691,7 @@ Case_Info* get_info(AST::Switch_Case* node) {
     return pass_get_node_info(ir_generator.current_pass, node, Info_Query::READ_NOT_NULL);
 }
 
-Symbol* get_info(AST::Symbol_Read* node) {
+Symbol* get_info(AST::Path_Lookup* node) {
     return pass_get_node_info(ir_generator.current_pass, node, Info_Query::READ_NOT_NULL)->symbol;
 }
 
@@ -1092,13 +1092,9 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
         dynamic_array_push_back(&ir_block->instructions, call_instr);
         return call_instr.options.call.destination;
     }
-    case AST::Expression_Type::SYMBOL_READ:
+    case AST::Expression_Type::PATH_LOOKUP:
     {
-        auto read = expression->options.symbol_read;
-        while (read->path_child.available) {
-            read = read->path_child.value;
-        }
-        auto symbol = get_info(read);
+        auto symbol = get_info(expression->options.path_lookup);
         switch (symbol->type)
         {
         case Symbol_Type::GLOBAL: {

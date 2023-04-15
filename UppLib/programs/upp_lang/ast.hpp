@@ -91,12 +91,13 @@ namespace AST
         MODULE,
 
         // Helpers
-        ARGUMENT,       // Expression with optional name
-        PARAMETER,      // Name/Type compination with optional default value + comptime
-        SYMBOL_READ,    // A symbol read
-        PROJECT_IMPORT, // Loading a project
-        ENUM_MEMBER,    // ID with or without value-expr
-        SWITCH_CASE,    // Expression 
+        ARGUMENT,          // Expression with optional name
+        PARAMETER,         // Name/Type compination with optional default value + comptime
+        SYMBOL_LOOKUP,     // A single identifier lookup
+        PATH_LOOKUP,       // Possibliy multiple symbol-lookups together (e.g. Utils~Logger~log)
+        PROJECT_IMPORT,    // Loading a project
+        ENUM_MEMBER,       // ID with or without value-expr
+        SWITCH_CASE,       // Expression 
     };
 
     struct Node
@@ -113,11 +114,19 @@ namespace AST
         String* filename;
     };
 
-    struct Symbol_Read
+    struct Symbol_Lookup
     {
         Node base;
         String* name;
-        Optional<Symbol_Read*> path_child;
+    };
+
+    struct Path_Lookup
+    {
+        Node base;
+        Dynamic_Array<Symbol_Lookup*> parts;
+        // NOTE: The last node is only a convenient pointer to the end of parts, but the
+        //       node is also inside parts, e.g. parts[parts.size-1] == last
+        Symbol_Lookup* last;
     };
 
     struct Module
@@ -187,7 +196,7 @@ namespace AST
         BAKE_BLOCK,
 
         // Memory Reads
-        SYMBOL_READ,
+        PATH_LOOKUP,
         LITERAL_READ,
         ARRAY_ACCESS,
         MEMBER_ACCESS,
@@ -235,7 +244,7 @@ namespace AST
                 Optional<Expression*> to_type;
                 Expression* operand;
             } cast;
-            Symbol_Read* symbol_read;
+            Path_Lookup* path_lookup;
             String* auto_enum;
             Literal_Value literal_read;
             struct {
@@ -341,7 +350,7 @@ namespace AST
     void base_print(Node* node);
     void base_append_to_string(Node* base, String* str);
 
-    void symbol_read_append_to_string(Symbol_Read* read, String* string);
+    void path_lookup_append_to_string(Path_Lookup* read, String* string);
     int binop_priority(Binop binop);
 
     namespace Helpers
@@ -355,7 +364,8 @@ namespace AST
         bool type_correct(Enum_Member* base);
         bool type_correct(Module* base);
         bool type_correct(Project_Import* base);
-        bool type_correct(Symbol_Read* base);
+        bool type_correct(Path_Lookup* base);
+        bool type_correct(Symbol_Lookup* base);
         bool type_correct(Code_Block* base);
     }
 

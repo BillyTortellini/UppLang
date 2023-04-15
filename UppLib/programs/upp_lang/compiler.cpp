@@ -16,7 +16,7 @@
 // Parser stages
 bool enable_lexing = true;
 bool enable_parsing = true;
-bool enable_analysis = true;
+bool enable_analysis = false;
 bool enable_ir_gen = true;
 bool enable_bytecode_gen = true;
 bool enable_c_generation = false;
@@ -24,7 +24,7 @@ bool enable_c_compilation = false;
 
 // Output stages
 bool output_identifiers = false;
-bool output_ast = false;
+bool output_ast = true;
 bool output_type_system = false;
 bool output_root_table = false;
 bool output_ir = false;
@@ -38,7 +38,7 @@ bool run_testcases_compiled = false;
 
 // Execution
 bool enable_output = true;
-bool output_only_on_code_gen = true;
+bool output_only_on_code_gen = false;
 bool enable_execution = true;
 bool execute_binary = false;
 

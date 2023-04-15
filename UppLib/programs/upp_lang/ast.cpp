@@ -7,13 +7,17 @@ namespace AST
         switch (node->type)
         {
         case Node_Type::SWITCH_CASE: 
+        case Node_Type::SYMBOL_LOOKUP: 
         case Node_Type::PROJECT_IMPORT: 
         case Node_Type::PARAMETER: 
         case Node_Type::ARGUMENT: 
-        case Node_Type::SYMBOL_READ: 
         case Node_Type::ENUM_MEMBER: 
         case Node_Type::DEFINITION: 
             break;
+        case Node_Type::PATH_LOOKUP: {
+            dynamic_array_destroy(&((Path_Lookup*)node)->parts);
+            break;
+        }
         case Node_Type::CODE_BLOCK: {
             auto block = (Code_Block*)node;
             if (block->statements.data != 0) {
@@ -116,9 +120,9 @@ namespace AST
             FILL_OPTIONAL(param->default_value);
             break;
         }
-        case Node_Type::SYMBOL_READ: {
-            auto read = (Symbol_Read*)node;
-            FILL_OPTIONAL(read->path_child);
+        case Node_Type::PATH_LOOKUP: {
+            auto path = (Path_Lookup*)node;
+            FILL_ARRAY(path->parts);
             break;
         }
         case Node_Type::ENUM_MEMBER: {
@@ -140,6 +144,9 @@ namespace AST
             auto def = (Definition*)node;
             FILL_OPTIONAL(def->type);
             FILL_OPTIONAL(def->value);
+            break;
+        }
+        case Node_Type::SYMBOL_LOOKUP: {
             break;
         }
         case Node_Type::PROJECT_IMPORT: {
@@ -179,8 +186,8 @@ namespace AST
                 FILL(cast.operand);
                 break;
             }
-            case Expression_Type::SYMBOL_READ: {
-                FILL(expr->options.symbol_read);
+            case Expression_Type::PATH_LOOKUP: {
+                FILL(expr->options.path_lookup);
                 break;
             }
             case Expression_Type::LITERAL_READ: {
@@ -366,6 +373,9 @@ namespace AST
             FILL_OPTIONAL(enum_member->value);
             break;
         }
+        case Node_Type::SYMBOL_LOOKUP: {
+            break;
+        }
         case Node_Type::PROJECT_IMPORT: {
             break;
         }
@@ -375,9 +385,9 @@ namespace AST
             FILL_OPTIONAL(param->default_value);
             break;
         }
-        case Node_Type::SYMBOL_READ: {
-            auto read = (Symbol_Read*)node;
-            FILL_OPTIONAL(read->path_child);
+        case Node_Type::PATH_LOOKUP: {
+            auto path = (Path_Lookup*)node;
+            FILL_ARRAY(path->parts);
             break;
         }
         case Node_Type::ARGUMENT: {
@@ -430,8 +440,8 @@ namespace AST
                 FILL(cast.operand);
                 break;
             }
-            case Expression_Type::SYMBOL_READ: {
-                FILL(expr->options.symbol_read);
+            case Expression_Type::PATH_LOOKUP: {
+                FILL(expr->options.path_lookup);
                 break;
             }
             case Expression_Type::LITERAL_READ: {
@@ -610,9 +620,12 @@ namespace AST
             string_append_formated(str, "IMPORT ");
             string_append_string(str, ((Project_Import*)base)->filename);
             break;
-        case Node_Type::SYMBOL_READ:
-            string_append_formated(str, "SYMBOL_READ ");
-            string_append_string(str, ((Symbol_Read*)base)->name);
+        case Node_Type::PATH_LOOKUP:
+            string_append_formated(str, "PATH_LOOKUP ");
+            break;
+        case Node_Type::SYMBOL_LOOKUP:
+            string_append_formated(str, "SYMBOL_LOOKUP ");
+            string_append_string(str, ((Symbol_Lookup*)base)->name);
             break;
         case Node_Type::SWITCH_CASE: string_append_formated(str, "SWITCH_CASE"); break;
         case Node_Type::CODE_BLOCK: string_append_formated(str, "CODE_BLOCK"); break;
@@ -650,7 +663,7 @@ namespace AST
             case Expression_Type::CAST: string_append_formated(str, "CAST"); break;
             case Expression_Type::BAKE_BLOCK: string_append_formated(str, "BAKE_BLOCK"); break;
             case Expression_Type::BAKE_EXPR: string_append_formated(str, "BAKE_EXPR"); break;
-            case Expression_Type::SYMBOL_READ: string_append_formated(str, "SYMBOL_READ "); break;
+            case Expression_Type::PATH_LOOKUP: string_append_formated(str, "PATH_LOOKUP "); break;
             case Expression_Type::LITERAL_READ: {
                 string_append_formated(str, "LITERAL_READ "); 
                 auto& read = expr->options.literal_read;
@@ -761,17 +774,24 @@ namespace AST
         return 0;
     }
 
-    void symbol_read_append_to_string(Symbol_Read* read, String* string)
+    void path_lookup_append_to_string(Path_Lookup* path, String* string)
     {
-        string_append_string(string, read->name);
-        if (read->path_child.available) {
-            string_append_formated(string, "~");
-            symbol_read_append_to_string(read->path_child.value, string);
+        for (int i = 0; i < path->parts.size; i++) {
+            string_append_formated(string, "%s", path->parts[i]->name);
+            if (i != path->parts.size - 1) {
+                string_append_character(string, '~');
+            }
         }
     }
 
     namespace Helpers
     {
+        bool type_correct(Symbol_Lookup* base) {
+            return base->base.type == Node_Type::SYMBOL_LOOKUP;
+        }
+        bool type_correct(Path_Lookup* base) {
+            return base->base.type == Node_Type::PATH_LOOKUP;
+        }
         bool type_correct(Definition* base) {
             return base->base.type == Node_Type::DEFINITION;
         }
@@ -798,9 +818,6 @@ namespace AST
         }
         bool type_correct(Project_Import* base) {
             return base->base.type == Node_Type::PROJECT_IMPORT;
-        }
-        bool type_correct(Symbol_Read* base) {
-            return base->base.type == Node_Type::SYMBOL_READ;
         }
         bool type_correct(Code_Block* base) {
             return base->base.type == Node_Type::CODE_BLOCK;

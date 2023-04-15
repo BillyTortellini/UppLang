@@ -289,7 +289,7 @@ namespace Parser
                 auto expr = downcast<Expression>(node);
                 assert(expr->type == AST::Expression_Type::ERROR_EXPR, "Only error expression may have 0-sized token range");
             }
-            else if (node->type == AST::Node_Type::CODE_BLOCK || node->type == AST::Node_Type::SYMBOL_READ) {
+            else if (node->type == AST::Node_Type::CODE_BLOCK || node->type == AST::Node_Type::SYMBOL_LOOKUP) {
             }
             else if (node->type == AST::Node_Type::STATEMENT && AST::downcast<Statement>(node)->type == AST::Statement_Type::BLOCK) {
             }
@@ -1071,13 +1071,13 @@ namespace Parser
             advance_token();
             advance_token();
         }
-        else if (related_expression != 0 && related_expression->type == Expression_Type::SYMBOL_READ && !related_expression->options.symbol_read->path_child.available) {
+        else if (related_expression != 0 && related_expression->type == Expression_Type::PATH_LOOKUP && related_expression->options.path_lookup->parts.size > 1) {
             // This is an experimental feature: give the block the name of the condition if possible,
             // e.g. switch color
             //      case .RED
             //          break color
             // In the future I also want to use this for loop variables, e.g.   loop a in array {break a}
-            result = optional_make_success<String*>(related_expression->options.symbol_read->name);
+            result = optional_make_success<String*>(related_expression->options.path_lookup->last->name);
         }
         return result;
     }
@@ -1232,35 +1232,41 @@ namespace Parser
         // Bases
         if (test_token(Token_Type::IDENTIFIER))
         {
-            Symbol_Read* final_read = allocate_base<Symbol_Read>(&result->base, Node_Type::SYMBOL_READ);
-            Symbol_Read* read = final_read;
-            read->path_child.available = false;
-            read->name = get_token(0)->options.identifier;
-            while (test_token(Token_Type::IDENTIFIER) &&
-                test_operator_offset(Operator::TILDE, 1))
+            Path_Lookup* path = allocate_base<Path_Lookup>(&result->base, Node_Type::PATH_LOOKUP);
+            path->parts = dynamic_array_create_empty<Symbol_Lookup*>(1);
+
+            while (true) 
             {
-                advance_token();
-                advance_token();
-                read->path_child = optional_make_success(allocate_base<Symbol_Read>(&read->base, Node_Type::SYMBOL_READ));
+                // Add symbol-lookup Node
+                Symbol_Lookup* lookup = allocate_base<Symbol_Lookup>(upcast(path), Node_Type::SYMBOL_LOOKUP);
+                dynamic_array_push_back(&path->parts, lookup);
+
+                // Check if we actually have an identifier, or if it's an 'empty' path, like "A~B~"
+                // INFO: We have this empty path so that the syntax editor is able to show that a node is missing here!
                 if (test_token(Token_Type::IDENTIFIER)) {
-                    read->path_child.value->name = get_token(0)->options.identifier;
+                    lookup->name = get_token()->options.identifier;
+                    advance_token();
                 }
                 else {
                     auto& pos = parser.state.pos;
-                    log_error("Expected identifier", node_range_make(token_index_advance(pos, -1), pos));
-                    read->path_child.value->name = compiler.id_empty_string;
+                    log_error("Expected identifier", node_range_make(token_index_advance(pos, -1), pos)); // Put error on the ~
+                    lookup->name = compiler.id_empty_string;
                 }
+                SET_END_RANGE(lookup);
 
-                read = read->path_child.value;
-                SET_END_RANGE(read);
+                if (test_operator(Operator::TILDE)) {
+                    advance_token();
+                }
+                else {
+                    break;
+                }
             }
 
-            result->type = Expression_Type::SYMBOL_READ;
-            result->options.symbol_read = final_read;
-            if (test_token(Token_Type::IDENTIFIER)) {
-                advance_token();
-            }
-            SET_END_RANGE(final_read);
+            SET_END_RANGE(path);
+            path->last = path->parts[path->parts.size - 1];
+
+            result->type = Expression_Type::PATH_LOOKUP;
+            result->options.path_lookup = path;
             PARSE_SUCCESS(result);
         }
 
