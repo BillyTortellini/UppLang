@@ -20,7 +20,7 @@
 
 // GLOBALS
 bool PRINT_DEPENDENCIES = false;
-bool PRINT_TIMING = true;
+bool PRINT_TIMING = false;
 static Semantic_Analyser semantic_analyser;
 static Workload_Executer workload_executer;
 
@@ -1449,20 +1449,20 @@ Symbol* path_lookup_resolve(AST::Path_Lookup* path, Symbol_Table* symbol_table)
     {
         auto part = path->parts[i];
         // Find symbol of path part
-        Symbol* symbol = symbol_table_find_symbol(table, part->name, i == 0, false, part);
+        Symbol* symbol = symbol_table_find_symbol(table, part->name, i == 0, path->parts.size == 1, part);
         if (symbol == 0) {
             semantic_analyser_log_error(Semantic_Error_Type::SYMBOL_TABLE_UNRESOLVED_SYMBOL, upcast(part));
             path_lookup_set_error_symbol(path, semantic_analyser.current_workload);
             return semantic_analyser.predefined_symbols.error_symbol;
         }
         else {
-            get_info(part)->symbol = symbol;
+            get_info(part, true)->symbol = symbol;
         }
 
         // Check if we are at the end of the path
         if (part == path->last) {
             // Set result of whole path (not indiviual part) to the last symbol
-            get_info(path)->symbol = symbol;
+            get_info(path, true)->symbol = symbol;
             return symbol;
         }
 

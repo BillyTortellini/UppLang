@@ -16,7 +16,7 @@
 // Parser stages
 bool enable_lexing = true;
 bool enable_parsing = true;
-bool enable_analysis = false;
+bool enable_analysis = true;
 bool enable_ir_gen = true;
 bool enable_bytecode_gen = true;
 bool enable_c_generation = false;
@@ -24,7 +24,7 @@ bool enable_c_compilation = false;
 
 // Output stages
 bool output_identifiers = false;
-bool output_ast = true;
+bool output_ast = false;
 bool output_type_system = false;
 bool output_root_table = false;
 bool output_ir = false;
@@ -166,14 +166,6 @@ void compiler_parse_code(Code_Source* source)
 
     assert(source->source_parse == 0, "Hey");
     source->source_parse = Parser::execute_clean(source->code);
-
-    if (output_ast && do_output)
-    {
-        compiler_switch_timing_task(Timing_Task::OUTPUT);
-        logg("\n");
-        logg("--------AST PARSE RESULT--------:\n");
-        AST::base_print(&source->source_parse->root->base);
-    }
 }
 
 void compiler_analyse_code(Code_Source* source, bool add_discovery_workload)
@@ -316,6 +308,13 @@ void compiler_finish_compile()
     }
 
     compiler_switch_timing_task(Timing_Task::OUTPUT);
+    if (do_output && output_ast) {
+
+        compiler_switch_timing_task(Timing_Task::OUTPUT);
+        logg("\n");
+        logg("--------AST PARSE RESULT--------:\n");
+        AST::base_print(upcast(compiler.main_source->source_parse->root));
+    }
     if (do_output && generate_code)
     {
         //logg("\n\n\n\n\n\n\n\n\n\n\n\n--------SOURCE CODE--------: \n%s\n\n", source_code->characters);

@@ -828,12 +828,30 @@ void code_completion_find_suggestions()
             }
         }
     }
-    else if (node->parent != 0 && node->parent->type == AST::Node_Type::PATH_LOOKUP)
+    else if (node->type == AST::Node_Type::PATH_LOOKUP) {
+        // This probably only happens if the last token was ~
+        auto prev_token = get_cursor_token(false);
+        if (prev_token.type == Token_Type::OPERATOR && prev_token.options.op == Operator::TILDE) {
+            // Try to get token before ~, which should be an identifier...
+            auto node = Parser::find_smallest_enclosing_node(&compiler.main_source->source_parse->root->base, token_index_prev(cursor_token_index));
+            auto pass = code_query_get_analysis_pass(node);
+            if (node->type == AST::Node_Type::SYMBOL_LOOKUP && pass != 0) {
+                auto info = pass_get_node_info(pass, AST::downcast<AST::Symbol_Lookup>(node), Info_Query::TRY_READ);
+                if (info != 0) {
+                    auto symbol = info->symbol;
+                    if (symbol->type == Symbol_Type::MODULE) {
+                        specific_table = symbol->options.module_table;
+                        fill_from_symbol_table = true;
+                    }
+                }
+            }
+        }
+    }
+    else if (node->type == AST::Node_Type::SYMBOL_LOOKUP)
     {
         auto lookup = AST::downcast<AST::Symbol_Lookup>(node); 
         auto path = AST::downcast<AST::Path_Lookup>(node->parent);
         auto pass = code_query_get_analysis_pass(node);
-        fill_from_symbol_table = true;
         if (pass != 0) 
         {
             // Find previous part of the current path
@@ -841,19 +859,22 @@ void code_completion_find_suggestions()
             for (int i = 0; i < path->parts.size; i++) {
                 if (path->parts[i] == lookup) {
                     prev_index = i - 1;
+                    break;
                 }
             }
             // Try to get symbol table from there
-            fill_from_symbol_table = true;
             if (prev_index != -1) {
                 auto info = pass_get_node_info(pass, path->parts[prev_index], Info_Query::TRY_READ);
                 if (info != 0) {
                     auto symbol = info->symbol;
                     if (symbol->type == Symbol_Type::MODULE) {
-                        fill_from_symbol_table = false;
                         specific_table = symbol->options.module_table;
+                        fill_from_symbol_table = true;
                     }
                 }
+            }
+            else {
+                fill_from_symbol_table = true;
             }
         }
     }
