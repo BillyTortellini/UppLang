@@ -19,7 +19,7 @@
 #include "symbol_table.hpp"
 
 // GLOBALS
-bool PRINT_DEPENDENCIES = true;
+bool PRINT_DEPENDENCIES = false;
 bool PRINT_TIMING = false;
 static Semantic_Analyser semantic_analyser;
 static Workload_Executer workload_executer;
@@ -526,7 +526,10 @@ Function_Progress* function_progress_create(Symbol* symbol, AST::Expression* fun
     assert(function_node->type == AST::Expression_Type::FUNCTION, "Has to be function!");
     // Create progress
     auto progress = analysis_progress_allocate_internal<Function_Progress>();
-    progress->function = modtree_function_create_empty(0, symbol, progress, symbol_table_create(semantic_analyser.current_workload->current_symbol_table, false));
+    progress->function = modtree_function_create_empty(
+        0, symbol, progress, 
+        symbol_table_create_with_parent(semantic_analyser.current_workload->current_symbol_table, false)
+    );
     progress->poly_instance = 0;
 
     // Set Symbol info
@@ -733,6 +736,7 @@ Module_Progress* module_progress_create(AST::Module* module, Symbol* symbol) {
         analysis->last_import_workload = 0;
         analysis->base.parent_table = semantic_analyser.root_symbol_table; 
         analysis->progress = progress;
+        analysis->parent_analysis = 0;
         if (semantic_analyser.current_workload != 0 && semantic_analyser.current_workload->current_symbol_table != 0) {
             analysis->base.parent_table = semantic_analyser.current_workload->current_symbol_table;
         }
@@ -748,13 +752,14 @@ Module_Progress* module_progress_create(AST::Module* module, Symbol* symbol) {
 
 
 // Create correct workloads for comptime definitions, for non-comptime checks if its a variable or a global and sets the symbol correctly
-void analyser_create_symbol_and_workload_for_definition(AST::Definition* definition)
+Workload_Base* analyser_create_symbol_and_workload_for_definition(AST::Definition* definition)
 {
     Symbol_Table* current_table = semantic_analyser.current_workload->current_symbol_table;
     Symbol* symbol = symbol_table_define_symbol(current_table, definition->name, Symbol_Type::DEFINITION_UNFINISHED, AST::upcast(definition), false);
     get_info(definition, true)->symbol = symbol; // Set definition symbol (Editor information)
 
     // Create workload for functions, structs and modules directly
+    Workload_Base* result = 0;
     bool create_definition_workload = true; // If not function/struct/module and not a variable
     if (definition->is_comptime) {
         // Check if it's a 'named' construct (function, struct, module)
@@ -766,18 +771,17 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
             switch (value->type)
             {
             case AST::Expression_Type::MODULE: {
-                // FUTURE: Here I should probably add another workload, but since this would require some sort of cluster analysis, it's recursive for now
-                // Set symbol
                 symbol->type = Symbol_Type::MODULE;
                 symbol->options.module_progress = module_progress_create(value->options.module, symbol);
+                result = upcast(symbol->options.module_progress->module_analysis);
                 break;
             }
             case AST::Expression_Type::FUNCTION: {
-                function_progress_create(symbol, value);
+                result = upcast(function_progress_create(symbol, value)->header_workload);
                 break;
             }
             case AST::Expression_Type::STRUCTURE_TYPE: {
-                struct_progress_create(symbol, value);
+                result = upcast(struct_progress_create(symbol, value)->analysis_workload);
                 break;
             }
             default: {
@@ -804,7 +808,9 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
         definition_workload->definition_node = definition;
         definition_workload->symbol = symbol;
         symbol->options.definition_workload = definition_workload;
+        result = upcast(definition_workload);
     }
+    return result;
 }
 
 
@@ -1514,27 +1520,43 @@ void path_lookup_set_error_symbol(AST::Path_Lookup* path, Workload_Base* workloa
     }
 }
 
+
 Symbol* symbol_lookup_resolve(AST::Symbol_Lookup* lookup, Symbol_Table* symbol_table, bool search_parents, bool internals_ok)
 {
-    // Find symbol of path part
-    Symbol* symbol = symbol_table_find_symbol(symbol_table, lookup->name, search_parents, internals_ok, lookup);
     auto info = pass_get_node_info(semantic_analyser.current_workload->current_pass, lookup, Info_Query::CREATE_IF_NULL);
-    if (symbol == 0) {
+    auto error = semantic_analyser.predefined_symbols.error_symbol;
+
+    // Find all symbols with this id
+    auto results = dynamic_array_create_empty<Symbol*>(1);
+    SCOPE_EXIT(dynamic_array_destroy(&results));
+    symbol_table_find_symbol_all(symbol_table, lookup->name, search_parents, internals_ok, lookup, &results);
+    if (results.size == 0) {
         semantic_analyser_log_error(Semantic_Error_Type::SYMBOL_TABLE_UNRESOLVED_SYMBOL, upcast(lookup));
-        info->symbol = semantic_analyser.predefined_symbols.error_symbol;
+        info->symbol = error;
     }
-    else {
-        // Resolve aliases
-        if (symbol->type == Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL) {
-            analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(symbol->options.alias_workload), lookup);
-            workload_executer_wait_for_dependency_resolution();
-            info->symbol = symbol->options.alias_workload->alias_for;
-            assert(info->symbol->type != Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, "Chained aliases should never happen here!");
+    else if (results.size == 1) {
+        info->symbol = results[0];
+    }
+    else { // size > 1
+        if (internals_ok && results[0]->internal) {
+            // So that we can have variable 'overloads', and we found a internal symbol first, we'll take that one
+            info->symbol = results[0];
         }
         else {
-            info->symbol = symbol;
+            semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(lookup));
+            semantic_analyser_add_error_info(error_information_make_text("Multiple results found for this symbol, cannot decided"));
+            info->symbol = error;
         }
     }
+
+    // Handled aliases
+    if (info->symbol->type == Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL) {
+        analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(info->symbol->options.alias_workload), lookup);
+        workload_executer_wait_for_dependency_resolution();
+        info->symbol = info->symbol->options.alias_workload->alias_for;
+        assert(info->symbol->type != Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, "Chained aliases should never happen here!");
+    }
+
     return info->symbol;
 }
 
@@ -2298,11 +2320,24 @@ void analysis_workload_entry(void* userdata)
         auto module_node = analysis->module_node;
 
         // Create and set symbol table
-        analysis->symbol_table = symbol_table_create(workload->current_symbol_table, false);
+        analysis->symbol_table = symbol_table_create_with_parent(workload->current_symbol_table, false);
         get_info(module_node, true)->symbol_table = analysis->symbol_table;
         RESTORE_ON_SCOPE_EXIT(workload->current_symbol_table, analysis->symbol_table);
 
-        // Handle imports
+        // Handle Usings
+        if (analysis->parent_analysis != 0) {
+            analysis->last_import_workload = analysis->parent_analysis->last_import_workload;
+            if (analysis->last_import_workload != 0) {
+                analysis_workload_add_dependency_internal(
+                    upcast(analysis->progress->event_symbol_table_ready),
+                    upcast(analysis->last_import_workload),
+                    0
+                );
+            }
+        }
+
+        auto last_normal_usings = dynamic_array_create_empty<Workload_Using_Resolve*>(1);
+        SCOPE_EXIT(dynamic_array_destroy(&last_normal_usings));
         for (int i = 0; i < module_node->using_nodes.size; i++) 
         {
             auto using_node = module_node->using_nodes[i];
@@ -2333,6 +2368,16 @@ void analysis_workload_entry(void* userdata)
             }
             analysis_workload_add_dependency_internal(upcast(analysis->progress->event_symbol_table_ready), upcast(using_workload), 0);
 
+            if (using_node->type == AST::Using_Type::NORMAL) {
+                dynamic_array_push_back(&last_normal_usings, using_workload);
+            }
+            else {
+                for (int i = 0; i < last_normal_usings.size; i++) {
+                    analysis_workload_add_dependency_internal(upcast(using_workload), upcast(last_normal_usings[i]), 0);
+                }
+                dynamic_array_reset(&last_normal_usings);
+            }
+
             // Define symbol if it's a normal using or an alias
             if (using_node->type == AST::Using_Type::NORMAL) {
                 using_workload->symbol = symbol_table_define_symbol(
@@ -2357,7 +2402,16 @@ void analysis_workload_entry(void* userdata)
 
         // Create workloads for definitions
         for (int i = 0; i < module_node->definitions.size; i++) {
-            analyser_create_symbol_and_workload_for_definition(module_node->definitions[i]);
+            auto workload = analyser_create_symbol_and_workload_for_definition(module_node->definitions[i]);
+            // If I added a new module I need to set myself as the parent
+            if (workload != 0 && workload->type == Analysis_Workload_Type::MODULE_ANALYSIS) {
+                auto new_progress = downcast<Workload_Module_Analysis>(workload);
+                new_progress->parent_analysis = analysis;
+            }
+            else {
+                // All other workloads need to wait until the symbol table is ready!
+                analysis_workload_add_dependency_internal(workload, upcast(analysis->progress->event_symbol_table_ready), 0);
+            }
         }
         break;
     }
@@ -2374,8 +2428,40 @@ void analysis_workload_entry(void* userdata)
             using_workload->alias_for = path_lookup_resolve(node->path);
         }
         else {
-            semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(node));
-            semantic_analyser_add_error_info(error_information_make_text("Here we need to do something lol"));
+            Symbol* symbol = path_lookup_resolve(node->path); 
+            assert(symbol->type != Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, "Must not happen here");
+            if (symbol->type == Symbol_Type::MODULE) 
+            {
+                auto progress = symbol->options.module_progress;
+                // Wait for symbol discovery to finish (Probably not even important)
+                analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(progress->module_analysis), node->path->last);
+                workload_executer_wait_for_dependency_resolution();
+
+                // If transitive we need to wait now until the last of their usings finish
+                auto last_import = progress->module_analysis->last_import_workload;
+                if (node->type == AST::Using_Type::SYMBOL_IMPORT_TRANSITIV && last_import != 0 && last_import != using_workload) {
+                    analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(progress->module_analysis->last_import_workload), node->path->last);
+                    workload_executer_wait_for_dependency_resolution();
+                }
+
+                // Refresh symbol after dependency wait
+                symbol = get_info(node->path->last)->symbol;
+                if (symbol->type != Symbol_Type::ERROR_SYMBOL) {
+                    // Add using
+                    symbol_table_add_include_table(
+                        semantic_analyser.current_workload->current_symbol_table,
+                        progress->module_analysis->symbol_table,
+                        node->type == AST::Using_Type::SYMBOL_IMPORT_TRANSITIV,
+                        false,
+                        upcast(node)
+                    );
+                }
+            }
+            else if (symbol->type != Symbol_Type::ERROR_SYMBOL) {
+                semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(node));
+                semantic_analyser_add_error_info(error_information_make_text("Cannot import from non module"));
+                semantic_analyser_add_error_info(error_information_make_symbol(symbol));
+            }
         }
         break;
     }
@@ -2936,6 +3022,30 @@ bool workload_executer_switch_to_workload(Workload_Base* workload)
     }
     semantic_analyser.current_workload = workload;
     bool result = fiber_pool_switch_to_handel(workload->fiber_handle);
+    if (PRINT_DEPENDENCIES) {
+        auto tmp = string_create_empty(1);
+        analysis_workload_append_to_string(workload, &tmp);
+        if (workload->dependencies.count == 0) {
+            SCOPE_EXIT(string_destroy(&tmp));
+            logg("FINISHED: %s\n", tmp.characters);
+        }
+        else
+        {
+            // Print dependencies
+            List_Node<Workload_Base*>* dependency_node = workload->dependencies.head;
+            if (dependency_node != 0) {
+                string_append_formated(&tmp, "    Depends On:\n");
+            }
+            while (dependency_node != 0) {
+                SCOPE_EXIT(dependency_node = dependency_node->next);
+                Workload_Base* dependency = dependency_node->value;
+                string_append_formated(&tmp, "      ");
+                analysis_workload_append_to_string(dependency, &tmp);
+                string_append_formated(&tmp, "\n");
+            }
+            logg("WAITING: %s\n", tmp.characters);
+        }
+    }
     semantic_analyser.current_workload = 0;
     return result;
 }
@@ -4966,18 +5076,23 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
                 context = expression_context_make_specific_type(expected_return_type);
             }
             auto return_type = semantic_analyser_analyse_expression_value(return_stat.value, context);
+            bool is_unknown = type_signature_equals(return_type, types.unknown_type);
 
-            // Check bake return type
             if (analyser.current_workload->type == Analysis_Workload_Type::BAKE_ANALYSIS)
             {
                 if (type_signature_equals(expected_return_type, types.void_type)) {
                     current_function->signature = type_system_make_function(&type_system, {}, return_type);
                 }
-                else if (!type_signature_equals(expected_return_type, return_type)) {
+                else if (!type_signature_equals(expected_return_type, return_type) && !is_unknown) {
                     semantic_analyser_log_error(Semantic_Error_Type::BAKE_BLOCK_RETURN_TYPE_DIFFERS_FROM_PREVIOUS_RETURN, statement);
                     semantic_analyser_add_error_info(error_information_make_given_type(return_type));
                     semantic_analyser_add_error_info(error_information_make_expected_type(expected_return_type));
                 }
+            }
+            else if (!type_signature_equals(expected_return_type, return_type) && !is_unknown) {
+                semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE_RETURN, statement);
+                semantic_analyser_add_error_info(error_information_make_expected_type(types.void_type));
+                semantic_analyser_add_error_info(error_information_make_given_type(return_type));
             }
         }
         else
@@ -5283,7 +5398,7 @@ Control_Flow semantic_analyser_analyse_block(AST::Code_Block* block)
     block_info->flow = Control_Flow::SEQUENTIAL;
 
     // Create symbol table for block
-    block_info->symbol_table = symbol_table_create(semantic_analyser.current_workload->current_symbol_table, true);
+    block_info->symbol_table = symbol_table_create_with_parent(semantic_analyser.current_workload->current_symbol_table, true);
     RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->current_symbol_table, block_info->symbol_table);
 
     // Analyse order independent symbols inside code-block (Comptimes and variables)
@@ -5339,15 +5454,14 @@ void semantic_analyser_finish()
     auto& type_system = compiler.type_system;
 
     // Check if main is defined
-    Symbol* main_symbol = symbol_table_find_symbol(
-        semantic_analyser.root_module->module_analysis->symbol_table, compiler.id_main, true, true, 0
-    );
+    Symbol** main_symbol_opt = hashtable_find_element(&semantic_analyser.root_module->module_analysis->symbol_table->symbols, compiler.id_main);
     ModTree_Function* main_function = 0;
-    if (main_symbol == 0) {
+    if (main_symbol_opt == 0) {
         semantic_analyser_log_error(Semantic_Error_Type::MAIN_NOT_DEFINED, (AST::Node*)0);
     }
     else
     {
+        auto main_symbol = *main_symbol_opt;
         if (main_symbol->type != Symbol_Type::FUNCTION) {
             semantic_analyser_log_error(Semantic_Error_Type::MAIN_MUST_BE_FUNCTION, main_symbol->definition_node);
             semantic_analyser_add_error_info(error_information_make_symbol(main_symbol));
@@ -5402,7 +5516,7 @@ void semantic_analyser_reset()
             symbol_destroy(semantic_analyser.allocated_symbols[i]);
         }
         dynamic_array_reset(&semantic_analyser.allocated_symbols);
-        semantic_analyser.root_symbol_table = symbol_table_create(0, false);
+        semantic_analyser.root_symbol_table = symbol_table_create();
 
         // AST-Mappings
         {
@@ -5515,6 +5629,7 @@ Semantic_Analyser* semantic_analyser_initialize()
     semantic_analyser.polymorphic_functions = dynamic_array_create_empty<Polymorphic_Base*>(1);
     semantic_analyser.program = 0;
     semantic_analyser.ast_to_pass_mapping = hashtable_create_pointer_empty<AST::Node*, Node_Passes>(1);
+    semantic_analyser.symbol_lookup_visited = hashset_create_pointer_empty<Symbol_Table*>(1);
     semantic_analyser.allocated_passes = dynamic_array_create_empty<Analysis_Pass*>(1);
     semantic_analyser.ast_to_info_mapping = hashtable_create_empty<AST_Info_Key, Analysis_Info*>(1, ast_info_key_hash, ast_info_equals);
     semantic_analyser.allocated_symbol_tables = dynamic_array_create_empty<Symbol_Table*>(16);
@@ -5524,6 +5639,8 @@ Semantic_Analyser* semantic_analyser_initialize()
 
 void semantic_analyser_destroy()
 {
+    hashset_destroy(&semantic_analyser.symbol_lookup_visited);
+
     for (int i = 0; i < semantic_analyser.errors.size; i++) {
         dynamic_array_destroy(&semantic_analyser.errors[i].information);
     }
@@ -5640,7 +5757,7 @@ void semantic_error_get_infos_internal(Semantic_Error e, const char** result_str
         HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_UNARY_OPERATOR, "Unary operator type invalid", Parser::Section::WHOLE);
         HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_BINARY_OPERATOR, "Binary operator types invalid", Parser::Section::WHOLE);
         HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_ASSIGNMENT, "Invalid assignment type", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_RETURN, "Invalid return type", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_RETURN, "Invalid return type", Parser::Section::KEYWORD);
         HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_DELETE, "Only pointer or unsized array types can be deleted", Parser::Section::WHOLE);
         HANDLE_CASE(Semantic_Error_Type::SYMBOL_EXPECTED_TYPE_ON_TYPE_IDENTIFIER, "Expected Type symbol", Parser::Section::WHOLE);
         HANDLE_CASE(Semantic_Error_Type::SYMBOL_ALREADY_DEFINED, "Symbol was already defined", Parser::Section::IDENTIFIER);

@@ -78,10 +78,16 @@ struct Symbol
     Dynamic_Array<AST::Symbol_Lookup*> references;
 };
 
+struct Included_Table
+{
+    bool transitive;
+    bool is_internal; // If it's internal we can access internal symbols of the parent table
+    Symbol_Table* table;
+};
+
 struct Symbol_Table
 {
-    Symbol_Table* parent;
-    bool internal; // Internal symbol tables can access internal variables of the parent symbol table (Currently only Code-Blocks). See Symbol
+    Dynamic_Array<Included_Table> included_tables;
     Hashtable<String*, Symbol*> symbols;
 };
 
@@ -91,11 +97,18 @@ struct Symbol_Error
     AST::Node* error_node;
 };
 
-Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbol_Type type, AST::Node* definition_node, bool is_internal);
-Symbol_Table* symbol_table_create(Symbol_Table* parent, bool is_internal);
+Symbol_Table* symbol_table_create();
+Symbol_Table* symbol_table_create_with_parent(Symbol_Table* parent_table, bool internal);
 void symbol_table_destroy(Symbol_Table* symbol_table);
 void symbol_destroy(Symbol* symbol);
+
+Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbol_Type type, AST::Node* definition_node, bool is_internal);
+void symbol_table_add_include_table(Symbol_Table* symbol_table, Symbol_Table* included_table, bool transitive, bool internal, AST::Node* include_node);
+// Note: when id == 0, all symbols that are possible will be added
+void symbol_table_find_symbol_all(
+    Symbol_Table* table, String* id, bool search_includes, bool internals_ok, AST::Symbol_Lookup* reference, Dynamic_Array<Symbol*>* results
+);
+
 void symbol_table_append_to_string(String* string, Symbol_Table* table, bool print_root);
 void symbol_append_to_string(Symbol* symbol, String* string);
-Symbol* symbol_table_find_symbol(Symbol_Table* table, String* id, bool search_parents, bool interals_ok, AST::Symbol_Lookup* reference);
 

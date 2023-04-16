@@ -195,6 +195,7 @@ struct Workload_Module_Analysis
     AST::Module* module_node;
     Symbol_Table* symbol_table;
     Workload_Using_Resolve* last_import_workload;
+    Workload_Module_Analysis* parent_analysis;
 };
 
 struct Workload_Using_Resolve
@@ -597,9 +598,11 @@ struct Semantic_Analyser
 
     // Stuff required for analysis
     Symbol_Table* root_symbol_table;
-    Module_Progress* root_module;
     Dynamic_Array<Symbol_Table*> allocated_symbol_tables;
     Dynamic_Array<Symbol*> allocated_symbols;
+    Hashset<Symbol_Table*> symbol_lookup_visited;
+
+    Module_Progress* root_module;
     Dynamic_Array<Analysis_Pass*> allocated_passes;
 
     Predefined_Symbols predefined_symbols;
@@ -834,6 +837,7 @@ struct Semantic_Error
 
 
 void semantic_analyser_add_error_info(Error_Information info);
+Error_Information error_information_make_text(const char* text);
 void semantic_analyser_log_error(Semantic_Error_Type type, AST::Node* node);
 void semantic_analyser_set_error_flag(bool error_due_to_unknown);
 void semantic_error_append_to_string(Semantic_Error e, String* string);

@@ -894,28 +894,13 @@ void code_completion_find_suggestions()
     // Find all available symbols
     if (fill_from_symbol_table)
     {
-        Symbol_Table* symbol_table;
-        if (specific_table != 0) {
-            symbol_table = specific_table;
-        }
-        else {
-            symbol_table = code_query_get_ast_node_symbol_table(node);
-        }
-
-        while (symbol_table != 0)
-        {
-            auto iter = hashtable_iterator_create(&symbol_table->symbols);
-            while (hashtable_iterator_has_next(&iter))
-            {
-                Symbol* symbol = (*iter.value);
-                code_completion_add_and_rank(*symbol->id, partially_typed);
-                hashtable_iterator_next(&iter);
-            }
-            symbol_table = symbol_table->parent;
-
-            // If a specific table is specified, only iterate over that one
-            if (specific_table != 0) {
-                break;
+        Symbol_Table* symbol_table = specific_table != 0 ? specific_table : symbol_table = code_query_get_ast_node_symbol_table(node);
+        if (symbol_table != 0) {
+            auto results = dynamic_array_create_empty<Symbol*>(1);
+            SCOPE_EXIT(dynamic_array_destroy(&results));
+            symbol_table_find_symbol_all(symbol_table, 0, specific_table == 0, true, 0, &results);
+            for (int i = 0; i < results.size; i++) {
+                code_completion_add_and_rank(*results[i]->id, partially_typed);
             }
         }
     }
