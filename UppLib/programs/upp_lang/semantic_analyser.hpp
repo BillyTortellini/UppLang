@@ -23,11 +23,12 @@ struct Analysis_Pass;
 
 struct Workload_Definition;
 struct Workload_Base;
+struct Workload_Using_Resolve;
 
-struct Analysis_Progress;
 struct Function_Progress;
 struct Struct_Progress;
 struct Bake_Progress;
+struct Module_Progress;
 
 namespace Parser
 {
@@ -132,7 +133,10 @@ enum class Dependency_Type
 
 enum class Analysis_Workload_Type
 {
-    MODULE_ANALYSIS,
+    EVENT, // Empty workload, which can have dependencies and dependents
+
+    MODULE_ANALYSIS, // This is basically just symbol discovery
+    USING_RESOLVE,   // 
 
     FUNCTION_HEADER,
     FUNCTION_PARAMETER,
@@ -178,11 +182,27 @@ struct Workload_Base
     Dynamic_Array<Workload_Base*> reachable_clusters;
 };
 
+struct Workload_Event
+{
+    Workload_Base base;
+    const char* description;
+};
+
 struct Workload_Module_Analysis
 {
     Workload_Base base;
+    Module_Progress* progress;
     AST::Module* module_node;
-    Hashset<AST::Module*> visited;
+    Symbol_Table* symbol_table;
+    Workload_Using_Resolve* last_import_workload;
+};
+
+struct Workload_Using_Resolve
+{
+    Workload_Base base;
+    AST::Using* using_node;
+    Symbol* symbol; // May be 0 if its an import
+    Symbol* alias_for; // May be 0 if its an import
 };
 
 struct Workload_Function_Header;
@@ -258,22 +278,8 @@ struct Workload_Bake_Execution
 
 
 // ANALYSIS_PROGRESS
-enum class Analysis_Progress_Type
-{
-    FUNCTION,
-    STRUCTURE,
-    BAKE,
-};
-
-struct Analysis_Progress
-{
-    Analysis_Progress_Type type;
-};
-
 struct Struct_Progress
 {
-    Analysis_Progress base;
-
     Type_Signature* struct_type;
 
     Workload_Struct_Analysis* analysis_workload;
@@ -282,8 +288,6 @@ struct Struct_Progress
 
 struct Bake_Progress
 {
-    Analysis_Progress base;
-
     ModTree_Function* bake_function;
     Comptime_Result result;
 
@@ -293,8 +297,6 @@ struct Bake_Progress
 
 struct Function_Progress
 {
-    Analysis_Progress base;
-
     ModTree_Function* function;
 
     Workload_Function_Header* header_workload;
@@ -304,6 +306,14 @@ struct Function_Progress
     // If we are dealing with a polymorphic instance, this value is not 0
     Polymorphic_Instance* poly_instance;
 };
+
+struct Module_Progress
+{
+    Workload_Module_Analysis* module_analysis;
+    Workload_Event* event_symbol_table_ready; // After all using workloads have ended
+    Symbol* symbol; // May be 0 if root
+};
+
 
 
 
@@ -333,7 +343,7 @@ struct Workload_Executer
     Hashtable<Workload_Pair, Dependency_Information> workload_dependencies;
 
     // Allocations
-    Dynamic_Array<Analysis_Progress*> allocated_progresses;
+    Stack_Allocator progress_allocator;
 };
 
 void workload_executer_resolve();
@@ -491,8 +501,9 @@ union Analysis_Info
 enum class Info_Query
 {
     CREATE,
-    READ_NOT_NULL, // Value must be there, otherwise panic
-    TRY_READ,      // May return 0
+    READ_NOT_NULL,  // Value must be there, otherwise panic
+    TRY_READ,       // May return 0
+    CREATE_IF_NULL, // Always returns info (Creates one if not existing)
 };
 
 Expression_Info* pass_get_node_info(Analysis_Pass* pass, AST::Expression* node, Info_Query query);
@@ -586,7 +597,9 @@ struct Semantic_Analyser
 
     // Stuff required for analysis
     Symbol_Table* root_symbol_table;
+    Module_Progress* root_module;
     Dynamic_Array<Symbol_Table*> allocated_symbol_tables;
+    Dynamic_Array<Symbol*> allocated_symbols;
     Dynamic_Array<Analysis_Pass*> allocated_passes;
 
     Predefined_Symbols predefined_symbols;

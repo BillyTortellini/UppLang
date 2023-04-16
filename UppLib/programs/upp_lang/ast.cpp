@@ -8,7 +8,7 @@ namespace AST
         {
         case Node_Type::SWITCH_CASE: 
         case Node_Type::SYMBOL_LOOKUP: 
-        case Node_Type::PROJECT_IMPORT: 
+        case Node_Type::USING: 
         case Node_Type::PARAMETER: 
         case Node_Type::ARGUMENT: 
         case Node_Type::ENUM_MEMBER: 
@@ -30,8 +30,8 @@ namespace AST
             if (module->definitions.data != 0) {
                 dynamic_array_destroy(&module->definitions);
             }
-            if (module->imports.data != 0) {
-                dynamic_array_destroy(&module->imports);
+            if (module->using_nodes.data != 0) {
+                dynamic_array_destroy(&module->using_nodes);
             }
             break;
         }
@@ -149,12 +149,13 @@ namespace AST
         case Node_Type::SYMBOL_LOOKUP: {
             break;
         }
-        case Node_Type::PROJECT_IMPORT: {
+        case Node_Type::USING: {
+            FILL(((Using*)node)->path);
             break;
         }
         case Node_Type::MODULE: {
             auto module = (Module*)node;
-            FILL_ARRAY(module->imports);
+            FILL_ARRAY(module->using_nodes);
             FILL_ARRAY(module->definitions);
             break;
         }
@@ -376,7 +377,9 @@ namespace AST
         case Node_Type::SYMBOL_LOOKUP: {
             break;
         }
-        case Node_Type::PROJECT_IMPORT: {
+        case Node_Type::USING: {
+            auto use = (Using*)node;
+            FILL(use->path);
             break;
         }
         case Node_Type::PARAMETER: {
@@ -408,7 +411,7 @@ namespace AST
         }
         case Node_Type::MODULE: {
             auto module = (Module*)node;
-            FILL_ARRAY(module->imports);
+            FILL_ARRAY(module->using_nodes);
             FILL_ARRAY(module->definitions);
             break;
         }
@@ -616,10 +619,18 @@ namespace AST
             string_append_formated(str, "DEFINITION ");
             string_append_string(str, ((Definition*)base)->name);
             break;
-        case Node_Type::PROJECT_IMPORT:
-            string_append_formated(str, "IMPORT ");
-            string_append_string(str, ((Project_Import*)base)->filename);
+        case Node_Type::USING: {
+            auto use = (Using*)base;
+            string_append_formated(str, "USING ");
+            if (use->type == Using_Type::SYMBOL_IMPORT) {
+                string_append_formated(str, "~* ");
+
+            }
+            else if (use->type == Using_Type::SYMBOL_IMPORT_TRANSITIV) {
+                string_append_formated(str, "~** ");
+            }
             break;
+        }
         case Node_Type::PATH_LOOKUP:
             string_append_formated(str, "PATH_LOOKUP ");
             break;
@@ -777,7 +788,7 @@ namespace AST
     void path_lookup_append_to_string(Path_Lookup* path, String* string)
     {
         for (int i = 0; i < path->parts.size; i++) {
-            string_append_formated(string, "%s", path->parts[i]->name);
+            string_append_formated(string, "%s", path->parts[i]->name->characters);
             if (i != path->parts.size - 1) {
                 string_append_character(string, '~');
             }
@@ -816,8 +827,8 @@ namespace AST
         bool type_correct(Module* base) {
             return base->base.type == Node_Type::MODULE;
         }
-        bool type_correct(Project_Import* base) {
-            return base->base.type == Node_Type::PROJECT_IMPORT;
+        bool type_correct(Using* base) {
+            return base->base.type == Node_Type::USING;
         }
         bool type_correct(Code_Block* base) {
             return base->base.type == Node_Type::CODE_BLOCK;

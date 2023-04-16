@@ -12,6 +12,7 @@ namespace AST
     struct Statement;
     struct Code_Block;
     struct Definition;
+    struct Path_Lookup;
     enum class Binop
     {
         ADDITION,
@@ -95,7 +96,7 @@ namespace AST
         PARAMETER,         // Name/Type compination with optional default value + comptime
         SYMBOL_LOOKUP,     // A single identifier lookup
         PATH_LOOKUP,       // Possibliy multiple symbol-lookups together (e.g. Utils~Logger~log)
-        PROJECT_IMPORT,    // Loading a project
+        USING,             // Aliases/Symbol-Import/File-Loading
         ENUM_MEMBER,       // ID with or without value-expr
         SWITCH_CASE,       // Expression 
     };
@@ -108,10 +109,18 @@ namespace AST
         Node_Range bounding_range;
     };
 
-    struct Project_Import
+    enum class Using_Type
+    {
+        NORMAL,                  // using A~a
+        SYMBOL_IMPORT,           // using A~*
+        SYMBOL_IMPORT_TRANSITIV  // using A~**
+    };
+
+    struct Using
     {
         Node base;
-        String* filename;
+        Using_Type type;
+        Path_Lookup* path;
     };
 
     struct Symbol_Lookup
@@ -133,7 +142,7 @@ namespace AST
     {
         Node base;
         Dynamic_Array<Definition*> definitions;
-        Dynamic_Array<Project_Import*> imports;
+        Dynamic_Array<Using*> using_nodes;
     };
 
     struct Enum_Member
@@ -363,7 +372,7 @@ namespace AST
         bool type_correct(Expression* base);
         bool type_correct(Enum_Member* base);
         bool type_correct(Module* base);
-        bool type_correct(Project_Import* base);
+        bool type_correct(Using* base);
         bool type_correct(Path_Lookup* base);
         bool type_correct(Symbol_Lookup* base);
         bool type_correct(Code_Block* base);

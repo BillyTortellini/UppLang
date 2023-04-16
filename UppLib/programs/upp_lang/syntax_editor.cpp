@@ -840,8 +840,10 @@ void code_completion_find_suggestions()
                 if (info != 0) {
                     auto symbol = info->symbol;
                     if (symbol->type == Symbol_Type::MODULE) {
-                        specific_table = symbol->options.module_table;
-                        fill_from_symbol_table = true;
+                        specific_table = symbol->options.module_progress->module_analysis->symbol_table;
+                        if (specific_table != 0) {
+                            fill_from_symbol_table = true;
+                        }
                     }
                 }
             }
@@ -868,8 +870,10 @@ void code_completion_find_suggestions()
                 if (info != 0) {
                     auto symbol = info->symbol;
                     if (symbol->type == Symbol_Type::MODULE) {
-                        specific_table = symbol->options.module_table;
-                        fill_from_symbol_table = true;
+                        specific_table = symbol->options.module_progress->module_analysis->symbol_table;
+                        if (specific_table != 0) {
+                            fill_from_symbol_table = true;
+                        }
                     }
                 }
             }

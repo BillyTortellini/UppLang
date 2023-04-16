@@ -494,6 +494,7 @@ namespace Parser
     void parse_follow_block(AST::Node* parent, Block_Context context);
     Code_Block* parse_code_block(Node* parent, AST::Expression* related_expression);
     Block_Parse* parse_source_block(AST::Node* parent, Block_Index block_index, Block_Context context);
+    Path_Lookup* parse_path_lookup(Node* parent);
     Expression* parse_expression(Node* parent);
     Expression* parse_expression_or_error_expr(Node* parent);
     Expression* parse_single_expression(Node* parent);
@@ -598,22 +599,25 @@ namespace Parser
 
 
         // Block Item functions
-        Project_Import* parse_project_import(Node* parent)
+        Using* parse_using(Node* parent)
         {
             CHECKPOINT_SETUP;
-            if (test_keyword_offset(Keyword::IMPORT, 0) && test_token_offset(Token_Type::LITERAL, 1))
+            if (test_keyword_offset(Keyword::USING, 0) && test_token_offset(Token_Type::IDENTIFIER, 1))
             {
-                if (get_token(1)->options.literal_value.type != Literal_Type::STRING) {
-                    CHECKPOINT_EXIT;
-                }
+                auto result = allocate_base<Using>(parent, Node_Type::USING);
+                result->type = Using_Type::NORMAL;
+                advance_token();
+                result->path = parse_path_lookup(upcast(result));
 
-                assert(parent->type == Node_Type::MODULE, "");
-                auto module = (Module*)parent;
-                auto import = allocate_base<Project_Import>(parent, Node_Type::PROJECT_IMPORT);
-                import->filename = get_token(1)->options.literal_value.options.string;
-                advance_token();
-                advance_token();
-                PARSE_SUCCESS(import);
+                if (test_operator(Operator::TILDE_STAR)) {
+                    result->type = Using_Type::SYMBOL_IMPORT;
+                    advance_token();
+                }
+                else if (test_operator(Operator::TILDE_STAR_STAR)) {
+                    result->type = Using_Type::SYMBOL_IMPORT_TRANSITIV;
+                    advance_token();
+                }
+                PARSE_SUCCESS(result);
             }
             CHECKPOINT_EXIT;
         }
@@ -666,9 +670,9 @@ namespace Parser
             if (definition != 0) {
                 return AST::upcast(definition);
             }
-            auto project_import = parse_project_import(parent);
-            if (project_import != 0) {
-                return AST::upcast(project_import);
+            auto using_node = parse_using(parent);
+            if (using_node != 0) {
+                return AST::upcast(using_node);
             }
             return nullptr;
         }
@@ -1071,7 +1075,7 @@ namespace Parser
             advance_token();
             advance_token();
         }
-        else if (related_expression != 0 && related_expression->type == Expression_Type::PATH_LOOKUP && related_expression->options.path_lookup->parts.size > 1) {
+        else if (related_expression != 0 && related_expression->type == Expression_Type::PATH_LOOKUP && related_expression->options.path_lookup->parts.size == 1) {
             // This is an experimental feature: give the block the name of the condition if possible,
             // e.g. switch color
             //      case .RED
@@ -1133,6 +1137,47 @@ namespace Parser
             result->type = parse_expression_or_error_expr((Node*)result);
         }
         PARSE_SUCCESS(result);
+    }
+
+    Path_Lookup* parse_path_lookup(Node* parent)
+    {
+        CHECKPOINT_SETUP;
+        if (!test_token(Token_Type::IDENTIFIER)) {
+            CHECKPOINT_EXIT;
+        }
+
+        Path_Lookup* path = allocate_base<Path_Lookup>(parent, Node_Type::PATH_LOOKUP);
+        path->parts = dynamic_array_create_empty<Symbol_Lookup*>(1);
+
+        while (true)
+        {
+            // Add symbol-lookup Node
+            Symbol_Lookup* lookup = allocate_base<Symbol_Lookup>(upcast(path), Node_Type::SYMBOL_LOOKUP);
+            dynamic_array_push_back(&path->parts, lookup);
+
+            // Check if we actually have an identifier, or if it's an 'empty' path, like "A~B~"
+            // INFO: We have this empty path so that the syntax editor is able to show that a node is missing here!
+            if (test_token(Token_Type::IDENTIFIER)) {
+                lookup->name = get_token()->options.identifier;
+                advance_token();
+            }
+            else {
+                auto& pos = parser.state.pos;
+                log_error("Expected identifier", node_range_make(token_index_advance(pos, -1), pos)); // Put error on the ~
+                lookup->name = compiler.id_empty_string;
+            }
+            SET_END_RANGE(lookup);
+
+            if (test_operator(Operator::TILDE)) {
+                advance_token();
+            }
+            else {
+                break;
+            }
+        }
+
+        path->last = path->parts[path->parts.size - 1];
+        PARSE_SUCCESS(path);
     }
 
     Expression* parse_single_expression_no_postop(Node* parent)
@@ -1232,41 +1277,8 @@ namespace Parser
         // Bases
         if (test_token(Token_Type::IDENTIFIER))
         {
-            Path_Lookup* path = allocate_base<Path_Lookup>(&result->base, Node_Type::PATH_LOOKUP);
-            path->parts = dynamic_array_create_empty<Symbol_Lookup*>(1);
-
-            while (true) 
-            {
-                // Add symbol-lookup Node
-                Symbol_Lookup* lookup = allocate_base<Symbol_Lookup>(upcast(path), Node_Type::SYMBOL_LOOKUP);
-                dynamic_array_push_back(&path->parts, lookup);
-
-                // Check if we actually have an identifier, or if it's an 'empty' path, like "A~B~"
-                // INFO: We have this empty path so that the syntax editor is able to show that a node is missing here!
-                if (test_token(Token_Type::IDENTIFIER)) {
-                    lookup->name = get_token()->options.identifier;
-                    advance_token();
-                }
-                else {
-                    auto& pos = parser.state.pos;
-                    log_error("Expected identifier", node_range_make(token_index_advance(pos, -1), pos)); // Put error on the ~
-                    lookup->name = compiler.id_empty_string;
-                }
-                SET_END_RANGE(lookup);
-
-                if (test_operator(Operator::TILDE)) {
-                    advance_token();
-                }
-                else {
-                    break;
-                }
-            }
-
-            SET_END_RANGE(path);
-            path->last = path->parts[path->parts.size - 1];
-
             result->type = Expression_Type::PATH_LOOKUP;
-            result->options.path_lookup = path;
+            result->options.path_lookup = parse_path_lookup(upcast(result)); // Note: parsing path cannot fail in this case
             PARSE_SUCCESS(result);
         }
 
@@ -1406,7 +1418,7 @@ namespace Parser
         if (test_keyword_offset(Keyword::MODULE, 0)) {
             auto module = allocate_base<Module>(&result->base, Node_Type::MODULE);
             module->definitions = dynamic_array_create_empty<Definition*>(1);
-            module->imports = dynamic_array_create_empty<Project_Import*>(1);
+            module->using_nodes = dynamic_array_create_empty<Using*>(1);
             advance_token();
             parse_follow_block(AST::upcast(module), Block_Context::MODULE);
             node_finalize_range(AST::upcast(module));
@@ -1642,22 +1654,10 @@ namespace Parser
         parser.state.pos = token_index_make_root(code);
         root = allocate_base<Module>(0, Node_Type::MODULE);
         root->definitions = dynamic_array_create_empty<Definition*>(1);
-        root->imports = dynamic_array_create_empty<Project_Import*>(1);
+        root->using_nodes = dynamic_array_create_empty<Using*>(1);
 
         // Parse root
-        auto block_parse = parse_source_block(AST::upcast(root), block_index_make_root(code), Block_Context::MODULE);
-        for (int i = 0; i < block_parse->items.size; i++) {
-            auto node = block_parse->items[i].node;
-            if (node->type == AST::Node_Type::DEFINITION) {
-                dynamic_array_push_back(&root->definitions, AST::downcast<Definition>(node));
-            }
-            else if (node->type == AST::Node_Type::PROJECT_IMPORT) {
-                dynamic_array_push_back(&root->imports, AST::downcast<Project_Import>(node));
-            }
-            else {
-                panic("");
-            }
-        }
+        parse_source_block(AST::upcast(root), block_index_make_root(code), Block_Context::MODULE);
         root->base.range = node_range_make_block(block_index_make_root(code));
         root->base.bounding_range = root->base.range;
     }
@@ -1674,7 +1674,7 @@ namespace Parser
             }
             auto module = AST::downcast<AST::Module>(block_parse->parent);
             dynamic_array_reset(&module->definitions);
-            dynamic_array_reset(&module->imports);
+            dynamic_array_reset(&module->using_nodes);
             break;
         }
         case Block_Context::ENUM: {
@@ -1736,8 +1736,8 @@ namespace Parser
             auto module = AST::downcast<AST::Module>(block_parse->parent);
             for (int i = 0; i < block_parse->items.size; i++) {
                 auto& item = block_parse->items[i].node;
-                if (item->type == AST::Node_Type::PROJECT_IMPORT) {
-                    dynamic_array_push_back(&module->imports, AST::downcast<AST::Project_Import>(item));
+                if (item->type == AST::Node_Type::USING) {
+                    dynamic_array_push_back(&module->using_nodes, AST::downcast<AST::Using>(item));
                 }
                 else if (item->type == AST::Node_Type::DEFINITION) {
                     dynamic_array_push_back(&module->definitions, AST::downcast<AST::Definition>(item));
@@ -2010,7 +2010,7 @@ namespace Parser
         if (!any_inside) {
             return;
         }
-        
+
         int child_index = 0;
         auto child = base_get_child(node, child_index);
         while (child != 0) {
@@ -2043,8 +2043,8 @@ namespace Parser
             for (int i = 0; i < differences.block_differences.size; i++) {
                 dynamic_array_destroy(&differences.block_differences[i].line_states);
             }
-            dynamic_array_destroy(&differences.block_differences);
-            dynamic_array_destroy(&differences.removed_blocks);
+        dynamic_array_destroy(&differences.block_differences);
+        dynamic_array_destroy(&differences.removed_blocks);
         );
 
         // Fill source-differences
@@ -2092,7 +2092,7 @@ namespace Parser
                 }
                 break;
             }
-            case Code_Change_Type::TEXT_INSERT:  {
+            case Code_Change_Type::TEXT_INSERT: {
                 source_difference_mark_line_as_changed(&differences, change.options.text_insert.index.line_index);
                 break;
             }
@@ -2342,7 +2342,7 @@ namespace Parser
                 else if (change.new_line_start != block_parse->items[i].line_start) {
                     auto index_update_helper = [&](int& line, Block_Index block_index) {
                         if (line >= item.line_start && line < item.line_start + item.line_count &&
-                            index_equal(block_index, block_parse->index)) 
+                            index_equal(block_index, block_parse->index))
                         {
                             line = change.new_line_start + (line - item.line_start);
                         }

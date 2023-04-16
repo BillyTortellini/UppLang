@@ -410,50 +410,51 @@ void compiler_compile_incremental(Code_History* history, Compile_Type compile_ty
     compiler_finish_compile();
 }
 
-Code_Source* compiler_add_project_import(AST::Project_Import* project_import)
+Code_Source* compiler_add_project_import(AST::Using* using_node)
 {
-    auto src = compiler_find_ast_code_source(&project_import->base);
-
-    String path = string_create(src->file_path.characters);
-    file_io_relative_to_full_path(&path);
-    bool success = false;
-    SCOPE_EXIT(if (!success) { string_destroy(&path); });
-
-    // Convert relative to full path, taking the folder of the import into account
-    {
-        Optional<int> last_pos = string_find_character_index_reverse(&path, '/', path.size - 1);
-        if (last_pos.available) {
-            string_truncate(&path, last_pos.value + 1);
-        }
-        else {
-            string_reset(&path);
-        }
-        string_append_string(&path, project_import->filename);
-        file_io_relative_to_full_path(&path);
-    }
-
-    // Check cache
-    {
-        Code_Source** cached_code = hashtable_find_element(&compiler.cached_imports, path);
-        if (cached_code != 0) {
-            // Project is already imported
-            compiler_analyse_code(*cached_code, false);
-            return *cached_code;
-        }
-    }
-
-    Optional<String> file_content = file_io_load_text_file(path.characters);
-    SCOPE_EXIT(file_io_unload_text_file(&file_content));
-    if (file_content.available) {
-        auto source_code = source_code_create();
-        source_code_fill_from_string(source_code, file_content.value);
-
-        Code_Source* code_source = code_source_create_empty(Code_Origin::LOADED_FILE, source_code, path);
-        code_source_analyse_clean(code_source, false);
-        success = true;
-        return code_source;
-    }
     return 0;
+    // auto src = compiler_find_ast_code_source(&using_node->base);
+
+    // String path = string_create(src->file_path.characters);
+    // file_io_relative_to_full_path(&path);
+    // bool success = false;
+    // SCOPE_EXIT(if (!success) { string_destroy(&path); });
+
+    // // Convert relative to full path, taking the folder of the import into account
+    // {
+    //     Optional<int> last_pos = string_find_character_index_reverse(&path, '/', path.size - 1);
+    //     if (last_pos.available) {
+    //         string_truncate(&path, last_pos.value + 1);
+    //     }
+    //     else {
+    //         string_reset(&path);
+    //     }
+    //     string_append_string(&path, project_import->filename);
+    //     file_io_relative_to_full_path(&path);
+    // }
+
+    // // Check cache
+    // {
+    //     Code_Source** cached_code = hashtable_find_element(&compiler.cached_imports, path);
+    //     if (cached_code != 0) {
+    //         // Project is already imported
+    //         compiler_analyse_code(*cached_code, false);
+    //         return *cached_code;
+    //     }
+    // }
+
+    // Optional<String> file_content = file_io_load_text_file(path.characters);
+    // SCOPE_EXIT(file_io_unload_text_file(&file_content));
+    // if (file_content.available) {
+    //     auto source_code = source_code_create();
+    //     source_code_fill_from_string(source_code, file_content.value);
+
+    //     Code_Source* code_source = code_source_create_empty(Code_Origin::LOADED_FILE, source_code, path);
+    //     code_source_analyse_clean(code_source, false);
+    //     success = true;
+    //     return code_source;
+    // }
+    // return 0;
 }
 
 Exit_Code compiler_execute()

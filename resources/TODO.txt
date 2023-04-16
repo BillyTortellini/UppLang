@@ -1,5 +1,26 @@
 
 
+
+Implementation Plan:
+    - new Token ~* (TILDE_STAR)
+    - new Token ~** (TILDE_STAR_STAR)
+
+    - Parser using
+        Let's start at module scope only
+        Start with just 
+            using A~*
+
+    - Analyser:
+        * Module import now defines all the symbols + creates the using workloads
+        * Dealing with multiple symbol lookup (Overloading/correct error reporting)
+
+    * Then probably aliases + Dealing with cyclic aliases
+    * Then usings in Code_Blocks, where they are order dependent
+    * File loading, make sure we cannot have recursion
+
+
+
+
 Maybe some initial rules for using:
 Use cases:
     Invalid                       using Symbol_Read            using B
@@ -50,6 +71,13 @@ Design Question:
                 test() // Should work
                 log()  // ?
 
+        Normal usings aren't transitive, but there is special syntax for transitive usings
+            using A~*   NOT TRANSITIVE
+            using A~**  TRANSITIVE
+            A :: module
+                using C~*
+                B :: module
+                    // This is also transitive to A...
         I don't think they need to be transitive, which means that the code is probably going to be a little bit more complicated
 
     - How/when are symbol-overloads handled? With using it's a lot simpler to have the same symbol imported twice!
@@ -60,6 +88,7 @@ Implementation Problems:
         using A as B
         using Somewhere~*
     Here we need to have somewhere already imported before I can lookup up the alias
+    --> This introduces dependencies
 
     What about
         Bar :: module

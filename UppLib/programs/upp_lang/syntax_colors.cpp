@@ -31,6 +31,7 @@ vec3 symbol_type_to_color(Symbol_Type type)
     case Symbol_Type::VARIABLE: return Syntax_Color::VARIABLE; 
     case Symbol_Type::COMPTIME_VALUE: return Syntax_Color::VARIABLE; 
     case Symbol_Type::DEFINITION_UNFINISHED: return Syntax_Color::IDENTIFIER_FALLBACK; 
+    case Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL: return Syntax_Color::IDENTIFIER_FALLBACK; 
     case Symbol_Type::ERROR_SYMBOL: return Syntax_Color::IDENTIFIER_FALLBACK; 
     case Symbol_Type::VARIABLE_UNDEFINED: return Syntax_Color::VARIABLE; 
     case Symbol_Type::GLOBAL: return Syntax_Color::VARIABLE; 

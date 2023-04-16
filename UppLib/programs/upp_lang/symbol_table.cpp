@@ -22,17 +22,11 @@ Symbol_Table* symbol_table_create(Symbol_Table* parent, bool is_internal)
 
 void symbol_destroy(Symbol* symbol) {
     dynamic_array_destroy(&symbol->references);
+    delete symbol;
 }
 
 void symbol_table_destroy(Symbol_Table* symbol_table)
 {
-    auto it = hashtable_iterator_create(&symbol_table->symbols);
-    while (hashtable_iterator_has_next(&it)) {
-        Symbol* symbol = *it.value;
-        symbol_destroy(symbol);
-        delete symbol;
-        hashtable_iterator_next(&it);
-    }
     hashtable_destroy(&symbol_table->symbols);
     delete symbol_table;
 }
@@ -57,6 +51,7 @@ Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbo
 
     // Create new symbol
     Symbol* new_sym = new Symbol;
+    dynamic_array_push_back(&compiler.semantic_analyser->allocated_symbols, new_sym);
     new_sym->definition_node = definition_node;
     new_sym->id = id;
     new_sym->type = type;
@@ -111,6 +106,9 @@ void symbol_append_to_string(Symbol* symbol, String* string)
         break;
     case Symbol_Type::DEFINITION_UNFINISHED:
         string_append_formated(string, "Definition Unfinished");
+        break;
+    case Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL:
+        string_append_formated(string, "Alias or imported symbol");
         break;
     case Symbol_Type::VARIABLE:
         string_append_formated(string, "Variable");

@@ -28,6 +28,8 @@ Operator_Info syntax_operator_info(Operator op)
     case Operator::COMMA: return operator_info_make(",", Operator_Type::BINOP, false, true);
     case Operator::DOT: return operator_info_make(".", Operator_Type::BINOP, false, false);
     case Operator::TILDE: return operator_info_make("~", Operator_Type::BINOP, false, false);
+    case Operator::TILDE_STAR: return operator_info_make("~*", Operator_Type::BINOP, false, true);
+    case Operator::TILDE_STAR_STAR: return operator_info_make("~**", Operator_Type::BINOP, false, true);
     case Operator::COLON: return operator_info_make(":", Operator_Type::BINOP, false, true);
     case Operator::NOT: return operator_info_make("!", Operator_Type::BINOP, false, false);
     case Operator::AMPERSAND: return operator_info_make("&", Operator_Type::UNOP, false, false);
@@ -74,6 +76,7 @@ String syntax_keyword_as_string(Keyword keyword)
     switch (keyword)
     {
     case Keyword::IMPORT: return string_create_static("#import");
+    case Keyword::USING: return string_create_static("using");
     case Keyword::BAKE: return string_create_static("#bake");
     case Keyword::BREAK: return string_create_static("break");
     case Keyword::CASE: return string_create_static("case");

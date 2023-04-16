@@ -18,7 +18,9 @@ enum class Operator
     MODULO,
     COMMA,
     DOT,
-    TILDE,
+    TILDE,           // ~    Used in Path-lookup A~B~c
+    TILDE_STAR,      // ~*   Import all
+    TILDE_STAR_STAR, // ~**  Transitive import all
     COLON,
     NOT,
     AMPERSAND,
@@ -74,6 +76,7 @@ enum class Keyword
     CAST_PTR,
     BAKE,
     IMPORT,
+    USING,
 
     MAX_ENUM_VALUE,
 };

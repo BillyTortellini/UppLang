@@ -19,13 +19,12 @@
 #include "symbol_table.hpp"
 
 // GLOBALS
-bool PRINT_DEPENDENCIES = false;
+bool PRINT_DEPENDENCIES = true;
 bool PRINT_TIMING = false;
 static Semantic_Analyser semantic_analyser;
 static Workload_Executer workload_executer;
 
 // PROTOTYPES
-void semantic_analyser_do_module_discovery(AST::Module* module_node, bool add_to_root);
 ModTree_Function* modtree_function_create_empty(Type_Signature* signature, Symbol* symbol, Function_Progress* progress, Symbol_Table* param_table);
 Comptime_Result comptime_result_make_not_comptime();
 Comptime_Result expression_calculate_comptime_value(AST::Expression* expr);
@@ -47,10 +46,7 @@ void workload_executer_wait_for_dependency_resolution();
 // HELPERS
 namespace Helpers
 {
-    Analysis_Progress_Type get_progress_type(Struct_Progress* progress) { return Analysis_Progress_Type::STRUCTURE; };
-    Analysis_Progress_Type get_progress_type(Function_Progress* progress) { return Analysis_Progress_Type::FUNCTION; };
-    Analysis_Progress_Type get_progress_type(Bake_Progress* progress) { return Analysis_Progress_Type::BAKE; };
-
+    Analysis_Workload_Type get_workload_type(Workload_Using_Resolve* workload) { return Analysis_Workload_Type::USING_RESOLVE; };
     Analysis_Workload_Type get_workload_type(Workload_Module_Analysis* workload) { return Analysis_Workload_Type::MODULE_ANALYSIS; };
     Analysis_Workload_Type get_workload_type(Workload_Definition* workload) { return Analysis_Workload_Type::DEFINITION; };
     Analysis_Workload_Type get_workload_type(Workload_Struct_Analysis* workload) { return Analysis_Workload_Type::STRUCT_ANALYSIS; };
@@ -61,12 +57,10 @@ namespace Helpers
     Analysis_Workload_Type get_workload_type(Workload_Function_Cluster_Compile* workload) { return Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE; };
     Analysis_Workload_Type get_workload_type(Workload_Bake_Analysis* workload) { return Analysis_Workload_Type::BAKE_ANALYSIS; };
     Analysis_Workload_Type get_workload_type(Workload_Bake_Execution* workload) { return Analysis_Workload_Type::BAKE_EXECUTION; };
+    Analysis_Workload_Type get_workload_type(Workload_Event* workload) { return Analysis_Workload_Type::EVENT; };
 };
 
-Analysis_Progress* upcast(Struct_Progress* progress) {return &progress->base;}
-Analysis_Progress* upcast(Function_Progress* progress) {return &progress->base;}
-Analysis_Progress* upcast(Bake_Progress* progress) {return &progress->base;}
-
+Workload_Base* upcast(Workload_Using_Resolve* workload) {return &workload->base;}
 Workload_Base* upcast(Workload_Module_Analysis* workload) {return &workload->base;}
 Workload_Base* upcast(Workload_Function_Header* workload) {return &workload->base;}
 Workload_Base* upcast(Workload_Function_Parameter* workload) {return &workload->base;}
@@ -77,13 +71,7 @@ Workload_Base* upcast(Workload_Struct_Reachable_Resolve* workload) {return &work
 Workload_Base* upcast(Workload_Definition* workload) {return &workload->base;}
 Workload_Base* upcast(Workload_Bake_Analysis* workload) {return &workload->base;}
 Workload_Base* upcast(Workload_Bake_Execution* workload) {return &workload->base;}
-
-template <typename T>
-T* downcast(Analysis_Progress* progress) {
-    T* result = (T*)progress;
-    assert(progress->type == Helpers::get_progress_type(result), "Invalid cast");
-    return result;
-}
+Workload_Base* upcast(Workload_Event* workload) {return &workload->base;}
 
 template <typename T>
 T* downcast(Workload_Base* workload) {
@@ -130,6 +118,20 @@ Analysis_Info* pass_get_base_info(Analysis_Pass* pass, AST::Node* node, Info_Que
     switch (query)
     {
     case Info_Query::CREATE: {
+        Analysis_Info* new_info = new Analysis_Info;
+        memory_zero(new_info);
+        bool inserted = hashtable_insert_element(&semantic_analyser.ast_to_info_mapping, key, new_info);
+        assert(inserted, "Must not happen");
+        return new_info;
+    }
+    case Info_Query::CREATE_IF_NULL: {
+        // Check if already there
+        Analysis_Info** already_there = hashtable_find_element(&semantic_analyser.ast_to_info_mapping, key);
+        if (already_there != 0) {
+            assert(*already_there != 0, "Somewhere nullptr was inserted into hashmap");
+            return *already_there;
+        }
+        // Otherwise create new
         Analysis_Info* new_info = new Analysis_Info;
         memory_zero(new_info);
         bool inserted = hashtable_insert_element(&semantic_analyser.ast_to_info_mapping, key, new_info);
@@ -430,8 +432,6 @@ void polymorpic_instance_destroy_empty(Polymorphic_Instance* instance) {
     delete instance;
 }
 
-
-
 // Returns base instance, which needs to be filled out with base values...
 Polymorphic_Base* polymorphic_base_create(Function_Progress* progress, int parameter_count)
 {
@@ -486,11 +486,8 @@ Analysis_Pass* analysis_pass_allocate(Workload_Base* origin, AST::Node* mapping_
 template<typename T>
 T* analysis_progress_allocate_internal()
 {
-    auto progress = new T;
-    Analysis_Progress* base = &progress->base;
-    dynamic_array_push_back(&workload_executer.allocated_progresses, base);
+    auto progress = stack_allocator_allocate<T>(&workload_executer.progress_allocator);
     memory_zero(progress);
-    base->type = Helpers::get_progress_type(progress);
     return progress;
 }
 
@@ -722,12 +719,97 @@ Bake_Progress* bake_progress_create(AST::Expression* bake_expr)
     return progress;
 }
 
+Module_Progress* module_progress_create(AST::Module* module, Symbol* symbol) {
+    // Create progress
+    auto progress = analysis_progress_allocate_internal<Module_Progress>();
+    progress->symbol = symbol;
+
+    // Create analysis workload
+    progress->module_analysis = workload_executer_allocate_workload<Workload_Module_Analysis>(upcast(module));
+    {
+        auto analysis = progress->module_analysis;
+        analysis->module_node = module;
+        analysis->symbol_table = 0;
+        analysis->last_import_workload = 0;
+        analysis->base.parent_table = semantic_analyser.root_symbol_table; 
+        analysis->progress = progress;
+        if (semantic_analyser.current_workload != 0 && semantic_analyser.current_workload->current_symbol_table != 0) {
+            analysis->base.parent_table = semantic_analyser.current_workload->current_symbol_table;
+        }
+    }
+
+    // Create event workload
+    progress->event_symbol_table_ready = workload_executer_allocate_workload<Workload_Event>(0);
+    progress->event_symbol_table_ready->description = "Symbol table ready event";
+    analysis_workload_add_dependency_internal(upcast(progress->event_symbol_table_ready), upcast(progress->module_analysis), 0);
+
+    return progress;
+}
+
+
+// Create correct workloads for comptime definitions, for non-comptime checks if its a variable or a global and sets the symbol correctly
+void analyser_create_symbol_and_workload_for_definition(AST::Definition* definition)
+{
+    Symbol_Table* current_table = semantic_analyser.current_workload->current_symbol_table;
+    Symbol* symbol = symbol_table_define_symbol(current_table, definition->name, Symbol_Type::DEFINITION_UNFINISHED, AST::upcast(definition), false);
+    get_info(definition, true)->symbol = symbol; // Set definition symbol (Editor information)
+
+    // Create workload for functions, structs and modules directly
+    bool create_definition_workload = true; // If not function/struct/module and not a variable
+    if (definition->is_comptime) {
+        // Check if it's a 'named' construct (function, struct, module)
+        if (definition->value.available)
+        {
+            auto value = definition->value.value;
+            bool type_valid_for_definition = false;
+            create_definition_workload = false;
+            switch (value->type)
+            {
+            case AST::Expression_Type::MODULE: {
+                // FUTURE: Here I should probably add another workload, but since this would require some sort of cluster analysis, it's recursive for now
+                // Set symbol
+                symbol->type = Symbol_Type::MODULE;
+                symbol->options.module_progress = module_progress_create(value->options.module, symbol);
+                break;
+            }
+            case AST::Expression_Type::FUNCTION: {
+                function_progress_create(symbol, value);
+                break;
+            }
+            case AST::Expression_Type::STRUCTURE_TYPE: {
+                struct_progress_create(symbol, value);
+                break;
+            }
+            default: {
+                create_definition_workload = true;
+                type_valid_for_definition = true;
+                break;
+            }
+            }
+
+            if (!type_valid_for_definition && definition->type.available) {
+                semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, definition->type.value);
+                semantic_analyser_add_error_info(error_information_make_text("Type is not valid for comptime definitons of structs/functions/modules!"));
+            }
+        }
+    }
+    else if (definition->base.parent->type == AST::Node_Type::STATEMENT) { // Here we know that it is a Variable
+        symbol->type = Symbol_Type::VARIABLE_UNDEFINED;
+        symbol->internal = true;
+        create_definition_workload = false;
+    }
+
+    if (create_definition_workload) {
+        auto definition_workload = workload_executer_allocate_workload<Workload_Definition>(upcast(definition));
+        definition_workload->definition_node = definition;
+        definition_workload->symbol = symbol;
+        symbol->options.definition_workload = definition_workload;
+    }
+}
 
 
 
-
-// MOD_TREE
-// Note: Doesn't set symbol to anything!
+// MOD_TREE (Note: Doesn't set symbol to anything!)
 ModTree_Function* modtree_function_create_empty(Type_Signature* signature, Symbol* symbol, Function_Progress* progress, Symbol_Table* param_table)
 {
     ModTree_Function* function = new ModTree_Function;
@@ -1358,7 +1440,7 @@ Workload_Executer* workload_executer_initialize()
     workload_executer.finished_workloads = dynamic_array_create_empty<Workload_Base*>(8);
     workload_executer.workload_dependencies = hashtable_create_empty<Workload_Pair, Dependency_Information>(8, workload_pair_hash, workload_pair_equals);
 
-    workload_executer.allocated_progresses = dynamic_array_create_empty<Analysis_Progress*>(8);
+    workload_executer.progress_allocator = stack_allocator_create_empty(1024);
 
     workload_executer.progress_was_made = false;
     return &workload_executer;
@@ -1367,10 +1449,7 @@ Workload_Executer* workload_executer_initialize()
 void workload_executer_destroy()
 {
     auto& executer = workload_executer;
-    for (int i = 0; i < executer.allocated_progresses.size; i++) {
-        delete executer.allocated_progresses[i];
-    }
-    dynamic_array_destroy(&executer.allocated_progresses);
+    stack_allocator_destroy(&executer.progress_allocator);
 
     for (int i = 0; i < executer.all_workloads.size; i++) {
         analysis_workload_destroy(executer.all_workloads[i]);
@@ -1405,9 +1484,6 @@ void analysis_workload_destroy(Workload_Base* workload)
         auto cluster = downcast<Workload_Function_Cluster_Compile>(workload);
         dynamic_array_destroy(&cluster->functions);
     }
-    else if (workload->type == Analysis_Workload_Type::MODULE_ANALYSIS) {
-        hashset_destroy(&downcast<Workload_Module_Analysis>(workload)->visited);
-    }
     else if (workload->type == Analysis_Workload_Type::FUNCTION_HEADER) {
         dynamic_array_destroy(&downcast<Workload_Function_Header>(workload)->parameter_order);
     }
@@ -1438,25 +1514,51 @@ void path_lookup_set_error_symbol(AST::Path_Lookup* path, Workload_Base* workloa
     }
 }
 
+Symbol* symbol_lookup_resolve(AST::Symbol_Lookup* lookup, Symbol_Table* symbol_table, bool search_parents, bool internals_ok)
+{
+    // Find symbol of path part
+    Symbol* symbol = symbol_table_find_symbol(symbol_table, lookup->name, search_parents, internals_ok, lookup);
+    auto info = pass_get_node_info(semantic_analyser.current_workload->current_pass, lookup, Info_Query::CREATE_IF_NULL);
+    if (symbol == 0) {
+        semantic_analyser_log_error(Semantic_Error_Type::SYMBOL_TABLE_UNRESOLVED_SYMBOL, upcast(lookup));
+        info->symbol = semantic_analyser.predefined_symbols.error_symbol;
+    }
+    else {
+        // Resolve aliases
+        if (symbol->type == Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL) {
+            analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(symbol->options.alias_workload), lookup);
+            workload_executer_wait_for_dependency_resolution();
+            info->symbol = symbol->options.alias_workload->alias_for;
+            assert(info->symbol->type != Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, "Chained aliases should never happen here!");
+        }
+        else {
+            info->symbol = symbol;
+        }
+    }
+    return info->symbol;
+}
+
 // Resolves the whole path (e.g. all nodes in Path)
-Symbol* path_lookup_resolve(AST::Path_Lookup* path, Symbol_Table* symbol_table)
+Symbol* path_lookup_resolve(AST::Path_Lookup* path)
 {
     auto& analyser = semantic_analyser;
-    auto table = symbol_table;
+    auto table = semantic_analyser.current_workload->current_symbol_table;
+    auto error = semantic_analyser.predefined_symbols.error_symbol;
 
     // Resolve path
     for (int i = 0; i < path->parts.size; i++) 
     {
         auto part = path->parts[i];
         // Find symbol of path part
-        Symbol* symbol = symbol_table_find_symbol(table, part->name, i == 0, path->parts.size == 1, part);
+        Symbol* symbol = symbol_lookup_resolve(part, table, i == 0, path->parts.size == 1);
         if (symbol == 0) {
             semantic_analyser_log_error(Semantic_Error_Type::SYMBOL_TABLE_UNRESOLVED_SYMBOL, upcast(part));
             path_lookup_set_error_symbol(path, semantic_analyser.current_workload);
-            return semantic_analyser.predefined_symbols.error_symbol;
+            return error;
         }
-        else {
-            get_info(part, true)->symbol = symbol;
+        if (symbol == error) {
+            path_lookup_set_error_symbol(path, semantic_analyser.current_workload);
+            return error;
         }
 
         // Check if we are at the end of the path
@@ -1468,7 +1570,15 @@ Symbol* path_lookup_resolve(AST::Path_Lookup* path, Symbol_Table* symbol_table)
 
         // Check if we can continue
         if (symbol->type == Symbol_Type::MODULE) {
-            table = symbol->options.module_table;
+            auto current = semantic_analyser.current_workload->type;
+            if (current == Analysis_Workload_Type::USING_RESOLVE) {
+                analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(symbol->options.module_progress->module_analysis), part);
+            }
+            else {
+                analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(symbol->options.module_progress->event_symbol_table_ready), part);
+            }
+            workload_executer_wait_for_dependency_resolution();
+            table = symbol->options.module_progress->module_analysis->symbol_table;
         }
         else {
             // Report error and exit
@@ -1495,6 +1605,7 @@ void analysis_workload_add_dependency_internal(Workload_Base* workload, Workload
 {
     auto& executer = workload_executer;
     if (dependency->is_finished) return;
+
     Workload_Pair pair = workload_pair_create(workload, dependency);
     Dependency_Information* infos = hashtable_find_element(&executer.workload_dependencies, pair);
     if (infos == 0) {
@@ -2137,6 +2248,8 @@ void workload_executer_resolve()
             case Analysis_Workload_Type::BAKE_EXECUTION: str =            "Bake Execute    "; break;
             case Analysis_Workload_Type::DEFINITION: str =                "Definition      "; break;
             case Analysis_Workload_Type::MODULE_ANALYSIS: str =           "Module Analysis "; break;
+            case Analysis_Workload_Type::USING_RESOLVE: str =             "Using Resolve   "; break;
+            case Analysis_Workload_Type::EVENT: str =                     "Event           "; break;
 
             case Analysis_Workload_Type::FUNCTION_HEADER: str =           "Header          "; break;
             case Analysis_Workload_Type::FUNCTION_PARAMETER: str =        "Parameter       "; break;
@@ -2162,113 +2275,6 @@ void workload_add_to_runnable_queue_if_possible(Workload_Base* workload)
     }
 }
 
-// Create correct workloads for comptime definitions, for non-comptime checks if its a variable or a global and sets the symbol correctly
-void analyser_create_symbol_and_workload_for_definition(AST::Definition* definition)
-{
-    Symbol_Table* current_table = semantic_analyser.current_workload->current_symbol_table;
-    Symbol* symbol = symbol_table_define_symbol(current_table, definition->name, Symbol_Type::DEFINITION_UNFINISHED, AST::upcast(definition), false);
-    get_info(definition, true)->symbol = symbol; // Set definition symbol (Editor information)
-
-    // Create workload for functions, structs and modules directly
-    bool create_definition_workload = true; // If not function/struct/module and not a variable
-    if (definition->is_comptime) {
-        // Check if it's a 'named' construct (function, struct, module)
-        if (definition->value.available)
-        {
-            auto value = definition->value.value;
-            bool type_valid_for_definition = false;
-            create_definition_workload = false;
-            switch (value->type)
-            {
-            case AST::Expression_Type::MODULE: {
-                // FUTURE: Here I should probably add another workload, but since this would require some sort of cluster analysis, it's recursive for now
-                // Set symbol
-                symbol->type = Symbol_Type::MODULE;
-                semantic_analyser_do_module_discovery(value->options.module, false);
-                symbol->options.module_table = get_info(value->options.module)->symbol_table;
-                break;
-            }
-            case AST::Expression_Type::FUNCTION: {
-                function_progress_create(symbol, value);
-                break;
-            }
-            case AST::Expression_Type::STRUCTURE_TYPE: {
-                struct_progress_create(symbol, value);
-                break;
-            }
-            default: {
-                create_definition_workload = true;
-                type_valid_for_definition = true;
-                break;
-            }
-            }
-
-            if (!type_valid_for_definition && definition->type.available) {
-                semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, definition->type.value);
-                semantic_analyser_add_error_info(error_information_make_text("Type is not valid for comptime definitons of structs/functions/modules!"));
-            }
-        }
-    }
-    else if (definition->base.parent->type == AST::Node_Type::STATEMENT) { // Here we know that it is a Variable
-        symbol->type = Symbol_Type::VARIABLE_UNDEFINED;
-        symbol->internal = true;
-        create_definition_workload = false;
-    }
-
-    if (create_definition_workload) {
-        auto definition_workload = workload_executer_allocate_workload<Workload_Definition>(upcast(definition));
-        definition_workload->definition_node = definition;
-        definition_workload->symbol = symbol;
-        symbol->options.definition_workload = definition_workload;
-    }
-}
-
-void semantic_analyser_do_module_discovery(AST::Module* module_node, bool add_to_root)
-{
-    // TODO: Run over the whole module + probably submodules and generate workloads...
-    //       Also for now install the symbol tables where they need to be...
-    // Define symbol for module? No, should be done by parent!
-    // FUTURE: Symbol tables should also be analysis information, not in the AST!
-
-    // Prevent cyclic module analysis (caused by imports)
-    {
-        auto visited = &downcast<Workload_Module_Analysis>(semantic_analyser.current_workload)->visited;
-        if (hashset_contains(visited, module_node)) {
-            return;
-        }
-        hashset_insert_element(visited, module_node);
-    }
-
-    Workload_Base* workload = semantic_analyser.current_workload;
-    auto info = get_info(module_node, true);
-    if (!add_to_root) {
-        info->symbol_table = symbol_table_create(workload->current_symbol_table, false);
-    }
-    else {
-        info->symbol_table = semantic_analyser.root_symbol_table;
-    }
-    RESTORE_ON_SCOPE_EXIT(workload->current_symbol_table, info->symbol_table);
-
-    // Handle imports
-    for (int i = 0; i < module_node->imports.size; i++) {
-        auto import = module_node->imports[i];
-        auto code = compiler_add_project_import(import);
-        if (code == 0) {
-            semantic_analyser_log_error(Semantic_Error_Type::OTHERS_COULD_NOT_LOAD_FILE, &module_node->imports[i]->base);
-            semantic_analyser_add_error_info(error_information_make_text("Could not load file"));
-            continue;
-        }
-
-        // Note: Currently all imports add their symbols to the root table (Only one 'global' scope)
-        semantic_analyser_do_module_discovery(code->source_parse->root, true);
-    }
-
-    // Create workloads for definitions
-    for (int i = 0; i < module_node->definitions.size; i++) {
-        analyser_create_symbol_and_workload_for_definition(module_node->definitions[i]);
-    }
-}
-
 void analysis_workload_entry(void* userdata)
 {
     Workload_Base* workload = (Workload_Base*)userdata;
@@ -2288,7 +2294,89 @@ void analysis_workload_entry(void* userdata)
     {
     case Analysis_Workload_Type::MODULE_ANALYSIS:
     {
-        semantic_analyser_do_module_discovery(downcast<Workload_Module_Analysis>(workload)->module_node, true);
+        auto analysis = downcast<Workload_Module_Analysis>(workload);
+        auto module_node = analysis->module_node;
+
+        // Create and set symbol table
+        analysis->symbol_table = symbol_table_create(workload->current_symbol_table, false);
+        get_info(module_node, true)->symbol_table = analysis->symbol_table;
+        RESTORE_ON_SCOPE_EXIT(workload->current_symbol_table, analysis->symbol_table);
+
+        // Handle imports
+        for (int i = 0; i < module_node->using_nodes.size; i++) 
+        {
+            auto using_node = module_node->using_nodes[i];
+
+            // Check for general using errors
+            if (using_node->type == AST::Using_Type::NORMAL) {
+                if (using_node->path->parts.size == 1) {
+                    semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(using_node));
+                    semantic_analyser_add_error_info(error_information_make_text("Using must be a path, not a single symbol!"));
+                    continue;
+                }
+            }
+            if (using_node->path->last->name->size == 0) {
+                // NOTE: This may happen for usage in the Syntax-Editor, look at the parser for more info.
+                //       Also i think this is kinda ugly because it's such a special case, but we'll see
+                continue;
+            }
+
+            // Create workload
+            auto using_workload = workload_executer_allocate_workload<Workload_Using_Resolve>(upcast(using_node));
+            using_workload->using_node = using_node;
+            using_workload->symbol = 0;
+            using_workload->alias_for = 0;
+
+            // Add dependencies
+            if (analysis->last_import_workload != 0) {
+                analysis_workload_add_dependency_internal(upcast(using_workload), upcast(analysis->last_import_workload), 0);
+            }
+            analysis_workload_add_dependency_internal(upcast(analysis->progress->event_symbol_table_ready), upcast(using_workload), 0);
+
+            // Define symbol if it's a normal using or an alias
+            if (using_node->type == AST::Using_Type::NORMAL) {
+                using_workload->symbol = symbol_table_define_symbol(
+                    workload->current_symbol_table, using_node->path->last->name, Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, upcast(using_node), false
+                );
+                using_workload->symbol->options.alias_workload = using_workload;
+            }
+            else {
+                analysis->last_import_workload = using_workload;
+            }
+
+            // PREVIOUS LOAD FILE IMPORT
+            //auto code = compiler_add_project_import(import);
+            //if (code == 0) {
+            //    semantic_analyser_log_error(Semantic_Error_Type::OTHERS_COULD_NOT_LOAD_FILE, &module_node->imports[i]->base);
+            //    semantic_analyser_add_error_info(error_information_make_text("Could not load file"));
+            //    continue;
+            //}
+            // Note: Currently all imports add their symbols to the root table (Only one 'global' scope)
+            // semantic_analyser_do_module_discovery(code->source_parse->root, true);
+        }
+
+        // Create workloads for definitions
+        for (int i = 0; i < module_node->definitions.size; i++) {
+            analyser_create_symbol_and_workload_for_definition(module_node->definitions[i]);
+        }
+        break;
+    }
+    case Analysis_Workload_Type::EVENT: {
+        // INFO: Events are only proxies for empty workloads
+        break;
+    }
+    case Analysis_Workload_Type::USING_RESOLVE:
+    {
+        auto using_workload = downcast<Workload_Using_Resolve>(workload);
+        auto node = using_workload->using_node;
+
+        if (node->type == AST::Using_Type::NORMAL) {
+            using_workload->alias_for = path_lookup_resolve(node->path);
+        }
+        else {
+            semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(node));
+            semantic_analyser_add_error_info(error_information_make_text("Here we need to do something lol"));
+        }
         break;
     }
     case Analysis_Workload_Type::DEFINITION:
@@ -2866,7 +2954,19 @@ void analysis_workload_append_to_string(Workload_Base* workload, String* string)
     {
     case Analysis_Workload_Type::MODULE_ANALYSIS: {
         auto module = downcast<Workload_Module_Analysis>(workload);
-        string_append_formated(string, "Module analysis %s\n");
+        string_append_formated(string, "Module analysis %s", module->progress->symbol == 0 ? "ROOT" : module->progress->symbol->id->characters);
+        break;
+    }
+    case Analysis_Workload_Type::USING_RESOLVE: {
+        auto using_node = downcast<Workload_Using_Resolve>(workload)->using_node;
+        string_append_formated(string, "Using ");
+        AST::path_lookup_append_to_string(using_node->path, string);
+        if (using_node->type == AST::Using_Type::SYMBOL_IMPORT) {
+            string_append_formated(string, "~*");
+        }
+        else if (using_node->type == AST::Using_Type::SYMBOL_IMPORT_TRANSITIV) {
+            string_append_formated(string, "~**");
+        }
         break;
     }
     case Analysis_Workload_Type::DEFINITION: {
@@ -2877,6 +2977,10 @@ void analysis_workload_append_to_string(Workload_Base* workload, String* string)
         else {
             string_append_formated(string, "Global \"%s\"", definition->name->characters);
         }
+        break;
+    }
+    case Analysis_Workload_Type::EVENT: {
+        string_append_formated(string, "Event %s", downcast<Workload_Event>(workload)->description);
         break;
     }
     case Analysis_Workload_Type::BAKE_ANALYSIS: {
@@ -2942,11 +3046,8 @@ void analysis_workload_append_to_string(Workload_Base* workload, String* string)
     }
 }
 
-void workload_executer_add_module_discovery(AST::Module* module)
-{
-    auto workload = workload_executer_allocate_workload<Workload_Module_Analysis>(upcast(module));
-    workload->visited = hashset_create_pointer_empty<AST::Module*>(1);
-    workload->module_node = module;
+void workload_executer_add_module_discovery(AST::Module* module) {
+    semantic_analyser.root_module = module_progress_create(module, 0);
 }
 
 
@@ -3439,7 +3540,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         //       because instances already have to wait for their parent analysis to be completed, e.g. symbols to be resolved.
 
         // Resolve symbol
-        Symbol* symbol = path_lookup_resolve(path, analyser.current_workload->current_symbol_table);
+        Symbol* symbol = path_lookup_resolve(path);
         assert(symbol != 0, "In error cases this should be set to error, never 0!");
 
         // Check and wait for all potential dependencies to finish
@@ -3507,6 +3608,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         }
         case Symbol_Type::DEFINITION_UNFINISHED: {
             panic("Should not happen, we just waited on this workload to finish!");
+        }
+        case Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL: {
+            panic("Aliases should already be handled, this should only point to a valid symbol");
         }
         case Symbol_Type::HARDCODED_FUNCTION: {
             EXIT_HARDCODED(symbol->options.hardcoded);
@@ -3867,17 +3971,17 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             EXIT_TYPE(struct_type);
             break;
         }
-
         case Analysis_Workload_Type::MODULE_ANALYSIS: {
             semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, expr);
             semantic_analyser_add_error_info(error_information_make_text("Inner Imports and anonymous modules aren't currently supported!"));
             EXIT_ERROR(types.unknown_type);
         }
-
         case Analysis_Workload_Type::DEFINITION:
+        case Analysis_Workload_Type::EVENT:
         case Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE:
         case Analysis_Workload_Type::BAKE_EXECUTION:
         case Analysis_Workload_Type::FUNCTION_BODY:
+        case Analysis_Workload_Type::USING_RESOLVE:
         case Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE:
         default:
         {
@@ -5233,9 +5337,10 @@ Control_Flow semantic_analyser_analyse_block(AST::Code_Block* block)
 void semantic_analyser_finish()
 {
     auto& type_system = compiler.type_system;
+
     // Check if main is defined
     Symbol* main_symbol = symbol_table_find_symbol(
-        semantic_analyser.root_symbol_table, compiler.id_main, true, true, 0
+        semantic_analyser.root_module->module_analysis->symbol_table, compiler.id_main, true, true, 0
     );
     ModTree_Function* main_function = 0;
     if (main_symbol == 0) {
@@ -5260,8 +5365,10 @@ void semantic_analyser_reset()
 
     // Reset analyser data
     {
-        // Errors
+        semantic_analyser.root_module = 0;
         semantic_analyser.current_workload = 0;
+
+        // Errors
         for (int i = 0; i < semantic_analyser.errors.size; i++) {
             dynamic_array_destroy(&semantic_analyser.errors[i].information);
         }
@@ -5290,6 +5397,11 @@ void semantic_analyser_reset()
             symbol_table_destroy(semantic_analyser.allocated_symbol_tables[i]);
         }
         dynamic_array_reset(&semantic_analyser.allocated_symbol_tables);
+
+        for (int i = 0; i < semantic_analyser.allocated_symbols.size; i++) {
+            symbol_destroy(semantic_analyser.allocated_symbols[i]);
+        }
+        dynamic_array_reset(&semantic_analyser.allocated_symbols);
         semantic_analyser.root_symbol_table = symbol_table_create(0, false);
 
         // AST-Mappings
@@ -5406,6 +5518,7 @@ Semantic_Analyser* semantic_analyser_initialize()
     semantic_analyser.allocated_passes = dynamic_array_create_empty<Analysis_Pass*>(1);
     semantic_analyser.ast_to_info_mapping = hashtable_create_empty<AST_Info_Key, Analysis_Info*>(1, ast_info_key_hash, ast_info_equals);
     semantic_analyser.allocated_symbol_tables = dynamic_array_create_empty<Symbol_Table*>(16);
+    semantic_analyser.allocated_symbols = dynamic_array_create_empty<Symbol*>(16);
     return &semantic_analyser;
 }
 
@@ -5420,6 +5533,11 @@ void semantic_analyser_destroy()
         symbol_table_destroy(semantic_analyser.allocated_symbol_tables[i]);
     }
     dynamic_array_destroy(&semantic_analyser.allocated_symbol_tables);
+
+    for (int i = 0; i < semantic_analyser.allocated_symbols.size; i++) {
+        symbol_destroy(semantic_analyser.allocated_symbols[i]);
+    }
+    dynamic_array_destroy(&semantic_analyser.allocated_symbols);
 
     {
         auto iter = hashtable_iterator_create(&semantic_analyser.ast_to_info_mapping);
