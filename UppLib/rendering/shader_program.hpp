@@ -8,8 +8,8 @@
 #include "../datastructures/string.hpp"
 #include "../rendering/opengl_function_pointers.hpp"
 #include "../math/umath.hpp"
+#include "rendering_core.hpp"
 
-struct Rendering_Core;
 struct Watched_File;
 struct File_Listener;
 struct Texture_2D;
@@ -23,52 +23,6 @@ struct Shader_Variable_Information
     String name_handle;
 };
 
-enum class Uniform_Value_Type
-{
-    I32,
-    U32,
-    FLOAT,
-    VEC2,
-    VEC3,
-    VEC4,
-    MAT2,
-    MAT3,
-    MAT4,
-    TEXTURE_2D_BINDING
-};
-
-struct Uniform_Value
-{
-public:
-    Uniform_Value() {};
-    Uniform_Value_Type type;
-    const char* uniform_name;
-    union
-    {
-        i32 data_i32;
-        u32 data_u32;
-        int texture_2D_id;
-        float data_float;
-        vec2 data_vec2;
-        vec3 data_vec3;
-        vec4 data_vec4;
-        mat2 data_mat2;
-        mat3 data_mat3;
-        mat4 data_mat4;
-    };
-};
-
-Uniform_Value uniform_value_make_i32(const char* uniform_name, i32 data);
-Uniform_Value uniform_value_make_u32(const char* uniform_name, u32 data);
-Uniform_Value uniform_value_make_float(const char* uniform_name, float data);
-Uniform_Value uniform_value_make_texture_2D_binding(const char* uniform_name, Texture_2D* texture);
-Uniform_Value uniform_value_make_vec2(const char* uniform_name, vec2 data);
-Uniform_Value uniform_value_make_vec3(const char* uniform_name, vec3 data);
-Uniform_Value uniform_value_make_vec4(const char* uniform_name, vec4 data);
-Uniform_Value uniform_value_make_mat2(const char* uniform_name, mat2 data);
-Uniform_Value uniform_value_make_mat3(const char* uniform_name, mat3 data);
-Uniform_Value uniform_value_make_mat4(const char* uniform_name, mat4 data);
-
 struct Shader_Program
 {
     GLuint program_id;
@@ -81,15 +35,15 @@ struct Shader_Program
 };
 
 // For shader_program_create to work, the files need to exist, the shader does not need to compile
-Shader_Program* shader_program_create(Rendering_Core* core, std::initializer_list<const char*> shader_filepaths);
+Shader_Program* shader_program_create(std::initializer_list<const char*> shader_filepaths);
 void shader_program_destroy(Shader_Program* program);
 
-void shader_program_draw_mesh(Shader_Program* program, Mesh_GPU_Buffer* mesh, Rendering_Core* core, std::initializer_list<Uniform_Value> uniforms);
+void shader_program_draw_mesh(Shader_Program* program, Mesh_GPU_Buffer* mesh, std::initializer_list<Uniform_Value> uniforms);
 void shader_program_draw_mesh_instanced(
-    Shader_Program* program, Mesh_GPU_Buffer* mesh, int instance_count, Rendering_Core* core, std::initializer_list<Uniform_Value> uniforms
+    Shader_Program* program, Mesh_GPU_Buffer* mesh, int instance_count, std::initializer_list<Uniform_Value> uniforms
 );
-bool shader_program_set_uniform_value(Shader_Program* program, Uniform_Value value, Rendering_Core* core);
-void shader_program_bind(Shader_Program* program, Rendering_Core* core);
+bool shader_program_set_uniform_value(Shader_Program* program, Uniform_Value value);
+void shader_program_bind(Shader_Program* program);
 void shader_program_print_variable_information(Shader_Program* program);
 Shader_Variable_Information* shader_program_find_shader_variable_information_by_name(Shader_Program* program, const char* name_handle);
 bool shader_program_check_compatability_with_mesh(Shader_Program* shader_program, Mesh_GPU_Buffer* mesh);

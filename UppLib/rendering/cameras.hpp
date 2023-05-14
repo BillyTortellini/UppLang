@@ -17,8 +17,8 @@ struct Camera_3D
     mat4 view_projection_matrix;
 };
 
-Camera_3D* camera_3D_create(Rendering_Core* core, float fov_x, float near_distance, float far_distance);
-void camera_3D_destroy(Camera_3D* camera, Rendering_Core* core);
+Camera_3D* camera_3D_create(float fov_x, float near_distance, float far_distance);
+void camera_3D_destroy(Camera_3D* camera);
 void camera_3D_update_matrices(Camera_3D* camera);
 void camera_3D_update_field_of_view(Camera_3D* camera, float fov_x);
 void camera_3D_update_view_with_up_vector(Camera_3D* camera, const vec3& position, const vec3& view_direction, const vec3& up);

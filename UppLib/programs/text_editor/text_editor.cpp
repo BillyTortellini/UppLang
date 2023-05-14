@@ -304,8 +304,8 @@ Text_Editor* text_editor_create(Text_Renderer* text_renderer, Rendering_Core* co
 
     result->renderer = text_renderer;
     result->text_highlights = dynamic_array_create_empty<Dynamic_Array<Text_Highlight>>(32);
-    result->cursor_shader = shader_program_create(core, {"resources/shaders/upp_lang/cursor.glsl"});
-    result->cursor_mesh = mesh_utils_create_quad_2D(core);
+    result->cursor_shader = shader_program_create({"resources/shaders/upp_lang/cursor.glsl"});
+    result->cursor_mesh = mesh_utils_create_quad_2D();
     result->line_size_cm = 0.3f;
     result->first_rendered_line = 0;
     result->first_rendered_char = 0;
@@ -384,11 +384,10 @@ void text_editor_draw_bounding_box(Text_Editor* editor, Rendering_Core* core, Bo
     (
         editor->cursor_shader, 
         &editor->cursor_mesh, 
-        core, 
         {
-            uniform_value_make_vec2("position", bb.min),
-            uniform_value_make_vec2("size", bb.max - bb.min),
-            uniform_value_make_vec4("color", color)
+            uniform_value_make("position", bb.min),
+            uniform_value_make("size", bb.max - bb.min),
+            uniform_value_make("color", color),
         }
     );
 }

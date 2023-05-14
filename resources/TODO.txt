@@ -1,4 +1,223 @@
 
+Ideas for rendering rework:
+    - What do we need for rendering:
+        * Rendering state (Culling, depth-test, ...)
+        * Shader (Determines which pixel colors are set)
+        * Mesh (Triangle data, position, normals, uvs, color?)
+        * Uniforms (Camera, MVP matrix, shader parameters)
+        * Textures
+        * Framebuffers (Textures which you can render into)
+        * Uniform blocks would be great (Common things like View-projection, time and other parameters)
+        * GPU buffers (Where I can easily upload memory for e.g. dynamic mesh data (Text) or instance data)
+
+I think most of the things I already have are pretty nice, but what I also want to do is to the following:
+ - Creating/Destroying shaders is kinda annoying
+ - Rendering_Core should be a global variable so I don't have to pass it everywhere
+ - Maybe I should also take a look at how current calls are made and how I think it would be nicer.
+ - For rendering stuff on top of each other, I still think that I want to have something like a RenderPass,
+   because otherwise it's going to be hard to have order-independent draw calls 
+   (E.g. your code needs to respect the order of the draw-calls you submit)
+ - After having implemented a GUI I would like to be able to toggle the different draw calls, and see the effect
+    of not doing them immediately on the screen. 
+ - Ordering of render-call is also something that I want to keep in mind, e.g. do I want to set the order 
+   explicitly via something like adding dependencies on e.g. framebuffer finished or do I want to set this implicitly,
+   or do I have to state the order of the rendering calls in code? --> This would be cool if I could set this manually.
+   Also I think this has to do with synchronization right? Or does opengl automagically do this for us when rendering into
+   a framebuffer and afterwards reading from the same buffer. I guess so.
+
+Start of with: 
+Draw a triangle and a textured thing and check out how hard it is to do this.
+
+Use-cases I want to cover:
+ - GUI drawing (Mutliple render-calls for each 'plane', e.g. rendering of text and 2D-Shapes in multiple different calls)
+   --> Text rendering means rendering textured quads
+ - Simple 3D with meshes (E.g. 3D data with normal and others)
+ - Custom shaders 
+ - Instancing
+
+Question 1: Stateful or not?
+    auto& main_pass = rendering_retrieve_renderpass(Type::Backbuffer, ) // Retrieve backbuffer renderpass
+    auto& shader = rendering_get_shader("constant_color.glsl")
+    renderpass_draw(shader, )
+    shader.draw
+
+What is a renderpass:
+ * Renderpasses contain/store draw calls
+ * A renderpass only has one specific pipeline_state ? and one framebuffer it renders too
+ * Renderpasses regulate the order in which draw-calls to opengl are made, and
+   all draw calls inside a renderpass may happen at the same time.
+ * Renderpasses can contain child passes, a renderpass finishes only if all child-passes are finished
+    Is this actually usefull? Maybe for synchronization reasons, but otherwise probably not...
+
+ So i guess I want my text-rendering and my 2D-rendering to be able to generate draw calls for a given renderpass...
+ Well obviously if you want to draw text on other text or 2D- things on other 2D things...
+
+ Maybe I want to go the distance and do everything with instancing (Instead of using uniforms)
+ This is obviously not always possible, but it would mean that different renderpasses could use the same instance buffer, 
+ and everything would be batched automatically. I think this would be fucking sick, so let's do just that.
+
+ So i guess I just want something that does instancing automatically, where I can create draw calls which are potentially in 
+ different renderpasses, and if they may be executed at the same time, then this will happen here. Sounds quite nice I guess
+
+ Mesh: Multiple arrays of the same length with different datatypes, like Position3D, uvs, ...
+ Mesh_Descriptor: Datatypes contained in the mesh
+
+ Shader Design:
+  * Shaders only have per-frame uniforms, and there is a warning if they are not set?
+
+Changes to the current render system:
+ * Rendering core will be a global variable (So i don't need to pass shit around) X
+ * Rework of Mesh-attributes and GPU-Buffers.
+ * Named values for things like framebuffers/shaders/textures/meshes?, so that they are either setup beforehand, or they are looked up per frame.
+ * Draw-commands will be added to renderpasses
+ * Renderpasses are generated inside the rendering-core
+
+renderer_lookup_renderpass() # Requires that it was already created
+renderer_anonymous_renderpass() 
+renderer_create_renderpass()
+    
+
+
+
+Note about the design of this rendering system:
+ * It should be flexible and 'nice' to use, so that I can write rendering code faster/cleaner.
+    --> Renderpass system should play in here quite nicely. 
+ * The design should be done in a way that so that it is possible to optimize the draw calls and stuff at some point.
+    --> Note: this means that I don't need to optimize everything right now, but it should be possible to optimize.
+ * To generally describe the 2D rendering problem:
+    : Every 2D object draws to a rectangular position on the screen. (Or at least we can bound the region, may also be fullscreen)
+    : Every 2D object is at a specific depth to one another (Which determines when it is drawn)
+    : There are opage objects, where the depth of the objects needs to be respected. (Either via depth testing)
+    : There are transparent objects (Note: almost all textures, or for antialiasing), which need to 
+
+So I guess you always want to do 2D rendering in layers, 
+
+
+So how do I want to deal with dynamic data, e.g. data that you upload to the gpu?
+ - In 3D you usually want to have constant meshes, which you don't upload every frame
+ - But you would upload some information (e.g. positions and sheet) every frame
+ - In 2D I want to upload the whole mesh every frame.
+
+So I want some helper thing that let's me generate the dynamic information every frame.
+ --> No, I can generally request an array of dynamic gpu data for a specific mesh, which can then be used in render-calls
+ --> Meshes stay completely on the cpu-side too.
+
+So obivously after window creation I have something like this:
+
+
+Some more notes:
+    - Some objects which should not be recreated every frame should have names,
+      e.g. framebuffers, shaders --> by filename?, textures --> Size? 
+      The names here are then only used for caching the values.
+
+      Shader shader("something something");
+      Texture textures...
+
+      // Rendering part
+      {
+        shader.draw or whatever
+      }
+
+      auto framebuffer = make_framebuffer("Icon_Target", 500, 400, RGBA)
+      auto pass = make_renderpass(framebuffer)
+      auto shader = get_shader("filename");
+      pass.draw(shader, core.meshes.quadmesh, {uniform("position", vec4(1, 2, 3, 4))})
+
+      main_pass.depends_on(pass) // So we need to wait until we finished rendering
+
+      shader.set_uniform(uniform("sampler2d", framebuffer.get_color_attachment(0)));
+
+
+
+TODO: Rewrite attribute system: You can query the renderer for a set of inputs and then get these.
+      Then for mesh creation you 
+
+      I guess VertexDescription consists of a bitmask of multiple attributes then.
+        Note: And also in the future of custom attributes (Here the binding location needs to be specified)
+
+
+      
+
+      The renderpass options need to be set at least once before rendering, and can be updated every frame...
+      Mesh somemesh = rendering_core_query_mesh(Vertex_Attribute_Description) --> Creates an empty cpu mesh
+      mesh_set_mesh_data(Mesh_Type::Static, Topology::Triangles)
+      rendering_core_create_renderpass("main", target = Backbuffer, Clear = True)
+      rendering_core_get_shader("whatever")
+      rendering_pass_set_uniform() "Sets uniform in the pass for shader"
+      rendering_pass_draw() "Also allows to set for uniforms"
+      All uniforms need to be set once per frame!
+
+      // Vertex attributes:
+      auto pos = rendering_core_query_attribute_vec3("Position3D") --> Returns Attribute<Vec3>*
+      auto normal = rendering_core_query_attribute_vec3("Normal3D") --> Returns Attribute<Vec3>*
+                        --> query_vertex_attribute("Position3D", Data_Type information) (e.g. vector, matrix, ...)
+      auto my_new_mesh = rendering_core_query_mesh("Text_Mesh", Mesh_Type::Static, Topology::Triangles)
+      // Fill vertex data
+      Array<vec3> positions = mesh_get_attribute_data_array(pos, 128); // Calling this twice within a frame should result in a warning
+      positions[0] = ...
+      Array<vec3> colors = mesh_get_attribute_data_array(color, 128);
+      colors[0] = ...
+      // Fill indices
+      Array<uint> indices = mesh_get_attribute_data_array(predefined.index, 64);
+      indices[0] = ...
+
+      Then the shader generation code can generate the bindings ?
+      rendering_core_get_shader("")
+
+// In shader instead of
+layout (location = 1) in vec2 position;
+#input(Position3D) vec3 position;
+// Note that we then still need to check if the variable is actually used or not
+New shader syntax:
+#VERTEX
+All after to next/end is the vertex shader code
+
+uniform vec3 name;
+in vec3 pos; //@Position3D --> these lines will be rewritten
+
+
+
+#FRAGMENT
+
+
+
+
+
+
+Side project:
+    Since i don't have too much time currently to work on the compiler, I would like to start
+    working on smaller things that aren't directly connected to the compiler, like the GUI or formatting or stuff like that.
+    Some things that come to mind:
+        - Text-Rendering update: Maybe rewrite the text renderer
+            I just think that doing the distance field calculation with the sdf that I currently have would be a lot nicer
+            than the things that I am currently doing. 
+            Also maybe you know not make it suck ass, lol
+        - Custom allocators:
+            * In C++ this would be interesting to explore if a global variable would actually be more convenient to use.
+              I guess I also would tmp_allocator_allocate_array()
+                                   allocator_allocate_array()
+              The problem here is how Datastructures would handle allocators, e.g.
+              We would probably need to rewrite our datastructures to use allocator functions.
+
+              Also should datastructures keep a pointer to the allocator they were created with?
+              This would probably be necessary, but it seems a little annoying when thinking about strings and simple arrays
+              where the size of the allocator pointer would almost double the whole thing.
+               
+              Then this should also work with threads and fibers, so fiber-handles would also need to store the current
+              allocator if we want to keep the logic consisten.
+        - Immediate mode GUI and 2D-drawing:
+        - Rework of rendering logic with rendering passes.
+        - More vim commands for editor, e.g. movement and stuff.
+        - Dynamic code formating in the editor
+
+I decided to work on the rendering side again. 
+
+TODO:
+    - Aliases with name, e.g. using Helpers~foo as bar
+    - File imports with using, e.g. using "printing.upp"
+        * also with alias, like using "printing.upp" as Printing
+    - Think about transitive using loops
+    - Symbol overloads when defining symbols
 
 
 Implementation Plan:

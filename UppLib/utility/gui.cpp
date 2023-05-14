@@ -9,6 +9,23 @@
 #include "../rendering/text_renderer.hpp"
 #include "../win32/timing.hpp"
 
+vec2 anchor_to_direction(Anchor_2D anchor)
+{
+    switch (anchor) {
+    case Anchor_2D::TOP_LEFT:   return vec2(-1, 1);
+    case Anchor_2D::TOP_CENTER: return vec2(0, 1);
+    case Anchor_2D::TOP_RIGHT:  return vec2(1, 1);
+    case Anchor_2D::CENTER_LEFT: return vec2(-1, 0);
+    case Anchor_2D::CENTER_CENTER: return vec2(0, 0);
+    case Anchor_2D::CENTER_RIGHT: return vec2(1, 0);
+    case Anchor_2D::BOTTOM_LEFT: return vec2(-1, -1);
+    case Anchor_2D::BOTTOM_CENTER: return vec2(0, -1);
+    case Anchor_2D::BOTTOM_RIGHT: return vec2(1, -1);
+    default: panic("");
+    }
+    return vec2(0);
+}
+
 GUI gui_create(Renderer_2D* renderer_2d, Input* input, Timer* timer)
 {
     GUI result;

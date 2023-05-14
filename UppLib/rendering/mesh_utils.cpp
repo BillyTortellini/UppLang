@@ -13,7 +13,7 @@ struct Basic_Vertex_Data_3D
     vec3 color;
 };
 
-Mesh_GPU_Buffer mesh_utils_create_quad_2D(Rendering_Core* core)
+Mesh_GPU_Buffer mesh_utils_create_quad_2D()
 {
     vec2 positions[] = {
         vec2(-1.0f, -1.0f),
@@ -25,9 +25,9 @@ Mesh_GPU_Buffer mesh_utils_create_quad_2D(Rendering_Core* core)
         0, 1, 2,
         0, 2, 3,
     };
-    Vertex_Attribute attrib_infos[] = { vertex_attribute_make(Vertex_Attribute_Type::POSITION_2D) };
+    REMOVE_ME a;
+    REMOVE_ME attrib_infos[] = {a};
     Mesh_GPU_Buffer result = mesh_gpu_buffer_create_with_single_vertex_buffer(
-        core,
         gpu_buffer_create(
             array_as_bytes(&array_create_static(positions, 4)),
             GPU_Buffer_Type::VERTEX_BUFFER,
@@ -45,7 +45,7 @@ Mesh_GPU_Buffer mesh_utils_create_quad_2D(Rendering_Core* core)
     return result;
 }
 
-Mesh_GPU_Buffer mesh_utils_create_cube(Rendering_Core* core, vec3 color)
+Mesh_GPU_Buffer mesh_utils_create_cube(vec3 color)
 {
     vec3 positions[] = {
         vec3(-1.0f, -1.0f, 1.0f),  color,
@@ -65,12 +65,9 @@ Mesh_GPU_Buffer mesh_utils_create_cube(Rendering_Core* core, vec3 color)
         0, 3, 7, 0, 7, 4,
         4, 6, 5, 4, 7, 6
     };
-    Vertex_Attribute attrib_infos[] = { 
-        vertex_attribute_make(Vertex_Attribute_Type::POSITION_3D),
-        vertex_attribute_make(Vertex_Attribute_Type::COLOR3),
-    };
+    REMOVE_ME a;
+    REMOVE_ME attrib_infos[] = {a};
     Mesh_GPU_Buffer result = mesh_gpu_buffer_create_with_single_vertex_buffer(
-        core,
         gpu_buffer_create(
             array_as_bytes(&array_create_static(positions, 16)),
             GPU_Buffer_Type::VERTEX_BUFFER,

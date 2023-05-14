@@ -2,33 +2,35 @@
 
 #include "rendering_core.hpp"
 
-void camera_3D_update_projection_window_size(void* userdata, Rendering_Core* core) 
+void camera_3D_update_projection_window_size(void* userdata) 
 {
+    auto& core = rendering_core;
     Camera_3D* camera = (Camera_3D*)userdata;
-    camera->aspect_ratio = ((float)core->render_information.window_width / core->render_information.viewport_height);
+    camera->aspect_ratio = ((float)core.render_information.window_width / core.render_information.viewport_height);
     camera->projection_matrix = mat4_make_projection_matrix(camera->near_distance, camera->far_distance, camera->fov_x, camera->aspect_ratio);
 }
 
-Camera_3D* camera_3D_create(Rendering_Core* core, float fov_x, float near_distance, float far_distance)
+Camera_3D* camera_3D_create(float fov_x, float near_distance, float far_distance)
 {
+    auto& core = rendering_core;
     Camera_3D* result = new Camera_3D();
     result->fov_x = fov_x;
-    result->fov_y = fov_x * ((float)core->render_information.window_width / core->render_information.viewport_height);
+    result->fov_y = fov_x * ((float)core.render_information.window_width / core.render_information.viewport_height);
     result->near_distance = near_distance;
     result->far_distance = far_distance;
     result->position = vec3(0);
     result->view_direction = vec3(0, 0, -1);
     result->up = vec3(0, 1, 0);
-    camera_3D_update_projection_window_size(result, core);
-    rendering_core_add_window_size_listener(core, &camera_3D_update_projection_window_size, result);
+    camera_3D_update_projection_window_size(result);
+    rendering_core_add_window_size_listener(&camera_3D_update_projection_window_size, result);
 
     camera_3D_update_matrices(result);
     return result;
 }
 
-void camera_3D_destroy(Camera_3D* camera, Rendering_Core* core)
+void camera_3D_destroy(Camera_3D* camera)
 {
-    rendering_core_remove_window_size_listener(core, camera);
+    rendering_core_remove_window_size_listener(camera);
     delete camera;
 }
 

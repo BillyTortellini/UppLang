@@ -15,8 +15,9 @@ void text_layout_destroy(Text_Layout* info) {
     dynamic_array_destroy(&info->character_positions);
 }
 
-void text_renderer_update_window_size(void* userdata, Rendering_Core* core)
+void text_renderer_update_window_size(void* userdata)
 {
+    auto core = &rendering_core;
     Text_Renderer* renderer = (Text_Renderer*) userdata;
     renderer->screen_width = core->render_information.viewport_width;
     renderer->screen_height = core->render_information.viewport_height;
@@ -31,7 +32,7 @@ Text_Renderer* text_renderer_create_from_font_atlas_file(
     text_renderer->text_layout = text_layout_create();
     text_renderer->screen_width = core->render_information.window_width;
     text_renderer->screen_height = core->render_information.window_height;
-    rendering_core_add_window_size_listener(core, &text_renderer_update_window_size, text_renderer);
+    rendering_core_add_window_size_listener(&text_renderer_update_window_size, text_renderer);
     text_renderer->glyph_atlas = optional_unwrap(glyph_atlas_create_from_atlas_file(font_filepath));
     text_renderer->default_color = vec3(1.0f);
     Pipeline_State pipeline_state;
@@ -48,17 +49,15 @@ Text_Renderer* text_renderer_create_from_font_atlas_file(
     //glyph_atlas_print_glyph_information(&text_renderer->glyph_atlas);
 
     // Initialize shaders
-    text_renderer->bitmap_shader = shader_program_create(core, { "resources/shaders/core/font_bitmap.glsl" });
-    text_renderer->sdf_shader = shader_program_create(core, { "resources/shaders/core/font_sdf.glsl" } );
+    text_renderer->bitmap_shader = shader_program_create({ "resources/shaders/core/font_bitmap.glsl" });
+    text_renderer->sdf_shader = shader_program_create({ "resources/shaders/core/font_sdf.glsl" } );
 
     // Initialize textures
     text_renderer->atlas_bitmap_texture = texture_2D_create_from_texture_bitmap(
-        core, 
         &text_renderer->glyph_atlas.atlas_bitmap,
         texture_sampling_mode_make_bilinear()
     );
     text_renderer->atlas_sdf_texture = texture_2D_create_from_bytes(
-        core,
         Texture_2D_Type::RED_F32,
         array_as_bytes(&text_renderer->glyph_atlas.atlas_distance_field),
         text_renderer->glyph_atlas.atlas_bitmap.width,
@@ -67,14 +66,9 @@ Text_Renderer* text_renderer_create_from_font_atlas_file(
     );
 
     // Initialize GPU data
-    Vertex_Attribute attribute_informations[] = {
-        vertex_attribute_make(Vertex_Attribute_Type::POSITION_2D),
-        vertex_attribute_make(Vertex_Attribute_Type::UV_COORDINATES_0),
-        vertex_attribute_make(Vertex_Attribute_Type::COLOR3),
-        vertex_attribute_make_custom(Vertex_Attribute_Data_Type::FLOAT, 11)
-    };
+    REMOVE_ME a;
+    REMOVE_ME attribute_informations[] = { a };
     text_renderer->font_mesh = mesh_gpu_buffer_create_with_single_vertex_buffer(
-        core,
         gpu_buffer_create_empty(sizeof(Font_Vertex)*1024, GPU_Buffer_Type::VERTEX_BUFFER, GPU_Buffer_Usage::DYNAMIC),
         array_create_static(attribute_informations, 4),
         gpu_buffer_create_empty(sizeof(GLuint) * 1024 * 4, GPU_Buffer_Type::INDEX_BUFFER, GPU_Buffer_Usage::DYNAMIC),
@@ -90,7 +84,7 @@ Text_Renderer* text_renderer_create_from_font_atlas_file(
 
 void text_renderer_destroy(Text_Renderer* renderer, Rendering_Core* core)
 {
-    rendering_core_remove_window_size_listener(core, renderer);
+    rendering_core_remove_window_size_listener(renderer);
     text_layout_destroy(&renderer->text_layout);
     shader_program_destroy(renderer->bitmap_shader);
     shader_program_destroy(renderer->sdf_shader);
@@ -266,7 +260,6 @@ void text_renderer_render(Text_Renderer* renderer, Rendering_Core* core)
     );
     mesh_gpu_buffer_update_index_buffer(
         &renderer->font_mesh,
-        core,
         dynamic_array_as_array(&renderer->text_indices)
     );
     renderer->font_mesh.index_count = renderer->text_indices.size;
@@ -276,7 +269,8 @@ void text_renderer_render(Text_Renderer* renderer, Rendering_Core* core)
     dynamic_array_reset(&renderer->text_indices);
 
     // Render
-    shader_program_draw_mesh(renderer->sdf_shader, &renderer->font_mesh, core, { uniform_value_make_texture_2D_binding("sampler", renderer->atlas_sdf_texture) });
+    // REMOVE_ME
+    //shader_program_draw_mesh(renderer->sdf_shader, &renderer->font_mesh, { uniform_value_make_texture_2D_binding("sampler", renderer->atlas_sdf_texture) });
 }
 
 float text_renderer_get_cursor_advance(Text_Renderer* renderer, float relative_height)

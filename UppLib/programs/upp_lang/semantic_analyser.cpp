@@ -20,7 +20,7 @@
 
 // GLOBALS
 bool PRINT_DEPENDENCIES = false;
-bool PRINT_TIMING = false;
+bool PRINT_TIMING = true;
 static Semantic_Analyser semantic_analyser;
 static Workload_Executer workload_executer;
 

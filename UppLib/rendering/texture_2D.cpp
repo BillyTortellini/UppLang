@@ -125,7 +125,7 @@ int texture_2D_type_pixel_byte_size(Texture_2D_Type type)
     return false;
 }
 
-Texture_2D* texture_2D_create_empty(Rendering_Core* core, Texture_2D_Type type, int width, int height, Texture_Sampling_Mode sample_mode)
+Texture_2D* texture_2D_create_empty(Texture_2D_Type type, int width, int height, Texture_Sampling_Mode sample_mode)
 {
     Texture_2D* result = new Texture_2D();
     result->is_renderbuffer = false;
@@ -135,7 +135,7 @@ Texture_2D* texture_2D_create_empty(Rendering_Core* core, Texture_2D_Type type, 
     result->sampling_mode = sample_mode;
 
     glGenTextures(1, &result->texture_id);
-    opengl_state_bind_texture_to_next_free_unit(&core->opengl_state, Texture_Binding_Type::TEXTURE_2D, result->texture_id);
+    opengl_state_bind_texture_to_next_free_unit(Texture_Binding_Type::TEXTURE_2D, result->texture_id);
     glTexImage2D(
         (GLenum) Texture_Binding_Type::TEXTURE_2D, 
         0,
@@ -148,12 +148,12 @@ Texture_2D* texture_2D_create_empty(Rendering_Core* core, Texture_2D_Type type, 
         0
     );
     result->has_mipmap = false;
-    texture_2D_set_sampling_mode(result, sample_mode, core);
+    texture_2D_set_sampling_mode(result, sample_mode);
 
     return result;
 }
 
-Texture_2D* texture_2D_create_renderbuffer(Rendering_Core* core, Texture_2D_Type type, int width, int height)
+Texture_2D* texture_2D_create_renderbuffer(Texture_2D_Type type, int width, int height)
 {
     Texture_2D* result = new Texture_2D();
     result->type = type;
@@ -168,15 +168,15 @@ Texture_2D* texture_2D_create_renderbuffer(Rendering_Core* core, Texture_2D_Type
     return result;
 }
 
-Texture_2D* texture_2D_create_from_bytes(Rendering_Core* core, Texture_2D_Type type, 
+Texture_2D* texture_2D_create_from_bytes(Texture_2D_Type type, 
     Array<byte> data, int width, int height, Texture_Sampling_Mode sample_mode)
 {
-    Texture_2D* result = texture_2D_create_empty(core, type, width, height, sample_mode);
-    texture_2D_update_texture_data(result, core, data, sample_mode.minification_mode == Texture_Minification_Mode::TRILINEAR_INTERPOLATION);
+    Texture_2D* result = texture_2D_create_empty(type, width, height, sample_mode);
+    texture_2D_update_texture_data(result, data, sample_mode.minification_mode == Texture_Minification_Mode::TRILINEAR_INTERPOLATION);
     return result;
 }
 
-Texture_2D* texture_2D_create_from_texture_bitmap(Rendering_Core* core, Texture_Bitmap* texture_data, Texture_Sampling_Mode sample_mode)
+Texture_2D* texture_2D_create_from_texture_bitmap(Texture_Bitmap* texture_data, Texture_Sampling_Mode sample_mode)
 {
     Texture_2D_Type result_type;
     switch (texture_data->channel_count) 
@@ -187,7 +187,7 @@ Texture_2D* texture_2D_create_from_texture_bitmap(Rendering_Core* core, Texture_
     case 4: result_type = Texture_2D_Type::RED_GREEN_BLUE_ALPHA_U8; break;
     default: panic("Should not happen");
     }
-    return texture_2D_create_from_bytes(core, result_type, texture_data->data, texture_data->width, texture_data->height, sample_mode);
+    return texture_2D_create_from_bytes(result_type, texture_data->data, texture_data->width, texture_data->height, sample_mode);
 }
 
 void texture_2D_destroy(Texture_2D* texture) {
@@ -195,7 +195,7 @@ void texture_2D_destroy(Texture_2D* texture) {
     delete texture;
 }
 
-void texture_2D_update_texture_data(Texture_2D* texture, Rendering_Core* core, Array<byte> data, bool create_mipmap)
+void texture_2D_update_texture_data(Texture_2D* texture, Array<byte> data, bool create_mipmap)
 {
     if (texture->is_renderbuffer) {
         panic("Cannot update a renderbuffer!");
@@ -235,7 +235,7 @@ void texture_2D_update_texture_data(Texture_2D* texture, Rendering_Core* core, A
         panic("Data is to small for texture to upload!");
     }
 
-    opengl_state_bind_texture_to_next_free_unit(&core->opengl_state, Texture_Binding_Type::TEXTURE_2D, texture->texture_id);
+    opengl_state_bind_texture_to_next_free_unit(Texture_Binding_Type::TEXTURE_2D, texture->texture_id);
     glTexSubImage2D(
         (GLenum) Texture_Binding_Type::TEXTURE_2D,
         0,
@@ -254,7 +254,7 @@ void texture_2D_update_texture_data(Texture_2D* texture, Rendering_Core* core, A
     }
 }
 
-void texture_2D_resize(Texture_2D* texture, Rendering_Core* core, int width, int height, bool create_mipmap)
+void texture_2D_resize(Texture_2D* texture, int width, int height, bool create_mipmap)
 {
     if (texture->is_renderbuffer) 
     {
@@ -265,7 +265,7 @@ void texture_2D_resize(Texture_2D* texture, Rendering_Core* core, int width, int
         return;
     }
 
-    opengl_state_bind_texture_to_next_free_unit(&core->opengl_state, Texture_Binding_Type::TEXTURE_2D, texture->texture_id);
+    opengl_state_bind_texture_to_next_free_unit(Texture_Binding_Type::TEXTURE_2D, texture->texture_id);
     glTexImage2D(
         (GLenum) Texture_Binding_Type::TEXTURE_2D, 
         0,
@@ -285,16 +285,16 @@ void texture_2D_resize(Texture_2D* texture, Rendering_Core* core, int width, int
     }
 }
 
-GLint texture_2D_bind_to_next_free_unit(Texture_2D* texture, Rendering_Core* core) {
+GLint texture_2D_bind_to_next_free_unit(Texture_2D* texture) {
     if (texture->is_renderbuffer) {
         panic("Cannot bind a renderbuffer, since they are write_only");
     }
-    return opengl_state_bind_texture_to_next_free_unit(&core->opengl_state, Texture_Binding_Type::TEXTURE_2D, texture->texture_id);
+    return opengl_state_bind_texture_to_next_free_unit(Texture_Binding_Type::TEXTURE_2D, texture->texture_id);
 }
 
-void texture_2D_set_sampling_mode(Texture_2D* texture, Texture_Sampling_Mode sample_mode, Rendering_Core* core)
+void texture_2D_set_sampling_mode(Texture_2D* texture, Texture_Sampling_Mode sample_mode)
 {
-    opengl_state_bind_texture_to_next_free_unit(&core->opengl_state, Texture_Binding_Type::TEXTURE_2D, texture->texture_id);
+    opengl_state_bind_texture_to_next_free_unit(Texture_Binding_Type::TEXTURE_2D, texture->texture_id);
     texture->sampling_mode = sample_mode;
 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, (GLenum) sample_mode.minification_mode);

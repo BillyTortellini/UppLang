@@ -7,6 +7,17 @@
 
 struct Rendering_Core;
 
+enum class Mesh_Topology
+{
+    POINTS = GL_POINTS,
+    LINES = GL_LINES,
+    LINE_STRIP = GL_LINE_STRIP,
+    LINE_LOOP = GL_LINE_LOOP,
+    TRIANGLES = GL_TRIANGLES,
+    TRIANGLE_STRIP = GL_TRIANGLE_STRIP, // Note: Primitive Restart can be used in index buffer
+    TRIANGLE_FAN = GL_TRIANGLE_FAN,
+};
+
 enum class GPU_Buffer_Type
 {
     VERTEX_BUFFER = GL_ARRAY_BUFFER,
@@ -38,70 +49,15 @@ void gpu_buffer_update(GPU_Buffer* buffer, Array<byte> data);
 void gpu_buffer_bind_indexed(GPU_Buffer* buffer, int index);
 
 
+struct REMOVE_ME {
 
-enum class Vertex_Attribute_Type
-{
-    POSITION_3D = 0,
-    POSITION_2D = 1,
-    UV_COORDINATES_0 = 2,
-    UV_COORDINATES_1 = 3,
-    UV_COORDINATES_2 = 4,
-    UV_COORDINATES_3 = 5,
-    NORMAL = 6,
-    TANGENT = 7,
-    BITANGENT = 8,
-    COLOR3 = 9,
-    COLOR4 = 10,
-    // TODO: Bone weights and indices
-
-    MINIMUM_OPENGL_ATTRIBUTE_COUNT = 16,
-    PADDING_ATTRIBUTE = 6969,
 };
 
-enum class Vertex_Attribute_Data_Type
-{
-    FLOAT, 
-    INT, 
-    VEC2, 
-    VEC3, 
-    VEC4, 
-    MAT2, 
-    MAT3, 
-    MAT4
-};
-
-struct Vertex_Attribute
-{
-    // Type information
-    GLenum gl_type; // Common: GL_BYTE, GL_SHORT, GL_INT, GL_FLOAT, GL_DOUBLE and other
-    GLint size; // The number of types (E.g. for vec3 type = GL_FLOAT and size = 3)
-    GLint location; // Note: Is not actually part of vbo, but of vao
-    int byte_count;
-    bool instanced;
-
-    // How the data is stored inside the vbo:
-    int offset;
-    int stride;
-};
-
-Vertex_Attribute vertex_attribute_make(Vertex_Attribute_Type type, bool instanced = false);
-Vertex_Attribute vertex_attribute_make_custom(Vertex_Attribute_Data_Type type, GLint shader_location, bool instanced = false);
 
 struct Bound_Vertex_GPU_Buffer
 {
     GPU_Buffer gpu_buffer;
-    Array<Vertex_Attribute> attribute_informations;
-};
-
-enum class Mesh_Topology
-{
-    POINTS = GL_POINTS,
-    LINES = GL_LINES,
-    LINE_STRIP = GL_LINE_STRIP,
-    LINE_LOOP = GL_LINE_LOOP,
-    TRIANGLES = GL_TRIANGLES,
-    TRIANGLE_STRIP = GL_TRIANGLE_STRIP, // Note: Primitive Restart can be used in index buffer
-    TRIANGLE_FAN = GL_TRIANGLE_FAN,
+    Array<REMOVE_ME> attribute_informations;
 };
 
 struct Mesh_GPU_Buffer
@@ -115,7 +71,6 @@ struct Mesh_GPU_Buffer
 
 // Takes GPU_Buffer ownership
 Mesh_GPU_Buffer mesh_gpu_buffer_create_without_vertex_buffer(
-    Rendering_Core* core,
     GPU_Buffer index_buffer,
     Mesh_Topology topology,
     int index_count
@@ -123,14 +78,13 @@ Mesh_GPU_Buffer mesh_gpu_buffer_create_without_vertex_buffer(
 
 // Takes ownership of gpu buffers, copies informations array
 Mesh_GPU_Buffer mesh_gpu_buffer_create_with_single_vertex_buffer(
-    Rendering_Core* core,
     GPU_Buffer vertex_buffer,
-    Array<Vertex_Attribute> informations,
+    Array<REMOVE_ME> informations,
     GPU_Buffer index_buffer,
     Mesh_Topology topology,
     int index_count
 );
 
 void mesh_gpu_buffer_destroy(Mesh_GPU_Buffer* mesh);
-int mesh_gpu_buffer_attach_vertex_buffer(Mesh_GPU_Buffer* mesh, Rendering_Core* core, GPU_Buffer vertex_buffer, Array<Vertex_Attribute> informations);
-void mesh_gpu_buffer_update_index_buffer(Mesh_GPU_Buffer* mesh, Rendering_Core* core, Array<uint32> data);
+int mesh_gpu_buffer_attach_vertex_buffer(Mesh_GPU_Buffer* mesh, GPU_Buffer vertex_buffer, Array<REMOVE_ME> informations);
+void mesh_gpu_buffer_update_index_buffer(Mesh_GPU_Buffer* mesh, Array<uint32> data);

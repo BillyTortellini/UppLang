@@ -77,13 +77,13 @@ struct Texture_2D
     bool is_renderbuffer;
 };
 
-Texture_2D* texture_2D_create_empty(Rendering_Core* core, Texture_2D_Type type, int width, int height, Texture_Sampling_Mode sample_mode);
-Texture_2D* texture_2D_create_renderbuffer(Rendering_Core* core, Texture_2D_Type type, int width, int height);
-Texture_2D* texture_2D_create_from_bytes(Rendering_Core* core, Texture_2D_Type type, Array<byte> data, int width, int height, Texture_Sampling_Mode sample_mode);
-Texture_2D* texture_2D_create_from_texture_bitmap(Rendering_Core* core, Texture_Bitmap* texture_data, Texture_Sampling_Mode sample_mode);
+Texture_2D* texture_2D_create_empty( Texture_2D_Type type, int width, int height, Texture_Sampling_Mode sample_mode);
+Texture_2D* texture_2D_create_renderbuffer( Texture_2D_Type type, int width, int height);
+Texture_2D* texture_2D_create_from_bytes( Texture_2D_Type type, Array<byte> data, int width, int height, Texture_Sampling_Mode sample_mode);
+Texture_2D* texture_2D_create_from_texture_bitmap( Texture_Bitmap* texture_data, Texture_Sampling_Mode sample_mode);
 void texture_2D_destroy(Texture_2D* texture);
 
-void texture_2D_update_texture_data(Texture_2D* texture, Rendering_Core* core, Array<byte> data, bool create_mipmap);
-void texture_2D_resize(Texture_2D* texture, Rendering_Core* core, int width, int height, bool create_mipmap);
-GLint texture_2D_bind_to_next_free_unit(Texture_2D* texture, Rendering_Core* core);
-void texture_2D_set_sampling_mode(Texture_2D* texture, Texture_Sampling_Mode sample_mode, Rendering_Core* core);
+void texture_2D_update_texture_data(Texture_2D* texture,  Array<byte> data, bool create_mipmap);
+void texture_2D_resize(Texture_2D* texture,  int width, int height, bool create_mipmap);
+GLint texture_2D_bind_to_next_free_unit(Texture_2D* texture);
+void texture_2D_set_sampling_mode(Texture_2D* texture, Texture_Sampling_Mode sample_mode);

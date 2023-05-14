@@ -3,6 +3,7 @@
 #include <cstring>
 #include <cstdio>
 #include <cstdarg>
+#include "dynamic_array.hpp"
 #include <cstdlib>
 
 #include "../math/scalars.hpp"
@@ -444,3 +445,25 @@ bool string_test_char(String str, int char_index, char c)
     return str[char_index] == c;
 }
 
+Array<String> string_split(String string, char c)
+{
+    auto parts = dynamic_array_create_empty<String>(1);
+    int last_end_index = -1;
+    for (int i = 0; i < string.size; i++) {
+        if (string.characters[i] == c && i > (last_end_index + 1)) {
+            String sub = string_create_substring_static(&string, last_end_index+1, i);
+            dynamic_array_push_back(&parts, sub);
+            last_end_index = i;
+        }
+    }
+    if (last_end_index + 1 < string.size) {
+        String sub = string_create_substring_static(&string, last_end_index+1, string.size);
+        dynamic_array_push_back(&parts, sub);
+    }
+    return dynamic_array_as_array(&parts);
+}
+
+void string_split_destroy(Array<String> parts) {
+    delete parts.data;
+    parts.data = 0;
+}

@@ -5,7 +5,6 @@
 #include "../datastructures/string.hpp"
 #include "gpu_buffers.hpp"
 #include "rendering_core.hpp"
-#include "render_pass.hpp"
 
 struct Shader_Program;
 struct Text_Renderer;

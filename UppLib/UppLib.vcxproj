@@ -37,6 +37,7 @@
     <ClInclude Include="programs\c_importer\c_importer.hpp" />
     <ClInclude Include="programs\c_importer\c_lexer.hpp" />
     <ClInclude Include="programs\proc_city\proc_city.hpp" />
+    <ClInclude Include="programs\render_rework\render_rework.hpp" />
     <ClInclude Include="programs\text_editor\text.hpp" />
     <ClInclude Include="programs\text_editor\text_editor.hpp" />
     <ClInclude Include="programs\upp_lang\ast.hpp" />
@@ -66,9 +67,7 @@
     <ClInclude Include="rendering\rendering_core.hpp" />
     <ClInclude Include="rendering\opengl_utils.hpp" />
     <ClInclude Include="rendering\renderer_2D.hpp" />
-    <ClInclude Include="rendering\render_pass.hpp" />
     <ClInclude Include="rendering\shader_program.hpp" />
-    <ClInclude Include="rendering\test_renderer.hpp" />
     <ClInclude Include="rendering\texture_2D.hpp" />
     <ClInclude Include="rendering\texture_bitmap.hpp" />
     <ClInclude Include="rendering\text_renderer.hpp" />
@@ -105,6 +104,7 @@
     <ClCompile Include="programs\c_importer\c_importer.cpp" />
     <ClCompile Include="programs\c_importer\c_lexer.cpp" />
     <ClCompile Include="programs\proc_city\proc_city.cpp" />
+    <ClCompile Include="programs\render_rework\render_rework.cpp" />
     <ClCompile Include="programs\text_editor\text.cpp" />
     <ClCompile Include="programs\text_editor\text_editor.cpp" />
     <ClCompile Include="programs\upp_lang\ast.cpp" />
@@ -134,9 +134,7 @@
     <ClCompile Include="rendering\rendering_core.cpp" />
     <ClCompile Include="rendering\opengl_utils.cpp" />
     <ClCompile Include="rendering\renderer_2D.cpp" />
-    <ClCompile Include="rendering\render_pass.cpp" />
     <ClCompile Include="rendering\shader_program.cpp" />
-    <ClCompile Include="rendering\test_renderer.cpp" />
     <ClCompile Include="rendering\texture_2D.cpp" />
     <ClCompile Include="rendering\texture_bitmap.cpp" />
     <ClCompile Include="rendering\text_renderer.cpp" />

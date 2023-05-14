@@ -103,6 +103,12 @@
     <Filter Include="Source Files\Programs\C_Importer">
       <UniqueIdentifier>{97e19768-b984-4e20-a66d-1d4c80794ef3}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Header Files\Programs\Render_Rework">
+      <UniqueIdentifier>{7e9c0c19-b669-4876-9637-3c16c81490bd}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Programs\Render_Rework">
+      <UniqueIdentifier>{f14dca25-db34-4144-8c59-2147dd97c431}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="datastructures\array.hpp">
@@ -222,9 +228,6 @@
     <ClInclude Include="rendering\framebuffer.hpp">
       <Filter>Header Files\Rendering\Core</Filter>
     </ClInclude>
-    <ClInclude Include="rendering\render_pass.hpp">
-      <Filter>Header Files\Rendering\Utility</Filter>
-    </ClInclude>
     <ClInclude Include="utility\hash_functions.hpp">
       <Filter>Header Files\Utility</Filter>
     </ClInclude>
@@ -245,9 +248,6 @@
     </ClInclude>
     <ClInclude Include="datastructures\dependency_graph.hpp">
       <Filter>Header Files\Datastructures</Filter>
-    </ClInclude>
-    <ClInclude Include="rendering\test_renderer.hpp">
-      <Filter>Header Files\Rendering\Utility</Filter>
     </ClInclude>
     <ClInclude Include="utility\character_info.hpp">
       <Filter>Header Files\Utility</Filter>
@@ -311,6 +311,9 @@
     </ClInclude>
     <ClInclude Include="programs\upp_lang\symbol_table.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\render_rework\render_rework.hpp">
+      <Filter>Header Files\Programs\Render_Rework</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -440,9 +443,6 @@
     <ClCompile Include="rendering\framebuffer.cpp">
       <Filter>Source Files\Rendering\Core</Filter>
     </ClCompile>
-    <ClCompile Include="rendering\render_pass.cpp">
-      <Filter>Source Files\Rendering\Utility</Filter>
-    </ClCompile>
     <ClCompile Include="utility\hash_functions.cpp">
       <Filter>Source Files\Utility</Filter>
     </ClCompile>
@@ -468,9 +468,6 @@
       <Filter>Source Files\Programs\Upp_Lang</Filter>
     </ClCompile>
     <ClCompile Include="programs\upp_lang\syntax_editor.cpp">
-      <Filter>Source Files\Programs\Upp_Lang</Filter>
-    </ClCompile>
-    <ClCompile Include="rendering\test_renderer.cpp">
       <Filter>Source Files\Programs\Upp_Lang</Filter>
     </ClCompile>
     <ClCompile Include="programs\upp_lang\ast.cpp">
@@ -508,6 +505,9 @@
     </ClCompile>
     <ClCompile Include="programs\upp_lang\symbol_table.cpp">
       <Filter>Source Files\Programs\Upp_Lang</Filter>
+    </ClCompile>
+    <ClCompile Include="programs\render_rework\render_rework.cpp">
+      <Filter>Source Files\Programs\Render_Rework</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

@@ -23,7 +23,6 @@
 #include "../../datastructures/hashset.hpp"
 #include "../../utility/hash_functions.hpp"
 
-#include "../../rendering/test_renderer.hpp"
 #include "syntax_editor.hpp"
 
 #include "../../datastructures/block_allocator.hpp"
@@ -208,35 +207,35 @@ void upp_lang_main()
     Window* window = window_create("Test", 0);
     SCOPE_EXIT(window_destroy(window));
     Window_State* window_state = window_get_window_state(window);
+    rendering_core_initialize(window_state->width, window_state->height, window_state->dpi);
+    SCOPE_EXIT(rendering_core_destroy());
 
-    Rendering_Core core = rendering_core_create(window_state->width, window_state->height, window_state->dpi);
-    SCOPE_EXIT(rendering_core_destroy(&core));
-
-    Render_Pass* background_pass = render_pass_create(0, pipeline_state_make_default(), true, true, true);
-    SCOPE_EXIT(render_pass_destroy(background_pass));
+    GLint maxAttribs = 0;
+    glGetIntegerv(GL_MAX_VERTEX_ATTRIBS, &maxAttribs);
+    logg("Maximum attribs: %d\n", maxAttribs);
 
     Timer timer = timer_make();
 
-    Text_Renderer* text_renderer = text_renderer_create_from_font_atlas_file(&core, "resources/fonts/glyph_atlas.atlas");
-    SCOPE_EXIT(text_renderer_destroy(text_renderer, &core));
+    Text_Renderer* text_renderer = text_renderer_create_from_font_atlas_file(&rendering_core, "resources/fonts/glyph_atlas.atlas");
+    SCOPE_EXIT(text_renderer_destroy(text_renderer, &rendering_core));
 
-    Renderer_2D* renderer_2D = renderer_2D_create(&core, text_renderer);
-    SCOPE_EXIT(renderer_2D_destroy(renderer_2D, &core));
+    Renderer_2D* renderer_2D = renderer_2D_create(&rendering_core, text_renderer);
+    SCOPE_EXIT(renderer_2D_destroy(renderer_2D, &rendering_core));
     GUI gui = gui_create(renderer_2D, window_get_input(window), &timer);
     SCOPE_EXIT(gui_destroy(&gui));
 
-    syntax_editor_initialize(&core, text_renderer, renderer_2D, window_get_input(window), &timer);
+    syntax_editor_initialize(&rendering_core, text_renderer, renderer_2D, window_get_input(window), &timer);
     SCOPE_EXIT(syntax_editor_destroy());
 
     // Background
-    Mesh_GPU_Buffer mesh_quad = mesh_utils_create_quad_2D(&core);
+    Mesh_GPU_Buffer mesh_quad = mesh_utils_create_quad_2D();
     SCOPE_EXIT(mesh_gpu_buffer_destroy(&mesh_quad));
 
-    Shader_Program* background_shader = shader_program_create(&core, { "resources/shaders/upp_lang/background.glsl" });
+    Shader_Program* background_shader = shader_program_create({ "resources/shaders/upp_lang/background.glsl" });
     SCOPE_EXIT(shader_program_destroy(background_shader));
 
-    Camera_3D* camera = camera_3D_create(&core, math_degree_to_radians(90), 0.1f, 100.0f);
-    SCOPE_EXIT(camera_3D_destroy(camera, &core));
+    Camera_3D* camera = camera_3D_create(math_degree_to_radians(90), 0.1f, 100.0f);
+    SCOPE_EXIT(camera_3D_destroy(camera));
     Camera_Controller_Arcball camera_controller_arcball;
     {
         window_set_cursor_constrain(window, false);
@@ -246,9 +245,6 @@ void upp_lang_main()
         camera->position = vec3(0, 0, 1.0f);
     }
 
-    Primitive_Renderer_2D* primitive_renderer_2D = primitive_renderer_2D_create(&core);
-    SCOPE_EXIT(primitive_renderer_2D_destroy(primitive_renderer_2D, &core));
-
     // Set Window/Rendering Options
     {
         window_load_position(window, "window_pos.set");
@@ -257,12 +253,12 @@ void upp_lang_main()
         //window_set_fullscreen(window, true);
         window_set_vsync(window, false);
 
-        opengl_state_set_clear_color(&core.opengl_state, vec4(0.0f));
+        opengl_state_set_clear_color(vec4(0.0f));
         window_set_vsync(window, true);
     }
     Pipeline_State pipeline_state = pipeline_state_make_default();
     pipeline_state.blending_state.blending_enabled = true;
-    rendering_core_update_pipeline_state(&core, pipeline_state);
+    rendering_core_update_pipeline_state(pipeline_state);
 
 
     // Window Loop
@@ -301,9 +297,6 @@ void upp_lang_main()
 
         // Rendering
         {
-            rendering_core_prepare_frame(
-                &core, camera, Framebuffer_Clear_Type::COLOR_AND_DEPTH, timer_current_time_in_seconds(&timer), window_state->width, window_state->height
-            );
 
             // Draw Background
             //shader_program_draw_mesh(background_shader, &mesh_quad, &core, {});
@@ -389,6 +382,9 @@ void upp_lang_main()
             primitive_renderer_2D_render(primitive_renderer_2D, &core);
             */
 
+            rendering_core_render(
+                camera, Framebuffer_Clear_Type::COLOR_AND_DEPTH, timer_current_time_in_seconds(&timer), window_state->width, window_state->height
+            );
             window_swap_buffers(window);
         }
 
