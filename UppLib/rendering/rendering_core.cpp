@@ -20,6 +20,7 @@ OpenGL_State opengl_state_create()
     // Initialize texture unit tracking
     int texture_unit_count;
     glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS, &texture_unit_count);
+    texture_unit_count = math_minimum(2048, texture_unit_count);
     result.texture_unit_bindings = array_create_empty<GLuint>(texture_unit_count);
     for (int i = 0; i < texture_unit_count; i++) {
         result.texture_unit_bindings.data[i] = 0;
@@ -449,11 +450,6 @@ void rendering_core_render(Camera_3D* camera, Framebuffer_Clear_Type clear_type,
                 auto& buffer = mesh->buffers[i];
                 auto attribute = mesh->description->attributes[i];
 
-                // Skip if nothing changed
-                if (!buffer.dirty) {
-                    continue;
-                }
-
                 // Calculate how many triangles we have
                 {
                     if (attribute == core.predefined.index) {
@@ -469,9 +465,18 @@ void rendering_core_render(Camera_3D* camera, Framebuffer_Clear_Type clear_type,
                     }
                 }
 
+                // Skip if nothing changed
+                if (!buffer.dirty) {
+                    continue;
+                }
+
                 // Upload data to gpu
                 buffer.dirty = false;
                 gpu_buffer_update(&buffer.gpu_buffer, dynamic_array_as_bytes(&buffer.attribute_data));
+                if (mesh->reset_every_frame) {
+                    buffer.dirty = true;
+                    dynamic_array_reset(&buffer.attribute_data);
+                }
             }
             
             if (index_buffer != 0) {
@@ -684,7 +689,7 @@ Vertex_Description* vertex_description_create(std::initializer_list<Vertex_Attri
     return description;
 }
 
-Mesh* rendering_core_query_mesh(const char* name, Vertex_Description* description, Mesh_Topology topology, GPU_Buffer_Usage usage)
+Mesh* rendering_core_query_mesh(const char* name, Vertex_Description* description, Mesh_Topology topology, bool reset_every_frame)
 {
     auto& core = rendering_core;
     auto found = hashtable_find_element(&core.meshes, string_create_static(name));
@@ -706,14 +711,17 @@ Mesh* rendering_core_query_mesh(const char* name, Vertex_Description* descriptio
     mesh->buffers = array_create_empty<Attribute_Buffer>(description->attributes.size);
     mesh->queried_this_frame = true;
     mesh->has_element_buffer = false;
+    mesh->reset_every_frame = reset_every_frame;
     mesh->topology = topology;
     mesh->primitive_count = 0;
     for (int i = 0; i < mesh->buffers.size; i++) {
         auto& buffer = mesh->buffers[i];
         auto attribute = description->attributes[i];
-        buffer.dirty = false;
+        buffer.dirty = mesh-reset_every_frame;
         buffer.gpu_buffer = gpu_buffer_create_empty(
-            4, attribute == core.predefined.index ? GPU_Buffer_Type::INDEX_BUFFER : GPU_Buffer_Type::VERTEX_BUFFER, usage
+            1, 
+            attribute == core.predefined.index ? GPU_Buffer_Type::INDEX_BUFFER : GPU_Buffer_Type::VERTEX_BUFFER, 
+            mesh->reset_every_frame ? GPU_Buffer_Usage::DYNAMIC : GPU_Buffer_Usage::STATIC
         );
         buffer.attribute_data = dynamic_array_create_empty<byte>(1);
 
@@ -998,7 +1006,7 @@ void shader_file_changed_callback(void* userdata, const char* filename)
             GLenum type; // Type of uniform
             GLint array_size; // Size, e.g. for arrays? or vector components?
             glGetActiveUniform(
-                shader->program_id, (GLuint)i, buffer.size, NULL,
+                shader->program_id, (GLuint)i, buffer.capacity, &buffer.size,
                 &array_size, &type, (GLchar*)buffer.characters
             );
 
@@ -1126,7 +1134,7 @@ Render_Pass* rendering_core_query_renderpass(const char* name, Pipeline_State pi
 
 void render_pass_draw(Render_Pass* pass, Shader* shader, Mesh* mesh, std::initializer_list<Uniform_Value> uniforms)
 {
-    for (auto uniform : uniforms) {
+    for (const auto uniform : uniforms) {
         Render_Pass_Command command;
         command.type = Render_Pass_Command_Type::UNIFORM;
         command.uniform.shader = shader;

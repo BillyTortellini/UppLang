@@ -385,9 +385,9 @@ void text_editor_draw_bounding_box(Text_Editor* editor, Rendering_Core* core, Bo
         editor->cursor_shader, 
         &editor->cursor_mesh, 
         {
-            uniform_value_make("position", bb.min),
-            uniform_value_make("size", bb.max - bb.min),
-            uniform_value_make("color", color),
+            uniform_make("position", bb.min),
+            uniform_make("size", bb.max - bb.min),
+            uniform_make("color", color),
         }
     );
 }

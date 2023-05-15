@@ -194,7 +194,18 @@ Shader_Datatype_Info shader_datatype_get_info(Shader_Datatype type);
 template<typename T>
 Shader_Datatype shader_datatype_of() {
     panic("Not a shader datatype!");
+    return Shader_Datatype::FLOAT;
 }
+
+template<> Shader_Datatype shader_datatype_of<float>();
+template<> Shader_Datatype shader_datatype_of<uint32>();
+template<> Shader_Datatype shader_datatype_of<vec2>();
+template<> Shader_Datatype shader_datatype_of<vec3>();
+template<> Shader_Datatype shader_datatype_of<vec4>();
+template<> Shader_Datatype shader_datatype_of<mat2>();
+template<> Shader_Datatype shader_datatype_of<mat3>();
+template<> Shader_Datatype shader_datatype_of<mat4>();
+
 
 struct Uniform_Value
 {
@@ -219,8 +230,9 @@ public:
 };
 
 template<typename T>
-Uniform_Value uniform_value_make(const char* name, T data) {
+Uniform_Value uniform_make(const char* name, T data) {
     Uniform_Value val;
+    val.datatype = shader_datatype_of<T>();
     val.name = name;
     memcpy(&val.buffer[0], &data, sizeof(T));
     return val;
@@ -307,6 +319,7 @@ struct Mesh
     Array<Attribute_Buffer> buffers;
     GLuint vao;
     Mesh_Topology topology;
+    bool reset_every_frame;
 
     bool queried_this_frame;
     int has_element_buffer;
@@ -314,7 +327,7 @@ struct Mesh
 };
 
 template<typename T>
-Array<T> mesh_get_attribute_buffer(Mesh* mesh, Vertex_Attribute<T>* attribute, int size) 
+Array<T> mesh_push_attribute_slice(Mesh* mesh, Vertex_Attribute<T>* attribute, int size) 
 {
     int index = -1;
     for (int i = 0; i < mesh->description->attributes.size; i++) {
@@ -328,14 +341,26 @@ Array<T> mesh_get_attribute_buffer(Mesh* mesh, Vertex_Attribute<T>* attribute, i
     }
 
     auto& buffer = mesh->buffers[index];
+    int before_size = buffer.attribute_data.size;
     buffer.dirty = true;
-    dynamic_array_reserve(&buffer.attribute_data, size * sizeof(T));
-    buffer.attribute_data.size = size * sizeof(T);
+    dynamic_array_reserve(&buffer.attribute_data, buffer.attribute_data.size + size * sizeof(T));
+    buffer.attribute_data.size = buffer.attribute_data.size + size * sizeof(T);
 
     Array<T> result;
     result.size = size;
-    result.data = (T*) buffer.attribute_data.data;
+    result.data = (T*) &buffer.attribute_data.data[before_size];
     return result;
+}
+
+template<typename T>
+void mesh_push_attribute(Mesh* mesh, Vertex_Attribute<T>* attribute, std::initializer_list<T> data) 
+{
+    auto buffer = mesh_push_attribute_slice(mesh, attribute, data.size());
+    int i = 0; 
+    for (auto& elem : data) {
+        buffer[i] = elem;
+        i += 1;
+    }
 }
 
 
@@ -427,7 +452,7 @@ void rendering_core_clear_bound_framebuffer(Framebuffer_Clear_Type clear_type);
 void rendering_core_add_window_size_listener(window_size_changed_callback callback, void* userdata);
 void rendering_core_remove_window_size_listener(void* userdata);
 
-Mesh* rendering_core_query_mesh(const char* name, Vertex_Description* description, Mesh_Topology topology, GPU_Buffer_Usage usage);
+Mesh* rendering_core_query_mesh(const char* name, Vertex_Description* description, Mesh_Topology topology, bool reset_every_frame);
 Shader* rendering_core_query_shader(const char* filename);
 Render_Pass* rendering_core_query_renderpass(const char* name, Pipeline_State pipeline_state);
 

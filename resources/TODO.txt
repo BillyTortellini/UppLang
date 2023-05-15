@@ -1,4 +1,12 @@
 
+TODO:
+- Textures, framebuffers (Render to texture) and renderpass-dependencies
+- Rework all current rendering code
+- Maybe do cool auto-generated shader stuff...
+- 2D rendering rework, e.g. new 2d renderer that does depth better, support for text, lines, rectangles, circles and other things
+- Custom imgui
+- Move parts of the compiler options into the imgui
+
 Ideas for rendering rework:
     - What do we need for rendering:
         * Rendering state (Culling, depth-test, ...)

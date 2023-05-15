@@ -45,6 +45,18 @@ void render_rework()
     // Shader_Program* background_shader = shader_program_create({ "resources/shaders/upp_lang/background.glsl" });
     // SCOPE_EXIT(shader_program_destroy(background_shader));
 
+    auto& core = rendering_core;
+    auto mesh = rendering_core_query_mesh(
+        "mesh", vertex_description_create({ core.predefined.position2D }), Mesh_Topology::TRIANGLES, false
+    );
+    mesh_push_attribute(
+        mesh, core.predefined.position2D, {
+            vec2(-0.5f, -0.5f),
+            vec2(0.5f, -0.5f),
+            vec2(0.0f, 0.5f),
+        }
+    );
+
     // Window Loop
     double time_last_update_start = timer_current_time_in_seconds(&timer);
     while (true)
@@ -77,18 +89,25 @@ void render_rework()
 
         // Rendering
         {
-            auto& core = rendering_core;
-
-            auto mesh = rendering_core_query_mesh(
-                "mesh", vertex_description_create({ core.predefined.position2D }), Mesh_Topology::TRIANGLES, GPU_Buffer_Usage::DYNAMIC
+            auto circle = rendering_core_query_mesh(
+                "circleMesh", vertex_description_create({ core.predefined.position2D }), Mesh_Topology::TRIANGLES, true
             );
-            auto pos = mesh_get_attribute_buffer(mesh, core.predefined.position2D, 3);
-            pos[0] = vec2(-0.5f, -0.5);
-            pos[1] = vec2(0.5f, -0.5);
-            pos[2] = vec2(0.0f, 0.5);
+            vec2 offset(-0.5f, 0.5f);
+            float radius = 0.3;
+            int division = 16;
+            for (int i = 0; i < division; i++) {
+                mesh_push_attribute(
+                    circle, core.predefined.position2D, {
+                        vec2(0),
+                        vec2(math_cosine(2 * PI / division * i), math_sine(2 * PI / division * i)) * radius,
+                        vec2(math_cosine(2 * PI / division * (i + 1)), math_sine(2 * PI / division * (i + 1))) * radius,
+                    }
+                );
+            }
 
             auto shader = rendering_core_query_shader("resources/shaders/test.glsl");
-            render_pass_draw(core.main_pass, shader, mesh, {});
+            render_pass_draw(core.main_pass, shader, mesh, {uniform_make("offset", vec2(0)), uniform_make("scale", 1.0f)});
+            render_pass_draw(core.main_pass, shader, circle, {uniform_make("offset", vec2(-.5f, .5f)), uniform_make("scale", 0.3f)});
 
             rendering_core_render(
                 camera, Framebuffer_Clear_Type::COLOR_AND_DEPTH, timer_current_time_in_seconds(&timer), window_state->width, window_state->height
