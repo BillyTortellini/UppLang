@@ -53,16 +53,15 @@ Text_Renderer* text_renderer_create_from_font_atlas_file(
     text_renderer->sdf_shader = shader_program_create({ "resources/shaders/core/font_sdf.glsl" } );
 
     // Initialize textures
-    text_renderer->atlas_bitmap_texture = texture_2D_create_from_texture_bitmap(
-        &text_renderer->glyph_atlas.atlas_bitmap,
-        texture_sampling_mode_make_bilinear()
+    text_renderer->atlas_bitmap_texture = texture_create_from_texture_bitmap(
+        &text_renderer->glyph_atlas.atlas_bitmap, false
     );
-    text_renderer->atlas_sdf_texture = texture_2D_create_from_bytes(
-        Texture_2D_Type::RED_F32,
+    text_renderer->atlas_sdf_texture = texture_create_from_bytes(
+        Texture_Type::RED_F32,
         array_as_bytes(&text_renderer->glyph_atlas.atlas_distance_field),
         text_renderer->glyph_atlas.atlas_bitmap.width,
-        text_renderer->glyph_atlas.atlas_bitmap.height,
-        texture_sampling_mode_make_bilinear()
+        text_renderer->glyph_atlas.atlas_bitmap.height, 
+        false
     );
 
     // Initialize GPU data
@@ -279,7 +278,7 @@ float text_renderer_get_cursor_advance(Text_Renderer* renderer, float relative_h
     return renderer->glyph_atlas.cursor_advance * scaling_factor.x;
 }
 
-Texture_2D* text_renderer_get_texture(Text_Renderer* renderer)
+Texture* text_renderer_get_texture(Text_Renderer* renderer)
 {
     return renderer->atlas_sdf_texture;
 }

@@ -6,7 +6,7 @@
 #include "rendering_core.hpp"
 #include "../utility/file_listener.hpp"
 #include "opengl_utils.hpp"
-#include "texture_2D.hpp"
+#include "texture.hpp"
 #include "gpu_buffers.hpp"
 
 void shader_program_retrieve_shader_variable_information(Shader_Program* program)

@@ -8,205 +8,15 @@
 #include "opengl_function_pointers.hpp"
 #include "gpu_buffers.hpp"
 #include "cameras.hpp"
-#include "framebuffer.hpp"
+#include "opengl_state.hpp"
 
 struct File_Listener;
+struct Texture;
+struct Framebuffer;
 
 
 
-// OPENGL STATE
-enum class Texture_Binding_Type
-{
-    TEXTURE_1D = GL_TEXTURE_1D,
-    TEXTURE_2D = GL_TEXTURE_2D,
-    TEXTURE_3D = GL_TEXTURE_3D,
-    CUBE_MAP = GL_TEXTURE_CUBE_MAP,
-    TEXTURE_2D_MULTISAMPLED = GL_TEXTURE_2D_MULTISAMPLE,
-};
-
-enum class Framebuffer_Clear_Type
-{
-    NONE,
-    COLOR,
-    DEPTH,
-    COLOR_AND_DEPTH
-};
-
-struct OpenGL_State
-{
-    GLint active_program;
-    GLint active_vao; // Active Vao
-    GLint active_framebuffer;
-    vec4 clear_color;
-
-    // Texture handling
-    Array<GLuint> texture_unit_bindings; 
-    int texture_unit_next_bindable_index;
-    int texture_unit_highest_accessed_index; // Stores how many indices have been accessed 
-};
-
-OpenGL_State opengl_state_create();
-void opengl_state_destroy(OpenGL_State* state);
-void opengl_state_set_clear_color(vec4 clear_color);
-
-void opengl_state_bind_program(GLuint program_id);
-void opengl_state_bind_vao(GLuint vao);
-void opengl_state_bind_framebuffer(GLuint framebuffer);
-GLint opengl_state_bind_texture_to_next_free_unit(Texture_Binding_Type binding_target, GLuint texture_id);
-
-
-
-// PIPELINE STATE
-enum class Blend_Operand
-{
-    ONE = GL_ONE,
-    ZERO = GL_ZERO,
-    SOURCE_COLOR = GL_SRC_COLOR,
-    ONE_MINUS_SOURCE_COLOR = GL_ONE_MINUS_SRC_ALPHA,
-    DESTINTAION_COLOR = GL_DST_COLOR,
-    ONE_MINUS_DESTINATION_COLOR = GL_ONE_MINUS_DST_COLOR,
-    SOURCE_ALPHA = GL_SRC_ALPHA,
-    ONE_MINUS_SOURCE_ALPHA = GL_ONE_MINUS_SRC_ALPHA,
-    DESTINTAION_ALPHA = GL_DST_ALPHA, 
-    ONE_MINUS_DESTINATION_ALPHA = GL_ONE_MINUS_DST_ALPHA,
-    CUSTOM_COLOR = GL_CONSTANT_COLOR,
-    ONE_MINUS_CUSTOM_COLOR = GL_ONE_MINUS_CONSTANT_COLOR,
-    CUSTOM_ALPHA = GL_CONSTANT_ALPHA,
-    ONE_MINUS_CUSTOM_ALPHA = GL_ONE_MINUS_CONSTANT_ALPHA
-};
-
-enum class Blend_Equation
-{
-    ADDITION = GL_FUNC_ADD,
-    SUBTRACTION = GL_FUNC_SUBTRACT, // Source - Destination
-    REVERSE_SUBTRACT = GL_FUNC_REVERSE_SUBTRACT, // Destination - Source
-    MINIMUM = GL_MIN,
-    MAXIMUM = GL_MAX
-};
-
-/*
-    Blending in OpenGL is done using the equation:
-        C_src * F_src blend_op C_dest * F_dest
-    Where 
-        F_src, F_dest ... the source and destination operands in Blending state,
-        C_src         ... Color output of the fragment shader
-        C_dest        ... Color stored in the current framebuffer
-        blend_op      ... Operation that should be performed
-*/
-struct Blending_State
-{
-    bool blending_enabled;
-    Blend_Operand source;
-    Blend_Operand destination;
-    Blend_Equation equation;
-    vec4 custom_color;
-};
-
-enum class Depth_Test_Type
-{
-    IGNORE_DEPTH, // Always draw over
-    TEST_DEPTH_DONT_WRITE, // Doesnt update depth values after drawing
-    TEST_DEPTH // Do depth testing
-};
-
-// Per Default LESS is choosen
-enum class Depth_Pass_Function
-{
-    ALWAYS = GL_ALWAYS,
-    NEVER = GL_NEVER,
-    LESS = GL_LESS,
-    EQUAL = GL_EQUAL,
-    NOT_EQUAL = GL_NOTEQUAL,
-    LESS_THAN = GL_LESS,
-    LESS_EQUAL = GL_LEQUAL,
-    GREATER_THAN = GL_GREATER,
-    GREATER_EQUAL = GL_GEQUAL,
-};
-
-struct Depth_Test_State
-{
-    Depth_Test_Type test_type;
-    Depth_Pass_Function pass_function;
-};
-
-enum class Front_Face_Defintion
-{
-    CLOCKWISE = GL_CW,
-    COUNTER_CLOCKWISE = GL_CCW,
-};
-
-enum class Face_Culling_Mode
-{
-    CULL_BACKFACE = GL_BACK,
-    CULL_FRONTFACE = GL_FRONT,
-    CULL_FRONT_AND_BACK = GL_FRONT_AND_BACK
-};
-
-struct Face_Culling_State
-{
-    bool culling_enabled;
-    Front_Face_Defintion front_face_definition;
-    Face_Culling_Mode cull_mode;
-};
-
-enum class Polygon_Filling_Mode
-{
-    POINT = GL_POINT,
-    LINE = GL_LINE,
-    FILL = GL_FILL
-};
-
-struct Pipeline_State
-{
-    Blending_State blending_state;
-    Depth_Test_State depth_state;
-    Face_Culling_State culling_state;
-    Polygon_Filling_Mode polygon_filling_mode;
-};
-Pipeline_State pipeline_state_make_default();
-
-
-
-// SHADER 
-enum class Shader_Datatype
-{
-    FLOAT,
-    UINT32,
-    VEC2,
-    VEC3,
-    VEC4,
-    MAT2,
-    MAT3,
-    MAT4,
-    TEXTURE_2D_BINDING
-};
-
-struct Shader_Datatype_Info
-{
-    GLenum uniformType; // Type reported by glGetUniform
-    GLenum vertexAttribType; // Type for vertex-attribute setup (glVertexAttribPointer)
-    const char* name; // Plain text name, as a variable type in glsl
-    u32 byte_size; // Size in bytes
-};
-
-Shader_Datatype_Info shader_datatype_get_info(Shader_Datatype type);
-
-template<typename T>
-Shader_Datatype shader_datatype_of() {
-    panic("Not a shader datatype!");
-    return Shader_Datatype::FLOAT;
-}
-
-template<> Shader_Datatype shader_datatype_of<float>();
-template<> Shader_Datatype shader_datatype_of<uint32>();
-template<> Shader_Datatype shader_datatype_of<vec2>();
-template<> Shader_Datatype shader_datatype_of<vec3>();
-template<> Shader_Datatype shader_datatype_of<vec4>();
-template<> Shader_Datatype shader_datatype_of<mat2>();
-template<> Shader_Datatype shader_datatype_of<mat3>();
-template<> Shader_Datatype shader_datatype_of<mat4>();
-
-
+// SHADER
 struct Uniform_Value
 {
 public:
@@ -218,7 +28,10 @@ public:
         byte buffer[sizeof(mat4)]; // Has to be the size of the largest member!
         i32 data_i32;
         u32 data_u32;
-        int texture_2D_id;
+        struct {
+            Texture* texture;
+            Sampling_Mode sampling_mode;
+        } texture;
         float data_float;
         vec2 data_vec2;
         vec3 data_vec3;
@@ -229,14 +42,15 @@ public:
     };
 };
 
-template<typename T>
-Uniform_Value uniform_make(const char* name, T data) {
-    Uniform_Value val;
-    val.datatype = shader_datatype_of<T>();
-    val.name = name;
-    memcpy(&val.buffer[0], &data, sizeof(T));
-    return val;
-}
+Uniform_Value uniform_make(const char* name, float val);
+Uniform_Value uniform_make(const char* name, vec2 val);
+Uniform_Value uniform_make(const char* name, vec3 val);
+Uniform_Value uniform_make(const char* name, vec4 val);
+Uniform_Value uniform_make(const char* name, mat2 val);
+Uniform_Value uniform_make(const char* name, mat3 val);
+Uniform_Value uniform_make(const char* name, mat4 val);
+Uniform_Value uniform_make(const char* name, int val);
+Uniform_Value uniform_make(const char* name, Texture* data, Sampling_Mode sampling_mode);
 
 struct Uniform_Info
 {
@@ -265,7 +79,7 @@ struct Shader
 
 
 
-// Vertex Descriptions
+// VERTEX DESCRIPTION
 struct Vertex_Attribute_Base
 {
     Shader_Datatype type;
@@ -355,7 +169,7 @@ Array<T> mesh_push_attribute_slice(Mesh* mesh, Vertex_Attribute<T>* attribute, i
 template<typename T>
 void mesh_push_attribute(Mesh* mesh, Vertex_Attribute<T>* attribute, std::initializer_list<T> data) 
 {
-    auto buffer = mesh_push_attribute_slice(mesh, attribute, data.size());
+    auto buffer = mesh_push_attribute_slice(mesh, attribute, (int) data.size());
     int i = 0; 
     for (auto& elem : data) {
         buffer[i] = elem;
@@ -393,11 +207,17 @@ struct Render_Pass_Command
 struct Render_Pass
 {
     Dynamic_Array<Render_Pass_Command> commands;
+    Dynamic_Array<Render_Pass*> dependents;
+    int dependency_count;
+
     Pipeline_State pipeline_state;
+    Framebuffer* output_buffer; // If null this is the default framebuffer
     bool queried_this_frame;
 };
 
+void render_pass_set_uniforms(Render_Pass* pass, Shader* shader, std::initializer_list<Uniform_Value> uniforms);
 void render_pass_draw(Render_Pass* pass, Shader* shader, Mesh* mesh, std::initializer_list<Uniform_Value> uniforms);
+void render_pass_add_dependency(Render_Pass* pass, Render_Pass* depends_on);
 
 
 
@@ -434,6 +254,7 @@ struct Rendering_Core
     Hashtable<String, Mesh*> meshes;
     Hashtable<String, Shader*> shaders;
     Hashtable<String, Render_Pass*> render_passes;
+    Hashtable<String, Framebuffer*> framebuffers;
 
     Predefined_Attributes predefined;
     Render_Pass* main_pass;
@@ -454,5 +275,7 @@ void rendering_core_remove_window_size_listener(void* userdata);
 
 Mesh* rendering_core_query_mesh(const char* name, Vertex_Description* description, Mesh_Topology topology, bool reset_every_frame);
 Shader* rendering_core_query_shader(const char* filename);
-Render_Pass* rendering_core_query_renderpass(const char* name, Pipeline_State pipeline_state);
+Render_Pass* rendering_core_query_renderpass(const char* name, Pipeline_State pipeline_state, Framebuffer* output);
+Framebuffer* rendering_core_query_framebuffer_fullscreen(const char* name, Texture_Type type, Depth_Type depth);
+Framebuffer* rendering_core_query_framebuffer(const char* name, Texture_Type type, Depth_Type depth, int width, int height);
 

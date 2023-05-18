@@ -219,9 +219,6 @@
     <ClInclude Include="rendering\gpu_buffers.hpp">
       <Filter>Header Files\Rendering\Core</Filter>
     </ClInclude>
-    <ClInclude Include="rendering\texture_2D.hpp">
-      <Filter>Header Files\Rendering\Core</Filter>
-    </ClInclude>
     <ClInclude Include="rendering\renderer_2D.hpp">
       <Filter>Header Files\Rendering\2D</Filter>
     </ClInclude>
@@ -314,6 +311,12 @@
     </ClInclude>
     <ClInclude Include="programs\render_rework\render_rework.hpp">
       <Filter>Header Files\Programs\Render_Rework</Filter>
+    </ClInclude>
+    <ClInclude Include="rendering\texture.hpp">
+      <Filter>Header Files\Rendering\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="rendering\opengl_state.hpp">
+      <Filter>Header Files\Rendering\Core</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -431,9 +434,6 @@
     <ClCompile Include="rendering\gpu_buffers.cpp">
       <Filter>Source Files\Rendering\Core</Filter>
     </ClCompile>
-    <ClCompile Include="rendering\texture_2D.cpp">
-      <Filter>Source Files\Rendering\Core</Filter>
-    </ClCompile>
     <ClCompile Include="rendering\renderer_2D.cpp">
       <Filter>Source Files\Rendering\2D</Filter>
     </ClCompile>
@@ -508,6 +508,12 @@
     </ClCompile>
     <ClCompile Include="programs\render_rework\render_rework.cpp">
       <Filter>Source Files\Programs\Render_Rework</Filter>
+    </ClCompile>
+    <ClCompile Include="rendering\texture.cpp">
+      <Filter>Source Files\Rendering\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="rendering\opengl_state.cpp">
+      <Filter>Source Files\Rendering\Core</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

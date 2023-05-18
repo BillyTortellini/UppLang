@@ -64,11 +64,12 @@
     <ClInclude Include="rendering\gpu_buffers.hpp" />
     <ClInclude Include="rendering\mesh_utils.hpp" />
     <ClInclude Include="rendering\opengl_function_pointers.hpp" />
+    <ClInclude Include="rendering\opengl_state.hpp" />
     <ClInclude Include="rendering\rendering_core.hpp" />
     <ClInclude Include="rendering\opengl_utils.hpp" />
     <ClInclude Include="rendering\renderer_2D.hpp" />
     <ClInclude Include="rendering\shader_program.hpp" />
-    <ClInclude Include="rendering\texture_2D.hpp" />
+    <ClInclude Include="rendering\texture.hpp" />
     <ClInclude Include="rendering\texture_bitmap.hpp" />
     <ClInclude Include="rendering\text_renderer.hpp" />
     <ClInclude Include="upplib.hpp" />
@@ -131,11 +132,12 @@
     <ClCompile Include="rendering\gpu_buffers.cpp" />
     <ClCompile Include="rendering\mesh_utils.cpp" />
     <ClCompile Include="rendering\opengl_function_pointers.cpp" />
+    <ClCompile Include="rendering\opengl_state.cpp" />
     <ClCompile Include="rendering\rendering_core.cpp" />
     <ClCompile Include="rendering\opengl_utils.cpp" />
     <ClCompile Include="rendering\renderer_2D.cpp" />
     <ClCompile Include="rendering\shader_program.cpp" />
-    <ClCompile Include="rendering\texture_2D.cpp" />
+    <ClCompile Include="rendering\texture.cpp" />
     <ClCompile Include="rendering\texture_bitmap.cpp" />
     <ClCompile Include="rendering\text_renderer.cpp" />
     <ClCompile Include="utility\binary_parser.cpp" />

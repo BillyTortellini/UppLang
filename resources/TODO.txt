@@ -1,6 +1,5 @@
 
 TODO:
-- Textures, framebuffers (Render to texture) and renderpass-dependencies
 - Rework all current rendering code
 - Maybe do cool auto-generated shader stuff...
 - 2D rendering rework, e.g. new 2d renderer that does depth better, support for text, lines, rectangles, circles and other things

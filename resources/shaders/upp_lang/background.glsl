@@ -1,6 +1,8 @@
-#ifdef VERTEX_SHADER
+#version 430 core
 
-layout (location = 1) in vec2 position;
+#ifdef VERTEX
+
+in vec2 position; //@Position2D
 out vec2 uv_coords;
 
 void main() {
@@ -10,7 +12,7 @@ void main() {
 
 #endif
 
-#ifdef FRAGMENT_SHADER
+#ifdef FRAGMENT
 
 layout (std140, binding = 0) uniform Render_Information
 {

@@ -5,254 +5,13 @@
 #include "../utility/file_io.hpp"
 #include "../datastructures/string.hpp"
 #include "../rendering/opengl_utils.hpp"
+#include "../rendering/texture.hpp"
+#include "../rendering/framebuffer.hpp"
 
 // GLOBAL
 Rendering_Core rendering_core;
 
-OpenGL_State opengl_state_create()
-{
-    OpenGL_State result;
-    result.active_program = 0;
-    result.active_vao = 0;
-    result.clear_color = vec4(0.0f);
-    result.active_framebuffer = 0;
 
-    // Initialize texture unit tracking
-    int texture_unit_count;
-    glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS, &texture_unit_count);
-    texture_unit_count = math_minimum(2048, texture_unit_count);
-    result.texture_unit_bindings = array_create_empty<GLuint>(texture_unit_count);
-    for (int i = 0; i < texture_unit_count; i++) {
-        result.texture_unit_bindings.data[i] = 0;
-    }
-    result.texture_unit_highest_accessed_index = 0;
-    result.texture_unit_next_bindable_index = 0;
-    //logg("Texture unit count combined: %d\n", texture_unit_count);
-
-    return result;
-}
-
-void opengl_state_destroy(OpenGL_State* state) {
-    array_destroy(&state->texture_unit_bindings);
-}
-
-void opengl_state_set_clear_color(vec4 clear_color)
-{
-    auto state = &rendering_core.opengl_state;
-    if (state->clear_color.x != clear_color.x ||
-        state->clear_color.y != clear_color.y ||
-        state->clear_color.z != clear_color.z ||
-        state->clear_color.w != clear_color.w
-        ) {
-        glClearColor(clear_color.x, clear_color.y, clear_color.z, clear_color.w);
-    }
-}
-
-void opengl_state_bind_program(GLuint program_id) 
-{
-    auto state = &rendering_core.opengl_state;
-    if (state->active_program != program_id) {
-        glUseProgram(program_id);
-        state->active_program = program_id;
-    }
-}
-
-void opengl_state_bind_vao(GLuint vao) {
-    auto state = &rendering_core.opengl_state;
-    if (vao != state->active_vao) {
-        glBindVertexArray(vao);
-        state->active_vao = vao;
-    }
-}
-
-void opengl_state_bind_framebuffer(GLuint framebuffer)
-{
-    auto state = &rendering_core.opengl_state;
-    if (state->active_framebuffer != framebuffer) {
-        glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
-        state->active_framebuffer = framebuffer;
-    }
-}
-
-GLint opengl_state_bind_texture_to_next_free_unit(Texture_Binding_Type binding_target, GLuint texture_id)
-{
-    auto state = &rendering_core.opengl_state;
-    // Check if texture is already bound to a texture_unit
-    for (int i = 0; i <= state->texture_unit_highest_accessed_index; i++) {
-        if (state->texture_unit_bindings.data[i] == texture_id) {
-            return i;
-        }
-    }
-
-    // If it is not already bound, bind it to next free index
-    GLint unit = state->texture_unit_next_bindable_index;
-    state->texture_unit_bindings.data[unit] = texture_id;
-    state->texture_unit_next_bindable_index = (state->texture_unit_next_bindable_index + 1) % state->texture_unit_bindings.size;
-    glActiveTexture(GL_TEXTURE0 + unit);
-    glBindTexture((GLenum) binding_target, texture_id);
-
-    // Update highest accessed
-    if (state->texture_unit_highest_accessed_index < unit) {
-        state->texture_unit_highest_accessed_index = unit;
-    }
-
-    return unit;
-}
-
-
-
-Pipeline_State pipeline_state_make_default()
-{
-    Blending_State blend_state;
-    blend_state.blending_enabled = false;
-    blend_state.custom_color = vec4(0.0f);
-    blend_state.source = Blend_Operand::SOURCE_ALPHA;
-    blend_state.destination = Blend_Operand::ONE_MINUS_SOURCE_ALPHA;
-    blend_state.equation = Blend_Equation::ADDITION;
-
-    Face_Culling_State culling_state;
-    culling_state.culling_enabled = false;
-    culling_state.cull_mode = Face_Culling_Mode::CULL_BACKFACE;
-    culling_state.front_face_definition = Front_Face_Defintion::COUNTER_CLOCKWISE;
-
-    Depth_Test_State depth_test_state;
-    depth_test_state.test_type = Depth_Test_Type::IGNORE_DEPTH;
-    depth_test_state.pass_function = Depth_Pass_Function::LESS;
-
-    Pipeline_State state;
-    state.blending_state = blend_state;
-    state.culling_state = culling_state;
-    state.depth_state = depth_test_state;
-    state.polygon_filling_mode = Polygon_Filling_Mode::FILL;
-
-    return state;
-}
-
-void pipeline_state_set_unconditional(Pipeline_State* state)
-{
-    if (state->blending_state.blending_enabled) {
-        glEnable(GL_BLEND);
-    }
-    else {
-        glDisable(GL_BLEND);
-    }
-    glBlendColor(state->blending_state.custom_color.x, state->blending_state.custom_color.y, 
-        state->blending_state.custom_color.z, state->blending_state.custom_color.w
-    );
-    glBlendFunc((GLenum)state->blending_state.source, (GLenum)state->blending_state.destination);
-    glBlendEquation((GLenum)state->blending_state.equation);
-
-    if (state->culling_state.culling_enabled) {
-        glEnable(GL_CULL_FACE);
-    }
-    else {
-        glDisable(GL_CULL_FACE);
-    }
-    glCullFace((GLenum)state->culling_state.cull_mode);
-    glFrontFace((GLenum)state->culling_state.front_face_definition);
-    switch (state->depth_state.test_type)
-    {
-    case Depth_Test_Type::IGNORE_DEPTH:
-        glDisable(GL_DEPTH_TEST);
-        break;
-    case Depth_Test_Type::TEST_DEPTH:
-        glEnable(GL_DEPTH_TEST);
-        glDepthMask(GL_TRUE);
-        break;
-    case Depth_Test_Type::TEST_DEPTH_DONT_WRITE:
-        glEnable(GL_DEPTH_TEST);
-        glDepthMask(GL_FALSE);
-        break;
-    }
-    glDepthFunc((GLenum)state->depth_state.pass_function);
-    glPolygonMode(GL_FRONT_AND_BACK, (GLenum)state->polygon_filling_mode);
-}
-
-void rendering_core_update_pipeline_state(Pipeline_State new_state)
-{
-    auto core = &rendering_core;
-    if (core->pipeline_state.blending_state.blending_enabled != new_state.blending_state.blending_enabled)
-    {
-        Blending_State* current = &core->pipeline_state.blending_state;
-        Blending_State* updated = &new_state.blending_state;
-        if (updated->blending_enabled)
-        {
-            glEnable(GL_BLEND);
-            if (current->custom_color.x != updated->custom_color.x ||
-                current->custom_color.y != updated->custom_color.y ||
-                current->custom_color.z != updated->custom_color.z ||
-                current->custom_color.w != updated->custom_color.w) {
-                glBlendColor(updated->custom_color.x, updated->custom_color.y, updated->custom_color.z, updated->custom_color.w);
-            }
-
-            if (current->destination != updated->destination || current->source != updated->source) {
-                glBlendFunc((GLenum)updated->source, (GLenum)updated->destination);
-            }
-
-            if (current->equation != updated->equation) {
-                glBlendEquation((GLenum)updated->equation);
-            }
-        }
-        else {
-            glDisable(GL_BLEND);
-        }
-    }
-
-    if (core->pipeline_state.culling_state.culling_enabled != new_state.culling_state.culling_enabled)
-    {
-        Face_Culling_State* current = &core->pipeline_state.culling_state;
-        Face_Culling_State* updated = &new_state.culling_state;
-        if (updated->culling_enabled)
-        {
-            glEnable(GL_CULL_FACE);
-            if (current->cull_mode != updated->cull_mode) {
-                glCullFace((GLenum)updated->cull_mode);
-            }
-            if (current->front_face_definition != updated->front_face_definition) {
-                glFrontFace((GLenum)updated->front_face_definition);
-            }
-        }
-        else {
-            glDisable(GL_CULL_FACE);
-        }
-    }
-
-    {
-        Depth_Test_State* current = &core->pipeline_state.depth_state;
-        Depth_Test_State* updated = &new_state.depth_state;
-
-        if (current->test_type != updated->test_type)
-        {
-            switch (updated->test_type)
-            {
-            case Depth_Test_Type::IGNORE_DEPTH:
-                glDisable(GL_DEPTH_TEST);
-                break;
-            case Depth_Test_Type::TEST_DEPTH:
-                glEnable(GL_DEPTH_TEST);
-                glDepthMask(GL_TRUE);
-                break;
-            case Depth_Test_Type::TEST_DEPTH_DONT_WRITE:
-                glEnable(GL_DEPTH_TEST);
-                glDepthMask(GL_FALSE);
-                break;
-            }
-        }
-        if (current->pass_function != updated->pass_function) {
-            glDepthFunc((GLenum)updated->pass_function);
-        }
-    }
-
-    {
-        Polygon_Filling_Mode current = core->pipeline_state.polygon_filling_mode;
-        Polygon_Filling_Mode updated = new_state.polygon_filling_mode;
-        if (current != updated) {
-            glPolygonMode(GL_FRONT_AND_BACK, (GLenum)updated);
-        }
-    }
-
-    core->pipeline_state = new_state;
-}
 
 Render_Information render_information_make(int viewport_width, int viewport_height, int window_width, int window_height, float monitor_dpi, float current_time)
 {
@@ -291,6 +50,7 @@ void rendering_core_initialize(int window_width, int window_height, float monito
     result.meshes = hashtable_create_empty<String, Mesh*>(4, hash_string, string_equals);
     result.shaders = hashtable_create_empty<String, Shader*>(4, hash_string, string_equals);
     result.render_passes = hashtable_create_empty<String, Render_Pass*>(4, hash_string, string_equals);
+    result.framebuffers = hashtable_create_empty<String, Framebuffer*>(4, hash_string, string_equals);
 
     result.predefined.position3D = vertex_attribute_make<vec3>("Position3D");
     result.predefined.position2D = vertex_attribute_make<vec2>("Position2D");
@@ -302,7 +62,7 @@ void rendering_core_initialize(int window_width, int window_height, float monito
     result.predefined.color4 = vertex_attribute_make<vec4>("Color4");
     result.predefined.index = vertex_attribute_make<uint32>("IndexBuffer");
 
-    result.main_pass = rendering_core_query_renderpass("main", pipeline_state_make_default());
+    result.main_pass = rendering_core_query_renderpass("main", pipeline_state_make_default(), nullptr);
 }
 
 void rendering_core_destroy()
@@ -369,10 +129,20 @@ void rendering_core_destroy()
         while (hashtable_iterator_has_next(&it)) {
             Render_Pass* pass = *(it.value);
             dynamic_array_destroy(&pass->commands);
+            dynamic_array_destroy(&pass->dependents);
             delete pass;
             hashtable_iterator_next(&it);
         }
         hashtable_destroy(&core.render_passes);
+    }
+    {
+        auto it = hashtable_iterator_create(&core.framebuffers);
+        while (hashtable_iterator_has_next(&it)) {
+            Framebuffer* buffer = *(it.value);
+            framebuffer_destroy(buffer);
+            hashtable_iterator_next(&it);
+        }
+        hashtable_destroy(&core.framebuffers);
     }
 }
 
@@ -396,6 +166,18 @@ void rendering_core_remove_window_size_listener(void* userdata)
     }
     if (found == -1) panic("Should not happen i guess");
     dynamic_array_swap_remove(&core->window_size_listeners, found);
+}
+
+void renderpass_queue_if_no_dependencies(Render_Pass* pass, Dynamic_Array<Render_Pass*>* execution_order)
+{
+    if (pass->dependency_count == 0) {
+        dynamic_array_push_back(execution_order, pass);
+        pass->dependency_count = -1; // So we don't queue twice in a frame
+    }
+    for (int i = 0; i < pass->dependents.size; i++) {
+        pass->dependents[i]->dependency_count -= 1;
+        renderpass_queue_if_no_dependencies(pass->dependents[i], execution_order);
+    }
 }
 
 void rendering_core_render(Camera_3D* camera, Framebuffer_Clear_Type clear_type, float current_time, int window_width, int window_height)
@@ -439,13 +221,13 @@ void rendering_core_render(Camera_3D* camera, Framebuffer_Clear_Type clear_type,
     // Upload all changed mesh data to gpu
     {
         auto it = hashtable_iterator_create(&core.meshes);
-        while (hashtable_iterator_has_next(&it)) 
+        while (hashtable_iterator_has_next(&it))
         {
             Mesh* mesh = *it.value;
             mesh->queried_this_frame = false; // Reset
             mesh->primitive_count = 0;
             Attribute_Buffer* index_buffer = 0;
-            for (int i = 0; i < mesh->buffers.size; i++) 
+            for (int i = 0; i < mesh->buffers.size; i++)
             {
                 auto& buffer = mesh->buffers[i];
                 auto attribute = mesh->description->attributes[i];
@@ -478,7 +260,7 @@ void rendering_core_render(Camera_3D* camera, Framebuffer_Clear_Type clear_type,
                     dynamic_array_reset(&buffer.attribute_data);
                 }
             }
-            
+
             if (index_buffer != 0) {
                 mesh->primitive_count = index_buffer->attribute_data.size / sizeof(u32);
             }
@@ -489,16 +271,41 @@ void rendering_core_render(Camera_3D* camera, Framebuffer_Clear_Type clear_type,
 
     // Execute all renderpasses
     {
+        // Generate execution queue based on dependencies of passes
+        auto execution_queue = dynamic_array_create_empty<Render_Pass*>(core.render_passes.element_count);
         auto it = hashtable_iterator_create(&core.render_passes);
-        while (hashtable_iterator_has_next(&it)) 
-        {
+        
+        while (hashtable_iterator_has_next(&it)) {
             Render_Pass* pass = *it.value;
+            renderpass_queue_if_no_dependencies(pass, &execution_queue);
             pass->queried_this_frame = false; // Reset
+            hashtable_iterator_next(&it);
+        }
+        if (execution_queue.size != core.render_passes.element_count) {
+            panic("There is a cyclic dependency in the render-passes, shouldn't happen!");
+        }
+
+        // Execute the renderpasses in order
+        for (int i = 0; i < execution_queue.size; i++) 
+        {
+            auto& pass = execution_queue[i];
+            dynamic_array_reset(&pass->dependents);
+            pass->dependency_count = 0;
+
+            // Set opengl state
             rendering_core_update_pipeline_state(pass->pipeline_state);
-            for (int i = 0; i < pass->commands.size; i++) 
+            if (pass->output_buffer != 0) {
+                opengl_state_bind_framebuffer(pass->output_buffer->framebuffer_id);
+            }
+            else {
+                opengl_state_bind_framebuffer(0);
+            }
+
+            // Execute commands
+            for (int i = 0; i < pass->commands.size; i++)
             {
                 auto& command = pass->commands[i];
-                if (command.type == Render_Pass_Command_Type::UNIFORM) 
+                if (command.type == Render_Pass_Command_Type::UNIFORM)
                 {
                     auto& uniform = command.uniform;
                     opengl_state_bind_program(uniform.shader->program_id);
@@ -538,7 +345,10 @@ void rendering_core_render(Camera_3D* camera, Framebuffer_Clear_Type clear_type,
                     case Shader_Datatype::MAT3: glUniformMatrix3fv(info->location, 1, GL_FALSE, (GLfloat*)&value.data_mat3); break;
                     case Shader_Datatype::MAT4: glUniformMatrix4fv(info->location, 1, GL_FALSE, (GLfloat*)&value.data_mat4); break;
                     case Shader_Datatype::TEXTURE_2D_BINDING:
-                        glUniform1i(info->location, opengl_state_bind_texture_to_next_free_unit(Texture_Binding_Type::TEXTURE_2D, value.texture_2D_id));
+                        glUniform1i(
+                            info->location, 
+                            opengl_state_bind_texture_to_next_free_unit(
+                                Texture_Binding_Type::TEXTURE_2D, value.texture.texture->texture_id, value.texture.sampling_mode));
                         break;
                     }
                 }
@@ -578,7 +388,7 @@ void rendering_core_render(Camera_3D* camera, Framebuffer_Clear_Type clear_type,
 
                     // Draw
                     if (mesh->has_element_buffer) {
-                        glDrawElements((GLenum)mesh->topology, mesh->primitive_count, GL_UNSIGNED_INT, (GLvoid*) 0);
+                        glDrawElements((GLenum)mesh->topology, mesh->primitive_count, GL_UNSIGNED_INT, (GLvoid*)0);
                     }
                     else {
                         glDrawArrays((GLenum)mesh->topology, 0, mesh->primitive_count);
@@ -587,9 +397,14 @@ void rendering_core_render(Camera_3D* camera, Framebuffer_Clear_Type clear_type,
             }
 
             dynamic_array_reset(&pass->commands);
-            hashtable_iterator_next(&it);
         }
     }
+}
+
+void rendering_core_update_pipeline_state(Pipeline_State new_state) {
+    auto& core = rendering_core;
+    pipeline_state_switch(core.pipeline_state, new_state);
+    core.pipeline_state = new_state;
 }
 
 void rendering_core_clear_bound_framebuffer(Framebuffer_Clear_Type clear_type)
@@ -717,10 +532,10 @@ Mesh* rendering_core_query_mesh(const char* name, Vertex_Description* descriptio
     for (int i = 0; i < mesh->buffers.size; i++) {
         auto& buffer = mesh->buffers[i];
         auto attribute = description->attributes[i];
-        buffer.dirty = mesh-reset_every_frame;
+        buffer.dirty = mesh - reset_every_frame;
         buffer.gpu_buffer = gpu_buffer_create_empty(
-            1, 
-            attribute == core.predefined.index ? GPU_Buffer_Type::INDEX_BUFFER : GPU_Buffer_Type::VERTEX_BUFFER, 
+            1,
+            attribute == core.predefined.index ? GPU_Buffer_Type::INDEX_BUFFER : GPU_Buffer_Type::VERTEX_BUFFER,
             mesh->reset_every_frame ? GPU_Buffer_Usage::DYNAMIC : GPU_Buffer_Usage::STATIC
         );
         buffer.attribute_data = dynamic_array_create_empty<byte>(1);
@@ -734,30 +549,30 @@ Mesh* rendering_core_query_mesh(const char* name, Vertex_Description* descriptio
     glGenVertexArrays(1, &mesh->vao);
     opengl_state_bind_vao(mesh->vao);
     SCOPE_EXIT(opengl_state_bind_vao(0));
-    for (int i = 0; i < mesh->buffers.size; i++) 
+    for (int i = 0; i < mesh->buffers.size; i++)
     {
         auto& buffer = mesh->buffers[i];
         auto attrib = mesh->description->attributes[i];
-        if (attrib == core.predefined.index) 
+        if (attrib == core.predefined.index)
         {
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, buffer.gpu_buffer.id); // Binds index_buffer to vao
         }
-        else 
+        else
         {
             auto info = shader_datatype_get_info(attrib->type);
             glBindBuffer(GL_ARRAY_BUFFER, buffer.gpu_buffer.id);
             // We can bind only 4 float at a time, this is how opengl works...
-            for (int i = 0; i < math_round_next_multiple(info.byte_size, 16) / 16; i++) 
+            for (int i = 0; i < math_round_next_multiple(info.byte_size, 16) / 16; i++)
             {
                 glEnableVertexAttribArray(attrib->binding_location + i);
-                int offset = i * 16;
+                int64 offset = i * 16;
                 glVertexAttribPointer(
                     attrib->binding_location,
                     info.byte_size / 4, // WARNING: This only works for 4 byte values like float, integers, vectors of floats and matrices!!!
                     info.vertexAttribType,
                     GL_FALSE,
                     info.byte_size,
-                    (void*) offset
+                    (void*)offset
                 );
             }
         }
@@ -847,32 +662,58 @@ void shader_file_changed_callback(void* userdata, const char* filename)
         SCOPE_EXIT(string_split_destroy(lines));
         GLenum shaderType = GL_INVALID_ENUM;
         int slot_index = 0;
+        bool inside_code = false; // Code only starts after #define
         for (int i = 0; i < lines.size; i++)
         {
             auto line = lines[i];
-            bool line_processed = false;
 
             // Do pattern matching
             // Shader type defines
             String escape_sequence = string_create_static("//@");
-            if (string_compare_substring(&line, 0, &escape_sequence))
+            String ifdef = string_create_static("#ifdef");
+            String endif = string_create_static("#endif");
+            if (string_compare_substring(&line, 0, &ifdef))
             {
+                // Split line into words
+                Array<String> words = string_split(line, ' ');
+                SCOPE_EXIT(string_split_destroy(words));
+                if (words.size != 2) {
+                    logg("Shader error, couldn't parse #ifdef!\n");
+                    continue; // Next line
+                }
+                String stage_name = words[1];
+                if (stage_name.size > 0 && stage_name.characters[words[1].size - 1] == '\r') {
+                    stage_name.size -= 1;
+                }
+
+                bool worked = false;
                 for (int j = 0; j < possible_shader_defines_count; j++)
                 {
-                    if (!string_compare_substring(&line, escape_sequence.size, &possible_shader_defines[j])) {
+                    if (!string_equals(&stage_name, &possible_shader_defines[j])) {
                         continue;
                     }
-                    if (shaderType != GL_INVALID_ENUM) {
-                        createAndAttachShader(shaderType, shader->program_id, buffer);
-                    }
-                    string_reset(&buffer);
                     shaderType = possible_shader_define_types[j];
-                    line_processed = true;
+                    worked = true;
                     break;
                 }
-                if (!line_processed) {
-                    logg("Could not comprehend line %d, escape sequence found, but wasn't keyword\n");
+                if (!worked) {
+                    logg("Could not comprehend ifdef\n");
                 }
+                else {
+                    inside_code = true;
+                }
+                continue; // GOTO next line
+            }
+
+            if (string_compare_substring(&line, 0, &endif)) {
+                createAndAttachShader(shaderType, shader->program_id, buffer);
+                string_reset(&buffer);
+                inside_code = false;
+            }
+
+            // Skip none code lines
+            if (!inside_code) {
+                continue;
             }
 
             // Input layout
@@ -954,15 +795,14 @@ void shader_file_changed_callback(void* userdata, const char* filename)
                 string_append_formated(&buffer, "layout (location = %d) ", input_info.attribute->binding_location);
             }
 
-            // Add line to buffer if not processed
-            if (!line_processed) {
-                string_append_string(&buffer, &line);
-                string_append(&buffer, "\n");
-            }
+            // Add line to buffer if its not a special line
+            string_append_string(&buffer, &line);
+            string_append(&buffer, "\n");
         }
 
         // Add the final shader_stage to the program
-        if (shaderType != GL_INVALID_ENUM) {
+        if (inside_code) {
+            logg("Last endif is missing in shader!\n");
             createAndAttachShader(shaderType, shader->program_id, buffer);
         }
     }
@@ -1063,12 +903,7 @@ Shader* rendering_core_query_shader(const char* filename)
     return shader;
 }
 
-bool shader_set_uniform(Shader* shader, Uniform_Value value)
-{
-    // Shader_Variable_Information* info = shader_program_find_shader_variable_information_by_name(program, value.uniform_name);
-    return true;
-}
-
+template<> Shader_Datatype shader_datatype_of<Texture*>() { return Shader_Datatype::TEXTURE_2D_BINDING; };
 template<> Shader_Datatype shader_datatype_of<float>() { return Shader_Datatype::FLOAT; };
 template<> Shader_Datatype shader_datatype_of<uint32>() { return Shader_Datatype::UINT32; };
 template<> Shader_Datatype shader_datatype_of<vec2>() { return Shader_Datatype::VEC2; };
@@ -1077,6 +912,34 @@ template<> Shader_Datatype shader_datatype_of<vec4>() { return Shader_Datatype::
 template<> Shader_Datatype shader_datatype_of<mat2>() { return Shader_Datatype::MAT2; };
 template<> Shader_Datatype shader_datatype_of<mat3>() { return Shader_Datatype::MAT3; };
 template<> Shader_Datatype shader_datatype_of<mat4>() { return Shader_Datatype::MAT4; };
+
+
+template<typename T>
+Uniform_Value uniform_make_base(const char* name, T data) {
+    Uniform_Value val;
+    val.datatype = shader_datatype_of<T>();
+    val.name = name;
+    memcpy(&val.buffer[0], &data, sizeof(T));
+    return val;
+}
+
+Uniform_Value uniform_make(const char* name, float val) { return uniform_make_base(name, val); }
+Uniform_Value uniform_make(const char* name, vec2 val) { return uniform_make_base(name, val); }
+Uniform_Value uniform_make(const char* name, vec3 val) {return uniform_make_base(name, val); }
+Uniform_Value uniform_make(const char* name, vec4 val) {return uniform_make_base(name, val); }
+Uniform_Value uniform_make(const char* name, mat2 val) {return uniform_make_base(name, val); }
+Uniform_Value uniform_make(const char* name, mat3 val) {return uniform_make_base(name, val); }
+Uniform_Value uniform_make(const char* name, mat4 val) { return uniform_make_base(name, val); }
+Uniform_Value uniform_make(const char* name, int val) { return uniform_make_base(name, val); }
+
+Uniform_Value uniform_make(const char* name, Texture* data, Sampling_Mode sampling_mode) {
+    Uniform_Value val;
+    val.datatype = shader_datatype_of<Texture*>();
+    val.name = name;
+    val.texture.texture = data;
+    val.texture.sampling_mode = sampling_mode;
+    return val;
+}
 
 Shader_Datatype_Info shader_datatype_get_info(Shader_Datatype type)
 {
@@ -1108,7 +971,7 @@ Shader_Datatype_Info shader_datatype_get_info(Shader_Datatype type)
 }
 
 
-Render_Pass* rendering_core_query_renderpass(const char* name, Pipeline_State pipeline_state)
+Render_Pass* rendering_core_query_renderpass(const char* name, Pipeline_State pipeline_state, Framebuffer* output_buffer)
 {
     auto& core = rendering_core;
     auto found = hashtable_find_element(&core.render_passes, string_create_static(name));
@@ -1121,6 +984,8 @@ Render_Pass* rendering_core_query_renderpass(const char* name, Pipeline_State pi
             panic("Renderpass already queried this frame!\n");
         }
         render_pass->queried_this_frame = true;
+        render_pass->output_buffer = output_buffer;
+        render_pass->pipeline_state = pipeline_state;
         return render_pass;
     }
 
@@ -1129,12 +994,26 @@ Render_Pass* rendering_core_query_renderpass(const char* name, Pipeline_State pi
     render_pass->commands = dynamic_array_create_empty<Render_Pass_Command>(1);
     render_pass->pipeline_state = pipeline_state;
     render_pass->queried_this_frame = true;
+    render_pass->output_buffer = output_buffer;
+    render_pass->dependency_count = 0;
+    render_pass->dependents = dynamic_array_create_empty<Render_Pass*>(1);
     return render_pass;
+}
+
+void render_pass_set_uniforms(Render_Pass* pass, Shader* shader, std::initializer_list<Uniform_Value> uniforms)
+{
+    for (const auto& uniform : uniforms) {
+        Render_Pass_Command command;
+        command.type = Render_Pass_Command_Type::UNIFORM;
+        command.uniform.shader = shader;
+        command.uniform.value = uniform;
+        dynamic_array_push_back(&pass->commands, command);
+    }
 }
 
 void render_pass_draw(Render_Pass* pass, Shader* shader, Mesh* mesh, std::initializer_list<Uniform_Value> uniforms)
 {
-    for (const auto uniform : uniforms) {
+    for (const auto& uniform : uniforms) {
         Render_Pass_Command command;
         command.type = Render_Pass_Command_Type::UNIFORM;
         command.uniform.shader = shader;
@@ -1147,4 +1026,50 @@ void render_pass_draw(Render_Pass* pass, Shader* shader, Mesh* mesh, std::initia
     draw.draw_call.shader = shader;
     dynamic_array_push_back(&pass->commands, draw);
 }
+
+void render_pass_add_dependency(Render_Pass* pass, Render_Pass* depends_on)
+{
+    pass->dependency_count += 1;
+    dynamic_array_push_back(&depends_on->dependents, pass);
+}
+
+Framebuffer* rendering_core_query_framebuffer_fullscreen(const char* name, Texture_Type type, Depth_Type depth)
+{
+    auto& core = rendering_core;
+    auto found = hashtable_find_element(&core.framebuffers, string_create_static(name));
+    if (found != 0) {
+        // Note: if a framebuffer is queried with different attributes (E.g. texture type or sampling mode)
+        auto framebuffer = *found;
+        assert(framebuffer->resize_with_window, "Cannot set width of framebuffer for fullscreen!");
+        return *found;
+    }
+
+    // Create framebuffer
+    auto& info = core.render_information;
+    Framebuffer* result = framebuffer_create(type, depth, true, info.window_width, info.window_height);
+    hashtable_insert_element(&core.framebuffers, string_create_static(name), result);
+    return result;
+}
+
+Framebuffer* rendering_core_query_framebuffer(const char* name, Texture_Type type, Depth_Type depth, int width, int height)
+{
+    auto& core = rendering_core;
+    auto found = hashtable_find_element(&core.framebuffers, string_create_static(name));
+    if (found != 0) {
+        // Note: if a framebuffer is queried with different attributes (E.g. texture type or sampling mode)
+        auto framebuffer = *found;
+        if (framebuffer->width != width || framebuffer->height != height) {
+            assert(framebuffer->resize_with_window, "Cannot create framebuffer as fullscreen and then resize!");
+            framebuffer_resize(framebuffer, width, height);
+        }
+        if (found)
+            return *found;
+    }
+
+    // Create framebuffer
+    Framebuffer* result = framebuffer_create(type, depth, false, width, height);
+    hashtable_insert_element(&core.framebuffers, string_create_static(name), result);
+    return result;
+}
+
 

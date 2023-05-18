@@ -1,18 +1,31 @@
-//@VERTEX
+#version 430 core
+#ifdef VERTEX
+
 in vec2 a_position; //@Position2D
+out vec2 uvs;
 
 uniform vec2 offset;
 uniform float scale;
 
-void main_vert()
+void main()
 {
     gl_Position = vec4(a_position * scale + offset, 0.0, 1.0);
+    uvs = a_position;
 }
 
-//@FRAGMENT
+#endif 
+
+#ifdef FRAGMENT
+in vec2 uvs;
 out vec4 o_color;
 
-void main_frag()
+layout (location = 2) uniform sampler2D image;
+
+void main()
 {
-    o_color = vec4(1.0);
+    // o_color = vec4(1.0);
+    o_color = texture(image, (uvs+vec2(0.5)));
+    //o_color = vec4(1.0);
 }
+
+#endif

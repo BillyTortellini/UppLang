@@ -7,7 +7,7 @@
 #include "../../rendering/gpu_buffers.hpp"
 #include "../../rendering/cameras.hpp"
 #include "../../rendering/camera_controllers.hpp"
-#include "../../rendering/texture_2D.hpp"
+#include "../../rendering/texture.hpp"
 #include "../../rendering/text_renderer.hpp"
 #include "../../rendering/mesh_utils.hpp"
 #include "../../rendering/rendering_core.hpp"

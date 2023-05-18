@@ -4,7 +4,7 @@
 #include "../utility/bounding_box.hpp"
 
 #include "glyph_atlas.hpp"
-#include "texture_2D.hpp"
+#include "texture.hpp"
 #include "gpu_buffers.hpp"
 #include "rendering_core.hpp"
 
@@ -45,8 +45,8 @@ struct Text_Renderer
 {
     // Atlas data
     Glyph_Atlas glyph_atlas;
-    Texture_2D* atlas_bitmap_texture;
-    Texture_2D* atlas_sdf_texture;
+    Texture* atlas_bitmap_texture;
+    Texture* atlas_sdf_texture;
 
     // Shaders
     Shader_Program* bitmap_shader;
@@ -81,4 +81,4 @@ float text_renderer_cm_to_relative_height(Text_Renderer* renderer, Rendering_Cor
 float text_renderer_calculate_text_width(Text_Renderer* renderer, int char_count, float relative_height);
 float text_renderer_get_cursor_advance(Text_Renderer* renderer, float relative_height);
 void text_renderer_set_color(Text_Renderer* renderer, vec3 color);
-Texture_2D* text_renderer_get_texture(Text_Renderer* renderer);
+Texture* text_renderer_get_texture(Text_Renderer* renderer);

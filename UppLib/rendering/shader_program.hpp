@@ -12,7 +12,7 @@
 
 struct Watched_File;
 struct File_Listener;
-struct Texture_2D;
+struct Texture;
 struct Mesh_GPU_Buffer;
 
 struct Shader_Variable_Information

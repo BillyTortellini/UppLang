@@ -1,45 +1,24 @@
 #pragma once
 
-struct Texture_2D;
 struct Rendering_Core;
+struct Texture;
 
-#include "opengl_function_pointers.hpp"
+#include <initializer_list>
+
 #include "../datastructures/dynamic_array.hpp"
+#include "opengl_state.hpp"
 
-enum class Framebuffer_Depth_Stencil_State
-{
-    NO_DEPTH,
-    DEPTH_32_NO_STENCIL,
-    DEPTH_24_STENCIL_8,
-    RENDERBUFFER_DEPTH_32_NO_STENCIL,
-    RENDERBUFFER_DEPTH_24_STENCIL_8
-};
-
-struct Framebuffer_Attachment
-{
-    int attachment_index;
-    Texture_2D* texture;
-    bool destroy_texture;
-};
-
+// FRAMEBUFFER
 struct Framebuffer
 {
     GLuint framebuffer_id;
-    Dynamic_Array<Framebuffer_Attachment> color_attachments;
-    Framebuffer_Attachment depth_stencil_attachment;
+    Dynamic_Array<Texture*> attachments;
+    Texture* color_texture;
 
     int width, height;
     bool resize_with_window;
-    bool is_complete;
 };
 
-Framebuffer* framebuffer_create_fullscreen(Framebuffer_Depth_Stencil_State depth_stencil_state);
-Framebuffer* framebuffer_create_width_height(Framebuffer_Depth_Stencil_State depth_stencil_state, int width, int height);
+Framebuffer* framebuffer_create(Texture_Type type, Depth_Type depth_type, bool fullscreen, int width, int height);
+void framebuffer_resize(Framebuffer* framebuffer, int width, int height);
 void framebuffer_destroy(Framebuffer* framebuffer);
-
-void framebuffer_set_depth_attachment(Framebuffer* framebuffer, Texture_2D* texture, bool destroy_texture_with_framebuffer);
-void framebuffer_add_color_attachment(Framebuffer* framebuffer, int attachment_index, Texture_2D* texture, bool destroy_texture_with_framebuffer);
-
-
-
-

@@ -4,9 +4,13 @@
 #include "../../win32/timing.hpp"
 #include "../../win32/window.hpp"
 #include "../../rendering/rendering_core.hpp"
+#include "../../rendering/texture.hpp"
+#include "../../rendering/texture_bitmap.hpp"
 #include "../../rendering/mesh_utils.hpp"
 #include "../../rendering/shader_program.hpp"
 #include "../../rendering/camera_controllers.hpp"
+#include "../../utility/random.hpp"
+#include "../../rendering/framebuffer.hpp"
 
 void render_rework()
 {
@@ -57,6 +61,31 @@ void render_rework()
         }
     );
 
+    auto quad_mesh = rendering_core_query_mesh(
+        "quad", mesh->description, Mesh_Topology::TRIANGLES, false
+    );
+    mesh_push_attribute(
+        quad_mesh, core.predefined.position2D, {
+            vec2(-1.f, -1.0f),
+            vec2(1.0f, -1.0f),
+            vec2(1.0f, 1.0f),
+            vec2(-1.0f, -1.0f),
+            vec2(1.0f, 1.0f),
+            vec2(-1.0f, 1.0f),
+        }
+    );
+
+    Texture_Bitmap bitmap = texture_bitmap_create_test_bitmap(64);
+    Texture* texture = texture_create_from_texture_bitmap(&bitmap, false);
+    Texture_Bitmap bitmap2 = texture_bitmap_create_empty(32, 32, 3);
+    auto random = random_make_time_initalized();
+    for (int i = 0; i < 32 * 32* 3; i+=3) {
+        bitmap2.data[i + 0] = (byte) random_next_u32(&random);
+        bitmap2.data[i + 1] = (byte) random_next_u32(&random);
+        bitmap2.data[i + 2] = (byte) random_next_u32(&random);
+    }
+    Texture* texture2 = texture_create_from_texture_bitmap(&bitmap2, false);
+
     // Window Loop
     double time_last_update_start = timer_current_time_in_seconds(&timer);
     while (true)
@@ -93,7 +122,7 @@ void render_rework()
                 "circleMesh", vertex_description_create({ core.predefined.position2D }), Mesh_Topology::TRIANGLES, true
             );
             vec2 offset(-0.5f, 0.5f);
-            float radius = 0.3;
+            float radius = 0.3f;
             int division = 16;
             for (int i = 0; i < division; i++) {
                 mesh_push_attribute(
@@ -105,9 +134,24 @@ void render_rework()
                 );
             }
 
-            auto shader = rendering_core_query_shader("resources/shaders/test.glsl");
-            render_pass_draw(core.main_pass, shader, mesh, {uniform_make("offset", vec2(0)), uniform_make("scale", 1.0f)});
-            render_pass_draw(core.main_pass, shader, circle, {uniform_make("offset", vec2(-.5f, .5f)), uniform_make("scale", 0.3f)});
+            auto bg_buffer = rendering_core_query_framebuffer("bg_buffer", Texture_Type::RED_GREEN_BLUE_U8, Depth_Type::NO_DEPTH, 512, 512);
+            {
+                auto bg_pass = rendering_core_query_renderpass("bg_pass", pipeline_state_make_default(), bg_buffer);
+                render_pass_add_dependency(core.main_pass, bg_pass);
+                auto bg_shader = rendering_core_query_shader("resources/shaders/upp_lang/background.glsl");
+                render_pass_draw(bg_pass, bg_shader, quad_mesh, {});
+            }
+
+            {
+                auto shader = rendering_core_query_shader("resources/shaders/test.glsl");
+                render_pass_set_uniforms(core.main_pass, shader, { uniform_make("image", bg_buffer->color_texture, sampling_mode_bilinear()) });
+                render_pass_draw(core.main_pass, shader, mesh, { uniform_make("offset", vec2(0)), uniform_make("scale", 1.0f) });
+                auto mode = sampling_mode_nearest();
+                mode.u_wrapping = Texture_Wrapping_Mode::MIRROR_REPEAT;
+                mode.v_wrapping = Texture_Wrapping_Mode::MIRROR_REPEAT;
+                //render_pass_set_uniforms(core.main_pass, shader, { uniform_make("image", texture2, mode) });
+                //render_pass_draw(core.main_pass, shader, quad_mesh, {uniform_make("offset", vec2(0.0f)), uniform_make("scale", 1.0f)});
+            }
 
             rendering_core_render(
                 camera, Framebuffer_Clear_Type::COLOR_AND_DEPTH, timer_current_time_in_seconds(&timer), window_state->width, window_state->height

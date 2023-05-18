@@ -1,183 +1,87 @@
 #include "framebuffer.hpp"
 
 #include "rendering_core.hpp"
-#include "texture_2D.hpp"
+#include "texture.hpp"
 
-Framebuffer* framebuffer_create_width_height(Framebuffer_Depth_Stencil_State depth_stencil_state, int width, int height)
+void framebuffer_window_resize_callback(void* userdata);
+
+Framebuffer* framebuffer_create(Texture_Type type, Depth_Type depth_type, bool fullscreen, int width, int height)
 {
     Framebuffer* result = new Framebuffer();
-    result->is_complete = false;
     result->width = width;
     result->height = height;
-    result->color_attachments = dynamic_array_create_empty<Framebuffer_Attachment>(2);
-    result->resize_with_window = false;
+    result->attachments = dynamic_array_create_empty<Texture*>(1);
+    result->resize_with_window = fullscreen;
+    if (fullscreen) {
+        rendering_core_add_window_size_listener(&framebuffer_window_resize_callback, result);
+    }
 
     glGenFramebuffers(1, &result->framebuffer_id);
     opengl_state_bind_framebuffer(result->framebuffer_id);
 
-    switch (depth_stencil_state)
+    // Create depth stencil attachment if requested
+    if (depth_type != Depth_Type::NO_DEPTH)
     {
-    case Framebuffer_Depth_Stencil_State::NO_DEPTH: 
-        result->depth_stencil_attachment.attachment_index = 0;
-        result->depth_stencil_attachment.texture = 0;
-        result->depth_stencil_attachment.destroy_texture = false;
-        break;
-    case Framebuffer_Depth_Stencil_State::DEPTH_32_NO_STENCIL: {
-        result->depth_stencil_attachment.attachment_index = 0;
-        result->depth_stencil_attachment.texture = texture_2D_create_empty(Texture_2D_Type::DEPTH, width, height, texture_sampling_mode_make_nearest());
-        result->depth_stencil_attachment.destroy_texture = true;
-        texture_2D_bind_to_next_free_unit(result->depth_stencil_attachment.texture);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, result->depth_stencil_attachment.texture->texture_id, 0);
-        result->is_complete = true;
-        break;
-    }
-    case Framebuffer_Depth_Stencil_State::DEPTH_24_STENCIL_8:
-        result->depth_stencil_attachment.attachment_index = 0;
-        result->depth_stencil_attachment.texture = texture_2D_create_empty(Texture_2D_Type::DEPTH_STENCIL, width, height, texture_sampling_mode_make_nearest());
-        result->depth_stencil_attachment.destroy_texture = true;
-        texture_2D_bind_to_next_free_unit(result->depth_stencil_attachment.texture);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, result->depth_stencil_attachment.texture->texture_id, 0);
-        result->is_complete = true;
-        break;
-    case Framebuffer_Depth_Stencil_State::RENDERBUFFER_DEPTH_32_NO_STENCIL:
-        result->depth_stencil_attachment.attachment_index = 0;
-        result->depth_stencil_attachment.texture = texture_2D_create_renderbuffer(Texture_2D_Type::DEPTH, width, height);
-        result->depth_stencil_attachment.destroy_texture = true;
-        glBindRenderbuffer(GL_RENDERBUFFER, result->depth_stencil_attachment.texture->texture_id);
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, result->depth_stencil_attachment.texture->texture_id);
-        result->is_complete = true;
-        break;
-    case Framebuffer_Depth_Stencil_State::RENDERBUFFER_DEPTH_24_STENCIL_8:
-        result->depth_stencil_attachment.attachment_index = 0;
-        result->depth_stencil_attachment.texture = texture_2D_create_renderbuffer(Texture_2D_Type::DEPTH_STENCIL, width, height);
-        result->depth_stencil_attachment.destroy_texture = true;
-        glBindRenderbuffer(GL_RENDERBUFFER, result->depth_stencil_attachment.texture->texture_id);
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, result->depth_stencil_attachment.texture->texture_id);
-        result->is_complete = true;
-        break;
+        bool is_renderbuffer = false;
+        Texture_Type texture_type = Texture_Type::DEPTH;
+        switch (depth_type) {
+        case Depth_Type::DEPTH_32_NO_STENCIL:              texture_type = Texture_Type::DEPTH; is_renderbuffer = false; break;
+        case Depth_Type::DEPTH_24_STENCIL_8:               texture_type = Texture_Type::DEPTH_STENCIL; is_renderbuffer = false; break;
+        case Depth_Type::RENDERBUFFER_DEPTH_32_NO_STENCIL: texture_type = Texture_Type::DEPTH; is_renderbuffer = true; break;
+        case Depth_Type::RENDERBUFFER_DEPTH_24_STENCIL_8:  texture_type = Texture_Type::DEPTH_STENCIL; is_renderbuffer = true; break;
+        default: panic("");
+        }
+        GLenum attachment_type = texture_type == Texture_Type::DEPTH ? GL_DEPTH_ATTACHMENT : GL_DEPTH_STENCIL_ATTACHMENT;
+
+        Texture* depth;
+        if (is_renderbuffer) {
+            depth = texture_create_renderbuffer(texture_type, width, height);
+            glBindRenderbuffer(GL_RENDERBUFFER, depth->texture_id);
+            glFramebufferRenderbuffer(GL_FRAMEBUFFER, attachment_type, GL_RENDERBUFFER, depth->texture_id);
+        }
+        else {
+            depth = texture_create_empty(texture_type, width, height);
+            texture_bind(depth);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, attachment_type, GL_TEXTURE_2D, depth->texture_id, 0);
+        }
+        dynamic_array_push_back(&result->attachments, depth);
     }
 
-    if (result->is_complete) {
-        result->is_complete = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+    // Create color attachment
+    {
+        Texture* color = texture_create_empty(type, width, height);
+        texture_bind(color);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, color->texture_id, 0);
+        dynamic_array_push_back(&result->attachments, color);
+        result->color_texture = color;
     }
+
+    assert(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE, "Framebuffer must be complete by now!");
 
     return result;
+}
+
+void framebuffer_resize(Framebuffer* framebuffer, int width, int height) {
+    framebuffer->width = width;
+    framebuffer->height = height;
+    for (int i = 0; i < framebuffer->attachments.size; i++) {
+        auto attachment = framebuffer->attachments[i];
+        texture_resize(attachment, framebuffer->width, framebuffer->height, false);
+    }
 }
 
 void framebuffer_window_resize_callback(void* userdata)
 {
-    Framebuffer* framebuffer = (Framebuffer*)userdata;
-    framebuffer->width = rendering_core.render_information.window_width;
-    framebuffer->height = rendering_core.render_information.window_height;
-    if (framebuffer->depth_stencil_attachment.texture != 0) {
-        texture_2D_resize(framebuffer->depth_stencil_attachment.texture, framebuffer->width, framebuffer->height, false);
-    }
-    for (int i = 0; i < framebuffer->color_attachments.size; i++) {
-        Framebuffer_Attachment* attachment = &framebuffer->color_attachments[i];
-        texture_2D_resize(attachment->texture, framebuffer->width, framebuffer->height, false);
-    }
-}
-
-Framebuffer* framebuffer_create_fullscreen(Framebuffer_Depth_Stencil_State depth_stencil_state)
-{
-    Framebuffer* result = framebuffer_create_width_height(
-        depth_stencil_state, rendering_core.render_information.window_width, rendering_core.render_information.window_height);
-    result->resize_with_window = true;
-    rendering_core_add_window_size_listener(&framebuffer_window_resize_callback, result);
-    return result;
-}
-
-void framebuffer_set_depth_attachment(Framebuffer* framebuffer, Texture_2D* texture, bool destroy_texture_with_framebuffer)
-{
-    if (framebuffer->depth_stencil_attachment.destroy_texture) {
-        texture_2D_destroy(framebuffer->depth_stencil_attachment.texture);
-    }
-
-    framebuffer->depth_stencil_attachment.attachment_index = 0;
-    framebuffer->depth_stencil_attachment.texture = texture;
-    framebuffer->depth_stencil_attachment.destroy_texture = destroy_texture_with_framebuffer;
-
-    opengl_state_bind_framebuffer(framebuffer->framebuffer_id);
-    switch (texture->type)
-    {
-    case Texture_2D_Type::DEPTH:
-        if (texture->is_renderbuffer) {
-            glBindRenderbuffer(GL_RENDERBUFFER, texture->texture_id);
-            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, texture->texture_id); 
-        }
-        else {
-            texture_2D_bind_to_next_free_unit(texture);
-            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, texture->texture_id, 0);
-        }
-        break;
-    case Texture_2D_Type::DEPTH_STENCIL:
-        if (texture->is_renderbuffer) {
-            glBindRenderbuffer(GL_RENDERBUFFER, texture->texture_id);
-            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, texture->texture_id); 
-        }
-        else {
-            texture_2D_bind_to_next_free_unit(texture);
-            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, texture->texture_id, 0);
-        }
-        break;
-    default: panic("Depth attachment texture type must be either depth or depth_stencil!");
-    }
-
-    framebuffer->is_complete = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
-}
-
-void framebuffer_add_color_attachment(Framebuffer* framebuffer, int attachment_index, Texture_2D* texture, bool destroy_texture_afterwards)
-{
-    if (texture->type == Texture_2D_Type::DEPTH || texture->type == Texture_2D_Type::DEPTH_STENCIL) {
-        panic("Should not happen, color attachment texture cannot be depth component!");
-    }
-
-    if (texture->width != framebuffer->width && texture->height != framebuffer->height) {
-        panic("Should not happen, Color buffer needs the same size as framebuffer");
-    }
-
-    Framebuffer_Attachment* attachment = nullptr;
-    for (int i = 0; i < framebuffer->color_attachments.size; i++) {
-        if (framebuffer->color_attachments[i].attachment_index == attachment_index) {
-            attachment = &framebuffer->color_attachments[i];
-            if (attachment->destroy_texture) {
-                texture_2D_destroy(attachment->texture);
-            }
-            break;
-        }
-    }
-    if (attachment == nullptr) {
-        Framebuffer_Attachment empty_attachment = {};
-        dynamic_array_push_back(&framebuffer->color_attachments, empty_attachment);
-        attachment = &framebuffer->color_attachments[framebuffer->color_attachments.size - 1];
-    }
-    attachment->attachment_index = attachment_index;
-    attachment->destroy_texture = destroy_texture_afterwards;
-    attachment->texture = texture;
-
-    opengl_state_bind_framebuffer(framebuffer->framebuffer_id);
-    if (texture->is_renderbuffer) {
-        glBindRenderbuffer(GL_RENDERBUFFER, texture->texture_id);
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + attachment_index, GL_RENDERBUFFER, texture->texture_id);
-    }
-    else {
-        texture_2D_bind_to_next_free_unit(texture);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + attachment_index, GL_TEXTURE_2D, texture->texture_id, 0);
-    }
+    auto& info = rendering_core.render_information;
+    framebuffer_resize((Framebuffer*)userdata, info.window_width, info.window_height);
 }
 
 void framebuffer_destroy(Framebuffer* framebuffer)
 {
-    for (int i = 0; i < framebuffer->color_attachments.size; i++) {
-        Framebuffer_Attachment* attachment = &framebuffer->color_attachments[i];
-        if (attachment->destroy_texture) {
-            texture_2D_destroy(attachment->texture);
-        }
+    for (int i = 0; i < framebuffer->attachments.size; i++) {
+        texture_destroy(framebuffer->attachments[i]);
     }
-    if (framebuffer->depth_stencil_attachment.destroy_texture) {
-        texture_2D_destroy(framebuffer->depth_stencil_attachment.texture);
-    }
-    dynamic_array_destroy(&framebuffer->color_attachments);
+    dynamic_array_destroy(&framebuffer->attachments);
     if (framebuffer->resize_with_window) {
         rendering_core_remove_window_size_listener(framebuffer);
     }
