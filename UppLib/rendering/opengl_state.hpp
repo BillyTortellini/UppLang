@@ -99,6 +99,20 @@ enum class Depth_Type
 
 
 
+// MESH
+enum class Mesh_Topology
+{
+    POINTS = GL_POINTS,
+    LINES = GL_LINES,
+    LINE_STRIP = GL_LINE_STRIP,
+    LINE_LOOP = GL_LINE_LOOP,
+    TRIANGLES = GL_TRIANGLES,
+    TRIANGLE_STRIP = GL_TRIANGLE_STRIP, // Note: Primitive Restart can be used in index buffer
+    TRIANGLE_FAN = GL_TRIANGLE_FAN,
+};
+
+
+
 // OPENGL STATE
 struct Texture_Unit_Binding
 {

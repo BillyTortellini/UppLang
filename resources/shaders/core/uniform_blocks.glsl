@@ -1,4 +1,4 @@
-#ifdef VERTEX_SHADER
+#ifdef VERTEX
 
 layout (std140, binding = 0) uniform Render_Information
 {

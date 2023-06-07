@@ -1,12 +1,10 @@
 #pragma once
 
-#include "opengl_function_pointers.hpp"
+#include "opengl_state.hpp"
 #include "../datastructures/array.hpp"
-#include "rendering_core.hpp"
 
-struct Rendering_Core;
-struct Shader_Program;
 struct Texture_Bitmap;
+typedef u32 GLuint;
 
 struct Texture
 {

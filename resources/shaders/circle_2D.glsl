@@ -1,4 +1,4 @@
-#ifdef VERTEX_SHADER
+#ifdef VERTEX
 
 layout (location = 0) in vec3 a_position;
 layout (location = 2) in vec2 a_uv;

@@ -198,14 +198,8 @@
     <ClInclude Include="rendering\opengl_utils.hpp">
       <Filter>Header Files\Rendering\Utility</Filter>
     </ClInclude>
-    <ClInclude Include="rendering\mesh_utils.hpp">
-      <Filter>Header Files\Rendering\Utility</Filter>
-    </ClInclude>
     <ClInclude Include="rendering\camera_controllers.hpp">
       <Filter>Header Files\Rendering\Utility</Filter>
-    </ClInclude>
-    <ClInclude Include="rendering\shader_program.hpp">
-      <Filter>Header Files\Rendering\Core</Filter>
     </ClInclude>
     <ClInclude Include="rendering\glyph_atlas.hpp">
       <Filter>Header Files\Rendering\2D</Filter>
@@ -413,9 +407,6 @@
     <ClCompile Include="rendering\glyph_atlas.cpp">
       <Filter>Source Files\Rendering\2D</Filter>
     </ClCompile>
-    <ClCompile Include="rendering\mesh_utils.cpp">
-      <Filter>Source Files\Rendering\Utility</Filter>
-    </ClCompile>
     <ClCompile Include="rendering\opengl_function_pointers.cpp">
       <Filter>Source Files\Rendering\Utility</Filter>
     </ClCompile>
@@ -423,9 +414,6 @@
       <Filter>Source Files\Rendering\Utility</Filter>
     </ClCompile>
     <ClCompile Include="rendering\rendering_core.cpp">
-      <Filter>Source Files\Rendering\Core</Filter>
-    </ClCompile>
-    <ClCompile Include="rendering\shader_program.cpp">
       <Filter>Source Files\Rendering\Core</Filter>
     </ClCompile>
     <ClCompile Include="rendering\text_renderer.cpp">
@@ -555,10 +543,7 @@
     <None Include="..\resources\shaders\rectangle_2D.glsl">
       <Filter>Resource Files\Shaders</Filter>
     </None>
-    <None Include="..\resources\shaders\circle_2D.glsl">
-      <Filter>Resource Files\Shaders</Filter>
-    </None>
-    <None Include="..\resources\shaders\line_2D.glsl">
+    <None Include="..\resources\shaders\const_color_2D.glsl">
       <Filter>Resource Files\Shaders</Filter>
     </None>
   </ItemGroup>

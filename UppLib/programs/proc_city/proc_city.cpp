@@ -8,9 +8,7 @@
 #include "../../rendering/cameras.hpp"
 #include "../../rendering/camera_controllers.hpp"
 #include "../../rendering/gpu_buffers.hpp"
-#include "../../rendering/mesh_utils.hpp"
 #include "../../rendering/text_renderer.hpp"
-#include "../../rendering/shader_program.hpp"
 #include "../../utility/bounding_box.hpp"
 #include "../../rendering/renderer_2D.hpp"
 #include "../../utility/gui.hpp"
@@ -1318,28 +1316,28 @@ Mesh_GPU_Data city_street_create_mesh_from_network()
 }
 */
 
-Mesh_GPU_Buffer city_building_create_mesh_from_polygon(Polygon2D* polygon, float height, Rendering_Core* core)
-{
-    Dynamic_Array<Building_Vertex> building_vertices = dynamic_array_create_empty<Building_Vertex>(32);
-    Dynamic_Array<uint32> building_indices = dynamic_array_create_empty<uint32>(32);
-    SCOPE_EXIT(dynamic_array_destroy(&building_vertices));
-    SCOPE_EXIT(dynamic_array_destroy(&building_indices));
-    building_create_from_polygon_2d(polygon, &building_vertices, &building_indices, 5.0f);
-
-    REMOVE_ME a;
-    REMOVE_ME vertex_attributes[] = {
-        a
-    };
-    Mesh_GPU_Buffer building_mesh = mesh_gpu_buffer_create_with_single_vertex_buffer(
-        gpu_buffer_create(dynamic_array_as_bytes(&building_vertices), GPU_Buffer_Type::VERTEX_BUFFER, GPU_Buffer_Usage::STATIC),
-        array_create_static(vertex_attributes, 1),
-        gpu_buffer_create(dynamic_array_as_bytes(&building_indices), GPU_Buffer_Type::INDEX_BUFFER, GPU_Buffer_Usage::STATIC),
-        Mesh_Topology::TRIANGLES,
-        building_indices.size
-    );
-
-    return building_mesh;
-}
+//Mesh_GPU_Buffer city_building_create_mesh_from_polygon(Polygon2D* polygon, float height, Rendering_Core* core)
+//{
+//    Dynamic_Array<Building_Vertex> building_vertices = dynamic_array_create_empty<Building_Vertex>(32);
+//    Dynamic_Array<uint32> building_indices = dynamic_array_create_empty<uint32>(32);
+//    SCOPE_EXIT(dynamic_array_destroy(&building_vertices));
+//    SCOPE_EXIT(dynamic_array_destroy(&building_indices));
+//    building_create_from_polygon_2d(polygon, &building_vertices, &building_indices, 5.0f);
+//
+//    REMOVE_ME a;
+//    REMOVE_ME vertex_attributes[] = {
+//        a
+//    };
+//    Mesh_GPU_Buffer building_mesh = mesh_gpu_buffer_create_with_single_vertex_buffer(
+//        gpu_buffer_create(dynamic_array_as_bytes(&building_vertices), GPU_Buffer_Type::VERTEX_BUFFER, GPU_Buffer_Usage::STATIC),
+//        array_create_static(vertex_attributes, 1),
+//        gpu_buffer_create(dynamic_array_as_bytes(&building_indices), GPU_Buffer_Type::INDEX_BUFFER, GPU_Buffer_Usage::STATIC),
+//        Mesh_Topology::TRIANGLES,
+//        building_indices.size
+//    );
+//
+//    return building_mesh;
+//}
 
 #include <cstdio>
 

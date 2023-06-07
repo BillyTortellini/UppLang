@@ -3,7 +3,6 @@
 #include "../win32/window.hpp"
 #include "../win32/input.hpp"
 #include "../rendering/rendering_core.hpp"
-#include "../rendering/shader_program.hpp"
 #include "../rendering/gpu_buffers.hpp"
 #include "../rendering/renderer_2d.hpp"
 #include "../rendering/text_renderer.hpp"
@@ -50,13 +49,13 @@ void gui_destroy(GUI* gui)
     string_destroy(&gui->numeric_input_buffer);
 }
 
-void gui_update(GUI* gui, Input* input, int window_width, int window_height)
+void gui_update(GUI* gui, Input* input, int backbuffer_width, int backbuffer_height)
 {
     // Update mouse information
     gui->mouse_pos_last_frame = gui->mouse_pos;
     gui->mouse_down_last_frame = gui->mouse_down_this_frame;
     gui->mouse_down_this_frame = input->mouse_down[(int)Mouse_Key_Code::LEFT];
-    gui->mouse_pos = vec2(input->mouse_x / (float)window_width, input->mouse_y / (float)window_height) * 2 - vec2(1);
+    gui->mouse_pos = vec2(input->mouse_x / (float)backbuffer_width, input->mouse_y / (float)backbuffer_height) * 2 - vec2(1);
     gui->mouse_pos.y *= -1;
     gui->mouse_pos = gui->mouse_pos / gui->renderer_2d->scaling_factor;
     gui->current_depth = 0.99f;
@@ -72,7 +71,7 @@ void gui_render(GUI* gui, Rendering_Core* core)
         renderer_2D_add_rectangle(gui->renderer_2d, gui->focused_pos,
             gui->focused_size + 0.1f, vec3(0.3f, 0.3f, 0.8f), 0.999f);
     }
-    renderer_2D_render(gui->renderer_2d, core);
+    renderer_2D_draw(gui->renderer_2d, core->predefined.main_pass);
 }
 
 float gui_next_depth(GUI* gui) {

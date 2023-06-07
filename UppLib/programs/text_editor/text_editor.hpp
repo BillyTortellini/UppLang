@@ -2,7 +2,6 @@
 
 #include "../../datastructures/string.hpp"
 #include "../../datastructures/dynamic_array.hpp"
-#include "../../rendering/gpu_buffers.hpp"
 #include "../../rendering/text_renderer.hpp"
 #include "../../rendering/rendering_core.hpp"
 #include "../../win32/input.hpp"
@@ -176,8 +175,6 @@ struct Text_Editor
 
     // Rendering Stuff
     Text_Renderer* renderer;
-    Shader_Program* cursor_shader;
-    Mesh_GPU_Buffer cursor_mesh;
     Dynamic_Array<Dynamic_Array<Text_Highlight>> text_highlights;
     float line_size_cm;
     double last_keymessage_time;

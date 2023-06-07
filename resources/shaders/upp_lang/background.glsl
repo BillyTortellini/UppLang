@@ -16,10 +16,8 @@ void main() {
 
 layout (std140, binding = 0) uniform Render_Information
 {
-    float viewport_width;
-    float viewport_height;
-    float window_width;
-    float window_height;
+    float backbuffer_width;
+    float backbuffer_height;
     float monitor_dpi;
     float current_time_in_seconds;
 } u_render_info;
@@ -115,7 +113,7 @@ float march_ray(vec3 origin, vec3 direction)
 void main() 
 {
 	vec2 pos = uv_coords * 2.0 - 1.0;
-	float aspect_ratio = u_render_info.viewport_width / u_render_info.viewport_height;
+	float aspect_ratio = u_render_info.backbuffer_width / u_render_info.backbuffer_height;
 	pos.x *= aspect_ratio;
 	float inside = smoothstep(0.99, 0.98, length(pos));
 

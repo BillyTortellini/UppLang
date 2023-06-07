@@ -73,7 +73,7 @@ void framebuffer_resize(Framebuffer* framebuffer, int width, int height) {
 void framebuffer_window_resize_callback(void* userdata)
 {
     auto& info = rendering_core.render_information;
-    framebuffer_resize((Framebuffer*)userdata, info.window_width, info.window_height);
+    framebuffer_resize((Framebuffer*)userdata, info.backbuffer_width, info.backbuffer_height);
 }
 
 void framebuffer_destroy(Framebuffer* framebuffer)

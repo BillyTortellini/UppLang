@@ -853,21 +853,6 @@ void window_swap_buffers(Window* window) {
     SwapBuffers(window->hdc);
 }
 
-void window_check_if_size_changed(Window* window)
-{
-    RECT window_rect;
-    GetClientRect(window->hwnd, &window_rect);
-    int x = window_rect.left;
-    int y = window_rect.top;
-    int width = window_rect.right - window_rect.left;
-    int height = window_rect.bottom - window_rect.top;
-    if (window->state.width != width || window->state.height != height) {
-        window->input.client_area_resized = true;
-        window->state.width = width;
-        window->state.height = height;
-    }
-}
-
 void window_change_fullscreen_mode(Window* window, bool fullscreen)
 {
     /* Useful ex styles

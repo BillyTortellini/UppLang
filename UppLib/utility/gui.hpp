@@ -50,7 +50,7 @@ struct GUI
 
 GUI gui_create(Renderer_2D* renderer_2d, Input* input, Timer* timer);
 void gui_destroy(GUI* gui);
-void gui_update(GUI* gui, Input* input, int window_width, int window_height);
+void gui_update(GUI* gui, Input* input, int backbuffer_width, int backbuffer_height);
 void gui_render(GUI* gui, Rendering_Core* core);
 float gui_next_depth(GUI* gui);
 void gui_set_focus(GUI* gui, vec2 pos, vec2 size);

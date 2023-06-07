@@ -3,8 +3,6 @@
 #include "../../rendering/text_renderer.hpp"
 #include "../../win32/window.hpp"
 #include "../../math/vectors.hpp"
-#include "../../rendering/shader_program.hpp"
-#include "../../rendering/mesh_utils.hpp"
 #include "../../math/scalars.hpp"
 #include "../../utility/file_io.hpp"
 #include "../../win32/timing.hpp"
@@ -304,8 +302,6 @@ Text_Editor* text_editor_create(Text_Renderer* text_renderer, Rendering_Core* co
 
     result->renderer = text_renderer;
     result->text_highlights = dynamic_array_create_empty<Dynamic_Array<Text_Highlight>>(32);
-    result->cursor_shader = shader_program_create({"resources/shaders/upp_lang/cursor.glsl"});
-    result->cursor_mesh = mesh_utils_create_quad_2D();
     result->line_size_cm = 0.3f;
     result->first_rendered_line = 0;
     result->first_rendered_char = 0;
@@ -344,8 +340,6 @@ void text_editor_destroy(Text_Editor* editor)
         dynamic_array_destroy(&editor->text_highlights.data[i]);
     }
     dynamic_array_destroy(&editor->text_highlights);
-    shader_program_destroy(editor->cursor_shader);
-    mesh_gpu_buffer_destroy(&editor->cursor_mesh);
     string_destroy(&editor->yanked_string);
     string_destroy(&editor->line_count_buffer);
 
@@ -380,16 +374,13 @@ void text_editor_reset_highlights(Text_Editor* editor)
 
 void text_editor_draw_bounding_box(Text_Editor* editor, Rendering_Core* core, Bounding_Box2 bb, vec4 color)
 {
-    shader_program_draw_mesh
-    (
-        editor->cursor_shader, 
-        &editor->cursor_mesh, 
-        {
+    auto& predef = rendering_core.predefined;
+    auto shader = rendering_core_query_shader("upp_lang/cursor.glsl");
+    render_pass_draw(
+        predef.main_pass, shader, predef.quad, Mesh_Topology::TRIANGLES, {
             uniform_make("position", bb.min),
             uniform_make("size", bb.max - bb.min),
-            uniform_make("color", color),
-        }
-    );
+            uniform_make("color", color) });
 }
 
 Bounding_Box2 text_editor_get_character_bounding_box(Text_Editor* editor, Text_Position pos)
@@ -408,8 +399,8 @@ Bounding_Box2 text_editor_get_character_bounding_box(Text_Editor* editor, Text_P
 void text_editor_add_highlight_from_slice(Text_Editor* editor, Text_Slice slice, vec3 text_color, vec4 background_color);
 void text_editor_render(Text_Editor* editor, Rendering_Core* core, Bounding_Box2 editor_region)
 {
-    int width = core->render_information.window_width;
-    int height = core->render_information.window_height;
+    int width = core->render_information.backbuffer_width;
+    int height = core->render_information.backbuffer_height;
     int dpi = core->render_information.monitor_dpi;
     float time = core->render_information.current_time_in_seconds;
 
@@ -511,7 +502,7 @@ void text_editor_render(Text_Editor* editor, Rendering_Core* core, Bounding_Box2
         line_pos.y -= (text_height);
     }
 
-    text_renderer_render(editor->renderer, core);
+    text_renderer_draw(editor->renderer, rendering_core.predefined.main_pass);
 
     // Draw cursor 
     {

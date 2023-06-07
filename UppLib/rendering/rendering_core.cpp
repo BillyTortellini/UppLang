@@ -13,19 +13,7 @@ Rendering_Core rendering_core;
 
 
 
-Render_Information render_information_make(int viewport_width, int viewport_height, int window_width, int window_height, float monitor_dpi, float current_time)
-{
-    Render_Information info;
-    info.viewport_width = (float)viewport_width;
-    info.viewport_height = (float)viewport_height;
-    info.window_width = window_width;
-    info.window_height = window_height;
-    info.monitor_dpi = monitor_dpi;
-    info.current_time_in_seconds = current_time;
-    return info;
-}
-
-void rendering_core_initialize(int window_width, int window_height, float monitor_dpi)
+void rendering_core_initialize(int backbuffer_width, int backbuffer_height, float monitor_dpi)
 {
     auto& result = rendering_core;
     result.pipeline_state = pipeline_state_make_default();
@@ -38,11 +26,11 @@ void rendering_core_initialize(int window_width, int window_height, float monito
     result.ubo_camera_data = gpu_buffer_create_empty(sizeof(Camera_3D_UBO_Data), GPU_Buffer_Type::UNIFORM_BUFFER, GPU_Buffer_Usage::DYNAMIC);
     gpu_buffer_bind_indexed(&result.ubo_camera_data, 1);
 
-    result.render_information.viewport_height = 0;
-    result.render_information.viewport_width = 0;
+    result.render_information.backbuffer_height = 0;
+    result.render_information.backbuffer_width = 0;
     result.render_information.monitor_dpi = monitor_dpi;
-    result.render_information.window_width = window_width;
-    result.render_information.window_height = window_height;
+    result.render_information.backbuffer_width = backbuffer_width;
+    result.render_information.backbuffer_height = backbuffer_height;
 
     result.window_size_listeners = dynamic_array_create_empty<Window_Size_Listener>(1);
     result.vertex_attributes = dynamic_array_create_empty<Vertex_Attribute_Base*>(1);
@@ -52,17 +40,107 @@ void rendering_core_initialize(int window_width, int window_height, float monito
     result.render_passes = hashtable_create_empty<String, Render_Pass*>(4, hash_string, string_equals);
     result.framebuffers = hashtable_create_empty<String, Framebuffer*>(4, hash_string, string_equals);
 
-    result.predefined.position3D = vertex_attribute_make<vec3>("Position3D");
-    result.predefined.position2D = vertex_attribute_make<vec2>("Position2D");
-    result.predefined.textureCoordinates = vertex_attribute_make<vec2>("TextureCoordinates");
-    result.predefined.normal = vertex_attribute_make<vec3>("Normal");
-    result.predefined.tangent = vertex_attribute_make<vec3>("Tangent");
-    result.predefined.bitangent = vertex_attribute_make<vec3>("Bitangent");
-    result.predefined.color3 = vertex_attribute_make<vec3>("Color3");
-    result.predefined.color4 = vertex_attribute_make<vec4>("Color4");
-    result.predefined.index = vertex_attribute_make<uint32>("IndexBuffer");
+    // Generate predefined objects
+    {
+        auto& predef = result.predefined;
+        // Attributes
+        predef.position3D = vertex_attribute_make<vec3>("Position3D");
+        predef.position2D = vertex_attribute_make<vec2>("Position2D");
+        predef.texture_coordinates = vertex_attribute_make<vec2>("TextureCoordinates");
+        predef.normal = vertex_attribute_make<vec3>("Normal");
+        predef.tangent = vertex_attribute_make<vec3>("Tangent");
+        predef.bitangent = vertex_attribute_make<vec3>("Bitangent");
+        predef.color3 = vertex_attribute_make<vec3>("Color3");
+        predef.color4 = vertex_attribute_make<vec4>("Color4");
+        predef.index = vertex_attribute_make<uint32>("IndexBuffer");
 
-    result.main_pass = rendering_core_query_renderpass("main", pipeline_state_make_default(), nullptr);
+        // Meshes
+        predef.quad = rendering_core_query_mesh(
+            "fullscreen_quad_mesh", vertex_description_create({ predef.position2D }), false);
+        mesh_push_attribute(
+            predef.quad, predef.position2D, {
+                vec2(-1.0f, -1.0f),
+                vec2(1.0f, -1.0f),
+                vec2(1.0f, 1.0f),
+
+                vec2(-1.0f, -1.0f),
+                vec2(1.0f, 1.0f),
+                vec2(-1.0f, 1.0f),
+            }
+        );
+
+        predef.cube = rendering_core_query_mesh(
+            "unit_cube", vertex_description_create({ predef.position3D, predef.normal, predef.index}), false);
+        mesh_push_attribute(
+            predef.cube, predef.position3D, {
+                // Front face
+                vec3(-1.0f, -1.0f,  1.0f),
+                vec3( 1.0f, -1.0f,  1.0f),
+                vec3( 1.0f,  1.0f,  1.0f),
+                vec3(-1.0f,  1.0f,  1.0f),
+
+                // Back face (CW!)
+                vec3(-1.0f, -1.0f, -1.0f),
+                vec3( 1.0f, -1.0f, -1.0f),
+                vec3( 1.0f,  1.0f, -1.0f),
+                vec3(-1.0f,  1.0f, -1.0f),
+
+                // Right face
+                vec3( 1.0f, -1.0f,  1.0f),
+                vec3( 1.0f, -1.0f, -1.0f),
+                vec3( 1.0f,  1.0f, -1.0f),
+                vec3( 1.0f,  1.0f,  1.0f),
+
+                // Left face (CW!)
+                vec3( 1.0f, -1.0f,  1.0f),
+                vec3( 1.0f, -1.0f, -1.0f),
+                vec3( 1.0f,  1.0f, -1.0f),
+                vec3( 1.0f,  1.0f,  1.0f),
+
+                // Top face
+                vec3(-1.0f,  1.0f,  1.0f),
+                vec3( 1.0f,  1.0f,  1.0f),
+                vec3( 1.0f,  1.0f, -1.0f),
+                vec3(-1.0f,  1.0f, -1.0f),
+
+                // Bottom face (CW!)
+                vec3(-1.0f,  1.0f,  1.0f),
+                vec3( 1.0f,  1.0f,  1.0f),
+                vec3( 1.0f,  1.0f, -1.0f),
+                vec3(-1.0f,  1.0f, -1.0f),
+            }
+        );
+
+        // Generate indices
+        auto indices = mesh_push_attribute_slice(predef.cube, predef.index, 6 * 6);
+        for (int face = 0; face < 6; face++) {
+            int counter_clockwise_order[] = { 0, 1, 2, 0, 2, 3 };
+            int clockwise_order[] = { 0, 2, 1, 0, 3, 2 };
+            for (int i = 0; i < 6; i++) {
+                indices[face * 6 + i] = face * 4 + (face % 2 == 0 ? counter_clockwise_order[i] : clockwise_order[i]);
+            }
+        }
+
+        // Generate normals
+        vec3 normals[6] = {
+            vec3(0, 0, 1),
+            vec3(0, 0, -1),
+            vec3(1, 0, 0),
+            vec3(-1, 0, 0),
+            vec3(0, 1, 0),
+            vec3(0, -1, 0)
+        };
+        auto normal_data = mesh_push_attribute_slice(predef.cube, predef.normal, 4 * 6);
+        for (int face = 0; face < 6; face++) {
+            normal_data[face * 4 + 0] = normals[face];
+            normal_data[face * 4 + 1] = normals[face];
+            normal_data[face * 4 + 2] = normals[face];
+            normal_data[face * 4 + 3] = normals[face];
+        }
+
+        // Render pass
+        predef.main_pass = rendering_core_query_renderpass("main", pipeline_state_make_default(), nullptr);
+    }
 }
 
 void rendering_core_destroy()
@@ -180,18 +258,62 @@ void renderpass_queue_if_no_dependencies(Render_Pass* pass, Dynamic_Array<Render
     }
 }
 
-void rendering_core_render(Camera_3D* camera, Framebuffer_Clear_Type clear_type, float current_time, int window_width, int window_height)
+void render_mesh_with_shader_if_compatible(Shader* shader, Mesh* mesh, Mesh_Topology topology, int element_count, int element_start)
+{
+    if (shader->program_id == 0) {
+        return;
+    }
+
+    // Check if mesh and shader are compatible
+    {
+        bool compatible = true;
+        for (int k = 0; k < shader->input_layout.size; k++) {
+            bool found = false;
+            for (int m = 0; m < mesh->description->attributes.size; m++) {
+                if (shader->input_layout[k].attribute == mesh->description->attributes[m]) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                logg("Mesh does not contain all attributes, missing: %s\n", shader->input_layout[k].attribute->name.characters);
+                compatible = false;
+                break;
+            }
+        }
+        if (!compatible) {
+            return;
+        }
+    }
+
+    // Bind necessary state
+    opengl_state_bind_program(shader->program_id);
+    opengl_state_bind_vao(mesh->vao);
+
+    // Draw
+    if (mesh->drawing_has_index_buffer) {
+        glDrawElements((GLenum)topology, element_count, GL_UNSIGNED_INT, (GLvoid*)(i64)(element_start * sizeof(GLuint)));
+    }
+    else {
+        glDrawArrays((GLenum)topology, element_start, element_count);
+    }
+}
+
+void rendering_core_prepare_frame(float current_time, int backbuffer_width, int backbuffer_height) 
 {
     auto& core = rendering_core;
+    auto& info = core.render_information;
+
+    info.current_time_in_seconds = current_time;
 
     // Update file listeners and window size changed listeners
     {
         file_listener_check_if_files_changed(core.file_listener);
-        if ((window_width != core.render_information.window_width || window_height != core.render_information.window_height) &&
-            (window_width != 0 && window_height != 0))
+        if ((backbuffer_width != info.backbuffer_width || backbuffer_height != info.backbuffer_height) &&
+            (backbuffer_width != 0 && backbuffer_height != 0))
         {
-            core.render_information.window_width = window_width;
-            core.render_information.window_height = window_height;
+            info.backbuffer_width = backbuffer_width;
+            info.backbuffer_height = backbuffer_height;
             for (int i = 0; i < core.window_size_listeners.size; i++) {
                 auto& listener = core.window_size_listeners[i];
                 listener.callback(listener.userdata);
@@ -199,73 +321,75 @@ void rendering_core_render(Camera_3D* camera, Framebuffer_Clear_Type clear_type,
         }
     }
 
-    // Update common UBO's
+    // Reset data from last frame
     {
-        // Viewport
-        core.render_information.viewport_width = window_width;
-        core.render_information.viewport_height = window_height;
-        glViewport(0, 0, window_width, window_height);
+        auto it = hashtable_iterator_create(&core.meshes);
+        while (hashtable_iterator_has_next(&it)) 
+        {
+            auto mesh = *it.value;
+            mesh->queried_this_frame = false; // Reset
+            mesh->dirty = false;
+            if (mesh->reset_every_frame) {
+                mesh->drawing_has_index_buffer = false;
+                mesh->draw_count = 0;
+                mesh->vertex_count = 0;
+                for (int i = 0; i < mesh->buffers.size; i++) {
+                    auto& buffer = mesh->buffers[i];
+                    buffer.element_count = 0;
+                    dynamic_array_reset(&buffer.attribute_data);
+                }
+            }
+            hashtable_iterator_next(&it);
+        }
+    }
+}
 
-        // Time
-        core.render_information.current_time_in_seconds = current_time;
-        gpu_buffer_update(&core.ubo_render_information, array_create_static_as_bytes(&core.render_information, 1));
+void rendering_core_render(Camera_3D* camera, Framebuffer_Clear_Type clear_type)
+{
+    auto& core = rendering_core;
+    auto& info = core.render_information;
 
-        // Camera
+    // Prepare frame
+    {
+        // Update UBOs
         Camera_3D_UBO_Data data = camera_3d_ubo_data_make(camera);
         gpu_buffer_update(&core.ubo_camera_data, array_create_static_as_bytes(&data, 1));
+        gpu_buffer_update(&core.ubo_render_information, array_create_static_as_bytes(&core.render_information, 1));
 
-        // Bind default framebuffer
+        // Clear default framebuffer
+        opengl_state_bind_framebuffer(0);
         rendering_core_clear_bound_framebuffer(clear_type);
     }
 
-    // Upload all changed mesh data to gpu
+    // Upload all mesh data to the GPU ('dirty' meshes only)
     {
         auto it = hashtable_iterator_create(&core.meshes);
         while (hashtable_iterator_has_next(&it))
         {
+            SCOPE_EXIT(hashtable_iterator_next(&it));
             Mesh* mesh = *it.value;
-            mesh->queried_this_frame = false; // Reset
-            mesh->primitive_count = 0;
-            Attribute_Buffer* index_buffer = 0;
+            if (!mesh->dirty) {
+                continue;
+            }
+            mesh->dirty = false;
+
+            mesh->drawing_has_index_buffer = false;
+            mesh->draw_count = 0;
             for (int i = 0; i < mesh->buffers.size; i++)
             {
                 auto& buffer = mesh->buffers[i];
                 auto attribute = mesh->description->attributes[i];
 
-                // Calculate how many triangles we have
-                {
-                    if (attribute == core.predefined.index) {
-                        index_buffer = &buffer;
-                    }
-                    int primitive_count = buffer.attribute_data.size / shader_datatype_get_info(attribute->type).byte_size;
-                    if (mesh->primitive_count == 0) {
-                        mesh->primitive_count = primitive_count;
-                    }
-                    if (mesh->primitive_count != primitive_count && attribute != core.predefined.index) {
-                        logg("Mesh has different count of vertex attributes!");
-                        mesh->primitive_count = math_minimum(mesh->primitive_count, primitive_count);
-                    }
+                if (attribute == core.predefined.index) {
+                    mesh->drawing_has_index_buffer = true;
+                    mesh->draw_count = buffer.element_count;
                 }
-
-                // Skip if nothing changed
-                if (!buffer.dirty) {
-                    continue;
+                else if (!mesh->drawing_has_index_buffer) {
+                    assert(!(i != 0 && mesh->draw_count != buffer.element_count), "All vertex attributes must have the same size when drawing!");
+                    mesh->draw_count = buffer.element_count;
                 }
-
-                // Upload data to gpu
-                buffer.dirty = false;
                 gpu_buffer_update(&buffer.gpu_buffer, dynamic_array_as_bytes(&buffer.attribute_data));
-                if (mesh->reset_every_frame) {
-                    buffer.dirty = true;
-                    dynamic_array_reset(&buffer.attribute_data);
-                }
             }
-
-            if (index_buffer != 0) {
-                mesh->primitive_count = index_buffer->attribute_data.size / sizeof(u32);
-            }
-
-            hashtable_iterator_next(&it);
         }
     }
 
@@ -273,20 +397,21 @@ void rendering_core_render(Camera_3D* camera, Framebuffer_Clear_Type clear_type,
     {
         // Generate execution queue based on dependencies of passes
         auto execution_queue = dynamic_array_create_empty<Render_Pass*>(core.render_passes.element_count);
-        auto it = hashtable_iterator_create(&core.render_passes);
-        
-        while (hashtable_iterator_has_next(&it)) {
-            Render_Pass* pass = *it.value;
-            renderpass_queue_if_no_dependencies(pass, &execution_queue);
-            pass->queried_this_frame = false; // Reset
-            hashtable_iterator_next(&it);
-        }
-        if (execution_queue.size != core.render_passes.element_count) {
-            panic("There is a cyclic dependency in the render-passes, shouldn't happen!");
+        {
+            auto it = hashtable_iterator_create(&core.render_passes);
+            while (hashtable_iterator_has_next(&it)) {
+                Render_Pass* pass = *it.value;
+                renderpass_queue_if_no_dependencies(pass, &execution_queue);
+                pass->queried_this_frame = false; // Reset
+                hashtable_iterator_next(&it);
+            }
+            if (execution_queue.size != core.render_passes.element_count) {
+                panic("There is a cyclic dependency in the render-passes, shouldn't happen!");
+            }
         }
 
         // Execute the renderpasses in order
-        for (int i = 0; i < execution_queue.size; i++) 
+        for (int i = 0; i < execution_queue.size; i++)
         {
             auto& pass = execution_queue[i];
             dynamic_array_reset(&pass->dependents);
@@ -296,9 +421,11 @@ void rendering_core_render(Camera_3D* camera, Framebuffer_Clear_Type clear_type,
             rendering_core_update_pipeline_state(pass->pipeline_state);
             if (pass->output_buffer != 0) {
                 opengl_state_bind_framebuffer(pass->output_buffer->framebuffer_id);
+                glViewport(0, 0, pass->output_buffer->width, pass->output_buffer->height);
             }
             else {
                 opengl_state_bind_framebuffer(0);
+                glViewport(0, 0, info.backbuffer_width, info.backbuffer_height);
             }
 
             // Execute commands
@@ -308,6 +435,9 @@ void rendering_core_render(Camera_3D* camera, Framebuffer_Clear_Type clear_type,
                 if (command.type == Render_Pass_Command_Type::UNIFORM)
                 {
                     auto& uniform = command.uniform;
+                    if (uniform.shader->program_id == 0) {
+                        continue;
+                    }
                     opengl_state_bind_program(uniform.shader->program_id);
 
                     // Find uniform location in shader
@@ -346,53 +476,19 @@ void rendering_core_render(Camera_3D* camera, Framebuffer_Clear_Type clear_type,
                     case Shader_Datatype::MAT4: glUniformMatrix4fv(info->location, 1, GL_FALSE, (GLfloat*)&value.data_mat4); break;
                     case Shader_Datatype::TEXTURE_2D_BINDING:
                         glUniform1i(
-                            info->location, 
+                            info->location,
                             opengl_state_bind_texture_to_next_free_unit(
                                 Texture_Binding_Type::TEXTURE_2D, value.texture.texture->texture_id, value.texture.sampling_mode));
                         break;
                     }
                 }
-                else if (command.type == Render_Pass_Command_Type::DRAW_CALL)
-                {
-                    auto& mesh = command.draw_call.mesh;
-                    auto& shader = command.draw_call.shader;
-                    if (shader->program_id == 0) {
-                        continue;
-                    }
-
-                    // Check if mesh and shader are compatible
-                    {
-                        bool compatible = true;
-                        for (int k = 0; k < shader->input_layout.size; k++) {
-                            bool found = false;
-                            for (int m = 0; m < mesh->description->attributes.size; m++) {
-                                if (shader->input_layout[k].attribute == mesh->description->attributes[m]) {
-                                    found = true;
-                                    break;
-                                }
-                            }
-                            if (!found) {
-                                logg("Mesh does not contain all attributes, missing: %s\n", shader->input_layout[k].attribute->name.characters);
-                                compatible = false;
-                                break;
-                            }
-                        }
-                        if (!compatible) {
-                            continue;
-                        }
-                    }
-
-                    // Bind necessary state
-                    opengl_state_bind_program(shader->program_id);
-                    opengl_state_bind_vao(mesh->vao);
-
-                    // Draw
-                    if (mesh->has_element_buffer) {
-                        glDrawElements((GLenum)mesh->topology, mesh->primitive_count, GL_UNSIGNED_INT, (GLvoid*)0);
-                    }
-                    else {
-                        glDrawArrays((GLenum)mesh->topology, 0, mesh->primitive_count);
-                    }
+                else if (command.type == Render_Pass_Command_Type::DRAW_CALL) {
+                    auto& call = command.draw_call;
+                    render_mesh_with_shader_if_compatible(call.shader, call.mesh, call.topology, call.mesh->draw_count, 0);
+                }
+                else if (command.type == Render_Pass_Command_Type::DRAW_CALL_COUNT) {
+                    auto& call = command.draw_call_count;
+                    render_mesh_with_shader_if_compatible(call.shader, call.mesh, call.topology, call.element_count, call.element_start);
                 }
             }
 
@@ -464,6 +560,10 @@ Vertex_Description* vertex_description_create(std::initializer_list<Vertex_Attri
     for (int i = 0; i < core.vertex_descriptions.size; i++)
     {
         auto& description = core.vertex_descriptions[i];
+        if (description->attributes.size != attributes.size()) {
+            continue;
+        }
+
         bool all_found = true;
         for (auto required_attribute : attributes)
         {
@@ -504,7 +604,7 @@ Vertex_Description* vertex_description_create(std::initializer_list<Vertex_Attri
     return description;
 }
 
-Mesh* rendering_core_query_mesh(const char* name, Vertex_Description* description, Mesh_Topology topology, bool reset_every_frame)
+Mesh* rendering_core_query_mesh(const char* name, Vertex_Description * description, bool reset_every_frame)
 {
     auto& core = rendering_core;
     auto found = hashtable_find_element(&core.meshes, string_create_static(name));
@@ -523,26 +623,26 @@ Mesh* rendering_core_query_mesh(const char* name, Vertex_Description* descriptio
     Mesh* mesh = new Mesh;
     hashtable_insert_element(&core.meshes, string_create_static(name), mesh);
     mesh->description = description;
-    mesh->buffers = array_create_empty<Attribute_Buffer>(description->attributes.size);
     mesh->queried_this_frame = true;
-    mesh->has_element_buffer = false;
     mesh->reset_every_frame = reset_every_frame;
-    mesh->topology = topology;
-    mesh->primitive_count = 0;
-    for (int i = 0; i < mesh->buffers.size; i++) {
+    mesh->dirty = false;
+    mesh->vertex_count = 0;
+
+    // Generate buffers
+    mesh->buffers = array_create_empty<Attribute_Buffer>(description->attributes.size);
+    for (int i = 0; i < mesh->buffers.size; i++) 
+    {
         auto& buffer = mesh->buffers[i];
         auto attribute = description->attributes[i];
-        buffer.dirty = mesh - reset_every_frame;
+        bool is_index = attribute == core.predefined.index;
+
+        buffer.element_count = 0;
         buffer.gpu_buffer = gpu_buffer_create_empty(
             1,
-            attribute == core.predefined.index ? GPU_Buffer_Type::INDEX_BUFFER : GPU_Buffer_Type::VERTEX_BUFFER,
+            is_index ? GPU_Buffer_Type::INDEX_BUFFER : GPU_Buffer_Type::VERTEX_BUFFER,
             mesh->reset_every_frame ? GPU_Buffer_Usage::DYNAMIC : GPU_Buffer_Usage::STATIC
         );
         buffer.attribute_data = dynamic_array_create_empty<byte>(1);
-
-        if (attribute == core.predefined.index) {
-            mesh->has_element_buffer = true;
-        }
     }
     hashtable_insert_element(&core.meshes, string_create_static(name), mesh);
 
@@ -553,8 +653,7 @@ Mesh* rendering_core_query_mesh(const char* name, Vertex_Description* descriptio
     {
         auto& buffer = mesh->buffers[i];
         auto attrib = mesh->description->attributes[i];
-        if (attrib == core.predefined.index)
-        {
+        if (attrib == core.predefined.index) {
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, buffer.gpu_buffer.id); // Binds index_buffer to vao
         }
         else
@@ -581,11 +680,21 @@ Mesh* rendering_core_query_mesh(const char* name, Vertex_Description* descriptio
     return mesh;
 }
 
+void mesh_push_indices(Mesh* mesh, std::initializer_list<uint32> indices, bool add_offset) {
+    auto index_data = mesh_push_attribute_slice(mesh, rendering_core.predefined.index, indices.size());
+    int i = 0;
+    for (auto index : indices) {
+        index_data[i] = index + (add_offset ? mesh->vertex_count : 0);
+        i += 1;
+    }
+}
+
+
 void shader_file_changed_callback(void* userdata, const char* filename)
 {
     Shader* shader = (Shader*)userdata;
+    logg("Compiling shader: %s\n", filename);
 
-    // Load file
     auto shader_code_opt = file_io_load_text_file(filename);
     SCOPE_EXIT(file_io_unload_text_file(&shader_code_opt));
     if (!shader_code_opt.available) {
@@ -895,10 +1004,16 @@ Shader* rendering_core_query_shader(const char* filename)
     shader->uniform_infos = dynamic_array_create_empty<Uniform_Info>(1);
     shader->allocated_strings = dynamic_array_create_empty<String>(1);
 
-    if (file_listener_add_file(core.file_listener, shader->filename, shader_file_changed_callback, shader) == 0) {
+    // Register to file-listener (Hot-reloading)
+    String full_path = string_create("resources/shaders/");
+    SCOPE_EXIT(string_destroy(&full_path));
+    string_append(&full_path, filename);
+    if (file_listener_add_file(core.file_listener, full_path.characters, shader_file_changed_callback, shader) == 0) {
         panic("Shader file does not exist!");
     }
-    shader_file_changed_callback(shader, filename);
+
+    // Compile shader
+    shader_file_changed_callback(shader, full_path.characters);
 
     return shader;
 }
@@ -925,10 +1040,10 @@ Uniform_Value uniform_make_base(const char* name, T data) {
 
 Uniform_Value uniform_make(const char* name, float val) { return uniform_make_base(name, val); }
 Uniform_Value uniform_make(const char* name, vec2 val) { return uniform_make_base(name, val); }
-Uniform_Value uniform_make(const char* name, vec3 val) {return uniform_make_base(name, val); }
-Uniform_Value uniform_make(const char* name, vec4 val) {return uniform_make_base(name, val); }
-Uniform_Value uniform_make(const char* name, mat2 val) {return uniform_make_base(name, val); }
-Uniform_Value uniform_make(const char* name, mat3 val) {return uniform_make_base(name, val); }
+Uniform_Value uniform_make(const char* name, vec3 val) { return uniform_make_base(name, val); }
+Uniform_Value uniform_make(const char* name, vec4 val) { return uniform_make_base(name, val); }
+Uniform_Value uniform_make(const char* name, mat2 val) { return uniform_make_base(name, val); }
+Uniform_Value uniform_make(const char* name, mat3 val) { return uniform_make_base(name, val); }
 Uniform_Value uniform_make(const char* name, mat4 val) { return uniform_make_base(name, val); }
 Uniform_Value uniform_make(const char* name, int val) { return uniform_make_base(name, val); }
 
@@ -977,7 +1092,7 @@ Render_Pass* rendering_core_query_renderpass(const char* name, Pipeline_State pi
     auto found = hashtable_find_element(&core.render_passes, string_create_static(name));
     if (found != 0) {
         auto render_pass = *found;
-        if (render_pass == core.main_pass) {
+        if (render_pass == core.predefined.main_pass) {
             panic("You shouldn't query the main pass!");
         }
         if (render_pass->queried_this_frame) {
@@ -1011,19 +1126,31 @@ void render_pass_set_uniforms(Render_Pass* pass, Shader* shader, std::initialize
     }
 }
 
-void render_pass_draw(Render_Pass* pass, Shader* shader, Mesh* mesh, std::initializer_list<Uniform_Value> uniforms)
+void render_pass_draw_count(
+    Render_Pass* pass, Shader* shader, Mesh* mesh, Mesh_Topology topology,
+    std::initializer_list<Uniform_Value> uniforms, int element_start, int element_count)
 {
-    for (const auto& uniform : uniforms) {
-        Render_Pass_Command command;
-        command.type = Render_Pass_Command_Type::UNIFORM;
-        command.uniform.shader = shader;
-        command.uniform.value = uniform;
-        dynamic_array_push_back(&pass->commands, command);
-    }
+    render_pass_set_uniforms(pass, shader, uniforms);
+    Render_Pass_Command draw;
+    draw.type = Render_Pass_Command_Type::DRAW_CALL_COUNT;
+    auto& call = draw.draw_call_count;
+    call.mesh = mesh;
+    call.shader = shader;
+    call.topology = topology;
+    call.element_start = element_start;
+    call.element_count = element_count;
+    dynamic_array_push_back(&pass->commands, draw);
+
+}
+
+void render_pass_draw(Render_Pass* pass, Shader* shader, Mesh* mesh, Mesh_Topology topology, std::initializer_list<Uniform_Value> uniforms)
+{
+    render_pass_set_uniforms(pass, shader, uniforms);
     Render_Pass_Command draw;
     draw.type = Render_Pass_Command_Type::DRAW_CALL;
     draw.draw_call.mesh = mesh;
     draw.draw_call.shader = shader;
+    draw.draw_call.topology = topology;
     dynamic_array_push_back(&pass->commands, draw);
 }
 
@@ -1046,7 +1173,7 @@ Framebuffer* rendering_core_query_framebuffer_fullscreen(const char* name, Textu
 
     // Create framebuffer
     auto& info = core.render_information;
-    Framebuffer* result = framebuffer_create(type, depth, true, info.window_width, info.window_height);
+    Framebuffer* result = framebuffer_create(type, depth, true, info.backbuffer_width, info.backbuffer_height);
     hashtable_insert_element(&core.framebuffers, string_create_static(name), result);
     return result;
 }

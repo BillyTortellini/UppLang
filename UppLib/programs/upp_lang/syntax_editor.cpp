@@ -92,7 +92,6 @@ struct Syntax_Editor
 
     Input* input;
     Rendering_Core* rendering_core;
-    Window* window;
     Renderer_2D* renderer_2D;
     Text_Renderer* text_renderer;
     vec2 character_size;
@@ -1588,8 +1587,8 @@ void syntax_editor_destroy()
 vec2 text_to_screen_coord(int line_index, int character)
 {
     auto editor = &syntax_editor;
-    float w = editor->rendering_core->render_information.viewport_width;
-    float h = editor->rendering_core->render_information.viewport_height;
+    float w = editor->rendering_core->render_information.backbuffer_width;
+    float h = editor->rendering_core->render_information.backbuffer_height;
     vec2 scaling_factor;
     if (w > h) {
         scaling_factor = vec2(w / h, 1.0f);
@@ -1605,8 +1604,8 @@ vec2 text_to_screen_coord(int line_index, int character)
 
 void syntax_editor_draw_underline(int line_index, int character, int length, vec3 color)
 {
-    float w = syntax_editor.rendering_core->render_information.viewport_width;
-    float h = syntax_editor.rendering_core->render_information.viewport_height;
+    float w = syntax_editor.rendering_core->render_information.backbuffer_width;
+    float h = syntax_editor.rendering_core->render_information.backbuffer_height;
     vec2 scaling_factor;
     if (w > h) {
         scaling_factor = vec2(w / h, 1.0f);
@@ -1625,8 +1624,8 @@ void syntax_editor_draw_underline(int line_index, int character, int length, vec
 void syntax_editor_draw_cursor_line(int line_index, int character, vec3 color)
 {
     auto editor = &syntax_editor;
-    float w = editor->rendering_core->render_information.viewport_width;
-    float h = editor->rendering_core->render_information.viewport_height;
+    float w = editor->rendering_core->render_information.backbuffer_width;
+    float h = editor->rendering_core->render_information.backbuffer_height;
     vec2 scaling_factor;
     if (w > h) {
         scaling_factor = vec2(w / h, 1.0f);
@@ -1647,8 +1646,8 @@ void syntax_editor_draw_text_background(int line_index, int character, int lengt
     auto& editor = syntax_editor;
     auto offset = editor.character_size * vec2(0.0f, 0.5f);
 
-    float w = editor.rendering_core->render_information.viewport_width;
-    float h = editor.rendering_core->render_information.viewport_height;
+    float w = editor.rendering_core->render_information.backbuffer_width;
+    float h = editor.rendering_core->render_information.backbuffer_height;
     vec2 scaling_factor;
     if (w > h) {
         scaling_factor = vec2(w / h, 1.0f);
@@ -1696,8 +1695,8 @@ void syntax_editor_draw_string_in_box(String string, vec3 text_color, vec3 box_c
     text_renderer_set_color(editor->text_renderer, text_color);
     text_renderer_add_text(editor->text_renderer, &string, pos, editor->character_size.y * text_size, 1.0f);
 
-    float w = editor->rendering_core->render_information.viewport_width;
-    float h = editor->rendering_core->render_information.viewport_height;
+    float w = editor->rendering_core->render_information.backbuffer_width;
+    float h = editor->rendering_core->render_information.backbuffer_height;
     vec2 scaling_factor;
     if (w > h) {
         scaling_factor = vec2(w / h, 1.0f);
@@ -2108,7 +2107,7 @@ void syntax_editor_render()
     auto& cursor = syntax_editor.cursor;
 
     // Prepare Render
-    editor.character_size.y = text_renderer_cm_to_relative_height(editor.text_renderer, editor.rendering_core, 0.55f);
+    editor.character_size.y = text_renderer_cm_to_relative_height(editor.text_renderer, 0.55f);
     editor.character_size.x = text_renderer_get_cursor_advance(editor.text_renderer, editor.character_size.y);
 
     // Layout Source Code
@@ -2321,9 +2320,19 @@ void syntax_editor_render()
     // Render Source Code
     syntax_editor_render_block(block_index_make_root(editor.code));
 
+    // Prepare 2D renderpass
+    auto state_2D = pipeline_state_make_default();
+    state_2D.blending_state.blending_enabled = true;
+    state_2D.blending_state.source = Blend_Operand::SOURCE_ALPHA;
+    state_2D.blending_state.destination = Blend_Operand::ONE_MINUS_SOURCE_ALPHA;
+    state_2D.blending_state.equation = Blend_Equation::ADDITION;
+    state_2D.depth_state.test_type = Depth_Test_Type::IGNORE_DEPTH;
+    auto pass_2D = rendering_core_query_renderpass("2D state", state_2D, 0);
+    render_pass_add_dependency(pass_2D, rendering_core.predefined.main_pass);
+
     // Render Primitives
-    renderer_2D_render(editor.renderer_2D, editor.rendering_core);
-    text_renderer_render(editor.text_renderer, editor.rendering_core);
+    renderer_2D_draw(editor.renderer_2D, pass_2D);
+    text_renderer_draw(editor.text_renderer, pass_2D);
 
     // Draw context
     if (show_context_info)
@@ -2340,8 +2349,8 @@ void syntax_editor_render()
 
     // Render Primitives (2nd Pass so context is above all else)
     // PERF: This is garbage rendering, since this will probably require a GPU/CPU synchronization
-    renderer_2D_render(editor.renderer_2D, editor.rendering_core);
-    text_renderer_render(editor.text_renderer, editor.rendering_core);
+    renderer_2D_draw(editor.renderer_2D, pass_2D);
+    text_renderer_draw(editor.text_renderer, pass_2D);
 }
 
 

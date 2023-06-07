@@ -1,82 +1,76 @@
 #include "renderer_2D.hpp"
 
-#include "shader_program.hpp"
 #include "text_renderer.hpp"
+#include "rendering_core.hpp"
 
 void renderer_2D_update_window_size(void* userdata) 
 {
     Renderer_2D* renderer = (Renderer_2D*) userdata;
     int smallest_dim = 0;
     vec2& scaling_factor = renderer->scaling_factor;
-    auto core = &rendering_core;
-    if (core->render_information.window_width > core->render_information.window_height) {
-        scaling_factor.x = (float)core->render_information.window_height / core->render_information.window_width;
+    auto width = rendering_core.render_information.backbuffer_width;
+    auto height = rendering_core.render_information.backbuffer_height;
+    if (width > height) {
+        scaling_factor.x = (float)height / width;
         scaling_factor.y = 1.0f;
-        smallest_dim = core->render_information.window_height;
+        smallest_dim = height;
     }
     else {
-        scaling_factor.y = (float)core->render_information.window_width / core->render_information.window_height;
+        scaling_factor.y = (float)width / height;
         scaling_factor.x = 1.0f;
-        smallest_dim = core->render_information.window_width;
+        smallest_dim = width;
     }
     renderer->to_pixel_scaling = 2.0f / (float)smallest_dim;
 }
 
-Renderer_2D* renderer_2D_create(Rendering_Core* core, Text_Renderer* text_renderer)
+Renderer_2D* renderer_2D_create(Text_Renderer* text_renderer)
 {
     Renderer_2D* result = new Renderer_2D();
     result->text_renderer = text_renderer;
-    result->geometry_data = dynamic_array_create_empty<Geometry_2D_Vertex>(64);
-    result->index_data = dynamic_array_create_empty<uint32>(64);
-    result->shader_2d = shader_program_create({ "resources/shaders/core/geometry_2d.glsl" });
-    REMOVE_ME a;
-    REMOVE_ME attributes[] = { a };
-    result->geometry = mesh_gpu_buffer_create_with_single_vertex_buffer(
-        gpu_buffer_create_empty(sizeof(Geometry_2D_Vertex) * 128, GPU_Buffer_Type::VERTEX_BUFFER, GPU_Buffer_Usage::DYNAMIC),
-        array_create_static(attributes, 2),
-        gpu_buffer_create_empty(sizeof(uint32) * 128, GPU_Buffer_Type::INDEX_BUFFER, GPU_Buffer_Usage::DYNAMIC),
-        Mesh_Topology::TRIANGLES,
-        0
-    );
     result->string_buffer = string_create_empty(256);
+
     renderer_2D_update_window_size(&result);
+    rendering_core_add_window_size_listener(&renderer_2D_update_window_size, result);
+
+    auto& predef = rendering_core.predefined;
+    result->mesh = rendering_core_query_mesh(
+        "renderer 2d mesh buffer",
+        vertex_description_create({ predef.index, predef.position2D, predef.color3 }), 
+        true
+    );
+
     result->pipeline_state = pipeline_state_make_default();
     result->pipeline_state.blending_state.blending_enabled = true;
     result->pipeline_state.depth_state.test_type = Depth_Test_Type::IGNORE_DEPTH;
     result->pipeline_state.culling_state.culling_enabled = false;
-    rendering_core_add_window_size_listener(&renderer_2D_update_window_size, result);
+
+    renderer_2D_reset(result);
+
     return result;
 }
 
-void renderer_2D_destroy(Renderer_2D* renderer, Rendering_Core* core)
+void renderer_2D_destroy(Renderer_2D* renderer)
 {
     rendering_core_remove_window_size_listener(renderer);
-    dynamic_array_destroy(&renderer->geometry_data);
-    dynamic_array_destroy(&renderer->index_data);
-    shader_program_destroy(renderer->shader_2d);
-    mesh_gpu_buffer_destroy(&renderer->geometry);
     string_destroy(&renderer->string_buffer);
     delete renderer;
 }
 
-Geometry_2D_Vertex geometry_2d_vertex_make(vec3 pos, vec3 color) {
-    Geometry_2D_Vertex v;
-    v.pos = pos;
-    v.color = color;
-    return v;
+void renderer_2D_reset(Renderer_2D* renderer) {
+    renderer->batch_start = 0;
+    renderer->batch_size = 0; 
 }
 
-void renderer_2D_render(Renderer_2D* renderer, Rendering_Core* core)
-{
-    // Upload data
-    gpu_buffer_update(&renderer->geometry.vertex_buffers[0].gpu_buffer, array_as_bytes(&dynamic_array_as_array(&renderer->geometry_data)));
-    mesh_gpu_buffer_update_index_buffer(&renderer->geometry, dynamic_array_as_array(&renderer->index_data));
-    dynamic_array_reset(&renderer->geometry_data);
-    dynamic_array_reset(&renderer->index_data);
-    // Render
-    rendering_core_update_pipeline_state(renderer->pipeline_state);
-    shader_program_draw_mesh(renderer->shader_2d, &renderer->geometry, {});
-    text_renderer_render(renderer->text_renderer, &rendering_core);
+void renderer_2D_draw(Renderer_2D* renderer, Render_Pass* render_pass) {
+    if (renderer->batch_size == 0) {
+        return;
+    }
+    auto shader_2d = rendering_core_query_shader("core/geometry_2d.glsl");
+    render_pass_draw_count(
+        render_pass, shader_2d, renderer->mesh, Mesh_Topology::TRIANGLES, {}, renderer->batch_start, renderer->batch_size);
+
+    renderer->batch_start += renderer->batch_size;
+    renderer->batch_size = 0;
 }
 
 void renderer_2D_add_rectangle(Renderer_2D* renderer, vec2 pos, vec2 size, vec3 color, float depth) 
@@ -86,17 +80,11 @@ void renderer_2D_add_rectangle(Renderer_2D* renderer, vec2 pos, vec2 size, vec3 
     vec2 p2 = (pos + vec2(size.x, size.y) / 2.0f) * renderer->scaling_factor;
     vec2 p3 = (pos + vec2(-size.x, size.y) / 2.0f) * renderer->scaling_factor;
 
-    dynamic_array_push_back(&renderer->geometry_data, geometry_2d_vertex_make(vec3(p0, depth), color));
-    dynamic_array_push_back(&renderer->geometry_data, geometry_2d_vertex_make(vec3(p1, depth), color));
-    dynamic_array_push_back(&renderer->geometry_data, geometry_2d_vertex_make(vec3(p2, depth), color));
-    dynamic_array_push_back(&renderer->geometry_data, geometry_2d_vertex_make(vec3(p3, depth), color));
-
-    dynamic_array_push_back(&renderer->index_data, (uint32)(renderer->geometry_data.size - 4));
-    dynamic_array_push_back(&renderer->index_data, (uint32)(renderer->geometry_data.size - 3));
-    dynamic_array_push_back(&renderer->index_data, (uint32)(renderer->geometry_data.size - 2));
-    dynamic_array_push_back(&renderer->index_data, (uint32)(renderer->geometry_data.size - 4));
-    dynamic_array_push_back(&renderer->index_data, (uint32)(renderer->geometry_data.size - 2));
-    dynamic_array_push_back(&renderer->index_data, (uint32)(renderer->geometry_data.size - 1));
+    auto predef = rendering_core.predefined;
+    mesh_push_indices(renderer->mesh, { 0, 1, 2, 0, 2, 3 }, true);
+    mesh_push_attribute(renderer->mesh, predef.color3, { color, color, color, color });
+    mesh_push_attribute(renderer->mesh, predef.position2D, {p0, p1, p2, p3});
+    renderer->batch_size += 6;
 }
 
 void renderer_2D_add_line(Renderer_2D* renderer, vec2 start, vec2 end, vec3 color, float thickness, float depth)
@@ -109,17 +97,11 @@ void renderer_2D_add_line(Renderer_2D* renderer, vec2 start, vec2 end, vec3 colo
     vec2 p2 = (end + (normal + a_to_b) * thickness) * renderer->scaling_factor;
     vec2 p3 = (start + (normal - a_to_b) * thickness) * renderer->scaling_factor;
 
-    dynamic_array_push_back(&renderer->geometry_data, geometry_2d_vertex_make(vec3(p0, depth), color));
-    dynamic_array_push_back(&renderer->geometry_data, geometry_2d_vertex_make(vec3(p1, depth), color));
-    dynamic_array_push_back(&renderer->geometry_data, geometry_2d_vertex_make(vec3(p2, depth), color));
-    dynamic_array_push_back(&renderer->geometry_data, geometry_2d_vertex_make(vec3(p3, depth), color));
-
-    dynamic_array_push_back(&renderer->index_data, (uint32)(renderer->geometry_data.size - 4));
-    dynamic_array_push_back(&renderer->index_data, (uint32)(renderer->geometry_data.size - 3));
-    dynamic_array_push_back(&renderer->index_data, (uint32)(renderer->geometry_data.size - 2));
-    dynamic_array_push_back(&renderer->index_data, (uint32)(renderer->geometry_data.size - 4));
-    dynamic_array_push_back(&renderer->index_data, (uint32)(renderer->geometry_data.size - 2));
-    dynamic_array_push_back(&renderer->index_data, (uint32)(renderer->geometry_data.size - 1));
+    auto predef = rendering_core.predefined;
+    mesh_push_indices(renderer->mesh, { 0, 1, 2, 0, 2, 3 }, true);
+    mesh_push_attribute(renderer->mesh, predef.color3, { color, color, color, color });
+    mesh_push_attribute(renderer->mesh, predef.position2D, {p0, p1, p2, p3});
+    renderer->batch_size += 6;
 }
 
 void renderer_2D_add_rect_outline(Renderer_2D* renderer, vec2 pos, vec2 size, vec3 color, float thickness, float depth)
@@ -133,6 +115,7 @@ void renderer_2D_add_rect_outline(Renderer_2D* renderer, vec2 pos, vec2 size, ve
     renderer_2D_add_line(renderer, p2, p3, color, thickness, depth);
     renderer_2D_add_line(renderer, p3, p0, color, thickness, depth);
 }
+
 void renderer_2D_add_text_in_box(Renderer_2D* renderer, String* text, float text_height, vec3 color, vec2 pos, vec2 size,
     Text_Alignment_Horizontal align_h, Text_Alignment_Vertical align_v, Text_Wrapping_Mode wrapping_mode)
 {

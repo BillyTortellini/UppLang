@@ -8,7 +8,6 @@
 #include "gpu_buffers.hpp"
 #include "rendering_core.hpp"
 
-struct Shader_Program;
 struct String;
 
 struct Character_Position
@@ -47,37 +46,27 @@ struct Text_Renderer
     Glyph_Atlas glyph_atlas;
     Texture* atlas_bitmap_texture;
     Texture* atlas_sdf_texture;
-
-    // Shaders
-    Shader_Program* bitmap_shader;
-    Shader_Program* sdf_shader;
-
-    // Gpu data
-    Mesh_GPU_Buffer font_mesh;
-    Dynamic_Array<Font_Vertex> text_vertices;
-    Dynamic_Array<GLuint> text_indices;
+    Vertex_Attribute<float>* attrib_pixel_size;
+    Mesh* text_mesh;
+    int last_batch_end; // Note, in character-count, so to get index you need * 6, and for vertex * 4 
+    int current_batch_end;
 
     // Text positioning cache
     Text_Layout text_layout;
     vec3 default_color;
-
-    // Window data
-    int screen_width;
-    int screen_height;
 };
 
-Text_Renderer* text_renderer_create_from_font_atlas_file(
-    Rendering_Core* core,
-    const char* font_filepath
-);
-void text_renderer_destroy(Text_Renderer* renderer, Rendering_Core* core);
+Text_Renderer* text_renderer_create_from_font_atlas_file(const char* font_filepath);
+void text_renderer_destroy(Text_Renderer* renderer);
 
-void text_renderer_render(Text_Renderer* renderer, Rendering_Core* core);
+void text_renderer_reset(Text_Renderer* renderer);
 void text_renderer_add_text(Text_Renderer* renderer, String* text, vec2 position, float relative_height, float line_gap_percent);
+void text_renderer_draw(Text_Renderer* renderer, Render_Pass* render_pass);
+
 Text_Layout* text_renderer_calculate_text_layout(Text_Renderer* renderer, String* text, float relative_height, float line_gap_percent);
 void text_renderer_add_text_from_layout(Text_Renderer* renderer, Text_Layout* text_layout, vec2 position);
 
-float text_renderer_cm_to_relative_height(Text_Renderer* renderer, Rendering_Core* core, float height_in_cm);
+float text_renderer_cm_to_relative_height(Text_Renderer* renderer, float height_in_cm);
 float text_renderer_calculate_text_width(Text_Renderer* renderer, int char_count, float relative_height);
 float text_renderer_get_cursor_advance(Text_Renderer* renderer, float relative_height);
 void text_renderer_set_color(Text_Renderer* renderer, vec3 color);

@@ -62,13 +62,11 @@
     <ClInclude Include="rendering\framebuffer.hpp" />
     <ClInclude Include="rendering\glyph_atlas.hpp" />
     <ClInclude Include="rendering\gpu_buffers.hpp" />
-    <ClInclude Include="rendering\mesh_utils.hpp" />
     <ClInclude Include="rendering\opengl_function_pointers.hpp" />
     <ClInclude Include="rendering\opengl_state.hpp" />
     <ClInclude Include="rendering\rendering_core.hpp" />
     <ClInclude Include="rendering\opengl_utils.hpp" />
     <ClInclude Include="rendering\renderer_2D.hpp" />
-    <ClInclude Include="rendering\shader_program.hpp" />
     <ClInclude Include="rendering\texture.hpp" />
     <ClInclude Include="rendering\texture_bitmap.hpp" />
     <ClInclude Include="rendering\text_renderer.hpp" />
@@ -130,13 +128,11 @@
     <ClCompile Include="rendering\framebuffer.cpp" />
     <ClCompile Include="rendering\glyph_atlas.cpp" />
     <ClCompile Include="rendering\gpu_buffers.cpp" />
-    <ClCompile Include="rendering\mesh_utils.cpp" />
     <ClCompile Include="rendering\opengl_function_pointers.cpp" />
     <ClCompile Include="rendering\opengl_state.cpp" />
     <ClCompile Include="rendering\rendering_core.cpp" />
     <ClCompile Include="rendering\opengl_utils.cpp" />
     <ClCompile Include="rendering\renderer_2D.cpp" />
-    <ClCompile Include="rendering\shader_program.cpp" />
     <ClCompile Include="rendering\texture.cpp" />
     <ClCompile Include="rendering\texture_bitmap.cpp" />
     <ClCompile Include="rendering\text_renderer.cpp" />
@@ -162,12 +158,11 @@
     <Text Include="..\resources\TODO.txt" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="..\resources\shaders\circle_2D.glsl" />
+    <None Include="..\resources\shaders\const_color_2D.glsl" />
     <None Include="..\resources\shaders\core\font_bitmap.glsl" />
     <None Include="..\resources\shaders\core\font_sdf.glsl" />
     <None Include="..\resources\shaders\core\geometry_2d.glsl" />
     <None Include="..\resources\shaders\core\uniform_blocks.glsl" />
-    <None Include="..\resources\shaders\line_2D.glsl" />
     <None Include="..\resources\shaders\proc_city\city_shader.glsl" />
     <None Include="..\resources\shaders\rectangle_2D.glsl" />
     <None Include="..\resources\shaders\test.glsl" />

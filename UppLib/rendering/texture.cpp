@@ -1,9 +1,9 @@
 #include "texture.hpp"
 
-#include "shader_program.hpp"
 #include "texture_bitmap.hpp"
-#include "rendering_core.hpp"
+#include "opengl_state.hpp"
 #include "../utility/utils.hpp"
+#include "opengl_function_pointers.hpp"
 
 Texture* texture_create_empty(Texture_Type type, int width, int height)
 {

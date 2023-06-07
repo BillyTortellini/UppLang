@@ -6,7 +6,7 @@ void camera_3D_update_projection_window_size(void* userdata)
 {
     auto& core = rendering_core;
     Camera_3D* camera = (Camera_3D*)userdata;
-    camera->aspect_ratio = ((float)core.render_information.window_width / core.render_information.viewport_height);
+    camera->aspect_ratio = ((float)core.render_information.backbuffer_width / core.render_information.backbuffer_height);
     camera->projection_matrix = mat4_make_projection_matrix(camera->near_distance, camera->far_distance, camera->fov_x, camera->aspect_ratio);
 }
 
@@ -15,7 +15,7 @@ Camera_3D* camera_3D_create(float fov_x, float near_distance, float far_distance
     auto& core = rendering_core;
     Camera_3D* result = new Camera_3D();
     result->fov_x = fov_x;
-    result->fov_y = fov_x * ((float)core.render_information.window_width / core.render_information.viewport_height);
+    result->fov_y = fov_x * ((float)core.render_information.backbuffer_width / core.render_information.backbuffer_height);
     result->near_distance = near_distance;
     result->far_distance = far_distance;
     result->position = vec3(0);

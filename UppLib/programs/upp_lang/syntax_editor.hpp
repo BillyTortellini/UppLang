@@ -30,10 +30,9 @@
 
 struct Rendering_Core;
 struct Input;
-struct Renderer_2D;
 struct Text_Renderer;
 struct Timer;
-struct Window;
+struct Renderer_2D;
 
 // Tokens
 // Functions

@@ -1,10 +1,12 @@
 
 TODO:
-- Rework all current rendering code
-- Maybe do cool auto-generated shader stuff...
+- Rework all current rendering code --> Remove the current mesh and shader stuff...
 - 2D rendering rework, e.g. new 2d renderer that does depth better, support for text, lines, rectangles, circles and other things
 - Custom imgui
 - Move parts of the compiler options into the imgui
+- Maybe do cool auto-generated shader stuff...
+
+
 
 Ideas for rendering rework:
     - What do we need for rendering:
@@ -31,9 +33,6 @@ I think most of the things I already have are pretty nice, but what I also want 
    or do I have to state the order of the rendering calls in code? --> This would be cool if I could set this manually.
    Also I think this has to do with synchronization right? Or does opengl automagically do this for us when rendering into
    a framebuffer and afterwards reading from the same buffer. I guess so.
-
-Start of with: 
-Draw a triangle and a textured thing and check out how hard it is to do this.
 
 Use-cases I want to cover:
  - GUI drawing (Mutliple render-calls for each 'plane', e.g. rendering of text and 2D-Shapes in multiple different calls)
@@ -185,6 +184,74 @@ in vec3 pos; //@Position3D --> these lines will be rewritten
 
 
 #FRAGMENT
+
+
+
+Auto-Generating Shaders Ideas:
+ - I still want to have hot reloading, so the shaders should be in files
+ - I think I want to keep the normal structure of glsl code, so that I can use all things available there.
+    * vec4 x
+    * x.xxy = vec3(1.0, 0.0, 1.0)
+ - I don't want to write a custom parser/analyer yet, I just want a quick and dirty way of doing this
+ - This probably also means that syntax/error highlighting will probably not work in Visual studio editor,
+    or maybe it will if we do some special things (Like maybe including all used values in a single file)
+
+Design/general Ideas:
+ - Shader code is in general quite functional, since you cannot really modify global state (e.g. runs on gpu)
+ - Reduce duplicate code for each new shader 
+    (e.g. passing 2d positions for 2d objects through vertex shader, multiplying position by mvp matrix)
+    Shading: calculating normalized eye to view direction and other stuff
+ - Vertex shader needs to set
+ - Uniforms and shader inputs are still normally accessible through the shader code and our other systems,
+    this is solely about creating the shader code and reducing manual work
+ - I want some of the common variables (pos3D) to have names, and pieces of shader code can depend on
+    previously defined names and generate values for new variables, or update current variable values
+ - So shader snippet defines inputs and outputs
+ - What about snippets that define multiple outputs, and some outputs aren't used?
+    * Should we rely on the compiler to optimize these away?  --> Yes
+    * We could also make snippets more complicated by allowing outputs to depend on inputs
+    * Lets go with the simple solution at first
+    * I guess if it comes to performance its always possible to take multiple small snippets and put them
+        in a bigger snippet, which reduces the flexibility, but increases other stuff...
+ - I guess some variables could also be directly connected to Vertex-Attributes? ... Not sure if this is a good idea
+    Otherwise we will need a vertex_attribute loader for each vertex attribute. --> Is probably the better idea
+ - How should inputs and outputs between vertex and fragmentshader happen?
+    * Maybe if we know what types the different shaders are, different shader stages can just refer to previously generated values.
+      I think this is the smartest move, the only thing you have to worry about is maybe interpolation 
+      (e.g. some option if you want to interpolate flat or non-perspective corrected)
+ - Is there any way this can be made somewhat typesafe, or do I have to rely on dynamic checking... I guess I have to
+ - Maybe we also want to have general access to functions with this, since this really isn't a feature in glsl
+    E.g. you probably would need to start including headers if you do function things, but then you cannot access input/outputs
+ - Also accessing our custom ubos is a given, I think
+ - Problem: If I write the composition of the snippets in c++ (E.g. which interact to form a shader)
+            this composition cannot be hot-reloaded... But this would probably be one of the interesting parts of this whole project
+            This could be solved if we had 'another' syntax for composing shaders...
+            Here the problem is that if we want our composition to be dependent on some program logic 
+            (Maybe performance options or generating different shaders based on what which textures are available)
+            this could not be expressed in the other syntax...
+            To be fair this isn't the main problem now, and I also want to be able to write normal shaders without any other influences...
+            But I guess both solutions could co-exist, so I probably want to start out with the C++ controled version
+
+Example:
+    C++ code:
+        shader_generator_make({
+            // Vertex part
+            snippet_from_attribute(predefined.position2D, "pos"),
+            snippet("uvs_from_pos"), --> Requires pos
+            // Either
+                snippet_custom("gl_Position = vec4(pos, 0.0, 0.0);", Shader_Type::Vertex)
+                snippet_vertex_position("pos"),  // Somehow we need to define the vertex position in the end...
+
+            // Fragment part:
+            frag_output("o_color");
+            snippet("")
+            snippet("background")
+        });
+
+Some things where duplication happens:
+ - Solid color vs shaded vs textured...
+ 
+   
 
 
 

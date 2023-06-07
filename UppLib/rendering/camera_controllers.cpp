@@ -17,7 +17,7 @@ Camera_Controller_Arcball camera_controller_arcball_make(vec3 center, float base
     return result;
 }
 
-void camera_controller_arcball_update(Camera_Controller_Arcball* controller, Camera_3D* camera, Input* input, int window_width, int window_height)
+void camera_controller_arcball_update(Camera_Controller_Arcball* controller, Camera_3D* camera, Input* input, int backbuffer_width, int backbuffer_height)
 {
     // Update sphereCoords
     if (input->mouse_down[(int)Mouse_Key_Code::LEFT]) {
@@ -39,8 +39,8 @@ void camera_controller_arcball_update(Camera_Controller_Arcball* controller, Cam
         view = matrix_transpose(view);
 
         vec3 moveDir = vec3(-(float)input->mouse_delta_x, (float)input->mouse_delta_y, 0);
-        moveDir.x /= (float)window_width * 0.5f;
-        moveDir.y /= (float)window_height;
+        moveDir.x /= (float)backbuffer_width * 0.5f;
+        moveDir.y /= (float)backbuffer_height;
         float speed = 1.0f;
         moveDir = view * moveDir * distance_to_center;
 

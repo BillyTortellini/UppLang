@@ -1,7 +1,7 @@
-#ifdef VERTEX_SHADER
+#ifdef VERTEX
 
-layout (location = 1) in vec2 attribute_position;
-layout (location = 2) in vec2 texture_coordinates;
+in vec2 attribute_position; //@Position2D
+in vec2 texture_coordinates; //@TextureCoordinates
 
 out vec2 uv_coords;
 
@@ -13,7 +13,7 @@ void main()
 
 #endif
 
-#ifdef FRAGMENT_SHADER
+#ifdef FRAGMENT
 
 uniform sampler2D sampler;
 

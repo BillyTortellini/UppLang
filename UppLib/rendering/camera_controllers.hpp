@@ -15,7 +15,7 @@ struct Camera_Controller_Arcball
 
 struct Input;
 Camera_Controller_Arcball camera_controller_arcball_make(vec3 center, float base_distance_to_center);
-void camera_controller_arcball_update(Camera_Controller_Arcball* controller, Camera_3D* camera, Input* input, int window_width, int window_height);
+void camera_controller_arcball_update(Camera_Controller_Arcball* controller, Camera_3D* camera, Input* input, int backbuffer_width, int backbuffer_height);
 
 struct Camera_Controller_Flying
 {

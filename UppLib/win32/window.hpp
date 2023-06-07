@@ -8,7 +8,7 @@ struct Window_State
 {
     // Position and size
     int x, y;
-    int width, height;
+    int width, height; // Note: client size
     int dpi;
 
     bool fullscreen, minimized, vsync;

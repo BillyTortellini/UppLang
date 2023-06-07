@@ -23,9 +23,7 @@ layout (location = 2) uniform sampler2D image;
 
 void main()
 {
-    // o_color = vec4(1.0);
     o_color = texture(image, (uvs+vec2(0.5)));
-    //o_color = vec4(1.0);
 }
 
 #endif

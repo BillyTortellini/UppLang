@@ -2,7 +2,6 @@
 
 #include "../datastructures/string.hpp"
 #include "../utility/utils.hpp"
-#include "shader_program.hpp"
 
 Text_Layout text_layout_create()
 {
@@ -15,24 +14,10 @@ void text_layout_destroy(Text_Layout* info) {
     dynamic_array_destroy(&info->character_positions);
 }
 
-void text_renderer_update_window_size(void* userdata)
-{
-    auto core = &rendering_core;
-    Text_Renderer* renderer = (Text_Renderer*) userdata;
-    renderer->screen_width = core->render_information.viewport_width;
-    renderer->screen_height = core->render_information.viewport_height;
-}
-
-Text_Renderer* text_renderer_create_from_font_atlas_file(
-    Rendering_Core* core,
-    const char* font_filepath
-)
+Text_Renderer* text_renderer_create_from_font_atlas_file(const char* font_filepath)
 {
     Text_Renderer* text_renderer = new Text_Renderer();
     text_renderer->text_layout = text_layout_create();
-    text_renderer->screen_width = core->render_information.window_width;
-    text_renderer->screen_height = core->render_information.window_height;
-    rendering_core_add_window_size_listener(&text_renderer_update_window_size, text_renderer);
     text_renderer->glyph_atlas = optional_unwrap(glyph_atlas_create_from_atlas_file(font_filepath));
     text_renderer->default_color = vec3(1.0f);
     Pipeline_State pipeline_state;
@@ -48,10 +33,6 @@ Text_Renderer* text_renderer_create_from_font_atlas_file(
     //glyph_atlas_save_as_file(&text_renderer->glyph_atlas, "resources/glyph_atlas_cour.atlas");
     //glyph_atlas_print_glyph_information(&text_renderer->glyph_atlas);
 
-    // Initialize shaders
-    text_renderer->bitmap_shader = shader_program_create({ "resources/shaders/core/font_bitmap.glsl" });
-    text_renderer->sdf_shader = shader_program_create({ "resources/shaders/core/font_sdf.glsl" } );
-
     // Initialize textures
     text_renderer->atlas_bitmap_texture = texture_create_from_texture_bitmap(
         &text_renderer->glyph_atlas.atlas_bitmap, false
@@ -64,33 +45,27 @@ Text_Renderer* text_renderer_create_from_font_atlas_file(
         false
     );
 
-    // Initialize GPU data
-    REMOVE_ME a;
-    REMOVE_ME attribute_informations[] = { a };
-    text_renderer->font_mesh = mesh_gpu_buffer_create_with_single_vertex_buffer(
-        gpu_buffer_create_empty(sizeof(Font_Vertex)*1024, GPU_Buffer_Type::VERTEX_BUFFER, GPU_Buffer_Usage::DYNAMIC),
-        array_create_static(attribute_informations, 4),
-        gpu_buffer_create_empty(sizeof(GLuint) * 1024 * 4, GPU_Buffer_Type::INDEX_BUFFER, GPU_Buffer_Usage::DYNAMIC),
-        Mesh_Topology::TRIANGLES,
-        0
+    text_renderer->attrib_pixel_size = vertex_attribute_make<float>("Pixel_Size");
+    auto& predef = rendering_core.predefined;
+    text_renderer->text_mesh = rendering_core_query_mesh(
+        "text rendering mesh",
+        vertex_description_create({
+            predef.position2D,
+            predef.texture_coordinates,
+            predef.color3,
+            predef.index,
+            text_renderer->attrib_pixel_size 
+        }),
+        true
     );
-
-    text_renderer->text_vertices = dynamic_array_create_empty<Font_Vertex>(1024);
-    text_renderer->text_indices = dynamic_array_create_empty<GLuint>(1024);
 
     return text_renderer;
 }
 
-void text_renderer_destroy(Text_Renderer* renderer, Rendering_Core* core)
+void text_renderer_destroy(Text_Renderer* renderer)
 {
-    rendering_core_remove_window_size_listener(renderer);
     text_layout_destroy(&renderer->text_layout);
-    shader_program_destroy(renderer->bitmap_shader);
-    shader_program_destroy(renderer->sdf_shader);
-    mesh_gpu_buffer_destroy(&renderer->font_mesh);
     glyph_atlas_destroy(&renderer->glyph_atlas);
-    dynamic_array_destroy(&renderer->text_vertices);
-    dynamic_array_destroy(&renderer->text_indices);
     delete renderer;
 }
 
@@ -98,9 +73,10 @@ vec2 text_renderer_get_scaling_factor(Text_Renderer* renderer, float relative_he
 {
     // Glpyh information sizes (in 23.3 format) to normalized screen coordinates scaling factor
     Glyph_Atlas* atlas = &renderer->glyph_atlas;
+    auto& info = rendering_core.render_information;
     float CHARACTER_HEIGHT_NORMALIZED = relative_height;
     const float scaling_factor_x = CHARACTER_HEIGHT_NORMALIZED / (atlas->ascender - atlas->descender) *
-        ((float)renderer->screen_height / renderer->screen_width);
+        ((float)info.backbuffer_height / info.backbuffer_width);
     const float scaling_factor_y = CHARACTER_HEIGHT_NORMALIZED / (atlas->ascender - atlas->descender);
 
     return vec2(scaling_factor_x, scaling_factor_y);
@@ -118,9 +94,16 @@ void text_renderer_add_text_from_layout(
     float distance_field_scaling;
     {
         float line_pixel_size_in_atlas = ((atlas->ascender - atlas->descender) / 64.0f); // In pixel per line_index
-        float line_size_on_screen = layout->relative_height * renderer->screen_height; // In pixel per line_index
+        float line_size_on_screen = layout->relative_height * rendering_core.render_information.backbuffer_height; // In pixel per line_index
         distance_field_scaling = line_size_on_screen / line_pixel_size_in_atlas;
     }
+
+    const int vertexCount = layout->character_positions.size * 4;
+    auto positions = mesh_push_attribute_slice(renderer->text_mesh, rendering_core.predefined.position2D, vertexCount);
+    auto uvs = mesh_push_attribute_slice(renderer->text_mesh, rendering_core.predefined.texture_coordinates, vertexCount);
+    auto colors = mesh_push_attribute_slice(renderer->text_mesh, rendering_core.predefined.color3, vertexCount);
+    auto pixelSizes = mesh_push_attribute_slice(renderer->text_mesh, renderer->attrib_pixel_size, vertexCount);
+    auto indices = mesh_push_attribute_slice(renderer->text_mesh, rendering_core.predefined.index, layout->character_positions.size * 6);
 
     for (int i = 0; i < layout->character_positions.size; i++)
     {
@@ -140,43 +123,37 @@ void text_renderer_add_text_from_layout(
             glyph_info->glyph_height * scaling_factor.y;
 
         // Push back 4 vertices for each glyph
-        Font_Vertex bb_bottom_left(
-            vec2(char_box.min.x, char_box.min.y),
-            vec2(glyph_info->atlas_fragcoords_left, glyph_info->atlas_fragcoords_bottom),
-            char_pos->color,
-            distance_field_scaling
-        );
-        Font_Vertex bb_bottom_right(
-            vec2(char_box.max.x, char_box.min.y),
-            vec2(glyph_info->atlas_fragcoords_right, glyph_info->atlas_fragcoords_bottom),
-            char_pos->color,
-            distance_field_scaling
-        );
-        Font_Vertex bb_top_left(
-            vec2(char_box.min.x, char_box.max.y),
-            vec2(glyph_info->atlas_fragcoords_left, glyph_info->atlas_fragcoords_top),
-            char_pos->color,
-            distance_field_scaling
-        );
-        Font_Vertex bb_top_right(
-            vec2(char_box.max.x, char_box.max.y),
-            vec2(glyph_info->atlas_fragcoords_right, glyph_info->atlas_fragcoords_top),
-            char_pos->color,
-            distance_field_scaling
-        );
-        int quad_start_index = renderer->text_vertices.size;
-        dynamic_array_push_back(&renderer->text_vertices, bb_bottom_left);
-        dynamic_array_push_back(&renderer->text_vertices, bb_bottom_right);
-        dynamic_array_push_back(&renderer->text_vertices, bb_top_right);
-        dynamic_array_push_back(&renderer->text_vertices, bb_top_left);
-        // Push back 6 indices for each glyph
-        dynamic_array_push_back(&renderer->text_indices, (GLuint)quad_start_index + 0);
-        dynamic_array_push_back(&renderer->text_indices, (GLuint)quad_start_index + 1);
-        dynamic_array_push_back(&renderer->text_indices, (GLuint)quad_start_index + 2);
-        dynamic_array_push_back(&renderer->text_indices, (GLuint)quad_start_index + 0);
-        dynamic_array_push_back(&renderer->text_indices, (GLuint)quad_start_index + 2);
-        dynamic_array_push_back(&renderer->text_indices, (GLuint)quad_start_index + 3);
+        positions[i * 4 + 0] = vec2(char_box.min.x, char_box.min.y);
+        positions[i * 4 + 1] = vec2(char_box.max.x, char_box.min.y);
+        positions[i * 4 + 2] = vec2(char_box.min.x, char_box.max.y);
+        positions[i * 4 + 3] = vec2(char_box.max.x, char_box.max.y);
+        uvs[i * 4 + 0] = vec2(glyph_info->atlas_fragcoords_left, glyph_info->atlas_fragcoords_bottom);
+        uvs[i * 4 + 1] = vec2(glyph_info->atlas_fragcoords_right, glyph_info->atlas_fragcoords_bottom);
+        uvs[i * 4 + 2] = vec2(glyph_info->atlas_fragcoords_left, glyph_info->atlas_fragcoords_top);
+        uvs[i * 4 + 3] = vec2(glyph_info->atlas_fragcoords_right, glyph_info->atlas_fragcoords_top);
+        colors[i * 4 + 0] = char_pos->color;
+        colors[i * 4 + 1] = char_pos->color;
+        colors[i * 4 + 2] = char_pos->color;
+        colors[i * 4 + 3] = char_pos->color;
+        pixelSizes[i * 4 + 0] = distance_field_scaling;
+        pixelSizes[i * 4 + 1] = distance_field_scaling;
+        pixelSizes[i * 4 + 2] = distance_field_scaling;
+        pixelSizes[i * 4 + 3] = distance_field_scaling;
+
+        // Push 6 indices for each character quad
+        indices[i * 6 + 0] = (renderer->current_batch_end + i) * 4 + 0;
+        indices[i * 6 + 1] = (renderer->current_batch_end + i) * 4 + 1;
+        indices[i * 6 + 2] = (renderer->current_batch_end + i) * 4 + 2;
+        indices[i * 6 + 3] = (renderer->current_batch_end + i) * 4 + 1;
+        indices[i * 6 + 4] = (renderer->current_batch_end + i) * 4 + 3;
+        indices[i * 6 + 5] = (renderer->current_batch_end + i) * 4 + 2;
     }
+    renderer->current_batch_end += layout->character_positions.size;
+}
+
+void text_renderer_reset(Text_Renderer* renderer) {
+    renderer->current_batch_end = 0;
+    renderer->last_batch_end = 0;
 }
 
 void text_renderer_add_text(
@@ -186,7 +163,6 @@ void text_renderer_add_text(
     float relative_height,
     float line_gap_percent)
 {
-    // Loop over all glyphs
     Text_Layout* layout = text_renderer_calculate_text_layout(renderer, text, relative_height, line_gap_percent);
     text_renderer_add_text_from_layout(renderer, layout, position);
 }
@@ -250,26 +226,28 @@ Text_Layout* text_renderer_calculate_text_layout(
     return &renderer->text_layout;
 }
 
-void text_renderer_render(Text_Renderer* renderer, Rendering_Core* core)
+void text_renderer_draw(Text_Renderer* renderer, Render_Pass* render_pass)
 {
-    // Update font_mesh
-    gpu_buffer_update(
-        &renderer->font_mesh.vertex_buffers[0].gpu_buffer,
-        dynamic_array_as_bytes(&renderer->text_vertices)
-    );
-    mesh_gpu_buffer_update_index_buffer(
-        &renderer->font_mesh,
-        dynamic_array_as_array(&renderer->text_indices)
-    );
-    renderer->font_mesh.index_count = renderer->text_indices.size;
+    if (renderer->last_batch_end == renderer->current_batch_end) {
+        return;
+    }
 
-    // Reset buffers
-    dynamic_array_reset(&renderer->text_vertices);
-    dynamic_array_reset(&renderer->text_indices);
+    // Get shaders
+    auto& core = rendering_core;
+    auto bitmap_shader = rendering_core_query_shader("core/font_bitmap.glsl");
+    auto sdf_shader = rendering_core_query_shader("core/font_sdf.glsl");
 
-    // Render
-    // REMOVE_ME
-    //shader_program_draw_mesh(renderer->sdf_shader, &renderer->font_mesh, { uniform_value_make_texture_2D_binding("sampler", renderer->atlas_sdf_texture) });
+    // Render the last pushed indices
+    render_pass_draw_count(
+        render_pass,
+        sdf_shader,
+        renderer->text_mesh,
+        Mesh_Topology::TRIANGLES,
+        { uniform_make("sampler", renderer->atlas_sdf_texture, sampling_mode_bilinear()) },
+        renderer->last_batch_end * 6, 
+        (renderer->current_batch_end - renderer->last_batch_end) * 6
+    );
+    renderer->last_batch_end = renderer->current_batch_end;
 }
 
 float text_renderer_get_cursor_advance(Text_Renderer* renderer, float relative_height)
@@ -288,13 +266,15 @@ void text_renderer_set_color(Text_Renderer* renderer, vec3 color) {
 }
 
 float text_renderer_calculate_text_width(Text_Renderer* renderer, int char_count, float relative_height) {
+    auto& info = rendering_core.render_information;
     return (float)renderer->glyph_atlas.cursor_advance / (renderer->glyph_atlas.ascender - renderer->glyph_atlas.descender) * relative_height * char_count
-        * ((float)renderer->screen_height / renderer->screen_width);
+        * ((float)info.backbuffer_height / info.backbuffer_width);
 }
 
-float text_renderer_cm_to_relative_height(Text_Renderer* renderer, Rendering_Core* core, float height_in_cm) {
-    int height = core->render_information.window_height;
-    int dpi = core->render_information.monitor_dpi;
+float text_renderer_cm_to_relative_height(Text_Renderer* renderer, float height_in_cm) {
+    auto& info = rendering_core.render_information;
+    int height = info.backbuffer_height;
+    int dpi = info.monitor_dpi;
     return  2.0f * (height_in_cm) / (height / (float)dpi * 2.54f);
 }
 
