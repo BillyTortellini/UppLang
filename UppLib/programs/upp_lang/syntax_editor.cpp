@@ -1669,8 +1669,7 @@ void syntax_editor_draw_string(String string, vec3 color, int line_index, int ch
 {
     auto editor = &syntax_editor;
     vec2 pos = vec2(-1.0f, 1.0f) + vec2(character, -(line_index + 1)) * editor->character_size;
-    text_renderer_set_color(editor->text_renderer, color);
-    text_renderer_add_text(editor->text_renderer, &string, pos, editor->character_size.y, 1.0f);
+    text_renderer_add_text(editor->text_renderer, string, pos, Anchor::BOTTOM_LEFT, editor->character_size.y, color);
 }
 
 void syntax_editor_draw_string_in_box(String string, vec3 text_color, vec3 box_color, int line_index, int character, float text_size)
@@ -1692,8 +1691,7 @@ void syntax_editor_draw_string_in_box(String string, vec3 text_color, vec3 box_c
 
     auto editor = &syntax_editor;
     vec2 pos = vec2(-1.0f, 1.0f) + vec2(character, -line_index) * editor->character_size + vec2(0.0f, -editor->character_size.y * text_size * text_height);
-    text_renderer_set_color(editor->text_renderer, text_color);
-    text_renderer_add_text(editor->text_renderer, &string, pos, editor->character_size.y * text_size, 1.0f);
+    text_renderer_add_text(editor->text_renderer, string, pos, Anchor::BOTTOM_LEFT, editor->character_size.y * text_size, text_color);
 
     float w = editor->rendering_core->render_information.backbuffer_width;
     float h = editor->rendering_core->render_information.backbuffer_height;
@@ -2107,8 +2105,9 @@ void syntax_editor_render()
     auto& cursor = syntax_editor.cursor;
 
     // Prepare Render
-    editor.character_size.y = text_renderer_cm_to_relative_height(editor.text_renderer, 0.55f);
-    editor.character_size.x = text_renderer_get_cursor_advance(editor.text_renderer, editor.character_size.y);
+    panic("Change dis");
+    // editor.character_size.y = text_renderer_cm_to_relative_height(editor.text_renderer, 0.55f);
+    // editor.character_size.x = text_renderer_get_cursor_advance(editor.text_renderer, editor.character_size.y);
 
     // Layout Source Code
     syntax_editor_sanitize_cursor();

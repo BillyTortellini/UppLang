@@ -8,7 +8,7 @@
 struct Glyph_Information
 {
     unsigned char character;
-    // The following measurements are in 23.3 pixels (1/64th of a pixel)
+    // The following measurements are in 23.3 pixels (1/64th of a pixel on normal dpi)
     int advance_x; 
     int bearing_x; 
     int bearing_y;

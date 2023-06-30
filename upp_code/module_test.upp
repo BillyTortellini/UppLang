@@ -1,0 +1,48 @@
+
+
+Helpers::module
+	foo::()
+		print_string("foo")
+	
+	bar::()
+		print_string("bar")
+	
+	baz::()
+		print_string("baz")
+	
+	More::module
+		add::(a:int,b:int)->int
+			return a+b
+			
+		sub::(a:int,b:int)->int
+			return a-b
+
+
+A::module
+	KEY::15
+
+B::module
+	using A~*
+
+C::module
+	using B~**
+	test::()
+		print_string("Key is: ")
+		print_i32(KEY)
+		print_line()
+
+using Helpers~*
+using More~add
+using C~test
+
+main::()
+	foo()
+	print_line()
+	bar()
+	print_line()
+	baz()
+	print_line()
+	print_i32(add(15,2))
+	
+	print_line()
+	test()

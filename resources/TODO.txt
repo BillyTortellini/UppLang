@@ -1,4 +1,74 @@
 
+
+Simplest possible UI stuff:
+ - Rectangles (Floating windows)
+ - Text (Information for user)
+ - Lines (Borders, simple shapes like X, sliders, whatever)
+
+With this you could create
+    - Windows
+    - Buttons
+    - Sliders
+
+Note: I also want to know how to make this GUI thing as performant as possible...
+
+So where do I start:
+ - Correct positioning and sizing of rectangles on the screen.
+ - Drawing rectangles and lines correctly on top of one another
+ - Drawing rectangles exactly at pixel lines...
+ - A button, which does something to the drawn thing, maybe a toggle
+
+Is there anything useful I can do with a depth buffer?
+ - If I draw pixel perfect lines and rectangles, I can do that with a depth buffer... 
+ - but it has to be different from the main scene depth buffer...
+ - For Transparent effects to work correctly (Text, see-through windows, thin lines, antialiased objects..., images with transparency)
+    we cannot really use a depth buffer, or we have to do depth sorting...
+
+Use case:
+ - Running test-cases from the GUI
+ - Running all test-cases and looking at the results
+ - Selecting different files/projects
+ - Something like a program explorere: List all functions recursively, 
+    where you can get information about specific datatypes.
+
+
+
+General problems with shader code: 
+ - Duplication in shader and on CPU-side:
+    * Vertex attributes need to have the same layout, same location
+    * Uniform values need to either be set per object or per frame
+    * Data is passed through shader stages is also 'duplicate',
+      need to have the same name and the same datatype
+ - Code cannot be reused effectively
+    * There is no include system in glsl files
+    * Normal includes are hard because of global data like gl_Position and in_out values, which
+        again rely on names and datatypes to connect, and it's hard/annoying to integrate this into
+        reusable components.
+    * I think theres room for compression here, most shader code is somewhat functional, e.g. no side effects,
+      most of the functions are pure. I think composable shaders are a goal that we can strive towards.
+
+Simple Use-cases:
+ - Fragment shader use-cases:
+    * Solid color
+        - Uniform value
+        - Vertex color (either solid or interpolated)
+    * Texture
+    * Lighting model applied to a given color
+        - Diffuse color, specular color (From texture, from uniform, procedurally generated ...)
+        - Normal vector (With or without normal mapping)
+        - Shadow mapping
+    * Procedurally generated (E.g. ray marching or whatever for funky effects)
+    * Effects like cubemapping, relief-mapping, volumetric lighting
+ - Similar things for Vertex stage:
+    * 2D or 3D vertices
+    * Support for per-vertex color
+    * Transformations with uniforms
+    * Instancing support (e.g. instanced attributes)
+    * Custom animations with time offset and maybe random variables and stuff
+    
+
+
+
 TODO:
 - Rework all current rendering code --> Remove the current mesh and shader stuff...
 - 2D rendering rework, e.g. new 2d renderer that does depth better, support for text, lines, rectangles, circles and other things
@@ -11,7 +81,7 @@ TODO:
 Ideas for rendering rework:
     - What do we need for rendering:
         * Rendering state (Culling, depth-test, ...)
-        * Shader (Determines which pixel colors are set)
+        * Shader 
         * Mesh (Triangle data, position, normals, uvs, color?)
         * Uniforms (Camera, MVP matrix, shader parameters)
         * Textures

@@ -385,7 +385,7 @@ void text_editor_draw_bounding_box(Text_Editor* editor, Rendering_Core* core, Bo
 
 Bounding_Box2 text_editor_get_character_bounding_box(Text_Editor* editor, Text_Position pos)
 {
-    float glyph_advance = text_renderer_get_cursor_advance(editor->renderer, editor->last_text_height);
+    float glyph_advance = text_renderer_line_width(editor->renderer, editor->last_text_height, 1);
     vec2 cursor_pos = vec2(glyph_advance * (pos.character - editor->first_rendered_char), 0.0f) +
         vec2(editor->last_editor_region.min.x, editor->last_editor_region.max.y - ((pos.line_index - editor->first_rendered_line) + 1.0f) * editor->last_text_height);
     vec2 cursor_size = vec2(glyph_advance, editor->last_text_height);
@@ -439,28 +439,29 @@ void text_editor_render(Text_Editor* editor, Rendering_Core* core, Bounding_Box2
             }
 
             // Trim line_index number if we are outside of the text_region
-            Text_Layout* layout = text_renderer_calculate_text_layout(editor->renderer, &editor->line_count_buffer, text_height, 1.0f);
-            for (int j = layout->character_positions.size - 1; j >= 0; j--) {
-                Bounding_Box2 positioned_char = layout->character_positions[j].bounding_box;
-                positioned_char.min += line_pos;
-                positioned_char.max += line_pos;
-                if (!bounding_box_2_is_other_box_inside(editor_region, positioned_char)) {
-                    dynamic_array_remove_ordered(&layout->character_positions, j);
-                }
-                else {
-                    layout->character_positions[j].color = vec3(0.5f, 0.5f, 1.0f);
-                }
-            }
-            text_renderer_add_text_from_layout(editor->renderer, layout, line_pos);
-            line_pos.y -= (text_height);
+            panic("This needs to be adapted to the new text rendering");
+            // Text_Layout* layout = text_renderer_calculate_text_layout(editor->renderer, &editor->line_count_buffer, text_height, 1.0f);
+            // for (int j = layout->character_positions.size - 1; j >= 0; j--) {
+            //     Bounding_Box2 positioned_char = layout->character_positions[j].bounding_box;
+            //     positioned_char.min += line_pos;
+            //     positioned_char.max += line_pos;
+            //     if (!bounding_box_2_is_other_box_inside(editor_region, positioned_char)) {
+            //         dynamic_array_remove_ordered(&layout->character_positions, j);
+            //     }
+            //     else {
+            //         layout->character_positions[j].color = vec3(0.5f, 0.5f, 1.0f);
+            //     }
+            // }
+            // text_renderer_add_text_from_layout(editor->renderer, layout, line_pos);
+            // line_pos.y -= (text_height);
         }
-        editor_region.min.x += text_renderer_calculate_text_width(editor->renderer, line_number_char_count + 1, text_height);
+        editor_region.min.x += text_renderer_line_width(editor->renderer, line_number_char_count + 1, text_height);
     }
     editor->last_editor_region = editor_region;
     editor->last_text_height = text_height;
 
     // Calculate the first and last character to be drawn in any line_index (Viewport)
-    int max_character_count = (editor_region.max.x - editor_region.min.x) / text_renderer_get_cursor_advance(editor->renderer, text_height);
+    int max_character_count = (editor_region.max.x - editor_region.min.x) / text_renderer_line_width(editor->renderer, text_height, 1);
     if (editor->cursor_position.character < editor->first_rendered_char) {
         editor->first_rendered_char = editor->cursor_position.character;
     }
@@ -477,28 +478,29 @@ void text_editor_render(Text_Editor* editor, Rendering_Core* core, Bounding_Box2
     {
         String* line_index = &editor->text[i];
         String truncated_line = string_create_substring_static(line_index, editor->first_rendered_char, last_char + 1);
-        Text_Layout* line_layout = text_renderer_calculate_text_layout(editor->renderer, &truncated_line, text_height, 1.0f);
-        for (int j = 0; j < editor->text_highlights.data[i].size; j++)
-        {
-            Text_Highlight* highlight = &editor->text_highlights.data[i].data[j];
-            // Draw text background 
-            {
-                Bounding_Box2 highlight_start = text_editor_get_character_bounding_box(editor, text_position_make(i, highlight->character_start));
-                Bounding_Box2 highlight_end = text_editor_get_character_bounding_box(editor, text_position_make(i, highlight->character_end - 1));
-                Bounding_Box2 combined = bounding_box_2_combine(highlight_start, highlight_end);
-                text_editor_draw_bounding_box(editor, core, combined, highlight->background_color);
-            }
-            // Set text color
-            for (int k = highlight->character_start; k < highlight->character_end &&
-                k - editor->first_rendered_char < line_layout->character_positions.size; k++)
-            {
-                if (k - editor->first_rendered_char < 0) continue;
-                Character_Position* char_pos = &line_layout->character_positions.data[k - editor->first_rendered_char];
-                char_pos->color = highlight->text_color;
-            }
-        }
+        panic("Needs to be adapted to new text rendering");
+        // Text_Layout* line_layout = text_renderer_calculate_text_layout(editor->renderer, &truncated_line, text_height, 1.0f);
+        // for (int j = 0; j < editor->text_highlights.data[i].size; j++)
+        // {
+        //     Text_Highlight* highlight = &editor->text_highlights.data[i].data[j];
+        //     // Draw text background 
+        //     {
+        //         Bounding_Box2 highlight_start = text_editor_get_character_bounding_box(editor, text_position_make(i, highlight->character_start));
+        //         Bounding_Box2 highlight_end = text_editor_get_character_bounding_box(editor, text_position_make(i, highlight->character_end - 1));
+        //         Bounding_Box2 combined = bounding_box_2_combine(highlight_start, highlight_end);
+        //         text_editor_draw_bounding_box(editor, core, combined, highlight->background_color);
+        //     }
+        //     // Set text color
+        //     for (int k = highlight->character_start; k < highlight->character_end &&
+        //         k - editor->first_rendered_char < line_layout->character_positions.size; k++)
+        //     {
+        //         if (k - editor->first_rendered_char < 0) continue;
+        //         Character_Position* char_pos = &line_layout->character_positions.data[k - editor->first_rendered_char];
+        //         char_pos->color = highlight->text_color;
+        //     }
+        // }
 
-        text_renderer_add_text_from_layout(editor->renderer, line_layout, line_pos);
+        // text_renderer_add_text_from_layout(editor->renderer, line_layout, line_pos);
         line_pos.y -= (text_height);
     }
 

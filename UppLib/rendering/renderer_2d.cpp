@@ -121,7 +121,7 @@ void renderer_2D_add_text_in_box(Renderer_2D* renderer, String* text, float text
 {
     // Do text wrapping if necessary
     //text_height *= renderer->text_height_scaling;
-    vec2 text_size(text_renderer_calculate_text_width(renderer->text_renderer, text->size, text_height), text_height);
+    vec2 text_size(text_renderer_line_width(renderer->text_renderer, text->size, text_height), text_height);
     String* result = text; // Required for CUTOFF to set size to another value
     if (wrapping_mode == Text_Wrapping_Mode::SCALE_DOWN) {
         float required_scaling_y = size.y / text_height;
@@ -131,7 +131,7 @@ void renderer_2D_add_text_in_box(Renderer_2D* renderer, String* text, float text
     }
     else if (wrapping_mode == Text_Wrapping_Mode::CUTOFF) {
         if (text_size.x > size.x) {
-            float char_width = text_renderer_calculate_text_width(renderer->text_renderer, 1, text_size.y);
+            float char_width = text_renderer_line_width(renderer->text_renderer, 1, text_size.y);
             int fitting_char_count = (int)(size.x / char_width);
             string_set_characters(&renderer->string_buffer, text->characters);
             result = &renderer->string_buffer;
@@ -159,6 +159,7 @@ void renderer_2D_add_text_in_box(Renderer_2D* renderer, String* text, float text
     else if (align_h == Text_Alignment_Horizontal::CENTER) text_pos.x = pos.x - text_size.x / 2.0f;
     else text_pos.x = pos.x + size.x / 2.0f - text_size.x;
 
-    text_renderer_set_color(renderer->text_renderer, color);
-    text_renderer_add_text(renderer->text_renderer, result, text_pos * renderer->scaling_factor, text_size.y * renderer->scaling_factor.y, 0.0f);
+    panic("TODO");
+    // text_renderer_set_color(renderer->text_renderer, color);
+    // text_renderer_add_text(renderer->text_renderer, result, text_pos * renderer->scaling_factor, text_size.y * renderer->scaling_factor.y, 0.0f);
 }

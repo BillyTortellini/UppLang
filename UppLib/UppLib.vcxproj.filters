@@ -312,6 +312,9 @@
     <ClInclude Include="rendering\opengl_state.hpp">
       <Filter>Header Files\Rendering\Core</Filter>
     </ClInclude>
+    <ClInclude Include="rendering\basic2D.hpp">
+      <Filter>Header Files\Rendering\2D</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="datastructures\array.cpp">
@@ -370,9 +373,6 @@
     </ClCompile>
     <ClCompile Include="programs\proc_city\proc_city.cpp">
       <Filter>Source Files\Programs\Proc_City</Filter>
-    </ClCompile>
-    <ClCompile Include="utility\bounding_box.cpp">
-      <Filter>Source Files\Utility</Filter>
     </ClCompile>
     <ClCompile Include="datastructures\string_pool.cpp">
       <Filter>Source Files\Datastructures</Filter>
@@ -503,6 +503,9 @@
     <ClCompile Include="rendering\opengl_state.cpp">
       <Filter>Source Files\Rendering\Core</Filter>
     </ClCompile>
+    <ClCompile Include="rendering\basic2D.cpp">
+      <Filter>Source Files\Rendering\2D</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <Text Include="..\resources\TODO.txt">
@@ -544,6 +547,9 @@
       <Filter>Resource Files\Shaders</Filter>
     </None>
     <None Include="..\resources\shaders\const_color_2D.glsl">
+      <Filter>Resource Files\Shaders</Filter>
+    </None>
+    <None Include="..\resources\shaders\gui_rect.glsl">
       <Filter>Resource Files\Shaders</Filter>
     </None>
   </ItemGroup>

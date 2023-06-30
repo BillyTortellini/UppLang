@@ -1,48 +1,14 @@
 #pragma once
 
 #include "../math/vectors.hpp"
-#include "../utility/bounding_box.hpp"
 
 #include "glyph_atlas.hpp"
 #include "texture.hpp"
-#include "gpu_buffers.hpp"
 #include "rendering_core.hpp"
-
-struct String;
-
-struct Character_Position
-{
-    Bounding_Box2 bounding_box;
-    Glyph_Information* glyph_info;
-    vec3 color;
-};
-
-struct Text_Layout
-{
-    Dynamic_Array<Character_Position> character_positions;
-    vec2 size;
-    float relative_height;
-};
-
-Text_Layout text_layout_create();
-void text_layout_destroy(Text_Layout* info);
-
-
-
-struct Font_Vertex
-{
-    vec2 position;
-    vec2 uv_coords;
-    vec3 color;
-    float pixel_size;
-    Font_Vertex(const vec2& pos, const vec2& uv_coords, vec3 color, float pixel_size)
-        : position(pos), uv_coords(uv_coords), pixel_size(pixel_size), color(color) {};
-    Font_Vertex() {};
-};
+#include "basic2D.hpp"
 
 struct Text_Renderer
 {
-    // Atlas data
     Glyph_Atlas glyph_atlas;
     Texture* atlas_bitmap_texture;
     Texture* atlas_sdf_texture;
@@ -50,24 +16,12 @@ struct Text_Renderer
     Mesh* text_mesh;
     int last_batch_end; // Note, in character-count, so to get index you need * 6, and for vertex * 4 
     int current_batch_end;
-
-    // Text positioning cache
-    Text_Layout text_layout;
-    vec3 default_color;
 };
 
 Text_Renderer* text_renderer_create_from_font_atlas_file(const char* font_filepath);
 void text_renderer_destroy(Text_Renderer* renderer);
 
 void text_renderer_reset(Text_Renderer* renderer);
-void text_renderer_add_text(Text_Renderer* renderer, String* text, vec2 position, float relative_height, float line_gap_percent);
+void text_renderer_add_text(Text_Renderer* renderer, String text, vec2 position, Anchor anchor, float line_height, vec3 color);
 void text_renderer_draw(Text_Renderer* renderer, Render_Pass* render_pass);
-
-Text_Layout* text_renderer_calculate_text_layout(Text_Renderer* renderer, String* text, float relative_height, float line_gap_percent);
-void text_renderer_add_text_from_layout(Text_Renderer* renderer, Text_Layout* text_layout, vec2 position);
-
-float text_renderer_cm_to_relative_height(Text_Renderer* renderer, float height_in_cm);
-float text_renderer_calculate_text_width(Text_Renderer* renderer, int char_count, float relative_height);
-float text_renderer_get_cursor_advance(Text_Renderer* renderer, float relative_height);
-void text_renderer_set_color(Text_Renderer* renderer, vec3 color);
-Texture* text_renderer_get_texture(Text_Renderer* renderer);
+float text_renderer_line_width(Text_Renderer* renderer, float line_height, int char_count);

@@ -1,30 +1,13 @@
 #include "text_renderer.hpp"
 
 #include "../datastructures/string.hpp"
+#include "basic2D.hpp"
 #include "../utility/utils.hpp"
-
-Text_Layout text_layout_create()
-{
-    Text_Layout info;
-    info.character_positions = dynamic_array_create_empty<Character_Position>(512);
-    return info;
-}
-
-void text_layout_destroy(Text_Layout* info) {
-    dynamic_array_destroy(&info->character_positions);
-}
 
 Text_Renderer* text_renderer_create_from_font_atlas_file(const char* font_filepath)
 {
     Text_Renderer* text_renderer = new Text_Renderer();
-    text_renderer->text_layout = text_layout_create();
     text_renderer->glyph_atlas = optional_unwrap(glyph_atlas_create_from_atlas_file(font_filepath));
-    text_renderer->default_color = vec3(1.0f);
-    Pipeline_State pipeline_state;
-    pipeline_state = pipeline_state_make_default();
-    pipeline_state.depth_state.test_type = Depth_Test_Type::IGNORE_DEPTH;
-    pipeline_state.culling_state.culling_enabled = true;
-    pipeline_state.blending_state.blending_enabled = true;
 
     // Create Font File
     //text_renderer->glyph_atlas = optional_unwrap(glyph_atlas_create_from_font_file("resources/fonts/consola.ttf", 256, 3200, 32, 16, false));
@@ -64,7 +47,6 @@ Text_Renderer* text_renderer_create_from_font_atlas_file(const char* font_filepa
 
 void text_renderer_destroy(Text_Renderer* renderer)
 {
-    text_layout_destroy(&renderer->text_layout);
     glyph_atlas_destroy(&renderer->glyph_atlas);
     delete renderer;
 }
@@ -82,59 +64,56 @@ vec2 text_renderer_get_scaling_factor(Text_Renderer* renderer, float relative_he
     return vec2(scaling_factor_x, scaling_factor_y);
 }
 
-void text_renderer_add_text_from_layout(
-    Text_Renderer* renderer,
-    Text_Layout* layout,
-    vec2 position
-)
+void text_renderer_add_text(Text_Renderer* renderer, String text, vec2 position, Anchor anchor, float line_height, vec3 color)
 {
-    Glyph_Atlas* atlas = &renderer->glyph_atlas;
-    vec2 scaling_factor = text_renderer_get_scaling_factor(renderer, layout->relative_height);
-    float descender = atlas->descender * scaling_factor.y;
-    float distance_field_scaling;
-    {
-        float line_pixel_size_in_atlas = ((atlas->ascender - atlas->descender) / 64.0f); // In pixel per line_index
-        float line_size_on_screen = layout->relative_height * rendering_core.render_information.backbuffer_height; // In pixel per line_index
-        distance_field_scaling = line_size_on_screen / line_pixel_size_in_atlas;
-    }
-
-    const int vertexCount = layout->character_positions.size * 4;
+    const int vertexCount = text.size * 4;
     auto positions = mesh_push_attribute_slice(renderer->text_mesh, rendering_core.predefined.position2D, vertexCount);
     auto uvs = mesh_push_attribute_slice(renderer->text_mesh, rendering_core.predefined.texture_coordinates, vertexCount);
     auto colors = mesh_push_attribute_slice(renderer->text_mesh, rendering_core.predefined.color3, vertexCount);
     auto pixelSizes = mesh_push_attribute_slice(renderer->text_mesh, renderer->attrib_pixel_size, vertexCount);
-    auto indices = mesh_push_attribute_slice(renderer->text_mesh, rendering_core.predefined.index, layout->character_positions.size * 6);
+    auto indices = mesh_push_attribute_slice(renderer->text_mesh, rendering_core.predefined.index, text.size * 6);
 
-    for (int i = 0; i < layout->character_positions.size; i++)
+    Glyph_Atlas* atlas = &renderer->glyph_atlas;
+    vec2 char_size_normalized = convertSizeFromTo(
+        vec2(((float)atlas->cursor_advance / (float)(atlas->ascender - atlas->descender)), 1.0f) * line_height, Unit::PIXELS, Unit::NORMALIZED_SCREEN
+    );
+    vec2 offset = anchor_switch(
+        convertPointFromTo(position, Unit::PIXELS, Unit::NORMALIZED_SCREEN), vec2(char_size_normalized.x * text.size, char_size_normalized.y),
+        anchor, Anchor::BOTTOM_LEFT
+    );
+    vec2 font_scaling = convertSizeFromTo(vec2(line_height) / (float)(atlas->ascender - atlas->descender), Unit::PIXELS, Unit::NORMALIZED_SCREEN);
+    float distance_field_scaling;
     {
-        Character_Position* char_pos = &renderer->text_layout.character_positions[i];
-        Glyph_Information* glyph_info = char_pos->glyph_info;
+        float line_pixel_size_in_atlas = ((atlas->ascender - atlas->descender) / 64.0f); // In pixel per line_index
+        float line_size_on_screen = line_height; // In pixel per line_index
+        distance_field_scaling = line_size_on_screen / line_pixel_size_in_atlas;
+    }
+
+
+    for (int i = 0; i < text.size; i++) 
+    {
+        char character = text.characters[i];
+        Glyph_Information* glyph_info = &atlas->glyph_informations[atlas->character_to_glyph_map[character]];;
 
         Bounding_Box2 char_box;
-        char_box.min.x =
-            char_pos->bounding_box.min.x + position.x +
-            glyph_info->bearing_x * scaling_factor.x;
-        char_box.min.y =
-            char_pos->bounding_box.min.y + position.y - descender +
-            (glyph_info->bearing_y - glyph_info->glyph_height) * scaling_factor.y;
-        char_box.max.x = char_box.min.x +
-            glyph_info->glyph_width * scaling_factor.x;
-        char_box.max.y = char_box.min.y +
-            glyph_info->glyph_height * scaling_factor.y;
+        char_box.min.x = i * char_size_normalized.x + glyph_info->bearing_x * font_scaling.x;
+        char_box.min.y = (-atlas->descender + glyph_info->bearing_y - glyph_info->glyph_height) * font_scaling.y;
+        char_box.max.x = char_box.min.x + glyph_info->glyph_width * font_scaling.x;
+        char_box.max.y = char_box.min.y + glyph_info->glyph_height * font_scaling.y;
 
         // Push back 4 vertices for each glyph
-        positions[i * 4 + 0] = vec2(char_box.min.x, char_box.min.y);
-        positions[i * 4 + 1] = vec2(char_box.max.x, char_box.min.y);
-        positions[i * 4 + 2] = vec2(char_box.min.x, char_box.max.y);
-        positions[i * 4 + 3] = vec2(char_box.max.x, char_box.max.y);
+        positions[i * 4 + 0] = vec2(char_box.min.x, char_box.min.y) + offset;
+        positions[i * 4 + 1] = vec2(char_box.max.x, char_box.min.y) + offset;
+        positions[i * 4 + 2] = vec2(char_box.min.x, char_box.max.y) + offset;
+        positions[i * 4 + 3] = vec2(char_box.max.x, char_box.max.y) + offset;
         uvs[i * 4 + 0] = vec2(glyph_info->atlas_fragcoords_left, glyph_info->atlas_fragcoords_bottom);
         uvs[i * 4 + 1] = vec2(glyph_info->atlas_fragcoords_right, glyph_info->atlas_fragcoords_bottom);
         uvs[i * 4 + 2] = vec2(glyph_info->atlas_fragcoords_left, glyph_info->atlas_fragcoords_top);
         uvs[i * 4 + 3] = vec2(glyph_info->atlas_fragcoords_right, glyph_info->atlas_fragcoords_top);
-        colors[i * 4 + 0] = char_pos->color;
-        colors[i * 4 + 1] = char_pos->color;
-        colors[i * 4 + 2] = char_pos->color;
-        colors[i * 4 + 3] = char_pos->color;
+        colors[i * 4 + 0] = color;
+        colors[i * 4 + 1] = color;
+        colors[i * 4 + 2] = color;
+        colors[i * 4 + 3] = color;
         pixelSizes[i * 4 + 0] = distance_field_scaling;
         pixelSizes[i * 4 + 1] = distance_field_scaling;
         pixelSizes[i * 4 + 2] = distance_field_scaling;
@@ -148,82 +127,17 @@ void text_renderer_add_text_from_layout(
         indices[i * 6 + 4] = (renderer->current_batch_end + i) * 4 + 3;
         indices[i * 6 + 5] = (renderer->current_batch_end + i) * 4 + 2;
     }
-    renderer->current_batch_end += layout->character_positions.size;
+    renderer->current_batch_end += text.size;
+}
+
+float text_renderer_line_width(Text_Renderer* renderer, float line_height, int char_count) {
+    auto& atlas = renderer->glyph_atlas;
+    return line_height * char_count * atlas.cursor_advance / (float)(atlas.ascender - atlas.descender);
 }
 
 void text_renderer_reset(Text_Renderer* renderer) {
     renderer->current_batch_end = 0;
     renderer->last_batch_end = 0;
-}
-
-void text_renderer_add_text(
-    Text_Renderer* renderer,
-    String* text,
-    vec2 position,
-    float relative_height,
-    float line_gap_percent)
-{
-    Text_Layout* layout = text_renderer_calculate_text_layout(renderer, text, relative_height, line_gap_percent);
-    text_renderer_add_text_from_layout(renderer, layout, position);
-}
-
-Text_Layout* text_renderer_calculate_text_layout(
-    Text_Renderer* renderer,
-    String* text,
-    float relative_height,
-    float line_gap_percent)
-{
-    Glyph_Atlas* atlas = &renderer->glyph_atlas;
-    vec2 scaling_factor = text_renderer_get_scaling_factor(renderer, relative_height);
-    renderer->text_layout.relative_height = relative_height;
-
-    float max_cursor_x = 0.0f;
-    float cursor_x = 0.0f;
-    //float cursor_y = -atlas->descender * scaling_factor.y;
-    float cursor_y = -relative_height;
-
-    dynamic_array_reset(&renderer->text_layout.character_positions);
-    for (int i = 0; i < text->size; i++)
-    {
-        byte current_character = (*text)[i];
-        if (current_character == '\n') {
-            cursor_y -= relative_height * line_gap_percent;
-            if (cursor_x > max_cursor_x) {
-                max_cursor_x = cursor_x;
-            }
-            cursor_x = 0.0f;
-            continue;
-        }
-
-        // Get Glyph info
-        Glyph_Information* info = &atlas->glyph_informations[atlas->character_to_glyph_map[current_character]];;
-
-        // Add character information
-        {
-            Character_Position pos;
-            pos.glyph_info = info;
-            pos.bounding_box.min = vec2(cursor_x, cursor_y);
-            pos.bounding_box.max = vec2(cursor_x + info->advance_x * scaling_factor.x,
-                cursor_y + (atlas->ascender - atlas->descender) * scaling_factor.y);
-            pos.color = renderer->default_color;
-            dynamic_array_push_back(&renderer->text_layout.character_positions, pos);
-        }
-
-        // Advance to next character
-        cursor_x += info->advance_x * scaling_factor.x;
-    }
-    if (cursor_x > max_cursor_x) {
-        max_cursor_x = cursor_x;
-    }
-
-    // Push up all character, so that all y coordinates are > 0
-    for (int i = 0; i < renderer->text_layout.character_positions.size; i++) {
-        renderer->text_layout.character_positions[i].bounding_box.min.y -= cursor_y;
-        renderer->text_layout.character_positions[i].bounding_box.max.y -= cursor_y;
-    }
-
-    renderer->text_layout.size = vec2(max_cursor_x, -cursor_y);
-    return &renderer->text_layout;
 }
 
 void text_renderer_draw(Text_Renderer* renderer, Render_Pass* render_pass)
@@ -250,49 +164,7 @@ void text_renderer_draw(Text_Renderer* renderer, Render_Pass* render_pass)
     renderer->last_batch_end = renderer->current_batch_end;
 }
 
-float text_renderer_get_cursor_advance(Text_Renderer* renderer, float relative_height)
-{
-    vec2 scaling_factor = text_renderer_get_scaling_factor(renderer, relative_height);
-    return renderer->glyph_atlas.cursor_advance * scaling_factor.x;
-}
 
-Texture* text_renderer_get_texture(Text_Renderer* renderer)
-{
-    return renderer->atlas_sdf_texture;
-}
-
-void text_renderer_set_color(Text_Renderer* renderer, vec3 color) {
-    renderer->default_color = color;
-}
-
-float text_renderer_calculate_text_width(Text_Renderer* renderer, int char_count, float relative_height) {
-    auto& info = rendering_core.render_information;
-    return (float)renderer->glyph_atlas.cursor_advance / (renderer->glyph_atlas.ascender - renderer->glyph_atlas.descender) * relative_height * char_count
-        * ((float)info.backbuffer_height / info.backbuffer_width);
-}
-
-float text_renderer_cm_to_relative_height(Text_Renderer* renderer, float height_in_cm) {
-    auto& info = rendering_core.render_information;
-    int height = info.backbuffer_height;
-    int dpi = info.monitor_dpi;
-    return  2.0f * (height_in_cm) / (height / (float)dpi * 2.54f);
-}
-
-
-
-
-
-
-
-
-
-/*
-    How to implement: either
-        - Use a tool to create distance fields onto images, load those
-        - Use a library to load TrueType font types, and render those
-           |--> Create distance field from rasterized images/create distance fields directly from those images
-        - Load TrueType/OpenType font data manually, do bezier stuff, would probably be lots of fun :)
-*/
 
 /*
     Typography information/vocabulary:

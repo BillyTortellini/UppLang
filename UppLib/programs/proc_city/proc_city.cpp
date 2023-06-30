@@ -9,7 +9,6 @@
 #include "../../rendering/camera_controllers.hpp"
 #include "../../rendering/gpu_buffers.hpp"
 #include "../../rendering/text_renderer.hpp"
-#include "../../utility/bounding_box.hpp"
 #include "../../rendering/renderer_2D.hpp"
 #include "../../utility/gui.hpp"
 #include "../../math/scalars.hpp"
@@ -370,7 +369,7 @@ struct Streetnetwork_Grid_Line_Iterator
 
 Streetnetwork_Grid_Line_Iterator streetnetwork_grid_line_iterator_make(StreetNetwork* network, vec2 a, vec2 b)
 {
-    Bounding_Box2 grid_bb = bounding_box_2_make_center_size(vec2(0.0f), vec2(network->grid_width));
+    Bounding_Box2 grid_bb = bounding_box_2_make_anchor(vec2(0.0f), vec2(network->grid_width), Anchor::CENTER_CENTER);
     if (!bounding_box_2_is_point_inside(grid_bb, a) || !bounding_box_2_is_point_inside(grid_bb, b))
         panic("Shit");
 

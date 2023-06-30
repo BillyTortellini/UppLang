@@ -6,8 +6,8 @@
 
 int main(int argc, char** argv)
 {
-    //render_rework();
-    upp_lang_main();
+    render_rework();
+    //upp_lang_main();
     //proc_city_main();
     return 0;
 }

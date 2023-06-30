@@ -7,6 +7,7 @@
 #include "../rendering/renderer_2d.hpp"
 #include "../rendering/text_renderer.hpp"
 #include "../win32/timing.hpp"
+#include "../rendering/basic2D.hpp"
 
 vec2 anchor_to_direction(Anchor_2D anchor)
 {
@@ -97,7 +98,8 @@ bool gui_is_in_focus(GUI* gui, vec2 pos, vec2 size) {
 }
 
 vec2 gui_calculate_text_size(GUI* gui, int char_count, float height) {
-    return vec2(text_renderer_calculate_text_width(gui->renderer_2d->text_renderer, char_count, height), height);
+    // return vec2(text_renderer_calculate_text_width(gui->renderer_2d->text_renderer, char_count, height), height);
+    return vec2(0.0f);
 }
 
 GUI_Position gui_position_make(vec2 pos, vec2 size) {
@@ -140,7 +142,7 @@ GUI_Position gui_position_make_inside(GUI_Position parent, Anchor_2D anchor, vec
 
 bool gui_checkbox(GUI* gui, vec2 pos, vec2 size, bool* value)
 {
-    Bounding_Box2 bb = bounding_box_2_make_center_size(pos, size);
+    Bounding_Box2 bb = bounding_box_2_make_anchor(pos, size, Anchor::CENTER_CENTER);
     bool hovered = false;
     bool clicked = false;
     if (bounding_box_2_is_point_inside(bb, gui->mouse_pos)) {
@@ -175,7 +177,7 @@ bool gui_slider(GUI* gui, GUI_Position pos, float* value, float min, float max)
     float normalized = math_clamp((*value - min) / (max - min), 0.0f, 1.0f);
     vec2 slider_pos = pos.pos - vec2(pos.size.x / 2.0f, 0.0f) + vec2(normalized * pos.size.x, 0.0f);
     vec2 slider_size = vec2(0.05f, pos.size.y);
-    Bounding_Box2 slider_bb = bounding_box_2_make_center_size(slider_pos, slider_size);
+    Bounding_Box2 slider_bb = bounding_box_2_make_anchor(slider_pos, slider_size, Anchor::CENTER_CENTER);
     
     // TODO: Check if slider was in focus last frame, and drop focus if mouse is not pressed anymore
     bool in_focus = gui_is_in_focus(gui, slider_pos, slider_size);
@@ -237,7 +239,7 @@ bool gui_text_input_string(GUI* gui, String* to_fill, vec2 pos, vec2 size, bool 
     String* edit_string = only_write_on_enter ? &gui->text_in_edit : to_fill;
     if (!in_focus) {
         if (gui->input->mouse_pressed[(int)Mouse_Key_Code::LEFT]) {
-            if (bounding_box_2_is_point_inside(bounding_box_2_make_center_size(pos, size), gui->mouse_pos)) {
+            if (bounding_box_2_is_point_inside(bounding_box_2_make_anchor(pos, size, Anchor::CENTER_CENTER), gui->mouse_pos)) {
                 gui_set_focus(gui, pos, size);
                 if (only_write_on_enter) {
                     if (clear_on_focus) {
@@ -372,7 +374,7 @@ bool gui_button(GUI* gui, vec2 pos, vec2 size, const char* text)
     bool clicked = false, hovered = false;
 
     // Check if clicked
-    Bounding_Box2 bb = bounding_box_2_make_center_size(pos, size);
+    Bounding_Box2 bb = bounding_box_2_make_anchor(pos, size, Anchor::CENTER_CENTER);
     if (bounding_box_2_is_point_inside(bb, gui->mouse_pos)) {
         if (gui->input->mouse_released[(int)Mouse_Key_Code::LEFT]) {
             clicked = true;

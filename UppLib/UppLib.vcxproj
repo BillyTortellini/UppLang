@@ -57,6 +57,7 @@
     <ClInclude Include="programs\upp_lang\syntax_editor.hpp" />
     <ClInclude Include="programs\upp_lang\type_system.hpp" />
     <ClInclude Include="programs\upp_lang\upp_lang.hpp" />
+    <ClInclude Include="rendering\basic2D.hpp" />
     <ClInclude Include="rendering\cameras.hpp" />
     <ClInclude Include="rendering\camera_controllers.hpp" />
     <ClInclude Include="rendering\framebuffer.hpp" />
@@ -123,6 +124,7 @@
     <ClCompile Include="programs\upp_lang\syntax_editor.cpp" />
     <ClCompile Include="programs\upp_lang\type_system.cpp" />
     <ClCompile Include="programs\upp_lang\upp_lang.cpp" />
+    <ClCompile Include="rendering\basic2D.cpp" />
     <ClCompile Include="rendering\cameras.cpp" />
     <ClCompile Include="rendering\camera_controllers.cpp" />
     <ClCompile Include="rendering\framebuffer.cpp" />
@@ -137,7 +139,6 @@
     <ClCompile Include="rendering\texture_bitmap.cpp" />
     <ClCompile Include="rendering\text_renderer.cpp" />
     <ClCompile Include="utility\binary_parser.cpp" />
-    <ClCompile Include="utility\bounding_box.cpp" />
     <ClCompile Include="utility\character_info.cpp" />
     <ClCompile Include="utility\directory_crawler.cpp" />
     <ClCompile Include="utility\file_io.cpp" />
@@ -163,6 +164,7 @@
     <None Include="..\resources\shaders\core\font_sdf.glsl" />
     <None Include="..\resources\shaders\core\geometry_2d.glsl" />
     <None Include="..\resources\shaders\core\uniform_blocks.glsl" />
+    <None Include="..\resources\shaders\gui_rect.glsl" />
     <None Include="..\resources\shaders\proc_city\city_shader.glsl" />
     <None Include="..\resources\shaders\rectangle_2D.glsl" />
     <None Include="..\resources\shaders\test.glsl" />

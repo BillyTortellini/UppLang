@@ -20,7 +20,7 @@
 
 // GLOBALS
 bool PRINT_DEPENDENCIES = false;
-bool PRINT_TIMING = true;
+bool PRINT_TIMING = false;
 static Semantic_Analyser semantic_analyser;
 static Workload_Executer workload_executer;
 
@@ -4247,6 +4247,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         {
             auto& argument = init_node.arguments[i];
             if (!argument->name.available) {
+                auto arg_info = get_info(argument, true);
+                arg_info->valid = false;
                 semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE_NAMED_ARGUMENTS, AST::upcast(argument));
                 continue;
             }
