@@ -1,9 +1,24 @@
 
 
+Implementation plan:
+ * Build hierarchy with GUI_Nodes, each Node has a bounding-box and a color
+    - Matching to previous should be done by order of inputs, if no matching was done, then delete node at end of frame
+    - Layout is completely done by hand, and children need to be inside their parents, there is no order guarantee otherwise
+        here we need to do some trimming at some point in the future
+ * Check that drawing is done in a performant way (E.g. layer per layer, and that layers are correctly calculated)
+ * Add text rendering to the whole schablam, so we can build up our normal menues again
+ * Try to get input to work, e.g. do the matching with the component from the previous runs 
+ * 
+
+Convert functionality:
+ - Should probably be updated, the method names dont use underscores...
+
 Simplest possible UI stuff:
  - Rectangles (Floating windows)
  - Text (Information for user)
  - Lines (Borders, simple shapes like X, sliders, whatever)
+
+- Input my dude....
 
 With this you could create
     - Windows

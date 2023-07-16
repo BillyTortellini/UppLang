@@ -58,3 +58,5 @@ Bounding_Box2 bounding_box_2_make_anchor(vec2 pos, vec2 size, Anchor anchor);
 bool bounding_box_2_is_point_inside(const Bounding_Box2& bb, const vec2& p);
 bool bounding_box_2_is_other_box_inside(const Bounding_Box2& bb, const Bounding_Box2& inside);
 Bounding_Box2 bounding_box_2_combine(Bounding_Box2 bb1, Bounding_Box2 bb2);
+bool bounding_box_2_overlap(const Bounding_Box2& a, const Bounding_Box2& b);
+Bounding_Box2 bounding_box_2_convert(const Bounding_Box2& bb, Unit unit);

@@ -152,6 +152,11 @@ bool bounding_box_2_is_other_box_inside(const Bounding_Box2& bb, const Bounding_
     return bounding_box_2_is_point_inside(bb, inside.min) && bounding_box_2_is_point_inside(bb, inside.max);
 }
 
+bool bounding_box_2_overlap(const Bounding_Box2& a, const Bounding_Box2& b) {
+    // Both axes must overlap for real overlap
+    return !((a.max.x < b.min.x || a.min.x > b.max.x) || (a.max.y < b.min.y || a.min.y > b.max.y));
+}
+
 Bounding_Box2 bounding_box_2_combine(Bounding_Box2 bb1, Bounding_Box2 bb2) 
 {
     Bounding_Box2 result;
@@ -166,3 +171,9 @@ Bounding_Box2 bounding_box_2_combine(Bounding_Box2 bb1, Bounding_Box2 bb2)
     return result;
 }
 
+Bounding_Box2 bounding_box_2_convert(const Bounding_Box2& bb, Unit unit) {
+    Bounding_Box2 result;
+    result.min = convertPoint(bb.min, unit);
+    result.max = convertPoint(bb.max, unit);
+    return result;
+}
