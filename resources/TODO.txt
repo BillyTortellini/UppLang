@@ -1,4 +1,26 @@
 
+Next steps:
+ - Add drawable type to node: Either rectangle, nothing or text
+    * Need to store text per node, and free on delete node
+ - Simple layout-options: Horizontal or vertical stack
+ - Clip children in parent to prevent weird stuff
+ - Input in some form, like a button?!?
+
+Layout options:
+ - Position:
+    * Specific: use the given bounding box, isn't counted when doing the layout shit, 
+        for top-level windows and stuff that can be dragged around
+    * Use parent layout, with given size:
+        Min/Max size: Why do we need a max size --> don't really know, I guess this is only for resizing windows?
+        Preferred size: Minimum (Just enough to enclose all children) or fill parent (With weight I guess)
+        Alignment in parent: Anchor
+    * Child layout options:
+        Horizontal stack 
+        Vertical stack
+        Maybe grid? Like pushing items into it and sheet
+ - Better Interface: return parent, and when pushing nodes I need to pass the parent (So we can add to different items in different order, and don't need the traversal)
+    Also when adding nodes maybe have something like a node-style, so there aren't that many parameters dude
+        
 
 Implementation plan:
  * Build hierarchy with GUI_Nodes, each Node has a bounding-box and a color
