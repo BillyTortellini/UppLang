@@ -1,10 +1,21 @@
 
-Next steps:
+DONE:
  - Add drawable type to node: Either rectangle, nothing or text
     * Need to store text per node, and free on delete node
  - Simple layout-options: Horizontal or vertical stack
- - Clip children in parent to prevent weird stuff
- - Input in some form, like a button?!?
+ - Fix layout being too beeg
+ - Refactor with 2d array of sizes
+    
+
+Next steps:
+ - Fix layout after refactor lol
+ - Clip children in parent to prevent overflow
+ - Input in some form, like a buttin?!?
+ - Better rendering options, like borders, per-vertex color for rectanglez
+ - Some more input options, like sliders, textfields or schtuff
+ - Maybe think about pixel-aligning the boxes and schtuff
+ - Batch rendering currently consideres layout-containers to be 'drawn', which isn't true and causes performance lozz
+ - Make GUI a global
 
 Layout options:
  - Position:
