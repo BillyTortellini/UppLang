@@ -1,21 +1,70 @@
 
+
 DONE:
  - Add drawable type to node: Either rectangle, nothing or text
     * Need to store text per node, and free on delete node
  - Simple layout-options: Horizontal or vertical stack
  - Fix layout being too beeg
  - Refactor with 2d array of sizes
-    
-
-Next steps:
  - Fix layout after refactor lol
  - Clip children in parent to prevent overflow
+ - Nodes are never deleted?
+ - Fill layout seems to be wrong when children are present.
  - Input in some form, like a buttin?!?
- - Better rendering options, like borders, per-vertex color for rectanglez
- - Some more input options, like sliders, textfields or schtuff
+ - Add some per node data with default value stuff, like integers and strings and stuff
+ - Drag and drop
+
+TODO:
+ - Sliders (min/max value, maybe also with integers)
+ - Focus/Z-order for windows
+ - Scrolling on overflow
+ - Text input (With movement and validation and sheet)
+
+Next steps:
  - Maybe think about pixel-aligning the boxes and schtuff
  - Batch rendering currently consideres layout-containers to be 'drawn', which isn't true and causes performance lozz
+ - Better rendering options, like borders, rounded-rectanglez, per-vertex color for rectanglez, maybe custom rendering of things
+ - Some more input options, like sliders, textfields or schtuff
  - Make GUI a global
+ - Make text-renderer global
+
+
+
+My Use-cases for this GUI:
+ - Create movable, resizable windows where I can display dynamic information about the program
+    * For debugging, e.g. showing dynamic properties of specific values
+    * For controlling settings like: run all testcases, run specific text-case, compile to c/bytecode...
+ - Maybe at some point some graph view, where we can display the undo/redo history
+    Or have the AST tree visuallized, or a function call graph, or whatever
+
+This means:
+ - Formated text output (Labels)
+ - Buttons 
+ - I think a userdata void* for each node would be interesting, with an optional destroy method and
+    a initialize value. --> No templates, and it would also work out just fine.
+    This way we could store arbitrary stuff there, and no-one would bat an eye. This also allows the client to control 
+    where the memory comes from.
+ - I think drag and drop could then be implemented with this userdata
+ - Also text input and editing could be done like this, by storing a string in the meantime.
+ - Text-fields for entering text (Integers, floats, or other text)
+ - Sliders
+ - Checkboxes
+ - Draggable windows
+ - Scrollable windows
+ - Focusing/Defocusing windows
+ - Some layout elements, like horizontal spacing, or a horizontal line would be neat
+ - Opening/Closing of something like tabs
+
+
+How to do Input:
+ - Each node also needs to state if it can receive mouse input (e.g)
+    This way we can determine where a click goes, e.g. do visibilty culling.
+    Otherwise a child node may 'steal' mouse input from parent, like the text of a button instead
+    of it's whole surface area, or labels inside a window
+ - Children should have access to: Is_hovered and is_clicked
+ - GUI needs to determine over which element the mouse is currently moved
+ - Inputs could be: Mouse clicked
+
 
 Layout options:
  - Position:

@@ -171,6 +171,23 @@ Bounding_Box2 bounding_box_2_combine(Bounding_Box2 bb1, Bounding_Box2 bb2)
     return result;
 }
 
+Optional<Bounding_Box2> bounding_box_2_union(const Bounding_Box2& a, const Bounding_Box2& b)
+{
+    Bounding_Box2 result;
+    result.min = vec2(
+        math_maximum(a.min.x, b.min.x),
+        math_maximum(a.min.y, b.min.y)
+    );
+    result.max = vec2(
+        math_minimum(a.max.x, b.max.x),
+        math_minimum(a.max.y, b.max.y)
+    );
+    if (result.min.x < result.max.x && result.min.y < result.max.y) {
+        return optional_make_success(result);
+    }
+    return optional_make_failure<Bounding_Box2>();
+}
+
 Bounding_Box2 bounding_box_2_convert(const Bounding_Box2& bb, Unit unit) {
     Bounding_Box2 result;
     result.min = convertPoint(bb.min, unit);

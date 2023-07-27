@@ -22,6 +22,14 @@ Text_Renderer* text_renderer_create_from_font_atlas_file(const char* font_filepa
 void text_renderer_destroy(Text_Renderer* renderer);
 
 void text_renderer_reset(Text_Renderer* renderer);
-void text_renderer_add_text(Text_Renderer* renderer, String text, vec2 position, Anchor anchor, float line_height, vec3 color);
+void text_renderer_add_text(
+    Text_Renderer* renderer, 
+    String text, 
+    vec2 position, 
+    Anchor anchor, 
+    float line_height,
+    vec3 color,
+    Optional<Bounding_Box2> clip_box = optional_make_failure<Bounding_Box2>()
+);
 void text_renderer_draw(Text_Renderer* renderer, Render_Pass* render_pass);
 float text_renderer_line_width(Text_Renderer* renderer, float line_height, int char_count);

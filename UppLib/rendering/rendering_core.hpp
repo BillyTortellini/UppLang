@@ -91,6 +91,22 @@ struct Mesh
 };
 
 template<typename T>
+Array<T> mesh_get_attribute_data(Mesh* mesh, Vertex_Attribute<T>* attribute) 
+{
+    int index = -1;
+    for (int i = 0; i < mesh->description->attributes.size; i++) {
+        if (mesh->description->attributes[i] == static_cast<Vertex_Attribute_Base*>(attribute)) {
+            index = i;
+            break;
+        }
+    }
+    if (index == -1) {
+        panic("Mesh did not contain attribute : %s\n", attribute->name.characters);
+    }
+    return dynamic_array_as_array(&mesh->buffers[index].attribute_data);
+}
+
+template<typename T>
 Array<T> mesh_push_attribute_slice(Mesh* mesh, Vertex_Attribute<T>* attribute, int size) 
 {
     int index = -1;

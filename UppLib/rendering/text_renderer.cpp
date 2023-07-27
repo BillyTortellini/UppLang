@@ -51,32 +51,20 @@ void text_renderer_destroy(Text_Renderer* renderer)
     delete renderer;
 }
 
-vec2 text_renderer_get_scaling_factor(Text_Renderer* renderer, float relative_height)
-{
-    // Glpyh information sizes (in 23.3 format) to normalized screen coordinates scaling factor
-    Glyph_Atlas* atlas = &renderer->glyph_atlas;
-    auto& info = rendering_core.render_information;
-    float CHARACTER_HEIGHT_NORMALIZED = relative_height;
-    const float scaling_factor_x = CHARACTER_HEIGHT_NORMALIZED / (atlas->ascender - atlas->descender) *
-        ((float)info.backbuffer_height / info.backbuffer_width);
-    const float scaling_factor_y = CHARACTER_HEIGHT_NORMALIZED / (atlas->ascender - atlas->descender);
-
-    return vec2(scaling_factor_x, scaling_factor_y);
+float text_renderer_line_width(Text_Renderer* renderer, float line_height, int char_count) {
+    auto& atlas = renderer->glyph_atlas;
+    return line_height * char_count * atlas.cursor_advance / (float)(atlas.ascender - atlas.descender);
 }
 
-void text_renderer_add_text(Text_Renderer* renderer, String text, vec2 position, Anchor anchor, float line_height, vec3 color)
+void text_renderer_add_text(Text_Renderer* renderer, String text, vec2 position, Anchor anchor, float line_height, vec3 color, Optional<Bounding_Box2> clip_box)
 {
-    const int vertexCount = text.size * 4;
-    auto positions = mesh_push_attribute_slice(renderer->text_mesh, rendering_core.predefined.position2D, vertexCount);
-    auto uvs = mesh_push_attribute_slice(renderer->text_mesh, rendering_core.predefined.texture_coordinates, vertexCount);
-    auto colors = mesh_push_attribute_slice(renderer->text_mesh, rendering_core.predefined.color3, vertexCount);
-    auto pixelSizes = mesh_push_attribute_slice(renderer->text_mesh, renderer->attrib_pixel_size, vertexCount);
-    auto indices = mesh_push_attribute_slice(renderer->text_mesh, rendering_core.predefined.index, text.size * 6);
+    if (text.size == 0) {
+        return;
+    }
 
     Glyph_Atlas* atlas = &renderer->glyph_atlas;
-    vec2 char_size_normalized = convertSizeFromTo(
-        vec2(((float)atlas->cursor_advance / (float)(atlas->ascender - atlas->descender)), 1.0f) * line_height, Unit::PIXELS, Unit::NORMALIZED_SCREEN
-    );
+    const vec2 char_size = vec2(text_renderer_line_width(renderer, line_height, 1), line_height);
+    const vec2 char_size_normalized = convertSizeFromTo(char_size, Unit::PIXELS, Unit::NORMALIZED_SCREEN);
     vec2 offset = anchor_switch(
         convertPointFromTo(position, Unit::PIXELS, Unit::NORMALIZED_SCREEN), vec2(char_size_normalized.x * text.size, char_size_normalized.y),
         anchor, Anchor::BOTTOM_LEFT
@@ -89,8 +77,36 @@ void text_renderer_add_text(Text_Renderer* renderer, String text, vec2 position,
         distance_field_scaling = line_size_on_screen / line_pixel_size_in_atlas;
     }
 
+    // Two simple cases: completely inside clip box, or completely outside
+    bool clipping = false;
+    if (clip_box.available) {
+        auto clip = clip_box.value;
+        Bounding_Box2 text_box = bounding_box_2_make_anchor(position, vec2(char_size.x * text.size, line_height), anchor);
+        if (!bounding_box_2_overlap(clip, text_box)) { // Return if everything is clipped
+            return;
+        }
+        clipping = !bounding_box_2_is_other_box_inside(clip, text_box);
+    }
 
-    for (int i = 0; i < text.size; i++) 
+    // Clip text, so that we don't produce too many vertices
+    if (clipping) {
+        int char_start = math_maximum(0, (int)((clip_box.value.min.x - position.x) / char_size.x));
+        int char_end = math_minimum(text.size, (int)((clip_box.value.max.x - position.x + char_size.x) / char_size.x));
+        position.x += char_size.x * char_start;
+        text = string_create_substring_static(&text, char_start, char_end);
+        if (char_start > char_end) {
+            return;
+        }
+    }
+
+    const int vertexCount = text.size * 4;
+    auto positions = mesh_push_attribute_slice(renderer->text_mesh, rendering_core.predefined.position2D, vertexCount);
+    auto uvs = mesh_push_attribute_slice(renderer->text_mesh, rendering_core.predefined.texture_coordinates, vertexCount);
+    auto colors = mesh_push_attribute_slice(renderer->text_mesh, rendering_core.predefined.color3, vertexCount);
+    auto pixelSizes = mesh_push_attribute_slice(renderer->text_mesh, renderer->attrib_pixel_size, vertexCount);
+    auto indices = mesh_push_attribute_slice(renderer->text_mesh, rendering_core.predefined.index, text.size * 6);
+
+    for (int i = 0; i < text.size; i++)
     {
         char character = text.characters[i];
         Glyph_Information* glyph_info = &atlas->glyph_informations[atlas->character_to_glyph_map[character]];;
@@ -100,16 +116,72 @@ void text_renderer_add_text(Text_Renderer* renderer, String text, vec2 position,
         char_box.min.y = (-atlas->descender + glyph_info->bearing_y - glyph_info->glyph_height) * font_scaling.y;
         char_box.max.x = char_box.min.x + glyph_info->glyph_width * font_scaling.x;
         char_box.max.y = char_box.min.y + glyph_info->glyph_height * font_scaling.y;
+        char_box.min += offset;
+        char_box.max += offset;
+
+        Bounding_Box2 uv_box = bounding_box_2_make_min_max(
+            vec2(glyph_info->atlas_fragcoords_left, glyph_info->atlas_fragcoords_bottom),
+            vec2(glyph_info->atlas_fragcoords_right, glyph_info->atlas_fragcoords_top)
+        );
+
+        if (clipping) 
+        {
+            auto clip = clip_box.value;
+            clip.min = convertPointFromTo(clip.min, Unit::PIXELS, Unit::NORMALIZED_SCREEN);
+            clip.max = convertPointFromTo(clip.max, Unit::PIXELS, Unit::NORMALIZED_SCREEN);
+
+            Bounding_Box2 clipped_pos = char_box;
+            Bounding_Box2 clipped_uvs = uv_box;
+            if (char_box.min.y > clip.max.y || char_box.max.y < clip.min.y ||
+                char_box.min.x > clip.max.x || char_box.max.x < clip.min.x) {
+                /*
+                Even though we already trim as much as possible, some characters may still get completely clipped
+                because of how they are positioned on the screen (e.g. ascender/descender and general text positioning)
+                */
+                clipped_pos.min = vec2(-10.0f);
+                clipped_pos.max = vec2(-10.0f);
+            }
+            else 
+            {
+                // Normal clipping with interpolation
+                if (char_box.max.y > clip.max.y) {
+                    float blend = (clip.max.y - char_box.min.y) / (char_box.max.y - char_box.min.y);
+                    assert(blend >= 0 && blend <= 1, "Blend must be valid");
+                    clipped_pos.max.y = math_interpolate_linear(char_box.min.y, char_box.max.y, blend);
+                    clipped_uvs.max.y = math_interpolate_linear(uv_box.min.y, uv_box.max.y, blend);
+                }
+                if (char_box.min.y < clip.min.y) {
+                    float blend = (clip.min.y - char_box.min.y) / (char_box.max.y - char_box.min.y);
+                    assert(blend >= 0 && blend <= 1, "Blend must be valid");
+                    clipped_pos.min.y = math_interpolate_linear(char_box.min.y, char_box.max.y, blend);
+                    clipped_uvs.min.y = math_interpolate_linear(uv_box.min.y, uv_box.max.y, blend);
+                }
+                if (char_box.max.x > clip.max.x) {
+                    float blend = (clip.max.x - char_box.min.x) / (char_box.max.x - char_box.min.x);
+                    assert(blend >= 0 && blend <= 1, "Blend must be valid");
+                    clipped_pos.max.x = math_interpolate_linear(char_box.min.x, char_box.max.x, blend);
+                    clipped_uvs.max.x = math_interpolate_linear(uv_box.min.x, uv_box.max.x, blend);
+                }
+                if (char_box.min.x < clip.min.x) {
+                    float blend = (clip.min.x - char_box.min.x) / (char_box.max.x - char_box.min.x);
+                    assert(blend >= 0 && blend <= 1, "Blend must be valid");
+                    clipped_pos.min.x = math_interpolate_linear(char_box.min.x, char_box.max.x, blend);
+                    clipped_uvs.min.x = math_interpolate_linear(uv_box.min.x, uv_box.max.x, blend);
+                }
+            }
+            char_box = clipped_pos;
+            uv_box = clipped_uvs;
+        }
 
         // Push back 4 vertices for each glyph
-        positions[i * 4 + 0] = vec2(char_box.min.x, char_box.min.y) + offset;
-        positions[i * 4 + 1] = vec2(char_box.max.x, char_box.min.y) + offset;
-        positions[i * 4 + 2] = vec2(char_box.min.x, char_box.max.y) + offset;
-        positions[i * 4 + 3] = vec2(char_box.max.x, char_box.max.y) + offset;
-        uvs[i * 4 + 0] = vec2(glyph_info->atlas_fragcoords_left, glyph_info->atlas_fragcoords_bottom);
-        uvs[i * 4 + 1] = vec2(glyph_info->atlas_fragcoords_right, glyph_info->atlas_fragcoords_bottom);
-        uvs[i * 4 + 2] = vec2(glyph_info->atlas_fragcoords_left, glyph_info->atlas_fragcoords_top);
-        uvs[i * 4 + 3] = vec2(glyph_info->atlas_fragcoords_right, glyph_info->atlas_fragcoords_top);
+        positions[i * 4 + 0] = vec2(char_box.min.x, char_box.min.y);
+        positions[i * 4 + 1] = vec2(char_box.max.x, char_box.min.y);
+        positions[i * 4 + 2] = vec2(char_box.min.x, char_box.max.y);
+        positions[i * 4 + 3] = vec2(char_box.max.x, char_box.max.y);
+        uvs[i * 4 + 0] = vec2(uv_box.min.x, uv_box.min.y);
+        uvs[i * 4 + 1] = vec2(uv_box.max.x, uv_box.min.y);
+        uvs[i * 4 + 2] = vec2(uv_box.min.x, uv_box.max.y);
+        uvs[i * 4 + 3] = vec2(uv_box.max.x, uv_box.max.y);
         colors[i * 4 + 0] = color;
         colors[i * 4 + 1] = color;
         colors[i * 4 + 2] = color;
@@ -128,11 +200,6 @@ void text_renderer_add_text(Text_Renderer* renderer, String text, vec2 position,
         indices[i * 6 + 5] = (renderer->current_batch_end + i) * 4 + 2;
     }
     renderer->current_batch_end += text.size;
-}
-
-float text_renderer_line_width(Text_Renderer* renderer, float line_height, int char_count) {
-    auto& atlas = renderer->glyph_atlas;
-    return line_height * char_count * atlas.cursor_advance / (float)(atlas.ascender - atlas.descender);
 }
 
 void text_renderer_reset(Text_Renderer* renderer) {
@@ -158,7 +225,7 @@ void text_renderer_draw(Text_Renderer* renderer, Render_Pass* render_pass)
         renderer->text_mesh,
         Mesh_Topology::TRIANGLES,
         { uniform_make("sampler", renderer->atlas_sdf_texture, sampling_mode_bilinear()) },
-        renderer->last_batch_end * 6, 
+        renderer->last_batch_end * 6,
         (renderer->current_batch_end - renderer->last_batch_end) * 6
     );
     renderer->last_batch_end = renderer->current_batch_end;
