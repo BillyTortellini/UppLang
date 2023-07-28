@@ -346,6 +346,11 @@ LRESULT CALLBACK window_message_callback(HWND hwnd, UINT msg_type, WPARAM wparam
 
         return 0;
     }
+    case WM_SETCURSOR:
+        if (LOWORD(lparam) == HTCLIENT) {
+            return TRUE;
+        }
+        break;
     case WM_MOVE: {
         Window_State* state = &window_for_message_callback->state;
         state->x = (i16)LOWORD(lparam);
@@ -1027,6 +1032,28 @@ void window_set_cursor_reset_into_center(Window* window, bool reset) {
             window_set_cursor_into_center_of_screen(window);
         }
     }
+}
+
+void window_set_cursor_icon(Window* window, Cursor_Icon_Type cursor)
+{
+    HCURSOR cursorHandle = LoadCursor(NULL, IDC_HAND);
+    switch (cursor)
+    {
+    case Cursor_Icon_Type::ARROW: cursorHandle = LoadCursor(NULL, IDC_ARROW); break;
+    case Cursor_Icon_Type::HAND:  cursorHandle = LoadCursor(NULL, IDC_HAND); break;
+    case Cursor_Icon_Type::IBEAM: cursorHandle = LoadCursor(NULL, IDC_IBEAM); break;
+    case Cursor_Icon_Type::SIZE_HORIZONTAL: cursorHandle = LoadCursor(NULL, IDC_SIZEWE); break;
+    case Cursor_Icon_Type::SIZE_VERTICAL: cursorHandle = LoadCursor(NULL, IDC_SIZENS); break;
+    case Cursor_Icon_Type::SIZE_NORTHEAST: cursorHandle = LoadCursor(NULL, IDC_SIZENESW); break;
+    case Cursor_Icon_Type::SIZE_SOUTHEAST: cursorHandle = LoadCursor(NULL, IDC_SIZENWSE); break;
+    default:panic("");
+    }
+    if (cursorHandle == NULL) {
+        panic("I think the normal cursors should all work!");
+        return;
+    }
+    window->cursor_default = cursorHandle;
+    SetCursor(cursorHandle);
 }
 
 Input* window_get_input(Window* window) {

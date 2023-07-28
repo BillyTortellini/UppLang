@@ -256,11 +256,13 @@ struct GUI_Handle
 struct GUI_Renderer
 {
     Text_Renderer* text_renderer;
+    Window* window;
     Dynamic_Array<GUI_Node> nodes;
     GUI_Handle root_handle;
+    Cursor_Icon_Type cursor_type;
 };
 
-GUI_Renderer gui_renderer_initialize(Text_Renderer* text_renderer)
+GUI_Renderer gui_renderer_initialize(Text_Renderer* text_renderer, Window* window)
 {
     auto& pre = rendering_core.predefined;
 
@@ -269,6 +271,8 @@ GUI_Renderer gui_renderer_initialize(Text_Renderer* text_renderer)
     result.nodes = dynamic_array_create_empty<GUI_Node>(1);
     result.root_handle.index = 0;
     result.root_handle.mouse_hover = false;
+    result.window = window;
+    result.cursor_type = Cursor_Icon_Type::ARROW;
     
     // Push root node
     GUI_Node root;
@@ -648,6 +652,9 @@ bool gui_handle_input(GUI_Renderer* renderer, Input* input, int node_index)
     return node.receives_input && mouse_over;
 }
 
+Bounding_Box2 gui_get_node_prev_size(GUI_Renderer* renderer, GUI_Handle handle) {
+    return renderer->nodes[handle.index].bounding_box;
+}
 
 
 template<typename T>
@@ -684,26 +691,44 @@ void gui_push_text(GUI_Renderer* renderer, GUI_Handle parent_handle, String text
 struct GUI_Window_Info
 {
     vec2 pos;
+    vec2 size;
+
     bool drag_started;
-    vec2 prev_mouse;
+    vec2 drag_start_mouse;
+    vec2 drag_start_pos;
+    vec2 drag_start_size;
+
+    bool move;
+    bool resize_right;
+    bool resize_left;
+    bool resize_top;
+    bool resize_bottom;
 };
 
-GUI_Handle gui_push_window(GUI_Renderer* renderer, GUI_Handle parent_handle, Input* input, vec2 size, Anchor anchor, const char* name, vec2 initial_pos)
+GUI_Handle gui_push_window(GUI_Renderer* renderer, GUI_Handle parent_handle, Input* input, const char* name, 
+    vec2 initial_pos = convertPoint(vec2(0.0f), Unit::NORMALIZED_SCREEN), vec2 initial_size = vec2(300, 500), Anchor initial_anchor = Anchor::CENTER_CENTER)
 {
     // Get window info
     GUI_Window_Info* info = 0;
     {
         GUI_Window_Info initial_info;
         initial_info.drag_started = false;
-        initial_info.pos = initial_pos;
+        initial_info.pos = anchor_switch(initial_pos, initial_size, initial_anchor, Anchor::BOTTOM_LEFT);
+        initial_info.size = initial_size;
+        initial_info.drag_started = false;
+        initial_info.move = false;
+        initial_info.resize_bottom = false;
+        initial_info.resize_top = false;
+        initial_info.resize_left = false;
+        initial_info.resize_right = false;
         info = gui_store_primitive<GUI_Window_Info>(renderer, parent_handle, initial_info);
     }
 
     // Create gui nodes
     auto window_handle = gui_add_node(
         renderer, parent_handle, gui_layout_make(), 
-        gui_size_make_absolute(bounding_box_2_make_anchor(info->pos, size, anchor)),
-        gui_drawable_make_none(), false);
+        gui_size_make_absolute(bounding_box_2_make_anchor(info->pos, info->size, Anchor::BOTTOM_LEFT)),
+        gui_drawable_make_none(), true);
     auto header_handle = gui_add_node(
         renderer, window_handle,
         gui_layout_make(false, GUI_Align::MIN, vec2(3)),
@@ -714,24 +739,123 @@ GUI_Handle gui_push_window(GUI_Renderer* renderer, GUI_Handle parent_handle, Inp
     gui_push_text(renderer, header_handle, string_create_static(name));
     auto client_area = gui_add_node(renderer, window_handle, gui_layout_make(), gui_size_make_fill(true, true), gui_drawable_make_rect(vec4(1.0f)), false);
 
-    // Handle drag
+    // Handle user interaction
     bool mouse_down = input->mouse_down[(int)Mouse_Key_Code::LEFT];
-    vec2 mouse_pos = vec2(input->mouse_x, input->mouse_y);
-    if (info->drag_started && mouse_down) {
-        vec2 diff = mouse_pos - info->prev_mouse;
-        diff.y *= -1;
-        info->prev_mouse = mouse_pos;
-        // Update window pos
-        info->pos += diff;
-        gui_set_size(renderer, window_handle, gui_size_make_absolute(bounding_box_2_make_anchor(info->pos, size, anchor)));
+    vec2 mouse_pos = vec2((float)input->mouse_x, rendering_core.render_information.backbuffer_height - input->mouse_y);
+    
+    if (!mouse_down && info->drag_started) {
+        info->drag_started = false;
+        info->move = false;
+        info->resize_right = false;
+        info->resize_left = false;
+        info->resize_bottom = false;
+        info->resize_top = false;
+        window_set_cursor_constrain(renderer->window, false);
     }
-    else {
-        if (header_handle.mouse_hover && mouse_down) {
-            info->drag_started = true;
-            info->prev_mouse = mouse_pos;
+
+    // Check for drag start
+    auto window_bb = gui_get_node_prev_size(renderer, window_handle);
+    const float interaction_distance = 5;
+
+    const bool right_border = math_absolute(mouse_pos.x - window_bb.max.x) < interaction_distance;
+    const bool left_border = math_absolute(mouse_pos.x - window_bb.min.x) < interaction_distance && !right_border;
+    const bool bottom_border = math_absolute(mouse_pos.y - window_bb.min.y) < interaction_distance;
+    const bool top_border = math_absolute(mouse_pos.y - window_bb.max.y) < interaction_distance && !bottom_border;
+
+    // Set cursor correctly
+    if (window_handle.mouse_hover || header_handle.mouse_hover)
+    {
+        // Handle scrolling icon
+        bool left = info->drag_started ? info->resize_left : left_border;
+        bool right = info->drag_started ? info->resize_right : right_border;
+        bool top = info->drag_started ? info->resize_top : top_border;
+        bool bot = info->drag_started ? info->resize_bottom : bottom_border;
+
+        if (bot) {
+            if (left) {
+                renderer->cursor_type = Cursor_Icon_Type::SIZE_NORTHEAST;
+            }
+            else if (right) {
+                renderer->cursor_type = Cursor_Icon_Type::SIZE_SOUTHEAST;
+            }
+            else {
+                renderer->cursor_type = Cursor_Icon_Type::SIZE_VERTICAL;
+            }
         }
-        else {
-            info->drag_started = false;
+        else if (top) {
+            if (left) {
+                renderer->cursor_type = Cursor_Icon_Type::SIZE_SOUTHEAST;
+            }
+            else if (right) {
+                renderer->cursor_type = Cursor_Icon_Type::SIZE_NORTHEAST;
+            }
+            else {
+                renderer->cursor_type = Cursor_Icon_Type::SIZE_VERTICAL;
+            }
+        }
+        else if (left || right) {
+            renderer->cursor_type = Cursor_Icon_Type::SIZE_HORIZONTAL;
+        }
+    }
+
+    // Check if drag-and-drop is happening
+    if (info->drag_started)
+    {
+        vec2 new_pos = info->pos;
+        vec2 new_size = info->size;
+        if (info->move) {
+            new_pos = info->drag_start_pos + (mouse_pos - info->drag_start_mouse);
+        }
+        else
+        {
+            if (info->resize_right) {
+                new_size.x = math_maximum(10.0f, info->drag_start_size.x + (mouse_pos.x - info->drag_start_mouse.x));
+            }
+            else if (info->resize_left) {
+                new_size.x = math_maximum(10.0f, info->drag_start_size.x - (mouse_pos.x - info->drag_start_mouse.x));
+                new_pos.x = info->drag_start_pos.x + (mouse_pos - info->drag_start_mouse).x;
+            }
+            if (info->resize_top) {
+                new_size.y = math_maximum(10.0f, info->drag_start_size.y + (mouse_pos.y - info->drag_start_mouse.y));
+            }
+            else if (info->resize_bottom) {
+                new_size.y = math_maximum(10.0f, info->drag_start_size.y - (mouse_pos.y - info->drag_start_mouse.y));
+                new_pos.y = info->drag_start_pos.y + (mouse_pos - info->drag_start_mouse).y;
+            }
+        }
+        info->pos = new_pos;
+        info->size = new_size;
+        gui_set_size(renderer, window_handle, gui_size_make_absolute(bounding_box_2_make_anchor(info->pos, info->size, Anchor::BOTTOM_LEFT)));
+        window_set_cursor_constrain(renderer->window, true);
+    }
+    else if (mouse_down && (window_handle.mouse_hover || header_handle.mouse_hover))
+    {
+        if (right_border) {
+            info->drag_started = true;
+            info->resize_right = true;
+        }
+        else if (left_border) {
+            info->drag_started = true;
+            info->resize_left = true;
+        }
+        if (bottom_border) {
+            info->drag_started = true;
+            info->resize_bottom = true;
+        }
+        else if (top_border) {
+            info->drag_started = true;
+            info->resize_top = true;
+        }
+
+        if (!info->drag_started && header_handle.mouse_hover) {
+            info->drag_started = true;
+            info->move = true;
+        }
+
+        if (info->drag_started) {
+            info->drag_start_pos = info->pos;
+            info->drag_start_size = info->size;
+            info->drag_start_mouse = mouse_pos;
         }
     }
 
@@ -822,10 +946,7 @@ void gui_update(GUI_Renderer* renderer, Input* input)
         //     gui_drawable_make_rect(vec4(1.0f, 0.0f, 1.0f, 1.0f)),
         //     false
         // );
-        auto window = gui_push_window(
-            renderer, renderer->root_handle, input, vec2(400), Anchor::CENTER_CENTER,
-            "Window", convertPoint(vec2(0.0f), Unit::NORMALIZED_SCREEN)
-        );
+        auto window = gui_push_window(renderer, renderer->root_handle, input, "Window");
         if (toggle) {
             gui_push_text(renderer, window, string_create_static("Hello"));
             gui_add_node(renderer, window, gui_layout_make(),
@@ -853,10 +974,7 @@ void gui_update(GUI_Renderer* renderer, Input* input)
         const vec4 magenta = vec4(vec3(1, 0, 1), 1.0f);
         const vec4 gray = vec4(vec3(0.3f), 1.0f);
 
-        auto window = gui_push_window(
-            renderer, renderer->root_handle, input,
-            vec2(400, 600), Anchor::CENTER_CENTER, "Test window", convertPoint(vec2(0.0f), Unit::NORMALIZED_SCREEN)
-        );
+        auto window = gui_push_window(renderer, renderer->root_handle, input, "Test window");
         auto space = gui_add_node(renderer, window, gui_layout_make(false, GUI_Align::CENTER), gui_size_make_fill(true, true), gui_drawable_make_rect(cyan), false);
         bool* value = gui_store_primitive<bool>(renderer, space, false);
         gui_push_toggle(renderer, space, input, value);
@@ -983,6 +1101,10 @@ void gui_update(GUI_Renderer* renderer, Input* input)
 
     // Handle input
     gui_handle_input(renderer, input, 0);
+
+    // Handle cursor
+    window_set_cursor_icon(renderer->window, renderer->cursor_type);
+    renderer->cursor_type = Cursor_Icon_Type::ARROW; // Cursor needs to be set each frame, otherwise it defaults to Arrow
 
     // Render UI
     {
@@ -1250,7 +1372,7 @@ void render_rework()
     Renderer_2D* renderer_2D = renderer_2D_create(text_renderer);
     SCOPE_EXIT(renderer_2D_destroy(renderer_2D));
 
-    GUI_Renderer gui_renderer = gui_renderer_initialize(text_renderer);
+    GUI_Renderer gui_renderer = gui_renderer_initialize(text_renderer, window);
 
     // Window Loop
     double time_last_update_start = timer_current_time_in_seconds(&timer);
@@ -1290,6 +1412,7 @@ void render_rework()
             text_renderer_reset(text_renderer);
             rendering_core_render(camera, Framebuffer_Clear_Type::COLOR_AND_DEPTH);
             window_swap_buffers(window);
+            glFinish();
             );
 
             gui_update(&gui_renderer, input);

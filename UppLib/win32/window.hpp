@@ -4,6 +4,17 @@
 
 struct Window;
 
+enum class Cursor_Icon_Type
+{
+    ARROW, // Default
+    IBEAM, // For Text
+    HAND, // For clickable things?
+    SIZE_HORIZONTAL,
+    SIZE_VERTICAL,
+    SIZE_NORTHEAST,
+    SIZE_SOUTHEAST
+};
+
 struct Window_State
 {
     // Position and size
@@ -31,6 +42,7 @@ void window_set_fullscreen(Window* window, bool fullscreen);
 void window_set_cursor_visibility(Window* window, bool visible);
 void window_set_cursor_constrain(Window* window, bool constrain);
 void window_set_cursor_reset_into_center(Window* window, bool reset);
+void window_set_cursor_icon(Window* window, Cursor_Icon_Type cursor);
 void window_set_vsync(Window* window, bool vsync);
 void window_set_minimized(Window* window, bool minimized);
 void window_set_position(Window* window, int x, int y);
