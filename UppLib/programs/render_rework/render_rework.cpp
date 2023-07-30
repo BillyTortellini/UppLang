@@ -82,49 +82,72 @@ Stages of IM-GUI:
 */
 
 
-struct GUI_Size
+enum class GUI_Size_Type
 {
-    bool is_absolute; // Size is given by bounding_rectangle, not calculated by parent
-    Bounding_Box2 absolute_box;
-    // If size is not absolute
-    float min_size[2]; // Minimum size in x/y
-    bool fill[2];
+    FIXED,
+    FILL_WITH_MIN, 
+    MIN
 };
 
-GUI_Size gui_size_make_absolute(Bounding_Box2 absolute_box) {
+struct GUI_Size
+{
+    float min_size;
+    bool fit_at_least_children;
+    bool fill;
+};
+
+GUI_Size gui_size_make(float min_size, bool fit_at_least_children, bool fill) {
     GUI_Size size;
-    size.is_absolute = true;
-    size.absolute_box = absolute_box;
-    // Initialize unused with something
-    size.min_size[0] = 0.0f;
-    size.min_size[1] = 0.0f;
-    size.fill[0] = false;
-    size.fill[1] = false;
+    size.min_size = min_size;
+    size.fill = fill;
+    size.fit_at_least_children = fit_at_least_children;
     return size;
 }
 
-GUI_Size gui_size_make_min(vec2 min_size) {
-    GUI_Size size;
-    size.is_absolute = false;
-    size.min_size[0] = min_size.x;
-    size.min_size[1] = min_size.y;
-    size.fill[0] = false;
-    size.fill[1] = false;
-    // Initialize unused with something
-    size.absolute_box = bounding_box_2_make_min_max(vec2(0.0f), vec2(0.0f));
-    return size;
+GUI_Size gui_size_make_fit() {
+    return gui_size_make(0.0f, true, false);
 }
 
-GUI_Size gui_size_make_fill(bool fill_x, bool fill_y) {
-    GUI_Size size;
-    size.is_absolute = false;
-    size.fill[0] = fill_x;
-    size.fill[1] = fill_y;
-    // Initialize unused with something
-    size.absolute_box = bounding_box_2_make_min_max(vec2(0.0f), vec2(0.0f));
-    size.min_size[0] = 0.0f;
-    size.min_size[1] = 0.0f;
-    return size;
+GUI_Size gui_size_make_fixed(float value) {
+    return gui_size_make(value, false, false);
+}
+
+GUI_Size gui_size_make_fill(bool fit_children = false, float min_size = 0.0f) {
+    return gui_size_make(min_size, fit_children, true);
+}
+
+
+
+enum class GUI_Position_Type
+{
+    RELATIVE_TO_WINDOW,
+    RELATIVE_TO_PARENT,
+    USE_PARENT_LAYOUT
+};
+
+struct GUI_Position
+{
+    GUI_Position_Type type;
+    vec2 offset;
+    Anchor anchor;
+    int z_index;
+};
+
+GUI_Position gui_position_make_parent_layout(int z_index = 0) {
+    GUI_Position result;
+    memory_zero(&result);
+    result.type = GUI_Position_Type::USE_PARENT_LAYOUT;
+    result.z_index = z_index;
+    return result;
+}
+
+GUI_Position gui_position_make_relative(vec2 offset, Anchor anchor, int z_index = 0, bool relative_to_parent = true) {
+    GUI_Position result;
+    result.type = relative_to_parent ? GUI_Position_Type::RELATIVE_TO_PARENT : GUI_Position_Type::RELATIVE_TO_WINDOW;
+    result.offset = offset;
+    result.anchor = anchor;
+    result.z_index = z_index;
+    return result;
 }
 
 
@@ -136,20 +159,36 @@ enum class GUI_Align
     CENTER,
 };
 
+enum class GUI_Layout_Type {
+    STACK_HORIZONTAL,
+    STACK_VERTICAL,
+    LAYERED
+};
+
 struct GUI_Layout
 {
-    int stack_dimension; // either 0 or 1
-    GUI_Align child_alignment;
+    GUI_Layout_Type layout_type;
+    GUI_Align child_alignment; 
     float padding[2];
 };
 
-GUI_Layout gui_layout_make(bool stack_vertical = false, GUI_Align align = GUI_Align::MIN, vec2 padding = vec2(0.0f))
+GUI_Layout gui_layout_make_stacked(bool stack_vertical = true, GUI_Align align = GUI_Align::MIN, vec2 padding = vec2(0.0f))
 {
     GUI_Layout layout;
     layout.child_alignment = align;
     layout.padding[0] = padding.x;
     layout.padding[1] = padding.y;
-    layout.stack_dimension = stack_vertical ? 0 : 1;
+    layout.layout_type = stack_vertical ? GUI_Layout_Type::STACK_VERTICAL : GUI_Layout_Type::STACK_HORIZONTAL;
+    return layout;
+}
+
+GUI_Layout gui_layout_make_layered(vec2 padding = vec2(0.0f))
+{
+    GUI_Layout layout;
+    layout.layout_type = GUI_Layout_Type::LAYERED;
+    layout.child_alignment = GUI_Align::MIN; // Doesnt matter
+    layout.padding[0] = padding.x;
+    layout.padding[1] = padding.y;
     return layout;
 }
 
@@ -200,12 +239,14 @@ void gui_drawable_destroy(GUI_Drawable& drawable) {
 }
 
 
-typedef void (*gui_userdata_destroy_fn)(void* userdata);
 
 // GUI Hierarchy
+typedef void (*gui_userdata_destroy_fn)(void* userdata);
+
 struct GUI_Node
 {
-    GUI_Size size;
+    GUI_Size size[2];
+    GUI_Position position;
     GUI_Layout layout;
     GUI_Drawable drawable;
 
@@ -220,7 +261,8 @@ struct GUI_Node
     // Stuff calculated during layout
     Bounding_Box2 bounding_box;
     Optional<Bounding_Box2> clipped_box; // Hierarchical clipping from parent
-    float min_size_with_children[2];
+    float min_size[2];
+    float min_child_size[2];
 
     // Infos for matching
     bool referenced_this_frame; // Node and all child nodes will be removed at end of frame if not referenced 
@@ -243,8 +285,6 @@ void gui_node_destroy(GUI_Node& node) {
     }
     gui_drawable_destroy(node.drawable);
 }
-
-
 
 struct GUI_Handle
 {
@@ -284,8 +324,11 @@ GUI_Renderer gui_renderer_initialize(Text_Renderer* text_renderer, Window* windo
     root.index_next_node = -1;
     root.traversal_next_child = -1;
     root.drawable = gui_drawable_make_none();
-    root.size = gui_size_make_absolute(root.bounding_box);
-    root.layout = gui_layout_make();
+    auto& info = rendering_core.render_information;
+    root.size[0] = gui_size_make(info.backbuffer_width, false, false);
+    root.size[1] = gui_size_make(info.backbuffer_height, false, false);
+    root.position = gui_position_make_relative(vec2(0.0f), Anchor::BOTTOM_LEFT, 0, false);
+    root.layout = gui_layout_make_layered();
     root.receives_input = false;
     dynamic_array_push_back(&result.nodes, root);
 
@@ -299,7 +342,11 @@ void gui_renderer_destroy(GUI_Renderer* renderer) {
     dynamic_array_destroy(&renderer->nodes);
 }
 
-GUI_Handle gui_add_node(GUI_Renderer* renderer, GUI_Handle parent_handle, GUI_Layout layout, GUI_Size size, GUI_Drawable drawable, bool receives_input) 
+GUI_Handle gui_add_node(
+    GUI_Renderer* renderer, GUI_Handle parent_handle, 
+    GUI_Size size_x, GUI_Size size_y, 
+    GUI_Position position, GUI_Layout layout, GUI_Drawable drawable, bool receives_input
+) 
 {
     auto& nodes = renderer->nodes;
 
@@ -339,7 +386,9 @@ GUI_Handle gui_add_node(GUI_Renderer* renderer, GUI_Handle parent_handle, GUI_La
         auto& node = renderer->nodes[node_index];
         node.referenced_this_frame = true;
         node.layout = layout;
-        node.size = size;
+        node.size[0] = size_x;
+        node.size[1] = size_y;
+        node.position = position;
         node.receives_input = receives_input;
 
         // Special handeling for text drawable, to avoid memory allocations
@@ -368,34 +417,9 @@ GUI_Handle gui_add_node(GUI_Renderer* renderer, GUI_Handle parent_handle, GUI_La
     return handle;
 }
 
-void gui_set_drawable(GUI_Renderer* renderer, GUI_Handle handle, GUI_Drawable drawable) {
-    if (handle.index == 0) {
-        panic("Cannot update root node!");
-    }
-    renderer->nodes[handle.index].drawable = drawable;
-}
 
-void gui_set_size(GUI_Renderer* renderer, GUI_Handle handle, GUI_Size size) {
-    if (handle.index == 0) {
-        panic("Cannot update root node!");
-    }
-    renderer->nodes[handle.index].size = size;
-}
 
-void gui_set_userdata(GUI_Renderer* renderer, GUI_Handle& handle, void* userdata, gui_userdata_destroy_fn destroy_fn) {
-    if (handle.index == 0) {
-        panic("Cannot update root node!");
-    }
-    auto& node = renderer->nodes[handle.index];
-    if (node.userdata != 0) {
-        assert(node.userdata_destroy_fn != 0, "Since userdata should always be allocated dynamically, there should always be a destroy!");
-        node.userdata_destroy_fn(node.userdata);
-    }
-    node.userdata = userdata;
-    node.userdata_destroy_fn = destroy_fn;
-    handle.userdata = userdata;
-}
-
+// GUI UPDATE
 void gui_update_nodes_recursive(GUI_Renderer* renderer, Array<int> new_node_indices, int node_index, int& next_free_node_index)
 {
     auto& nodes = renderer->nodes;
@@ -461,50 +485,62 @@ void gui_update_nodes_recursive(GUI_Renderer* renderer, Array<int> new_node_indi
     node.mouse_hover = false;
 }
 
-void gui_layout_calculate_min_size(GUI_Renderer* renderer, int node_index)
+void gui_layout_calculate_min_size(GUI_Renderer* renderer, int node_index, int dim)
 {
     auto& nodes = renderer->nodes;
     auto& node = nodes[node_index];
 
-    // Calculate min-sizes of all children
-    for (int dim = 0; dim < 2; dim++) {
-        node.min_size_with_children[dim] = 0.0f;
-    }
+    // Calculate all child min sizes
+    node.min_child_size[dim] = 0.0f;
+    bool in_stacking_dimension =
+        (node.layout.layout_type != GUI_Layout_Type::LAYERED) &&
+        ((node.layout.layout_type == GUI_Layout_Type::STACK_HORIZONTAL && dim == 0) ||
+            (node.layout.layout_type == GUI_Layout_Type::STACK_VERTICAL && dim == 1));
+
+    // Calculate min child size
     int child_index = node.index_first_child;
     while (child_index != -1) {
         auto& child_node = nodes[child_index];
         SCOPE_EXIT(child_index = child_node.index_next_node);
-        gui_layout_calculate_min_size(renderer, child_index);
-        for (int dim = 0; dim < 2; dim++) {
-            if (dim == node.layout.stack_dimension) {
-                node.min_size_with_children[dim] += child_node.min_size_with_children[dim];
-            }
-            else {
-                node.min_size_with_children[dim] = math_maximum(node.min_size_with_children[dim], child_node.min_size_with_children[dim]);
-            }
+        gui_layout_calculate_min_size(renderer, child_index, dim);
+
+        if (child_node.position.type != GUI_Position_Type::USE_PARENT_LAYOUT) {
+            continue;
+        }
+        if (in_stacking_dimension) {
+            node.min_child_size[dim] += child_node.min_size[dim];
+        }
+        else {
+            node.min_child_size[dim] = math_maximum(node.min_child_size[dim], child_node.min_size[dim]);
         }
     }
 
-    // Add padding and own minimum size
-    for (int dim = 0; dim < 2; dim++) {
-        node.min_size_with_children[dim] = math_maximum(
-            node.min_size_with_children[dim] + node.layout.padding[dim] * 2.0f,
-            node.size.min_size[dim]
-        );
+    // Calculate min size
+    if (node.size[dim].fit_at_least_children) {
+        node.min_size[dim] = math_maximum(node.size[dim].min_size, node.min_child_size[dim] + node.layout.padding[dim] * 2.0f);
+    }
+    else {
+        node.min_size[dim] = node.size[dim].min_size;
     }
 }
 
-void gui_layout_layout_children(GUI_Renderer* renderer, int node_index)
+void gui_layout_layout_children(GUI_Renderer* renderer, int node_index, int dim)
 {
     auto& nodes = renderer->nodes;
     auto& node = nodes[node_index];
     auto& layout = node.layout;
 
-    // Set my own size if i'm an absolute unit, otherwise it was set by parent (Note: This is slightly confusing because root also needs to work)
-    if (node.size.is_absolute) {
-        node.bounding_box = node.size.absolute_box;
+    // Size is set by parent at this point
+    float node_size;
+    float node_pos;
+    if (dim == 0) {
+        node_size = node.bounding_box.max.x - node.bounding_box.min.x;
+        node_pos = node.bounding_box.min.x;
     }
-    const float my_size[2] = { node.bounding_box.max.x - node.bounding_box.min.x, node.bounding_box.max.y - node.bounding_box.min.y };
+    else {
+        node_size = node.bounding_box.max.y - node.bounding_box.min.y;
+        node_pos = node.bounding_box.min.y;
+    }
 
     // Calculated clipped bounding box
     if (node.index_parent != -1) {
@@ -520,100 +556,182 @@ void gui_layout_layout_children(GUI_Renderer* renderer, int node_index)
         node.clipped_box = optional_make_success(node.bounding_box);
     }
 
+    // Check if we need to calculate fill
+    bool in_stack_dimension = false;
+    if (node.layout.layout_type != GUI_Layout_Type::LAYERED) {
+        int stack_dimension = node.layout.layout_type == GUI_Layout_Type::STACK_HORIZONTAL ? 0 : 1;
+        in_stack_dimension = dim == stack_dimension;
+    }
+
     // Calculate additional size for all fill children
     bool size_for_fill_available = false;
     float size_for_fill = 0.0f;
+    const float available_size = node_size - 2.0f * node.layout.padding[dim];
+    if (in_stack_dimension && available_size - node.min_child_size[dim] > 0) // Only calculate if there is actually space for filling
     {
-        // Get number of children who want to fill in stacking direction
-        int fill_child_count = 0;
-        int child_index = node.index_first_child;
         float non_fill_size = 0.0f;
+        Dynamic_Array<int> fill_childs = dynamic_array_create_empty<int>(4);
+        SCOPE_EXIT(dynamic_array_destroy(&fill_childs));
+
+        // Get number of children who want to fill in stacking direction
+        int child_index = node.index_first_child;
         while (child_index != -1) {
             auto& child_node = nodes[child_index];
             SCOPE_EXIT(child_index = child_node.index_next_node);
-            if (child_node.size.is_absolute) {
+            if (child_node.position.type != GUI_Position_Type::USE_PARENT_LAYOUT) {
                 continue;
             }
-            if (child_node.size.fill[layout.stack_dimension]) {
-                fill_child_count += 1;
+
+            if (child_node.size[dim].fill) {
+                dynamic_array_push_back(&fill_childs, child_index);
             }
             else {
-                non_fill_size += child_node.min_size_with_children[layout.stack_dimension];
+                non_fill_size += child_node.min_size[dim];
             }
         }
 
-        if (my_size[layout.stack_dimension] - node.min_size_with_children[layout.stack_dimension] > 0) {
+        // Calculate values for fill-children
+        if (fill_childs.size > 0)
+        {
             size_for_fill_available = true;
-            size_for_fill = (my_size[layout.stack_dimension] - non_fill_size) / fill_child_count;
+            size_for_fill = (available_size - non_fill_size) / fill_childs.size;
+
+            // Loop over fill children until we have enough space for all
+            float full_combined_size = 0.0f;
+            float min_size_for_fill = 0.0f;
+            int max_full_count = 0;
+            int full_count = 0;
+            for (int i = 0; i < fill_childs.size; i++)
+            {
+                auto& child_node = nodes[fill_childs[i]];
+                float min_size = child_node.min_size[dim];
+                if (min_size > size_for_fill) {
+                    full_count += 1;
+                    full_combined_size += min_size;
+                }
+                else {
+                    min_size_for_fill = math_maximum(min_size_for_fill, min_size);
+                }
+
+                if (full_count > max_full_count) {
+                    max_full_count = full_count;
+                    size_for_fill = (available_size - non_fill_size - full_combined_size) / (fill_childs.size - full_count);
+
+                    // Restart with new size_for_fill
+                    if (size_for_fill < min_size_for_fill) {
+                        i = -1; // Restart loop at 0;
+                        full_count = 0;
+                        full_combined_size = 0.0f;
+                        min_size_for_fill = 0.0f;
+                    }
+                }
+            }
         }
     }
 
-    // Set bounding_boxes for all children
-    const float stack_sign = layout.stack_dimension == 0 ? +1.0f : -1.0f; // Stack downward if we stack in y
-    float stack_cursor = layout.stack_dimension == 0 ? node.bounding_box.min.x : node.bounding_box.max.y;
-    stack_cursor += layout.padding[layout.stack_dimension] * stack_sign;
-    const float min[2] = { node.bounding_box.min.x, node.bounding_box.min.y };
-    const float max[2] = { node.bounding_box.max.x, node.bounding_box.max.y };
+    // Setup stack cursor 
+    const float stack_sign = dim == 0 ? +1.0f : -1.0f; // Stack downward if we stack in y
+    float stack_cursor = dim == 0 ? node.bounding_box.min.x : node.bounding_box.max.y;
+    stack_cursor += layout.padding[dim] * stack_sign;
 
+    // Loop over all children and set their position and size
     int child_index = node.index_first_child;
     while (child_index != -1)
     {
         auto& child_node = nodes[child_index];
         SCOPE_EXIT(child_index = child_node.index_next_node);
 
-        // Ignore children with absolute position
-        if (child_node.size.is_absolute) {
-            gui_layout_layout_children(renderer, child_index);
-            continue;
-        }
-
-        // Calculate child size and position
-        float child_size[2];
-        float pos[2];
-        for (int dim = 0; dim < 2; dim++) {
-            // Calculate size
-            child_size[dim] = child_node.min_size_with_children[dim];
-            if (child_node.size.fill[dim] && size_for_fill_available) {
-                if (dim == layout.stack_dimension) {
-                    child_size[dim] = size_for_fill;
+        float child_size = child_node.min_size[dim];
+        if (child_node.size[dim].fill) {
+            if (in_stack_dimension && child_node.position.type == GUI_Position_Type::USE_PARENT_LAYOUT) {
+                if (size_for_fill_available && size_for_fill > child_size) {
+                    child_size = size_for_fill;
                 }
                 else {
-                    child_size[dim] = math_maximum(child_size[dim], my_size[dim] - layout.padding[dim] * 2.0f);
+                    // In this case there is no more space to fill, so just take the minimum value
                 }
-            }
-
-            // Set position
-            if (dim == layout.stack_dimension) {
-                pos[dim] = stack_cursor;
-                if (stack_sign < 0) {
-                    pos[dim] -= child_size[dim];
-                }
-                stack_cursor += child_size[dim] * stack_sign;
             }
             else {
-                if (layout.child_alignment == GUI_Align::MIN) {
-                    pos[dim] = min[dim] + layout.padding[dim];
-                }
-                else if (layout.child_alignment == GUI_Align::CENTER) {
-                    pos[dim] = (min[dim] + max[dim]) / 2.0f - child_size[dim] / 2.0f;
-                }
-                else if (layout.child_alignment == GUI_Align::MAX) {
-                    pos[dim] = max[dim] - layout.padding[dim] - child_size[dim];
-                }
-                else {
-                    panic("Hey");
-                }
+                child_size = math_maximum(child_size, node_size - node.layout.padding[dim] * 2.0f);
             }
         }
 
-        // Position + size to bounding_box
-        child_node.bounding_box.min.x = pos[0];
-        child_node.bounding_box.min.y = pos[1];
-        child_node.bounding_box.max.x = pos[0] + child_size[0];
-        child_node.bounding_box.max.y = pos[1] + child_size[1];
+        // Alignment info if child should be aligned
+        bool align_child = false;
+        GUI_Align final_align = GUI_Align::MIN;
+        float rel_pos = node_pos;
+        float padding = node.layout.padding[dim];
+        float rel_size = node_size;
+        float offset = 0;
+
+        // Check how position should be calculated
+        float child_pos = 0.0f;
+        switch (child_node.position.type)
+        {
+        case GUI_Position_Type::RELATIVE_TO_PARENT:
+        case GUI_Position_Type::RELATIVE_TO_WINDOW: {
+            align_child = true;
+            if (child_node.position.type == GUI_Position_Type::RELATIVE_TO_WINDOW) {
+                rel_pos = 0;
+                auto& info = rendering_core.render_information;
+                rel_size = dim == 0 ? info.backbuffer_width : info.backbuffer_height;
+                padding = 0;
+            }
+
+            offset = (dim == 0 ? child_node.position.offset.x : child_node.position.offset.y);
+            vec2 anchor_dir = anchor_to_direction(child_node.position.anchor);
+            float offset_dir = dim == 0 ? anchor_dir.x : anchor_dir.y;
+            if (offset_dir < -0.1f) {
+                final_align = GUI_Align::MIN;
+            }
+            else if (offset_dir > 0.1f) {
+                final_align = GUI_Align::MAX;
+            }
+            else {
+                final_align = GUI_Align::CENTER;
+            }
+            break;
+        }
+        case GUI_Position_Type::USE_PARENT_LAYOUT: {
+            if (in_stack_dimension) {
+                child_pos = stack_cursor;
+                if (stack_sign < 0.0f) {
+                    child_pos -= child_size;
+                }
+                stack_cursor += child_size * stack_sign;
+            }
+            else {
+                align_child = true;
+                final_align = node.layout.child_alignment;
+            }
+            break;
+        }
+        default: panic("");
+        }
+
+        // Do alignment if requested
+        if (align_child)
+        {
+            switch (final_align)
+            {
+            case GUI_Align::MIN: child_pos = rel_pos + padding + offset; break;
+            case GUI_Align::MAX: child_pos = rel_pos + rel_size - child_size - padding + offset; break;
+            case GUI_Align::CENTER: child_pos = (rel_pos + rel_size / 2.0f) - child_size / 2.0f + offset;
+            }
+        }
+
+        // Set child pos
+        if (dim == 0) {
+            child_node.bounding_box.min.x = child_pos;
+            child_node.bounding_box.max.x = child_pos + child_size;
+        }
+        else {
+            child_node.bounding_box.min.y = child_pos;
+            child_node.bounding_box.max.y = child_pos + child_size;
+        }
 
         // Recurse to all children
-        gui_layout_layout_children(renderer, child_index);
+        gui_layout_layout_children(renderer, child_index, dim);
     }
 }
 
@@ -652,275 +770,6 @@ bool gui_handle_input(GUI_Renderer* renderer, Input* input, int node_index)
     return node.receives_input && mouse_over;
 }
 
-Bounding_Box2 gui_get_node_prev_size(GUI_Renderer* renderer, GUI_Handle handle) {
-    return renderer->nodes[handle.index].bounding_box;
-}
-
-
-template<typename T>
-T* gui_store_primitive(GUI_Renderer* renderer, GUI_Handle parent_handle, T default_value) {
-    auto node_handle = gui_push_dummy(renderer, parent_handle);
-    if (node_handle.userdata == 0) {
-        T* new_value = new T;
-        *new_value = default_value;
-        gui_set_userdata(
-            renderer, node_handle, (void*)new_value,
-            [](void* data) -> void {
-                T* typed_data = (T*)data;
-                delete typed_data;
-            }
-        );
-        return new_value;
-    }
-    return (T*)node_handle.userdata;
-}
-
-void gui_push_text(GUI_Renderer* renderer, GUI_Handle parent_handle, String text, float text_height_cm = .5f, vec4 color = vec4(0.0f, 0.0f, 0.0f, 1.0f))
-{
-    const float char_height = convertHeight(text_height_cm, Unit::CENTIMETER);
-    const float char_width = text_renderer_line_width(renderer->text_renderer, char_height, 1) + 0.01f;
-    gui_add_node(
-        renderer, parent_handle,
-        gui_layout_make(),
-        gui_size_make_min(vec2(char_width * text.size, char_height)),
-        gui_drawable_make_text(text, color),
-        false
-    );
-}
-
-struct GUI_Window_Info
-{
-    vec2 pos;
-    vec2 size;
-
-    bool drag_started;
-    vec2 drag_start_mouse;
-    vec2 drag_start_pos;
-    vec2 drag_start_size;
-
-    bool move;
-    bool resize_right;
-    bool resize_left;
-    bool resize_top;
-    bool resize_bottom;
-};
-
-GUI_Handle gui_push_window(GUI_Renderer* renderer, GUI_Handle parent_handle, Input* input, const char* name, 
-    vec2 initial_pos = convertPoint(vec2(0.0f), Unit::NORMALIZED_SCREEN), vec2 initial_size = vec2(300, 500), Anchor initial_anchor = Anchor::CENTER_CENTER)
-{
-    // Get window info
-    GUI_Window_Info* info = 0;
-    {
-        GUI_Window_Info initial_info;
-        initial_info.drag_started = false;
-        initial_info.pos = anchor_switch(initial_pos, initial_size, initial_anchor, Anchor::BOTTOM_LEFT);
-        initial_info.size = initial_size;
-        initial_info.drag_started = false;
-        initial_info.move = false;
-        initial_info.resize_bottom = false;
-        initial_info.resize_top = false;
-        initial_info.resize_left = false;
-        initial_info.resize_right = false;
-        info = gui_store_primitive<GUI_Window_Info>(renderer, parent_handle, initial_info);
-    }
-
-    // Create gui nodes
-    auto window_handle = gui_add_node(
-        renderer, parent_handle, gui_layout_make(), 
-        gui_size_make_absolute(bounding_box_2_make_anchor(info->pos, info->size, Anchor::BOTTOM_LEFT)),
-        gui_drawable_make_none(), true);
-    auto header_handle = gui_add_node(
-        renderer, window_handle,
-        gui_layout_make(false, GUI_Align::MIN, vec2(3)),
-        gui_size_make_fill(true, false),
-        gui_drawable_make_rect(vec4(0.3f, 0.3f, 1.0f, 1.0f)),
-        true
-    );
-    gui_push_text(renderer, header_handle, string_create_static(name));
-    auto client_area = gui_add_node(renderer, window_handle, gui_layout_make(), gui_size_make_fill(true, true), gui_drawable_make_rect(vec4(1.0f)), false);
-
-    // Handle user interaction
-    bool mouse_down = input->mouse_down[(int)Mouse_Key_Code::LEFT];
-    vec2 mouse_pos = vec2((float)input->mouse_x, rendering_core.render_information.backbuffer_height - input->mouse_y);
-    
-    if (!mouse_down && info->drag_started) {
-        info->drag_started = false;
-        info->move = false;
-        info->resize_right = false;
-        info->resize_left = false;
-        info->resize_bottom = false;
-        info->resize_top = false;
-        window_set_cursor_constrain(renderer->window, false);
-    }
-
-    // Check for drag start
-    auto window_bb = gui_get_node_prev_size(renderer, window_handle);
-    const float interaction_distance = 5;
-
-    const bool right_border = math_absolute(mouse_pos.x - window_bb.max.x) < interaction_distance;
-    const bool left_border = math_absolute(mouse_pos.x - window_bb.min.x) < interaction_distance && !right_border;
-    const bool bottom_border = math_absolute(mouse_pos.y - window_bb.min.y) < interaction_distance;
-    const bool top_border = math_absolute(mouse_pos.y - window_bb.max.y) < interaction_distance && !bottom_border;
-
-    // Set cursor correctly
-    if (window_handle.mouse_hover || header_handle.mouse_hover)
-    {
-        // Handle scrolling icon
-        bool left = info->drag_started ? info->resize_left : left_border;
-        bool right = info->drag_started ? info->resize_right : right_border;
-        bool top = info->drag_started ? info->resize_top : top_border;
-        bool bot = info->drag_started ? info->resize_bottom : bottom_border;
-
-        if (bot) {
-            if (left) {
-                renderer->cursor_type = Cursor_Icon_Type::SIZE_NORTHEAST;
-            }
-            else if (right) {
-                renderer->cursor_type = Cursor_Icon_Type::SIZE_SOUTHEAST;
-            }
-            else {
-                renderer->cursor_type = Cursor_Icon_Type::SIZE_VERTICAL;
-            }
-        }
-        else if (top) {
-            if (left) {
-                renderer->cursor_type = Cursor_Icon_Type::SIZE_SOUTHEAST;
-            }
-            else if (right) {
-                renderer->cursor_type = Cursor_Icon_Type::SIZE_NORTHEAST;
-            }
-            else {
-                renderer->cursor_type = Cursor_Icon_Type::SIZE_VERTICAL;
-            }
-        }
-        else if (left || right) {
-            renderer->cursor_type = Cursor_Icon_Type::SIZE_HORIZONTAL;
-        }
-    }
-
-    // Check if drag-and-drop is happening
-    if (info->drag_started)
-    {
-        vec2 new_pos = info->pos;
-        vec2 new_size = info->size;
-        if (info->move) {
-            new_pos = info->drag_start_pos + (mouse_pos - info->drag_start_mouse);
-        }
-        else
-        {
-            if (info->resize_right) {
-                new_size.x = math_maximum(10.0f, info->drag_start_size.x + (mouse_pos.x - info->drag_start_mouse.x));
-            }
-            else if (info->resize_left) {
-                new_size.x = math_maximum(10.0f, info->drag_start_size.x - (mouse_pos.x - info->drag_start_mouse.x));
-                new_pos.x = info->drag_start_pos.x + (mouse_pos - info->drag_start_mouse).x;
-            }
-            if (info->resize_top) {
-                new_size.y = math_maximum(10.0f, info->drag_start_size.y + (mouse_pos.y - info->drag_start_mouse.y));
-            }
-            else if (info->resize_bottom) {
-                new_size.y = math_maximum(10.0f, info->drag_start_size.y - (mouse_pos.y - info->drag_start_mouse.y));
-                new_pos.y = info->drag_start_pos.y + (mouse_pos - info->drag_start_mouse).y;
-            }
-        }
-        info->pos = new_pos;
-        info->size = new_size;
-        gui_set_size(renderer, window_handle, gui_size_make_absolute(bounding_box_2_make_anchor(info->pos, info->size, Anchor::BOTTOM_LEFT)));
-        window_set_cursor_constrain(renderer->window, true);
-    }
-    else if (mouse_down && (window_handle.mouse_hover || header_handle.mouse_hover))
-    {
-        if (right_border) {
-            info->drag_started = true;
-            info->resize_right = true;
-        }
-        else if (left_border) {
-            info->drag_started = true;
-            info->resize_left = true;
-        }
-        if (bottom_border) {
-            info->drag_started = true;
-            info->resize_bottom = true;
-        }
-        else if (top_border) {
-            info->drag_started = true;
-            info->resize_top = true;
-        }
-
-        if (!info->drag_started && header_handle.mouse_hover) {
-            info->drag_started = true;
-            info->move = true;
-        }
-
-        if (info->drag_started) {
-            info->drag_start_pos = info->pos;
-            info->drag_start_size = info->size;
-            info->drag_start_mouse = mouse_pos;
-        }
-    }
-
-    return client_area;
-}
-
-bool gui_push_button(GUI_Renderer* renderer, GUI_Handle parent_handle, Input* input, String text)
-{
-    const vec4 border_color = vec4(vec3(0.2f), 1.0f); // Some shade of gray
-    const vec4 normal_color = vec4(vec3(0.8f), 1.0f); // Some shade of gray
-    const vec4 hover_color = vec4(vec3(0.5f), 1.0f); // Some shade of gray
-    auto border = gui_add_node(
-        renderer, parent_handle, gui_layout_make(false, GUI_Align::MIN, vec2(1.2f)),
-        gui_size_make_min(vec2(0.0f)), gui_drawable_make_rect(border_color), false
-    );
-    auto button = gui_add_node(
-        renderer, border, gui_layout_make(false, GUI_Align::CENTER, vec2(1.0f)), gui_size_make_min(vec2(convertWidth(1.0f, Unit::CENTIMETER), 0.0f)),
-        gui_drawable_make_rect(normal_color), true
-    );
-    if (button.mouse_hover) {
-        gui_set_drawable(renderer, button, gui_drawable_make_rect(hover_color));
-    }
-    gui_push_text(renderer, button, text);
-    return button.mouse_hover && input->mouse_pressed[(int)Mouse_Key_Code::LEFT];
-}
-
-GUI_Handle gui_push_dummy(GUI_Renderer* renderer, GUI_Handle parent_handle) {
-    return gui_add_node(
-        renderer, parent_handle, gui_layout_make(),
-        gui_size_make_absolute(bounding_box_2_make_min_max(vec2(-10.0f), vec2(-10.0f))),
-        gui_drawable_make_none(), false);
-}
-
-// Returns true if the value was toggled
-bool gui_push_toggle(GUI_Renderer* renderer, GUI_Handle parent_handle, Input* input, bool* value)
-{
-    const vec4 border_color = vec4(vec3(0.1f), 1.0f); // Some shade of gray
-    const vec4 normal_color = vec4(vec3(0.8f), 1.0f); // Some shade of gray
-    const vec4 hover_color = vec4(vec3(0.5f), 1.0f); // Some shade of gray
-    float height = convertHeight(.4f, Unit::CENTIMETER);
-    auto border = gui_add_node(
-        renderer, parent_handle, gui_layout_make(false, GUI_Align::CENTER, vec2(1.5f)),
-        gui_size_make_min(vec2(0.0f)), gui_drawable_make_rect(border_color), true
-    );
-    auto center = gui_add_node(
-        renderer, border, gui_layout_make(false, GUI_Align::CENTER, vec2(0.0f)),
-        gui_size_make_min(vec2(height)),
-        gui_drawable_make_rect(hover_color), false
-    );
-    bool pressed = false;
-    if (border.mouse_hover) {
-        gui_set_drawable(renderer, center, gui_drawable_make_rect(hover_color));
-        pressed = input->mouse_pressed[(int)Mouse_Key_Code::LEFT];
-    }
-    if (pressed) {
-        *value = !*value;
-    }
-    if (*value) {
-        gui_push_text(renderer, center, string_create_static("x"), .4f, vec4(1.0f, 0.0f, 0.0f, 1.0f));
-    }
-    return pressed;
-}
-
-
-
 struct GUI_Dependency
 {
     int dependency_count;
@@ -929,139 +778,45 @@ struct GUI_Dependency
     Dynamic_Array<int> dependents_waiting_on_child_finish;
 };
 
+void gui_append_to_string(GUI_Renderer* renderer, String* append_to, int indentation_level, int node_index)
+{
+    auto& nodes = renderer->nodes;
+    auto& node = nodes[node_index];
+
+    for (int i = 0; i < indentation_level; i++) {
+        string_append_formated(append_to, "  ");
+    }
+
+    bool print_bb = true;
+    bool print_layout = true;
+
+    string_append_formated(append_to, "#%d: ", node_index);
+    if (print_bb) {
+        auto bb = node.bounding_box;
+        if (!node.clipped_box.available) {
+            string_append_formated(append_to, "CLIPPED");
+        }
+        else {
+            string_append_formated(append_to, "(%4.0f, %4.0f)", bb.max.x - bb.min.x, bb.max.y - bb.min.y);
+        }
+    }
+
+    string_append(append_to, "\n");
+    {
+        int child_index = node.index_first_child;
+        while (child_index != -1) {
+            auto& child_node = nodes[child_index];
+            SCOPE_EXIT(child_index = child_node.index_next_node);
+            gui_append_to_string(renderer, append_to, indentation_level + 1, child_index);
+        }
+    }
+}
+
 void gui_update(GUI_Renderer* renderer, Input* input)
 {
     auto& core = rendering_core;
     auto& pre = core.predefined;
-
-    if (false)
-    {
-        static bool toggle = false;
-        if (input->key_pressed[(int)Key_Code::T]) {
-            toggle = !toggle;
-            logg("Toggle switched to: %s\n", toggle ? "true" : "false");
-        }
-        // auto window = gui_add_node(renderer, renderer->root_handle, gui_layout_make(),
-        //     gui_size_make_absolute(bounding_box_2_make_anchor(convertPoint(vec2(0.0f), Unit::NORMALIZED_SCREEN), vec2(400), Anchor::CENTER_CENTER)),
-        //     gui_drawable_make_rect(vec4(1.0f, 0.0f, 1.0f, 1.0f)),
-        //     false
-        // );
-        auto window = gui_push_window(renderer, renderer->root_handle, input, "Window");
-        if (toggle) {
-            gui_push_text(renderer, window, string_create_static("Hello"));
-            gui_add_node(renderer, window, gui_layout_make(),
-                gui_size_make_absolute(bounding_box_2_make_anchor(convertPoint(vec2(0.0f), Unit::NORMALIZED_SCREEN), vec2(200), Anchor::CENTER_CENTER)),
-                gui_drawable_make_rect(vec4(0.0f, 1.0f, 1.0f, 1.0f)),
-                false
-            );
-        }
-    }
-
-    // Generating UI (User code mockup, this will be somewhere else later)
-    if (true)
-    {
-        // Make the rectangle a constant pixel size:
-        int pixel_width = 100;
-        int pixel_height = 100;
-
-        const vec4 white = vec4(1.0f);
-        const vec4 black = vec4(vec3(0.0f), 1.0f);
-        const vec4 red = vec4(vec3(1, 0, 0), 1.0f);
-        const vec4 green = vec4(vec3(0, 1, 0), 1.0f);
-        const vec4 blue = vec4(vec3(0, 0, 1), 1.0f);
-        const vec4 cyan = vec4(vec3(0, 1, 1), 1.0f);
-        const vec4 yellow = vec4(vec3(1, 1, 0), 1.0f);
-        const vec4 magenta = vec4(vec3(1, 0, 1), 1.0f);
-        const vec4 gray = vec4(vec3(0.3f), 1.0f);
-
-        auto window = gui_push_window(renderer, renderer->root_handle, input, "Test window");
-        auto space = gui_add_node(renderer, window, gui_layout_make(false, GUI_Align::CENTER), gui_size_make_fill(true, true), gui_drawable_make_rect(cyan), false);
-        bool* value = gui_store_primitive<bool>(renderer, space, false);
-        gui_push_toggle(renderer, space, input, value);
-        if (*value) {
-            bool pressed = gui_push_button(renderer, space, input, string_create_static("Press me!"));
-            int* value = gui_store_primitive<int>(renderer, space, 0);
-            if (pressed) {
-                *value += 1;
-            }
-            String tmp = string_create_formated("%d", *value);
-            SCOPE_EXIT(string_destroy(&tmp));
-            gui_push_text(renderer, space, tmp);
-        }
-
-        auto right_align = gui_add_node(renderer, window, gui_layout_make(false, GUI_Align::MAX), gui_size_make_fill(true, false), gui_drawable_make_none(), false);
-        gui_push_text(renderer, right_align, string_create_static("Dis is da dext"));
-        auto vertical = gui_add_node(renderer, window, gui_layout_make(true), gui_size_make_fill(true, true), gui_drawable_make_none(), false);
-        gui_add_node(renderer, vertical, gui_layout_make(), gui_size_make_fill(true, true), gui_drawable_make_rect(gray), false);
-        gui_add_node(renderer, vertical, gui_layout_make(), gui_size_make_fill(true, true), gui_drawable_make_rect(yellow), false);
-        auto center = gui_add_node(renderer, window, gui_layout_make(false, GUI_Align::CENTER), gui_size_make_fill(true, false), gui_drawable_make_none(), false);
-        gui_push_text(renderer, center, string_create_static("Da degst 2"));
-        gui_add_node(renderer, window, gui_layout_make(), gui_size_make_fill(true, true), gui_drawable_make_rect(magenta), false);
-        gui_push_text(renderer, window, string_create_static("Da degst 3"));
-
-
-        // Add centered text
-        // gui_push_text(renderer, window, string_create_static("Hello there"));
-        // auto tmp = string_create_static("Long text that, lorem ipsum");
-        // auto center = gui_add_node(renderer, window, gui_layout_make(false, GUI_Align::CENTER), gui_size_make_fill(true, false), gui_drawable_make_none());
-        // gui_push_text(renderer, center, tmp, 1.3f);
-
-        // gui_push_text(renderer, window, string_create_static("Hello there"), 0.4f, gray);
-        // gui_push_text(renderer, window, string_create_static("This is a new item"), 0.4f, gray);
-        // auto container = gui_push_container(renderer, window, true);
-        // gui_push_text(renderer, container, string_create_static("Where"), 0.4f, gray);
-        // gui_push_text(renderer, container, string_create_static("Am I"), 0.4f, green);
-
-        // {
-        //     float t = rendering_core.render_information.current_time_in_seconds;
-        //     t += 20.0f;
-        //     if (t < 1.0f) {
-        //         t = 0;
-        //     }
-        //     else {
-        //         t = t - 1;
-        //     }
-
-        //     float remaining = 10 - t;
-        //     gui_push_text(renderer, window, string_create_static(""), 0.4f, gray); // Placeholder
-        //     String tmp = string_create_formated("%3.1f", remaining);
-        //     SCOPE_EXIT(string_destroy(&tmp));
-
-        //     vec4 color = red;
-        //     if (remaining < 0.0f) {
-        //         string_set_characters(&tmp, "Get Pranked, lol");
-        //         color = magenta;
-        //     }
-
-        //     auto layout = gui_layout_default(false, Anchor::CENTER_CENTER);
-        //     auto center = gui_add_node(renderer, window, layout, white, GUI_Draw_Type::NONE, string_create_static(""));
-        //     gui_push_text(renderer, center, tmp, 1.3f, color);
-        // }
-
-        // gui_new_window(renderer, "Longer Test1");
-        // gui_push_label(renderer, string_create_static("Hello there"));
-        // gui_push_label(renderer, string_create_static("General Kenobi!"));
-        // gui_new_window(renderer, "Faster Test2");
-
-        // vec2 pos = convertPoint(vec2(0.0f), Unit::NORMALIZED_SCREEN);
-        // vec2 size = convertSize(vec2(1.0f), Unit::CENTIMETER);
-
-        // primitive_renderer_add_rectangle(
-        //   , renderer->primitive_renderer, bounding_box_2_make_anchor(pos, size, Anchor::BOTTOM_LEFT), red
-        // );
-        // gui_draw_text_cutoff(renderer, string_create_static("Hellow orld"), pos, Anchor::BOTTOM_LEFT, size, vec3(1.0f));
-        // primitive_renderer_add_text(renderer->primitive_renderer, string_create_static("Asdfasdf"), pos, Anchor::CENTER_CENTER, size.y * 0.8f, magenta);
-        // primitive_renderer_add_rectangle(
-        //     renderer->primitive_renderer, bounding_box_2_make_anchor(pos, size, Anchor::CENTER_CENTER), blue
-        // );
-
-
-        // pos.x += size.x * 2.0f;
-        // primitive_renderer_add_rectangle(
-        //     renderer->primitive_renderer, bounding_box_2_make_anchor(pos, size, Anchor::BOTTOM_LEFT), green
-        // );
-
-    }
+    auto& info = core.render_information;
 
     // Remove nodes from last frame
     {
@@ -1092,18 +847,36 @@ void gui_update(GUI_Renderer* renderer, Input* input)
     // Layout UI
     {
         auto& nodes = renderer->nodes;
-        assert(nodes[0].size.is_absolute, "Root must be absolute!");
-        nodes[0].size.absolute_box = bounding_box_2_make_anchor(vec2(0.0f), convertSize(vec2(2.0f), Unit::NORMALIZED_SCREEN), Anchor::BOTTOM_LEFT);
 
-        gui_layout_calculate_min_size(renderer, 0);
-        gui_layout_layout_children(renderer, 0);
+        // Set root to windows size
+        nodes[0].size[0] = gui_size_make(info.backbuffer_width, false, false);
+        nodes[0].size[1] = gui_size_make(info.backbuffer_height, false, false);
+        nodes[0].bounding_box.min = vec2(0.0f);
+        nodes[0].bounding_box.max = vec2(info.backbuffer_width, info.backbuffer_height);
+
+        // Calculate layout
+        gui_layout_calculate_min_size(renderer, 0, 0);
+        gui_layout_calculate_min_size(renderer, 0, 1);
+        gui_layout_layout_children(renderer, 0, 0);
+        gui_layout_layout_children(renderer, 0, 1);
+    }
+
+    if (input->key_pressed[(int)Key_Code::P]) {
+        String str = string_create_empty(1);
+        SCOPE_EXIT(string_destroy(&str));
+        gui_append_to_string(renderer, &str, 0, 0);
+        logg("%s\n\n", str.characters);
     }
 
     // Handle input
     gui_handle_input(renderer, input, 0);
 
     // Handle cursor
-    window_set_cursor_icon(renderer->window, renderer->cursor_type);
+    static Cursor_Icon_Type last_icon_type = Cursor_Icon_Type::ARROW;
+    if (last_icon_type != renderer->cursor_type) {
+        window_set_cursor_icon(renderer->window, renderer->cursor_type);
+        last_icon_type = renderer->cursor_type;
+    }
     renderer->cursor_type = Cursor_Icon_Type::ARROW; // Cursor needs to be set each frame, otherwise it defaults to Arrow
 
     // Render UI
@@ -1327,6 +1100,676 @@ void gui_update(GUI_Renderer* renderer, Input* input)
 
 
 
+
+// Setters and getters for outside input
+void gui_set_userdata(GUI_Renderer* renderer, GUI_Handle& handle, void* userdata, gui_userdata_destroy_fn destroy_fn) {
+    if (handle.index == 0) {
+        panic("Cannot update root node!");
+    }
+    auto& node = renderer->nodes[handle.index];
+    if (node.userdata != 0) {
+        assert(node.userdata_destroy_fn != 0, "Since userdata should always be allocated dynamically, there should always be a destroy!");
+        node.userdata_destroy_fn(node.userdata);
+    }
+    node.userdata = userdata;
+    node.userdata_destroy_fn = destroy_fn;
+    handle.userdata = userdata;
+}
+
+void gui_set_drawable(GUI_Renderer* renderer, GUI_Handle handle, GUI_Drawable drawable) {
+    if (handle.index == 0) {
+        panic("Cannot update root node!");
+    }
+    renderer->nodes[handle.index].drawable = drawable;
+}
+
+void gui_set_size(GUI_Renderer* renderer, GUI_Handle handle, GUI_Size size_x, GUI_Size size_y) {
+    if (handle.index == 0) {
+        panic("Cannot update root node!");
+    }
+    renderer->nodes[handle.index].size[0] = size_x;
+    renderer->nodes[handle.index].size[1] = size_y;
+}
+
+void gui_set_position(GUI_Renderer* renderer, GUI_Handle handle, GUI_Position pos) {
+    if (handle.index == 0) {
+        panic("Cannot update root node!");
+    }
+    renderer->nodes[handle.index].position = pos;
+}
+
+void gui_set_layout(GUI_Renderer* renderer, GUI_Handle handle, GUI_Layout layout) {
+    if (handle.index == 0) {
+        panic("Cannot update root node!");
+    }
+    renderer->nodes[handle.index].layout = layout;
+}
+
+Bounding_Box2 gui_get_node_prev_size(GUI_Renderer* renderer, GUI_Handle handle) {
+    return renderer->nodes[handle.index].bounding_box;
+}
+
+template<typename T>
+T* gui_store_primitive(GUI_Renderer* renderer, GUI_Handle parent_handle, T default_value) {
+    auto node_handle = gui_push_dummy(renderer, parent_handle);
+    if (node_handle.userdata == 0) {
+        T* new_value = new T;
+        *new_value = default_value;
+        gui_set_userdata(
+            renderer, node_handle, (void*)new_value,
+            [](void* data) -> void {
+                T* typed_data = (T*)data;
+                delete typed_data;
+            }
+        );
+        return new_value;
+    }
+    return (T*)node_handle.userdata;
+}
+
+
+
+// Predefined GUI objects
+void gui_push_text(GUI_Renderer* renderer, GUI_Handle parent_handle, String text, float text_height_cm = .5f, vec4 color = vec4(0.0f, 0.0f, 0.0f, 1.0f))
+{
+    const float char_height = convertHeight(text_height_cm, Unit::CENTIMETER);
+    const float char_width = text_renderer_line_width(renderer->text_renderer, char_height, 1) + 0.01f;
+    gui_add_node(
+        renderer, parent_handle,
+        gui_size_make_fixed(char_width * text.size),
+        gui_size_make_fixed(char_height),
+        gui_position_make_parent_layout(),
+        gui_layout_make_layered(),
+        gui_drawable_make_text(text, color),
+        false
+    );
+}
+
+struct GUI_Window_Info
+{
+    vec2 pos;
+    vec2 size;
+
+    bool drag_started;
+    vec2 drag_start_mouse;
+    vec2 drag_start_pos;
+    vec2 drag_start_size;
+
+    bool move;
+    bool resize_right;
+    bool resize_left;
+    bool resize_top;
+    bool resize_bottom;
+};
+
+GUI_Handle gui_push_window(GUI_Renderer* renderer, GUI_Handle parent_handle, Input* input, const char* name,
+    vec2 initial_pos = convertPoint(vec2(0.0f), Unit::NORMALIZED_SCREEN), vec2 initial_size = vec2(300, 500), Anchor initial_anchor = Anchor::CENTER_CENTER)
+{
+    // Get window info
+    GUI_Window_Info* info = 0;
+    {
+        GUI_Window_Info initial_info;
+        initial_info.drag_started = false;
+        initial_info.pos = anchor_switch(initial_pos, initial_size, initial_anchor, Anchor::BOTTOM_LEFT);
+        initial_info.size = initial_size;
+        initial_info.drag_started = false;
+        initial_info.move = false;
+        initial_info.resize_bottom = false;
+        initial_info.resize_top = false;
+        initial_info.resize_left = false;
+        initial_info.resize_right = false;
+        info = gui_store_primitive<GUI_Window_Info>(renderer, parent_handle, initial_info);
+    }
+
+    if (input->client_area_resized) {
+        auto& pos = info->pos;
+        auto& size = info->size;
+        vec2 client_area = vec2(rendering_core.render_information.backbuffer_width, rendering_core.render_information.backbuffer_height);
+
+        size.x = math_minimum(size.x, client_area.x);
+        size.y = math_minimum(size.y, client_area.y);
+        pos.x = math_clamp(pos.x, 0.0f, client_area.x - size.x);
+        pos.y = math_clamp(pos.y, 0.0f, client_area.y - size.y);
+    }
+
+    // Create gui nodes
+    auto window_handle = gui_add_node(
+        renderer, parent_handle,
+        gui_size_make_fixed(info->size.x),
+        gui_size_make_fixed(info->size.y),
+        gui_position_make_relative(info->pos, Anchor::BOTTOM_LEFT),
+        gui_layout_make_stacked(),
+        gui_drawable_make_rect(vec4(0.5f)),
+        true);
+    auto header_handle = gui_add_node(
+        renderer, window_handle,
+        gui_size_make_fill(true, false),
+        gui_size_make_fit(),
+        gui_position_make_parent_layout(),
+        gui_layout_make_stacked(true, GUI_Align::MIN, vec2(3)),
+        gui_drawable_make_rect(vec4(0.3f, 0.3f, 1.0f, 1.0f)),
+        true
+    );
+    gui_push_text(renderer, header_handle, string_create_static(name));
+    auto client_area = gui_add_node(
+        renderer, window_handle,
+        gui_size_make_fill(),
+        gui_size_make_fill(),
+        gui_position_make_parent_layout(),
+        gui_layout_make_stacked(),
+        gui_drawable_make_rect(vec4(1.0f)),
+        false
+    );
+
+    // Handle user interaction
+    bool mouse_down = input->mouse_down[(int)Mouse_Key_Code::LEFT];
+    bool mouse_pressed = input->mouse_pressed[(int)Mouse_Key_Code::LEFT];
+    vec2 mouse_pos = vec2((float)input->mouse_x, rendering_core.render_information.backbuffer_height - input->mouse_y);
+
+    if (!mouse_down && info->drag_started) {
+        info->drag_started = false;
+        info->move = false;
+        info->resize_right = false;
+        info->resize_left = false;
+        info->resize_bottom = false;
+        info->resize_top = false;
+        window_set_cursor_constrain(renderer->window, false);
+    }
+
+    // Check for drag start
+    auto window_bb = gui_get_node_prev_size(renderer, window_handle);
+    const float interaction_distance = 5;
+
+    const bool right_border = math_absolute(mouse_pos.x - window_bb.max.x) < interaction_distance;
+    const bool left_border = math_absolute(mouse_pos.x - window_bb.min.x) < interaction_distance && !right_border;
+    const bool bottom_border = math_absolute(mouse_pos.y - window_bb.min.y) < interaction_distance;
+    const bool top_border = math_absolute(mouse_pos.y - window_bb.max.y) < interaction_distance && !bottom_border;
+
+    // Set cursor icon for scrolling
+    if (window_handle.mouse_hover || header_handle.mouse_hover)
+    {
+        // Handle scrolling icon
+        bool left = info->drag_started ? info->resize_left : left_border;
+        bool right = info->drag_started ? info->resize_right : right_border;
+        bool top = info->drag_started ? info->resize_top : top_border;
+        bool bot = info->drag_started ? info->resize_bottom : bottom_border;
+
+        if (bot) {
+            if (left) {
+                renderer->cursor_type = Cursor_Icon_Type::SIZE_NORTHEAST;
+            }
+            else if (right) {
+                renderer->cursor_type = Cursor_Icon_Type::SIZE_SOUTHEAST;
+            }
+            else {
+                renderer->cursor_type = Cursor_Icon_Type::SIZE_VERTICAL;
+            }
+        }
+        else if (top) {
+            if (left) {
+                renderer->cursor_type = Cursor_Icon_Type::SIZE_SOUTHEAST;
+            }
+            else if (right) {
+                renderer->cursor_type = Cursor_Icon_Type::SIZE_NORTHEAST;
+            }
+            else {
+                renderer->cursor_type = Cursor_Icon_Type::SIZE_VERTICAL;
+            }
+        }
+        else if (left || right) {
+            renderer->cursor_type = Cursor_Icon_Type::SIZE_HORIZONTAL;
+        }
+    }
+
+    // Check if drag-and-drop is happening
+    if (info->drag_started)
+    {
+        bool tmp = input->key_down[(int)Key_Code::B];
+        vec2 new_pos = info->pos;
+        vec2 new_size = info->size;
+        if (info->move) {
+            new_pos = info->drag_start_pos + (mouse_pos - info->drag_start_mouse);
+            // Restrict movement so we cant move windows out of the window
+            auto info = rendering_core.render_information;
+            new_pos.x = math_maximum(new_pos.x, 0.0f);
+            new_pos.y = math_maximum(new_pos.y, 0.0f);
+            new_pos.x = math_minimum(new_pos.x, info.backbuffer_width - new_size.x);
+            new_pos.y = math_minimum(new_pos.y, info.backbuffer_height - new_size.y);
+        }
+        else
+        {
+            if (info->resize_right) {
+                new_size.x = math_maximum(10.0f, info->drag_start_size.x + (mouse_pos.x - info->drag_start_mouse.x));
+            }
+            else if (info->resize_left) {
+                new_size.x = math_maximum(10.0f, info->drag_start_size.x - (mouse_pos.x - info->drag_start_mouse.x));
+                new_pos.x = info->drag_start_pos.x + (mouse_pos - info->drag_start_mouse).x;
+                if (new_size.x != 10.0f) {
+                    new_pos.x = info->drag_start_pos.x + (mouse_pos - info->drag_start_mouse).x;
+                }
+                else {
+                    new_pos.x = info->drag_start_pos.x + info->drag_start_size.x - 10.0f;
+                }
+            }
+            if (info->resize_top) {
+                new_size.y = math_maximum(10.0f, info->drag_start_size.y + (mouse_pos.y - info->drag_start_mouse.y));
+            }
+            else if (info->resize_bottom) {
+                new_size.y = math_maximum(10.0f, info->drag_start_size.y - (mouse_pos.y - info->drag_start_mouse.y));
+                if (new_size.y != 10.0f) {
+                    new_pos.y = info->drag_start_pos.y + (mouse_pos - info->drag_start_mouse).y;
+                }
+                else {
+                    new_pos.y = info->drag_start_pos.y + info->drag_start_size.y - 10.0f;
+                }
+            }
+        }
+        info->pos = new_pos;
+        info->size = new_size;
+        gui_set_position(renderer, window_handle, gui_position_make_relative(info->pos, Anchor::BOTTOM_LEFT));
+        gui_set_size(renderer, window_handle, gui_size_make_fixed(info->size.x), gui_size_make_fixed(info->size.y));
+        window_set_cursor_constrain(renderer->window, true);
+    }
+    else if (mouse_pressed && (window_handle.mouse_hover || header_handle.mouse_hover))
+    {
+        if (right_border) {
+            info->drag_started = true;
+            info->resize_right = true;
+        }
+        else if (left_border) {
+            info->drag_started = true;
+            info->resize_left = true;
+        }
+        if (bottom_border) {
+            info->drag_started = true;
+            info->resize_bottom = true;
+        }
+        else if (top_border) {
+            info->drag_started = true;
+            info->resize_top = true;
+        }
+
+        if (!info->drag_started && header_handle.mouse_hover) {
+            info->drag_started = true;
+            info->move = true;
+        }
+
+        if (info->drag_started) {
+            info->drag_start_pos = info->pos;
+            info->drag_start_size = info->size;
+            info->drag_start_mouse = mouse_pos;
+        }
+    }
+
+    return client_area;
+}
+
+bool gui_push_button(GUI_Renderer* renderer, GUI_Handle parent_handle, Input* input, String text)
+{
+    const vec4 border_color = vec4(vec3(0.2f), 1.0f); // Some shade of gray
+    const vec4 normal_color = vec4(vec3(0.8f), 1.0f); // Some shade of gray
+    const vec4 hover_color = vec4(vec3(0.5f), 1.0f); // Some shade of gray
+    auto border = gui_add_node(
+        renderer, parent_handle,
+        gui_size_make_fit(),
+        gui_size_make_fit(),
+        gui_position_make_parent_layout(),
+        gui_layout_make_stacked(true, GUI_Align::MIN, vec2(1.2f)),
+        gui_drawable_make_rect(border_color), true
+    );
+    auto button = gui_add_node(
+        renderer, border,
+        gui_size_make(convertWidth(1.0f, Unit::CENTIMETER), true, false),
+        gui_size_make_fit(),
+        gui_position_make_parent_layout(),
+        gui_layout_make_stacked(true, GUI_Align::CENTER, vec2(1.0f)),
+        gui_drawable_make_rect(normal_color),
+        false
+    );
+    if (border.mouse_hover) {
+        gui_set_drawable(renderer, button, gui_drawable_make_rect(hover_color));
+    }
+    gui_push_text(renderer, button, text);
+    return border.mouse_hover && input->mouse_pressed[(int)Mouse_Key_Code::LEFT];
+}
+
+GUI_Handle gui_push_dummy(GUI_Renderer* renderer, GUI_Handle parent_handle) {
+    return gui_add_node(
+        renderer, parent_handle,
+        gui_size_make_fixed(0.0f),
+        gui_size_make_fixed(0.0f),
+        gui_position_make_relative(vec2(0.0f), Anchor::BOTTOM_LEFT, 0, false),
+        gui_layout_make_stacked(),
+        gui_drawable_make_none(),
+        false
+    );
+}
+
+// Returns true if the value was toggled
+bool gui_push_toggle(GUI_Renderer* renderer, GUI_Handle parent_handle, Input* input, bool* value)
+{
+    const vec4 border_color = vec4(vec3(0.1f), 1.0f); // Some shade of gray
+    const vec4 normal_color = vec4(vec3(0.8f), 1.0f); // Some shade of gray
+    const vec4 hover_color = vec4(vec3(0.5f), 1.0f); // Some shade of gray
+    float height = convertHeight(.4f, Unit::CENTIMETER);
+    auto border = gui_add_node(
+        renderer, parent_handle,
+        gui_size_make_fit(),
+        gui_size_make_fit(),
+        gui_position_make_parent_layout(),
+        gui_layout_make_stacked(true, GUI_Align::CENTER, vec2(1.5f)),
+        gui_drawable_make_rect(border_color), true
+    );
+    auto center = gui_add_node(
+        renderer, border,
+        gui_size_make_fixed(height),
+        gui_size_make_fixed(height),
+        gui_position_make_parent_layout(),
+        gui_layout_make_stacked(true, GUI_Align::CENTER, vec2(0.0f)),
+        gui_drawable_make_rect(hover_color), false
+    );
+    bool pressed = false;
+    if (border.mouse_hover) {
+        gui_set_drawable(renderer, center, gui_drawable_make_rect(hover_color));
+        pressed = input->mouse_pressed[(int)Mouse_Key_Code::LEFT];
+    }
+    if (pressed) {
+        *value = !*value;
+    }
+    if (*value) {
+        gui_push_text(renderer, center, string_create_static("x"), .4f, vec4(1.0f, 0.0f, 0.0f, 1.0f));
+    }
+    return pressed;
+}
+
+
+
+void draw_example_gui(GUI_Renderer* renderer, Input* input)
+{
+    const vec4 white = vec4(1.0f);
+    const vec4 black = vec4(vec3(0.0f), 1.0f);
+    const vec4 red = vec4(vec3(1, 0, 0), 1.0f);
+    const vec4 green = vec4(vec3(0, 1, 0), 1.0f);
+    const vec4 blue = vec4(vec3(0, 0, 1), 1.0f);
+    const vec4 cyan = vec4(vec3(0, 1, 1), 1.0f);
+    const vec4 yellow = vec4(vec3(1, 1, 0), 1.0f);
+    const vec4 magenta = vec4(vec3(1, 0, 1), 1.0f);
+    const vec4 gray = vec4(vec3(0.3f), 1.0f);
+
+    if (false)
+    {
+        auto window = gui_push_window(renderer, renderer->root_handle, input, "Test");
+        // gui_push_text(renderer, window, string_create_static("Text"), 2.0f);
+        // gui_push_text(renderer, window, string_create_static("Take 2"), 2.0f);
+    }
+
+    if (false)
+    {
+        auto window = gui_add_node(
+            renderer, renderer->root_handle,
+            gui_size_make_fixed(300.0f),
+            gui_size_make_fixed(300.0f),
+            gui_position_make_relative(vec2(0.0f), Anchor::CENTER_CENTER),
+            gui_layout_make_stacked(true, GUI_Align::MIN, vec2(5.0f)),
+            gui_drawable_make_rect(white),
+            false
+        );
+
+        // auto window = gui_push_window(renderer, renderer->root_handle, input, "Halp?");
+        // gui_push_button(renderer, window, input, string_create_static("Something"));
+        // gui_push_button(renderer, window, input, string_create_static("Other"));
+        // gui_push_button(renderer, window, input, string_create_static("X"));
+
+        auto horizontal = gui_add_node(
+            renderer, window,
+            gui_size_make_fill(),
+            gui_size_make_fill(),
+            gui_position_make_parent_layout(),
+            gui_layout_make_stacked(false),
+            gui_drawable_make_none(),
+            false
+        );
+        gui_add_node(
+            renderer, horizontal,
+            gui_size_make_fill(),
+            gui_size_make_fill(),
+            gui_position_make_parent_layout(),
+            gui_layout_make_stacked(),
+            gui_drawable_make_rect(green),
+            false
+        );
+        gui_add_node(
+            renderer, horizontal,
+            gui_size_make_fill(),
+            gui_size_make_fill(),
+            gui_position_make_parent_layout(),
+            gui_layout_make_stacked(),
+            gui_drawable_make_rect(yellow),
+            false
+        );
+
+        gui_add_node(
+            renderer, window,
+            gui_size_make_fill(400.0f),
+            gui_size_make_fill(100.0f),
+            gui_position_make_parent_layout(),
+            gui_layout_make_stacked(),
+            gui_drawable_make_rect(cyan),
+            false
+        );
+    }
+
+    if (false)
+    {
+        static bool toggle = false;
+        if (input->key_pressed[(int)Key_Code::T]) {
+            toggle = !toggle;
+            logg("Toggle switched to: %s\n", toggle ? "true" : "false");
+        }
+        float t = rendering_core.render_information.current_time_in_seconds;
+        float a = math_sine(t) * 0.5f + 0.5f;
+        a = (float)input->mouse_x / rendering_core.render_information.backbuffer_width;
+        auto window = gui_add_node(
+            renderer, renderer->root_handle,
+            gui_size_make_fixed(200 * a),
+            gui_size_make_fixed(60.0f),
+            gui_position_make_relative(vec2(0.0f), Anchor::CENTER_CENTER),
+            gui_layout_make_layered(),
+            gui_drawable_make_rect(vec4(1.0f, 0.0f, 1.0f, 1.0f)),
+            false
+        );
+        auto bar = gui_add_node(
+            renderer, window,
+            gui_size_make_fill(),
+            gui_size_make_fixed(30.0f),
+            gui_position_make_parent_layout(),
+            gui_layout_make_stacked(false, GUI_Align::MAX),
+            gui_drawable_make_rect(vec4(0.3f, 0.3f, 1.0f, 1.0f)),
+            false
+        );
+
+        gui_push_text(renderer, bar, string_create_static("HEllo!"));
+        // auto window = gui_push_window(renderer, renderer->root_handle, input, "Window");
+        // if (toggle) {
+        //     gui_push_text(renderer, window, string_create_static("Hello"));
+        //     gui_add_node(renderer, window, gui_layout_make(),
+        //         gui_size_make_absolute(bounding_box_2_make_anchor(convertPoint(vec2(0.0f), Unit::NORMALIZED_SCREEN), vec2(200), Anchor::CENTER_CENTER)),
+        //         gui_drawable_make_rect(vec4(0.0f, 1.0f, 1.0f, 1.0f)),
+        //         false
+        //     );
+        // }
+    }
+
+    // Generating UI (User code mockup, this will be somewhere else later)
+    if (true)
+    {
+        // Make the rectangle a constant pixel size:
+        int pixel_width = 100;
+        int pixel_height = 100;
+
+        auto window = gui_push_window(renderer, renderer->root_handle, input, "Test window");
+
+        auto space = gui_add_node(
+            renderer, window,
+            gui_size_make_fill(),
+            gui_size_make_fill(),
+            gui_position_make_parent_layout(),
+            gui_layout_make_stacked(true, GUI_Align::CENTER),
+            gui_drawable_make_rect(cyan),
+            false
+        );
+        bool* value = gui_store_primitive<bool>(renderer, space, false);
+        gui_push_toggle(renderer, space, input, value);
+        if (*value) {
+            bool pressed = gui_push_button(renderer, space, input, string_create_static("Press me!"));
+            int* value = gui_store_primitive<int>(renderer, space, 0);
+            if (pressed) {
+                *value += 1;
+            }
+            String tmp = string_create_formated("%d", *value);
+            SCOPE_EXIT(string_destroy(&tmp));
+            gui_push_text(renderer, space, tmp);
+        }
+
+        auto right_align = gui_add_node(
+            renderer, window,
+            gui_size_make_fill(true),
+            gui_size_make_fit(),
+            gui_position_make_parent_layout(),
+            gui_layout_make_stacked(true, GUI_Align::MAX),
+            gui_drawable_make_none(),
+            false);
+        gui_push_text(renderer, right_align, string_create_static("Right"));
+
+        auto horizontal = gui_add_node(
+            renderer, window,
+            gui_size_make_fill(true),
+            gui_size_make_fill(true),
+            gui_position_make_parent_layout(),
+            gui_layout_make_stacked(false),
+            gui_drawable_make_none(), false);
+        gui_add_node(
+            renderer, horizontal,
+            gui_size_make_fill(true),
+            gui_size_make_fill(true),
+            gui_position_make_parent_layout(),
+            gui_layout_make_stacked(),
+            gui_drawable_make_rect(gray),
+            false);
+        auto horizontal2 = gui_add_node(
+            renderer, horizontal,
+            gui_size_make_fill(true),
+            gui_size_make_fill(true),
+            gui_position_make_parent_layout(),
+            gui_layout_make_stacked(false),
+            gui_drawable_make_none(),
+            false);
+        gui_add_node(
+            renderer, horizontal2,
+            gui_size_make_fill(true),
+            gui_size_make_fill(true),
+            gui_position_make_parent_layout(),
+            gui_layout_make_stacked(),
+            gui_drawable_make_rect(yellow),
+            false);
+        gui_add_node(
+            renderer, horizontal2,
+            gui_size_make_fill(true),
+            gui_size_make_fill(true),
+            gui_position_make_parent_layout(),
+            gui_layout_make_stacked(),
+            gui_drawable_make_rect(green),
+            false);
+
+        auto center = gui_add_node(
+            renderer, window,
+            gui_size_make_fill(false),
+            gui_size_make_fit(),
+            gui_position_make_parent_layout(),
+            gui_layout_make_stacked(true, GUI_Align::CENTER),
+            gui_drawable_make_none(),
+            false);
+        gui_push_text(renderer, center, string_create_static("Center with very long name that you shouldn't forget!"));
+        gui_add_node(
+            renderer, window,
+            gui_size_make_fill(true),
+            gui_size_make_fill(true),
+            gui_position_make_parent_layout(),
+            gui_layout_make_stacked(),
+            gui_drawable_make_rect(magenta),
+            false);
+        gui_push_text(renderer, window, string_create_static("LEFT"));
+
+        if (false)
+        {
+            auto window = gui_push_window(renderer, renderer->root_handle, input, "Contender");
+        }
+
+
+        // Add centered text
+        // gui_push_text(renderer, window, string_create_static("Hello there"));
+        // auto tmp = string_create_static("Long text that, lorem ipsum");
+        // auto center = gui_add_node(renderer, window, gui_layout_make(false, GUI_Align::CENTER), gui_size_make_fill(true, false), gui_drawable_make_none());
+        // gui_push_text(renderer, center, tmp, 1.3f);
+
+        // gui_push_text(renderer, window, string_create_static("Hello there"), 0.4f, gray);
+        // gui_push_text(renderer, window, string_create_static("This is a new item"), 0.4f, gray);
+        // auto container = gui_push_container(renderer, window, true);
+        // gui_push_text(renderer, container, string_create_static("Where"), 0.4f, gray);
+        // gui_push_text(renderer, container, string_create_static("Am I"), 0.4f, green);
+
+        // {
+        //     float t = rendering_core.render_information.current_time_in_seconds;
+        //     t += 20.0f;
+        //     if (t < 1.0f) {
+        //         t = 0;
+        //     }
+        //     else {
+        //         t = t - 1;
+        //     }
+
+        //     float remaining = 10 - t;
+        //     gui_push_text(renderer, window, string_create_static(""), 0.4f, gray); // Placeholder
+        //     String tmp = string_create_formated("%3.1f", remaining);
+        //     SCOPE_EXIT(string_destroy(&tmp));
+
+        //     vec4 color = red;
+        //     if (remaining < 0.0f) {
+        //         string_set_characters(&tmp, "Get Pranked, lol");
+        //         color = magenta;
+        //     }
+
+        //     auto layout = gui_layout_default(false, Anchor::CENTER_CENTER);
+        //     auto center = gui_add_node(renderer, window, layout, white, GUI_Draw_Type::NONE, string_create_static(""));
+        //     gui_push_text(renderer, center, tmp, 1.3f, color);
+        // }
+
+        // gui_new_window(renderer, "Longer Test1");
+        // gui_push_label(renderer, string_create_static("Hello there"));
+        // gui_push_label(renderer, string_create_static("General Kenobi!"));
+        // gui_new_window(renderer, "Faster Test2");
+
+        // vec2 pos = convertPoint(vec2(0.0f), Unit::NORMALIZED_SCREEN);
+        // vec2 size = convertSize(vec2(1.0f), Unit::CENTIMETER);
+
+        // primitive_renderer_add_rectangle(
+        //   , renderer->primitive_renderer, bounding_box_2_make_anchor(pos, size, Anchor::BOTTOM_LEFT), red
+        // );
+        // gui_draw_text_cutoff(renderer, string_create_static("Hellow orld"), pos, Anchor::BOTTOM_LEFT, size, vec3(1.0f));
+        // primitive_renderer_add_text(renderer->primitive_renderer, string_create_static("Asdfasdf"), pos, Anchor::CENTER_CENTER, size.y * 0.8f, magenta);
+        // primitive_renderer_add_rectangle(
+        //     renderer->primitive_renderer, bounding_box_2_make_anchor(pos, size, Anchor::CENTER_CENTER), blue
+        // );
+
+
+        // pos.x += size.x * 2.0f;
+        // primitive_renderer_add_rectangle(
+        //     renderer->primitive_renderer, bounding_box_2_make_anchor(pos, size, Anchor::BOTTOM_LEFT), green
+        // );
+
+    }
+}
+
 void render_rework()
 {
     Window* window = window_create("Test", 0);
@@ -1415,6 +1858,7 @@ void render_rework()
             glFinish();
             );
 
+            draw_example_gui(&gui_renderer, input);
             gui_update(&gui_renderer, input);
 
             // text_renderer_add_text(text_renderer, &string_create_static("H"), vec2(0.0f), 0.1f, 0.0f);

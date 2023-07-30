@@ -92,7 +92,7 @@ void text_renderer_add_text(Text_Renderer* renderer, String text, vec2 position,
     if (clipping) {
         int char_start = math_maximum(0, (int)((clip_box.value.min.x - position.x) / char_size.x));
         int char_end = math_minimum(text.size, (int)((clip_box.value.max.x - position.x + char_size.x) / char_size.x));
-        position.x += char_size.x * char_start;
+        offset.x = offset.x + char_size_normalized.x * char_start;
         text = string_create_substring_static(&text, char_start, char_end);
         if (char_start > char_end) {
             return;

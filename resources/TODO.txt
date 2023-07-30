@@ -13,12 +13,59 @@ DONE:
  - Input in some form, like a buttin?!?
  - Add some per node data with default value stuff, like integers and strings and stuff
  - Drag and drop
+ - Change mouse cursor when hovering
+ - Confine mouse cursor inside window while dragging
+ - BUG: Layout when window gets small
+ - BUG: Text clipping when window is outside of screen
+
+Current Item description:
+ - Window focus isn't correct, sometimes I can adjust 2 things at the same time
+    --> On hover is probably not set correctly, should only be set once
+    and also the logic has to respect on hover!
+ - Currently the first child will always receive the input, but the last child is actually
+    the one which will be drawn on top
+
+Implementation order:
+ - Add new layout option: stacked
+ - Add z-index which defaults to 0 for every item, but can be specified
+ - Respect order when calculating the draw-batches
+
+ - Add hover over child boolean to input system
+ - 
+
+So I need a system where 
+ - The z-order of items can be set through interactions
+ - Z-Order is currently determined by matching order (e.g. order in source code)
+ - I cannot rewrite source code order if I want to change this.
+ - Question is if this how much this should be scriptable, and how much the core library should change that
+ - What I want is that if some componenets are clicked inside a window this window will be put to the forefront
+ - Dialog boxes should start focused, and maybe should stay focused until dialog is ended
+ - Current solution is that there is a new layout type, something like Stacking container
+    each child in the layer container is either just set to an anchor of the parent (With size),
+    or it has absolute positioning (For windows)
+    Also children may set a z-value, which is normally ignored, but in the stacked container
+    the ordering is done first by z-value, and then push-order (Code order)
+ - How would window-focus then be implemented? 
+    For inputs the window will need to know if the mouse is hoverd above it, or one of it's children (Note: important because of visibility culling)
+    and if a mouse-key is pressed then it should be moved to the highest z-order (Which means that all other windows should be updated too...)
+ - Maybe absolute position should be relative to the parent?
+    Currently size is always calculated as either fill or min
+    Position is set by parent, except for absolute positions, then it is ignored
+    So there is no way to have an absolute position and min size for example
+ - Probably position should be either absolute (in screen coordinates), relative to parent (Anchor and offset), or calculated by parent (For stacking layouts)
+ - For containers size should probably be settable to child size (e.g. if some child has fill, add fill, otherwise the min of the min)
+ - For layout, use parent-layout may be something useful?
 
 TODO:
- - Sliders (min/max value, maybe also with integers)
+ - Check if relative position is working (both to parent and too window)
+ - Align to pixel-grid (So things like margin, padding, and maybe? border-thickness are better defined)
+    This also makes it easier to do exact collision testing, and we don't have to worry about draw-order being dependent on floating point accuracy
  - Focus/Z-order for windows
+    * Requires other setup for rendering batches
+ - Sliders (min/max value, maybe also with integers)
  - Scrolling on overflow
- - Text input (With movement and validation and sheet)
+ - Text input (With movement and validation and shortcuts)
+ - Maybe a better matching system (for e.g. pop-up windows), or a way to add inactive nodes (not drawn, but the node hierarchy is still generated for matching)
 
 Next steps:
  - Maybe think about pixel-aligning the boxes and schtuff

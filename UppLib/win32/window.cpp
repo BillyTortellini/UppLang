@@ -346,11 +346,12 @@ LRESULT CALLBACK window_message_callback(HWND hwnd, UINT msg_type, WPARAM wparam
 
         return 0;
     }
-    case WM_SETCURSOR:
-        if (LOWORD(lparam) == HTCLIENT) {
-            return TRUE;
-        }
+    case WM_SETCURSOR: {
+        // if (LOWORD(lparam) == HTCLIENT) {
+        //     return TRUE;
+        // }
         break;
+    }
     case WM_MOVE: {
         Window_State* state = &window_for_message_callback->state;
         state->x = (i16)LOWORD(lparam);
