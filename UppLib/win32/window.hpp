@@ -3,6 +3,7 @@
 #include "input.hpp"
 
 struct Window;
+struct Timer;
 
 enum class Cursor_Icon_Type
 {
@@ -34,6 +35,9 @@ void window_destroy(Window* window); // Deletes the window object
 bool window_handle_messages(Window* window, bool block_until_next_message);
 void window_swap_buffers(Window* window);
 void window_activate_context(Window* window);
+
+void window_wait_vsynch();
+void window_calculate_vsynch_beat(double& vsync_start, double& time_between_vsynchs, Timer& timer);
 
 Window_State* window_get_window_state(Window* window);
 Input* window_get_input(Window* window);

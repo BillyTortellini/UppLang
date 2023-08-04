@@ -1559,7 +1559,7 @@ void draw_example_gui(GUI_Renderer* renderer, Input* input)
         );
     }
 
-    if (false)
+    if (true)
     {
         static bool toggle = false;
         if (input->key_pressed[(int)Key_Code::T]) {
@@ -1567,13 +1567,16 @@ void draw_example_gui(GUI_Renderer* renderer, Input* input)
             logg("Toggle switched to: %s\n", toggle ? "true" : "false");
         }
         float t = rendering_core.render_information.current_time_in_seconds;
+        auto& info = rendering_core.render_information;
+        vec2 mouse_pos = vec2((float)input->mouse_x, info.backbuffer_height - input->mouse_y);
         float a = math_sine(t) * 0.5f + 0.5f;
         a = (float)input->mouse_x / rendering_core.render_information.backbuffer_width;
         auto window = gui_add_node(
             renderer, renderer->root_handle,
-            gui_size_make_fixed(200 * a),
-            gui_size_make_fixed(60.0f),
-            gui_position_make_relative(vec2(0.0f), Anchor::CENTER_CENTER),
+            // gui_size_make_fixed(200 * a),
+            gui_size_make_fixed(60),
+            gui_size_make_fixed(60),
+            gui_position_make_relative(mouse_pos - vec2(30, 30), Anchor::BOTTOM_LEFT),
             gui_layout_make_layered(),
             gui_drawable_make_rect(vec4(1.0f, 0.0f, 1.0f, 1.0f)),
             false
@@ -1601,7 +1604,7 @@ void draw_example_gui(GUI_Renderer* renderer, Input* input)
     }
 
     // Generating UI (User code mockup, this will be somewhere else later)
-    if (true)
+    if (false)
     {
         // Make the rectangle a constant pixel size:
         int pixel_width = 100;
@@ -1770,6 +1773,69 @@ void draw_example_gui(GUI_Renderer* renderer, Input* input)
     }
 }
 
+GUI_Handle gui_push_text_description(GUI_Renderer* renderer, GUI_Handle parent_handle, const char* text)
+{
+    auto main_container = gui_add_node(
+        renderer, parent_handle,
+        gui_size_make_fill(),
+        gui_size_make_fit(),
+        gui_position_make_parent_layout(),
+        gui_layout_make_stacked(false),
+        gui_drawable_make_none(), false
+    );
+
+    gui_push_text(renderer, main_container, string_create_static(text));
+
+    return gui_add_node(
+        renderer, main_container,
+        gui_size_make_fill(),
+        gui_size_make_fit(),
+        gui_position_make_parent_layout(),
+        gui_layout_make_stacked(true, GUI_Align::MAX),
+        gui_drawable_make_none(), false
+    );
+}
+
+void gui_push_int(GUI_Renderer* renderer, GUI_Handle parent_handle, Input* input, const char* text, int& value)
+{
+    auto container = gui_add_node(
+        renderer, parent_handle,
+        gui_size_make_fill(),
+        gui_size_make_fit(),
+        gui_position_make_parent_layout(),
+        gui_layout_make_stacked(false),
+        gui_drawable_make_none(), false
+    );
+    gui_push_text(renderer, container, string_create_static(text));
+
+    auto fill_container = gui_add_node(
+        renderer, container,
+        gui_size_make_fill(),
+        gui_size_make_fit(),
+        gui_position_make_parent_layout(),
+        gui_layout_make_stacked(true, GUI_Align::MAX),
+        gui_drawable_make_none(), false
+    );
+    auto h_container = gui_add_node(
+        renderer, fill_container,
+        gui_size_make_fit(),
+        gui_size_make_fit(),
+        gui_position_make_parent_layout(),
+        gui_layout_make_stacked(false),
+        gui_drawable_make_none(), false
+    );
+
+    if (gui_push_button(renderer, h_container, input, string_create_static("+"))) {
+        value += 1;
+    }
+    if (gui_push_button(renderer, h_container, input, string_create_static("-"))) {
+        value -= 1;
+    }
+    String tmp = string_create_formated("%d", value);
+    SCOPE_EXIT(string_destroy(&tmp));
+    gui_push_text(renderer, h_container, tmp);
+}
+
 void render_rework()
 {
     Window* window = window_create("Test", 0);
@@ -1794,7 +1860,7 @@ void render_rework()
     // Set Window/Rendering Options
     {
         window_load_position(window, "window_pos.set");
-        window_set_vsync(window, true);
+        window_set_vsync(window, false);
         opengl_state_set_clear_color(vec4(0.0f));
     }
 
@@ -1817,19 +1883,90 @@ void render_rework()
 
     GUI_Renderer gui_renderer = gui_renderer_initialize(text_renderer, window);
 
+    String timing_str = string_create_empty(128);
+    SCOPE_EXIT(string_destroy(&timing_str));
+
+
+    /*
+    Stuff TODO:
+     - Calculate roughly a latency thing (one/two/three frames based on mouse speed)
+     - Try some smarter timing code
+
+    Observations:
+     - SwapBuffers doesn't block in Release-Mode? Or is this because of OpenGL-Debug? Asynchronous debug?
+     - With glFinish both rendering and swapBuffers take a few milliseconds
+     - Swapping into fullscreen seems to help, but only on the primary monitor??
+
+    With Vsynch on in fullscreen, swap doesn't block
+
+    Debug-Mode, no opengl-logging:
+     - Windowed, no-vsynch: Green
+     - Windowed, vsynch: Red
+
+    Add offset from game_start, and always start at fixed intervals
+
+    Interesting note: glFinish after Swap does different things in fullscreen/non-fullscreen!
+
+    Let's see if we can stabilize the screen tear by having the swap-buffer at a specific time 
+
+    So i guess what you want is --> In non compositor mode, you want no-vsynch, 
+
+    With synchronous debug output on, switch-window stalls!
+
+    !!!
+    It seems to be working, it looks like there is a small time after toggling vsynch where it actually
+    keeps synchronized with the cursor. But this is quickly removed...
+
+    ToTest: Use wait for vblanc to do sleeping...
+
+    */
+    bool vsynch = false;
+    bool glFinishAfterRender = false;
+    bool glFinishAfterSwap = false;
+    bool waitForWindowEvents = false;
+    bool test_new_sleep = false;
+    bool sleep_enabled = true;
+    bool custom_cursor = false;
+    bool show_window_cursor = true;
+    int beat_offset_time = 0;
+    int delay_swap_buffer_ms = 0; // Wait until some ms since frame start has passed for swap buffer
+
+    double vsync_start, vsync_time_between;
+    {
+        window_calculate_vsynch_beat(vsync_start, vsync_time_between, timer);
+        for (int i = 0; i < 1; i++) {
+            timer_sleep_for(&timer, 0.2 + 0.0234234 * i); // Random perturbation
+            double new_start, new_between;
+            window_calculate_vsynch_beat(new_start, new_between, timer);
+            logg("Before: vsynch_start: %f, Now: %f, Diff: %f, Modulo: %f\n",
+                vsync_start, new_start, new_start - vsync_start, math_modulo(new_start - vsync_start, 1 / 60.0));
+        }
+    }
+    const double start_update_before_beat = 0.001;
+
+    const int buffer_frames = 3;
+    double buffer_width[buffer_frames];
+    for (int i = 0; i < buffer_frames; i++) {
+        buffer_width[i] = 0;
+    }
+
     // Window Loop
-    double time_last_update_start = timer_current_time_in_seconds(&timer);
+    double game_start_time = timer_current_time_in_seconds(&timer);
+    double time_last_update_start = game_start_time;
     while (true)
     {
-        double time_frame_start = timer_current_time_in_seconds(&timer);
-        float time_since_last_update = (float)(time_frame_start - time_last_update_start);
-        time_last_update_start = time_frame_start;
+        double now = timer_current_time_in_seconds(&timer);
+        double frame_start_time = now;
+        double tslf = now - time_last_update_start;
+        time_last_update_start = now;
 
+        // Sleep before getting input
+        // timer_sleep_for(&timer, 0.001 * sleep_before_input_ms);
         Input* input = window_get_input(window);
         SCOPE_EXIT(input_reset(input));
         {
             // Input and Logic
-            if (!window_handle_messages(window, false)) {
+            if (!window_handle_messages(window, waitForWindowEvents)) {
                 break;
             }
             if (input->close_request_issued || input->key_pressed[(int)Key_Code::ESCAPE]) {
@@ -1845,101 +1982,232 @@ void render_rework()
             camera_controller_arcball_update(&camera_controller_arcball, camera, input, window_state->width, window_state->height);
         }
 
-        double time_input_end = timer_current_time_in_seconds(&timer);
+        if (input->key_pressed[(int)Key_Code::N]) {
+            double new_beat, new_time;
+            window_calculate_vsynch_beat(new_beat, new_time, timer);
+            double diff = math_modulo(vsync_start - new_beat, vsync_time_between);
+            diff = math_minimum(diff, math_absolute(1 / 60.0 - diff));
+            logg("Diff in beats: %fms\n", diff * 1000.0);
+            vsync_start = new_beat;
+            vsync_time_between = new_time;
+        }
+        if (input->key_pressed[(int)Key_Code::X]) {
+            beat_offset_time -= 1;
+        }
+        if (input->key_pressed[(int)Key_Code::C]) {
+            beat_offset_time += 1;
+        }
+        if (input->key_pressed[(int)Key_Code::V]) {
+            timer_sleep_for(&timer, 1 / 60.0 * 20); // Just skip 20 frames
+        }
 
         // Rendering
         {
             rendering_core_prepare_frame(timer_current_time_in_seconds(&timer), window_state->width, window_state->height);
-            SCOPE_EXIT(
-                renderer_2D_reset(renderer_2D);
-            text_renderer_reset(text_renderer);
-            rendering_core_render(camera, Framebuffer_Clear_Type::COLOR_AND_DEPTH);
-            window_swap_buffers(window);
-            glFinish();
-            );
+            now = timer_current_time_in_seconds(&timer);
 
-            draw_example_gui(&gui_renderer, input);
+            // Render mouse 'lag' indicator
+            {
+                float width = math_absolute(input->mouse_delta_x);
+                vec4 color = vec4(1.0f);
+                bool multiple = true;
+                int frames = 3;
+                if (input->mouse_delta_x == 0) {
+                    width = 30;
+                    color = vec4(1.0f, 0, 0, 1.0f);
+                }
+                vec4 colors[6] = {
+                    vec4(1.0f, 0.0f, 0.0f, 1.0f),
+                    vec4(0.0f, 1.0f, 0.0f, 1.0f),
+                    vec4(1.0f, 0.0f, 1.0f, 1.0f),
+                    vec4(1.0f, 1.0f, 0.0f, 1.0f),
+                    vec4(0.0f, 1.0f, 1.0f, 1.0f),
+                    vec4(1.0f, 1.0f, 0.0f, 1.0f)
+                };
+                vec2 mouse_pos = vec2((float)input->mouse_x, rendering_core.render_information.backbuffer_height - input->mouse_y);
+                // Smooth width over last 3 frames
+                // Push all one frame back
+                for (int i = buffer_frames - 1; i -1 >= 0; i--) {
+                    buffer_width[i] = buffer_width[i - 1];
+                }
+                buffer_width[0] = width;
+
+                // Calc new width
+                width = 0;
+                for (int i = 0; i < buffer_frames; i++) {
+                    width += buffer_width[i];
+                }
+                width = width / buffer_frames;
+
+                for (int i = 0; i < frames; i++) {
+                    float w = width * (frames - i);
+                    float x_offset = 0;
+                    if (input->mouse_delta_x == 0) {
+                        x_offset = -w / 2.0f;
+                    }
+                    else if (input->mouse_delta_x < 0) {
+                        x_offset = -w;
+                    }
+                    gui_add_node(
+                        &gui_renderer, gui_renderer.root_handle,
+                        gui_size_make_fixed(w),
+                        gui_size_make_fixed(50),
+                        gui_position_make_relative(
+                            vec2(mouse_pos.x + x_offset, mouse_pos.y - 25),
+                            Anchor::BOTTOM_LEFT),
+                        gui_layout_make_stacked(),
+                        gui_drawable_make_rect(colors[i]), false
+                    );
+                }
+                if (custom_cursor) {
+                    gui_add_node(
+                        &gui_renderer, gui_renderer.root_handle,
+                        gui_size_make_fixed(20),
+                        gui_size_make_fixed(20),
+                        gui_position_make_relative(
+                            vec2(mouse_pos.x - 10, mouse_pos.y - 10),
+                            Anchor::BOTTOM_LEFT),
+                        gui_layout_make_stacked(),
+                        gui_drawable_make_rect(vec4(0.0f, 0.0f, 0.0f, 1.0f)), false
+                    );
+                    gui_add_node(
+                        &gui_renderer, gui_renderer.root_handle,
+                        gui_size_make_fixed(16),
+                        gui_size_make_fixed(16),
+                        gui_position_make_relative(
+                            vec2(mouse_pos.x - 8, mouse_pos.y - 8),
+                            Anchor::BOTTOM_LEFT),
+                        gui_layout_make_stacked(),
+                        gui_drawable_make_rect(vec4(1.0f)), false
+                    );
+                }
+            }
+
+            // Add moving cubes as __smoothness__ indication
+            {
+                double t = rendering_core.render_information.current_time_in_seconds;
+                gui_add_node(
+                    &gui_renderer, gui_renderer.root_handle,
+                    gui_size_make_fixed(50),
+                    gui_size_make_fixed(50),
+                    gui_position_make_relative(
+                        vec2((float)math_sine(t * 3.0f) * 200, 0.0f),
+                        Anchor::CENTER_CENTER),
+                    gui_layout_make_stacked(),
+                    gui_drawable_make_rect(vec4(1.0f)), false
+                );
+                gui_add_node(
+                    &gui_renderer, gui_renderer.root_handle,
+                    gui_size_make_fixed(50),
+                    gui_size_make_fixed(50),
+                    gui_position_make_relative(
+                        vec2((float)math_sine(t * 6.0f) * 300, -60.0f),
+                        Anchor::CENTER_CENTER),
+                    gui_layout_make_stacked(),
+                    gui_drawable_make_rect(vec4(1.0f)), false
+                );
+                gui_add_node(
+                    &gui_renderer, gui_renderer.root_handle,
+                    gui_size_make_fixed(60),
+                    gui_size_make_fixed(10000),
+                    gui_position_make_relative(
+                        vec2(500 + (float)math_sine(t * 16.0f) * 100, -60.0f),
+                        Anchor::CENTER_CENTER),
+                    gui_layout_make_stacked(),
+                    gui_drawable_make_rect(vec4(1.0f)), false
+                );
+            }
+
+            // Add Timing output as window
+            {
+                auto text_container = gui_add_node(
+                    &gui_renderer, gui_renderer.root_handle,
+                    gui_size_make_fit(),
+                    gui_size_make_fit(),
+                    gui_position_make_relative(vec2(0.0f), Anchor::BOTTOM_LEFT),
+                    gui_layout_make_stacked(),
+                    gui_drawable_make_rect(vec4(1.0f, 0.3f, 0.8f, 0.2f)), false
+                );
+                auto split = string_split(timing_str, '\n');
+                SCOPE_EXIT(string_split_destroy(split));
+                for (int i = 0; i < split.size; i++) {
+                    if (split[i].size == 0) continue;
+                    gui_push_text(&gui_renderer, text_container, split[i], .7f, vec4(1.0f));
+                }
+            }
+
+            // Push Control window
+            {
+                auto gui_window = gui_push_window(&gui_renderer, gui_renderer.root_handle, input, "Render-Settings");
+                auto container = gui_push_text_description(&gui_renderer, gui_window, "V-Synch: ");
+                if (gui_push_toggle(&gui_renderer, container, input, &vsynch)) {
+                    window_set_vsync(window, vsynch);
+                }
+                container = gui_push_text_description(&gui_renderer, gui_window, "glFinish after Render: ");
+                gui_push_toggle(&gui_renderer, container, input, &glFinishAfterRender);
+                container = gui_push_text_description(&gui_renderer, gui_window, "glFinish after Swap: ");
+                gui_push_toggle(&gui_renderer, container, input, &glFinishAfterSwap);
+                container = gui_push_text_description(&gui_renderer, gui_window, "Wait WindowMsg: ");
+                gui_push_toggle(&gui_renderer, container, input, &waitForWindowEvents);
+                container = gui_push_text_description(&gui_renderer, gui_window, "Sleep: ");
+                gui_push_toggle(&gui_renderer, container, input, &sleep_enabled);
+                container = gui_push_text_description(&gui_renderer, gui_window, "New_Sleep: ");
+                gui_push_toggle(&gui_renderer, container, input, &test_new_sleep);
+                container = gui_push_text_description(&gui_renderer, gui_window, "Custom_Cursor:");
+                gui_push_toggle(&gui_renderer, container, input, &custom_cursor);
+                container = gui_push_text_description(&gui_renderer, gui_window, "Window_Cursor:");
+                if (gui_push_toggle(&gui_renderer, container, input, &show_window_cursor)) {
+                    window_set_cursor_visibility(window, show_window_cursor);
+                }
+
+                gui_push_int(&gui_renderer, gui_window, input, "Beat offset(ms)", beat_offset_time);
+                gui_push_int(&gui_renderer, gui_window, input, "Delay SwapBuffer(ms)", delay_swap_buffer_ms);
+            }
+
             gui_update(&gui_renderer, input);
 
-            // text_renderer_add_text(text_renderer, &string_create_static("H"), vec2(0.0f), 0.1f, 0.0f);
-            // text_renderer_draw(text_renderer, text_pass);
-            // text_renderer_add_text(text_renderer, &string_create_static("e"), vec2(0.0f, -0.3f), 0.03f, 0.0f);
-            // text_renderer_draw(text_renderer, text_pass);
-
-
-            // auto main_pass = core.predefined.main_pass;
-            // auto circle1 = rendering_core_query_mesh(
-            //     "circleMesh1", vertex_description_create({ core.predefined.position2D }), true
-            // );
-            // auto circle2 = rendering_core_query_mesh(
-            //     "circleMesh2", vertex_description_create({ core.predefined.position2D, core.predefined.index, core.predefined.texture_coordinates }), true
-            // );
-
-            // // Generate circle data
-            // {
-            //     float radius = 0.3f;
-            //     int division = 16;
-            //     auto time = rendering_core.render_information.current_time_in_seconds;
-            //     vec2 offset = vec2(math_cosine(time), math_sine(time));
-            //     for (int i = 0; i < division; i++) {
-            //         mesh_push_attribute(
-            //             circle1, core.predefined.position2D, {
-            //                 offset + vec2(0),
-            //                 offset + vec2(math_cosine(2 * PI / division * i), math_sine(2 * PI / division * i)) * radius,
-            //                 offset + vec2(math_cosine(2 * PI / division * (i + 1)), math_sine(2 * PI / division * (i + 1))) * radius,
-            //             }
-            //         );
-            //     }
-            //     
-            //     time += PI;
-            //     offset = vec2(math_cosine(time), math_sine(time));
-
-            //     auto indices = mesh_push_attribute_slice(circle2, core.predefined.index, division * 3);
-            //     auto positions = mesh_push_attribute_slice(circle2, core.predefined.position2D, division * 3);
-            //     auto uvs = mesh_push_attribute_slice(circle2, core.predefined.texture_coordinates, division * 3);
-            //     for (int i = 0; i < division; i++) {
-            //         int k = i * 3;
-            //         indices[k + 0] = k + 0;
-            //         indices[k + 1] = k + 1;
-            //         indices[k + 2] = k + 2;
-            //         positions[k + 0] = offset + vec2(0);
-            //         positions[k + 1] = offset + vec2(math_cosine(2 * PI / division * k), math_sine(2 * PI / division * k)) * radius;
-            //         positions[k + 2] = offset + vec2(math_cosine(2 * PI / division * (k + 1)), math_sine(2 * PI / division * (k + 1))) * radius;
-            //         uvs[k + 0] = vec2(0);
-            //         uvs[k + 1] = vec2(math_cosine(2 * PI / division * k), math_sine(2 * PI / division * k)) * radius;
-            //         uvs[k + 2] = vec2(math_cosine(2 * PI / division * (k + 1)), math_sine(2 * PI / division * (k + 1))) * radius;
-            //     }
-
-            //     logg("What\n");
-            // }
-
-            // auto const_color_2d = rendering_core_query_shader("const_color_2D.glsl");
-            // //render_pass_draw(main_pass, const_color_2d, circle1, Mesh_Topology::TRIANGLES, { uniform_make("u_color", vec4(1.0f)) });
-            // render_pass_draw(main_pass, const_color_2d, circle2, Mesh_Topology::TRIANGLES, { uniform_make("u_color", vec4(1.0f, 0.0f, 0.0f, 1.0f)) });
-            //auto color_shader_2d = shader_generator_make({ predefined.position2D, predefined.uniform_color }, );
-
-            //auto bg_buffer = rendering_core_query_framebuffer("bg_buffer", Texture_Type::RED_GREEN_BLUE_U8, Depth_Type::NO_DEPTH, 512, 512);
-            //{
-            //    auto bg_pass = rendering_core_query_renderpass("bg_pass", pipeline_state_make_default(), bg_buffer);
-            //    render_pass_add_dependency(main_pass, bg_pass);
-            //    auto bg_shader = rendering_core_query_shader("upp_lang/background.glsl");
-            //    render_pass_draw(bg_pass, bg_shader, quad_mesh, Mesh_Topology::TRIANGLES, {});
-            //}
-
-            //{
-            //    auto shader = rendering_core_query_shader("test.glsl");
-            //    render_pass_set_uniforms(main_pass, shader, { uniform_make("image", bg_buffer->color_texture, sampling_mode_bilinear()) });
-            //    render_pass_draw(main_pass, shader, mesh, Mesh_Topology::TRIANGLES, { uniform_make("offset", vec2(0)), uniform_make("scale", 1.0f) });
-            //}
-            // renderer_2D_add_rectangle(renderer_2D, vec2(0.0f), vec2(0.2, 0.3f), vec3(1.0f), 0.0f);
-            // renderer_2D_draw(renderer_2D, text_pass);
+            renderer_2D_reset(renderer_2D);
+            text_renderer_reset(text_renderer);
         }
+        double cpu_frame_time = timer_current_time_in_seconds(&timer) - now;
 
-        double time_render_end = timer_current_time_in_seconds(&timer);
+        double rendering_core_time = 0.0f;
+        now = timer_current_time_in_seconds(&timer);
+        rendering_core_render(camera, Framebuffer_Clear_Type::COLOR_AND_DEPTH);
+        if (glFinishAfterRender) {
+            glFinish();
+        }
+        rendering_core_time = timer_current_time_in_seconds(&timer) - now;
+
+        now = timer_current_time_in_seconds(&timer);
+        if (!input->key_down[(int)Key_Code::S]) {
+            // Wait for swap buffer delay
+            timer_sleep_until(&timer, frame_start_time + delay_swap_buffer_ms * 0.001);
+
+            window_swap_buffers(window);
+            if (glFinishAfterSwap) {
+                glFinish();
+            }
+        }
+        double swap_buffer_time = timer_current_time_in_seconds(&timer) - now;
+        double time_to_swap = timer_current_time_in_seconds(&timer) - frame_start_time;
 
         // Sleep
         {
-            double time_calculations = timer_current_time_in_seconds(&timer) - time_frame_start;
+            const int TARGET_FPS = 60;
+            const double SECONDS_PER_FRAME = 1.0 / TARGET_FPS;
+
+            double now = timer_current_time_in_seconds(&timer);
+            // Check when the next game_start_beat is
+            double time_till_next_beat = math_modulo(vsync_start + beat_offset_time * 0.001 - now, vsync_time_between);
+
+            string_reset(&timing_str);
+            string_append_formated(&timing_str, "tslf           ... %3.2fms\n", 1000.0f * (tslf));
+            string_append_formated(&timing_str, "cpu_time       ... %3.2fms\n", 1000.0f * (cpu_frame_time));
+            string_append_formated(&timing_str, "core_time      ... %3.2fms\n", 1000.0f * (rendering_core_time));
+            string_append_formated(&timing_str, "swap_time      ... %3.2fms\n", 1000.0f * (swap_buffer_time));
+            string_append_formated(&timing_str, "time_till_beat ... %3.2fms\n", 1000.0f * (time_till_next_beat));
+            string_append_formated(&timing_str, "time_to_swap   ... %3.2fms\n", 1000.0f * (time_to_swap));
             /*
             logg("FRAME_TIMING:\n---------------\n");
             logg("input        ... %3.2fms\n", 1000.0f * (float)(time_input_end - time_frame_start));
@@ -1948,9 +2216,20 @@ void render_rework()
             */
 
             // Sleep
-            const int TARGET_FPS = 60;
-            const double SECONDS_PER_FRAME = 1.0 / TARGET_FPS;
-            timer_sleep_until(&timer, time_frame_start + SECONDS_PER_FRAME);
+            if (sleep_enabled) {
+                //timer_sleep_until(&timer, time_last_update_start + SECONDS_PER_FRAME);
+                if (test_new_sleep) {
+                    if (window_state->fullscreen) {
+                        window_wait_vsynch();
+                    }
+                    else {
+                    }
+                    timer_sleep_for(&timer, beat_offset_time * 0.001);
+                }
+                else {
+                    timer_sleep_for(&timer, time_till_next_beat);
+                }
+            }
         }
     }
 }

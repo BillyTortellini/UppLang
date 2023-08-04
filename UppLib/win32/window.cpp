@@ -2,8 +2,13 @@
 
 #include <Windows.h>
 #include <windowsx.h>
+#include <dxgi.h>
 #include <gl/GL.h>
 #include <wingdi.h>
+#include <dcomp.h>
+
+#include <vector>
+#include "timing.hpp"
 
 #include "../utility/utils.hpp"
 #include "../utility/datatypes.hpp"
@@ -40,6 +45,7 @@ struct Window
     // which is why fullscreen request are buffered until handle messages is called
     bool fullscreen_state_request_was_made;
     bool desired_fullscreen_state;
+    bool cursor_enabled;
 };
 
 void window_cursor_update_contrain_rect(Window* window);
@@ -382,7 +388,7 @@ void APIENTRY opengl_debug_callback(GLenum source, GLenum type, GLuint id, GLenu
 {
     // Ignore performance warnings and unnecessary stuff
     // if (id == 131169 || id == 131185 || id == 131218 || id == 131204) return;
-    if (id == 131185 || id == 131218) return;
+    // if (id == 131185 || id == 131218) return;
     String formatted_message = string_create_empty(1024);
 
     switch (source)
@@ -635,6 +641,7 @@ Window* window_create(const char* window_title, int multisample_count)
                 WGL_COLOR_BITS_ARB,     32,
                 WGL_DEPTH_BITS_ARB,     24,
                 WGL_STENCIL_BITS_ARB,   8,
+                WGL_SWAP_METHOD_ARB,    WGL_SWAP_EXCHANGE_ARB, 
                 0
             };
             int pixel_format_with_multisampling[] = {
@@ -675,7 +682,7 @@ Window* window_create(const char* window_title, int multisample_count)
         // Create OpenGL context
         int context_attributes[] = {
             WGL_CONTEXT_PROFILE_MASK_ARB, WGL_CONTEXT_CORE_PROFILE_BIT_ARB,
-            WGL_CONTEXT_MAJOR_VERSION_ARB, 3,
+            WGL_CONTEXT_MAJOR_VERSION_ARB, 4,
             WGL_CONTEXT_MINOR_VERSION_ARB, 3,
             0 // 0 termintes the attributes list
         };
@@ -692,7 +699,7 @@ Window* window_create(const char* window_title, int multisample_count)
         if (!opengl_load_all_functions()) {
             panic("Could not load opengl_functions");
         }
-        //opengl_print_all_extensions((void*)&hdc);
+        opengl_print_all_extensions((void*)&hdc);
 
         // Display new Window
         ShowWindow(hwnd, SW_SHOWNORMAL);
@@ -727,6 +734,7 @@ Window* window_create(const char* window_title, int multisample_count)
         window->state.in_focus = true;
         window->put_next_char_into_last_key_message = false;
         window->cursor_default = LoadCursor(NULL, IDC_ARROW);
+        window->cursor_enabled = true;
         if (window->cursor_default == 0) {
             panic("Could not load cursor");
         }
@@ -740,9 +748,9 @@ Window* window_create(const char* window_title, int multisample_count)
         window->state.vsync = true;
         wglSwapIntervalEXT(1);
 
-        glEnable(GL_DEBUG_OUTPUT);
-        glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
-        glDebugMessageCallback(opengl_debug_callback, 0);
+        // glEnable(GL_DEBUG_OUTPUT);
+        // glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+        // glDebugMessageCallback(opengl_debug_callback, 0);
 
         // Set dpi
         {
@@ -993,9 +1001,11 @@ void window_set_cursor_visibility(Window* window, bool visible) {
     if (window->state.cursor_visible != visible) {
         window->state.cursor_visible = visible;
         if (visible) {
+            window->cursor_enabled = true;
             SetCursor(window->cursor_default);
         }
         else {
+            window->cursor_enabled = false;
             SetCursor(0);
         }
     }
@@ -1054,7 +1064,9 @@ void window_set_cursor_icon(Window* window, Cursor_Icon_Type cursor)
         return;
     }
     window->cursor_default = cursorHandle;
-    SetCursor(cursorHandle);
+    if (window->cursor_enabled) {
+        SetCursor(cursorHandle);
+    }
 }
 
 Input* window_get_input(Window* window) {
@@ -1123,3 +1135,139 @@ void window_save_position(Window* window, const char* filename)
     file_io_write_file(filename, data);
 }
 
+IDXGIOutput* g_output = 0;
+bool initialized = false;
+
+void window_initialize_dxgi_output()
+{
+    if (!initialized) {
+        IDXGIFactory* pFactory;
+        HRESULT hr = CreateDXGIFactory(__uuidof(IDXGIFactory), (void**)(&pFactory));
+
+        UINT i = 0;
+        IDXGIAdapter* pAdapter;
+        std::vector<IDXGIAdapter*> vAdapters;
+        while (pFactory->EnumAdapters(i, &pAdapter) != DXGI_ERROR_NOT_FOUND) {
+            vAdapters.push_back(pAdapter);
+            UINT j = 0;
+            DXGI_ADAPTER_DESC desc;
+            pAdapter->GetDesc(&desc);
+            IDXGIOutput* output;
+            while (pAdapter->EnumOutputs(j, &output) != DXGI_ERROR_NOT_FOUND) {
+                g_output = output; 
+
+                DXGI_OUTPUT_DESC desc;
+                output->GetDesc(&desc);
+                int len = lstrlenW(desc.DeviceName);
+                auto tmp = string_create_empty(32);
+                SCOPE_EXIT(string_destroy(&tmp));
+                wcstombs(tmp.characters, desc.DeviceName, 32);
+                tmp.size = strlen(tmp.characters);
+                logg("Using output: %s\n", tmp.characters);
+
+                break;
+                j++;
+            }
+            i++;
+        }
+        initialized = true;
+    }
+}
+
+void window_wait_vsynch()
+{
+    window_initialize_dxgi_output();
+    g_output->WaitForVBlank();
+}
+
+void window_calculate_vsynch_beat(double& vsync_start, double& time_between_vsynchs, Timer& timer) 
+{
+    window_initialize_dxgi_output();
+    double reference = timer_current_time_in_seconds(&timer);
+    bool first = true;
+    g_output->WaitForVBlank();
+    vsync_start = timer_current_time_in_seconds(&timer);
+    time_between_vsynchs = 1 / 60.0;
+
+    /// while (pFactory->EnumAdapters(i, &pAdapter) != DXGI_ERROR_NOT_FOUND) {
+    ///     vAdapters.push_back(pAdapter);
+    ///     UINT j = 0;
+    ///     IDXGIOutput* output;
+    ///     DXGI_ADAPTER_DESC desc;
+    ///     pAdapter->GetDesc(&desc);
+
+    ///     while (pAdapter->EnumOutputs(j, &output) != DXGI_ERROR_NOT_FOUND) {
+    ///         DXGI_OUTPUT_DESC desc;
+    ///         output->GetDesc(&desc);
+    ///         int len = lstrlenW(desc.DeviceName);
+    ///         auto tmp = string_create_empty(32);
+    ///         SCOPE_EXIT(string_destroy(&tmp));
+    ///         wcstombs(tmp.characters, desc.DeviceName, 32);
+    ///         tmp.size = strlen(tmp.characters);
+    ///         logg("%s\n", tmp.characters);
+
+    ///         // Do something stupid here, like measuring 3 time spots right after wait for vsynch
+    ///         const int timestamp_count = 20;
+    ///         double timestamps[timestamp_count];
+    ///         for (int k = 0; k < timestamp_count; k++) {
+    ///             if (output->WaitForVBlank() != S_OK) {
+    ///                 panic("");
+    ///                 logg("Something isn't working lol\n");
+    ///             }
+    ///             timestamps[k] = timer_current_time_in_seconds(&timer);
+    ///         }
+
+    ///         // Print timestamps, and difference to previous
+    ///         logg("Timestamps:\n");
+    ///         double average_difference = 0;
+    ///         for (int k = 0; k < timestamp_count; k++) {
+    ///             double diff = 0;
+    ///             if (k > 0) {
+    ///                 diff = timestamps[k] - timestamps[k - 1];
+    ///                 average_difference += diff;
+    ///             }
+    ///             // logg("    %f (-%f)\n", timestamps[k], diff);
+    ///         }
+    ///         average_difference = average_difference / (timestamp_count - 1); // Don't count first timestamp
+    ///         // Calculate max difference
+    ///         double max_difference = 0;
+    ///         for (int k = 0; k < timestamp_count; k++) {
+    ///             double diff = 0;
+    ///             if (k > 0) {
+    ///                 diff = timestamps[k] - timestamps[k - 1];
+    ///                 max_difference = math_maximum(max_difference, math_absolute(diff - average_difference));
+    ///             }
+    ///         }
+    ///         logg("Average difference: %f, max: %f\n", average_difference, max_difference);
+
+
+    ///         logg("Offsets:\n");
+    ///         double average_offset = 0;
+    ///         double max_offset = 0;
+    ///         for (int k = 0; k < timestamp_count; k++) {
+    ///             double offset = math_modulo(timestamps[k] - reference, average_difference);
+    ///             average_offset += offset;
+    ///             // logg("    %f\n", offset);
+    ///         }
+    ///         average_offset = average_offset / timestamp_count;
+    ///         for (int k = 0; k < timestamp_count; k++) {
+    ///             double offset = math_modulo(timestamps[k] - reference, average_difference);
+    ///             max_offset = math_maximum(max_offset, math_absolute(offset - average_offset));
+    ///         }
+    ///         logg("Average offset: %f, max: %f\n", average_offset, max_offset);
+    ///         if (first) {
+    ///             vsync_start = reference + average_offset;
+    ///             time_between_vsynchs = average_difference;
+    ///             if (math_absolute(time_between_vsynchs - (1 / 60.0)) < 0.0005) {
+    ///                 time_between_vsynchs = 1 / 60.0;
+    ///             }
+    ///             first = false;
+    ///         }
+
+    ///         break;
+    ///         j++;
+    ///     }
+
+    ///     ++i;
+    /// }
+}
