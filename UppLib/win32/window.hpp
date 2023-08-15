@@ -32,7 +32,7 @@ Window* window_create(const char* window_title, int multisample_count);
 void window_close(Window* window); // Causes the window to exit the handle message loop
 void window_destroy(Window* window); // Deletes the window object
 
-bool window_handle_messages(Window* window, bool block_until_next_message);
+bool window_handle_messages(Window* window, bool block_until_next_message, int* message_count = nullptr);
 void window_swap_buffers(Window* window);
 void window_activate_context(Window* window);
 

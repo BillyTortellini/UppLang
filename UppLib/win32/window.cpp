@@ -316,7 +316,6 @@ LRESULT CALLBACK window_message_callback(HWND hwnd, UINT msg_type, WPARAM wparam
         input->mouse_normalized_delta_y = (float)input->mouse_delta_y / window_for_message_callback->primary_monitor_height;
         input->mouse_x = x;
         input->mouse_y = y;
-        return 0;
         break;
     }
     case WM_SIZE:
@@ -794,8 +793,16 @@ void window_change_fullscreen_mode(Window* window, bool fullscreen);
     So what i want to do:
     If I get KEY_DOWN/UP in message_handler, I tell WM_CHAR that it should put itself into the current message
 */
-bool window_handle_messages(Window* window, bool block_until_next_message)
+bool time_init = false;
+Timer timer;
+bool window_handle_messages(Window* window, bool block_until_next_message, int* message_count)
 {
+    if (!time_init) {
+        timer = timer_make();
+        time_init = true;
+    }
+    double before_all = timer_current_time_in_seconds(&timer);
+
     // Handle fullscreen requests
     if (window->fullscreen_state_request_was_made) {
         window_change_fullscreen_mode(window, window->desired_fullscreen_state);
@@ -820,33 +827,52 @@ bool window_handle_messages(Window* window, bool block_until_next_message)
         window_set_cursor_into_center_of_screen(window);
     }
 
+    double start = timer_current_time_in_seconds(&timer);
     MSG msg = {};
-    if (!PeekMessage(&msg, NULL, 0, 0, PM_NOREMOVE)) // Check if a message exists
+    int msg_count = 0;
+    if (block_until_next_message)
     {
-        // No messages found
-        if (block_until_next_message) { // Call GetMessage, which blocks
-            if (!GetMessage(&msg, 0, 0, 0)) {
-                return false; // WM_QUIT was sent
-            }
-            else { // Handle message received from GetMessage
-                TranslateMessage(&msg);
-                DispatchMessage(&msg);
+        if (!GetMessage(&msg, 0, 0, 0)) {
+            return false; // WM_QUIT was sent
+        }
+        else { // Handle message received from GetMessage
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        }
+        // Handle all remaining available messages
+        while (PeekMessage(&msg, 0, 0, 0, PM_REMOVE))
+        {
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+            if (msg.message == WM_QUIT) { // WM_QUIT was sent
+                return false;
             }
         }
-        else { // Just return if we should not block
-            return true;
+    }
+    else
+    {
+        // Handle all messages
+        while (PeekMessage(&msg, window->hwnd, 0, 0, PM_REMOVE | PM_NOYIELD))
+        {
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+            if (msg.message == WM_QUIT) { // WM_QUIT was sent
+                return false;
+            }
+            msg_count += 1;
         }
+    }
+    if (message_count != 0) {
+        *message_count = msg_count;
     }
 
-    // Handle all remaining available messages
-    while (PeekMessage(&msg, 0, 0, 0, PM_REMOVE))
-    {
-        TranslateMessage(&msg);
-        DispatchMessage(&msg);
-        if (msg.message == WM_QUIT) { // WM_QUIT was sent
-            return false;
-        }
+    double end = timer_current_time_in_seconds(&timer);
+    if (end - start > 0.003) {
+        logg("Took longer than a ms %3.2fms\n", (end-start) * 1000.0f);
+        // logg("Time for first: %3.2fms\n", (end - start) * 1000.0f);
+        // logg("MEssage count: #%d\n", msg_count);
     }
+
     return true;
 }
 
@@ -1086,8 +1112,8 @@ void window_set_cursor_into_center_of_screen(Window* window)
     GetWindowRect(window->hwnd, &window_rect);
     int width = window_rect.right - window_rect.left;
     int height = window_rect.bottom - window_rect.top;
-    window->last_mouse_reset_pos_x = window_rect.left + width/2;
-    window->last_mouse_reset_pos_y = window_rect.top + height/2;
+    window->last_mouse_reset_pos_x = window_rect.left + width / 2;
+    window->last_mouse_reset_pos_y = window_rect.top + height / 2;
     SetCursorPos(window->last_mouse_reset_pos_x, window->last_mouse_reset_pos_y);
 }
 
@@ -1154,7 +1180,7 @@ void window_initialize_dxgi_output()
             pAdapter->GetDesc(&desc);
             IDXGIOutput* output;
             while (pAdapter->EnumOutputs(j, &output) != DXGI_ERROR_NOT_FOUND) {
-                g_output = output; 
+                g_output = output;
 
                 DXGI_OUTPUT_DESC desc;
                 output->GetDesc(&desc);
@@ -1180,7 +1206,7 @@ void window_wait_vsynch()
     g_output->WaitForVBlank();
 }
 
-void window_calculate_vsynch_beat(double& vsync_start, double& time_between_vsynchs, Timer& timer) 
+void window_calculate_vsynch_beat(double& vsync_start, double& time_between_vsynchs, Timer& timer)
 {
     window_initialize_dxgi_output();
     double reference = timer_current_time_in_seconds(&timer);

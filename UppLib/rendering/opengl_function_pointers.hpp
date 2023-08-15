@@ -118,3 +118,13 @@ extern PFNGLRENDERBUFFERSTORAGEPROC glRenderbufferStorage;
 // Blending
 extern PFNGLBLENDEQUATIONPROC glBlendEquation;
 extern PFNGLBLENDCOLORPROC glBlendColor;
+// Query Objects (Timer queries)
+extern PFNGLGENQUERIESPROC glGenQueries;
+extern PFNGLDELETEQUERIESPROC glDeleteQueries;
+extern PFNGLBEGINQUERYPROC glBeginQuery;
+extern PFNGLENDQUERYPROC glEndQuery;
+extern PFNGLGETQUERYOBJECTIVPROC glGetQueryObjectiv;
+extern PFNGLGETQUERYOBJECTUIVPROC glGetQueryObjectuiv;
+extern PFNGLGETQUERYOBJECTI64VPROC glGetQueryObjecti64v;
+extern PFNGLGETQUERYOBJECTUI64VPROC glGetQueryObjectui64v;
+extern PFNGLQUERYCOUNTERPROC glQueryCounter;

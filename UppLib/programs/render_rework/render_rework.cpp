@@ -1836,6 +1836,53 @@ void gui_push_int(GUI_Renderer* renderer, GUI_Handle parent_handle, Input* input
     gui_push_text(renderer, h_container, tmp);
 }
 
+struct Ring_Buffer
+{
+    double values[120];
+    int next_free;
+
+    double average;
+    double max;
+    double min;
+    double standard_deviation;
+};
+
+Ring_Buffer ring_buffer_make(double initial_value)
+{
+    Ring_Buffer result;
+    for (int i = 0; i < 120; i++) {
+        result.values[i] = 0;
+    }
+    result.next_free = 0;
+    return result;
+}
+
+void ring_buffer_update_stats(Ring_Buffer& buffer)
+{
+    buffer.average = 0;
+    buffer.max = -1000000.0;
+    buffer.min = 1000000.0;
+    for (int i = 0; i < 120; i++) {
+        buffer.average += buffer.values[i];
+        buffer.max = math_maximum(buffer.max, buffer.values[i]);
+        buffer.min = math_minimum(buffer.max, buffer.values[i]);
+    }
+    buffer.average = buffer.average / 120.0;
+    // Calculate variance
+    buffer.standard_deviation = 0.0;
+    for (int i = 0; i < 120; i++) {
+        double diff = buffer.values[i] - buffer.average;
+        buffer.standard_deviation += diff * diff;
+    }
+    buffer.standard_deviation = math_square_root(buffer.standard_deviation);
+}
+
+void ring_buffer_set_value(Ring_Buffer& buffer, double value) {
+    buffer.values[buffer.next_free] = value;
+    buffer.next_free = (buffer.next_free + 1) % 120;
+}
+
+
 void render_rework()
 {
     Window* window = window_create("Test", 0);
@@ -1949,26 +1996,99 @@ void render_rework()
     for (int i = 0; i < buffer_frames; i++) {
         buffer_width[i] = 0;
     }
+    
+
+    /*
+    Note:
+
+    Next up: 
+        - Probably some more V-Synch things, or should I start doing something else (GUI)?
+        - Something else could be here
+    Things to consider for timing:
+        We currently don't try to hit the next frame when sleeping, but rather 
+        we check what the next vsync interval would be, so maybe we are missing some 
+        CPU frames, and I'd like to check that
+        Note: Time since last frame should actually handle this already, but we don't have min/max there
+
+    OpenGL commands can be:
+        - Unissued (Buffered in driver, not sent to hardware)
+        - Issued (Sent to GPU, not necessarily finished yet)
+        - Complete (Results of the command are ready to use
+
+    Notes about OpenGL timing:
+    glGetInteger64v with GL_TIMESTAMP --> Returns when all previous commands have been issued!
+        This is also asynchronous!
+    Some more interesting things:
+
+    Plan for synchronization:
+     - Do double buffering for gpu-queries, so that it shouldn't block
+     - Synchronize GPU timer with CPU timer (measure offset to our timer)
+
+    Per frame:
+     - Check when last gpu frame ended (Either SwapBuffer or last Draw)
+     - If this doesn't fall into our time-limit (We didn't hit 16ms, drop one frame)
+     - Sleep until vsynch timer
+
+    New note:
+     - GPU and CPU timer drift apart by a ca .5 milliseconds per second, so not usable as comparison
+     - So how do I make sure that I don't buffer frames, and hit my vsynch target?
+        Take a look at gpu time
+
+    So what I can't measure:
+     - Time on GPU before Vsynch
+    I guess the best option is to:
+     - Measure CPU time after flush
+     - Measure GPU time from render-start to render end (from previous frame)
+    Use this time to calculate how long a frame takes, and use the vsynch info and offset for the rest
+
+    What to do with it:
+     - Control sleep time to be as close to vsynch interval as possible (With some leeway, e.g. 10% variance in cpu/gpu time) + 1ms fixed or something
+     - If one frame takes too long, skip one rendering frame --> Results in hickup (same frame shown twice), but no frame buffering should happen
+    Problems that I still have:
+     - How to check if one frame schlipps over vsynch and causes delays --> Check gpu timing difference between frame ends...
+    */
+    const int query_buffer_size = 16;
+    GLuint query_buffer[16];
+    for (int i = 0; i < query_buffer_size; i++) {
+        glGenQueries(1, &query_buffer[i]);
+    }
+
+    // Synchronize CPU/GPU timer
+    GLuint64 gpu_time_reference = 0;
+    glQueryCounter(query_buffer[0], GL_TIMESTAMP);
+    glFlush();
+    glGetQueryObjectui64v(query_buffer[0], GL_QUERY_RESULT, &gpu_time_reference);
+    bool use_first_queries = false;
+    glQueryCounter(query_buffer[0], GL_TIMESTAMP);
+    glQueryCounter(query_buffer[1], GL_TIMESTAMP);
+    glQueryCounter(query_buffer[2], GL_TIMESTAMP);
+    GLuint64 gpu_last_frame_end = gpu_time_reference;
+
+    Ring_Buffer gpu_times = ring_buffer_make(0.0);
+    Ring_Buffer cpu_times = ring_buffer_make(0.0);
+    Ring_Buffer tslf_times = ring_buffer_make(0.0);
 
     // Window Loop
     double game_start_time = timer_current_time_in_seconds(&timer);
-    double time_last_update_start = game_start_time;
+    double frame_start_time = game_start_time;
     while (true)
     {
         double now = timer_current_time_in_seconds(&timer);
-        double frame_start_time = now;
-        double tslf = now - time_last_update_start;
-        time_last_update_start = now;
+        double tslf = now - frame_start_time;
+        frame_start_time = now;
 
-        // Sleep before getting input
-        // timer_sleep_for(&timer, 0.001 * sleep_before_input_ms);
+        // Handle input
         Input* input = window_get_input(window);
+        double handle_message_time;
         SCOPE_EXIT(input_reset(input));
+        int msg_count = 0;
         {
             // Input and Logic
-            if (!window_handle_messages(window, waitForWindowEvents)) {
+            double now = timer_current_time_in_seconds(&timer);
+            if (!window_handle_messages(window, waitForWindowEvents, &msg_count)) {
                 break;
             }
+            handle_message_time = timer_current_time_in_seconds(&timer) - now;
             if (input->close_request_issued || input->key_pressed[(int)Key_Code::ESCAPE]) {
                 window_save_position(window, "window_pos.set");
                 window_close(window);
@@ -2000,6 +2120,8 @@ void render_rework()
         if (input->key_pressed[(int)Key_Code::V]) {
             timer_sleep_for(&timer, 1 / 60.0 * 20); // Just skip 20 frames
         }
+
+        const double input_end_time = timer_current_time_in_seconds(&timer);
 
         // Rendering
         {
@@ -2039,7 +2161,7 @@ void render_rework()
                 }
                 width = width / buffer_frames;
 
-                for (int i = 0; i < frames; i++) {
+                for (int i = 0; i < frames && !custom_cursor; i++) {
                     float w = width * (frames - i);
                     float x_offset = 0;
                     if (input->mouse_delta_x == 0) {
@@ -2169,66 +2291,122 @@ void render_rework()
             renderer_2D_reset(renderer_2D);
             text_renderer_reset(text_renderer);
         }
-        double cpu_frame_time = timer_current_time_in_seconds(&timer) - now;
 
-        double rendering_core_time = 0.0f;
-        now = timer_current_time_in_seconds(&timer);
+        double render_buffer_end_time = timer_current_time_in_seconds(&timer);
+
+        int query_offset = use_first_queries ? 0 : 3;
+        glQueryCounter(query_buffer[query_offset + 0], GL_TIMESTAMP);
         rendering_core_render(camera, Framebuffer_Clear_Type::COLOR_AND_DEPTH);
+        glQueryCounter(query_buffer[query_offset + 1], GL_TIMESTAMP);
+
+        double core_before_swap = timer_current_time_in_seconds(&timer);
         if (glFinishAfterRender) {
             glFinish();
         }
-        rendering_core_time = timer_current_time_in_seconds(&timer) - now;
 
-        now = timer_current_time_in_seconds(&timer);
+        // SWAP
         if (!input->key_down[(int)Key_Code::S]) {
             // Wait for swap buffer delay
             timer_sleep_until(&timer, frame_start_time + delay_swap_buffer_ms * 0.001);
 
             window_swap_buffers(window);
+            glQueryCounter(query_buffer[query_offset + 2], GL_TIMESTAMP);
             if (glFinishAfterSwap) {
                 glFinish();
             }
+             
+            if (input->key_down[(int)Key_Code::D]) {
+                glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+                window_swap_buffers(window);
+            }
         }
-        double swap_buffer_time = timer_current_time_in_seconds(&timer) - now;
-        double time_to_swap = timer_current_time_in_seconds(&timer) - frame_start_time;
+        double core_after_swap = timer_current_time_in_seconds(&timer);
+        glFlush();
+        double core_after_swap_flush = timer_current_time_in_seconds(&timer);
 
-        // Sleep
+        // Sleep + Timing
         {
+            // Sleep
             const int TARGET_FPS = 60;
             const double SECONDS_PER_FRAME = 1.0 / TARGET_FPS;
 
             double now = timer_current_time_in_seconds(&timer);
             // Check when the next game_start_beat is
-            double time_till_next_beat = math_modulo(vsync_start + beat_offset_time * 0.001 - now, vsync_time_between);
-
-            string_reset(&timing_str);
-            string_append_formated(&timing_str, "tslf           ... %3.2fms\n", 1000.0f * (tslf));
-            string_append_formated(&timing_str, "cpu_time       ... %3.2fms\n", 1000.0f * (cpu_frame_time));
-            string_append_formated(&timing_str, "core_time      ... %3.2fms\n", 1000.0f * (rendering_core_time));
-            string_append_formated(&timing_str, "swap_time      ... %3.2fms\n", 1000.0f * (swap_buffer_time));
-            string_append_formated(&timing_str, "time_till_beat ... %3.2fms\n", 1000.0f * (time_till_next_beat));
-            string_append_formated(&timing_str, "time_to_swap   ... %3.2fms\n", 1000.0f * (time_to_swap));
-            /*
-            logg("FRAME_TIMING:\n---------------\n");
-            logg("input        ... %3.2fms\n", 1000.0f * (float)(time_input_end - time_frame_start));
-            logg("render       ... %3.2fms\n", 1000.0f * (float)(time_render_end - time_input_end));
-            logg("TSLF: %3.2fms, calculation time: %3.2fms\n", time_since_last_update*1000, time_calculations*1000);
-            */
-
-            // Sleep
+            double time_till_next_beat = math_modulo(vsync_start - now, vsync_time_between);
+            double sleep_time = time_till_next_beat + beat_offset_time * 0.001;
             if (sleep_enabled) {
-                //timer_sleep_until(&timer, time_last_update_start + SECONDS_PER_FRAME);
                 if (test_new_sleep) {
-                    if (window_state->fullscreen) {
-                        window_wait_vsynch();
-                    }
-                    else {
-                    }
+                    window_wait_vsynch();
                     timer_sleep_for(&timer, beat_offset_time * 0.001);
                 }
                 else {
-                    timer_sleep_for(&timer, time_till_next_beat);
+                    timer_sleep_for(&timer, sleep_time);
                 }
+            }
+
+            // Read last queries (GPU timings)
+            use_first_queries = !use_first_queries;
+            query_offset = use_first_queries ? 0 : 3;
+            // Query timestamps (Timing is in nanoseconds!)
+            GLuint64 core_start, core_end, swap_end;
+            glGetQueryObjectui64v(query_buffer[query_offset + 0], GL_QUERY_RESULT, &core_start);
+            glGetQueryObjectui64v(query_buffer[query_offset + 1], GL_QUERY_RESULT, &core_end);
+            glGetQueryObjectui64v(query_buffer[query_offset + 2], GL_QUERY_RESULT, &swap_end);
+            double gpu_start = (double)(core_start - gpu_time_reference) / 1000000.0;
+            double gpu_end = (double)(core_end - gpu_time_reference) / 1000000.0;
+            double gpu_swap = (double)(swap_end - gpu_time_reference) / 1000000.0;
+            double gpu_diff_last_frame_end = (double)(swap_end - gpu_last_frame_end) / 1000000.0;
+            gpu_last_frame_end = swap_end;
+
+            // Generate timing output
+            const int time_point_count = 5;
+            const char* strings[time_point_count] = {
+                "input_end         ... ",
+                "render_buffer_end ... ",
+                "core_before_swap  ... ",
+                "core_after_swap   ... ",
+                "core_after_flush  ... ",
+            };
+            double time_points[time_point_count] = {
+                input_end_time,
+                render_buffer_end_time,
+                core_before_swap,
+                core_after_swap,
+                core_after_swap_flush
+            };
+            
+            string_reset(&timing_str);
+            double prev = frame_start_time;
+            for (int i = 0; i < time_point_count; i++) {
+                string_append_formated(&timing_str, "%s%3.2fms (+%3.2fms)\n", strings[i], 1000.0f * (time_points[i] - frame_start_time), 1000.0f * (time_points[i] - prev));
+                prev = time_points[i];
+            }
+
+            // ring_buffer_set_value(cpu_times, (input_end_time - frame_start_time) * 1000.0);
+            ring_buffer_set_value(cpu_times, handle_message_time * 1000.0);
+            ring_buffer_update_stats(cpu_times);
+            ring_buffer_set_value(gpu_times, gpu_diff_last_frame_end);
+            ring_buffer_update_stats(gpu_times);
+            ring_buffer_set_value(tslf_times, tslf * 1000.0);
+            ring_buffer_update_stats(tslf_times);
+
+            string_append_formated(&timing_str, "CPU avg: %3.2fms, min: %3.2fms, max: %3.2fms, dev: %3.2fms\n", 
+                cpu_times.average, cpu_times.min, cpu_times.max, cpu_times.standard_deviation);
+            string_append_formated(&timing_str, "GPU avg: %3.2fms, min: %3.2fms, max: %3.2fms, dev: %3.2fms\n",
+                gpu_times.average, gpu_times.min, gpu_times.max, gpu_times.standard_deviation);
+            string_append_formated(&timing_str, "TSLF avg: %3.2fms, min: %3.2fms, max: %3.2fms, dev: %3.2fms\n",
+                tslf_times.average, tslf_times.min, tslf_times.max, tslf_times.standard_deviation);
+
+            string_append_formated(&timing_str, "tslf       ... %3.2fms\n", tslf * 1000.0);
+            string_append_formated(&timing_str, "GPU render ... %3.2fms\n", gpu_end - gpu_start);
+            string_append_formated(&timing_str, "GPU swap   ... %3.2fms\n", gpu_swap - gpu_start);
+            string_append_formated(&timing_str, "GPU diff   ... %3.2fms\n", gpu_diff_last_frame_end);
+            string_append_formated(&timing_str, "msg_count  ... %d\n", msg_count);
+            if (gpu_diff_last_frame_end > 1 / 60.0 * 1000.0 + 8) {
+                string_append_formated(&timing_str, "HOT");
+            }
+            else {
+                string_append_formated(&timing_str, "no");
             }
         }
     }

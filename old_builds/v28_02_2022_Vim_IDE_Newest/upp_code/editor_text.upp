@@ -9,7 +9,7 @@ F11 - Toggle Fullscreen
 */
 
 fib :: (a: int) -> int {
-    if a < 2 {
+    if a < 2 { 
         return 1;
     }
     return fib(a-1) + fib(a-2);
@@ -17,6 +17,7 @@ fib :: (a: int) -> int {
 
 main :: () {
     print_string("Neat yeah");
+    print_line();
     print_i32(fib(10));
 }
 

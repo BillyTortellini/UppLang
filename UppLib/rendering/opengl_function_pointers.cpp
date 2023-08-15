@@ -137,6 +137,17 @@ bool opengl_load_all_functions()
     glBlendEquation = (PFNGLBLENDEQUATIONPROC)opengl_get_function_address("glBlendEquation");
     glBlendColor = (PFNGLBLENDCOLORPROC)opengl_get_function_address("glBlendColor");
 
+    glGenQueries = (PFNGLGENQUERIESPROC)opengl_get_function_address("glGenQueries");
+    glDeleteQueries = (PFNGLDELETEQUERIESPROC)opengl_get_function_address("glDeleteQueries");
+    glBeginQuery = (PFNGLBEGINQUERYPROC)opengl_get_function_address("glBeginQuery");
+    glEndQuery = (PFNGLENDQUERYPROC)opengl_get_function_address("glEndQuery");
+    glGetQueryObjectiv = (PFNGLGETQUERYOBJECTIVPROC)opengl_get_function_address("glGetQueryObjectiv");
+    glGetQueryObjectuiv = (PFNGLGETQUERYOBJECTUIVPROC)opengl_get_function_address("glGetQueryObjectuiv");
+    glGetQueryObjecti64v = (PFNGLGETQUERYOBJECTI64VPROC)opengl_get_function_address("glGetQueryObjecti64v");
+    glGetQueryObjectui64v = (PFNGLGETQUERYOBJECTUI64VPROC)opengl_get_function_address("glGetQueryObjectui64v");
+    glQueryCounter = (PFNGLQUERYCOUNTERPROC)opengl_get_function_address("glQueryCounter");
+
+
     bool success = true;
     success = success &&
         (glDebugMessageCallback != NULL) &&
@@ -222,7 +233,17 @@ bool opengl_load_all_functions()
         (glRenderbufferStorage != NULL) &&
         //(glTexSubImage2D != NULL) &&
         (glBlendColor != NULL) &&
-        (glBlendEquation != NULL);
+        (glBlendEquation != NULL) &&
+        (glGenQueries != NULL) &&
+        (glDeleteQueries != NULL) &&
+        (glBeginQuery != NULL) &&
+        (glEndQuery != NULL) &&
+        (glGetQueryObjectiv != NULL) &&
+        (glGetQueryObjectuiv != NULL) &&
+        (glGetQueryObjecti64v != NULL) &&
+        (glGetQueryObjectui64v != NULL) &&
+        (glQueryCounter != NULL) &&
+        (true); // Just so we can copy paste lines without having to worry about the last &&
 
     // Load extensions
     success = success && opengl_load_extensions();
@@ -333,3 +354,13 @@ PFNGLRENDERBUFFERSTORAGEPROC glRenderbufferStorage;
 // Blending
  PFNGLBLENDEQUATIONPROC glBlendEquation;
  PFNGLBLENDCOLORPROC glBlendColor;
+ // Timing
+PFNGLGENQUERIESPROC glGenQueries;
+PFNGLDELETEQUERIESPROC glDeleteQueries;
+PFNGLBEGINQUERYPROC glBeginQuery;
+PFNGLENDQUERYPROC glEndQuery;
+PFNGLGETQUERYOBJECTIVPROC glGetQueryObjectiv;
+PFNGLGETQUERYOBJECTUIVPROC glGetQueryObjectuiv;
+PFNGLGETQUERYOBJECTI64VPROC glGetQueryObjecti64v;
+PFNGLGETQUERYOBJECTUI64VPROC glGetQueryObjectui64v;
+PFNGLQUERYCOUNTERPROC glQueryCounter;
