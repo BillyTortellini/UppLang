@@ -13,31 +13,7 @@
 #include "../../rendering/renderer_2d.hpp"
 #include "../../rendering/basic2D.hpp"
 #include <algorithm>
-
-    /* So what coordinates do we have here:
-        * pixel coordinates             (0 - bb_width)
-            + Integer precision
-            + Absolute
-            - Resolution dependent (E.g. no scaling)
-        * normalized screen coordinates (-1.0f - 1.0f)
-            o Required for rendering
-            - Introduces stretching on non 1:1 aspect rations
-            + Resolution Independent
-        * Aspect-Ratio normalized coordinates (4 - 3 --> 4/3 - 1)
-            o Normalized to either height, width, max or min of dimensions
-            + No stretching
-            - Arbitrary boundaries on the side of windows (e.g. at 1.34343 is the left boundary)
-        * Pixel coordinates are almost fine except that they are integers.
-        * I guess depending on the use case you want other sizes...
-        * Conversion of widths and heights is different when we have different aspect ratios
-        Some things we may want:
-            - Size dependent on Window-Size (E.g. text scaling with Screen size for large Text and UI-elements in Games)
-            - Size dependent on Screen-Size (For things that should always be e.g. readable, like Text in information UIs)
-            - Fixed pixel size:
-                Not flexible on high resolution devices, everything will be smaller, and on low-res monitors the size is too large.
-
-       When sending the data to the gpu we want to have normalized screen coordinates
-     */
+#include <iostream>
 
 /*
 Things to consider:
@@ -293,7 +269,7 @@ struct GUI_Handle
     void* userdata;
 };
 
-struct GUI_Renderer
+struct IMGUI
 {
     Text_Renderer* text_renderer;
     Window* window;
@@ -302,17 +278,18 @@ struct GUI_Renderer
     Cursor_Icon_Type cursor_type;
 };
 
-GUI_Renderer gui_renderer_initialize(Text_Renderer* text_renderer, Window* window)
+IMGUI imgui;
+
+void imgui_initialize(Text_Renderer* text_renderer, Window* window)
 {
     auto& pre = rendering_core.predefined;
 
-    GUI_Renderer result;
-    result.text_renderer = text_renderer;
-    result.nodes = dynamic_array_create_empty<GUI_Node>(1);
-    result.root_handle.index = 0;
-    result.root_handle.mouse_hover = false;
-    result.window = window;
-    result.cursor_type = Cursor_Icon_Type::ARROW;
+    imgui.text_renderer = text_renderer;
+    imgui.nodes = dynamic_array_create_empty<GUI_Node>(1);
+    imgui.root_handle.index = 0;
+    imgui.root_handle.mouse_hover = false;
+    imgui.window = window;
+    imgui.cursor_type = Cursor_Icon_Type::ARROW;
     
     // Push root node
     GUI_Node root;
@@ -323,6 +300,8 @@ GUI_Renderer gui_renderer_initialize(Text_Renderer* text_renderer, Window* windo
     root.index_parent = -1;
     root.index_next_node = -1;
     root.traversal_next_child = -1;
+    root.userdata = nullptr;
+    root.userdata_destroy_fn = nullptr;
     root.drawable = gui_drawable_make_none();
     auto& info = rendering_core.render_information;
     root.size[0] = gui_size_make(info.backbuffer_width, false, false);
@@ -330,25 +309,22 @@ GUI_Renderer gui_renderer_initialize(Text_Renderer* text_renderer, Window* windo
     root.position = gui_position_make_relative(vec2(0.0f), Anchor::BOTTOM_LEFT, 0, false);
     root.layout = gui_layout_make_layered();
     root.receives_input = false;
-    dynamic_array_push_back(&result.nodes, root);
-
-    return result;
+    dynamic_array_push_back(&imgui.nodes, root);
 }
 
-void gui_renderer_destroy(GUI_Renderer* renderer) {
-    for (int i = 0; i < renderer->nodes.size; i++) {
-        gui_node_destroy(renderer->nodes[i]);
+void imgui_destroy() {
+    for (int i = 0; i < imgui.nodes.size; i++) {
+        gui_node_destroy(imgui.nodes[i]);
     }
-    dynamic_array_destroy(&renderer->nodes);
+    dynamic_array_destroy(&imgui.nodes);
 }
 
 GUI_Handle gui_add_node(
-    GUI_Renderer* renderer, GUI_Handle parent_handle, 
-    GUI_Size size_x, GUI_Size size_y, 
+    GUI_Handle parent_handle, GUI_Size size_x, GUI_Size size_y, 
     GUI_Position position, GUI_Layout layout, GUI_Drawable drawable, bool receives_input
 ) 
 {
-    auto& nodes = renderer->nodes;
+    auto& nodes = imgui.nodes;
 
     // Node-Matching (Create new node or reuse node from last frame)
     int node_index = nodes[parent_handle.index].traversal_next_child;
@@ -363,8 +339,8 @@ GUI_Handle gui_add_node(
         node.mouse_hover = false;
         node.userdata = 0;
         node.userdata_destroy_fn = 0;
-        dynamic_array_push_back(&renderer->nodes, node);
-        node_index = renderer->nodes.size - 1;
+        dynamic_array_push_back(&imgui.nodes, node);
+        node_index = imgui.nodes.size - 1;
 
         // Create links between parent and children
         auto& parent_node = nodes[parent_handle.index];
@@ -383,7 +359,7 @@ GUI_Handle gui_add_node(
 
     // Update node data
     {
-        auto& node = renderer->nodes[node_index];
+        auto& node = imgui.nodes[node_index];
         node.referenced_this_frame = true;
         node.layout = layout;
         node.size[0] = size_x;
@@ -408,7 +384,7 @@ GUI_Handle gui_add_node(
     }
 
     // Update next traversal
-    nodes[parent_handle.index].traversal_next_child = renderer->nodes[node_index].index_next_node;
+    nodes[parent_handle.index].traversal_next_child = imgui.nodes[node_index].index_next_node;
 
     GUI_Handle handle;
     handle.index = node_index;
@@ -420,9 +396,9 @@ GUI_Handle gui_add_node(
 
 
 // GUI UPDATE
-void gui_update_nodes_recursive(GUI_Renderer* renderer, Array<int> new_node_indices, int node_index, int& next_free_node_index)
+void gui_update_nodes_recursive(Array<int> new_node_indices, int node_index, int& next_free_node_index)
 {
-    auto& nodes = renderer->nodes;
+    auto& nodes = imgui.nodes;
     auto& node = nodes[node_index];
 
     // Check if node is parent
@@ -450,7 +426,7 @@ void gui_update_nodes_recursive(GUI_Renderer* renderer, Array<int> new_node_indi
         while (child_index != -1) {
             auto& child = nodes[child_index];
             SCOPE_EXIT(child_index = child.index_next_node);
-            gui_update_nodes_recursive(renderer, new_node_indices, child_index, next_free_node_index);
+            gui_update_nodes_recursive(new_node_indices, child_index, next_free_node_index);
         }
 
         // Update next connections of children
@@ -485,9 +461,9 @@ void gui_update_nodes_recursive(GUI_Renderer* renderer, Array<int> new_node_indi
     node.mouse_hover = false;
 }
 
-void gui_layout_calculate_min_size(GUI_Renderer* renderer, int node_index, int dim)
+void gui_layout_calculate_min_size(int node_index, int dim)
 {
-    auto& nodes = renderer->nodes;
+    auto& nodes = imgui.nodes;
     auto& node = nodes[node_index];
 
     // Calculate all child min sizes
@@ -502,7 +478,7 @@ void gui_layout_calculate_min_size(GUI_Renderer* renderer, int node_index, int d
     while (child_index != -1) {
         auto& child_node = nodes[child_index];
         SCOPE_EXIT(child_index = child_node.index_next_node);
-        gui_layout_calculate_min_size(renderer, child_index, dim);
+        gui_layout_calculate_min_size(child_index, dim);
 
         if (child_node.position.type != GUI_Position_Type::USE_PARENT_LAYOUT) {
             continue;
@@ -524,9 +500,9 @@ void gui_layout_calculate_min_size(GUI_Renderer* renderer, int node_index, int d
     }
 }
 
-void gui_layout_layout_children(GUI_Renderer* renderer, int node_index, int dim)
+void gui_layout_layout_children(int node_index, int dim)
 {
-    auto& nodes = renderer->nodes;
+    auto& nodes = imgui.nodes;
     auto& node = nodes[node_index];
     auto& layout = node.layout;
 
@@ -731,13 +707,13 @@ void gui_layout_layout_children(GUI_Renderer* renderer, int node_index, int dim)
         }
 
         // Recurse to all children
-        gui_layout_layout_children(renderer, child_index, dim);
+        gui_layout_layout_children(child_index, dim);
     }
 }
 
-bool gui_handle_input(GUI_Renderer* renderer, Input* input, int node_index)
+bool gui_handle_input(Input* input, int node_index)
 {
-    auto& nodes = renderer->nodes;
+    auto& nodes = imgui.nodes;
     auto& node = nodes[node_index];
 
     // Check if mouse is over this node
@@ -757,7 +733,7 @@ bool gui_handle_input(GUI_Renderer* renderer, Input* input, int node_index)
         while (child_index != -1) {
             auto& child_node = nodes[child_index];
             SCOPE_EXIT(child_index = child_node.index_next_node);
-            if (gui_handle_input(renderer, input, child_index)) {
+            if (gui_handle_input(input, child_index)) {
                 child_took_input = true;
                 break;
             }
@@ -770,17 +746,9 @@ bool gui_handle_input(GUI_Renderer* renderer, Input* input, int node_index)
     return node.receives_input && mouse_over;
 }
 
-struct GUI_Dependency
+void gui_append_to_string(String* append_to, int indentation_level, int node_index)
 {
-    int dependency_count;
-    int waiting_for_child_finish_count;
-    Dynamic_Array<int> dependents_waiting_on_draw;
-    Dynamic_Array<int> dependents_waiting_on_child_finish;
-};
-
-void gui_append_to_string(GUI_Renderer* renderer, String* append_to, int indentation_level, int node_index)
-{
-    auto& nodes = renderer->nodes;
+    auto& nodes = imgui.nodes;
     auto& node = nodes[node_index];
 
     for (int i = 0; i < indentation_level; i++) {
@@ -807,25 +775,119 @@ void gui_append_to_string(GUI_Renderer* renderer, String* append_to, int indenta
         while (child_index != -1) {
             auto& child_node = nodes[child_index];
             SCOPE_EXIT(child_index = child_node.index_next_node);
-            gui_append_to_string(renderer, append_to, indentation_level + 1, child_index);
+            gui_append_to_string(append_to, indentation_level + 1, child_index);
         }
     }
 }
 
-void gui_update(GUI_Renderer* renderer, Input* input)
+struct GUI_Dependency {
+    int dependency_count;
+    Dynamic_Array<int> dependents;
+};
+
+void gui_add_dependency(Dynamic_Array<GUI_Node>& nodes, Array<GUI_Dependency> dependencies, int node_index, int depends_on_index, bool parent_child_dependency)
+{
+    auto& node = nodes[node_index];
+    auto& other = nodes[depends_on_index];
+    
+    if (other.drawable.type == GUI_Drawable_Type::NONE) {
+        if (parent_child_dependency) {
+            if (other.index_parent == -1) {
+                return;
+            }
+            gui_add_dependency(nodes, dependencies, node_index, other.index_parent, parent_child_dependency);
+        }
+        else {
+            // add dependencies to all children
+            int child_index = other.index_first_child;
+            while (child_index != -1) {
+                auto& child_node = nodes[child_index];
+                SCOPE_EXIT(child_index = child_node.index_next_node);
+                gui_add_dependency(nodes, dependencies, node_index, child_index, parent_child_dependency);
+            }
+        }
+    }
+    else {
+        dependencies[node_index].dependency_count += 1;
+        dynamic_array_push_back(&dependencies[depends_on_index].dependents, node_index);
+    }
+}
+
+bool check_overlap_dependency(Dynamic_Array<GUI_Node>& nodes, Array<GUI_Dependency> dependencies, int node_index, int other_index, bool check_z_index) 
+{
+    auto* node = &nodes[node_index];
+    auto* other = &nodes[other_index];
+
+    // Custom overlap test
+    {
+        Bounding_Box2 a = node->bounding_box;
+        Bounding_Box2 b = other->bounding_box;
+        bool x_overlap = false;
+        float max_overlap = 0;
+        if (a.max.x > b.min.x && a.min.x < b.max.x) {
+            float overlap = math_minimum(a.max.x - b.min.x, b.max.x - a.min.x);
+            max_overlap = math_maximum(overlap, max_overlap);
+            x_overlap = true;
+        }
+        bool y_overlap = false;
+        if (a.max.y > b.min.y && a.min.y < b.max.y) {
+            float overlap = math_minimum(a.max.y - b.min.y, b.max.y - a.min.y);
+            max_overlap = math_maximum(overlap, max_overlap);
+            y_overlap = true;
+        }
+        if (!y_overlap || !x_overlap) {
+            return false;
+        }
+        if (max_overlap < 3.0f) {
+            return false;
+        }
+    }
+
+    // if (!bounding_box_2_overlap(node->bounding_box, other->bounding_box)) {
+    //     return false;
+    // }
+
+    // Other would need to wait on me, except if the z-index is higher
+    if (other->position.z_index > node->position.z_index && check_z_index) {
+        GUI_Node* swap = other;
+        other = node;
+        node = swap;
+        int swapi = other_index;
+        other_index = node_index;
+        node_index = swapi;
+    }
+
+    // Check if we overlap with any child, if so we don't need to add any additional dependencies
+    bool overlapped_any = false;
+    int child_index = node->index_last_child;
+    while (child_index != -1) {
+        auto& child_node = nodes[child_index];
+        SCOPE_EXIT(child_index = child_node.index_next_node);
+        if (check_overlap_dependency(nodes, dependencies, child_index, other_index, false)) {
+            overlapped_any = true;
+        };
+    }
+    if (!overlapped_any) {
+        gui_add_dependency(nodes, dependencies, node_index, other_index, false);
+    }
+
+    return true;
+}
+
+void gui_update(Input* input)
 {
     auto& core = rendering_core;
     auto& pre = core.predefined;
     auto& info = core.render_information;
+    auto& nodes = imgui.nodes;
 
     // Remove nodes from last frame
     {
-        auto& nodes = renderer->nodes;
         // Generate new node positions
         Array<int> new_node_indices = array_create_empty<int>(nodes.size);
         SCOPE_EXIT(array_destroy(&new_node_indices));
         int next_free_index = 0;
-        gui_update_nodes_recursive(renderer, new_node_indices, 0, next_free_index);
+        gui_update_nodes_recursive(new_node_indices, 0, next_free_index);
 
         // Do compaction
         Dynamic_Array<GUI_Node> new_nodes = dynamic_array_create_empty<GUI_Node>(next_free_index + 1);
@@ -836,17 +898,17 @@ void gui_update(GUI_Renderer* renderer, Input* input)
                 new_nodes[new_index] = nodes[i];
             }
         }
-        auto old = renderer->nodes;
-        renderer->nodes = new_nodes;
+        auto old = imgui.nodes;
+        imgui.nodes = new_nodes;
         dynamic_array_destroy(&old);
 
         // Update root node
         nodes[0].referenced_this_frame = true;
     }
 
-    // Layout UI
+    // Layout UI 
     {
-        auto& nodes = renderer->nodes;
+        auto& nodes = imgui.nodes;
 
         // Set root to windows size
         nodes[0].size[0] = gui_size_make(info.backbuffer_width, false, false);
@@ -855,33 +917,34 @@ void gui_update(GUI_Renderer* renderer, Input* input)
         nodes[0].bounding_box.max = vec2(info.backbuffer_width, info.backbuffer_height);
 
         // Calculate layout
-        gui_layout_calculate_min_size(renderer, 0, 0);
-        gui_layout_calculate_min_size(renderer, 0, 1);
-        gui_layout_layout_children(renderer, 0, 0);
-        gui_layout_layout_children(renderer, 0, 1);
+        gui_layout_calculate_min_size(0, 0);
+        gui_layout_calculate_min_size(0, 1);
+        gui_layout_layout_children(0, 0);
+        gui_layout_layout_children(0, 1);
     }
 
+    // Print UI if requested
     if (input->key_pressed[(int)Key_Code::P]) {
         String str = string_create_empty(1);
         SCOPE_EXIT(string_destroy(&str));
-        gui_append_to_string(renderer, &str, 0, 0);
+        gui_append_to_string(&str, 0, 0);
         logg("%s\n\n", str.characters);
     }
 
     // Handle input
-    gui_handle_input(renderer, input, 0);
+    gui_handle_input(input, 0);
 
     // Handle cursor
     static Cursor_Icon_Type last_icon_type = Cursor_Icon_Type::ARROW;
-    if (last_icon_type != renderer->cursor_type) {
-        window_set_cursor_icon(renderer->window, renderer->cursor_type);
-        last_icon_type = renderer->cursor_type;
+    if (last_icon_type != imgui.cursor_type) {
+        window_set_cursor_icon(imgui.window, imgui.cursor_type);
+        last_icon_type = imgui.cursor_type;
     }
-    renderer->cursor_type = Cursor_Icon_Type::ARROW; // Cursor needs to be set each frame, otherwise it defaults to Arrow
+    imgui.cursor_type = Cursor_Icon_Type::ARROW; // Cursor needs to be set each frame, otherwise it defaults to Arrow
 
     // Render UI
     {
-        auto& nodes = renderer->nodes;
+        auto& nodes = imgui.nodes;
 
         // Generate draw batches
         Array<int> execution_order = array_create_empty<int>(nodes.size);
@@ -889,63 +952,44 @@ void gui_update(GUI_Renderer* renderer, Input* input)
         SCOPE_EXIT(array_destroy(&execution_order));
         SCOPE_EXIT(dynamic_array_destroy(&batch_start_indices));
         {
-            int next_free_in_order = 0;
-
             // Initialize dependency graph structure
             Array<GUI_Dependency> dependencies = array_create_empty<GUI_Dependency>(nodes.size);
             for (int i = 0; i < dependencies.size; i++) {
                 auto& dependency = dependencies[i];
                 dependency.dependency_count = 0;
-                dependency.waiting_for_child_finish_count = 0;
-                dependency.dependents_waiting_on_child_finish = dynamic_array_create_empty<int>(1);
-                dependency.dependents_waiting_on_draw = dynamic_array_create_empty<int>(1);
+                dependency.dependents = dynamic_array_create_empty<int>(1);
             }
             SCOPE_EXIT(
                 for (int i = 0; i < dependencies.size; i++) {
-                    auto& dependency = dependencies[i];
-                    dynamic_array_destroy(&dependency.dependents_waiting_on_child_finish);
-                    dynamic_array_destroy(&dependency.dependents_waiting_on_draw);
+                    dynamic_array_destroy(&dependencies[i].dependents);
                 }
-            array_destroy(&dependencies);
+                array_destroy(&dependencies);
             );
 
             // Generate dependencies
-            for (int i = 0; i < nodes.size; i++)
+            for (int node_index = 0; node_index < nodes.size; node_index++)
             {
-                auto& node = nodes[i];
-                auto& dependency = dependencies[i];
-
-                // Generate child finish dependencies
+                auto& node = nodes[node_index];
+                // Loop over all children
                 auto child_index = node.index_first_child;
                 while (child_index != -1) {
-                    auto& child_dependency = dependencies[child_index];
                     auto& child_node = nodes[child_index];
                     SCOPE_EXIT(child_index = child_node.index_next_node);
-                    // Add child finish dependency for each child
-                    dependency.waiting_for_child_finish_count += 1;
-                    child_dependency.dependency_count += 1;
-                    dynamic_array_push_back(&dependency.dependents_waiting_on_draw, child_index);
-                }
 
-                // Generate overlap/neighbor dependencies
-                auto next_index = node.index_next_node;
-                while (next_index != -1) {
-                    auto& next_dependency = dependencies[next_index];
-                    auto& next_node = nodes[next_index];
-                    SCOPE_EXIT(next_index = next_node.index_next_node);
-                    // Add overlap dependency
-                    if (bounding_box_2_overlap(next_node.bounding_box, node.bounding_box)) {
-                        next_dependency.dependency_count += 1;
-                        if (node.index_first_child == -1) { // Normal dependency if this node doesn't have any children
-                            dynamic_array_push_back(&dependency.dependents_waiting_on_draw, next_index);
-                        }
-                        else {
-                            dynamic_array_push_back(&dependency.dependents_waiting_on_child_finish, next_index);
-                        }
+                    // Add parent-child dependency
+                    gui_add_dependency(nodes, dependencies, child_index, node_index, true);
+
+                    // Check for overlap-dependencies between children
+                    int next_child_index = child_node.index_next_node;
+                    while (next_child_index != -1) {
+                        auto& next_child_node = nodes[next_child_index];
+                        SCOPE_EXIT(next_child_index = next_child_node.index_next_node);
+                        check_overlap_dependency(nodes, dependencies, child_index, next_child_index, true);
                     }
                 }
             }
 
+            int next_free_in_order = 0;
             // Generate first batch by looking for all things that are runnable
             dynamic_array_push_back(&batch_start_indices, 0);
             for (int i = 0; i < dependencies.size; i++) {
@@ -970,10 +1014,10 @@ void gui_update(GUI_Renderer* renderer, Input* input)
                 // Remove all dependencies and queue next workloads
                 for (int i = batch_start; i < batch_end; i++)
                 {
-                    auto& dependency = dependencies[i];
-                    for (int j = 0; j < dependency.dependents_waiting_on_draw.size; j++)
+                    auto& dependency = dependencies[execution_order[i]];
+                    for (int j = 0; j < dependency.dependents.size; j++)
                     {
-                        int waiting_index = dependency.dependents_waiting_on_draw[j];
+                        int waiting_index = dependency.dependents[j];
                         auto& waiting_dependency = dependencies[waiting_index];
                         assert(waiting_dependency.dependency_count > 0, "Must not happen!");
                         waiting_dependency.dependency_count -= 1;
@@ -981,30 +1025,6 @@ void gui_update(GUI_Renderer* renderer, Input* input)
                         if (waiting_dependency.dependency_count == 0) {
                             execution_order[next_free_in_order] = waiting_index;
                             next_free_in_order += 1;
-                        }
-                    }
-
-                    // Check parent dependencies
-                    auto& node = nodes[i];
-                    if (node.index_parent != -1)
-                    {
-                        auto& parent_dependency = dependencies[node.index_parent];
-                        assert(parent_dependency.waiting_for_child_finish_count > 0, "Must not happen!");
-                        parent_dependency.waiting_for_child_finish_count -= 1;
-                        if (parent_dependency.waiting_for_child_finish_count == 0)
-                        {
-                            for (int j = 0; j < parent_dependency.dependents_waiting_on_child_finish.size; j++)
-                            {
-                                int waiting_index = parent_dependency.dependents_waiting_on_child_finish[j];
-                                auto& waiting_dependency = dependencies[waiting_index];
-                                assert(waiting_dependency.dependency_count > 0, "Must not happen!");
-                                waiting_dependency.dependency_count -= 1;
-                                // Add to next batch if the workload can be drawn
-                                if (waiting_dependency.dependency_count == 0) {
-                                    execution_order[next_free_in_order] = waiting_index;
-                                    next_free_in_order += 1;
-                                }
-                            }
                         }
                     }
                 }
@@ -1031,8 +1051,19 @@ void gui_update(GUI_Renderer* renderer, Input* input)
         Render_Pass* pass_2D = rendering_core_query_renderpass("2D pass", render_state_2D, 0);
         render_pass_add_dependency(pass_2D, rendering_core.predefined.main_pass);
 
+        static int skip_batches = 0;
+        if (input->key_pressed[(int)Key_Code::O]) {
+            skip_batches += 1;
+            logg("Skip batches: %\n", skip_batches);
+        }
+        else if (input->key_pressed[(int)Key_Code::P]) {
+            skip_batches -= 1;
+            logg("Skip batches: %\n", skip_batches);
+        }
+        skip_batches = math_clamp(skip_batches, 0, batch_start_indices.size - 1);
+        
         // Draw batches in order
-        for (int batch = 0; batch < batch_start_indices.size - 1; batch++)
+        for (int batch = 0; batch < batch_start_indices.size - 1 - skip_batches; batch++)
         {
             int batch_start = batch_start_indices[batch];
             int batch_end = batch_start_indices[batch + 1];
@@ -1068,11 +1099,11 @@ void gui_update(GUI_Renderer* renderer, Input* input)
                 }
                 case GUI_Drawable_Type::TEXT: {
                     float height = node.bounding_box.max.y - node.bounding_box.min.y;
-                    float char_width = text_renderer_line_width(renderer->text_renderer, height, 1);
+                    float char_width = text_renderer_line_width(imgui.text_renderer, height, 1);
                     String text = node.drawable.text; // Local copy so size can be changed without affecting original code
                     vec4 c = node.drawable.color;
                     text_renderer_add_text(
-                        renderer->text_renderer, text, node.bounding_box.min, Anchor::BOTTOM_LEFT, height, vec3(c.x, c.y, c.z), node.clipped_box
+                        imgui.text_renderer, text, node.bounding_box.min, Anchor::BOTTOM_LEFT, height, vec3(c.x, c.y, c.z), node.clipped_box
                     );
                     break;
                 }
@@ -1082,7 +1113,7 @@ void gui_update(GUI_Renderer* renderer, Input* input)
 
                 // logg("    Text \"%s\"\n", primitive.data.text.characters);
                 // text_renderer_add_text(
-                //     renderer->text_renderer, primitive.data.text, primitive.bounding_box.min, Anchor::BOTTOM_LEFT,
+                //     imgui.text_renderer, primitive.data.text, primitive.bounding_box.min, Anchor::BOTTOM_LEFT,
                 //     primitive.bounding_box.max.y - primitive.bounding_box.min.y, vec3(primitive.color.x, primitive.color.y, primitive.color.z)
                 // );
                 // break;
@@ -1093,7 +1124,7 @@ void gui_update(GUI_Renderer* renderer, Input* input)
             if (new_quad_vertex_count > quad_vertex_count) {
                 render_pass_draw_count(pass_2D, rect_shader, rect_mesh, Mesh_Topology::TRIANGLES, {}, quad_vertex_count, new_quad_vertex_count - quad_vertex_count);
             }
-            text_renderer_draw(renderer->text_renderer, pass_2D);
+            text_renderer_draw(imgui.text_renderer, pass_2D);
         }
     }
 }
@@ -1102,11 +1133,11 @@ void gui_update(GUI_Renderer* renderer, Input* input)
 
 
 // Setters and getters for outside input
-void gui_set_userdata(GUI_Renderer* renderer, GUI_Handle& handle, void* userdata, gui_userdata_destroy_fn destroy_fn) {
+void gui_set_userdata(GUI_Handle& handle, void* userdata, gui_userdata_destroy_fn destroy_fn) {
     if (handle.index == 0) {
         panic("Cannot update root node!");
     }
-    auto& node = renderer->nodes[handle.index];
+    auto& node = imgui.nodes[handle.index];
     if (node.userdata != 0) {
         assert(node.userdata_destroy_fn != 0, "Since userdata should always be allocated dynamically, there should always be a destroy!");
         node.userdata_destroy_fn(node.userdata);
@@ -1116,47 +1147,47 @@ void gui_set_userdata(GUI_Renderer* renderer, GUI_Handle& handle, void* userdata
     handle.userdata = userdata;
 }
 
-void gui_set_drawable(GUI_Renderer* renderer, GUI_Handle handle, GUI_Drawable drawable) {
+void gui_set_drawable(GUI_Handle handle, GUI_Drawable drawable) {
     if (handle.index == 0) {
         panic("Cannot update root node!");
     }
-    renderer->nodes[handle.index].drawable = drawable;
+    imgui.nodes[handle.index].drawable = drawable;
 }
 
-void gui_set_size(GUI_Renderer* renderer, GUI_Handle handle, GUI_Size size_x, GUI_Size size_y) {
+void gui_set_size(GUI_Handle handle, GUI_Size size_x, GUI_Size size_y) {
     if (handle.index == 0) {
         panic("Cannot update root node!");
     }
-    renderer->nodes[handle.index].size[0] = size_x;
-    renderer->nodes[handle.index].size[1] = size_y;
+    imgui.nodes[handle.index].size[0] = size_x;
+    imgui.nodes[handle.index].size[1] = size_y;
 }
 
-void gui_set_position(GUI_Renderer* renderer, GUI_Handle handle, GUI_Position pos) {
+void gui_set_position(GUI_Handle handle, GUI_Position pos) {
     if (handle.index == 0) {
         panic("Cannot update root node!");
     }
-    renderer->nodes[handle.index].position = pos;
+    imgui.nodes[handle.index].position = pos;
 }
 
-void gui_set_layout(GUI_Renderer* renderer, GUI_Handle handle, GUI_Layout layout) {
+void gui_set_layout(GUI_Handle handle, GUI_Layout layout) {
     if (handle.index == 0) {
         panic("Cannot update root node!");
     }
-    renderer->nodes[handle.index].layout = layout;
+    imgui.nodes[handle.index].layout = layout;
 }
 
-Bounding_Box2 gui_get_node_prev_size(GUI_Renderer* renderer, GUI_Handle handle) {
-    return renderer->nodes[handle.index].bounding_box;
+Bounding_Box2 gui_get_node_prev_size(GUI_Handle handle) {
+    return imgui.nodes[handle.index].bounding_box;
 }
 
 template<typename T>
-T* gui_store_primitive(GUI_Renderer* renderer, GUI_Handle parent_handle, T default_value) {
-    auto node_handle = gui_push_dummy(renderer, parent_handle);
+T* gui_store_primitive(GUI_Handle parent_handle, T default_value) {
+    auto node_handle = gui_push_dummy(parent_handle);
     if (node_handle.userdata == 0) {
         T* new_value = new T;
         *new_value = default_value;
         gui_set_userdata(
-            renderer, node_handle, (void*)new_value,
+            node_handle, (void*)new_value,
             [](void* data) -> void {
                 T* typed_data = (T*)data;
                 delete typed_data;
@@ -1170,12 +1201,12 @@ T* gui_store_primitive(GUI_Renderer* renderer, GUI_Handle parent_handle, T defau
 
 
 // Predefined GUI objects
-void gui_push_text(GUI_Renderer* renderer, GUI_Handle parent_handle, String text, float text_height_cm = .5f, vec4 color = vec4(0.0f, 0.0f, 0.0f, 1.0f))
+void gui_push_text(GUI_Handle parent_handle, String text, float text_height_cm = .5f, vec4 color = vec4(0.0f, 0.0f, 0.0f, 1.0f))
 {
     const float char_height = convertHeight(text_height_cm, Unit::CENTIMETER);
-    const float char_width = text_renderer_line_width(renderer->text_renderer, char_height, 1) + 0.01f;
+    const float char_width = text_renderer_line_width(imgui.text_renderer, char_height, 1) + 0.01f;
     gui_add_node(
-        renderer, parent_handle,
+        parent_handle,
         gui_size_make_fixed(char_width * text.size),
         gui_size_make_fixed(char_height),
         gui_position_make_parent_layout(),
@@ -1202,7 +1233,7 @@ struct GUI_Window_Info
     bool resize_bottom;
 };
 
-GUI_Handle gui_push_window(GUI_Renderer* renderer, GUI_Handle parent_handle, Input* input, const char* name,
+GUI_Handle gui_push_window(GUI_Handle parent_handle, Input* input, const char* name,
     vec2 initial_pos = convertPoint(vec2(0.0f), Unit::NORMALIZED_SCREEN), vec2 initial_size = vec2(300, 500), Anchor initial_anchor = Anchor::CENTER_CENTER)
 {
     // Get window info
@@ -1218,7 +1249,7 @@ GUI_Handle gui_push_window(GUI_Renderer* renderer, GUI_Handle parent_handle, Inp
         initial_info.resize_top = false;
         initial_info.resize_left = false;
         initial_info.resize_right = false;
-        info = gui_store_primitive<GUI_Window_Info>(renderer, parent_handle, initial_info);
+        info = gui_store_primitive<GUI_Window_Info>(parent_handle, initial_info);
     }
 
     if (input->client_area_resized) {
@@ -1234,15 +1265,15 @@ GUI_Handle gui_push_window(GUI_Renderer* renderer, GUI_Handle parent_handle, Inp
 
     // Create gui nodes
     auto window_handle = gui_add_node(
-        renderer, parent_handle,
+        parent_handle,
         gui_size_make_fixed(info->size.x),
         gui_size_make_fixed(info->size.y),
         gui_position_make_relative(info->pos, Anchor::BOTTOM_LEFT),
         gui_layout_make_stacked(),
-        gui_drawable_make_rect(vec4(0.5f)),
+        gui_drawable_make_none(),
         true);
     auto header_handle = gui_add_node(
-        renderer, window_handle,
+        window_handle,
         gui_size_make_fill(true, false),
         gui_size_make_fit(),
         gui_position_make_parent_layout(),
@@ -1250,9 +1281,9 @@ GUI_Handle gui_push_window(GUI_Renderer* renderer, GUI_Handle parent_handle, Inp
         gui_drawable_make_rect(vec4(0.3f, 0.3f, 1.0f, 1.0f)),
         true
     );
-    gui_push_text(renderer, header_handle, string_create_static(name));
+    gui_push_text(header_handle, string_create_static(name));
     auto client_area = gui_add_node(
-        renderer, window_handle,
+        window_handle,
         gui_size_make_fill(),
         gui_size_make_fill(),
         gui_position_make_parent_layout(),
@@ -1273,11 +1304,11 @@ GUI_Handle gui_push_window(GUI_Renderer* renderer, GUI_Handle parent_handle, Inp
         info->resize_left = false;
         info->resize_bottom = false;
         info->resize_top = false;
-        window_set_cursor_constrain(renderer->window, false);
+        window_set_cursor_constrain(imgui.window, false);
     }
 
     // Check for drag start
-    auto window_bb = gui_get_node_prev_size(renderer, window_handle);
+    auto window_bb = gui_get_node_prev_size(window_handle);
     const float interaction_distance = 5;
 
     const bool right_border = math_absolute(mouse_pos.x - window_bb.max.x) < interaction_distance;
@@ -1296,28 +1327,28 @@ GUI_Handle gui_push_window(GUI_Renderer* renderer, GUI_Handle parent_handle, Inp
 
         if (bot) {
             if (left) {
-                renderer->cursor_type = Cursor_Icon_Type::SIZE_NORTHEAST;
+                imgui.cursor_type = Cursor_Icon_Type::SIZE_NORTHEAST;
             }
             else if (right) {
-                renderer->cursor_type = Cursor_Icon_Type::SIZE_SOUTHEAST;
+                imgui.cursor_type = Cursor_Icon_Type::SIZE_SOUTHEAST;
             }
             else {
-                renderer->cursor_type = Cursor_Icon_Type::SIZE_VERTICAL;
+                imgui.cursor_type = Cursor_Icon_Type::SIZE_VERTICAL;
             }
         }
         else if (top) {
             if (left) {
-                renderer->cursor_type = Cursor_Icon_Type::SIZE_SOUTHEAST;
+                imgui.cursor_type = Cursor_Icon_Type::SIZE_SOUTHEAST;
             }
             else if (right) {
-                renderer->cursor_type = Cursor_Icon_Type::SIZE_NORTHEAST;
+                imgui.cursor_type = Cursor_Icon_Type::SIZE_NORTHEAST;
             }
             else {
-                renderer->cursor_type = Cursor_Icon_Type::SIZE_VERTICAL;
+                imgui.cursor_type = Cursor_Icon_Type::SIZE_VERTICAL;
             }
         }
         else if (left || right) {
-            renderer->cursor_type = Cursor_Icon_Type::SIZE_HORIZONTAL;
+            imgui.cursor_type = Cursor_Icon_Type::SIZE_HORIZONTAL;
         }
     }
 
@@ -1366,9 +1397,9 @@ GUI_Handle gui_push_window(GUI_Renderer* renderer, GUI_Handle parent_handle, Inp
         }
         info->pos = new_pos;
         info->size = new_size;
-        gui_set_position(renderer, window_handle, gui_position_make_relative(info->pos, Anchor::BOTTOM_LEFT));
-        gui_set_size(renderer, window_handle, gui_size_make_fixed(info->size.x), gui_size_make_fixed(info->size.y));
-        window_set_cursor_constrain(renderer->window, true);
+        gui_set_position(window_handle, gui_position_make_relative(info->pos, Anchor::BOTTOM_LEFT));
+        gui_set_size(window_handle, gui_size_make_fixed(info->size.x), gui_size_make_fixed(info->size.y));
+        window_set_cursor_constrain(imgui.window, true);
     }
     else if (mouse_pressed && (window_handle.mouse_hover || header_handle.mouse_hover))
     {
@@ -1404,13 +1435,13 @@ GUI_Handle gui_push_window(GUI_Renderer* renderer, GUI_Handle parent_handle, Inp
     return client_area;
 }
 
-bool gui_push_button(GUI_Renderer* renderer, GUI_Handle parent_handle, Input* input, String text)
+bool gui_push_button(GUI_Handle parent_handle, Input* input, String text)
 {
     const vec4 border_color = vec4(vec3(0.2f), 1.0f); // Some shade of gray
     const vec4 normal_color = vec4(vec3(0.8f), 1.0f); // Some shade of gray
     const vec4 hover_color = vec4(vec3(0.5f), 1.0f); // Some shade of gray
     auto border = gui_add_node(
-        renderer, parent_handle,
+        parent_handle,
         gui_size_make_fit(),
         gui_size_make_fit(),
         gui_position_make_parent_layout(),
@@ -1418,7 +1449,7 @@ bool gui_push_button(GUI_Renderer* renderer, GUI_Handle parent_handle, Input* in
         gui_drawable_make_rect(border_color), true
     );
     auto button = gui_add_node(
-        renderer, border,
+        border,
         gui_size_make(convertWidth(1.0f, Unit::CENTIMETER), true, false),
         gui_size_make_fit(),
         gui_position_make_parent_layout(),
@@ -1427,15 +1458,15 @@ bool gui_push_button(GUI_Renderer* renderer, GUI_Handle parent_handle, Input* in
         false
     );
     if (border.mouse_hover) {
-        gui_set_drawable(renderer, button, gui_drawable_make_rect(hover_color));
+        gui_set_drawable(button, gui_drawable_make_rect(hover_color));
     }
-    gui_push_text(renderer, button, text);
+    gui_push_text(button, text);
     return border.mouse_hover && input->mouse_pressed[(int)Mouse_Key_Code::LEFT];
 }
 
-GUI_Handle gui_push_dummy(GUI_Renderer* renderer, GUI_Handle parent_handle) {
+GUI_Handle gui_push_dummy(GUI_Handle parent_handle) {
     return gui_add_node(
-        renderer, parent_handle,
+        parent_handle,
         gui_size_make_fixed(0.0f),
         gui_size_make_fixed(0.0f),
         gui_position_make_relative(vec2(0.0f), Anchor::BOTTOM_LEFT, 0, false),
@@ -1446,14 +1477,14 @@ GUI_Handle gui_push_dummy(GUI_Renderer* renderer, GUI_Handle parent_handle) {
 }
 
 // Returns true if the value was toggled
-bool gui_push_toggle(GUI_Renderer* renderer, GUI_Handle parent_handle, Input* input, bool* value)
+bool gui_push_toggle(GUI_Handle parent_handle, Input* input, bool* value)
 {
     const vec4 border_color = vec4(vec3(0.1f), 1.0f); // Some shade of gray
     const vec4 normal_color = vec4(vec3(0.8f), 1.0f); // Some shade of gray
     const vec4 hover_color = vec4(vec3(0.5f), 1.0f); // Some shade of gray
     float height = convertHeight(.4f, Unit::CENTIMETER);
     auto border = gui_add_node(
-        renderer, parent_handle,
+        parent_handle,
         gui_size_make_fit(),
         gui_size_make_fit(),
         gui_position_make_parent_layout(),
@@ -1461,7 +1492,7 @@ bool gui_push_toggle(GUI_Renderer* renderer, GUI_Handle parent_handle, Input* in
         gui_drawable_make_rect(border_color), true
     );
     auto center = gui_add_node(
-        renderer, border,
+        border,
         gui_size_make_fixed(height),
         gui_size_make_fixed(height),
         gui_position_make_parent_layout(),
@@ -1470,21 +1501,21 @@ bool gui_push_toggle(GUI_Renderer* renderer, GUI_Handle parent_handle, Input* in
     );
     bool pressed = false;
     if (border.mouse_hover) {
-        gui_set_drawable(renderer, center, gui_drawable_make_rect(hover_color));
+        gui_set_drawable(center, gui_drawable_make_rect(hover_color));
         pressed = input->mouse_pressed[(int)Mouse_Key_Code::LEFT];
     }
     if (pressed) {
         *value = !*value;
     }
     if (*value) {
-        gui_push_text(renderer, center, string_create_static("x"), .4f, vec4(1.0f, 0.0f, 0.0f, 1.0f));
+        gui_push_text(center, string_create_static("x"), .4f, vec4(1.0f, 0.0f, 0.0f, 1.0f));
     }
     return pressed;
 }
 
 
 
-void draw_example_gui(GUI_Renderer* renderer, Input* input)
+void draw_example_gui(Input* input)
 {
     const vec4 white = vec4(1.0f);
     const vec4 black = vec4(vec3(0.0f), 1.0f);
@@ -1496,17 +1527,67 @@ void draw_example_gui(GUI_Renderer* renderer, Input* input)
     const vec4 magenta = vec4(vec3(1, 0, 1), 1.0f);
     const vec4 gray = vec4(vec3(0.3f), 1.0f);
 
-    if (false)
+    // Z-Overlap Test
+    if (true) {
+        auto canvas = gui_add_node(imgui.root_handle, gui_size_make_fixed(250), gui_size_make_fixed(250),
+            gui_position_make_relative(vec2(0), Anchor::CENTER_CENTER, 2),
+            gui_layout_make_stacked(),
+            gui_drawable_make_rect(gray),
+            false
+        );
+
+        gui_add_node(canvas, gui_size_make_fixed(50), gui_size_make_fixed(50),
+            gui_position_make_relative(vec2(0), Anchor::CENTER_CENTER, 0),
+            gui_layout_make_stacked(),
+            gui_drawable_make_rect(vec4(0, 0, 1, 0.5f)),
+            false
+        );
+        gui_add_node(canvas, gui_size_make_fixed(50), gui_size_make_fixed(50),
+            gui_position_make_relative(vec2(15), Anchor::CENTER_CENTER, 0),
+            gui_layout_make_stacked(),
+            gui_drawable_make_rect(green),
+            false
+        );
+        gui_add_node(canvas, gui_size_make_fixed(50), gui_size_make_fixed(50),
+            gui_position_make_relative(vec2(-15, 4), Anchor::CENTER_CENTER, 0),
+            gui_layout_make_stacked(),
+            gui_drawable_make_rect(red),
+            false
+        );
+
+        float offset = -90;
+        gui_add_node(canvas, gui_size_make_fixed(50), gui_size_make_fixed(50),
+            gui_position_make_relative(vec2(offset, 0.f), Anchor::CENTER_CENTER, 2),
+            gui_layout_make_stacked(),
+            gui_drawable_make_rect(vec4(0, 0, 1, 0.5f)),
+            false
+        );
+        gui_add_node(canvas, gui_size_make_fixed(50), gui_size_make_fixed(50),
+            gui_position_make_relative(vec2(15 + offset, 15.f), Anchor::CENTER_CENTER, 1),
+            gui_layout_make_stacked(),
+            gui_drawable_make_rect(green),
+            false
+        );
+        gui_add_node(canvas, gui_size_make_fixed(50), gui_size_make_fixed(50),
+            gui_position_make_relative(vec2(-15 + offset, 4.f), Anchor::CENTER_CENTER, 0),
+            gui_layout_make_stacked(),
+            gui_drawable_make_rect(red),
+            false
+        );
+    }
+
+    // Empty window
+    if (true)
     {
-        auto window = gui_push_window(renderer, renderer->root_handle, input, "Test");
-        // gui_push_text(renderer, window, string_create_static("Text"), 2.0f);
-        // gui_push_text(renderer, window, string_create_static("Take 2"), 2.0f);
+        auto window = gui_push_window(imgui.root_handle, input, "Test");
+        // gui_push_text(window, string_create_static("Text"), 2.0f);
+        // gui_push_text(window, string_create_static("Take 2"), 2.0f);
     }
 
     if (false)
     {
         auto window = gui_add_node(
-            renderer, renderer->root_handle,
+            imgui.root_handle,
             gui_size_make_fixed(300.0f),
             gui_size_make_fixed(300.0f),
             gui_position_make_relative(vec2(0.0f), Anchor::CENTER_CENTER),
@@ -1515,13 +1596,13 @@ void draw_example_gui(GUI_Renderer* renderer, Input* input)
             false
         );
 
-        // auto window = gui_push_window(renderer, renderer->root_handle, input, "Halp?");
-        // gui_push_button(renderer, window, input, string_create_static("Something"));
-        // gui_push_button(renderer, window, input, string_create_static("Other"));
-        // gui_push_button(renderer, window, input, string_create_static("X"));
+        // auto window = gui_push_window(imgui.root_handle, input, "Halp?");
+        // gui_push_button(window, input, string_create_static("Something"));
+        // gui_push_button(window, input, string_create_static("Other"));
+        // gui_push_button(window, input, string_create_static("X"));
 
         auto horizontal = gui_add_node(
-            renderer, window,
+            window,
             gui_size_make_fill(),
             gui_size_make_fill(),
             gui_position_make_parent_layout(),
@@ -1530,7 +1611,7 @@ void draw_example_gui(GUI_Renderer* renderer, Input* input)
             false
         );
         gui_add_node(
-            renderer, horizontal,
+            horizontal,
             gui_size_make_fill(),
             gui_size_make_fill(),
             gui_position_make_parent_layout(),
@@ -1539,7 +1620,7 @@ void draw_example_gui(GUI_Renderer* renderer, Input* input)
             false
         );
         gui_add_node(
-            renderer, horizontal,
+            horizontal,
             gui_size_make_fill(),
             gui_size_make_fill(),
             gui_position_make_parent_layout(),
@@ -1549,7 +1630,7 @@ void draw_example_gui(GUI_Renderer* renderer, Input* input)
         );
 
         gui_add_node(
-            renderer, window,
+            window,
             gui_size_make_fill(400.0f),
             gui_size_make_fill(100.0f),
             gui_position_make_parent_layout(),
@@ -1559,7 +1640,7 @@ void draw_example_gui(GUI_Renderer* renderer, Input* input)
         );
     }
 
-    if (true)
+    if (false)
     {
         static bool toggle = false;
         if (input->key_pressed[(int)Key_Code::T]) {
@@ -1572,7 +1653,7 @@ void draw_example_gui(GUI_Renderer* renderer, Input* input)
         float a = math_sine(t) * 0.5f + 0.5f;
         a = (float)input->mouse_x / rendering_core.render_information.backbuffer_width;
         auto window = gui_add_node(
-            renderer, renderer->root_handle,
+            imgui.root_handle,
             // gui_size_make_fixed(200 * a),
             gui_size_make_fixed(60),
             gui_size_make_fixed(60),
@@ -1582,7 +1663,7 @@ void draw_example_gui(GUI_Renderer* renderer, Input* input)
             false
         );
         auto bar = gui_add_node(
-            renderer, window,
+            window,
             gui_size_make_fill(),
             gui_size_make_fixed(30.0f),
             gui_position_make_parent_layout(),
@@ -1591,11 +1672,11 @@ void draw_example_gui(GUI_Renderer* renderer, Input* input)
             false
         );
 
-        gui_push_text(renderer, bar, string_create_static("HEllo!"));
-        // auto window = gui_push_window(renderer, renderer->root_handle, input, "Window");
+        gui_push_text(bar, string_create_static("HEllo!"));
+        // auto window = gui_push_window(imgui.root_handle, input, "Window");
         // if (toggle) {
-        //     gui_push_text(renderer, window, string_create_static("Hello"));
-        //     gui_add_node(renderer, window, gui_layout_make(),
+        //     gui_push_text(window, string_create_static("Hello"));
+        //     gui_add_node(window, gui_layout_make(),
         //         gui_size_make_absolute(bounding_box_2_make_anchor(convertPoint(vec2(0.0f), Unit::NORMALIZED_SCREEN), vec2(200), Anchor::CENTER_CENTER)),
         //         gui_drawable_make_rect(vec4(0.0f, 1.0f, 1.0f, 1.0f)),
         //         false
@@ -1610,10 +1691,10 @@ void draw_example_gui(GUI_Renderer* renderer, Input* input)
         int pixel_width = 100;
         int pixel_height = 100;
 
-        auto window = gui_push_window(renderer, renderer->root_handle, input, "Test window");
+        auto window = gui_push_window(imgui.root_handle, input, "Test window");
 
         auto space = gui_add_node(
-            renderer, window,
+            window,
             gui_size_make_fill(),
             gui_size_make_fill(),
             gui_position_make_parent_layout(),
@@ -1621,38 +1702,38 @@ void draw_example_gui(GUI_Renderer* renderer, Input* input)
             gui_drawable_make_rect(cyan),
             false
         );
-        bool* value = gui_store_primitive<bool>(renderer, space, false);
-        gui_push_toggle(renderer, space, input, value);
+        bool* value = gui_store_primitive<bool>(space, false);
+        gui_push_toggle(space, input, value);
         if (*value) {
-            bool pressed = gui_push_button(renderer, space, input, string_create_static("Press me!"));
-            int* value = gui_store_primitive<int>(renderer, space, 0);
+            bool pressed = gui_push_button(space, input, string_create_static("Press me!"));
+            int* value = gui_store_primitive<int>(space, 0);
             if (pressed) {
                 *value += 1;
             }
             String tmp = string_create_formated("%d", *value);
             SCOPE_EXIT(string_destroy(&tmp));
-            gui_push_text(renderer, space, tmp);
+            gui_push_text(space, tmp);
         }
 
         auto right_align = gui_add_node(
-            renderer, window,
+            window,
             gui_size_make_fill(true),
             gui_size_make_fit(),
             gui_position_make_parent_layout(),
             gui_layout_make_stacked(true, GUI_Align::MAX),
             gui_drawable_make_none(),
             false);
-        gui_push_text(renderer, right_align, string_create_static("Right"));
+        gui_push_text(right_align, string_create_static("Right"));
 
         auto horizontal = gui_add_node(
-            renderer, window,
+            window,
             gui_size_make_fill(true),
             gui_size_make_fill(true),
             gui_position_make_parent_layout(),
             gui_layout_make_stacked(false),
             gui_drawable_make_none(), false);
         gui_add_node(
-            renderer, horizontal,
+            horizontal,
             gui_size_make_fill(true),
             gui_size_make_fill(true),
             gui_position_make_parent_layout(),
@@ -1660,7 +1741,7 @@ void draw_example_gui(GUI_Renderer* renderer, Input* input)
             gui_drawable_make_rect(gray),
             false);
         auto horizontal2 = gui_add_node(
-            renderer, horizontal,
+            horizontal,
             gui_size_make_fill(true),
             gui_size_make_fill(true),
             gui_position_make_parent_layout(),
@@ -1668,7 +1749,7 @@ void draw_example_gui(GUI_Renderer* renderer, Input* input)
             gui_drawable_make_none(),
             false);
         gui_add_node(
-            renderer, horizontal2,
+            horizontal2,
             gui_size_make_fill(true),
             gui_size_make_fill(true),
             gui_position_make_parent_layout(),
@@ -1676,7 +1757,7 @@ void draw_example_gui(GUI_Renderer* renderer, Input* input)
             gui_drawable_make_rect(yellow),
             false);
         gui_add_node(
-            renderer, horizontal2,
+            horizontal2,
             gui_size_make_fill(true),
             gui_size_make_fill(true),
             gui_position_make_parent_layout(),
@@ -1685,41 +1766,41 @@ void draw_example_gui(GUI_Renderer* renderer, Input* input)
             false);
 
         auto center = gui_add_node(
-            renderer, window,
+            window,
             gui_size_make_fill(false),
             gui_size_make_fit(),
             gui_position_make_parent_layout(),
             gui_layout_make_stacked(true, GUI_Align::CENTER),
             gui_drawable_make_none(),
             false);
-        gui_push_text(renderer, center, string_create_static("Center with very long name that you shouldn't forget!"));
+        gui_push_text(center, string_create_static("Center with very long name that you shouldn't forget!"));
         gui_add_node(
-            renderer, window,
+            window,
             gui_size_make_fill(true),
             gui_size_make_fill(true),
             gui_position_make_parent_layout(),
             gui_layout_make_stacked(),
             gui_drawable_make_rect(magenta),
             false);
-        gui_push_text(renderer, window, string_create_static("LEFT"));
+        gui_push_text(window, string_create_static("LEFT"));
 
         if (false)
         {
-            auto window = gui_push_window(renderer, renderer->root_handle, input, "Contender");
+            auto window = gui_push_window(imgui.root_handle, input, "Contender");
         }
 
 
         // Add centered text
-        // gui_push_text(renderer, window, string_create_static("Hello there"));
+        // gui_push_text(window, string_create_static("Hello there"));
         // auto tmp = string_create_static("Long text that, lorem ipsum");
-        // auto center = gui_add_node(renderer, window, gui_layout_make(false, GUI_Align::CENTER), gui_size_make_fill(true, false), gui_drawable_make_none());
-        // gui_push_text(renderer, center, tmp, 1.3f);
+        // auto center = gui_add_node(window, gui_layout_make(false, GUI_Align::CENTER), gui_size_make_fill(true, false), gui_drawable_make_none());
+        // gui_push_text(center, tmp, 1.3f);
 
-        // gui_push_text(renderer, window, string_create_static("Hello there"), 0.4f, gray);
-        // gui_push_text(renderer, window, string_create_static("This is a new item"), 0.4f, gray);
-        // auto container = gui_push_container(renderer, window, true);
-        // gui_push_text(renderer, container, string_create_static("Where"), 0.4f, gray);
-        // gui_push_text(renderer, container, string_create_static("Am I"), 0.4f, green);
+        // gui_push_text(window, string_create_static("Hello there"), 0.4f, gray);
+        // gui_push_text(window, string_create_static("This is a new item"), 0.4f, gray);
+        // auto container = gui_push_container(window, true);
+        // gui_push_text(container, string_create_static("Where"), 0.4f, gray);
+        // gui_push_text(container, string_create_static("Am I"), 0.4f, green);
 
         // {
         //     float t = rendering_core.render_information.current_time_in_seconds;
@@ -1732,7 +1813,7 @@ void draw_example_gui(GUI_Renderer* renderer, Input* input)
         //     }
 
         //     float remaining = 10 - t;
-        //     gui_push_text(renderer, window, string_create_static(""), 0.4f, gray); // Placeholder
+        //     gui_push_text(window, string_create_static(""), 0.4f, gray); // Placeholder
         //     String tmp = string_create_formated("%3.1f", remaining);
         //     SCOPE_EXIT(string_destroy(&tmp));
 
@@ -1743,40 +1824,40 @@ void draw_example_gui(GUI_Renderer* renderer, Input* input)
         //     }
 
         //     auto layout = gui_layout_default(false, Anchor::CENTER_CENTER);
-        //     auto center = gui_add_node(renderer, window, layout, white, GUI_Draw_Type::NONE, string_create_static(""));
-        //     gui_push_text(renderer, center, tmp, 1.3f, color);
+        //     auto center = gui_add_node(window, layout, white, GUI_Draw_Type::NONE, string_create_static(""));
+        //     gui_push_text(center, tmp, 1.3f, color);
         // }
 
-        // gui_new_window(renderer, "Longer Test1");
-        // gui_push_label(renderer, string_create_static("Hello there"));
-        // gui_push_label(renderer, string_create_static("General Kenobi!"));
-        // gui_new_window(renderer, "Faster Test2");
+        // gui_new_window("Longer Test1");
+        // gui_push_label(string_create_static("Hello there"));
+        // gui_push_label(string_create_static("General Kenobi!"));
+        // gui_new_window("Faster Test2");
 
         // vec2 pos = convertPoint(vec2(0.0f), Unit::NORMALIZED_SCREEN);
         // vec2 size = convertSize(vec2(1.0f), Unit::CENTIMETER);
 
         // primitive_renderer_add_rectangle(
-        //   , renderer->primitive_renderer, bounding_box_2_make_anchor(pos, size, Anchor::BOTTOM_LEFT), red
+        //   , imgui.primitive_renderer, bounding_box_2_make_anchor(pos, size, Anchor::BOTTOM_LEFT), red
         // );
         // gui_draw_text_cutoff(renderer, string_create_static("Hellow orld"), pos, Anchor::BOTTOM_LEFT, size, vec3(1.0f));
-        // primitive_renderer_add_text(renderer->primitive_renderer, string_create_static("Asdfasdf"), pos, Anchor::CENTER_CENTER, size.y * 0.8f, magenta);
+        // primitive_renderer_add_text(imgui.primitive_renderer, string_create_static("Asdfasdf"), pos, Anchor::CENTER_CENTER, size.y * 0.8f, magenta);
         // primitive_renderer_add_rectangle(
-        //     renderer->primitive_renderer, bounding_box_2_make_anchor(pos, size, Anchor::CENTER_CENTER), blue
+        //     imgui.primitive_renderer, bounding_box_2_make_anchor(pos, size, Anchor::CENTER_CENTER), blue
         // );
 
 
         // pos.x += size.x * 2.0f;
         // primitive_renderer_add_rectangle(
-        //     renderer->primitive_renderer, bounding_box_2_make_anchor(pos, size, Anchor::BOTTOM_LEFT), green
+        //     imgui.primitive_renderer, bounding_box_2_make_anchor(pos, size, Anchor::BOTTOM_LEFT), green
         // );
 
     }
 }
 
-GUI_Handle gui_push_text_description(GUI_Renderer* renderer, GUI_Handle parent_handle, const char* text)
+GUI_Handle gui_push_text_description(GUI_Handle parent_handle, const char* text)
 {
     auto main_container = gui_add_node(
-        renderer, parent_handle,
+        parent_handle,
         gui_size_make_fill(),
         gui_size_make_fit(),
         gui_position_make_parent_layout(),
@@ -1784,10 +1865,10 @@ GUI_Handle gui_push_text_description(GUI_Renderer* renderer, GUI_Handle parent_h
         gui_drawable_make_none(), false
     );
 
-    gui_push_text(renderer, main_container, string_create_static(text));
+    gui_push_text(main_container, string_create_static(text));
 
     return gui_add_node(
-        renderer, main_container,
+        main_container,
         gui_size_make_fill(),
         gui_size_make_fit(),
         gui_position_make_parent_layout(),
@@ -1796,20 +1877,20 @@ GUI_Handle gui_push_text_description(GUI_Renderer* renderer, GUI_Handle parent_h
     );
 }
 
-void gui_push_int(GUI_Renderer* renderer, GUI_Handle parent_handle, Input* input, const char* text, int& value)
+void gui_push_int(GUI_Handle parent_handle, Input* input, const char* text, int& value)
 {
     auto container = gui_add_node(
-        renderer, parent_handle,
+        parent_handle,
         gui_size_make_fill(),
         gui_size_make_fit(),
         gui_position_make_parent_layout(),
         gui_layout_make_stacked(false),
         gui_drawable_make_none(), false
     );
-    gui_push_text(renderer, container, string_create_static(text));
+    gui_push_text(container, string_create_static(text));
 
     auto fill_container = gui_add_node(
-        renderer, container,
+        container,
         gui_size_make_fill(),
         gui_size_make_fit(),
         gui_position_make_parent_layout(),
@@ -1817,7 +1898,7 @@ void gui_push_int(GUI_Renderer* renderer, GUI_Handle parent_handle, Input* input
         gui_drawable_make_none(), false
     );
     auto h_container = gui_add_node(
-        renderer, fill_container,
+        fill_container,
         gui_size_make_fit(),
         gui_size_make_fit(),
         gui_position_make_parent_layout(),
@@ -1825,15 +1906,15 @@ void gui_push_int(GUI_Renderer* renderer, GUI_Handle parent_handle, Input* input
         gui_drawable_make_none(), false
     );
 
-    if (gui_push_button(renderer, h_container, input, string_create_static("+"))) {
+    if (gui_push_button(h_container, input, string_create_static("+"))) {
         value += 1;
     }
-    if (gui_push_button(renderer, h_container, input, string_create_static("-"))) {
+    if (gui_push_button(h_container, input, string_create_static("-"))) {
         value -= 1;
     }
     String tmp = string_create_formated("%d", value);
     SCOPE_EXIT(string_destroy(&tmp));
-    gui_push_text(renderer, h_container, tmp);
+    gui_push_text(h_container, tmp);
 }
 
 struct Ring_Buffer
@@ -1883,6 +1964,7 @@ void ring_buffer_set_value(Ring_Buffer& buffer, double value) {
 }
 
 
+
 void render_rework()
 {
     Window* window = window_create("Test", 0);
@@ -1928,145 +2010,8 @@ void render_rework()
     Renderer_2D* renderer_2D = renderer_2D_create(text_renderer);
     SCOPE_EXIT(renderer_2D_destroy(renderer_2D));
 
-    GUI_Renderer gui_renderer = gui_renderer_initialize(text_renderer, window);
-
-    String timing_str = string_create_empty(128);
-    SCOPE_EXIT(string_destroy(&timing_str));
-
-
-    /*
-    Stuff TODO:
-     - Calculate roughly a latency thing (one/two/three frames based on mouse speed)
-     - Try some smarter timing code
-
-    Observations:
-     - SwapBuffers doesn't block in Release-Mode? Or is this because of OpenGL-Debug? Asynchronous debug?
-     - With glFinish both rendering and swapBuffers take a few milliseconds
-     - Swapping into fullscreen seems to help, but only on the primary monitor??
-
-    With Vsynch on in fullscreen, swap doesn't block
-
-    Debug-Mode, no opengl-logging:
-     - Windowed, no-vsynch: Green
-     - Windowed, vsynch: Red
-
-    Add offset from game_start, and always start at fixed intervals
-
-    Interesting note: glFinish after Swap does different things in fullscreen/non-fullscreen!
-
-    Let's see if we can stabilize the screen tear by having the swap-buffer at a specific time 
-
-    So i guess what you want is --> In non compositor mode, you want no-vsynch, 
-
-    With synchronous debug output on, switch-window stalls!
-
-    !!!
-    It seems to be working, it looks like there is a small time after toggling vsynch where it actually
-    keeps synchronized with the cursor. But this is quickly removed...
-
-    ToTest: Use wait for vblanc to do sleeping...
-
-    */
-    bool vsynch = false;
-    bool glFinishAfterRender = false;
-    bool glFinishAfterSwap = false;
-    bool waitForWindowEvents = false;
-    bool test_new_sleep = false;
-    bool sleep_enabled = true;
-    bool custom_cursor = false;
-    bool show_window_cursor = true;
-    int beat_offset_time = 0;
-    int delay_swap_buffer_ms = 0; // Wait until some ms since frame start has passed for swap buffer
-
-    double vsync_start, vsync_time_between;
-    {
-        window_calculate_vsynch_beat(vsync_start, vsync_time_between, timer);
-        for (int i = 0; i < 1; i++) {
-            timer_sleep_for(&timer, 0.2 + 0.0234234 * i); // Random perturbation
-            double new_start, new_between;
-            window_calculate_vsynch_beat(new_start, new_between, timer);
-            logg("Before: vsynch_start: %f, Now: %f, Diff: %f, Modulo: %f\n",
-                vsync_start, new_start, new_start - vsync_start, math_modulo(new_start - vsync_start, 1 / 60.0));
-        }
-    }
-    const double start_update_before_beat = 0.001;
-
-    const int buffer_frames = 3;
-    double buffer_width[buffer_frames];
-    for (int i = 0; i < buffer_frames; i++) {
-        buffer_width[i] = 0;
-    }
-    
-
-    /*
-    Note:
-
-    Next up: 
-        - Probably some more V-Synch things, or should I start doing something else (GUI)?
-        - Something else could be here
-    Things to consider for timing:
-        We currently don't try to hit the next frame when sleeping, but rather 
-        we check what the next vsync interval would be, so maybe we are missing some 
-        CPU frames, and I'd like to check that
-        Note: Time since last frame should actually handle this already, but we don't have min/max there
-
-    OpenGL commands can be:
-        - Unissued (Buffered in driver, not sent to hardware)
-        - Issued (Sent to GPU, not necessarily finished yet)
-        - Complete (Results of the command are ready to use
-
-    Notes about OpenGL timing:
-    glGetInteger64v with GL_TIMESTAMP --> Returns when all previous commands have been issued!
-        This is also asynchronous!
-    Some more interesting things:
-
-    Plan for synchronization:
-     - Do double buffering for gpu-queries, so that it shouldn't block
-     - Synchronize GPU timer with CPU timer (measure offset to our timer)
-
-    Per frame:
-     - Check when last gpu frame ended (Either SwapBuffer or last Draw)
-     - If this doesn't fall into our time-limit (We didn't hit 16ms, drop one frame)
-     - Sleep until vsynch timer
-
-    New note:
-     - GPU and CPU timer drift apart by a ca .5 milliseconds per second, so not usable as comparison
-     - So how do I make sure that I don't buffer frames, and hit my vsynch target?
-        Take a look at gpu time
-
-    So what I can't measure:
-     - Time on GPU before Vsynch
-    I guess the best option is to:
-     - Measure CPU time after flush
-     - Measure GPU time from render-start to render end (from previous frame)
-    Use this time to calculate how long a frame takes, and use the vsynch info and offset for the rest
-
-    What to do with it:
-     - Control sleep time to be as close to vsynch interval as possible (With some leeway, e.g. 10% variance in cpu/gpu time) + 1ms fixed or something
-     - If one frame takes too long, skip one rendering frame --> Results in hickup (same frame shown twice), but no frame buffering should happen
-    Problems that I still have:
-     - How to check if one frame schlipps over vsynch and causes delays --> Check gpu timing difference between frame ends...
-    */
-    const int query_buffer_size = 16;
-    GLuint query_buffer[16];
-    for (int i = 0; i < query_buffer_size; i++) {
-        glGenQueries(1, &query_buffer[i]);
-    }
-
-    // Synchronize CPU/GPU timer
-    GLuint64 gpu_time_reference = 0;
-    glQueryCounter(query_buffer[0], GL_TIMESTAMP);
-    glFlush();
-    glGetQueryObjectui64v(query_buffer[0], GL_QUERY_RESULT, &gpu_time_reference);
-    bool use_first_queries = false;
-    glQueryCounter(query_buffer[0], GL_TIMESTAMP);
-    glQueryCounter(query_buffer[1], GL_TIMESTAMP);
-    glQueryCounter(query_buffer[2], GL_TIMESTAMP);
-    GLuint64 gpu_last_frame_end = gpu_time_reference;
-
-    Ring_Buffer gpu_times = ring_buffer_make(0.0);
-    Ring_Buffer cpu_times = ring_buffer_make(0.0);
-    Ring_Buffer tslf_times = ring_buffer_make(0.0);
+    imgui_initialize(text_renderer, window);
+    SCOPE_EXIT(imgui_destroy());
 
     // Window Loop
     double game_start_time = timer_current_time_in_seconds(&timer);
@@ -2081,11 +2026,11 @@ void render_rework()
         Input* input = window_get_input(window);
         double handle_message_time;
         SCOPE_EXIT(input_reset(input));
-        int msg_count = 0;
         {
             // Input and Logic
             double now = timer_current_time_in_seconds(&timer);
-            if (!window_handle_messages(window, waitForWindowEvents, &msg_count)) {
+            int msg_count = 0;
+            if (!window_handle_messages(window, false, &msg_count)) {
                 break;
             }
             handle_message_time = timer_current_time_in_seconds(&timer) - now;
@@ -2102,312 +2047,28 @@ void render_rework()
             camera_controller_arcball_update(&camera_controller_arcball, camera, input, window_state->width, window_state->height);
         }
 
-        if (input->key_pressed[(int)Key_Code::N]) {
-            double new_beat, new_time;
-            window_calculate_vsynch_beat(new_beat, new_time, timer);
-            double diff = math_modulo(vsync_start - new_beat, vsync_time_between);
-            diff = math_minimum(diff, math_absolute(1 / 60.0 - diff));
-            logg("Diff in beats: %fms\n", diff * 1000.0);
-            vsync_start = new_beat;
-            vsync_time_between = new_time;
-        }
-        if (input->key_pressed[(int)Key_Code::X]) {
-            beat_offset_time -= 1;
-        }
-        if (input->key_pressed[(int)Key_Code::C]) {
-            beat_offset_time += 1;
-        }
-        if (input->key_pressed[(int)Key_Code::V]) {
-            timer_sleep_for(&timer, 1 / 60.0 * 20); // Just skip 20 frames
-        }
-
-        const double input_end_time = timer_current_time_in_seconds(&timer);
-
         // Rendering
         {
             rendering_core_prepare_frame(timer_current_time_in_seconds(&timer), window_state->width, window_state->height);
             now = timer_current_time_in_seconds(&timer);
 
-            // Render mouse 'lag' indicator
-            {
-                float width = math_absolute(input->mouse_delta_x);
-                vec4 color = vec4(1.0f);
-                bool multiple = true;
-                int frames = 3;
-                if (input->mouse_delta_x == 0) {
-                    width = 30;
-                    color = vec4(1.0f, 0, 0, 1.0f);
-                }
-                vec4 colors[6] = {
-                    vec4(1.0f, 0.0f, 0.0f, 1.0f),
-                    vec4(0.0f, 1.0f, 0.0f, 1.0f),
-                    vec4(1.0f, 0.0f, 1.0f, 1.0f),
-                    vec4(1.0f, 1.0f, 0.0f, 1.0f),
-                    vec4(0.0f, 1.0f, 1.0f, 1.0f),
-                    vec4(1.0f, 1.0f, 0.0f, 1.0f)
-                };
-                vec2 mouse_pos = vec2((float)input->mouse_x, rendering_core.render_information.backbuffer_height - input->mouse_y);
-                // Smooth width over last 3 frames
-                // Push all one frame back
-                for (int i = buffer_frames - 1; i -1 >= 0; i--) {
-                    buffer_width[i] = buffer_width[i - 1];
-                }
-                buffer_width[0] = width;
-
-                // Calc new width
-                width = 0;
-                for (int i = 0; i < buffer_frames; i++) {
-                    width += buffer_width[i];
-                }
-                width = width / buffer_frames;
-
-                for (int i = 0; i < frames && !custom_cursor; i++) {
-                    float w = width * (frames - i);
-                    float x_offset = 0;
-                    if (input->mouse_delta_x == 0) {
-                        x_offset = -w / 2.0f;
-                    }
-                    else if (input->mouse_delta_x < 0) {
-                        x_offset = -w;
-                    }
-                    gui_add_node(
-                        &gui_renderer, gui_renderer.root_handle,
-                        gui_size_make_fixed(w),
-                        gui_size_make_fixed(50),
-                        gui_position_make_relative(
-                            vec2(mouse_pos.x + x_offset, mouse_pos.y - 25),
-                            Anchor::BOTTOM_LEFT),
-                        gui_layout_make_stacked(),
-                        gui_drawable_make_rect(colors[i]), false
-                    );
-                }
-                if (custom_cursor) {
-                    gui_add_node(
-                        &gui_renderer, gui_renderer.root_handle,
-                        gui_size_make_fixed(20),
-                        gui_size_make_fixed(20),
-                        gui_position_make_relative(
-                            vec2(mouse_pos.x - 10, mouse_pos.y - 10),
-                            Anchor::BOTTOM_LEFT),
-                        gui_layout_make_stacked(),
-                        gui_drawable_make_rect(vec4(0.0f, 0.0f, 0.0f, 1.0f)), false
-                    );
-                    gui_add_node(
-                        &gui_renderer, gui_renderer.root_handle,
-                        gui_size_make_fixed(16),
-                        gui_size_make_fixed(16),
-                        gui_position_make_relative(
-                            vec2(mouse_pos.x - 8, mouse_pos.y - 8),
-                            Anchor::BOTTOM_LEFT),
-                        gui_layout_make_stacked(),
-                        gui_drawable_make_rect(vec4(1.0f)), false
-                    );
-                }
-            }
-
-            // Add moving cubes as __smoothness__ indication
-            {
-                double t = rendering_core.render_information.current_time_in_seconds;
-                gui_add_node(
-                    &gui_renderer, gui_renderer.root_handle,
-                    gui_size_make_fixed(50),
-                    gui_size_make_fixed(50),
-                    gui_position_make_relative(
-                        vec2((float)math_sine(t * 3.0f) * 200, 0.0f),
-                        Anchor::CENTER_CENTER),
-                    gui_layout_make_stacked(),
-                    gui_drawable_make_rect(vec4(1.0f)), false
-                );
-                gui_add_node(
-                    &gui_renderer, gui_renderer.root_handle,
-                    gui_size_make_fixed(50),
-                    gui_size_make_fixed(50),
-                    gui_position_make_relative(
-                        vec2((float)math_sine(t * 6.0f) * 300, -60.0f),
-                        Anchor::CENTER_CENTER),
-                    gui_layout_make_stacked(),
-                    gui_drawable_make_rect(vec4(1.0f)), false
-                );
-                gui_add_node(
-                    &gui_renderer, gui_renderer.root_handle,
-                    gui_size_make_fixed(60),
-                    gui_size_make_fixed(10000),
-                    gui_position_make_relative(
-                        vec2(500 + (float)math_sine(t * 16.0f) * 100, -60.0f),
-                        Anchor::CENTER_CENTER),
-                    gui_layout_make_stacked(),
-                    gui_drawable_make_rect(vec4(1.0f)), false
-                );
-            }
-
-            // Add Timing output as window
-            {
-                auto text_container = gui_add_node(
-                    &gui_renderer, gui_renderer.root_handle,
-                    gui_size_make_fit(),
-                    gui_size_make_fit(),
-                    gui_position_make_relative(vec2(0.0f), Anchor::BOTTOM_LEFT),
-                    gui_layout_make_stacked(),
-                    gui_drawable_make_rect(vec4(1.0f, 0.3f, 0.8f, 0.2f)), false
-                );
-                auto split = string_split(timing_str, '\n');
-                SCOPE_EXIT(string_split_destroy(split));
-                for (int i = 0; i < split.size; i++) {
-                    if (split[i].size == 0) continue;
-                    gui_push_text(&gui_renderer, text_container, split[i], .7f, vec4(1.0f));
-                }
-            }
-
-            // Push Control window
-            {
-                auto gui_window = gui_push_window(&gui_renderer, gui_renderer.root_handle, input, "Render-Settings");
-                auto container = gui_push_text_description(&gui_renderer, gui_window, "V-Synch: ");
-                if (gui_push_toggle(&gui_renderer, container, input, &vsynch)) {
-                    window_set_vsync(window, vsynch);
-                }
-                container = gui_push_text_description(&gui_renderer, gui_window, "glFinish after Render: ");
-                gui_push_toggle(&gui_renderer, container, input, &glFinishAfterRender);
-                container = gui_push_text_description(&gui_renderer, gui_window, "glFinish after Swap: ");
-                gui_push_toggle(&gui_renderer, container, input, &glFinishAfterSwap);
-                container = gui_push_text_description(&gui_renderer, gui_window, "Wait WindowMsg: ");
-                gui_push_toggle(&gui_renderer, container, input, &waitForWindowEvents);
-                container = gui_push_text_description(&gui_renderer, gui_window, "Sleep: ");
-                gui_push_toggle(&gui_renderer, container, input, &sleep_enabled);
-                container = gui_push_text_description(&gui_renderer, gui_window, "New_Sleep: ");
-                gui_push_toggle(&gui_renderer, container, input, &test_new_sleep);
-                container = gui_push_text_description(&gui_renderer, gui_window, "Custom_Cursor:");
-                gui_push_toggle(&gui_renderer, container, input, &custom_cursor);
-                container = gui_push_text_description(&gui_renderer, gui_window, "Window_Cursor:");
-                if (gui_push_toggle(&gui_renderer, container, input, &show_window_cursor)) {
-                    window_set_cursor_visibility(window, show_window_cursor);
-                }
-
-                gui_push_int(&gui_renderer, gui_window, input, "Beat offset(ms)", beat_offset_time);
-                gui_push_int(&gui_renderer, gui_window, input, "Delay SwapBuffer(ms)", delay_swap_buffer_ms);
-            }
-
-            gui_update(&gui_renderer, input);
+            draw_example_gui(input);
+            gui_update(input);
 
             renderer_2D_reset(renderer_2D);
             text_renderer_reset(text_renderer);
         }
 
-        double render_buffer_end_time = timer_current_time_in_seconds(&timer);
-
-        int query_offset = use_first_queries ? 0 : 3;
-        glQueryCounter(query_buffer[query_offset + 0], GL_TIMESTAMP);
         rendering_core_render(camera, Framebuffer_Clear_Type::COLOR_AND_DEPTH);
-        glQueryCounter(query_buffer[query_offset + 1], GL_TIMESTAMP);
-
-        double core_before_swap = timer_current_time_in_seconds(&timer);
-        if (glFinishAfterRender) {
-            glFinish();
-        }
-
-        // SWAP
-        if (!input->key_down[(int)Key_Code::S]) {
-            // Wait for swap buffer delay
-            timer_sleep_until(&timer, frame_start_time + delay_swap_buffer_ms * 0.001);
-
-            window_swap_buffers(window);
-            glQueryCounter(query_buffer[query_offset + 2], GL_TIMESTAMP);
-            if (glFinishAfterSwap) {
-                glFinish();
-            }
-             
-            if (input->key_down[(int)Key_Code::D]) {
-                glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-                window_swap_buffers(window);
-            }
-        }
-        double core_after_swap = timer_current_time_in_seconds(&timer);
+        window_swap_buffers(window);
         glFlush();
-        double core_after_swap_flush = timer_current_time_in_seconds(&timer);
 
         // Sleep + Timing
         {
             // Sleep
             const int TARGET_FPS = 60;
             const double SECONDS_PER_FRAME = 1.0 / TARGET_FPS;
-
-            double now = timer_current_time_in_seconds(&timer);
-            // Check when the next game_start_beat is
-            double time_till_next_beat = math_modulo(vsync_start - now, vsync_time_between);
-            double sleep_time = time_till_next_beat + beat_offset_time * 0.001;
-            if (sleep_enabled) {
-                if (test_new_sleep) {
-                    window_wait_vsynch();
-                    timer_sleep_for(&timer, beat_offset_time * 0.001);
-                }
-                else {
-                    timer_sleep_for(&timer, sleep_time);
-                }
-            }
-
-            // Read last queries (GPU timings)
-            use_first_queries = !use_first_queries;
-            query_offset = use_first_queries ? 0 : 3;
-            // Query timestamps (Timing is in nanoseconds!)
-            GLuint64 core_start, core_end, swap_end;
-            glGetQueryObjectui64v(query_buffer[query_offset + 0], GL_QUERY_RESULT, &core_start);
-            glGetQueryObjectui64v(query_buffer[query_offset + 1], GL_QUERY_RESULT, &core_end);
-            glGetQueryObjectui64v(query_buffer[query_offset + 2], GL_QUERY_RESULT, &swap_end);
-            double gpu_start = (double)(core_start - gpu_time_reference) / 1000000.0;
-            double gpu_end = (double)(core_end - gpu_time_reference) / 1000000.0;
-            double gpu_swap = (double)(swap_end - gpu_time_reference) / 1000000.0;
-            double gpu_diff_last_frame_end = (double)(swap_end - gpu_last_frame_end) / 1000000.0;
-            gpu_last_frame_end = swap_end;
-
-            // Generate timing output
-            const int time_point_count = 5;
-            const char* strings[time_point_count] = {
-                "input_end         ... ",
-                "render_buffer_end ... ",
-                "core_before_swap  ... ",
-                "core_after_swap   ... ",
-                "core_after_flush  ... ",
-            };
-            double time_points[time_point_count] = {
-                input_end_time,
-                render_buffer_end_time,
-                core_before_swap,
-                core_after_swap,
-                core_after_swap_flush
-            };
-            
-            string_reset(&timing_str);
-            double prev = frame_start_time;
-            for (int i = 0; i < time_point_count; i++) {
-                string_append_formated(&timing_str, "%s%3.2fms (+%3.2fms)\n", strings[i], 1000.0f * (time_points[i] - frame_start_time), 1000.0f * (time_points[i] - prev));
-                prev = time_points[i];
-            }
-
-            // ring_buffer_set_value(cpu_times, (input_end_time - frame_start_time) * 1000.0);
-            ring_buffer_set_value(cpu_times, handle_message_time * 1000.0);
-            ring_buffer_update_stats(cpu_times);
-            ring_buffer_set_value(gpu_times, gpu_diff_last_frame_end);
-            ring_buffer_update_stats(gpu_times);
-            ring_buffer_set_value(tslf_times, tslf * 1000.0);
-            ring_buffer_update_stats(tslf_times);
-
-            string_append_formated(&timing_str, "CPU avg: %3.2fms, min: %3.2fms, max: %3.2fms, dev: %3.2fms\n", 
-                cpu_times.average, cpu_times.min, cpu_times.max, cpu_times.standard_deviation);
-            string_append_formated(&timing_str, "GPU avg: %3.2fms, min: %3.2fms, max: %3.2fms, dev: %3.2fms\n",
-                gpu_times.average, gpu_times.min, gpu_times.max, gpu_times.standard_deviation);
-            string_append_formated(&timing_str, "TSLF avg: %3.2fms, min: %3.2fms, max: %3.2fms, dev: %3.2fms\n",
-                tslf_times.average, tslf_times.min, tslf_times.max, tslf_times.standard_deviation);
-
-            string_append_formated(&timing_str, "tslf       ... %3.2fms\n", tslf * 1000.0);
-            string_append_formated(&timing_str, "GPU render ... %3.2fms\n", gpu_end - gpu_start);
-            string_append_formated(&timing_str, "GPU swap   ... %3.2fms\n", gpu_swap - gpu_start);
-            string_append_formated(&timing_str, "GPU diff   ... %3.2fms\n", gpu_diff_last_frame_end);
-            string_append_formated(&timing_str, "msg_count  ... %d\n", msg_count);
-            if (gpu_diff_last_frame_end > 1 / 60.0 * 1000.0 + 8) {
-                string_append_formated(&timing_str, "HOT");
-            }
-            else {
-                string_append_formated(&timing_str, "no");
-            }
+            timer_sleep_until(&timer, frame_start_time + SECONDS_PER_FRAME);
         }
     }
 }

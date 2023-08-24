@@ -3,6 +3,7 @@
 #include "../utility/utils.hpp"
 #include "array.hpp"
 #include "../math/scalars.hpp"
+#include <algorithm>
 
 template <typename T>
 struct Dynamic_Array
@@ -218,3 +219,12 @@ void dynamic_array_bubble_sort(Dynamic_Array<T> array, bool (*in_order_fn)(T* a,
     array_bubble_sort(simple_array, in_order_fn);
 }
 
+template<typename T, typename Comparator>
+void dynamic_array_sort(Dynamic_Array<T>* array, Comparator comparator) {
+    std::sort(&array->data[0], &array->data[array->size], comparator);
+}
+
+template<typename T, typename Comparator>
+void dynamic_array_stable_sort(Dynamic_Array<T>* array, Comparator comparator) {
+    std::stable_sort(&array->data[0], &array->data[array->size], comparator);
+}
