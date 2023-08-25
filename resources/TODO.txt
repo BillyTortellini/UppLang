@@ -1,6 +1,35 @@
 
 
+
+TODO:
+ - Some stacking setting system so we don't have to specify all things for each node
+ - Refactor Draggable and resizable for windows, so that this can be reused for other components.
+ - Align layout to pixels, add integer checks to overlap correction, 
+    Borders with integer thickness
+
 DONE:
+ - Boolean toggles to disable rendering, but still keep the nodes "alive"
+ - Better matching system
+ - Fix Input order, needs to be correct...
+ - Stacked layout should draw in z-order
+ - Generating draw batches should respect non-drawing elements (Just containers)
+ - Add window focus, which changes depending on which window is clicked
+
+- 2 Places need the z-order: Update (Which element is in focus) and Render (Drawing order...)
+    Order is also important for Matching from previous frames. 
+    So we need both the specification order, and the draw order... 
+    So I guess I'll add one phase to the first update pass to generate the draw order
+        After removal of dead nodes --> This currently means in the update pass.
+    How is focusing the top element gonna work? Either by just setting the z to a higher value each time,
+    Or by looping over all previous elements in the parent container and updating the indices there,
+    which won't work if new windows are created in this frame, but I guess new windows will be at the top most of the time
+        and with this approach I also need to add just one more function to the whole schablam
+    Does the z-Order do anything when we are not in a stacked contaner? I guess not, because elements will be layed out
+        based on stacking, or some new method in the future. But i guess there are those absolute elements,
+        and it would kinda make sense to use z-order for those. But then I don't think theres a good reason for the stacked thing at all
+
+DONE:
+ - Turn gui into global variable
  - Add drawable type to node: Either rectangle, nothing or text
     * Need to store text per node, and free on delete node
  - Simple layout-options: Horizontal or vertical stack
