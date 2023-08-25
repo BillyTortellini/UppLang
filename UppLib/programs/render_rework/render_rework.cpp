@@ -798,13 +798,7 @@ void gui_add_dependency(Dynamic_Array<GUI_Node>& nodes, Array<GUI_Dependency> de
             gui_add_dependency(nodes, dependencies, node_index, other.index_parent, parent_child_dependency);
         }
         else {
-            // add dependencies to all children
-            int child_index = other.index_first_child;
-            while (child_index != -1) {
-                auto& child_node = nodes[child_index];
-                SCOPE_EXIT(child_index = child_node.index_next_node);
-                gui_add_dependency(nodes, dependencies, node_index, child_index, parent_child_dependency);
-            }
+            return;
         }
     }
     else {
@@ -857,13 +851,24 @@ bool check_overlap_dependency(Dynamic_Array<GUI_Node>& nodes, Array<GUI_Dependen
         node_index = swapi;
     }
 
+    if (node->drawable.type == GUI_Drawable_Type::NONE) {
+        // Overlap all my children with the other
+        int child_index = node->index_first_child;
+        while (child_index != -1) {
+            auto& child_node = nodes[child_index];
+            SCOPE_EXIT(child_index = child_node.index_next_node);
+            check_overlap_dependency(nodes, dependencies, child_index, other_index, false);
+        }
+        return true;
+    }
+
     // Check if we overlap with any child, if so we don't need to add any additional dependencies
     bool overlapped_any = false;
-    int child_index = node->index_last_child;
+    int child_index = other->index_first_child;
     while (child_index != -1) {
         auto& child_node = nodes[child_index];
         SCOPE_EXIT(child_index = child_node.index_next_node);
-        if (check_overlap_dependency(nodes, dependencies, child_index, other_index, false)) {
+        if (check_overlap_dependency(nodes, dependencies, node_index, child_index, false)) {
             overlapped_any = true;
         };
     }
@@ -963,7 +968,7 @@ void gui_update(Input* input)
                 for (int i = 0; i < dependencies.size; i++) {
                     dynamic_array_destroy(&dependencies[i].dependents);
                 }
-                array_destroy(&dependencies);
+            array_destroy(&dependencies);
             );
 
             // Generate dependencies
@@ -984,7 +989,7 @@ void gui_update(Input* input)
                     while (next_child_index != -1) {
                         auto& next_child_node = nodes[next_child_index];
                         SCOPE_EXIT(next_child_index = next_child_node.index_next_node);
-                        check_overlap_dependency(nodes, dependencies, child_index, next_child_index, true);
+                        check_overlap_dependency(nodes, dependencies, next_child_index, child_index, true);
                     }
                 }
             }
@@ -1061,7 +1066,7 @@ void gui_update(Input* input)
             logg("Skip batches: %\n", skip_batches);
         }
         skip_batches = math_clamp(skip_batches, 0, batch_start_indices.size - 1);
-        
+
         // Draw batches in order
         for (int batch = 0; batch < batch_start_indices.size - 1 - skip_batches; batch++)
         {
@@ -1530,11 +1535,20 @@ void draw_example_gui(Input* input)
     // Z-Overlap Test
     if (true) {
         auto canvas = gui_add_node(imgui.root_handle, gui_size_make_fixed(250), gui_size_make_fixed(250),
-            gui_position_make_relative(vec2(0), Anchor::CENTER_CENTER, 2),
+            gui_position_make_relative(vec2(0), Anchor::CENTER_CENTER),
             gui_layout_make_stacked(),
             gui_drawable_make_rect(gray),
             false
         );
+
+        gui_add_node(imgui.root_handle, gui_size_make_fixed(250), gui_size_make_fixed(250),
+            gui_position_make_relative(vec2(-235, -20), Anchor::CENTER_CENTER),
+            gui_layout_make_stacked(),
+            gui_drawable_make_rect(yellow),
+            false
+        );
+
+
 
         gui_add_node(canvas, gui_size_make_fixed(50), gui_size_make_fixed(50),
             gui_position_make_relative(vec2(0), Anchor::CENTER_CENTER, 0),
@@ -1685,7 +1699,7 @@ void draw_example_gui(Input* input)
     }
 
     // Generating UI (User code mockup, this will be somewhere else later)
-    if (false)
+    if (true)
     {
         // Make the rectangle a constant pixel size:
         int pixel_width = 100;
