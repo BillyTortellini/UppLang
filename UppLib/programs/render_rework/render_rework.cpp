@@ -57,113 +57,60 @@ Stages of IM-GUI:
         String editing and schtuff. This needs to be saved so that when things are queried next frame they get the new values.
 */
 
-
-enum class GUI_Size_Type
-{
-    FIXED,
-    FILL_WITH_MIN, 
-    MIN
-};
-
 struct GUI_Size
 {
     float min_size;
-    bool fit_at_least_children;
-    bool fill;
+    bool fit_at_least_children; // If set, grows to accomodate min size of children...
+    bool fill; // Fill up parent, if multiple children fill up parent, the available size is split
+    bool inherit_fill_from_children; // If a child also wants to fill, this will propagate up
 };
 
-GUI_Size gui_size_make(float min_size, bool fit_at_least_children, bool fill) {
+GUI_Size gui_size_make(float min_size, bool fit_at_least_children, bool fill, bool inherit_fill_from_children) {
     GUI_Size size;
     size.min_size = min_size;
     size.fill = fill;
     size.fit_at_least_children = fit_at_least_children;
+    size.inherit_fill_from_children = inherit_fill_from_children;
     return size;
 }
 
-GUI_Size gui_size_make_fit() {
-    return gui_size_make(0.0f, true, false);
+GUI_Size gui_size_make_fit(bool inherit_fill = false) {
+    return gui_size_make(0.0f, true, false, inherit_fill);
 }
 
 GUI_Size gui_size_make_fixed(float value) {
-    return gui_size_make(value, false, false);
+    return gui_size_make(value, false, false, false);
 }
 
-GUI_Size gui_size_make_fill(bool fit_children = false, float min_size = 0.0f) {
-    return gui_size_make(min_size, fit_children, true);
-}
-
-
-
-enum class GUI_Position_Type
-{
-    RELATIVE_TO_WINDOW,
-    RELATIVE_TO_PARENT,
-    USE_PARENT_LAYOUT
-};
-
-struct GUI_Position
-{
-    GUI_Position_Type type;
-    vec2 offset;
-    Anchor anchor;
-};
-
-GUI_Position gui_position_make_parent_layout() {
-    GUI_Position result;
-    memory_zero(&result);
-    result.type = GUI_Position_Type::USE_PARENT_LAYOUT;
-    return result;
-}
-
-GUI_Position gui_position_make_relative(vec2 offset, Anchor anchor, bool relative_to_parent = true) {
-    GUI_Position result;
-    result.type = relative_to_parent ? GUI_Position_Type::RELATIVE_TO_PARENT : GUI_Position_Type::RELATIVE_TO_WINDOW;
-    result.offset = offset;
-    result.anchor = anchor;
-    return result;
+GUI_Size gui_size_make_fill(bool fit_at_least_children = true) {
+    return gui_size_make(0, fit_at_least_children, true, false);
 }
 
 
 
-enum class GUI_Align
+enum class GUI_Alignment
 {
     MIN, // in x this is left_aligned, in y bottom aligned
     MAX,
     CENTER,
 };
 
-enum class GUI_Layout_Type {
-    STACK_HORIZONTAL,
-    STACK_VERTICAL,
-    LAYERED
+struct GUI_Position
+{
+    bool auto_layout; // Is set by parent, otherwise position needs to be specified
+    GUI_Alignment alignment; // Only used with auto layout, is inherited from parent by default
+    bool relative_to_window; // Only used if auto layout is off, either relative to window or relative to parent 
+    vec2 offset;
+    Anchor anchor;
 };
 
 struct GUI_Layout
 {
-    GUI_Layout_Type layout_type;
-    GUI_Align child_alignment; 
+    bool stack_vertical;
     float padding[2];
+    bool pad_between_children;
+    GUI_Alignment child_default_alignment;
 };
-
-GUI_Layout gui_layout_make_stacked(bool stack_vertical = true, GUI_Align align = GUI_Align::MIN, vec2 padding = vec2(0.0f))
-{
-    GUI_Layout layout;
-    layout.child_alignment = align;
-    layout.padding[0] = padding.x;
-    layout.padding[1] = padding.y;
-    layout.layout_type = stack_vertical ? GUI_Layout_Type::STACK_VERTICAL : GUI_Layout_Type::STACK_HORIZONTAL;
-    return layout;
-}
-
-GUI_Layout gui_layout_make_layered(vec2 padding = vec2(0.0f))
-{
-    GUI_Layout layout;
-    layout.layout_type = GUI_Layout_Type::LAYERED;
-    layout.child_alignment = GUI_Align::MIN; // Doesnt matter
-    layout.padding[0] = padding.x;
-    layout.padding[1] = padding.y;
-    return layout;
-}
 
 
 
@@ -212,6 +159,7 @@ void gui_drawable_destroy(GUI_Drawable& drawable) {
 }
 
 
+
 // Matching Checkpoint
 enum class GUI_Matching_Checkpoint_Type
 {
@@ -253,11 +201,12 @@ typedef void (*gui_userdata_destroy_fn)(void* userdata);
 
 struct GUI_Node
 {
-    GUI_Size size[2];
-    GUI_Position position;
-    GUI_Layout layout;
+    GUI_Size size[2];        
     GUI_Drawable drawable;
-    int z_index;
+    GUI_Position position;   // Resets to default each frame
+    GUI_Alignment alignment; // Resets to default each frame
+    GUI_Layout layout;       // Resets to default each frame
+    int z_index;             // Stays persistent over frames
 
     // Enable/Disable settings (Must be set each frame)
     bool input_enabled; // Element can receive mouse hover, default false
@@ -278,6 +227,7 @@ struct GUI_Node
     float min_size[2];
     float min_child_size[2];
     bool hidden_by_parent; // If some parent is hidden, this node is hidden this frame
+    bool should_fill[2]; 
 
     // Infos for matching
     bool referenced_this_frame; // Node and all child nodes will be removed at end of frame if not referenced 
@@ -323,19 +273,144 @@ struct IMGUI
 
 IMGUI imgui;
 
+
+
+// GUI_Node Getters and setters
+void gui_node_set_position_fixed(GUI_Handle handle, vec2 offset, Anchor anchor, bool relative_to_window = false) {
+    imgui.nodes[handle.index].position.auto_layout = false;
+    imgui.nodes[handle.index].position.offset = offset;
+    imgui.nodes[handle.index].position.anchor = anchor;
+    imgui.nodes[handle.index].position.relative_to_window = relative_to_window;
+}
+
+void gui_node_set_alignment(GUI_Handle handle, GUI_Alignment alignment = GUI_Alignment::MIN) {
+    imgui.nodes[handle.index].position.auto_layout = true;
+    imgui.nodes[handle.index].position.alignment = alignment;
+}
+
+void gui_node_set_layout(GUI_Handle handle, bool stack_vertical = false, GUI_Alignment child_default_alignment = GUI_Alignment::MIN) 
+{
+    imgui.nodes[handle.index].layout.stack_vertical = stack_vertical;
+    imgui.nodes[handle.index].layout.child_default_alignment = child_default_alignment;
+}
+
+void gui_node_set_padding(GUI_Handle handle, vec2 padding, bool pad_between_children = false) {
+    imgui.nodes[handle.index].layout.padding[0] = padding.x;
+    imgui.nodes[handle.index].layout.padding[1] = padding.y;
+    imgui.nodes[handle.index].layout.pad_between_children = pad_between_children;
+}
+
+void gui_node_update_drawable(GUI_Handle handle, GUI_Drawable drawable) {
+    // Special handling for text drawable, to avoid memory allocations
+    auto& node = imgui.nodes[handle.index];
+    gui_drawable_destroy(node.drawable);
+    node.drawable = drawable;
+}
+
+void gui_node_update_size(GUI_Handle handle, GUI_Size size_x, GUI_Size size_y) {
+    imgui.nodes[handle.index].size[0] = size_x;
+    imgui.nodes[handle.index].size[1] = size_y;
+}
+
+void gui_node_set_z_index(GUI_Handle handle, int z_index) {
+    imgui.nodes[handle.index].z_index = z_index;
+}
+
+void gui_node_set_z_index_to_highest(GUI_Handle handle)
+{
+    auto& nodes = imgui.nodes;
+    auto& node = nodes[handle.index];
+    if (node.index_parent == -1) {
+        return;
+    }
+    auto& parent_node = nodes[node.index_parent];
+
+    // Figure out if the node is already the highest
+    int min_z_index = 100000;
+    int max_z_index = -100000;
+    bool found_other = false;
+    int child_index = parent_node.index_first_child;
+    while (child_index != -1) {
+        auto& child_node = nodes[child_index];
+        SCOPE_EXIT(child_index = child_node.index_next_node);
+        if (child_index == handle.index) {
+            continue;
+        }
+        min_z_index = math_minimum(min_z_index, child_node.z_index);
+        max_z_index = math_maximum(max_z_index, child_node.z_index);
+        found_other = true;
+    }
+
+    if (!found_other) {
+        node.z_index = 0;
+        return;
+    }
+
+    // Set lowest z-index to 0, and adjust all others
+    int new_highest = max_z_index - min_z_index;
+    node.z_index = new_highest + 1;
+
+    // Adjust all other z-indices
+    child_index = parent_node.index_first_child;
+    while (child_index != -1) {
+        auto& child_node = nodes[child_index];
+        SCOPE_EXIT(child_index = child_node.index_next_node);
+        if (child_index == handle.index) {
+            continue;
+        }
+        child_node.z_index -= min_z_index;
+    }
+}
+
+Bounding_Box2 gui_node_get_previous_frame_size(GUI_Handle handle) {
+    return imgui.nodes[handle.index].bounding_box;
+}
+
+void gui_node_enable_input(GUI_Handle handle) {
+    imgui.nodes[handle.index].input_enabled = true;
+}
+
+void gui_node_hide(GUI_Handle handle) {
+    imgui.nodes[handle.index].hidden = true;
+}
+
+void gui_node_keep_children_even_if_not_referenced(GUI_Handle handle) {
+    imgui.nodes[handle.index].keep_children_even_if_not_referenced = true;
+}
+
+void gui_node_set_userdata(GUI_Handle& handle, void* userdata, gui_userdata_destroy_fn destroy_fn) {
+    if (handle.index == 0) {
+        panic("Cannot update root node!");
+    }
+    auto& node = imgui.nodes[handle.index];
+    if (node.userdata != 0) {
+        assert(node.userdata_destroy_fn != 0, "Since userdata should always be allocated dynamically, there should always be a destroy!");
+        node.userdata_destroy_fn(node.userdata);
+    }
+    node.userdata = userdata;
+    node.userdata_destroy_fn = destroy_fn;
+    handle.userdata = userdata;
+}
+
+
+
+// Initializers and destroy for gui
 void imgui_initialize(Text_Renderer* text_renderer, Window* window)
 {
     auto& pre = rendering_core.predefined;
 
     imgui.text_renderer = text_renderer;
     imgui.nodes = dynamic_array_create_empty<GUI_Node>(1);
-    imgui.root_handle.index = 0;
-    imgui.root_handle.mouse_hover = false;
-    imgui.root_handle.mouse_hovers_child = false;
     imgui.window = window;
     imgui.cursor_type = Cursor_Icon_Type::ARROW;
     imgui.active_checkpoint.type = GUI_Matching_Checkpoint_Type::NONE;
     
+    // Note: We cannot add the root node with add_node, because root doesnt have a parent...
+    imgui.root_handle.index = 0;
+    imgui.root_handle.mouse_hover = false;
+    imgui.root_handle.mouse_hovers_child = false;
+    imgui.root_handle.userdata = nullptr;
+
     // Push root node
     GUI_Node root;
     root.bounding_box = bounding_box_2_convert(bounding_box_2_make_anchor(vec2(0.0f), vec2(2.0f), Anchor::CENTER_CENTER), Unit::NORMALIZED_SCREEN);
@@ -350,14 +425,16 @@ void imgui_initialize(Text_Renderer* text_renderer, Window* window)
     root.userdata_destroy_fn = nullptr;
     root.drawable = gui_drawable_make_none();
     auto& info = rendering_core.render_information;
-    root.size[0] = gui_size_make(info.backbuffer_width, false, false);
-    root.size[1] = gui_size_make(info.backbuffer_height, false, false);
-    root.position = gui_position_make_relative(vec2(0.0f), Anchor::BOTTOM_LEFT, false);
-    root.layout = gui_layout_make_layered();
+    root.size[0] = gui_size_make(info.backbuffer_width, false, false, false);
+    root.size[1] = gui_size_make(info.backbuffer_height, false, false, false);
     root.input_enabled = false;
     root.hidden = false;
     root.keep_children_even_if_not_referenced = false;
     dynamic_array_push_back(&imgui.nodes, root);
+
+    gui_node_set_position_fixed(imgui.root_handle, vec2(0.0f), Anchor::BOTTOM_LEFT, false);
+    gui_node_set_layout(imgui.root_handle);
+    gui_node_set_padding(imgui.root_handle, vec2(0), false);
 }
 
 void imgui_destroy() {
@@ -367,6 +444,9 @@ void imgui_destroy() {
     dynamic_array_destroy(&imgui.nodes);
 }
 
+
+
+// Matching and node adding
 void gui_matching_add_checkpoint_int(int value) {
     imgui.active_checkpoint.type = GUI_Matching_Checkpoint_Type::INT;
     imgui.active_checkpoint.data.int_value = value;
@@ -382,8 +462,7 @@ void gui_matching_add_checkpoint_name(const char* name) {
     imgui.active_checkpoint.data.name = name;
 }
 
-GUI_Handle gui_add_node(
-    GUI_Handle parent_handle, GUI_Size size_x, GUI_Size size_y, GUI_Position position, GUI_Layout layout, GUI_Drawable drawable) 
+GUI_Handle gui_add_node(GUI_Handle parent_handle, GUI_Size size_x, GUI_Size size_y, GUI_Drawable drawable) 
 {
     auto& nodes = imgui.nodes;
 
@@ -438,6 +517,7 @@ GUI_Handle gui_add_node(
         node.hidden = false;
         node.keep_children_even_if_not_referenced = false;
         node.input_enabled = false;
+        node.drawable.type = GUI_Drawable_Type::NONE; // Note: This is required because drawable actually has ownership of memory
         dynamic_array_push_back(&imgui.nodes, node);
         node_index = imgui.nodes.size - 1;
 
@@ -456,42 +536,29 @@ GUI_Handle gui_add_node(
         }
     }
 
-    // Update node data
-    {
-        auto& node = imgui.nodes[node_index];
-        node.referenced_this_frame = true;
-        node.layout = layout;
-        node.size[0] = size_x;
-        node.size[1] = size_y;
-        node.position = position;
-        node.checkpoint = imgui.active_checkpoint;
-        imgui.active_checkpoint.type = GUI_Matching_Checkpoint_Type::NONE;
-
-        // Special handling for text drawable, to avoid memory allocations
-        if (!create_new_node && node.drawable.type == GUI_Drawable_Type::TEXT) {
-            if (drawable.type == GUI_Drawable_Type::TEXT) {
-                string_set_characters(&node.drawable.text, drawable.text.characters);
-                node.drawable.color = drawable.color;
-            }
-            else {
-                gui_drawable_destroy(node.drawable);
-                node.drawable = drawable;
-            }
-        }
-        else {
-            node.drawable = drawable;
-        }
-    }
-
     // Update next traversal
     nodes[parent_handle.index].traversal_next_child = imgui.nodes[node_index].index_next_node;
 
+    // Create handle
     GUI_Handle handle;
     handle.index = node_index;
     handle.mouse_hover = nodes[node_index].mouse_hover;
     handle.mouse_hovers_child = nodes[node_index].mouse_hovers_child;
     handle.first_time_created = create_new_node;
     handle.userdata = nodes[node_index].userdata;
+
+    // Update node data
+    auto& node = imgui.nodes[node_index];
+    node.referenced_this_frame = true;
+    gui_node_set_layout(handle, true);
+    gui_node_set_alignment(handle, imgui.nodes[parent_handle.index].layout.child_default_alignment);
+    gui_node_update_drawable(handle, drawable);
+    gui_node_set_padding(handle, vec2(0));
+    node.size[0] = size_x;
+    node.size[1] = size_y;
+    node.checkpoint = imgui.active_checkpoint;
+    imgui.active_checkpoint.type = GUI_Matching_Checkpoint_Type::NONE;
+
     return handle;
 }
 
@@ -577,19 +644,20 @@ void gui_layout_calculate_min_size(int node_index, int dim)
 
     // Calculate all child min sizes
     node.min_child_size[dim] = 0.0f;
-    bool in_stacking_dimension =
-        (node.layout.layout_type != GUI_Layout_Type::LAYERED) &&
-        ((node.layout.layout_type == GUI_Layout_Type::STACK_HORIZONTAL && dim == 0) ||
-            (node.layout.layout_type == GUI_Layout_Type::STACK_VERTICAL && dim == 1));
+    bool in_stacking_dimension = node.layout.stack_vertical ? (dim == 1) : (dim == 0);
 
     // Calculate min child size
+    bool child_with_fill_exists = false;
     int child_index = node.index_first_child;
     while (child_index != -1) {
         auto& child_node = nodes[child_index];
         SCOPE_EXIT(child_index = child_node.index_next_node);
         gui_layout_calculate_min_size(child_index, dim);
 
-        if (child_node.position.type != GUI_Position_Type::USE_PARENT_LAYOUT) {
+        if (child_node.size[dim].fill) {
+            child_with_fill_exists = true;
+        }
+        if (!child_node.position.auto_layout) {
             continue;
         }
         if (in_stacking_dimension) {
@@ -598,6 +666,17 @@ void gui_layout_calculate_min_size(int node_index, int dim)
         else {
             node.min_child_size[dim] = math_maximum(node.min_child_size[dim], child_node.min_size[dim]);
         }
+    }
+    
+    // Check inherited fill
+    if (node.size[dim].fill) {
+        node.should_fill[dim] = true;
+    }
+    else if (node.size[dim].inherit_fill_from_children) {
+        node.should_fill[dim] = child_with_fill_exists;
+    }
+    else {
+        node.should_fill[dim] = false;
     }
 
     // Calculate min size
@@ -642,14 +721,9 @@ void gui_layout_layout_children(int node_index, int dim)
     }
 
     // Check if we need to calculate fill
-    bool in_stack_dimension = false;
-    if (node.layout.layout_type != GUI_Layout_Type::LAYERED) {
-        int stack_dimension = node.layout.layout_type == GUI_Layout_Type::STACK_HORIZONTAL ? 0 : 1;
-        in_stack_dimension = dim == stack_dimension;
-    }
+    bool in_stack_dimension = node.layout.stack_vertical ? (dim == 1) : (dim == 0);
 
     // Calculate additional size for all fill children
-    bool size_for_fill_available = false;
     float size_for_fill = 0.0f;
     const float available_size = node_size - 2.0f * node.layout.padding[dim];
     if (in_stack_dimension && available_size - node.min_child_size[dim] > 0) // Only calculate if there is actually space for filling
@@ -663,11 +737,11 @@ void gui_layout_layout_children(int node_index, int dim)
         while (child_index != -1) {
             auto& child_node = nodes[child_index];
             SCOPE_EXIT(child_index = child_node.index_next_node);
-            if (child_node.position.type != GUI_Position_Type::USE_PARENT_LAYOUT || child_node.hidden_by_parent) {
+            if (!child_node.position.auto_layout || child_node.hidden_by_parent) {
                 continue;
             }
 
-            if (child_node.size[dim].fill) {
+            if (child_node.should_fill[dim]) {
                 dynamic_array_push_back(&fill_childs, child_index);
             }
             else {
@@ -678,7 +752,6 @@ void gui_layout_layout_children(int node_index, int dim)
         // Calculate values for fill-children
         if (fill_childs.size > 0)
         {
-            size_for_fill_available = true;
             size_for_fill = (available_size - non_fill_size) / fill_childs.size;
 
             // Loop over fill children until we have enough space for all
@@ -729,37 +802,45 @@ void gui_layout_layout_children(int node_index, int dim)
             continue;
         }
 
-        float child_size = child_node.min_size[dim];
-        if (child_node.size[dim].fill) {
-            if (in_stack_dimension && child_node.position.type == GUI_Position_Type::USE_PARENT_LAYOUT) {
-                if (size_for_fill_available && size_for_fill > child_size) {
-                    child_size = size_for_fill;
-                }
-                else {
-                    // In this case there is no more space to fill, so just take the minimum value
-                }
+        float child_size = 0.0f;
+        if (child_node.should_fill[dim]) {
+            if (in_stack_dimension && child_node.position.auto_layout) {
+                child_size = size_for_fill;
             }
             else {
-                child_size = math_maximum(child_size, node_size - node.layout.padding[dim] * 2.0f);
+                child_size = node_size - node.layout.padding[dim] * 2.0f;
             }
         }
+        child_size = math_maximum(child_node.min_size[dim], child_size); // Enforce min size
 
         // Alignment info if child should be aligned
         bool align_child = false;
-        GUI_Align final_align = GUI_Align::MIN;
+        GUI_Alignment final_align = GUI_Alignment::MIN;
         float rel_pos = node_pos;
         float padding = node.layout.padding[dim];
         float rel_size = node_size;
-        float offset = 0;
+        float offset = 0.0f;
 
         // Check how position should be calculated
         float child_pos = 0.0f;
-        switch (child_node.position.type)
+        if (child_node.position.auto_layout) 
         {
-        case GUI_Position_Type::RELATIVE_TO_PARENT:
-        case GUI_Position_Type::RELATIVE_TO_WINDOW: {
+            if (in_stack_dimension) {
+                child_pos = stack_cursor;
+                if (stack_sign < 0.0f) {
+                    child_pos -= child_size;
+                }
+                stack_cursor += child_size * stack_sign;
+            }
+            else {
+                align_child = true;
+                final_align = child_node.position.alignment;
+            }
+        }
+        else 
+        {
             align_child = true;
-            if (child_node.position.type == GUI_Position_Type::RELATIVE_TO_WINDOW) {
+            if (child_node.position.relative_to_window) {
                 rel_pos = 0;
                 auto& info = rendering_core.render_information;
                 rel_size = dim == 0 ? info.backbuffer_width : info.backbuffer_height;
@@ -770,31 +851,14 @@ void gui_layout_layout_children(int node_index, int dim)
             vec2 anchor_dir = anchor_to_direction(child_node.position.anchor);
             float offset_dir = dim == 0 ? anchor_dir.x : anchor_dir.y;
             if (offset_dir < -0.1f) {
-                final_align = GUI_Align::MIN;
+                final_align = GUI_Alignment::MIN;
             }
             else if (offset_dir > 0.1f) {
-                final_align = GUI_Align::MAX;
+                final_align = GUI_Alignment::MAX;
             }
             else {
-                final_align = GUI_Align::CENTER;
+                final_align = GUI_Alignment::CENTER;
             }
-            break;
-        }
-        case GUI_Position_Type::USE_PARENT_LAYOUT: {
-            if (in_stack_dimension) {
-                child_pos = stack_cursor;
-                if (stack_sign < 0.0f) {
-                    child_pos -= child_size;
-                }
-                stack_cursor += child_size * stack_sign;
-            }
-            else {
-                align_child = true;
-                final_align = node.layout.child_alignment;
-            }
-            break;
-        }
-        default: panic("");
         }
 
         // Do alignment if requested
@@ -802,13 +866,13 @@ void gui_layout_layout_children(int node_index, int dim)
         {
             switch (final_align)
             {
-            case GUI_Align::MIN: child_pos = rel_pos + padding + offset; break;
-            case GUI_Align::MAX: child_pos = rel_pos + rel_size - child_size - padding + offset; break;
-            case GUI_Align::CENTER: child_pos = (rel_pos + rel_size / 2.0f) - child_size / 2.0f + offset;
+            case GUI_Alignment::MIN: child_pos = rel_pos + padding + offset; break;
+            case GUI_Alignment::MAX: child_pos = rel_pos + rel_size - child_size - padding + offset; break;
+            case GUI_Alignment::CENTER: child_pos = (rel_pos + rel_size / 2.0f) - child_size / 2.0f + offset;
             }
         }
 
-        // Set child pos
+        // Set child bounding box from position and size
         if (dim == 0) {
             child_node.bounding_box.min.x = child_pos;
             child_node.bounding_box.max.x = child_pos + child_size;
@@ -1023,7 +1087,7 @@ void gui_update(Input* input)
     auto& info = core.render_information;
     auto& nodes = imgui.nodes;
 
-    imgui.active_checkpoint.type == GUI_Matching_Checkpoint_Type::NONE;
+    imgui.active_checkpoint.type = GUI_Matching_Checkpoint_Type::NONE;
 
     // Remove nodes from last frame
     {
@@ -1055,8 +1119,8 @@ void gui_update(Input* input)
         auto& nodes = imgui.nodes;
 
         // Set root to windows size
-        nodes[0].size[0] = gui_size_make(info.backbuffer_width, false, false);
-        nodes[0].size[1] = gui_size_make(info.backbuffer_height, false, false);
+        nodes[0].size[0] = gui_size_make(info.backbuffer_width, false, false, false);
+        nodes[0].size[1] = gui_size_make(info.backbuffer_height, false, false, false);
         nodes[0].bounding_box.min = vec2(0.0f);
         nodes[0].bounding_box.max = vec2(info.backbuffer_width, info.backbuffer_height);
 
@@ -1123,12 +1187,28 @@ void gui_update(Input* input)
                     // Add parent-child dependency
                     gui_add_dependency(nodes, dependencies, child_index, node_index, true);
 
-                    // Check for overlap-dependencies between children
-                    int next_child_index = child_node.index_next_node;
-                    while (next_child_index != -1) {
-                        auto& next_child_node = nodes[next_child_index];
-                        SCOPE_EXIT(next_child_index = next_child_node.index_next_node);
-                        check_overlap_dependency(nodes, dependencies, next_child_index, child_index, true);
+                    // If the node doesn't use auto-layout, we need to do collision checking
+                    if (!child_node.position.auto_layout) {
+                        // Check for overlap-dependencies between children
+                        int other_child_index = node.index_first_child;
+                        bool before_child = true;
+                        while (other_child_index != -1) {
+                            auto& other_child_node = nodes[other_child_index];
+                            SCOPE_EXIT(other_child_index = other_child_node.index_next_node);
+                            if (other_child_index == child_index) {
+                                before_child = false;
+                                continue; // Skip self intersection
+                            }
+
+                            if (other_child_node.position.auto_layout) {
+                                // Collision with auto layout and non-auto layout node --> non-auto is drawn on top
+                                check_overlap_dependency(nodes, dependencies, child_index, other_child_index, false);
+                            }
+                            else if (!before_child){
+                                // Remember that there is a symmetry here, and we don't want double checks
+                                check_overlap_dependency(nodes, dependencies, other_child_index, child_index, true);
+                            }
+                        }
                     }
                 }
             }
@@ -1285,112 +1365,15 @@ void gui_update(Input* input)
 
 
 
-
-// Setters and getters for outside input
-void gui_set_userdata(GUI_Handle& handle, void* userdata, gui_userdata_destroy_fn destroy_fn) {
-    if (handle.index == 0) {
-        panic("Cannot update root node!");
-    }
-    auto& node = imgui.nodes[handle.index];
-    if (node.userdata != 0) {
-        assert(node.userdata_destroy_fn != 0, "Since userdata should always be allocated dynamically, there should always be a destroy!");
-        node.userdata_destroy_fn(node.userdata);
-    }
-    node.userdata = userdata;
-    node.userdata_destroy_fn = destroy_fn;
-    handle.userdata = userdata;
-}
-
-void gui_set_drawable(GUI_Handle handle, GUI_Drawable drawable) {
-    if (handle.index == 0) {
-        panic("Cannot update root node!");
-    }
-    imgui.nodes[handle.index].drawable = drawable;
-}
-
-void gui_set_size(GUI_Handle handle, GUI_Size size_x, GUI_Size size_y) {
-    if (handle.index == 0) {
-        panic("Cannot update root node!");
-    }
-    imgui.nodes[handle.index].size[0] = size_x;
-    imgui.nodes[handle.index].size[1] = size_y;
-}
-
-void gui_set_position(GUI_Handle handle, GUI_Position pos) {
-    if (handle.index == 0) {
-        panic("Cannot update root node!");
-    }
-    imgui.nodes[handle.index].position = pos;
-}
-
-void gui_set_layout(GUI_Handle handle, GUI_Layout layout) {
-    if (handle.index == 0) {
-        panic("Cannot update root node!");
-    }
-    imgui.nodes[handle.index].layout = layout;
-}
-
-void gui_set_z_index(GUI_Handle handle, int z_index) {
-    imgui.nodes[handle.index].z_index = z_index;
-}
-
-void gui_set_z_index_to_highest(GUI_Handle handle)
-{
-    auto& nodes = imgui.nodes;
-    auto& node = nodes[handle.index];
-    if (node.index_parent == -1) {
-        return;
-    }
-    auto& parent_node = nodes[node.index_parent];
-
-    // Figure out if the node is already the highest
-    int min_z_index = 100000;
-    int max_z_index = -100000;
-    bool found_other = false;
-    int child_index = parent_node.index_first_child;
-    while (child_index != -1) {
-        auto& child_node = nodes[child_index];
-        SCOPE_EXIT(child_index = child_node.index_next_node);
-        if (child_index == handle.index) {
-            continue;
-        }
-        min_z_index = math_minimum(min_z_index, child_node.z_index);
-        max_z_index = math_maximum(max_z_index, child_node.z_index);
-        found_other = true;
-    }
-
-    if (!found_other) {
-        node.z_index = 0;
-        return;
-    }
-
-    // Set lowest z-index to 0, and adjust all others
-    int new_highest = max_z_index - min_z_index;
-    node.z_index = new_highest + 1;
-
-    // Adjust all other z-indices
-    child_index = parent_node.index_first_child;
-    while (child_index != -1) {
-        auto& child_node = nodes[child_index];
-        SCOPE_EXIT(child_index = child_node.index_next_node);
-        if (child_index == handle.index) {
-            continue;
-        }
-        child_node.z_index -= min_z_index;
-    }
-}
-
-Bounding_Box2 gui_get_node_prev_size(GUI_Handle handle) {
-    return imgui.nodes[handle.index].bounding_box;
-}
-
+// Predefined GUI objects
 template<typename T>
 T* gui_store_primitive(GUI_Handle parent_handle, T default_value) {
-    auto node_handle = gui_push_dummy(parent_handle);
+    auto node_handle = gui_add_node(parent_handle, gui_size_make_fixed(0.0f), gui_size_make_fixed(0.0f), gui_drawable_make_none());
+    gui_node_hide(node_handle);
     if (node_handle.userdata == 0) {
         T* new_value = new T;
         *new_value = default_value;
-        gui_set_userdata(
+        gui_node_set_userdata(
             node_handle, (void*)new_value,
             [](void* data) -> void {
                 T* typed_data = (T*)data;
@@ -1402,30 +1385,14 @@ T* gui_store_primitive(GUI_Handle parent_handle, T default_value) {
     return (T*)node_handle.userdata;
 }
 
-void gui_node_enable_input(GUI_Handle handle) {
-    imgui.nodes[handle.index].input_enabled = true;
-}
-
-void gui_node_hide(GUI_Handle handle) {
-    imgui.nodes[handle.index].hidden = true;
-}
-
-void gui_node_keep_children_even_if_not_referenced(GUI_Handle handle) {
-    imgui.nodes[handle.index].keep_children_even_if_not_referenced = true;
-}
-
-
-// Predefined GUI objects
-void gui_push_text(GUI_Handle parent_handle, String text, float text_height_cm = .5f, vec4 color = vec4(0.0f, 0.0f, 0.0f, 1.0f))
+GUI_Handle gui_push_text(GUI_Handle parent_handle, String text, float text_height_cm = .5f, vec4 color = vec4(0.0f, 0.0f, 0.0f, 1.0f))
 {
     const float char_height = convertHeight(text_height_cm, Unit::CENTIMETER);
     const float char_width = text_renderer_line_width(imgui.text_renderer, char_height, 1) + 0.01f;
-    gui_add_node(
+    return gui_add_node(
         parent_handle,
         gui_size_make_fixed(char_width * text.size),
         gui_size_make_fixed(char_height),
-        gui_position_make_parent_layout(),
-        gui_layout_make_layered(),
         gui_drawable_make_text(text, color)
     );
 }
@@ -1477,37 +1444,20 @@ GUI_Handle gui_push_window(GUI_Handle parent_handle, Input* input, const char* n
     }
 
     // Create gui nodes
-    auto window_handle = gui_add_node(
-        parent_handle,
-        gui_size_make_fixed(info->size.x),
-        gui_size_make_fixed(info->size.y),
-        gui_position_make_relative(info->pos, Anchor::BOTTOM_LEFT),
-        gui_layout_make_stacked(),
-        gui_drawable_make_none()
-    );
+    auto window_handle = gui_add_node(parent_handle, gui_size_make_fixed(info->size.x), gui_size_make_fixed(info->size.y), gui_drawable_make_none());
+    gui_node_set_position_fixed(window_handle, info->pos, Anchor::BOTTOM_LEFT, true);
+    gui_node_set_layout(window_handle, true);
     gui_node_enable_input(window_handle);
-    auto header_handle = gui_add_node(
-        window_handle,
-        gui_size_make_fill(true, false),
-        gui_size_make_fit(),
-        gui_position_make_parent_layout(),
-        gui_layout_make_stacked(true, GUI_Align::MIN, vec2(3)),
-        gui_drawable_make_rect(vec4(0.3f, 0.3f, 1.0f, 1.0f))
-    );
-    gui_node_enable_input(header_handle);
+
+    auto header_handle = gui_add_node(window_handle, gui_size_make_fill(), gui_size_make_fit(false), gui_drawable_make_rect(vec4(0.3f, 0.3f, 1.0f, 1.0f)));
+    gui_node_enable_input(header_handle); // For dragging
     gui_push_text(header_handle, string_create_static(name));
-    auto client_area = gui_add_node(
-        window_handle,
-        gui_size_make_fill(),
-        gui_size_make_fill(),
-        gui_position_make_parent_layout(),
-        gui_layout_make_stacked(),
-        gui_drawable_make_rect(vec4(1.0f))
-    );
+
+    auto client_area = gui_add_node(window_handle, gui_size_make_fill(false), gui_size_make_fill(), gui_drawable_make_rect(vec4(1.0f)));
 
     // Handle focusing of windows (e.g. window order)
     if (window_handle.first_time_created || ((window_handle.mouse_hovers_child || window_handle.mouse_hover) && input->mouse_pressed[(int)Mouse_Key_Code::LEFT])) {
-        gui_set_z_index_to_highest(window_handle);
+        gui_node_set_z_index_to_highest(window_handle);
     }
 
     // Handle user interaction
@@ -1526,7 +1476,7 @@ GUI_Handle gui_push_window(GUI_Handle parent_handle, Input* input, const char* n
     }
 
     // Check for drag start
-    auto window_bb = gui_get_node_prev_size(window_handle);
+    auto window_bb = gui_node_get_previous_frame_size(window_handle);
     const float interaction_distance = 5;
 
     const bool right_border = math_absolute(mouse_pos.x - window_bb.max.x) < interaction_distance;
@@ -1615,8 +1565,8 @@ GUI_Handle gui_push_window(GUI_Handle parent_handle, Input* input, const char* n
         }
         info->pos = new_pos;
         info->size = new_size;
-        gui_set_position(window_handle, gui_position_make_relative(info->pos, Anchor::BOTTOM_LEFT));
-        gui_set_size(window_handle, gui_size_make_fixed(info->size.x), gui_size_make_fixed(info->size.y));
+        gui_node_set_position_fixed(window_handle, info->pos, Anchor::BOTTOM_LEFT);
+        gui_node_update_size(window_handle, gui_size_make_fixed(info->size.x), gui_size_make_fixed(info->size.y));
         window_set_cursor_constrain(imgui.window, true);
     }
     else if (mouse_pressed && (window_handle.mouse_hover || header_handle.mouse_hover))
@@ -1658,36 +1608,23 @@ bool gui_push_button(GUI_Handle parent_handle, Input* input, String text)
     const vec4 border_color = vec4(vec3(0.2f), 1.0f); // Some shade of gray
     const vec4 normal_color = vec4(vec3(0.8f), 1.0f); // Some shade of gray
     const vec4 hover_color = vec4(vec3(0.5f), 1.0f); // Some shade of gray
-    auto border = gui_add_node(
-        parent_handle,
-        gui_size_make_fit(),
-        gui_size_make_fit(),
-        gui_position_make_parent_layout(),
-        gui_layout_make_stacked(true, GUI_Align::MIN, vec2(1.2f)),
-        gui_drawable_make_rect(border_color));
+    auto border = gui_add_node(parent_handle, gui_size_make_fit(), gui_size_make_fit(), gui_drawable_make_rect(border_color));
+    gui_node_set_padding(border, vec2(1.2f));
     gui_node_enable_input(border);
-    auto button = gui_add_node(
-        border,
-        gui_size_make(convertWidth(1.0f, Unit::CENTIMETER), true, false),
-        gui_size_make_fit(),
-        gui_position_make_parent_layout(),
-        gui_layout_make_stacked(true, GUI_Align::CENTER, vec2(1.0f)),
-        gui_drawable_make_rect(normal_color));
-    if (border.mouse_hover) {
-        gui_set_drawable(button, gui_drawable_make_rect(hover_color));
-    }
-    gui_push_text(button, text);
-    return border.mouse_hover && input->mouse_pressed[(int)Mouse_Key_Code::LEFT];
-}
 
-GUI_Handle gui_push_dummy(GUI_Handle parent_handle) {
-    return gui_add_node(
-        parent_handle,
-        gui_size_make_fixed(0.0f),
-        gui_size_make_fixed(0.0f),
-        gui_position_make_relative(vec2(0.0f), Anchor::BOTTOM_LEFT, false),
-        gui_layout_make_stacked(),
-        gui_drawable_make_none());
+    auto button = gui_add_node(
+        border, 
+        gui_size_make(convertWidth(1.0f, Unit::CENTIMETER), true, false, false), 
+        gui_size_make_fit(),
+        gui_drawable_make_rect(normal_color)
+    );
+    if (border.mouse_hover) {
+        gui_node_update_drawable(button, gui_drawable_make_rect(hover_color));
+    }
+
+    auto text_node = gui_push_text(button, text);
+    gui_node_set_alignment(text_node, GUI_Alignment::CENTER);
+    return border.mouse_hover && input->mouse_pressed[(int)Mouse_Key_Code::LEFT];
 }
 
 // Returns true if the value was toggled
@@ -1697,94 +1634,38 @@ bool gui_push_toggle(GUI_Handle parent_handle, Input* input, bool* value)
     const vec4 normal_color = vec4(vec3(0.8f), 1.0f); // Some shade of gray
     const vec4 hover_color = vec4(vec3(0.5f), 1.0f); // Some shade of gray
     float height = convertHeight(.4f, Unit::CENTIMETER);
-    auto border = gui_add_node(
-        parent_handle,
-        gui_size_make_fit(),
-        gui_size_make_fit(),
-        gui_position_make_parent_layout(),
-        gui_layout_make_stacked(true, GUI_Align::CENTER, vec2(1.5f)),
-        gui_drawable_make_rect(border_color));
+    auto border = gui_add_node(parent_handle, gui_size_make_fit(), gui_size_make_fit(), gui_drawable_make_rect(border_color));
+    gui_node_set_padding(border, vec2(1.5f));
     gui_node_enable_input(border);
-    auto center = gui_add_node(
-        border,
-        gui_size_make_fixed(height),
-        gui_size_make_fixed(height),
-        gui_position_make_parent_layout(),
-        gui_layout_make_stacked(true, GUI_Align::CENTER, vec2(0.0f)),
-        gui_drawable_make_rect(hover_color));
+
+    auto center = gui_add_node(border, gui_size_make_fixed(height), gui_size_make_fixed(height), gui_drawable_make_rect(hover_color));
     bool pressed = false;
     if (border.mouse_hover) {
-        gui_set_drawable(center, gui_drawable_make_rect(hover_color));
+        gui_node_update_drawable(center, gui_drawable_make_rect(hover_color));
         pressed = input->mouse_pressed[(int)Mouse_Key_Code::LEFT];
     }
     if (pressed) {
         *value = !*value;
     }
     if (*value) {
-        gui_push_text(center, string_create_static("x"), .4f, vec4(1.0f, 0.0f, 0.0f, 1.0f));
+        auto text = gui_push_text(center, string_create_static("x"), .4f, vec4(1.0f, 0.0f, 0.0f, 1.0f));
+        gui_node_set_alignment(text, GUI_Alignment::CENTER);
     }
     return pressed;
 }
 
-
-
 GUI_Handle gui_push_text_description(GUI_Handle parent_handle, const char* text)
 {
-    auto main_container = gui_add_node(
-        parent_handle,
-        gui_size_make_fill(),
-        gui_size_make_fit(),
-        gui_position_make_parent_layout(),
-        gui_layout_make_stacked(false),
-        gui_drawable_make_none());
-
+    auto main_container = gui_add_node(parent_handle, gui_size_make_fill(), gui_size_make_fit(), gui_drawable_make_none());
+    gui_node_set_layout(main_container, false);
     gui_push_text(main_container, string_create_static(text));
 
-    return gui_add_node(
-        main_container,
-        gui_size_make_fill(),
-        gui_size_make_fit(),
-        gui_position_make_parent_layout(),
-        gui_layout_make_stacked(true, GUI_Align::MAX),
-        gui_drawable_make_none());
+    auto container = gui_add_node(main_container, gui_size_make_fill(), gui_size_make_fit(), gui_drawable_make_none());
+    gui_node_set_layout(container, true, GUI_Alignment::MAX);
+    return container;
 }
 
-void gui_push_int(GUI_Handle parent_handle, Input* input, const char* text, int& value)
-{
-    auto container = gui_add_node(
-        parent_handle,
-        gui_size_make_fill(),
-        gui_size_make_fit(),
-        gui_position_make_parent_layout(),
-        gui_layout_make_stacked(false),
-        gui_drawable_make_none());
-    gui_push_text(container, string_create_static(text));
 
-    auto fill_container = gui_add_node(
-        container,
-        gui_size_make_fill(),
-        gui_size_make_fit(),
-        gui_position_make_parent_layout(),
-        gui_layout_make_stacked(true, GUI_Align::MAX),
-        gui_drawable_make_none());
-    auto h_container = gui_add_node(
-        fill_container,
-        gui_size_make_fit(),
-        gui_size_make_fit(),
-        gui_position_make_parent_layout(),
-        gui_layout_make_stacked(false),
-        gui_drawable_make_none());
-
-    if (gui_push_button(h_container, input, string_create_static("+"))) {
-        value += 1;
-    }
-    if (gui_push_button(h_container, input, string_create_static("-"))) {
-        value -= 1;
-    }
-    String tmp = string_create_formated("%d", value);
-    SCOPE_EXIT(string_destroy(&tmp));
-    gui_push_text(h_container, tmp);
-}
 
 void draw_example_gui(Input* input)
 {
@@ -1826,92 +1707,65 @@ void draw_example_gui(Input* input)
     {
         gui_matching_add_checkpoint_name("Input hover");
 
-        auto canvas = gui_add_node(imgui.root_handle, gui_size_make_fixed(250), gui_size_make_fixed(250),
-            gui_position_make_relative(vec2(0), Anchor::CENTER_CENTER),
-            gui_layout_make_stacked(),
-            gui_drawable_make_rect(red));
+        auto canvas = gui_add_node(imgui.root_handle, gui_size_make_fixed(250), gui_size_make_fixed(250), gui_drawable_make_rect(red));
+        gui_node_set_position_fixed(canvas, vec2(0), Anchor::CENTER_CENTER);
         gui_node_enable_input(canvas);
         if (canvas.mouse_hover) {
-            gui_set_drawable(canvas, gui_drawable_make_rect(green));
+            gui_node_update_drawable(canvas, gui_drawable_make_rect(green));
         }
         else if (canvas.mouse_hovers_child) {
-            gui_set_drawable(canvas, gui_drawable_make_rect(white));
+            gui_node_update_drawable(canvas, gui_drawable_make_rect(white));
         }
 
-        auto c2 = gui_add_node(canvas, gui_size_make_fixed(50), gui_size_make_fixed(50),
-            gui_position_make_relative(vec2(0), Anchor::CENTER_CENTER),
-            gui_layout_make_stacked(),
-            gui_drawable_make_rect(blue));
+        auto c2 = gui_add_node(canvas, gui_size_make_fixed(50), gui_size_make_fixed(50), gui_drawable_make_rect(blue));
+        gui_node_set_position_fixed(c2, vec2(0), Anchor::CENTER_CENTER);
         gui_node_enable_input(c2);
         if (c2.mouse_hover) {
-            gui_set_drawable(c2, gui_drawable_make_rect(yellow));
+            gui_node_update_drawable(c2, gui_drawable_make_rect(yellow));
         }
 
-        auto c4 = gui_add_node(imgui.root_handle, gui_size_make_fixed(50), gui_size_make_fixed(50),
-            gui_position_make_relative(vec2(55, 0), Anchor::CENTER_CENTER),
-            gui_layout_make_stacked(),
-            gui_drawable_make_rect(blue));
+        auto c4 = gui_add_node(imgui.root_handle, gui_size_make_fixed(50), gui_size_make_fixed(50), gui_drawable_make_rect(blue));
+        gui_node_set_position_fixed(c4, vec2(55, 0), Anchor::CENTER_CENTER),
         gui_node_enable_input(c4);
         if (c4.mouse_hover) {
-            gui_set_drawable(c4, gui_drawable_make_rect(yellow));
+            gui_node_update_drawable(c4, gui_drawable_make_rect(yellow));
         }
 
         auto time = rendering_core.render_information.current_time_in_seconds;
-        auto c3 = gui_add_node(imgui.root_handle, gui_size_make_fixed(50), gui_size_make_fixed(50),
-            gui_position_make_relative(vec2(math_sine(time) * 400, 0.f), Anchor::CENTER_CENTER),
-            gui_layout_make_stacked(),
-            gui_drawable_make_rect(magenta));
+        auto c3 = gui_add_node(imgui.root_handle, gui_size_make_fixed(50), gui_size_make_fixed(50), gui_drawable_make_rect(magenta));
+        gui_node_set_position_fixed(c3, vec2(math_sine(time) * 400, 0.f), Anchor::CENTER_CENTER),
         gui_node_enable_input(c3);
         if (c3.mouse_hover) {
-            gui_set_drawable(c3, gui_drawable_make_rect(gray));
+            gui_node_update_drawable(c3, gui_drawable_make_rect(gray));
         }
-
-
     }
 
     if (z_test) {
         gui_matching_add_checkpoint_name("Z test ");
-        auto canvas = gui_add_node(imgui.root_handle, gui_size_make_fixed(250), gui_size_make_fixed(250),
-            gui_position_make_relative(vec2(0), Anchor::CENTER_CENTER),
-            gui_layout_make_stacked(),
-            gui_drawable_make_rect(gray));
+        auto canvas = gui_add_node(imgui.root_handle, gui_size_make_fixed(250), gui_size_make_fixed(250), gui_drawable_make_rect(gray));
+        gui_node_set_position_fixed(canvas, vec2(0), Anchor::CENTER_CENTER);
 
-        gui_add_node(imgui.root_handle, gui_size_make_fixed(250), gui_size_make_fixed(250),
-            gui_position_make_relative(vec2(-235, -20), Anchor::CENTER_CENTER),
-            gui_layout_make_stacked(),
-            gui_drawable_make_rect(yellow));
+        auto last = gui_add_node(imgui.root_handle, gui_size_make_fixed(250), gui_size_make_fixed(250), gui_drawable_make_rect(yellow));
+        gui_node_set_position_fixed(last, vec2(-235, -20), Anchor::CENTER_CENTER);
 
+        vec2 offset(0);
+        last = gui_add_node(canvas, gui_size_make_fixed(50), gui_size_make_fixed(50), gui_drawable_make_rect(vec4(0, 0, 1, 0.5f)));
+        gui_node_set_position_fixed(last, vec2(0) + offset, Anchor::CENTER_CENTER);
+        last = gui_add_node(canvas, gui_size_make_fixed(50), gui_size_make_fixed(50), gui_drawable_make_rect(green));
+        gui_node_set_position_fixed(last, vec2(15) + offset, Anchor::CENTER_CENTER);
+        last = gui_add_node(canvas, gui_size_make_fixed(50), gui_size_make_fixed(50), gui_drawable_make_rect(red));
+        gui_node_set_position_fixed(last, vec2(-15, 4) + offset, Anchor::CENTER_CENTER);
 
-
-        gui_add_node(canvas, gui_size_make_fixed(50), gui_size_make_fixed(50),
-            gui_position_make_relative(vec2(0), Anchor::CENTER_CENTER),
-            gui_layout_make_stacked(),
-            gui_drawable_make_rect(vec4(0, 0, 1, 0.5f)));
-        gui_add_node(canvas, gui_size_make_fixed(50), gui_size_make_fixed(50),
-            gui_position_make_relative(vec2(15), Anchor::CENTER_CENTER),
-            gui_layout_make_stacked(),
-            gui_drawable_make_rect(green));
-        gui_add_node(canvas, gui_size_make_fixed(50), gui_size_make_fixed(50),
-            gui_position_make_relative(vec2(-15, 4), Anchor::CENTER_CENTER),
-            gui_layout_make_stacked(),
-            gui_drawable_make_rect(red));
-
-        float offset = -90;
-        auto h1 = gui_add_node(canvas, gui_size_make_fixed(50), gui_size_make_fixed(50),
-            gui_position_make_relative(vec2(offset, 0.f), Anchor::CENTER_CENTER),
-            gui_layout_make_stacked(),
-            gui_drawable_make_rect(vec4(0, 0, 1, 0.5f)));
-        gui_set_z_index(h1, 2);
-        auto h2 = gui_add_node(canvas, gui_size_make_fixed(50), gui_size_make_fixed(50),
-            gui_position_make_relative(vec2(15 + offset, 15.f), Anchor::CENTER_CENTER),
-            gui_layout_make_stacked(),
-            gui_drawable_make_rect(green));
-        gui_set_z_index(h2, 1);
-        auto h3 = gui_add_node(canvas, gui_size_make_fixed(50), gui_size_make_fixed(50),
-            gui_position_make_relative(vec2(-15 + offset, 4.f), Anchor::CENTER_CENTER),
-            gui_layout_make_stacked(),
-            gui_drawable_make_rect(red));
-        gui_set_z_index(h3, 0);
+        offset = vec2(-95, 0);
+        last = gui_add_node(canvas, gui_size_make_fixed(50), gui_size_make_fixed(50), gui_drawable_make_rect(vec4(0, 0, 1, 0.5f)));
+        gui_node_set_position_fixed(last, vec2(0) + offset, Anchor::CENTER_CENTER);
+        gui_node_set_z_index(last, 2);
+        last = gui_add_node(canvas, gui_size_make_fixed(50), gui_size_make_fixed(50), gui_drawable_make_rect(green));
+        gui_node_set_position_fixed(last, vec2(15) + offset, Anchor::CENTER_CENTER);
+        gui_node_set_z_index(last, 1);
+        last = gui_add_node(canvas, gui_size_make_fixed(50), gui_size_make_fixed(50), gui_drawable_make_rect(red));
+        gui_node_set_position_fixed(last, vec2(-15, 4) + offset, Anchor::CENTER_CENTER);
+        gui_node_set_z_index(last, 0);
     }
 
     if (empty_window)
@@ -1925,48 +1779,17 @@ void draw_example_gui(Input* input)
     if (stacking)
     {
         gui_matching_add_checkpoint_name("Stacking text");
-        auto window = gui_add_node(
-            imgui.root_handle,
-            gui_size_make_fixed(300.0f),
-            gui_size_make_fixed(300.0f),
-            gui_position_make_relative(vec2(0.0f), Anchor::CENTER_CENTER),
-            gui_layout_make_stacked(true, GUI_Align::MIN, vec2(5.0f)),
-            gui_drawable_make_rect(white));
+        auto window = gui_add_node(imgui.root_handle, gui_size_make_fixed(300.0f), gui_size_make_fixed(300.0f), gui_drawable_make_rect(white));
+        gui_node_set_position_fixed(window, vec2(0), Anchor::CENTER_CENTER);
+        gui_node_set_layout(window, true, GUI_Alignment::MIN);
+        gui_node_set_padding(window, vec2(5));
 
-        // auto window = gui_push_window(imgui.root_handle, input, "Halp?");
-        // gui_push_button(window, input, string_create_static("Something"));
-        // gui_push_button(window, input, string_create_static("Other"));
-        // gui_push_button(window, input, string_create_static("X"));
+        auto horizontal = gui_add_node(window, gui_size_make_fill(), gui_size_make_fill(), gui_drawable_make_none());
+        gui_node_set_layout(horizontal, false);
+        gui_add_node(horizontal, gui_size_make_fill(), gui_size_make_fill(), gui_drawable_make_rect(green));
+        gui_add_node(horizontal, gui_size_make_fill(), gui_size_make_fill(), gui_drawable_make_rect(yellow));
 
-        auto horizontal = gui_add_node(
-            window,
-            gui_size_make_fill(),
-            gui_size_make_fill(),
-            gui_position_make_parent_layout(),
-            gui_layout_make_stacked(false),
-            gui_drawable_make_none());
-        gui_add_node(
-            horizontal,
-            gui_size_make_fill(),
-            gui_size_make_fill(),
-            gui_position_make_parent_layout(),
-            gui_layout_make_stacked(),
-            gui_drawable_make_rect(green));
-        gui_add_node(
-            horizontal,
-            gui_size_make_fill(),
-            gui_size_make_fill(),
-            gui_position_make_parent_layout(),
-            gui_layout_make_stacked(),
-            gui_drawable_make_rect(yellow));
-
-        gui_add_node(
-            window,
-            gui_size_make_fill(400.0f),
-            gui_size_make_fill(100.0f),
-            gui_position_make_parent_layout(),
-            gui_layout_make_stacked(),
-            gui_drawable_make_rect(cyan));
+        gui_add_node(window, gui_size_make_fill(), gui_size_make_fill(), gui_drawable_make_rect(cyan));
     }
 
     if (toggle_thing)
@@ -1982,30 +1805,11 @@ void draw_example_gui(Input* input)
         vec2 mouse_pos = vec2((float)input->mouse_x, info.backbuffer_height - input->mouse_y);
         float a = math_sine(t) * 0.5f + 0.5f;
         a = (float)input->mouse_x / rendering_core.render_information.backbuffer_width;
-        auto window = gui_add_node(
-            imgui.root_handle,
-            // gui_size_make_fixed(200 * a),
-            gui_size_make_fixed(60),
-            gui_size_make_fixed(60),
-            gui_position_make_relative(mouse_pos - vec2(30, 30), Anchor::BOTTOM_LEFT),
-            gui_layout_make_layered(),
-            gui_drawable_make_rect(vec4(1.0f, 0.0f, 1.0f, 1.0f)));
-        auto bar = gui_add_node(
-            window,
-            gui_size_make_fill(),
-            gui_size_make_fixed(30.0f),
-            gui_position_make_parent_layout(),
-            gui_layout_make_stacked(false, GUI_Align::MAX),
-            gui_drawable_make_rect(vec4(0.3f, 0.3f, 1.0f, 1.0f)));
+        auto window = gui_add_node(imgui.root_handle, gui_size_make_fixed(60), gui_size_make_fixed(60), gui_drawable_make_rect(vec4(1.0f, 0.0f, 1.0f, 1.0f)));
+        gui_node_set_position_fixed(window, mouse_pos - vec2(30, 30), Anchor::BOTTOM_LEFT);
 
+        auto bar = gui_add_node(window, gui_size_make_fill(), gui_size_make_fixed(30.0f), gui_drawable_make_rect(vec4(0.3f, 0.3f, 1.0f, 1.0f)));
         gui_push_text(bar, string_create_static("HEllo!"));
-        // auto window = gui_push_window(imgui.root_handle, input, "Window");
-        // if (toggle) {
-        //     gui_push_text(window, string_create_static("Hello"));
-        //     gui_add_node(window, gui_layout_make(),
-        //         gui_size_make_absolute(bounding_box_2_make_anchor(convertPoint(vec2(0.0f), Unit::NORMALIZED_SCREEN), vec2(200), Anchor::CENTER_CENTER)),
-        //         gui_drawable_make_rect(vec4(0.0f, 1.0f, 1.0f, 1.0f)));
-        // }
     }
 
     if (layout_window)
@@ -2017,24 +1821,14 @@ void draw_example_gui(Input* input)
 
         auto window = gui_push_window(imgui.root_handle, input, "Test window");
 
-        auto space = gui_add_node(
-            window,
-            gui_size_make_fill(),
-            gui_size_make_fill(),
-            gui_position_make_parent_layout(),
-            gui_layout_make_stacked(true, GUI_Align::CENTER),
-            gui_drawable_make_rect(cyan));
-
+        // Add number couter with userdata
+        auto space = gui_add_node(window, gui_size_make_fill(), gui_size_make_fill(), gui_drawable_make_rect(cyan));
+        gui_node_set_layout(space, true, GUI_Alignment::CENTER);
         {
             bool* value = gui_store_primitive<bool>(space, false);
             gui_push_toggle(space, input, value);
-            auto toggle_area = gui_add_node(
-                space,
-                gui_size_make_fill(),
-                gui_size_make_fill(),
-                gui_position_make_parent_layout(),
-                gui_layout_make_stacked(true, GUI_Align::CENTER),
-                gui_drawable_make_none());
+            auto toggle_area = gui_add_node(space, gui_size_make_fill(), gui_size_make_fill(), gui_drawable_make_none());
+            gui_node_set_layout(toggle_area, true, GUI_Alignment::CENTER);
             if (!*value) {
                 gui_node_hide(toggle_area);
                 gui_node_keep_children_even_if_not_referenced(toggle_area);
@@ -2052,137 +1846,29 @@ void draw_example_gui(Input* input)
             }
         }
 
-        auto right_align = gui_add_node(
-            window,
-            gui_size_make_fill(true),
-            gui_size_make_fit(),
-            gui_position_make_parent_layout(),
-            gui_layout_make_stacked(true, GUI_Align::MAX),
-            gui_drawable_make_none());
-        gui_push_text(right_align, string_create_static("Right"));
+        auto right = gui_push_text(window, string_create_static("Right"));
+        gui_node_set_alignment(right, GUI_Alignment::MAX);
 
-        auto horizontal = gui_add_node(
-            window,
-            gui_size_make_fill(true),
-            gui_size_make_fill(true),
-            gui_position_make_parent_layout(),
-            gui_layout_make_stacked(false),
-            gui_drawable_make_none());
-        gui_add_node(
-            horizontal,
-            gui_size_make_fill(true),
-            gui_size_make_fill(true),
-            gui_position_make_parent_layout(),
-            gui_layout_make_stacked(),
-            gui_drawable_make_rect(gray));
-        auto horizontal2 = gui_add_node(
-            horizontal,
-            gui_size_make_fill(true),
-            gui_size_make_fill(true),
-            gui_position_make_parent_layout(),
-            gui_layout_make_stacked(false),
-            gui_drawable_make_none());
-        gui_add_node(
-            horizontal2,
-            gui_size_make_fill(true),
-            gui_size_make_fill(true),
-            gui_position_make_parent_layout(),
-            gui_layout_make_stacked(),
-            gui_drawable_make_rect(yellow));
-        gui_add_node(
-            horizontal2,
-            gui_size_make_fill(true),
-            gui_size_make_fill(true),
-            gui_position_make_parent_layout(),
-            gui_layout_make_stacked(),
-            gui_drawable_make_rect(green));
+        auto horizontal = gui_add_node(window, gui_size_make_fill(true), gui_size_make_fill(true), gui_drawable_make_none());
+        gui_node_set_layout(horizontal, false);
+        gui_add_node(horizontal, gui_size_make_fill(true), gui_size_make_fill(true), gui_drawable_make_rect(gray));
+        auto horizontal2 = gui_add_node(horizontal, gui_size_make_fill(true), gui_size_make_fill(true), gui_drawable_make_none());
+        gui_node_set_layout(horizontal2, false);
+        gui_add_node(horizontal2, gui_size_make_fill(true), gui_size_make_fill(true), gui_drawable_make_rect(yellow));
+        gui_add_node(horizontal2, gui_size_make_fill(true), gui_size_make_fill(true), gui_drawable_make_rect(green));
 
-        auto center = gui_add_node(
-            window,
-            gui_size_make_fill(false),
-            gui_size_make_fit(),
-            gui_position_make_parent_layout(),
-            gui_layout_make_stacked(true, GUI_Align::CENTER),
-            gui_drawable_make_none());
-        gui_push_text(center, string_create_static("Center with very long name that you shouldn't forget!"));
-        gui_add_node(
-            window,
-            gui_size_make_fill(true),
-            gui_size_make_fill(true),
-            gui_position_make_parent_layout(),
-            gui_layout_make_stacked(),
-            gui_drawable_make_rect(magenta));
+        auto center = gui_push_text(window, string_create_static("Center with very long name that you shouldn't forget!"));
+        gui_node_set_alignment(center, GUI_Alignment::CENTER);
+
+        gui_add_node(window, gui_size_make_fill(true), gui_size_make_fill(true), gui_drawable_make_rect(magenta));
         gui_push_text(window, string_create_static("LEFT"));
-
-        if (false)
-        {
-            auto window = gui_push_window(imgui.root_handle, input, "Contender");
-        }
-
-
-        // Add centered text
-        // gui_push_text(window, string_create_static("Hello there"));
-        // auto tmp = string_create_static("Long text that, lorem ipsum");
-        // auto center = gui_add_node(window, gui_layout_make(false, GUI_Align::CENTER), gui_size_make_fill(true, false)));
-        // gui_push_text(center, tmp, 1.3f);
-
-        // gui_push_text(window, string_create_static("Hello there"), 0.4f, gray);
-        // gui_push_text(window, string_create_static("This is a new item"), 0.4f, gray);
-        // auto container = gui_push_container(window, true);
-        // gui_push_text(container, string_create_static("Where"), 0.4f, gray);
-        // gui_push_text(container, string_create_static("Am I"), 0.4f, green);
-
-        // {
-        //     float t = rendering_core.render_information.current_time_in_seconds;
-        //     t += 20.0f;
-        //     if (t < 1.0f) {
-        //         t = 0;
-        //     }
-        //     else {
-        //         t = t - 1;
-        //     }
-
-        //     float remaining = 10 - t;
-        //     gui_push_text(window, string_create_static(""), 0.4f, gray); // Placeholder
-        //     String tmp = string_create_formated("%3.1f", remaining);
-        //     SCOPE_EXIT(string_destroy(&tmp));
-
-        //     vec4 color = red;
-        //     if (remaining < 0.0f) {
-        //         string_set_characters(&tmp, "Get Pranked, lol");
-        //         color = magenta;
-        //     }
-
-        //     auto layout = gui_layout_default(false, Anchor::CENTER_CENTER);
-        //     auto center = gui_add_node(window, layout, white, GUI_Draw_Type::NONE));
-        //     gui_push_text(center, tmp, 1.3f, color);
-        // }
-
-        // gui_new_window("Longer Test1");
-        // gui_push_label(string_create_static("Hello there"));
-        // gui_push_label(string_create_static("General Kenobi!"));
-        // gui_new_window("Faster Test2");
-
-        // vec2 pos = convertPoint(vec2(0.0f), Unit::NORMALIZED_SCREEN);
-        // vec2 size = convertSize(vec2(1.0f), Unit::CENTIMETER);
-
-        // primitive_renderer_add_rectangle(
-        //   , imgui.primitive_renderer, bounding_box_2_make_anchor(pos, size, Anchor::BOTTOM_LEFT), red
-        // );
-        // gui_draw_text_cutoff(renderer, string_create_static("Hellow orld"), pos, Anchor::BOTTOM_LEFT, size, vec3(1.0f));
-        // primitive_renderer_add_text(imgui.primitive_renderer, string_create_static("Asdfasdf"), pos, Anchor::CENTER_CENTER, size.y * 0.8f, magenta);
-        // primitive_renderer_add_rectangle(
-        //     imgui.primitive_renderer, bounding_box_2_make_anchor(pos, size, Anchor::CENTER_CENTER), blue
-        // );
-
-
-        // pos.x += size.x * 2.0f;
-        // primitive_renderer_add_rectangle(
-        //     imgui.primitive_renderer, bounding_box_2_make_anchor(pos, size, Anchor::BOTTOM_LEFT), green
-        // );
-
     }
 }
+
+
+
+// GUI END  
+
 
 
 
