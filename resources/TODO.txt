@@ -1,14 +1,38 @@
 
-New things to implement:
- - GUI_Size can inherit fill from children -> needs to be tested...
- - I think a preferred size (Greater than min size) would be quite interesting for buttons and test_input and other things...
-        Why? Because usually buttons should all be the same size, except if not enough space is available, then they should shrink...
-        Also when something is set to fill we currently cannot set a maximum size, so it will always eat all available space...
+Stuff to consider:
+ Pixel perfect means we can use integers for positioning on the screen...
+ -> Do calculations suffer when done without float? Nah, shouldn't be a Problem
+This includes:
+    - BoundingBox
+    - Clipped BoundingBox
+    - MinSize
+    - Padding
+
 
 Things to implement:
+ - Pixel perfect alignment
  - Padding between children
- - Check inheritable fill
- - 
+    Note: Padding should cut off children if they move out of the way...
+ - Rectangle border + border color
+ - Further layout options:
+    * Max size for fill, so we could have a list that doesn't eat everything in it's path
+    * Fill weight, also when fill is inherited from children
+    * Preferred size (Between min and max size), question if it's stronger than fill or not...
+    * Maybe a grid layout, but not sure how helpful this really is
+    * Stacking also in reverse directions...
+
+More input elements:
+ * Text input
+ * Float/Integer input (Basically text but maybe with other things...)
+ * Reusable resize/moving of windows for other elements
+    Double click for fitting to child content...
+ * Scroll Bar
+ * List of items
+ * Drop-Down Menu
+ * Sort of focus system, e.g. even when we move the mouse away we still want to type...
+    So when we click on something that can receive input, it becomes the focused element
+
+
 
 
 

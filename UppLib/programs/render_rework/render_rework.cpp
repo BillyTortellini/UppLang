@@ -57,15 +57,67 @@ Stages of IM-GUI:
         String editing and schtuff. This needs to be saved so that when things are queried next frame they get the new values.
 */
 
+struct GUI_Interval {
+    int min;
+    int max;
+};
+
+int float_to_nearest_int(float value) {
+    return value >= 0.0f ? ((int)value + 0.5f) : ((int)value - 0.5f);
+}
+
+struct GUI_Box {
+    GUI_Box() {}
+    GUI_Box(Bounding_Box2 bb) {
+        intervals[0].min = float_to_nearest_int(bb.min.x);
+        intervals[0].max = float_to_nearest_int(bb.max.x);
+        intervals[1].min = float_to_nearest_int(bb.min.y);
+        intervals[1].max = float_to_nearest_int(bb.max.y);
+    }
+
+    GUI_Interval intervals[2];
+    GUI_Interval& operator[](int index) {
+        assert(index >= 0 && index < 3, "!");
+        return intervals[index];
+    }
+    
+    Bounding_Box2 as_bounding_box() {
+        return bounding_box_2_make_min_max(vec2(intervals[0].min, intervals[1].min), vec2(intervals[0].max, intervals[1].max));
+    }
+    
+    Optional<GUI_Box> intersect(const GUI_Box& other) {
+        GUI_Box result;
+        for (int dim = 0; dim < 2; dim++) {
+            auto& a = intervals[dim];
+            auto& b = other.intervals[dim];
+            if (a.min > b.max || b.min > a.max) {
+                return optional_make_failure<GUI_Box>();
+            }
+            result.intervals[dim].min = math_maximum(a.min, b.min);
+            result.intervals[dim].max = math_minimum(a.max, b.max);
+        }
+        return optional_make_success(result);
+    }
+     
+    bool overlaps(const GUI_Box& other) {
+        return this->intersect(other).available;
+    }
+    
+    bool is_point_inside(vec2 point) {
+        return point.x >= intervals[0].min && point.x <= intervals[0].max &&
+            point.y >= intervals[1].min && point.y <= intervals[1].max;
+    }
+};
+
 struct GUI_Size
 {
-    float min_size;
+    int min_size;
     bool fit_at_least_children; // If set, grows to accomodate min size of children...
     bool fill; // Fill up parent, if multiple children fill up parent, the available size is split
     bool inherit_fill_from_children; // If a child also wants to fill, this will propagate up
 };
 
-GUI_Size gui_size_make(float min_size, bool fit_at_least_children, bool fill, bool inherit_fill_from_children) {
+GUI_Size gui_size_make(int min_size, bool fit_at_least_children, bool fill, bool inherit_fill_from_children) {
     GUI_Size size;
     size.min_size = min_size;
     size.fill = fill;
@@ -100,14 +152,14 @@ struct GUI_Position
     bool auto_layout; // Is set by parent, otherwise position needs to be specified
     GUI_Alignment alignment; // Only used with auto layout, is inherited from parent by default
     bool relative_to_window; // Only used if auto layout is off, either relative to window or relative to parent 
-    vec2 offset;
+    vec2 offset; // Will be rounded to nearest integer value...
     Anchor anchor;
 };
 
 struct GUI_Layout
 {
     bool stack_vertical;
-    float padding[2];
+    int padding[2];
     bool pad_between_children;
     GUI_Alignment child_default_alignment;
 };
@@ -222,12 +274,13 @@ struct GUI_Node
     gui_userdata_destroy_fn userdata_destroy_fn;
 
     // Stuff calculated during layout
-    Bounding_Box2 bounding_box;
-    Optional<Bounding_Box2> clipped_box; // Hierarchical clipping from parent
-    float min_size[2];
-    float min_child_size[2];
+    GUI_Box bounding_box;
+    Optional<GUI_Box> clipped_box; // Hierarchical clipping from parent (Does not include overlaps)
+    int min_size[2];
+    int min_child_size[2];
     bool hidden_by_parent; // If some parent is hidden, this node is hidden this frame
     bool should_fill[2]; 
+    int calculated_size [2] ;
 
     // Infos for matching
     bool referenced_this_frame; // Node and all child nodes will be removed at end of frame if not referenced 
@@ -363,7 +416,7 @@ void gui_node_set_z_index_to_highest(GUI_Handle handle)
 }
 
 Bounding_Box2 gui_node_get_previous_frame_size(GUI_Handle handle) {
-    return imgui.nodes[handle.index].bounding_box;
+    return imgui.nodes[handle.index].bounding_box.as_bounding_box();
 }
 
 void gui_node_enable_input(GUI_Handle handle) {
@@ -565,7 +618,7 @@ GUI_Handle gui_add_node(GUI_Handle parent_handle, GUI_Size size_x, GUI_Size size
 
 
 // GUI UPDATE
-void gui_update_nodes_recursive(Array<int> new_node_indices, int node_index, int& next_free_node_index, bool dont_delete_children, bool hidden_by_parent)
+void gui_remove_unreferenced_nodes_recursive(Array<int> new_node_indices, int node_index, int& next_free_node_index, bool dont_delete_children, bool hidden_by_parent)
 {
     auto& nodes = imgui.nodes;
     auto& node = nodes[node_index];
@@ -596,7 +649,7 @@ void gui_update_nodes_recursive(Array<int> new_node_indices, int node_index, int
         while (child_index != -1) {
             auto& child = nodes[child_index];
             SCOPE_EXIT(child_index = child.index_next_node);
-            gui_update_nodes_recursive(
+            gui_remove_unreferenced_nodes_recursive(
                 new_node_indices, child_index, next_free_node_index,
                 dont_delete_children || node.keep_children_even_if_not_referenced,
                 node.hidden_by_parent
@@ -628,13 +681,6 @@ void gui_update_nodes_recursive(Array<int> new_node_indices, int node_index, int
             nodes[last_valid_child].index_next_node = -1;
         }
     }
-
-    // Reset node data
-    node.referenced_this_frame = false;
-    node.traversal_next_child = node.index_first_child;
-    node.mouse_hover = false;
-    node.mouse_hovers_child = false;
-    node.keep_children_even_if_not_referenced = false;
 }
 
 void gui_layout_calculate_min_size(int node_index, int dim)
@@ -642,23 +688,24 @@ void gui_layout_calculate_min_size(int node_index, int dim)
     auto& nodes = imgui.nodes;
     auto& node = nodes[node_index];
 
-    // Calculate all child min sizes
     node.min_child_size[dim] = 0.0f;
     bool in_stacking_dimension = node.layout.stack_vertical ? (dim == 1) : (dim == 0);
 
-    // Calculate min child size
+    // Loop over children
     bool child_with_fill_exists = false;
+    int child_count = 0;
     int child_index = node.index_first_child;
     while (child_index != -1) {
         auto& child_node = nodes[child_index];
         SCOPE_EXIT(child_index = child_node.index_next_node);
         gui_layout_calculate_min_size(child_index, dim);
 
+        if (!child_node.position.auto_layout || child_node.hidden_by_parent) {
+            continue;
+        }
+        child_count++;
         if (child_node.size[dim].fill) {
             child_with_fill_exists = true;
-        }
-        if (!child_node.position.auto_layout) {
-            continue;
         }
         if (in_stacking_dimension) {
             node.min_child_size[dim] += child_node.min_size[dim];
@@ -681,12 +728,28 @@ void gui_layout_calculate_min_size(int node_index, int dim)
 
     // Calculate min size
     if (node.size[dim].fit_at_least_children) {
-        node.min_size[dim] = math_maximum(node.size[dim].min_size, node.min_child_size[dim] + node.layout.padding[dim] * 2.0f);
+        int padding_size = node.layout.padding[dim] * 2;
+        if (node.layout.pad_between_children) {
+            padding_size += math_maximum(0, child_count - 1) * node.layout.padding[dim];
+        }
+        node.min_size[dim] = math_maximum(node.size[dim].min_size, node.min_child_size[dim] + padding_size);
     }
     else {
         node.min_size[dim] = node.size[dim].min_size;
     }
 }
+
+struct GUI_Node_Min_Size_Comparator
+{
+    GUI_Node_Min_Size_Comparator(int dim) : dim(dim) {}
+    int dim;
+
+    bool operator()(int node_index_a, int node_index_b) {
+        auto& a = imgui.nodes[node_index_a];
+        auto& b = imgui.nodes[node_index_b];
+        return a.min_size[dim] > b.min_size[dim];
+    }
+};
 
 void gui_layout_layout_children(int node_index, int dim)
 {
@@ -695,49 +758,65 @@ void gui_layout_layout_children(int node_index, int dim)
     auto& layout = node.layout;
 
     // Size is set by parent at this point
-    float node_size;
-    float node_pos;
-    if (dim == 0) {
-        node_size = node.bounding_box.max.x - node.bounding_box.min.x;
-        node_pos = node.bounding_box.min.x;
-    }
-    else {
-        node_size = node.bounding_box.max.y - node.bounding_box.min.y;
-        node_pos = node.bounding_box.min.y;
-    }
+    const int node_size = node.calculated_size[dim];
+    const int node_pos = node.bounding_box[dim].min;
+    const bool in_stack_dimension = node.layout.stack_vertical ? (dim == 1) : (dim == 0);
 
     // Calculated clipped bounding box
-    if (node.index_parent != -1) {
-        const auto& parent_node = nodes[node.index_parent];
-        if (parent_node.clipped_box.available) {
-            node.clipped_box = bounding_box_2_union(node.bounding_box, parent_node.clipped_box.value);
+    if (dim == 1) {
+        // Note: This is currently a little hacky, since we can only do the "full" calculation once we know the 
+        //      values of both dimension, but this function is called twice
+        if (node.index_parent != -1) {
+            auto& parent_node = nodes[node.index_parent];
+            if (parent_node.clipped_box.available) {
+                // Adjust parent box for padding
+                auto parent_box = parent_node.clipped_box.value;
+                parent_box[0].min += parent_node.layout.padding[0];
+                parent_box[0].max -= parent_node.layout.padding[0];
+                parent_box[1].min += parent_node.layout.padding[1];
+                parent_box[1].max -= parent_node.layout.padding[1];
+                if (parent_box[0].max > parent_box[0].min && parent_box[1].max > parent_box[1].min) {
+                    node.clipped_box = parent_box.intersect(node.bounding_box);
+                }
+                else {
+                    node.clipped_box = optional_make_failure<GUI_Box>();
+                }
+            }
+            else {
+                node.clipped_box = optional_make_failure<GUI_Box>();
+            }
         }
         else {
-            node.clipped_box.available = false;
+            node.clipped_box = optional_make_success(node.bounding_box);
         }
     }
-    else {
-        node.clipped_box = optional_make_success(node.bounding_box);
-    }
 
-    // Check if we need to calculate fill
-    bool in_stack_dimension = node.layout.stack_vertical ? (dim == 1) : (dim == 0);
-
-    // Calculate additional size for all fill children
-    float size_for_fill = 0.0f;
-    const float available_size = node_size - 2.0f * node.layout.padding[dim];
-    if (in_stack_dimension && available_size - node.min_child_size[dim] > 0) // Only calculate if there is actually space for filling
+    // Set sizes for all non-fill children
+    if (in_stack_dimension)
     {
-        float non_fill_size = 0.0f;
         Dynamic_Array<int> fill_childs = dynamic_array_create_empty<int>(4);
         SCOPE_EXIT(dynamic_array_destroy(&fill_childs));
+        int non_fill_size = 0;
+        int padding_count = 2;
 
-        // Get number of children who want to fill in stacking direction
         int child_index = node.index_first_child;
-        while (child_index != -1) {
+        while (child_index != -1) 
+        {
             auto& child_node = nodes[child_index];
             SCOPE_EXIT(child_index = child_node.index_next_node);
-            if (!child_node.position.auto_layout || child_node.hidden_by_parent) {
+
+            // Ignore hidden and non auto-layout nodes
+            if (child_node.hidden_by_parent) {
+                child_node.calculated_size[dim] = 0;
+                continue;
+            }
+            if (!child_node.position.auto_layout) {
+                if (child_node.should_fill[dim]) {
+                    child_node.calculated_size[dim] = math_maximum(child_node.min_size[dim], node_size - node.layout.padding[dim] * 2);
+                }
+                else {
+                    child_node.calculated_size[dim] = child_node.min_size[dim];
+                }
                 continue;
             }
 
@@ -746,53 +825,77 @@ void gui_layout_layout_children(int node_index, int dim)
             }
             else {
                 non_fill_size += child_node.min_size[dim];
+                child_node.calculated_size[dim] = child_node.min_size[dim];
+            }
+            if (node.layout.pad_between_children) {
+                padding_count += 1;
             }
         }
 
-        // Calculate values for fill-children
-        if (fill_childs.size > 0)
+        // Partition space among children that want to fill (And also respect min-size requirements)
+        dynamic_array_sort(&fill_childs, GUI_Node_Min_Size_Comparator(dim));
+        // Find first children which are gonna be larger than their min-size
+        int i = 0;
+        for (; i < fill_childs.size; i++) {
+            auto& child_node = nodes[fill_childs[i]];
+            const int space_for_fill = (node_size - non_fill_size - padding_count * node.layout.padding[dim]) / (fill_childs.size - i);
+            if (space_for_fill >= child_node.min_size[dim]) {
+                break;
+            }
+            child_node.calculated_size[dim] = child_node.min_size[dim];
+            non_fill_size += child_node.min_size[dim];
+        }
+
+        // Distribute space among the non-min fill children (If such children exist)
+        if (i < fill_childs.size) 
         {
-            size_for_fill = (available_size - non_fill_size) / fill_childs.size;
-
-            // Loop over fill children until we have enough space for all
-            float full_combined_size = 0.0f;
-            float min_size_for_fill = 0.0f;
-            int max_full_count = 0;
-            int full_count = 0;
-            for (int i = 0; i < fill_childs.size; i++)
-            {
+            const int space_for_fill = (node_size - non_fill_size - padding_count * node.layout.padding[dim]) / (fill_childs.size - i);
+            int filled_size_sum = 0;
+            for (; i < fill_childs.size; i++) {
                 auto& child_node = nodes[fill_childs[i]];
-                float min_size = child_node.min_size[dim];
-                if (min_size > size_for_fill) {
-                    full_count += 1;
-                    full_combined_size += min_size;
+                child_node.calculated_size[dim] = space_for_fill;
+                assert(child_node.calculated_size[dim] >= child_node.min_size[dim], "");
+                filled_size_sum += space_for_fill;
+            }
+            // Since all sizes are now pixel (integer) aligned, we may not fill the whole parent because of integer division,
+            // so we distribute the remaining pixels among the fill children
+            int remaining_pixels = node_size - non_fill_size - padding_count * node.layout.padding[dim] - filled_size_sum;
+            assert(remaining_pixels >= 0 && remaining_pixels < fill_childs.size, "");
+            for (int i = 0; i < remaining_pixels; i++) {
+                auto& child_node = nodes[fill_childs[i]];
+                child_node.calculated_size[dim] += 1;
+            }
+        }
+    }
+    else 
+    {
+        int child_index = node.index_first_child;
+        while (child_index != -1) {
+            auto& child_node = nodes[child_index];
+            SCOPE_EXIT(child_index = child_node.index_next_node);
+            if (child_node.hidden_by_parent) {
+                child_node.calculated_size[dim] = 0;
+                continue;
+            }
+            if (child_node.should_fill[dim]) {
+                int padding = node.layout.padding[dim];
+                if (child_node.position.auto_layout) {
+                    padding = 0;
                 }
-                else {
-                    min_size_for_fill = math_maximum(min_size_for_fill, min_size);
-                }
-
-                if (full_count > max_full_count) {
-                    max_full_count = full_count;
-                    size_for_fill = (available_size - non_fill_size - full_combined_size) / (fill_childs.size - full_count);
-
-                    // Restart with new size_for_fill
-                    if (size_for_fill < min_size_for_fill) {
-                        i = -1; // Restart loop at 0;
-                        full_count = 0;
-                        full_combined_size = 0.0f;
-                        min_size_for_fill = 0.0f;
-                    }
-                }
+                child_node.calculated_size[dim] = math_maximum(child_node.min_size[dim], node_size - padding);
+            }
+            else {
+                child_node.calculated_size[dim] = child_node.min_size[dim];
             }
         }
     }
 
     // Setup stack cursor 
-    const float stack_sign = dim == 0 ? +1.0f : -1.0f; // Stack downward if we stack in y
-    float stack_cursor = dim == 0 ? node.bounding_box.min.x : node.bounding_box.max.y;
+    const int stack_sign = dim == 0 ? 1 : -1; // Stack downward if we stack in y
+    int stack_cursor = dim == 0 ? node.bounding_box[0].min : node.bounding_box[1].max;
     stack_cursor += layout.padding[dim] * stack_sign;
 
-    // Loop over all children and set their position and size
+    // Loop over all children and set their bounding boxes
     int child_index = node.index_first_child;
     while (child_index != -1)
     {
@@ -802,49 +905,37 @@ void gui_layout_layout_children(int node_index, int dim)
             continue;
         }
 
-        float child_size = 0.0f;
-        if (child_node.should_fill[dim]) {
-            if (in_stack_dimension && child_node.position.auto_layout) {
-                child_size = size_for_fill;
-            }
-            else {
-                child_size = node_size - node.layout.padding[dim] * 2.0f;
-            }
-        }
-        child_size = math_maximum(child_node.min_size[dim], child_size); // Enforce min size
-
         // Alignment info if child should be aligned
         bool align_child = false;
         GUI_Alignment final_align = GUI_Alignment::MIN;
-        float rel_pos = node_pos;
-        float padding = node.layout.padding[dim];
-        float rel_size = node_size;
-        float offset = 0.0f;
+        int rel_pos = node_pos;
+        int padding = node.layout.padding[dim];
+        int rel_size = node_size;
+        int offset = 0;
 
         // Check how position should be calculated
-        float child_pos = 0.0f;
-        if (child_node.position.auto_layout) 
+        int child_pos = 0;
+        if (child_node.position.auto_layout)
         {
             if (in_stack_dimension) {
                 child_pos = stack_cursor;
                 if (stack_sign < 0.0f) {
-                    child_pos -= child_size;
+                    child_pos -= child_node.calculated_size[dim];
                 }
-                stack_cursor += child_size * stack_sign;
+                stack_cursor += child_node.calculated_size[dim] * stack_sign;
             }
             else {
                 align_child = true;
                 final_align = child_node.position.alignment;
             }
         }
-        else 
+        else
         {
             align_child = true;
             if (child_node.position.relative_to_window) {
                 rel_pos = 0;
                 auto& info = rendering_core.render_information;
                 rel_size = dim == 0 ? info.backbuffer_width : info.backbuffer_height;
-                padding = 0;
             }
 
             offset = (dim == 0 ? child_node.position.offset.x : child_node.position.offset.y);
@@ -867,20 +958,14 @@ void gui_layout_layout_children(int node_index, int dim)
             switch (final_align)
             {
             case GUI_Alignment::MIN: child_pos = rel_pos + padding + offset; break;
-            case GUI_Alignment::MAX: child_pos = rel_pos + rel_size - child_size - padding + offset; break;
-            case GUI_Alignment::CENTER: child_pos = (rel_pos + rel_size / 2.0f) - child_size / 2.0f + offset;
+            case GUI_Alignment::MAX: child_pos = rel_pos + rel_size - child_node.calculated_size[dim] - padding + offset; break;
+            case GUI_Alignment::CENTER: child_pos = (rel_pos + rel_size / 2.0f) - child_node.calculated_size[dim] / 2.0f + offset;
             }
         }
 
         // Set child bounding box from position and size
-        if (dim == 0) {
-            child_node.bounding_box.min.x = child_pos;
-            child_node.bounding_box.max.x = child_pos + child_size;
-        }
-        else {
-            child_node.bounding_box.min.y = child_pos;
-            child_node.bounding_box.max.y = child_pos + child_size;
-        }
+        child_node.bounding_box[dim].min = child_pos;
+        child_node.bounding_box[dim].max = child_pos + child_node.calculated_size[dim];
 
         // Recurse to all children
         gui_layout_layout_children(child_index, dim);
@@ -903,8 +988,8 @@ bool gui_handle_input(Input* input, int node_index)
         if (!child_node.clipped_box.available || child_node.hidden_by_parent) {
             continue;
         }
-        bool overlaps_mouse = bounding_box_2_is_point_inside(
-            child_node.clipped_box.value, vec2(input->mouse_x, (int)(rendering_core.render_information.backbuffer_height - input->mouse_y)));
+        bool overlaps_mouse = child_node.clipped_box.value.is_point_inside(
+            vec2(input->mouse_x, (int)(rendering_core.render_information.backbuffer_height - input->mouse_y)));
         if (!overlaps_mouse) {
             continue;
         }
@@ -949,8 +1034,11 @@ void gui_append_to_string(String* append_to, int indentation_level, int node_ind
         if (!node.clipped_box.available) {
             string_append_formated(append_to, "CLIPPED");
         }
+        else if (node.hidden_by_parent) {
+            string_append_formated(append_to, "Hidden");
+        }
         else {
-            string_append_formated(append_to, "(%4.0f, %4.0f)", bb.max.x - bb.min.x, bb.max.y - bb.min.y);
+            string_append_formated(append_to, "(%d, %d)", bb[0].max - bb[0].min, bb[1].max - bb[0].min);
         }
     }
 
@@ -1001,34 +1089,9 @@ bool check_overlap_dependency(Dynamic_Array<GUI_Node>& nodes, Array<GUI_Dependen
     auto* node = &nodes[node_index];
     auto* other = &nodes[other_index];
 
-    // Custom overlap test
-    {
-        Bounding_Box2 a = node->bounding_box;
-        Bounding_Box2 b = other->bounding_box;
-        bool x_overlap = false;
-        float max_overlap = 0;
-        if (a.max.x > b.min.x && a.min.x < b.max.x) {
-            float overlap = math_minimum(a.max.x - b.min.x, b.max.x - a.min.x);
-            max_overlap = math_maximum(overlap, max_overlap);
-            x_overlap = true;
-        }
-        bool y_overlap = false;
-        if (a.max.y > b.min.y && a.min.y < b.max.y) {
-            float overlap = math_minimum(a.max.y - b.min.y, b.max.y - a.min.y);
-            max_overlap = math_maximum(overlap, max_overlap);
-            y_overlap = true;
-        }
-        if (!y_overlap || !x_overlap) {
-            return false;
-        }
-        if (max_overlap < 3.0f) {
-            return false;
-        }
+    if (!node->bounding_box.overlaps(other->bounding_box)) {
+        return false;
     }
-
-    // if (!bounding_box_2_overlap(node->bounding_box, other->bounding_box)) {
-    //     return false;
-    // }
 
     // Other would need to wait on me, except if the z-index is higher
     if (other->z_index > node->z_index && check_z_index) {
@@ -1089,13 +1152,13 @@ void gui_update(Input* input)
 
     imgui.active_checkpoint.type = GUI_Matching_Checkpoint_Type::NONE;
 
-    // Remove nodes from last frame
+    // Remove unreferenced nodes (And update indices accurdingly)
     {
         // Generate new node positions
         Array<int> new_node_indices = array_create_empty<int>(nodes.size);
         SCOPE_EXIT(array_destroy(&new_node_indices));
         int next_free_index = 0;
-        gui_update_nodes_recursive(new_node_indices, 0, next_free_index, false, false);
+        gui_remove_unreferenced_nodes_recursive(new_node_indices, 0, next_free_index, false, false);
 
         // Do compaction
         Dynamic_Array<GUI_Node> new_nodes = dynamic_array_create_empty<GUI_Node>(next_free_index + 1);
@@ -1114,6 +1177,16 @@ void gui_update(Input* input)
         nodes[0].referenced_this_frame = true;
     }
 
+    // Reset node data
+    for (int i = 0; i < imgui.nodes.size; i++) {
+        auto& node = imgui.nodes[i];
+        node.referenced_this_frame = false;
+        node.traversal_next_child = node.index_first_child;
+        node.mouse_hover = false;
+        node.mouse_hovers_child = false;
+        node.keep_children_even_if_not_referenced = false;
+    }
+
     // Layout UI 
     {
         auto& nodes = imgui.nodes;
@@ -1121,8 +1194,12 @@ void gui_update(Input* input)
         // Set root to windows size
         nodes[0].size[0] = gui_size_make(info.backbuffer_width, false, false, false);
         nodes[0].size[1] = gui_size_make(info.backbuffer_height, false, false, false);
-        nodes[0].bounding_box.min = vec2(0.0f);
-        nodes[0].bounding_box.max = vec2(info.backbuffer_width, info.backbuffer_height);
+        nodes[0].calculated_size[0] = info.backbuffer_width;
+        nodes[0].calculated_size[1] = info.backbuffer_height;
+        nodes[0].bounding_box[0].min = 0;
+        nodes[0].bounding_box[0].max = info.backbuffer_width;
+        nodes[0].bounding_box[1].min = 0;
+        nodes[0].bounding_box[1].max = info.backbuffer_height;
 
         // Calculate layout
         gui_layout_calculate_min_size(0, 0);
@@ -1204,7 +1281,7 @@ void gui_update(Input* input)
                                 // Collision with auto layout and non-auto layout node --> non-auto is drawn on top
                                 check_overlap_dependency(nodes, dependencies, child_index, other_child_index, false);
                             }
-                            else if (!before_child){
+                            else if (!before_child) {
                                 // Remember that there is a symmetry here, and we don't want double checks
                                 check_overlap_dependency(nodes, dependencies, other_child_index, child_index, true);
                             }
@@ -1305,7 +1382,7 @@ void gui_update(Input* input)
                 switch (node.drawable.type)
                 {
                 case GUI_Drawable_Type::RECTANGLE: {
-                    auto bb = node.clipped_box.value;
+                    auto bb = node.clipped_box.value.as_bounding_box();
                     bb.min = convertPointFromTo(bb.min, Unit::PIXELS, Unit::NORMALIZED_SCREEN);
                     bb.max = convertPointFromTo(bb.max, Unit::PIXELS, Unit::NORMALIZED_SCREEN);
                     auto& pre = rendering_core.predefined;
@@ -1326,12 +1403,14 @@ void gui_update(Input* input)
                     break;
                 }
                 case GUI_Drawable_Type::TEXT: {
-                    float height = node.bounding_box.max.y - node.bounding_box.min.y;
+                    auto bb = node.clipped_box.value.as_bounding_box();
+                    float height = bb.max.y - bb.min.y;
                     float char_width = text_renderer_line_width(imgui.text_renderer, height, 1);
                     String text = node.drawable.text; // Local copy so size can be changed without affecting original code
                     vec4 c = node.drawable.color;
                     text_renderer_add_text(
-                        imgui.text_renderer, text, node.bounding_box.min, Anchor::BOTTOM_LEFT, height, vec3(c.x, c.y, c.z), node.clipped_box
+                        imgui.text_renderer, text, bb.min, Anchor::BOTTOM_LEFT, height, vec3(c.x, c.y, c.z), 
+                        optional_make_success(node.clipped_box.value.as_bounding_box())
                     );
                     break;
                 }
@@ -1613,8 +1692,8 @@ bool gui_push_button(GUI_Handle parent_handle, Input* input, String text)
     gui_node_enable_input(border);
 
     auto button = gui_add_node(
-        border, 
-        gui_size_make(convertWidth(1.0f, Unit::CENTIMETER), true, false, false), 
+        border,
+        gui_size_make(convertWidth(1.0f, Unit::CENTIMETER), true, false, false),
         gui_size_make_fit(),
         gui_drawable_make_rect(normal_color)
     );
@@ -1687,7 +1766,7 @@ void draw_example_gui(Input* input)
     static bool input_hover = false;
     static bool z_test = false;
     static bool empty_window = false;
-    static bool stacking = false;
+    static bool stacking = true;
     static bool toggle_thing = false;
     static bool layout_window = false;
 
@@ -1726,7 +1805,7 @@ void draw_example_gui(Input* input)
 
         auto c4 = gui_add_node(imgui.root_handle, gui_size_make_fixed(50), gui_size_make_fixed(50), gui_drawable_make_rect(blue));
         gui_node_set_position_fixed(c4, vec2(55, 0), Anchor::CENTER_CENTER),
-        gui_node_enable_input(c4);
+            gui_node_enable_input(c4);
         if (c4.mouse_hover) {
             gui_node_update_drawable(c4, gui_drawable_make_rect(yellow));
         }
@@ -1734,7 +1813,7 @@ void draw_example_gui(Input* input)
         auto time = rendering_core.render_information.current_time_in_seconds;
         auto c3 = gui_add_node(imgui.root_handle, gui_size_make_fixed(50), gui_size_make_fixed(50), gui_drawable_make_rect(magenta));
         gui_node_set_position_fixed(c3, vec2(math_sine(time) * 400, 0.f), Anchor::CENTER_CENTER),
-        gui_node_enable_input(c3);
+            gui_node_enable_input(c3);
         if (c3.mouse_hover) {
             gui_node_update_drawable(c3, gui_drawable_make_rect(gray));
         }
