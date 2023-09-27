@@ -113,29 +113,37 @@ struct GUI_Size
 {
     int min_size;
     bool fit_at_least_children; // If set, grows to accomodate min size of children...
+
+    // Fill options;
     bool fill; // Fill up parent, if multiple children fill up parent, the available size is split
     bool inherit_fill_from_children; // If a child also wants to fill, this will propagate up
+    int preferred_size; // Set to 0 to disable, will be ignored if < min_size
 };
 
-GUI_Size gui_size_make(int min_size, bool fit_at_least_children, bool fill, bool inherit_fill_from_children) {
+GUI_Size gui_size_make(int min_size, bool fit_at_least_children, bool fill, bool inherit_fill_from_children, int preferred_size) {
     GUI_Size size;
     size.min_size = min_size;
     size.fill = fill;
     size.fit_at_least_children = fit_at_least_children;
     size.inherit_fill_from_children = inherit_fill_from_children;
+    size.preferred_size = preferred_size;
     return size;
 }
 
 GUI_Size gui_size_make_fit(bool inherit_fill = false) {
-    return gui_size_make(0.0f, true, false, inherit_fill);
+    return gui_size_make(0.0f, true, false, inherit_fill, 0);
 }
 
 GUI_Size gui_size_make_fixed(float value) {
-    return gui_size_make(value, false, false, false);
+    return gui_size_make(value, false, false, false, 0);
 }
 
 GUI_Size gui_size_make_fill(bool fit_at_least_children = true) {
-    return gui_size_make(0, fit_at_least_children, true, false);
+    return gui_size_make(0, fit_at_least_children, true, false, 0);
+}
+
+GUI_Size gui_size_make_preferred(int preferred, int min = 0, bool fit_at_least_children = true) {
+    return gui_size_make(min, fit_at_least_children, true, false, preferred);
 }
 
 
@@ -494,8 +502,8 @@ void imgui_initialize(Text_Renderer* text_renderer, Window* window)
     root.userdata_destroy_fn = nullptr;
     root.drawable = gui_drawable_make_none();
     auto& info = rendering_core.render_information;
-    root.size[0] = gui_size_make(info.backbuffer_width, false, false, false);
-    root.size[1] = gui_size_make(info.backbuffer_height, false, false, false);
+    root.size[0] = gui_size_make(info.backbuffer_width, false, false, false, 0);
+    root.size[1] = gui_size_make(info.backbuffer_height, false, false, false, 0);
     root.input_enabled = false;
     root.hidden = false;
     root.keep_children_even_if_not_referenced = false;
@@ -768,15 +776,17 @@ void gui_layout_calculate_min_size(int node_index, int dim)
     }
 }
 
-struct GUI_Node_Min_Size_Comparator
-{
-    GUI_Node_Min_Size_Comparator(int dim) : dim(dim) {}
-    int dim;
+struct GUI_Constraint {
+    GUI_Constraint() {}
+    GUI_Constraint(int node_index, int value, bool is_max_constraint) : node_index(node_index), value(value), is_max_constraint(is_max_constraint) {}
+    bool is_max_constraint;
+    int value;
+    int node_index;
+};
 
-    bool operator()(int node_index_a, int node_index_b) {
-        auto& a = imgui.nodes[node_index_a];
-        auto& b = imgui.nodes[node_index_b];
-        return a.min_size[dim] > b.min_size[dim];
+struct GUI_Constraint_Comparator {
+    bool operator()(const GUI_Constraint& a, const GUI_Constraint& b) {
+        return a.value < b.value;
     }
 };
 
@@ -823,78 +833,140 @@ void gui_layout_layout_children(int node_index, int dim)
     // Set sizes for all non-fill children
     if (in_stack_dimension)
     {
-        Dynamic_Array<int> fill_childs = dynamic_array_create_empty<int>(4);
-        SCOPE_EXIT(dynamic_array_destroy(&fill_childs));
-        int non_fill_size = 0;
-        int padded_child_count = 0;
-
-        int child_index = node.index_first_child;
-        while (child_index != -1)
+        // Collect fill children and calculate space
+        Dynamic_Array<GUI_Constraint> preferred_constraints = dynamic_array_create_empty<GUI_Constraint>(1);
+        Dynamic_Array<GUI_Constraint> fill_constraints = dynamic_array_create_empty<GUI_Constraint>(1);
+        SCOPE_EXIT(dynamic_array_destroy(&preferred_constraints));
+        SCOPE_EXIT(dynamic_array_destroy(&fill_constraints));
+        int space_without_padding = node_size - node.layout.padding[dim];
+        int space_min_preferred = 0;
+        int space_full_preferred = 0;
+        int space_min_fill = 0;
         {
-            auto& child_node = nodes[child_index];
-            SCOPE_EXIT(child_index = child_node.index_next_node);
+            int child_index = node.index_first_child;
+            while (child_index != -1)
+            {
+                auto& child_node = nodes[child_index];
+                SCOPE_EXIT(child_index = child_node.index_next_node);
 
-            // Ignore hidden and non auto-layout nodes
-            if (child_node.hidden_by_parent) {
-                child_node.calculated_size[dim] = 0;
-                continue;
-            }
-            if (!child_node.position.auto_layout) {
+                // Ignore hidden and non auto-layout nodes
+                if (child_node.hidden_by_parent) {
+                    child_node.calculated_size[dim] = 0;
+                    continue;
+                }
+                if (!child_node.position.auto_layout) {
+                    if (child_node.should_fill[dim]) {
+                        child_node.calculated_size[dim] = math_maximum(child_node.min_size[dim], node_size - node.layout.padding[dim] * 2);
+                    }
+                    else {
+                        child_node.calculated_size[dim] = child_node.min_size[dim];
+                    }
+                    continue;
+                }
+
+                // Set size to minimum and adjust free space
+                child_node.calculated_size[dim] = child_node.min_size[dim];
+                if (node.layout.pad_between_children && child_index != node.index_first_child) {
+                    space_without_padding -= node.layout.padding[dim];
+                }
+
+                // Add node indices to corresponding indices
                 if (child_node.should_fill[dim]) {
-                    child_node.calculated_size[dim] = math_maximum(child_node.min_size[dim], node_size - node.layout.padding[dim] * 2);
+                    if (child_node.size[dim].preferred_size > child_node.min_size[dim]) {
+                        dynamic_array_push_back(&preferred_constraints, GUI_Constraint(child_index, child_node.min_size[dim], false));
+                        dynamic_array_push_back(&preferred_constraints, GUI_Constraint(child_index, child_node.size[dim].preferred_size, true));
+                        space_min_preferred += child_node.min_size[dim];
+                        space_full_preferred += child_node.size[dim].preferred_size;
+                    }
+                    else {
+                        dynamic_array_push_back(&fill_constraints, GUI_Constraint(child_index, child_node.min_size[dim], false));
+                        space_min_fill += child_node.min_size[dim];
+                    }
                 }
                 else {
-                    child_node.calculated_size[dim] = child_node.min_size[dim];
+                    space_without_padding -= child_node.min_size[dim];
                 }
-                continue;
-            }
-
-            if (child_node.should_fill[dim]) {
-                dynamic_array_push_back(&fill_childs, child_index);
-            }
-            else {
-                non_fill_size += child_node.min_size[dim];
-                child_node.calculated_size[dim] = child_node.min_size[dim];
-            }
-            if (node.layout.pad_between_children) {
-                padded_child_count += 1;
             }
         }
-        const int padding_space = (2 + math_maximum(0, padded_child_count - 1)) * node.layout.padding[dim];
 
-        // Partition space among children that want to fill (And also respect min-size requirements)
-        dynamic_array_sort(&fill_childs, GUI_Node_Min_Size_Comparator(dim));
-        // Find first children which are gonna be larger than their min-size
-        int i = 0;
-        for (; i < fill_childs.size; i++) {
-            auto& child_node = nodes[fill_childs[i]];
-            const int space_for_fill = (node_size - non_fill_size - padding_space) / (fill_childs.size - i);
-            if (space_for_fill >= child_node.min_size[dim]) {
-                break;
-            }
-            child_node.calculated_size[dim] = child_node.min_size[dim];
-            non_fill_size += child_node.min_size[dim];
-        }
-
-        // Distribute space among the non-min fill children (If such children exist)
-        if (i < fill_childs.size)
+        auto solve_constraints_fn = [](Dynamic_Array<GUI_Constraint>& constraints, int space_available, int dim) -> void 
         {
-            const int space_for_fill = (node_size - non_fill_size - padding_space) / (fill_childs.size - i);
-            int filled_size_sum = 0;
-            for (; i < fill_childs.size; i++) {
-                auto& child_node = nodes[fill_childs[i]];
-                child_node.calculated_size[dim] = space_for_fill;
-                assert(child_node.calculated_size[dim] >= child_node.min_size[dim], "");
-                filled_size_sum += space_for_fill;
+            if (constraints.size == 0) {
+                return;
             }
-            // Since all sizes are now pixel (integer) aligned, we may not fill the whole parent because of integer division,
-            // so we distribute the remaining pixels among the fill children
-            int remaining_pixels = node_size - non_fill_size - padding_space - filled_size_sum;
-            assert(remaining_pixels >= 0 && remaining_pixels < fill_childs.size, "");
-            for (int i = 0; i < remaining_pixels; i++) {
-                auto& child_node = nodes[fill_childs[i]];
-                child_node.calculated_size[dim] += 1;
+            dynamic_array_sort(&constraints, GUI_Constraint_Comparator());
+            
+            // Find suitable size_threshhold
+            int size_threshold = 0.0f;
+            int pixel_remainder = 0; // Because of int division some pixels need to the first few items which can take more
+
+            int active_count = 0;
+            for (int i = 0; i < constraints.size; i++)
+            {
+                auto& constraint = constraints[i];
+                if (!constraint.is_max_constraint) {
+                    active_count += 1;
+                    space_available += constraint.value;
+                }
+                else {
+                    assert(active_count > 0, "Must not happen when sorting intervals with min/max");
+                    active_count -= 1;
+                    space_available -= constraint.value;
+                }
+
+                if (constraint.value * active_count <= space_available) {
+                    if (active_count == 0) {
+                        size_threshold = constraint.value;
+                        pixel_remainder = 0;
+                    }
+                    else {
+                        size_threshold = (float)space_available / active_count;
+                        pixel_remainder = space_available % active_count;
+                    }
+                }
+                else {
+                    break;
+                }
             }
+
+            // Set sizes depending on threshold
+            for (int i = 0; i < constraints.size; i++) {
+                auto& constraint = constraints[i];
+                if (constraint.is_max_constraint) { // Since min constraints handle setting the size we can skip max constraints
+                    continue;
+                }
+                auto& node = imgui.nodes[constraint.node_index];
+                if (size_threshold < node.min_size[dim]) {
+                    node.calculated_size[dim] = node.min_size[dim];
+                }
+                else if (size_threshold > node.size[dim].preferred_size && node.size[dim].preferred_size > node.min_size[dim]) {
+                    node.calculated_size[dim] = node.size[dim].preferred_size;
+                }
+                else {
+                    node.calculated_size[dim] = size_threshold;
+                    if (pixel_remainder > 0) {
+                        node.calculated_size[dim] += 1;
+                        pixel_remainder -= 1;
+                    }
+                }
+            }
+        };
+
+        if (space_without_padding < space_min_fill + space_min_preferred) {
+            // Everything is set to minimum, nothing more can be done
+        }
+        else if (space_without_padding < space_min_fill + space_full_preferred) {
+            // Fill out preferred contraints, fill_nodes stay at minimum
+            solve_constraints_fn(preferred_constraints, space_without_padding - space_min_preferred - space_min_fill, dim);
+        }
+        else {
+            // All preferred nodes can be fully set, fill_nodes need to be calculated
+            for (int i = 0; i < preferred_constraints.size; i++) {
+                auto& constraint = preferred_constraints[i];
+                auto& node = nodes[constraint.node_index];
+                node.calculated_size[dim] = node.size[dim].preferred_size;
+            }
+            solve_constraints_fn(fill_constraints, space_without_padding - space_min_fill - space_full_preferred, dim);
         }
     }
     else
@@ -912,7 +984,10 @@ void gui_layout_layout_children(int node_index, int dim)
                 if (!child_node.position.auto_layout) {
                     padding = 0;
                 }
-                child_node.calculated_size[dim] = math_maximum(child_node.min_size[dim], node_size - padding * 2);
+                child_node.calculated_size[dim] = math_maximum(node_size - padding * 2, child_node.min_size[dim]);
+                if (child_node.size[dim].preferred_size > child_node.min_size[dim]) {
+                    child_node.calculated_size[dim] = math_minimum(child_node.calculated_size[dim], child_node.size[dim].preferred_size);
+                }
             }
             else {
                 child_node.calculated_size[dim] = child_node.min_size[dim];
@@ -920,94 +995,96 @@ void gui_layout_layout_children(int node_index, int dim)
         }
     }
 
-    // Setup stack cursor 
-    int stack_sign;
-    int stack_cursor;
-    switch (node.layout.stack_direction) {
-    case GUI_Stack_Direction::TOP_TO_BOTTOM: stack_sign = -1; stack_cursor = node.bounding_box[1].max; break;
-    case GUI_Stack_Direction::BOTTOM_TO_TOP: stack_sign = 1; stack_cursor = node.bounding_box[1].min; break;
-    case GUI_Stack_Direction::LEFT_TO_RIGHT: stack_sign = 1; stack_cursor = node.bounding_box[0].min; break;
-    case GUI_Stack_Direction::RIGHT_TO_LEFT: stack_sign = -1; stack_cursor = node.bounding_box[0].max; break;
-    default: panic("");
-    }
-    stack_cursor += layout.padding[dim] * stack_sign;
-
     // Loop over all children and set their bounding boxes
-    int child_index = node.index_first_child;
-    while (child_index != -1)
     {
-        auto& child_node = nodes[child_index];
-        SCOPE_EXIT(child_index = child_node.index_next_node);
-        if (child_node.hidden_by_parent) {
-            continue;
+        // Setup stack cursor 
+        int stack_sign;
+        int stack_cursor;
+        switch (node.layout.stack_direction) {
+        case GUI_Stack_Direction::TOP_TO_BOTTOM: stack_sign = -1; stack_cursor = node.bounding_box[1].max; break;
+        case GUI_Stack_Direction::BOTTOM_TO_TOP: stack_sign = 1; stack_cursor = node.bounding_box[1].min; break;
+        case GUI_Stack_Direction::LEFT_TO_RIGHT: stack_sign = 1; stack_cursor = node.bounding_box[0].min; break;
+        case GUI_Stack_Direction::RIGHT_TO_LEFT: stack_sign = -1; stack_cursor = node.bounding_box[0].max; break;
+        default: panic("");
         }
+        stack_cursor += layout.padding[dim] * stack_sign;
 
-        // Alignment info if child should be aligned
-        bool align_child = false;
-        GUI_Alignment final_align = GUI_Alignment::MIN;
-        int rel_pos = node_pos;
-        int padding = node.layout.padding[dim];
-        int rel_size = node_size;
-        int offset = 0;
-
-        // Check how position should be calculated
-        int child_pos = 0;
-        if (child_node.position.auto_layout)
+        int child_index = node.index_first_child;
+        while (child_index != -1)
         {
-            if (in_stack_dimension) {
-                child_pos = stack_cursor;
-                if (stack_sign < 0.0f) {
-                    child_pos -= child_node.calculated_size[dim];
-                }
-                int padding = node.layout.pad_between_children ? node.layout.padding[dim] : 0;
-                stack_cursor += (child_node.calculated_size[dim] + padding) * stack_sign;
-            }
-            else {
-                align_child = true;
-                final_align = child_node.position.alignment;
-            }
-        }
-        else
-        {
-            align_child = true;
-            padding = false;
-            if (child_node.position.relative_to_window) {
-                rel_pos = 0;
-                auto& info = rendering_core.render_information;
-                rel_size = dim == 0 ? info.backbuffer_width : info.backbuffer_height;
+            auto& child_node = nodes[child_index];
+            SCOPE_EXIT(child_index = child_node.index_next_node);
+            if (child_node.hidden_by_parent) {
+                continue;
             }
 
-            offset = (dim == 0 ? child_node.position.offset.x : child_node.position.offset.y);
-            vec2 anchor_dir = anchor_to_direction(child_node.position.anchor);
-            float offset_dir = dim == 0 ? anchor_dir.x : anchor_dir.y;
-            if (offset_dir < -0.1f) {
-                final_align = GUI_Alignment::MIN;
-            }
-            else if (offset_dir > 0.1f) {
-                final_align = GUI_Alignment::MAX;
-            }
-            else {
-                final_align = GUI_Alignment::CENTER;
-            }
-        }
+            // Alignment info if child should be aligned
+            bool align_child = false;
+            GUI_Alignment final_align = GUI_Alignment::MIN;
+            int rel_pos = node_pos;
+            int padding = node.layout.padding[dim];
+            int rel_size = node_size;
+            int offset = 0;
 
-        // Do alignment if requested
-        if (align_child)
-        {
-            switch (final_align)
+            // Check how position should be calculated
+            int child_pos = 0;
+            if (child_node.position.auto_layout)
             {
-            case GUI_Alignment::MIN: child_pos = rel_pos + padding + offset; break;
-            case GUI_Alignment::MAX: child_pos = rel_pos + rel_size - child_node.calculated_size[dim] - padding + offset; break;
-            case GUI_Alignment::CENTER: child_pos = (rel_pos + rel_size / 2.0f) - child_node.calculated_size[dim] / 2.0f + offset;
+                if (in_stack_dimension) {
+                    child_pos = stack_cursor;
+                    if (stack_sign < 0.0f) {
+                        child_pos -= child_node.calculated_size[dim];
+                    }
+                    int padding = node.layout.pad_between_children ? node.layout.padding[dim] : 0;
+                    stack_cursor += (child_node.calculated_size[dim] + padding) * stack_sign;
+                }
+                else {
+                    align_child = true;
+                    final_align = child_node.position.alignment;
+                }
             }
+            else
+            {
+                align_child = true;
+                padding = false;
+                if (child_node.position.relative_to_window) {
+                    rel_pos = 0;
+                    auto& info = rendering_core.render_information;
+                    rel_size = dim == 0 ? info.backbuffer_width : info.backbuffer_height;
+                }
+
+                offset = (dim == 0 ? child_node.position.offset.x : child_node.position.offset.y);
+                vec2 anchor_dir = anchor_to_direction(child_node.position.anchor);
+                float offset_dir = dim == 0 ? anchor_dir.x : anchor_dir.y;
+                if (offset_dir < -0.1f) {
+                    final_align = GUI_Alignment::MIN;
+                }
+                else if (offset_dir > 0.1f) {
+                    final_align = GUI_Alignment::MAX;
+                }
+                else {
+                    final_align = GUI_Alignment::CENTER;
+                }
+            }
+
+            // Do alignment if requested
+            if (align_child)
+            {
+                switch (final_align)
+                {
+                case GUI_Alignment::MIN: child_pos = rel_pos + padding + offset; break;
+                case GUI_Alignment::MAX: child_pos = rel_pos + rel_size - child_node.calculated_size[dim] - padding + offset; break;
+                case GUI_Alignment::CENTER: child_pos = (rel_pos + rel_size / 2.0f) - child_node.calculated_size[dim] / 2.0f + offset;
+                }
+            }
+
+            // Set child bounding box from position and size
+            child_node.bounding_box[dim].min = child_pos;
+            child_node.bounding_box[dim].max = child_pos + child_node.calculated_size[dim];
+
+            // Recurse to all children
+            gui_layout_layout_children(child_index, dim);
         }
-
-        // Set child bounding box from position and size
-        child_node.bounding_box[dim].min = child_pos;
-        child_node.bounding_box[dim].max = child_pos + child_node.calculated_size[dim];
-
-        // Recurse to all children
-        gui_layout_layout_children(child_index, dim);
     }
 }
 
@@ -1231,8 +1308,8 @@ void gui_update(Input* input)
         auto& nodes = imgui.nodes;
 
         // Set root to windows size
-        nodes[0].size[0] = gui_size_make(info.backbuffer_width, false, false, false);
-        nodes[0].size[1] = gui_size_make(info.backbuffer_height, false, false, false);
+        nodes[0].size[0] = gui_size_make(info.backbuffer_width, false, false, false, 0);
+        nodes[0].size[1] = gui_size_make(info.backbuffer_height, false, false, false, 0);
         nodes[0].calculated_size[0] = info.backbuffer_width;
         nodes[0].calculated_size[1] = info.backbuffer_height;
         nodes[0].bounding_box[0].min = 0;
@@ -1393,7 +1470,7 @@ void gui_update(Input* input)
                 rendering_core.predefined.color4,
                 borderColor,
                 borderThicknessEdgeRadius
-            }),
+                }),
             true
         );
         auto rectangle_shader = rendering_core_query_shader("gui_rect.glsl");
@@ -1462,7 +1539,7 @@ void gui_update(Input* input)
             int after_rectangle_count = rectangle_mesh->vertex_count;
             if (after_rectangle_count > before_rectangle_count) {
                 render_pass_draw_count(
-                    pass_2D, rectangle_shader, rectangle_mesh, Mesh_Topology::POINTS, {}, 
+                    pass_2D, rectangle_shader, rectangle_mesh, Mesh_Topology::POINTS, {},
                     before_rectangle_count, after_rectangle_count - before_rectangle_count
                 );
             }
@@ -1726,23 +1803,20 @@ bool gui_push_button(GUI_Handle parent_handle, Input* input, String text)
     const vec4 border_color = vec4(vec3(0.2f), 1.0f); // Some shade of gray
     const vec4 normal_color = vec4(vec3(0.8f), 1.0f); // Some shade of gray
     const vec4 hover_color = vec4(vec3(0.5f), 1.0f); // Some shade of gray
-    auto border = gui_add_node(parent_handle, gui_size_make_fit(), gui_size_make_fit(), gui_drawable_make_rect(border_color));
-    gui_node_set_padding(border, 1, 1);
-    gui_node_enable_input(border);
+    float width = convertWidth(1.0f, Unit::CENTIMETER);
 
     auto button = gui_add_node(
-        border,
-        gui_size_make(convertWidth(1.0f, Unit::CENTIMETER), true, false, false),
-        gui_size_make_fit(),
-        gui_drawable_make_rect(normal_color)
-    );
-    if (border.mouse_hover) {
-        gui_node_update_drawable(button, gui_drawable_make_rect(hover_color));
+        parent_handle, gui_size_make_preferred(width * 3, width), gui_size_make_fit(), gui_drawable_make_rect(normal_color, 1, border_color, 5));
+    gui_node_set_padding(button, 3, 3);
+    gui_node_enable_input(button);
+
+    if (button.mouse_hover) {
+        gui_node_update_drawable(button, gui_drawable_make_rect(hover_color, 1, border_color, 3));
     }
 
     auto text_node = gui_push_text(button, text);
     gui_node_set_alignment(text_node, GUI_Alignment::CENTER);
-    return border.mouse_hover && input->mouse_pressed[(int)Mouse_Key_Code::LEFT];
+    return button.mouse_hover && input->mouse_pressed[(int)Mouse_Key_Code::LEFT];
 }
 
 // Returns true if the value was toggled
@@ -1972,6 +2046,7 @@ void draw_example_gui(Input* input)
         // Add number couter with userdata
         auto space = gui_add_node(window, gui_size_make_fill(), gui_size_make_fill(), gui_drawable_make_rect(cyan));
         gui_node_set_layout(space, GUI_Stack_Direction::TOP_TO_BOTTOM, GUI_Alignment::CENTER);
+        gui_node_set_padding(space, 1, 1, true);
         {
             bool* value = gui_store_primitive<bool>(space, false);
             gui_push_toggle(space, input, value);

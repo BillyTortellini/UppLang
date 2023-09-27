@@ -2,8 +2,7 @@
 
 Things to implement:
  - Further layout options:
-    * Max size for fill, so we could have a list that doesn't eat everything in it's path (And also buttons with the same sizes on multiple rows..)
-    * Fill weight, also when fill is inherited from children? (Probably only usefull when single child)
+    * Max size for fill, so we can have elements with different text sizes but still same size (E.g. git buttons)
 
 More input elements:
  * Text input

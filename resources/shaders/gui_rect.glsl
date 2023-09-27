@@ -118,7 +118,7 @@ void main()
     
     // Calculate final color based on mix between color, border-color and outside
     o_color = mix(f_borderColor, f_color, border_alpha);
-    // o_color = mix(o_color, bg, outside_alpha);
+    o_color.w *= 1.0 - outside_alpha;
 }
 
 #endif
