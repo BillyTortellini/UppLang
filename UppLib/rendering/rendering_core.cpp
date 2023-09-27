@@ -161,6 +161,7 @@ void rendering_core_destroy()
 
     for (int i = 0; i < core.vertex_attributes.size; i++) {
         auto attrib = core.vertex_attributes[i];
+        string_destroy(&attrib->name);
         delete core.vertex_attributes[i];
     }
     dynamic_array_destroy(&core.vertex_attributes);
@@ -539,7 +540,7 @@ Vertex_Attribute_Base* vertex_attribute_make_base(Shader_Datatype type, const ch
     }
 
     Vertex_Attribute_Base* base = new Vertex_Attribute_Base();
-    base->name = str;
+    base->name = string_create(name);
     base->type = type;
     static int next_free_binding = 0;
     base->binding_location = next_free_binding;

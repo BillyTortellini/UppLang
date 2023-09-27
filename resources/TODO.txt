@@ -1,25 +1,9 @@
 
-Stuff to consider:
- Pixel perfect means we can use integers for positioning on the screen...
- -> Do calculations suffer when done without float? Nah, shouldn't be a Problem
-This includes:
-    - BoundingBox
-    - Clipped BoundingBox
-    - MinSize
-    - Padding
-
 
 Things to implement:
- - Pixel perfect alignment
- - Padding between children
-    Note: Padding should cut off children if they move out of the way...
- - Rectangle border + border color
  - Further layout options:
-    * Max size for fill, so we could have a list that doesn't eat everything in it's path
-    * Fill weight, also when fill is inherited from children
-    * Preferred size (Between min and max size), question if it's stronger than fill or not...
-    * Maybe a grid layout, but not sure how helpful this really is
-    * Stacking also in reverse directions...
+    * Max size for fill, so we could have a list that doesn't eat everything in it's path (And also buttons with the same sizes on multiple rows..)
+    * Fill weight, also when fill is inherited from children? (Probably only usefull when single child)
 
 More input elements:
  * Text input
