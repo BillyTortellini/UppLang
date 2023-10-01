@@ -339,12 +339,16 @@ struct GUI_Handle
 
 struct IMGUI
 {
-    Text_Renderer* text_renderer;
-    Window* window;
     Dynamic_Array<GUI_Node> nodes;
+    GUI_Matching_Checkpoint active_checkpoint;
     GUI_Handle root_handle;
     Cursor_Icon_Type cursor_type;
-    GUI_Matching_Checkpoint active_checkpoint;
+    
+    int focused_node; // 0 (E.g. root) When no node has focus
+
+    Text_Renderer* text_renderer;
+    Window* window;
+    Input* input;
 };
 
 IMGUI imgui;
@@ -447,6 +451,21 @@ void gui_node_enable_input(GUI_Handle handle) {
     imgui.nodes[handle.index].input_enabled = true;
 }
 
+void gui_node_set_focus(GUI_Handle handle) {
+    imgui.focused_node = handle.index;
+}
+
+// Does nothing is node is not in focus
+void gui_node_remove_focus(GUI_Handle handle) {
+    if (imgui.focused_node == handle.index) {
+        imgui.focused_node = 0;
+    }
+}
+
+bool gui_node_has_focus(GUI_Handle handle) {
+    return imgui.focused_node == handle.index;
+}
+
 void gui_node_hide(GUI_Handle handle) {
     imgui.nodes[handle.index].hidden = true;
 }
@@ -472,15 +491,17 @@ void gui_node_set_userdata(GUI_Handle& handle, void* userdata, gui_userdata_dest
 
 
 // Initializers and destroy for gui
-void imgui_initialize(Text_Renderer* text_renderer, Window* window)
+void imgui_initialize(Text_Renderer* text_renderer, Window* window, Input* input)
 {
     auto& pre = rendering_core.predefined;
 
     imgui.text_renderer = text_renderer;
     imgui.nodes = dynamic_array_create_empty<GUI_Node>(1);
     imgui.window = window;
+    imgui.input = input;
     imgui.cursor_type = Cursor_Icon_Type::ARROW;
     imgui.active_checkpoint.type = GUI_Matching_Checkpoint_Type::NONE;
+    imgui.focused_node = 0;
 
     // Note: We cannot add the root node with add_node, because root doesnt have a parent...
     imgui.root_handle.index = 0;
@@ -1291,6 +1312,11 @@ void gui_update(Input* input)
 
         // Update root node
         nodes[0].referenced_this_frame = true;
+        // Update focused node
+        imgui.focused_node = new_node_indices[imgui.focused_node];
+        if (imgui.focused_node == -1) {
+            imgui.focused_node = 0;
+        }
     }
 
     // Reset node data
@@ -1461,12 +1487,14 @@ void gui_update(Input* input)
         // Query render primitives
         auto& pre = rendering_core.predefined;
         auto posSizeCombined = vertex_attribute_make<vec4>("PosSize2D");
+        auto clippedBoundingBox = vertex_attribute_make<vec4>("ClippedBoundingBox");
         auto borderThicknessEdgeRadius = vertex_attribute_make<vec2>("BorderThicknessEdgeRadius");
         auto borderColor = vertex_attribute_make<vec4>("BorderColor");
         auto rectangle_mesh = rendering_core_query_mesh(
             "gui_rectangle_mesh",
             vertex_description_create({
                 posSizeCombined,
+                clippedBoundingBox,
                 rendering_core.predefined.color4,
                 borderColor,
                 borderThicknessEdgeRadius
@@ -1485,11 +1513,11 @@ void gui_update(Input* input)
         render_pass_add_dependency(pass_2D, rendering_core.predefined.main_pass);
 
         static int skip_batches = 0;
-        if (input->key_pressed[(int)Key_Code::O]) {
+        if (input->key_pressed[(int)Key_Code::O] && imgui.focused_node == 0) {
             skip_batches += 1;
             logg("Skip batches: %\n", skip_batches);
         }
-        else if (input->key_pressed[(int)Key_Code::P]) {
+        else if (input->key_pressed[(int)Key_Code::P] && imgui.focused_node == 0) {
             skip_batches -= 1;
             logg("Skip batches: %\n", skip_batches);
         }
@@ -1511,8 +1539,10 @@ void gui_update(Input* input)
                 {
                 case GUI_Drawable_Type::RECTANGLE: {
                     // Rendering test 
-                    auto bb = node.clipped_box.value.as_bounding_box();
+                    auto clippedBB = node.clipped_box.value.as_bounding_box();
+                    auto bb = node.bounding_box.as_bounding_box();
                     mesh_push_attribute(rectangle_mesh, posSizeCombined, { vec4(bb.min.x, bb.min.y, bb.max.x - bb.min.x, bb.max.y - bb.min.y) });
+                    mesh_push_attribute(rectangle_mesh, clippedBoundingBox, { vec4(clippedBB.min.x, clippedBB.min.y, clippedBB.max.x, clippedBB.max.y) });
                     mesh_push_attribute(rectangle_mesh, rendering_core.predefined.color4, { node.drawable.color });
                     mesh_push_attribute(rectangle_mesh, borderColor, { node.drawable.border_color });
                     mesh_push_attribute(rectangle_mesh, borderThicknessEdgeRadius, { vec2(node.drawable.border_thickness, node.drawable.edge_radius) });
@@ -1576,6 +1606,25 @@ T* gui_store_primitive(GUI_Handle parent_handle, T default_value) {
     return (T*)node_handle.userdata;
 }
 
+String* gui_store_string(GUI_Handle parent_handle, const char* initial_string) {
+    auto node_handle = gui_add_node(parent_handle, gui_size_make_fixed(0.0f), gui_size_make_fixed(0.0f), gui_drawable_make_none());
+    gui_node_hide(node_handle);
+    if (node_handle.userdata == 0) {
+        String* string = new String;
+        *string = string_create(initial_string);
+        gui_node_set_userdata(
+            node_handle, (void*)string,
+            [](void* data) -> void {
+                String* str = (String*)data;
+                string_destroy(str);
+                delete str;
+            }
+        );
+        return string;
+    }
+    return (String*)node_handle.userdata;
+}
+
 GUI_Handle gui_push_text(GUI_Handle parent_handle, String text, float text_height_cm = .4f, vec4 color = vec4(0.0f, 0.0f, 0.0f, 1.0f))
 {
     const float char_height = convertHeight(text_height_cm, Unit::CENTIMETER);
@@ -1605,7 +1654,7 @@ struct GUI_Window_Info
     bool resize_bottom;
 };
 
-GUI_Handle gui_push_window(GUI_Handle parent_handle, Input* input, const char* name,
+GUI_Handle gui_push_window(GUI_Handle parent_handle, const char* name,
     vec2 initial_pos = convertPoint(vec2(0.0f), Unit::NORMALIZED_SCREEN), vec2 initial_size = vec2(300, 500), Anchor initial_anchor = Anchor::CENTER_CENTER)
 {
     // Get window info
@@ -1623,6 +1672,7 @@ GUI_Handle gui_push_window(GUI_Handle parent_handle, Input* input, const char* n
         info = gui_store_primitive<GUI_Window_Info>(parent_handle, initial_info);
     }
 
+    auto input = imgui.input;
     if (input->client_area_resized) {
         auto& pos = info->pos;
         auto& size = info->size;
@@ -1798,7 +1848,7 @@ GUI_Handle gui_push_window(GUI_Handle parent_handle, Input* input, const char* n
     return window_handle;
 }
 
-bool gui_push_button(GUI_Handle parent_handle, Input* input, String text)
+bool gui_push_button(GUI_Handle parent_handle, String text)
 {
     const vec4 border_color = vec4(vec3(0.2f), 1.0f); // Some shade of gray
     const vec4 normal_color = vec4(vec3(0.8f), 1.0f); // Some shade of gray
@@ -1811,12 +1861,67 @@ bool gui_push_button(GUI_Handle parent_handle, Input* input, String text)
     gui_node_enable_input(button);
 
     if (button.mouse_hover) {
-        gui_node_update_drawable(button, gui_drawable_make_rect(hover_color, 1, border_color, 3));
+        gui_node_update_drawable(button, gui_drawable_make_rect(hover_color, 1, border_color, 5));
     }
 
     auto text_node = gui_push_text(button, text);
     gui_node_set_alignment(text_node, GUI_Alignment::CENTER);
-    return button.mouse_hover && input->mouse_pressed[(int)Mouse_Key_Code::LEFT];
+    return button.mouse_hover && imgui.input->mouse_pressed[(int)Mouse_Key_Code::LEFT];
+}
+
+void gui_push_text_edit(GUI_Handle parent_handle, String* string, float text_height_cm = 0.4f)
+{
+    auto input = imgui.input;
+    vec4 normal_bg_color = vec4(vec3(0.8f), 1);
+    vec4 highlight_bg_color = vec4(vec3(0.88f), 1);
+    vec4 border_color = vec4(0, 0, 0, 1);
+    vec4 focus_border_color = vec4(0.7, 0.3, 0.3, 1.0);
+
+    int text_height = convertHeight(text_height_cm, Unit::CENTIMETER);
+    float char_width = text_renderer_line_width(imgui.text_renderer, text_height, 1);
+
+    auto container = gui_add_node(parent_handle, gui_size_make_fill(), gui_size_make_fit(),
+        gui_drawable_make_rect(normal_bg_color, 1, border_color, 3));
+    gui_node_set_padding(container, 2, 2, false);
+    gui_node_enable_input(container);
+    gui_node_set_layout(container, GUI_Stack_Direction::LEFT_TO_RIGHT);
+
+    if (container.mouse_hover && !gui_node_has_focus(container)) {
+        gui_node_update_drawable(container, gui_drawable_make_rect(highlight_bg_color, 1, border_color, 3));
+        if (input->mouse_pressed[(int)Mouse_Key_Code::LEFT]) {
+            gui_node_set_focus(container);
+        }
+    }
+
+    if (gui_node_has_focus(container) && !container.mouse_hover && input->mouse_pressed[(int)Mouse_Key_Code::LEFT]) {
+        gui_node_remove_focus(container);
+    }
+
+    if (gui_node_has_focus(container)) {
+        gui_node_update_drawable(container, gui_drawable_make_rect(highlight_bg_color, 2, focus_border_color, 3));
+        for (int i = 0; i < input->key_messages.size; i++) {
+            auto& msg = input->key_messages[i];
+            if (msg.key_code == Key_Code::BACKSPACE && msg.key_down) {
+                if (string->size > 0) {
+                    string_remove_character(string, string->size - 1);
+                }
+            }
+            if (msg.key_code == Key_Code::U && msg.key_down && msg.ctrl_down) {
+                string_reset(string);
+            }
+            else if (msg.key_code == Key_Code::RETURN && msg.key_down) {
+                gui_node_remove_focus(container);
+                break;
+            }
+            else if (msg.character != 0) {
+                string_append_character(string, msg.character);
+            }
+        }
+    }
+    auto text = gui_add_node(container, gui_size_make_fixed(string->size * char_width), gui_size_make_fixed(text_height), gui_drawable_make_text(*string));
+    if (gui_node_has_focus(container)) {
+        gui_add_node(container, gui_size_make_fixed(2), gui_size_make_fill(), gui_drawable_make_rect(vec4(0, 0, 0, 1)));
+    }
 }
 
 // Returns true if the value was toggled
@@ -1872,7 +1977,7 @@ void draw_example_gui(Input* input)
     const vec4 gray = vec4(vec3(0.3f), 1.0f);
 
     static bool show_config_gui = false;
-    if (input->key_pressed[(int)Key_Code::Z]) {
+    if (input->key_pressed[(int)Key_Code::Z] && imgui.focused_node == 0) {
         show_config_gui = !show_config_gui;
     }
 
@@ -1883,10 +1988,15 @@ void draw_example_gui(Input* input)
     static bool toggle_thing = false;
     static bool layout_window = false;
     static bool padding_test = false;
+    static bool preferred_test = false;
+
+    auto window = gui_push_window(imgui.root_handle, "Test");
+    String* str = gui_store_string(window, "");
+    gui_push_text_edit(window, str);
 
     if (show_config_gui) {
         gui_matching_add_checkpoint_name("Config GUI");
-        auto window = gui_push_window(imgui.root_handle, input, "Config_Window");
+        auto window = gui_push_window(imgui.root_handle, "Config_Window");
 
         gui_push_toggle(gui_push_text_description(window, "Input hover"), input, &input_hover);
         gui_push_toggle(gui_push_text_description(window, "Z-Test"), input, &z_test);
@@ -1895,6 +2005,21 @@ void draw_example_gui(Input* input)
         gui_push_toggle(gui_push_text_description(window, "Toggle-Thing"), input, &toggle_thing);
         gui_push_toggle(gui_push_text_description(window, "Layout"), input, &layout_window);
         gui_push_toggle(gui_push_text_description(window, "Padding"), input, &padding_test);
+        gui_push_toggle(gui_push_text_description(window, "Preferred"), input, &preferred_test);
+    }
+
+    if (preferred_test) {
+        gui_matching_add_checkpoint_name("Preferred GUI");
+        auto window = gui_push_window(imgui.root_handle, "Preferred");
+        auto container = gui_add_node(window, gui_size_make_fill(), gui_size_make_fill(), gui_drawable_make_rect(white));
+        gui_node_set_layout(container, GUI_Stack_Direction::LEFT_TO_RIGHT);
+        gui_node_set_padding(container, 2, 2, true);
+        gui_add_node(container, gui_size_make_fixed(50), gui_size_make_fill(), gui_drawable_make_rect(gray, 1, black));
+        gui_add_node(container, gui_size_make(60, true, true, false, 0), gui_size_make_fill(), gui_drawable_make_rect(red, 1, black));
+        gui_add_node(container, gui_size_make(20, true, true, false, 0), gui_size_make_fill(), gui_drawable_make_rect(red, 1, black));
+        gui_add_node(container, gui_size_make(60, true, true, false, 100), gui_size_make_fill(), gui_drawable_make_rect(green, 1, black));
+        gui_add_node(container, gui_size_make(20, true, true, false, 100), gui_size_make_fill(), gui_drawable_make_rect(green, 1, black));
+        gui_add_node(container, gui_size_make(20, true, true, false, 100), gui_size_make_fill(), gui_drawable_make_rect(green, 1, black));
     }
 
     if (padding_test) {
@@ -1979,7 +2104,7 @@ void draw_example_gui(Input* input)
     if (empty_window)
     {
         gui_matching_add_checkpoint_name("Empty window");
-        auto window = gui_push_window(imgui.root_handle, input, "Test");
+        auto window = gui_push_window(imgui.root_handle, "Test");
         // gui_push_text(window, string_create_static("Text"), 2.0f);
         // gui_push_text(window, string_create_static("Take 2"), 2.0f);
     }
@@ -2041,7 +2166,7 @@ void draw_example_gui(Input* input)
         int pixel_width = 100;
         int pixel_height = 100;
 
-        auto window = gui_push_window(imgui.root_handle, input, "Test window");
+        auto window = gui_push_window(imgui.root_handle, "Test window");
 
         // Add number couter with userdata
         auto space = gui_add_node(window, gui_size_make_fill(), gui_size_make_fill(), gui_drawable_make_rect(cyan));
@@ -2058,7 +2183,7 @@ void draw_example_gui(Input* input)
             }
             else
             {
-                bool pressed = gui_push_button(toggle_area, input, string_create_static("Press me!"));
+                bool pressed = gui_push_button(toggle_area, string_create_static("Press me!"));
                 int* value = gui_store_primitive<int>(toggle_area, 0);
                 if (pressed) {
                     *value += 1;
@@ -2188,7 +2313,7 @@ void render_rework()
     Renderer_2D* renderer_2D = renderer_2D_create(text_renderer);
     SCOPE_EXIT(renderer_2D_destroy(renderer_2D));
 
-    imgui_initialize(text_renderer, window);
+    imgui_initialize(text_renderer, window, window_get_input(window));
     SCOPE_EXIT(imgui_destroy());
 
     // Window Loop

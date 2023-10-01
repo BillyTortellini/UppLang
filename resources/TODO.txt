@@ -1,52 +1,17 @@
 
 
-Things to implement:
- - Further layout options:
-    * Max size for fill, so we can have elements with different text sizes but still same size (E.g. git buttons)
-
-More input elements:
- * Text input
- * Float/Integer input (Basically text but maybe with other things...)
- * Reusable resize/moving of windows for other elements
-    Double click for fitting to child content...
- * Scroll Bar
- * List of items
- * Drop-Down Menu
- * Sort of focus system, e.g. even when we move the mouse away we still want to type...
-    So when we click on something that can receive input, it becomes the focused element
-
-
-
-
-
-Ideas for Layout-Refactor:
-    - GUI_Size should also be able to "inherit" fill from children, e.g. if one child wants to fill, then the parent also wants to fill...
-    - GUI_Alignment should be settable in each child, not in parent layout (E.g. for left/right align)
-    - Padding between child items should be settable?
-    - Text height should be a inheritable property, maybe text-drawable shouldn't implicitly use height of container...
-
-Ideas for Rendering-Refactor
-    - Things should be Pixel-Aligned...
-    - There should be options for borders for rectagles
-
-Which things should be inheritable?
-    - Size and position...
-The options we have to reduce config size are:
-    Set reasonable defaults for values or have inheritable values...
-
-What happens when Stack layout has fixed positioned children/when layered layout has non-positioned children?
-I think I want to remove the layered layout completely, and just have layers/z-index for positioned children...
-alignment in parent when positioned? Does nothing, obviously...
-
-// Note: Ill make gui position and gui layout things that can be set per node, and have default values...
-
+Text Input:
+    Draw some text into a single line, 
+    when clicked a cursor appears, add/remove text based on key_strokes...
 
 
 TODO:
- - Some stacking setting system so we don't have to specify all things for each node
- - Refactor Draggable and resizable for windows, so that this can be reused for other components.
- - Align layout to pixels, add integer checks to overlap correction, 
-    Borders with integer thickness
+ * Bug with preferred, left border not visible anymore...
+ * Move to new header file
+ * Scroll Bar
+ * Reusable resize/moving of windows for other elements 
+ * Drop-Down Menu/Pop-Up window -> Probably just add a new element to root thingy with topmost z-index which disapperas after focus lost
+
 
 DONE:
  - Boolean toggles to disable rendering, but still keep the nodes "alive"
@@ -157,11 +122,6 @@ My Use-cases for this GUI:
 This means:
  - Formated text output (Labels)
  - Buttons 
- - I think a userdata void* for each node would be interesting, with an optional destroy method and
-    a initialize value. --> No templates, and it would also work out just fine.
-    This way we could store arbitrary stuff there, and no-one would bat an eye. This also allows the client to control 
-    where the memory comes from.
- - I think drag and drop could then be implemented with this userdata
  - Also text input and editing could be done like this, by storing a string in the meantime.
  - Text-fields for entering text (Integers, floats, or other text)
  - Sliders
@@ -207,7 +167,6 @@ Implementation plan:
  * Check that drawing is done in a performant way (E.g. layer per layer, and that layers are correctly calculated)
  * Add text rendering to the whole schablam, so we can build up our normal menues again
  * Try to get input to work, e.g. do the matching with the component from the previous runs 
- * 
 
 Convert functionality:
  - Should probably be updated, the method names dont use underscores...
@@ -231,12 +190,6 @@ So where do I start:
  - Drawing rectangles and lines correctly on top of one another
  - Drawing rectangles exactly at pixel lines...
  - A button, which does something to the drawn thing, maybe a toggle
-
-Is there anything useful I can do with a depth buffer?
- - If I draw pixel perfect lines and rectangles, I can do that with a depth buffer... 
- - but it has to be different from the main scene depth buffer...
- - For Transparent effects to work correctly (Text, see-through windows, thin lines, antialiased objects..., images with transparency)
-    we cannot really use a depth buffer, or we have to do depth sorting...
 
 Use case:
  - Running test-cases from the GUI
