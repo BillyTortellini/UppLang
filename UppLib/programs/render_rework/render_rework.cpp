@@ -859,11 +859,12 @@ void gui_layout_layout_children(int node_index, int dim)
         Dynamic_Array<GUI_Constraint> fill_constraints = dynamic_array_create_empty<GUI_Constraint>(1);
         SCOPE_EXIT(dynamic_array_destroy(&preferred_constraints));
         SCOPE_EXIT(dynamic_array_destroy(&fill_constraints));
-        int space_without_padding = node_size - node.layout.padding[dim];
+        int space_without_padding = node_size - node.layout.padding[dim] * 2;
         int space_min_preferred = 0;
         int space_full_preferred = 0;
         int space_min_fill = 0;
         {
+            bool first_child_drawn = false;
             int child_index = node.index_first_child;
             while (child_index != -1)
             {
@@ -887,9 +888,10 @@ void gui_layout_layout_children(int node_index, int dim)
 
                 // Set size to minimum and adjust free space
                 child_node.calculated_size[dim] = child_node.min_size[dim];
-                if (node.layout.pad_between_children && child_index != node.index_first_child) {
+                if (node.layout.pad_between_children && first_child_drawn) {
                     space_without_padding -= node.layout.padding[dim];
                 }
+                first_child_drawn = true;
 
                 // Add node indices to corresponding indices
                 if (child_node.should_fill[dim]) {
@@ -1167,7 +1169,6 @@ void gui_append_to_string(String* append_to, int indentation_level, int node_ind
 
     string_append_formated(append_to, "#%d: ", node_index);
     if (print_bb) {
-        auto bb = node.bounding_box;
         if (!node.clipped_box.available) {
             string_append_formated(append_to, "CLIPPED");
         }
@@ -1175,7 +1176,16 @@ void gui_append_to_string(String* append_to, int indentation_level, int node_ind
             string_append_formated(append_to, "Hidden");
         }
         else {
-            string_append_formated(append_to, "(%d, %d)", bb[0].max - bb[0].min, bb[1].max - bb[1].min);
+            auto bb = node.bounding_box;
+            auto cl = node.clipped_box.value;
+            int w = bb[0].max - bb[0].min;
+            int h = bb[1].max - bb[1].min;
+            int cw = cl[0].max - cl[0].min;
+            int ch = cl[1].max - cl[1].min;
+            string_append_formated(append_to, "(%d, %d)", w, h);
+            if (cw != w || ch != h) {
+                string_append_formated(append_to, ", Clipped (%d, %d)", cw, ch);
+            }
         }
     }
 
@@ -1348,14 +1358,6 @@ void gui_update(Input* input)
         gui_layout_calculate_min_size(0, 1);
         gui_layout_layout_children(0, 0);
         gui_layout_layout_children(0, 1);
-    }
-
-    // Print UI if requested
-    if (input->key_pressed[(int)Key_Code::P]) {
-        String str = string_create_empty(1);
-        SCOPE_EXIT(string_destroy(&str));
-        gui_append_to_string(&str, 0, 0);
-        logg("%s\n\n", str.characters);
     }
 
     // Handle input (Do mouse collision testing)
@@ -1581,6 +1583,14 @@ void gui_update(Input* input)
     for (int i = 0; i < nodes.size; i++) {
         auto& node = nodes[i];
         node.hidden = false;
+    }
+
+    // Print UI if requested
+    if (input->key_pressed[(int)Key_Code::P]) {
+        String str = string_create_empty(1);
+        SCOPE_EXIT(string_destroy(&str));
+        gui_append_to_string(&str, 0, 0);
+        logg("%s\n\n", str.characters);
     }
 }
 
@@ -1988,7 +1998,7 @@ void draw_example_gui(Input* input)
     static bool toggle_thing = false;
     static bool layout_window = false;
     static bool padding_test = false;
-    static bool preferred_test = false;
+    static bool preferred_test = true;
 
     auto window = gui_push_window(imgui.root_handle, "Test");
     String* str = gui_store_string(window, "");
@@ -2013,7 +2023,7 @@ void draw_example_gui(Input* input)
         auto window = gui_push_window(imgui.root_handle, "Preferred");
         auto container = gui_add_node(window, gui_size_make_fill(), gui_size_make_fill(), gui_drawable_make_rect(white));
         gui_node_set_layout(container, GUI_Stack_Direction::LEFT_TO_RIGHT);
-        gui_node_set_padding(container, 2, 2, true);
+        gui_node_set_padding(container, 4, 4, true);
         gui_add_node(container, gui_size_make_fixed(50), gui_size_make_fill(), gui_drawable_make_rect(gray, 1, black));
         gui_add_node(container, gui_size_make(60, true, true, false, 0), gui_size_make_fill(), gui_drawable_make_rect(red, 1, black));
         gui_add_node(container, gui_size_make(20, true, true, false, 0), gui_size_make_fill(), gui_drawable_make_rect(red, 1, black));
