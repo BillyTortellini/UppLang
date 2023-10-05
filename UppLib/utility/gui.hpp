@@ -2,215 +2,150 @@
 
 #include "../math/umath.hpp"
 #include "../datastructures/string.hpp"
-#include "../win32/timing.hpp"
+#include "../rendering/basic2D.hpp"
 
-// Forward Declarations
-struct Input;
-struct Renderer_2D;
-struct Rendering_Core;
-struct Window_State;
+// Types and forward definitions
+struct Text_Renderer;
+struct Window;
+struct GUI_Size;
+struct GUI_Drawable;
 
-enum class Anchor_2D
+enum class GUI_Stack_Direction {
+    LEFT_TO_RIGHT,
+    RIGHT_TO_LEFT,
+    TOP_TO_BOTTOM,
+    BOTTOM_TO_TOP,
+};
+
+enum class GUI_Alignment
 {
-    TOP_LEFT,
-    TOP_CENTER,
-    TOP_RIGHT,
-    CENTER_LEFT,
-    CENTER_CENTER,
-    CENTER_RIGHT,
-    BOTTOM_LEFT,
-    BOTTOM_CENTER,
-    BOTTOM_RIGHT
+    MIN, // in x this is left_aligned, in y bottom aligned
+    MAX,
+    CENTER,
 };
-vec2 anchor_to_direction(Anchor_2D anchor);
+
+typedef void (*gui_userdata_destroy_fn)(void* userdata);
 
 
-struct GUI
+
+void gui_initialize(Text_Renderer* text_renderer, Window* window);
+void gui_destroy();
+void gui_update_and_render(); // Generates 
+
+struct GUI_Handle
 {
-    vec2 mouse_pos; // Normalized
-    vec2 mouse_pos_last_frame;
-    bool mouse_down_last_frame;
-    bool mouse_down_this_frame;
-
-    bool element_in_focus;
-    bool draw_in_focus;
-    vec2 focused_size;
-    vec2 focused_pos;
-
-    bool backspace_was_down = false;
-    double backspace_down_time;
-    String text_in_edit;
-    String numeric_input_buffer;
-    float current_depth = 0.99f;
-
-    Input* input;
-    Timer* timer;
-    Renderer_2D* renderer_2d;
+    int index;
+    bool mouse_hover;
+    bool mouse_hovers_child;
+    bool first_time_created;
+    void* userdata;
 };
 
-GUI gui_create(Renderer_2D* renderer_2d, Input* input, Timer* timer);
-void gui_destroy(GUI* gui);
-void gui_update(GUI* gui, Input* input, int backbuffer_width, int backbuffer_height);
-void gui_render(GUI* gui, Rendering_Core* core);
-float gui_next_depth(GUI* gui);
-void gui_set_focus(GUI* gui, vec2 pos, vec2 size);
-bool gui_is_in_focus(GUI* gui, vec2 pos, vec2 size);
-vec2 gui_calculate_text_size(GUI* gui, int char_count, float height);
+GUI_Handle gui_add_node(GUI_Handle parent_handle, GUI_Size size_x, GUI_Size size_y, GUI_Drawable drawable);
+void gui_matching_add_checkpoint_int(int value);
+void gui_matching_add_checkpoint_void_ptr(void* ptr);
+void gui_matching_add_checkpoint_name(const char* name);
 
-struct GUI_Position {
-    vec2 pos;
-    vec2 size;
+GUI_Handle gui_root_handle();
+void gui_node_set_position_fixed(GUI_Handle handle, vec2 offset, Anchor anchor, bool relative_to_window = false);
+void gui_node_set_bounding_box_fixed(GUI_Handle handle, Bounding_Box2 bounding_box);
+void gui_node_set_alignment(GUI_Handle handle, GUI_Alignment alignment = GUI_Alignment::MIN);
+void gui_node_set_layout(
+    GUI_Handle handle, 
+    GUI_Stack_Direction stack_direction = GUI_Stack_Direction::TOP_TO_BOTTOM, 
+    GUI_Alignment child_default_alignment = GUI_Alignment::MIN,
+    vec2 child_offset = vec2(0,0));
+void gui_node_set_layout_child_offset(GUI_Handle handle, vec2 child_offset);
+void gui_node_set_padding(GUI_Handle handle, int x_padding, int y_padding, bool pad_between_children = false);
+void gui_node_update_drawable(GUI_Handle handle, GUI_Drawable drawable);
+void gui_node_update_size(GUI_Handle handle, GUI_Size size_x, GUI_Size size_y);
+void gui_node_set_z_index(GUI_Handle handle, int z_index);
+void gui_node_set_z_index_to_highest(GUI_Handle handle);
+void gui_node_enable_input(GUI_Handle handle);
+void gui_node_set_focus(GUI_Handle handle);
+void gui_node_remove_focus(GUI_Handle handle);
+bool gui_node_has_focus(GUI_Handle handle);
+void gui_node_hide(GUI_Handle handle);
+void gui_node_keep_children_even_if_not_referenced(GUI_Handle handle);
+void gui_node_set_userdata(GUI_Handle& handle, void* userdata, gui_userdata_destroy_fn destroy_fn);
+Bounding_Box2 gui_node_get_previous_frame_box(GUI_Handle handle);
+vec2 gui_node_get_previous_frame_min_child_size(GUI_Handle handle);
+
+
+
+struct GUI_Size
+{
+    int min_size;
+    bool fit_at_least_children; // If set, grows to accomodate min size of children...
+
+    // Fill options;
+    bool fill; // Fill up parent, if multiple children fill up parent, the available size is split
+    bool inherit_fill_from_children; // If a child also wants to fill, this will propagate up
+    int preferred_size; // Set to 0 to disable, will be ignored if < min_size
 };
 
-GUI_Position gui_position_make(vec2 pos, vec2 size);
-GUI_Position gui_position_make_neighbour(GUI_Position origin, Anchor_2D anchor, vec2 size);
-GUI_Position gui_position_make_on_window_border(GUI* gui, vec2 size, Anchor_2D anchor);
-GUI_Position gui_position_make_inside(GUI_Position parent, Anchor_2D anchor, vec2 size);
+GUI_Size gui_size_make(int min_size, bool fit_at_least_children, bool fill, bool inherit_fill_from_children, int preferred_size);
+GUI_Size gui_size_make_fit(bool inherit_fill = false);
+GUI_Size gui_size_make_fixed(float value);
+GUI_Size gui_size_make_fill(bool fit_at_least_children = true);
+GUI_Size gui_size_make_preferred(int preferred, int min = 0, bool fit_at_least_children = true);
 
-bool gui_checkbox(GUI* gui, vec2 pos, vec2 size, bool* value);
-bool gui_checkbox(GUI* gui, GUI_Position pos, bool* value);
-bool gui_slider(GUI* gui, GUI_Position pos, float* value, float min, float max) ;
-void gui_label(GUI* gui, GUI_Position pos, const char* text);
-void gui_label_float(GUI* gui, GUI_Position pos, float f);
-bool gui_text_input_string(GUI* gui, String* to_fill, vec2 pos, vec2 size, bool only_write_on_enter, bool clear_on_focus);
-bool gui_text_input_string(GUI* gui, String* to_fill, GUI_Position pos, bool only_write_on_enter, bool clear_on_focus);
-bool gui_text_input_int(GUI* gui, vec2 pos, vec2 size, int* value);
-bool gui_text_input_int(GUI* gui, GUI_Position pos, int* value);
-bool gui_text_input_float(GUI* gui, vec2 pos, vec2 size, float* value);
-bool gui_text_input_float(GUI* gui, GUI_Position pos, float* value);
-bool gui_button(GUI* gui, vec2 pos, vec2 size, const char* text);
-bool gui_button(GUI* gui, GUI_Position pos, const char* text);
+enum class GUI_Drawable_Type
+{
+    RECTANGLE,
+    TEXT,
+    NONE, // Just a container for other items (Usefull for layout)
+};
 
-/* 
-TODO:
-    GUI:
-     - Object placement in windows
-     - Text renderer with depth
-     - Movable windows -> Handling overlaps
-     - Popup-like stuff, or toasts (Like on mobile phones)
-     - Rerouting logg output to GUI-Elements Display
-     - Variable tweaker (Search bar and input stuff)
-     - Config for GUI-style (Colors, sizes...)
-*/
+struct GUI_Drawable
+{
+    GUI_Drawable_Type type;
+    String text;
+    vec4 color;
 
-/*
- GUI machen:
- -----------
- Was will ich genau?
-    Einfach benutzbare, minimalistische GUI library, mit der ich elemente auf den screen platzieren kann.
-    USE_CASES:
-        - Ein Parameter tuner, mit dem ich parameter dynamisch setzen kann
-            - integer, floats, vectoren, booleans, strings
-        - Einfache Menüs, mit denen ich variablen überwachen und bearbeiten kann (E.g. Camera pos/direction anzeigen)
-            Normalerweise Structs anschauen können, die werte bearbeiten (Eventuell auch mit parameter tuner)
-        - Ausgabe von Error messages
-  
-    Was braucht die library:
-        Grundbausteine:
-        - Buttons (With text)
-        - Labels (String ausgabe)
-        - Text Input (Numerisch/String input)
-        - Drop-Down liste
-        - Slider (Für numerische Values)
-        - Text Area (Großes feld, wo man text bearbeiten kann)
+    // Rectangle Options
+    vec4 border_color;
+    int border_thickness;
+    int edge_radius;
+};
 
-        Advanced Stuff:
-        - Layout Optionen (Grid layout, other stuff?)
-        - Text passt size an, nicht umgekehrt
-        - Overlay handling
-        - Scrollbars
-        - Images/Icons
-        - Drag-and-Drop-able items
-        - Movable Windows
-        - Popups
-        - Antialiasing, schönere Effekte
-
-Meilensteine:
-    - Slider
-    - Checkboxes
-    - Dropdown?
-    - Buttons respond to click mit animation
-    - Mehrere Buttons, welche überlappen können und nicht scheiße sind (Eventuell Layer system)
-    //- Movable Buttons mit rechtsclick -> in imgui müsste dann der caller die pos speichern -> eventuell movable window?
-
-Implementiert:
-    - Text input (Braucht focus mechanik)
-    - Single Button, der auf Button-Press reagiert
-        - Einfärbiges Rechteck
-        - Statische Position auf Bildschirm
-        - Print wenn der Button gepresst wird
-    - Hover-Feature für button implementieren
-    - Text innerhalb des Buttons (Zentriert) zeichnen, mit text cutoff!
-    - Aspect ratio und size zeug festlegen
-    
-
- Wie implementiere ich dass?
-    ALLGEMEIN: Functionen über Aussehen
-
- Wie werde ich den Button implementieren?
-    Ich will sowas haben wie
-        GUI gui = gui_create(...);
-
-        // Start of frame
-        gui_update(&gui, input);
-
-        // Irgendwo (Einmal pro frame)
-        bool button_pressed = gui_button(&gui, size = vec2(0.1, 0.2), pos = vec2(0, 0))
-
-        // End of frame
-        gui_draw(&gui);
-
-    Problem: GUI call (gui_button) hat keinen input als übergabe, deswegen muss es mouse-clicks am anfang des frames speichern
-        Ich muss mal nachschauen wie ich zurzeit maus input mache
-
-        Überlappende elemente werden doppelt angeschprochen
-
-    Frage:
-        Wie werden Größen/Positionen angegeben? Wie interagieren die Sachen mit aspekt ratios? 
-
-        Wie schauen normale Use-Cases aus?
-            User definiert Fenster, in dem die elemente platziert werden
-            Wenn ich size = 0.1/0.2 angebe, dann will ich dass es x anhand von y skaliert wird        
-
-        Approaches für Größen:
-            - Fixe Größen in Physikalischer Größe, unabhängig von Window Size:
-                + Immer gleich gut benutzbar, weil immer gleich groß
-                + Einfache Berechnung
-                - Nicht responsive, bei kleinen Fenstern ist alles zu groß, viele überlappende sachen
-            - Größen relativ zu Bildschirmhöhe
-                + Unterschiedlich groß
-                - Bei großen Fenster zu große Elemente
-            - Kombinierter Approch, physikalische größe, außer bei zu kleinen Fenster
-                + Mehr zeug zum angeben
-
-            Größen relativ zu kleinster Bildschirmdimension -> Geht das überhaupt mit GUI?
-                Input: Box größe x/y
-                
-            Eine prozentangabe zur kleinsten Bildschirm-Dimension (Also hauptsächlich Höhe)
-            Wieso/was macht das?
-        
- */
+GUI_Drawable gui_drawable_make_none();
+GUI_Drawable gui_drawable_make_text(String text, vec4 color = vec4(0.0f, 0.0f, 0.0f, 1.0f));
+GUI_Drawable gui_drawable_make_rect(vec4 color, int border_thickness = 0, vec4 border_color = vec4(0), int edge_radius = 0);
+void gui_drawable_destroy(GUI_Drawable& drawable);
 
 
-/* 
-I want to have order independet rendering of primitives:
-Primitives:
-    * Rectangles
-    * Text
-    * Lines 2D
-    * Circles
-    * Lines 3D
+// Helper methods
+template<typename T>
+T* gui_store_primitive(GUI_Handle parent_handle, T default_value) {
+    auto node_handle = gui_add_node(parent_handle, gui_size_make_fixed(0.0f), gui_size_make_fixed(0.0f), gui_drawable_make_none());
+    gui_node_hide(node_handle);
+    if (node_handle.userdata == 0) {
+        T* new_value = new T;
+        *new_value = default_value;
+        gui_node_set_userdata(
+            node_handle, (void*)new_value,
+            [](void* data) -> void {
+                T* typed_data = (T*)data;
+                delete typed_data;
+            }
+        );
+        return new_value;
+    }
+    return (T*)node_handle.userdata;
+}
 
-Advanced stuff:
-    Anti aliasing for everything
-    
-Implementation:
-    * First implement depth with colored rectangles
-    * Depth for text rendering
-*/
+String* gui_store_string(GUI_Handle parent_handle, const char* initial_string);
 
 
-// Actually gui stuff is actually just drawing rectangles and text
-// To clean this up, i think i just want to have a 2d drawing library, 
-// I also want to have order independent rendering
+
+// PREDEFINED OBJECTS
+GUI_Handle gui_push_text(GUI_Handle parent_handle, String text, float text_height_cm = .4f, vec4 color = vec4(0.0f, 0.0f, 0.0f, 1.0f));
+GUI_Handle gui_push_window(GUI_Handle parent_handle, const char* name);
+bool gui_push_button(GUI_Handle parent_handle, String text);
+void gui_push_text_edit(GUI_Handle parent_handle, String* string, float text_height_cm = 0.4f);
+bool gui_push_toggle(GUI_Handle parent_handle, bool* value);
+GUI_Handle gui_push_text_description(GUI_Handle parent_handle, const char* text);
+
+void gui_push_example_gui();
 

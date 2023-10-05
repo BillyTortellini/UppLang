@@ -60,6 +60,8 @@ TODO:
         - L-Systems
 
 */
+
+/*
 Random g_random;
 
 struct City_Vertex
@@ -192,6 +194,7 @@ void street_generate_hotspot_points(DynamicArray<vec2>* to_fill, int point_count
     Just for testing the algorithm, i wont need an acceleration structure, just do the dumbest thing possible for now
 */
 
+/*
 struct StreetLine
 {
     int start;
@@ -287,8 +290,6 @@ void streetnetwork_place_buildings_random(StreetNetwork* network, float radius) 
             if (random_next_bool(&g_random, 0.7f)) {
                 dynamic_array_push_back(&network->buildings, street_buidling_placeholder_make(pos - normal * (radius * 1.2f + 0.1f), radius, normal));
             }
-            /*
-            */
         }
     }
 }
@@ -601,7 +602,6 @@ void streetnetwork_grow_main_road(StreetNetwork* network, float split_distance, 
     streetnetwork_grow_branch(network, middle_index, normal, branch_length, 3);
     streetnetwork_grow_branch(network, middle_index, -normal, branch_length, 2);
 }
-*/
 
 void streetnetwork_generate_seedpoints_for_branches(StreetNetwork* network, float split_distance, float fail_percentage)
 {
@@ -640,8 +640,6 @@ void streetnetwork_generate_seedpoints_for_branches(StreetNetwork* network, floa
                 dynamic_array_push_back(&network->open_branches, streetbranch_make(network->positions.size - 1, normal));
                 dynamic_array_push_back(&network->open_branches, streetbranch_make(network->positions.size - 1, -normal));
             }
-            /*
-            */
         }
     }
 }
@@ -684,14 +682,6 @@ Optional<int> streetnetwork_add_line_between_points_with_collision(StreetNetwork
 void streetnetwork_grow_branches(StreetNetwork* network, float dist, float destroy_start_radius, float max_radius)
 {
     // Dont do something lame, do something cooler 
-    /*
-        Options:
-            - Turn left and grow
-            - Turn right and grow
-            - Terminate
-            - Split in normal direciton
-            - Create all kinds of intersections
-    */
     float turn_left_percentage = 0.3f;
     float turn_right_percentage = 0.3f;
     float terminate_percentage = 0.05f;
@@ -899,7 +889,6 @@ void street_generate_between_hotspots_random(
 
     street_generate_from_points(dynamic_array_to_array(&street_points), vertex_buffer, index_buffer, state, thickness);
 }
-*/
 
 struct Polygon2D
 {
@@ -1309,11 +1298,9 @@ void building_create_from_polygon_2d(Polygon2D* polygon, Dynamic_Array<Building_
     }
 }
 
-/*
 Mesh_GPU_Data city_street_create_mesh_from_network()
 {
 }
-*/
 
 //Mesh_GPU_Buffer city_building_create_mesh_from_polygon(Polygon2D* polygon, float height, Rendering_Core* core)
 //{
@@ -1457,6 +1444,8 @@ void streetnetwork_regenerate(StreetNetwork* network, float max_radius)
     streetnetwork_place_buildings_random(network, 0.15f);
 }
 
+*/
+
 void proc_city_main()
 {
     /*
@@ -1585,3 +1574,4 @@ void proc_city_main()
     logg("what");
     */
 }
+

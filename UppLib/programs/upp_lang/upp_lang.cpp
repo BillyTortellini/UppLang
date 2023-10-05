@@ -219,8 +219,6 @@ void upp_lang_main()
 
     Renderer_2D* renderer_2D = renderer_2D_create(text_renderer);
     SCOPE_EXIT(renderer_2D_destroy(renderer_2D));
-    GUI gui = gui_create(renderer_2D, window_get_input(window), &timer);
-    SCOPE_EXIT(gui_destroy(&gui));
 
     syntax_editor_initialize(&rendering_core, text_renderer, renderer_2D, window_get_input(window), &timer);
     SCOPE_EXIT(syntax_editor_destroy());

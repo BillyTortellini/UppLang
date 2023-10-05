@@ -1,114 +1,30 @@
 
+Scroll-Bar:
+    * Implement as new node atop of previous node (fixed layout)
+Required core-functionality:
+    * New layout-option for auto-layout: child_offset (Just a offset that is added to child positions, not for relative children)
+    * Getting min-child-size from previous frame by handle
 
-Text Input:
-    Draw some text into a single line, 
-    when clicked a cursor appears, add/remove text based on key_strokes...
 
 
 TODO:
- * Bug with preferred, left border not visible anymore...
- * Move to new header file
  * Scroll Bar
+ * Drop-Down Menu/Pop-Up window -> Probably just add a new element to root thingy with topmost z-index which disappears after focus lost
  * Reusable resize/moving of windows for other elements 
- * Drop-Down Menu/Pop-Up window -> Probably just add a new element to root thingy with topmost z-index which disapperas after focus lost
+ * More padding options (E.g. border option so that cut-off can handle padding correctly...)
+ * Integer/Float input
+ * Toggle-able seperator (Section seperator)
 
-
-DONE:
- - Boolean toggles to disable rendering, but still keep the nodes "alive"
- - Better matching system
- - Fix Input order, needs to be correct...
- - Stacked layout should draw in z-order
- - Generating draw batches should respect non-drawing elements (Just containers)
- - Add window focus, which changes depending on which window is clicked
-
-- 2 Places need the z-order: Update (Which element is in focus) and Render (Drawing order...)
-    Order is also important for Matching from previous frames. 
-    So we need both the specification order, and the draw order... 
-    So I guess I'll add one phase to the first update pass to generate the draw order
-        After removal of dead nodes --> This currently means in the update pass.
-    How is focusing the top element gonna work? Either by just setting the z to a higher value each time,
-    Or by looping over all previous elements in the parent container and updating the indices there,
-    which won't work if new windows are created in this frame, but I guess new windows will be at the top most of the time
-        and with this approach I also need to add just one more function to the whole schablam
-    Does the z-Order do anything when we are not in a stacked contaner? I guess not, because elements will be layed out
-        based on stacking, or some new method in the future. But i guess there are those absolute elements,
-        and it would kinda make sense to use z-order for those. But then I don't think theres a good reason for the stacked thing at all
-
-DONE:
- - Turn gui into global variable
- - Add drawable type to node: Either rectangle, nothing or text
-    * Need to store text per node, and free on delete node
- - Simple layout-options: Horizontal or vertical stack
- - Fix layout being too beeg
- - Refactor with 2d array of sizes
- - Fix layout after refactor lol
- - Clip children in parent to prevent overflow
- - Nodes are never deleted?
- - Fill layout seems to be wrong when children are present.
- - Input in some form, like a buttin?!?
- - Add some per node data with default value stuff, like integers and strings and stuff
- - Drag and drop
- - Change mouse cursor when hovering
- - Confine mouse cursor inside window while dragging
- - BUG: Layout when window gets small
- - BUG: Text clipping when window is outside of screen
-
-Current Item description:
- - Window focus isn't correct, sometimes I can adjust 2 things at the same time
-    --> On hover is probably not set correctly, should only be set once
-    and also the logic has to respect on hover!
- - Currently the first child will always receive the input, but the last child is actually
-    the one which will be drawn on top
-
-Implementation order:
- - Add new layout option: stacked
- - Add z-index which defaults to 0 for every item, but can be specified
- - Respect order when calculating the draw-batches
-
- - Add hover over child boolean to input system
- - 
-
-So I need a system where 
- - The z-order of items can be set through interactions
- - Z-Order is currently determined by matching order (e.g. order in source code)
- - I cannot rewrite source code order if I want to change this.
- - Question is if this how much this should be scriptable, and how much the core library should change that
- - What I want is that if some componenets are clicked inside a window this window will be put to the forefront
- - Dialog boxes should start focused, and maybe should stay focused until dialog is ended
- - Current solution is that there is a new layout type, something like Stacking container
-    each child in the layer container is either just set to an anchor of the parent (With size),
-    or it has absolute positioning (For windows)
-    Also children may set a z-value, which is normally ignored, but in the stacked container
-    the ordering is done first by z-value, and then push-order (Code order)
- - How would window-focus then be implemented? 
-    For inputs the window will need to know if the mouse is hoverd above it, or one of it's children (Note: important because of visibility culling)
-    and if a mouse-key is pressed then it should be moved to the highest z-order (Which means that all other windows should be updated too...)
- - Maybe absolute position should be relative to the parent?
-    Currently size is always calculated as either fill or min
-    Position is set by parent, except for absolute positions, then it is ignored
-    So there is no way to have an absolute position and min size for example
- - Probably position should be either absolute (in screen coordinates), relative to parent (Anchor and offset), or calculated by parent (For stacking layouts)
- - For containers size should probably be settable to child size (e.g. if some child has fill, add fill, otherwise the min of the min)
- - For layout, use parent-layout may be something useful?
-
-TODO:
- - Check if relative position is working (both to parent and too window)
- - Align to pixel-grid (So things like margin, padding, and maybe? border-thickness are better defined)
-    This also makes it easier to do exact collision testing, and we don't have to worry about draw-order being dependent on floating point accuracy
- - Focus/Z-order for windows
-    * Requires other setup for rendering batches
- - Sliders (min/max value, maybe also with integers)
- - Scrolling on overflow
- - Text input (With movement and validation and shortcuts)
- - Maybe a better matching system (for e.g. pop-up windows), or a way to add inactive nodes (not drawn, but the node hierarchy is still generated for matching)
-
-Next steps:
- - Maybe think about pixel-aligning the boxes and schtuff
- - Batch rendering currently consideres layout-containers to be 'drawn', which isn't true and causes performance lozz
- - Better rendering options, like borders, rounded-rectanglez, per-vertex color for rectanglez, maybe custom rendering of things
- - Some more input options, like sliders, textfields or schtuff
- - Make GUI a global
- - Make text-renderer global
+Extra Features that I may want to have sometime in the future:
+ * Line-Rendering for graphs
+ * Fill-Weight so that components keep a specific ratio to one another
+ * Tab-able input focus (E.g. move from input to input with tab), so it's easier to add new things
+ * Copy and paste for text/number input
+ * Better text handling, e.g. cursor movement, mouse selection, typical shortcuts, copy and paste, undo/redo
+ * Text area for large text, multiple lines/line-wrapping
+ * UI-Style which determines colors/sizes of predefined objects like windows, buttons...
+ * Images and Icon rendering
+ * Simple Plotting (bar-charts, line-plots, scatter-plot)
 
 
 
