@@ -130,10 +130,12 @@ struct GUI_Node
 
     // Enable/Disable settings (Must be set each frame)
     bool input_enabled; // Element can receive mouse hover, default false
+    bool mouse_wheel_input_enabled; // Element can receive mouse hover, default false
     bool hidden; // Element and all children will be hidden this frame, will not be drawn
     bool keep_children_even_if_not_referenced;
 
     // Input
+    bool has_mouse_wheel_input;
     bool mouse_hover; // If the mouse is hovering over this exact element
     bool mouse_hovers_child; // If the mouse is hovering over a child node which has input enabled
 
@@ -220,6 +222,7 @@ void gui_initialize(Text_Renderer* text_renderer, Window* window)
     root.size[0] = gui_size_make(info.backbuffer_width, false, false, false, 0);
     root.size[1] = gui_size_make(info.backbuffer_height, false, false, false, 0);
     root.input_enabled = false;
+    root.mouse_wheel_input_enabled = false;
     root.hidden = false;
     root.keep_children_even_if_not_referenced = false;
     dynamic_array_push_back(&gui.nodes, root);
@@ -302,6 +305,7 @@ GUI_Handle gui_add_node(GUI_Handle parent_handle, GUI_Size size_x, GUI_Size size
         node.index_next_node = -1;
         node.traversal_next_child = -1;
         node.mouse_hover = false;
+        node.has_mouse_wheel_input = false;
         node.mouse_hovers_child = false;
         node.userdata = 0;
         node.userdata_destroy_fn = 0;
@@ -309,6 +313,7 @@ GUI_Handle gui_add_node(GUI_Handle parent_handle, GUI_Size size_x, GUI_Size size
         node.hidden = false;
         node.keep_children_even_if_not_referenced = false;
         node.input_enabled = false;
+        node.mouse_wheel_input_enabled = false;
         node.drawable.type = GUI_Drawable_Type::NONE; // Note: This is required because drawable actually has ownership of memory
         dynamic_array_push_back(&gui.nodes, node);
         node_index = gui.nodes.size - 1;
@@ -337,6 +342,7 @@ GUI_Handle gui_add_node(GUI_Handle parent_handle, GUI_Size size_x, GUI_Size size
     handle.mouse_hover = nodes[node_index].mouse_hover;
     handle.mouse_hovers_child = nodes[node_index].mouse_hovers_child;
     handle.first_time_created = create_new_node;
+    handle.has_mouse_wheel_input = nodes[node_index].has_mouse_wheel_input;
     handle.userdata = nodes[node_index].userdata;
 
     // Update node data
@@ -811,7 +817,7 @@ void gui_layout_layout_children(int node_index, int dim)
     }
 }
 
-bool gui_find_mouse_hover_node(int node_index)
+void gui_find_mouse_hover_node(int node_index, bool& return_child_took_input, bool& return_child_took_mouse_wheel_input)
 {
     auto& nodes = gui.nodes;
     auto& node = nodes[node_index];
@@ -820,6 +826,7 @@ bool gui_find_mouse_hover_node(int node_index)
     // Check which child has the highest z-index and overlapps
     int highest_z_node_index = -1;
     int highest_z = 0;
+    bool overlap_child_encountered = false;
     int child_index = node.index_first_child;
     while (child_index != -1) {
         auto& child_node = nodes[child_index];
@@ -830,7 +837,7 @@ bool gui_find_mouse_hover_node(int node_index)
         }
         bool overlaps_mouse = child_node.clipped_box.value.is_point_inside(
             vec2(input->mouse_x, (int)(rendering_core.render_information.backbuffer_height - input->mouse_y)));
-        if (!overlaps_mouse) {
+        if (!overlaps_mouse || (overlap_child_encountered && child_node.position.auto_layout)) {
             continue;
         }
 
@@ -843,17 +850,26 @@ bool gui_find_mouse_hover_node(int node_index)
             highest_z = child_node.z_index;
             highest_z_node_index = child_index;
         }
+        if (!child_node.position.auto_layout && !overlap_child_encountered) {
+            highest_z = child_node.z_index;
+            highest_z_node_index = child_index;
+            overlap_child_encountered = true;
+        }
     }
 
-    // Loop over children
+    // Recurse into children
     bool child_took_input = false;
+    bool child_took_wheel_input = false;
     if (highest_z_node_index != -1) {
-        child_took_input = gui_find_mouse_hover_node(highest_z_node_index);
+        gui_find_mouse_hover_node(highest_z_node_index, child_took_input, child_took_wheel_input);
     }
 
     node.mouse_hover = !child_took_input && node.input_enabled;
     node.mouse_hovers_child = !node.mouse_hover;
-    return node.mouse_hover || child_took_input;
+    node.has_mouse_wheel_input = !child_took_wheel_input && node.mouse_wheel_input_enabled;
+
+    return_child_took_input = node.mouse_hover || child_took_input;
+    return_child_took_mouse_wheel_input = node.has_mouse_wheel_input || child_took_wheel_input;
 }
 
 void gui_append_to_string(String* append_to, int indentation_level, int node_index)
@@ -1038,6 +1054,7 @@ void gui_update_and_render()
         node.traversal_next_child = node.index_first_child;
         node.mouse_hover = false;
         node.mouse_hovers_child = false;
+        node.has_mouse_wheel_input = false;
         node.keep_children_even_if_not_referenced = false;
     }
 
@@ -1063,7 +1080,8 @@ void gui_update_and_render()
     }
 
     // Handle input (Do mouse collision testing)
-    gui_find_mouse_hover_node(0);
+    bool unused1, unused2;
+    gui_find_mouse_hover_node(0, unused1, unused2);
 
     // Handle cursor icon
     {
@@ -1337,11 +1355,6 @@ void gui_node_set_position_fixed(GUI_Handle handle, vec2 offset, Anchor anchor, 
     gui.nodes[handle.index].position.relative_to_window = relative_to_window;
 }
 
-void gui_node_set_bounding_box_fixed(GUI_Handle handle, Bounding_Box2 bounding_box) {
-    gui_node_set_position_fixed(handle, bounding_box.min, Anchor::BOTTOM_LEFT, true);
-    gui_node_update_size(handle, gui_size_make_fixed(bounding_box.max.x - bounding_box.min.x), gui_size_make_fixed(bounding_box.max.y - bounding_box.min.y));
-}
-
 void gui_node_set_alignment(GUI_Handle handle, GUI_Alignment alignment) {
     gui.nodes[handle.index].position.auto_layout = true;
     gui.nodes[handle.index].position.alignment = alignment;
@@ -1430,6 +1443,10 @@ void gui_node_enable_input(GUI_Handle handle) {
     gui.nodes[handle.index].input_enabled = true;
 }
 
+void gui_node_enable_mouse_wheel(GUI_Handle handle) {
+    gui.nodes[handle.index].mouse_wheel_input_enabled = true;
+}
+
 void gui_node_set_focus(GUI_Handle handle) {
     gui.focused_node = handle.index;
 }
@@ -1472,6 +1489,17 @@ Bounding_Box2 gui_node_get_previous_frame_box(GUI_Handle handle) {
         return bounding_box_2_make_min_max(vec2(0), vec2(0));
     }
     return gui.nodes[handle.index].bounding_box.as_bounding_box();
+}
+
+GUI_Handle gui_node_get_parent_handle(GUI_Handle handle) {
+    GUI_Handle parent;
+    parent.first_time_created = false;
+    parent.index = gui.nodes[handle.index].index_parent;
+    auto& node = gui.nodes[parent.index];
+    parent.mouse_hover = node.mouse_hover;
+    parent.mouse_hovers_child = node.mouse_hovers_child;
+    parent.userdata = node.userdata;
+    return parent;
 }
 
 vec2 gui_node_get_previous_frame_min_child_size(GUI_Handle handle) {
@@ -1560,53 +1588,70 @@ GUI_Handle gui_push_text(GUI_Handle parent_handle, String text, float text_heigh
     );
 }
 
+struct GUI_Drag_Data
+{
+    vec2 pos;
+    vec2 size;
+    bool drag_active;
+    bool drag_is_move;
+};
+
+void gui_drag_data_apply_to_node(GUI_Drag_Data data, GUI_Handle handle) {
+    gui_node_set_position_fixed(handle, data.pos, Anchor::BOTTOM_LEFT, false);
+    gui_node_update_size(handle, gui_size_make_fixed(data.size.x), gui_size_make_fixed(data.size.y));
+}
+
 struct GUI_Drag_Info
 {
-    vec2 pos; // Last saved position
-    vec2 size; // Last saved size
+    GUI_Drag_Data data;
 
     vec2 drag_start_mouse;
     vec2 drag_start_pos;
     vec2 drag_start_size;
 
-    bool drag_active;
-    bool move;
     bool resize_right;
     bool resize_left;
     bool resize_top;
     bool resize_bottom;
 };
 
-Bounding_Box2 gui_push_movable_or_draggable(GUI_Handle draggable_handle, GUI_Handle drag_area_handle, Bounding_Box2 initial_box, bool move_enabled, bool resize_enabled, vec2 min_size)
+GUI_Drag_Data* gui_push_movable_or_draggable(
+    GUI_Handle draggable_handle, GUI_Handle drag_area_handle, vec2 initial_pos, vec2 initial_size, bool move_enabled, bool resize_enabled, vec2 min_size = vec2(10))
 {
     gui_node_enable_input(drag_area_handle);
     gui_node_enable_input(draggable_handle);
 
     // Push initial info
     GUI_Drag_Info initial_info;
-    initial_info.pos = initial_box.min;
-    initial_info.size = initial_box.max - initial_box.min;
+    memory_set_bytes(&initial_info, sizeof(initial_info), 0);
+    initial_info.data.drag_active = false;
+    initial_info.data.drag_is_move = false;
+    initial_info.data.pos = initial_pos;
+    initial_info.data.size = initial_size;
 
     auto& info = *gui_store_primitive<GUI_Drag_Info>(draggable_handle, initial_info);
+    auto& data = info.data;
     auto input = gui.input;
     bool mouse_down = input->mouse_down[(int)Mouse_Key_Code::LEFT];
     bool mouse_pressed = input->mouse_pressed[(int)Mouse_Key_Code::LEFT];
     vec2 mouse_pos = vec2((float)input->mouse_x, rendering_core.render_information.backbuffer_height - input->mouse_y);
 
     // Reset drag info if mouse is not down
-    if (!mouse_down && info.drag_active) {
-        info.drag_active = false;
-        info.move = false;
+    if (!mouse_down && data.drag_active) {
+        data.drag_active = false;
+        data.drag_is_move = false;
         info.resize_bottom = false;
         info.resize_top = false;
         info.resize_left = false;
         info.resize_right = false;
         window_set_cursor_constrain(gui.window, false);
-        return bounding_box_2_make_anchor(info.pos, info.size, Anchor::BOTTOM_LEFT);
     }
 
     // Check overlap with mouse and node borders
     auto bb = gui_node_get_previous_frame_box(draggable_handle);
+    auto parent_bb = gui_node_get_previous_frame_box(gui_node_get_parent_handle(draggable_handle));
+    bb.min -= parent_bb.min;
+    bb.max -= parent_bb.min;
     const float interaction_distance = 5;
 
     const bool right_border = math_absolute(mouse_pos.x - bb.max.x) < interaction_distance;
@@ -1615,53 +1660,89 @@ Bounding_Box2 gui_push_movable_or_draggable(GUI_Handle draggable_handle, GUI_Han
     const bool top_border = math_absolute(mouse_pos.y - bb.max.y) < interaction_distance && !bottom_border;
 
     // Check if resize started
-    if (!info.drag_active && mouse_pressed && draggable_handle.mouse_hover && resize_enabled)
+    if (!data.drag_active && mouse_pressed && (draggable_handle.mouse_hover || drag_area_handle.mouse_hover) && resize_enabled)
     {
         if (right_border) {
-            info.drag_active = true;
+            data.drag_active = true;
             info.resize_right = true;
         }
         else if (left_border) {
-            info.drag_active = true;
+            data.drag_active = true;
             info.resize_left = true;
         }
         if (bottom_border) {
-            info.drag_active = true;
+            data.drag_active = true;
             info.resize_bottom = true;
         }
         else if (top_border) {
-            info.drag_active = true;
+            data.drag_active = true;
             info.resize_top = true;
         }
 
-        if (info.drag_active) {
+        if (data.drag_active) {
             info.drag_start_size = vec2(bb.max.x - bb.min.x, bb.max.y - bb.min.y);
             info.drag_start_pos = bb.min;
-            info.pos = info.drag_start_pos;
-            info.size = info.drag_start_size;
+            data.pos = info.drag_start_pos;
+            data.size = info.drag_start_size;
             info.drag_start_mouse = mouse_pos;
         }
     }
 
     // Check if move started
-    if (!info.drag_active && mouse_pressed && drag_area_handle.mouse_hover && move_enabled) {
+    if (!data.drag_active && mouse_pressed && drag_area_handle.mouse_hover && move_enabled) {
         info.drag_start_size = vec2(bb.max.x - bb.min.x, bb.max.y - bb.min.y);
         info.drag_start_pos = bb.min;
-        info.pos = info.drag_start_pos;
-        info.size = info.drag_start_size;
+        data.pos = info.drag_start_pos;
+        data.size = info.drag_start_size;
         info.drag_start_mouse = mouse_pos;
 
-        info.drag_active = true;
-        info.move = true;
+        data.drag_active = true;
+        data.drag_is_move = true;
+    }
+
+    // Set cursor icon for resize
+    if ((draggable_handle.mouse_hover || drag_area_handle.mouse_hover) && resize_enabled)
+    {
+        // Handle resize icon
+        bool left = data.drag_active ? info.resize_left : left_border;
+        bool right = data.drag_active ? info.resize_right : right_border;
+        bool top = data.drag_active ? info.resize_top : top_border;
+        bool bot = data.drag_active ? info.resize_bottom : bottom_border;
+
+        if (bot) {
+            if (left) {
+                gui.cursor_type = Cursor_Icon_Type::SIZE_NORTHEAST;
+            }
+            else if (right) {
+                gui.cursor_type = Cursor_Icon_Type::SIZE_SOUTHEAST;
+            }
+            else {
+                gui.cursor_type = Cursor_Icon_Type::SIZE_VERTICAL;
+            }
+        }
+        else if (top) {
+            if (left) {
+                gui.cursor_type = Cursor_Icon_Type::SIZE_SOUTHEAST;
+            }
+            else if (right) {
+                gui.cursor_type = Cursor_Icon_Type::SIZE_NORTHEAST;
+            }
+            else {
+                gui.cursor_type = Cursor_Icon_Type::SIZE_VERTICAL;
+            }
+        }
+        else if (left || right) {
+            gui.cursor_type = Cursor_Icon_Type::SIZE_HORIZONTAL;
+        }
     }
 
     // Handle move/resize
-    if (info.drag_active)
+    if (data.drag_active)
     {
         window_set_cursor_constrain(gui.window, true);
-        vec2 new_pos = info.pos;
-        vec2 new_size = info.size;
-        if (info.move) {
+        vec2 new_pos = data.pos;
+        vec2 new_size = data.size;
+        if (data.drag_is_move) {
             new_pos = info.drag_start_pos + (mouse_pos - info.drag_start_mouse);
             // Restrict movement so we cant move windows out of the window
             auto info = rendering_core.render_information;
@@ -1698,11 +1779,66 @@ Bounding_Box2 gui_push_movable_or_draggable(GUI_Handle draggable_handle, GUI_Han
                 }
             }
         }
-        info.pos = new_pos;
-        info.size = new_size;
+        data.pos = new_pos;
+        data.size = new_size;
     }
 
-    return bounding_box_2_make_anchor(info.pos, info.size, Anchor::BOTTOM_LEFT);
+    return &data;
+}
+
+// Note: It is recommended that size_x and size_y have reasonable minimums, so that the scroll bar has enough space to appear
+GUI_Handle gui_push_scroll_area(GUI_Handle parent_handle, GUI_Size size_x, GUI_Size size_y)
+{
+    // Add scroll area
+    auto scroll_area = gui_add_node(parent_handle, size_x, size_y, gui_drawable_make_none());
+    gui_node_set_layout(scroll_area, GUI_Stack_Direction::LEFT_TO_RIGHT);
+    auto client_area = gui_add_node(scroll_area, gui_size_make_fill(false), gui_size_make_fill(false), gui_drawable_make_none());
+    if (scroll_area.first_time_created) {
+        return client_area;
+    }
+
+    // Calculate sizes from previous frame
+    const vec2 child_min_size = gui_node_get_previous_frame_min_child_size(client_area);
+    Bounding_Box2 bb = gui_node_get_previous_frame_box(scroll_area);
+    const int available = bb.max.y - bb.min.y;
+    const int required = child_min_size.y;
+    if (available >= required) {
+        return client_area;
+    }
+
+    const int max_scroll_distance = required - available;
+    const int bar_width = 10;
+    const int bar_height = math_maximum(20.0f, math_minimum(available - 10.0f, available * available / (float)required));
+
+    // Add vertical scroll bar
+    auto scroll_bar_area = gui_add_node(scroll_area, gui_size_make_fixed(bar_width), gui_size_make_fill(), gui_drawable_make_none());
+    auto scroll_bar = gui_add_node(scroll_bar_area, gui_size_make_fixed(bar_width), gui_size_make_fixed(bar_height), gui_drawable_make_rect(vec4(1.0), 1));
+    auto drag_data = gui_push_movable_or_draggable(scroll_bar, scroll_bar, vec2(0), vec2(1), true, false, vec2(0));
+    gui_node_enable_mouse_wheel(scroll_area);
+
+    int& scroll_distance = *gui_store_primitive<int>(scroll_bar, 0); // In pixel
+    scroll_distance = math_clamp(scroll_distance, 0, max_scroll_distance);
+
+    // Handle mouse interactions with scroll bar
+    if (drag_data->drag_active) {
+        float percentage = 1.0f - math_clamp(drag_data->pos.y / (float)(bb.max.y - bb.min.y - bar_height), 0.0f, 1.0f);
+        scroll_distance = max_scroll_distance * percentage;
+    }
+    else if (scroll_area.has_mouse_wheel_input){
+        float modifier = gui.input->key_down[(int)Key_Code::CTRL] ? 0.2f : 1.0f;
+        scroll_distance = math_clamp(scroll_distance - gui.input->mouse_wheel_delta * 50.0f * modifier, 0.0f, (float) max_scroll_distance);
+    }
+
+    // Set final scroll bar position
+    float percentage = scroll_distance / (float)max_scroll_distance;
+    drag_data->size = vec2(bar_width, bar_height);
+    drag_data->pos.x = 0;
+    drag_data->pos.y = (bb.max.y - bb.min.y - bar_height) * (1.0f - percentage);
+    gui_drag_data_apply_to_node(*drag_data, scroll_bar);
+
+    // Set scrolling
+    gui_node_set_layout_child_offset(client_area, vec2(0, scroll_distance));
+    return client_area;
 }
 
 GUI_Handle gui_push_window(GUI_Handle parent_handle, const char* name)
@@ -1711,11 +1847,11 @@ GUI_Handle gui_push_window(GUI_Handle parent_handle, const char* name)
     auto window_handle = gui_add_node(parent_handle, gui_size_make_fixed(100), gui_size_make_fixed(100), gui_drawable_make_rect(vec4(1), 1, vec4(0, 0, 0, 1)));
     auto header_handle = gui_add_node(window_handle, gui_size_make_fill(), gui_size_make_fit(false), gui_drawable_make_rect(vec4(0.3f, 0.3f, 1.0f, 1.0f)));
 
-    auto bb = gui_push_movable_or_draggable(
+    auto drag_data = gui_push_movable_or_draggable(
         window_handle, header_handle, 
-        bounding_box_2_make_anchor(convertPoint(vec2(0), Unit::NORMALIZED_SCREEN), vec2(300, 500), Anchor::CENTER_CENTER), 
-        true, true, vec2(10, 10));
-    gui_node_set_bounding_box_fixed(window_handle, bb);
+        convertPoint(vec2(0), Unit::NORMALIZED_SCREEN), vec2(300, 500),
+        true, true, vec2(40, 40));
+    gui_drag_data_apply_to_node(*drag_data, window_handle);
     gui_node_set_padding(window_handle, 1, 1);
     gui_node_set_padding(header_handle, 1, 1);
     gui_push_text(header_handle, string_create_static(name), .43f);
@@ -1728,7 +1864,7 @@ GUI_Handle gui_push_window(GUI_Handle parent_handle, const char* name)
     // Push header/client area seperator
     gui_add_node(window_handle, gui_size_make_fill(), gui_size_make_fixed(1), gui_drawable_make_rect(vec4(0, 0, 0, 1)));
 
-    return gui_add_node(window_handle, gui_size_make_fill(), gui_size_make_fill(), gui_drawable_make_none());
+    return gui_push_scroll_area(window_handle, gui_size_make_fill(false), gui_size_make_fill(false));
 }
 
 bool gui_push_button(GUI_Handle parent_handle, String text)
@@ -1751,8 +1887,8 @@ bool gui_push_button(GUI_Handle parent_handle, String text)
     gui_node_set_alignment(text_node, GUI_Alignment::CENTER);
     return button.mouse_hover && gui.input->mouse_pressed[(int)Mouse_Key_Code::LEFT];
 }
-
-void gui_push_text_edit(GUI_Handle parent_handle, String* string, float text_height_cm)
+ 
+GUI_Handle gui_push_focusable(GUI_Handle parent_handle, GUI_Size size_x, GUI_Size size_y)
 {
     auto input = gui.input;
     vec4 normal_bg_color = vec4(vec3(0.8f), 1);
@@ -1760,28 +1896,39 @@ void gui_push_text_edit(GUI_Handle parent_handle, String* string, float text_hei
     vec4 border_color = vec4(0, 0, 0, 1);
     vec4 focus_border_color = vec4(0.7, 0.3, 0.3, 1.0);
 
-    int text_height = convertHeight(text_height_cm, Unit::CENTIMETER);
-    float char_width = text_renderer_line_width(gui.text_renderer, text_height, 1);
-
-    auto container = gui_add_node(parent_handle, gui_size_make_fill(), gui_size_make_fit(),
-        gui_drawable_make_rect(normal_bg_color, 1, border_color, 3));
+    auto container = gui_add_node(parent_handle, size_x, size_y, gui_drawable_make_rect(normal_bg_color, 1, border_color, 3));
     gui_node_set_padding(container, 2, 2, false);
     gui_node_enable_input(container);
-    gui_node_set_layout(container, GUI_Stack_Direction::LEFT_TO_RIGHT);
 
+    // Check if node received focus
     if (container.mouse_hover && !gui_node_has_focus(container)) {
+        // Update drawable to highlight mouse hover
         gui_node_update_drawable(container, gui_drawable_make_rect(highlight_bg_color, 1, border_color, 3));
         if (input->mouse_pressed[(int)Mouse_Key_Code::LEFT]) {
             gui_node_set_focus(container);
         }
     }
 
+    // Check if focus was lost
     if (gui_node_has_focus(container) && !container.mouse_hover && input->mouse_pressed[(int)Mouse_Key_Code::LEFT]) {
         gui_node_remove_focus(container);
     }
 
+    // Update drawable if we have focus
     if (gui_node_has_focus(container)) {
         gui_node_update_drawable(container, gui_drawable_make_rect(highlight_bg_color, 2, focus_border_color, 3));
+    }
+    return container;
+}
+
+void gui_push_text_edit(GUI_Handle parent_handle, String* string, float text_height_cm)
+{
+    auto input = gui.input;
+    auto container = gui_push_focusable(parent_handle, gui_size_make_fill(), gui_size_make_fit());
+    gui_node_set_layout(container, GUI_Stack_Direction::LEFT_TO_RIGHT);
+
+    // Alter text if we have focus
+    if (gui_node_has_focus(container)) {
         for (int i = 0; i < input->key_messages.size; i++) {
             auto& msg = input->key_messages[i];
             if (msg.key_code == Key_Code::BACKSPACE && msg.key_down) {
@@ -1801,8 +1948,12 @@ void gui_push_text_edit(GUI_Handle parent_handle, String* string, float text_hei
             }
         }
     }
+
+    // Add text box
+    int text_height = convertHeight(text_height_cm, Unit::CENTIMETER);
+    float char_width = text_renderer_line_width(gui.text_renderer, text_height, 1);
     auto text = gui_add_node(container, gui_size_make_fixed(string->size * char_width), gui_size_make_fixed(text_height), gui_drawable_make_text(*string));
-    if (gui_node_has_focus(container)) {
+    if (gui_node_has_focus(container)) { // Add cursor
         gui_add_node(container, gui_size_make_fixed(2), gui_size_make_fill(), gui_drawable_make_rect(vec4(0, 0, 0, 1)));
     }
 }
@@ -1847,32 +1998,6 @@ GUI_Handle gui_push_text_description(GUI_Handle parent_handle, const char* text)
     return container;
 }
 
-void gui_push_scroll_bar(GUI_Handle parent_handle)
-{
-    auto scroll_bar = gui_add_node(parent_handle, gui_size_make_fixed(0), gui_size_make_fixed(0), gui_drawable_make_none());
-    if (parent_handle.first_time_created) {
-        gui_node_hide(scroll_bar);
-        return;
-    }
-
-    Bounding_Box2 bb = gui_node_get_previous_frame_box(parent_handle);
-    vec2 child_min_size = gui_node_get_previous_frame_min_child_size(parent_handle);
-
-    float available = bb.max.y - bb.min.y;
-    float required = child_min_size.y;
-    if (available >= required) {
-        gui_node_hide(scroll_bar);
-        return;
-    }
-
-    float& scroll_percentage = *gui_store_primitive<float>(scroll_bar, 0.0f);
-    // Add drag and drop to this thing
-
-
-
-
-}
-
 
 
 void gui_push_example_gui()
@@ -1903,20 +2028,26 @@ void gui_push_example_gui()
     static bool toggle_thing = false;
     static bool layout_window = false;
     static bool padding_test = false;
-    static bool preferred_test = true;
+    static bool preferred_test = false;
 
     auto window = gui_push_window(gui_root_handle(), "Test");
     String* str = gui_store_string(window, "");
     gui_push_text_edit(window, str);
-    gui_push_button(window, string_create_static("Test me!"));
+    if (gui_push_button(window, string_create_static("Test me!"))) {
+        logg("%s\n", str->characters);
+    }
     auto time = rendering_core.render_information.current_time_in_seconds;
-    gui_node_set_layout_child_offset(window, vec2(0.0f, math_sine(time) * 100));
 
     auto movable = gui_add_node(gui_root_handle(), gui_size_make_fixed(300), gui_size_make_fixed(300), gui_drawable_make_rect(gray));
-    // vec2 pos = gui_push_draggable(movable, movable, vec2(300, 300), vec2(0, 0));
-    // gui_node_set_position_fixed(movable, pos, Anchor::BOTTOM_LEFT);
-    auto bb = gui_push_movable_or_draggable(movable, movable, bounding_box_2_make_anchor(vec2(400), vec2(200, 200), Anchor::CENTER_CENTER), true, false, vec2(10));
-    gui_node_set_bounding_box_fixed(movable, bb);
+    auto drag_data = gui_push_movable_or_draggable(movable, movable, vec2(400), vec2(200, 200), true, true, vec2(10));
+    gui_drag_data_apply_to_node(*drag_data, movable);
+
+    movable = gui_push_scroll_area(movable, gui_size_make_fill(), gui_size_make_fill());
+    gui_add_node(movable, gui_size_make_fixed(100), gui_size_make_fixed(100), gui_drawable_make_rect(red));
+    gui_add_node(movable, gui_size_make_fixed(100), gui_size_make_fixed(100), gui_drawable_make_rect(green));
+    gui_add_node(movable, gui_size_make_fixed(100), gui_size_make_fixed(100), gui_drawable_make_rect(blue));
+    gui_add_node(movable, gui_size_make_fixed(100), gui_size_make_fixed(100), gui_drawable_make_rect(yellow));
+    gui_add_node(movable, gui_size_make_fixed(100), gui_size_make_fixed(100), gui_drawable_make_rect(cyan));
 
     if (show_config_gui) {
         gui_matching_add_checkpoint_name("Config GUI");

@@ -4,6 +4,26 @@
 #include "../datastructures/string.hpp"
 #include "../rendering/basic2D.hpp"
 
+
+/*
+TODO:
+ * Drop-Down Menu/Pop-Up window -> Probably just add a new element to root thingy with topmost z-index which disappears after focus lost
+ * Integer/Float input
+ * Toggle-able seperator (Section seperator)
+
+Extra Features that I may want to have sometime in the future:
+ * Line-Rendering for graphs
+ * Fill-Weight so that components keep a specific ratio to one another
+ * Tab-able input focus (E.g. move from input to input with tab), so it's easier to add new things
+ * Copy and paste for text/number input
+ * Better text handling, e.g. cursor movement, mouse selection, typical shortcuts, copy and paste, undo/redo
+ * Text area for large text, multiple lines/line-wrapping
+ * UI-Style which determines colors/sizes of predefined objects like windows, buttons...
+ * Images and Icon rendering
+ * Simple Plotting (bar-charts, line-plots, scatter-plot)
+ * More padding options (E.g. border option so that cut-off can handle padding correctly...)
+*/
+
 // Types and forward definitions
 struct Text_Renderer;
 struct Window;
@@ -35,10 +55,13 @@ void gui_update_and_render(); // Generates
 struct GUI_Handle
 {
     int index;
-    bool mouse_hover;
-    bool mouse_hovers_child;
+
     bool first_time_created;
     void* userdata;
+
+    bool mouse_hover;
+    bool mouse_hovers_child;
+    bool has_mouse_wheel_input;
 };
 
 GUI_Handle gui_add_node(GUI_Handle parent_handle, GUI_Size size_x, GUI_Size size_y, GUI_Drawable drawable);
@@ -48,7 +71,6 @@ void gui_matching_add_checkpoint_name(const char* name);
 
 GUI_Handle gui_root_handle();
 void gui_node_set_position_fixed(GUI_Handle handle, vec2 offset, Anchor anchor, bool relative_to_window = false);
-void gui_node_set_bounding_box_fixed(GUI_Handle handle, Bounding_Box2 bounding_box);
 void gui_node_set_alignment(GUI_Handle handle, GUI_Alignment alignment = GUI_Alignment::MIN);
 void gui_node_set_layout(
     GUI_Handle handle, 
@@ -111,7 +133,7 @@ struct GUI_Drawable
 
 GUI_Drawable gui_drawable_make_none();
 GUI_Drawable gui_drawable_make_text(String text, vec4 color = vec4(0.0f, 0.0f, 0.0f, 1.0f));
-GUI_Drawable gui_drawable_make_rect(vec4 color, int border_thickness = 0, vec4 border_color = vec4(0), int edge_radius = 0);
+GUI_Drawable gui_drawable_make_rect(vec4 color, int border_thickness = 0, vec4 border_color = vec4(0, 0, 0, 1), int edge_radius = 0);
 void gui_drawable_destroy(GUI_Drawable& drawable);
 
 
@@ -141,6 +163,7 @@ String* gui_store_string(GUI_Handle parent_handle, const char* initial_string);
 
 // PREDEFINED OBJECTS
 GUI_Handle gui_push_text(GUI_Handle parent_handle, String text, float text_height_cm = .4f, vec4 color = vec4(0.0f, 0.0f, 0.0f, 1.0f));
+void gui_push_scroll_bar(GUI_Handle parent_handle);
 GUI_Handle gui_push_window(GUI_Handle parent_handle, const char* name);
 bool gui_push_button(GUI_Handle parent_handle, String text);
 void gui_push_text_edit(GUI_Handle parent_handle, String* string, float text_height_cm = 0.4f);

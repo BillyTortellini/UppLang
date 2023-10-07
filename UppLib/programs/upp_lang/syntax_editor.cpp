@@ -2105,9 +2105,8 @@ void syntax_editor_render()
     auto& cursor = syntax_editor.cursor;
 
     // Prepare Render
-    panic("Change dis");
-    // editor.character_size.y = text_renderer_cm_to_relative_height(editor.text_renderer, 0.55f);
-    // editor.character_size.x = text_renderer_get_cursor_advance(editor.text_renderer, editor.character_size.y);
+    editor.character_size.y = convertHeightFromTo(0.55f, Unit::CENTIMETER, Unit::NORMALIZED_SCREEN);
+    editor.character_size.x = text_renderer_line_width(editor.text_renderer, editor.character_size.y, 1);
 
     // Layout Source Code
     syntax_editor_sanitize_cursor();

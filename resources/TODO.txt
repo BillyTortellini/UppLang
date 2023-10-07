@@ -1,444 +1,3 @@
-
-Scroll-Bar:
-    * Implement as new node atop of previous node (fixed layout)
-Required core-functionality:
-    * New layout-option for auto-layout: child_offset (Just a offset that is added to child positions, not for relative children)
-    * Getting min-child-size from previous frame by handle
-
-
-
-TODO:
- * Scroll Bar
- * Drop-Down Menu/Pop-Up window -> Probably just add a new element to root thingy with topmost z-index which disappears after focus lost
- * Reusable resize/moving of windows for other elements 
- * More padding options (E.g. border option so that cut-off can handle padding correctly...)
- * Integer/Float input
- * Toggle-able seperator (Section seperator)
-
-Extra Features that I may want to have sometime in the future:
- * Line-Rendering for graphs
- * Fill-Weight so that components keep a specific ratio to one another
- * Tab-able input focus (E.g. move from input to input with tab), so it's easier to add new things
- * Copy and paste for text/number input
- * Better text handling, e.g. cursor movement, mouse selection, typical shortcuts, copy and paste, undo/redo
- * Text area for large text, multiple lines/line-wrapping
- * UI-Style which determines colors/sizes of predefined objects like windows, buttons...
- * Images and Icon rendering
- * Simple Plotting (bar-charts, line-plots, scatter-plot)
-
-
-
-My Use-cases for this GUI:
- - Create movable, resizable windows where I can display dynamic information about the program
-    * For debugging, e.g. showing dynamic properties of specific values
-    * For controlling settings like: run all testcases, run specific text-case, compile to c/bytecode...
- - Maybe at some point some graph view, where we can display the undo/redo history
-    Or have the AST tree visuallized, or a function call graph, or whatever
-
-This means:
- - Formated text output (Labels)
- - Buttons 
- - Also text input and editing could be done like this, by storing a string in the meantime.
- - Text-fields for entering text (Integers, floats, or other text)
- - Sliders
- - Checkboxes
- - Draggable windows
- - Scrollable windows
- - Focusing/Defocusing windows
- - Some layout elements, like horizontal spacing, or a horizontal line would be neat
- - Opening/Closing of something like tabs
-
-
-How to do Input:
- - Each node also needs to state if it can receive mouse input (e.g)
-    This way we can determine where a click goes, e.g. do visibilty culling.
-    Otherwise a child node may 'steal' mouse input from parent, like the text of a button instead
-    of it's whole surface area, or labels inside a window
- - Children should have access to: Is_hovered and is_clicked
- - GUI needs to determine over which element the mouse is currently moved
- - Inputs could be: Mouse clicked
-
-
-Layout options:
- - Position:
-    * Specific: use the given bounding box, isn't counted when doing the layout shit, 
-        for top-level windows and stuff that can be dragged around
-    * Use parent layout, with given size:
-        Min/Max size: Why do we need a max size --> don't really know, I guess this is only for resizing windows?
-        Preferred size: Minimum (Just enough to enclose all children) or fill parent (With weight I guess)
-        Alignment in parent: Anchor
-    * Child layout options:
-        Horizontal stack 
-        Vertical stack
-        Maybe grid? Like pushing items into it and sheet
- - Better Interface: return parent, and when pushing nodes I need to pass the parent (So we can add to different items in different order, and don't need the traversal)
-    Also when adding nodes maybe have something like a node-style, so there aren't that many parameters dude
-        
-
-Implementation plan:
- * Build hierarchy with GUI_Nodes, each Node has a bounding-box and a color
-    - Matching to previous should be done by order of inputs, if no matching was done, then delete node at end of frame
-    - Layout is completely done by hand, and children need to be inside their parents, there is no order guarantee otherwise
-        here we need to do some trimming at some point in the future
- * Check that drawing is done in a performant way (E.g. layer per layer, and that layers are correctly calculated)
- * Add text rendering to the whole schablam, so we can build up our normal menues again
- * Try to get input to work, e.g. do the matching with the component from the previous runs 
-
-Convert functionality:
- - Should probably be updated, the method names dont use underscores...
-
-Simplest possible UI stuff:
- - Rectangles (Floating windows)
- - Text (Information for user)
- - Lines (Borders, simple shapes like X, sliders, whatever)
-
-- Input my dude....
-
-With this you could create
-    - Windows
-    - Buttons
-    - Sliders
-
-Note: I also want to know how to make this GUI thing as performant as possible...
-
-So where do I start:
- - Correct positioning and sizing of rectangles on the screen.
- - Drawing rectangles and lines correctly on top of one another
- - Drawing rectangles exactly at pixel lines...
- - A button, which does something to the drawn thing, maybe a toggle
-
-Use case:
- - Running test-cases from the GUI
- - Running all test-cases and looking at the results
- - Selecting different files/projects
- - Something like a program explorere: List all functions recursively, 
-    where you can get information about specific datatypes.
-
-
-
-General problems with shader code: 
- - Duplication in shader and on CPU-side:
-    * Vertex attributes need to have the same layout, same location
-    * Uniform values need to either be set per object or per frame
-    * Data is passed through shader stages is also 'duplicate',
-      need to have the same name and the same datatype
- - Code cannot be reused effectively
-    * There is no include system in glsl files
-    * Normal includes are hard because of global data like gl_Position and in_out values, which
-        again rely on names and datatypes to connect, and it's hard/annoying to integrate this into
-        reusable components.
-    * I think theres room for compression here, most shader code is somewhat functional, e.g. no side effects,
-      most of the functions are pure. I think composable shaders are a goal that we can strive towards.
-
-Simple Use-cases:
- - Fragment shader use-cases:
-    * Solid color
-        - Uniform value
-        - Vertex color (either solid or interpolated)
-    * Texture
-    * Lighting model applied to a given color
-        - Diffuse color, specular color (From texture, from uniform, procedurally generated ...)
-        - Normal vector (With or without normal mapping)
-        - Shadow mapping
-    * Procedurally generated (E.g. ray marching or whatever for funky effects)
-    * Effects like cubemapping, relief-mapping, volumetric lighting
- - Similar things for Vertex stage:
-    * 2D or 3D vertices
-    * Support for per-vertex color
-    * Transformations with uniforms
-    * Instancing support (e.g. instanced attributes)
-    * Custom animations with time offset and maybe random variables and stuff
-    
-
-
-
-TODO:
-- Rework all current rendering code --> Remove the current mesh and shader stuff...
-- 2D rendering rework, e.g. new 2d renderer that does depth better, support for text, lines, rectangles, circles and other things
-- Custom imgui
-- Move parts of the compiler options into the imgui
-- Maybe do cool auto-generated shader stuff...
-
-
-
-Ideas for rendering rework:
-    - What do we need for rendering:
-        * Rendering state (Culling, depth-test, ...)
-        * Shader 
-        * Mesh (Triangle data, position, normals, uvs, color?)
-        * Uniforms (Camera, MVP matrix, shader parameters)
-        * Textures
-        * Framebuffers (Textures which you can render into)
-        * Uniform blocks would be great (Common things like View-projection, time and other parameters)
-        * GPU buffers (Where I can easily upload memory for e.g. dynamic mesh data (Text) or instance data)
-
-I think most of the things I already have are pretty nice, but what I also want to do is to the following:
- - Creating/Destroying shaders is kinda annoying
- - Rendering_Core should be a global variable so I don't have to pass it everywhere
- - Maybe I should also take a look at how current calls are made and how I think it would be nicer.
- - For rendering stuff on top of each other, I still think that I want to have something like a RenderPass,
-   because otherwise it's going to be hard to have order-independent draw calls 
-   (E.g. your code needs to respect the order of the draw-calls you submit)
- - After having implemented a GUI I would like to be able to toggle the different draw calls, and see the effect
-    of not doing them immediately on the screen. 
- - Ordering of render-call is also something that I want to keep in mind, e.g. do I want to set the order 
-   explicitly via something like adding dependencies on e.g. framebuffer finished or do I want to set this implicitly,
-   or do I have to state the order of the rendering calls in code? --> This would be cool if I could set this manually.
-   Also I think this has to do with synchronization right? Or does opengl automagically do this for us when rendering into
-   a framebuffer and afterwards reading from the same buffer. I guess so.
-
-Use-cases I want to cover:
- - GUI drawing (Mutliple render-calls for each 'plane', e.g. rendering of text and 2D-Shapes in multiple different calls)
-   --> Text rendering means rendering textured quads
- - Simple 3D with meshes (E.g. 3D data with normal and others)
- - Custom shaders 
- - Instancing
-
-Question 1: Stateful or not?
-    auto& main_pass = rendering_retrieve_renderpass(Type::Backbuffer, ) // Retrieve backbuffer renderpass
-    auto& shader = rendering_get_shader("constant_color.glsl")
-    renderpass_draw(shader, )
-    shader.draw
-
-What is a renderpass:
- * Renderpasses contain/store draw calls
- * A renderpass only has one specific pipeline_state ? and one framebuffer it renders too
- * Renderpasses regulate the order in which draw-calls to opengl are made, and
-   all draw calls inside a renderpass may happen at the same time.
- * Renderpasses can contain child passes, a renderpass finishes only if all child-passes are finished
-    Is this actually usefull? Maybe for synchronization reasons, but otherwise probably not...
-
- So i guess I want my text-rendering and my 2D-rendering to be able to generate draw calls for a given renderpass...
- Well obviously if you want to draw text on other text or 2D- things on other 2D things...
-
- Maybe I want to go the distance and do everything with instancing (Instead of using uniforms)
- This is obviously not always possible, but it would mean that different renderpasses could use the same instance buffer, 
- and everything would be batched automatically. I think this would be fucking sick, so let's do just that.
-
- So i guess I just want something that does instancing automatically, where I can create draw calls which are potentially in 
- different renderpasses, and if they may be executed at the same time, then this will happen here. Sounds quite nice I guess
-
- Mesh: Multiple arrays of the same length with different datatypes, like Position3D, uvs, ...
- Mesh_Descriptor: Datatypes contained in the mesh
-
- Shader Design:
-  * Shaders only have per-frame uniforms, and there is a warning if they are not set?
-
-Changes to the current render system:
- * Rendering core will be a global variable (So i don't need to pass shit around) X
- * Rework of Mesh-attributes and GPU-Buffers.
- * Named values for things like framebuffers/shaders/textures/meshes?, so that they are either setup beforehand, or they are looked up per frame.
- * Draw-commands will be added to renderpasses
- * Renderpasses are generated inside the rendering-core
-
-renderer_lookup_renderpass() # Requires that it was already created
-renderer_anonymous_renderpass() 
-renderer_create_renderpass()
-    
-
-
-
-Note about the design of this rendering system:
- * It should be flexible and 'nice' to use, so that I can write rendering code faster/cleaner.
-    --> Renderpass system should play in here quite nicely. 
- * The design should be done in a way that so that it is possible to optimize the draw calls and stuff at some point.
-    --> Note: this means that I don't need to optimize everything right now, but it should be possible to optimize.
- * To generally describe the 2D rendering problem:
-    : Every 2D object draws to a rectangular position on the screen. (Or at least we can bound the region, may also be fullscreen)
-    : Every 2D object is at a specific depth to one another (Which determines when it is drawn)
-    : There are opage objects, where the depth of the objects needs to be respected. (Either via depth testing)
-    : There are transparent objects (Note: almost all textures, or for antialiasing), which need to 
-
-So I guess you always want to do 2D rendering in layers, 
-
-
-So how do I want to deal with dynamic data, e.g. data that you upload to the gpu?
- - In 3D you usually want to have constant meshes, which you don't upload every frame
- - But you would upload some information (e.g. positions and sheet) every frame
- - In 2D I want to upload the whole mesh every frame.
-
-So I want some helper thing that let's me generate the dynamic information every frame.
- --> No, I can generally request an array of dynamic gpu data for a specific mesh, which can then be used in render-calls
- --> Meshes stay completely on the cpu-side too.
-
-So obivously after window creation I have something like this:
-
-
-Some more notes:
-    - Some objects which should not be recreated every frame should have names,
-      e.g. framebuffers, shaders --> by filename?, textures --> Size? 
-      The names here are then only used for caching the values.
-
-      Shader shader("something something");
-      Texture textures...
-
-      // Rendering part
-      {
-        shader.draw or whatever
-      }
-
-      auto framebuffer = make_framebuffer("Icon_Target", 500, 400, RGBA)
-      auto pass = make_renderpass(framebuffer)
-      auto shader = get_shader("filename");
-      pass.draw(shader, core.meshes.quadmesh, {uniform("position", vec4(1, 2, 3, 4))})
-
-      main_pass.depends_on(pass) // So we need to wait until we finished rendering
-
-      shader.set_uniform(uniform("sampler2d", framebuffer.get_color_attachment(0)));
-
-
-
-TODO: Rewrite attribute system: You can query the renderer for a set of inputs and then get these.
-      Then for mesh creation you 
-
-      I guess VertexDescription consists of a bitmask of multiple attributes then.
-        Note: And also in the future of custom attributes (Here the binding location needs to be specified)
-
-
-      
-
-      The renderpass options need to be set at least once before rendering, and can be updated every frame...
-      Mesh somemesh = rendering_core_query_mesh(Vertex_Attribute_Description) --> Creates an empty cpu mesh
-      mesh_set_mesh_data(Mesh_Type::Static, Topology::Triangles)
-      rendering_core_create_renderpass("main", target = Backbuffer, Clear = True)
-      rendering_core_get_shader("whatever")
-      rendering_pass_set_uniform() "Sets uniform in the pass for shader"
-      rendering_pass_draw() "Also allows to set for uniforms"
-      All uniforms need to be set once per frame!
-
-      // Vertex attributes:
-      auto pos = rendering_core_query_attribute_vec3("Position3D") --> Returns Attribute<Vec3>*
-      auto normal = rendering_core_query_attribute_vec3("Normal3D") --> Returns Attribute<Vec3>*
-                        --> query_vertex_attribute("Position3D", Data_Type information) (e.g. vector, matrix, ...)
-      auto my_new_mesh = rendering_core_query_mesh("Text_Mesh", Mesh_Type::Static, Topology::Triangles)
-      // Fill vertex data
-      Array<vec3> positions = mesh_get_attribute_data_array(pos, 128); // Calling this twice within a frame should result in a warning
-      positions[0] = ...
-      Array<vec3> colors = mesh_get_attribute_data_array(color, 128);
-      colors[0] = ...
-      // Fill indices
-      Array<uint> indices = mesh_get_attribute_data_array(predefined.index, 64);
-      indices[0] = ...
-
-      Then the shader generation code can generate the bindings ?
-      rendering_core_get_shader("")
-
-// In shader instead of
-layout (location = 1) in vec2 position;
-#input(Position3D) vec3 position;
-// Note that we then still need to check if the variable is actually used or not
-New shader syntax:
-#VERTEX
-All after to next/end is the vertex shader code
-
-uniform vec3 name;
-in vec3 pos; //@Position3D --> these lines will be rewritten
-
-
-
-#FRAGMENT
-
-
-
-Auto-Generating Shaders Ideas:
- - I still want to have hot reloading, so the shaders should be in files
- - I think I want to keep the normal structure of glsl code, so that I can use all things available there.
-    * vec4 x
-    * x.xxy = vec3(1.0, 0.0, 1.0)
- - I don't want to write a custom parser/analyer yet, I just want a quick and dirty way of doing this
- - This probably also means that syntax/error highlighting will probably not work in Visual studio editor,
-    or maybe it will if we do some special things (Like maybe including all used values in a single file)
-
-Design/general Ideas:
- - Shader code is in general quite functional, since you cannot really modify global state (e.g. runs on gpu)
- - Reduce duplicate code for each new shader 
-    (e.g. passing 2d positions for 2d objects through vertex shader, multiplying position by mvp matrix)
-    Shading: calculating normalized eye to view direction and other stuff
- - Vertex shader needs to set
- - Uniforms and shader inputs are still normally accessible through the shader code and our other systems,
-    this is solely about creating the shader code and reducing manual work
- - I want some of the common variables (pos3D) to have names, and pieces of shader code can depend on
-    previously defined names and generate values for new variables, or update current variable values
- - So shader snippet defines inputs and outputs
- - What about snippets that define multiple outputs, and some outputs aren't used?
-    * Should we rely on the compiler to optimize these away?  --> Yes
-    * We could also make snippets more complicated by allowing outputs to depend on inputs
-    * Lets go with the simple solution at first
-    * I guess if it comes to performance its always possible to take multiple small snippets and put them
-        in a bigger snippet, which reduces the flexibility, but increases other stuff...
- - I guess some variables could also be directly connected to Vertex-Attributes? ... Not sure if this is a good idea
-    Otherwise we will need a vertex_attribute loader for each vertex attribute. --> Is probably the better idea
- - How should inputs and outputs between vertex and fragmentshader happen?
-    * Maybe if we know what types the different shaders are, different shader stages can just refer to previously generated values.
-      I think this is the smartest move, the only thing you have to worry about is maybe interpolation 
-      (e.g. some option if you want to interpolate flat or non-perspective corrected)
- - Is there any way this can be made somewhat typesafe, or do I have to rely on dynamic checking... I guess I have to
- - Maybe we also want to have general access to functions with this, since this really isn't a feature in glsl
-    E.g. you probably would need to start including headers if you do function things, but then you cannot access input/outputs
- - Also accessing our custom ubos is a given, I think
- - Problem: If I write the composition of the snippets in c++ (E.g. which interact to form a shader)
-            this composition cannot be hot-reloaded... But this would probably be one of the interesting parts of this whole project
-            This could be solved if we had 'another' syntax for composing shaders...
-            Here the problem is that if we want our composition to be dependent on some program logic 
-            (Maybe performance options or generating different shaders based on what which textures are available)
-            this could not be expressed in the other syntax...
-            To be fair this isn't the main problem now, and I also want to be able to write normal shaders without any other influences...
-            But I guess both solutions could co-exist, so I probably want to start out with the C++ controled version
-
-Example:
-    C++ code:
-        shader_generator_make({
-            // Vertex part
-            snippet_from_attribute(predefined.position2D, "pos"),
-            snippet("uvs_from_pos"), --> Requires pos
-            // Either
-                snippet_custom("gl_Position = vec4(pos, 0.0, 0.0);", Shader_Type::Vertex)
-                snippet_vertex_position("pos"),  // Somehow we need to define the vertex position in the end...
-
-            // Fragment part:
-            frag_output("o_color");
-            snippet("")
-            snippet("background")
-        });
-
-Some things where duplication happens:
- - Solid color vs shaded vs textured...
- 
-   
-
-
-
-
-
-
-Side project:
-    Since i don't have too much time currently to work on the compiler, I would like to start
-    working on smaller things that aren't directly connected to the compiler, like the GUI or formatting or stuff like that.
-    Some things that come to mind:
-        - Text-Rendering update: Maybe rewrite the text renderer
-            I just think that doing the distance field calculation with the sdf that I currently have would be a lot nicer
-            than the things that I am currently doing. 
-            Also maybe you know not make it suck ass, lol
-        - Custom allocators:
-            * In C++ this would be interesting to explore if a global variable would actually be more convenient to use.
-              I guess I also would tmp_allocator_allocate_array()
-                                   allocator_allocate_array()
-              The problem here is how Datastructures would handle allocators, e.g.
-              We would probably need to rewrite our datastructures to use allocator functions.
-
-              Also should datastructures keep a pointer to the allocator they were created with?
-              This would probably be necessary, but it seems a little annoying when thinking about strings and simple arrays
-              where the size of the allocator pointer would almost double the whole thing.
-               
-              Then this should also work with threads and fibers, so fiber-handles would also need to store the current
-              allocator if we want to keep the logic consisten.
-        - Immediate mode GUI and 2D-drawing:
-        - Rework of rendering logic with rendering passes.
-        - More vim commands for editor, e.g. movement and stuff.
-        - Dynamic code formating in the editor
-
-I decided to work on the rendering side again. 
-
 TODO:
     - Aliases with name, e.g. using Helpers~foo as bar
     - File imports with using, e.g. using "printing.upp"
@@ -2556,4 +2115,283 @@ Metaprogramming features:
 
 
 
+
+ // RENDERING RANT
+Ideas for rendering rework:
+    - What do we need for rendering:
+        * Rendering state (Culling, depth-test, ...)
+        * Shader 
+        * Mesh (Triangle data, position, normals, uvs, color?)
+        * Uniforms (Camera, MVP matrix, shader parameters)
+        * Textures
+        * Framebuffers (Textures which you can render into)
+        * Uniform blocks would be great (Common things like View-projection, time and other parameters)
+        * GPU buffers (Where I can easily upload memory for e.g. dynamic mesh data (Text) or instance data)
+
+I think most of the things I already have are pretty nice, but what I also want to do is to the following:
+ - Creating/Destroying shaders is kinda annoying
+ - Rendering_Core should be a global variable so I don't have to pass it everywhere
+ - Maybe I should also take a look at how current calls are made and how I think it would be nicer.
+ - For rendering stuff on top of each other, I still think that I want to have something like a RenderPass,
+   because otherwise it's going to be hard to have order-independent draw calls 
+   (E.g. your code needs to respect the order of the draw-calls you submit)
+ - After having implemented a GUI I would like to be able to toggle the different draw calls, and see the effect
+    of not doing them immediately on the screen. 
+ - Ordering of render-call is also something that I want to keep in mind, e.g. do I want to set the order 
+   explicitly via something like adding dependencies on e.g. framebuffer finished or do I want to set this implicitly,
+   or do I have to state the order of the rendering calls in code? --> This would be cool if I could set this manually.
+   Also I think this has to do with synchronization right? Or does opengl automagically do this for us when rendering into
+   a framebuffer and afterwards reading from the same buffer. I guess so.
+
+Use-cases I want to cover:
+ - GUI drawing (Mutliple render-calls for each 'plane', e.g. rendering of text and 2D-Shapes in multiple different calls)
+   --> Text rendering means rendering textured quads
+ - Simple 3D with meshes (E.g. 3D data with normal and others)
+ - Custom shaders 
+ - Instancing
+
+Question 1: Stateful or not?
+    auto& main_pass = rendering_retrieve_renderpass(Type::Backbuffer, ) // Retrieve backbuffer renderpass
+    auto& shader = rendering_get_shader("constant_color.glsl")
+    renderpass_draw(shader, )
+    shader.draw
+
+What is a renderpass:
+ * Renderpasses contain/store draw calls
+ * A renderpass only has one specific pipeline_state ? and one framebuffer it renders too
+ * Renderpasses regulate the order in which draw-calls to opengl are made, and
+   all draw calls inside a renderpass may happen at the same time.
+ * Renderpasses can contain child passes, a renderpass finishes only if all child-passes are finished
+    Is this actually usefull? Maybe for synchronization reasons, but otherwise probably not...
+
+ So i guess I want my text-rendering and my 2D-rendering to be able to generate draw calls for a given renderpass...
+ Well obviously if you want to draw text on other text or 2D- things on other 2D things...
+
+ Maybe I want to go the distance and do everything with instancing (Instead of using uniforms)
+ This is obviously not always possible, but it would mean that different renderpasses could use the same instance buffer, 
+ and everything would be batched automatically. I think this would be fucking sick, so let's do just that.
+
+ So i guess I just want something that does instancing automatically, where I can create draw calls which are potentially in 
+ different renderpasses, and if they may be executed at the same time, then this will happen here. Sounds quite nice I guess
+
+ Mesh: Multiple arrays of the same length with different datatypes, like Position3D, uvs, ...
+ Mesh_Descriptor: Datatypes contained in the mesh
+
+ Shader Design:
+  * Shaders only have per-frame uniforms, and there is a warning if they are not set?
+
+Changes to the current render system:
+ * Rendering core will be a global variable (So i don't need to pass shit around) X
+ * Rework of Mesh-attributes and GPU-Buffers.
+ * Named values for things like framebuffers/shaders/textures/meshes?, so that they are either setup beforehand, or they are looked up per frame.
+ * Draw-commands will be added to renderpasses
+ * Renderpasses are generated inside the rendering-core
+
+renderer_lookup_renderpass() # Requires that it was already created
+renderer_anonymous_renderpass() 
+renderer_create_renderpass()
+    
+
+
+
+Note about the design of this rendering system:
+ * It should be flexible and 'nice' to use, so that I can write rendering code faster/cleaner.
+    --> Renderpass system should play in here quite nicely. 
+ * The design should be done in a way that so that it is possible to optimize the draw calls and stuff at some point.
+    --> Note: this means that I don't need to optimize everything right now, but it should be possible to optimize.
+ * To generally describe the 2D rendering problem:
+    : Every 2D object draws to a rectangular position on the screen. (Or at least we can bound the region, may also be fullscreen)
+    : Every 2D object is at a specific depth to one another (Which determines when it is drawn)
+    : There are opage objects, where the depth of the objects needs to be respected. (Either via depth testing)
+    : There are transparent objects (Note: almost all textures, or for antialiasing), which need to 
+
+So I guess you always want to do 2D rendering in layers, 
+
+
+So how do I want to deal with dynamic data, e.g. data that you upload to the gpu?
+ - In 3D you usually want to have constant meshes, which you don't upload every frame
+ - But you would upload some information (e.g. positions and sheet) every frame
+ - In 2D I want to upload the whole mesh every frame.
+
+So I want some helper thing that let's me generate the dynamic information every frame.
+ --> No, I can generally request an array of dynamic gpu data for a specific mesh, which can then be used in render-calls
+ --> Meshes stay completely on the cpu-side too.
+
+So obivously after window creation I have something like this:
+
+
+Some more notes:
+    - Some objects which should not be recreated every frame should have names,
+      e.g. framebuffers, shaders --> by filename?, textures --> Size? 
+      The names here are then only used for caching the values.
+
+      Shader shader("something something");
+      Texture textures...
+
+      // Rendering part
+      {
+        shader.draw or whatever
+      }
+
+      auto framebuffer = make_framebuffer("Icon_Target", 500, 400, RGBA)
+      auto pass = make_renderpass(framebuffer)
+      auto shader = get_shader("filename");
+      pass.draw(shader, core.meshes.quadmesh, {uniform("position", vec4(1, 2, 3, 4))})
+
+      main_pass.depends_on(pass) // So we need to wait until we finished rendering
+
+      shader.set_uniform(uniform("sampler2d", framebuffer.get_color_attachment(0)));
+
+
+
+TODO: Rewrite attribute system: You can query the renderer for a set of inputs and then get these.
+      Then for mesh creation you 
+
+      I guess VertexDescription consists of a bitmask of multiple attributes then.
+        Note: And also in the future of custom attributes (Here the binding location needs to be specified)
+
+
+      
+
+      The renderpass options need to be set at least once before rendering, and can be updated every frame...
+      Mesh somemesh = rendering_core_query_mesh(Vertex_Attribute_Description) --> Creates an empty cpu mesh
+      mesh_set_mesh_data(Mesh_Type::Static, Topology::Triangles)
+      rendering_core_create_renderpass("main", target = Backbuffer, Clear = True)
+      rendering_core_get_shader("whatever")
+      rendering_pass_set_uniform() "Sets uniform in the pass for shader"
+      rendering_pass_draw() "Also allows to set for uniforms"
+      All uniforms need to be set once per frame!
+
+      // Vertex attributes:
+      auto pos = rendering_core_query_attribute_vec3("Position3D") --> Returns Attribute<Vec3>*
+      auto normal = rendering_core_query_attribute_vec3("Normal3D") --> Returns Attribute<Vec3>*
+                        --> query_vertex_attribute("Position3D", Data_Type information) (e.g. vector, matrix, ...)
+      auto my_new_mesh = rendering_core_query_mesh("Text_Mesh", Mesh_Type::Static, Topology::Triangles)
+      // Fill vertex data
+      Array<vec3> positions = mesh_get_attribute_data_array(pos, 128); // Calling this twice within a frame should result in a warning
+      positions[0] = ...
+      Array<vec3> colors = mesh_get_attribute_data_array(color, 128);
+      colors[0] = ...
+      // Fill indices
+      Array<uint> indices = mesh_get_attribute_data_array(predefined.index, 64);
+      indices[0] = ...
+
+      Then the shader generation code can generate the bindings ?
+      rendering_core_get_shader("")
+
+// In shader instead of
+layout (location = 1) in vec2 position;
+#input(Position3D) vec3 position;
+// Note that we then still need to check if the variable is actually used or not
+New shader syntax:
+#VERTEX
+All after to next/end is the vertex shader code
+
+uniform vec3 name;
+in vec3 pos; //@Position3D --> these lines will be rewritten
+
+
+
+#FRAGMENT
+
+
+
+Auto-Generating Shaders Ideas:
+ - I still want to have hot reloading, so the shaders should be in files
+ - I think I want to keep the normal structure of glsl code, so that I can use all things available there.
+    * vec4 x
+    * x.xxy = vec3(1.0, 0.0, 1.0)
+ - I don't want to write a custom parser/analyer yet, I just want a quick and dirty way of doing this
+ - This probably also means that syntax/error highlighting will probably not work in Visual studio editor,
+    or maybe it will if we do some special things (Like maybe including all used values in a single file)
+
+Design/general Ideas:
+ - Shader code is in general quite functional, since you cannot really modify global state (e.g. runs on gpu)
+ - Reduce duplicate code for each new shader 
+    (e.g. passing 2d positions for 2d objects through vertex shader, multiplying position by mvp matrix)
+    Shading: calculating normalized eye to view direction and other stuff
+ - Vertex shader needs to set
+ - Uniforms and shader inputs are still normally accessible through the shader code and our other systems,
+    this is solely about creating the shader code and reducing manual work
+ - I want some of the common variables (pos3D) to have names, and pieces of shader code can depend on
+    previously defined names and generate values for new variables, or update current variable values
+ - So shader snippet defines inputs and outputs
+ - What about snippets that define multiple outputs, and some outputs aren't used?
+    * Should we rely on the compiler to optimize these away?  --> Yes
+    * We could also make snippets more complicated by allowing outputs to depend on inputs
+    * Lets go with the simple solution at first
+    * I guess if it comes to performance its always possible to take multiple small snippets and put them
+        in a bigger snippet, which reduces the flexibility, but increases other stuff...
+ - I guess some variables could also be directly connected to Vertex-Attributes? ... Not sure if this is a good idea
+    Otherwise we will need a vertex_attribute loader for each vertex attribute. --> Is probably the better idea
+ - How should inputs and outputs between vertex and fragmentshader happen?
+    * Maybe if we know what types the different shaders are, different shader stages can just refer to previously generated values.
+      I think this is the smartest move, the only thing you have to worry about is maybe interpolation 
+      (e.g. some option if you want to interpolate flat or non-perspective corrected)
+ - Is there any way this can be made somewhat typesafe, or do I have to rely on dynamic checking... I guess I have to
+ - Maybe we also want to have general access to functions with this, since this really isn't a feature in glsl
+    E.g. you probably would need to start including headers if you do function things, but then you cannot access input/outputs
+ - Also accessing our custom ubos is a given, I think
+ - Problem: If I write the composition of the snippets in c++ (E.g. which interact to form a shader)
+            this composition cannot be hot-reloaded... But this would probably be one of the interesting parts of this whole project
+            This could be solved if we had 'another' syntax for composing shaders...
+            Here the problem is that if we want our composition to be dependent on some program logic 
+            (Maybe performance options or generating different shaders based on what which textures are available)
+            this could not be expressed in the other syntax...
+            To be fair this isn't the main problem now, and I also want to be able to write normal shaders without any other influences...
+            But I guess both solutions could co-exist, so I probably want to start out with the C++ controled version
+
+Example:
+    C++ code:
+        shader_generator_make({
+            // Vertex part
+            snippet_from_attribute(predefined.position2D, "pos"),
+            snippet("uvs_from_pos"), --> Requires pos
+            // Either
+                snippet_custom("gl_Position = vec4(pos, 0.0, 0.0);", Shader_Type::Vertex)
+                snippet_vertex_position("pos"),  // Somehow we need to define the vertex position in the end...
+
+            // Fragment part:
+            frag_output("o_color");
+            snippet("")
+            snippet("background")
+        });
+
+Some things where duplication happens:
+ - Solid color vs shaded vs textured...
+ 
+   
+
+
+
+
+
+
+Side project:
+    Since i don't have too much time currently to work on the compiler, I would like to start
+    working on smaller things that aren't directly connected to the compiler, like the GUI or formatting or stuff like that.
+    Some things that come to mind:
+        - Text-Rendering update: Maybe rewrite the text renderer
+            I just think that doing the distance field calculation with the sdf that I currently have would be a lot nicer
+            than the things that I am currently doing. 
+            Also maybe you know not make it suck ass, lol
+        - Custom allocators:
+            * In C++ this would be interesting to explore if a global variable would actually be more convenient to use.
+              I guess I also would tmp_allocator_allocate_array()
+                                   allocator_allocate_array()
+              The problem here is how Datastructures would handle allocators, e.g.
+              We would probably need to rewrite our datastructures to use allocator functions.
+
+              Also should datastructures keep a pointer to the allocator they were created with?
+              This would probably be necessary, but it seems a little annoying when thinking about strings and simple arrays
+              where the size of the allocator pointer would almost double the whole thing.
+               
+              Then this should also work with threads and fibers, so fiber-handles would also need to store the current
+              allocator if we want to keep the logic consisten.
+        - Immediate mode GUI and 2D-drawing:
+        - Rework of rendering logic with rendering passes.
+        - More vim commands for editor, e.g. movement and stuff.
+        - Dynamic code formating in the editor
+
+I decided to work on the rendering side again. 
 
