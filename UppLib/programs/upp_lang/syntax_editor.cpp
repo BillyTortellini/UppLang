@@ -87,8 +87,6 @@ struct Syntax_Editor
     Dynamic_Array<Error_Display> errors;
     Dynamic_Array<Token_Range> token_range_buffer;
     int camera_start_line;
-    int last_line_count;
-    int last_cursor_line;
 
     Input* input;
     Rendering_Core* rendering_core;
@@ -1318,8 +1316,11 @@ void syntax_editor_process_key_message(Key_Message& msg)
     if (mode == Editor_Mode::INSERT)
     {
         Insert_Command input;
-        if (msg.key_code == Key_Code::SPACE && msg.key_down) {
-            input.type = msg.ctrl_down ? Insert_Command_Type::INSERT_CODE_COMPLETION : Insert_Command_Type::SPACE;
+        if ((msg.key_code == Key_Code::P || msg.key_code == Key_Code::N) && msg.ctrl_down && msg.key_down) {
+            input.type = Insert_Command_Type::INSERT_CODE_COMPLETION; 
+        }
+        else if (msg.key_code == Key_Code::SPACE && msg.key_down) {
+            input.type = msg.shift_down ? Insert_Command_Type::INSERT_CODE_COMPLETION : Insert_Command_Type::SPACE;
         }
         else if (msg.key_code == Key_Code::L && msg.key_down && msg.ctrl_down) {
             input.type = Insert_Command_Type::EXIT_INSERT_MODE;
@@ -1495,6 +1496,7 @@ void syntax_editor_update()
         }
     }
 
+    // Check shortcuts pressed
     if (syntax_editor.input->key_pressed[(int)Key_Code::O] && syntax_editor.input->key_down[(int)Key_Code::CTRL]) {
         auto open_file = file_io_open_file_selection_dialog();
         if (open_file.available) {
@@ -1509,6 +1511,7 @@ void syntax_editor_update()
         syntax_editor_load_text_file(editor.file_path);
     }
 
+    // Handle Editor inputs
     for (int i = 0; i < input->key_messages.size; i++) {
         syntax_editor_process_key_message(input->key_messages[i]);
     }
@@ -1556,7 +1559,6 @@ void syntax_editor_initialize(Rendering_Core * rendering_core, Text_Renderer * t
     syntax_editor.mode = Editor_Mode::NORMAL;
     syntax_editor.cursor = text_index_make(line_index_make(block_index_make(syntax_editor.code, 0), 0), 0);
     syntax_editor.camera_start_line = 0;
-    syntax_editor.last_line_count = 100;
 
     syntax_editor.input_replay = input_replay_create();
 
@@ -1584,143 +1586,99 @@ void syntax_editor_destroy()
 
 // RENDERING
 // Draw Commands
-vec2 text_to_screen_coord(int line_index, int character)
+
+// Returns bottom left vector
+vec2 syntax_editor_position_to_pixel(int line_index, int character)
 {
-    auto editor = &syntax_editor;
-    float w = editor->rendering_core->render_information.backbuffer_width;
-    float h = editor->rendering_core->render_information.backbuffer_height;
-    vec2 scaling_factor;
-    if (w > h) {
-        scaling_factor = vec2(w / h, 1.0f);
-    }
-    else {
-        scaling_factor = vec2(1.0f, h / w);
-    }
-    vec2 char_size = editor->character_size * scaling_factor;
-    vec2 line_start = vec2(-1.0f, 1.0f) * scaling_factor;
-    vec2 cursor = line_start + vec2(character * char_size.x, -(line_index + 1) * char_size.y);
-    return cursor;
+    float height = rendering_core.render_information.backbuffer_height;
+    return vec2(0.0f, height) + syntax_editor.character_size * vec2(character, -line_index - 1);
 }
 
 void syntax_editor_draw_underline(int line_index, int character, int length, vec3 color)
 {
-    float w = syntax_editor.rendering_core->render_information.backbuffer_width;
-    float h = syntax_editor.rendering_core->render_information.backbuffer_height;
-    vec2 scaling_factor;
-    if (w > h) {
-        scaling_factor = vec2(w / h, 1.0f);
-    }
-    else {
-        scaling_factor = vec2(1.0f, h / w);
-    }
-    vec2 char_size = syntax_editor.character_size * scaling_factor;
-    vec2 size = char_size * vec2((float)length, 1 / 8.0f);
-    vec2 edge_point = vec2(-1.0f, 1.0f) * scaling_factor;
-    vec2 cursor = edge_point + vec2(character * char_size.x, -(line_index + 1) * char_size.y);
-    cursor = cursor + size * vec2(0.5f, 0.5f);
-    renderer_2D_add_rectangle(syntax_editor.renderer_2D, cursor, size, color, 0.0f);
+    vec2 pos = syntax_editor_position_to_pixel(line_index, character);
+    vec2 size = vec2((float)length, 1.0f/8.f) * syntax_editor.character_size;
+    renderer_2D_add_rectangle(syntax_editor.renderer_2D, bounding_box_2_make_anchor(pos, size, Anchor::BOTTOM_LEFT), color);
 }
 
 void syntax_editor_draw_cursor_line(int line_index, int character, vec3 color)
 {
-    auto editor = &syntax_editor;
-    float w = editor->rendering_core->render_information.backbuffer_width;
-    float h = editor->rendering_core->render_information.backbuffer_height;
-    vec2 scaling_factor;
-    if (w > h) {
-        scaling_factor = vec2(w / h, 1.0f);
-    }
-    else {
-        scaling_factor = vec2(1.0f, h / w);
-    }
-    vec2 char_size = editor->character_size * scaling_factor;
-    vec2 size = char_size * vec2(0.1f, 1.0f);
-    vec2 edge_point = vec2(-1.0f, 1.0f) * scaling_factor;
-    vec2 cursor = edge_point + vec2(character * char_size.x, -(line_index + 1) * char_size.y);
-    cursor = cursor + size * vec2(0.5f, 0.5f);
-    renderer_2D_add_rectangle(editor->renderer_2D, cursor, size, color, 0.0f);
+    vec2 pos = syntax_editor_position_to_pixel(line_index, character);
+    vec2 size = vec2(0.1f, 1.0) * syntax_editor.character_size;
+    renderer_2D_add_rectangle(syntax_editor.renderer_2D, bounding_box_2_make_anchor(pos, size, Anchor::BOTTOM_LEFT), color);
 }
 
 void syntax_editor_draw_text_background(int line_index, int character, int length, vec3 color)
 {
-    auto& editor = syntax_editor;
-    auto offset = editor.character_size * vec2(0.0f, 0.5f);
-
-    float w = editor.rendering_core->render_information.backbuffer_width;
-    float h = editor.rendering_core->render_information.backbuffer_height;
-    vec2 scaling_factor;
-    if (w > h) {
-        scaling_factor = vec2(w / h, 1.0f);
-    }
-    else {
-        scaling_factor = vec2(1.0f, h / w);
-    }
-
-    vec2 char_size = editor.character_size * scaling_factor;
-    vec2 edge_point = vec2(-1.0f, 1.0f) * scaling_factor;
-    vec2 cursor = edge_point + vec2(character * char_size.x, -line_index * char_size.y);
-
-    vec2 size = char_size * vec2((float)length, 1.0f);
-    cursor = cursor + size * vec2(0.5f, -0.5f);
-    renderer_2D_add_rectangle(editor.renderer_2D, cursor, size, color, 0.0f);
+    vec2 pos = syntax_editor_position_to_pixel(line_index, character);
+    vec2 size = vec2(length, 1) * syntax_editor.character_size;
+    renderer_2D_add_rectangle(syntax_editor.renderer_2D, bounding_box_2_make_anchor(pos, size, Anchor::BOTTOM_LEFT), color);
 }
 
 void syntax_editor_draw_string(String string, vec3 color, int line_index, int character)
 {
-    auto editor = &syntax_editor;
-    vec2 pos = vec2(-1.0f, 1.0f) + vec2(character, -(line_index + 1)) * editor->character_size;
-    text_renderer_add_text(editor->text_renderer, string, pos, Anchor::BOTTOM_LEFT, editor->character_size.y, color);
+    vec2 pos = syntax_editor_position_to_pixel(line_index, character);
+    text_renderer_add_text(syntax_editor.text_renderer, string, pos, Anchor::BOTTOM_LEFT, syntax_editor.character_size.y, color);
 }
 
-void syntax_editor_draw_string_in_box(String string, vec3 text_color, vec3 box_color, int line_index, int character, float text_size)
+// Note: Always takes Anchor::TOP_LEFT, because string may grow downwards...
+void syntax_editor_draw_string_in_box(String string, vec3 text_color, vec3 box_color, vec2 position, float text_height)
 {
-    int text_width = 0;
-    int max_text_width = 0;
-    int text_height = 1;
-    for (int i = 0; i < string.size; i++) {
-        auto c = string[i];
+    vec2 char_size = vec2(text_renderer_character_width(syntax_editor.text_renderer, text_height), text_height);
+
+    int line_pos = 0;
+    int max_line_pos = 0;
+    int current_char_pos = 0;
+    int last_draw_character_index = 0;
+    int next_draw_char_pos = 0;
+    for (int i = 0; i <= string.size; i++) {
+        char c = i == string.size ? 0 : string[i];
+        bool draw_until_this_character = i == string.size;
+        const int draw_line_index = line_pos;
+
         if (c == '\n') {
-            text_width = 0;
-            text_height += 1;
+            draw_until_this_character = true;
+            line_pos += 1;
+            current_char_pos = 0;
+        }
+        else if (c == '\t') {
+            draw_until_this_character = true;
+            current_char_pos += 4;
+        }
+        else if (c < 32) {
+            // Ignore other ascii control sequences
         }
         else {
-            text_width += 1;
-            max_text_width = math_maximum(max_text_width, text_width);
+            // Normal character
+            current_char_pos += 1;
+        }
+        max_line_pos = math_maximum(max_line_pos, current_char_pos);
+
+        if (draw_until_this_character) {
+            String line = string_create_substring_static(&string, last_draw_character_index, i);
+            last_draw_character_index = i + 1;
+            vec2 text_line_pos = position + char_size * vec2(next_draw_char_pos, -draw_line_index);
+            text_renderer_add_text(syntax_editor.text_renderer, line, text_line_pos, Anchor::TOP_LEFT, text_height, text_color);
+            next_draw_char_pos = current_char_pos;
         }
     }
 
-    auto editor = &syntax_editor;
-    vec2 pos = vec2(-1.0f, 1.0f) + vec2(character, -line_index) * editor->character_size + vec2(0.0f, -editor->character_size.y * text_size * text_height);
-    text_renderer_add_text(editor->text_renderer, string, pos, Anchor::BOTTOM_LEFT, editor->character_size.y * text_size, text_color);
-
-    float w = editor->rendering_core->render_information.backbuffer_width;
-    float h = editor->rendering_core->render_information.backbuffer_height;
-    vec2 scaling_factor;
-    if (w > h) {
-        scaling_factor = vec2(w / h, 1.0f);
-    }
-    else {
-        scaling_factor = vec2(1.0f, h / w);
-    }
-    vec2 size = editor->character_size * scaling_factor;
-    vec2 edge_point = vec2(-1.0f, 1.0f) * scaling_factor;
-    vec2 cursor = edge_point + vec2(character * size.x, -line_index * size.y);
-    size = size * vec2(max_text_width, text_height) * text_size;
-    cursor = cursor + size * vec2(0.5f, -0.5f);
-    renderer_2D_add_rectangle(editor->renderer_2D, cursor, size, box_color, 0.0f);
+    // Draw surrounding retangle
+    vec2 text_size = char_size * vec2(max_line_pos, line_pos + 1);
+    renderer_2D_add_rectangle(syntax_editor.renderer_2D, bounding_box_2_make_anchor(position, text_size, Anchor::TOP_LEFT), box_color);
 }
 
 void syntax_editor_draw_block_outline(int line_start, int line_end, int indentation)
 {
     if (indentation == 0) return;
     auto offset = syntax_editor.character_size * vec2(0.5f, 1.0f);
-    vec2 start = text_to_screen_coord(line_start, (indentation - 1) * 4) + offset;
-    vec2 end = text_to_screen_coord(line_end, (indentation - 1) * 4) + offset;
+    vec2 start = syntax_editor_position_to_pixel(line_start, (indentation - 1) * 4) + offset;
+    vec2 end = syntax_editor_position_to_pixel(line_end, (indentation - 1) * 4) + offset;
     start.y -= syntax_editor.character_size.y * 0.1;
     end.y += syntax_editor.character_size.y * 0.1;
-    renderer_2D_add_line(syntax_editor.renderer_2D, start, end, vec3(0.4f), 3, 0.0f);
+    renderer_2D_add_line(syntax_editor.renderer_2D, start, end, vec3(0.4f), 3);
     vec2 l_end = end + vec2(syntax_editor.character_size.x * 0.5f, 0.0f);
-    renderer_2D_add_line(syntax_editor.renderer_2D, end, l_end, vec3(0.4f), 3, 0.0f);
+    renderer_2D_add_line(syntax_editor.renderer_2D, end, l_end, vec3(0.4f), 3);
 }
 
 
@@ -2105,8 +2063,8 @@ void syntax_editor_render()
     auto& cursor = syntax_editor.cursor;
 
     // Prepare Render
-    editor.character_size.y = convertHeightFromTo(0.55f, Unit::CENTIMETER, Unit::NORMALIZED_SCREEN);
-    editor.character_size.x = text_renderer_line_width(editor.text_renderer, editor.character_size.y, 1);
+    editor.character_size.y = math_floor(convertHeight(0.55f, Unit::CENTIMETER));
+    editor.character_size.x = text_renderer_character_width(editor.text_renderer, editor.character_size.y);
 
     // Layout Source Code
     syntax_editor_sanitize_cursor();
@@ -2115,13 +2073,11 @@ void syntax_editor_render()
 
     // Check where cursor is
     {
-        int line_count = 2.0f / editor.character_size.y;
-        editor.last_line_count = line_count;
+        int line_count = rendering_core.render_information.backbuffer_height / editor.character_size.y;
         int visible_start = editor.camera_start_line;
         int visible_end = visible_start + line_count;
 
         auto cursor_line = index_value_text(cursor.line_index)->render_index;
-        editor.last_cursor_line = cursor_line;
         if (cursor_line < visible_start) {
             editor.camera_start_line = cursor_line;
         }
@@ -2342,7 +2298,8 @@ void syntax_editor_render()
             auto& info = line->infos[display_index.token];
             char_index = info.pos; // + (cursor.pos - index_value(cursor_token_index)->start_index);
         }
-        syntax_editor_draw_string_in_box(context, vec3(1.0f), vec3(0.2f), line->render_index + 1, char_index, 0.8f);
+        vec2 context_pos = syntax_editor_position_to_pixel(line->render_index, char_index);
+        syntax_editor_draw_string_in_box(context, vec3(1.0f), vec3(0.2f), context_pos, syntax_editor.character_size.y * 0.8f);
     }
 
     // Render Primitives (2nd Pass so context is above all else)

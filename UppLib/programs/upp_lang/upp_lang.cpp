@@ -266,7 +266,7 @@ void upp_lang_main()
             if (!window_handle_messages(window, true)) {
                 break;
             }
-            if (input->close_request_issued || input->key_pressed[(int)Key_Code::ESCAPE]) {
+            if (input->close_request_issued || (input->key_pressed[(int)Key_Code::E] && input->key_down[(int)Key_Code::CTRL])) {
                 window_save_position(window, "window_pos.set");
                 window_close(window);
                 break;

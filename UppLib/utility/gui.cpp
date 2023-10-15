@@ -1275,7 +1275,7 @@ void gui_update_and_render()
                 case GUI_Drawable_Type::TEXT: {
                     auto bb = node.bounding_box.as_bounding_box();
                     float height = bb.max.y - bb.min.y;
-                    float char_width = text_renderer_line_width(gui.text_renderer, height, 1);
+                    float char_width = text_renderer_character_width(gui.text_renderer, height);
                     String text = node.drawable.text; // Local copy so size can be changed without affecting original code
                     vec4 c = node.drawable.color;
                     text_renderer_add_text(
@@ -1579,7 +1579,7 @@ void gui_drawable_destroy(GUI_Drawable& drawable) {
 GUI_Handle gui_push_text(GUI_Handle parent_handle, String text, float text_height_cm, vec4 color)
 {
     const float char_height = convertHeight(text_height_cm, Unit::CENTIMETER);
-    const float char_width = text_renderer_line_width(gui.text_renderer, char_height, 1) + 0.01f;
+    const float char_width = text_renderer_character_width(gui.text_renderer, char_height) + 0.01f;
     return gui_add_node(
         parent_handle,
         gui_size_make_fixed(char_width * text.size),
@@ -1951,7 +1951,7 @@ void gui_push_text_edit(GUI_Handle parent_handle, String* string, float text_hei
 
     // Add text box
     int text_height = convertHeight(text_height_cm, Unit::CENTIMETER);
-    float char_width = text_renderer_line_width(gui.text_renderer, text_height, 1);
+    float char_width = text_renderer_character_width(gui.text_renderer, text_height);
     auto text = gui_add_node(container, gui_size_make_fixed(string->size * char_width), gui_size_make_fixed(text_height), gui_drawable_make_text(*string));
     if (gui_node_has_focus(container)) { // Add cursor
         gui_add_node(container, gui_size_make_fixed(2), gui_size_make_fill(), gui_drawable_make_rect(vec4(0, 0, 0, 1)));

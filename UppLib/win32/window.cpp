@@ -867,7 +867,7 @@ bool window_handle_messages(Window* window, bool block_until_next_message, int* 
     }
 
     double end = timer_current_time_in_seconds(&timer);
-    if (end - start > 0.003) {
+    if (end - start > 0.003 && !block_until_next_message) {
         logg("Took longer than a ms %3.2fms\n", (end-start) * 1000.0f);
         // logg("Time for first: %3.2fms\n", (end - start) * 1000.0f);
         // logg("MEssage count: #%d\n", msg_count);

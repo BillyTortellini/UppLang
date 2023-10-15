@@ -1,4 +1,10 @@
-TODO:
+
+
+First of all, "importing" should be done with an import statement thing, so either #import or import (Instead of using)
+
+Entering spaces in editor is buggy? Either it doesn't show them properly, or it something else
+
+Alias missing things:
     - Aliases with name, e.g. using Helpers~foo as bar
     - File imports with using, e.g. using "printing.upp"
         * also with alias, like using "printing.upp" as Printing

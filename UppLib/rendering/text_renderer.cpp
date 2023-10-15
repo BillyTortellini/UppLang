@@ -51,9 +51,9 @@ void text_renderer_destroy(Text_Renderer* renderer)
     delete renderer;
 }
 
-float text_renderer_line_width(Text_Renderer* renderer, float line_height, int char_count) {
+float text_renderer_character_width(Text_Renderer* renderer, float line_height) {
     auto& atlas = renderer->glyph_atlas;
-    return line_height * char_count * atlas.cursor_advance / (float)(atlas.ascender - atlas.descender);
+    return line_height * atlas.cursor_advance / (float)(atlas.ascender - atlas.descender);
 }
 
 void text_renderer_add_text(Text_Renderer* renderer, String text, vec2 position, Anchor anchor, float line_height, vec3 color, Optional<Bounding_Box2> clip_box)
@@ -63,7 +63,7 @@ void text_renderer_add_text(Text_Renderer* renderer, String text, vec2 position,
     }
 
     Glyph_Atlas* atlas = &renderer->glyph_atlas;
-    const vec2 char_size = vec2(text_renderer_line_width(renderer, line_height, 1), line_height);
+    const vec2 char_size = vec2(text_renderer_character_width(renderer, line_height), line_height);
     const vec2 char_size_normalized = convertSizeFromTo(char_size, Unit::PIXELS, Unit::NORMALIZED_SCREEN);
     vec2 offset = anchor_switch(
         convertPointFromTo(position, Unit::PIXELS, Unit::NORMALIZED_SCREEN), vec2(char_size_normalized.x * text.size, char_size_normalized.y),
