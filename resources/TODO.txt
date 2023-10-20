@@ -1,23 +1,14 @@
 
-BUG:
-    Symbol resolve not working with parent module -> Debug through symbol resolve:
-    Possible issues:
-        * Parent table not installed
-        * Workload dependencies wrong -> Symbol lookup is done before module analysis is finished...
-        * Internal Symbol flag is set wrong
-
-
-Alias missing things:
-    - Handling Symbol overloads when defining symbols
-        -> On symbol lookup either allow symbol overloads or don't, if so, then the symbol can return multiple values, otherwise error and error symbol...
-        
+TODO:
+    - All imports should run from top to bottom, so don't do this weird "figure out the order" thingy
+    - imports should also work in non-module context, e.g. as a statement in a code block...
+        e.g. Statement_Type::Import    
 
 Next Features to implement:
-    - Symbol imports and file loads
-    - Handling Symbol overloads correctly
-    - imports should also work in non-module context, e.g. as a statement in a code block...
-    - Rework function calls (named arguments, default values), multiple return values
-    - Function overloading...
+
+    - Rework function calls (named arguments, default values, varargs thingy with any), multiple return values
+    - Function overloading, Symbol overloading in general (I guess this only applies to functions...)
+
     - New casting system, operator overloads, better loops ()
 
 
@@ -126,6 +117,51 @@ Implementation Problems:
     Ideas for using: 
     Aliases: 
     So using require a Symbol-Lookup/Path lookup (To find if the symbol exists to where it's pointing)
+
+Symbol overloads:
+    Currently we cannot define multiple Symbols with the same name in the same symbol table I guess...
+        X::int
+        X::bool 
+    but in Code it is possible to allow "shadowing" of variables
+        a: int = 15
+            a := false
+            print_bool(a)
+        print_int(a)
+    How is this currently implemented?
+
+Problems with overloaded Symbols:
+    What does currently happen?
+        When defining a symbol, the name is looked up in the symbol table, and if it already exists, 
+        a temporary name is created -> E.g. the error is located at the time of the second definition.
+    What should happen (Design)?
+        Question: When is it an error if two symbols are accessible in the same scope?
+            Maybe there is a point to be made that some types of symbols (Comptime values) can never be overloaded,
+            so it shouldn't be possible to define them in the same module twice
+             --> This would mean that there is a definition order inside the module, and the error 
+                    would be the second definition...
+            Another problem: When can the error checking happen, since imports may import arbitrary symbols into the scope
+            Note: Symbol definition also usually happens before the imports, but the symbol types are just not known yet...
+        From a design point of view: When should the error be reported...
+
+        SOLUTION: Errors only on symbol lookup
+        A simple solution would probably be to move the error-reporting to the symbol lookup, where errors are reported only at lookup time
+        This would mean that arbitrary names can overlap, but on lookup only one name must exist (Or we can do overloading based on type)
+        Downside:
+            Errors will be reported later or can be overlooked during implementation
+            e.g. Situations where Overload-Disambiguation will be impossible to do will only be reported later.
+        Positives:
+            But with ~* imports it may accidentally happen that two namespaces clash in another namespace, and maybe the symbol of the ~* isn't used
+            at all in there, so there will be no error if never used...
+        Complexity: Since Symbols are used to determine the Dependencies of the Workloads, it may be harder if we have overloads,
+                    and also there may be more "unnecessary" dependencies which may lead to unwanted circular things...
+        Also: Later on we can add a system where some symbols don't allow other symbols with the same name in the same namespace...
+
+    Alright, so implementation:
+        Each symboltable stores a hashmap connected to a dynamic_array of symbols, and on symbol query all symbols are returned...
+
+    Storing Symbol references needs to be done somewhere else now...
+
+
 
 
             

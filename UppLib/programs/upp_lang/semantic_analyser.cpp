@@ -1530,24 +1530,23 @@ Symbol* symbol_lookup_resolve(AST::Symbol_Lookup* lookup, Symbol_Table* symbol_t
     // Find all symbols with this id
     auto results = dynamic_array_create_empty<Symbol*>(1);
     SCOPE_EXIT(dynamic_array_destroy(&results));
-    symbol_table_find_symbol_all(symbol_table, lookup->name, search_parents, internals_ok, lookup, &results);
+    symbol_table_query_id(symbol_table, lookup->name, search_parents, internals_ok, &results);
+
     if (results.size == 0) {
         semantic_analyser_log_error(Semantic_Error_Type::SYMBOL_TABLE_UNRESOLVED_SYMBOL, upcast(lookup));
         info->symbol = error;
     }
     else if (results.size == 1) {
         info->symbol = results[0];
+        dynamic_array_push_back(&info->symbol->references, lookup);
     }
     else { // size > 1
-        if (internals_ok && results[0]->internal) {
-            // So that we can have variable 'overloads', and we found a internal symbol first, we'll take that one
-            info->symbol = results[0];
+        semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(lookup));
+        semantic_analyser_add_error_info(error_information_make_text("Multiple results found for this symbol, cannot decided"));
+        for (int i = 0; i < results.size; i++) {
+            semantic_analyser_add_error_info(error_information_make_symbol(results[i]));
         }
-        else {
-            semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(lookup));
-            semantic_analyser_add_error_info(error_information_make_text("Multiple results found for this symbol, cannot decided"));
-            info->symbol = error;
-        }
+        info->symbol = error;
     }
 
     // Handled aliases
@@ -2367,7 +2366,7 @@ void analysis_workload_entry(void* userdata)
 
             // Handle Symbol Imports
             // Check for general using errors
-            if (import_node->path->parts.size == 1 && import_node->alias_name == 0) {
+            if (import_node->path->parts.size == 1 && import_node->alias_name == 0 && import_node->type == AST::Import_Type::SINGLE_SYMBOL) {
                 semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(import_node->path));
                 semantic_analyser_add_error_info(error_information_make_text("Cannot import single symbol, or have an alias with same name!"));
                 continue;
@@ -5439,11 +5438,11 @@ Control_Flow semantic_analyser_analyse_block(AST::Code_Block* block)
     // Analyse order independent symbols inside code-block (Comptimes and variables)
     {
         auto progress = semantic_analyser.current_workload->current_function->progress;
-        bool define_comptimes = progress->poly_instance != 0 && progress->poly_instance->instance_index != 0;
+        bool dont_define_comptimes = progress->poly_instance != 0 && progress->poly_instance->instance_index != 0;
         for (int i = 0; i < block->statements.size; i++) {
             if (block->statements[i]->type == AST::Statement_Type::DEFINITION) {
                 auto definition = block->statements[i]->options.definition;
-                if (!(definition->is_comptime && define_comptimes)) {
+                if (!(definition->is_comptime && dont_define_comptimes)) {
                     analyser_create_symbol_and_workload_for_definition(definition);
                 }
             }
@@ -5487,26 +5486,36 @@ Control_Flow semantic_analyser_analyse_block(AST::Code_Block* block)
 void semantic_analyser_finish()
 {
     auto& type_system = compiler.type_system;
+    semantic_analyser.program->main_function = 0;
 
     // Check if main is defined
-    Symbol** main_symbol_opt = hashtable_find_element(&semantic_analyser.root_module->module_analysis->symbol_table->symbols, compiler.id_main);
-    ModTree_Function* main_function = 0;
-    if (main_symbol_opt == 0) {
+    Dynamic_Array<Symbol*>* main_symbols = hashtable_find_element(&semantic_analyser.root_module->module_analysis->symbol_table->symbols, compiler.id_main);
+    if (main_symbols == 0) {
         semantic_analyser_log_error(Semantic_Error_Type::MAIN_NOT_DEFINED, (AST::Node*)0);
         semantic_analyser_add_error_info(error_information_make_text("Main function not defined!"));
+        return;
     }
-    else
-    {
-        auto main_symbol = *main_symbol_opt;
-        if (main_symbol->type != Symbol_Type::FUNCTION) {
-            semantic_analyser_log_error(Semantic_Error_Type::MAIN_MUST_BE_FUNCTION, main_symbol->definition_node);
-            semantic_analyser_add_error_info(error_information_make_symbol(main_symbol));
+    if (main_symbols->size > 1) {
+        for (int i = 0; i < main_symbols->size; i++) {
+            auto symbol = (*main_symbols)[i];
+            semantic_analyser_log_error(Semantic_Error_Type::MAIN_NOT_DEFINED, symbol->definition_node);
+            semantic_analyser_add_error_info(error_information_make_text("Multiple main functions found!"));
         }
-        else {
-            main_function = main_symbol->options.function->function;
-        }
+        return;
     }
-    semantic_analyser.program->main_function = main_function;
+
+    Symbol* main_symbol = (*main_symbols)[0];
+    if (main_symbol->type != Symbol_Type::FUNCTION) {
+        semantic_analyser_log_error(Semantic_Error_Type::MAIN_MUST_BE_FUNCTION, main_symbol->definition_node);
+        semantic_analyser_add_error_info(error_information_make_symbol(main_symbol));
+        return;
+    }
+    if (main_symbol->options.function->function->signature != type_system.predefined_types.type_print_line) {
+        semantic_analyser_log_error(Semantic_Error_Type::MAIN_UNEXPECTED_SIGNATURE, main_symbol->definition_node);
+        semantic_analyser_add_error_info(error_information_make_symbol(main_symbol));
+        return;
+    }
+    semantic_analyser.program->main_function = main_symbol->options.function->function;
 }
 
 void semantic_analyser_reset()

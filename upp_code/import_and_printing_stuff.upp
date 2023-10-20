@@ -1,0 +1,12 @@
+
+import"printing.upp"as Printing
+
+main::()
+	Player::struct
+		name:String
+		age:int
+		alive:bool
+	
+	p:=Player.{name="Frank",age=15,alive=true}
+	Printing~print_any(p)
+	print_line()

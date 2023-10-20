@@ -35,7 +35,7 @@ enum class Symbol_Type
     DEFINITION_UNFINISHED,   // A Definition that isn't ready yet (global variable or comptime value)
     VARIABLE_UNDEFINED,      // A variable/parameter/global that hasn't been defined yet
 
-    ALIAS_OR_IMPORTED_SYMBOL, // Alias created by using, e.g. using Algorithms~sort
+    ALIAS_OR_IMPORTED_SYMBOL, // Alias created by import, e.g. import Algorithms~bubble_sort as sort
     HARDCODED_FUNCTION,
     FUNCTION,
     POLYMORPHIC_FUNCTION,
@@ -88,7 +88,7 @@ struct Included_Table
 struct Symbol_Table
 {
     Dynamic_Array<Included_Table> included_tables;
-    Hashtable<String*, Symbol*> symbols;
+    Hashtable<String*, Dynamic_Array<Symbol*>> symbols;
 };
 
 struct Symbol_Error
@@ -105,9 +105,7 @@ void symbol_destroy(Symbol* symbol);
 Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbol_Type type, AST::Node* definition_node, bool is_internal);
 void symbol_table_add_include_table(Symbol_Table* symbol_table, Symbol_Table* included_table, bool transitive, bool internal, AST::Node* include_node);
 // Note: when id == 0, all symbols that are possible will be added
-void symbol_table_find_symbol_all(
-    Symbol_Table* table, String* id, bool search_includes, bool internals_ok, AST::Symbol_Lookup* reference, Dynamic_Array<Symbol*>* results
-);
+void symbol_table_query_id(Symbol_Table* table, String* id, bool search_includes, bool internals_ok, Dynamic_Array<Symbol*>* results);
 
 void symbol_table_append_to_string(String* string, Symbol_Table* table, bool print_root);
 void symbol_append_to_string(Symbol* symbol, String* string);

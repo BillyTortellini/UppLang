@@ -895,7 +895,7 @@ void code_completion_find_suggestions()
         if (symbol_table != 0) {
             auto results = dynamic_array_create_empty<Symbol*>(1);
             SCOPE_EXIT(dynamic_array_destroy(&results));
-            symbol_table_find_symbol_all(symbol_table, 0, specific_table == 0, true, 0, &results);
+            symbol_table_query_id(symbol_table, 0, specific_table == 0, true, &results);
             for (int i = 0; i < results.size; i++) {
                 code_completion_add_and_rank(*results[i]->id, partially_typed);
             }

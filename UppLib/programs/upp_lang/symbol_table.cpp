@@ -15,7 +15,7 @@ Symbol_Table* symbol_table_create()
     Symbol_Table* result = new Symbol_Table;
     dynamic_array_push_back(&analyser->allocated_symbol_tables, result);
     result->included_tables = dynamic_array_create_empty<Included_Table>(1);
-    result->symbols = hashtable_create_pointer_empty<String*, Symbol*>(1);
+    result->symbols = hashtable_create_pointer_empty<String*, Dynamic_Array<Symbol*>>(1);
     return result;
 }
 
@@ -28,6 +28,10 @@ Symbol_Table* symbol_table_create_with_parent(Symbol_Table* parent_table, bool i
 
 void symbol_table_destroy(Symbol_Table* symbol_table)
 {
+    for (auto iter = hashtable_iterator_create(&symbol_table->symbols); hashtable_iterator_has_next(&iter); hashtable_iterator_next(&iter)) {
+        // Note: Symbols are allocated elsewhere...
+        dynamic_array_destroy(iter.value);
+    }
     hashtable_destroy(&symbol_table->symbols);
     delete symbol_table;
 }
@@ -66,23 +70,12 @@ Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbo
 {
     assert(id != 0, "HEY");
 
-    // Check if already defined in same scope, if so, use temporary id
-    {
-        Symbol** found_symbol = hashtable_find_element(&symbol_table->symbols, id);
-        if (found_symbol != 0) {
-            semantic_analyser_log_error(
-                Semantic_Error_Type::SYMBOL_TABLE_SYMBOL_ALREADY_DEFINED,
-                definition_node == 0 ? AST::upcast(compiler.main_source->parsed_code->root) : definition_node
-            );
-
-            // Create new temporary name for symbol. FUTURE: When we have overloading, this will need to be removed.
-            String temp_identifer = string_create_empty(128);
-            SCOPE_EXIT(string_destroy(&temp_identifer));
-            static int counter = 0; // Note: This is pretty bad, since we will flood the identifer pool this way
-            string_append_formated(&temp_identifer, "__temporary_%d", counter);
-            counter += 1;
-            id = identifier_pool_add(&compiler.identifier_pool, temp_identifer);
-        }
+    Dynamic_Array<Symbol*>* symbols = hashtable_find_element(&symbol_table->symbols, id);
+    if (symbols == 0) {
+        Dynamic_Array<Symbol*> new_symbols = dynamic_array_create_empty<Symbol*>(1);
+        hashtable_insert_element(&symbol_table->symbols, id, new_symbols);
+        symbols = hashtable_find_element(&symbol_table->symbols, id);
+        assert(symbols != 0, "Just inserted!");
     }
 
     // Create new symbol
@@ -94,14 +87,13 @@ Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbo
     new_sym->origin_table = symbol_table;
     new_sym->internal = is_internal;
     new_sym->references = dynamic_array_create_empty<AST::Symbol_Lookup*>(1);
-
-    hashtable_insert_element(&symbol_table->symbols, id, new_sym);
+    dynamic_array_push_back(symbols, new_sym);
     return new_sym;
 }
 
 
-void symbol_table_find_symbol_all_internal(
-    Symbol_Table* table, String* id, bool search_includes, bool internals_ok, AST::Symbol_Lookup* reference, Dynamic_Array<Symbol*>* results
+void symbol_table_query_id_recursive(
+    Symbol_Table* table, String* id, bool search_includes, bool internals_ok, Dynamic_Array<Symbol*>* results
 )
 {
     // Check if already visited
@@ -112,49 +104,52 @@ void symbol_table_find_symbol_all_internal(
     hashset_insert_element(&visited, table);
 
     // Check if all symbols should be added (If id parameter == 0)
+    bool stop_further_lookup = false;
     if (id != 0) {
         // Try to find symbol
-        Symbol** found = hashtable_find_element(&table->symbols, id);
-        if (found != 0) {
-            Symbol* symbol = *found;
-            if (!(symbol->internal && !internals_ok)) {
-                dynamic_array_push_back(results, symbol);
-                if (reference != 0) {
-                    dynamic_array_push_back(&(symbol->references), reference);
+        Dynamic_Array<Symbol*>* symbols = hashtable_find_element(&table->symbols, id);
+        if (symbols != 0) {
+            for (int i = 0; i < symbols->size; i++) {
+                Symbol* symbol = (*symbols)[i];
+                if (!(symbol->internal && !internals_ok)) {
+                    dynamic_array_push_back(results, symbol);
+                    if (symbol->internal) {
+                        stop_further_lookup = true; // Once a internal symbol is found (variable/parameter), stop the search
+                    }
                 }
             }
         }
     }
     else {
         // Otherwise add all symbols in this table
-        auto iter = hashtable_iterator_create(&table->symbols);
-        while (hashtable_iterator_has_next(&iter))
-        {
-            Symbol* symbol = (*iter.value);
-            dynamic_array_push_back(results, symbol);
-            hashtable_iterator_next(&iter);
+        for (auto iter = hashtable_iterator_create(&table->symbols); hashtable_iterator_has_next(&iter); hashtable_iterator_next(&iter)) {
+            Dynamic_Array<Symbol*>* symbols = iter.value;
+            for (int i = 0; i < symbols->size; i++) {
+                dynamic_array_push_back(results, (*symbols)[i]);
+            }
         }
+    }
+
+    if (stop_further_lookup) {
+        return;
     }
 
     // With includes, even if we have found a symbol, we keep searching
     for (int i = 0; i < table->included_tables.size && search_includes; i++) {
         auto included = table->included_tables[i];
-        symbol_table_find_symbol_all_internal(
+        symbol_table_query_id_recursive(
             included.table,
             id,
             included.transitive,
             internals_ok && included.is_internal,
-            reference,
             results
         );
     }
 }
 
-void symbol_table_find_symbol_all(
-    Symbol_Table* table, String* id, bool search_includes, bool internals_ok, AST::Symbol_Lookup* reference, Dynamic_Array<Symbol*>* results) 
-{
+void symbol_table_query_id(Symbol_Table* table, String* id, bool search_includes, bool internals_ok, Dynamic_Array<Symbol*>* results) {
     hashset_reset(&compiler.semantic_analyser->symbol_lookup_visited);
-    return symbol_table_find_symbol_all_internal(table, id, search_includes, internals_ok, reference, results);
+    return symbol_table_query_id_recursive(table, id, search_includes, internals_ok, results);
 }
 
 void symbol_append_to_string(Symbol* symbol, String* string)
@@ -211,16 +206,17 @@ void symbol_table_append_to_string_with_parent_info(String* string, Symbol_Table
     if (!is_parent) {
         string_append_formated(string, "Symbols: \n");
     }
-    auto iter = hashtable_iterator_create(&table->symbols);
-    while (hashtable_iterator_has_next(&iter))
+    for (auto iter = hashtable_iterator_create(&table->symbols); hashtable_iterator_has_next(&iter); hashtable_iterator_next(&iter))
     {
-        Symbol* s = *iter.value;
-        if (is_parent) {
-            string_append_formated(string, "\t");
+        Dynamic_Array<Symbol*> symbols = *(iter.value);
+        for (int i = 0; i < symbols.size; i++) {
+            Symbol* s = symbols[i];
+            if (is_parent) {
+                string_append_formated(string, "\t");
+            }
+            symbol_append_to_string(s, string);
+            string_append_formated(string, "\n");
         }
-        symbol_append_to_string(s, string);
-        string_append_formated(string, "\n");
-        hashtable_iterator_next(&iter);
     }
     // if (table->parent != 0) {
     //     symbol_table_append_to_string_with_parent_info(string, table->parent, true, print_root);
