@@ -1512,6 +1512,10 @@ void path_lookup_set_error_symbol(AST::Path_Lookup* path, Workload_Base* workloa
         }
     }
 
+    // Set last symbol read of path to error
+    auto info = pass_get_node_info(workload->current_pass, path->last, Info_Query::TRY_READ);
+    info->symbol = error_symbol;
+
     // Set whole path result to error
     {
         auto info = pass_get_node_info(workload->current_pass, path, Info_Query::TRY_READ);
@@ -1553,8 +1557,10 @@ Symbol* symbol_lookup_resolve(AST::Symbol_Lookup* lookup, Symbol_Table* symbol_t
     if (info->symbol->type == Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL) {
         analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(info->symbol->options.alias_workload), lookup);
         workload_executer_wait_for_dependency_resolution();
-        info->symbol = info->symbol->options.alias_workload->alias_for_symbol;
-        assert(info->symbol->type != Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, "Chained aliases should never happen here!");
+        if (info->symbol->type != Symbol_Type::ERROR_SYMBOL) { // Could have been set to error after waiting for dependency
+            info->symbol = info->symbol->options.alias_workload->alias_for_symbol;
+            assert(info->symbol->type != Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, "Chained aliases should never happen here!");
+        }
     }
 
     return info->symbol;
@@ -2325,7 +2331,7 @@ void analysis_workload_entry(void* userdata)
         get_info(module_node, true)->symbol_table = analysis->symbol_table;
         RESTORE_ON_SCOPE_EXIT(workload->current_symbol_table, analysis->symbol_table);
 
-        // Handle Imports
+        // Add Parent-Dependency for Symbol-Ready (e.g. normal workloads can run and do symbol lookups)
         if (analysis->parent_analysis != 0) {
             analysis->last_import_workload = analysis->parent_analysis->last_import_workload;
             if (analysis->last_import_workload != 0) {
@@ -2337,60 +2343,32 @@ void analysis_workload_entry(void* userdata)
             }
         }
 
-        auto last_normal_usings = dynamic_array_create_empty<Workload_Import_Resolve*>(1);
-        SCOPE_EXIT(dynamic_array_destroy(&last_normal_usings));
         for (int i = 0; i < module_node->import_nodes.size; i++)
         {
             auto import_node = module_node->import_nodes[i];
 
-            // Handle file imports
-            if (import_node->type == AST::Import_Type::FILE) {
-                auto module_progress = compiler_import_and_queue_analysis_workload(import_node);
-                if (module_progress == 0) {
-                    semantic_analyser_log_error(Semantic_Error_Type::OTHERS_COULD_NOT_LOAD_FILE, upcast(import_node));
-                    semantic_analyser_add_error_info(error_information_make_text("Could not load file"));
+            // Check for Syntax-Errors
+            if (import_node->type != AST::Import_Type::FILE) {
+                if (import_node->path->parts.size == 1 && import_node->alias_name == 0 && import_node->type == AST::Import_Type::SINGLE_SYMBOL) {
+                    semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(import_node->path));
+                    semantic_analyser_add_error_info(error_information_make_text("Cannot import single symbol, or have an alias with same name!"));
                     continue;
                 }
-                if (import_node->alias_name == 0) {
-                    // Install into current symbol_table
-                    symbol_table_add_include_table(analysis->symbol_table, module_progress->module_analysis->symbol_table, false, false, upcast(import_node));
+                if (import_node->path->last->name == import_node->alias_name) {
+                    semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(import_node->path));
+                    semantic_analyser_add_error_info(error_information_make_text("Using as ... in import requires the name to be different than the original symbol name"));
+                    continue;
                 }
-                else {
-                    Symbol* symbol = symbol_table_define_symbol(
-                        workload->current_symbol_table, import_node->alias_name, Symbol_Type::MODULE, upcast(import_node), false
-                    );
-                    symbol->options.module_progress = module_progress;
+                if (import_node->path->last->name == 0) {
+                    // NOTE: This may happen for usage in the Syntax-Editor, look at the parser for more info.
+                    //       Also i think this is kinda ugly because it's such a special case, but we'll see
+                    continue;
                 }
-                continue;
-            }
-
-            // Handle Symbol Imports
-            // Check for general using errors
-            if (import_node->path->parts.size == 1 && import_node->alias_name == 0 && import_node->type == AST::Import_Type::SINGLE_SYMBOL) {
-                semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(import_node->path));
-                semantic_analyser_add_error_info(error_information_make_text("Cannot import single symbol, or have an alias with same name!"));
-                continue;
-            }
-            if (import_node->path->last->name == import_node->alias_name) {
-                semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(import_node->path));
-                semantic_analyser_add_error_info(error_information_make_text("Using as ... in import requires the name to be different than the original symbol name"));
-                continue;
-            }
-            if (import_node->path->last->name == 0) {
-                // NOTE: This may happen for usage in the Syntax-Editor, look at the parser for more info.
-                //       Also i think this is kinda ugly because it's such a special case, but we'll see
-                continue;
-            }
-            if (import_node->alias_name != 0 && (import_node->type == AST::Import_Type::MODULE_SYMBOLS || import_node->type == AST::Import_Type::MODULE_SYMBOLS_TRANSITIVE)) {
-                semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(import_node->path));
-                semantic_analyser_add_error_info(error_information_make_text("Cannot alias * or ** imports"));
-                continue;
-            }
-
-            // Handle alias name
-            auto name = import_node->path->last->name;
-            if (import_node->alias_name != 0) {
-                name = import_node->alias_name;
+                if (import_node->alias_name != 0 && (import_node->type == AST::Import_Type::MODULE_SYMBOLS || import_node->type == AST::Import_Type::MODULE_SYMBOLS_TRANSITIVE)) {
+                    semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(import_node->path));
+                    semantic_analyser_add_error_info(error_information_make_text("Cannot alias * or ** imports"));
+                    continue;
+                }
             }
 
             // Create workload
@@ -2404,27 +2382,24 @@ void analysis_workload_entry(void* userdata)
                 analysis_workload_add_dependency_internal(upcast(import_workload), upcast(analysis->last_import_workload), 0);
             }
             analysis_workload_add_dependency_internal(upcast(analysis->progress->event_symbol_table_ready), upcast(import_workload), 0);
+            analysis->last_import_workload = import_workload;
 
-            switch (import_node->type) {
-            case AST::Import_Type::SINGLE_SYMBOL: {
-                dynamic_array_push_back(&last_normal_usings, import_workload);
+            // Define Symbols if available
+            if (import_node->type == AST::Import_Type::SINGLE_SYMBOL) {
+                auto name = import_node->path->last->name;
+                if (import_node->alias_name != 0) {
+                    name = import_node->alias_name;
+                }
                 import_workload->symbol = symbol_table_define_symbol(
                     workload->current_symbol_table, name, Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, upcast(import_node), false
                 );
                 import_workload->symbol->options.alias_workload = import_workload;
-                break;
             }
-            case AST::Import_Type::MODULE_SYMBOLS:
-            case AST::Import_Type::MODULE_SYMBOLS_TRANSITIVE: {
-                for (int i = 0; i < last_normal_usings.size; i++) {
-                    analysis_workload_add_dependency_internal(upcast(import_workload), upcast(last_normal_usings[i]), 0);
-                }
-                dynamic_array_reset(&last_normal_usings);
-                analysis->last_import_workload = import_workload;
-                break;
-            }
-            default:
-                panic("");
+            else if (import_node->type == AST::Import_Type::FILE && import_node->alias_name != 0) {
+                import_workload->symbol = symbol_table_define_symbol(
+                    workload->current_symbol_table, import_node->alias_name, Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, upcast(import_node), false
+                );
+                import_workload->symbol->options.alias_workload = import_workload;
             }
         }
 
@@ -2449,11 +2424,37 @@ void analysis_workload_entry(void* userdata)
     }
     case Analysis_Workload_Type::USING_RESOLVE:
     {
-        auto using_workload = downcast<Workload_Import_Resolve>(workload);
-        auto node = using_workload->import_node;
+        auto import_workload = downcast<Workload_Import_Resolve>(workload);
+        auto node = import_workload->import_node;
 
-        if (node->type == AST::Import_Type::SINGLE_SYMBOL) {
-            using_workload->alias_for_symbol = path_lookup_resolve(node->path);
+        // Handle file imports
+        if (node->type == AST::Import_Type::FILE) 
+        {
+            auto module_progress = compiler_import_and_queue_analysis_workload(node);
+            if (module_progress == 0) {
+                semantic_analyser_log_error(Semantic_Error_Type::OTHERS_COULD_NOT_LOAD_FILE, upcast(node));
+                semantic_analyser_add_error_info(error_information_make_text("Could not load file"));
+                import_workload->alias_for_symbol = semantic_analyser.predefined_symbols.error_symbol;
+                break;
+            }
+
+            // Wait for module discovery to finish
+            analysis_workload_add_dependency_internal(workload, upcast(module_progress->module_analysis), 0);
+            workload_executer_wait_for_dependency_resolution();
+
+            if (node->alias_name == 0) {
+                // Install into current symbol_table
+                symbol_table_add_include_table(
+                    import_workload->base.current_symbol_table, module_progress->module_analysis->symbol_table, false, false, upcast(node)
+                );
+            }
+            else {
+                import_workload->alias_for_symbol = import_workload->symbol;
+            }
+            break;
+        }
+        else if (node->type == AST::Import_Type::SINGLE_SYMBOL) {
+            import_workload->alias_for_symbol = path_lookup_resolve(node->path);
         }
         else {
             Symbol* symbol = path_lookup_resolve(node->path);
@@ -2461,18 +2462,18 @@ void analysis_workload_entry(void* userdata)
             if (symbol->type == Symbol_Type::MODULE)
             {
                 auto progress = symbol->options.module_progress;
-                // Wait for symbol discovery to finish (Probably not even important)
+                // Wait for symbol discovery to finish
                 analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(progress->module_analysis), node->path->last);
                 workload_executer_wait_for_dependency_resolution();
 
                 // If transitive we need to wait now until the last of their usings finish
                 auto last_import = progress->module_analysis->last_import_workload;
-                if (node->type == AST::Import_Type::MODULE_SYMBOLS_TRANSITIVE && last_import != 0 && last_import != using_workload) {
+                if (node->type == AST::Import_Type::MODULE_SYMBOLS_TRANSITIVE && last_import != 0 && last_import != import_workload) {
                     analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(progress->module_analysis->last_import_workload), node->path->last);
                     workload_executer_wait_for_dependency_resolution();
                 }
 
-                // Refresh symbol after dependency wait
+                // Refresh symbol after dependency wait (Could have been set to error in the meantime)
                 symbol = get_info(node->path->last)->symbol;
                 if (symbol->type != Symbol_Type::ERROR_SYMBOL) {
                     // Add using
