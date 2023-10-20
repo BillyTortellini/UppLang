@@ -1189,7 +1189,7 @@ void window_initialize_dxgi_output()
                 SCOPE_EXIT(string_destroy(&tmp));
                 wcstombs(tmp.characters, desc.DeviceName, 32);
                 tmp.size = strlen(tmp.characters);
-                logg("Using output: %s\n", tmp.characters);
+                logg("Import output: %s\n", tmp.characters);
 
                 break;
                 j++;

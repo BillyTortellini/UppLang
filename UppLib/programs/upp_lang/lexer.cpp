@@ -75,8 +75,8 @@ String syntax_keyword_as_string(Keyword keyword)
 {
     switch (keyword)
     {
-    case Keyword::IMPORT: return string_create_static("#import");
-    case Keyword::USING: return string_create_static("using");
+    case Keyword::IMPORT: return string_create_static("import");
+    case Keyword::AS: return string_create_static("as");
     case Keyword::BAKE: return string_create_static("#bake");
     case Keyword::BREAK: return string_create_static("break");
     case Keyword::CASE: return string_create_static("case");

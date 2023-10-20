@@ -96,7 +96,7 @@ namespace AST
         PARAMETER,         // Name/Type compination with optional default value + comptime
         SYMBOL_LOOKUP,     // A single identifier lookup
         PATH_LOOKUP,       // Possibliy multiple symbol-lookups together (e.g. Utils~Logger~log)
-        USING,             // Aliases/Symbol-Import/File-Loading
+        IMPORT,             // Aliases/Symbol-Import/File-Loading
         ENUM_MEMBER,       // ID with or without value-expr
         SWITCH_CASE,       // Expression 
     };
@@ -109,18 +109,22 @@ namespace AST
         Node_Range bounding_range;
     };
 
-    enum class Using_Type
+    enum class Import_Type
     {
-        NORMAL,                  // using A~a
-        SYMBOL_IMPORT,           // using A~*
-        SYMBOL_IMPORT_TRANSITIV  // using A~**
+        SINGLE_SYMBOL,             // import A~a
+        MODULE_SYMBOLS,            // import A~*
+        MODULE_SYMBOLS_TRANSITIVE, // import A~**
+        FILE                       // import "../something"
     };
 
-    struct Using
+    struct Import
     {
         Node base;
-        Using_Type type;
+        Import_Type type;
+        String* alias_name; // May be null if no alias is given
+        // Depending on import type one of those is set, the other will be 0
         Path_Lookup* path;
+        String* file_name;
     };
 
     struct Symbol_Lookup
@@ -142,7 +146,7 @@ namespace AST
     {
         Node base;
         Dynamic_Array<Definition*> definitions;
-        Dynamic_Array<Using*> using_nodes;
+        Dynamic_Array<Import*> import_nodes;
     };
 
     struct Enum_Member
@@ -372,7 +376,7 @@ namespace AST
         bool type_correct(Expression* base);
         bool type_correct(Enum_Member* base);
         bool type_correct(Module* base);
-        bool type_correct(Using* base);
+        bool type_correct(Import* base);
         bool type_correct(Path_Lookup* base);
         bool type_correct(Symbol_Lookup* base);
         bool type_correct(Code_Block* base);

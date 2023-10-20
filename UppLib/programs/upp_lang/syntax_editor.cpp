@@ -413,7 +413,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
     syntax_editor.code_changed_since_last_compile = false;
     syntax_editor.last_compile_was_with_code_gen = generate_code;
     compiler_compile_incremental(&syntax_editor.history, (generate_code ? Compile_Type::BUILD_CODE : Compile_Type::ANALYSIS_ONLY));
-    //compiler_compile_clean(syntax_editor.code, (generate_code ? Compile_Type::BUILD_CODE : Compile_Type::ANALYSIS_ONLY), string_create(syntax_editor.file_path));
+    // compiler_compile_clean(syntax_editor.code, (generate_code ? Compile_Type::BUILD_CODE : Compile_Type::ANALYSIS_ONLY), string_create(syntax_editor.file_path));
 
     // Collect errors from all compiler stages
     {
@@ -425,7 +425,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
         // Parse Errors
         for (int i = 0; i < compiler.code_sources.size; i++)
         {
-            auto& parse_errors = compiler.code_sources[i]->source_parse->error_messages;
+            auto& parse_errors = compiler.code_sources[i]->parsed_code->error_messages;
             for (int j = 0; j < parse_errors.size; j++) {
                 auto& error = parse_errors[j];
                 dynamic_array_push_back(&editor.errors, error_display_make(string_create_static(error.msg), AST::node_range_to_token_range(error.range)));
@@ -769,7 +769,7 @@ void code_completion_find_suggestions()
     // Check if we are on special node
     syntax_editor_synchronize_with_compiler(false);
     Token_Index cursor_token_index = token_index_make(syntax_editor.cursor.line_index, get_cursor_token_index(false));
-    auto node = Parser::find_smallest_enclosing_node(&compiler.main_source->source_parse->root->base, cursor_token_index);
+    auto node = Parser::find_smallest_enclosing_node(&compiler.main_source->parsed_code->root->base, cursor_token_index);
 
     bool fill_from_symbol_table = false;
     Symbol_Table* specific_table = 0;
@@ -830,7 +830,7 @@ void code_completion_find_suggestions()
         auto prev_token = get_cursor_token(false);
         if (prev_token.type == Token_Type::OPERATOR && prev_token.options.op == Operator::TILDE) {
             // Try to get token before ~, which should be an identifier...
-            auto node = Parser::find_smallest_enclosing_node(&compiler.main_source->source_parse->root->base, token_index_prev(cursor_token_index));
+            auto node = Parser::find_smallest_enclosing_node(&compiler.main_source->parsed_code->root->base, token_index_prev(cursor_token_index));
             auto pass = code_query_get_analysis_pass(node);
             if (node->type == AST::Node_Type::SYMBOL_LOOKUP && pass != 0) {
                 auto info = pass_get_node_info(pass, AST::downcast<AST::Symbol_Lookup>(node), Info_Query::TRY_READ);
@@ -1876,7 +1876,7 @@ bool display_space_after_token(Token_Index index)
     }
 
     // Special keyword handling
-    if (a.type == Token_Type::KEYWORD) {
+    if (a.type == Token_Type::KEYWORD || b.type == Token_Type::KEYWORD) {
         return true;
     }
 
@@ -2124,7 +2124,7 @@ void syntax_editor_render()
     //if (!show_context_info)
     //{
     //    show_context_info = true;
-    //    auto node = Parser::find_smallest_enclosing_node(&compiler.main_source->source_parse->root->base, cursor_token_index);
+    //    auto node = Parser::find_smallest_enclosing_node(&compiler.main_source->parsed_code->root->base, cursor_token_index);
     //    AST::base_append_to_string(node, &context);
     //}
 
@@ -2146,7 +2146,7 @@ void syntax_editor_render()
 
     // Display Hover Information
     {
-        auto node = Parser::find_smallest_enclosing_node(&compiler.main_source->source_parse->root->base, cursor_token_index);
+        auto node = Parser::find_smallest_enclosing_node(&compiler.main_source->parsed_code->root->base, cursor_token_index);
 
         if (!show_context_info) {
             show_context_info = syntax_editor_display_analysis_info(node);
@@ -2210,7 +2210,7 @@ void syntax_editor_render()
         string_append_string(&context, &str);
     }
     // Syntax Highlighting
-    syntax_highlighting_set_symbol_colors(&compiler.main_source->source_parse->root->base);
+    syntax_highlighting_set_symbol_colors(&compiler.main_source->parsed_code->root->base);
 
     // Draw Cursor
     {

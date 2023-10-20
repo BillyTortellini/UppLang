@@ -46,7 +46,7 @@ void workload_executer_wait_for_dependency_resolution();
 // HELPERS
 namespace Helpers
 {
-    Analysis_Workload_Type get_workload_type(Workload_Using_Resolve* workload) { return Analysis_Workload_Type::USING_RESOLVE; };
+    Analysis_Workload_Type get_workload_type(Workload_Import_Resolve* workload) { return Analysis_Workload_Type::USING_RESOLVE; };
     Analysis_Workload_Type get_workload_type(Workload_Module_Analysis* workload) { return Analysis_Workload_Type::MODULE_ANALYSIS; };
     Analysis_Workload_Type get_workload_type(Workload_Definition* workload) { return Analysis_Workload_Type::DEFINITION; };
     Analysis_Workload_Type get_workload_type(Workload_Struct_Analysis* workload) { return Analysis_Workload_Type::STRUCT_ANALYSIS; };
@@ -60,7 +60,7 @@ namespace Helpers
     Analysis_Workload_Type get_workload_type(Workload_Event* workload) { return Analysis_Workload_Type::EVENT; };
 };
 
-Workload_Base* upcast(Workload_Using_Resolve* workload) {return &workload->base;}
+Workload_Base* upcast(Workload_Import_Resolve* workload) {return &workload->base;}
 Workload_Base* upcast(Workload_Module_Analysis* workload) {return &workload->base;}
 Workload_Base* upcast(Workload_Function_Header* workload) {return &workload->base;}
 Workload_Base* upcast(Workload_Function_Parameter* workload) {return &workload->base;}
@@ -722,7 +722,7 @@ Bake_Progress* bake_progress_create(AST::Expression* bake_expr)
     return progress;
 }
 
-Module_Progress* module_progress_create(AST::Module* module, Symbol* symbol) {
+Module_Progress* module_progress_create(AST::Module* module, Symbol* symbol, Symbol_Table* parent_symbol_table) {
     // Create progress
     auto progress = analysis_progress_allocate_internal<Module_Progress>();
     progress->symbol = symbol;
@@ -732,9 +732,9 @@ Module_Progress* module_progress_create(AST::Module* module, Symbol* symbol) {
     {
         auto analysis = progress->module_analysis;
         analysis->module_node = module;
-        analysis->symbol_table = 0;
+        analysis->base.parent_table = parent_symbol_table;
+        analysis->symbol_table = symbol_table_create_with_parent(parent_symbol_table, false);
         analysis->last_import_workload = 0;
-        analysis->base.parent_table = semantic_analyser.root_symbol_table; 
         analysis->progress = progress;
         analysis->parent_analysis = 0;
         if (semantic_analyser.current_workload != 0 && semantic_analyser.current_workload->current_symbol_table != 0) {
@@ -772,7 +772,7 @@ Workload_Base* analyser_create_symbol_and_workload_for_definition(AST::Definitio
             {
             case AST::Expression_Type::MODULE: {
                 symbol->type = Symbol_Type::MODULE;
-                symbol->options.module_progress = module_progress_create(value->options.module, symbol);
+                symbol->options.module_progress = module_progress_create(value->options.module, symbol, current_table);
                 result = upcast(symbol->options.module_progress->module_analysis);
                 break;
             }
@@ -1496,6 +1496,8 @@ void analysis_workload_destroy(Workload_Base* workload)
     delete workload;
 }
 
+
+
 // This will set the read + the non-resolved symbol paths to error
 void path_lookup_set_error_symbol(AST::Path_Lookup* path, Workload_Base* workload)
 {
@@ -1519,7 +1521,6 @@ void path_lookup_set_error_symbol(AST::Path_Lookup* path, Workload_Base* workloa
         info->symbol = error_symbol;
     }
 }
-
 
 Symbol* symbol_lookup_resolve(AST::Symbol_Lookup* lookup, Symbol_Table* symbol_table, bool search_parents, bool internals_ok)
 {
@@ -1553,7 +1554,7 @@ Symbol* symbol_lookup_resolve(AST::Symbol_Lookup* lookup, Symbol_Table* symbol_t
     if (info->symbol->type == Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL) {
         analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(info->symbol->options.alias_workload), lookup);
         workload_executer_wait_for_dependency_resolution();
-        info->symbol = info->symbol->options.alias_workload->alias_for;
+        info->symbol = info->symbol->options.alias_workload->alias_for_symbol;
         assert(info->symbol->type != Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, "Chained aliases should never happen here!");
     }
 
@@ -1568,7 +1569,7 @@ Symbol* path_lookup_resolve(AST::Path_Lookup* path)
     auto error = semantic_analyser.predefined_symbols.error_symbol;
 
     // Resolve path
-    for (int i = 0; i < path->parts.size; i++) 
+    for (int i = 0; i < path->parts.size; i++)
     {
         auto part = path->parts[i];
         // Find symbol of path part
@@ -1622,6 +1623,8 @@ Symbol* path_lookup_resolve(AST::Path_Lookup* path)
     panic("");
     return 0;
 }
+
+
 
 void analysis_workload_add_dependency_internal(Workload_Base* workload, Workload_Base* dependency, AST::Symbol_Lookup* lookup)
 {
@@ -2256,7 +2259,7 @@ void workload_executer_resolve()
     }
 
 
-    if (PRINT_TIMING) 
+    if (PRINT_TIMING)
     {
         double end_time = timer_current_time_in_seconds(compiler.timer);
         //logg("Time in Bake Analysis    %3.4f")
@@ -2266,24 +2269,24 @@ void workload_executer_resolve()
             Analysis_Workload_Type type = (Analysis_Workload_Type)i;
             const char* str = "";
             switch (type) {
-            case Analysis_Workload_Type::BAKE_ANALYSIS: str =             "Bake Analysis   "; break;
-            case Analysis_Workload_Type::BAKE_EXECUTION: str =            "Bake Execute    "; break;
-            case Analysis_Workload_Type::DEFINITION: str =                "Definition      "; break;
-            case Analysis_Workload_Type::MODULE_ANALYSIS: str =           "Module Analysis "; break;
-            case Analysis_Workload_Type::USING_RESOLVE: str =             "Using Resolve   "; break;
-            case Analysis_Workload_Type::EVENT: str =                     "Event           "; break;
+            case Analysis_Workload_Type::BAKE_ANALYSIS: str = "Bake Analysis   "; break;
+            case Analysis_Workload_Type::BAKE_EXECUTION: str = "Bake Execute    "; break;
+            case Analysis_Workload_Type::DEFINITION: str = "Definition      "; break;
+            case Analysis_Workload_Type::MODULE_ANALYSIS: str = "Module Analysis "; break;
+            case Analysis_Workload_Type::USING_RESOLVE: str = "Import Resolve   "; break;
+            case Analysis_Workload_Type::EVENT: str = "Event           "; break;
 
-            case Analysis_Workload_Type::FUNCTION_HEADER: str =           "Header          "; break;
-            case Analysis_Workload_Type::FUNCTION_PARAMETER: str =        "Parameter       "; break;
-            case Analysis_Workload_Type::FUNCTION_BODY: str =             "Body            "; break;
-            case Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE: str =  "Cluster Compile "; break;
+            case Analysis_Workload_Type::FUNCTION_HEADER: str = "Header          "; break;
+            case Analysis_Workload_Type::FUNCTION_PARAMETER: str = "Parameter       "; break;
+            case Analysis_Workload_Type::FUNCTION_BODY: str = "Body            "; break;
+            case Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE: str = "Cluster Compile "; break;
 
-            case Analysis_Workload_Type::STRUCT_ANALYSIS: str =           "Struct Analysis "; break;
-            case Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE: str =  "Struct Reachable"; break;
+            case Analysis_Workload_Type::STRUCT_ANALYSIS: str = "Struct Analysis "; break;
+            case Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE: str = "Struct Reachable"; break;
             }
             logg("Time in %s %3.4fms\n", str, time_per_workload_type[i] * 1000);
         }
-        logg("SUUM:                    %3.4fms\n\n", (end_time-start_time) * 1000);
+        logg("SUUM:                    %3.4fms\n\n", (end_time - start_time) * 1000);
     }
 
 }
@@ -2319,12 +2322,11 @@ void analysis_workload_entry(void* userdata)
         auto analysis = downcast<Workload_Module_Analysis>(workload);
         auto module_node = analysis->module_node;
 
-        // Create and set symbol table
-        analysis->symbol_table = symbol_table_create_with_parent(workload->current_symbol_table, false);
+        // Set Symbol table
         get_info(module_node, true)->symbol_table = analysis->symbol_table;
         RESTORE_ON_SCOPE_EXIT(workload->current_symbol_table, analysis->symbol_table);
 
-        // Handle Usings
+        // Handle Imports
         if (analysis->parent_analysis != 0) {
             analysis->last_import_workload = analysis->parent_analysis->last_import_workload;
             if (analysis->last_import_workload != 0) {
@@ -2336,68 +2338,95 @@ void analysis_workload_entry(void* userdata)
             }
         }
 
-        auto last_normal_usings = dynamic_array_create_empty<Workload_Using_Resolve*>(1);
+        auto last_normal_usings = dynamic_array_create_empty<Workload_Import_Resolve*>(1);
         SCOPE_EXIT(dynamic_array_destroy(&last_normal_usings));
-        for (int i = 0; i < module_node->using_nodes.size; i++) 
+        for (int i = 0; i < module_node->import_nodes.size; i++)
         {
-            auto using_node = module_node->using_nodes[i];
+            auto import_node = module_node->import_nodes[i];
 
-            // Check for general using errors
-            if (using_node->type == AST::Using_Type::NORMAL) {
-                if (using_node->path->parts.size == 1) {
-                    semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(using_node));
-                    semantic_analyser_add_error_info(error_information_make_text("Using must be a path, not a single symbol!"));
+            // Handle file imports
+            if (import_node->type == AST::Import_Type::FILE) {
+                auto module_progress = compiler_import_and_queue_analysis_workload(import_node);
+                if (module_progress == 0) {
+                    semantic_analyser_log_error(Semantic_Error_Type::OTHERS_COULD_NOT_LOAD_FILE, upcast(import_node));
+                    semantic_analyser_add_error_info(error_information_make_text("Could not load file"));
                     continue;
                 }
+                if (import_node->alias_name == 0) {
+                    // Install into current symbol_table
+                    symbol_table_add_include_table(analysis->symbol_table, module_progress->module_analysis->symbol_table, false, false, upcast(import_node));
+                }
+                else {
+                    Symbol* symbol = symbol_table_define_symbol(
+                        workload->current_symbol_table, import_node->alias_name, Symbol_Type::MODULE, upcast(import_node), false
+                    );
+                    symbol->options.module_progress = module_progress;
+                }
+                continue;
             }
-            if (using_node->path->last->name->size == 0) {
+
+            // Handle Symbol Imports
+            // Check for general using errors
+            if (import_node->path->parts.size == 1 && import_node->alias_name == 0) {
+                semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(import_node->path));
+                semantic_analyser_add_error_info(error_information_make_text("Cannot import single symbol, or have an alias with same name!"));
+                continue;
+            }
+            if (import_node->path->last->name == import_node->alias_name) {
+                semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(import_node->path));
+                semantic_analyser_add_error_info(error_information_make_text("Using as ... in import requires the name to be different than the original symbol name"));
+                continue;
+            }
+            if (import_node->path->last->name == 0) {
                 // NOTE: This may happen for usage in the Syntax-Editor, look at the parser for more info.
                 //       Also i think this is kinda ugly because it's such a special case, but we'll see
                 continue;
             }
+            if (import_node->alias_name != 0 && (import_node->type == AST::Import_Type::MODULE_SYMBOLS || import_node->type == AST::Import_Type::MODULE_SYMBOLS_TRANSITIVE)) {
+                semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(import_node->path));
+                semantic_analyser_add_error_info(error_information_make_text("Cannot alias * or ** imports"));
+                continue;
+            }
+
+            // Handle alias name
+            auto name = import_node->path->last->name;
+            if (import_node->alias_name != 0) {
+                name = import_node->alias_name;
+            }
 
             // Create workload
-            auto using_workload = workload_executer_allocate_workload<Workload_Using_Resolve>(upcast(using_node));
-            using_workload->using_node = using_node;
-            using_workload->symbol = 0;
-            using_workload->alias_for = 0;
+            auto import_workload = workload_executer_allocate_workload<Workload_Import_Resolve>(upcast(import_node));
+            import_workload->import_node = import_node;
+            import_workload->symbol = 0;
+            import_workload->alias_for_symbol = 0;
 
             // Add dependencies
             if (analysis->last_import_workload != 0) {
-                analysis_workload_add_dependency_internal(upcast(using_workload), upcast(analysis->last_import_workload), 0);
+                analysis_workload_add_dependency_internal(upcast(import_workload), upcast(analysis->last_import_workload), 0);
             }
-            analysis_workload_add_dependency_internal(upcast(analysis->progress->event_symbol_table_ready), upcast(using_workload), 0);
+            analysis_workload_add_dependency_internal(upcast(analysis->progress->event_symbol_table_ready), upcast(import_workload), 0);
 
-            if (using_node->type == AST::Using_Type::NORMAL) {
-                dynamic_array_push_back(&last_normal_usings, using_workload);
+            switch (import_node->type) {
+            case AST::Import_Type::SINGLE_SYMBOL: {
+                dynamic_array_push_back(&last_normal_usings, import_workload);
+                import_workload->symbol = symbol_table_define_symbol(
+                    workload->current_symbol_table, name, Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, upcast(import_node), false
+                );
+                import_workload->symbol->options.alias_workload = import_workload;
+                break;
             }
-            else {
+            case AST::Import_Type::MODULE_SYMBOLS:
+            case AST::Import_Type::MODULE_SYMBOLS_TRANSITIVE: {
                 for (int i = 0; i < last_normal_usings.size; i++) {
-                    analysis_workload_add_dependency_internal(upcast(using_workload), upcast(last_normal_usings[i]), 0);
+                    analysis_workload_add_dependency_internal(upcast(import_workload), upcast(last_normal_usings[i]), 0);
                 }
                 dynamic_array_reset(&last_normal_usings);
+                analysis->last_import_workload = import_workload;
+                break;
             }
-
-            // Define symbol if it's a normal using or an alias
-            if (using_node->type == AST::Using_Type::NORMAL) {
-                using_workload->symbol = symbol_table_define_symbol(
-                    workload->current_symbol_table, using_node->path->last->name, Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, upcast(using_node), false
-                );
-                using_workload->symbol->options.alias_workload = using_workload;
+            default:
+                panic("");
             }
-            else {
-                analysis->last_import_workload = using_workload;
-            }
-
-            // PREVIOUS LOAD FILE IMPORT
-            //auto code = compiler_add_project_import(import);
-            //if (code == 0) {
-            //    semantic_analyser_log_error(Semantic_Error_Type::OTHERS_COULD_NOT_LOAD_FILE, &module_node->imports[i]->base);
-            //    semantic_analyser_add_error_info(error_information_make_text("Could not load file"));
-            //    continue;
-            //}
-            // Note: Currently all imports add their symbols to the root table (Only one 'global' scope)
-            // semantic_analyser_do_module_discovery(code->source_parse->root, true);
         }
 
         // Create workloads for definitions
@@ -2421,16 +2450,16 @@ void analysis_workload_entry(void* userdata)
     }
     case Analysis_Workload_Type::USING_RESOLVE:
     {
-        auto using_workload = downcast<Workload_Using_Resolve>(workload);
-        auto node = using_workload->using_node;
+        auto using_workload = downcast<Workload_Import_Resolve>(workload);
+        auto node = using_workload->import_node;
 
-        if (node->type == AST::Using_Type::NORMAL) {
-            using_workload->alias_for = path_lookup_resolve(node->path);
+        if (node->type == AST::Import_Type::SINGLE_SYMBOL) {
+            using_workload->alias_for_symbol = path_lookup_resolve(node->path);
         }
         else {
-            Symbol* symbol = path_lookup_resolve(node->path); 
+            Symbol* symbol = path_lookup_resolve(node->path);
             assert(symbol->type != Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, "Must not happen here");
-            if (symbol->type == Symbol_Type::MODULE) 
+            if (symbol->type == Symbol_Type::MODULE)
             {
                 auto progress = symbol->options.module_progress;
                 // Wait for symbol discovery to finish (Probably not even important)
@@ -2439,7 +2468,7 @@ void analysis_workload_entry(void* userdata)
 
                 // If transitive we need to wait now until the last of their usings finish
                 auto last_import = progress->module_analysis->last_import_workload;
-                if (node->type == AST::Using_Type::SYMBOL_IMPORT_TRANSITIV && last_import != 0 && last_import != using_workload) {
+                if (node->type == AST::Import_Type::MODULE_SYMBOLS_TRANSITIVE && last_import != 0 && last_import != using_workload) {
                     analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(progress->module_analysis->last_import_workload), node->path->last);
                     workload_executer_wait_for_dependency_resolution();
                 }
@@ -2451,7 +2480,7 @@ void analysis_workload_entry(void* userdata)
                     symbol_table_add_include_table(
                         semantic_analyser.current_workload->current_symbol_table,
                         progress->module_analysis->symbol_table,
-                        node->type == AST::Using_Type::SYMBOL_IMPORT_TRANSITIV,
+                        node->type == AST::Import_Type::MODULE_SYMBOLS_TRANSITIVE,
                         false,
                         upcast(node)
                     );
@@ -3068,13 +3097,13 @@ void analysis_workload_append_to_string(Workload_Base* workload, String* string)
         break;
     }
     case Analysis_Workload_Type::USING_RESOLVE: {
-        auto using_node = downcast<Workload_Using_Resolve>(workload)->using_node;
-        string_append_formated(string, "Using ");
-        AST::path_lookup_append_to_string(using_node->path, string);
-        if (using_node->type == AST::Using_Type::SYMBOL_IMPORT) {
+        auto import_node = downcast<Workload_Import_Resolve>(workload)->import_node;
+        string_append_formated(string, "Import ");
+        AST::path_lookup_append_to_string(import_node->path, string);
+        if (import_node->type == AST::Import_Type::MODULE_SYMBOLS) {
             string_append_formated(string, "~*");
         }
-        else if (using_node->type == AST::Using_Type::SYMBOL_IMPORT_TRANSITIV) {
+        else if (import_node->type == AST::Import_Type::MODULE_SYMBOLS_TRANSITIVE) {
             string_append_formated(string, "~**");
         }
         break;
@@ -3156,8 +3185,12 @@ void analysis_workload_append_to_string(Workload_Base* workload, String* string)
     }
 }
 
-void workload_executer_add_module_discovery(AST::Module* module) {
-    semantic_analyser.root_module = module_progress_create(module, 0);
+Module_Progress* workload_executer_add_module_discovery(AST::Module* module, bool is_root_module) {
+    auto progress = module_progress_create(module, 0, semantic_analyser.root_symbol_table);
+    if (is_root_module) {
+        semantic_analyser.root_module = progress;
+    }
+    return progress;
 }
 
 
@@ -5460,6 +5493,7 @@ void semantic_analyser_finish()
     ModTree_Function* main_function = 0;
     if (main_symbol_opt == 0) {
         semantic_analyser_log_error(Semantic_Error_Type::MAIN_NOT_DEFINED, (AST::Node*)0);
+        semantic_analyser_add_error_info(error_information_make_text("Main function not defined!"));
     }
     else
     {

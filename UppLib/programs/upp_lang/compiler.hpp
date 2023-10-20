@@ -11,6 +11,7 @@ struct Compiler;
 struct AST_Parser;
 struct Semantic_Analyser;
 struct Intermediate_Generator;
+struct Module_Progress;
 struct Bytecode_Generator;
 struct Bytecode_Interpreter;
 struct C_Generator;
@@ -87,7 +88,7 @@ void compiler_destroy();
 
 void compiler_compile_clean(Source_Code* source_code, Compile_Type compile_type, String project_file); // Takes ownership of project file
 void compiler_compile_incremental(Code_History* history, Compile_Type compile_type);
-Code_Source* compiler_add_project_import(AST::Using* using_node);
+Module_Progress* compiler_import_and_queue_analysis_workload(AST::Import* import_node); // Returns 0 if file couldn't be read
 Exit_Code compiler_execute();
 
 bool compiler_errors_occured();

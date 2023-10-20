@@ -1,0 +1,4 @@
+
+hello::()
+	print_string("Hello world!")
+	

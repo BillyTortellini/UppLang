@@ -8,7 +8,7 @@ namespace AST
         {
         case Node_Type::SWITCH_CASE: 
         case Node_Type::SYMBOL_LOOKUP: 
-        case Node_Type::USING: 
+        case Node_Type::IMPORT: 
         case Node_Type::PARAMETER: 
         case Node_Type::ARGUMENT: 
         case Node_Type::ENUM_MEMBER: 
@@ -30,8 +30,8 @@ namespace AST
             if (module->definitions.data != 0) {
                 dynamic_array_destroy(&module->definitions);
             }
-            if (module->using_nodes.data != 0) {
-                dynamic_array_destroy(&module->using_nodes);
+            if (module->import_nodes.data != 0) {
+                dynamic_array_destroy(&module->import_nodes);
             }
             break;
         }
@@ -149,13 +149,16 @@ namespace AST
         case Node_Type::SYMBOL_LOOKUP: {
             break;
         }
-        case Node_Type::USING: {
-            FILL(((Using*)node)->path);
+        case Node_Type::IMPORT: {
+            auto import = (Import*)node;
+            if (import->type != Import_Type::FILE) {
+                FILL(import->path);
+            }
             break;
         }
         case Node_Type::MODULE: {
             auto module = (Module*)node;
-            FILL_ARRAY(module->using_nodes);
+            FILL_ARRAY(module->import_nodes);
             FILL_ARRAY(module->definitions);
             break;
         }
@@ -377,9 +380,11 @@ namespace AST
         case Node_Type::SYMBOL_LOOKUP: {
             break;
         }
-        case Node_Type::USING: {
-            auto use = (Using*)node;
-            FILL(use->path);
+        case Node_Type::IMPORT: {
+            auto import = (Import*)node;
+            if (import->type != Import_Type::FILE) {
+                FILL(import->path);
+            }
             break;
         }
         case Node_Type::PARAMETER: {
@@ -411,7 +416,7 @@ namespace AST
         }
         case Node_Type::MODULE: {
             auto module = (Module*)node;
-            FILL_ARRAY(module->using_nodes);
+            FILL_ARRAY(module->import_nodes);
             FILL_ARRAY(module->definitions);
             break;
         }
@@ -619,15 +624,20 @@ namespace AST
             string_append_formated(str, "DEFINITION ");
             string_append_string(str, ((Definition*)base)->name);
             break;
-        case Node_Type::USING: {
-            auto use = (Using*)base;
-            string_append_formated(str, "USING ");
-            if (use->type == Using_Type::SYMBOL_IMPORT) {
-                string_append_formated(str, "~* ");
-
+        case Node_Type::IMPORT: {
+            auto import = (Import*)base;
+            string_append_formated(str, "IMPORT ");
+            if (import->type == Import_Type::FILE) {
+                string_append_formated(str, "\"%s\" ", import->file_name->characters);
             }
-            else if (use->type == Using_Type::SYMBOL_IMPORT_TRANSITIV) {
+            else if (import->type == Import_Type::MODULE_SYMBOLS) {
+                string_append_formated(str, "~* ");
+            }
+            else if (import->type == Import_Type::MODULE_SYMBOLS_TRANSITIVE) {
                 string_append_formated(str, "~** ");
+            }
+            if (import->alias_name != 0) {
+                string_append_formated(str, "as %s ", import->alias_name->characters);
             }
             break;
         }
@@ -827,8 +837,8 @@ namespace AST
         bool type_correct(Module* base) {
             return base->base.type == Node_Type::MODULE;
         }
-        bool type_correct(Using* base) {
-            return base->base.type == Node_Type::USING;
+        bool type_correct(Import* base) {
+            return base->base.type == Node_Type::IMPORT;
         }
         bool type_correct(Code_Block* base) {
             return base->base.type == Node_Type::CODE_BLOCK;

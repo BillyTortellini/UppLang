@@ -20,7 +20,7 @@ namespace Parser
     struct Parse_State
     {
         Token_Index pos;
-        Source_Parse* source_parse;
+        Parsed_Code* parsed_code;
         Block_Parse* block_parse;
         int allocated_count;
         int error_count;
@@ -55,10 +55,10 @@ namespace Parser
         Parse_State state;
         state.allocated_count = 0;
         state.error_count = 0;
-        state.source_parse = 0;
+        state.parsed_code = 0;
         state.block_parse = 0;
         state.pos = token_index_make(line_index_make(block_index_make(0, 0), 0), 0);
-        parser.state.source_parse = 0;
+        parser.state.parsed_code = 0;
         parser_rollback(state);
     }
 
@@ -516,13 +516,13 @@ namespace Parser
 
     void block_parse_destroy(Block_Parse* block_parse)
     {
-        auto& source_parse = parser.state.source_parse;
+        auto& parsed_code = parser.state.parsed_code;
         // logg("Removing block_parse of block %d\n", block_parse->index.block_index);
         // Remove error messages created in this block
-        for (int j = 0; j < source_parse->error_messages.size; j++) {
-            auto& error = source_parse->error_messages[j];
+        for (int j = 0; j < parsed_code->error_messages.size; j++) {
+            auto& error = parsed_code->error_messages[j];
             if (error.block_parse == block_parse) {
-                dynamic_array_swap_remove(&source_parse->error_messages, j);
+                dynamic_array_swap_remove(&parsed_code->error_messages, j);
                 // logg("Removing error message: %s\n", error.msg);
                 j -= 1;
                 continue;
@@ -536,7 +536,7 @@ namespace Parser
 
         // Remove nodes from parent node
         block_parse_remove_items_from_ast(block_parse);
-        hashtable_remove_element(&source_parse->block_parses, block_parse->index);
+        hashtable_remove_element(&parsed_code->block_parses, block_parse->index);
         // Destroy all child-items
         for (int i = 0; i < block_parse->items.size; i++) {
             ast_node_destroy_recursively(block_parse->items[i].node);
@@ -562,9 +562,9 @@ namespace Parser
 
     void block_index_remove_block_parse(Block_Index index)
     {
-        auto& source_parse = parser.state.source_parse;
+        auto& parsed_code = parser.state.parsed_code; 
         // Check if the block_index was parsed
-        auto block_parse = hashtable_find_element(&source_parse->block_parses, index);
+        auto block_parse = hashtable_find_element(&parsed_code->block_parses, index);
         if (block_parse == 0) { // block was not parsed
             return;
         }
@@ -599,27 +599,49 @@ namespace Parser
 
 
         // Block Item functions
-        Using* parse_using(Node* parent)
+        Import* parse_import(Node* parent)
         {
             CHECKPOINT_SETUP;
-            if (test_keyword_offset(Keyword::USING, 0) && test_token_offset(Token_Type::IDENTIFIER, 1))
-            {
-                auto result = allocate_base<Using>(parent, Node_Type::USING);
-                result->type = Using_Type::NORMAL;
+            if (!test_keyword_offset(Keyword::IMPORT, 0)) {
+                CHECKPOINT_EXIT;
+                return 0;
+            }
+
+            auto result = allocate_base<Import>(parent, Node_Type::IMPORT);
+            result->alias_name = 0;
+            result->file_name = 0;
+            result->path = 0;
+            advance_token();
+
+            // Check if its' a file import
+            if (test_token(Token_Type::LITERAL) && get_token()->options.literal_value.type == Literal_Type::STRING) {
+                result->type = Import_Type::FILE;
+                result->file_name = get_token()->options.literal_value.options.string;
                 advance_token();
+            }
+            else {
+                result->type = Import_Type::SINGLE_SYMBOL;
                 result->path = parse_path_lookup(upcast(result));
+                if (result->path == 0) {
+                    CHECKPOINT_EXIT;
+                }
 
                 if (test_operator(Operator::TILDE_STAR)) {
-                    result->type = Using_Type::SYMBOL_IMPORT;
+                    result->type = Import_Type::MODULE_SYMBOLS;
                     advance_token();
                 }
                 else if (test_operator(Operator::TILDE_STAR_STAR)) {
-                    result->type = Using_Type::SYMBOL_IMPORT_TRANSITIV;
+                    result->type = Import_Type::MODULE_SYMBOLS_TRANSITIVE;
                     advance_token();
                 }
-                PARSE_SUCCESS(result);
             }
-            CHECKPOINT_EXIT;
+
+            if (test_keyword(Keyword::AS) && test_token_offset(Token_Type::IDENTIFIER, 1)) {
+                result->alias_name = get_token(1)->options.identifier;
+                advance_token();
+                advance_token();
+            }
+            PARSE_SUCCESS(result);
         }
 
         Definition* parse_definition(Node* parent)
@@ -670,9 +692,9 @@ namespace Parser
             if (definition != 0) {
                 return AST::upcast(definition);
             }
-            auto using_node = parse_using(parent);
-            if (using_node != 0) {
-                return AST::upcast(using_node);
+            auto import_node = parse_import(parent);
+            if (import_node != 0) {
+                return AST::upcast(import_node);
             }
             return nullptr;
         }
@@ -981,7 +1003,7 @@ namespace Parser
 
         // Check if block is already parsed
         {
-            auto block_parse_opt = hashtable_find_element(&parser.state.source_parse->block_parses, block_index);
+            auto block_parse_opt = hashtable_find_element(&parser.state.parsed_code->block_parses, block_index);
             if (block_parse_opt != 0) {
                 auto block_parse = *block_parse_opt;
                 block_parse_remove_items_from_ast(block_parse);
@@ -1005,7 +1027,7 @@ namespace Parser
         block_parse->parent_parse = parser.state.block_parse;
         block_parse->line_count = index_value(block_index)->lines.size;
         block_parse->parent = parent;
-        hashtable_insert_element(&parser.state.source_parse->block_parses, block_index, block_parse);
+        hashtable_insert_element(&parser.state.parsed_code->block_parses, block_index, block_parse);
 
         // Insert into parent block parse
         if (parser.state.block_parse != 0) {
@@ -1418,7 +1440,7 @@ namespace Parser
         if (test_keyword_offset(Keyword::MODULE, 0)) {
             auto module = allocate_base<Module>(&result->base, Node_Type::MODULE);
             module->definitions = dynamic_array_create_empty<Definition*>(1);
-            module->using_nodes = dynamic_array_create_empty<Using*>(1);
+            module->import_nodes = dynamic_array_create_empty<Import*>(1);
             advance_token();
             parse_follow_block(AST::upcast(module), Block_Context::MODULE);
             node_finalize_range(AST::upcast(module));
@@ -1627,34 +1649,34 @@ namespace Parser
 #undef PARSE_SUCCESS
 #undef SET_END_RANGE
 
-    void source_parse_destroy(Source_Parse* source_parse)
+    void source_parse_destroy(Parsed_Code* parsed_code)
     {
-        parser.state.source_parse = source_parse;
+        parser.state.parsed_code = parsed_code;
         // We need to destroy the root block parse because it recursively destory all others
-        block_index_remove_block_parse(block_index_make(source_parse->code, 0));
-        hashtable_destroy(&source_parse->block_parses);
-        dynamic_array_destroy(&source_parse->error_messages);
+        block_index_remove_block_parse(block_index_make(parsed_code->code, 0));
+        hashtable_destroy(&parsed_code->block_parses);
+        dynamic_array_destroy(&parsed_code->error_messages);
     }
 
-    void source_parse_reset(Source_Parse* source_parse)
+    void source_parse_reset(Parsed_Code* parsed_code)
     {
-        parser.state.source_parse = source_parse;
+        parser.state.parsed_code = parsed_code;
         // We need to destroy the root block parse because it recursively destory all others
-        block_index_remove_block_parse(block_index_make(source_parse->code, 0));
-        hashtable_reset(&source_parse->block_parses);
-        dynamic_array_reset(&source_parse->error_messages);
-        source_parse->root = 0;
+        block_index_remove_block_parse(block_index_make(parsed_code->code, 0));
+        hashtable_reset(&parsed_code->block_parses);
+        dynamic_array_reset(&parsed_code->error_messages);
+        parsed_code->root = 0;
     }
 
     void parse_root()
     {
         // Create root
-        auto& root = parser.state.source_parse->root;
-        auto& code = parser.state.source_parse->code;
+        auto& root = parser.state.parsed_code->root;
+        auto& code = parser.state.parsed_code->code;
         parser.state.pos = token_index_make_root(code);
         root = allocate_base<Module>(0, Node_Type::MODULE);
         root->definitions = dynamic_array_create_empty<Definition*>(1);
-        root->using_nodes = dynamic_array_create_empty<Using*>(1);
+        root->import_nodes = dynamic_array_create_empty<Import*>(1);
 
         // Parse root
         parse_source_block(AST::upcast(root), block_index_make_root(code), Block_Context::MODULE);
@@ -1674,7 +1696,7 @@ namespace Parser
             }
             auto module = AST::downcast<AST::Module>(block_parse->parent);
             dynamic_array_reset(&module->definitions);
-            dynamic_array_reset(&module->using_nodes);
+            dynamic_array_reset(&module->import_nodes);
             break;
         }
         case Block_Context::ENUM: {
@@ -1736,8 +1758,8 @@ namespace Parser
             auto module = AST::downcast<AST::Module>(block_parse->parent);
             for (int i = 0; i < block_parse->items.size; i++) {
                 auto& item = block_parse->items[i].node;
-                if (item->type == AST::Node_Type::USING) {
-                    dynamic_array_push_back(&module->using_nodes, AST::downcast<AST::Using>(item));
+                if (item->type == AST::Node_Type::IMPORT) {
+                    dynamic_array_push_back(&module->import_nodes, AST::downcast<AST::Import>(item));
                 }
                 else if (item->type == AST::Node_Type::DEFINITION) {
                     dynamic_array_push_back(&module->definitions, AST::downcast<AST::Definition>(item));
@@ -1812,28 +1834,29 @@ namespace Parser
         return hash_combine(hash_pointer(a->code), hash_i32(&a->block_index));
     }
 
-    void parser_prepare_parsing(Source_Parse* source_parse)
+    void parser_prepare_parsing(Parsed_Code* parsed_code)
     {
-        parser.state.source_parse = source_parse;
+        parser.state.parsed_code = parsed_code;
         parser.state.error_count = 0;
+        parser.state.block_parse = 0;
         dynamic_array_reset(&parser.new_error_messages);
         dynamic_array_reset(&parser.allocated_nodes);
     }
 
-    Source_Parse* execute_clean(Source_Code* code)
+    Parsed_Code* execute_clean(Source_Code* code)
     {
-        Source_Parse* source_parse = new Source_Parse;
-        source_parse->block_parses = hashtable_create_empty<Block_Index, Block_Parse*>(1, block_index_hash, block_index_equal);
-        source_parse->code = code;
-        source_parse->error_messages = dynamic_array_create_empty<Error_Message>(1);
-        source_parse->timestamp.node_index = 0;
+        Parsed_Code* parsed_code = new Parsed_Code;
+        parsed_code->block_parses = hashtable_create_empty<Block_Index, Block_Parse*>(1, block_index_hash, block_index_equal);
+        parsed_code->code = code;
+        parsed_code->error_messages = dynamic_array_create_empty<Error_Message>(1);
+        parsed_code->timestamp.node_index = 0;
 
-        parser_prepare_parsing(source_parse);
+        parser_prepare_parsing(parsed_code);
         parse_root();
 
         // Add block parse items to things...
         {
-            auto iter = hashtable_iterator_create(&source_parse->block_parses);
+            auto iter = hashtable_iterator_create(&parsed_code->block_parses);
             while (hashtable_iterator_has_next(&iter)) {
                 auto block_parse = *iter.value;
                 block_parse_remove_items_from_ast(block_parse);
@@ -1843,10 +1866,10 @@ namespace Parser
         }
 
         // Add created error messages to all error messages
-        dynamic_array_append_other(&source_parse->error_messages, &parser.new_error_messages);
+        dynamic_array_append_other(&parsed_code->error_messages, &parser.new_error_messages);
         dynamic_array_reset(&parser.new_error_messages);
 
-        return source_parse;
+        return parsed_code;
     }
 
 
@@ -1870,7 +1893,7 @@ namespace Parser
     };
 
     struct Source_Difference {
-        Source_Parse* source_parse;
+        Parsed_Code* parsed_code;
         Dynamic_Array<Block_Index> removed_blocks;
         Dynamic_Array<Block_Difference> block_differences;
     };
@@ -1888,7 +1911,7 @@ namespace Parser
                 return 0;
             }
         }
-        auto block_parse = hashtable_find_element(&differences->source_parse->block_parses, block_index);
+        auto block_parse = hashtable_find_element(&differences->parsed_code->block_parses, block_index);
         if (block_parse == 0) {
             return 0; // We don't need differences if no block parse exists
         }
@@ -2020,23 +2043,23 @@ namespace Parser
         }
     }
 
-    void execute_incremental(Source_Parse* source_parse, Code_History* history)
+    void execute_incremental(Parsed_Code* parsed_code, Code_History* history)
     {
         // Get changes since last sync
         Dynamic_Array<Code_Change> changes = dynamic_array_create_empty<Code_Change>(1);
         SCOPE_EXIT(dynamic_array_destroy(&changes));
         auto now = history_get_timestamp(history);
-        history_get_changes_between(history, source_parse->timestamp, now, &changes);
-        source_parse->timestamp = now;
+        history_get_changes_between(history, parsed_code->timestamp, now, &changes);
+        parsed_code->timestamp = now;
         if (changes.size == 0) {
             return;
         }
 
         // Prepare for re-parsing
-        parser_prepare_parsing(source_parse);
+        parser_prepare_parsing(parsed_code);
 
         Source_Difference differences;
-        differences.source_parse = source_parse;
+        differences.parsed_code = parsed_code;
         differences.removed_blocks = dynamic_array_create_empty<Block_Index>(1);
         differences.block_differences = dynamic_array_create_empty<Block_Difference>(1);
         SCOPE_EXIT(
@@ -2138,7 +2161,7 @@ namespace Parser
             // Ignore new blocks
             Block_Parse* block_parse;
             {
-                auto block_parse_opt = hashtable_find_element(&source_parse->block_parses, block_index_make(source_parse->code, block_difference.block_index));
+                auto block_parse_opt = hashtable_find_element(&parsed_code->block_parses, block_index_make(parsed_code->code, block_difference.block_index));
                 if (block_parse_opt == 0) {
                     continue;
                 }
@@ -2237,7 +2260,7 @@ namespace Parser
             }
 
             // Do the block-reparse :D
-            parser.state.source_parse = source_parse;
+            parser.state.parsed_code = parsed_code;
             parser.state.block_parse = block_parse;
             int line_index = 0;
             auto block = index_value(block_parse->index);
@@ -2310,13 +2333,13 @@ namespace Parser
                         }
                     }
                 }
-                for (int i = 0; i < source_parse->error_messages.size; i++) {
-                    auto& error = source_parse->error_messages[i];
+                for (int i = 0; i < parsed_code->error_messages.size; i++) {
+                    auto& error = parsed_code->error_messages[i];
                     if (error.block_parse == block_parse) {
                         auto& line_change = original_line_changes[error.origin_line_index];
                         if (line_change.was_changed || line_change.was_deleted) {
                             //logg("Removing error message: %s\n", error.msg);
-                            dynamic_array_swap_remove(&source_parse->error_messages, i);
+                            dynamic_array_swap_remove(&parsed_code->error_messages, i);
                             i -= 1;
                             continue;
                         }
@@ -2348,8 +2371,8 @@ namespace Parser
                         }
                     };
                     auto& item = block_parse->items[i];
-                    for (int j = 0; j < source_parse->error_messages.size; j++) {
-                        auto& error = source_parse->error_messages[j];
+                    for (int j = 0; j < parsed_code->error_messages.size; j++) {
+                        auto& error = parsed_code->error_messages[j];
                         index_update_helper(error.origin_line_index, block_parse->index);
                         if (error.range.start.type == AST::Node_Position_Type::TOKEN_INDEX) {
                             index_update_helper(error.range.start.options.token_index.line_index.line_index, error.range.start.options.token_index.line_index.block_index);
@@ -2380,12 +2403,12 @@ namespace Parser
         }
 
         // Add generated errors
-        dynamic_array_append_other(&source_parse->error_messages, &parser.new_error_messages);
+        dynamic_array_append_other(&parsed_code->error_messages, &parser.new_error_messages);
         dynamic_array_reset(&parser.new_error_messages);
 
         // Add block parse items to things...
         {
-            auto iter = hashtable_iterator_create(&source_parse->block_parses);
+            auto iter = hashtable_iterator_create(&parsed_code->block_parses);
             while (hashtable_iterator_has_next(&iter)) {
                 auto block_parse = *iter.value;
                 block_parse_remove_items_from_ast(block_parse);
@@ -2395,7 +2418,7 @@ namespace Parser
         }
 
         //logg("INCREMENTAL REPARSE RESULT: \n----------------------\n");
-        //AST::base_print(AST::upcast(source_parse->root));
+        //AST::base_print(AST::upcast(parsed_code->root));
     }
 
 

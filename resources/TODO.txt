@@ -1,15 +1,24 @@
 
+BUG:
+    Symbol resolve not working with parent module -> Debug through symbol resolve:
+    Possible issues:
+        * Parent table not installed
+        * Workload dependencies wrong -> Symbol lookup is done before module analysis is finished...
+        * Internal Symbol flag is set wrong
 
-First of all, "importing" should be done with an import statement thing, so either #import or import (Instead of using)
-
-Entering spaces in editor is buggy? Either it doesn't show them properly, or it something else
 
 Alias missing things:
-    - Aliases with name, e.g. using Helpers~foo as bar
-    - File imports with using, e.g. using "printing.upp"
-        * also with alias, like using "printing.upp" as Printing
-    - Think about transitive using loops
-    - Symbol overloads when defining symbols
+    - Handling Symbol overloads when defining symbols
+        -> On symbol lookup either allow symbol overloads or don't, if so, then the symbol can return multiple values, otherwise error and error symbol...
+        
+
+Next Features to implement:
+    - Symbol imports and file loads
+    - Handling Symbol overloads correctly
+    - imports should also work in non-module context, e.g. as a statement in a code block...
+    - Rework function calls (named arguments, default values), multiple return values
+    - Function overloading...
+    - New casting system, operator overloads, better loops ()
 
 
 Implementation Plan:
@@ -155,7 +164,7 @@ Player :: struct
 
 main :: ()
     player := Player.{"Frank", 15, true, 100}
-    using player~name
+    using player.name
     print_string(name)
 
     using player

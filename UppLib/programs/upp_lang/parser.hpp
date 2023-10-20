@@ -59,7 +59,7 @@ namespace Parser
         int line_count;
     };
 
-    struct Source_Parse
+    struct Parsed_Code
     {
         Source_Code* code;
         AST::Module* root;
@@ -68,9 +68,9 @@ namespace Parser
         History_Timestamp timestamp;
     };
 
-    Source_Parse* execute_clean(Source_Code* code);
-    void execute_incremental(Source_Parse* source_parse, Code_History* history);
-    void source_parse_destroy(Source_Parse* source_parse);
+    Parsed_Code* execute_clean(Source_Code* code);
+    void execute_incremental(Parsed_Code* parsed_code, Code_History* history);
+    void source_parse_destroy(Parsed_Code* parsed_code);
 
 
 

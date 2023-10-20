@@ -72,7 +72,7 @@ Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbo
         if (found_symbol != 0) {
             semantic_analyser_log_error(
                 Semantic_Error_Type::SYMBOL_TABLE_SYMBOL_ALREADY_DEFINED,
-                definition_node == 0 ? AST::upcast(compiler.main_source->source_parse->root) : definition_node
+                definition_node == 0 ? AST::upcast(compiler.main_source->parsed_code->root) : definition_node
             );
 
             // Create new temporary name for symbol. FUTURE: When we have overloading, this will need to be removed.
@@ -111,8 +111,9 @@ void symbol_table_find_symbol_all_internal(
     }
     hashset_insert_element(&visited, table);
 
-    // Check if a symbol matches in current table
+    // Check if all symbols should be added (If id parameter == 0)
     if (id != 0) {
+        // Try to find symbol
         Symbol** found = hashtable_find_element(&table->symbols, id);
         if (found != 0) {
             Symbol* symbol = *found;
@@ -150,8 +151,7 @@ void symbol_table_find_symbol_all_internal(
 }
 
 void symbol_table_find_symbol_all(
-    Symbol_Table* table, String* id, bool search_includes, bool internals_ok, AST::Symbol_Lookup* reference, Dynamic_Array<Symbol*>* results
-)
+    Symbol_Table* table, String* id, bool search_includes, bool internals_ok, AST::Symbol_Lookup* reference, Dynamic_Array<Symbol*>* results) 
 {
     hashset_reset(&compiler.semantic_analyser->symbol_lookup_visited);
     return symbol_table_find_symbol_all_internal(table, id, search_includes, internals_ok, reference, results);

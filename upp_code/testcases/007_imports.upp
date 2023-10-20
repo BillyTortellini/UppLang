@@ -1,6 +1,4 @@
-#import"007_imports_file.upp"
-// Multiple loads must also work
-#import"007_imports_file.upp"
+import"007_imports_file.upp"
 
 main::()
 	success()

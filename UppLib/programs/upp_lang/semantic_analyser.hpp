@@ -23,7 +23,7 @@ struct Analysis_Pass;
 
 struct Workload_Definition;
 struct Workload_Base;
-struct Workload_Using_Resolve;
+struct Workload_Import_Resolve;
 
 struct Function_Progress;
 struct Struct_Progress;
@@ -194,16 +194,16 @@ struct Workload_Module_Analysis
     Module_Progress* progress;
     AST::Module* module_node;
     Symbol_Table* symbol_table;
-    Workload_Using_Resolve* last_import_workload;
+    Workload_Import_Resolve* last_import_workload;
     Workload_Module_Analysis* parent_analysis;
 };
 
-struct Workload_Using_Resolve
+struct Workload_Import_Resolve
 {
     Workload_Base base;
-    AST::Using* using_node;
+    AST::Import* import_node;
     Symbol* symbol; // May be 0 if its an import
-    Symbol* alias_for; // May be 0 if its an import
+    Symbol* alias_for_symbol; // May be 0 if its an import
 };
 
 struct Workload_Function_Header;
@@ -348,7 +348,7 @@ struct Workload_Executer
 };
 
 void workload_executer_resolve();
-void workload_executer_add_module_discovery(AST::Module* module);
+Module_Progress* workload_executer_add_module_discovery(AST::Module* module, bool is_root_module);
 
 
 

@@ -10,6 +10,7 @@
 struct Type_Signature;
 struct String;
 struct Type_System;
+struct Module_Progress;
 
 enum class Timing_Task
 {
@@ -72,7 +73,7 @@ namespace AST {
     struct Module;
 }
 namespace Parser {
-    struct Source_Parse;
+    struct Parsed_Code;
 }
 
 enum class Code_Origin
@@ -85,10 +86,10 @@ struct Code_Source
 {
     Code_Origin origin;
     String file_path;
-    bool analysed;
 
     Source_Code* code;
-    Parser::Source_Parse* source_parse;
+    Parser::Parsed_Code* parsed_code;
+    Module_Progress* module_progress; // Analysis progress, may be 0 if not analysed yet
 };
 
 

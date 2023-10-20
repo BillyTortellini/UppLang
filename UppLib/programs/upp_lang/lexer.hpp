@@ -76,7 +76,7 @@ enum class Keyword
     CAST_PTR,
     BAKE,
     IMPORT,
-    USING,
+    AS,
 
     MAX_ENUM_VALUE,
 };
