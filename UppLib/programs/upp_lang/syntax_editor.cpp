@@ -189,7 +189,6 @@ void syntax_editor_set_text(String string)
 {
     auto& editor = syntax_editor;
     editor.cursor = text_index_make(block_get_first_text_line(block_index_make_root(editor.code)), 0);
-
     source_code_fill_from_string(editor.code, string);
     source_code_tokenize(editor.code);
     code_history_reset(&editor.history);
@@ -302,7 +301,7 @@ bool syntax_editor_sanitize_line(Line_Index line_index)
         }
     }
 
-    if (index_equal(editor.cursor.line_index, line_index)) 
+    if (index_equal(editor.cursor.line_index, line_index))
     {
         editor.cursor.pos = pos;
         syntax_editor_sanitize_cursor();
@@ -401,7 +400,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 {
     syntax_editor_synchronize_tokens();
     auto& editor = syntax_editor;
-    if (!editor.code_changed_since_last_compile) 
+    if (!editor.code_changed_since_last_compile)
     {
         if (!generate_code) {
             return;
@@ -848,10 +847,10 @@ void code_completion_find_suggestions()
     }
     else if (node->type == AST::Node_Type::SYMBOL_LOOKUP)
     {
-        auto lookup = AST::downcast<AST::Symbol_Lookup>(node); 
+        auto lookup = AST::downcast<AST::Symbol_Lookup>(node);
         auto path = AST::downcast<AST::Path_Lookup>(node->parent);
         auto pass = code_query_get_analysis_pass(node);
-        if (pass != 0) 
+        if (pass != 0)
         {
             // Find previous part of the current path
             int prev_index = -1;
@@ -1219,6 +1218,12 @@ void insert_command_execute(Insert_Command input)
     }
     case Insert_Command_Type::SPACE:
     {
+        if (source_block_inside_comment(editor.cursor.line_index.block_index)) {
+            history_insert_char(&syntax_editor.history, cursor, ' ');
+            pos += 1;
+            break;
+        }
+
         if (pos == 0) break;
         syntax_editor_synchronize_tokens();
         auto token = get_cursor_token(false);
@@ -1317,7 +1322,7 @@ void syntax_editor_process_key_message(Key_Message& msg)
     {
         Insert_Command input;
         if ((msg.key_code == Key_Code::P || msg.key_code == Key_Code::N) && msg.ctrl_down && msg.key_down) {
-            input.type = Insert_Command_Type::INSERT_CODE_COMPLETION; 
+            input.type = Insert_Command_Type::INSERT_CODE_COMPLETION;
         }
         else if (msg.key_code == Key_Code::SPACE && msg.key_down) {
             input.type = msg.shift_down ? Insert_Command_Type::INSERT_CODE_COMPLETION : Insert_Command_Type::SPACE;
@@ -1539,7 +1544,7 @@ void syntax_editor_update()
     }
 }
 
-void syntax_editor_initialize(Rendering_Core * rendering_core, Text_Renderer * text_renderer, Renderer_2D * renderer_2D, Input * input, Timer * timer)
+void syntax_editor_initialize(Rendering_Core* rendering_core, Text_Renderer* text_renderer, Renderer_2D* renderer_2D, Input* input, Timer* timer)
 {
     memory_zero(&syntax_editor);
     syntax_editor.context_text = string_create_empty(256);
@@ -1597,7 +1602,7 @@ vec2 syntax_editor_position_to_pixel(int line_index, int character)
 void syntax_editor_draw_underline(int line_index, int character, int length, vec3 color)
 {
     vec2 pos = syntax_editor_position_to_pixel(line_index, character);
-    vec2 size = vec2((float)length, 1.0f/8.f) * syntax_editor.character_size;
+    vec2 size = vec2((float)length, 1.0f / 8.f) * syntax_editor.character_size;
     renderer_2D_add_rectangle(syntax_editor.renderer_2D, bounding_box_2_make_anchor(pos, size, Anchor::BOTTOM_LEFT), color);
 }
 
@@ -1717,7 +1722,7 @@ void syntax_highlighting_mark_range(Token_Range range, vec3 normal_color, vec3 e
             draw_start = line->infos[index.token].pos;
         }
         if (index_equal(index.line_index, end.line_index)) {
-            if (end.token - 1 >= 0) {
+            if (end.token - 1 >= 0 && end.token < line->infos.size) {
                 const auto& info = line->infos[end.token - 1];
                 draw_end = info.pos + info.size;
             }
@@ -1733,7 +1738,7 @@ void syntax_highlighting_mark_range(Token_Range range, vec3 normal_color, vec3 e
     }
 }
 
-void syntax_highlighting_mark_section(AST::Node * base, Parser::Section section, vec3 normal_color, vec3 empty_range_color, bool underline)
+void syntax_highlighting_mark_section(AST::Node* base, Parser::Section section, vec3 normal_color, vec3 empty_range_color, bool underline)
 {
     assert(base != 0, "");
     auto ranges = syntax_editor.token_range_buffer;
@@ -1746,7 +1751,7 @@ void syntax_highlighting_mark_section(AST::Node * base, Parser::Section section,
     }
 }
 
-void syntax_highlighting_set_section_text_color(AST::Node * base, Parser::Section section, vec3 color)
+void syntax_highlighting_set_section_text_color(AST::Node* base, Parser::Section section, vec3 color)
 {
     assert(base != 0, "");
     auto ranges = syntax_editor.token_range_buffer;
@@ -1770,7 +1775,7 @@ void syntax_highlighting_set_section_text_color(AST::Node * base, Parser::Sectio
     }
 }
 
-void syntax_highlighting_set_symbol_colors(AST::Node * base)
+void syntax_highlighting_set_symbol_colors(AST::Node* base)
 {
     Symbol* symbol = code_query_get_ast_node_symbol(base);
     if (symbol != 0) {
@@ -2038,7 +2043,7 @@ void syntax_editor_render_block(Block_Index block_index)
     syntax_editor_draw_block_outline(block->render_start, block->render_end, block->render_indent);
 }
 
-bool syntax_editor_display_analysis_info(AST::Node * node)
+bool syntax_editor_display_analysis_info(AST::Node* node)
 {
     if (node->type != AST::Node_Type::EXPRESSION) return false;
     auto expr = AST::downcast<AST::Expression>(node);

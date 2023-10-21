@@ -313,6 +313,10 @@ namespace AST
                 FILL(defer);
                 break;
             }
+            case Statement_Type::IMPORT: {
+                FILL(stat->options.import_node);
+                break;
+            }
             case Statement_Type::IF_STATEMENT: {
                 auto if_stat = stat->options.if_statement;
                 FILL(if_stat.condition);
@@ -571,6 +575,10 @@ namespace AST
                 FILL(defer);
                 break;
             }
+            case Statement_Type::IMPORT: {
+                FILL(stat->options.import_node);
+                break;
+            }
             case Statement_Type::IF_STATEMENT: {
                 auto if_stat = stat->options.if_statement;
                 FILL(if_stat.condition);
@@ -725,6 +733,7 @@ namespace AST
             case Statement_Type::ASSIGNMENT: string_append_formated(str, "ASSIGNMENT"); break;
             case Statement_Type::EXPRESSION_STATEMENT: string_append_formated(str, "EXPRESSION_STATEMENT"); break;
             case Statement_Type::DEFER: string_append_formated(str, "DEFER"); break;
+            case Statement_Type::IMPORT: string_append_formated(str, "IMPORT"); break;
             case Statement_Type::IF_STATEMENT: string_append_formated(str, "IF_STATEMENT"); break;
             case Statement_Type::WHILE_STATEMENT: string_append_formated(str, "WHILE_STATEMENT"); break;
             case Statement_Type::SWITCH_STATEMENT: string_append_formated(str, "SWITCH_STATEMENT"); break;

@@ -1,0 +1,18 @@
+
+A::module
+	x:int=100
+	y:bool=false
+
+B::module
+	import A~*
+
+C::module
+	// Transitive imports import all symbols and all imported imports
+	import B~**
+	
+	test::()
+		assert(x==100)
+		assert(!y)
+
+main::()
+	C~test()

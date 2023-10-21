@@ -1,0 +1,26 @@
+//
+	Symbols and imports in modules are handled in the following order:
+	1.All non-import symbol are defined
+	2.Imports are handled from top to bottom,and can see Definition symbols
+	
+	This means that:
+	*imports can'see'symbols defined later
+	*definitions can'see'imports defined later
+	*imports cannot'see'imports defined later
+
+
+// Import sees hello, although it's later defined
+import hello as h
+
+hello::()
+	x:=15+5
+
+
+// X can use the import symbol y, because definitions can see later symbols
+x:=y
+z:=100
+import z as y
+
+main::()
+	h()
+	assert(x==100)

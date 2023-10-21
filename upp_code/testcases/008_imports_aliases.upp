@@ -1,0 +1,15 @@
+
+A::module
+	x:int=100
+	y:bool=false
+
+B::module
+	// Imports are used to access symbols from other modules more easily
+	import A~x as a
+	import A~y as b
+	test::()
+		assert(a==100)
+		assert(!b)
+
+main::()
+	B~test()

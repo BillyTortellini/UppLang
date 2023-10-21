@@ -136,7 +136,7 @@ enum class Analysis_Workload_Type
     EVENT, // Empty workload, which can have dependencies and dependents
 
     MODULE_ANALYSIS, // This is basically just symbol discovery
-    USING_RESOLVE,   // 
+    IMPORT_RESOLVE,   // 
 
     FUNCTION_HEADER,
     FUNCTION_PARAMETER,

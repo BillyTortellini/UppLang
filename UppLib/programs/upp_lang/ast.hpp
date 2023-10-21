@@ -312,6 +312,7 @@ namespace AST
         ASSIGNMENT,
         EXPRESSION_STATEMENT,
         // Keyword Statements
+        IMPORT,
         DEFER,
         IF_STATEMENT,
         WHILE_STATEMENT,
@@ -354,6 +355,7 @@ namespace AST
             String* continue_name;
             Optional<Expression*> return_value;
             Expression* delete_expr;
+            Import* import_node;
         } options;
     };
 

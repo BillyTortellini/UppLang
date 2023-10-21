@@ -46,7 +46,7 @@ void workload_executer_wait_for_dependency_resolution();
 // HELPERS
 namespace Helpers
 {
-    Analysis_Workload_Type get_workload_type(Workload_Import_Resolve* workload) { return Analysis_Workload_Type::USING_RESOLVE; };
+    Analysis_Workload_Type get_workload_type(Workload_Import_Resolve* workload) { return Analysis_Workload_Type::IMPORT_RESOLVE; };
     Analysis_Workload_Type get_workload_type(Workload_Module_Analysis* workload) { return Analysis_Workload_Type::MODULE_ANALYSIS; };
     Analysis_Workload_Type get_workload_type(Workload_Definition* workload) { return Analysis_Workload_Type::DEFINITION; };
     Analysis_Workload_Type get_workload_type(Workload_Struct_Analysis* workload) { return Analysis_Workload_Type::STRUCT_ANALYSIS; };
@@ -1536,6 +1536,38 @@ Symbol* symbol_lookup_resolve(AST::Symbol_Lookup* lookup, Symbol_Table* symbol_t
     SCOPE_EXIT(dynamic_array_destroy(&results));
     symbol_table_query_id(symbol_table, lookup->name, search_parents, internals_ok, &results);
 
+    // Wait for alias symbols to finish their resolution
+    for (int i = 0; i < results.size; i++) {
+        Symbol* symbol = results[i];
+        if (symbol->type == Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL) {
+            info->symbol = symbol; // Note: This is a little hacky, because waiting may result in the symbol to be set to error...
+            analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(info->symbol->options.alias_workload), lookup);
+            workload_executer_wait_for_dependency_resolution();
+            if (info->symbol->type == Symbol_Type::ERROR_SYMBOL) {
+                // If one of the overloaded symbols is error, we return error
+                return info->symbol;
+            }
+            else if (info->symbol->type == Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL) { 
+                // Replace symbol in results array with alias value
+                results[i] = info->symbol->options.alias_workload->alias_for_symbol;
+                assert(results[i]->type != Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, "Chained aliases should never happen here!");
+            }
+        }
+    }
+
+    // Remove duplicate symbols (May happen because of aliases in different scopes)
+    for (int i = 0; i < results.size; i++) {
+        Symbol* symbol = results[i];
+        for (int j = i + 1; j < results.size; j++) {
+            Symbol* other = results[j];
+            if (other == symbol) {
+                dynamic_array_swap_remove(&results, j);
+                j -= 1; // Since we removed one element
+            }
+        }
+    }
+
+    // Handle results array
     if (results.size == 0) {
         semantic_analyser_log_error(Semantic_Error_Type::SYMBOL_TABLE_UNRESOLVED_SYMBOL, upcast(lookup));
         info->symbol = error;
@@ -1551,16 +1583,6 @@ Symbol* symbol_lookup_resolve(AST::Symbol_Lookup* lookup, Symbol_Table* symbol_t
             semantic_analyser_add_error_info(error_information_make_symbol(results[i]));
         }
         info->symbol = error;
-    }
-
-    // Handled aliases
-    if (info->symbol->type == Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL) {
-        analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(info->symbol->options.alias_workload), lookup);
-        workload_executer_wait_for_dependency_resolution();
-        if (info->symbol->type != Symbol_Type::ERROR_SYMBOL) { // Could have been set to error after waiting for dependency
-            info->symbol = info->symbol->options.alias_workload->alias_for_symbol;
-            assert(info->symbol->type != Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, "Chained aliases should never happen here!");
-        }
     }
 
     return info->symbol;
@@ -1599,7 +1621,7 @@ Symbol* path_lookup_resolve(AST::Path_Lookup* path)
         // Check if we can continue
         if (symbol->type == Symbol_Type::MODULE) {
             auto current = semantic_analyser.current_workload->type;
-            if (current == Analysis_Workload_Type::USING_RESOLVE) {
+            if (current == Analysis_Workload_Type::IMPORT_RESOLVE) {
                 analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(symbol->options.module_progress->module_analysis), part);
             }
             else {
@@ -2278,7 +2300,7 @@ void workload_executer_resolve()
             case Analysis_Workload_Type::BAKE_EXECUTION: str = "Bake Execute    "; break;
             case Analysis_Workload_Type::DEFINITION: str = "Definition      "; break;
             case Analysis_Workload_Type::MODULE_ANALYSIS: str = "Module Analysis "; break;
-            case Analysis_Workload_Type::USING_RESOLVE: str = "Import Resolve   "; break;
+            case Analysis_Workload_Type::IMPORT_RESOLVE: str = "Import Resolve   "; break;
             case Analysis_Workload_Type::EVENT: str = "Event           "; break;
 
             case Analysis_Workload_Type::FUNCTION_HEADER: str = "Header          "; break;
@@ -2303,6 +2325,59 @@ void workload_add_to_runnable_queue_if_possible(Workload_Base* workload)
         dynamic_array_push_back(&graph->runnable_workloads, workload);
         graph->progress_was_made = true;
     }
+}
+
+Workload_Import_Resolve* create_import_workload(AST::Import* import_node) 
+{
+    // Check for Syntax-Errors
+    if (import_node->type != AST::Import_Type::FILE) {
+        if (import_node->path->parts.size == 1 && import_node->alias_name == 0 && import_node->type == AST::Import_Type::SINGLE_SYMBOL) {
+            semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(import_node->path));
+            semantic_analyser_add_error_info(error_information_make_text("Cannot import single symbol, or have an alias with same name!"));
+            return 0;
+        }
+        if (import_node->path->last->name == import_node->alias_name) {
+            semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(import_node->path));
+            semantic_analyser_add_error_info(error_information_make_text("Using as ... in import requires the name to be different than the original symbol name"));
+            return 0;
+        }
+        if (import_node->path->last->name == 0) {
+            // NOTE: This may happen for usage in the Syntax-Editor, look at the parser for more info.
+            //       Also i think this is kinda ugly because it's such a special case, but we'll see
+            return 0;
+        }
+        if (import_node->alias_name != 0 && (import_node->type == AST::Import_Type::MODULE_SYMBOLS || import_node->type == AST::Import_Type::MODULE_SYMBOLS_TRANSITIVE)) {
+            semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(import_node->path));
+            semantic_analyser_add_error_info(error_information_make_text("Cannot alias * or ** imports"));
+            return 0;
+        }
+    }
+
+    // Create workload
+    auto import_workload = workload_executer_allocate_workload<Workload_Import_Resolve>(upcast(import_node));
+    import_workload->import_node = import_node;
+    import_workload->symbol = 0;
+    import_workload->alias_for_symbol = 0;
+
+    // Define Symbols if there are any
+    auto workload = semantic_analyser.current_workload;
+    if (import_node->type == AST::Import_Type::SINGLE_SYMBOL) {
+        auto name = import_node->path->last->name;
+        if (import_node->alias_name != 0) {
+            name = import_node->alias_name;
+        }
+        import_workload->symbol = symbol_table_define_symbol(
+            workload->current_symbol_table, name, Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, upcast(import_node), false
+        );
+        import_workload->symbol->options.alias_workload = import_workload;
+    }
+    else if (import_node->type == AST::Import_Type::FILE && import_node->alias_name != 0) {
+        import_workload->symbol = symbol_table_define_symbol(
+            workload->current_symbol_table, import_node->alias_name, Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, upcast(import_node), false
+        );
+        import_workload->symbol->options.alias_workload = import_workload;
+    }
+    return import_workload;
 }
 
 void analysis_workload_entry(void* userdata)
@@ -2343,64 +2418,20 @@ void analysis_workload_entry(void* userdata)
             }
         }
 
-        for (int i = 0; i < module_node->import_nodes.size; i++)
-        {
-            auto import_node = module_node->import_nodes[i];
-
-            // Check for Syntax-Errors
-            if (import_node->type != AST::Import_Type::FILE) {
-                if (import_node->path->parts.size == 1 && import_node->alias_name == 0 && import_node->type == AST::Import_Type::SINGLE_SYMBOL) {
-                    semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(import_node->path));
-                    semantic_analyser_add_error_info(error_information_make_text("Cannot import single symbol, or have an alias with same name!"));
-                    continue;
-                }
-                if (import_node->path->last->name == import_node->alias_name) {
-                    semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(import_node->path));
-                    semantic_analyser_add_error_info(error_information_make_text("Using as ... in import requires the name to be different than the original symbol name"));
-                    continue;
-                }
-                if (import_node->path->last->name == 0) {
-                    // NOTE: This may happen for usage in the Syntax-Editor, look at the parser for more info.
-                    //       Also i think this is kinda ugly because it's such a special case, but we'll see
-                    continue;
-                }
-                if (import_node->alias_name != 0 && (import_node->type == AST::Import_Type::MODULE_SYMBOLS || import_node->type == AST::Import_Type::MODULE_SYMBOLS_TRANSITIVE)) {
-                    semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(import_node->path));
-                    semantic_analyser_add_error_info(error_information_make_text("Cannot alias * or ** imports"));
-                    continue;
-                }
+        analysis->last_import_workload = 0;
+        for (int i = 0; i < module_node->import_nodes.size; i++) {
+            auto import_workload = create_import_workload(module_node->import_nodes[i]);
+            if (import_workload == 0) {
+                continue;
             }
-
-            // Create workload
-            auto import_workload = workload_executer_allocate_workload<Workload_Import_Resolve>(upcast(import_node));
-            import_workload->import_node = import_node;
-            import_workload->symbol = 0;
-            import_workload->alias_for_symbol = 0;
-
             // Add dependencies
             if (analysis->last_import_workload != 0) {
                 analysis_workload_add_dependency_internal(upcast(import_workload), upcast(analysis->last_import_workload), 0);
             }
-            analysis_workload_add_dependency_internal(upcast(analysis->progress->event_symbol_table_ready), upcast(import_workload), 0);
             analysis->last_import_workload = import_workload;
-
-            // Define Symbols if available
-            if (import_node->type == AST::Import_Type::SINGLE_SYMBOL) {
-                auto name = import_node->path->last->name;
-                if (import_node->alias_name != 0) {
-                    name = import_node->alias_name;
-                }
-                import_workload->symbol = symbol_table_define_symbol(
-                    workload->current_symbol_table, name, Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, upcast(import_node), false
-                );
-                import_workload->symbol->options.alias_workload = import_workload;
-            }
-            else if (import_node->type == AST::Import_Type::FILE && import_node->alias_name != 0) {
-                import_workload->symbol = symbol_table_define_symbol(
-                    workload->current_symbol_table, import_node->alias_name, Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, upcast(import_node), false
-                );
-                import_workload->symbol->options.alias_workload = import_workload;
-            }
+        }
+        if (analysis->last_import_workload != 0) {
+            analysis_workload_add_dependency_internal(upcast(analysis->progress->event_symbol_table_ready), upcast(analysis->last_import_workload), 0);
         }
 
         // Create workloads for definitions
@@ -2422,13 +2453,13 @@ void analysis_workload_entry(void* userdata)
         // INFO: Events are only proxies for empty workloads
         break;
     }
-    case Analysis_Workload_Type::USING_RESOLVE:
+    case Analysis_Workload_Type::IMPORT_RESOLVE:
     {
         auto import_workload = downcast<Workload_Import_Resolve>(workload);
         auto node = import_workload->import_node;
 
         // Handle file imports
-        if (node->type == AST::Import_Type::FILE) 
+        if (node->type == AST::Import_Type::FILE)
         {
             auto module_progress = compiler_import_and_queue_analysis_workload(node);
             if (module_progress == 0) {
@@ -2449,14 +2480,15 @@ void analysis_workload_entry(void* userdata)
                 );
             }
             else {
-                import_workload->alias_for_symbol = import_workload->symbol;
+                import_workload->symbol->type = Symbol_Type::MODULE;
+                import_workload->symbol->options.module_progress = module_progress;
             }
             break;
         }
         else if (node->type == AST::Import_Type::SINGLE_SYMBOL) {
             import_workload->alias_for_symbol = path_lookup_resolve(node->path);
         }
-        else {
+        else { // Import * or **
             Symbol* symbol = path_lookup_resolve(node->path);
             assert(symbol->type != Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, "Must not happen here");
             if (symbol->type == Symbol_Type::MODULE)
@@ -3096,15 +3128,20 @@ void analysis_workload_append_to_string(Workload_Base* workload, String* string)
         string_append_formated(string, "Module analysis %s", module->progress->symbol == 0 ? "ROOT" : module->progress->symbol->id->characters);
         break;
     }
-    case Analysis_Workload_Type::USING_RESOLVE: {
+    case Analysis_Workload_Type::IMPORT_RESOLVE: {
         auto import_node = downcast<Workload_Import_Resolve>(workload)->import_node;
         string_append_formated(string, "Import ");
-        AST::path_lookup_append_to_string(import_node->path, string);
-        if (import_node->type == AST::Import_Type::MODULE_SYMBOLS) {
-            string_append_formated(string, "~*");
+        if (import_node->type == AST::Import_Type::FILE) {
+            string_append_formated(string, "\"%s\"", import_node->file_name->characters);
         }
-        else if (import_node->type == AST::Import_Type::MODULE_SYMBOLS_TRANSITIVE) {
-            string_append_formated(string, "~**");
+        else {
+            AST::path_lookup_append_to_string(import_node->path, string);
+            if (import_node->type == AST::Import_Type::MODULE_SYMBOLS) {
+                string_append_formated(string, "~*");
+            }
+            else if (import_node->type == AST::Import_Type::MODULE_SYMBOLS_TRANSITIVE) {
+                string_append_formated(string, "~**");
+            }
         }
         break;
     }
@@ -4124,7 +4161,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         case Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE:
         case Analysis_Workload_Type::BAKE_EXECUTION:
         case Analysis_Workload_Type::FUNCTION_BODY:
-        case Analysis_Workload_Type::USING_RESOLVE:
+        case Analysis_Workload_Type::IMPORT_RESOLVE:
         case Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE:
         default:
         {
@@ -5387,6 +5424,10 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
         }
         EXIT(Control_Flow::SEQUENTIAL);
     }
+    case AST::Statement_Type::IMPORT: {
+        // Already handled on block start...
+        EXIT(Control_Flow::SEQUENTIAL);
+    }
     case AST::Statement_Type::DEFINITION:
     {
         auto definition = statement->options.definition;
@@ -5396,6 +5437,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
         }
         assert(!(!definition->value.available && !definition->type.available), "");
 
+        // Otherwise this is a varialbe, and we need to check type and initialize it
         Type_Signature* type = 0;
         if (definition->type.available) {
             type = semantic_analyser_analyse_expression_type(definition->type.value);
@@ -5436,7 +5478,7 @@ Control_Flow semantic_analyser_analyse_block(AST::Code_Block* block)
     block_info->symbol_table = symbol_table_create_with_parent(semantic_analyser.current_workload->current_symbol_table, true);
     RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->current_symbol_table, block_info->symbol_table);
 
-    // Analyse order independent symbols inside code-block (Comptimes and variables)
+    // Create symbols and workloads for definitions inside the block
     {
         auto progress = semantic_analyser.current_workload->current_function->progress;
         bool dont_define_comptimes = progress->poly_instance != 0 && progress->poly_instance->instance_index != 0;
@@ -5447,6 +5489,31 @@ Control_Flow semantic_analyser_analyse_block(AST::Code_Block* block)
                     analyser_create_symbol_and_workload_for_definition(definition);
                 }
             }
+        }
+    }
+
+    // Afterwards handle import statements (This order is the same as in modules, first the symbols get defined, then the imports are handled)
+    {
+        // Note: This is almost the same as in workload_entry for Module import
+        Workload_Import_Resolve* last_import_workload = 0;
+        for (int i = 0; i < block->statements.size; i++) {
+            if (block->statements[i]->type == AST::Statement_Type::IMPORT) {
+                auto import = block->statements[i]->options.import_node;
+                auto import_workload = create_import_workload(import);
+                if (import_workload == 0) {
+                    continue;
+                }
+                if (last_import_workload != 0) {
+                    analysis_workload_add_dependency_internal(upcast(import_workload), upcast(last_import_workload), 0);
+                }
+                last_import_workload = import_workload;
+            }
+        }
+
+        // If any imports were found, wait for all imports to finish before analysing block
+        if (last_import_workload != 0) {
+            analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(last_import_workload), 0);
+            workload_executer_wait_for_dependency_resolution();
         }
     }
 
@@ -5876,6 +5943,7 @@ void semantic_error_get_infos_internal(Semantic_Error e, const char** result_str
         HANDLE_CASE(Semantic_Error_Type::MISSING_FEATURE_NESTED_DEFERS, "Nested defers not implemented yet", Parser::Section::WHOLE);
         HANDLE_CASE(Semantic_Error_Type::CYCLIC_DEPENDENCY_DETECTED, "Cyclic workload dependencies detected", Parser::Section::WHOLE);
         HANDLE_CASE(Semantic_Error_Type::VARIABLE_NOT_DEFINED_YET, "Variable not defined yet", Parser::Section::WHOLE);
+        HANDLE_CASE(Semantic_Error_Type::MODULE_NOT_VALID_IN_THIS_CONTEXT, "Module not valid in this context", Parser::Section::WHOLE);
     default: panic("ERROR");
     }
 #undef HANDLE_CASE

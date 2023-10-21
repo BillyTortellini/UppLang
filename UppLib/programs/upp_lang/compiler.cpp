@@ -24,7 +24,7 @@ bool enable_c_compilation = false;
 
 // Output stages
 bool output_identifiers = false;
-bool output_ast = true;
+bool output_ast = false;
 bool output_type_system = false;
 bool output_root_table = false;
 bool output_ir = false;
@@ -622,7 +622,14 @@ void compiler_run_testcases(Timer* timer, bool force_run)
         test_case_make("004_types_primitive.upp", true),
         test_case_make("005_operator_precedence.upp", true),
         test_case_make("006_function_calls.upp", true),
-        test_case_make("007_imports.upp", true),
+        test_case_make("007_modules.upp", true),
+        test_case_make("008_imports_simple.upp", true),
+        test_case_make("008_imports_aliases.upp", true),
+        test_case_make("008_imports_star.upp", true),
+        test_case_make("008_imports_star_star.upp", true),
+        test_case_make("008_imports_import_order.upp", true),
+        test_case_make("008_imports_invalid_import_order.upp", false),
+        test_case_make("008_imports_as_statement.upp", true),
         test_case_make("011_pointers.upp", true),
         test_case_make("012_new_delete.upp", true),
         test_case_make("013_structs.upp", true),
@@ -630,7 +637,6 @@ void compiler_run_testcases(Timer* timer, bool force_run)
         test_case_make("015_defer.upp", true),
         test_case_make("016_casting.upp", true),
         test_case_make("017_function_pointers.upp", true),
-        test_case_make("018_modules.upp", true),
         test_case_make("019_scopes.upp", true),
         test_case_make("020_globals.upp", true),
         test_case_make("021_slices.upp", true),
@@ -716,6 +722,10 @@ void compiler_run_testcases(Timer* timer, bool force_run)
                     string_append_formated(&result, "\n");
                 }
             }
+            errors_occured = true;
+        }
+        else if (exit_code == Exit_Code::SUCCESS && !test_case->should_succeed) {
+            string_append_formated(&result, "ERROR:   Test %s successfull, but should fail!\n", test_case->name);
             errors_occured = true;
         }
         else {

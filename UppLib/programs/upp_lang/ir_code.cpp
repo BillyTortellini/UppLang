@@ -1586,6 +1586,9 @@ void ir_generator_generate_block(IR_Code_Block* ir_block, AST::Code_Block* ast_b
             dynamic_array_push_back(&ir_block->instructions, instr);
             break;
         }
+        case AST::Statement_Type::IMPORT: {
+            break; // Imports don't generate code
+        }
         case AST::Statement_Type::EXPRESSION_STATEMENT: {
             ir_generator_generate_expression(ir_block, statement->options.expression);
             break;

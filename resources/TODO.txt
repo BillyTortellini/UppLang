@@ -1,11 +1,55 @@
 
-TODO:
-    - All imports should run from top to bottom, so don't do this weird "figure out the order" thingy
-    - imports should also work in non-module context, e.g. as a statement in a code block...
-        e.g. Statement_Type::Import    
+What would reworked function calls look like:
+    Named arguments: Once you start naming arguments, you cannot stop anymore,
+        because unnamed arguments rely on order
+    Problem: Function signature doesn't actually store argument names -> bad...
+
+What should this function call rework include:
+    * Named arguments 
+    * Default values
+    * Multiple return values, e.g. multiple assignments
+        For returning error codes mostly, but also other stuff maybe
+    * Function overloading
+
+Implementation plan:
+   * Named arguments
+        Function_Signatures should also store the names of the arguments 
+            --> This way when calling a function we have access to the names
+        Problem: Function pointers should still be usable even if the names don't match
+        Solution: Add casting between function_pointer types if they have the same arguments
+        When calling a function, once you start using named arguments, you cannot use unnamed afterwards
+   * Default values:
+        Also store default values in Signature, these are comptime values.
+        If called with the default arguments, these values are read.
+   * Multiple return values:
+        In C it's definitly sometimes annoying that you don't know which parameters are in_out, so this is why this can be usefull
+        Notes:
+            Should the return values have names?
+            Why not use structs instead?
+            How is this handled in the type system?
+            Requires an unpacking syntax for assignments and definitions...
+                also with "dropped" values with _ or something
+        Example:
+            find_regex(string: String, regex: Regex) -> (index: int, length: int, found: bool)
+                return 5, 6, true
+            index, length, found := find_regex(...)
+            index, _, found = find_regex()
+        Should the return type be of tupel? Should tuples be handled in this language
+            don't think so, i don't really like that
+    * Function overloading:
+        How to decide which function to pick:
+            - Expected return type
+            - Number of arguments
+            - Given named arguments 
+            - Argument types (Of arguments that are discernable --> Expression_Context must be disabled for those)
+        With templates I think this gets more complicated, because templates already require a given order 
+            in which to evaluate the arguments...
+    
+Things that I'm not quite sure about:
+    - Default values, when should the expression be evaluated? Is this comptime or not? --> Easier with comptime, but where to store? Function def?
+
 
 Next Features to implement:
-
     - Rework function calls (named arguments, default values, varargs thingy with any), multiple return values
     - Function overloading, Symbol overloading in general (I guess this only applies to functions...)
 

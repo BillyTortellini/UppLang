@@ -725,6 +725,17 @@ namespace Parser
             CHECKPOINT_SETUP;
             auto result = allocate_base<Statement>(parent, Node_Type::STATEMENT);
 
+            // Check for import
+            if (test_keyword(Keyword::IMPORT)) {
+                auto import = parse_import(upcast(result));
+                if (import == 0) {
+                    CHECKPOINT_EXIT;
+                }
+                result->type = Statement_Type::IMPORT;
+                result->options.import_node = import;
+                PARSE_SUCCESS(result);
+            }
+
             {
                 // Check for Anonymous Blocks
                 // INFO: This needs to be done before definition

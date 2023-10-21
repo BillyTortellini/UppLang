@@ -235,12 +235,25 @@ void source_text_remove_invalid_whitespaces(String& text)
 {
     // NOTE: This is a copy paste from syntax-editor
     int index = 0;
+    bool inside_comment = false;
     while (index < text.size)
     {
         char curr = text[index];
         char next = index + 1 < text.size ? text[index + 1] : '!'; // Any non-space critical chars will do
         char prev = index - 1 >= 0 ? text[index - 1] : '!';
-        if (prev == '/' && curr == '/') break; // Skip comments
+
+        // Remove control characters from line, like \n, \t, \r and others
+        if (curr < ' '){
+            string_remove_character(&text, index);
+        }
+
+        // Handle comments
+        if ((prev == '/' && curr == '/') || inside_comment) {
+            index += 1;
+            inside_comment = true;
+            continue;
+        }
+
         // Skip strings
         if (curr == '"')
         {
@@ -254,15 +267,14 @@ void source_text_remove_invalid_whitespaces(String& text)
                 }
                 if (curr == '"') {
                     index += 1;
-                    prev = curr;
                     break;
                 }
                 index += 1;
-                prev = curr;
             }
             continue;
         }
 
+        // Remove unnecessary whitespaces
         if (curr == ' ' && !(char_is_space_critical(prev) && char_is_space_critical(next))) {
             string_remove_character(&text, index);
         }
