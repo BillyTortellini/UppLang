@@ -70,14 +70,6 @@ Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbo
 {
     assert(id != 0, "HEY");
 
-    Dynamic_Array<Symbol*>* symbols = hashtable_find_element(&symbol_table->symbols, id);
-    if (symbols == 0) {
-        Dynamic_Array<Symbol*> new_symbols = dynamic_array_create_empty<Symbol*>(1);
-        hashtable_insert_element(&symbol_table->symbols, id, new_symbols);
-        symbols = hashtable_find_element(&symbol_table->symbols, id);
-        assert(symbols != 0, "Just inserted!");
-    }
-
     // Create new symbol
     Symbol* new_sym = new Symbol;
     dynamic_array_push_back(&compiler.semantic_analyser->allocated_symbols, new_sym);
@@ -87,6 +79,25 @@ Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbo
     new_sym->origin_table = symbol_table;
     new_sym->internal = is_internal;
     new_sym->references = dynamic_array_create_empty<AST::Symbol_Lookup*>(1);
+
+    // Check if symbol is already defined
+    bool add_to_symbol_table = true;
+    Dynamic_Array<Symbol*>* symbols = hashtable_find_element(&symbol_table->symbols, id);
+    if (symbols == 0) {
+        Dynamic_Array<Symbol*> new_symbols = dynamic_array_create_empty<Symbol*>(1);
+        hashtable_insert_element(&symbol_table->symbols, id, new_symbols);
+        symbols = hashtable_find_element(&symbol_table->symbols, id);
+        assert(symbols != 0, "Just inserted!");
+    }
+    else if (type != Symbol_Type::FUNCTION && type != Symbol_Type::POLYMORPHIC_FUNCTION) {
+        // If this is the case, choose another ID for the new symbol, and don't put it into the symbol table, it will get freed anyway
+        semantic_analyser_log_error(Semantic_Error_Type::SYMBOL_ALREADY_DEFINED, definition_node);
+        static String invalid_name = string_create_static("_SYMBOL_NAME_NOT_AVAILABLE");
+        new_sym->id = &invalid_name;
+        return new_sym;
+    }
+
+    // Add to symbol_table
     dynamic_array_push_back(symbols, new_sym);
     return new_sym;
 }

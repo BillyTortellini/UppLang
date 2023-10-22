@@ -1084,7 +1084,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
         }
         for (int j = 0; j < call.arguments.size; j++) {
             auto info = get_info(call.arguments[j]);
-            if (info->valid) { // Skip invalid arguments (Polymorphic/constant values)
+            if (!info->is_polymorphic) { // Skip polymorphic arguments
                 call_instr.options.call.arguments[info->argument_index] = ir_generator_generate_expression(ir_block, call.arguments[j]->value);
             }
         }
@@ -1123,7 +1123,6 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
         {
             auto arg = struct_init.arguments[i];
             auto arg_info = get_info(arg);
-            assert(arg_info->valid, "");
             assert(result_type->type == Signature_Type::STRUCT, "");
 
             IR_Instruction move_instr;

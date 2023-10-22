@@ -1,12 +1,10 @@
 
-What would reworked function calls look like:
-    Named arguments: Once you start naming arguments, you cannot stop anymore,
-        because unnamed arguments rely on order
-    Problem: Function signature doesn't actually store argument names -> bad...
+TODO:
+    REWORK ERROR REPORTING --> Fugton of work, but it becomes more and more annoying otherwise
+
 
 What should this function call rework include:
-    * Named arguments 
-    * Default values
+    * Default values --> also part of function signature, once default values start you cannot stop anymore i guess 
     * Multiple return values, e.g. multiple assignments
         For returning error codes mostly, but also other stuff maybe
     * Function overloading

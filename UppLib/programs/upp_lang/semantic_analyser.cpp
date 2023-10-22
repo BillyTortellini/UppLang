@@ -3476,15 +3476,15 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         auto& call = expr->options.call;
         auto function_expr_info = semantic_analyser_analyse_expression_any(call.expr, expression_context_make_auto_dereference());
 
-        // Initialize all argument infos as valid 
+        // Initialize all argument infos
         for (int i = 0; i < call.arguments.size; i++) {
             auto argument = get_info(call.arguments[i], true);
-            argument->valid = true;
+            argument->is_polymorphic = false;
             argument->argument_index = i;
         }
         info->specifics.function_call_signature = 0;
 
-        // Handle Type-Of (Or in the future other compiler given functions)
+        // Handle Type-Of (Or in the future other hardcoded function implemented during analysis)
         if (function_expr_info->result_type == Expression_Result_Type::HARDCODED_FUNCTION && function_expr_info->options.hardcoded == Hardcoded_Type::TYPE_OF)
         {
             if (call.arguments.size != 1) {
@@ -3530,6 +3530,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             EXIT_ERROR(arg_result->options.type);
         }
 
+        // Find type-signature (Includes handling polymorphic arguments)
         Type_Signature* function_signature = 0; // Note: I still want to analyse all arguments even if the signature is null
         switch (function_expr_info->result_type)
         {
@@ -3579,7 +3580,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 if (!parameter->param_node->is_comptime) continue; // Skip non-comptime parameters
                 auto& poly_value = empty_instance->parameter_values[i];
                 auto argument = arguments[parameter->symbol->options.parameter.ast_index];
-                get_info(argument)->valid = false;
+                get_info(argument)->is_polymorphic = true;
 
                 // Re-analyse base-header to get valid poly-argument type (Since this type can change with filled out polymorphic values)
                 Type_Signature* argument_type = 0;
@@ -3668,12 +3669,12 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         }
         info->specifics.function_call_signature = function_signature;
 
-        // Handle unknown function
+        // Handle errors
         auto& arguments = call.arguments;
-        if (function_signature == 0) {
+        if (function_signature == 0 || function_signature == type_system->predefined_types.unknown_type) {
             // Analyse all expressions with unknown context
             for (int i = 0; i < arguments.size; i++) {
-                if (!get_info(arguments[i])->valid) { // Skip already analysed
+                if (!get_info(arguments[i])->is_polymorphic) { // Skip polymorphic arguments (Already analysed)
                     continue;
                 }
                 semantic_analyser_analyse_expression_value(arguments[i]->value, expression_context_make_unknown());
@@ -3683,27 +3684,76 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
         // Analyse arguments
         {
+            // NOTE: This is almost the same as struct initializer arguments
+            bool named_argument_encountered = false;
+            int first_named_argument_index = 0;
+            int next_unnamed_parameter_index = 0; // Note: Can be different from argument index (comptime arguments)
+            int non_polymorphic_argument_count = 0;
+
             auto& parameters = function_signature->options.function.parameters;
-            int valid_argument_count = 0;
-            bool size_mismatch = false;
-            for (int i = 0; i < arguments.size; i++) {
-                auto info = get_info(arguments[i]);
-                if (info->valid) {
-                    auto context = expression_context_make_unknown();
-                    if (valid_argument_count < parameters.size) {
-                        context = expression_context_make_specific_type(parameters[valid_argument_count].type);
+            for (int i = 0; i < arguments.size; i++) 
+            {
+                auto arg = arguments[i];
+                auto info = get_info(arg);
+                if (info->is_polymorphic) { // Skip already analysed parameters (Done during polymorphic function analysis, e.g. comptime params)
+                    continue;
+                }
+                non_polymorphic_argument_count += 1;
+
+                // Figure out context/Handle named arguments
+                auto context = expression_context_make_unknown();
+                if (arg->name.available) {
+                    if (!named_argument_encountered) {
+                        named_argument_encountered = true;
+                        first_named_argument_index = i;
+                    }
+
+                    // Error checking (No double names)
+                    for (int j = first_named_argument_index; j < i; j++) {
+                        auto& other_arg = arguments[j];
+                        if (other_arg->name.available && other_arg->name.value == arg->name.value) {
+                            semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(arg));
+                            semantic_analyser_add_error_info(error_information_make_text("Argument name already specified!"));
+                            break;
+                        }
+                    }
+
+                    // Find corresponding parameter
+                    for (int j = 0; j < parameters.size; j++) {
+                        auto& param = parameters[j];
+                        if (param.name.available && param.name.value == arg->name.value) {
+                            info->argument_index = j;
+                            context = expression_context_make_specific_type(parameters[info->argument_index].type);
+                            break;
+                        }
+                    }
+                }
+                else {
+                    if (named_argument_encountered) {
+                        // Cannot have unnamed arguments after named ones
+                        semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(arg));
+                        semantic_analyser_add_error_info(error_information_make_text("Unnamed arguments must not appear after named arguments"));
                     }
                     else {
-                        size_mismatch = true;
+                        info->argument_index = next_unnamed_parameter_index;
+                        next_unnamed_parameter_index += 1;
+                        if (info->argument_index < parameters.size) {
+                            context = expression_context_make_specific_type(parameters[info->argument_index].type);
+                        }
+                        else {
+                            // Error will be report later because argument count won't match
+                        }
                     }
-                    semantic_analyser_analyse_expression_value(arguments[i]->value, context);
-                    info->argument_index = valid_argument_count;
-                    valid_argument_count += 1;
                 }
+
+                // Analyse argument value
+                semantic_analyser_analyse_expression_value(arguments[i]->value, context);
             }
-            if (valid_argument_count != parameters.size || size_mismatch) {
+
+            // Error checking
+            if (non_polymorphic_argument_count != parameters.size) {
                 semantic_analyser_log_error(Semantic_Error_Type::FUNCTION_CALL_ARGUMENT_SIZE_MISMATCH, expr);
-                semantic_analyser_add_error_info(error_information_make_argument_count(arguments.size, parameters.size));
+                semantic_analyser_add_error_info(error_information_make_argument_count(non_polymorphic_argument_count, parameters.size));
                 semantic_analyser_add_error_info(error_information_make_function_type(function_signature));
             }
         }
@@ -4287,6 +4337,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
     case AST::Expression_Type::STRUCT_INITIALIZER:
     {
         auto& init_node = expr->options.struct_initializer;
+
+        // Find struct type
         Type_Signature* struct_signature = 0;
         if (init_node.type_expr.available) {
             struct_signature = semantic_analyser_analyse_expression_type(init_node.type_expr.value);
@@ -4301,6 +4353,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             }
         }
 
+        // Check type errors
         if (struct_signature->type != Signature_Type::STRUCT) {
             semantic_analyser_log_error(Semantic_Error_Type::STRUCT_INITIALIZER_TYPE_MUST_BE_STRUCT, expr);
             semantic_analyser_add_error_info(error_information_make_given_type(struct_signature));
@@ -4313,41 +4366,80 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         assert(!(struct_signature->size == 0 && struct_signature->alignment == 0), "");
 
         // Analyse arguments
-        for (int i = 0; i < init_node.arguments.size; i++)
         {
-            auto& argument = init_node.arguments[i];
-            if (!argument->name.available) {
-                auto arg_info = get_info(argument, true);
-                arg_info->valid = false;
-                semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE_NAMED_ARGUMENTS, AST::upcast(argument));
-                continue;
-            }
-            String* member_id = argument->name.value;
-            Struct_Member* found_member = 0;
-            for (int i = 0; i < struct_signature->options.structure.members.size; i++) {
-                if (struct_signature->options.structure.members[i].id == member_id) {
-                    found_member = &struct_signature->options.structure.members[i];
-                }
-            }
-            auto context = expression_context_make_unknown();
-            auto arg_info = get_info(argument, true);
-            if (found_member != 0)
+            auto& arguments = init_node.arguments;
+            auto& parameters = struct_signature->options.structure.members;
+
+            // NOTE: This is almost the same as function-call arguments
+            bool named_argument_encountered = false;
+            int first_named_argument_index = 0;
+
+            for (int i = 0; i < arguments.size; i++) 
             {
-                arg_info->valid = true;
-                arg_info->member = *found_member;
-                context = expression_context_make_specific_type(found_member->type);
+                auto arg = arguments[i];
+                auto info = get_info(arg, true);
+                info->argument_index = -1; // Not used in struct initializer
+                info->is_polymorphic = false; // Not used is struct initializer
+
+                // Figure out context/Handle named arguments
+                auto context = expression_context_make_unknown();
+                if (arg->name.available) {
+                    if (!named_argument_encountered) {
+                        named_argument_encountered = true;
+                        first_named_argument_index = i;
+                    }
+
+                    // Error checking (No double names)
+                    for (int j = first_named_argument_index; j < i; j++) {
+                        auto& other_arg = arguments[j];
+                        if (other_arg->name.available && other_arg->name.value == arg->name.value) {
+                            semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(arg));
+                            semantic_analyser_add_error_info(error_information_make_text("Argument name already specified!"));
+                            break;
+                        }
+                    }
+
+                    // Find corresponding parameter
+                    for (int j = 0; j < parameters.size; j++) {
+                        auto& param = parameters[j];
+                        if (param.id == arg->name.value) {
+                            info->member = param;
+                            context = expression_context_make_specific_type(parameters[j].type);
+                            break;
+                        }
+                    }
+                }
+                else {
+                    if (named_argument_encountered) {
+                        // Cannot have unnamed arguments after named ones
+                        semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(arg));
+                        semantic_analyser_add_error_info(error_information_make_text("Unnamed arguments must not appear after named arguments"));
+                    }
+                    else {
+                        if (i < parameters.size) {
+                            context = expression_context_make_specific_type(parameters[i].type);
+                        }
+                        else {
+                            // Error will be report later because argument count won't match
+                        }
+                    }
+                }
+
+                // Analyse argument value
+                semantic_analyser_analyse_expression_value(arguments[i]->value, context);
             }
-            else {
-                arg_info->valid = false;
-                semantic_analyser_log_error(Semantic_Error_Type::STRUCT_INITIALIZER_MEMBER_DOES_NOT_EXIST, AST::upcast(argument));
-                semantic_analyser_add_error_info(error_information_make_id(member_id));
-                // TODO: Find out if we want to analyse expressions even if we don't have the context for it
-            }
-            semantic_analyser_analyse_expression_value(argument->value, context);
         }
 
         // Check for errors (Different for unions/structs)
-        if (struct_signature->options.structure.struct_type != AST::Structure_Type::STRUCT)
+        if (struct_signature->options.structure.struct_type == AST::Structure_Type::STRUCT)
+        {
+            // Check if all members are initiliazed
+            if (init_node.arguments.size != struct_signature->options.structure.members.size) {
+                semantic_analyser_log_error(Semantic_Error_Type::STRUCT_INITIALIZER_MEMBERS_MISSING, expr);
+                semantic_analyser_add_error_info(error_information_make_argument_count(init_node.arguments.size, struct_signature->options.structure.members.size));
+            }
+        }
+        else
         {
             if (init_node.arguments.size == 0) {
                 semantic_analyser_log_error(Semantic_Error_Type::STRUCT_INITIALIZER_MEMBERS_MISSING, expr);
@@ -4361,30 +4453,6 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 if (member.offset == struct_signature->options.structure.tag_member.offset) {
                     semantic_analyser_log_error(Semantic_Error_Type::STRUCT_INITIALIZER_CANNOT_SET_UNION_TAG, AST::upcast(init_node.arguments[0]));
                 }
-            }
-        }
-        else
-        {
-            // Check that all members aren't initilized more than once
-            int valid_count = 0;
-            for (int i = 0; i < init_node.arguments.size; i++)
-            {
-                auto info = get_info(init_node.arguments[i]);
-                if (!info->valid) continue;
-                valid_count += 1;
-                for (int j = i + 1; j < init_node.arguments.size; j++)
-                {
-                    auto other = get_info(init_node.arguments[j]);
-                    if (!other->valid) continue;
-                    if (info->member.id == other->member.id) {
-                        semantic_analyser_log_error(Semantic_Error_Type::STRUCT_INITIALIZER_MEMBER_INITIALIZED_TWICE, AST::upcast(init_node.arguments[j]));
-                        semantic_analyser_log_error(Semantic_Error_Type::STRUCT_INITIALIZER_MEMBER_INITIALIZED_TWICE, AST::upcast(init_node.arguments[i]));
-                    }
-                }
-            }
-            // Check if all members are initiliazed
-            if (valid_count != struct_signature->options.structure.members.size) {
-                semantic_analyser_log_error(Semantic_Error_Type::STRUCT_INITIALIZER_MEMBERS_MISSING, expr);
             }
         }
 

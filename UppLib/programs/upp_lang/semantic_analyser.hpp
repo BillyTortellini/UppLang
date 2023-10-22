@@ -397,7 +397,7 @@ enum class Expression_Result_Type
 
 struct Argument_Info
 {
-    bool valid; // Used in both polymorphic functions/named parameters and struct initializer
+    bool is_polymorphic; // If polymorphic, the argument shouldn't generate code during code-generation
     int argument_index; // For named arguments/parameters this gives the according parameter index
     Struct_Member member; // For struct initializer
 };
