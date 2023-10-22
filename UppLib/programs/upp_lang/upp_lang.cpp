@@ -1,4 +1,7 @@
 #include "upp_lang.hpp"
+
+#include <iostream>
+
 #include "../../upplib.hpp"
 #include "../../win32/timing.hpp"
 
@@ -200,6 +203,20 @@ void test_things()
     }
 }
 
+// Test implicit casting in C++
+struct Base
+{
+    int base_value;
+};
+
+void print_base(Base* base) {
+    if (base == nullptr) {
+        printf("Base was numm");
+        return;
+    }
+    printf("base_value: %d\n", base->base_value);
+}
+
 void upp_lang_main()
 {
     Window* window = window_create("Test", 0);
@@ -290,9 +307,9 @@ void upp_lang_main()
             rendering_core_prepare_frame(timer_current_time_in_seconds(&timer), window_state->width, window_state->height);
             SCOPE_EXIT(
                 text_renderer_reset(text_renderer);
-                renderer_2D_reset(renderer_2D);
-                rendering_core_render(camera, Framebuffer_Clear_Type::COLOR_AND_DEPTH);
-                window_swap_buffers(window);
+            renderer_2D_reset(renderer_2D);
+            rendering_core_render(camera, Framebuffer_Clear_Type::COLOR_AND_DEPTH);
+            window_swap_buffers(window);
             );
 
             // Draw Background

@@ -83,6 +83,7 @@ namespace Parser
         KEYWORD,           // Highlight keyword if the node contains one
         ENCLOSURE,         // Highlight enclosures, e.g. (), {}, []
         NONE,              // Not quite sure if this is usefull at all
+        FIRST_TOKEN,       // To display error that isn't specific to all internal tokens
         END_TOKEN,         // To display that something is missing
     };
 

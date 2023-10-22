@@ -442,7 +442,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
             dynamic_array_reset(&error_ranges);
             if (node == 0) continue;
             if (compiler_find_ast_code_source(node) != compiler.main_source) continue;
-            Parser::ast_base_get_section_token_range(node, semantic_error_get_section(error), &error_ranges);
+            Parser::ast_base_get_section_token_range(node, error.section, &error_ranges);
             for (int j = 0; j < error_ranges.size; j++) {
                 auto& range = error_ranges[j];
                 String string = string_create_empty(4);

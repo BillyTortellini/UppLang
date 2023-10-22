@@ -40,15 +40,13 @@ void symbol_table_add_include_table(Symbol_Table* symbol_table, Symbol_Table* in
 {
     // Check for errors
     if (symbol_table == included_table) {
-        semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, include_node);
-        semantic_analyser_add_error_info(error_information_make_text("Trying to include symbol table to itself!"));
+        log_semantic_error("Trying to include symbol table to itself!", include_node);
         return;
     }
     for (int i = 0; i < symbol_table->included_tables.size; i++) {
         auto include = symbol_table->included_tables[i];
         if (include.table == included_table) {
-            semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, include_node);
-            semantic_analyser_add_error_info(error_information_make_text("Table is already included!"));
+            log_semantic_error("Table is already included!", include_node);
             return;
         }
     }
@@ -91,7 +89,7 @@ Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbo
     }
     else if (type != Symbol_Type::FUNCTION && type != Symbol_Type::POLYMORPHIC_FUNCTION) {
         // If this is the case, choose another ID for the new symbol, and don't put it into the symbol table, it will get freed anyway
-        semantic_analyser_log_error(Semantic_Error_Type::SYMBOL_ALREADY_DEFINED, definition_node);
+        log_semantic_error("Symbol already defined in this scope", definition_node);
         static String invalid_name = string_create_static("_SYMBOL_NAME_NOT_AVAILABLE");
         new_sym->id = &invalid_name;
         return new_sym;

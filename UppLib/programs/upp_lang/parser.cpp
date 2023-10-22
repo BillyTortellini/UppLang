@@ -2513,6 +2513,14 @@ namespace Parser
             dynamic_array_push_back(ranges, token_range_make_offset(result.value, 1));
             break;
         }
+        case Section::FIRST_TOKEN: {
+            Token_Index next = token_index_advance(range.start, 1);
+            if (!index_valid(next)) {
+                next = range.start;
+            }
+            dynamic_array_push_back(ranges, token_range_make(range.start, next));
+            break;
+        }
         case Section::END_TOKEN: {
             Token_Range end_token_range = token_range_make(token_index_advance(range.end, -1), range.end);
             assert(end_token_range.start.token > 0, "Hey");

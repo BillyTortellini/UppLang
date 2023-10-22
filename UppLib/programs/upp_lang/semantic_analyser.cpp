@@ -260,28 +260,22 @@ void semantic_analyser_set_error_flag(bool error_due_to_unknown)
     }
 }
 
-void semantic_analyser_log_error(Semantic_Error_Type type, AST::Node* node) {
+void log_semantic_error(const char* msg, AST::Node* node, Parser::Section node_section) {
     Semantic_Error error;
-    error.type = type;
+    error.msg = msg;
     error.error_node = node;
+    error.section = node_section;
     error.information = dynamic_array_create_empty<Error_Information>(2);
     dynamic_array_push_back(&semantic_analyser.errors, error);
     semantic_analyser_set_error_flag(false);
 }
 
-void semantic_analyser_log_error(Semantic_Error_Type type, AST::Expression* node) {
-    semantic_analyser_log_error(type, AST::upcast(node));
+void log_semantic_error(const char* msg, AST::Expression* node, Parser::Section node_section = Parser::Section::WHOLE) {
+    log_semantic_error(msg, AST::upcast(node), node_section);
 }
 
-void semantic_analyser_log_error(Semantic_Error_Type type, AST::Statement* node) {
-    semantic_analyser_log_error(type, AST::upcast(node));
-}
-
-void semantic_analyser_add_error_info(Error_Information info) {
-    auto& errors = semantic_analyser.errors;
-    assert(errors.size != 0, "");
-    Semantic_Error* last_error = &errors[errors.size - 1];
-    dynamic_array_push_back(&last_error->information, info);
+void log_semantic_error(const char* msg, AST::Statement* node, Parser::Section node_section = Parser::Section::WHOLE) {
+    log_semantic_error(msg, AST::upcast(node), node_section);
 }
 
 Error_Information error_information_make_empty(Error_Information_Type type) {
@@ -290,86 +284,80 @@ Error_Information error_information_make_empty(Error_Information_Type type) {
     return info;
 }
 
-Error_Information error_information_make_text(const char* text) {
-    Error_Information info = error_information_make_empty(Error_Information_Type::EXTRA_TEXT);
-    info.options.extra_text = text;
-    return info;
-}
-
-Error_Information error_information_make_argument_count(int given_argument_count, int expected_argument_count) {
+void log_error_info_argument_count(int given_argument_count, int expected_argument_count) {
     Error_Information info = error_information_make_empty(Error_Information_Type::ARGUMENT_COUNT);
     info.options.invalid_argument_count.expected = expected_argument_count;
     info.options.invalid_argument_count.given = given_argument_count;
-    return info;
+    dynamic_array_push_back(&semantic_analyser.errors[semantic_analyser.errors.size - 1].information, info);
 }
 
-Error_Information error_information_make_invalid_member(Type_Signature* struct_signature, String* id) {
+void log_error_info_invalid_member(Type_Signature* struct_signature, String* id) {
     Error_Information info = error_information_make_empty(Error_Information_Type::INVALID_MEMBER);
     info.options.invalid_member.member_id = id;
     info.options.invalid_member.struct_signature = struct_signature;
-    return info;
+    dynamic_array_push_back(&semantic_analyser.errors[semantic_analyser.errors.size - 1].information, info);
 }
 
-Error_Information error_information_make_id(String* id) {
+void log_error_info_id(String* id) {
     assert(id != 0, "");
     Error_Information info = error_information_make_empty(Error_Information_Type::ID);
     info.options.id = id;
-    return info;
+    dynamic_array_push_back(&semantic_analyser.errors[semantic_analyser.errors.size - 1].information, info);
 }
 
-Error_Information error_information_make_symbol(Symbol* symbol) {
+void log_error_info_symbol(Symbol* symbol) {
     Error_Information info = error_information_make_empty(Error_Information_Type::SYMBOL);
     info.options.symbol = symbol;
-    return info;
+    dynamic_array_push_back(&semantic_analyser.errors[semantic_analyser.errors.size - 1].information, info);
 }
 
-Error_Information error_information_make_exit_code(Exit_Code code) {
+void log_error_info_exit_code(Exit_Code code) {
     Error_Information info = error_information_make_empty(Error_Information_Type::EXIT_CODE);
     info.options.exit_code = code;
-    return info;
+    dynamic_array_push_back(&semantic_analyser.errors[semantic_analyser.errors.size - 1].information, info);
 }
 
-Error_Information error_information_make_given_type(Type_Signature* type) {
+void log_error_info_given_type(Type_Signature* type) {
     Error_Information info = error_information_make_empty(Error_Information_Type::GIVEN_TYPE);
     info.options.type = type;
-    return info;
+    dynamic_array_push_back(&semantic_analyser.errors[semantic_analyser.errors.size - 1].information, info);
 }
 
-Error_Information error_information_make_expected_type(Type_Signature* type) {
+void log_error_info_expected_type(Type_Signature* type) {
     Error_Information info = error_information_make_empty(Error_Information_Type::EXPECTED_TYPE);
     info.options.type = type;
-    return info;
+    dynamic_array_push_back(&semantic_analyser.errors[semantic_analyser.errors.size - 1].information, info);
 }
 
-Error_Information error_information_make_function_type(Type_Signature* type) {
+void log_error_info_function_type(Type_Signature* type) {
     Error_Information info = error_information_make_empty(Error_Information_Type::FUNCTION_TYPE);
     info.options.type = type;
-    return info;
+    dynamic_array_push_back(&semantic_analyser.errors[semantic_analyser.errors.size - 1].information, info);
 }
 
-Error_Information error_information_make_binary_op_type(Type_Signature* left_type, Type_Signature* right_type) {
+void log_error_info_binary_op_type(Type_Signature* left_type, Type_Signature* right_type) {
     Error_Information info = error_information_make_empty(Error_Information_Type::BINARY_OP_TYPES);
     info.options.binary_op_types.left_type = left_type;
     info.options.binary_op_types.right_type = right_type;
-    return info;
+    dynamic_array_push_back(&semantic_analyser.errors[semantic_analyser.errors.size - 1].information, info);
 }
 
-Error_Information error_information_make_expression_result_type(Expression_Result_Type result_type) {
+void log_error_info_expression_result_type(Expression_Result_Type result_type) {
     Error_Information info = error_information_make_empty(Error_Information_Type::EXPRESSION_RESULT_TYPE);
     info.options.expression_type = result_type;
-    return info;
+    dynamic_array_push_back(&semantic_analyser.errors[semantic_analyser.errors.size - 1].information, info);
 }
 
-Error_Information error_information_make_constant_status(Constant_Status status) {
+void log_error_info_constant_status(Constant_Status status) {
     Error_Information info = error_information_make_empty(Error_Information_Type::CONSTANT_STATUS);
     info.options.constant_status = status;
-    return info;
+    dynamic_array_push_back(&semantic_analyser.errors[semantic_analyser.errors.size - 1].information, info);
 }
 
-Error_Information error_information_make_cycle_workload(Workload_Base* workload) {
+void log_error_info_cycle_workload(Workload_Base* workload) {
     Error_Information info = error_information_make_empty(Error_Information_Type::CYCLE_WORKLOAD);
     info.options.cycle_workload = workload;
-    return info;
+    dynamic_array_push_back(&semantic_analyser.errors[semantic_analyser.errors.size - 1].information, info);
 }
 
 
@@ -406,11 +394,9 @@ Polymorphic_Instance* polymorphic_base_make_instance_empty(Polymorphic_Base* bas
 
         // Stop recursive instanciates at some threshold
         if (instanciation_counter > 10) {
-            semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, instanciation_node);
-            semantic_analyser_add_error_info(error_information_make_text("Polymorphic function instanciation reached depth limit 10!"));
+            log_semantic_error("Polymorphic function instanciation reached depth limit 10!", instanciation_node, Parser::Section::FIRST_TOKEN);
             // TODO: Add more error information, e.g. finding a cycle or printing the mother instances!
-
-            // Also set all calling functions to contain errors (Somewhat important so that no more instances of the base function are created!)
+            // Also set all calling functions to contain errors (Important so that no more instances of the base function are created!)
             recursive_base->progress->function->contains_errors = true;
             return 0;
         }
@@ -792,8 +778,7 @@ Workload_Base* analyser_create_symbol_and_workload_for_definition(AST::Definitio
             }
 
             if (!type_valid_for_definition && definition->type.available) {
-                semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, definition->type.value);
-                semantic_analyser_add_error_info(error_information_make_text("Type is not valid for comptime definitons of structs/functions/modules!"));
+                log_semantic_error("Type is not valid for comptime definitons of structs/functions/modules!", upcast(definition->type.value));
             }
         }
     }
@@ -1382,8 +1367,8 @@ void expression_info_set_constant(Expression_Info* info, Type_Signature* signatu
     if (result.status != Constant_Status::SUCCESS)
     {
         assert(error_report_node != 0, "Error"); // Error report node may only be null if we know that adding the constant cannot fail.
-        semantic_analyser_log_error(Semantic_Error_Type::CONSTANT_POOL_ERROR, error_report_node);
-        semantic_analyser_add_error_info(error_information_make_constant_status(result.status));
+        log_semantic_error("Value cannot be converted to constant value (Not serializable)", error_report_node);
+        log_error_info_constant_status(result.status);
         expression_info_set_error(info, signature);
         return;
     }
@@ -1569,7 +1554,7 @@ Symbol* symbol_lookup_resolve(AST::Symbol_Lookup* lookup, Symbol_Table* symbol_t
 
     // Handle results array
     if (results.size == 0) {
-        semantic_analyser_log_error(Semantic_Error_Type::SYMBOL_TABLE_UNRESOLVED_SYMBOL, upcast(lookup));
+        log_semantic_error("Could not resolve Symbol (No definition found)", upcast(lookup));
         info->symbol = error;
     }
     else if (results.size == 1) {
@@ -1577,10 +1562,9 @@ Symbol* symbol_lookup_resolve(AST::Symbol_Lookup* lookup, Symbol_Table* symbol_t
         dynamic_array_push_back(&info->symbol->references, lookup);
     }
     else { // size > 1
-        semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(lookup));
-        semantic_analyser_add_error_info(error_information_make_text("Multiple results found for this symbol, cannot decided"));
+        log_semantic_error("Multiple results found for this symbol, cannot decided", upcast(lookup));
         for (int i = 0; i < results.size; i++) {
-            semantic_analyser_add_error_info(error_information_make_symbol(results[i]));
+            log_error_info_symbol(results[i]);
         }
         info->symbol = error;
     }
@@ -1601,11 +1585,6 @@ Symbol* path_lookup_resolve(AST::Path_Lookup* path)
         auto part = path->parts[i];
         // Find symbol of path part
         Symbol* symbol = symbol_lookup_resolve(part, table, i == 0, path->parts.size == 1);
-        if (symbol == 0) {
-            semantic_analyser_log_error(Semantic_Error_Type::SYMBOL_TABLE_UNRESOLVED_SYMBOL, upcast(part));
-            path_lookup_set_error_symbol(path, semantic_analyser.current_workload);
-            return error;
-        }
         if (symbol == error) {
             path_lookup_set_error_symbol(path, semantic_analyser.current_workload);
             return error;
@@ -1634,13 +1613,11 @@ Symbol* path_lookup_resolve(AST::Path_Lookup* path)
             // Report error and exit
             if (symbol->type == Symbol_Type::DEFINITION_UNFINISHED) {
                 // FUTURE: It may be possible that symbol resolution needs to create dependencies itself, which would happen here!
-                semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(part));
-                semantic_analyser_add_error_info(error_information_make_text("Expected module, not a definition (global/comptime)"));
+                log_semantic_error("Expected module, not a definition (global/comptime)", upcast(part));
             }
             else {
-                semantic_analyser_log_error(Semantic_Error_Type::SYMBOL_EXPECTED_MODUL_IN_IDENTIFIER_PATH, upcast(part));
-                semantic_analyser_add_error_info(error_information_make_symbol(symbol));
-
+                log_semantic_error("Expected Module as intermediate path nodes", upcast(part));
+                log_error_info_symbol(symbol);
             }
             path_lookup_set_error_symbol(path, semantic_analyser.current_workload);
             return semantic_analyser.predefined_symbols.error_symbol;
@@ -2252,10 +2229,10 @@ void workload_executer_resolve()
                         only_reads_was_found = true;
                         for (int j = 0; j < infos.symbol_lookups.size; j++) {
                             path_lookup_set_error_symbol(downcast<AST::Path_Lookup>(infos.symbol_lookups[j]->base.parent), workload);
-                            semantic_analyser_log_error(Semantic_Error_Type::CYCLIC_DEPENDENCY_DETECTED, upcast(infos.symbol_lookups[j]));
+                            log_semantic_error("Cyclic dependencies detected", upcast(infos.symbol_lookups[j]));
                             for (int k = 0; k < workload_cycle.size; k++) {
                                 Workload_Base* workload = workload_cycle[k];
-                                semantic_analyser_add_error_info(error_information_make_cycle_workload(workload));
+                                log_error_info_cycle_workload(workload);
                             }
                         }
                         workload_executer_remove_dependency(workload, depends_on, true);
@@ -2332,13 +2309,11 @@ Workload_Import_Resolve* create_import_workload(AST::Import* import_node)
     // Check for Syntax-Errors
     if (import_node->type != AST::Import_Type::FILE) {
         if (import_node->path->parts.size == 1 && import_node->alias_name == 0 && import_node->type == AST::Import_Type::SINGLE_SYMBOL) {
-            semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(import_node->path));
-            semantic_analyser_add_error_info(error_information_make_text("Cannot import single symbol, or have an alias with same name!"));
+            log_semantic_error("Cannot import single symbol, or have an alias with same name!", upcast(import_node->path));
             return 0;
         }
         if (import_node->path->last->name == import_node->alias_name) {
-            semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(import_node->path));
-            semantic_analyser_add_error_info(error_information_make_text("Using as ... in import requires the name to be different than the original symbol name"));
+            log_semantic_error("Using as ... in import requires the name to be different than the original symbol name", upcast(import_node->path));
             return 0;
         }
         if (import_node->path->last->name == 0) {
@@ -2347,8 +2322,7 @@ Workload_Import_Resolve* create_import_workload(AST::Import* import_node)
             return 0;
         }
         if (import_node->alias_name != 0 && (import_node->type == AST::Import_Type::MODULE_SYMBOLS || import_node->type == AST::Import_Type::MODULE_SYMBOLS_TRANSITIVE)) {
-            semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(import_node->path));
-            semantic_analyser_add_error_info(error_information_make_text("Cannot alias * or ** imports"));
+            log_semantic_error("Cannot alias * or ** imports", upcast(import_node->path));
             return 0;
         }
     }
@@ -2463,8 +2437,7 @@ void analysis_workload_entry(void* userdata)
         {
             auto module_progress = compiler_import_and_queue_analysis_workload(node);
             if (module_progress == 0) {
-                semantic_analyser_log_error(Semantic_Error_Type::OTHERS_COULD_NOT_LOAD_FILE, upcast(node));
-                semantic_analyser_add_error_info(error_information_make_text("Could not load file"));
+                log_semantic_error("Could not load file", upcast(node));
                 import_workload->alias_for_symbol = semantic_analyser.predefined_symbols.error_symbol;
                 break;
             }
@@ -2519,9 +2492,8 @@ void analysis_workload_entry(void* userdata)
                 }
             }
             else if (symbol->type != Symbol_Type::ERROR_SYMBOL) {
-                semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(node));
-                semantic_analyser_add_error_info(error_information_make_text("Cannot import from non module"));
-                semantic_analyser_add_error_info(error_information_make_symbol(symbol));
+                log_semantic_error("Cannot import from non module", upcast(node));
+                log_error_info_symbol(symbol);
             }
         }
         break;
@@ -2563,10 +2535,10 @@ void analysis_workload_entry(void* userdata)
         {
             if (definition->type.available) {
                 semantic_analyser_analyse_expression_type(definition->type.value);
-                semantic_analyser_log_error(Semantic_Error_Type::COMPTIME_DEFINITION_MUST_BE_INFERED, definition->type.value);
+                log_semantic_error("Comptime definitions must currently be inferred", definition->type.value);
             }
             if (!definition->value.available) {
-                semantic_analyser_log_error(Semantic_Error_Type::COMPTIME_DEFINITION_REQUIRES_INITAL_VALUE, AST::upcast(definition));
+                log_semantic_error("Comptime definitions always require initial value", AST::upcast(definition));
                 return;
             }
 
@@ -2585,7 +2557,7 @@ void analysis_workload_entry(void* userdata)
                     return;
                 }
                 case Comptime_Result_Type::NOT_COMPTIME: {
-                    semantic_analyser_log_error(Semantic_Error_Type::COMPTIME_DEFINITION_MUST_BE_COMPTIME_KNOWN, definition->value.value);
+                    log_semantic_error("Could not determine value at compile time", definition->value.value);
                     symbol->type = Symbol_Type::ERROR_SYMBOL;
                     return;
                 }
@@ -2596,8 +2568,8 @@ void analysis_workload_entry(void* userdata)
                     &compiler.constant_pool, comptime.data_type, array_create_static((byte*)comptime.data, comptime.data_type->size)
                 );
                 if (result.status != Constant_Status::SUCCESS) {
-                    semantic_analyser_log_error(Semantic_Error_Type::CONSTANT_POOL_ERROR, definition->value.value);
-                    semantic_analyser_add_error_info(error_information_make_constant_status(result.status));
+                    log_semantic_error("Comptime value must be serializable", definition->value.value);
+                    log_error_info_constant_status(result.status);
                     symbol->type = Symbol_Type::ERROR_SYMBOL;
                     break;
                 }
@@ -2614,8 +2586,7 @@ void analysis_workload_entry(void* userdata)
             case Expression_Result_Type::HARDCODED_FUNCTION:
             {
                 symbol->type = Symbol_Type::ERROR_SYMBOL;
-                semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, AST::upcast(definition));
-                semantic_analyser_add_error_info(error_information_make_text("Creating aliases for hardcoded functions currently not supported!\n"));
+                log_semantic_error("Creating aliases for hardcoded functions currently not supported", AST::upcast(definition));
                 break;
                 //symbol->type = Symbol_Type::HARDCODED_FUNCTION;
                 //symbol->options.hardcoded = result->options.hardcoded;
@@ -2626,14 +2597,12 @@ void analysis_workload_entry(void* userdata)
                 ModTree_Function* function = result->options.function;
                 assert(function->symbol != 0, "Shouldn't happen, we cannot reference a function if it doesn't have a symbol!");
                 symbol->type = Symbol_Type::ERROR_SYMBOL;
-                semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, AST::upcast(definition));
-                semantic_analyser_add_error_info(error_information_make_text("Creating symbol/function aliases currently not supported!\n"));
+                log_semantic_error("Creating symbol/function aliases currently not supported", AST::upcast(definition));
                 break;
             }
             case Expression_Result_Type::POLYMORPHIC_FUNCTION: {
                 symbol->type = Symbol_Type::ERROR_SYMBOL;
-                semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, AST::upcast(definition));
-                semantic_analyser_add_error_info(error_information_make_text("Creating aliases for polymorphic functions not supported!"));
+                log_semantic_error("Creating aliases for polymorphic functions not supported!", AST::upcast(definition));
                 break;
             }
             case Expression_Result_Type::TYPE: {
@@ -2758,7 +2727,7 @@ void analysis_workload_entry(void* userdata)
         // Analyse body
         Control_Flow flow = semantic_analyser_analyse_block(code_block);
         if (flow != Control_Flow::RETURNS && !type_signature_equals(function->signature->options.function.return_type, types.void_type)) {
-            semantic_analyser_log_error(Semantic_Error_Type::OTHERS_MISSING_RETURN_STATEMENT, upcast(code_block));
+            log_semantic_error("Function is missing a return statement", upcast(code_block), Parser::Section::END_TOKEN);
         }
         break;
     }
@@ -2801,10 +2770,10 @@ void analysis_workload_entry(void* userdata)
         {
             auto member_node = struct_node.members[i];
             if (member_node->value.available) {
-                semantic_analyser_log_error(Semantic_Error_Type::STRUCT_MEMBER_MUST_NOT_HAVE_VALUE, AST::upcast(member_node));
+                log_semantic_error("Cannot add values to struct members (Default values not supported)", AST::upcast(member_node->value.value));
             }
             if (!member_node->type.available) {
-                semantic_analyser_log_error(Semantic_Error_Type::STRUCT_MEMBER_REQUIRES_TYPE, AST::upcast(member_node->value.value));
+                log_semantic_error("Type must be specified for struct member", AST::upcast(member_node), Parser::Section::END_TOKEN);
                 continue;
             }
 
@@ -2845,7 +2814,7 @@ void analysis_workload_entry(void* userdata)
             function->signature = type_system_make_function(&type_system, {}, types.void_type);
             auto flow = semantic_analyser_analyse_block(code_block);
             if (flow != Control_Flow::RETURNS) {
-                semantic_analyser_log_error(Semantic_Error_Type::OTHERS_MISSING_RETURN_STATEMENT, AST::upcast(code_block));
+                log_semantic_error("Missing return statement", AST::upcast(code_block), Parser::Section::END_TOKEN);
             }
         }
         else if (node->type == AST::Expression_Type::BAKE_EXPR)
@@ -2903,8 +2872,8 @@ void analysis_workload_entry(void* userdata)
         RESTORE_ON_SCOPE_EXIT(interpreter->instruction_limit, 5000);
         bytecode_interpreter_run_function(interpreter, func_start_instr_index);
         if (interpreter->exit_code != Exit_Code::SUCCESS) {
-            semantic_analyser_log_error(Semantic_Error_Type::BAKE_FUNCTION_DID_NOT_SUCCEED, execute->bake_node);
-            semantic_analyser_add_error_info(error_information_make_exit_code(interpreter->exit_code));
+            log_semantic_error("Bake function did not return succesfully", execute->bake_node);
+            log_error_info_exit_code(interpreter->exit_code);
             progress->result = comptime_result_make_unavailable(bake_function->signature->options.function.return_type);
             return;
         }
@@ -2942,7 +2911,7 @@ case Analysis_Workload_Type::EXTERN_HEADER_IMPORT:
                 error.type = Semantic_Error_Type::EXTERN_HEADER_DOES_NOT_CONTAIN_SYMBOL;
                 error.id = import_id;
                 error.error_node = import_id_node;
-                semantic_analyser_log_error(analyser, error);
+                log_semantic_error(analyser, error);
                 continue;
             }
 
@@ -2981,7 +2950,7 @@ case Analysis_Workload_Type::EXTERN_HEADER_IMPORT:
                 Semantic_Error error;
                 error.type = Semantic_Error_Type::MISSING_FEATURE_EXTERN_GLOBAL_IMPORT;
                 error.error_node = import_id_node;
-                semantic_analyser_log_error(analyser, error);
+                log_semantic_error(analyser, error);
                 break;
             }
             default: panic("hey");
@@ -3020,7 +2989,7 @@ case Analysis_Workload_Type::EXTERN_HEADER_IMPORT:
         Semantic_Error error;
         error.type = Semantic_Error_Type::EXTERN_HEADER_PARSING_FAILED;
         error.error_node = workload.options.extern_header.node;
-        semantic_analyser_log_error(analyser, error);
+        log_semantic_error(analyser, error);
     }
     break;
 }
@@ -3040,7 +3009,7 @@ case Analysis_Workload_Type::EXTERN_FUNCTION_DECLARATION:
             Semantic_Error error;
             error.type = Semantic_Error_Type::INVALID_TYPE_FUNCTION_IMPORT_EXPECTED_FUNCTION_POINTER;
             error.error_node = extern_node->child_start;
-            semantic_analyser_log_error(analyser, error);
+            log_semantic_error(analyser, error);
             break;
         }
 
@@ -3488,14 +3457,13 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         if (function_expr_info->result_type == Expression_Result_Type::HARDCODED_FUNCTION && function_expr_info->options.hardcoded == Hardcoded_Type::TYPE_OF)
         {
             if (call.arguments.size != 1) {
-                semantic_analyser_log_error(Semantic_Error_Type::FUNCTION_CALL_ARGUMENT_SIZE_MISMATCH, call.expr);
-                semantic_analyser_add_error_info(error_information_make_argument_count(call.arguments.size, 1));
+                log_semantic_error("Function call argument size mismatch", call.expr);
+                log_error_info_argument_count(call.arguments.size, 1);
                 EXIT_ERROR(types.unknown_type);
             }
             auto& arg = call.arguments[0];
             if (arg->name.available) {
-                semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, &arg->base);
-                semantic_analyser_add_error_info(error_information_make_text("Argument name for type_of must not be given"));
+                log_semantic_error("Argument name for type_of must not be given", &arg->base);
             }
 
             auto arg_result = semantic_analyser_analyse_expression_any(arg->value, expression_context_make_unknown());
@@ -3505,8 +3473,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 EXIT_TYPE(arg_result->options.type);
             }
             case Expression_Result_Type::HARDCODED_FUNCTION: {
-                semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, arg->value);
-                semantic_analyser_add_error_info(error_information_make_text("Cannot use type_of on hardcoded functions!"));
+                log_semantic_error("Cannot use type_of on hardcoded functions!", arg->value);
                 EXIT_ERROR(types.unknown_type);
             }
             case Expression_Result_Type::CONSTANT: {
@@ -3519,8 +3486,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 EXIT_TYPE(types.type_type);
             }
             case Expression_Result_Type::POLYMORPHIC_FUNCTION: {
-                semantic_analyser_log_error(Semantic_Error_Type::INVALID_EXPRESSION_TYPE, arg->value);
-                semantic_analyser_add_error_info(error_information_make_expression_result_type(arg_result->result_type));
+                log_semantic_error("Type of cannot handle the given expression type", arg->value);
+                log_error_info_expression_result_type(arg_result->result_type);
                 EXIT_ERROR(types.unknown_type);
             }
             default: panic("");
@@ -3552,8 +3519,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             {
                 if (arguments.size != poly_header->parameter_order.size) {
                     // TODO: In theory I could do something smarter here, with default values and named parameters I will need to do something else
-                    semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, AST::upcast(expr));
-                    semantic_analyser_add_error_info(error_information_make_text("Argument count did not match parameter count!"));
+                    log_semantic_error("Argument count did not match parameter count!", AST::upcast(expr));
                     function_signature = 0;
                     break;
                 }
@@ -3612,8 +3578,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                         array_create_static((byte*)comptime_result.data, comptime_result.data_type->size)
                     );
                     if (result.status != Constant_Status::SUCCESS) {
-                        semantic_analyser_log_error(Semantic_Error_Type::CONSTANT_POOL_ERROR, AST::upcast(argument->value));
-                        semantic_analyser_add_error_info(error_information_make_constant_status(result.status));
+                        log_semantic_error("Could not serialize polymorphic value!", AST::upcast(argument->value));
+                        log_error_info_constant_status(result.status);
                         poly_value.is_not_set = true;
                         success = false;
                     }
@@ -3628,17 +3594,14 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                     break;
                 }
                 case Comptime_Result_Type::NOT_COMPTIME:
-                    semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, AST::upcast(argument->value));
-                    semantic_analyser_add_error_info(error_information_make_text("For instanciation values must be comptime!"));
+                    log_semantic_error("For instanciation values must be comptime!", AST::upcast(argument->value));
                     success = false;
                     break;
                 }
             }
 
-            if (!success)
-            {
-                semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, AST::upcast(expr));
-                semantic_analyser_add_error_info(error_information_make_text("Some values couldn't be calculated at comptime!"));
+            if (!success){
+                log_semantic_error("Some values couldn't be calculated at comptime!", AST::upcast(expr));
                 break;
             }
 
@@ -3652,16 +3615,16 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             // TODO: Check if this is comptime known, then we dont need a function pointer call
             function_signature = function_expr_info->options.type;
             if (function_signature->type != Signature_Type::FUNCTION) {
-                semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE_FUNCTION_CALL, expr);
-                semantic_analyser_add_error_info(error_information_make_given_type(function_signature));
+                log_semantic_error("Function call requires a callable expression", expr);
+                log_error_info_given_type(function_signature);
                 function_signature = 0;
             }
             break;
         }
         case Expression_Result_Type::CONSTANT:
         case Expression_Result_Type::TYPE: {
-            semantic_analyser_log_error(Semantic_Error_Type::EXPECTED_CALLABLE, expr);
-            semantic_analyser_add_error_info(error_information_make_expression_result_type(function_expr_info->result_type));
+            log_semantic_error("Function call requires a callable expression", expr);
+            log_error_info_expression_result_type(function_expr_info->result_type);
             function_signature = 0;
             break;
         }
@@ -3712,8 +3675,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                     for (int j = first_named_argument_index; j < i; j++) {
                         auto& other_arg = arguments[j];
                         if (other_arg->name.available && other_arg->name.value == arg->name.value) {
-                            semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(arg));
-                            semantic_analyser_add_error_info(error_information_make_text("Argument name already specified!"));
+                            log_semantic_error("Argument name already specified!", upcast(arg));
                             break;
                         }
                     }
@@ -3731,8 +3693,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 else {
                     if (named_argument_encountered) {
                         // Cannot have unnamed arguments after named ones
-                        semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(arg));
-                        semantic_analyser_add_error_info(error_information_make_text("Unnamed arguments must not appear after named arguments"));
+                        log_semantic_error("Unnamed arguments must not appear after named arguments", upcast(arg));
                     }
                     else {
                         info->argument_index = next_unnamed_parameter_index;
@@ -3752,9 +3713,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
             // Error checking
             if (non_polymorphic_argument_count != parameters.size) {
-                semantic_analyser_log_error(Semantic_Error_Type::FUNCTION_CALL_ARGUMENT_SIZE_MISMATCH, expr);
-                semantic_analyser_add_error_info(error_information_make_argument_count(non_polymorphic_argument_count, parameters.size));
-                semantic_analyser_add_error_info(error_information_make_function_type(function_signature));
+                log_semantic_error("Some function parameters are missing", expr, Parser::Section::ENCLOSURE);
+                log_error_info_argument_count(non_polymorphic_argument_count, parameters.size);
+                log_error_info_function_type(function_signature);
             }
         }
 
@@ -3860,7 +3821,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             EXIT_VALUE(symbol->options.variable_type);
         }
         case Symbol_Type::VARIABLE_UNDEFINED: {
-            semantic_analyser_log_error(Semantic_Error_Type::VARIABLE_NOT_DEFINED_YET, expr);
+            log_semantic_error("Variable not defined at this point", expr);
             EXIT_ERROR(types.unknown_type);
         }
         case Symbol_Type::PARAMETER: {
@@ -3870,8 +3831,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             {
                 // This means we are in the base analysis and just found a parameter-dependency
                 if (!param.is_polymorphic) {
-                    semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, expr);
-                    semantic_analyser_add_error_info(error_information_make_text("Function headers cannot access normal parameters!"));
+                    log_semantic_error("Function headers cannot access normal parameters!", expr);
                     EXIT_VALUE(param.workload->base_type);
                 }
                 else if (type_signature_equals(param.workload->base_type, types.type_type)) { // Not sure if this is a hack or required...
@@ -3905,8 +3865,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             return info;
         }
         case Symbol_Type::MODULE: {
-            semantic_analyser_log_error(Semantic_Error_Type::SYMBOL_MODULE_INVALID, expr);
-            semantic_analyser_add_error_info(error_information_make_symbol(symbol));
+            log_semantic_error("Module not valid as expression result", expr);
+            log_error_info_symbol(symbol);
             EXIT_ERROR(types.unknown_type);
         }
         case Symbol_Type::POLYMORPHIC_FUNCTION: {
@@ -3936,7 +3896,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             if (destination_type == 0)
             {
                 if (context.type != Expression_Context_Type::SPECIFIC_TYPE) {
-                    semantic_analyser_log_error(Semantic_Error_Type::AUTO_CAST_KNOWN_CONTEXT_IS_REQUIRED, expr);
+                    log_semantic_error("No context is available for auto cast", expr);
                     EXIT_ERROR(types.unknown_type);
                 }
                 destination_type = context.signature;
@@ -3946,14 +3906,14 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         case AST::Cast_Type::RAW_TO_PTR:
         {
             if (destination_type == 0) {
-                semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_INVALID_CAST, expr);
+                log_semantic_error("Raw to pointer cast requires destination type", expr);
                 destination_type = types.unknown_type;
             }
             else {
                 operand_context = expression_context_make_specific_type(types.u64_type);
                 if (destination_type->type != Signature_Type::POINTER) {
-                    semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE_CAST_PTR_DESTINATION_MUST_BE_PTR, expr);
-                    semantic_analyser_add_error_info(error_information_make_given_type(destination_type));
+                    log_semantic_error("Destination type must be pointer", expr);
+                    log_error_info_given_type(destination_type);
                 }
             }
             break;
@@ -3961,7 +3921,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         case AST::Cast_Type::PTR_TO_RAW:
         {
             if (destination_type != 0) {
-                semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_INVALID_CAST, expr);
+                log_semantic_error("Must not specify destination type when casting to raw", expr);
             }
             destination_type = types.u64_type;
             break;
@@ -3979,17 +3939,16 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             assert(destination_type != 0, "");
             cast_type = semantic_analyser_check_cast_type(operand_type, destination_type, false);
             if (cast_type == Info_Cast_Type::INVALID) {
-                semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_INVALID_CAST, expr);
-                semantic_analyser_add_error_info(error_information_make_given_type(operand_type));
-                semantic_analyser_add_error_info(error_information_make_expected_type(destination_type));
+                log_semantic_error("No cast available between given types", expr);
+                log_error_info_given_type(operand_type);
+                log_error_info_expected_type(destination_type);
             }
             break;
         }
         case AST::Cast_Type::PTR_TO_RAW: {
             if (operand_type->type != Signature_Type::POINTER) {
-                semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_INVALID_CAST, expr);
-                semantic_analyser_add_error_info(error_information_make_given_type(operand_type));
-                semantic_analyser_add_error_info(error_information_make_expected_type(destination_type));
+                log_semantic_error("To raw cast require a pointer value", expr);
+                log_error_info_given_type(operand_type);
             }
             cast_type = Info_Cast_Type::POINTER_TO_U64;
             break;
@@ -4067,7 +4026,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 case Comptime_Result_Type::UNAVAILABLE:
                     break;
                 case Comptime_Result_Type::NOT_COMPTIME:
-                    semantic_analyser_log_error(Semantic_Error_Type::ENUM_VALUE_MUST_BE_COMPILE_TIME_KNOWN, member_node->value.value);
+                    log_semantic_error("Enum value must be comptime known", member_node->value.value);
                     break;
                 default: panic("");
                 }
@@ -4090,12 +4049,12 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             {
                 auto other = &enum_type->options.enum_type.members[j];
                 if (other->id == member->id) {
-                    semantic_analyser_log_error(Semantic_Error_Type::ENUM_MEMBER_NAME_MUST_BE_UNIQUE, AST::upcast(expr));
-                    semantic_analyser_add_error_info(error_information_make_id(other->id));
+                    log_semantic_error("Enum member name is already in use", AST::upcast(expr));
+                    log_error_info_id(other->id);
                 }
                 if (other->value == member->value) {
-                    semantic_analyser_log_error(Semantic_Error_Type::ENUM_VALUE_MUST_BE_UNIQUE, AST::upcast(expr));
-                    semantic_analyser_add_error_info(error_information_make_id(other->id));
+                    log_semantic_error("Enum value is already taken by previous member", AST::upcast(expr));
+                    log_error_info_id(other->id);
                 }
             }
         }
@@ -4103,8 +4062,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         EXIT_TYPE(enum_type);
     }
     case AST::Expression_Type::MODULE: {
-        semantic_analyser_log_error(Semantic_Error_Type::MODULE_NOT_VALID_IN_THIS_CONTEXT, AST::upcast(expr));
-        semantic_analyser_add_error_info(error_information_make_text("Anonymous modules can never be useful since nothing inside them can be referenced!"));
+        log_semantic_error("Module not valid in this context", AST::upcast(expr));
         EXIT_ERROR(types.unknown_type);
     }
     case AST::Expression_Type::FUNCTION:
@@ -4202,8 +4160,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             break;
         }
         case Analysis_Workload_Type::MODULE_ANALYSIS: {
-            semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, expr);
-            semantic_analyser_add_error_info(error_information_make_text("Inner Imports and anonymous modules aren't currently supported!"));
+            log_semantic_error("Anonymous modules aren't currently supported", expr);
             EXIT_ERROR(types.unknown_type);
         }
         case Analysis_Workload_Type::DEFINITION:
@@ -4233,8 +4190,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         {
             auto& param = sig.parameters[i];
             if (param->is_comptime) {
-                semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, AST::upcast(param));
-                semantic_analyser_add_error_info(error_information_make_text("Comptime parameters are only allowed in function definitions, not in signatures!"));
+                log_semantic_error("Comptime parameters are only allowed in functions, not in signatures!", AST::upcast(param));
             }
             else {
                 empty_function_add_parameter(&unfinished, param->name, semantic_analyser_analyse_expression_type(param->type));
@@ -4280,7 +4236,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             array_size_known = true;
             array_size = *(i32*)comptime.data;
             if (array_size <= 0) {
-                semantic_analyser_log_error(Semantic_Error_Type::ARRAY_SIZE_MUST_BE_GREATER_ZERO, array_node.size_expr);
+                log_semantic_error("Array size must be greater than zero", array_node.size_expr);
                 array_size_known = false;
             }
             break;
@@ -4289,7 +4245,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             array_size_known = false;
             break;
         case Comptime_Result_Type::NOT_COMPTIME:
-            semantic_analyser_log_error(Semantic_Error_Type::ARRAY_SIZE_NOT_COMPILE_TIME_KNOWN, array_node.size_expr);
+            log_semantic_error("Array size must be known at compile time", array_node.size_expr);
             array_size_known = false;
             break;
         default: panic("");
@@ -4348,19 +4304,15 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 struct_signature = context.signature;
             }
             else {
-                semantic_analyser_log_error(Semantic_Error_Type::AUTO_STRUCT_INITIALIZER_COULD_NOT_DETERMINE_TYPE, expr);
+                log_semantic_error("Could not determine struct type from context", expr, Parser::Section::FIRST_TOKEN);
                 EXIT_ERROR(types.unknown_type);
             }
         }
 
         // Check type errors
         if (struct_signature->type != Signature_Type::STRUCT) {
-            semantic_analyser_log_error(Semantic_Error_Type::STRUCT_INITIALIZER_TYPE_MUST_BE_STRUCT, expr);
-            semantic_analyser_add_error_info(error_information_make_given_type(struct_signature));
-            EXIT_ERROR(struct_signature);
-        }
-        if (init_node.arguments.size == 0) {
-            semantic_analyser_log_error(Semantic_Error_Type::STRUCT_INITIALIZER_MEMBERS_MISSING, expr);
+            log_semantic_error("Struct initializer requires structure type", expr);
+            log_error_info_given_type(struct_signature);
             EXIT_ERROR(struct_signature);
         }
         assert(!(struct_signature->size == 0 && struct_signature->alignment == 0), "");
@@ -4393,8 +4345,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                     for (int j = first_named_argument_index; j < i; j++) {
                         auto& other_arg = arguments[j];
                         if (other_arg->name.available && other_arg->name.value == arg->name.value) {
-                            semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(arg));
-                            semantic_analyser_add_error_info(error_information_make_text("Argument name already specified!"));
+                            log_semantic_error("Argument name already specified!", upcast(arg), Parser::Section::IDENTIFIER);
                             break;
                         }
                     }
@@ -4410,10 +4361,13 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                     }
                 }
                 else {
+                    if (struct_signature->options.structure.struct_type != AST::Structure_Type::STRUCT) {
+                        // Cannot have unnamed arguments after named ones
+                        log_semantic_error("Union initializer requires named argument", upcast(arg), Parser::Section::FIRST_TOKEN);
+                    }
                     if (named_argument_encountered) {
                         // Cannot have unnamed arguments after named ones
-                        semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE, upcast(arg));
-                        semantic_analyser_add_error_info(error_information_make_text("Unnamed arguments must not appear after named arguments"));
+                        log_semantic_error("Unnamed arguments must not appear after named arguments", upcast(arg));
                     }
                     else {
                         if (i < parameters.size) {
@@ -4435,23 +4389,23 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         {
             // Check if all members are initiliazed
             if (init_node.arguments.size != struct_signature->options.structure.members.size) {
-                semantic_analyser_log_error(Semantic_Error_Type::STRUCT_INITIALIZER_MEMBERS_MISSING, expr);
-                semantic_analyser_add_error_info(error_information_make_argument_count(init_node.arguments.size, struct_signature->options.structure.members.size));
+                log_semantic_error("Some struct members are missing in initializer", expr, Parser::Section::ENCLOSURE);
+                log_error_info_argument_count(init_node.arguments.size, struct_signature->options.structure.members.size);
             }
         }
         else
         {
             if (init_node.arguments.size == 0) {
-                semantic_analyser_log_error(Semantic_Error_Type::STRUCT_INITIALIZER_MEMBERS_MISSING, expr);
+                log_semantic_error("One initializer value is required in union initializer", expr, Parser::Section::ENCLOSURE);
             }
             else if (init_node.arguments.size != 1) {
-                semantic_analyser_log_error(Semantic_Error_Type::STRUCT_INITIALIZER_CAN_ONLY_SET_ONE_UNION_MEMBER, expr);
+                log_semantic_error("Only one value must be given for union initializer", expr);
             }
             else if (struct_signature->options.structure.struct_type == AST::Structure_Type::UNION)
             {
                 auto& member = get_info(init_node.arguments[0])->member;
                 if (member.offset == struct_signature->options.structure.tag_member.offset) {
-                    semantic_analyser_log_error(Semantic_Error_Type::STRUCT_INITIALIZER_CANNOT_SET_UNION_TAG, AST::upcast(init_node.arguments[0]));
+                    log_semantic_error("Cannot set the tag value in initializer", AST::upcast(init_node.arguments[0]));
                 }
             }
         }
@@ -4480,8 +4434,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 }
             }
             if (element_type == 0) {
-                semantic_analyser_log_error(Semantic_Error_Type::ARRAY_AUTO_INITIALIZER_COULD_NOT_DETERMINE_TYPE, expr);
-                EXIT_ERROR(types.unknown_type);
+                log_semantic_error("Could not determine array element type from context", expr);
+                element_type = type_system->predefined_types.unknown_type;
             }
         }
 
@@ -4512,8 +4466,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             element_type = array_type->options.slice.element_type;
         }
         else {
-            semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE_ARRAY_ACCESS, expr);
-            semantic_analyser_add_error_info(error_information_make_given_type(array_type));
+            log_semantic_error("Array access can only currently happen on array or slice types", expr);
+            log_error_info_given_type(array_type);
             element_type = types.unknown_type;
         }
 
@@ -4535,8 +4489,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 enum_type = enum_type->options.structure.tag_member.type;
             }
             if (enum_type->type != Signature_Type::ENUM) {
-                semantic_analyser_log_error(Semantic_Error_Type::OTHERS_TYPE_MEMBER_ACCESS_MUST_BE_ENUM, member_node.expr);
-                semantic_analyser_add_error_info(error_information_make_given_type(enum_type));
+                log_semantic_error("Member access for given type not possible", member_node.expr);
+                log_error_info_given_type(enum_type);
                 EXIT_ERROR(types.unknown_type);
             }
 
@@ -4551,8 +4505,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
             int value = 0;
             if (found == 0) {
-                semantic_analyser_log_error(Semantic_Error_Type::ENUM_DOES_NOT_CONTAIN_THIS_MEMBER, member_node.expr);
-                semantic_analyser_add_error_info(error_information_make_id(member_node.name));
+                log_semantic_error("Enum/Union does not contain this member", member_node.expr);
+                log_error_info_id(member_node.name);
             }
             else {
                 value = found->value;
@@ -4563,8 +4517,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         case Expression_Result_Type::FUNCTION:
         case Expression_Result_Type::HARDCODED_FUNCTION:
         case Expression_Result_Type::POLYMORPHIC_FUNCTION: {
-            semantic_analyser_log_error(Semantic_Error_Type::INVALID_EXPRESSION_TYPE, member_node.expr);
-            semantic_analyser_add_error_info(error_information_make_expression_result_type(access_expr_info->result_type));
+            log_semantic_error("Cannot use member access ('x.y') on functions", member_node.expr);
+            log_error_info_expression_result_type(access_expr_info->result_type);
             EXIT_ERROR(types.unknown_type);
         }
         case Expression_Result_Type::VALUE:
@@ -4581,8 +4535,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                     }
                 }
                 if (found == 0) {
-                    semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_MEMBER_NOT_FOUND, expr);
-                    semantic_analyser_add_error_info(error_information_make_id(member_node.name));
+                    log_semantic_error("Struct doesn't contain a member with this name", expr);
+                    log_error_info_id(member_node.name);
                     EXIT_ERROR(types.unknown_type);
                 }
                 EXIT_VALUE(found->type);
@@ -4590,8 +4544,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             else if (struct_signature->type == Signature_Type::ARRAY || struct_signature->type == Signature_Type::SLICE)
             {
                 if (member_node.name != compiler.id_size && member_node.name != compiler.id_data) {
-                    semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_MEMBER_NOT_FOUND, expr);
-                    semantic_analyser_add_error_info(error_information_make_id(member_node.name));
+                    log_semantic_error("Arrays/Slices only have either .size or .data as members", expr);
+                    log_error_info_id(member_node.name);
                     EXIT_ERROR(types.unknown_type);
                 }
 
@@ -4625,8 +4579,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             }
             else
             {
-                semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE_ON_MEMBER_ACCESS, expr);
-                semantic_analyser_add_error_info(error_information_make_given_type(struct_signature));
+                log_semantic_error("Given type does not define member access", expr);
+                log_error_info_given_type(struct_signature);
                 EXIT_ERROR(types.unknown_type);
             }
             panic("");
@@ -4641,11 +4595,12 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
     {
         String* id = expr->options.auto_enum;
         if (context.type != Expression_Context_Type::SPECIFIC_TYPE) {
-            semantic_analyser_log_error(Semantic_Error_Type::AUTO_MEMBER_KNOWN_CONTEXT_IS_REQUIRED, expr);
+            log_semantic_error("Could not determine context for auto enum", expr);
             EXIT_ERROR(types.unknown_type);
         }
         if (context.signature->type != Signature_Type::ENUM) {
-            semantic_analyser_log_error(Semantic_Error_Type::AUTO_MEMBER_MUST_BE_IN_ENUM_CONTEXT, expr);
+            log_semantic_error("Context requires a type that is not an enum, so .NAME syntax is not valid", expr);
+            log_error_info_given_type(context.signature);
             EXIT_ERROR(types.unknown_type);
         }
 
@@ -4661,8 +4616,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
         int value = 0;
         if (found == 0) {
-            semantic_analyser_log_error(Semantic_Error_Type::ENUM_DOES_NOT_CONTAIN_THIS_MEMBER, expr);
-            semantic_analyser_add_error_info(error_information_make_id(id));
+            log_semantic_error("Enum does not contain this member", expr);
+            log_error_info_id(id);
         }
         else {
             value = found->value;
@@ -4692,8 +4647,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                     valid = operand_type->options.primitive.is_signed && operand_type->options.primitive.type != Primitive_Type::BOOLEAN;
                 }
                 if (!valid) {
-                    semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE_UNARY_OPERATOR, expr);
-                    semantic_analyser_add_error_info(error_information_make_given_type(operand_type));
+                    log_semantic_error("Type not valid for negate operator", expr);
+                    log_error_info_given_type(operand_type);
                 }
             }
 
@@ -4717,7 +4672,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
                 Type_Signature* operand_type = operand_result->context_ops.after_cast_type;
                 if (!expression_has_memory_address(unary_node.expr)) {
-                    semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_ADDRESS_MUST_NOT_BE_OF_TEMPORARY_RESULT, expr);
+                    log_semantic_error("Cannot get memory address of a temporary value", expr);
                 }
                 EXIT_VALUE(type_system_make_pointer(type_system, operand_type));
             }
@@ -4727,8 +4682,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             case Expression_Result_Type::FUNCTION:
             case Expression_Result_Type::POLYMORPHIC_FUNCTION:
             case Expression_Result_Type::HARDCODED_FUNCTION: {
-                semantic_analyser_log_error(Semantic_Error_Type::INVALID_EXPRESSION_TYPE, expr);
-                semantic_analyser_add_error_info(error_information_make_expression_result_type(operand_result->result_type));
+                log_semantic_error("Cannot get pointer to a function (Function pointers don't require *)", expr);
                 EXIT_ERROR(types.unknown_type);
             }
             default: panic("");
@@ -4741,8 +4695,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             auto operand_type = semantic_analyser_analyse_expression_value(unary_node.expr, expression_context_make_unknown());
             Type_Signature* result_type = types.unknown_type;
             if (operand_type->type != Signature_Type::POINTER || type_signature_equals(operand_type, types.void_ptr_type)) {
-                semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE_UNARY_OPERATOR, expr);
-                semantic_analyser_add_error_info(error_information_make_given_type(operand_type));
+                log_semantic_error("Cannot dereference non-pointer value", expr);
+                log_error_info_given_type(operand_type);
             }
             else {
                 result_type = operand_type->options.pointer_child;
@@ -4883,8 +4837,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         }
 
         if (!types_are_valid) {
-            semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE_BINARY_OPERATOR, expr);
-            semantic_analyser_add_error_info(error_information_make_binary_op_type(left_type, right_type));
+            log_semantic_error("Types aren't valid for binary operation", expr);
+            log_error_info_binary_op_type(left_type, right_type);
         }
         EXIT_VALUE(result_type_is_bool ? types.bool_type : operand_type);
     }
@@ -4916,7 +4870,7 @@ void expression_context_apply(AST::Expression* expr, Expression_Context context)
     // Special Case Handling: Expression_Statements are the only things which can expect void type
     if (type_signature_equals(initial_type, types.void_type)) {
         if (!(context.type == Expression_Context_Type::SPECIFIC_TYPE && type_signature_equals(context.signature, types.void_type))) {
-            semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE_VOID_USAGE, expr);
+            log_semantic_error("Void type not allowed here", expr);
         }
         info->context_ops.after_cast_type = types.unknown_type;
         return;
@@ -4992,9 +4946,9 @@ void expression_context_apply(AST::Expression* expr, Expression_Context context)
         {
             Info_Cast_Type cast_type = semantic_analyser_check_cast_type(final_type, context.signature, true);
             if (cast_type == Info_Cast_Type::INVALID) {
-                semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE, expr);
-                semantic_analyser_add_error_info(error_information_make_given_type(initial_type));
-                semantic_analyser_add_error_info(error_information_make_expected_type(context.signature));
+                log_semantic_error("Cannot implicitly cast from given to expected type", expr);
+                log_error_info_given_type(initial_type);
+                log_error_info_expected_type(context.signature);
             }
             expression_info_set_cast(info, cast_type, context.signature);
         }
@@ -5030,8 +4984,8 @@ Type_Signature* semantic_analyser_try_convert_value_to_type(AST::Expression* exp
         if (!type_signature_equals(result->context_ops.after_cast_type, types.type_type))
         {
             if (log_error) {
-                semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_IS_NOT_A_TYPE, expression);
-                semantic_analyser_add_error_info(error_information_make_given_type(result->context_ops.after_cast_type));
+                log_semantic_error("Expression cannot be converted to type", expression);
+                log_error_info_given_type(result->context_ops.after_cast_type);
                 return types.unknown_type;
             }
             else {
@@ -5050,7 +5004,7 @@ Type_Signature* semantic_analyser_try_convert_value_to_type(AST::Expression* exp
                 u64 type_index = *(u64*)comptime.data;
                 if (type_index >= type_system.internal_type_infos.size) {
                     if (log_error) {
-                        semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_CONTAINS_INVALID_TYPE_HANDLE, expression);
+                        log_semantic_error("Expression value contains invalid type handle", expression);
                         return types.unknown_type;
                     }
                     else {
@@ -5063,7 +5017,7 @@ Type_Signature* semantic_analyser_try_convert_value_to_type(AST::Expression* exp
                 return types.unknown_type;
             case Comptime_Result_Type::NOT_COMPTIME:
                 if (log_error) {
-                    semantic_analyser_log_error(Semantic_Error_Type::TYPE_NOT_KNOWN_AT_COMPILE_TIME, expression);
+                    log_semantic_error("Expression is a type, but is not known at compile time", expression);
                     return types.unknown_type;
                 }
                 else {
@@ -5076,7 +5030,7 @@ Type_Signature* semantic_analyser_try_convert_value_to_type(AST::Expression* exp
             auto type_index = upp_constant_to_value<u64>(&compiler.constant_pool, result->options.constant);
             if (type_index >= type_system.internal_type_infos.size) {
                 // Note: Always log this error, because this should never happen!
-                semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_CONTAINS_INVALID_TYPE_HANDLE, expression);
+                log_semantic_error("Expression contains invalid type handle", expression);
                 return types.unknown_type;
             }
             return type_system.types[type_index];
@@ -5089,8 +5043,8 @@ Type_Signature* semantic_analyser_try_convert_value_to_type(AST::Expression* exp
     case Expression_Result_Type::POLYMORPHIC_FUNCTION:
     case Expression_Result_Type::FUNCTION: {
         if (log_error) {
-            semantic_analyser_log_error(Semantic_Error_Type::EXPECTED_TYPE, expression);
-            semantic_analyser_add_error_info(error_information_make_expression_result_type(result->result_type));
+            log_semantic_error("Expected a type, given a function", expression);
+            log_error_info_expression_result_type(result->result_type);
             return types.unknown_type;
         }
         return 0;
@@ -5136,13 +5090,12 @@ Type_Signature* semantic_analyser_analyse_expression_value(AST::Expression* expr
     }
     case Expression_Result_Type::HARDCODED_FUNCTION:
     {
-        semantic_analyser_log_error(Semantic_Error_Type::OTHERS_CANNOT_TAKE_ADDRESS_OF_HARDCODED_FUNCTION, expression);
+        log_semantic_error("Cannot take address of hardcoded function", expression);
         return types.unknown_type;
     }
     case Expression_Result_Type::POLYMORPHIC_FUNCTION:
     {
-        semantic_analyser_log_error(Semantic_Error_Type::EXPECTED_VALUE, expression);
-        semantic_analyser_add_error_info(error_information_make_expression_result_type(result->result_type));
+        log_semantic_error("Cannot convert polymorphic function to function pointer", expression);
         return types.unknown_type;
     }
     default: panic("");
@@ -5224,34 +5177,33 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
                     current_function->signature = type_system_make_function(&type_system, {}, return_type);
                 }
                 else if (!type_signature_equals(expected_return_type, return_type) && !is_unknown) {
-                    semantic_analyser_log_error(Semantic_Error_Type::BAKE_BLOCK_RETURN_TYPE_DIFFERS_FROM_PREVIOUS_RETURN, statement);
-                    semantic_analyser_add_error_info(error_information_make_given_type(return_type));
-                    semantic_analyser_add_error_info(error_information_make_expected_type(expected_return_type));
+                    log_semantic_error("All return statements must return the same type", statement);
+                    log_error_info_given_type(return_type);
+                    log_error_info_expected_type(expected_return_type);
                 }
             }
             else if (!type_signature_equals(expected_return_type, return_type) && !is_unknown) {
-                semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE_RETURN, statement);
-                semantic_analyser_add_error_info(error_information_make_expected_type(types.void_type));
-                semantic_analyser_add_error_info(error_information_make_given_type(return_type));
+                log_semantic_error("Return type does not match the declared return type", statement);
+                log_error_info_given_type(return_type);
+                log_error_info_expected_type(expected_return_type);
             }
         }
         else
         {
             if (analyser.current_workload->type == Analysis_Workload_Type::BAKE_ANALYSIS) {
-                semantic_analyser_log_error(Semantic_Error_Type::BAKE_BLOCK_RETURN_MUST_NOT_BE_EMPTY, statement);
+                log_semantic_error("Must return a value in bake", statement);
             }
             else
             {
                 if (!type_signature_equals(expected_return_type, types.void_type)) {
-                    semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE_RETURN, statement);
-                    semantic_analyser_add_error_info(error_information_make_given_type(types.void_type));
-                    semantic_analyser_add_error_info(error_information_make_expected_type(expected_return_type));
+                    log_semantic_error("A value is required for a return in this context", statement);
+                    log_error_info_expected_type(expected_return_type);
                 }
             }
         }
 
         if (inside_defer()) {
-            semantic_analyser_log_error(Semantic_Error_Type::OTHERS_DEFER_NO_RETURNS_ALLOWED, statement);
+            log_semantic_error("Cannot return in a defer block", statement, Parser::Section::KEYWORD);
         }
         EXIT(Control_Flow::RETURNS);
     }
@@ -5273,17 +5225,15 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 
         if (found_block == 0)
         {
-            semantic_analyser_log_error(
-                is_continue ? Semantic_Error_Type::CONTINUE_LABEL_NOT_FOUND : Semantic_Error_Type::BREAK_LABLE_NOT_FOUND, statement
-            );
-            semantic_analyser_add_error_info(error_information_make_id(search_id));
+            log_semantic_error("Label not found", statement);
+            log_error_info_id(search_id);
             EXIT(Control_Flow::RETURNS);
         }
         else
         {
             info->specifics.block = found_block;
             if (is_continue && !code_block_is_while(found_block)) {
-                semantic_analyser_log_error(Semantic_Error_Type::CONTINUE_REQUIRES_LOOP_BLOCK, statement);
+                log_semantic_error("Continue can only be used on loops", statement);
                 EXIT(Control_Flow::SEQUENTIAL);
             }
         }
@@ -5309,7 +5259,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
     {
         semantic_analyser_analyse_block(statement->options.defer_block);
         if (inside_defer()) {
-            semantic_analyser_log_error(Semantic_Error_Type::MISSING_FEATURE_NESTED_DEFERS, statement);
+            log_semantic_error("Currently nested defers aren't allowed", statement);
             EXIT(Control_Flow::SEQUENTIAL);
         }
         EXIT(Control_Flow::SEQUENTIAL);
@@ -5318,7 +5268,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
     {
         auto& expression_node = statement->options.expression;
         if (expression_node->type != AST::Expression_Type::FUNCTION_CALL) {
-            semantic_analyser_log_error(Semantic_Error_Type::EXPRESSION_STATEMENT_MUST_BE_FUNCTION_CALL, statement);
+            log_semantic_error("Expression statement must be a function call", statement);
         }
         // Note(Martin): This is a special case, in expression statements a void_type is valid
         semantic_analyser_analyse_expression_value(expression_node, expression_context_make_specific_type(types.void_type));
@@ -5364,8 +5314,8 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
         }
         else if (switch_type->type != Signature_Type::ENUM)
         {
-            semantic_analyser_log_error(Semantic_Error_Type::SWITCH_REQUIRES_ENUM, switch_node.condition);
-            semantic_analyser_add_error_info(error_information_make_given_type(switch_type));
+            log_semantic_error("Switch only works on either enum or union types", switch_node.condition);
+            log_error_info_given_type(switch_type);
         }
 
         Expression_Context case_context = switch_type->type == Signature_Type::ENUM ?
@@ -5415,7 +5365,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
                 default: panic("");
                 }
                 if (comptime.type == Comptime_Result_Type::NOT_COMPTIME) {
-                    semantic_analyser_log_error(Semantic_Error_Type::SWITCH_CASES_MUST_BE_COMPTIME_KNOWN, case_node->value.value);
+                    log_semantic_error("Switch case must be known at compile-time", case_node->value.value);
                     break;
                 }
             }
@@ -5423,7 +5373,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
             {
                 // Default case
                 if (default_found) {
-                    semantic_analyser_log_error(Semantic_Error_Type::SWITCH_ONLY_ONE_DEFAULT_ALLOWED, statement);
+                    log_semantic_error("Only one default section allowed in switch", statement);
                 }
                 default_found = true;
             }
@@ -5444,7 +5394,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
                 auto other_info = get_info(other_case);
                 if (!other_info->is_valid) continue;
                 if (case_info->case_value == other_info->case_value) {
-                    semantic_analyser_log_error(Semantic_Error_Type::SWITCH_CASE_MUST_BE_UNIQUE, AST::upcast(other_case));
+                    log_semantic_error("Case is not unique", AST::upcast(other_case));
                     is_unique = false;
                     break;
                 }
@@ -5457,7 +5407,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
         // Check if all possible cases are handled
         if (!default_found && switch_type->type == Signature_Type::ENUM) {
             if (unique_count < switch_type->options.enum_type.members.size) {
-                semantic_analyser_log_error(Semantic_Error_Type::SWITCH_MUST_HANDLE_ALL_CASES, statement);
+                log_semantic_error("Not all cases are handled by switch", statement);
             }
         }
         return switch_flow;
@@ -5477,8 +5427,8 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
     {
         auto delete_type = semantic_analyser_analyse_expression_value(statement->options.delete_expr, expression_context_make_unknown());
         if (delete_type->type != Signature_Type::POINTER && delete_type->type != Signature_Type::SLICE) {
-            semantic_analyser_log_error(Semantic_Error_Type::INVALID_TYPE_DELETE, statement->options.delete_expr);
-            semantic_analyser_add_error_info(error_information_make_given_type(delete_type));
+            log_semantic_error("Delete is only valid on pointer or slice types", statement->options.delete_expr);
+            log_error_info_given_type(delete_type);
         }
         EXIT(Control_Flow::SEQUENTIAL);
     }
@@ -5488,7 +5438,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
         auto left_type = semantic_analyser_analyse_expression_value(assignment_node.left_side, expression_context_make_unknown());
         auto right_type = semantic_analyser_analyse_expression_value(assignment_node.right_side, expression_context_make_specific_type(left_type));
         if (!expression_has_memory_address(assignment_node.left_side)) {
-            semantic_analyser_log_error(Semantic_Error_Type::OTHERS_ASSIGNMENT_REQUIRES_MEMORY_ADDRESS, assignment_node.left_side);
+            log_semantic_error("Cannot assign to a temporary value", assignment_node.left_side);
         }
         EXIT(Control_Flow::SEQUENTIAL);
     }
@@ -5591,7 +5541,7 @@ Control_Flow semantic_analyser_analyse_block(AST::Code_Block* block)
         for (int i = 0; i < block_stack.size; i++) {
             auto prev = block_stack[i];
             if (prev != 0 && prev->block_id.available && prev->block_id.value == block->block_id.value) {
-                semantic_analyser_log_error(Semantic_Error_Type::LABEL_ALREADY_IN_USE, &block->base);
+                log_semantic_error("Block label already in use", &block->base);
             }
         }
     }
@@ -5627,28 +5577,26 @@ void semantic_analyser_finish()
     // Check if main is defined
     Dynamic_Array<Symbol*>* main_symbols = hashtable_find_element(&semantic_analyser.root_module->module_analysis->symbol_table->symbols, compiler.id_main);
     if (main_symbols == 0) {
-        semantic_analyser_log_error(Semantic_Error_Type::MAIN_NOT_DEFINED, (AST::Node*)0);
-        semantic_analyser_add_error_info(error_information_make_text("Main function not defined!"));
+        log_semantic_error("Main function not defined", (AST::Node*)nullptr);
         return;
     }
     if (main_symbols->size > 1) {
         for (int i = 0; i < main_symbols->size; i++) {
             auto symbol = (*main_symbols)[i];
-            semantic_analyser_log_error(Semantic_Error_Type::MAIN_NOT_DEFINED, symbol->definition_node);
-            semantic_analyser_add_error_info(error_information_make_text("Multiple main functions found!"));
+            log_semantic_error("Multiple main functions found!", symbol->definition_node);
         }
         return;
     }
 
     Symbol* main_symbol = (*main_symbols)[0];
     if (main_symbol->type != Symbol_Type::FUNCTION) {
-        semantic_analyser_log_error(Semantic_Error_Type::MAIN_MUST_BE_FUNCTION, main_symbol->definition_node);
-        semantic_analyser_add_error_info(error_information_make_symbol(main_symbol));
+        log_semantic_error("Main Symbol must be a function", main_symbol->definition_node);
+        log_error_info_symbol(main_symbol);
         return;
     }
     if (main_symbol->options.function->function->signature != type_system.predefined_types.type_print_line) {
-        semantic_analyser_log_error(Semantic_Error_Type::MAIN_UNEXPECTED_SIGNATURE, main_symbol->definition_node);
-        semantic_analyser_add_error_info(error_information_make_symbol(main_symbol));
+        log_semantic_error("Main function does not have correct signature", main_symbol->definition_node);
+        log_error_info_symbol(main_symbol);
         return;
     }
     semantic_analyser.program->main_function = main_symbol->options.function->function;
@@ -5876,174 +5824,15 @@ void semantic_analyser_destroy()
 
 
 // ERRORS
-void semantic_error_get_infos_internal(Semantic_Error e, const char** result_str, Parser::Section* result_section)
-{
-    const char* string = "";
-    Parser::Section section;
-#define HANDLE_CASE(type, msg, sec) \
-    case type: \
-        string = msg;\
-        section = sec; \
-        break;
-
-    switch (e.type)
-    {
-        HANDLE_CASE(Semantic_Error_Type::BAKE_BLOCK_RETURN_MUST_NOT_BE_EMPTY, "Return inside bake must not be empty", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::BAKE_BLOCK_RETURN_TYPE_DIFFERS_FROM_PREVIOUS_RETURN, "Return type differs from previous return type", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE, "Invalid Type", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::EXPRESSION_CONTAINS_INVALID_TYPE_HANDLE, "Invalid Type Handle!", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::TYPE_NOT_KNOWN_AT_COMPILE_TIME, "Type not known at compile time", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::EXPRESSION_IS_NOT_A_TYPE, "Expression used as a type", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_EXPRESSION_TYPE, "Expression type not valid in this context", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::EXPECTED_CALLABLE, "Expected: Callable", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::EXPECTED_TYPE, "Expected: Type", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::EXPECTED_VALUE, "Expected: Value", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::TEMPLATE_ARGUMENTS_INVALID_COUNT, "Invalid Template Argument count", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::TEMPLATE_ARGUMENTS_NOT_ON_TEMPLATE, "Template arguments invalid", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::OTHERS_MEMBER_ACCESS_INVALID_ON_FUNCTION, "Functions do not have any members to access", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::OTHERS_TYPE_MEMBER_ACCESS_MUST_BE_ENUM, "Member access on types requires enums", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::TEMPLATE_ARGUMENTS_REQUIRED, "Symbol is templated", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::SWITCH_REQUIRES_ENUM, "Switch requires enum", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::SWITCH_CASES_MUST_BE_COMPTIME_KNOWN, "Switch case must be compile time known", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::SWITCH_MUST_HANDLE_ALL_CASES, "Switch does not handle all cases", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::SWITCH_MUST_NOT_BE_EMPTY, "Switch must not be empty", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::SWITCH_ONLY_ONE_DEFAULT_ALLOWED, "Switch only one default case allowed", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::SWITCH_CASE_MUST_BE_UNIQUE, "Switch case must be unique", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::SWITCH_CASE_TYPE_INVALID, "Switch case type must be enum value", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::EXTERN_HEADER_DOES_NOT_CONTAIN_SYMBOL, "Extern header does not contain this symbol", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::EXTERN_HEADER_PARSING_FAILED, "Parsing extern header failed", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_VOID_USAGE, "Invalid use of void type", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_FUNCTION_CALL, "Expected function pointer type on function call", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_FUNCTION_IMPORT_EXPECTED_FUNCTION_POINTER, "Expected function type on function import", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_ARGUMENT, "Argument type does not match function parameter type", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::ARRAY_INITIALIZER_REQUIRES_TYPE_SYMBOL, "Array initializer requires type", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::STRUCT_INITIALIZER_REQUIRES_TYPE_SYMBOL, "Struct initilizer requires type", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::STRUCT_INITIALIZER_MEMBERS_MISSING, "Struct member/s missing", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::STRUCT_INITIALIZER_CANNOT_SET_UNION_TAG, "Cannot set union tag in initializer", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::STRUCT_INITIALIZER_MEMBER_INITIALIZED_TWICE, "Member already initialized", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::STRUCT_INITIALIZER_TYPE_MUST_BE_STRUCT, "Initializer type must either be struct/union/enum", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::STRUCT_INITIALIZER_MEMBER_DOES_NOT_EXIST, "Struct does not contain member", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::STRUCT_INITIALIZER_INVALID_MEMBER_TYPE, "Member type does not match", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::STRUCT_INITIALIZER_CAN_ONLY_SET_ONE_UNION_MEMBER, "Only one union member may be active at one time", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::AUTO_STRUCT_INITIALIZER_COULD_NOT_DETERMINE_TYPE, "Auto struct type could not be determined by context", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::ARRAY_AUTO_INITIALIZER_COULD_NOT_DETERMINE_TYPE, "Could not determine array type by context", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::ARRAY_INITIALIZER_INVALID_TYPE, "Array initializer member invalid type", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_ARRAY_ACCESS, "Array access only works on array types", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_ARRAY_ACCESS_INDEX, "Array access index must be of type i32", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_ARRAY_ALLOCATION_SIZE, "Array allocation size must be of type i32", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_ARRAY_SIZE, "Array size must be of type i32", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_ON_MEMBER_ACCESS, "Member access only valid on struct/array or pointer to struct/array types", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_IF_CONDITION, "If condition must be boolean", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_WHILE_CONDITION, "While condition must be boolean", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_UNARY_OPERATOR, "Unary operator type invalid", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_BINARY_OPERATOR, "Binary operator types invalid", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_ASSIGNMENT, "Invalid assignment type", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_RETURN, "Invalid return type", Parser::Section::KEYWORD);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_DELETE, "Only pointer or unsized array types can be deleted", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::SYMBOL_EXPECTED_TYPE_ON_TYPE_IDENTIFIER, "Expected Type symbol", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::SYMBOL_ALREADY_DEFINED, "Symbol was already defined", Parser::Section::IDENTIFIER);
-        HANDLE_CASE(Semantic_Error_Type::SYMBOL_MODULE_INVALID, "Expected Variable or Function symbol for Variable read", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::SYMBOL_EXPECTED_MODUL_IN_IDENTIFIER_PATH, "Expected module in indentifier path", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::SYMBOL_TABLE_UNRESOLVED_SYMBOL, "Could not resolve symbol", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::SYMBOL_TABLE_SYMBOL_ALREADY_DEFINED, "Symbol already defined", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::SYMBOL_TABLE_MODULE_ALREADY_DEFINED, "Module already defined", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_ENUM_VALUE, "Enum value must be of i32 type!", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_EXPECTED_POINTER, "Invalid type", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::BAKE_FUNCTION_DID_NOT_SUCCEED, "Bake error", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::AUTO_MEMBER_MUST_BE_IN_ENUM_CONTEXT, "Auto Member must be in used in a Context where an enum is required", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::AUTO_MEMBER_KNOWN_CONTEXT_IS_REQUIRED, "Auto Member must be used inside known Context", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::AUTO_CAST_KNOWN_CONTEXT_IS_REQUIRED, "Auto cast not able to extract destination type", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::BAKE_FUNCTION_MUST_NOT_REFERENCE_GLOBALS, "Bake function must not reference globals!", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::CONSTANT_POOL_ERROR, "Could not add value to constant pool", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_COMPTIME_DEFINITION, "Value does not match given type", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::COMPTIME_DEFINITION_MUST_BE_COMPTIME_KNOWN, "Comptime definition value must be known at compile time", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::COMPTIME_DEFINITION_REQUIRES_INITAL_VALUE, "Comptime definition requires initial value", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::COMPTIME_DEFINITION_MUST_BE_INFERED, "Comptime definitions must be infered!", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::FUNCTION_CALL_ARGUMENT_SIZE_MISMATCH, "Parameter count does not match argument count", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_CAST_PTR_REQUIRES_U64, "cast_ptr only casts from u64 to pointers", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::INVALID_TYPE_CAST_PTR_DESTINATION_MUST_BE_PTR, "cast_ptr only casts from u64 to pointers", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::EXPRESSION_INVALID_CAST, "Invalid cast", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::EXPRESSION_MEMBER_NOT_FOUND, "Struct/Array does not contain member", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::LABEL_ALREADY_IN_USE, "Label already in use", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::BREAK_LABLE_NOT_FOUND, "Label cannot be found", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::BREAK_NOT_INSIDE_LOOP_OR_SWITCH, "Break is not inside a loop or switch", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::CONTINUE_LABEL_NOT_FOUND, "Label cannot be found", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::CONTINUE_NOT_INSIDE_LOOP, "Continue is not inside a loop", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::CONTINUE_REQUIRES_LOOP_BLOCK, "Continue only works for loop lables", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::EXPRESSION_BINARY_OP_TYPES_MUST_MATCH, "Binary op types do not match and cannot be implicitly casted", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::EXPRESSION_STATEMENT_MUST_BE_FUNCTION_CALL, "Expression does not do anything", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::STRUCT_MUST_CONTAIN_MEMBER, "Struct must contain at least one member", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::STRUCT_MEMBER_ALREADY_DEFINED, "Struct member is already defined", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::STRUCT_MEMBER_MUST_NOT_HAVE_VALUE, "Struct member must not have value", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::STRUCT_MEMBER_REQUIRES_TYPE, "Struct member requires type", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::OTHERS_WHILE_ONLY_RUNS_ONCE, "While loop always exits", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::OTHERS_WHILE_ALWAYS_RETURNS, "While loop always returns", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::OTHERS_WHILE_NEVER_STOPS, "While loop always continues", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::OTHERS_STATEMENT_UNREACHABLE, "Unreachable statement", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::OTHERS_DEFER_NO_RETURNS_ALLOWED, "No returns allowed inside of defer", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::OTHERS_MISSING_RETURN_STATEMENT, "Function is missing a return statement", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::OTHERS_UNFINISHED_WORKLOAD_FUNCTION_HEADER, "Unfinished workload function header", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::OTHERS_UNFINISHED_WORKLOAD_CODE_BLOCK, "Unfinished workload code block", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::OTHERS_UNFINISHED_WORKLOAD_TYPE_SIZE, "Unfinished workload type size", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::MAIN_CANNOT_BE_TEMPLATED, "Main function cannot be templated", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::MAIN_MUST_BE_FUNCTION, "Main must be a function", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::MAIN_NOT_DEFINED, "Main function not found", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::MAIN_UNEXPECTED_SIGNATURE, "Main unexpected signature", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::MAIN_CANNOT_BE_CALLED, "Cannot call main function again", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::OTHERS_COULD_NOT_LOAD_FILE, "Could not load file", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::OTHERS_CANNOT_TAKE_ADDRESS_OF_MAIN, "Cannot take address of main", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::OTHERS_CANNOT_TAKE_ADDRESS_OF_HARDCODED_FUNCTION, "Cannot take address of hardcoded function", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::OTHERS_ASSIGNMENT_REQUIRES_MEMORY_ADDRESS, "Left side of assignment does not have a memory address", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::MISSING_FEATURE_TEMPLATED_GLOBALS, "Templated globals not implemented yet", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::MISSING_FEATURE_NAMED_ARGUMENTS, "Named arguments aren't supported yet", Parser::Section::IDENTIFIER);
-        HANDLE_CASE(Semantic_Error_Type::ARRAY_SIZE_NOT_COMPILE_TIME_KNOWN, "Array size not known at compile time", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::ARRAY_SIZE_MUST_BE_GREATER_ZERO, "Array size must be greater zero!", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::MISSING_FEATURE_NESTED_TEMPLATED_MODULES, "Nested template modules not implemented yet", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::MISSING_FEATURE_EXTERN_IMPORT_IN_TEMPLATED_MODULES, "Extern imports inside templates not allowed", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::MISSING_FEATURE_EXTERN_GLOBAL_IMPORT, "Extern global variable import not implemented yet", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::MISSING_FEATURE, "Missing feature", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::ENUM_MEMBER_NAME_MUST_BE_UNIQUE, "Enum member name must be unique", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::ENUM_VALUE_MUST_BE_COMPILE_TIME_KNOWN, "enum value must be compile time known", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::ENUM_VALUE_MUST_BE_UNIQUE, "Enum value must be unique", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::ENUM_DOES_NOT_CONTAIN_THIS_MEMBER, "Enum member does not exist", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::CANNOT_TAKE_POINTER_OF_FUNCTION, "Cannot take pointer of function", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::EXPRESSION_ADDRESS_MUST_NOT_BE_OF_TEMPORARY_RESULT, "Cannot take address of temporary result!", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::MISSING_FEATURE_NESTED_DEFERS, "Nested defers not implemented yet", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::CYCLIC_DEPENDENCY_DETECTED, "Cyclic workload dependencies detected", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::VARIABLE_NOT_DEFINED_YET, "Variable not defined yet", Parser::Section::WHOLE);
-        HANDLE_CASE(Semantic_Error_Type::MODULE_NOT_VALID_IN_THIS_CONTEXT, "Module not valid in this context", Parser::Section::WHOLE);
-    default: panic("ERROR");
-    }
-#undef HANDLE_CASE
-    if (result_str != 0) {
-        *result_str = string;
-    }
-    if (result_section != 0) {
-        *result_section = section;
-    }
-}
-
-Parser::Section semantic_error_get_section(Semantic_Error e)
-{
-    Parser::Section result;
-    semantic_error_get_infos_internal(e, 0, &result);
-    return result;
-}
-
 void semantic_error_append_to_string(Semantic_Error e, String* string)
 {
-    const char* type_text;
-    semantic_error_get_infos_internal(e, &type_text, 0);
-    string_append_formated(string, type_text);
+    string_append_formated(string, e.msg);
 
     for (int k = 0; k < e.information.size; k++)
     {
         Error_Information* info = &e.information[k];
         switch (info->type)
         {
-        case Error_Information_Type::EXTRA_TEXT:
-            string_append_formated(string, "\n %s", info->options.extra_text);
-            break;
         case Error_Information_Type::CYCLE_WORKLOAD:
             string_append_formated(string, "\n  ");
             analysis_workload_append_to_string(info->options.cycle_workload, string);

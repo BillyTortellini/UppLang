@@ -8,6 +8,7 @@
 
 #include "type_system.hpp"
 #include "compiler_misc.hpp"
+#include "parser.hpp"
 
 struct Type_Signature;
 struct Symbol;
@@ -586,6 +587,67 @@ struct Node_Passes
 };
 
 
+// ERRORS
+enum class Error_Information_Type
+{
+    ARGUMENT_COUNT,
+    INVALID_MEMBER,
+    ID,
+    SYMBOL,
+    EXIT_CODE,
+
+    GIVEN_TYPE,
+    EXPECTED_TYPE,
+    FUNCTION_TYPE,
+    BINARY_OP_TYPES,
+    CYCLE_WORKLOAD,
+
+    EXPRESSION_RESULT_TYPE,
+    CONSTANT_STATUS,
+};
+
+struct Error_Information
+{
+    Error_Information_Type type;
+    union
+    {
+        struct {
+            int expected;
+            int given;
+        } invalid_argument_count;
+        String* id;
+        Symbol* symbol;
+        Exit_Code exit_code;
+        Type_Signature* type;
+        struct {
+            Type_Signature* struct_signature;
+            String* member_id;
+        } invalid_member;
+        Workload_Base* cycle_workload;
+        struct {
+            Type_Signature* left_type;
+            Type_Signature* right_type;
+        } binary_op_types;
+        Expression_Result_Type expression_type;
+        Constant_Status constant_status;
+    } options;
+};
+
+struct Semantic_Error
+{
+    const char* msg;
+    AST::Node* error_node; // May be null
+    Parser::Section section;
+    Dynamic_Array<Error_Information> information;
+};
+
+void log_semantic_error(const char* msg, AST::Node* node, Parser::Section node_section = Parser::Section::WHOLE);
+void semantic_analyser_set_error_flag(bool error_due_to_unknown);
+void semantic_error_append_to_string(Semantic_Error e, String* string);
+
+
+
+
 
 // ANALYSER
 struct Semantic_Analyser
@@ -623,222 +685,3 @@ Type_Signature* hardcoded_type_to_signature(Hardcoded_Type type);
 
 
 
-// ERRORS
-enum class Semantic_Error_Type
-{
-    TEMPLATE_ARGUMENTS_INVALID_COUNT,
-    TEMPLATE_ARGUMENTS_NOT_ON_TEMPLATE,
-    TEMPLATE_ARGUMENTS_REQUIRED,
-
-    CYCLIC_DEPENDENCY_DETECTED,
-
-    EXTERN_HEADER_DOES_NOT_CONTAIN_SYMBOL, // Error_node = is identifier_node
-    EXTERN_HEADER_PARSING_FAILED, // Error_node = EXTERN_HEADER_IMPORT
-
-    EXPECTED_TYPE,
-    EXPECTED_VALUE,
-    EXPECTED_CALLABLE,
-    INVALID_EXPRESSION_TYPE,
-
-    INVALID_TYPE,
-    INVALID_TYPE_VOID_USAGE,
-    INVALID_TYPE_FUNCTION_CALL, // Expression
-    INVALID_TYPE_FUNCTION_IMPORT_EXPECTED_FUNCTION_POINTER,
-    INVALID_TYPE_ARGUMENT,
-    INVALID_TYPE_ARRAY_ACCESS, // x: int; x[5];
-    INVALID_TYPE_ARRAY_ACCESS_INDEX, // x: int; x[5];
-    INVALID_TYPE_ARRAY_ALLOCATION_SIZE, // new [false]int;
-    INVALID_TYPE_ARRAY_SIZE, // x: [bool]int;
-    INVALID_TYPE_ON_MEMBER_ACCESS,
-    INVALID_TYPE_IF_CONDITION,
-    INVALID_TYPE_WHILE_CONDITION,
-    INVALID_TYPE_UNARY_OPERATOR,
-    INVALID_TYPE_BINARY_OPERATOR,
-    INVALID_TYPE_ASSIGNMENT,
-    INVALID_TYPE_RETURN,
-    INVALID_TYPE_DELETE,
-    INVALID_TYPE_ENUM_VALUE,
-    INVALID_TYPE_EXPECTED_POINTER,
-    INVALID_TYPE_CAST_RAW_REQUIRES_POINTER,
-    INVALID_TYPE_CAST_PTR_REQUIRES_U64,
-    INVALID_TYPE_CAST_PTR_DESTINATION_MUST_BE_PTR,
-
-    INVALID_TYPE_COMPTIME_DEFINITION,
-    COMPTIME_DEFINITION_MUST_BE_COMPTIME_KNOWN,
-    COMPTIME_DEFINITION_MUST_BE_INFERED,
-    COMPTIME_DEFINITION_REQUIRES_INITAL_VALUE,
-
-    CONSTANT_POOL_ERROR,
-
-    MODULE_NOT_VALID_IN_THIS_CONTEXT,
-
-    ENUM_VALUE_MUST_BE_COMPILE_TIME_KNOWN,
-    ENUM_VALUE_MUST_BE_UNIQUE,
-    ENUM_MEMBER_NAME_MUST_BE_UNIQUE,
-    ENUM_DOES_NOT_CONTAIN_THIS_MEMBER,
-
-    SWITCH_REQUIRES_ENUM,
-    SWITCH_CASES_MUST_BE_COMPTIME_KNOWN,
-    SWITCH_MUST_HANDLE_ALL_CASES,
-    SWITCH_MUST_NOT_BE_EMPTY,
-    SWITCH_ONLY_ONE_DEFAULT_ALLOWED,
-    SWITCH_CASE_TYPE_INVALID,
-    SWITCH_CASE_MUST_BE_UNIQUE,
-
-    VARIABLE_NOT_DEFINED_YET,
-
-    SYMBOL_EXPECTED_MODUL_IN_IDENTIFIER_PATH,
-    SYMBOL_EXPECTED_TYPE_ON_TYPE_IDENTIFIER,
-    SYMBOL_ALREADY_DEFINED,
-    SYMBOL_MODULE_INVALID,
-
-    SYMBOL_TABLE_UNRESOLVED_SYMBOL,
-    SYMBOL_TABLE_SYMBOL_ALREADY_DEFINED,
-    SYMBOL_TABLE_MODULE_ALREADY_DEFINED,
-
-    FUNCTION_CALL_ARGUMENT_SIZE_MISMATCH,
-    AUTO_MEMBER_KNOWN_CONTEXT_IS_REQUIRED,
-    AUTO_MEMBER_MUST_BE_IN_ENUM_CONTEXT,
-    AUTO_CAST_KNOWN_CONTEXT_IS_REQUIRED,
-
-    EXPRESSION_INVALID_CAST,
-    EXPRESSION_MEMBER_NOT_FOUND,
-    EXPRESSION_ADDRESS_MUST_NOT_BE_OF_TEMPORARY_RESULT,
-    CANNOT_TAKE_POINTER_OF_FUNCTION,
-    EXPRESSION_BINARY_OP_TYPES_MUST_MATCH,
-    EXPRESSION_STATEMENT_MUST_BE_FUNCTION_CALL,
-
-    BAKE_FUNCTION_MUST_NOT_REFERENCE_GLOBALS,
-    BAKE_FUNCTION_DID_NOT_SUCCEED,
-    BAKE_BLOCK_RETURN_MUST_NOT_BE_EMPTY,
-    BAKE_BLOCK_RETURN_TYPE_DIFFERS_FROM_PREVIOUS_RETURN,
-
-    EXPRESSION_CONTAINS_INVALID_TYPE_HANDLE,
-    TYPE_NOT_KNOWN_AT_COMPILE_TIME,
-    EXPRESSION_IS_NOT_A_TYPE,
-
-    COMPTIME_ARGUMENT_NOT_KNOWN_AT_COMPTIME,
-
-    MAIN_CANNOT_BE_TEMPLATED,
-    MAIN_NOT_DEFINED,
-    MAIN_UNEXPECTED_SIGNATURE,
-    MAIN_CANNOT_BE_CALLED,
-    MAIN_MUST_BE_FUNCTION,
-
-    BREAK_NOT_INSIDE_LOOP_OR_SWITCH,
-    BREAK_LABLE_NOT_FOUND,
-    CONTINUE_NOT_INSIDE_LOOP,
-    CONTINUE_LABEL_NOT_FOUND,
-    CONTINUE_REQUIRES_LOOP_BLOCK,
-    LABEL_ALREADY_IN_USE,
-
-    ARRAY_SIZE_NOT_COMPILE_TIME_KNOWN,
-    ARRAY_SIZE_MUST_BE_GREATER_ZERO,
-
-    ARRAY_INITIALIZER_REQUIRES_TYPE_SYMBOL,
-    ARRAY_INITIALIZER_INVALID_TYPE,
-    ARRAY_AUTO_INITIALIZER_COULD_NOT_DETERMINE_TYPE,
-
-    STRUCT_INITIALIZER_REQUIRES_TYPE_SYMBOL,
-    STRUCT_INITIALIZER_MEMBERS_MISSING,
-    STRUCT_INITIALIZER_MEMBER_INITIALIZED_TWICE,
-    STRUCT_INITIALIZER_TYPE_MUST_BE_STRUCT,
-    STRUCT_INITIALIZER_MEMBER_DOES_NOT_EXIST,
-    STRUCT_INITIALIZER_INVALID_MEMBER_TYPE,
-    STRUCT_INITIALIZER_CAN_ONLY_SET_ONE_UNION_MEMBER,
-    STRUCT_INITIALIZER_CANNOT_SET_UNION_TAG,
-    AUTO_STRUCT_INITIALIZER_COULD_NOT_DETERMINE_TYPE,
-
-    STRUCT_MUST_CONTAIN_MEMBER,
-    STRUCT_MEMBER_ALREADY_DEFINED,
-    STRUCT_MEMBER_REQUIRES_TYPE,
-    STRUCT_MEMBER_MUST_NOT_HAVE_VALUE,
-
-    MISSING_FEATURE_NAMED_ARGUMENTS,
-
-    OTHERS_TYPE_MEMBER_ACCESS_MUST_BE_ENUM,
-    OTHERS_MEMBER_ACCESS_INVALID_ON_FUNCTION,
-    OTHERS_WHILE_ONLY_RUNS_ONCE,
-    OTHERS_WHILE_ALWAYS_RETURNS,
-    OTHERS_WHILE_NEVER_STOPS,
-    OTHERS_STATEMENT_UNREACHABLE,
-    OTHERS_DEFER_NO_RETURNS_ALLOWED,
-    OTHERS_MISSING_RETURN_STATEMENT,
-    OTHERS_UNFINISHED_WORKLOAD_FUNCTION_HEADER,
-    OTHERS_UNFINISHED_WORKLOAD_CODE_BLOCK,
-    OTHERS_UNFINISHED_WORKLOAD_TYPE_SIZE,
-    OTHERS_CANNOT_TAKE_ADDRESS_OF_MAIN,
-    OTHERS_ASSIGNMENT_REQUIRES_MEMORY_ADDRESS,
-    OTHERS_RETURN_EXPECTED_NO_VALUE,
-    OTHERS_CANNOT_TAKE_ADDRESS_OF_HARDCODED_FUNCTION,
-    OTHERS_COULD_NOT_LOAD_FILE,
-
-    MISSING_FEATURE_TEMPLATED_GLOBALS,
-    MISSING_FEATURE_NESTED_TEMPLATED_MODULES,
-    MISSING_FEATURE_EXTERN_IMPORT_IN_TEMPLATED_MODULES,
-    MISSING_FEATURE_EXTERN_GLOBAL_IMPORT,
-    MISSING_FEATURE,
-    MISSING_FEATURE_NESTED_DEFERS
-};
-
-enum class Error_Information_Type
-{
-    ARGUMENT_COUNT,
-    INVALID_MEMBER,
-    ID,
-    SYMBOL,
-    EXIT_CODE,
-
-    GIVEN_TYPE,
-    EXPECTED_TYPE,
-    FUNCTION_TYPE,
-    BINARY_OP_TYPES,
-    CYCLE_WORKLOAD,
-
-    EXPRESSION_RESULT_TYPE,
-    CONSTANT_STATUS,
-    EXTRA_TEXT,
-};
-
-struct Error_Information
-{
-    Error_Information_Type type;
-    union
-    {
-        struct {
-            int expected;
-            int given;
-        } invalid_argument_count;
-        const char* extra_text;
-        String* id;
-        Symbol* symbol;
-        Exit_Code exit_code;
-        Type_Signature* type;
-        struct {
-            Type_Signature* struct_signature;
-            String* member_id;
-        } invalid_member;
-        Workload_Base* cycle_workload;
-        struct {
-            Type_Signature* left_type;
-            Type_Signature* right_type;
-        } binary_op_types;
-        Expression_Result_Type expression_type;
-        Constant_Status constant_status;
-    } options;
-};
-
-struct Semantic_Error
-{
-    Semantic_Error_Type type;
-    AST::Node* error_node;
-    Dynamic_Array<Error_Information> information;
-};
-
-
-void semantic_analyser_add_error_info(Error_Information info);
-Error_Information error_information_make_text(const char* text);
-void semantic_analyser_log_error(Semantic_Error_Type type, AST::Node* node);
-void semantic_analyser_set_error_flag(bool error_due_to_unknown);
-void semantic_error_append_to_string(Semantic_Error e, String* string);
-Parser::Section semantic_error_get_section(Semantic_Error e);
