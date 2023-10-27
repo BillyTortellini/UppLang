@@ -28,7 +28,7 @@ void type_signature_append_to_string_with_children(String* string, Type_Signatur
         string_append_formated(string, "TEMPLATE_TYPE");
         break;
     case Signature_Type::VOID_TYPE:
-        string_append_formated(string, "VOID");
+        string_append_formated(string, "void");
         break;
     case Signature_Type::ARRAY:
         if (signature->options.array.count_known) {
@@ -47,7 +47,7 @@ void type_signature_append_to_string_with_children(String* string, Type_Signatur
         string_append_formated(string, "Unknown-Type");
         break;
     case Signature_Type::TYPE_TYPE:
-        string_append_formated(string, "TYPE_TYPE");
+        string_append_formated(string, "Type_Type");
         break;
     case Signature_Type::POINTER:
         string_append_formated(string, "*");
@@ -56,9 +56,9 @@ void type_signature_append_to_string_with_children(String* string, Type_Signatur
     case Signature_Type::PRIMITIVE:
         switch (signature->options.primitive.type) 
         {
-        case Primitive_Type::BOOLEAN: string_append_formated(string, "BOOLEAN"); break;
-        case Primitive_Type::INTEGER: string_append_formated(string, "%s%d", signature->options.primitive.is_signed ? "INT" : "UINT", signature->size * 8); break;
-        case Primitive_Type::FLOAT: string_append_formated(string, "FLOAT%d", signature->size * 8); break;
+        case Primitive_Type::BOOLEAN: string_append_formated(string, "bool"); break;
+        case Primitive_Type::INTEGER: string_append_formated(string, "%s%d", signature->options.primitive.is_signed ? "int" : "uint", signature->size * 8); break;
+        case Primitive_Type::FLOAT: string_append_formated(string, "float%d", signature->size * 8); break;
         default: panic("Heyo");
         }
         break;
@@ -101,7 +101,14 @@ void type_signature_append_to_string_with_children(String* string, Type_Signatur
     case Signature_Type::FUNCTION:
         string_append_formated(string, "(");
         for (int i = 0; i < signature->options.function.parameters.size; i++) {
+            auto& param = signature->options.function.parameters[i];
+            if (param.name.available) {
+                string_append_formated(string, "%s: ", param.name.value->characters);
+            }
             type_signature_append_to_string_with_children(string, signature->options.function.parameters[i].type, print_child);
+            if (param.has_default_value) {
+                string_append_formated(string, " = ...");
+            }
             if (i != signature->options.function.parameters.size - 1) {
                 string_append_formated(string, ", ");
             }
@@ -643,6 +650,12 @@ Type_Signature* type_system_register_type(Type_System * system, Type_Signature s
                             are_equal = false;
                             break;
                         }
+                        // Note: For default values, we currently don't have constant de-duplication, so
+                        //       if a default value exists, then the functions don't match
+                        if (param1.has_default_value || param2.has_default_value) {
+                            are_equal = false;
+                            break;
+                        }
                     }
                     break;
                 }
@@ -944,7 +957,14 @@ void empty_function_add_parameter(Type_Signature* function_signature, String* na
     Function_Parameter param;
     param.name = optional_make_success(name);
     param.type = type;
+    param.has_default_value = false;
+    param.default_value.available = false;
     dynamic_array_push_back(&function_signature->options.function.parameters, param);
+}
+
+void empty_function_add_parameter(Type_Signature* function_signature, Function_Parameter parameter) {
+    assert(function_signature->type == Signature_Type::FUNCTION && function_signature->internal_index == -1, "Must still be empty");
+    dynamic_array_push_back(&function_signature->options.function.parameters, parameter);
 }
 
 Type_Signature* empty_function_finish(Type_System* system, Type_Signature function_signature, Type_Signature* return_type) {

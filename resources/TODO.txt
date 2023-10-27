@@ -1,10 +1,97 @@
 
 TODO:
-    REWORK ERROR REPORTING --> Fugton of work, but it becomes more and more annoying otherwise
 
+Multiple return values:
+    I think Odin's approach isn't really applicable in my language, because of Expression_Context for parsing and other stuff...
+    I also don't think it's really all that usefull, because it feels a little convoluted...
+
+    Design Decision:
+        * I don't like tuples with unnamed arguments, e.g. (5, 20), because you don't know what the values mean
+            so I would like to always have named tuple elements --> same as anonymous struct...
+        Is this something that I can handle with anonymous structs + A little bit of syntactic sugar?
+
+        Something like  
+            find :: (map: Map, key: Key) -> (success: bool, value*: Value)
+                return true, *found_value
+        isn't too different from
+            find :: (map: Map, key: Key) -> struct 
+                success: bool
+                value*: Value
+
+                return .{true, null}
+
+        My main use-cases are:
+            * Multiple parameter returns for some functions 
+            * Should errors handled this way? Probably
+            * Question: Once the editor does auto formating, do I really need syntactic sugar?
+                Probably only for Struct-Deconstruction, assignments and others
+            * So the real thing that I want is actually struct-deconstruction
+                player := Player.{"Frank", 15}
+                name, age := player 
+
+        So what would multi-assignment/definition look like?
+        Current syntax:
+            a := 15
+            a :: 15
+            a: int = 15
+            a = 15
+        which could be replaced with
+            a, b := 15
+            a, b := 15, false --> Probably not, because I don't want multi expressions? 
+            a, b: int, bool = 15, false
+            a, b :: 15, false // Probably not something that you want on comptime definitions --> But I guess it would work?
+        Vec3 :: struct
+            x, y, z: float
+        I guess all of this makes more sense for variables then for global definitions,
+            but it would also work there
+        This alone isn't that big of a deal, but I think with struct deconstruction this will be nicer...
+            success, value := map.find(key)
+            if !success
+
+        Yeah, let's just do this...
+        a.x, b[5] := player
+
+    So what would be impacted?
+        Definitions
+            Comptime definitions
+            Variable definitions
+            Maybe comptime definitions just don't allow this in general -> so it's easy to determine module/function/struct analysis
+            Maybe just implementing this for definition statements/assignments would be better...
+                I think so, because then I don't have to deal with workloads and other crap...
+        Structs
+            e.g. member definitions
+        Assignments
+            multiple expressions...
+
+    And the only two cases I want to support are:
+        * 1-to-many definitions x, y := 2
+        * 1-to-1 defintions x, y := 2, 2
+
+    Note: Definitions only have id's, where assignments have expressions
+
+
+    Question:
+        
+
+    In C it's definitly sometimes annoying that you don't know which parameters are in_out, so this is why this can be usefull
+    Notes:
+        Should the return values have names?
+            Yes, but just for documentation's sake, when displaying the function's type
+            In Jai there is also a deeper meaning, but I don't want to go into that
+        Why not use structs instead?
+          
+       How is this handled in the type system?
+       Requires an unpacking syntax for assignments and definitions...
+           also with "dropped" values with _ or something
+    Example:
+       find_regex(string: String, regex: Regex) -> (index: int, length: int, found: bool)
+           return 5, 6, true
+       index, length, found := find_regex(...)
+       index, _, found = find_regex()
+    Should the return type be of tupel? Should tuples be handled in this language
+       don't think so, i don't really like that
 
 What should this function call rework include:
-    * Default values --> also part of function signature, once default values start you cannot stop anymore i guess 
     * Multiple return values, e.g. multiple assignments
         For returning error codes mostly, but also other stuff maybe
     * Function overloading
@@ -19,21 +106,9 @@ Implementation plan:
    * Default values:
         Also store default values in Signature, these are comptime values.
         If called with the default arguments, these values are read.
-   * Multiple return values:
-        In C it's definitly sometimes annoying that you don't know which parameters are in_out, so this is why this can be usefull
-        Notes:
-            Should the return values have names?
-            Why not use structs instead?
-            How is this handled in the type system?
-            Requires an unpacking syntax for assignments and definitions...
-                also with "dropped" values with _ or something
-        Example:
-            find_regex(string: String, regex: Regex) -> (index: int, length: int, found: bool)
-                return 5, 6, true
-            index, length, found := find_regex(...)
-            index, _, found = find_regex()
-        Should the return type be of tupel? Should tuples be handled in this language
-            don't think so, i don't really like that
+        Can we have default value, and afterwards default values?
+            With named arguments, this would actually be doable, but I don't really think it's necessray
+            I never really want to have a complicated order of arguments anyway, so I guess this is fine...
     * Function overloading:
         How to decide which function to pick:
             - Expected return type

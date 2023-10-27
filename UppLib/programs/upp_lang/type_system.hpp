@@ -59,6 +59,10 @@ struct Function_Parameter
 {
     Optional<String*> name;
     Type_Signature* type;
+    // Note: It can be the case that a default value exists, but the upp_constant is not available because there was an error,
+    //       and we need to be able to seperate these cases.
+    bool has_default_value;
+    Optional<Upp_Constant> default_value;
 };
 
 struct Type_Signature
@@ -306,6 +310,7 @@ Type_Signature* type_system_make_template(Type_System* system, String* id);
 Type_Signature* type_system_make_function(Type_System* system, std::initializer_list<Function_Parameter> parameter_types, Type_Signature* return_type);
 Type_Signature type_system_make_function_empty(Type_System* system);
 void empty_function_add_parameter(Type_Signature* function_signature, String* name, Type_Signature* type);
+void empty_function_add_parameter(Type_Signature* function_signature, Function_Parameter parameter);
 Type_Signature* empty_function_finish(Type_System* system, Type_Signature function_signature, Type_Signature* return_type);
 // Note: empty types need to be finished before they are used!
 Type_Signature* type_system_make_enum_empty(Type_System* system, String* id);

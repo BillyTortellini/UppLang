@@ -215,6 +215,7 @@ struct Workload_Function_Parameter
     AST::Parameter* param_node;
     Symbol* symbol;
     Type_Signature* base_type; // Type of parameter in function/polymorphic base
+    Function_Parameter result;
     int execution_order_index;
 };
 
@@ -468,6 +469,7 @@ struct Case_Info
 
 struct Parameter_Info {
     Symbol* symbol;
+    Workload_Function_Parameter* param_workload; // May be null
 };
 
 struct Definition_Info {
@@ -591,6 +593,7 @@ struct Node_Passes
 enum class Error_Information_Type
 {
     ARGUMENT_COUNT,
+    MISSING_PARAMETER,
     INVALID_MEMBER,
     ID,
     SYMBOL,
@@ -611,6 +614,7 @@ struct Error_Information
     Error_Information_Type type;
     union
     {
+        Function_Parameter parameter;
         struct {
             int expected;
             int given;
@@ -658,22 +662,23 @@ struct Semantic_Analyser
     Hashtable<AST::Node*, Node_Passes> ast_to_pass_mapping;
     Hashtable<AST_Info_Key, Analysis_Info*> ast_to_info_mapping;
 
-    // Stuff required for analysis
-    Symbol_Table* root_symbol_table;
-    Dynamic_Array<Symbol_Table*> allocated_symbol_tables;
-    Dynamic_Array<Symbol*> allocated_symbols;
-    Hashset<Symbol_Table*> symbol_lookup_visited;
-
+    // Other
+    Workload_Base* current_workload;
     Module_Progress* root_module;
-    Dynamic_Array<Analysis_Pass*> allocated_passes;
-
+    ModTree_Global* global_type_informations;
     Predefined_Symbols predefined_symbols;
     Workload_Executer* workload_executer;
-    Dynamic_Array<Polymorphic_Base*> polymorphic_functions;
-    Stack_Allocator allocator_values;
-    Workload_Base* current_workload;
 
-    ModTree_Global* global_type_informations;
+    // Symbol tables
+    Symbol_Table* root_symbol_table;
+    Hashset<Symbol_Table*> symbol_lookup_visited;
+
+    // Allocations
+    Stack_Allocator allocator_values;
+    Dynamic_Array<Symbol_Table*> allocated_symbol_tables;
+    Dynamic_Array<Symbol*> allocated_symbols;
+    Dynamic_Array<Analysis_Pass*> allocated_passes;
+    Dynamic_Array<Polymorphic_Base*> polymorphic_functions;
 };
 
 Semantic_Analyser* semantic_analyser_initialize();

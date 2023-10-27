@@ -1153,6 +1153,7 @@ namespace Parser
         CHECKPOINT_SETUP;
         auto result = allocate_base<Parameter>(parent, Node_Type::PARAMETER);
         result->is_comptime = false;
+        result->default_value.available = false;
         if (test_operator(Operator::DOLLAR)) {
             result->is_comptime = true;
             advance_token();
@@ -1167,7 +1168,11 @@ namespace Parser
         result->type = parse_expression_or_error_expr((Node*)result);
 
         if (test_operator(Operator::ASSIGN)) {
-            result->type = parse_expression_or_error_expr((Node*)result);
+            advance_token();
+            result->default_value.value = parse_expression_or_error_expr((Node*)result);
+            if (result->default_value.value != 0) {
+                result->default_value.available = true;
+            }
         }
         PARSE_SUCCESS(result);
     }
@@ -1307,7 +1312,7 @@ namespace Parser
             PARSE_SUCCESS(result);
         }
 
-        // Bases
+        // Path/Identifier
         if (test_token(Token_Type::IDENTIFIER))
         {
             result->type = Expression_Type::PATH_LOOKUP;
@@ -1315,6 +1320,7 @@ namespace Parser
             PARSE_SUCCESS(result);
         }
 
+        // Auto operators
         if (test_operator(Operator::DOT))
         {
             advance_token();

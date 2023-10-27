@@ -1076,12 +1076,24 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
         default: panic("");
         }
 
-        // Generate arguments (Currently they MUST be in correct order)
+        // Generate arguments 
         call_instr.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(call.arguments.size);
         auto function_signature = get_info(expression)->specifics.function_call_signature;
+
+        // Add default/dummy arguments
         for (int i = 0; i < function_signature->options.function.parameters.size; i++) {
-            dynamic_array_push_back_dummy(&call_instr.options.call.arguments);
+            auto& param = function_signature->options.function.parameters[i];
+            if (param.has_default_value) {
+                // Initialize all default arguments with their default value, if they are supplied, this will be overwritten
+                assert(param.default_value.available, "Must be, otherwise we shouldn't get to this point");
+                dynamic_array_push_back(&call_instr.options.call.arguments, ir_data_access_create_constant(param.default_value.value));
+            }
+            else {
+                dynamic_array_push_back_dummy(&call_instr.options.call.arguments);
+            }
         }
+
+        // Generate code for arguments
         for (int j = 0; j < call.arguments.size; j++) {
             auto info = get_info(call.arguments[j]);
             if (!info->is_polymorphic) { // Skip polymorphic arguments

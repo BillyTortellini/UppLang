@@ -36,6 +36,7 @@ Type_Signature* semantic_analyser_try_convert_value_to_type(AST::Expression* exp
 Control_Flow semantic_analyser_analyse_block(AST::Code_Block* code_block);
 
 bool workload_executer_switch_to_workload(Workload_Base* workload);
+void analysis_workload_entry(void* userdata);
 void analysis_workload_add_struct_dependency(Struct_Progress* my_workload, Struct_Progress* other_progress, Dependency_Type type, AST::Symbol_Lookup* lookup);
 void analysis_workload_append_to_string(Workload_Base* workload, String* string);
 void analysis_workload_add_dependency_internal(Workload_Base* workload, Workload_Base* dependency, AST::Symbol_Lookup* lookup);
@@ -326,6 +327,12 @@ void log_error_info_given_type(Type_Signature* type) {
 void log_error_info_expected_type(Type_Signature* type) {
     Error_Information info = error_information_make_empty(Error_Information_Type::EXPECTED_TYPE);
     info.options.type = type;
+    dynamic_array_push_back(&semantic_analyser.errors[semantic_analyser.errors.size - 1].information, info);
+}
+
+void log_error_info_missing_parameter(Function_Parameter parameter) {
+    Error_Information info = error_information_make_empty(Error_Information_Type::MISSING_PARAMETER);
+    info.options.parameter = parameter;
     dynamic_array_push_back(&semantic_analyser.errors[semantic_analyser.errors.size - 1].information, info);
 }
 
@@ -2304,6 +2311,164 @@ void workload_add_to_runnable_queue_if_possible(Workload_Base* workload)
     }
 }
 
+bool workload_executer_switch_to_workload(Workload_Base * workload)
+{
+    if (!workload->was_started) {
+        workload->fiber_handle = fiber_pool_get_handle(compiler.fiber_pool, analysis_workload_entry, workload);
+        workload->was_started = true;
+    }
+    semantic_analyser.current_workload = workload;
+    bool result = fiber_pool_switch_to_handel(workload->fiber_handle);
+    if (PRINT_DEPENDENCIES) {
+        auto tmp = string_create_empty(1);
+        analysis_workload_append_to_string(workload, &tmp);
+        if (workload->dependencies.count == 0) {
+            SCOPE_EXIT(string_destroy(&tmp));
+            logg("FINISHED: %s\n", tmp.characters);
+        }
+        else
+        {
+            // Print dependencies
+            List_Node<Workload_Base*>* dependency_node = workload->dependencies.head;
+            if (dependency_node != 0) {
+                string_append_formated(&tmp, "    Depends On:\n");
+            }
+            while (dependency_node != 0) {
+                SCOPE_EXIT(dependency_node = dependency_node->next);
+                Workload_Base* dependency = dependency_node->value;
+                string_append_formated(&tmp, "      ");
+                analysis_workload_append_to_string(dependency, &tmp);
+                string_append_formated(&tmp, "\n");
+            }
+            logg("WAITING: %s\n", tmp.characters);
+        }
+    }
+    semantic_analyser.current_workload = 0;
+    return result;
+}
+
+void workload_executer_wait_for_dependency_resolution()
+{
+    Workload_Base* workload = semantic_analyser.current_workload;
+    if (workload->dependencies.count != 0) {
+        fiber_pool_switch_to_main_fiber(compiler.fiber_pool);
+    }
+}
+
+void analysis_workload_append_to_string(Workload_Base * workload, String * string)
+{
+    switch (workload->type)
+    {
+    case Analysis_Workload_Type::MODULE_ANALYSIS: {
+        auto module = downcast<Workload_Module_Analysis>(workload);
+        string_append_formated(string, "Module analysis %s", module->progress->symbol == 0 ? "ROOT" : module->progress->symbol->id->characters);
+        break;
+    }
+    case Analysis_Workload_Type::IMPORT_RESOLVE: {
+        auto import_node = downcast<Workload_Import_Resolve>(workload)->import_node;
+        string_append_formated(string, "Import ");
+        if (import_node->type == AST::Import_Type::FILE) {
+            string_append_formated(string, "\"%s\"", import_node->file_name->characters);
+        }
+        else {
+            AST::path_lookup_append_to_string(import_node->path, string);
+            if (import_node->type == AST::Import_Type::MODULE_SYMBOLS) {
+                string_append_formated(string, "~*");
+            }
+            else if (import_node->type == AST::Import_Type::MODULE_SYMBOLS_TRANSITIVE) {
+                string_append_formated(string, "~**");
+            }
+        }
+        break;
+    }
+    case Analysis_Workload_Type::DEFINITION: {
+        auto definition = downcast<Workload_Definition>(workload)->definition_node;
+        if (definition->is_comptime) {
+            string_append_formated(string, "Comptime \"%s\"", definition->name->characters);
+        }
+        else {
+            string_append_formated(string, "Global \"%s\"", definition->name->characters);
+        }
+        break;
+    }
+    case Analysis_Workload_Type::EVENT: {
+        string_append_formated(string, "Event %s", downcast<Workload_Event>(workload)->description);
+        break;
+    }
+    case Analysis_Workload_Type::BAKE_ANALYSIS: {
+        string_append_formated(string, "Bake-Analysis");
+        break;
+    }
+    case Analysis_Workload_Type::BAKE_EXECUTION: {
+        string_append_formated(string, "Bake-Execution");
+        break;
+    }
+    case Analysis_Workload_Type::FUNCTION_PARAMETER: {
+        auto param = downcast<Workload_Function_Parameter>(workload);
+        Symbol* symbol = param->header->progress->function->symbol;
+        const char* fn_id = symbol == 0 ? "Lambda" : symbol->id->characters;
+        string_append_formated(string, "Paramter: %s of %s", param->param_node->name->characters, fn_id);
+        break;
+    }
+    case Analysis_Workload_Type::FUNCTION_BODY: {
+        Symbol* symbol = downcast<Workload_Function_Body>(workload)->progress->function->symbol;
+        const char* fn_id = symbol == 0 ? "Lambda" : symbol->id->characters;
+        string_append_formated(string, "Body \"%s\"", fn_id);
+        break;
+    }
+    case Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE:
+    {
+        string_append_formated(string, "Cluster-Compile [");
+        auto cluster = downcast<Workload_Function_Cluster_Compile>(analysis_workload_find_associated_cluster(workload));
+        for (int i = 0; i < cluster->functions.size; i++) {
+            Symbol* symbol = cluster->functions[i]->symbol;
+            const char* fn_id = symbol == 0 ? "Anonymous" : symbol->id->characters;
+            string_append_formated(string, "%s, ", fn_id);
+        }
+        string_append_formated(string, "]");
+        break;
+    }
+    case Analysis_Workload_Type::FUNCTION_HEADER: {
+        Symbol* symbol = downcast<Workload_Function_Header>(workload)->progress->function->symbol;
+        const char* fn_id = symbol == 0 ? "Anonymous" : symbol->id->characters;
+        string_append_formated(string, "Header \"%s\"", fn_id);
+        break;
+    }
+    case Analysis_Workload_Type::STRUCT_ANALYSIS: {
+        Symbol* symbol = downcast<Workload_Struct_Analysis>(workload)->progress->struct_type->options.structure.symbol;
+        const char* struct_id = symbol == 0 ? "Anonymous_Struct" : symbol->id->characters;
+        string_append_formated(string, "Struct-Analysis \"%s\"", struct_id);
+        break;
+    }
+    case Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE: {
+        //const char* struct_id = symbol == 0 ? "Anonymous_Struct" : symbol->id->characters;
+        string_append_formated(string, "Struct-Reachable-Resolve [");
+        auto cluster = downcast<Workload_Struct_Reachable_Resolve>(analysis_workload_find_associated_cluster(workload));
+        for (int i = 0; i < cluster->struct_types.size; i++) {
+            Symbol* symbol = cluster->struct_types[i]->options.structure.symbol;
+            const char* fn_id = symbol == 0 ? "Anonymous" : symbol->id->characters;
+            string_append_formated(string, "%s, ", fn_id);
+        }
+        string_append_formated(string, "]");
+
+
+        break;
+    }
+    default: panic("");
+    }
+}
+
+Module_Progress* workload_executer_add_module_discovery(AST::Module * module, bool is_root_module) {
+    auto progress = module_progress_create(module, 0, semantic_analyser.root_symbol_table);
+    if (is_root_module) {
+        semantic_analyser.root_module = progress;
+    }
+    return progress;
+}
+
+
+
+// WORKLOAD EXECUTION AND OTHERS
 Workload_Import_Resolve* create_import_workload(AST::Import* import_node) 
 {
     // Check for Syntax-Errors
@@ -2352,6 +2517,55 @@ Workload_Import_Resolve* create_import_workload(AST::Import* import_node)
         import_workload->symbol->options.alias_workload = import_workload;
     }
     return import_workload;
+}
+
+Function_Parameter analyse_function_parameter(AST::Parameter* param)
+{
+    Function_Parameter result;
+    result.default_value.available = false;
+    result.has_default_value = false;
+    result.type = compiler.type_system.predefined_types.unknown_type;
+    result.name = optional_make_success(param->name);
+
+    // Analyse parameter
+    result.type = semantic_analyser_analyse_expression_type(param->type);
+
+    // Analyse default value
+    if (!param->default_value.available) {
+        return result;
+    }
+    result.has_default_value = true;
+    auto default_value_type = semantic_analyser_analyse_expression_value(param->default_value.value, expression_context_make_specific_type(result.type));
+    if (result.type->type == Signature_Type::UNKNOWN_TYPE || default_value_type != result.type) {
+        return result;
+    }
+
+    // Default value must be comptime known and serializable
+    Comptime_Result comptime = expression_calculate_comptime_value(param->default_value.value);
+    switch (comptime.type) {
+    case Comptime_Result_Type::AVAILABLE: {
+        break;
+    }
+    case Comptime_Result_Type::UNAVAILABLE: {
+        return result;
+    }
+    case Comptime_Result_Type::NOT_COMPTIME: {
+        log_semantic_error("Default value must be comptime known", param->default_value.value);
+        break;
+    }
+    default: panic("");
+    }
+
+    assert(comptime.data_type == default_value_type && default_value_type == result.type, "I think types must all match at this point");
+    auto constant_result = constant_pool_add_constant(
+        &compiler.constant_pool, comptime.data_type, array_create_static<byte>((byte*)comptime.data, comptime.data_type->size));
+    if (constant_result.status != Constant_Status::SUCCESS) {
+        log_semantic_error("Could not serialize comptime value", AST::upcast(param->default_value.value));
+        log_error_info_constant_status(constant_result.status);
+        return result;
+    }
+    result.default_value = optional_make_success(constant_result.constant);
+    return result;
 }
 
 void analysis_workload_entry(void* userdata)
@@ -2659,7 +2873,9 @@ void analysis_workload_entry(void* userdata)
                 }
 
                 // Set analysis info
-                get_info(param_node, true)->symbol = symbol;
+                auto param_info = get_info(param_node, true);
+                param_info->symbol = symbol;
+                param_info->param_workload = param_workload;
             }
             workload_executer_wait_for_dependency_resolution(); // Wait for all parameter workloads to finish
         }
@@ -2672,7 +2888,7 @@ void analysis_workload_entry(void* userdata)
                 if (param->is_comptime) {
                     continue;
                 }
-                empty_function_add_parameter(&unfinished_signature, param->name, get_info(param)->symbol->options.parameter.workload->base_type);
+                empty_function_add_parameter(&unfinished_signature, get_info(param)->param_workload->result);
             }
 
             Type_Signature* return_type = types.void_type;
@@ -2691,14 +2907,14 @@ void analysis_workload_entry(void* userdata)
             }
         }
 
-
         break;
     }
     case Analysis_Workload_Type::FUNCTION_PARAMETER:
     {
         auto param_workload = downcast<Workload_Function_Parameter>(workload);
         param_workload->base.current_function = param_workload->header->progress->function;
-        param_workload->base_type = semantic_analyser_analyse_expression_type(param_workload->param_node->type);
+        param_workload->result = analyse_function_parameter(param_workload->param_node);
+        param_workload->base_type = param_workload->result.type;
         param_workload->execution_order_index = param_workload->header->parameter_order.size;
         dynamic_array_push_back(&param_workload->header->parameter_order, param_workload);
         break;
@@ -3039,170 +3255,12 @@ case Analysis_Workload_Type::EXTERN_FUNCTION_DECLARATION:
     break;
 }
 */
-
-
-
-}
-
-bool workload_executer_switch_to_workload(Workload_Base* workload)
-{
-    if (!workload->was_started) {
-        workload->fiber_handle = fiber_pool_get_handle(compiler.fiber_pool, analysis_workload_entry, workload);
-        workload->was_started = true;
-    }
-    semantic_analyser.current_workload = workload;
-    bool result = fiber_pool_switch_to_handel(workload->fiber_handle);
-    if (PRINT_DEPENDENCIES) {
-        auto tmp = string_create_empty(1);
-        analysis_workload_append_to_string(workload, &tmp);
-        if (workload->dependencies.count == 0) {
-            SCOPE_EXIT(string_destroy(&tmp));
-            logg("FINISHED: %s\n", tmp.characters);
-        }
-        else
-        {
-            // Print dependencies
-            List_Node<Workload_Base*>* dependency_node = workload->dependencies.head;
-            if (dependency_node != 0) {
-                string_append_formated(&tmp, "    Depends On:\n");
-            }
-            while (dependency_node != 0) {
-                SCOPE_EXIT(dependency_node = dependency_node->next);
-                Workload_Base* dependency = dependency_node->value;
-                string_append_formated(&tmp, "      ");
-                analysis_workload_append_to_string(dependency, &tmp);
-                string_append_formated(&tmp, "\n");
-            }
-            logg("WAITING: %s\n", tmp.characters);
-        }
-    }
-    semantic_analyser.current_workload = 0;
-    return result;
-}
-
-void workload_executer_wait_for_dependency_resolution()
-{
-    Workload_Base* workload = semantic_analyser.current_workload;
-    if (workload->dependencies.count != 0) {
-        fiber_pool_switch_to_main_fiber(compiler.fiber_pool);
-    }
-}
-
-void analysis_workload_append_to_string(Workload_Base* workload, String* string)
-{
-    switch (workload->type)
-    {
-    case Analysis_Workload_Type::MODULE_ANALYSIS: {
-        auto module = downcast<Workload_Module_Analysis>(workload);
-        string_append_formated(string, "Module analysis %s", module->progress->symbol == 0 ? "ROOT" : module->progress->symbol->id->characters);
-        break;
-    }
-    case Analysis_Workload_Type::IMPORT_RESOLVE: {
-        auto import_node = downcast<Workload_Import_Resolve>(workload)->import_node;
-        string_append_formated(string, "Import ");
-        if (import_node->type == AST::Import_Type::FILE) {
-            string_append_formated(string, "\"%s\"", import_node->file_name->characters);
-        }
-        else {
-            AST::path_lookup_append_to_string(import_node->path, string);
-            if (import_node->type == AST::Import_Type::MODULE_SYMBOLS) {
-                string_append_formated(string, "~*");
-            }
-            else if (import_node->type == AST::Import_Type::MODULE_SYMBOLS_TRANSITIVE) {
-                string_append_formated(string, "~**");
-            }
-        }
-        break;
-    }
-    case Analysis_Workload_Type::DEFINITION: {
-        auto definition = downcast<Workload_Definition>(workload)->definition_node;
-        if (definition->is_comptime) {
-            string_append_formated(string, "Comptime \"%s\"", definition->name->characters);
-        }
-        else {
-            string_append_formated(string, "Global \"%s\"", definition->name->characters);
-        }
-        break;
-    }
-    case Analysis_Workload_Type::EVENT: {
-        string_append_formated(string, "Event %s", downcast<Workload_Event>(workload)->description);
-        break;
-    }
-    case Analysis_Workload_Type::BAKE_ANALYSIS: {
-        string_append_formated(string, "Bake-Analysis");
-        break;
-    }
-    case Analysis_Workload_Type::BAKE_EXECUTION: {
-        string_append_formated(string, "Bake-Execution");
-        break;
-    }
-    case Analysis_Workload_Type::FUNCTION_PARAMETER: {
-        auto param = downcast<Workload_Function_Parameter>(workload);
-        Symbol* symbol = param->header->progress->function->symbol;
-        const char* fn_id = symbol == 0 ? "Lambda" : symbol->id->characters;
-        string_append_formated(string, "Paramter: %s of %s", param->param_node->name->characters, fn_id);
-        break;
-    }
-    case Analysis_Workload_Type::FUNCTION_BODY: {
-        Symbol* symbol = downcast<Workload_Function_Body>(workload)->progress->function->symbol;
-        const char* fn_id = symbol == 0 ? "Lambda" : symbol->id->characters;
-        string_append_formated(string, "Body \"%s\"", fn_id);
-        break;
-    }
-    case Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE:
-    {
-        string_append_formated(string, "Cluster-Compile [");
-        auto cluster = downcast<Workload_Function_Cluster_Compile>(analysis_workload_find_associated_cluster(workload));
-        for (int i = 0; i < cluster->functions.size; i++) {
-            Symbol* symbol = cluster->functions[i]->symbol;
-            const char* fn_id = symbol == 0 ? "Anonymous" : symbol->id->characters;
-            string_append_formated(string, "%s, ", fn_id);
-        }
-        string_append_formated(string, "]");
-        break;
-    }
-    case Analysis_Workload_Type::FUNCTION_HEADER: {
-        Symbol* symbol = downcast<Workload_Function_Header>(workload)->progress->function->symbol;
-        const char* fn_id = symbol == 0 ? "Anonymous" : symbol->id->characters;
-        string_append_formated(string, "Header \"%s\"", fn_id);
-        break;
-    }
-    case Analysis_Workload_Type::STRUCT_ANALYSIS: {
-        Symbol* symbol = downcast<Workload_Struct_Analysis>(workload)->progress->struct_type->options.structure.symbol;
-        const char* struct_id = symbol == 0 ? "Anonymous_Struct" : symbol->id->characters;
-        string_append_formated(string, "Struct-Analysis \"%s\"", struct_id);
-        break;
-    }
-    case Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE: {
-        //const char* struct_id = symbol == 0 ? "Anonymous_Struct" : symbol->id->characters;
-        string_append_formated(string, "Struct-Reachable-Resolve [");
-        auto cluster = downcast<Workload_Struct_Reachable_Resolve>(analysis_workload_find_associated_cluster(workload));
-        for (int i = 0; i < cluster->struct_types.size; i++) {
-            Symbol* symbol = cluster->struct_types[i]->options.structure.symbol;
-            const char* fn_id = symbol == 0 ? "Anonymous" : symbol->id->characters;
-            string_append_formated(string, "%s, ", fn_id);
-        }
-        string_append_formated(string, "]");
-
-
-        break;
-    }
-    default: panic("");
-    }
-}
-
-Module_Progress* workload_executer_add_module_discovery(AST::Module* module, bool is_root_module) {
-    auto progress = module_progress_create(module, 0, semantic_analyser.root_symbol_table);
-    if (is_root_module) {
-        semantic_analyser.root_module = progress;
-    }
-    return progress;
 }
 
 
 
 // EXPRESSIONS
-void semantic_analyser_register_function_call(ModTree_Function* call_to)
+void semantic_analyser_register_function_call(ModTree_Function * call_to)
 {
     auto& analyser = semantic_analyser;
     auto& type_system = compiler.type_system;
@@ -3238,7 +3296,7 @@ void semantic_analyser_register_function_call(ModTree_Function* call_to)
     }
 }
 
-Info_Cast_Type semantic_analyser_check_cast_type(Type_Signature* source_type, Type_Signature* destination_type, bool implicit_cast)
+Info_Cast_Type semantic_analyser_check_cast_type(Type_Signature * source_type, Type_Signature * destination_type, bool implicit_cast)
 {
     auto& analyser = semantic_analyser;
     auto& type_system = compiler.type_system;
@@ -3372,7 +3430,7 @@ Info_Cast_Type semantic_analyser_check_cast_type(Type_Signature* source_type, Ty
     return Info_Cast_Type::INVALID;
 }
 
-void expression_info_set_cast(Expression_Info* info, Info_Cast_Type cast_type, Type_Signature* result_type)
+void expression_info_set_cast(Expression_Info * info, Info_Cast_Type cast_type, Type_Signature * result_type)
 {
     info->context_ops.after_cast_type = result_type;
     info->context_ops.cast = cast_type;
@@ -3383,7 +3441,7 @@ void expression_info_set_cast(Expression_Info* info, Info_Cast_Type cast_type, T
     semantic_analyser.current_workload->current_expression = new_info; \
     SCOPE_EXIT(semantic_analyser.current_workload->current_expression = _backup_info);
 
-Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* expr, Expression_Context context)
+Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression * expr, Expression_Context context)
 {
     auto& analyser = semantic_analyser;
     auto type_system = &compiler.type_system;
@@ -3449,7 +3507,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         for (int i = 0; i < call.arguments.size; i++) {
             auto argument = get_info(call.arguments[i], true);
             argument->is_polymorphic = false;
-            argument->argument_index = i;
+            argument->argument_index = -1; // Initialize as invalid
         }
         info->specifics.function_call_signature = 0;
 
@@ -3600,7 +3658,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 }
             }
 
-            if (!success){
+            if (!success) {
                 log_semantic_error("Some values couldn't be calculated at comptime!", AST::upcast(expr));
                 break;
             }
@@ -3648,39 +3706,27 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         // Analyse arguments
         {
             // NOTE: This is almost the same as struct initializer arguments
+            bool error_occured = false;
             bool named_argument_encountered = false;
-            int first_named_argument_index = 0;
             int next_unnamed_parameter_index = 0; // Note: Can be different from argument index (comptime arguments)
-            int non_polymorphic_argument_count = 0;
+            int required_argument_count = 0; // Number of supplied non-polymorphic/non-default argument count
 
             auto& parameters = function_signature->options.function.parameters;
-            for (int i = 0; i < arguments.size; i++) 
+            for (int i = 0; i < arguments.size; i++)
             {
                 auto arg = arguments[i];
                 auto info = get_info(arg);
                 if (info->is_polymorphic) { // Skip already analysed parameters (Done during polymorphic function analysis, e.g. comptime params)
                     continue;
                 }
-                non_polymorphic_argument_count += 1;
 
                 // Figure out context/Handle named arguments
                 auto context = expression_context_make_unknown();
                 if (arg->name.available) {
-                    if (!named_argument_encountered) {
-                        named_argument_encountered = true;
-                        first_named_argument_index = i;
-                    }
-
-                    // Error checking (No double names)
-                    for (int j = first_named_argument_index; j < i; j++) {
-                        auto& other_arg = arguments[j];
-                        if (other_arg->name.available && other_arg->name.value == arg->name.value) {
-                            log_semantic_error("Argument name already specified!", upcast(arg));
-                            break;
-                        }
-                    }
+                    named_argument_encountered = true;
 
                     // Find corresponding parameter
+                    bool param_not_found = true;
                     for (int j = 0; j < parameters.size; j++) {
                         auto& param = parameters[j];
                         if (param.name.available && param.name.value == arg->name.value) {
@@ -3689,20 +3735,43 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                             break;
                         }
                     }
+
+                    // Error checking (Don't specify same argument twice)
+                    for (int j = 0; j < i && info->argument_index != -1; j++) {
+                        auto other_arg_info = get_info(arguments[j]);
+                        if (other_arg_info->argument_index == info->argument_index) {
+                            log_semantic_error("Parameter already specified in previous argument", upcast(arg), Parser::Section::IDENTIFIER);
+                            error_occured = true;
+                            break;
+                        }
+                    }
+
+                    // Track number of arguments
+                    if (!parameters[info->argument_index].has_default_value) {
+                        required_argument_count += 1;
+                    }
                 }
                 else {
                     if (named_argument_encountered) {
                         // Cannot have unnamed arguments after named ones
                         log_semantic_error("Unnamed arguments must not appear after named arguments", upcast(arg));
+                        error_occured = true;
                     }
                     else {
                         info->argument_index = next_unnamed_parameter_index;
                         next_unnamed_parameter_index += 1;
                         if (info->argument_index < parameters.size) {
                             context = expression_context_make_specific_type(parameters[info->argument_index].type);
+
+                            // Track number of arguments
+                            if (!parameters[info->argument_index].has_default_value) {
+                                required_argument_count += 1;
+                            }
                         }
                         else {
-                            // Error will be report later because argument count won't match
+                            log_semantic_error("Too many arguments for function", upcast(arg));
+                            log_error_info_function_type(function_signature);
+                            error_occured = true;
                         }
                     }
                 }
@@ -3711,11 +3780,40 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 semantic_analyser_analyse_expression_value(arguments[i]->value, context);
             }
 
-            // Error checking
-            if (non_polymorphic_argument_count != parameters.size) {
-                log_semantic_error("Some function parameters are missing", expr, Parser::Section::ENCLOSURE);
-                log_error_info_argument_count(non_polymorphic_argument_count, parameters.size);
+            // Check if all parameters are supplied
+            int required_parameter_count = 0;
+            for (int i = 0; i < parameters.size && !error_occured; i++) {
+                auto& param = parameters[i];
+                if (!param.has_default_value) {
+                    required_parameter_count += 1;
+                }
+            }
+
+            // Report errors for missing parameters
+            if (required_parameter_count != required_argument_count && !error_occured) 
+            {
+                log_semantic_error("Not all parameters were filled out!", expr, Parser::Section::ENCLOSURE);
                 log_error_info_function_type(function_signature);
+                for (int i = 0; i < parameters.size; i++) {
+                    auto& param = parameters[i];
+                    if (param.has_default_value) {
+                        continue;
+                    }
+
+                    // Search if this parameter is supplied
+                    bool was_supplied = false;
+                    for (int j = 0; j < arguments.size; j++) {
+                        auto info = get_info(arguments[j]);
+                        if (info->argument_index == i) {
+                            was_supplied = true;
+                            break;
+                        }
+                    }
+
+                    if (!was_supplied) {
+                        log_error_info_missing_parameter(param);
+                    }
+                }
             }
         }
 
@@ -4191,10 +4289,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             auto& param = sig.parameters[i];
             if (param->is_comptime) {
                 log_semantic_error("Comptime parameters are only allowed in functions, not in signatures!", AST::upcast(param));
+                continue;
             }
-            else {
-                empty_function_add_parameter(&unfinished, param->name, semantic_analyser_analyse_expression_type(param->type));
-            }
+            empty_function_add_parameter(&unfinished, analyse_function_parameter(param));
         }
         Type_Signature* return_type = types.void_type;
         if (sig.return_value.available) {
@@ -4324,9 +4421,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
             // NOTE: This is almost the same as function-call arguments
             bool named_argument_encountered = false;
-            int first_named_argument_index = 0;
-
-            for (int i = 0; i < arguments.size; i++) 
+            for (int i = 0; i < arguments.size; i++)
             {
                 auto arg = arguments[i];
                 auto info = get_info(arg, true);
@@ -4336,26 +4431,24 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 // Figure out context/Handle named arguments
                 auto context = expression_context_make_unknown();
                 if (arg->name.available) {
-                    if (!named_argument_encountered) {
-                        named_argument_encountered = true;
-                        first_named_argument_index = i;
-                    }
-
-                    // Error checking (No double names)
-                    for (int j = first_named_argument_index; j < i; j++) {
-                        auto& other_arg = arguments[j];
-                        if (other_arg->name.available && other_arg->name.value == arg->name.value) {
-                            log_semantic_error("Argument name already specified!", upcast(arg), Parser::Section::IDENTIFIER);
-                            break;
-                        }
-                    }
+                    named_argument_encountered = true;
 
                     // Find corresponding parameter
                     for (int j = 0; j < parameters.size; j++) {
                         auto& param = parameters[j];
                         if (param.id == arg->name.value) {
                             info->member = param;
+                            info->argument_index = j;
                             context = expression_context_make_specific_type(parameters[j].type);
+                            break;
+                        }
+                    }
+
+                    // Error checking (No specifying same parameter twice)
+                    for (int j = 0; j < i; j++) {
+                        auto other_arg_info = get_info(arguments[j]);
+                        if (other_arg_info->argument_index == info->argument_index) {
+                            log_semantic_error("Struct member was already specified by previous argument", upcast(arg), Parser::Section::IDENTIFIER);
                             break;
                         }
                     }
@@ -4858,7 +4951,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 #undef EXIT_FUNCTION
 }
 
-void expression_context_apply(AST::Expression* expr, Expression_Context context)
+void expression_context_apply(AST::Expression * expr, Expression_Context context)
 {
     auto& type_system = compiler.type_system;
     auto& types = type_system.predefined_types;
@@ -4955,7 +5048,7 @@ void expression_context_apply(AST::Expression* expr, Expression_Context context)
     }
 }
 
-Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression* expression, Expression_Context context)
+Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression * expression, Expression_Context context)
 {
     auto& type_system = compiler.type_system;
     auto result = semantic_analyser_analyse_expression_internal(expression, context);
@@ -4965,7 +5058,7 @@ Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression* expre
     return result;
 }
 
-Type_Signature* semantic_analyser_try_convert_value_to_type(AST::Expression* expression, bool log_error)
+Type_Signature* semantic_analyser_try_convert_value_to_type(AST::Expression * expression, bool log_error)
 {
     auto& type_system = compiler.type_system;
     auto& types = type_system.predefined_types;
@@ -5055,7 +5148,7 @@ Type_Signature* semantic_analyser_try_convert_value_to_type(AST::Expression* exp
     return 0;
 }
 
-Type_Signature* semantic_analyser_analyse_expression_type(AST::Expression* expression)
+Type_Signature* semantic_analyser_analyse_expression_type(AST::Expression * expression)
 {
     auto& type_system = compiler.type_system;
     auto& types = type_system.predefined_types;
@@ -5064,7 +5157,7 @@ Type_Signature* semantic_analyser_analyse_expression_type(AST::Expression* expre
     return semantic_analyser_try_convert_value_to_type(expression, true);
 }
 
-Type_Signature* semantic_analyser_analyse_expression_value(AST::Expression* expression, Expression_Context context)
+Type_Signature* semantic_analyser_analyse_expression_value(AST::Expression * expression, Expression_Context context)
 {
     auto& type_system = compiler.type_system;
     auto& types = type_system.predefined_types;
@@ -5108,7 +5201,7 @@ Type_Signature* semantic_analyser_analyse_expression_value(AST::Expression* expr
 
 
 // STATEMENTS
-bool code_block_is_while(AST::Code_Block* block)
+bool code_block_is_while(AST::Code_Block * block)
 {
     if (block != 0 && block->base.parent->type == AST::Node_Type::STATEMENT) {
         auto parent = (AST::Statement*) block->base.parent;
@@ -5117,7 +5210,7 @@ bool code_block_is_while(AST::Code_Block* block)
     return false;
 }
 
-bool code_block_is_defer(AST::Code_Block* block)
+bool code_block_is_defer(AST::Code_Block * block)
 {
     if (block != 0 && block->base.parent->type == AST::Node_Type::STATEMENT) {
         auto parent = (AST::Statement*) block->base.parent;
@@ -5141,7 +5234,7 @@ bool inside_defer()
     return false;
 }
 
-Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
+Control_Flow semantic_analyser_analyse_statement(AST::Statement * statement)
 {
     auto& type_system = compiler.type_system;
     auto& types = type_system.predefined_types;
@@ -5486,7 +5579,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 #undef EXIT
 }
 
-Control_Flow semantic_analyser_analyse_block(AST::Code_Block* block)
+Control_Flow semantic_analyser_analyse_block(AST::Code_Block * block)
 {
     auto block_info = get_info(block, true);
     block_info->control_flow_locked = false;
@@ -5742,11 +5835,11 @@ void semantic_analyser_reset()
     );
 }
 
-u64 ast_info_key_hash(AST_Info_Key* key) {
+u64 ast_info_key_hash(AST_Info_Key * key) {
     return hash_combine(hash_pointer(key->base), hash_pointer(key->pass));
 }
 
-bool ast_info_equals(AST_Info_Key* a, AST_Info_Key* b) {
+bool ast_info_equals(AST_Info_Key * a, AST_Info_Key * b) {
     return a->base == b->base && a->pass == b->pass;
 }
 
@@ -5824,7 +5917,7 @@ void semantic_analyser_destroy()
 
 
 // ERRORS
-void semantic_error_append_to_string(Semantic_Error e, String* string)
+void semantic_error_append_to_string(Semantic_Error e, String * string)
 {
     string_append_formated(string, e.msg);
 
@@ -5840,6 +5933,13 @@ void semantic_error_append_to_string(Semantic_Error e, String* string)
         case Error_Information_Type::ARGUMENT_COUNT:
             string_append_formated(string, "\n  Given argument count: %d, required: %d",
                 info->options.invalid_argument_count.given, info->options.invalid_argument_count.expected);
+            break;
+        case Error_Information_Type::MISSING_PARAMETER:
+            string_append_formated(string, "\n  Missing ");
+            if (info->options.parameter.name.available) {
+                string_append_formated(string, "\"%s\": ", info->options.parameter.name.value->characters);
+            }
+            type_signature_append_to_string(string, info->options.parameter.type);
             break;
         case Error_Information_Type::ID:
             string_append_formated(string, "\n  Name: %s", info->options.id->characters);
