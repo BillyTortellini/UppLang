@@ -1,5 +1,7 @@
 
 TODO:
+    * Struct deconstruction on definition + assignment
+    * Add drop_value symbol (_) --> Means that the the expression should be evaluated, but the value isn't saved 
 
 Multiple return values:
     I think Odin's approach isn't really applicable in my language, because of Expression_Context for parsing and other stuff...

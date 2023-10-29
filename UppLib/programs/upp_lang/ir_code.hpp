@@ -260,7 +260,7 @@ struct IR_Generator
     ModTree_Program* modtree;
 
     // Stuff needed for compilation
-    Hashtable<AST::Definition*, IR_Data_Access> variable_mapping; 
+    Hashtable<AST::Definition_Symbol*, IR_Data_Access> variable_mapping; 
     Hashtable<ModTree_Function*, IR_Function*> function_mapping;
 
     Dynamic_Array<Function_Stub> queue_functions;

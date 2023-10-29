@@ -261,7 +261,9 @@ struct Workload_Definition
 {
     Workload_Base base;
     Symbol* symbol;
-    AST::Definition* definition_node;
+    bool is_comptime;
+    AST::Expression* value_node;
+    AST::Expression* type_node;
 };
 
 struct Workload_Bake_Analysis
@@ -472,7 +474,7 @@ struct Parameter_Info {
     Workload_Function_Parameter* param_workload; // May be null
 };
 
-struct Definition_Info {
+struct Definition_Symbol_Info {
     Symbol* symbol;
 };
 
@@ -496,7 +498,7 @@ union Analysis_Info
     Case_Info info_case;
     Argument_Info arg_info;
     Parameter_Info param_info;
-    Definition_Info definition_info;
+    Definition_Symbol_Info definition_symbol_info;
     Symbol_Lookup_Info symbol_lookup_info;
     Path_Lookup_Info path_info;
     Module_Info module_info;
@@ -516,7 +518,7 @@ Argument_Info* pass_get_node_info(Analysis_Pass* pass, AST::Argument* node, Info
 Statement_Info* pass_get_node_info(Analysis_Pass* pass, AST::Statement* node, Info_Query query);
 Code_Block_Info* pass_get_node_info(Analysis_Pass* pass, AST::Code_Block* node, Info_Query query);
 Symbol_Lookup_Info* pass_get_node_info(Analysis_Pass* pass, AST::Symbol_Lookup* node, Info_Query query);
-Definition_Info* pass_get_node_info(Analysis_Pass* pass, AST::Definition* node, Info_Query query);
+Definition_Symbol_Info* pass_get_node_info(Analysis_Pass* pass, AST::Definition_Symbol* node, Info_Query query);
 Parameter_Info* pass_get_node_info(Analysis_Pass* pass, AST::Parameter* node, Info_Query query);
 Path_Lookup_Info* pass_get_node_info(Analysis_Pass* pass, AST::Path_Lookup* node, Info_Query query);
 Module_Info* pass_get_node_info(Analysis_Pass* pass, AST::Module* node, Info_Query query);

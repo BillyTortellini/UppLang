@@ -114,7 +114,7 @@ void assert_function(bool condition, const char* condition_as_string, const char
         printf("\tMsg: ");
         vprintf(message, args);
         va_end(args);
-       __debugbreak();
+        __debugbreak();
         panic("ASSERTION FAILED");
     }
 }

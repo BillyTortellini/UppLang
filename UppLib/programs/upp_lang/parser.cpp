@@ -400,6 +400,63 @@ namespace Parser
         return true;
     }
 
+    typedef bool (*error_recovery_stop_function)(Token& token);
+
+    template<typename T>
+    void parse_comma_seperated_items(Node* parent, Dynamic_Array<T*>* fill_array, T* (*parse_fn)(Node* parent), error_recovery_stop_function stop_fn)
+    {
+        // Parse Items
+        while (true)
+        {
+            auto item = parse_fn(parent);
+            if (item != 0)
+            {
+                dynamic_array_push_back(fill_array, item);
+                if (test_operator(Operator::COMMA)) {
+                    advance_token();
+                    continue;
+                }
+                // Check if we reached
+                if (token_index_is_end_of_line(parser.state.pos)) {
+                    return;
+                }
+                if (stop_fn != 0) {
+                    if (stop_fn(*get_token())) {
+                        return;
+                    }
+                }
+            }
+            
+            // Otherwise try to find next comma
+            auto search_fn = [](Token* token, void* userdata) -> bool {
+                auto stop_function = (error_recovery_stop_function)userdata;
+                if (stop_function != 0) {
+                    if (stop_function(*token)) {
+                        return true;
+                    }
+                }
+                return token->type == Token_Type::OPERATOR && token->options.op == Operator::COMMA;
+            };
+            auto recovery_point_opt = search_token(parser.state.pos, search_fn, stop_fn, false);
+
+            // Check if we reached stop, found comma or none of both
+            if (!recovery_point_opt.available) {
+                return;
+            }
+            auto token = index_value(recovery_point_opt.value);
+            if (token->type == Token_Type::OPERATOR && token->options.op == Operator::COMMA) {
+                log_error_to_pos("Couldn't parse item", recovery_point_opt.value);
+                parser.state.pos = recovery_point_opt.value;
+                advance_token();
+                continue;
+            }
+            // Otherwise we found the stop point
+            log_error_to_pos("Couldn't parse item", recovery_point_opt.value);
+            parser.state.pos = recovery_point_opt.value;
+            return;
+        }
+    }
+
     // DOCU: Parser position must be on Open Parenthesis for this to work
     template<typename T>
     void parse_parenthesis_comma_seperated(Node* parent, Dynamic_Array<T*>* fill_array, T* (*parse_fn)(Node* parent), Parenthesis_Type type)
@@ -597,6 +654,15 @@ namespace Parser
             return 0;
         }
 
+        Definition_Symbol* parse_definition_symbol(Node* parent) {
+            if (!test_token(Token_Type::IDENTIFIER)) {
+                return 0;
+            }
+            auto node = allocate_base<Definition_Symbol>(parent, Node_Type::DEFINITION_SYMBOL);
+            node->name = get_token()->options.identifier;
+            advance_token();
+            PARSE_SUCCESS(node);
+        }
 
         // Block Item functions
         Import* parse_import(Node* parent)
@@ -646,41 +712,64 @@ namespace Parser
 
         Definition* parse_definition(Node* parent)
         {
-            // INFO: Definitions cannot start in the middle of a line_index
+            // INFO: Definitions, like all line items, cannot start in the middle of a line
             CHECKPOINT_SETUP;
-            auto result = allocate_base<Definition>(parent, AST::Node_Type::DEFINITION);
-            result->is_comptime = false;
-
             if (parser.state.pos.token != 0) CHECKPOINT_EXIT;
             if (!test_token(Token_Type::IDENTIFIER)) CHECKPOINT_EXIT;
-            result->name = get_token(0)->options.identifier;
-            advance_token();
 
+            auto result = allocate_base<Definition>(parent, AST::Node_Type::DEFINITION);
+            result->is_comptime = false;
+            result->symbols = dynamic_array_create_empty<Definition_Symbol*>(1);
+            result->types = dynamic_array_create_empty<AST::Expression*>(1);
+            result->values = dynamic_array_create_empty<AST::Expression*>(1);
+
+            // Parse comma seperated list of identifiers
+            auto found_definition_operator = [](Token& token) -> bool {
+                return token.type == Token_Type::OPERATOR &&
+                    (token.options.op == Operator::COLON ||
+                     token.options.op == Operator::DEFINE_COMPTIME ||
+                     token.options.op == Operator::DEFINE_INFER);
+            };
+            parse_comma_seperated_items(upcast(result), &result->symbols, parse_definition_symbol, found_definition_operator);
+
+            // Check if there is a colon :, or a := or an ::
             if (test_operator(Operator::COLON))
             {
                 advance_token();
-                result->type = optional_make_success(parse_expression_or_error_expr((Node*)result));
+                // Note: Parse types (At least one value is guaranteed by parse_expression or error)
+                auto found_value_start = [](Token& token) -> bool {
+                    return token.type == Token_Type::OPERATOR &&
+                        (token.options.op == Operator::COLON ||
+                         token.options.op == Operator::ASSIGN);
+                };
+                parse_comma_seperated_items(upcast(result), &result->types, parse_expression_or_error_expr, found_value_start);
 
-                bool is_assign = test_operator(Operator::ASSIGN);
-                if (is_assign || test_operator(Operator::COLON)) {
-                    result->is_comptime = !is_assign;
+                if (test_operator(Operator::ASSIGN)) {
+                    result->is_comptime = false;
                     advance_token();
-                    result->value = optional_make_success(parse_expression_or_error_expr((Node*)result));
+                }
+                else if (test_operator(Operator::COLON)) {
+                    result->is_comptime = true;
+                    advance_token();
+                }
+                else {
+                    PARSE_SUCCESS(result);
                 }
             }
             else if (test_operator(Operator::DEFINE_COMPTIME)) {
                 advance_token();
                 result->is_comptime = true;
-                result->value = optional_make_success(parse_expression_or_error_expr((Node*)result));
             }
             else if (test_operator(Operator::DEFINE_INFER)) {
                 advance_token();
                 result->is_comptime = false;
-                result->value = optional_make_success(parse_expression_or_error_expr((Node*)result));
             }
             else {
                 CHECKPOINT_EXIT;
             }
+            
+            // Parse values (Or add at least one error expression)
+            parse_comma_seperated_items(upcast(result), &result->values, parse_expression_or_error_expr, 0);
 
             PARSE_SUCCESS(result);
         }
@@ -771,13 +860,42 @@ namespace Parser
                 auto expr = parse_expression(&result->base);
                 if (expr != 0)
                 {
-                    if (test_operator(Operator::ASSIGN)) {
+                    if (test_operator(Operator::COMMA)) 
+                    {
+                        // Assume that it's an assignment
                         result->type = Statement_Type::ASSIGNMENT;
-                        result->options.assignment.left_side = expr;
+                        result->options.assignment.left_side = dynamic_array_create_empty<Expression*>(1);
+                        result->options.assignment.right_side = dynamic_array_create_empty<Expression*>(1);
+                        dynamic_array_push_back(&result->options.assignment.left_side, expr);
                         advance_token();
-                        result->options.assignment.right_side = parse_expression_or_error_expr(&result->base);
+                        
+                        // Parse remaining left_side expressions
+                        auto is_assign = [](Token& token) -> bool {return token.type == Token_Type::OPERATOR && token.options.op == Operator::ASSIGN; };
+                        parse_comma_seperated_items(upcast(result), &result->options.assignment.left_side, parse_expression_or_error_expr, is_assign);
+
+                        // Check if assignment found, otherwise error
+                        if (!test_operator(Operator::ASSIGN)) {
+                            CHECKPOINT_EXIT;
+                        }
+                        advance_token();
+
+                        // Parse right side
+                        parse_comma_seperated_items(upcast(result), &result->options.assignment.right_side, parse_expression_or_error_expr, 0);
                         PARSE_SUCCESS(result);
                     }
+                    else if (test_operator(Operator::ASSIGN)) 
+                    {
+                        result->type = Statement_Type::ASSIGNMENT;
+                        result->options.assignment.left_side = dynamic_array_create_empty<Expression*>(1);
+                        result->options.assignment.right_side = dynamic_array_create_empty<Expression*>(1);
+                        dynamic_array_push_back(&result->options.assignment.left_side, expr);
+                        advance_token();
+
+                        // Parse right side
+                        parse_comma_seperated_items(upcast(result), &result->options.assignment.right_side, parse_expression_or_error_expr, 0);
+                        PARSE_SUCCESS(result);
+                    }
+                    
                     result->type = Statement_Type::EXPRESSION_STATEMENT;
                     result->options.expression = expr;
                     PARSE_SUCCESS(result);

@@ -458,7 +458,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 Analysis_Pass* code_query_get_analysis_pass(AST::Node* base);
 Symbol* code_query_get_ast_node_symbol(AST::Node* base)
 {
-    if (base->type != AST::Node_Type::DEFINITION &&
+    if (base->type != AST::Node_Type::DEFINITION_SYMBOL &&
         base->type != AST::Node_Type::PATH_LOOKUP &&
         base->type != AST::Node_Type::SYMBOL_LOOKUP &&
         base->type != AST::Node_Type::PARAMETER) {
@@ -469,8 +469,8 @@ Symbol* code_query_get_ast_node_symbol(AST::Node* base)
     if (pass == 0) return 0;
     switch (base->type)
     {
-    case AST::Node_Type::DEFINITION: {
-        auto info = pass_get_node_info(pass, AST::downcast<AST::Definition>(base), Info_Query::TRY_READ);
+    case AST::Node_Type::DEFINITION_SYMBOL: {
+        auto info = pass_get_node_info(pass, AST::downcast<AST::Definition_Symbol>(base), Info_Query::TRY_READ);
         return info == 0 ? 0 : info->symbol;
     }
     case AST::Node_Type::SYMBOL_LOOKUP: {

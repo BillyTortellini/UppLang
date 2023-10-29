@@ -11,9 +11,16 @@ namespace AST
         case Node_Type::IMPORT: 
         case Node_Type::PARAMETER: 
         case Node_Type::ARGUMENT: 
+        case Node_Type::DEFINITION_SYMBOL: 
         case Node_Type::ENUM_MEMBER: 
-        case Node_Type::DEFINITION: 
             break;
+        case Node_Type::DEFINITION: {
+            auto def = (Definition*)node;
+            dynamic_array_destroy(&def->values);
+            dynamic_array_destroy(&def->types);
+            dynamic_array_destroy(&def->symbols);
+            break;
+        }
         case Node_Type::PATH_LOOKUP: {
             dynamic_array_destroy(&((Path_Lookup*)node)->parts);
             break;
@@ -92,6 +99,12 @@ namespace AST
                 }
                 break;
             }
+            case Statement_Type::ASSIGNMENT: {
+                auto as = stat->options.assignment;
+                dynamic_array_destroy(&as.left_side);
+                dynamic_array_destroy(&as.right_side);
+                break;
+            }
             }
             break;
         }
@@ -140,10 +153,14 @@ namespace AST
             FILL_ARRAY(block->statements);
             break;
         }
+        case Node_Type::DEFINITION_SYMBOL: {
+            break;
+        }
         case Node_Type::DEFINITION: {
             auto def = (Definition*)node;
-            FILL_OPTIONAL(def->type);
-            FILL_OPTIONAL(def->value);
+            FILL_ARRAY(def->symbols);
+            FILL_ARRAY(def->types);
+            FILL_ARRAY(def->values);
             break;
         }
         case Node_Type::SYMBOL_LOOKUP: {
@@ -299,8 +316,8 @@ namespace AST
             }
             case Statement_Type::ASSIGNMENT: {
                 auto ass = stat->options.assignment;
-                FILL(ass.left_side);
-                FILL(ass.right_side);
+                FILL_ARRAY(ass.left_side);
+                FILL_ARRAY(ass.right_side);
                 break;
             }
             case Statement_Type::EXPRESSION_STATEMENT: {
@@ -412,10 +429,14 @@ namespace AST
             FILL_ARRAY(block->statements);
             break;
         }
+        case Node_Type::DEFINITION_SYMBOL: {
+            break;
+        }
         case Node_Type::DEFINITION: {
             auto def = (Definition*)node;
-            FILL_OPTIONAL(def->type);
-            FILL_OPTIONAL(def->value);
+            FILL_ARRAY(def->symbols);
+            FILL_ARRAY(def->types);
+            FILL_ARRAY(def->values);
             break;
         }
         case Node_Type::MODULE: {
@@ -561,8 +582,8 @@ namespace AST
             }
             case Statement_Type::ASSIGNMENT: {
                 auto ass = stat->options.assignment;
-                FILL(ass.left_side);
-                FILL(ass.right_side);
+                FILL_ARRAY(ass.left_side);
+                FILL_ARRAY(ass.right_side);
                 break;
             }
             case Statement_Type::EXPRESSION_STATEMENT: {
@@ -628,10 +649,14 @@ namespace AST
     {
         switch (base->type)
         {
-        case Node_Type::DEFINITION:
-            string_append_formated(str, "DEFINITION ");
-            string_append_string(str, ((Definition*)base)->name);
+        case Node_Type::DEFINITION_SYMBOL: {
+            string_append_formated(str, "DEFINITION_SYMBOL %s", ((Definition_Symbol*)base)->name->characters);
             break;
+        }
+        case Node_Type::DEFINITION: {
+            string_append_formated(str, "DEFINITION");
+            break;
+        }
         case Node_Type::IMPORT: {
             auto import = (Import*)base;
             string_append_formated(str, "IMPORT ");
@@ -824,6 +849,9 @@ namespace AST
         }
         bool type_correct(Definition* base) {
             return base->base.type == Node_Type::DEFINITION;
+        }
+        bool type_correct(Definition_Symbol* base) {
+            return base->base.type == Node_Type::DEFINITION_SYMBOL;
         }
         bool type_correct(Switch_Case* base) {
             return base->base.type == Node_Type::SWITCH_CASE;

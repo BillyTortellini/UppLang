@@ -61,6 +61,7 @@ namespace Helpers
     Analysis_Workload_Type get_workload_type(Workload_Event* workload) { return Analysis_Workload_Type::EVENT; };
 };
 
+Workload_Base* upcast(Workload_Base* workload) {return workload;}
 Workload_Base* upcast(Workload_Import_Resolve* workload) {return &workload->base;}
 Workload_Base* upcast(Workload_Module_Analysis* workload) {return &workload->base;}
 Workload_Base* upcast(Workload_Function_Header* workload) {return &workload->base;}
@@ -186,8 +187,8 @@ Path_Lookup_Info* pass_get_node_info(Analysis_Pass* pass, AST::Path_Lookup* node
     return &pass_get_base_info(pass, AST::upcast(node), query)->path_info;
 }
 
-Definition_Info* pass_get_node_info(Analysis_Pass* pass, AST::Definition* node, Info_Query query) {
-    return &pass_get_base_info(pass, AST::upcast(node), query)->definition_info;
+Definition_Symbol_Info* pass_get_node_info(Analysis_Pass* pass, AST::Definition_Symbol* node, Info_Query query) {
+    return &pass_get_base_info(pass, AST::upcast(node), query)->definition_symbol_info;
 }
 
 Symbol_Lookup_Info* pass_get_node_info(Analysis_Pass* pass, AST::Symbol_Lookup* node, Info_Query query) {
@@ -225,7 +226,7 @@ Parameter_Info* get_info(AST::Parameter* param, bool create = false) {
     return pass_get_node_info(semantic_analyser.current_workload->current_pass, param, create ? Info_Query::CREATE : Info_Query::READ_NOT_NULL);
 }
 
-Definition_Info* get_info(AST::Definition* definition, bool create = false) {
+Definition_Symbol_Info* get_info(AST::Definition_Symbol* definition, bool create = false) {
     return pass_get_node_info(semantic_analyser.current_workload->current_pass, definition, create ? Info_Query::CREATE : Info_Query::READ_NOT_NULL);
 }
 
@@ -719,6 +720,10 @@ Module_Progress* module_progress_create(AST::Module* module, Symbol* symbol, Sym
     // Create progress
     auto progress = analysis_progress_allocate_internal<Module_Progress>();
     progress->symbol = symbol;
+    if (symbol != 0) {
+        symbol->type = Symbol_Type::MODULE;
+        symbol->options.module_progress = progress;
+    }
 
     // Create analysis workload
     progress->module_analysis = workload_executer_allocate_workload<Workload_Module_Analysis>(upcast(module));
@@ -745,64 +750,122 @@ Module_Progress* module_progress_create(AST::Module* module, Symbol* symbol, Sym
 
 
 // Create correct workloads for comptime definitions, for non-comptime checks if its a variable or a global and sets the symbol correctly
-Workload_Base* analyser_create_symbol_and_workload_for_definition(AST::Definition* definition)
+void analyser_create_symbol_and_workload_for_definition(AST::Definition* definition)
 {
     Symbol_Table* current_table = semantic_analyser.current_workload->current_symbol_table;
-    Symbol* symbol = symbol_table_define_symbol(current_table, definition->name, Symbol_Type::DEFINITION_UNFINISHED, AST::upcast(definition), false);
-    get_info(definition, true)->symbol = symbol; // Set definition symbol (Editor information)
+    assert(!(definition->values.size == 0 && definition->types.size == 0), "Cannot have values and types be 0");
+    assert(definition->symbols.size != 0, "Parser shouldn't allow this");
 
+    // Check if we are currently in a module discovery workload
+    Workload_Base* symbol_finish_workload = 0;
+    if (semantic_analyser.current_workload->type == Analysis_Workload_Type::MODULE_ANALYSIS) {
+        symbol_finish_workload = upcast(downcast<Workload_Module_Analysis>(semantic_analyser.current_workload)->progress->event_symbol_table_ready);
+    }
+
+    // Define all symbols
+    bool is_local_variable = !definition->is_comptime && definition->base.parent->type == AST::Node_Type::STATEMENT;
+    bool is_global_variable = !definition->is_comptime && !is_local_variable;
+    for (int i = 0; i < definition->symbols.size; i++) {
+        auto info = get_info(definition->symbols[i], true);
+        info->symbol = symbol_table_define_symbol(current_table, definition->symbols[i]->name, 
+            is_local_variable ? Symbol_Type::VARIABLE_UNDEFINED : Symbol_Type::ERROR_SYMBOL, AST::upcast(definition->symbols[i]), false);
+    }
+
+    // Only define symbols for local variables, analysis will happen when the statement is reached
+    if (is_local_variable) {
+        return;
+    }
+
+    // Report errors
+    bool error_occured = false;
+    for (int i = 1; i < definition->symbols.size; i++) {
+        log_semantic_error("Multiple Symbols not allowed for global/comptime definition, e.g. '::'", upcast(definition->symbols[i]));
+        error_occured = true;
+    }
+    for (int i = 1; i < definition->values.size; i++) {
+        log_semantic_error("Multiple Values not allowed for global/comptime definition, e.g. '::'", upcast(definition->values[i]));
+        error_occured = true;
+    }
+    if (!is_global_variable && definition->types.size > 0) {
+        log_semantic_error("Type not allowed on comptime definition", upcast(definition->types[0]));
+        error_occured = true;
+    }
+    for (int i = 1; i < definition->types.size; i++) {
+        log_semantic_error("Multiple types currently not allowed on global/comptime definition", upcast(definition->types[i]));
+        error_occured = true;
+    }
+    if (definition->values.size == 0 && !is_global_variable) {
+        log_semantic_error("Comptime definition must have a value", upcast(definition));
+        error_occured = true;
+    }
+    if (error_occured) {
+        return;
+    }
+
+    Symbol* symbol = get_info(definition->symbols[0])->symbol;
+    
     // Create workload for functions, structs and modules directly
-    Workload_Base* result = 0;
-    bool create_definition_workload = true; // If not function/struct/module and not a variable
-    if (definition->is_comptime) {
+    if (definition->is_comptime) 
+    {
+        AST::Expression* value = definition->values[0];
         // Check if it's a 'named' construct (function, struct, module)
-        if (definition->value.available)
+        switch (value->type)
         {
-            auto value = definition->value.value;
-            bool type_valid_for_definition = false;
-            create_definition_workload = false;
-            switch (value->type)
-            {
-            case AST::Expression_Type::MODULE: {
-                symbol->type = Symbol_Type::MODULE;
-                symbol->options.module_progress = module_progress_create(value->options.module, symbol, current_table);
-                result = upcast(symbol->options.module_progress->module_analysis);
-                break;
-            }
-            case AST::Expression_Type::FUNCTION: {
-                result = upcast(function_progress_create(symbol, value)->header_workload);
-                break;
-            }
-            case AST::Expression_Type::STRUCTURE_TYPE: {
-                result = upcast(struct_progress_create(symbol, value)->analysis_workload);
-                break;
-            }
-            default: {
-                create_definition_workload = true;
-                type_valid_for_definition = true;
-                break;
-            }
-            }
+        case AST::Expression_Type::MODULE: 
+        {
+            auto module_progress = module_progress_create(value->options.module, symbol, current_table);
+            symbol->type = Symbol_Type::MODULE;
+            symbol->options.module_progress = module_progress;
 
-            if (!type_valid_for_definition && definition->type.available) {
-                log_semantic_error("Type is not valid for comptime definitons of structs/functions/modules!", upcast(definition->type.value));
+            // Add dependencies between parent and child module
+            if (semantic_analyser.current_workload->type == Analysis_Workload_Type::MODULE_ANALYSIS) 
+            {
+                auto current = downcast<Workload_Module_Analysis>(semantic_analyser.current_workload);
+                module_progress->module_analysis->parent_analysis = current;
+                // Add Parent-Dependency for Symbol-Ready (e.g. normal workloads can run and do symbol lookups)
+                module_progress->module_analysis->last_import_workload = current->last_import_workload;
+                if (current->last_import_workload != 0) {
+                    analysis_workload_add_dependency_internal(upcast(module_progress->event_symbol_table_ready), upcast(current->last_import_workload), 0);
+                }
             }
+            return;
+        }
+        case AST::Expression_Type::FUNCTION: {
+            auto workload = upcast(function_progress_create(symbol, value)->header_workload);
+            if (symbol_finish_workload != 0) {
+                analysis_workload_add_dependency_internal(workload, symbol_finish_workload, 0);
+            }
+            return;
+        }
+        case AST::Expression_Type::STRUCTURE_TYPE: {
+            auto workload = upcast(struct_progress_create(symbol, value)->analysis_workload);
+            if (symbol_finish_workload != 0) {
+                analysis_workload_add_dependency_internal(workload, symbol_finish_workload, 0);
+            }
+            return;
+        }
+        default: break;
         }
     }
-    else if (definition->base.parent->type == AST::Node_Type::STATEMENT) { // Here we know that it is a Variable
-        symbol->type = Symbol_Type::VARIABLE_UNDEFINED;
-        symbol->internal = true;
-        create_definition_workload = false;
+
+    // Create workload for global variables/comptime definitions
+    auto definition_workload = workload_executer_allocate_workload<Workload_Definition>(upcast(definition));
+    definition_workload->symbol = symbol;
+    definition_workload->is_comptime = definition->is_comptime;
+    definition_workload->type_node = 0;
+    if (is_global_variable && definition->types.size != 0) {
+        definition_workload->type_node = definition->types[0];
+    }
+    definition_workload->value_node = 0;
+    if (definition->values.size != 0) {
+        definition_workload->value_node = definition->values[0];
+    }
+    if (symbol_finish_workload != 0) {
+        analysis_workload_add_dependency_internal(upcast(definition_workload), symbol_finish_workload, 0);
     }
 
-    if (create_definition_workload) {
-        auto definition_workload = workload_executer_allocate_workload<Workload_Definition>(upcast(definition));
-        definition_workload->definition_node = definition;
-        definition_workload->symbol = symbol;
-        symbol->options.definition_workload = definition_workload;
-        result = upcast(definition_workload);
-    }
-    return result;
+    symbol->type = Symbol_Type::DEFINITION_UNFINISHED;
+    symbol->options.definition_workload = definition_workload;
 }
 
 
@@ -1006,11 +1069,11 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
             auto& upp_const = symbol->options.constant;
             return comptime_result_make_available(&compiler.constant_pool.buffer[upp_const.offset], upp_const.type);
         }
-        else if (symbol->type == Symbol_Type::PARAMETER && symbol->options.parameter.is_polymorphic) 
+        else if (symbol->type == Symbol_Type::PARAMETER && symbol->options.parameter.is_polymorphic)
         {
             auto& param = symbol->options.parameter;
             if (analyser.current_workload->type == Analysis_Workload_Type::FUNCTION_PARAMETER ||
-                analyser.current_workload->type == Analysis_Workload_Type::FUNCTION_HEADER) 
+                analyser.current_workload->type == Analysis_Workload_Type::FUNCTION_HEADER)
             {
                 // This means we are currently analysing the same header, e.g. the parameter cannot be set yet
                 return comptime_result_make_unavailable(param.workload->base_type);
@@ -1539,7 +1602,7 @@ Symbol* symbol_lookup_resolve(AST::Symbol_Lookup* lookup, Symbol_Table* symbol_t
                 // If one of the overloaded symbols is error, we return error
                 return info->symbol;
             }
-            else if (info->symbol->type == Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL) { 
+            else if (info->symbol->type == Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL) {
                 // Replace symbol in results array with alias value
                 results[i] = info->symbol->options.alias_workload->alias_for_symbol;
                 assert(results[i]->type != Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, "Chained aliases should never happen here!");
@@ -2311,7 +2374,7 @@ void workload_add_to_runnable_queue_if_possible(Workload_Base* workload)
     }
 }
 
-bool workload_executer_switch_to_workload(Workload_Base * workload)
+bool workload_executer_switch_to_workload(Workload_Base* workload)
 {
     if (!workload->was_started) {
         workload->fiber_handle = fiber_pool_get_handle(compiler.fiber_pool, analysis_workload_entry, workload);
@@ -2355,7 +2418,7 @@ void workload_executer_wait_for_dependency_resolution()
     }
 }
 
-void analysis_workload_append_to_string(Workload_Base * workload, String * string)
+void analysis_workload_append_to_string(Workload_Base* workload, String* string)
 {
     switch (workload->type)
     {
@@ -2382,12 +2445,10 @@ void analysis_workload_append_to_string(Workload_Base * workload, String * strin
         break;
     }
     case Analysis_Workload_Type::DEFINITION: {
-        auto definition = downcast<Workload_Definition>(workload)->definition_node;
-        if (definition->is_comptime) {
-            string_append_formated(string, "Comptime \"%s\"", definition->name->characters);
-        }
-        else {
-            string_append_formated(string, "Global \"%s\"", definition->name->characters);
+        auto def = downcast<Workload_Definition>(workload);
+        string_append_formated(string, "Definition %s", def->symbol->id->characters);
+        if (def->is_comptime) {
+            string_append_formated(string, " comptime");
         }
         break;
     }
@@ -2458,7 +2519,7 @@ void analysis_workload_append_to_string(Workload_Base * workload, String * strin
     }
 }
 
-Module_Progress* workload_executer_add_module_discovery(AST::Module * module, bool is_root_module) {
+Module_Progress* workload_executer_add_module_discovery(AST::Module* module, bool is_root_module) {
     auto progress = module_progress_create(module, 0, semantic_analyser.root_symbol_table);
     if (is_root_module) {
         semantic_analyser.root_module = progress;
@@ -2469,7 +2530,7 @@ Module_Progress* workload_executer_add_module_discovery(AST::Module * module, bo
 
 
 // WORKLOAD EXECUTION AND OTHERS
-Workload_Import_Resolve* create_import_workload(AST::Import* import_node) 
+Workload_Import_Resolve* create_import_workload(AST::Import* import_node)
 {
     // Check for Syntax-Errors
     if (import_node->type != AST::Import_Type::FILE) {
@@ -2594,18 +2655,7 @@ void analysis_workload_entry(void* userdata)
         get_info(module_node, true)->symbol_table = analysis->symbol_table;
         RESTORE_ON_SCOPE_EXIT(workload->current_symbol_table, analysis->symbol_table);
 
-        // Add Parent-Dependency for Symbol-Ready (e.g. normal workloads can run and do symbol lookups)
-        if (analysis->parent_analysis != 0) {
-            analysis->last_import_workload = analysis->parent_analysis->last_import_workload;
-            if (analysis->last_import_workload != 0) {
-                analysis_workload_add_dependency_internal(
-                    upcast(analysis->progress->event_symbol_table_ready),
-                    upcast(analysis->last_import_workload),
-                    0
-                );
-            }
-        }
-
+        // Create import symbols and workloads
         analysis->last_import_workload = 0;
         for (int i = 0; i < module_node->import_nodes.size; i++) {
             auto import_workload = create_import_workload(module_node->import_nodes[i]);
@@ -2624,16 +2674,7 @@ void analysis_workload_entry(void* userdata)
 
         // Create workloads for definitions
         for (int i = 0; i < module_node->definitions.size; i++) {
-            auto workload = analyser_create_symbol_and_workload_for_definition(module_node->definitions[i]);
-            // If I added a new module I need to set myself as the parent
-            if (workload != 0 && workload->type == Analysis_Workload_Type::MODULE_ANALYSIS) {
-                auto new_progress = downcast<Workload_Module_Analysis>(workload);
-                new_progress->parent_analysis = analysis;
-            }
-            else {
-                // All other workloads need to wait until the symbol table is ready!
-                analysis_workload_add_dependency_internal(workload, upcast(analysis->progress->event_symbol_table_ready), 0);
-            }
+            analyser_create_symbol_and_workload_for_definition(module_node->definitions[i]);
         }
         break;
     }
@@ -2714,54 +2755,42 @@ void analysis_workload_entry(void* userdata)
     }
     case Analysis_Workload_Type::DEFINITION:
     {
-        auto def_workload = downcast<Workload_Definition>(workload);
-        auto definition = def_workload->definition_node;
-        assert(!(!definition->type.available && !definition->value.available), "Syntax should not allow no type and no definition!");
-
-        Symbol* symbol = def_workload->symbol;
+        auto definition = downcast<Workload_Definition>(workload);
+        auto symbol = definition->symbol;
 
         if (!definition->is_comptime) // Global variable definition
         {
+            Expression_Context context = expression_context_make_unknown();
             Type_Signature* type = 0;
-            if (definition->type.available) {
-                type = semantic_analyser_analyse_expression_type(definition->type.value);
+            if (definition->type_node != 0) {
+                type = semantic_analyser_analyse_expression_type(definition->type_node);
             }
-            if (definition->value.available)
-            {
-                auto value_type = semantic_analyser_analyse_expression_value(
-                    definition->value.value, type != 0 ? expression_context_make_specific_type(type) : expression_context_make_unknown()
-                );
-                if (type == 0) {
-                    type = value_type;
+            if (definition->value_node != 0) {
+                if (type != 0) {
+                    semantic_analyser_analyse_expression_value(definition->value_node, expression_context_make_specific_type(type));
+                }
+                else {
+                    type = semantic_analyser_analyse_expression_value(definition->value_node, expression_context_make_unknown());
                 }
             }
+
             auto global = modtree_program_add_global(type);
-            if (definition->value.available) {
+            if (definition->value_node != 0) {
                 global->has_initial_value = true;
-                global->init_expr = definition->value.value;
+                global->init_expr = definition->value_node;
                 global->definition_workload = downcast<Workload_Definition>(workload);
             }
-
             symbol->type = Symbol_Type::GLOBAL;
             symbol->options.global = global;
         }
         else // Comptime definition
         {
-            if (definition->type.available) {
-                semantic_analyser_analyse_expression_type(definition->type.value);
-                log_semantic_error("Comptime definitions must currently be inferred", definition->type.value);
-            }
-            if (!definition->value.available) {
-                log_semantic_error("Comptime definitions always require initial value", AST::upcast(definition));
-                return;
-            }
-
-            auto result = semantic_analyser_analyse_expression_any(definition->value.value, expression_context_make_unknown());
+            auto result = semantic_analyser_analyse_expression_any(definition->value_node, expression_context_make_unknown());
             switch (result->result_type)
             {
             case Expression_Result_Type::VALUE:
             {
-                Comptime_Result comptime = expression_calculate_comptime_value(definition->value.value);
+                Comptime_Result comptime = expression_calculate_comptime_value(definition->value_node);
                 switch (comptime.type)
                 {
                 case Comptime_Result_Type::AVAILABLE:
@@ -2771,7 +2800,7 @@ void analysis_workload_entry(void* userdata)
                     return;
                 }
                 case Comptime_Result_Type::NOT_COMPTIME: {
-                    log_semantic_error("Could not determine value at compile time", definition->value.value);
+                    log_semantic_error("Could not determine value at compile time", definition->value_node);
                     symbol->type = Symbol_Type::ERROR_SYMBOL;
                     return;
                 }
@@ -2782,7 +2811,7 @@ void analysis_workload_entry(void* userdata)
                     &compiler.constant_pool, comptime.data_type, array_create_static((byte*)comptime.data, comptime.data_type->size)
                 );
                 if (result.status != Constant_Status::SUCCESS) {
-                    log_semantic_error("Comptime value must be serializable", definition->value.value);
+                    log_semantic_error("Comptime value must be serializable", definition->value_node);
                     log_error_info_constant_status(result.status);
                     symbol->type = Symbol_Type::ERROR_SYMBOL;
                     break;
@@ -2800,7 +2829,7 @@ void analysis_workload_entry(void* userdata)
             case Expression_Result_Type::HARDCODED_FUNCTION:
             {
                 symbol->type = Symbol_Type::ERROR_SYMBOL;
-                log_semantic_error("Creating aliases for hardcoded functions currently not supported", AST::upcast(definition));
+                log_semantic_error("Creating aliases for hardcoded functions currently not supported", AST::upcast(definition->value_node));
                 break;
                 //symbol->type = Symbol_Type::HARDCODED_FUNCTION;
                 //symbol->options.hardcoded = result->options.hardcoded;
@@ -2811,12 +2840,12 @@ void analysis_workload_entry(void* userdata)
                 ModTree_Function* function = result->options.function;
                 assert(function->symbol != 0, "Shouldn't happen, we cannot reference a function if it doesn't have a symbol!");
                 symbol->type = Symbol_Type::ERROR_SYMBOL;
-                log_semantic_error("Creating symbol/function aliases currently not supported", AST::upcast(definition));
+                log_semantic_error("Creating symbol/function aliases currently not supported", AST::upcast(definition->value_node));
                 break;
             }
             case Expression_Result_Type::POLYMORPHIC_FUNCTION: {
                 symbol->type = Symbol_Type::ERROR_SYMBOL;
-                log_semantic_error("Creating aliases for polymorphic functions not supported!", AST::upcast(definition));
+                log_semantic_error("Creating aliases for polymorphic functions not supported!", AST::upcast(definition->value_node));
                 break;
             }
             case Expression_Result_Type::TYPE: {
@@ -2985,18 +3014,27 @@ void analysis_workload_entry(void* userdata)
         for (int i = 0; i < struct_node.members.size; i++)
         {
             auto member_node = struct_node.members[i];
-            if (member_node->value.available) {
-                log_semantic_error("Cannot add values to struct members (Default values not supported)", AST::upcast(member_node->value.value));
+            for (int j = 0; j < member_node->values.size; j++) {
+                log_semantic_error("Cannot add values to struct members (Default values not supported)", AST::upcast(member_node->values[j]));
             }
-            if (!member_node->type.available) {
-                log_semantic_error("Type must be specified for struct member", AST::upcast(member_node), Parser::Section::END_TOKEN);
+
+            // Do basic shit for now
+            if (member_node->symbols.size != 1) {
+                log_semantic_error("Multi definition currently not supported in Struct members", AST::upcast(member_node));
+                continue;
+            }
+            if (member_node->types.size != 1) {
+                log_semantic_error("Multi definition currently not supported in Struct members", AST::upcast(member_node));
                 continue;
             }
 
+            String* name = member_node->symbols[0]->name;
+            AST::Expression* type_expression = member_node->types[0];
+
             Struct_Member member;
-            member.id = member_node->name;
+            member.id = name;
             member.offset = 0;
-            member.type = semantic_analyser_analyse_expression_type(member_node->type.value);
+            member.type = semantic_analyser_analyse_expression_type(type_expression);
             assert(!(member.type->size == 0 && member.type->alignment == 0), "Must not happen with current Dependency-System");
             dynamic_array_push_back(&struct_signature->options.structure.members, member);
         }
@@ -3260,7 +3298,7 @@ case Analysis_Workload_Type::EXTERN_FUNCTION_DECLARATION:
 
 
 // EXPRESSIONS
-void semantic_analyser_register_function_call(ModTree_Function * call_to)
+void semantic_analyser_register_function_call(ModTree_Function* call_to)
 {
     auto& analyser = semantic_analyser;
     auto& type_system = compiler.type_system;
@@ -3296,7 +3334,7 @@ void semantic_analyser_register_function_call(ModTree_Function * call_to)
     }
 }
 
-Info_Cast_Type semantic_analyser_check_cast_type(Type_Signature * source_type, Type_Signature * destination_type, bool implicit_cast)
+Info_Cast_Type semantic_analyser_check_cast_type(Type_Signature* source_type, Type_Signature* destination_type, bool implicit_cast)
 {
     auto& analyser = semantic_analyser;
     auto& type_system = compiler.type_system;
@@ -3430,7 +3468,7 @@ Info_Cast_Type semantic_analyser_check_cast_type(Type_Signature * source_type, T
     return Info_Cast_Type::INVALID;
 }
 
-void expression_info_set_cast(Expression_Info * info, Info_Cast_Type cast_type, Type_Signature * result_type)
+void expression_info_set_cast(Expression_Info* info, Info_Cast_Type cast_type, Type_Signature* result_type)
 {
     info->context_ops.after_cast_type = result_type;
     info->context_ops.cast = cast_type;
@@ -3441,7 +3479,7 @@ void expression_info_set_cast(Expression_Info * info, Info_Cast_Type cast_type, 
     semantic_analyser.current_workload->current_expression = new_info; \
     SCOPE_EXIT(semantic_analyser.current_workload->current_expression = _backup_info);
 
-Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression * expr, Expression_Context context)
+Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* expr, Expression_Context context)
 {
     auto& analyser = semantic_analyser;
     auto type_system = &compiler.type_system;
@@ -3790,7 +3828,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
             }
 
             // Report errors for missing parameters
-            if (required_parameter_count != required_argument_count && !error_occured) 
+            if (required_parameter_count != required_argument_count && !error_occured)
             {
                 log_semantic_error("Not all parameters were filled out!", expr, Parser::Section::ENCLOSURE);
                 log_error_info_function_type(function_signature);
@@ -4951,7 +4989,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
 #undef EXIT_FUNCTION
 }
 
-void expression_context_apply(AST::Expression * expr, Expression_Context context)
+void expression_context_apply(AST::Expression* expr, Expression_Context context)
 {
     auto& type_system = compiler.type_system;
     auto& types = type_system.predefined_types;
@@ -5048,7 +5086,7 @@ void expression_context_apply(AST::Expression * expr, Expression_Context context
     }
 }
 
-Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression * expression, Expression_Context context)
+Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression* expression, Expression_Context context)
 {
     auto& type_system = compiler.type_system;
     auto result = semantic_analyser_analyse_expression_internal(expression, context);
@@ -5058,7 +5096,7 @@ Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression * expr
     return result;
 }
 
-Type_Signature* semantic_analyser_try_convert_value_to_type(AST::Expression * expression, bool log_error)
+Type_Signature* semantic_analyser_try_convert_value_to_type(AST::Expression* expression, bool log_error)
 {
     auto& type_system = compiler.type_system;
     auto& types = type_system.predefined_types;
@@ -5148,7 +5186,7 @@ Type_Signature* semantic_analyser_try_convert_value_to_type(AST::Expression * ex
     return 0;
 }
 
-Type_Signature* semantic_analyser_analyse_expression_type(AST::Expression * expression)
+Type_Signature* semantic_analyser_analyse_expression_type(AST::Expression* expression)
 {
     auto& type_system = compiler.type_system;
     auto& types = type_system.predefined_types;
@@ -5157,7 +5195,7 @@ Type_Signature* semantic_analyser_analyse_expression_type(AST::Expression * expr
     return semantic_analyser_try_convert_value_to_type(expression, true);
 }
 
-Type_Signature* semantic_analyser_analyse_expression_value(AST::Expression * expression, Expression_Context context)
+Type_Signature* semantic_analyser_analyse_expression_value(AST::Expression* expression, Expression_Context context)
 {
     auto& type_system = compiler.type_system;
     auto& types = type_system.predefined_types;
@@ -5201,7 +5239,7 @@ Type_Signature* semantic_analyser_analyse_expression_value(AST::Expression * exp
 
 
 // STATEMENTS
-bool code_block_is_while(AST::Code_Block * block)
+bool code_block_is_while(AST::Code_Block* block)
 {
     if (block != 0 && block->base.parent->type == AST::Node_Type::STATEMENT) {
         auto parent = (AST::Statement*) block->base.parent;
@@ -5210,7 +5248,7 @@ bool code_block_is_while(AST::Code_Block * block)
     return false;
 }
 
-bool code_block_is_defer(AST::Code_Block * block)
+bool code_block_is_defer(AST::Code_Block* block)
 {
     if (block != 0 && block->base.parent->type == AST::Node_Type::STATEMENT) {
         auto parent = (AST::Statement*) block->base.parent;
@@ -5234,7 +5272,7 @@ bool inside_defer()
     return false;
 }
 
-Control_Flow semantic_analyser_analyse_statement(AST::Statement * statement)
+Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 {
     auto& type_system = compiler.type_system;
     auto& types = type_system.predefined_types;
@@ -5528,11 +5566,57 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement * statement)
     case AST::Statement_Type::ASSIGNMENT:
     {
         auto& assignment_node = statement->options.assignment;
-        auto left_type = semantic_analyser_analyse_expression_value(assignment_node.left_side, expression_context_make_unknown());
-        auto right_type = semantic_analyser_analyse_expression_value(assignment_node.right_side, expression_context_make_specific_type(left_type));
-        if (!expression_has_memory_address(assignment_node.left_side)) {
-            log_semantic_error("Cannot assign to a temporary value", assignment_node.left_side);
+
+        if (assignment_node.right_side.size == 1) // Broadcast
+        {
+            // Analyse left side
+            Type_Signature* left_side_type = 0;
+            for (int i = 0; i < assignment_node.left_side.size; i++) 
+            {
+                auto left = assignment_node.left_side[i];
+                auto left_type = semantic_analyser_analyse_expression_value(left, expression_context_make_unknown());
+                if (!expression_has_memory_address(left)) {
+                    log_semantic_error("Cannot assign to a temporary value", upcast(left));
+                }
+                if (left_type->type != Signature_Type::UNKNOWN_TYPE) {
+                    if (left_side_type == 0) {
+                        left_side_type = left_type;
+                    }
+                    else if (assignment_node.right_side.size == 1 && left_type != left_side_type) {
+                        log_semantic_error("On value broadcast all values of left side must have the same type", upcast(left));
+                    }
+                }
+            }
+
+            // Analyse right side (broadcast value)
+            if (left_side_type != 0) {
+                semantic_analyser_analyse_expression_value(assignment_node.right_side[0], expression_context_make_specific_type(left_side_type));
+            }
+            else {
+                semantic_analyser_analyse_expression_value(assignment_node.right_side[0], expression_context_make_unknown());
+            }
         }
+        else 
+        {
+            for (int i = 0; i < assignment_node.left_side.size; i++) {
+                auto left_node = assignment_node.left_side[i];
+                auto left_type = semantic_analyser_analyse_expression_value(left_node, expression_context_make_unknown());
+                if (!expression_has_memory_address(left_node)) {
+                    log_semantic_error("Cannot assign to a temporary value", upcast(left_node));
+                }
+
+                if (i < assignment_node.right_side.size) {
+                    semantic_analyser_analyse_expression_value(assignment_node.right_side[i], expression_context_make_specific_type(left_type));
+                }
+            }
+
+            // Analyse missed right values
+            for (int i = assignment_node.left_side.size; i < assignment_node.right_side.size; i++) {
+                semantic_analyser_analyse_expression_value(assignment_node.right_side[i], expression_context_make_unknown());
+                log_semantic_error("Not enough values on left side", upcast(assignment_node.right_side[i]));
+            }
+        }
+
         EXIT(Control_Flow::SEQUENTIAL);
     }
     case AST::Statement_Type::IMPORT: {
@@ -5542,31 +5626,91 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement * statement)
     case AST::Statement_Type::DEFINITION:
     {
         auto definition = statement->options.definition;
+
+        // Check if this was already handled at block start
         if (definition->is_comptime) {
-            // NOTE: This is already handled at block start
             EXIT(Control_Flow::SEQUENTIAL);
         }
-        assert(!(!definition->value.available && !definition->type.available), "");
 
-        // Otherwise this is a varialbe, and we need to check type and initialize it
-        Type_Signature* type = 0;
-        if (definition->type.available) {
-            type = semantic_analyser_analyse_expression_type(definition->type.value);
+        // Handle type broadcast
+        bool is_type_broadcast = false;
+        Type_Signature* broadcast_type = 0;
+        if (definition->types.size == 1) {
+            is_type_broadcast = true;
+            broadcast_type = semantic_analyser_analyse_expression_type(definition->types[0]);
         }
-        if (definition->value.available)
-        {
-            auto value_type = semantic_analyser_analyse_expression_value(
-                definition->value.value, type != 0 ? expression_context_make_specific_type(type) : expression_context_make_unknown()
-            );
-            if (type == 0) {
-                type = value_type;
+
+        // Handle value broadcast
+        bool is_value_broadcast = false;
+        if (definition->values.size == 1) {
+            is_value_broadcast = true;
+            if (is_type_broadcast != 0) {
+                semantic_analyser_analyse_expression_value(definition->values[0], expression_context_make_specific_type(broadcast_type));
+            }
+            else {
+                broadcast_type = semantic_analyser_analyse_expression_value(definition->values[0], expression_context_make_unknown());
             }
         }
+        
+        // Handle errors with unused expressions
+        for (int i = definition->symbols.size; i < definition->types.size; i++) {
+            semantic_analyser_analyse_expression_type(definition->types[i]);
+            log_semantic_error("Too much types, would require more symbols", upcast(definition->types[i]));
+        }
+        for (int i = definition->symbols.size; i < definition->values.size; i++) {
+            broadcast_type = semantic_analyser_analyse_expression_value(definition->values[i], expression_context_make_unknown());
+            log_semantic_error("Too much values, would require more symbols", upcast(definition->values[i]));
+        }
 
-        Symbol* symbol = get_info(definition)->symbol;
-        assert(symbol->type == Symbol_Type::VARIABLE_UNDEFINED, "Variable should be undefined here");
-        symbol->type = Symbol_Type::VARIABLE;
-        symbol->options.variable_type = type;
+        // Analyse and set all symbol values
+        for (int i = 0; i < definition->symbols.size; i++) 
+        {
+            bool error_occured = false;
+            Symbol* symbol = get_info(definition->symbols[i])->symbol;
+            Type_Signature* variable_type = broadcast_type;
+            
+            // Analyse type
+            if (definition->types.size == 0) {}
+            else if (is_type_broadcast) {
+                variable_type = broadcast_type;
+            }
+            else if (i >= definition->types.size) {
+                log_semantic_error("No type is specified for this variable", upcast(definition->symbols[i]));
+                error_occured = true;
+            }
+            else {
+                variable_type = semantic_analyser_analyse_expression_type(definition->types[i]);
+            }
+
+            // Analyse value
+            if (definition->values.size == 0) {}
+            else if (is_value_broadcast) {
+                if (variable_type == 0) {
+                    variable_type = broadcast_type;
+                }
+            }
+            else if (i >= definition->values.size) {
+                log_semantic_error("No value is specified for this variable", upcast(definition->symbols[i]));
+                error_occured = true;
+            }
+            else {
+                if (variable_type != 0) {
+                    semantic_analyser_analyse_expression_value(definition->values[i], expression_context_make_specific_type(variable_type));
+                }
+                else {
+                    variable_type = semantic_analyser_analyse_expression_value(definition->values[i], expression_context_make_unknown());
+                }
+            }
+
+            // Set Symbol
+            if (error_occured) {
+                symbol->type = Symbol_Type::ERROR_SYMBOL;
+            }
+            else {
+                symbol->type = Symbol_Type::VARIABLE;
+                symbol->options.variable_type = variable_type;
+            }
+        }
         EXIT(Control_Flow::SEQUENTIAL);
     }
     default: {
@@ -5579,7 +5723,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement * statement)
 #undef EXIT
 }
 
-Control_Flow semantic_analyser_analyse_block(AST::Code_Block * block)
+Control_Flow semantic_analyser_analyse_block(AST::Code_Block* block)
 {
     auto block_info = get_info(block, true);
     block_info->control_flow_locked = false;
@@ -5835,11 +5979,11 @@ void semantic_analyser_reset()
     );
 }
 
-u64 ast_info_key_hash(AST_Info_Key * key) {
+u64 ast_info_key_hash(AST_Info_Key* key) {
     return hash_combine(hash_pointer(key->base), hash_pointer(key->pass));
 }
 
-bool ast_info_equals(AST_Info_Key * a, AST_Info_Key * b) {
+bool ast_info_equals(AST_Info_Key* a, AST_Info_Key* b) {
     return a->base == b->base && a->pass == b->pass;
 }
 
@@ -5917,7 +6061,7 @@ void semantic_analyser_destroy()
 
 
 // ERRORS
-void semantic_error_append_to_string(Semantic_Error e, String * string)
+void semantic_error_append_to_string(Semantic_Error e, String* string)
 {
     string_append_formated(string, e.msg);
 

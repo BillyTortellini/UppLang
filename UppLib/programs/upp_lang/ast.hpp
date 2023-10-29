@@ -87,6 +87,7 @@ namespace AST
     {
         EXPRESSION,
         STATEMENT,
+        DEFINITION_SYMBOL, // Jus an id
         DEFINITION, // ::, :=, : ... =, ...: ...
         CODE_BLOCK,
         MODULE,
@@ -156,13 +157,19 @@ namespace AST
         Optional<Expression*> value;
     };
 
+    struct Definition_Symbol
+    {
+        Node base;
+        String* name;
+    };
+
     struct Definition
     {
         Node base;
         bool is_comptime; // :: instead of :=
-        String* name;
-        Optional<Expression*> type;
-        Optional<Expression*> value;
+        Dynamic_Array<Definition_Symbol*> symbols;
+        Dynamic_Array<Expression*> types;
+        Dynamic_Array<Expression*> values;
     };
 
     struct Argument
@@ -333,8 +340,8 @@ namespace AST
             Code_Block* block;
             Definition* definition;
             struct {
-                Expression* left_side;
-                Expression* right_side;
+                Dynamic_Array<Expression*> left_side;
+                Dynamic_Array<Expression*> right_side;
             } assignment;
             Code_Block* defer_block;
             struct {
@@ -371,6 +378,7 @@ namespace AST
     namespace Helpers
     {
         bool type_correct(Definition* base);
+        bool type_correct(Definition_Symbol* base);
         bool type_correct(Switch_Case* base);
         bool type_correct(Statement* base);
         bool type_correct(Argument* base);

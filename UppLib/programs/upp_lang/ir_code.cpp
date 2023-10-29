@@ -695,7 +695,7 @@ Symbol* get_info(AST::Path_Lookup* node) {
     return pass_get_node_info(ir_generator.current_pass, node, Info_Query::READ_NOT_NULL)->symbol;
 }
 
-Symbol* get_info(AST::Definition* node) {
+Symbol* get_info(AST::Definition_Symbol* node) {
     return pass_get_node_info(ir_generator.current_pass, node, Info_Query::READ_NOT_NULL)->symbol;
 }
 
@@ -1113,7 +1113,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
             return ir_data_access_create_global(symbol->options.global);
         }
         case Symbol_Type::VARIABLE: {
-            return *hashtable_find_element(&ir_generator.variable_mapping, AST::downcast<AST::Definition>(symbol->definition_node));
+            return *hashtable_find_element(&ir_generator.variable_mapping, AST::downcast<AST::Definition_Symbol>(symbol->definition_node));
         }
         case Symbol_Type::PARAMETER: {
             IR_Data_Access access;
@@ -1402,24 +1402,42 @@ void ir_generator_generate_block(IR_Code_Block* ir_block, AST::Code_Block* ast_b
                 // Comptime definitions should be already handled
                 continue;
             }
-            auto symbol = get_info(definition);
-            assert(symbol->type == Symbol_Type::VARIABLE, "");
-            auto var_type = symbol->options.variable_type;
-            dynamic_array_push_back(&ir_block->registers, var_type);
 
-            IR_Data_Access access;
-            access.type = IR_Data_Access_Type::REGISTER;
-            access.index = ir_block->registers.size - 1;
-            access.is_memory_access = false;
-            access.option.definition_block = ir_block;
-            hashtable_insert_element(&ir_generator.variable_mapping, definition, access);
+            IR_Data_Access broadcast_value;
+            if (definition->values.size == 1) {
+                broadcast_value = ir_generator_generate_expression(ir_block, definition->values[0]);
+            }
 
-            if (definition->value.available) {
-                IR_Instruction move;
-                move.type = IR_Instruction_Type::MOVE;
-                move.options.move.destination = access;
-                move.options.move.source = ir_generator_generate_expression(ir_block, definition->value.value);
-                dynamic_array_push_back(&ir_block->instructions, move);
+            // Define all variables
+            for (int i = 0; i < definition->symbols.size; i++) 
+            {
+                auto symbol = get_info(definition->symbols[i]);
+                assert(symbol->type == Symbol_Type::VARIABLE, "");
+                auto var_type = symbol->options.variable_type;
+                dynamic_array_push_back(&ir_block->registers, var_type);
+
+                IR_Data_Access access;
+                access.type = IR_Data_Access_Type::REGISTER;
+                access.index = ir_block->registers.size - 1;
+                access.is_memory_access = false;
+                access.option.definition_block = ir_block;
+                hashtable_insert_element(&ir_generator.variable_mapping, definition->symbols[i], access);
+                
+                if (definition->values.size == 1) {
+                    IR_Instruction move;
+                    move.type = IR_Instruction_Type::MOVE;
+                    move.options.move.destination = access;
+                    move.options.move.source = broadcast_value;
+                    dynamic_array_push_back(&ir_block->instructions, move);
+                }
+                else if (definition->values.size != 0) {
+                    assert(i < definition->values.size, "Must be guaranteed by semantic analyser!");
+                    IR_Instruction move;
+                    move.type = IR_Instruction_Type::MOVE;
+                    move.options.move.destination = access;
+                    move.options.move.source = ir_generator_generate_expression(ir_block, definition->values[i]);
+                    dynamic_array_push_back(&ir_block->instructions, move);
+                }
             }
 
             break;
@@ -1604,15 +1622,31 @@ void ir_generator_generate_block(IR_Code_Block* ir_block, AST::Code_Block* ast_b
             ir_generator_generate_expression(ir_block, statement->options.expression);
             break;
         }
-        case AST::Statement_Type::ASSIGNMENT: {
-            IR_Instruction instr;
-            instr.type = IR_Instruction_Type::MOVE;
-            instr.options.move.source = ir_generator_generate_expression(ir_block, statement->options.assignment.right_side);
-            instr.options.move.destination = ir_generator_generate_expression(ir_block, statement->options.assignment.left_side);
-            if ((int)instr.options.move.source.type < 0 || (int)instr.options.move.source.type > 6) {
-                panic("HEY");
+        case AST::Statement_Type::ASSIGNMENT: 
+        {
+            auto& as = statement->options.assignment;
+            IR_Data_Access broadcast_value;
+            if (as.right_side.size == 1) {
+                broadcast_value = ir_generator_generate_expression(ir_block, as.right_side[0]);
             }
-            dynamic_array_push_back(&ir_block->instructions, instr);
+
+            for (int i = 0; i < as.left_side.size; i++) 
+            {
+                IR_Instruction instr;
+                instr.type = IR_Instruction_Type::MOVE;
+                instr.options.move.destination = ir_generator_generate_expression(ir_block, as.left_side[i]);
+                if (as.right_side.size == 1) {
+                    instr.options.move.source = broadcast_value;
+                }
+                else {
+                    instr.options.move.source = ir_generator_generate_expression(ir_block, as.right_side[i]);
+                }
+
+                if ((int)instr.options.move.source.type < 0 || (int)instr.options.move.source.type > 6) {
+                    panic("HEY");
+                }
+                dynamic_array_push_back(&ir_block->instructions, instr);
+            }
             break;
         }
         case AST::Statement_Type::DELETE_STATEMENT:
@@ -1834,7 +1868,7 @@ IR_Generator* ir_generator_initialize()
     ir_generator.next_label_index = 0;
 
     ir_generator.function_mapping = hashtable_create_pointer_empty<ModTree_Function*, IR_Function*>(8);
-    ir_generator.variable_mapping = hashtable_create_pointer_empty<AST::Definition*, IR_Data_Access>(8);
+    ir_generator.variable_mapping = hashtable_create_pointer_empty<AST::Definition_Symbol*, IR_Data_Access>(8);
     ir_generator.labels_break = hashtable_create_pointer_empty<AST::Code_Block*, int>(8);
     ir_generator.labels_continue = hashtable_create_pointer_empty<AST::Code_Block*, int>(8);
     ir_generator.block_defer_depths = hashtable_create_pointer_empty<AST::Code_Block*, int>(8);
