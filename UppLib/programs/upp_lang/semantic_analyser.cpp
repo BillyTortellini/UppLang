@@ -768,7 +768,7 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
     for (int i = 0; i < definition->symbols.size; i++) {
         auto info = get_info(definition->symbols[i], true);
         info->symbol = symbol_table_define_symbol(current_table, definition->symbols[i]->name, 
-            is_local_variable ? Symbol_Type::VARIABLE_UNDEFINED : Symbol_Type::ERROR_SYMBOL, AST::upcast(definition->symbols[i]), false);
+            is_local_variable ? Symbol_Type::VARIABLE_UNDEFINED : Symbol_Type::ERROR_SYMBOL, AST::upcast(definition->symbols[i]), is_local_variable);
     }
 
     // Only define symbols for local variables, analysis will happen when the statement is reached
@@ -4503,6 +4503,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                     else {
                         if (i < parameters.size) {
                             context = expression_context_make_specific_type(parameters[i].type);
+                            info->member = parameters[i];
+                            info->argument_index = i;
                         }
                         else {
                             // Error will be report later because argument count won't match
@@ -5566,11 +5568,13 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
     case AST::Statement_Type::ASSIGNMENT:
     {
         auto& assignment_node = statement->options.assignment;
+        info->specifics.is_struct_split = false;
 
-        if (assignment_node.right_side.size == 1) // Broadcast
+        if (assignment_node.right_side.size == 1) // Could be Broadcast
         {
             // Analyse left side
             Type_Signature* left_side_type = 0;
+            bool left_side_all_same_type = true;
             for (int i = 0; i < assignment_node.left_side.size; i++) 
             {
                 auto left = assignment_node.left_side[i];
@@ -5578,22 +5582,50 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
                 if (!expression_has_memory_address(left)) {
                     log_semantic_error("Cannot assign to a temporary value", upcast(left));
                 }
-                if (left_type->type != Signature_Type::UNKNOWN_TYPE) {
-                    if (left_side_type == 0) {
-                        left_side_type = left_type;
-                    }
-                    else if (assignment_node.right_side.size == 1 && left_type != left_side_type) {
-                        log_semantic_error("On value broadcast all values of left side must have the same type", upcast(left));
-                    }
+                if (left_side_type == 0) {
+                    left_side_type = left_type;
+                }
+                else if (left_side_type != left_type) {
+                    left_side_all_same_type = false;
                 }
             }
 
-            // Analyse right side (broadcast value)
-            if (left_side_type != 0) {
-                semantic_analyser_analyse_expression_value(assignment_node.right_side[0], expression_context_make_specific_type(left_side_type));
+            // Analyse right side
+            if (assignment_node.left_side.size > 1) 
+            { 
+                // Broadcast or Struct-Split
+                Type_Signature* right_type = semantic_analyser_analyse_expression_value(assignment_node.right_side[0], expression_context_make_unknown());
+                if (right_type->type == Signature_Type::STRUCT && right_type->options.structure.struct_type == AST::Structure_Type::STRUCT) 
+                {
+                    info->specifics.is_struct_split = true;
+                    // Found struct split, check if all members have correct type
+                    auto& members = right_type->options.structure.members;
+                    if (members.size < assignment_node.left_side.size) {
+                        log_semantic_error("Struct-Split not working, not enough members to fill all left side values", upcast(assignment_node.right_side[0]));
+                    }
+                    else if (members.size > assignment_node.left_side.size) {
+                        log_semantic_error("More struct members then left side values!", upcast(assignment_node.right_side[0]));
+                    }
+
+                    // Check all types
+                    for (int i = 0; i < assignment_node.left_side.size && i < members.size; i++) {
+                        auto left_info = get_info(assignment_node.left_side[i]);
+                        if (left_info->result_type != Expression_Result_Type::VALUE) {
+                            continue; // This will have thrown an error earlier
+                        }
+                        auto left_type = left_info->context_ops.after_cast_type;
+                        auto member_type = members[i].type;
+                        if (member_type != left_type) {
+                            log_semantic_error("Struct split not working, types don't match", upcast(assignment_node.left_side[i]));
+                            log_error_info_expected_type(left_type);
+                            log_error_info_given_type(member_type);
+                        }
+                    }
+                }
             }
             else {
-                semantic_analyser_analyse_expression_value(assignment_node.right_side[0], expression_context_make_unknown());
+                // Normal value assignment
+                semantic_analyser_analyse_expression_value(assignment_node.right_side[0], expression_context_make_specific_type(left_side_type));
             }
         }
         else 
@@ -5626,91 +5658,141 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
     case AST::Statement_Type::DEFINITION:
     {
         auto definition = statement->options.definition;
+        auto& types = definition->types;
+        auto& symbol_nodes = definition->symbols;
+        auto& values = definition->values;
+        info->specifics.is_struct_split = false;
 
         // Check if this was already handled at block start
         if (definition->is_comptime) {
             EXIT(Control_Flow::SEQUENTIAL);
         }
 
-        // Handle type broadcast
-        bool is_type_broadcast = false;
-        Type_Signature* broadcast_type = 0;
-        if (definition->types.size == 1) {
-            is_type_broadcast = true;
-            broadcast_type = semantic_analyser_analyse_expression_type(definition->types[0]);
+        // Log errors if there are more symbols then values/types
+        for (int i = 0; i < symbol_nodes.size; i++) {
+            bool error = false;
+            if (i >= types.size && types.size > 2) {
+                log_semantic_error("No type exists for symbol", upcast(symbol_nodes[i]));
+                error = true;
+            }
+            if (i >= values.size && values.size > 2) {
+                log_semantic_error("No value exists for symbol", upcast(symbol_nodes[i]));
+                error = true;
+            }
+            if (error) {
+                auto symbol = get_info(symbol_nodes[i])->symbol;
+                symbol->type = Symbol_Type::VARIABLE;
+                symbol->options.variable_type = type_system.predefined_types.unknown_type;
+            }
         }
 
-        // Handle value broadcast
-        bool is_value_broadcast = false;
-        if (definition->values.size == 1) {
-            is_value_broadcast = true;
-            if (is_type_broadcast != 0) {
-                semantic_analyser_analyse_expression_value(definition->values[0], expression_context_make_specific_type(broadcast_type));
+        // Analyse all types
+        bool types_exist = types.size != 0;
+        for (int i = 0; i < types.size; i++) 
+        {
+            auto type_expr = types[i];
+            auto type = semantic_analyser_analyse_expression_type(type_expr);
+            if (definition->types.size == 1) { // Broadcast type to all symbols
+                for (int j = 0; j < symbol_nodes.size; j++) {
+                    auto symbol = get_info(symbol_nodes[j])->symbol;
+                    symbol->type = Symbol_Type::VARIABLE;
+                    symbol->options.variable_type = type;
+                }
+            }
+            else if (i < symbol_nodes.size) { // One-to-One type to symbol 
+                auto symbol = get_info(symbol_nodes[i])->symbol;
+                symbol->type = Symbol_Type::VARIABLE;
+                symbol->options.variable_type = type;
             }
             else {
-                broadcast_type = semantic_analyser_analyse_expression_value(definition->values[0], expression_context_make_unknown());
+                log_semantic_error("No symbol/variable defined for this type (To many types!)", upcast(type_expr));
+            }
+        }
+
+        // Analyse values
+        for (int i = 0; i < values.size; i++)
+        {
+            auto& value_expr = values[i];
+            if (values.size == 1 && symbol_nodes.size > 1) 
+            { 
+                // Broadcast/Struct-split
+                auto value_type = semantic_analyser_analyse_expression_value(definition->values[0], expression_context_make_unknown());
+                bool is_split = value_type->type == Signature_Type::STRUCT && value_type->options.structure.struct_type == AST::Structure_Type::STRUCT;
+                info->specifics.is_struct_split = is_split;
+
+                // On split, report error for excess/missing symbols
+                if (is_split) {
+                    for (int j = value_type->options.structure.members.size; j < symbol_nodes.size; j++) {
+                        log_semantic_error("Struct does not have enough values to fill this variable", upcast(symbol_nodes[j]));
+                    }
+                    if (symbol_nodes.size < value_type->options.structure.members.size) {
+                        log_semantic_error("More symbols are required for struct broadcast, all members need to have a symbol", upcast(value_expr));
+                    }
+                }
+
+                // Check if all defined types match
+                for (int j = 0; j < symbol_nodes.size; j++) 
+                {
+                    auto symbol = get_info(symbol_nodes[j])->symbol;
+                    assert(symbol->type == Symbol_Type::VARIABLE || symbol->type == Symbol_Type::VARIABLE_UNDEFINED, "");
+
+                    // Get expected type
+                    Type_Signature* given_type;
+                    if (is_split) {
+                        if (j < value_type->options.structure.members.size) {
+                            given_type = value_type->options.structure.members[j].type;
+                        }
+                        else {
+                            log_semantic_error("Too many symbols/struct does not have this many members", value_expr);
+                            symbol->type = Symbol_Type::VARIABLE;
+                            symbol->options.variable_type = type_system.predefined_types.unknown_type;
+                            continue;
+                        }
+                    }
+                    else {
+                        given_type = value_type;
+                    }
+
+                    // Check if definition type and expected type matches
+                    if (symbol->type == Symbol_Type::VARIABLE_UNDEFINED || (symbol->type == Symbol_Type::VARIABLE && symbol->options.variable_type->type == Signature_Type::UNKNOWN_TYPE)) {
+                        symbol->type = Symbol_Type::VARIABLE;
+                        symbol->options.variable_type = given_type;
+                    }
+                    else if (symbol->options.variable_type != given_type){
+                        log_semantic_error("Value type does not match defined type!", value_expr);
+                        log_error_info_given_type(given_type);
+                        log_error_info_expected_type(symbol->options.variable_type);
+                    }
+                }
+            }
+            else 
+            {
+                // Assign each value to the given symbol
+                Expression_Context context = expression_context_make_unknown();
+                if (i < symbol_nodes.size) {
+                    auto symbol = get_info(symbol_nodes[i])->symbol;
+                    if (symbol->type == Symbol_Type::VARIABLE && symbol->options.variable_type->type != Signature_Type::UNKNOWN_TYPE) {
+                        context = expression_context_make_specific_type(symbol->options.variable_type);
+                    }
+                }
+                else {
+                    log_semantic_error("Too many expressions. No variable symbol is given for this expression", value_expr);
+                }
+
+                // Analyse value
+                auto value_type = semantic_analyser_analyse_expression_value(value_expr, context);
+
+                // Set variable type if it wasn't already set
+                if (i < symbol_nodes.size) {
+                    auto symbol = get_info(symbol_nodes[i])->symbol;
+                    if (symbol->type == Symbol_Type::VARIABLE_UNDEFINED) {
+                        symbol->type = Symbol_Type::VARIABLE;
+                        symbol->options.variable_type = value_type;
+                    }
+                }
             }
         }
         
-        // Handle errors with unused expressions
-        for (int i = definition->symbols.size; i < definition->types.size; i++) {
-            semantic_analyser_analyse_expression_type(definition->types[i]);
-            log_semantic_error("Too much types, would require more symbols", upcast(definition->types[i]));
-        }
-        for (int i = definition->symbols.size; i < definition->values.size; i++) {
-            broadcast_type = semantic_analyser_analyse_expression_value(definition->values[i], expression_context_make_unknown());
-            log_semantic_error("Too much values, would require more symbols", upcast(definition->values[i]));
-        }
-
-        // Analyse and set all symbol values
-        for (int i = 0; i < definition->symbols.size; i++) 
-        {
-            bool error_occured = false;
-            Symbol* symbol = get_info(definition->symbols[i])->symbol;
-            Type_Signature* variable_type = broadcast_type;
-            
-            // Analyse type
-            if (definition->types.size == 0) {}
-            else if (is_type_broadcast) {
-                variable_type = broadcast_type;
-            }
-            else if (i >= definition->types.size) {
-                log_semantic_error("No type is specified for this variable", upcast(definition->symbols[i]));
-                error_occured = true;
-            }
-            else {
-                variable_type = semantic_analyser_analyse_expression_type(definition->types[i]);
-            }
-
-            // Analyse value
-            if (definition->values.size == 0) {}
-            else if (is_value_broadcast) {
-                if (variable_type == 0) {
-                    variable_type = broadcast_type;
-                }
-            }
-            else if (i >= definition->values.size) {
-                log_semantic_error("No value is specified for this variable", upcast(definition->symbols[i]));
-                error_occured = true;
-            }
-            else {
-                if (variable_type != 0) {
-                    semantic_analyser_analyse_expression_value(definition->values[i], expression_context_make_specific_type(variable_type));
-                }
-                else {
-                    variable_type = semantic_analyser_analyse_expression_value(definition->values[i], expression_context_make_unknown());
-                }
-            }
-
-            // Set Symbol
-            if (error_occured) {
-                symbol->type = Symbol_Type::ERROR_SYMBOL;
-            }
-            else {
-                symbol->type = Symbol_Type::VARIABLE;
-                symbol->options.variable_type = variable_type;
-            }
-        }
         EXIT(Control_Flow::SEQUENTIAL);
     }
     default: {

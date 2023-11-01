@@ -1398,14 +1398,17 @@ void ir_generator_generate_block(IR_Code_Block* ir_block, AST::Code_Block* ast_b
         case AST::Statement_Type::DEFINITION:
         {
             auto definition = statement->options.definition;
+            bool is_split = get_info(statement)->specifics.is_struct_split;
             if (definition->is_comptime) {
                 // Comptime definitions should be already handled
                 continue;
             }
 
             IR_Data_Access broadcast_value;
+            Type_Signature* broadcast_type;
             if (definition->values.size == 1) {
                 broadcast_value = ir_generator_generate_expression(ir_block, definition->values[0]);
+                broadcast_type = ir_data_access_get_type(&broadcast_value);
             }
 
             // Define all variables
@@ -1428,6 +1431,10 @@ void ir_generator_generate_block(IR_Code_Block* ir_block, AST::Code_Block* ast_b
                     move.type = IR_Instruction_Type::MOVE;
                     move.options.move.destination = access;
                     move.options.move.source = broadcast_value;
+                    if (is_split) {
+                        assert(broadcast_type->type == Signature_Type::STRUCT, "");
+                        move.options.move.source = ir_data_access_create_member(ir_block, broadcast_value, broadcast_type->options.structure.members[i]);
+                    }
                     dynamic_array_push_back(&ir_block->instructions, move);
                 }
                 else if (definition->values.size != 0) {
@@ -1625,9 +1632,13 @@ void ir_generator_generate_block(IR_Code_Block* ir_block, AST::Code_Block* ast_b
         case AST::Statement_Type::ASSIGNMENT: 
         {
             auto& as = statement->options.assignment;
+            bool is_struct_split = get_info(statement)->specifics.is_struct_split;
+
             IR_Data_Access broadcast_value;
+            Type_Signature* broadcast_type = 0;
             if (as.right_side.size == 1) {
                 broadcast_value = ir_generator_generate_expression(ir_block, as.right_side[0]);
+                broadcast_type = ir_data_access_get_type(&broadcast_value);
             }
 
             for (int i = 0; i < as.left_side.size; i++) 
@@ -1636,7 +1647,13 @@ void ir_generator_generate_block(IR_Code_Block* ir_block, AST::Code_Block* ast_b
                 instr.type = IR_Instruction_Type::MOVE;
                 instr.options.move.destination = ir_generator_generate_expression(ir_block, as.left_side[i]);
                 if (as.right_side.size == 1) {
-                    instr.options.move.source = broadcast_value;
+                    if (is_struct_split) {
+                        assert(broadcast_type->type == Signature_Type::STRUCT, "");
+                        instr.options.move.source = ir_data_access_create_member(ir_block, broadcast_value, broadcast_type->options.structure.members[i]);
+                    }
+                    else {
+                        instr.options.move.source = broadcast_value;
+                    }
                 }
                 else {
                     instr.options.move.source = ir_generator_generate_expression(ir_block, as.right_side[i]);

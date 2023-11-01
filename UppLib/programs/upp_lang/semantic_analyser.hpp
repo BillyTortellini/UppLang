@@ -453,6 +453,7 @@ struct Statement_Info
     Control_Flow flow;
     struct {
         AST::Code_Block* block; // Continue/break
+        bool is_struct_split; // Definition or assignment
     } specifics;
 };
 

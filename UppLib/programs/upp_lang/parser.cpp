@@ -416,7 +416,10 @@ namespace Parser
                     advance_token();
                     continue;
                 }
-                // Check if we reached
+                // Check if we reached end of line/block
+                if (parser.state.pos.line_index.line_index >= index_value(parser.state.pos.line_index.block_index)->lines.size) {
+                    return;
+                }
                 if (token_index_is_end_of_line(parser.state.pos)) {
                     return;
                 }
