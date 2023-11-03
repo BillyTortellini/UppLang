@@ -37,11 +37,18 @@ Control_Flow semantic_analyser_analyse_block(AST::Code_Block* code_block);
 
 bool workload_executer_switch_to_workload(Workload_Base* workload);
 void analysis_workload_entry(void* userdata);
-void analysis_workload_add_struct_dependency(Struct_Progress* my_workload, Struct_Progress* other_progress, Dependency_Type type, AST::Symbol_Lookup* lookup);
 void analysis_workload_append_to_string(Workload_Base* workload, String* string);
-void analysis_workload_add_dependency_internal(Workload_Base* workload, Workload_Base* dependency, AST::Symbol_Lookup* lookup);
 void workload_executer_wait_for_dependency_resolution();
-
+Dependency_Failure_Info dependency_failure_info_make_none();
+void analysis_workload_add_struct_dependency(
+    Struct_Progress* my_workload, 
+    Struct_Progress* other_progress, 
+    Dependency_Type type,
+    Dependency_Failure_Info failure_info = dependency_failure_info_make_none());
+void analysis_workload_add_dependency_internal(
+    Workload_Base* workload,
+    Workload_Base* dependency,
+    Dependency_Failure_Info failure_info = dependency_failure_info_make_none());
 
 
 // HELPERS
@@ -110,6 +117,19 @@ Type_Signature* hardcoded_type_to_signature(Hardcoded_Type type)
     return 0;
 }
 
+Dependency_Failure_Info dependency_failure_info_make_none() {
+    Dependency_Failure_Info info;
+    info.error_report_node = 0;
+    info.fail_indicator = 0;
+    return info;
+}
+
+Dependency_Failure_Info dependency_failure_info_make(bool* fail_indicator, AST::Symbol_Lookup* error_report_node = 0) {
+    Dependency_Failure_Info info;
+    info.error_report_node = error_report_node;
+    info.fail_indicator = fail_indicator;
+    return info;
+}
 
 
 // Analysis Info
@@ -553,8 +573,8 @@ Function_Progress* function_progress_create(Symbol* symbol, AST::Expression* fun
     progress->compile_workload->progress = progress;
 
     // Add dependencies between workloads
-    analysis_workload_add_dependency_internal(upcast(progress->body_workload), upcast(progress->header_workload), 0);
-    analysis_workload_add_dependency_internal(upcast(progress->compile_workload), upcast(progress->body_workload), 0);
+    analysis_workload_add_dependency_internal(upcast(progress->body_workload), upcast(progress->header_workload));
+    analysis_workload_add_dependency_internal(upcast(progress->compile_workload), upcast(progress->body_workload));
 
     return progress;
 }
@@ -650,8 +670,8 @@ Function_Progress* function_progress_create_polymorphic_instance(Polymorphic_Ins
 
     // Add dependencies between workloads
     // NOTE: The instance body waits on the base compile-workload, because errors which are caused by recursive instanciations require special handling
-    analysis_workload_add_dependency_internal(upcast(progress->body_workload), upcast(base_progress->compile_workload), 0); 
-    analysis_workload_add_dependency_internal(upcast(progress->compile_workload), upcast(progress->body_workload), 0);
+    analysis_workload_add_dependency_internal(upcast(progress->body_workload), upcast(base_progress->compile_workload)); 
+    analysis_workload_add_dependency_internal(upcast(progress->compile_workload), upcast(progress->body_workload));
 
     return progress;
 }
@@ -684,7 +704,7 @@ Struct_Progress* struct_progress_create(Symbol* symbol, AST::Expression* struct_
     dynamic_array_push_back(&progress->reachable_resolve_workload->struct_types, progress->struct_type);
 
     // Add dependencies between workloads
-    analysis_workload_add_dependency_internal(upcast(progress->reachable_resolve_workload), upcast(progress->analysis_workload), 0);
+    analysis_workload_add_dependency_internal(upcast(progress->reachable_resolve_workload), upcast(progress->analysis_workload));
 
     return progress;
 }
@@ -711,7 +731,7 @@ Bake_Progress* bake_progress_create(AST::Expression* bake_expr)
     progress->execute_workload->progress = progress;
 
     // Add dependencies between workloads
-    analysis_workload_add_dependency_internal(upcast(progress->execute_workload), upcast(progress->analysis_workload), 0);
+    analysis_workload_add_dependency_internal(upcast(progress->execute_workload), upcast(progress->analysis_workload));
 
     return progress;
 }
@@ -743,7 +763,7 @@ Module_Progress* module_progress_create(AST::Module* module, Symbol* symbol, Sym
     // Create event workload
     progress->event_symbol_table_ready = workload_executer_allocate_workload<Workload_Event>(0);
     progress->event_symbol_table_ready->description = "Symbol table ready event";
-    analysis_workload_add_dependency_internal(upcast(progress->event_symbol_table_ready), upcast(progress->module_analysis), 0);
+    analysis_workload_add_dependency_internal(upcast(progress->event_symbol_table_ready), upcast(progress->module_analysis));
 
     return progress;
 }
@@ -825,7 +845,7 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
                 // Add Parent-Dependency for Symbol-Ready (e.g. normal workloads can run and do symbol lookups)
                 module_progress->module_analysis->last_import_workload = current->last_import_workload;
                 if (current->last_import_workload != 0) {
-                    analysis_workload_add_dependency_internal(upcast(module_progress->event_symbol_table_ready), upcast(current->last_import_workload), 0);
+                    analysis_workload_add_dependency_internal(upcast(module_progress->event_symbol_table_ready), upcast(current->last_import_workload));
                 }
             }
             return;
@@ -833,14 +853,14 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
         case AST::Expression_Type::FUNCTION: {
             auto workload = upcast(function_progress_create(symbol, value)->header_workload);
             if (symbol_finish_workload != 0) {
-                analysis_workload_add_dependency_internal(workload, symbol_finish_workload, 0);
+                analysis_workload_add_dependency_internal(workload, symbol_finish_workload);
             }
             return;
         }
         case AST::Expression_Type::STRUCTURE_TYPE: {
             auto workload = upcast(struct_progress_create(symbol, value)->analysis_workload);
             if (symbol_finish_workload != 0) {
-                analysis_workload_add_dependency_internal(workload, symbol_finish_workload, 0);
+                analysis_workload_add_dependency_internal(workload, symbol_finish_workload);
             }
             return;
         }
@@ -861,7 +881,7 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
         definition_workload->value_node = definition->values[0];
     }
     if (symbol_finish_workload != 0) {
-        analysis_workload_add_dependency_internal(upcast(definition_workload), symbol_finish_workload, 0);
+        analysis_workload_add_dependency_internal(upcast(definition_workload), symbol_finish_workload);
     }
 
     symbol->type = Symbol_Type::DEFINITION_UNFINISHED;
@@ -1524,7 +1544,7 @@ void workload_executer_destroy()
         while (hashtable_iterator_has_next(&iter)) {
             SCOPE_EXIT(hashtable_iterator_next(&iter));
             auto& dep_info = iter.value;
-            dynamic_array_destroy(&dep_info->symbol_lookups);
+            dynamic_array_destroy(&dep_info->fail_indicators);
         }
         hashtable_destroy(&executer.workload_dependencies);
     }
@@ -1554,7 +1574,7 @@ void analysis_workload_destroy(Workload_Base* workload)
 
 
 // This will set the read + the non-resolved symbol paths to error
-void path_lookup_set_error_symbol(AST::Path_Lookup* path, Workload_Base* workload)
+void path_lookup_set_info_to_error_symbol(AST::Path_Lookup* path, Workload_Base* workload)
 {
     auto error_symbol = semantic_analyser.predefined_symbols.error_symbol;
     // Set unset path nodes to error
@@ -1568,43 +1588,43 @@ void path_lookup_set_error_symbol(AST::Path_Lookup* path, Workload_Base* workloa
     }
 
     // Set last symbol read of path to error
-    auto info = pass_get_node_info(workload->current_pass, path->last, Info_Query::TRY_READ);
-    info->symbol = error_symbol;
+    pass_get_node_info(workload->current_pass, path->last, Info_Query::CREATE_IF_NULL)->symbol = error_symbol;
 
     // Set whole path result to error
-    {
-        auto info = pass_get_node_info(workload->current_pass, path, Info_Query::TRY_READ);
-        if (info == 0) {
-            info = pass_get_node_info(workload->current_pass, path, Info_Query::CREATE);
-        }
-        info->symbol = error_symbol;
+    pass_get_node_info(workload->current_pass, path, Info_Query::CREATE_IF_NULL)->symbol = error_symbol;
+}
+
+void path_lookup_set_result_symbol(AST::Path_Lookup* path, Symbol* symbol) {
+
+    // Set last symbol_read to symbol
+    pass_get_node_info(semantic_analyser.current_workload->current_pass, path->last, Info_Query::CREATE_IF_NULL)->symbol = symbol;
+    // Set whole read to symbol
+    pass_get_node_info(semantic_analyser.current_workload->current_pass, path, Info_Query::CREATE_IF_NULL)->symbol = symbol;
+    // If symbol is not error, add reference to symbol
+    if (symbol->type != Symbol_Type::ERROR_SYMBOL) {
+        dynamic_array_push_back(&symbol->references, path->last);
     }
 }
 
-Symbol* symbol_lookup_resolve(AST::Symbol_Lookup* lookup, Symbol_Table* symbol_table, bool search_parents, bool internals_ok)
+// Queries symbol table for the id, and waits for all found symbol workloads to finish before continuing
+void symbol_lookup_resolve(AST::Symbol_Lookup* lookup, Symbol_Table* symbol_table, bool search_parents, bool internals_ok, Dynamic_Array<Symbol*>& results)
 {
-    auto info = pass_get_node_info(semantic_analyser.current_workload->current_pass, lookup, Info_Query::CREATE_IF_NULL);
-    auto error = semantic_analyser.predefined_symbols.error_symbol;
-
     // Find all symbols with this id
-    auto results = dynamic_array_create_empty<Symbol*>(1);
-    SCOPE_EXIT(dynamic_array_destroy(&results));
     symbol_table_query_id(symbol_table, lookup->name, search_parents, internals_ok, &results);
 
     // Wait for alias symbols to finish their resolution
-    for (int i = 0; i < results.size; i++) {
+    for (int i = 0; i < results.size; i++) 
+    {
         Symbol* symbol = results[i];
         if (symbol->type == Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL) {
-            info->symbol = symbol; // Note: This is a little hacky, because waiting may result in the symbol to be set to error...
-            analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(info->symbol->options.alias_workload), lookup);
+            bool dependency_failed = false;
+            analysis_workload_add_dependency_internal(
+                semantic_analyser.current_workload, upcast(symbol->options.alias_workload), dependency_failure_info_make(&dependency_failed, lookup));
             workload_executer_wait_for_dependency_resolution();
-            if (info->symbol->type == Symbol_Type::ERROR_SYMBOL) {
-                // If one of the overloaded symbols is error, we return error
-                return info->symbol;
-            }
-            else if (info->symbol->type == Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL) {
+            if (!dependency_failed) {
                 // Replace symbol in results array with alias value
-                results[i] = info->symbol->options.alias_workload->alias_for_symbol;
+                assert(symbol->type == Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, "Alias symbols should never change i think");
+                results[i] = symbol->options.alias_workload->alias_for_symbol;
                 assert(results[i]->type != Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, "Chained aliases should never happen here!");
             }
         }
@@ -1621,8 +1641,20 @@ Symbol* symbol_lookup_resolve(AST::Symbol_Lookup* lookup, Symbol_Table* symbol_t
             }
         }
     }
+}
 
-    // Handle results array
+// Logs an error if overloaded symbols was found
+Symbol* symbol_lookup_resolve_to_single_symbol(AST::Symbol_Lookup* lookup, Symbol_Table* symbol_table, bool search_parents, bool internals_ok)
+{
+    auto info = pass_get_node_info(semantic_analyser.current_workload->current_pass, lookup, Info_Query::CREATE_IF_NULL);
+    auto error = semantic_analyser.predefined_symbols.error_symbol;
+
+    // Find all overloads
+    auto results = dynamic_array_create_empty<Symbol*>(1);
+    SCOPE_EXIT(dynamic_array_destroy(&results));
+    symbol_lookup_resolve(lookup, symbol_table, search_parents, internals_ok, results);
+
+    // Handle result array
     if (results.size == 0) {
         log_semantic_error("Could not resolve Symbol (No definition found)", upcast(lookup));
         info->symbol = error;
@@ -1642,44 +1674,49 @@ Symbol* symbol_lookup_resolve(AST::Symbol_Lookup* lookup, Symbol_Table* symbol_t
     return info->symbol;
 }
 
-// Resolves the whole path (e.g. all nodes in Path)
-Symbol* path_lookup_resolve(AST::Path_Lookup* path)
+// Returns 0 if the path could not be resolved
+Symbol_Table* path_lookup_resolve_only_path_parts(AST::Path_Lookup* path)
 {
     auto& analyser = semantic_analyser;
     auto table = semantic_analyser.current_workload->current_symbol_table;
+    auto workload = semantic_analyser.current_workload;
     auto error = semantic_analyser.predefined_symbols.error_symbol;
 
     // Resolve path
-    for (int i = 0; i < path->parts.size; i++)
+    for (int i = 0; i < path->parts.size - 1; i++)
     {
         auto part = path->parts[i];
-        // Find symbol of path part
-        Symbol* symbol = symbol_lookup_resolve(part, table, i == 0, path->parts.size == 1);
-        if (symbol == error) {
-            path_lookup_set_error_symbol(path, semantic_analyser.current_workload);
-            return error;
-        }
 
-        // Check if we are at the end of the path
-        if (part == path->last) {
-            // Set result of whole path (not indiviual part) to the last symbol
-            get_info(path, true)->symbol = symbol;
-            return symbol;
+        // Find symbol of path part
+        Symbol* symbol = symbol_lookup_resolve_to_single_symbol(part, table, i == 0, false);
+        if (symbol == error) {
+            path_lookup_set_info_to_error_symbol(path, workload);
+            return 0;
         }
 
         // Check if we can continue
-        if (symbol->type == Symbol_Type::MODULE) {
-            auto current = semantic_analyser.current_workload->type;
+        if (symbol->type == Symbol_Type::MODULE) 
+        {
+            auto current = workload->type;
+            bool dependency_failure = false;
+            auto failure_info = dependency_failure_info_make(&dependency_failure, part);
             if (current == Analysis_Workload_Type::IMPORT_RESOLVE) {
-                analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(symbol->options.module_progress->module_analysis), part);
+                analysis_workload_add_dependency_internal(workload, upcast(symbol->options.module_progress->module_analysis), failure_info);
             }
             else {
-                analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(symbol->options.module_progress->event_symbol_table_ready), part);
+                analysis_workload_add_dependency_internal(workload, upcast(symbol->options.module_progress->event_symbol_table_ready), failure_info);
             }
             workload_executer_wait_for_dependency_resolution();
-            table = symbol->options.module_progress->module_analysis->symbol_table;
+            if (dependency_failure) {
+                path_lookup_set_info_to_error_symbol(path, workload);
+                return 0;
+            }
+            else {
+                table = symbol->options.module_progress->module_analysis->symbol_table;
+            }
         }
-        else {
+        else 
+        {
             // Report error and exit
             if (symbol->type == Symbol_Type::DEFINITION_UNFINISHED) {
                 // FUTURE: It may be possible that symbol resolution needs to create dependencies itself, which would happen here!
@@ -1689,21 +1726,64 @@ Symbol* path_lookup_resolve(AST::Path_Lookup* path)
                 log_semantic_error("Expected Module as intermediate path nodes", upcast(part));
                 log_error_info_symbol(symbol);
             }
-            path_lookup_set_error_symbol(path, semantic_analyser.current_workload);
-            return semantic_analyser.predefined_symbols.error_symbol;
+            path_lookup_set_info_to_error_symbol(path, semantic_analyser.current_workload);
+            return 0;
         }
     }
 
-    panic("");
-    return 0;
+    return table;
+}
+
+// Note: After resolving overloaded symbols, the caller should 1. the symbol_info for the symbol_read, and 2. add a reference to the symbol
+//       Returns true if the path was resolved, otherwise false if there was an error while resolving the path...
+bool path_lookup_resolve(AST::Path_Lookup* path, Dynamic_Array<Symbol*>& symbols)
+{
+    auto& analyser = semantic_analyser;
+    auto error = semantic_analyser.predefined_symbols.error_symbol;
+
+    // Resolve path
+    auto symbol_table = path_lookup_resolve_only_path_parts(path);
+    if (symbol_table == 0) {
+        return false;
+    }
+
+    // Resolve symbol
+    symbol_lookup_resolve(path->last, symbol_table, path->parts.size == 1, path->parts.size == 1, symbols);
+    get_info(path, true)->symbol = error;
+    return true;
+}
+
+Symbol* path_lookup_resolve_to_single_symbol(AST::Path_Lookup* path)
+{
+    auto& analyser = semantic_analyser;
+    auto error = semantic_analyser.predefined_symbols.error_symbol;
+
+    // Resolve path
+    auto symbol_table = path_lookup_resolve_only_path_parts(path);
+    if (symbol_table == 0) {
+        return false;
+    }
+
+    // Resolve symbol
+    Symbol* symbol = symbol_lookup_resolve_to_single_symbol(path->last, symbol_table, path->parts.size == 1, path->parts.size == 1);
+    path_lookup_set_result_symbol(path, symbol);
+    return symbol;
 }
 
 
 
-void analysis_workload_add_dependency_internal(Workload_Base* workload, Workload_Base* dependency, AST::Symbol_Lookup* lookup)
+// When dependencies generate cycles, the cycle must be broken, and this is done via the boolean parameter given here.
+// If this parameter is not null, this indicates that this dependency can be broken, and the caller of this function must handle this case correctly
+void analysis_workload_add_dependency_internal(Workload_Base* workload, Workload_Base* dependency, Dependency_Failure_Info failure_info)
 {
     auto& executer = workload_executer;
-    if (dependency->is_finished) return;
+    bool can_be_broken = failure_info.fail_indicator != 0;
+    if (can_be_broken) {
+        *failure_info.fail_indicator = !dependency->is_finished;
+    }
+    if (dependency->is_finished) {
+        return;
+    }
 
     Workload_Pair pair = workload_pair_create(workload, dependency);
     Dependency_Information* infos = hashtable_find_element(&executer.workload_dependencies, pair);
@@ -1711,21 +1791,20 @@ void analysis_workload_add_dependency_internal(Workload_Base* workload, Workload
         Dependency_Information info;
         info.dependency_node = list_add_at_end(&workload->dependencies, dependency);
         info.dependent_node = list_add_at_end(&dependency->dependents, workload);
-        info.symbol_lookups = dynamic_array_create_empty<AST::Symbol_Lookup*>(1);
-        info.only_symbol_read_dependency = false;
-        if (lookup != 0) {
-            info.only_symbol_read_dependency = true;
-            dynamic_array_push_back(&info.symbol_lookups, lookup);
+        info.fail_indicators = dynamic_array_create_empty<Dependency_Failure_Info>(1);
+        info.can_be_broken = can_be_broken;
+        if (can_be_broken) {
+            dynamic_array_push_back(&info.fail_indicators, failure_info);
         }
         bool inserted = hashtable_insert_element(&executer.workload_dependencies, pair, info);
         assert(inserted, "");
     }
     else {
-        if (lookup != 0) {
-            dynamic_array_push_back(&infos->symbol_lookups, lookup);
+        if (can_be_broken) {
+            dynamic_array_push_back(&infos->fail_indicators, failure_info);
         }
         else {
-            infos->only_symbol_read_dependency = false;
+            infos->can_be_broken = false;
         }
     }
 }
@@ -1749,20 +1828,20 @@ void workload_executer_move_dependency(Workload_Base* move_from, Workload_Base* 
         Dependency_Information new_info;
         new_info.dependency_node = list_add_at_end(&move_to->dependencies, dependency);
         new_info.dependent_node = list_add_at_end(&dependency->dependents, move_to);
-        new_info.symbol_lookups = info.symbol_lookups; // Note: Takes ownership
-        new_info.only_symbol_read_dependency = info.only_symbol_read_dependency;
+        new_info.fail_indicators = info.fail_indicators; // Note: Takes ownership
+        new_info.can_be_broken = info.can_be_broken;
         hashtable_insert_element(&graph->workload_dependencies, new_pair, new_info);
     }
     else {
-        dynamic_array_append_other(&new_infos->symbol_lookups, &info.symbol_lookups);
-        if (new_infos->only_symbol_read_dependency) {
-            new_infos->only_symbol_read_dependency = info.only_symbol_read_dependency;
+        dynamic_array_append_other(&new_infos->fail_indicators, &info.fail_indicators);
+        if (new_infos->can_be_broken) {
+            new_infos->can_be_broken = info.can_be_broken;
         }
-        dynamic_array_destroy(&info.symbol_lookups);
+        dynamic_array_destroy(&info.fail_indicators);
     }
 }
 
-void workload_executer_remove_dependency(Workload_Base* workload, Workload_Base* depends_on, bool allow_add_to_runnables)
+void workload_executer_remove_dependency(Workload_Base* workload, Workload_Base* depends_on, bool allow_add_to_runnables, bool dependency_succeeded)
 {
     auto graph = &workload_executer;
     Workload_Pair pair = workload_pair_create(workload, depends_on);
@@ -1770,7 +1849,13 @@ void workload_executer_remove_dependency(Workload_Base* workload, Workload_Base*
     assert(info != 0, "");
     list_remove_node(&workload->dependencies, info->dependency_node);
     list_remove_node(&depends_on->dependents, info->dependent_node);
-    dynamic_array_destroy(&info->symbol_lookups);
+
+    // Signal all fail indicators to have passed
+    for (int i = 0; i < info->fail_indicators.size; i++) {
+        *(info->fail_indicators[i].fail_indicator) = !dependency_succeeded;
+    }
+    dynamic_array_destroy(&info->fail_indicators);
+
     bool worked = hashtable_remove_element(&graph->workload_dependencies, pair);
     if (allow_add_to_runnables && workload->dependencies.count == 0) {
         dynamic_array_push_back(&graph->runnable_workloads, workload);
@@ -1819,7 +1904,7 @@ bool cluster_workload_check_for_cyclic_dependency(
     return loop_found;
 }
 
-void analysis_workload_add_cluster_dependency(Workload_Base* add_to_workload, Workload_Base* dependency, AST::Symbol_Lookup* lookup)
+void analysis_workload_add_cluster_dependency(Workload_Base* add_to_workload, Workload_Base* dependency, Dependency_Failure_Info failure_info = dependency_failure_info_make_none())
 {
     auto graph = &workload_executer;
     assert((add_to_workload->type == Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE && dependency->type == Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE) ||
@@ -1838,7 +1923,7 @@ void analysis_workload_add_cluster_dependency(Workload_Base* add_to_workload, Wo
     bool loop_found = cluster_workload_check_for_cyclic_dependency(merge_from, merge_into, &visited, &workloads_to_merge);
     if (!loop_found) {
         dynamic_array_push_back(&merge_into->reachable_clusters, merge_from);
-        analysis_workload_add_dependency_internal(merge_into, merge_from, lookup);
+        analysis_workload_add_dependency_internal(merge_into, merge_from, failure_info);
         return;
     }
 
@@ -1870,7 +1955,7 @@ void analysis_workload_add_cluster_dependency(Workload_Base* add_to_workload, Wo
                 workload_executer_move_dependency(merge_cluster, merge_into, merge_dependency);
             }
             else {
-                workload_executer_remove_dependency(merge_cluster, merge_dependency, false);
+                workload_executer_remove_dependency(merge_cluster, merge_dependency, false, true);
             }
             node = next;
         }
@@ -1903,7 +1988,7 @@ void analysis_workload_add_cluster_dependency(Workload_Base* add_to_workload, Wo
         // Add reachables to merged
         dynamic_array_append_other(&merge_into->reachable_clusters, &merge_cluster->reachable_clusters);
         dynamic_array_reset(&merge_cluster->reachable_clusters);
-        analysis_workload_add_dependency_internal(merge_cluster, merge_into, 0);
+        analysis_workload_add_dependency_internal(merge_cluster, merge_into);
         merge_cluster->cluster = merge_into;
     }
 
@@ -1928,7 +2013,7 @@ void analysis_workload_add_cluster_dependency(Workload_Base* add_to_workload, Wo
     }
 }
 
-void analysis_workload_add_struct_dependency(Struct_Progress* progress, Struct_Progress* other, Dependency_Type type, AST::Symbol_Lookup* lookup)
+void analysis_workload_add_struct_dependency(Struct_Progress* progress, Struct_Progress* other, Dependency_Type type, Dependency_Failure_Info failure_info)
 {
     auto graph = &workload_executer;
     if (progress->reachable_resolve_workload->base.is_finished || other->reachable_resolve_workload->base.is_finished) return;
@@ -1938,14 +2023,14 @@ void analysis_workload_add_struct_dependency(Struct_Progress* progress, Struct_P
     case Dependency_Type::NORMAL: {
         // Struct member references another struct, but not as a type
         // E.g. Foo :: struct { value: Bar.{...}; }
-        analysis_workload_add_dependency_internal(upcast(progress->analysis_workload), upcast(other->reachable_resolve_workload), lookup);
+        analysis_workload_add_dependency_internal(upcast(progress->analysis_workload), upcast(other->reachable_resolve_workload), failure_info);
         break;
     }
     case Dependency_Type::MEMBER_IN_MEMORY: {
         // Struct member references other member in memory
         // E.g. Foo :: struct { value: Bar; }
-        analysis_workload_add_dependency_internal(upcast(progress->analysis_workload), upcast(other->analysis_workload), lookup);
-        analysis_workload_add_cluster_dependency(upcast(progress->reachable_resolve_workload), upcast(other->reachable_resolve_workload), lookup);
+        analysis_workload_add_dependency_internal(upcast(progress->analysis_workload), upcast(other->analysis_workload), failure_info);
+        analysis_workload_add_cluster_dependency(upcast(progress->reachable_resolve_workload), upcast(other->reachable_resolve_workload), failure_info);
         break;
     }
     case Dependency_Type::MEMBER_REFERENCE:
@@ -1953,7 +2038,7 @@ void analysis_workload_add_struct_dependency(Struct_Progress* progress, Struct_P
         // Struct member contains some sort of reference to other member
         // E.g. Foo :: struct { value: *Bar; }
         // This means we need to unify the Reachable-Clusters
-        analysis_workload_add_cluster_dependency(upcast(progress->reachable_resolve_workload), upcast(other->reachable_resolve_workload), lookup);
+        analysis_workload_add_cluster_dependency(upcast(progress->reachable_resolve_workload), upcast(other->reachable_resolve_workload), failure_info);
         break;
     }
     default: panic("");
@@ -2128,7 +2213,7 @@ void workload_executer_resolve()
                 while (node != 0) {
                     Workload_Base* dependent = node->value;
                     node = node->next; // INFO: This is required before remove_dependency, since remove will remove nodes from the list
-                    workload_executer_remove_dependency(dependent, workload, true);
+                    workload_executer_remove_dependency(dependent, workload, true, true);
                 }
                 assert(workload->dependents.count == 0, "Remove dependency should already have cleared the list!");
             }
@@ -2288,27 +2373,26 @@ void workload_executer_resolve()
                 }
 
                 // Resolve and report error
-                bool only_reads_was_found = false;
+                bool breakable_dependency_found = false;
                 for (int i = 0; i < workload_cycle.size; i++)
                 {
                     Workload_Base* workload = workload_cycle[i];
                     Workload_Base* depends_on = i + 1 == workload_cycle.size ? workload_cycle[0] : workload_cycle[i + 1];
                     Workload_Pair pair = workload_pair_create(workload, depends_on);
                     Dependency_Information infos = *hashtable_find_element(&executer.workload_dependencies, pair);
-                    if (infos.only_symbol_read_dependency) {
-                        only_reads_was_found = true;
-                        for (int j = 0; j < infos.symbol_lookups.size; j++) {
-                            path_lookup_set_error_symbol(downcast<AST::Path_Lookup>(infos.symbol_lookups[j]->base.parent), workload);
-                            log_semantic_error("Cyclic dependencies detected", upcast(infos.symbol_lookups[j]));
+                    if (infos.can_be_broken) {
+                        breakable_dependency_found = true;
+                        for (int j = 0; j < infos.fail_indicators.size; j++) {
+                            log_semantic_error("Cyclic dependencies detected", upcast(infos.fail_indicators[j].error_report_node));
                             for (int k = 0; k < workload_cycle.size; k++) {
                                 Workload_Base* workload = workload_cycle[k];
                                 log_error_info_cycle_workload(workload);
                             }
                         }
-                        workload_executer_remove_dependency(workload, depends_on, true);
+                        workload_executer_remove_dependency(workload, depends_on, true, false);
                     }
                 }
-                assert(only_reads_was_found, "");
+                assert(breakable_dependency_found, "");
                 executer.progress_was_made = true;
                 if (PRINT_DEPENDENCIES) {
                     logg("Resolved cyclic dependency loop!");
@@ -2664,12 +2748,12 @@ void analysis_workload_entry(void* userdata)
             }
             // Add dependencies
             if (analysis->last_import_workload != 0) {
-                analysis_workload_add_dependency_internal(upcast(import_workload), upcast(analysis->last_import_workload), 0);
+                analysis_workload_add_dependency_internal(upcast(import_workload), upcast(analysis->last_import_workload));
             }
             analysis->last_import_workload = import_workload;
         }
         if (analysis->last_import_workload != 0) {
-            analysis_workload_add_dependency_internal(upcast(analysis->progress->event_symbol_table_ready), upcast(analysis->last_import_workload), 0);
+            analysis_workload_add_dependency_internal(upcast(analysis->progress->event_symbol_table_ready), upcast(analysis->last_import_workload));
         }
 
         // Create workloads for definitions
@@ -2698,7 +2782,7 @@ void analysis_workload_entry(void* userdata)
             }
 
             // Wait for module discovery to finish
-            analysis_workload_add_dependency_internal(workload, upcast(module_progress->module_analysis), 0);
+            analysis_workload_add_dependency_internal(workload, upcast(module_progress->module_analysis));
             workload_executer_wait_for_dependency_resolution();
 
             if (node->alias_name == 0) {
@@ -2714,29 +2798,32 @@ void analysis_workload_entry(void* userdata)
             break;
         }
         else if (node->type == AST::Import_Type::SINGLE_SYMBOL) {
-            import_workload->alias_for_symbol = path_lookup_resolve(node->path);
+            import_workload->alias_for_symbol = path_lookup_resolve_to_single_symbol(node->path);
         }
         else { // Import * or **
-            Symbol* symbol = path_lookup_resolve(node->path);
+            Symbol* symbol = path_lookup_resolve_to_single_symbol(node->path);
             assert(symbol->type != Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, "Must not happen here");
             if (symbol->type == Symbol_Type::MODULE)
             {
                 auto progress = symbol->options.module_progress;
                 // Wait for symbol discovery to finish
-                analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(progress->module_analysis), node->path->last);
+                analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(progress->module_analysis));
                 workload_executer_wait_for_dependency_resolution();
 
                 // If transitive we need to wait now until the last of their usings finish
                 auto last_import = progress->module_analysis->last_import_workload;
+                bool failure_indicator = false;
                 if (node->type == AST::Import_Type::MODULE_SYMBOLS_TRANSITIVE && last_import != 0 && last_import != import_workload) {
-                    analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(progress->module_analysis->last_import_workload), node->path->last);
+                    analysis_workload_add_dependency_internal(
+                        semantic_analyser.current_workload, 
+                        upcast(progress->module_analysis->last_import_workload), 
+                        dependency_failure_info_make(&failure_indicator, node->path->last));
                     workload_executer_wait_for_dependency_resolution();
                 }
 
-                // Refresh symbol after dependency wait (Could have been set to error in the meantime)
-                symbol = get_info(node->path->last)->symbol;
-                if (symbol->type != Symbol_Type::ERROR_SYMBOL) {
-                    // Add using
+                if (!failure_indicator) {
+                    assert(symbol->type == Symbol_Type::MODULE, "Without error symbol type shouldn't change!");
+                    // Add import
                     symbol_table_add_include_table(
                         semantic_analyser.current_workload->current_symbol_table,
                         progress->module_analysis->symbol_table,
@@ -2887,7 +2974,7 @@ void analysis_workload_entry(void* userdata)
                 param_workload->base.parent_table = header_workload->base.current_symbol_table;
                 param_workload->execution_order_index = -1;
                 param_workload->symbol = symbol;
-                analysis_workload_add_dependency_internal(upcast(header_workload), upcast(param_workload), 0);
+                analysis_workload_add_dependency_internal(upcast(header_workload), upcast(param_workload));
 
                 // Set symbol information
                 symbol->options.parameter.workload = param_workload;
@@ -3317,16 +3404,14 @@ void semantic_analyser_register_function_call(ModTree_Function* call_to)
     case Analysis_Workload_Type::BAKE_ANALYSIS: {
         analysis_workload_add_dependency_internal(
             upcast(downcast<Workload_Bake_Analysis>(analyser.current_workload)->progress->execute_workload),
-            upcast(progress->compile_workload),
-            0
+            upcast(progress->compile_workload)
         );
         break;
     }
     case Analysis_Workload_Type::FUNCTION_BODY: {
         analysis_workload_add_cluster_dependency(
             upcast(downcast<Workload_Function_Body>(analyser.current_workload)->progress->compile_workload),
-            upcast(progress->compile_workload),
-            0
+            upcast(progress->compile_workload)
         );
         break;
     }
@@ -3539,6 +3624,12 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
     {
         // Analyse call expression
         auto& call = expr->options.call;
+
+        if (call.expr->type == AST::Expression_Type::PATH_LOOKUP) 
+        {
+            // Do something for overloading
+        }
+
         auto function_expr_info = semantic_analyser_analyse_expression_any(call.expr, expression_context_make_auto_dereference());
 
         // Initialize all argument infos
@@ -3867,33 +3958,36 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         //       because instances already have to wait for their parent analysis to be completed, e.g. symbols to be resolved.
 
         // Resolve symbol
-        Symbol* symbol = path_lookup_resolve(path);
+        Symbol* symbol = path_lookup_resolve_to_single_symbol(path);
         assert(symbol != 0, "In error cases this should be set to error, never 0!");
 
         // Check and wait for all potential dependencies to finish
         {
             auto& executer = *analyser.workload_executer;
             auto workload = analyser.current_workload;
+
+            bool dependency_failure = false;
+            auto failure_info = dependency_failure_info_make(&dependency_failure, path->last);
             switch (symbol->type)
             {
             case Symbol_Type::DEFINITION_UNFINISHED:
             {
-                analysis_workload_add_dependency_internal(analyser.current_workload, upcast(symbol->options.definition_workload), path->last);
+                analysis_workload_add_dependency_internal(analyser.current_workload, upcast(symbol->options.definition_workload), failure_info);
                 break;
             }
             case Symbol_Type::FUNCTION:
             {
-                analysis_workload_add_dependency_internal(workload, upcast(symbol->options.function->header_workload), path->last);
+                analysis_workload_add_dependency_internal(workload, upcast(symbol->options.function->header_workload), failure_info);
                 break;
             }
             case Symbol_Type::POLYMORPHIC_FUNCTION:
             {
-                analysis_workload_add_dependency_internal(workload, upcast(symbol->options.polymorphic_function->progress->header_workload), path->last);
+                analysis_workload_add_dependency_internal(workload, upcast(symbol->options.polymorphic_function->progress->header_workload), failure_info);
                 break;
             }
             case Symbol_Type::PARAMETER:
             {
-                analysis_workload_add_dependency_internal(workload, upcast(symbol->options.parameter.workload), path->last);
+                analysis_workload_add_dependency_internal(workload, upcast(symbol->options.parameter.workload), failure_info);
                 break;
             }
             case Symbol_Type::TYPE:
@@ -3905,10 +3999,10 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                     if (other_progress != 0) {
                         if (workload->type == Analysis_Workload_Type::STRUCT_ANALYSIS) {
                             auto current = downcast<Workload_Struct_Analysis>(workload);
-                            analysis_workload_add_struct_dependency(current->progress, other_progress, current->dependency_type, path->last);
+                            analysis_workload_add_struct_dependency(current->progress, other_progress, current->dependency_type, failure_info);
                         }
                         else {
-                            analysis_workload_add_dependency_internal(workload, upcast(other_progress->reachable_resolve_workload), path->last);
+                            analysis_workload_add_dependency_internal(workload, upcast(other_progress->reachable_resolve_workload), failure_info);
                         }
                     }
                     else {
@@ -3922,9 +4016,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             }
 
             workload_executer_wait_for_dependency_resolution();
-            // Refresh symbol since it may have changed
-            symbol = get_info(path)->symbol;
-            assert(symbol != 0, "Must be given by dependency analysis");
+            if (dependency_failure) {
+                EXIT_ERROR(types.unknown_type);
+            }
         }
 
         switch (symbol->type)
@@ -4243,7 +4337,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         case Analysis_Workload_Type::BAKE_ANALYSIS: {
             // Wait for bake to finish
             auto progress = downcast<Workload_Bake_Analysis>(workload)->progress;
-            analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(progress->execute_workload), 0);
+            analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(progress->execute_workload));
             workload_executer_wait_for_dependency_resolution();
 
             // Handle result
@@ -4269,7 +4363,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         case Analysis_Workload_Type::FUNCTION_HEADER: {
             // Wait for workload
             auto progress = downcast<Workload_Function_Header>(workload)->progress;
-            analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(progress->header_workload), 0);
+            analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(progress->header_workload));
             workload_executer_wait_for_dependency_resolution();
 
             // Return value
@@ -4282,10 +4376,10 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             auto progress = downcast<Workload_Struct_Analysis>(workload)->progress;
             if (semantic_analyser.current_workload->type == Analysis_Workload_Type::STRUCT_ANALYSIS) {
                 auto current = downcast<Workload_Struct_Analysis>(semantic_analyser.current_workload)->progress;
-                analysis_workload_add_struct_dependency(current, progress, current->analysis_workload->dependency_type, 0);
+                analysis_workload_add_struct_dependency(current, progress, current->analysis_workload->dependency_type);
             }
             else {
-                analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(progress->reachable_resolve_workload), 0);
+                analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(progress->reachable_resolve_workload));
             }
             workload_executer_wait_for_dependency_resolution();
 
@@ -5841,7 +5935,7 @@ Control_Flow semantic_analyser_analyse_block(AST::Code_Block* block)
                     continue;
                 }
                 if (last_import_workload != 0) {
-                    analysis_workload_add_dependency_internal(upcast(import_workload), upcast(last_import_workload), 0);
+                    analysis_workload_add_dependency_internal(upcast(import_workload), upcast(last_import_workload));
                 }
                 last_import_workload = import_workload;
             }
@@ -5849,7 +5943,7 @@ Control_Flow semantic_analyser_analyse_block(AST::Code_Block* block)
 
         // If any imports were found, wait for all imports to finish before analysing block
         if (last_import_workload != 0) {
-            analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(last_import_workload), 0);
+            analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(last_import_workload));
             workload_executer_wait_for_dependency_resolution();
         }
     }

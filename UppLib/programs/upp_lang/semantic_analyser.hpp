@@ -329,13 +329,19 @@ struct Workload_Pair
     Workload_Base* depends_on;
 };
 
+struct Dependency_Failure_Info
+{
+    bool* fail_indicator;
+    AST::Symbol_Lookup* error_report_node;
+};
+
 struct Dependency_Information
 {
     List_Node<Workload_Base*>* dependency_node;
     List_Node<Workload_Base*>* dependent_node;
     // Information for cyclic resolve
-    bool only_symbol_read_dependency;
-    Dynamic_Array<AST::Symbol_Lookup*> symbol_lookups;
+    bool can_be_broken;
+    Dynamic_Array<Dependency_Failure_Info> fail_indicators;
 };
 
 struct Workload_Executer
