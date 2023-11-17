@@ -5,6 +5,6 @@ Player::struct
 
 main::()
 	//
-		The cool thing about the struct initialier is:
+		The cool thing about the struct initializers is:
 		all members must be initialized, otherwise there is an error
 	p1:=Player.{name="Herb",alive=true}

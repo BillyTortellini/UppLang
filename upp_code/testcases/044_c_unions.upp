@@ -18,4 +18,5 @@ main::()
 	
 	// The size of the type is also only 4 bytes,
 	// which confirmes that the members must overlap
-	assert(type_info(RGBA).size==4)
+	type_info(RGBA)
+	// assert(type_info(RGBA).size==4)

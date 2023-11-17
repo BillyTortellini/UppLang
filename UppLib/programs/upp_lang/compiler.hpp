@@ -79,6 +79,7 @@ struct Compiler
     String* id_type_of;
     String* id_type_info;
     String* id_empty_string;
+    String* id_invalid_symbol_name;
 };
 
 extern Compiler compiler;

@@ -87,12 +87,28 @@ Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbo
         symbols = hashtable_find_element(&symbol_table->symbols, id);
         assert(symbols != 0, "Just inserted!");
     }
-    else if (type != Symbol_Type::FUNCTION && type != Symbol_Type::POLYMORPHIC_FUNCTION) {
-        // If this is the case, choose another ID for the new symbol, and don't put it into the symbol table, it will get freed anyway
-        log_semantic_error("Symbol already defined in this scope", definition_node);
-        static String invalid_name = string_create_static("_SYMBOL_NAME_NOT_AVAILABLE");
-        new_sym->id = &invalid_name;
-        return new_sym;
+    else {
+        // Overloading is only allowed for functions
+        bool overload_valid = true;
+        if (type != Symbol_Type::FUNCTION && type != Symbol_Type::POLYMORPHIC_FUNCTION) {
+            overload_valid = false;
+        }
+        else {
+            // Even if this symbol_type would be valid for overloading, we still have to check the already defined symbol types
+            for (int i = 0; i < symbols->size; i++) {
+                auto other_symbol = (*symbols)[i];
+                if (other_symbol->type != Symbol_Type::FUNCTION && other_symbol->type != Symbol_Type::POLYMORPHIC_FUNCTION) {
+                    overload_valid = false;
+                }
+            }
+        }
+
+        if (!overload_valid) {
+            // Note: Here we still return a new symbol, but this symbol can never be referenced, because it isn't added in the symbol table
+            log_semantic_error("Symbol already defined in this scope", definition_node);
+            new_sym->id = compiler.id_invalid_symbol_name;
+            return new_sym;
+        }
     }
 
     // Add to symbol_table

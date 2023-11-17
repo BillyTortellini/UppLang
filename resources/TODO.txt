@@ -1,361 +1,47 @@
 
 TODO:
-    * Struct deconstruction on definition + assignment
-    * Add drop_value symbol (_) --> Means that the the expression should be evaluated, but the value isn't saved 
-
-Multiple return values:
-    I think Odin's approach isn't really applicable in my language, because of Expression_Context for parsing and other stuff...
-    I also don't think it's really all that usefull, because it feels a little convoluted...
-
-    Design Decision:
-        * I don't like tuples with unnamed arguments, e.g. (5, 20), because you don't know what the values mean
-            so I would like to always have named tuple elements --> same as anonymous struct...
-        Is this something that I can handle with anonymous structs + A little bit of syntactic sugar?
-
-        Something like  
-            find :: (map: Map, key: Key) -> (success: bool, value*: Value)
-                return true, *found_value
-        isn't too different from
-            find :: (map: Map, key: Key) -> struct 
-                success: bool
-                value*: Value
-
-                return .{true, null}
-
-        My main use-cases are:
-            * Multiple parameter returns for some functions 
-            * Should errors handled this way? Probably
-            * Question: Once the editor does auto formating, do I really need syntactic sugar?
-                Probably only for Struct-Deconstruction, assignments and others
-            * So the real thing that I want is actually struct-deconstruction
-                player := Player.{"Frank", 15}
-                name, age := player 
-
-        So what would multi-assignment/definition look like?
-        Current syntax:
-            a := 15
-            a :: 15
-            a: int = 15
-            a = 15
-        which could be replaced with
-            a, b := 15
-            a, b := 15, false --> Probably not, because I don't want multi expressions? 
-            a, b: int, bool = 15, false
-            a, b :: 15, false // Probably not something that you want on comptime definitions --> But I guess it would work?
-        Vec3 :: struct
-            x, y, z: float
-        I guess all of this makes more sense for variables then for global definitions,
-            but it would also work there
-        This alone isn't that big of a deal, but I think with struct deconstruction this will be nicer...
-            success, value := map.find(key)
-            if !success
-
-        Yeah, let's just do this...
-        a.x, b[5] := player
-
-    So what would be impacted?
-        Definitions
-            Comptime definitions
-            Variable definitions
-            Maybe comptime definitions just don't allow this in general -> so it's easy to determine module/function/struct analysis
-            Maybe just implementing this for definition statements/assignments would be better...
-                I think so, because then I don't have to deal with workloads and other crap...
-        Structs
-            e.g. member definitions
-        Assignments
-            multiple expressions...
-
-    And the only two cases I want to support are:
-        * 1-to-many definitions x, y := 2
-        * 1-to-1 defintions x, y := 2, 2
-
-    Note: Definitions only have id's, where assignments have expressions
-
-
-    Question:
-        
-
-    In C it's definitly sometimes annoying that you don't know which parameters are in_out, so this is why this can be usefull
-    Notes:
-        Should the return values have names?
-            Yes, but just for documentation's sake, when displaying the function's type
-            In Jai there is also a deeper meaning, but I don't want to go into that
-        Why not use structs instead?
-          
-       How is this handled in the type system?
-       Requires an unpacking syntax for assignments and definitions...
-           also with "dropped" values with _ or something
-    Example:
-       find_regex(string: String, regex: Regex) -> (index: int, length: int, found: bool)
-           return 5, 6, true
-       index, length, found := find_regex(...)
-       index, _, found = find_regex()
-    Should the return type be of tupel? Should tuples be handled in this language
-       don't think so, i don't really like that
-
-What should this function call rework include:
-    * Multiple return values, e.g. multiple assignments
-        For returning error codes mostly, but also other stuff maybe
     * Function overloading
+        - Multiple symbols in same scope with same name
+        - Do overloading based on given types, expected return type...
+    * Update function polymorphism (Works with named_arguments, in-expression values $x:int, x:$T, working with overloads)
 
-Implementation plan:
-   * Named arguments
-        Function_Signatures should also store the names of the arguments 
-            --> This way when calling a function we have access to the names
-        Problem: Function pointers should still be usable even if the names don't match
-        Solution: Add casting between function_pointer types if they have the same arguments
-        When calling a function, once you start using named arguments, you cannot use unnamed afterwards
-   * Default values:
-        Also store default values in Signature, these are comptime values.
-        If called with the default arguments, these values are read.
-        Can we have default value, and afterwards default values?
-            With named arguments, this would actually be doable, but I don't really think it's necessray
-            I never really want to have a complicated order of arguments anyway, so I guess this is fine...
+    * Struct rework (Allow other definitions inside the struct namespace, like functions/modules)
+    * Polymorphism for structs
+    * Local-Context for casting, operator overloading, dot-calls
+
+    * Context system for memory allocations -->
+    * Better loops (foreach, maybe a simple for ;; loop?)
+    * Put initial symbols (int, float, bool + hardcoded functions) into another namespace Upp/Compiler/custom thingy?
+    * Auto function? .->
+    * Block-Expressions?
+    * Templated functions
+    * Templated structs
+
+
+
     * Function overloading:
         How to decide which function to pick:
-            - Expected return type
-            - Number of arguments
-            - Given named arguments 
+            - Number of arguments (Note: default values)
+            - Given named arguments --> If name unique...
             - Argument types (Of arguments that are discernable --> Expression_Context must be disabled for those)
+                What if arguments can cast to both types? --> If one does not require a cast, then take that? For math functions this would be neeto
+            - Expected return type
         With templates I think this gets more complicated, because templates already require a given order 
-            in which to evaluate the arguments...
+            in which to evaluate the arguments... --> Which is currently done badly, so we'll just disable it for the time
     
-Things that I'm not quite sure about:
-    - Default values, when should the expression be evaluated? Is this comptime or not? --> Easier with comptime, but where to store? Function def?
 
-
-Next Features to implement:
-    - Rework function calls (named arguments, default values, varargs thingy with any), multiple return values
-    - Function overloading, Symbol overloading in general (I guess this only applies to functions...)
-
-    - New casting system, operator overloads, better loops ()
-
-
-Implementation Plan:
-    - new Token ~* (TILDE_STAR)
-    - new Token ~** (TILDE_STAR_STAR)
-
-    - Parser using
-        Let's start at module scope only
-        Start with just 
-            using A~*
-
-    - Analyser:
-        * Module import now defines all the symbols + creates the using workloads
-        * Dealing with multiple symbol lookup (Overloading/correct error reporting)
-
-    * Then probably aliases + Dealing with cyclic aliases
-    * Then usings in Code_Blocks, where they are order dependent
-    * File loading, make sure we cannot have recursion
+    Overloading:
+        On function call to a symbol-read --> 
+            Intercept this and handle this in another way...
+            For all symbols that are functions or otherwise callable -->
 
 
 
-
-Maybe some initial rules for using:
-Use cases:
-    Invalid                       using Symbol_Read            using B
-    Adds last symbol to table     using Symbol_Path            using B~a
-    Import all                    using Symbol_Path~*          using Output~*
-    Alias                         using Symbol_Path as ID      using Output~print_line
-    Alias Normal                  using Symbol_Read as ID      using y as x
-    File Import (All symbols)     using String_Literal         using "library.upp"
-    File Import (As module)       using String_Literal as ID   using "library.upp" as Quick_Mathz
-
-So what is
-    using B~*
-    using A as B
-
-    // Note: Alias cycles possible
-    using A as B
-    using B as A
-
-Order of eggsecution is:
-    1. Define all se symbolz (Definitions + using/aliases)
-
-
-Design Question: 
-    - What happens in an order-dependent (Code-Block) Situation? when are the using Symbols added?
-        Example:
-            main :: ()
-                x := 15
-                using a as b
-                a := 17
-
-        I think that I want inner-definitions to not be able to access the usings (Code-Block),
-        and that they are evaluated in order. I think this is a good idea because otherwise
-        you cannot really do variable renamings, and later on using struct will also not be possible for variables.
-
-    - Are usings transitive? When I do using A~* will all usings in A also be imported?
-        Example:
-            World :: module
-                using Utility~log
-                using Datastructures~List
-                test :: ()
-                    log("Starting World test now")
-
-                add_items(items: List) 
-                    do_smth()
-
-            main :: ()
-                using World~*
-                test() // Should work
-                log()  // ?
-
-        Normal usings aren't transitive, but there is special syntax for transitive usings
-            using A~*   NOT TRANSITIVE
-            using A~**  TRANSITIVE
-            A :: module
-                using C~*
-                B :: module
-                    // This is also transitive to A...
-        I don't think they need to be transitive, which means that the code is probably going to be a little bit more complicated
-
-    - How/when are symbol-overloads handled? With using it's a lot simpler to have the same symbol imported twice!
-
-
-Implementation Problems:
-    What about:
-        using A as B
-        using Somewhere~*
-    Here we need to have somewhere already imported before I can lookup up the alias
-    --> This introduces dependencies
-
-    What about
-        Bar :: module
-            Foo :: module
-        Baz :: module
-            Foo :: module
-                
-        using Foo~*
-        using Bar~*
-        vs.
-        using Foo~Bar~*
-
-        
-    When do we do the lookup where the using is pointing? Should that be a workload?
-    Ideas for using: 
-    Aliases: 
-    So using require a Symbol-Lookup/Path lookup (To find if the symbol exists to where it's pointing)
-
-Symbol overloads:
-    Currently we cannot define multiple Symbols with the same name in the same symbol table I guess...
-        X::int
-        X::bool 
-    but in Code it is possible to allow "shadowing" of variables
-        a: int = 15
-            a := false
-            print_bool(a)
-        print_int(a)
-    How is this currently implemented?
-
-Problems with overloaded Symbols:
-    What does currently happen?
-        When defining a symbol, the name is looked up in the symbol table, and if it already exists, 
-        a temporary name is created -> E.g. the error is located at the time of the second definition.
-    What should happen (Design)?
-        Question: When is it an error if two symbols are accessible in the same scope?
-            Maybe there is a point to be made that some types of symbols (Comptime values) can never be overloaded,
-            so it shouldn't be possible to define them in the same module twice
-             --> This would mean that there is a definition order inside the module, and the error 
-                    would be the second definition...
-            Another problem: When can the error checking happen, since imports may import arbitrary symbols into the scope
-            Note: Symbol definition also usually happens before the imports, but the symbol types are just not known yet...
-        From a design point of view: When should the error be reported...
-
-        SOLUTION: Errors only on symbol lookup
-        A simple solution would probably be to move the error-reporting to the symbol lookup, where errors are reported only at lookup time
-        This would mean that arbitrary names can overlap, but on lookup only one name must exist (Or we can do overloading based on type)
-        Downside:
-            Errors will be reported later or can be overlooked during implementation
-            e.g. Situations where Overload-Disambiguation will be impossible to do will only be reported later.
-        Positives:
-            But with ~* imports it may accidentally happen that two namespaces clash in another namespace, and maybe the symbol of the ~* isn't used
-            at all in there, so there will be no error if never used...
-        Complexity: Since Symbols are used to determine the Dependencies of the Workloads, it may be harder if we have overloads,
-                    and also there may be more "unnecessary" dependencies which may lead to unwanted circular things...
-        Also: Later on we can add a system where some symbols don't allow other symbols with the same name in the same namespace...
-
-    Alright, so implementation:
-        Each symboltable stores a hashmap connected to a dynamic_array of symbols, and on symbol query all symbols are returned...
-
-    Storing Symbol references needs to be done somewhere else now...
 
 
 
 
             
-
-
-using/import implementation
-
-using "../common_datastructures.upp" // Imports all symbols into this symbol table
-using x as y // A 'normal' alias
-using "console_output.upp" as Output
-
-using as 
-
-// Maybe i should keep using the import thing for this?
-import "library.upp"
-import "library.upp" as Image_Loading
-
-import A as B          // Make new alias for the thing that is a 
-
-// What about structs
-Dynamic_Array :: struct(T: Type)
-    buffer: []T
-    size: int
-
-    create :: (initial_capacity := 1) -> result: Dynamic_Array($T)
-        using result
-        buffer = new [initial_capacity]T
-        size = 0
-        return result;
-        
-Player :: struct
-    name: String
-    age: int
-    alive: bool
-    exp: float
-
-main :: ()
-    player := Player.{"Frank", 15, true, 100}
-    using player.name
-    print_string(name)
-
-    using player
-    using player~*
-    using Output~print_line
-   
-
-
-Image_Loading~load_file("digg.png")
-
-using Output~print_formated
-
-using Datastructures~Dynamic_Array
-
-using Printing~* // New syntax for using: Symbol_Read can have * at the end...
-
-// I think I would rather have a Symbol_Path and a Symbol_Read independently,
-// everything should work with the Symbol_Path
-
-x := Dynamic_Array~create()
-x := Dynamic_Array~create_from_template(template, 64)
-x := Dynamic_Array~create_from_array(.[15, 32, 100])
-
-x.add(10, 32, 100)
-elem, worked = x.pop() // Remove  
-elem = x.last
-
-new_buffer := Dynamic_Array~create_template(Type.INVALID, 256)
-Dynamic_Array~last(&new_buffer)
-Dynamic_Array~pop(_newbuffer)
-
-print_formated("Hell world")
-output~print_formated("hello world")
-
-Printing~print_formated
-
 
 
 Features that I may want to do next:
@@ -395,11 +81,6 @@ STILL TOP PRIORITY:
 
 Polymorphic Functions:
     a :: ($T: Type, a: T, b: T)
-
-
-TODO:
-    There should be a way to analyse expressions when the context is unknown,
-    which doesn't show context-errors but still analyses the expressions for other unrelated errors
 
 Polymorphism stages:
     * Symbol Resolution

@@ -1,0 +1,31 @@
+
+B::module
+	add::(a:int,b:int)->int
+		return a+b
+	
+	double_add::(a:int,b:int)->int
+		return add(add(a,b),add(a,b))
+
+import B~add
+
+main::()
+	import"a.upp"as A
+	A~hello()
+	import"printing.upp"as p
+	import X~*
+	
+	X::module
+		fibonacci::(n:int)->int
+			if n<2
+				return 1
+			return fibonacci(n-1)+fibonacci(n-2)
+	
+	i:=0
+	while i<8
+		p~print_formated("Fib % = %\n",.[i,fibonacci(i)])
+		i=i+1
+
+
+
+
+

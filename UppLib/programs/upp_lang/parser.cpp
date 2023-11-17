@@ -2650,7 +2650,7 @@ namespace Parser
         }
         case Section::END_TOKEN: {
             Token_Range end_token_range = token_range_make(token_index_advance(range.end, -1), range.end);
-            assert(end_token_range.start.token > 0, "Hey");
+            end_token_range.start.token = math_maximum(0, end_token_range.start.token);
             dynamic_array_push_back(ranges, end_token_range);
             break;
         }

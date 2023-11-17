@@ -783,7 +783,7 @@ void code_completion_find_suggestions()
         if (expr->type == AST::Expression_Type::MEMBER_ACCESS && pass != 0) {
             auto info = pass_get_node_info(pass, expr->options.member_access.expr, Info_Query::TRY_READ);
             if (info != 0) {
-                type = expression_info_get_type(info);
+                type = expression_info_get_type(info, false);
                 if (info->result_type == Expression_Result_Type::TYPE) {
                     type = info->options.type;
                     fill_from_symbol_table = false;
@@ -793,7 +793,7 @@ void code_completion_find_suggestions()
         else if (expr->type == AST::Expression_Type::AUTO_ENUM && pass != 0) {
             auto info = pass_get_node_info(pass, expr, Info_Query::TRY_READ);
             if (info != 0) {
-                type = expression_info_get_type(info);
+                type = expression_info_get_type(info, false);
                 fill_from_symbol_table = false;
             }
         }
@@ -2056,7 +2056,7 @@ bool syntax_editor_display_analysis_info(AST::Node* node)
     if (expression_info == 0 || expression_info->contains_errors) {
         return false;
     }
-    auto expr_type = expression_info_get_type(expression_info);
+    auto expr_type = expression_info_get_type(expression_info, false);
     string_append_formated(&syntax_editor.context_text, "Expr Result-Type: ");
     type_signature_append_to_string(&syntax_editor.context_text, expr_type);
     return true;

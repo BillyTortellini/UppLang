@@ -896,7 +896,7 @@ IR_Data_Access ir_generator_generate_cast(IR_Code_Block* ir_block, IR_Data_Acces
 IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block, AST::Expression* expression)
 {
     auto info = get_info(expression);
-    auto result_type = expression_info_get_type(info);
+    auto result_type = expression_info_get_type(info, true);
     auto type_system = &compiler.type_system;
     auto& types = type_system->predefined_types;
     assert(!info->contains_errors, "Cannot contain errors!"); 
@@ -1078,7 +1078,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
 
         // Generate arguments 
         call_instr.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(call.arguments.size);
-        auto function_signature = get_info(expression)->specifics.function_call_signature;
+        auto function_signature = call_info->specifics.function_call_signature;
 
         // Add default/dummy arguments
         for (int i = 0; i < function_signature->options.function.parameters.size; i++) {
@@ -1130,16 +1130,19 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
     case AST::Expression_Type::STRUCT_INITIALIZER:
     {
         IR_Data_Access struct_access = ir_data_access_create_intermediate(ir_block, result_type);
+        auto& members = ir_data_access_get_type(&struct_access)->options.structure.members;
+
         auto struct_init = expression->options.struct_initializer;
         for (int i = 0; i < struct_init.arguments.size; i++)
         {
             auto arg = struct_init.arguments[i];
             auto arg_info = get_info(arg);
+            
             assert(result_type->type == Signature_Type::STRUCT, "");
 
             IR_Instruction move_instr;
             move_instr.type = IR_Instruction_Type::MOVE;
-            move_instr.options.move.destination = ir_data_access_create_member(ir_block, struct_access, arg_info->member);
+            move_instr.options.move.destination = ir_data_access_create_member(ir_block, struct_access, members[arg_info->argument_index]);
             move_instr.options.move.source = ir_generator_generate_expression(ir_block, arg->value);
             dynamic_array_push_back(&ir_block->instructions, move_instr);
         }
@@ -1148,22 +1151,12 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
         if (result_type->options.structure.struct_type == AST::Structure_Type::UNION)
         {
             assert(struct_init.arguments.size == 1, "");
-            auto& member = get_info(struct_init.arguments[0])->member;
-            int member_index = -1;
-            for (int i = 0; i < result_type->options.structure.members.size; i++) {
-                if (result_type->options.structure.members[i].offset == member.offset &&
-                    result_type->options.structure.members[i].id == member.id &&
-                    result_type->options.structure.members[i].type == member.type) {
-                    member_index = i;
-                    break;
-                }
-            }
-            assert(member_index != -1, "");
+            int member_index = get_info(struct_init.arguments[0])->argument_index;
 
             IR_Instruction move_instr;
             move_instr.type = IR_Instruction_Type::MOVE;
             move_instr.options.move.destination = ir_data_access_create_member(ir_block, struct_access, result_type->options.structure.tag_member);
-            move_instr.options.move.source = ir_data_access_create_constant_i32(member_index + 1);
+            move_instr.options.move.source = ir_data_access_create_constant_i32(member_index + 1); // There's a reason this is plus 1, but i forgot...
             dynamic_array_push_back(&ir_block->instructions, move_instr);
         }
         return struct_access;
@@ -1234,7 +1227,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
     {
         auto mem_access = expression->options.member_access;
         auto source = ir_generator_generate_expression(ir_block, mem_access.expr);
-        auto src_type = get_info(mem_access.expr)->context_ops.after_cast_type;
+        auto src_type = get_info(mem_access.expr)->post_op.type_afterwards;
 
         // Handle special case of array.data, which basically becomes an address of
         if (src_type->type == Signature_Type::ARRAY)
@@ -1319,7 +1312,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
     case AST::Expression_Type::CAST:
     {
         auto source = ir_generator_generate_expression(ir_block, expression->options.cast.operand);
-        return ir_generator_generate_cast(ir_block, source, expression_info_get_type(info), info->specifics.cast_type);
+        return ir_generator_generate_cast(ir_block, source, expression_info_get_type(info, true), info->specifics.cast_type);
     }
     case AST::Expression_Type::BAKE_BLOCK:
     case AST::Expression_Type::BAKE_EXPR:
@@ -1349,16 +1342,16 @@ IR_Data_Access ir_generator_generate_expression(IR_Code_Block* ir_block, AST::Ex
     auto access = ir_generator_generate_expression_no_cast(ir_block, expression);
 
     // Apply context operations
-    if (info->context_ops.take_address_of) {
+    if (info->post_op.take_address_of) {
         access = ir_data_access_create_address_of(ir_block, access);
     }
     else
     {
-        for (int i = 0; i < info->context_ops.deref_count; i++) {
+        for (int i = 0; i < info->post_op.deref_count; i++) {
             access = ir_data_access_create_dereference(ir_block, access);
         }
     }
-    return ir_generator_generate_cast(ir_block, access, info->context_ops.after_cast_type, info->context_ops.cast);
+    return ir_generator_generate_cast(ir_block, access, info->post_op.type_afterwards, info->post_op.cast);
 }
 
 void ir_generator_work_through_defers(IR_Code_Block* ir_block, int defer_to_index, bool rewind_stack)

@@ -407,9 +407,18 @@ enum class Expression_Result_Type
 
 struct Argument_Info
 {
-    bool is_polymorphic; // If polymorphic, the argument shouldn't generate code during code-generation
     int argument_index; // For named arguments/parameters this gives the according parameter index
-    Struct_Member member; // For struct initializer
+    bool is_polymorphic; // If polymorphic, the argument shouldn't generate code during code-generation
+    bool already_analysed; // During analysis, don't reanalyse arguments that were already analyse
+    bool context_application_missing; // If already analyse, we may still need to apply the context
+};
+
+struct Expression_Post_Op
+{
+    int deref_count;
+    bool take_address_of;
+    Info_Cast_Type cast;
+    Type_Signature* type_afterwards;
 };
 
 struct Expression_Info
@@ -429,22 +438,16 @@ struct Expression_Info
         Hardcoded_Type hardcoded;
         Symbol_Table* module_table;
         Upp_Constant constant;
-        int argument_index;
     } options;
 
     bool contains_errors; // If this expression contains any errors (Not recursive), currently only used for comptime-calculation
     union {
-        Info_Cast_Type cast_type;
-        Type_Signature* function_call_signature; // Somewhat usefull when not all arguments in a call are used (polymorphic funcitons, later named/default args)
+        Info_Cast_Type cast_type; // Note: Cast-Expression results may be further implicitly casted and because of this expression_info can hold 2 cast types
+        Type_Signature* function_call_signature; // Used by code-generation for accessing default values
     } specifics;
 
     Expression_Context context; // Maybe I don't even want to store the context
-    struct { // Info for code-gen
-        int deref_count;
-        bool take_address_of;
-        Info_Cast_Type cast;
-        Type_Signature* after_cast_type;
-    } context_ops;
+    Expression_Post_Op post_op;
 };
 
 enum class Control_Flow
@@ -530,7 +533,7 @@ Parameter_Info* pass_get_node_info(Analysis_Pass* pass, AST::Parameter* node, In
 Path_Lookup_Info* pass_get_node_info(Analysis_Pass* pass, AST::Path_Lookup* node, Info_Query query);
 Module_Info* pass_get_node_info(Analysis_Pass* pass, AST::Module* node, Info_Query query);
 
-Type_Signature* expression_info_get_type(Expression_Info* info);
+Type_Signature* expression_info_get_type(Expression_Info* info, bool before_context_is_applied);
 
 
 

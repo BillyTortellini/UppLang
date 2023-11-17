@@ -211,6 +211,7 @@ void compiler_reset_data(bool keep_data_for_incremental_compile, Compile_Type co
         compiler.id_type_of = identifier_pool_add(&compiler.identifier_pool, string_create_static("type_of"));
         compiler.id_type_info = identifier_pool_add(&compiler.identifier_pool, string_create_static("type_info"));
         compiler.id_empty_string = identifier_pool_add(&compiler.identifier_pool, string_create_static(""));
+        compiler.id_invalid_symbol_name = identifier_pool_add(&compiler.identifier_pool, string_create_static("__INVALID_SYMBOL_NAME"));
 
         // FUTURE: When we have incremental compilation we cannot just reset everything anymore
         // Reset Data
