@@ -1,14 +1,14 @@
 
 TODO:
-    * Function overloading
-        - Multiple symbols in same scope with same name
-        - Do overloading based on given types, expected return type...
     * Update function polymorphism (Works with named_arguments, in-expression values $x:int, x:$T, working with overloads)
 
     * Struct rework (Allow other definitions inside the struct namespace, like functions/modules)
     * Polymorphism for structs
     * Local-Context for casting, operator overloading, dot-calls
 
+    - Test-Cases:
+        * Struct unpacking
+        * Function overloading
     * Context system for memory allocations -->
     * Better loops (foreach, maybe a simple for ;; loop?)
     * Put initial symbols (int, float, bool + hardcoded functions) into another namespace Upp/Compiler/custom thingy?
@@ -35,7 +35,16 @@ TODO:
             Intercept this and handle this in another way...
             For all symbols that are functions or otherwise callable -->
 
+Soooo, what actually needs to be done for polymorphic arguments?
+    foo :: ($count: int, $T: Type, a: [count]T)
+        What currently happens is that parameters are analysed, and a dependency graph is formed.
+        On-Call arguments are evaluated in this order
 
+    What I would like to do:
+        * Named parameters for polymorphic functions
+        * Polymorphic arguments may also have default values
+        * Also implicit polymorphism with $T, $C, or others
+        
 
 
 

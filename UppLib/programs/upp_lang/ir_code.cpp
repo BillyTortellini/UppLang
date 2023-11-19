@@ -650,8 +650,8 @@ IR_Data_Access ir_data_access_create_constant(Type_Signature* signature, Array<b
     IR_Data_Access access;
     access.is_memory_access = false;
     access.type = IR_Data_Access_Type::CONSTANT;
-    Constant_Result result = constant_pool_add_constant(&compiler.constant_pool, signature, bytes);
-    assert(result.status == Constant_Status::SUCCESS, "Must always work");
+    auto result = constant_pool_add_constant(&compiler.constant_pool, signature, bytes);
+    assert(result.success, "Must always work");
     access.index = result.constant.constant_index;
     return access;
 }
@@ -1172,7 +1172,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
             slice_base.data_ptr = 0;
             slice_base.size = 0;
             auto slice_constant = constant_pool_add_constant(&compiler.constant_pool, result_type, array_create_static_as_bytes(&slice_base, 1));
-            assert(slice_constant.status == Constant_Status::SUCCESS, "Empty slice must succeed!");
+            assert(slice_constant.success, "Empty slice must succeed!");
 
             IR_Instruction move;
             move.type = IR_Instruction_Type::MOVE;
@@ -1802,14 +1802,14 @@ void ir_generator_finish(bool gen_bytecode)
 
     // Set type_informations global
     {
-        Constant_Result result = constant_pool_add_constant(
+        auto result = constant_pool_add_constant(
             &compiler.constant_pool,
             type_system_make_array(
                 &type_system, type_system.predefined_types.type_information_type, true, type_system.internal_type_infos.size
             ),
             array_create_static_as_bytes(type_system.internal_type_infos.data, type_system.internal_type_infos.size)
         );
-        assert(result.status == Constant_Status::SUCCESS, "Type information must be valid");
+        assert(result.success, "Type information must be valid");
         assert(type_system.types.size == type_system.internal_type_infos.size, "");
 
         IR_Instruction move_instr;

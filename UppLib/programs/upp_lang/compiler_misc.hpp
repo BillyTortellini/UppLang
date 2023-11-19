@@ -109,22 +109,20 @@ struct Upp_Constant_Reference
     int buffer_destination_offset; 
 };
 
-enum class Constant_Status
+struct Constant_Pool_Result
 {
-    SUCCESS,
-    CONTAINS_VOID_TYPE,
-    CONTAINS_INVALID_POINTER_NOT_NULL,
-    CANNOT_SAVE_FUNCTIONS_YET,
-    CANNOT_SAVE_C_UNIONS_CONTAINING_REFERENCES,
-    CONTAINS_INVALID_UNION_TAG,
-    OUT_OF_MEMORY,
-    INVALID_SLICE_SIZE
+    bool success;
+    const char* error_message;
+    Upp_Constant constant;
 };
 
-struct Constant_Result
-{
-    Constant_Status status;
-    Upp_Constant constant;
+struct Constant_Pool;
+struct Constant_Deduplication {
+    Constant_Pool* pool;
+    int data_size_in_byte;
+    bool is_pool_data;
+    int offset;
+    void* data;
 };
 
 struct Constant_Pool
@@ -134,14 +132,14 @@ struct Constant_Pool
     Dynamic_Array<Upp_Constant_Reference> references;
     Dynamic_Array<byte> buffer;
     Hashtable<void*, int> saved_pointers;
+    Hashtable<Constant_Deduplication, int> deduplication_table;
     int max_buffer_size;
 };
 
 Constant_Pool constant_pool_create(Type_System* type_system);
 void constant_pool_destroy(Constant_Pool* pool);
-Constant_Result constant_pool_add_constant(Constant_Pool* pool, Type_Signature* signature, Array<byte> bytes);
+Constant_Pool_Result constant_pool_add_constant(Constant_Pool* pool, Type_Signature* signature, Array<byte> bytes);
 bool constant_pool_compare_constants(Constant_Pool* pool, Upp_Constant a, Upp_Constant b);
-const char* constant_status_to_string(Constant_Status status);
 void* upp_constant_get_pointer(Constant_Pool* pool, Upp_Constant constant);
 template<typename T>
 T upp_constant_to_value(Constant_Pool* pool, Upp_Constant constant)

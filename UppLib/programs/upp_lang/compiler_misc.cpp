@@ -115,7 +115,40 @@ void exit_code_append_to_string(String* string, Exit_Code code)
     }
 }
 
+bool compare_array_memory(Constant_Deduplication* a, Constant_Deduplication* b) {
+    if (a->data_size_in_byte != b->data_size_in_byte) {
+        return false;
+    }
+    if (a->pool != b->pool) {
+        return false;
+    }
 
+    void* a_ptr = a->data;
+    if (a->is_pool_data) {
+        a_ptr = &a->pool->buffer[a->offset];
+    }
+    void* b_ptr = b->data;
+    if (b->is_pool_data) {
+        b_ptr = &b->pool->buffer[b->offset];
+    }
+     
+    return memory_compare(a_ptr, b_ptr, a->data_size_in_byte);
+}
+
+u64 hash_deduplication(Constant_Deduplication* a) {
+    void* a_ptr = a->data;
+    if (a->is_pool_data) {
+        a_ptr = &a->pool->buffer[a->offset];
+    }
+    if (a->data_size_in_byte == 0 || a_ptr == 0) {
+        return 0;
+    }
+
+    Array<byte> memory;
+    memory.data = (byte*)a_ptr;
+    memory.size = a->data_size_in_byte;
+    return hash_memory(memory);
+}
 
 // Constant Pool
 Constant_Pool constant_pool_create(Type_System* type_system)
@@ -125,6 +158,7 @@ Constant_Pool constant_pool_create(Type_System* type_system)
     result.constants = dynamic_array_create_empty<Upp_Constant>(2048);
     result.references = dynamic_array_create_empty<Upp_Constant_Reference>(128);
     result.saved_pointers = hashtable_create_pointer_empty<void*, int>(32);
+    result.deduplication_table = hashtable_create_empty<Constant_Deduplication, int>(16, hash_deduplication, compare_array_memory);
     result.type_system = type_system;
     result.max_buffer_size = 1024 * 1024; // 1 MB of constant buffer is allowed per default
     return result;
@@ -136,48 +170,35 @@ void constant_pool_destroy(Constant_Pool* pool)
     dynamic_array_destroy(&pool->constants);
     dynamic_array_destroy(&pool->references);
     hashtable_destroy(&pool->saved_pointers);
+    hashtable_destroy(&pool->deduplication_table);
 }
 
 struct Offset_Result
 {
-    Constant_Status status;
+    bool success;
+    const char* error_message;
     int offset;
 };
 
 Offset_Result offset_result_make_success(int offset) {
     Offset_Result result;
-    result.status = Constant_Status::SUCCESS;
+    result.success = true;
     result.offset = offset;
+    result.error_message = "";
     return result;
 }
 
-Offset_Result offset_result_make_error(Constant_Status error_status) {
+Offset_Result offset_result_make_error(const char* error) {
     Offset_Result result;
-    result.status = error_status;
+    result.success = false;
+    result.error_message = error;
     result.offset = -1;
     return result;
 }
 
 Offset_Result constant_pool_add_constant_internal(Constant_Pool* pool, Type_Signature* signature, Array<byte> bytes);
-const char* constant_status_to_string(Constant_Status status)
-{
-    switch (status)
-    {
-    case Constant_Status::SUCCESS: return "SUCCESS";
-    case Constant_Status::CONTAINS_VOID_TYPE: return "CONTAINS_VOID_TYPE";
-    case Constant_Status::CONTAINS_INVALID_POINTER_NOT_NULL: return "CONTAINS_INVALID_POINTER_NOT_NULL";
-    case Constant_Status::CANNOT_SAVE_FUNCTIONS_YET: return "CANNOT_SAVE_FUNCTIONS_YET";
-    case Constant_Status::CANNOT_SAVE_C_UNIONS_CONTAINING_REFERENCES: return "CANNOT_SAVE_C_UNIONS_CONTAINING_REFERENCES";
-    case Constant_Status::CONTAINS_INVALID_UNION_TAG: return "CONTAINS_INVALID_UNION_TAG";
-    case Constant_Status::OUT_OF_MEMORY: return "OUT_OF_MEMORY";
-    case Constant_Status::INVALID_SLICE_SIZE: return "INVALID_SLICE_SIZE";
-    default: panic("");
-    }
-    return 0;
-}
 
-void* upp_constant_get_pointer(Constant_Pool* pool, Upp_Constant constant)
-{
+void* upp_constant_get_pointer(Constant_Pool* pool, Upp_Constant constant) {
     return (void*)&pool->buffer[constant.offset];
 }
 
@@ -219,10 +240,7 @@ bool constant_pool_compare_constants(Constant_Pool* pool, Upp_Constant a, Upp_Co
 
         Also, I could implement a deep comparison, but the use cases for that seem unclear
 
-        TODO: I definitly want to de-duplicate constant values, since they cannot be modified this will not change
-        anything about the logic of the program. For example, integer values like 0, 1, -1... will appear alot in
-        programs, so we shouldn't store them lots of times in constant memory.
-        After de-duplication (probably with a hashmap), it should be possible to compare two constants by looking at their indices!
+        Note: If we would have deduplication of constant values with references in them, then this could be a simple index check
     */
 
     if (a.type != b.type) return false;
@@ -235,13 +253,14 @@ bool constant_pool_compare_constants(Constant_Pool* pool, Upp_Constant a, Upp_Co
     return memory_compare(raw_data_a, raw_data_b, signature->size);
 }
 
-Constant_Status constant_pool_search_references(Constant_Pool* pool, int data_offset, Type_Signature* signature)
+// Return the error message
+Optional<const char*> constant_pool_record_references(Constant_Pool* pool, int data_offset, Type_Signature* signature)
 {
     void* raw_data = &pool->buffer[data_offset];
     switch (signature->type)
     {
     case Signature_Type::VOID_TYPE:
-        return Constant_Status::CONTAINS_VOID_TYPE;
+        return optional_make_success("Constant data contains void type");
     case Signature_Type::PRIMITIVE:
         break;
     case Signature_Type::POINTER:
@@ -257,17 +276,17 @@ Constant_Status constant_pool_search_references(Constant_Pool* pool, int data_of
             Offset_Result ptr_result = constant_pool_add_constant_internal(
                 pool, signature->options.pointer_child, array_create_static_as_bytes((byte*)ptr_value, signature->options.pointer_child->size)
             );
-            if (ptr_result.status != Constant_Status::SUCCESS) return ptr_result.status;
+            if (!ptr_result.success) return optional_make_success(ptr_result.error_message);
             reference.buffer_destination_offset = ptr_result.offset;
             dynamic_array_push_back(&pool->references, reference);
         }
         else {
-            return Constant_Status::CONTAINS_INVALID_POINTER_NOT_NULL;
+            return optional_make_success("Constant data contains invalid pointer that isn't null");
         }
         break;
     }
     case Signature_Type::FUNCTION: {
-        return Constant_Status::CANNOT_SAVE_FUNCTIONS_YET;
+        return optional_make_success("Cannot save function pointers as constants currently!");
     }
     case Signature_Type::STRUCT:
     {
@@ -278,14 +297,14 @@ Constant_Status constant_pool_search_references(Constant_Pool* pool, int data_of
         {
             for (int i = 0; i < signature->options.structure.members.size; i++) {
                 Struct_Member* member = &signature->options.structure.members[i];
-                Constant_Status member_status = constant_pool_search_references(pool, data_offset + member->offset, member->type);
-                if (member_status != Constant_Status::SUCCESS) return member_status;
+                auto member_error_opt = constant_pool_record_references(pool, data_offset + member->offset, member->type);
+                if (member_error_opt.available) return member_error_opt;
             }
             break;
         }
         case AST::Structure_Type::C_UNION: {
             if (type_signature_contains_references(signature)) {
-                return Constant_Status::CANNOT_SAVE_C_UNIONS_CONTAINING_REFERENCES;
+                return optional_make_success("Constant is/contains a c-union containing references, which cannot be serizalized");
             }
             break;
         }
@@ -304,12 +323,11 @@ Constant_Status constant_pool_search_references(Constant_Pool* pool, int data_of
             }
             if (found_member_index != -1) {
                 Struct_Member* member = &signature->options.structure.members[found_member_index];
-                Constant_Status member_status = constant_pool_search_references(pool, data_offset + member->offset, member->type);
-                if (member_status != Constant_Status::SUCCESS) return member_status;
+                auto member_status = constant_pool_record_references(pool, data_offset + member->offset, member->type);
+                if (member_status.available) return member_status;
             }
             else {
-                return Constant_Status::CONTAINS_INVALID_UNION_TAG;
-                //panic("Could not find active member of given tag value, union seems not to be initialized");
+                return optional_make_success("Constant data contained union with invalid tag");
             }
             break;
         }
@@ -324,8 +342,8 @@ Constant_Status constant_pool_search_references(Constant_Pool* pool, int data_of
         if (type_signature_contains_references(signature->options.array.element_type)) {
             for (int i = 0; i < signature->options.array.element_count; i++) {
                 int element_offset = i * signature->options.array.element_type->size;
-                Constant_Status element_status = constant_pool_search_references(pool, data_offset + element_offset, signature->options.array.element_type);
-                if (element_status != Constant_Status::SUCCESS) return element_status;
+                auto element_status = constant_pool_record_references(pool, data_offset + element_offset, signature->options.array.element_type);
+                if (element_status.available) return element_status;
             }
         }
         break;
@@ -338,7 +356,7 @@ Constant_Status constant_pool_search_references(Constant_Pool* pool, int data_of
             break;
         }
         if (slice.size <= 0) {
-            return Constant_Status::INVALID_SLICE_SIZE;
+            return optional_make_success("Constant data contained slice with negative size");
         }
         if (memory_is_readable(slice.data_ptr, signature->options.slice.element_type->size * slice.size)) 
         {
@@ -348,12 +366,12 @@ Constant_Status constant_pool_search_references(Constant_Pool* pool, int data_of
                 pool, type_system_make_array(pool->type_system, signature->options.slice.element_type, true, slice.size), 
                 array_create_static_as_bytes((byte*)slice.data_ptr, signature->options.slice.element_type->size * slice.size)
             );
-            if (data_result.status != Constant_Status::SUCCESS) return data_result.status;
+            if (!data_result.success) return optional_make_success(data_result.error_message);
             reference.buffer_destination_offset = data_result.offset;
             dynamic_array_push_back(&pool->references, reference);
         }
         else {
-            return Constant_Status::CONTAINS_INVALID_POINTER_NOT_NULL;
+            return optional_make_success("Constant data contained slice with invalid data-pointer");
         }
     }
     case Signature_Type::TEMPLATE_TYPE:
@@ -362,26 +380,38 @@ Constant_Status constant_pool_search_references(Constant_Pool* pool, int data_of
         break;
     default: panic("");
     }
-    return Constant_Status::SUCCESS;
+
+    return optional_make_failure<const char*>();
 }
 
 Offset_Result constant_pool_add_constant_internal(Constant_Pool* pool, Type_Signature* signature, Array<byte> bytes)
 {
-    /*
-        1. Reset Pointer Hashtable
-        2. Push bytes into pool
-        3. Add given pointer to hashtable
-        4. Search through bytes for references
-        5. If reference found, call add_constant with new reference, but don't reset hashtable
-    */
+    // Check if deduplication is possible (Currently for values without references, maybe change later...)
+    bool type_contains_references = type_signature_contains_references(signature);
+    if (!type_contains_references) {
+        Constant_Deduplication deduplication;
+        deduplication.pool = pool;
+        deduplication.data_size_in_byte = signature->size;
+        deduplication.is_pool_data = false;
+        deduplication.offset = -1;
+        deduplication.data = bytes.data;
+        int* offset_opt = hashtable_find_element(&pool->deduplication_table, deduplication);
+        if (offset_opt != 0) {
+            return offset_result_make_success(*offset_opt);
+        }
+    }
+
+    // Handle cyclic references (Stop adding to pool once same pointer was found)
     {
         int* found_offset = hashtable_find_element(&pool->saved_pointers, (void*)bytes.data);
         if (found_offset != 0) {
             return offset_result_make_success(*found_offset);
         }
     }
+
+
     if (pool->buffer.size + signature->alignment + signature->size > pool->max_buffer_size) {
-        return offset_result_make_error(Constant_Status::OUT_OF_MEMORY);
+        return offset_result_make_error("Constant pool reached maximum buffer size");
     }
 
     // Reserve enough memory in pool
@@ -392,26 +422,43 @@ Offset_Result constant_pool_add_constant_internal(Constant_Pool* pool, Type_Sign
         dynamic_array_push_back(&pool->buffer, (byte)0);
     }
 
+    // Copy data to pool
     int start_offset = pool->buffer.size;
     for (int i = 0; i < bytes.size; i++) {
         dynamic_array_push_back(&pool->buffer, bytes[i]);
     }
     hashtable_insert_element(&pool->saved_pointers, (void*)bytes.data, start_offset);
-    Constant_Status status = constant_pool_search_references(pool, start_offset, signature);
-    if (status != Constant_Status::SUCCESS) {
-        return offset_result_make_error(status);
+
+    // Handle references inside constant data
+    auto error_message = constant_pool_record_references(pool, start_offset, signature);
+    if (error_message.available) {
+        dynamic_array_rollback_to_size(&pool->buffer, start_offset);
+        return offset_result_make_error(error_message.value);
     }
+
+    // Add to deduplication list
+    if (!type_contains_references) {
+        Constant_Deduplication deduplication;
+        deduplication.pool = pool;
+        deduplication.data_size_in_byte = signature->size;
+        deduplication.is_pool_data = true;
+        deduplication.offset = start_offset;
+        deduplication.data = 0;
+        hashtable_insert_element(&pool->deduplication_table, deduplication, start_offset);
+    }
+
     return offset_result_make_success(start_offset);
 }
 
-Constant_Result constant_pool_add_constant(Constant_Pool* pool, Type_Signature* signature, Array<byte> bytes)
+Constant_Pool_Result constant_pool_add_constant(Constant_Pool* pool, Type_Signature* signature, Array<byte> bytes)
 {
     int rewind_index = pool->buffer.size;
     hashtable_reset(&pool->saved_pointers);
     Offset_Result offset_result = constant_pool_add_constant_internal(pool, signature, bytes);
-    if (offset_result.status != Constant_Status::SUCCESS) {
-        Constant_Result result;
-        result.status = offset_result.status;
+    if (!offset_result.success) {
+        Constant_Pool_Result result;
+        result.success = false;
+        result.error_message = offset_result.error_message;
         result.constant.constant_index = -1;
         result.constant.offset = -1;
         result.constant.type = 0;
@@ -424,8 +471,9 @@ Constant_Result constant_pool_add_constant(Constant_Pool* pool, Type_Signature* 
     constant.constant_index = pool->constants.size;
     dynamic_array_push_back(&pool->constants, constant);
 
-    Constant_Result result;
-    result.status = Constant_Status::SUCCESS;
+    Constant_Pool_Result result;
+    result.success = true;
+    result.error_message = "";
     result.constant = constant;
     return result;
 }

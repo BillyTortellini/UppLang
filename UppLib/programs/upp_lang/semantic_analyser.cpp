@@ -26,13 +26,11 @@ static Workload_Executer workload_executer;
 
 // PROTOTYPES
 ModTree_Function* modtree_function_create_empty(Type_Signature* signature, Symbol* symbol, Function_Progress* progress, Symbol_Table* param_table);
-Comptime_Result comptime_result_make_not_comptime();
-Comptime_Result expression_calculate_comptime_value(AST::Expression* expr);
 void analysis_workload_destroy(Workload_Base* workload);
 Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression* expression, Expression_Context context);
 Type_Signature* semantic_analyser_analyse_expression_value(AST::Expression* rc_expression, Expression_Context context);
 Type_Signature* semantic_analyser_analyse_expression_type(AST::Expression* rc_expression);
-Type_Signature* semantic_analyser_try_convert_value_to_type(AST::Expression* expression, bool log_error);
+Type_Signature* semantic_analyser_try_convert_value_to_type(AST::Expression* expression);
 Control_Flow semantic_analyser_analyse_block(AST::Code_Block* code_block);
 
 Expression_Post_Op expression_context_apply(
@@ -380,9 +378,15 @@ void log_error_info_expression_result_type(Expression_Result_Type result_type) {
     dynamic_array_push_back(&semantic_analyser.errors[semantic_analyser.errors.size - 1].information, info);
 }
 
-void log_error_info_constant_status(Constant_Status status) {
+void log_error_info_constant_status(const char* msg) {
     Error_Information info = error_information_make_empty(Error_Information_Type::CONSTANT_STATUS);
-    info.options.constant_status = status;
+    info.options.constant_message = msg;
+    dynamic_array_push_back(&semantic_analyser.errors[semantic_analyser.errors.size - 1].information, info);
+}
+
+void log_error_info_comptime_msg(const char* comptime_msg) {
+    Error_Information info = error_information_make_empty(Error_Information_Type::COMPTIME_MESSAGE);
+    info.options.comptime_message = comptime_msg;
     dynamic_array_push_back(&semantic_analyser.errors[semantic_analyser.errors.size - 1].information, info);
 }
 
@@ -408,39 +412,40 @@ void polymorphic_base_destroy(Polymorphic_Base* base) {
  // Returns null if we reached instanciation depth
 Polymorphic_Instance* polymorphic_base_make_instance_empty(Polymorphic_Base* base, AST::Node* instanciation_node) {
     // Check instance depth
-    int instanciation_counter = 0;
-    Polymorphic_Instance* recursive_base = 0; // The initial instance that lead to the creation of this instance, may be 0
+    int current_instanciation_depth = 0;
+    Polymorphic_Instance* parent_instance = 0; // The initial instance that lead to the creation of this instance, may be 0
     {
         ModTree_Function* current_function = semantic_analyser.current_workload->current_function;
-        if (current_function != 0) 
-        {
-            recursive_base = current_function->progress->poly_instance;
-            if (recursive_base != 0) {
-                if (recursive_base->root_instance != 0) {
-                    recursive_base = recursive_base->root_instance;
-                }
-                instanciation_counter = recursive_base->instances_generated;
-                recursive_base->instances_generated += 1;
+        if (current_function != 0) {
+            parent_instance = current_function->progress->poly_instance;
+            if (parent_instance != 0) {
+                current_instanciation_depth = parent_instance->instanciation_depth + 1;
             }
         }
 
         // Stop recursive instanciates at some threshold
-        if (instanciation_counter > 10) {
+        if (current_instanciation_depth > 10) {
             log_semantic_error("Polymorphic function instanciation reached depth limit 10!", instanciation_node, Parser::Section::FIRST_TOKEN);
             // TODO: Add more error information, e.g. finding a cycle or printing the mother instances!
-            // Also set all calling functions to contain errors (Important so that no more instances of the base function are created!)
-            recursive_base->progress->function->contains_errors = true;
+            auto parent = parent_instance;
+            while (parent != 0) {
+                parent->progress->function->contains_errors = true;
+                parent = parent->parent_instance;
+            }
             return 0;
         }
     }
 
     Polymorphic_Instance* instance = new Polymorphic_Instance;
     instance->base = base;
-    instance->instances_generated = 0;
-    instance->root_instance = recursive_base;
+    instance->instanciation_depth = current_instanciation_depth;
+    instance->parent_instance = parent_instance;
     instance->instance_index = -1;
-    instance->parameter_values = array_create_empty<Polymorphic_Value>(base->parameter_count);
     instance->progress = 0;
+    instance->parameter_values = array_create_empty<Polymorphic_Value>(base->parameter_count);
+    for (int i = 0; i < instance->parameter_values.size; i++) {
+        instance->parameter_values[i].is_not_set = true;
+    }
     return instance;
 }
 
@@ -457,7 +462,6 @@ Polymorphic_Base* polymorphic_base_create(Function_Progress* progress, int param
     Polymorphic_Base* base = new Polymorphic_Base;
     dynamic_array_push_back(&semantic_analyser.polymorphic_functions, base);
     base->instances = dynamic_array_create_empty<Polymorphic_Instance*>(1);
-    base->progress = progress;
     base->parameter_count = parameter_count;
 
     // Create first instance
@@ -467,9 +471,11 @@ Polymorphic_Base* polymorphic_base_create(Function_Progress* progress, int param
     }
     instance->instance_index = 0;
     instance->progress = progress;
-    instance->root_instance = 0;
-    instance->instances_generated = 0;
+    instance->parent_instance = 0;
+    instance->instanciation_depth = 0;
     dynamic_array_push_back(&base->instances, instance);
+
+    base->base_instance = instance;
     progress->poly_instance = instance;
     progress->function->is_runnable = false; 
 
@@ -586,8 +592,9 @@ Function_Progress* function_progress_create(Symbol* symbol, AST::Expression* fun
 Function_Progress* function_progress_create_polymorphic_instance(Polymorphic_Instance* empty_instance, Expression_Info* instance_expr_info, Analysis_Pass* header_pass)
 {
     // Check if we have already instanciated the function with given parameters
+    auto base = empty_instance->base;
+    auto base_progress = base->base_instance->progress;
     {
-        auto base = empty_instance->base;
         for (int i = 0; i < base->instances.size; i++) {
             auto instance = base->instances[i];
             bool all_matching = true;
@@ -622,7 +629,7 @@ Function_Progress* function_progress_create_polymorphic_instance(Polymorphic_Ins
 
     // Promote empty instance to actual instance
     empty_instance->instance_index = empty_instance->base->instances.size;
-    dynamic_array_push_back(&empty_instance->base->instances, empty_instance);
+    dynamic_array_push_back(&base->instances, empty_instance);
     instance_expr_info->options.polymorphic.instance = empty_instance;
 
     // Re-Analyse base function signature (Now with known polymorphic values) to get non-polymorphic instance signature
@@ -630,8 +637,8 @@ Function_Progress* function_progress_create_polymorphic_instance(Polymorphic_Ins
     {
         RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->current_polymorphic_values, empty_instance->parameter_values);
         RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->current_pass, header_pass);
-        RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->current_symbol_table, empty_instance->base->progress->function->parameter_table);
-        auto& signature_node = empty_instance->base->progress->header_workload->function_node->options.function.signature->options.function_signature;
+        RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->current_symbol_table, base_progress->function->parameter_table);
+        auto& signature_node = base_progress->header_workload->function_node->options.function.signature->options.function_signature;
 
         Type_Signature unfinished = type_system_make_function_empty(&compiler.type_system);
         for (int i = 0; i < signature_node.parameters.size; i++)
@@ -651,7 +658,6 @@ Function_Progress* function_progress_create_polymorphic_instance(Polymorphic_Ins
     }
 
     // Create new progress
-    auto base_progress = empty_instance->base->progress;
     auto progress = analysis_progress_allocate_internal<Function_Progress>();
     empty_instance->progress = progress;
     progress->poly_instance = empty_instance;
@@ -722,7 +728,7 @@ Bake_Progress* bake_progress_create(AST::Expression* bake_expr)
     progress->bake_function = modtree_function_create_empty(
         type_system_make_function(&compiler.type_system, {}, compiler.type_system.predefined_types.void_type), 0, 0, 0
     );
-    progress->result = comptime_result_make_not_comptime();
+    progress->result = optional_make_failure<Upp_Constant>();
 
     // Create workloads
     progress->analysis_workload = workload_executer_allocate_workload<Workload_Bake_Analysis>(upcast(bake_expr));
@@ -978,27 +984,48 @@ void modtree_program_destroy()
 
 
 // Comptime Values
+
+enum class Comptime_Result_Type
+{
+    AVAILABLE,
+    UNAVAILABLE, // The expression is comptime, but not evaluable due to the context (E.g. errors, Polymorphic parameters)
+    NOT_COMPTIME,
+};
+
+struct Comptime_Result
+{
+    Comptime_Result_Type type;
+    const char* message;
+    void* data;
+    Type_Signature* data_type;
+};
+
+Comptime_Result expression_calculate_comptime_value_internal(AST::Expression* expr);
+
 Comptime_Result comptime_result_make_available(void* data, Type_Signature* type) {
     Comptime_Result result;
     result.type = Comptime_Result_Type::AVAILABLE;
     result.data = data;
     result.data_type = type;
+    result.message = "";
     return result;
 }
 
-Comptime_Result comptime_result_make_unavailable(Type_Signature* type) {
+Comptime_Result comptime_result_make_unavailable(Type_Signature* type, const char* message) {
     Comptime_Result result;
     result.type = Comptime_Result_Type::UNAVAILABLE;
     result.data_type = type;
     result.data = 0;
+    result.message = message;
     return result;
 }
 
-Comptime_Result comptime_result_make_not_comptime() {
+Comptime_Result comptime_result_make_not_comptime(const char* message) {
     Comptime_Result result;
     result.type = Comptime_Result_Type::NOT_COMPTIME;
     result.data = 0;
     result.data_type = 0;
+    result.message = message;
     return result;
 }
 
@@ -1006,16 +1033,16 @@ Comptime_Result comptime_result_apply_cast(Comptime_Result value, Info_Cast_Type
 {
     auto& analyser = semantic_analyser;
     if (value.type == Comptime_Result_Type::NOT_COMPTIME) {
-        return comptime_result_make_not_comptime();
+        return comptime_result_make_not_comptime(value.message);
     }
     else if (value.type == Comptime_Result_Type::UNAVAILABLE) {
-        return comptime_result_make_unavailable(result_type);
+        return comptime_result_make_unavailable(result_type, value.message);
     }
 
     Instruction_Type instr_type = (Instruction_Type)-1;
     switch (cast_type)
     {
-    case Info_Cast_Type::INVALID: return comptime_result_make_unavailable(result_type); // Invalid means an error was already logged
+    case Info_Cast_Type::INVALID: return comptime_result_make_unavailable(result_type, "Expression contains invalid cast"); // Invalid means an error was already logged
     case Info_Cast_Type::NO_CAST: return value;
     case Info_Cast_Type::FLOATS: instr_type = Instruction_Type::CAST_FLOAT_DIFFERENT_SIZE; break;
     case Info_Cast_Type::FLOAT_TO_INT: instr_type = Instruction_Type::CAST_FLOAT_INTEGER; break;
@@ -1023,9 +1050,9 @@ Comptime_Result comptime_result_apply_cast(Comptime_Result value, Info_Cast_Type
     case Info_Cast_Type::INTEGERS: instr_type = Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE; break;
     case Info_Cast_Type::ENUM_TO_INT: instr_type = Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE; break;
     case Info_Cast_Type::INT_TO_ENUM: instr_type = Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE; break;
-    case Info_Cast_Type::POINTERS: return comptime_result_make_not_comptime();
-    case Info_Cast_Type::POINTER_TO_U64: return comptime_result_make_not_comptime();
-    case Info_Cast_Type::U64_TO_POINTER: return comptime_result_make_not_comptime();
+    case Info_Cast_Type::POINTERS: return comptime_result_make_not_comptime("Pointers aren't currently handled for comptime evaluation");
+    case Info_Cast_Type::POINTER_TO_U64: return comptime_result_make_not_comptime("Pointers aren't currently handled for comptime evaluation");
+    case Info_Cast_Type::U64_TO_POINTER: return comptime_result_make_not_comptime("Pointers aren't currently handled for comptime evaluation");
     case Info_Cast_Type::ARRAY_TO_SLICE: {
         Upp_Slice_Base* slice = stack_allocator_allocate<Upp_Slice_Base>(&analyser.allocator_values);
         slice->data_ptr = value.data;
@@ -1041,11 +1068,11 @@ Comptime_Result comptime_result_apply_cast(Comptime_Result value, Info_Cast_Type
     case Info_Cast_Type::FROM_ANY: {
         Upp_Any* given = (Upp_Any*)value.data;
         if (given->type >= compiler.type_system.types.size) {
-            return comptime_result_make_not_comptime();
+            return comptime_result_make_not_comptime("Any contained invalid type_id");
         }
         Type_Signature* any_type = compiler.type_system.types[given->type];
         if (!type_signature_equals(any_type, value.data_type)) {
-            return comptime_result_make_not_comptime();
+            return comptime_result_make_not_comptime("Any type_id doesn't match result type, actually not sure if this can happen");
         }
         return comptime_result_make_available(given->data, any_type);
     }
@@ -1069,7 +1096,7 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
 
     auto info = get_info(expr);
     if (info->contains_errors) {
-        return comptime_result_make_unavailable(expression_info_get_type(info, true));
+        return comptime_result_make_unavailable(expression_info_get_type(info, true), "Analysis contained errors");
     }
 
     switch (info->result_type)
@@ -1084,7 +1111,7 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
     case Expression_Result_Type::POLYMORPHIC_FUNCTION:
     case Expression_Result_Type::FUNCTION: // TODO: Function pointer reads should work in the future
     case Expression_Result_Type::HARDCODED_FUNCTION: {
-        return comptime_result_make_not_comptime();
+        return comptime_result_make_not_comptime("Function pointers for comptime values aren't supported currently");
     }
     case Expression_Result_Type::VALUE:
         break; // Rest of function
@@ -1106,9 +1133,10 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
     case AST::Expression_Type::MODULE:
         panic("Should be handled above!");
     case AST::Expression_Type::ERROR_EXPR: {
-        return comptime_result_make_unavailable(types.unknown_type);
+        return comptime_result_make_unavailable(types.unknown_type, "Analysis contained errors");
     }
-    case AST::Expression_Type::PATH_LOOKUP: {
+    case AST::Expression_Type::PATH_LOOKUP: 
+    {
         auto symbol = get_info(expr->options.path_lookup)->symbol;
         if (symbol->type == Symbol_Type::COMPTIME_VALUE) {
             auto& upp_const = symbol->options.constant;
@@ -1121,13 +1149,13 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
                 analyser.current_workload->type == Analysis_Workload_Type::FUNCTION_HEADER)
             {
                 // This means we are currently analysing the same header, e.g. the parameter cannot be set yet
-                return comptime_result_make_unavailable(param.workload->base_type);
+                return comptime_result_make_unavailable(param.workload->base_type, "In polymorphic base analysis, so no parameters are set yet");
             }
             else if (analyser.current_workload->type == Analysis_Workload_Type::FUNCTION_BODY) {
                 // Check if the value is set (e.g. if we are in the base-body or in an instance-body)
                 const auto& poly_value = analyser.current_workload->current_polymorphic_values[param.workload->execution_order_index];
                 if (poly_value.is_not_set) { // Is the case if we are in the body analysis of the base-function
-                    return comptime_result_make_unavailable(param.workload->base_type);
+                    return comptime_result_make_unavailable(param.workload->base_type, "In polymorphic base analysis, so no parameters are set yet");
                 }
                 return comptime_result_make_available(&compiler.constant_pool.buffer[poly_value.constant.offset], poly_value.constant.type);
             }
@@ -1135,23 +1163,30 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
                 panic("In which hellish landscape are we where we access parameters outside of body/header analysis");
             }
             panic("Must not happen");
-            return comptime_result_make_unavailable(types.unknown_type);
+            return comptime_result_make_unavailable(types.unknown_type, "Invalid code path");
         }
         else if (symbol->type == Symbol_Type::ERROR_SYMBOL) {
-            return comptime_result_make_unavailable(types.unknown_type);
+            return comptime_result_make_unavailable(types.unknown_type, "Analysis contained errors");
         }
-        return comptime_result_make_not_comptime();
+        return comptime_result_make_not_comptime("Encountered non-comptime symbol");
     }
     case AST::Expression_Type::BINARY_OPERATION:
     {
-        Comptime_Result left_val = expression_calculate_comptime_value(expr->options.binop.left);
-        Comptime_Result right_val = expression_calculate_comptime_value(expr->options.binop.right);
-        if (left_val.type != Comptime_Result_Type::AVAILABLE || right_val.type != Comptime_Result_Type::AVAILABLE) {
-            if (left_val.type == Comptime_Result_Type::NOT_COMPTIME && right_val.type != Comptime_Result_Type::NOT_COMPTIME) {
-                return comptime_result_make_not_comptime();
+        Comptime_Result left_val = expression_calculate_comptime_value_internal(expr->options.binop.left);
+        Comptime_Result right_val = expression_calculate_comptime_value_internal(expr->options.binop.right);
+        if (left_val.type != Comptime_Result_Type::AVAILABLE || right_val.type != Comptime_Result_Type::AVAILABLE) 
+        {
+            if (left_val.type == Comptime_Result_Type::NOT_COMPTIME) {
+                return left_val;
+            }
+            else if (right_val.type == Comptime_Result_Type::NOT_COMPTIME) {
+                return right_val;
+            }
+            else if (left_val.type == Comptime_Result_Type::UNAVAILABLE) {
+                return comptime_result_make_unavailable(result_type, left_val.message);
             }
             else {
-                return comptime_result_make_unavailable(result_type);
+                return comptime_result_make_unavailable(result_type, right_val.message);
             }
         }
 
@@ -1173,7 +1208,7 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
         case AST::Binop::GREATER_OR_EQUAL: instr_type = Instruction_Type::BINARY_OP_GREATER_EQUAL; break;
         case AST::Binop::POINTER_EQUAL: instr_type = Instruction_Type::BINARY_OP_EQUAL; break;
         case AST::Binop::POINTER_NOT_EQUAL: instr_type = Instruction_Type::BINARY_OP_NOT_EQUAL; break;
-        case AST::Binop::INVALID: return comptime_result_make_unavailable(result_type);
+        case AST::Binop::INVALID: return comptime_result_make_unavailable(result_type, "Analysis error encountered");
         default: panic("");
         }
 
@@ -1182,13 +1217,12 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
             return comptime_result_make_available(result_buffer, result_type);
         }
         else {
-            return comptime_result_make_not_comptime();
+            return comptime_result_make_not_comptime("Bytecode instruction execution failed, e.g. division by zero or others");
         }
         break;
     }
     case AST::Expression_Type::UNARY_OPERATION:
     {
-        Comptime_Result value = expression_calculate_comptime_value(expr->options.unop.expr);
         Instruction_Type instr_type;
         switch (expr->options.unop.type)
         {
@@ -1199,17 +1233,18 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
             break;
         }
         case AST::Unop::POINTER:
-            return comptime_result_make_not_comptime();
+            return comptime_result_make_not_comptime("Address of not supported for comptime values");
         case AST::Unop::DEREFERENCE:
-            return comptime_result_make_not_comptime();
+            return comptime_result_make_not_comptime("Dereferencing not supported for comptime values");
         default: panic("");
         }
 
+        Comptime_Result value = expression_calculate_comptime_value_internal(expr->options.unop.expr);
         if (value.type == Comptime_Result_Type::NOT_COMPTIME) {
-            return comptime_result_make_not_comptime();
+            return value;
         }
         else if (value.type == Comptime_Result_Type::UNAVAILABLE) {
-            return comptime_result_make_unavailable(result_type);
+            return comptime_result_make_unavailable(result_type, value.message);
         }
 
         void* result_buffer = stack_allocator_allocate_size(&analyser.allocator_values, result_type->size, result_type->alignment);
@@ -1217,19 +1252,25 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
         return comptime_result_make_available(result_buffer, result_type);
     }
     case AST::Expression_Type::CAST: {
-        auto operand = expression_calculate_comptime_value(expr->options.cast.operand);
+        auto operand = expression_calculate_comptime_value_internal(expr->options.cast.operand);
         return comptime_result_apply_cast(operand, info->specifics.cast_type, result_type);
     }
     case AST::Expression_Type::ARRAY_ACCESS:
     {
         Type_Signature* element_type = result_type;
-        Comptime_Result value_array = expression_calculate_comptime_value(expr->options.array_access.array_expr);
-        Comptime_Result value_index = expression_calculate_comptime_value(expr->options.array_access.index_expr);
-        if (value_array.type == Comptime_Result_Type::NOT_COMPTIME || value_index.type == Comptime_Result_Type::NOT_COMPTIME) {
-            return comptime_result_make_not_comptime();
+        Comptime_Result value_array = expression_calculate_comptime_value_internal(expr->options.array_access.array_expr);
+        Comptime_Result value_index = expression_calculate_comptime_value_internal(expr->options.array_access.index_expr);
+        if (value_array.type == Comptime_Result_Type::NOT_COMPTIME) {
+            return value_array;
         }
-        else if (value_array.type == Comptime_Result_Type::UNAVAILABLE || value_index.type == Comptime_Result_Type::UNAVAILABLE) {
-            return comptime_result_make_unavailable(result_type);
+        else if (value_index.type == Comptime_Result_Type::NOT_COMPTIME) {
+            return value_index;
+        }
+        else if (value_array.type == Comptime_Result_Type::UNAVAILABLE) {
+            return comptime_result_make_unavailable(result_type, value_array.message);
+        }
+        else if (value_index.type == Comptime_Result_Type::UNAVAILABLE) {
+            return comptime_result_make_unavailable(result_type, value_index.message);
         }
         assert(type_signature_equals(value_index.data_type, types.i32_type), "Must be i32 currently");
 
@@ -1250,21 +1291,21 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
 
         int index = *(int*)value_index.data;
         int element_offset = index * element_type->size;
-        if (index >= array_size) {
-            return comptime_result_make_not_comptime();
+        if (index >= array_size || index < 0) {
+            return comptime_result_make_not_comptime("Array out of bounds access");
         }
         if (!memory_is_readable(base_ptr, element_type->size)) {
-            return comptime_result_make_not_comptime();
+            return comptime_result_make_not_comptime("Slice/Array access to invalid memory");
         }
         return comptime_result_make_available(&base_ptr[element_offset], element_type);
     }
     case AST::Expression_Type::MEMBER_ACCESS: {
-        Comptime_Result value_struct = expression_calculate_comptime_value(expr->options.member_access.expr);
+        Comptime_Result value_struct = expression_calculate_comptime_value_internal(expr->options.member_access.expr);
         if (value_struct.type == Comptime_Result_Type::NOT_COMPTIME) {
-            return comptime_result_make_not_comptime();
+            return value_struct;
         }
         else if (value_struct.type == Comptime_Result_Type::UNAVAILABLE) {
-            return comptime_result_make_unavailable(result_type);
+            return comptime_result_make_unavailable(result_type, value_struct.message);
         }
         auto member = type_signature_find_member_by_id(value_struct.data_type, expr->options.member_access.name);
         assert(member.available, "I think after analysis this member should exist");
@@ -1272,14 +1313,15 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
         return comptime_result_make_available(&raw_data[member.value.offset], result_type);
     }
     case AST::Expression_Type::FUNCTION_CALL: {
-        return comptime_result_make_not_comptime();
+        return comptime_result_make_not_comptime("Function calls require #bake to be used as comtime values");
     }
     case AST::Expression_Type::NEW_EXPR: {
-        return comptime_result_make_not_comptime(); // New is always uninitialized, so it cannot have a comptime value (Future: Maybe new with values)
+        // New is always uninitialized, so it cannot have a comptime value (Future: Maybe new with values)
+        return comptime_result_make_not_comptime("New cannot be used in comptime values"); 
     }
     case AST::Expression_Type::ARRAY_INITIALIZER:
     {
-        return comptime_result_make_not_comptime();
+        return comptime_result_make_not_comptime("Array initializers not implemented yet for comptime values");
         // NOTE: Maybe this works in the future, but it dependes if we can always finish the struct size after analysis
         /*
         Type_Signature* element_type = result_type->options.array.element_type;
@@ -1290,7 +1332,7 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
         for (int i = 0; i < expr->options.array_initializer.size; i++)
         {
             ModTree_Expression* element_expr = expr->options.array_initializer[i];
-            Comptime_Analysis value_element = expression_calculate_comptime_value(analyser, element_expr);
+            Comptime_Analysis value_element = expression_calculate_comptime_value_internal(analyser, element_expr);
             if (!value_element.available) {
                 return value_element;
             }
@@ -1308,14 +1350,14 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
     case AST::Expression_Type::STRUCT_INITIALIZER:
     {
         // NOTE: Maybe this works in the future
-        return comptime_result_make_not_comptime();
+        return comptime_result_make_not_comptime("Struct initializer not yet implemented for comptime values");
         /*
         Type_Signature* struct_type = result_type->options.array.element_type;
         void* result_buffer = stack_allocator_allocate_size(&analyser->allocator_values, result_type->size, result_type->alignment);
         for (int i = 0; i < expr->options.struct_initializer.size; i++)
         {
             Member_Initializer* initializer = &expr->options.struct_initializer[i];
-            Comptime_Analysis value_member = expression_calculate_comptime_value(analyser, initializer->init_expr);
+            Comptime_Analysis value_member = expression_calculate_comptime_value_internal(analyser, initializer->init_expr);
             if (!value_member.available) {
                 return value_member;
             }
@@ -1332,10 +1374,10 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
     }
 
     panic("");
-    return comptime_result_make_not_comptime();
+    return comptime_result_make_not_comptime("Invalid code path");
 }
 
-Comptime_Result expression_calculate_comptime_value(AST::Expression* expr)
+Comptime_Result expression_calculate_comptime_value_internal(AST::Expression* expr)
 {
     auto result_no_context = expression_calculate_comptime_value_without_context_cast(expr);
     if (result_no_context.type != Comptime_Result_Type::AVAILABLE) {
@@ -1345,10 +1387,30 @@ Comptime_Result expression_calculate_comptime_value(AST::Expression* expr)
     auto info = get_info(expr);
     if (info->post_op.deref_count != 0 || info->post_op.take_address_of) {
         // Cannot handle pointers for comptime currently
-        return comptime_result_make_not_comptime();
+        return comptime_result_make_not_comptime("Pointer handling not supported by comptime values");
     }
 
     return comptime_result_apply_cast(result_no_context, info->post_op.cast, info->post_op.type_afterwards);
+}
+
+Optional<Upp_Constant> expression_calculate_comptime_value(AST::Expression* expr, const char* error_message_on_failure)
+{
+    Comptime_Result comptime_result = expression_calculate_comptime_value_internal(expr);
+    if (comptime_result.type != Comptime_Result_Type::AVAILABLE) {
+        log_semantic_error(error_message_on_failure, expr);
+        log_error_info_comptime_msg(comptime_result.message);
+        return optional_make_failure<Upp_Constant>();
+    }
+
+    auto bytes = array_create_static<byte>((byte*)comptime_result.data, comptime_result.data_type->size);
+    Constant_Pool_Result result = constant_pool_add_constant(&compiler.constant_pool, comptime_result.data_type, bytes);
+    if (!result.success) {
+        log_semantic_error(error_message_on_failure, expr);
+        log_error_info_constant_status(result.error_message);
+        return optional_make_failure<Upp_Constant>();
+    }
+
+    return optional_make_success(result.constant);
 }
 
 bool expression_has_memory_address(AST::Expression* expr)
@@ -1478,12 +1540,12 @@ void expression_info_set_polymorphic_function(Expression_Info* info, Polymorphic
 void expression_info_set_constant(Expression_Info* info, Type_Signature* signature, Array<byte> bytes, AST::Node* error_report_node)
 {
     auto& analyser = semantic_analyser;
-    Constant_Result result = constant_pool_add_constant(&compiler.constant_pool, signature, bytes);
-    if (result.status != Constant_Status::SUCCESS)
+    auto result = constant_pool_add_constant(&compiler.constant_pool, signature, bytes);
+    if (!result.success)
     {
         assert(error_report_node != 0, "Error"); // Error report node may only be null if we know that adding the constant cannot fail.
         log_semantic_error("Value cannot be converted to constant value (Not serializable)", error_report_node);
-        log_error_info_constant_status(result.status);
+        log_error_info_constant_status(result.error_message);
         expression_info_set_error(info, signature);
         return;
     }
@@ -1518,7 +1580,7 @@ Type_Signature* expression_info_get_type(Expression_Info* info, bool before_cont
             return info->options.polymorphic.instance->progress->function->signature;
         }
         else {
-            return info->options.polymorphic.base->progress->function->signature;
+            return info->options.polymorphic.base->base_instance->progress->function->signature;
         }
     default: panic("");
     }
@@ -2715,30 +2777,8 @@ Function_Parameter analyse_function_parameter(AST::Parameter* param)
     }
 
     // Default value must be comptime known and serializable
-    Comptime_Result comptime = expression_calculate_comptime_value(param->default_value.value);
-    switch (comptime.type) {
-    case Comptime_Result_Type::AVAILABLE: {
-        break;
-    }
-    case Comptime_Result_Type::UNAVAILABLE: {
-        return result;
-    }
-    case Comptime_Result_Type::NOT_COMPTIME: {
-        log_semantic_error("Default value must be comptime known", param->default_value.value);
-        break;
-    }
-    default: panic("");
-    }
-
-    assert(comptime.data_type == default_value_type && default_value_type == result.type, "I think types must all match at this point");
-    auto constant_result = constant_pool_add_constant(
-        &compiler.constant_pool, comptime.data_type, array_create_static<byte>((byte*)comptime.data, comptime.data_type->size));
-    if (constant_result.status != Constant_Status::SUCCESS) {
-        log_semantic_error("Could not serialize comptime value", AST::upcast(param->default_value.value));
-        log_error_info_constant_status(constant_result.status);
-        return result;
-    }
-    result.default_value = optional_make_success(constant_result.constant);
+    result.default_value = expression_calculate_comptime_value(param->default_value.value, "Default values must be comptime");
+    assert(result.default_value.value.type == default_value_type && default_value_type == result.type, "I think types must all match at this point");
     return result;
 }
 
@@ -2906,35 +2946,13 @@ void analysis_workload_entry(void* userdata)
             {
             case Expression_Result_Type::VALUE:
             {
-                Comptime_Result comptime = expression_calculate_comptime_value(definition->value_node);
-                switch (comptime.type)
-                {
-                case Comptime_Result_Type::AVAILABLE:
-                    break;
-                case Comptime_Result_Type::UNAVAILABLE: {
+                auto comptime = expression_calculate_comptime_value(definition->value_node, "Value must be comptime in comptime definition (:: syntax)");
+                if (!comptime.available) {
                     symbol->type = Symbol_Type::ERROR_SYMBOL;
                     return;
                 }
-                case Comptime_Result_Type::NOT_COMPTIME: {
-                    log_semantic_error("Could not determine value at compile time", definition->value_node);
-                    symbol->type = Symbol_Type::ERROR_SYMBOL;
-                    return;
-                }
-                default: panic("");
-                }
-
-                Constant_Result result = constant_pool_add_constant(
-                    &compiler.constant_pool, comptime.data_type, array_create_static((byte*)comptime.data, comptime.data_type->size)
-                );
-                if (result.status != Constant_Status::SUCCESS) {
-                    log_semantic_error("Comptime value must be serializable", definition->value_node);
-                    log_error_info_constant_status(result.status);
-                    symbol->type = Symbol_Type::ERROR_SYMBOL;
-                    break;
-                }
-
                 symbol->type = Symbol_Type::COMPTIME_VALUE;
-                symbol->options.constant = result.constant;
+                symbol->options.constant = comptime.value;
                 break;
             }
             case Expression_Result_Type::CONSTANT: {
@@ -3209,13 +3227,13 @@ void analysis_workload_entry(void* userdata)
 
         // Check if function compilation succeeded
         if (bake_function->contains_errors) {
-            progress->result = comptime_result_make_unavailable(bake_function->signature->options.function.return_type);
+            progress->result = optional_make_failure<Upp_Constant>();
             return;
         }
         for (int i = 0; i < bake_function->calls.size; i++) {
             if (!bake_function->calls[i]->is_runnable) {
                 bake_function->is_runnable = false;
-                progress->result = comptime_result_make_unavailable(bake_function->signature->options.function.return_type);
+                progress->result = optional_make_failure<Upp_Constant>();
                 return;
             }
         }
@@ -3242,14 +3260,23 @@ void analysis_workload_entry(void* userdata)
         RESTORE_ON_SCOPE_EXIT(interpreter->instruction_limit, 5000);
         bytecode_interpreter_run_function(interpreter, func_start_instr_index);
         if (interpreter->exit_code != Exit_Code::SUCCESS) {
-            log_semantic_error("Bake function did not return succesfully", execute->bake_node);
+            log_semantic_error("Bake function did not return successfully", execute->bake_node, Parser::Section::KEYWORD);
             log_error_info_exit_code(interpreter->exit_code);
-            progress->result = comptime_result_make_unavailable(bake_function->signature->options.function.return_type);
+            progress->result = optional_make_failure<Upp_Constant>();
             return;
         }
 
         void* value_ptr = interpreter->return_register;
-        progress->result = comptime_result_make_available(value_ptr, bake_function->signature->options.function.return_type);
+        auto result_type = progress->bake_function->signature->options.function.return_type;
+        Constant_Pool_Result pool_result = constant_pool_add_constant(
+            &compiler.constant_pool, result_type, array_create_static<byte>((byte*)value_ptr, result_type->size));
+        if (!pool_result.success) {
+            log_semantic_error("Couldn't serialize bake result", execute->bake_node, Parser::Section::KEYWORD);
+            log_error_info_constant_status(pool_result.error_message);
+            progress->result = optional_make_failure<Upp_Constant>();
+            return;
+        }
+        progress->result = optional_make_success(pool_result.constant);
         return;
     }
     default: panic("");
@@ -3630,7 +3657,7 @@ Expression_Info analyse_symbol_as_expression(Symbol* symbol, Expression_Context 
     }
     case Symbol_Type::POLYMORPHIC_FUNCTION:
     {
-        analysis_workload_add_dependency_internal(workload, upcast(symbol->options.polymorphic_function->progress->header_workload), failure_info);
+        analysis_workload_add_dependency_internal(workload, upcast(symbol->options.polymorphic_function->base_instance->progress->header_workload), failure_info);
         break;
     }
     case Symbol_Type::PARAMETER:
@@ -4205,7 +4232,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             case Expression_Result_Type::POLYMORPHIC_FUNCTION:
             {
                 auto poly_base = function_expr_info.options.polymorphic.base;
-                auto poly_header = poly_base->progress->header_workload;
+                auto poly_header = poly_base->base_instance->progress->header_workload;
                 auto& arguments = call.arguments;
 
                 // Disallow polymorphic functions as overload candidates for now...
@@ -4224,6 +4251,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         }
 
         // Remove polymorphic overloads, because we cannot handle those currently
+        if (candidates.size > 1)
         {
             bool found_poly = false;
             for (int i = 0; i < candidates.size; i++) {
@@ -4243,6 +4271,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         }
 
         // Disambiguate overloads by argument names/count
+        if (candidates.size > 1)
         {
             auto& arguments = call.arguments;
             const int named_argument_count = arguments.size - unnamed_argument_count;
@@ -4443,7 +4472,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             {
                 // Early exit on simple errors
                 auto poly_base = candidate.options.polymorphic;
-                auto poly_header = poly_base->progress->header_workload;
+                auto base_progress = poly_base->base_instance->progress;
+                auto poly_header = base_progress->header_workload;
                 candidate.function_signature = 0;
                 {
                     if (arguments.size != poly_header->parameter_order.size) {
@@ -4452,13 +4482,13 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                         candidate.function_signature = 0;
                         break;
                     }
-                    if (poly_base->progress->function->contains_errors) {
+                    if (base_progress->function->contains_errors) {
                         candidate.function_signature = 0;
                         break;
                     }
                 }
 
-                // Get instanciation depth (Exit when recursion is too high)
+                // Try to create new instance (Exit when recursion is too high)
                 auto empty_instance = polymorphic_base_make_instance_empty(poly_base, upcast(expr));
                 if (empty_instance == 0) {
                     break;
@@ -4475,6 +4505,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                     if (!parameter->param_node->is_comptime) continue; // Skip non-comptime parameters
                     auto& poly_value = empty_instance->parameter_values[i];
                     auto argument = arguments[parameter->symbol->options.parameter.ast_index];
+
                     auto arg_info = get_info(argument);
                     arg_info->is_polymorphic = true;
                     arg_info->already_analysed = true;
@@ -4484,7 +4515,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                     {
                         RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->current_pass, header_pass);
                         RESTORE_ON_SCOPE_EXIT(analyser.current_workload->current_polymorphic_values, empty_instance->parameter_values);
-                        RESTORE_ON_SCOPE_EXIT(analyser.current_workload->current_symbol_table, poly_base->progress->function->parameter_table);
+                        RESTORE_ON_SCOPE_EXIT(analyser.current_workload->current_symbol_table, base_progress->function->parameter_table);
                         argument_type = semantic_analyser_analyse_expression_type(parameter->param_node->type);
                     }
 
@@ -4497,43 +4528,22 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                         semantic_analyser_analyse_expression_value(argument->value, expression_context_make_specific_type(argument_type));
                     }
 
-                    auto comptime_result = expression_calculate_comptime_value(argument->value);
-                    switch (comptime_result.type)
-                    {
-                    case Comptime_Result_Type::AVAILABLE: {
-                        if (comptime_result.data_type == types.unknown_type) {
-                            panic("Lets panic for now, I'm not quite sure if this happens in recursive instanciations -_-");
-                        }
-                        Constant_Result result = constant_pool_add_constant(
-                            &compiler.constant_pool,
-                            comptime_result.data_type,
-                            array_create_static((byte*)comptime_result.data, comptime_result.data_type->size)
-                        );
-                        if (result.status != Constant_Status::SUCCESS) {
-                            log_semantic_error("Could not serialize polymorphic value!", AST::upcast(argument->value));
-                            log_error_info_constant_status(result.status);
-                            poly_value.is_not_set = true;
-                            success = false;
-                        }
-                        else {
-                            poly_value.is_not_set = false;
-                            poly_value.constant = result.constant;
-                        }
-                        break;
-                    }
-                    case Comptime_Result_Type::UNAVAILABLE: {
-                        poly_value.is_not_set = true;
-                        break;
-                    }
-                    case Comptime_Result_Type::NOT_COMPTIME:
-                        log_semantic_error("For instanciation values must be comptime!", AST::upcast(argument->value));
+                    // Note: This has been changed recently, previously we still instanciated the function even if some parameters weren't available
+                    //       e.g. unavailable. Currently we don't do tha anymore, not sure if this leads to errors.
+                    auto comptime_result = expression_calculate_comptime_value(argument->value, "Parameter is polymorphic, but argument cannot be evaluated at comptime");
+                    if (!comptime_result.available) {
                         success = false;
-                        break;
+                        poly_value.is_not_set = true;
+                    }
+                    else {
+                        poly_value.is_not_set = false;
+                        poly_value.constant = comptime_result.value;
                     }
                 }
 
                 if (!success) {
                     log_semantic_error("Some values couldn't be calculated at comptime!", AST::upcast(expr));
+                    candidate.function_signature = 0;
                     break;
                 }
 
@@ -4756,18 +4766,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             if (member_node->value.available)
             {
                 semantic_analyser_analyse_expression_value(member_node->value.value, expression_context_make_specific_type(types.i32_type));
-                Comptime_Result comptime = expression_calculate_comptime_value(member_node->value.value);
-                switch (comptime.type)
-                {
-                case Comptime_Result_Type::AVAILABLE:
-                    next_member_value = *(i32*)comptime.data;
-                    break;
-                case Comptime_Result_Type::UNAVAILABLE:
-                    break;
-                case Comptime_Result_Type::NOT_COMPTIME:
-                    log_semantic_error("Enum value must be comptime known", member_node->value.value);
-                    break;
-                default: panic("");
+                auto constant = expression_calculate_comptime_value(member_node->value.value, "Enum value must be comptime known");
+                if (constant.available) {
+                    next_member_value = upp_constant_to_value<i32>(&compiler.constant_pool, constant.value);
                 }
             }
 
@@ -4851,22 +4852,13 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
             // Handle result
             auto bake_result = &progress->result;
-            switch (bake_result->type)
-            {
-            case Comptime_Result_Type::AVAILABLE: {
-                expression_info_set_constant(
-                    info, bake_result->data_type, array_create_static((byte*)bake_result->data, bake_result->data_type->size), AST::upcast(expr)
-                );
+            if (bake_result->available) {
+                expression_info_set_constant(info, bake_result->value);
                 return info;
             }
-            case Comptime_Result_Type::UNAVAILABLE:
-                EXIT_ERROR(bake_result->data_type);
-            case Comptime_Result_Type::NOT_COMPTIME:
-                panic("Should not happen with bake!");
-                break;
-            default: panic("");
+            else {
+                EXIT_ERROR(progress->bake_function->signature->options.function.return_type);
             }
-            EXIT_ERROR(types.unknown_type);
             break;
         };
         case Analysis_Workload_Type::FUNCTION_HEADER: {
@@ -4965,28 +4957,16 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             }
         }
 
-        Comptime_Result comptime = expression_calculate_comptime_value(array_node.size_expr);
         int array_size = 0;
         bool array_size_known = false;
-        switch (comptime.type)
-        {
-        case Comptime_Result_Type::AVAILABLE: {
+        auto comptime = expression_calculate_comptime_value(array_node.size_expr, "Array size must be know at compile time");
+        if (comptime.available) {
             array_size_known = true;
-            array_size = *(i32*)comptime.data;
+            array_size = upp_constant_to_value<int>(&compiler.constant_pool, comptime.value);
             if (array_size <= 0) {
                 log_semantic_error("Array size must be greater than zero", array_node.size_expr);
                 array_size_known = false;
             }
-            break;
-        }
-        case Comptime_Result_Type::UNAVAILABLE:
-            array_size_known = false;
-            break;
-        case Comptime_Result_Type::NOT_COMPTIME:
-            log_semantic_error("Array size must be known at compile time", array_node.size_expr);
-            array_size_known = false;
-            break;
-        default: panic("");
         }
 
         Type_Signature* element_type = semantic_analyser_analyse_expression_type(array_node.type_expr);
@@ -5383,13 +5363,6 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             case Expression_Result_Type::VALUE:
             case Expression_Result_Type::CONSTANT:
             {
-                // Check if it's actually a type, since the * can be used both as address of and as pointer type...
-                // Note: Maybe this should already be done in analyse_expression_any, but I'm not sure yet
-                auto maybe_type = semantic_analyser_try_convert_value_to_type(unary_node.expr, false);
-                if (maybe_type != 0) {
-                    EXIT_TYPE(type_system_make_pointer(type_system, maybe_type));
-                }
-
                 Type_Signature* operand_type = operand_result->post_op.type_afterwards;
                 if (!expression_has_memory_address(unary_node.expr)) {
                     log_semantic_error("Cannot get memory address of a temporary value", expr);
@@ -5724,7 +5697,7 @@ Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression* expre
     return result;
 }
 
-Type_Signature* semantic_analyser_try_convert_value_to_type(AST::Expression* expression, bool log_error)
+Type_Signature* semantic_analyser_try_convert_value_to_type(AST::Expression* expression)
 {
     auto& type_system = compiler.type_system;
     auto& types = type_system.predefined_types;
@@ -5742,76 +5715,47 @@ Type_Signature* semantic_analyser_try_convert_value_to_type(AST::Expression* exp
         }
         if (!type_signature_equals(result->post_op.type_afterwards, types.type_type))
         {
-            if (log_error) {
-                log_semantic_error("Expression cannot be converted to type", expression);
-                log_error_info_given_type(result->post_op.type_afterwards);
-                return types.unknown_type;
-            }
-            else {
-                return 0;
-            }
+            log_semantic_error("Expression cannot be converted to type", expression);
+            log_error_info_given_type(result->post_op.type_afterwards);
+            return types.unknown_type;
         }
 
-        if (result->result_type == Expression_Result_Type::VALUE)
-        {
-            Comptime_Result comptime = expression_calculate_comptime_value(expression);
+        // Otherwise try to convert to constant
+        Upp_Constant constant;
+        if (result->result_type == Expression_Result_Type::VALUE) {
+            auto comptime_opt = expression_calculate_comptime_value(expression, "Expression is a type, but it isn't known at compile time");
             Type_Signature* result_type = types.unknown_type;
-            switch (comptime.type)
-            {
-            case Comptime_Result_Type::AVAILABLE:
-            {
-                u64 type_index = *(u64*)comptime.data;
-                if (type_index >= type_system.internal_type_infos.size) {
-                    if (log_error) {
-                        log_semantic_error("Expression value contains invalid type handle", expression);
-                        return types.unknown_type;
-                    }
-                    else {
-                        return 0;
-                    }
-                }
-                return type_system.types[type_index];
+            if (comptime_opt.available) {
+                constant = comptime_opt.value;
             }
-            case Comptime_Result_Type::UNAVAILABLE:
+            else {
                 return types.unknown_type;
-            case Comptime_Result_Type::NOT_COMPTIME:
-                if (log_error) {
-                    log_semantic_error("Expression is a type, but is not known at compile time", expression);
-                    return types.unknown_type;
-                }
-                else {
-                    return 0;
-                }
-            default: panic("");
             }
         }
         else {
-            auto type_index = upp_constant_to_value<u64>(&compiler.constant_pool, result->options.constant);
-            if (type_index >= type_system.internal_type_infos.size) {
-                // Note: Always log this error, because this should never happen!
-                log_semantic_error("Expression contains invalid type handle", expression);
-                return types.unknown_type;
-            }
-            return type_system.types[type_index];
+            constant = result->options.constant;
         }
 
-        panic("");
-        break;
+        auto type_index = upp_constant_to_value<u64>(&compiler.constant_pool, constant);
+        if (type_index >= type_system.internal_type_infos.size) {
+            // Note: Always log this error, because this should never happen!
+            log_semantic_error("Expression contains invalid type handle", expression);
+            return types.unknown_type;
+        }
+        return type_system.types[type_index];
     }
     case Expression_Result_Type::HARDCODED_FUNCTION:
     case Expression_Result_Type::POLYMORPHIC_FUNCTION:
     case Expression_Result_Type::FUNCTION: {
-        if (log_error) {
-            log_semantic_error("Expected a type, given a function", expression);
-            log_error_info_expression_result_type(result->result_type);
-            return types.unknown_type;
-        }
-        return 0;
+        log_semantic_error("Expected a type, given a function", expression);
+        log_error_info_expression_result_type(result->result_type);
+        return types.unknown_type;
     }
     default: panic("");
     }
+
     panic("Shouldn't happen");
-    return 0;
+    return types.unknown_type;
 }
 
 Type_Signature* semantic_analyser_analyse_expression_type(AST::Expression* expression)
@@ -5820,7 +5764,7 @@ Type_Signature* semantic_analyser_analyse_expression_type(AST::Expression* expre
     auto& types = type_system.predefined_types;
     auto result = semantic_analyser_analyse_expression_any(expression, expression_context_make_auto_dereference());
     SET_ACTIVE_EXPR_INFO(result);
-    return semantic_analyser_try_convert_value_to_type(expression, true);
+    return semantic_analyser_try_convert_value_to_type(expression);
 }
 
 Type_Signature* semantic_analyser_analyse_expression_value(AST::Expression* expression, Expression_Context context)
@@ -6109,25 +6053,15 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
             {
                 auto case_type = semantic_analyser_analyse_expression_value(case_node->value.value, case_context);
                 // Calculate case value
-                Comptime_Result comptime = expression_calculate_comptime_value(case_node->value.value);
-                switch (comptime.type)
-                {
-                case Comptime_Result_Type::AVAILABLE:
-                    case_info->case_value = *((int*)comptime.data);
+                auto comptime = expression_calculate_comptime_value(case_node->value.value, "Switch case must be known at compile time");
+                if (comptime.available) {
                     case_info->is_valid = true;
-                    break;
-                case Comptime_Result_Type::NOT_COMPTIME:
+                    case_info->case_value = upp_constant_to_value<int>(&compiler.constant_pool, comptime.value);
+                }
+                else {
                     case_info->is_valid = false;
                     case_info->case_value = -1;
-                    break;
-                case Comptime_Result_Type::UNAVAILABLE:
                     semantic_analyser_set_error_flag(true);
-                    break;
-                default: panic("");
-                }
-                if (comptime.type == Comptime_Result_Type::NOT_COMPTIME) {
-                    log_semantic_error("Switch case must be known at compile-time", case_node->value.value);
-                    break;
                 }
             }
             else
@@ -6784,6 +6718,9 @@ void semantic_error_append_to_string(Semantic_Error e, String* string)
             string_append_formated(string, "\n  ");
             analysis_workload_append_to_string(info->options.cycle_workload, string);
             break;
+        case Error_Information_Type::COMPTIME_MESSAGE:
+            string_append_formated(string, "\n  Comptime msg: %s", info->options.comptime_message);
+            break;
         case Error_Information_Type::ARGUMENT_COUNT:
             string_append_formated(string, "\n  Given argument count: %d, required: %d",
                 info->options.invalid_argument_count.given, info->options.invalid_argument_count.expected);
@@ -6863,7 +6800,7 @@ void semantic_error_append_to_string(Semantic_Error e, String* string)
             break;
         }
         case Error_Information_Type::CONSTANT_STATUS:
-            string_append_formated(string, "\n  %s", constant_status_to_string(info->options.constant_status));
+            string_append_formated(string, "\n  Couldn't serialize constant: %s", info->options.constant_message);
             break;
         default: panic("");
         }

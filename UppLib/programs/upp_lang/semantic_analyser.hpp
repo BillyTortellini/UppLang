@@ -16,7 +16,6 @@ struct Symbol_Table;
 struct Compiler;
 struct ModTree_Function;
 struct Upp_Constant;
-enum class Constant_Status;
 struct Semantic_Error;
 struct Error_Information;
 struct Expression_Info;
@@ -46,20 +45,6 @@ namespace AST
 
 
 // Polymorphism
-enum class Comptime_Result_Type
-{
-    AVAILABLE,
-    UNAVAILABLE, // The expression is comptime, but not evaluable due to the context (E.g. errors, Polymorphic parameters)
-    NOT_COMPTIME,
-};
-
-struct Comptime_Result
-{
-    Comptime_Result_Type type;
-    void* data;
-    Type_Signature* data_type;
-};
-
 struct Polymorphic_Value
 {
     bool is_not_set; // E.g. during base analysis
@@ -75,14 +60,14 @@ struct Polymorphic_Instance
     Function_Progress* progress;
 
     // Information for stopping recursion
-    int instances_generated;
-    Polymorphic_Instance* root_instance; // If this instance was not create from a base, but from another instance, the pointer to this instance
+    int instanciation_depth;
+    Polymorphic_Instance* parent_instance; // If this instance was not create from a base, but from another instance, the pointer to this instance
 };
 
 struct Polymorphic_Base
 {
-    Function_Progress* progress;
     int parameter_count;
+    Polymorphic_Instance* base_instance;
     Dynamic_Array<Polymorphic_Instance*> instances;
 };
 
@@ -294,7 +279,7 @@ struct Struct_Progress
 struct Bake_Progress
 {
     ModTree_Function* bake_function;
-    Comptime_Result result;
+    Optional<Upp_Constant> result;
 
     Workload_Bake_Analysis* analysis_workload;
     Workload_Bake_Execution* execute_workload;
@@ -619,6 +604,7 @@ enum class Error_Information_Type
 
     EXPRESSION_RESULT_TYPE,
     CONSTANT_STATUS,
+    COMPTIME_MESSAGE,
 };
 
 struct Error_Information
@@ -645,7 +631,8 @@ struct Error_Information
             Type_Signature* right_type;
         } binary_op_types;
         Expression_Result_Type expression_type;
-        Constant_Status constant_status;
+        const char* constant_message;
+        const char* comptime_message;
     } options;
 };
 
