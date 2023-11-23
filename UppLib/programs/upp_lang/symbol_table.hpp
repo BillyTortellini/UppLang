@@ -8,7 +8,7 @@
 // struct Function_Progress;
 // struct Polymorphic_Base;
 struct ModTree_Global;
-struct Type_Signature;
+struct Type_Base;
 struct Workload_Definition;
 struct Workload_Function_Parameter;
 struct Workload_Import_Resolve;
@@ -53,14 +53,14 @@ struct Symbol
     Symbol_Type type;
     union
     {
-        Type_Signature* variable_type;
+        Type_Base* variable_type;
         Module_Progress* module_progress;
         Function_Progress* function;
         Workload_Definition* definition_workload;
         Workload_Import_Resolve* alias_workload;
         Polymorphic_Base* polymorphic_function;
         Hardcoded_Type hardcoded;
-        Type_Signature* type;
+        Type_Base* type;
         ModTree_Global* global;
         struct {
             bool is_polymorphic;

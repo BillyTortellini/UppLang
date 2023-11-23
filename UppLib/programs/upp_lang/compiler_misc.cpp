@@ -196,36 +196,36 @@ Offset_Result offset_result_make_error(const char* error) {
     return result;
 }
 
-Offset_Result constant_pool_add_constant_internal(Constant_Pool* pool, Type_Signature* signature, Array<byte> bytes);
+Offset_Result constant_pool_add_constant_internal(Constant_Pool* pool, Type_Base* signature, Array<byte> bytes);
 
 void* upp_constant_get_pointer(Constant_Pool* pool, Upp_Constant constant) {
     return (void*)&pool->buffer[constant.offset];
 }
 
-bool type_signature_contains_references(Type_Signature* signature)
+bool type_signature_contains_references(Type_Base* signature)
 {
     switch (signature->type)
     {
-    case Signature_Type::VOID_TYPE: return false;
-    case Signature_Type::PRIMITIVE: return false;
-    case Signature_Type::POINTER: return true;
-    case Signature_Type::FUNCTION: return true;
-    case Signature_Type::STRUCT: 
+    case Type_Type::PRIMITIVE: return false;
+    case Type_Type::VOID_POINTER: return true;
+    case Type_Type::POINTER: return true;
+    case Type_Type::FUNCTION: return true;
+    case Type_Type::STRUCT: 
     {
-        for (int i = 0; i < signature->options.structure.members.size; i++) {
-            Struct_Member* member = &signature->options.structure.members[i];
+        auto& members = downcast<Type_Struct>(signature)->members;
+        for (int i = 0; i < members.size; i++) {
+            Struct_Member* member = &members[i];
             if (type_signature_contains_references(member->type)) {
                 return true;
             }
         }
         return false;
     }
-    case Signature_Type::ENUM: return false;
-    case Signature_Type::ARRAY: return type_signature_contains_references(signature->options.array.element_type);
-    case Signature_Type::SLICE: return true;
-    case Signature_Type::TEMPLATE_TYPE: return false;
-    case Signature_Type::TYPE_TYPE: return false;
-    case Signature_Type::UNKNOWN_TYPE: return false;
+    case Type_Type::ENUM: return false;
+    case Type_Type::ARRAY: return type_signature_contains_references(downcast<Type_Array>(signature)->element_type);
+    case Type_Type::SLICE: return true;
+    case Type_Type::TYPE_HANDLE: return false;
+    case Type_Type::ERROR_TYPE: return false;
     default: panic("");
     }
 
@@ -249,32 +249,38 @@ bool constant_pool_compare_constants(Constant_Pool* pool, Upp_Constant a, Upp_Co
     byte* pool_data = (byte*) pool->buffer.data;
     byte* raw_data_a = &pool_data[a.offset];
     byte* raw_data_b = &pool_data[b.offset];
-    Type_Signature* signature = a.type;
+    Type_Base* signature = a.type;
     return memory_compare(raw_data_a, raw_data_b, signature->size);
 }
 
 // Return the error message
-Optional<const char*> constant_pool_record_references(Constant_Pool* pool, int data_offset, Type_Signature* signature)
+Optional<const char*> constant_pool_record_references(Constant_Pool* pool, int data_offset, Type_Base* signature)
 {
     void* raw_data = &pool->buffer[data_offset];
     switch (signature->type)
     {
-    case Signature_Type::VOID_TYPE:
-        return optional_make_success("Constant data contains void type");
-    case Signature_Type::PRIMITIVE:
+    case Type_Type::PRIMITIVE:
         break;
-    case Signature_Type::POINTER:
+    case Type_Type::VOID_POINTER: {
+        void* ptr_value = *(void**)raw_data;
+        if (ptr_value != nullptr) {
+            return optional_make_success("Contains void pointer that isn't null");
+        }
+        break;
+    }
+    case Type_Type::POINTER:
     {
         void* ptr_value = *(void**)raw_data;
         if (ptr_value == nullptr) {
             break;
         }
-        if (memory_is_readable(ptr_value, signature->options.pointer_child->size)) 
+        Type_Base* points_to = downcast<Type_Pointer>(signature)->points_to_type;
+        if (memory_is_readable(ptr_value, points_to->size)) 
         {
             Upp_Constant_Reference reference;
             reference.ptr_offset = data_offset;
             Offset_Result ptr_result = constant_pool_add_constant_internal(
-                pool, signature->options.pointer_child, array_create_static_as_bytes((byte*)ptr_value, signature->options.pointer_child->size)
+                pool, points_to, array_create_static_as_bytes((byte*)ptr_value, points_to->size)
             );
             if (!ptr_result.success) return optional_make_success(ptr_result.error_message);
             reference.buffer_destination_offset = ptr_result.offset;
@@ -285,18 +291,20 @@ Optional<const char*> constant_pool_record_references(Constant_Pool* pool, int d
         }
         break;
     }
-    case Signature_Type::FUNCTION: {
+    case Type_Type::FUNCTION: {
         return optional_make_success("Cannot save function pointers as constants currently!");
     }
-    case Signature_Type::STRUCT:
+    case Type_Type::STRUCT:
     {
         // Loop over each member and call this function
-        switch (signature->options.structure.struct_type)
+        auto structure = downcast<Type_Struct>(signature);
+        auto& members = structure->members;
+        switch (structure->struct_type)
         {
         case AST::Structure_Type::STRUCT: 
         {
-            for (int i = 0; i < signature->options.structure.members.size; i++) {
-                Struct_Member* member = &signature->options.structure.members[i];
+            for (int i = 0; i < members.size; i++) {
+                Struct_Member* member = &members[i];
                 auto member_error_opt = constant_pool_record_references(pool, data_offset + member->offset, member->type);
                 if (member_error_opt.available) return member_error_opt;
             }
@@ -310,19 +318,22 @@ Optional<const char*> constant_pool_record_references(Constant_Pool* pool, int d
         }
         case AST::Structure_Type::UNION: 
         {
-            Type_Signature* tag_type = signature->options.structure.tag_member.type;
-            assert(tag_type->type == Signature_Type::ENUM, "");
-            int tag_value = *(int*)((byte*)raw_data + signature->options.structure.tag_member.offset);
+            Type_Base* tag_type = structure->tag_member.type;
+            assert(tag_type->type == Type_Type::ENUM, "");
+            Type_Enum* tag_enum = downcast<Type_Enum>(tag_type);
+            auto& enum_members = tag_enum->members;
+
+            int tag_value = *(int*)((byte*)raw_data + structure->tag_member.offset);
             int found_member_index = -1;
-            for (int i = 0; i < tag_type->options.enum_type.members.size; i++) 
+            for (int i = 0; i < enum_members.size; i++) 
             {
-                auto member = &tag_type->options.enum_type.members[i];
+                auto member = &enum_members[i];
                 if (member->value == tag_value) {
                     found_member_index = tag_value - 1;
                 }
             }
             if (found_member_index != -1) {
-                Struct_Member* member = &signature->options.structure.members[found_member_index];
+                Struct_Member* member = &members[found_member_index];
                 auto member_status = constant_pool_record_references(pool, data_offset + member->offset, member->type);
                 if (member_status.available) return member_status;
             }
@@ -335,22 +346,27 @@ Optional<const char*> constant_pool_record_references(Constant_Pool* pool, int d
         }
         break;
     }
-    case Signature_Type::ENUM: {
+    case Type_Type::ENUM: {
         break;
     }
-    case Signature_Type::ARRAY: {
-        if (type_signature_contains_references(signature->options.array.element_type)) {
-            for (int i = 0; i < signature->options.array.element_count; i++) {
-                int element_offset = i * signature->options.array.element_type->size;
-                auto element_status = constant_pool_record_references(pool, data_offset + element_offset, signature->options.array.element_type);
+    case Type_Type::ARRAY: {
+        auto array = downcast<Type_Array>(signature);
+        if (!array->count_known) {
+            return optional_make_success("Array size not known!");
+        }
+        if (type_signature_contains_references(array->element_type)) {
+            for (int i = 0; i < array->element_count; i++) {
+                int element_offset = i * array->element_type->size;
+                auto element_status = constant_pool_record_references(pool, data_offset + element_offset, array->element_type);
                 if (element_status.available) return element_status;
             }
         }
         break;
     }
-    case Signature_Type::SLICE: 
+    case Type_Type::SLICE: 
     {
         // Check if pointer is valid, if true, save slice data
+        auto slice_type = downcast<Type_Slice>(signature);
         Upp_Slice_Base slice = *(Upp_Slice_Base*)raw_data;
         if (slice.data_ptr == nullptr || slice.size == 0) {
             break;
@@ -358,13 +374,13 @@ Optional<const char*> constant_pool_record_references(Constant_Pool* pool, int d
         if (slice.size <= 0) {
             return optional_make_success("Constant data contained slice with negative size");
         }
-        if (memory_is_readable(slice.data_ptr, signature->options.slice.element_type->size * slice.size)) 
+        if (memory_is_readable(slice.data_ptr, slice_type->element_type->size * slice.size)) 
         {
             Upp_Constant_Reference reference;
             reference.ptr_offset = data_offset;
             Offset_Result data_result = constant_pool_add_constant_internal(
-                pool, type_system_make_array(pool->type_system, signature->options.slice.element_type, true, slice.size), 
-                array_create_static_as_bytes((byte*)slice.data_ptr, signature->options.slice.element_type->size * slice.size)
+                pool, upcast(type_system_make_array(slice_type->element_type, true, slice.size)), 
+                array_create_static_as_bytes((byte*)slice.data_ptr, slice_type->element_type->alignment * slice.size)
             );
             if (!data_result.success) return optional_make_success(data_result.error_message);
             reference.buffer_destination_offset = data_result.offset;
@@ -374,9 +390,8 @@ Optional<const char*> constant_pool_record_references(Constant_Pool* pool, int d
             return optional_make_success("Constant data contained slice with invalid data-pointer");
         }
     }
-    case Signature_Type::TEMPLATE_TYPE:
-    case Signature_Type::TYPE_TYPE:
-    case Signature_Type::UNKNOWN_TYPE:
+    case Type_Type::TYPE_HANDLE:
+    case Type_Type::ERROR_TYPE:
         break;
     default: panic("");
     }
@@ -384,7 +399,7 @@ Optional<const char*> constant_pool_record_references(Constant_Pool* pool, int d
     return optional_make_failure<const char*>();
 }
 
-Offset_Result constant_pool_add_constant_internal(Constant_Pool* pool, Type_Signature* signature, Array<byte> bytes)
+Offset_Result constant_pool_add_constant_internal(Constant_Pool* pool, Type_Base* signature, Array<byte> bytes)
 {
     // Check if deduplication is possible (Currently for values without references, maybe change later...)
     bool type_contains_references = type_signature_contains_references(signature);
@@ -450,7 +465,7 @@ Offset_Result constant_pool_add_constant_internal(Constant_Pool* pool, Type_Sign
     return offset_result_make_success(start_offset);
 }
 
-Constant_Pool_Result constant_pool_add_constant(Constant_Pool* pool, Type_Signature* signature, Array<byte> bytes)
+Constant_Pool_Result constant_pool_add_constant(Constant_Pool* pool, Type_Base* signature, Array<byte> bytes)
 {
     int rewind_index = pool->buffer.size;
     hashtable_reset(&pool->saved_pointers);
@@ -488,7 +503,7 @@ Extern_Sources extern_sources_create()
     result.headers_to_include = dynamic_array_create_empty<String*>(8);
     result.source_files_to_compile = dynamic_array_create_empty<String*>(8);
     result.lib_files = dynamic_array_create_empty<String*>(8);
-    result.extern_type_signatures = hashtable_create_pointer_empty<Type_Signature*, String*>(8);
+    result.extern_type_signatures = hashtable_create_pointer_empty<Type_Base*, String*>(8);
     return result;
 }
 

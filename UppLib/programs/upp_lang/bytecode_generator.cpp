@@ -107,7 +107,7 @@ int bytecode_generator_add_instruction(Bytecode_Generator* generator, Bytecode_I
     return generator->instructions.size - 1;
 }
 
-int bytecode_generator_create_temporary_stack_offset(Bytecode_Generator* generator, Type_Signature* type) 
+int bytecode_generator_create_temporary_stack_offset(Bytecode_Generator* generator, Type_Base* type) 
 {
     generator->current_stack_offset = align_offset_next_multiple(generator->current_stack_offset, type->alignment);
     int result = generator->current_stack_offset;
@@ -117,7 +117,7 @@ int bytecode_generator_create_temporary_stack_offset(Bytecode_Generator* generat
 
 int bytecode_generator_data_access_to_stack_offset(Bytecode_Generator* generator, IR_Data_Access access)
 {
-    Type_Signature* access_type = ir_data_access_get_type(&access);
+    Type_Base* access_type = ir_data_access_get_type(&access);
     auto& types = compiler.type_system.predefined_types;
 
     int stack_offset = 0;
@@ -128,7 +128,7 @@ int bytecode_generator_data_access_to_stack_offset(Bytecode_Generator* generator
         load_instruction.instruction_type = Instruction_Type::READ_CONSTANT;
         load_instruction.op2 = generator->compiler->constant_pool.constants[access.index].offset;
         if (access.is_memory_access) {
-            load_instruction.op1 = bytecode_generator_create_temporary_stack_offset(generator, types.void_ptr_type);
+            load_instruction.op1 = bytecode_generator_create_temporary_stack_offset(generator, types.void_pointer_type);
             load_instruction.op3 = 8;
         }
         else {
@@ -144,7 +144,7 @@ int bytecode_generator_data_access_to_stack_offset(Bytecode_Generator* generator
         load_instruction.instruction_type = Instruction_Type::READ_GLOBAL;
         load_instruction.op2 = generator->global_data_offsets[access.index];
         if (access.is_memory_access) {
-            load_instruction.op1 = bytecode_generator_create_temporary_stack_offset(generator, types.void_ptr_type);
+            load_instruction.op1 = bytecode_generator_create_temporary_stack_offset(generator, types.void_pointer_type);
             load_instruction.op3 = 8;
         }
         else {
@@ -190,7 +190,7 @@ int bytecode_generator_data_access_to_stack_offset(Bytecode_Generator* generator
     }
 }
 
-void bytecode_generator_write_stack_offset_to_destination(Bytecode_Generator* generator, int stack_offset, Type_Signature* type, IR_Data_Access destination)
+void bytecode_generator_write_stack_offset_to_destination(Bytecode_Generator* generator, int stack_offset, Type_Base* type, IR_Data_Access destination)
 {
     if (destination.is_memory_access)
     {
@@ -238,7 +238,7 @@ void bytecode_generator_write_stack_offset_to_destination(Bytecode_Generator* ge
 
 int bytecode_generator_add_instruction_and_set_destination(Bytecode_Generator* generator, IR_Data_Access destination, Bytecode_Instruction instr)
 {
-    Type_Signature* type = ir_data_access_get_type(&destination);
+    Type_Base* type = ir_data_access_get_type(&destination);
     if (destination.is_memory_access)
     {
         int source_reg_offset = bytecode_generator_create_temporary_stack_offset(generator, type);
@@ -296,7 +296,7 @@ int bytecode_generator_add_instruction_and_set_destination(Bytecode_Generator* g
 void bytecode_generator_move_accesses(Bytecode_Generator* generator, IR_Data_Access destination, IR_Data_Access source)
 {
     int move_byte_size;
-    Type_Signature* move_type = ir_data_access_get_type(&destination);
+    Type_Base* move_type = ir_data_access_get_type(&destination);
     move_byte_size = move_type->size;
     /*
     if (destination.is_memory_access) {
@@ -351,18 +351,18 @@ int bytecode_generator_get_pointer_to_access(Bytecode_Generator* generator, IR_D
         offset = generator->compiler->constant_pool.constants[access.index].offset;
         break;
     }
-    load_instr.op1 = bytecode_generator_create_temporary_stack_offset(generator, compiler.type_system.predefined_types.void_ptr_type);
+    load_instr.op1 = bytecode_generator_create_temporary_stack_offset(generator, compiler.type_system.predefined_types.void_pointer_type);
     load_instr.op2 = offset;
     bytecode_generator_add_instruction(generator, load_instr);
     return load_instr.op1;
 }
 
-int stack_offsets_calculate(Dynamic_Array<Type_Signature*>* types, Dynamic_Array<int>* offsets, int start_byte_offset)
+int stack_offsets_calculate(Dynamic_Array<Type_Base*>* types, Dynamic_Array<int>* offsets, int start_byte_offset)
 {
     int stack_offset = start_byte_offset;
     for (int i = 0; i < types->size; i++)
     {
-        Type_Signature* signature = types->data[i];
+        Type_Base* signature = types->data[i];
         stack_offset = align_offset_next_multiple(stack_offset, signature->alignment);
         dynamic_array_push_back(offsets, stack_offset);
         stack_offset += signature->size;
@@ -371,36 +371,38 @@ int stack_offsets_calculate(Dynamic_Array<Type_Signature*>* types, Dynamic_Array
     return stack_offset;
 }
 
-Bytecode_Type type_signature_to_bytecode_type(Type_Signature* primitive)
+Bytecode_Type type_base_to_bytecode_type(Type_Base* type)
 {
-    assert(primitive->type == Signature_Type::PRIMITIVE || primitive->type == Signature_Type::ENUM || primitive->type == Signature_Type::TYPE_TYPE, "HEY");
-    if (primitive->type == Signature_Type::TYPE_TYPE) {
+    assert(type->type == Type_Type::PRIMITIVE || type->type == Type_Type::ENUM || type->type == Type_Type::TYPE_HANDLE, "HEY");
+    if (type->type == Type_Type::TYPE_HANDLE) {
         return Bytecode_Type::UINT64;
     }
-    if (primitive->type == Signature_Type::ENUM) {
+    if (type->type == Type_Type::ENUM) {
         return Bytecode_Type::INT32;
     }
+
+    auto primitive = downcast<Type_Primitive>(type);
     Bytecode_Type result;
-    switch (primitive->options.primitive.type)
+    switch (primitive->primitive_type)
     {
     case Primitive_Type::INTEGER: {
-        switch (primitive->size) {
+        switch (primitive->base.size) {
         case 1: result = Bytecode_Type::INT8; break;
         case 2: result = Bytecode_Type::INT16; break;
         case 4: result = Bytecode_Type::INT32; break;
         case 8: result = Bytecode_Type::INT64; break;
         default: panic("HEY");
         }
-        if (!primitive->options.primitive.is_signed) {
+        if (!primitive->is_signed) {
             result = (Bytecode_Type)((int)result + 4);
         }
         break;
     }
     case Primitive_Type::FLOAT: {
-        if (primitive->size == 4) {
+        if (primitive->base.size == 4) {
             result = Bytecode_Type::FLOAT32; break;
         }
-        else if (primitive->size == 8) {
+        else if (primitive->base.size == 8) {
             result = Bytecode_Type::FLOAT64; break;
         }
         else panic("HEY");
@@ -467,30 +469,30 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
         case IR_Instruction_Type::FUNCTION_CALL:
         {
             IR_Instruction_Call* call = &instr->options.call;
-            Type_Signature* function_sig = 0;
+            Type_Function* function_sig = 0;
             switch (call->call_type)
             {
             case IR_Instruction_Call_Type::FUNCTION_CALL:
                 function_sig = call->options.function->function_type;
                 break;
             case IR_Instruction_Call_Type::FUNCTION_POINTER_CALL:
-                function_sig = ir_data_access_get_type(&call->options.pointer_access);
+                function_sig = downcast<Type_Function>(ir_data_access_get_type(&call->options.pointer_access));
                 break;
             case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
                 function_sig = call->options.hardcoded.signature;
                 break;
             case IR_Instruction_Call_Type::EXTERN_FUNCTION_CALL:
-                function_sig = call->options.extern_function.function_signature;
+                function_sig = downcast<Type_Function>(call->options.extern_function.function_signature);
                 break;
             default: panic("Error");
             }
 
             // Put arguments into the correct place on the stack
-            int pointer_offset = bytecode_generator_create_temporary_stack_offset(generator, compiler.type_system.predefined_types.void_ptr_type);
+            int pointer_offset = bytecode_generator_create_temporary_stack_offset(generator, compiler.type_system.predefined_types.void_pointer_type);
             int argument_stack_offset = align_offset_next_multiple(generator->current_stack_offset, 16); // I think 16 is the hightest i have
-            for (int i = 0; i < function_sig->options.function.parameters.size; i++)
+            for (int i = 0; i < function_sig->parameters.size; i++)
             {
-                Type_Signature* parameter_sig = function_sig->options.function.parameters[i].type;
+                Type_Base* parameter_sig = function_sig->parameters[i].type;
                 argument_stack_offset = align_offset_next_multiple(argument_stack_offset, parameter_sig->alignment);
                 IR_Data_Access* argument_access = &call->arguments[i];
 
@@ -587,10 +589,10 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             }
 
             // Load return value to destination
-            if (function_sig->options.function.return_type != types.void_type) {
+            if (function_sig->return_type.available) {
                 bytecode_generator_add_instruction_and_set_destination(
                     generator, call->destination,
-                    instruction_make_2(Instruction_Type::LOAD_RETURN_VALUE, PLACEHOLDER, function_sig->options.function.return_type->size)
+                    instruction_make_2(Instruction_Type::LOAD_RETURN_VALUE, PLACEHOLDER, function_sig->return_type.value->size)
                 );
             }
             break;
@@ -605,7 +607,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             */
             IR_Instruction_Switch* switch_instr = &instr->options.switch_instr;
             int condition_stack_offset = bytecode_generator_data_access_to_stack_offset(generator, switch_instr->condition_access);
-            int cmp_result_stack_offset = bytecode_generator_create_temporary_stack_offset(generator, types.bool_type);
+            int cmp_result_stack_offset = bytecode_generator_create_temporary_stack_offset(generator, upcast(types.bool_type));
 
             Dynamic_Array<int> case_jump_indices = dynamic_array_create_empty<int>(switch_instr->cases.size);
             Dynamic_Array<int> jmp_to_switch_end_indices = dynamic_array_create_empty<int>(switch_instr->cases.size + 1);
@@ -620,7 +622,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 constant_access.is_memory_access = false;
                 constant_access.type = IR_Data_Access_Type::CONSTANT;
                 constant_access.index = constant_pool_add_constant(
-                    &generator->compiler->constant_pool, types.i32_type,
+                    &generator->compiler->constant_pool, upcast(types.i32_type),
                     array_create_static_as_bytes(&switch_case->value, 1)
                 ).constant.constant_index;
                 int constant_stack_offset = bytecode_generator_data_access_to_stack_offset(generator, constant_access);
@@ -733,7 +735,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 break;
             }
             case IR_Instruction_Return_Type::RETURN_DATA: {
-                Type_Signature* return_sig = ir_data_access_get_type(&return_instr->options.return_value);
+                Type_Base* return_sig = ir_data_access_get_type(&return_instr->options.return_value);
                 bytecode_generator_add_instruction(
                     generator,
                     instruction_make_2(Instruction_Type::RETURN,
@@ -774,8 +776,8 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             case IR_Cast_Type::FLOAT_TO_INT:
             case IR_Cast_Type::INT_TO_FLOAT:
             {
-                Type_Signature* cast_source = ir_data_access_get_type(&cast->source);
-                Type_Signature* cast_destination = ir_data_access_get_type(&cast->destination);
+                Type_Base* cast_source = ir_data_access_get_type(&cast->source);
+                Type_Base* cast_destination = ir_data_access_get_type(&cast->destination);
                 Instruction_Type instr_type;
                 switch (cast->type) {
                     case IR_Cast_Type::ENUM_TO_INT: 
@@ -796,7 +798,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                     instruction_make_4(
                         instr_type, PLACEHOLDER,
                         bytecode_generator_data_access_to_stack_offset(generator, cast->source),
-                        (int)type_signature_to_bytecode_type(cast_destination), (int)type_signature_to_bytecode_type(cast_source)
+                        (int)type_base_to_bytecode_type(cast_destination), (int)type_base_to_bytecode_type(cast_source)
                     )
                 );
                 break;
@@ -813,7 +815,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             case IR_Instruction_Address_Of_Type::DATA: {
                 int pointer_offset = bytecode_generator_get_pointer_to_access(generator, address_of->source);
                 bytecode_generator_write_stack_offset_to_destination(
-                    generator, pointer_offset, types.void_ptr_type, address_of->destination
+                    generator, pointer_offset, types.void_pointer_type, address_of->destination
                 );
                 break;
             }
@@ -840,13 +842,16 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             }
             case IR_Instruction_Address_Of_Type::ARRAY_ELEMENT:
             {
-                Type_Signature* array_type = ir_data_access_get_type(&address_of->source);
+                Type_Base* array_type = ir_data_access_get_type(&address_of->source);
                 int base_pointer_offset;
-                if (array_type->type == Signature_Type::ARRAY) {
+                Type_Base* element_type = 0;
+                if (array_type->type == Type_Type::ARRAY) {
                     base_pointer_offset = bytecode_generator_get_pointer_to_access(generator, address_of->source);
+                    element_type = downcast<Type_Array>(array_type)->element_type;
                 }
-                else if (array_type->type == Signature_Type::SLICE) {
+                else if (array_type->type == Type_Type::SLICE) {
                     base_pointer_offset = bytecode_generator_data_access_to_stack_offset(generator, address_of->source);
+                    element_type = downcast<Type_Slice>(array_type)->element_type;
                 }
                 else {
                     panic("Hey, should not happen, since this is illegal");
@@ -859,7 +864,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                         PLACEHOLDER,
                         base_pointer_offset,
                         index_offset,
-                        math_round_next_multiple(array_type->options.array.element_type->size, array_type->options.array.element_type->alignment)
+                        math_round_next_multiple(element_type->size, element_type->alignment)
                     )
                 );
                 break;
@@ -917,12 +922,12 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             default: panic("");
             }
 
-            Type_Signature* operand_types = ir_data_access_get_type(&binary_op->operand_left);
-            if (operand_types->type == Signature_Type::POINTER) {
+            Type_Base* operand_types = ir_data_access_get_type(&binary_op->operand_left);
+            if (operand_types->type == Type_Type::POINTER) {
                 instr.op4 = (int)Bytecode_Type::INT64;
             }
             else {
-                instr.op4 = (int)type_signature_to_bytecode_type(operand_types);
+                instr.op4 = (int)type_base_to_bytecode_type(operand_types);
             }
             instr.op2 = bytecode_generator_data_access_to_stack_offset(generator, binary_op->operand_left);
             instr.op3 = bytecode_generator_data_access_to_stack_offset(generator, binary_op->operand_right);
@@ -943,9 +948,9 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 break;
             }
 
-            Type_Signature* operand_type = ir_data_access_get_type(&unary_op->source);
-            assert(operand_type->type == Signature_Type::PRIMITIVE, "Should not happen");
-            instr.op3 = (int)type_signature_to_bytecode_type(operand_type);
+            Type_Base* operand_type = ir_data_access_get_type(&unary_op->source);
+            assert(operand_type->type == Type_Type::PRIMITIVE, "Should not happen");
+            instr.op3 = (int)type_base_to_bytecode_type(operand_type);
             instr.op2 = bytecode_generator_data_access_to_stack_offset(generator, unary_op->source);
             bytecode_generator_add_instruction_and_set_destination(generator, unary_op->destination, instr);
             break;
@@ -961,8 +966,8 @@ void bytecode_generator_generate_function_code(Bytecode_Generator* generator, IR
         int stack_offset_index = *hashtable_find_element(&generator->function_parameter_stack_offset_index, function);
         Dynamic_Array<int>* parameter_offsets = &generator->stack_offsets[stack_offset_index];
 
-        auto& function_parameters = function->function_type->options.function.parameters;
-        Array<Type_Signature*> parameter_types = array_create_empty<Type_Signature*>(function_parameters.size);
+        auto& function_parameters = function->function_type->parameters;
+        Array<Type_Base*> parameter_types = array_create_empty<Type_Base*>(function_parameters.size);
         SCOPE_EXIT(array_destroy(&parameter_types));
         for (int i = 0; i < function_parameters.size; i++) {
             parameter_types[i] = function_parameters[i].type;
@@ -1027,7 +1032,7 @@ void bytecode_generator_update_globals(Bytecode_Generator* generator)
     // Only updates newly_added globals
     auto& globals = compiler.semantic_analyser->program->globals;
     for (int i = generator->global_data_offsets.size; i < globals.size; i++) {
-        Type_Signature* signature = globals[i]->type;
+        Type_Base* signature = globals[i]->type;
         generator->global_data_size = align_offset_next_multiple(generator->global_data_size, signature->alignment);
         dynamic_array_push_back(&generator->global_data_offsets, generator->global_data_size);
         generator->global_data_size += signature->size;

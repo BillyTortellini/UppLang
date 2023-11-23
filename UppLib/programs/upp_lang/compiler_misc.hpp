@@ -7,7 +7,7 @@
 
 #include "lexer.hpp"
 
-struct Type_Signature;
+struct Type_Base;
 struct String;
 struct Type_System;
 struct Module_Progress;
@@ -97,7 +97,7 @@ struct Code_Source
 // Constant Pool
 struct Upp_Constant
 {
-    Type_Signature* type;
+    Type_Base* type;
     int offset;
     int constant_index;
 };
@@ -138,7 +138,7 @@ struct Constant_Pool
 
 Constant_Pool constant_pool_create(Type_System* type_system);
 void constant_pool_destroy(Constant_Pool* pool);
-Constant_Pool_Result constant_pool_add_constant(Constant_Pool* pool, Type_Signature* signature, Array<byte> bytes);
+Constant_Pool_Result constant_pool_add_constant(Constant_Pool* pool, Type_Base* signature, Array<byte> bytes);
 bool constant_pool_compare_constants(Constant_Pool* pool, Upp_Constant a, Upp_Constant b);
 void* upp_constant_get_pointer(Constant_Pool* pool, Upp_Constant constant);
 template<typename T>
@@ -153,7 +153,7 @@ T upp_constant_to_value(Constant_Pool* pool, Upp_Constant constant)
 // Extern Sources
 struct Extern_Function_Identifier
 {
-    Type_Signature* function_signature;
+    Type_Base* function_signature;
     String* id;
 };
 
@@ -168,7 +168,7 @@ struct Extern_Sources
     Dynamic_Array<String*> source_files_to_compile;
     Dynamic_Array<String*> lib_files;
     Dynamic_Array<Extern_Function_Identifier> extern_functions;
-    Hashtable<Type_Signature*, String*> extern_type_signatures; // Extern types to name id, e.g. HWND should not create its own structure, but use name HWND as type
+    Hashtable<Type_Base*, String*> extern_type_signatures; // Extern types to name id, e.g. HWND should not create its own structure, but use name HWND as type
 };
 
 Extern_Sources extern_sources_create();

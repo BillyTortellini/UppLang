@@ -1,5 +1,55 @@
 
+Removed void, so now expressions can return void in some places...
+
 TODO:
+    Function signature stores if it's polymorphic, also parameters store if they are polymorphic
+
+All things that are functions:
+    * Normal functions
+    * Anonymous functions
+    * Bake functions
+    * Polymorphic functions
+    * External Functions
+    * Function-Pointer
+    * Hardcoded functions
+
+
+What does the type system really do?
+
+
+Polymorphism:
+What's happening
+ * Parameter analysis --> finding out that the function is polymorphic
+ * Base analysis      --> Analysing with unknown
+ * Instanciation 
+    - Argument analysis
+    - Deduplication
+    - Instanced analysis
+
+Maybe annoying:
+    Polymorphic parameters aren't part of the type-system, so they need to be stored elsewhere
+    --> Why? because... fuck you
+
+Examples:
+---------
+add :: (a: int, $b: int) -> int 
+    return a + b
+Note: During base analysis, b type is int, but value is not available
+
+add :: (a: T, $T: Type) -> int 
+    return a + b
+Note: During base analysis, a is of unknown-type
+
+Some changes I'm thinking about:
+    Function-Type Signature just knows if it's polymorphic 
+    --> probably bad, because type-signature should be comparabale, and castable, and all that crap
+    --> but what if I just don't care, and I just create a normal type-signature too?
+    So where are all the function parameter things stored?
+
+
+
+TODO:
+    * Change type system to have sub-types for different types...
     * Update function polymorphism (Works with named_arguments, in-expression values $x:int, x:$T, working with overloads)
 
     * Struct rework (Allow other definitions inside the struct namespace, like functions/modules)
@@ -973,7 +1023,7 @@ But how do I store the Type of a parameter depending on Polymorphic-Arguments af
 Well I need to store it as a Polymorphic Type 
 
 Idea:
-    New Signature_Type: Polymorphic Type
+    New Type_Type: Polymorphic Type
 
 
 Polymorphic Procedures Implementation Plan:
@@ -1212,7 +1262,7 @@ Can normal function signatures have parameter names/comptime arguments/default a
     bin_op_function: (a: int = 5)
 
 So in RC_Code, the Parameter names + information about comptime + default values.
-Normally a function signature returns a Signature_Type, but when we detect that there
+Normally a function signature returns a Type_Type, but when we detect that there
 are Polymorphic Arguments involved 
 
 I also think that all functions require parameters names, otherwise it is unspecified wheater

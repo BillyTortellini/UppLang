@@ -10,7 +10,6 @@
 #include "compiler_misc.hpp"
 #include "parser.hpp"
 
-struct Type_Signature;
 struct Symbol;
 struct Symbol_Table;
 struct Compiler;
@@ -76,7 +75,7 @@ struct Polymorphic_Base
 // Modtree TODO: Rename this into something more sensible, like Upp-Function
 struct ModTree_Function
 {
-    Type_Signature* signature;
+    Type_Function* signature;
     Symbol* symbol; // May be 0 (e.g. anonymous functions)
     Symbol_Table* parameter_table; 
     Workload_Base* code_workload; // Workload that generated the semantic info required for code-gen (Either Function-body or Bake-Analysis)
@@ -91,7 +90,7 @@ struct ModTree_Function
 
 struct ModTree_Global
 {
-    Type_Signature* type;
+    Type_Base* type;
     int index;
 
     bool has_initial_value;
@@ -199,7 +198,7 @@ struct Workload_Function_Parameter
     Workload_Function_Header* header;
     AST::Parameter* param_node;
     Symbol* symbol;
-    Type_Signature* base_type; // Type of parameter in function/polymorphic base
+    Type_Base* base_type; // Type of parameter in function/polymorphic base
     Function_Parameter result;
     int execution_order_index;
 };
@@ -238,8 +237,8 @@ struct Workload_Struct_Reachable_Resolve
 {
     Workload_Base base;
     Struct_Progress* progress;
-    Dynamic_Array<Type_Signature*> struct_types;
-    Dynamic_Array<Type_Signature*> unfinished_array_types;
+    Dynamic_Array<Type_Struct*> struct_types;
+    Dynamic_Array<Type_Array*> unfinished_array_types;
 };
 
 struct Workload_Definition
@@ -270,7 +269,7 @@ struct Workload_Bake_Execution
 // ANALYSIS_PROGRESS
 struct Struct_Progress
 {
-    Type_Signature* struct_type;
+    Type_Struct* struct_type;
 
     Workload_Struct_Analysis* analysis_workload;
     Workload_Struct_Reachable_Resolve* reachable_resolve_workload;
@@ -369,15 +368,17 @@ enum class Info_Cast_Type
 
 enum class Expression_Context_Type
 {
-    UNKNOWN,             // Type is not known
-    AUTO_DEREFERENCE,    // Type is not known, but we want pointer level 0 
-    SPECIFIC_TYPE,       // Type is known, pointer level items + implicit casting enabled
+    UNKNOWN,                // Type is not known
+    AUTO_DEREFERENCE,       // Type is not known, but we want pointer level 0, e.g. a value 
+    SPECIFIC_TYPE_EXPECTED, // Type is known, pointer level items + implicit casting enabled
+    NO_VALUE                // We expect no value, as it is immediately dropped (Expression statement)
 };
 
 struct Expression_Context
 {
     Expression_Context_Type type;
-    Type_Signature* signature;
+    bool unknown_due_to_error; // If true the context is unknown because an error occured, otherwise there is no info
+    Type_Base* signature;
 };
 
 enum class Expression_Result_Type
@@ -388,6 +389,7 @@ enum class Expression_Result_Type
     HARDCODED_FUNCTION,
     POLYMORPHIC_FUNCTION,
     CONSTANT,
+    NOTHING, // Functions returning void
 };
 
 struct Argument_Info
@@ -403,7 +405,7 @@ struct Expression_Post_Op
     int deref_count;
     bool take_address_of;
     Info_Cast_Type cast;
-    Type_Signature* type_afterwards;
+    Type_Base* type_afterwards;
 };
 
 struct Expression_Info
@@ -412,8 +414,8 @@ struct Expression_Info
     Expression_Result_Type result_type;
     union
     {
-        Type_Signature* value_type;
-        Type_Signature* type;
+        Type_Base* value_type;
+        Type_Base* type;
         ModTree_Function* function;
         struct {
             // Note: Analysis of polymorphic functions takes 2 steps, so the base is the result of the first one, and the instance the second one
@@ -428,7 +430,7 @@ struct Expression_Info
     bool contains_errors; // If this expression contains any errors (Not recursive), currently only used for comptime-calculation
     union {
         Info_Cast_Type cast_type; // Note: Cast-Expression results may be further implicitly casted and because of this expression_info can hold 2 cast types
-        Type_Signature* function_call_signature; // Used by code-generation for accessing default values
+        Type_Function* function_call_signature; // Used by code-generation for accessing default values
     } specifics;
 
     Expression_Context context; // Maybe I don't even want to store the context
@@ -518,7 +520,7 @@ Parameter_Info* pass_get_node_info(Analysis_Pass* pass, AST::Parameter* node, In
 Path_Lookup_Info* pass_get_node_info(Analysis_Pass* pass, AST::Path_Lookup* node, Info_Query query);
 Module_Info* pass_get_node_info(Analysis_Pass* pass, AST::Module* node, Info_Query query);
 
-Type_Signature* expression_info_get_type(Expression_Info* info, bool before_context_is_applied);
+Type_Base* expression_info_get_type(Expression_Info* info, bool before_context_is_applied);
 
 
 
@@ -620,15 +622,16 @@ struct Error_Information
         String* id;
         Symbol* symbol;
         Exit_Code exit_code;
-        Type_Signature* type;
+        Type_Base* type;
+        Type_Function* function;
         struct {
-            Type_Signature* struct_signature;
+            Type_Struct* struct_signature;
             String* member_id;
         } invalid_member;
         Workload_Base* cycle_workload;
         struct {
-            Type_Signature* left_type;
-            Type_Signature* right_type;
+            Type_Base* left_type;
+            Type_Base* right_type;
         } binary_op_types;
         Expression_Result_Type expression_type;
         const char* constant_message;
@@ -685,7 +688,7 @@ void semantic_analyser_destroy();
 void semantic_analyser_reset();
 void semantic_analyser_finish();
 
-Type_Signature* hardcoded_type_to_signature(Hardcoded_Type type);
+Type_Function* hardcoded_type_to_signature(Hardcoded_Type type);
 
 
 

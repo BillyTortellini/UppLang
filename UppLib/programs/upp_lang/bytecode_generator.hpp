@@ -36,7 +36,7 @@ enum class Bytecode_Type
     FLOAT64,
     BOOL,
 };
-Bytecode_Type type_signature_to_bytecode_type(Type_Signature* primitive);
+Bytecode_Type type_base_to_bytecode_type(Type_Base* primitive);
 
 enum class Instruction_Type
 {

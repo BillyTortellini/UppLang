@@ -963,7 +963,7 @@ void bytecode_interpreter_print_state(Bytecode_Interpreter* interpreter)
         Intermediate_Register* reg = &func->registers[i];
         int stack_offset = interpreter->generator->variable_stack_offsets[i];
         byte* reg_data_ptr = interpreter->stack_pointer + stack_offset;
-        Type_Signature* reg_type = reg->type_signature;
+        Type_Base* reg_type = reg->type_signature;
         if (reg->type == Intermediate_Register_Type::PARAMETER) {
             logg("Parameter %d (Offset %d): ", reg->parameter_index, stack_offset);
         }

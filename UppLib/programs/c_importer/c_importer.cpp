@@ -1908,12 +1908,12 @@ void c_importer_destroy(C_Importer* importer)
     hashtable_destroy(&importer->cache);
 }
 
-Type_Signature* import_c_type(C_Import_Type* type, Hashtable<C_Import_Type*, Type_Signature*>* type_conversions)
+Type_Base* import_c_type(C_Import_Type* type, Hashtable<C_Import_Type*, Type_Base*>* type_conversions)
 {
     /*
     auto& type_system = semantic_analyser.compiler->type_system;
     {
-        Type_Signature** converted = hashtable_find_element(type_conversions, type);
+        Type_Base** converted = hashtable_find_element(type_conversions, type);
         if (converted != 0) {
             return *converted;
         }
@@ -1921,20 +1921,20 @@ Type_Signature* import_c_type(C_Import_Type* type, Hashtable<C_Import_Type*, Typ
     Type_Signature signature;
     signature.size = type->byte_size;
     signature.alignment = type->alignment;
-    Type_Signature* result_type = 0;
+    Type_Base* result_type = 0;
     switch (type->type)
     {
     case C_Import_Type_Type::ARRAY: {
-        signature.type = Signature_Type::ARRAY;
+        signature.type = Type_Type::ARRAY;
         signature.options.array.element_count = type->array.array_size;
         signature.options.array.element_type = import_c_type(type->array.element_type, type_conversions);
-        result_type = type_system_register_type(&type_system, signature);
+        result_type = type_system_deduplicate_and_create_internal_info_for_type(&type_system, signature);
         break;
     }
     case C_Import_Type_Type::POINTER: {
-        signature.type = Signature_Type::POINTER;
+        signature.type = Type_Type::POINTER;
         signature.options.pointer_child = import_c_type(type->array.element_type, type_conversions);
-        result_type = type_system_register_type(&type_system, signature);
+        result_type = type_system_deduplicate_and_create_internal_info_for_type(&type_system, signature);
         break;
     }
     case C_Import_Type_Type::PRIMITIVE: {
@@ -2021,15 +2021,15 @@ Type_Signature* import_c_type(C_Import_Type* type, Hashtable<C_Import_Type*, Typ
         break;
     }
     case C_Import_Type_Type::ERROR_TYPE: {
-        signature.type = Signature_Type::ARRAY;
+        signature.type = Type_Type::ARRAY;
         signature.options.array.element_type = type_system.u8_type;
         signature.options.array.element_count = type->byte_size;
-        result_type = type_system_register_type(&type_system, signature);
+        result_type = type_system_deduplicate_and_create_internal_info_for_type(&type_system, signature);
         break;
     }
     case C_Import_Type_Type::STRUCTURE:
     {
-        signature.type = Signature_Type::STRUCT;
+        signature.type = Type_Type::STRUCT;
         //if (type->structure.is_anonymous) {
             //signature.options.structure.id = identifier_pool_add(&analyser->compiler->identifier_pool, string_create_static("__c_anon"));
         //}
@@ -2050,21 +2050,21 @@ Type_Signature* import_c_type(C_Import_Type* type, Hashtable<C_Import_Type*, Typ
                 dynamic_array_push_back(&signature.options.structure.members, member);
             }
         }
-        result_type = type_system_register_type(&type_system, signature);
+        result_type = type_system_deduplicate_and_create_internal_info_for_type(&type_system, signature);
         break;
     }
     case C_Import_Type_Type::FUNCTION_SIGNATURE:
     {
-        signature.type = Signature_Type::FUNCTION;
+        signature.type = Type_Type::FUNCTION;
         signature.options.function.return_type = import_c_type(type->function_signature.return_type, type_conversions);
-        signature.options.function.parameter_types = dynamic_array_create_empty<Type_Signature*>(type->function_signature.parameters.size);
+        signature.options.function.parameter_types = dynamic_array_create_empty<Type_Base*>(type->function_signature.parameters.size);
         for (int i = 0; i < type->function_signature.parameters.size; i++) {
             dynamic_array_push_back(
                 &signature.options.function.parameter_types,
                 import_c_type(type->function_signature.parameters[i].type, type_conversions)
             );
         }
-        result_type = type_system_register_type(&type_system, signature);
+        result_type = type_system_deduplicate_and_create_internal_info_for_type(&type_system, signature);
         break;
     }
     default: panic("WHAT");

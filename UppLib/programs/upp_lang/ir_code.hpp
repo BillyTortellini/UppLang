@@ -9,7 +9,7 @@ struct IR_Function;
 struct IR_Data_Access;
 struct IR_Code_Block;
 struct IR_Program;
-struct Type_Signature;
+struct Type_Base;
 struct Constant_Pool;
 struct Analysis_Pass;
 
@@ -32,7 +32,7 @@ struct IR_Data_Access
     } option;
     int index;
 };
-Type_Signature* ir_data_access_get_type(IR_Data_Access* access);
+Type_Base* ir_data_access_get_type(IR_Data_Access* access);
 
 struct IR_Instruction_Move
 {
@@ -71,7 +71,7 @@ struct IR_Instruction_Call
         IR_Function* function;
         IR_Data_Access pointer_access;
         struct {
-            Type_Signature* signature;
+            Type_Function* signature;
             Hardcoded_Type type;
         } hardcoded;
         Extern_Function_Identifier extern_function;
@@ -164,7 +164,7 @@ struct IR_Instruction;
 struct IR_Code_Block
 {
     IR_Function* function;
-    Dynamic_Array<Type_Signature*> registers;
+    Dynamic_Array<Type_Base*> registers;
     Dynamic_Array<IR_Instruction> instructions;
 };
 
@@ -224,7 +224,7 @@ struct IR_Program;
 struct IR_Function
 {
     IR_Program* program;
-    Type_Signature* function_type;
+    Type_Function* function_type;
     IR_Code_Block* code;
 };
 
@@ -239,7 +239,6 @@ struct ModTree_Program;
 struct ModTree_Function;
 struct ModTree_Global;
 struct Compiler;
-struct Type_Signature;
 
 struct Unresolved_Goto
 {
@@ -291,7 +290,7 @@ IR_Program* ir_program_create(Type_System* type_system);
 void ir_program_destroy(IR_Program* program);
 
 void ir_program_append_to_string(IR_Program* program, String* string);
-Type_Signature* ir_data_access_get_type(IR_Data_Access* access);
+Type_Base* ir_data_access_get_type(IR_Data_Access* access);
 
 
 

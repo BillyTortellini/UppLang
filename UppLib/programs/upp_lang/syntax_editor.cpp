@@ -778,7 +778,7 @@ void code_completion_find_suggestions()
     {
         auto expr = AST::downcast<AST::Expression>(node);
         auto pass = code_query_get_analysis_pass(node);
-        Type_Signature* type = 0;
+        Type_Base* type = 0;
         fill_from_symbol_table = true;
         if (expr->type == AST::Expression_Type::MEMBER_ACCESS && pass != 0) {
             auto info = pass_get_node_info(pass, expr->options.member_access.expr, Info_Query::TRY_READ);
@@ -802,23 +802,25 @@ void code_completion_find_suggestions()
         {
             switch (type->type)
             {
-            case Signature_Type::ARRAY:
-            case Signature_Type::SLICE: {
+            case Type_Type::ARRAY:
+            case Type_Type::SLICE: {
                 code_completion_add_and_rank(string_create_static("data"), partially_typed);
                 code_completion_add_and_rank(string_create_static("size"), partially_typed);
                 break;
             }
-            case Signature_Type::STRUCT: {
-                for (int i = 0; i < type->options.structure.members.size; i++) {
-                    auto& mem = type->options.structure.members[i];
+            case Type_Type::STRUCT: {
+                auto& members = downcast<Type_Struct>(type)->members;
+                for (int i = 0; i < members.size; i++) {
+                    auto& mem = members[i];
                     code_completion_add_and_rank(*mem.id, partially_typed);
                 }
                 break;
             }
-            case Signature_Type::ENUM:
-                for (int i = 0; i < type->options.enum_type.members.size; i++) {
-                    auto& mem = type->options.enum_type.members[i];
-                    code_completion_add_and_rank(*mem.id, partially_typed);
+            case Type_Type::ENUM:
+                auto& members = downcast<Type_Enum>(type)->members;
+                for (int i = 0; i < members.size; i++) {
+                    auto& mem = members[i];
+                    code_completion_add_and_rank(*mem.name, partially_typed);
                 }
                 break;
             }
@@ -2058,7 +2060,7 @@ bool syntax_editor_display_analysis_info(AST::Node* node)
     }
     auto expr_type = expression_info_get_type(expression_info, false);
     string_append_formated(&syntax_editor.context_text, "Expr Result-Type: ");
-    type_signature_append_to_string(&syntax_editor.context_text, expr_type);
+    type_append_to_string(&syntax_editor.context_text, expr_type);
     return true;
 }
 
@@ -2181,7 +2183,7 @@ void syntax_editor_render()
                 show_context_info = true;
                 string_append_string(&context, symbol->id);
                 string_append_formated(&context, " ");
-                Type_Signature* type = 0;
+                Type_Base* type = 0;
                 switch (symbol->type)
                 {
                 case Symbol_Type::COMPTIME_VALUE:
@@ -2189,7 +2191,7 @@ void syntax_editor_render()
                     type = symbol->options.constant.type;
                     break;
                 case Symbol_Type::HARDCODED_FUNCTION:
-                    type = hardcoded_type_to_signature(symbol->options.hardcoded);
+                    type = upcast(hardcoded_type_to_signature(symbol->options.hardcoded));
                     break;
                 case Symbol_Type::PARAMETER: {
                     type = symbol->options.parameter.workload->base_type;
@@ -2203,7 +2205,7 @@ void syntax_editor_render()
                     break;
                 }
                 if (type != 0) {
-                    type_signature_append_to_string(&context, type);
+                    type_append_to_string(&context, type);
                 }
             }
         }

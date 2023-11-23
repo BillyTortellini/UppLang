@@ -26,7 +26,7 @@ Exit_Code c_compiler_execute(C_Compiler* compiler);
 
 struct Compiler;
 struct IR_Program;
-struct Type_Signature;
+struct Type_Base;
 struct IR_Function;
 struct IR_Code_Block;
 struct Upp_Constant;
@@ -35,7 +35,7 @@ struct C_Type_Definition_Dependency
 {
     Dynamic_Array<int> outgoing_dependencies;
     Dynamic_Array<int> incoming_dependencies;
-    Type_Signature* signature;
+    Type_Base* signature;
     int dependency_count;
 };
 
@@ -54,11 +54,11 @@ struct C_Generator
     String section_function_implementations;
     int name_counter;
 
-    Hashtable<Type_Signature*, int> type_to_dependency_mapping;
+    Hashtable<Type_Base*, int> type_to_dependency_mapping;
     Dynamic_Array<C_Type_Definition_Dependency> type_dependencies;
 
     Hashtable<Upp_Constant*, String> translation_constant_to_name;
-    Hashtable<Type_Signature*, String> translation_type_to_name;
+    Hashtable<Type_Base*, String> translation_type_to_name;
     Hashtable<IR_Function*, String> translation_function_to_name;
     Hashtable<IR_Code_Block*, String> translation_code_block_to_name;
     Dynamic_Array<int> array_index_stack;
