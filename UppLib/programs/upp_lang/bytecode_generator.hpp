@@ -9,7 +9,6 @@ struct Compiler;
 struct IR_Function;
 struct IR_Code_Block;
 struct IR_Program;
-struct Type_Signature;
 
 /*
     Runtime system has:

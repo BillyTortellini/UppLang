@@ -5,19 +5,19 @@ Player::struct
 
 main::()
 	// To conclude why the Type-Type is quite powerfull, lets look at the type_information type
-	info:Type_Information
+	info:Type_Info
 	
 	// To obtain information about any type, we can use the built-in type_info() function
 	info=type_info(int)
 	
 	//
-		Type info contains all informations about a type, for example:
-		- size
-		- alignment
-		- struct members, with offsets and names
-		- enum members, with string names
-		- primitive type
-		- ...
+		Type info contains all informations about a type,for example:
+		-size
+		-alignment
+		-struct members,with offsets and names
+		-enum members,with string names
+		-primitive type
+		-...
 	int_size:=info.size
 	int_alignment:=info.alignment
 	
@@ -33,12 +33,12 @@ main::()
 	offset:=#bake member_offset(Player,"alive")
 	assert(offset==32)
 	//
-		This still seems kinda inconvenient compared to C's 'offset_of'
+		This still seems kinda inconvenient compared to C's'offset_of'
 		But in the future you will be able to get almost the same syntax with
-		Macros. There will also be the possiblility to report errors inside
-		bake, which will prevent the names from being invalid
+		Macros.There will also be the possiblility to report errors inside
+		bake,which will prevent the names from being invalid
 
-member_offset::(type:Type,name:String)->int
+member_offset::(type:Type_Handle,name:String)->int
 	offset:=-1
 	info:=type_info(type)
 	if info.options.tag!=.structure

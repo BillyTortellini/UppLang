@@ -17,7 +17,6 @@ struct Bytecode_Interpreter;
 struct C_Generator;
 struct C_Compiler;
 struct IR_Generator;
-struct Type_Signature;
 struct Source_Code;
 struct Code_History;
 
@@ -80,6 +79,7 @@ struct Compiler
     String* id_type_info;
     String* id_empty_string;
     String* id_invalid_symbol_name;
+    String* id_struct;
 };
 
 extern Compiler compiler;

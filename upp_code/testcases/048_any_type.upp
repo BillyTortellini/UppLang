@@ -24,8 +24,8 @@ main::()
 	any_player2:Any=Player.{name="Dude",age=69,alive=false}
 	
 	// As mentioned before, the any type contains a data member (*void) to the data
-	assert(any_int.data*==cast{*void}*val_int)
-	assert(any_player.data*==cast{*void}*val_player)
+	assert(any_int.data*==cast{void_pointer}*val_int)
+	assert(any_player.data*==cast{void_pointer}*val_player)
 	
 	// And also the type value, which can be used in type_info
 	assert(any_player.type==Player)
@@ -50,15 +50,15 @@ main::()
 	// Casting from any to a value will result in a crash if the types dont match, shown in next testcase
 	
 	//
-		One of the reasons we have tagged unions, slice types and Any type
+		One of the reasons we have tagged unions,slice types and Any type
 		is that this way we have eliminated all cases where the Compiler cannot determine
-		what type is currently active, making it possible to auto-generate
-		- Printing functions
-		- Serialization functions
-		- GUI interfaces for structs 
-		- Memory inspectors
-		- ...
-		Maybe, if our metaprogramming system gets good enough to be able to emulate this
+		what type is currently active,making it possible to auto-generate
+		-Printing functions
+		-Serialization functions
+		-GUI interfaces for structs
+		-Memory inspectors
+		-...
+		Maybe,if our metaprogramming system gets good enough to be able to emulate this
 		functionality,these features(Or this syntax)will be removed from the compiler.
 	
 

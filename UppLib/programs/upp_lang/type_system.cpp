@@ -93,8 +93,11 @@ void type_append_to_string_with_children(String* string, Type_Base* signature, b
     {
         auto struct_type = downcast<Type_Struct>(signature);
         auto& members = struct_type->members;
-        if (struct_type->symbol != 0) {
-            string_append_formated(string, struct_type->symbol->id->characters);
+        if (struct_type->name.available) {
+            string_append_formated(string, struct_type->name.value->characters);
+        }
+        else {
+            string_append_formated(string, "Struct");
         }
         if (print_child)
         {
@@ -153,7 +156,7 @@ void type_append_value_to_string(Type_Base* type, byte* value_ptr, String* strin
         break;
     case Type_Type::TYPE_HANDLE: {
         u64 value = *(u64*)value_ptr;
-        string_append_formated(string, "Type_Handle, internal_index: %d", value);
+        string_append_formated(string, "Type_Handle, type_handle: %d", value);
         break;
     }
     case Type_Type::ARRAY:
@@ -209,11 +212,11 @@ void type_append_value_to_string(Type_Base* type, byte* value_ptr, String* strin
     {
         auto struct_type = downcast<Type_Struct>(type);
         auto& members = struct_type->members;
-        if (struct_type->symbol != 0) {
-            string_append_formated(string, "%s{", struct_type->symbol->id->characters);
+        if (struct_type->name.available) {
+            string_append_formated(string, "%s{", struct_type->name.value->characters);
         }
         else {
-            string_append_formated(string, "Struct{");
+            string_append_formated(string, "%Struct{", struct_type->name.value->characters);
         }
         switch (struct_type->struct_type)
         {
@@ -508,10 +511,10 @@ Type_Base* type_system_deduplicate_and_create_internal_info_for_type(Type_Base* 
 
     // Create Interal type-info and internal index
     {
-        base_type->internal_index = type_system.internal_type_infos.size;
+        base_type->type_handle.index = type_system.internal_type_infos.size;
         Internal_Type_Information info;
         memory_set_bytes(&info, sizeof(info), 0);
-        info.type_handle.index = base_type->internal_index;
+        info.type_handle.index = base_type->type_handle.index;
         info.size = base_type->size;
         info.alignment = base_type->alignment;
         info.options.tag = base_type->type;
@@ -529,16 +532,16 @@ Type_Base* type_system_deduplicate_and_create_internal_info_for_type(Type_Base* 
         {
             auto function_type = downcast<Type_Function>(base_type);
             auto& parameters = function_type->parameters;
-            info.options.function.parameters.data_ptr = new Internal_Type_Handle[parameters.size];
+            info.options.function.parameters.data_ptr = new Type_Handle[parameters.size];
             info.options.function.parameters.size = parameters.size;
             for (int i = 0; i < parameters.size; i++) {
                 Type_Base* param = parameters[i].type;
-                Internal_Type_Handle* info_param = &info.options.function.parameters.data_ptr[i];
-                info_param->index = param->internal_index;
+                Type_Handle* info_param = &info.options.function.parameters.data_ptr[i];
+                *info_param = param->type_handle;
             }
             info.options.function.has_return_type = function_type->return_type.available;
             if (function_type->return_type.available) {
-                info.options.function.return_type.index = function_type->return_type.value->internal_index;
+                info.options.function.return_type = function_type->return_type.value->type_handle;
             }
             else {
                 info.options.function.return_type.index = -1;
@@ -546,7 +549,7 @@ Type_Base* type_system_deduplicate_and_create_internal_info_for_type(Type_Base* 
             break;
         }
         case Type_Type::POINTER: {
-            info.options.pointer.index = downcast<Type_Pointer>(base_type)->points_to_type->internal_index;
+            info.options.pointer = downcast<Type_Pointer>(base_type)->points_to_type->type_handle;
             break;
         }
         case Type_Type::PRIMITIVE:
@@ -558,7 +561,7 @@ Type_Base* type_system_deduplicate_and_create_internal_info_for_type(Type_Base* 
         }
         case Type_Type::ARRAY: {
             auto array = downcast<Type_Array>(base_type);
-            info.options.array.element_type.index = array->element_type->internal_index;
+            info.options.array.element_type = array->element_type->type_handle;
             if (array->count_known) {
                 info.options.array.size = array->element_count;
             }
@@ -569,7 +572,7 @@ Type_Base* type_system_deduplicate_and_create_internal_info_for_type(Type_Base* 
         }
         case Type_Type::SLICE: {
             auto slice = downcast<Type_Slice>(base_type);
-            info.options.slice.element_type.index = slice->element_type->internal_index;
+            info.options.slice.element_type = slice->element_type->type_handle;
             break;
         }
         default: panic("");
@@ -603,7 +606,7 @@ Type_Primitive* type_system_make_primitive(Primitive_Type type, int size, bool i
     result.base.type = Type_Type::PRIMITIVE;
     result.base.size = size;
     result.base.alignment = size;
-    result.base.internal_index = -1;
+    result.base.type_handle.index = -1;
     result.is_signed = is_signed;
     result.primitive_type = type;
     return type_system_register_type(result);
@@ -633,7 +636,7 @@ Type_Array* type_system_make_array(Type_Base* element_type, bool count_known, in
     else {
         result.element_count = 1;
     }
-    result.base.size = element_type->alignment * result.element_count;
+    result.base.size = element_type->size * result.element_count;
     return type_system_register_type(result);
 }
 
@@ -657,7 +660,7 @@ Type_Function type_system_make_function_empty()
 {
     Type_Function result;
     result.base.type = Type_Type::FUNCTION;
-    result.base.internal_index = -1;
+    result.base.type_handle.index = -1;
     result.base.alignment = 8;
     result.base.size = 8;
     result.parameters = dynamic_array_create_empty<Function_Parameter>(1);
@@ -711,13 +714,18 @@ Type_Function* type_system_make_function(std::initializer_list<Function_Paramete
     return type_system_make_function(params, return_type);
 }
 
-Type_Struct* type_system_make_struct_empty(Structure_Type struct_type, Symbol* symbol, Struct_Progress* progress)
+Type_Struct* type_system_make_struct_empty(AST::Structure_Type struct_type, String* name, Struct_Progress* progress)
 {
     Type_Struct result;
     result.base.type = Type_Type::STRUCT;
     result.base.size = 0;
     result.base.alignment = 0;
-    result.symbol = symbol;
+    if (name != 0) {
+        result.name = optional_make_success(name);
+    }
+    else {
+        result.name.available = false;
+    }
     result.progress = progress;
     result.tag_member.id = 0;
     result.tag_member.offset = 0;
@@ -752,7 +760,7 @@ void type_system_finish_struct(Type_Struct* structure)
     auto& type_system = compiler.type_system;
     auto& members = structure->members;
     auto& base = structure->base;
-    assert(base.internal_index < type_system.internal_type_infos.size, "");
+    assert(base.type_handle.index < (u32)type_system.internal_type_infos.size, "");
     assert(type_system.internal_type_infos.size == type_system.types.size, "");
     assert(base.size == 0 && base.alignment == 0, "");
 
@@ -783,7 +791,7 @@ void type_system_finish_struct(Type_Struct* structure)
             Struct_Member* struct_member = &members[i];
             Enum_Item tag_member;
             tag_member.name = struct_member->id;
-            tag_member.value = i + 1;
+            tag_member.value = i + 1; // Note: Enum member values start at 1 by default
             dynamic_array_push_back(&tag_type->members, tag_member);
         }
         type_system_finish_enum(tag_type);
@@ -803,27 +811,27 @@ void type_system_finish_struct(Type_Struct* structure)
     }
 
     // Finish type
-    structure->base.size = math_round_next_multiple(offset, alignment);
+    structure->base.size = math_maximum(1, math_round_next_multiple(offset, alignment));
     structure->base.alignment = alignment;
 
 
 
     // Update internal info to mirror struct info
-    Internal_Type_Information* internal_info = &type_system.internal_type_infos[base.internal_index];
+    Internal_Type_Information* internal_info = &type_system.internal_type_infos[base.type_handle.index];
     internal_info->size = base.size;
     internal_info->alignment = base.alignment;
-    internal_info->type_handle.index = base.internal_index;
+    internal_info->type_handle = base.type_handle;
     internal_info->options.tag = base.type;
 
-    if (structure->symbol == 0) {
-        internal_info->options.structure.name.character_buffer_size = 0;
-        internal_info->options.structure.name.character_buffer_data = 0;
+    if (!structure->name.available) {
+        internal_info->options.structure.name.character_buffer.size = 0;
+        internal_info->options.structure.name.character_buffer.data = 0;
         internal_info->options.structure.name.size = 0;
     }
     else {
-        internal_info->options.structure.name.character_buffer_size = structure->symbol->id->capacity;
-        internal_info->options.structure.name.character_buffer_data = structure->symbol->id->characters;
-        internal_info->options.structure.name.size = structure->symbol->id->size;
+        internal_info->options.structure.name.character_buffer.size = structure->name.value->capacity;
+        internal_info->options.structure.name.character_buffer.data = structure->name.value->characters;
+        internal_info->options.structure.name.size = structure->name.value->size;
     }
     int member_count = members.size;
     internal_info->options.structure.members.size = member_count;
@@ -833,10 +841,10 @@ void type_system_finish_struct(Type_Struct* structure)
         Internal_Type_Struct_Member* internal_member = &internal_info->options.structure.members.data_ptr[i];
         Struct_Member* member = &members[i];
         internal_member->name.size = member->id->size;
-        internal_member->name.character_buffer_size = member->id->capacity;
-        internal_member->name.character_buffer_data = member->id->characters;
+        internal_member->name.character_buffer.size = member->id->capacity;
+        internal_member->name.character_buffer.data = member->id->characters;
         internal_member->offset = member->offset;
-        internal_member->type.index = member->type->internal_index;
+        internal_member->type = member->type->type_handle;
     }
     internal_info->options.structure.type.tag = structure->struct_type;
     if ((int)internal_info->options.structure.type.tag == 0) {
@@ -852,7 +860,7 @@ void type_system_finish_enum(Type_Enum* enum_type)
     auto& type_system = compiler.type_system;
     auto& base = enum_type->base;
     auto& members = enum_type->members;
-    assert(base.internal_index < type_system.internal_type_infos.size, "");
+    assert(base.type_handle.index < (u32) type_system.internal_type_infos.size, "");
     assert(type_system.internal_type_infos.size == type_system.types.size, "");
     assert(base.size == 0 && base.alignment == 0, "");
 
@@ -861,21 +869,21 @@ void type_system_finish_enum(Type_Enum* enum_type)
     base.alignment = 4;
 
     // Update internal info to mirror struct info
-    Internal_Type_Information* internal_info = &type_system.internal_type_infos[base.internal_index];
+    Internal_Type_Information* internal_info = &type_system.internal_type_infos[base.type_handle.index];
     internal_info->size = base.size;
     internal_info->alignment = base.alignment;
-    internal_info->type_handle.index = base.internal_index;
+    internal_info->type_handle = base.type_handle;
     internal_info->options.tag = base.type;
 
     // Make mirroring internal info
     if (enum_type->name == 0) {
-        internal_info->options.enumeration.name.character_buffer_size = 0;
-        internal_info->options.enumeration.name.character_buffer_data = 0;
+        internal_info->options.enumeration.name.character_buffer.size = 0;
+        internal_info->options.enumeration.name.character_buffer.data = 0;
         internal_info->options.enumeration.name.size = 0;
     }
     else {
-        internal_info->options.enumeration.name.character_buffer_size = enum_type->name->capacity;
-        internal_info->options.enumeration.name.character_buffer_data = enum_type->name->characters;
+        internal_info->options.enumeration.name.character_buffer.size = enum_type->name->capacity;
+        internal_info->options.enumeration.name.character_buffer.data = enum_type->name->characters;
         internal_info->options.enumeration.name.size =                  enum_type->name->size;
     }
     int member_count = members.size;
@@ -886,8 +894,8 @@ void type_system_finish_enum(Type_Enum* enum_type)
         Enum_Item* member = &members[i];
         Internal_Type_Enum_Member* internal_member = &internal_info->options.enumeration.members.data_ptr[i];
         internal_member->name.size = member->name->size;
-        internal_member->name.character_buffer_size = 0;
-        internal_member->name.character_buffer_data = member->name->characters;
+        internal_member->name.character_buffer.size = 0;
+        internal_member->name.character_buffer.data = member->name->characters;
         internal_member->value = member->value;
     }
 }
@@ -896,19 +904,20 @@ void type_system_finish_array(Type_Array* array)
 {
     auto& type_system = compiler.type_system;
     auto& base = array->base;
-    assert(base.internal_index < type_system.internal_type_infos.size, "");
+    assert(base.type_handle.index < (u32) type_system.internal_type_infos.size, "");
     assert(type_system.internal_type_infos.size == type_system.types.size, "");
     assert(base.size == 0 && base.alignment == 0, "");
+    assert(array->base.type == Type_Type::ARRAY, "");
 
     // Finish array
-    base.size = array->element_type->alignment * array->element_count;
+    base.size = array->element_type->size * array->element_count;
     base.alignment = array->element_type->alignment;
 
     // Update internal info to mirror struct info
-    Internal_Type_Information* internal_info = &type_system.internal_type_infos[base.internal_index];
+    Internal_Type_Information* internal_info = &type_system.internal_type_infos[base.type_handle.index];
     internal_info->size = base.size;
     internal_info->alignment = base.alignment;
-    internal_info->type_handle.index = base.internal_index;
+    internal_info->type_handle = base.type_handle;
     internal_info->options.tag = base.type;
 }
 
@@ -944,15 +953,16 @@ void type_system_add_predefined_types(Type_System* system)
 
         Type_Base type_handle;
         type_handle.type = Type_Type::TYPE_HANDLE;
-        type_handle.size = 8;
-        type_handle.alignment = 8;
+        type_handle.size = 4;
+        type_handle.alignment = 4;
         types->type_handle = type_system_register_type(type_handle);
     }
 
     using AST::Structure_Type;
     // Empty structure
+    auto make_id = [&](const char* name) -> String* { return identifier_pool_add(&compiler.identifier_pool, string_create_static(name)); };
     {
-        types->empty_struct_type = type_system_make_struct_empty(Structure_Type::STRUCT, 0, 0);
+        types->empty_struct_type = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Empty_Struct"), 0);
         type_system_finish_struct(types->empty_struct_type);
     }
 
@@ -963,7 +973,7 @@ void type_system_add_predefined_types(Type_System* system)
 
     // String
     {
-        types->string_type = type_system_make_struct_empty(Structure_Type::STRUCT, 0, 0);
+        types->string_type = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("String"), 0);
         add_member_cstr(types->string_type, "character_buffer", upcast(type_system_make_slice(upcast(types->u8_type))));
         add_member_cstr(types->string_type, "size", upcast(types->i32_type));
         type_system_finish_struct(types->string_type);
@@ -972,7 +982,7 @@ void type_system_add_predefined_types(Type_System* system)
 
     // Any
     {
-        types->any_type = type_system_make_struct_empty(Structure_Type::STRUCT, 0, 0);
+        types->any_type = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Any"), 0);
         add_member_cstr(types->any_type, "data", types->void_pointer_type);
         add_member_cstr(types->any_type, "type", types->type_handle);
         type_system_finish_struct(types->any_type);
@@ -981,15 +991,15 @@ void type_system_add_predefined_types(Type_System* system)
 
     // Type Information
     {
-        Type_Struct* option_type = type_system_make_struct_empty(Structure_Type::UNION, 0, 0);
+        Type_Struct* option_type = type_system_make_struct_empty(Structure_Type::UNION, make_id("Type_Info_Option"), 0);
         add_member_cstr(option_type, "void_pointer", upcast(types->empty_struct_type));
         add_member_cstr(option_type, "type_handle", upcast(types->empty_struct_type));
         add_member_cstr(option_type, "error_type", upcast(types->empty_struct_type));
         // Primitive
         {
-            Type_Struct* primitive_type = type_system_make_struct_empty(Structure_Type::UNION, 0, 0);
+            Type_Struct* primitive_type = type_system_make_struct_empty(Structure_Type::UNION, make_id("Primitive_Info"), 0);
             {
-                Type_Struct* integer_info_type = type_system_make_struct_empty(Structure_Type::STRUCT, 0, 0);
+                Type_Struct* integer_info_type = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Integer_Info"), 0);
                 add_member_cstr(integer_info_type, "is_signed", upcast(types->bool_type));
                 type_system_finish_struct(integer_info_type);
                 add_member_cstr(primitive_type, "integer", upcast(integer_info_type));
@@ -1002,26 +1012,9 @@ void type_system_add_predefined_types(Type_System* system)
         }
         // Pointer
         add_member_cstr(option_type, "pointer", types->type_handle);
-        // Array
-        {
-            Type_Struct* array_type = type_system_make_struct_empty(Structure_Type::STRUCT, 0, 0);
-            add_member_cstr(array_type, "element_type", types->type_handle);
-            add_member_cstr(array_type, "size", upcast(types->i32_type));
-            type_system_finish_struct(array_type);
-            test_type_similarity<Internal_Type_Array>(upcast(array_type));
-            add_member_cstr(option_type, "array", upcast(array_type));
-        }
-        // Slice
-        {
-            Type_Struct* slice_type = type_system_make_struct_empty(Structure_Type::STRUCT, 0, 0);
-            add_member_cstr(slice_type, "element_type", types->type_handle);
-            type_system_finish_struct(slice_type);
-            test_type_similarity<Internal_Type_Slice>(upcast(slice_type));
-            add_member_cstr(option_type, "slice", upcast(slice_type));
-        }
         // Function
         {
-            Type_Struct* function_type = type_system_make_struct_empty(Structure_Type::STRUCT, 0, 0);
+            Type_Struct* function_type = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Function_Info"), 0);
             add_member_cstr(function_type, "parameter_types", upcast(type_system_make_slice(types->type_handle)));
             add_member_cstr(function_type, "return_type", types->type_handle);
             add_member_cstr(function_type, "has_return_type", upcast(types->bool_type));
@@ -1031,9 +1024,9 @@ void type_system_add_predefined_types(Type_System* system)
         }
         // Struct
         {
-            Type_Struct* struct_type = type_system_make_struct_empty(Structure_Type::STRUCT, 0, 0);
+            Type_Struct* struct_type = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Struct_Info"), 0);
             {
-                Type_Struct* struct_member_type = type_system_make_struct_empty(Structure_Type::STRUCT, 0, 0);
+                Type_Struct* struct_member_type = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Member_Info"), 0);
                 add_member_cstr(struct_member_type, "name", upcast(types->string_type));
                 add_member_cstr(struct_member_type, "type", types->type_handle);
                 add_member_cstr(struct_member_type, "offset", upcast(types->i32_type));
@@ -1043,7 +1036,7 @@ void type_system_add_predefined_types(Type_System* system)
             }
             add_member_cstr(struct_type, "name", upcast(types->string_type));
             {
-                Type_Struct* structure_type_type = type_system_make_struct_empty(Structure_Type::UNION, 0, 0);
+                Type_Struct* structure_type_type = type_system_make_struct_empty(Structure_Type::UNION, make_id("Struct_Type_Info"), 0);
                 add_member_cstr(structure_type_type, "structure", upcast(types->empty_struct_type));
                 add_member_cstr(structure_type_type, "union_untagged", upcast(types->empty_struct_type));
                 {
@@ -1062,7 +1055,7 @@ void type_system_add_predefined_types(Type_System* system)
         }
         // ENUM
         {
-            Type_Struct* enum_type = type_system_make_struct_empty(Structure_Type::STRUCT, 0, 0);
+            Type_Struct* enum_type = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Enum_Info"), 0);
             {
                 Type_Struct* enum_member_type = type_system_make_struct_empty(Structure_Type::STRUCT, 0, 0);
                 add_member_cstr(enum_member_type, "name", upcast(types->string_type));
@@ -1076,12 +1069,29 @@ void type_system_add_predefined_types(Type_System* system)
             add_member_cstr(option_type, "enumeration", upcast(enum_type));
             test_type_similarity<Internal_Type_Enum>(upcast(enum_type));
         }
+        // Array
+        {
+            Type_Struct* array_type = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Array_Info"), 0);
+            add_member_cstr(array_type, "element_type", types->type_handle);
+            add_member_cstr(array_type, "size", upcast(types->i32_type));
+            type_system_finish_struct(array_type);
+            test_type_similarity<Internal_Type_Array>(upcast(array_type));
+            add_member_cstr(option_type, "array", upcast(array_type));
+        }
+        // Slice
+        {
+            Type_Struct* slice_type = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Slice_Info"), 0);
+            add_member_cstr(slice_type, "element_type", types->type_handle);
+            type_system_finish_struct(slice_type);
+            test_type_similarity<Internal_Type_Slice>(upcast(slice_type));
+            add_member_cstr(option_type, "slice", upcast(slice_type));
+        }
         type_system_finish_struct(option_type);
         test_type_similarity<Internal_Type_Info_Options>(upcast(option_type));
 
         // Type Information
         {
-            Type_Struct* type_info_type = type_system_make_struct_empty(Structure_Type::STRUCT, 0, 0);
+            Type_Struct* type_info_type = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Type_Info"), 0);
             add_member_cstr(type_info_type, "type", types->type_handle);
             add_member_cstr(type_info_type, "size", upcast(types->i32_type));
             add_member_cstr(type_info_type, "alignment", upcast(types->i32_type));

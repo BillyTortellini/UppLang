@@ -41,6 +41,11 @@ struct Enum_Item
 
 
 // TYPE SIGNATURES
+struct Type_Handle
+{
+    u32 index;
+};
+
 enum class Type_Type
 {
     VOID_POINTER = 1, // Note: Void type does not exist, but void pointers are here for interoperability with C
@@ -60,7 +65,7 @@ struct Type_Base
     Type_Type type;
     int size; // in byte
     int alignment; // in byte
-    u64 internal_index;
+    Type_Handle type_handle;
 };
 
 enum class Primitive_Type
@@ -113,7 +118,7 @@ struct Type_Struct {
     AST::Structure_Type struct_type;
     Struct_Member tag_member; // Only valid for unions
 
-    Symbol* symbol; // May be null if it's a predefined struct
+    Optional<String*> name;
     Struct_Progress* progress; // May be null if it's a predefined struct
 };
 
@@ -139,33 +144,26 @@ struct Upp_Slice
 
 struct Upp_Slice_Base
 {
-    void* data_ptr;
+    void* data;
     i32 size;
 };
 
 // A string as it is currently defined in the upp-language
 struct Upp_String
 {
-    char* character_buffer_data;
-    i32 character_buffer_size;
-    i32 _padding;
+    Upp_Slice_Base character_buffer;
     i32 size;
 };
 
 struct Upp_Any
 {
     void* data;
-    u64 type;
+    Type_Handle type;
 };
 
 
 
 // TYPE-INFORMATION STRUCTS (Usable in Upp)
-struct Internal_Type_Handle  
-{
-    u64 index;
-};
-
 struct Internal_Type_Primitive
 {
     bool is_signed;
@@ -174,15 +172,15 @@ struct Internal_Type_Primitive
 
 struct Internal_Type_Function
 {
-    Upp_Slice<Internal_Type_Handle> parameters;
-    Internal_Type_Handle return_type;
+    Upp_Slice<Type_Handle> parameters;
+    Type_Handle return_type;
     bool has_return_type;
 };
 
 struct Internal_Type_Struct_Member
 {
     Upp_String name;
-    Internal_Type_Handle type;
+    Type_Handle type;
     int offset;
 };
 
@@ -207,13 +205,13 @@ struct Internal_Type_Enum_Member
 
 struct Internal_Type_Array
 {
-    Internal_Type_Handle element_type;
+    Type_Handle element_type;
     int size;
 };
 
 struct Internal_Type_Slice
 {
-    Internal_Type_Handle element_type;
+    Type_Handle element_type;
 };
 
 struct Internal_Type_Enum
@@ -226,7 +224,7 @@ struct Internal_Type_Info_Options
 {
     union {
         struct {} type_type;
-        Internal_Type_Handle pointer;
+        Type_Handle pointer;
         Internal_Type_Array array;
         Internal_Type_Slice slice;
         Internal_Type_Primitive primitive;
@@ -239,7 +237,7 @@ struct Internal_Type_Info_Options
 
 struct Internal_Type_Information
 {
-    Internal_Type_Handle type_handle;
+    Type_Handle type_handle;
     int size;
     int alignment;
     Internal_Type_Info_Options options;
@@ -320,7 +318,7 @@ Type_Function* type_system_finish_function(Type_Function function, Type_Base* re
 
 // Note: empty types need to be finished before they are used!
 Type_Enum* type_system_make_enum_empty(String* name);
-Type_Struct* type_system_make_struct_empty(AST::Structure_Type struct_type, Symbol* symbol, Struct_Progress* progress);
+Type_Struct* type_system_make_struct_empty(AST::Structure_Type struct_type, String* name = 0, Struct_Progress* progress = 0);
 void struct_add_member(Type_Struct* structure, String* id, Type_Base* member_type);
 void type_system_finish_struct(Type_Struct* structure);
 void type_system_finish_enum(Type_Enum* enum_type);

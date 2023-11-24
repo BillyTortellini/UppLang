@@ -207,11 +207,13 @@ void syntax_editor_load_text_file(const char* filename)
     if (content.available) {
         result = content.value;
         editor.file_path = filename;
+        syntax_editor_set_text(result);
     }
     else {
-        result = string_create_static("main :: (x : int) -> void \n{\n\n}");
+        result = string_create("main :: (x : int) -> void \n{\n\n}");
+        SCOPE_EXIT(string_destroy(&result));
+        syntax_editor_set_text(result);
     }
-    syntax_editor_set_text(result);
 }
 
 void syntax_editor_save_text_file()

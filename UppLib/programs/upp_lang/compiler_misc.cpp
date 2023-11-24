@@ -1,6 +1,7 @@
 #include "compiler_misc.hpp"
 
 #include "type_system.hpp"
+#include "compiler.hpp"
 
 const char* timing_task_to_string(Timing_Task task)
 {
@@ -296,6 +297,37 @@ Optional<const char*> constant_pool_record_references(Constant_Pool* pool, int d
     }
     case Type_Type::STRUCT:
     {
+        auto& type_system = compiler.type_system;
+        auto& any_type = type_system.predefined_types.any_type;
+        if (types_are_equal(signature, upcast(any_type))) 
+        {
+            Upp_Any* any = (Upp_Any*)raw_data;
+            if (any->type.index >= (u32)type_system.types.size) {
+                return optional_make_success("Any contained invalid type index");
+            }
+            Type_Base* pointed_to_type = type_system.types[any->type.index];
+
+            // Check pointer
+            if (any->data == 0) {
+                break; // If nullptr, then we don't have a reference, so serialization is fine at this point
+            }
+            else if (memory_is_readable(any->data, pointed_to_type->size)) 
+            {
+                Upp_Constant_Reference reference;
+                reference.ptr_offset = data_offset;
+                Offset_Result data_result = constant_pool_add_constant_internal(pool, pointed_to_type, 
+                    array_create_static_as_bytes((byte*)any->data, pointed_to_type->size)
+                );
+                if (!data_result.success) return optional_make_success(data_result.error_message);
+                reference.buffer_destination_offset = data_result.offset;
+                dynamic_array_push_back(&pool->references, reference);
+            }
+            else {
+                return optional_make_success("Constant data contained slice with invalid data-pointer");
+            }
+            break; // Don't further handle any
+        }
+
         // Loop over each member and call this function
         auto structure = downcast<Type_Struct>(signature);
         auto& members = structure->members;
@@ -368,19 +400,19 @@ Optional<const char*> constant_pool_record_references(Constant_Pool* pool, int d
         // Check if pointer is valid, if true, save slice data
         auto slice_type = downcast<Type_Slice>(signature);
         Upp_Slice_Base slice = *(Upp_Slice_Base*)raw_data;
-        if (slice.data_ptr == nullptr || slice.size == 0) {
+        if (slice.data == nullptr || slice.size == 0) {
             break;
         }
         if (slice.size <= 0) {
             return optional_make_success("Constant data contained slice with negative size");
         }
-        if (memory_is_readable(slice.data_ptr, slice_type->element_type->size * slice.size)) 
+        if (memory_is_readable(slice.data, slice_type->element_type->size * slice.size)) 
         {
             Upp_Constant_Reference reference;
             reference.ptr_offset = data_offset;
             Offset_Result data_result = constant_pool_add_constant_internal(
                 pool, upcast(type_system_make_array(slice_type->element_type, true, slice.size)), 
-                array_create_static_as_bytes((byte*)slice.data_ptr, slice_type->element_type->alignment * slice.size)
+                array_create_static_as_bytes((byte*)slice.data, slice_type->element_type->size * slice.size)
             );
             if (!data_result.success) return optional_make_success(data_result.error_message);
             reference.buffer_destination_offset = data_result.offset;

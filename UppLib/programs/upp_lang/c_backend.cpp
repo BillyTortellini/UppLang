@@ -401,8 +401,8 @@ void c_generator_register_type_name(C_Generator* generator, Type_Base* type)
     {
         auto structure = downcast<Type_Struct>(type);
         auto& members = structure->members;
-        if (structure->symbol != 0) {
-            string_append_formated(&type_name, "struct_%d_%s", generator->name_counter, structure->symbol->id->characters);
+        if (structure->name.available) {
+            string_append_formated(&type_name, "struct_%d_%s", generator->name_counter, structure->name.value->characters);
         }
         else {
             string_append_formated(&type_name, "struct_%d", generator->name_counter);

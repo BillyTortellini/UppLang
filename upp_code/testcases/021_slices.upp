@@ -15,7 +15,7 @@ main::()
 	// Deletion on slices
 	delete arr
 
-array_bubble_sort::(a:[]int)->void
+array_bubble_sort::(a:[]int)
 	i:=0
 	while(i<a.size)
 		j:=i+1

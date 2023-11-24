@@ -801,7 +801,7 @@ IR_Data_Access ir_generator_generate_cast(IR_Code_Block* ir_block, IR_Data_Acces
             cmp_instr.options.binary_op.type = AST::Binop::EQUAL;
             cmp_instr.options.binary_op.operand_left = ir_data_access_create_constant(
                 types.type_handle,
-                array_create_static_as_bytes<u64>(&result_type->internal_index, 1)
+                array_create_static_as_bytes<u32>(&result_type->type_handle.index, 1)
             );
             cmp_instr.options.binary_op.operand_right = ir_data_access_create_member(ir_block, access_operand, types.any_type->members[1]);
             cmp_instr.options.binary_op.destination = access_valid_cast;
@@ -881,8 +881,8 @@ IR_Data_Access ir_generator_generate_cast(IR_Code_Block* ir_block, IR_Data_Acces
                 ir_block, any_access, types.any_type->members[1]
             );
             instr.options.move.source = ir_data_access_create_constant(
-                upcast(types.any_type),
-                array_create_static_as_bytes(&source_type->internal_index, 1)
+                upcast(types.type_handle),
+                array_create_static_as_bytes(&source_type->type_handle, 1)
             );
             dynamic_array_push_back(&ir_block->instructions, instr);
         }
@@ -907,7 +907,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
     case Expression_Result_Type::CONSTANT:
         return ir_data_access_create_constant(info->options.constant);
     case Expression_Result_Type::TYPE:
-        return ir_data_access_create_constant(upcast(types.u64_type), array_create_static_as_bytes(&result_type->internal_index, 1));
+        return ir_data_access_create_constant(upcast(types.type_handle), array_create_static_as_bytes(&result_type->type_handle, 1));
     case Expression_Result_Type::FUNCTION: {
         // Function pointer read
         auto access = ir_data_access_create_intermediate(ir_block, result_type);
@@ -1171,7 +1171,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
         {
             assert(array_init.values.size == 0, "");
             Upp_Slice_Base slice_base;
-            slice_base.data_ptr = 0;
+            slice_base.data = 0;
             slice_base.size = 0;
             auto slice_constant = constant_pool_add_constant(&compiler.constant_pool, result_type, array_create_static_as_bytes(&slice_base, 1));
             assert(slice_constant.success, "Empty slice must succeed!");
@@ -1804,78 +1804,81 @@ void ir_generator_queue_function(ModTree_Function* function) {
 
 void ir_generator_finish(bool gen_bytecode)
 {
-    // Generate entry function
-    auto& type_system = compiler.type_system;
-    auto entry_function = ir_function_create(type_system_make_function({}), 0);
-    ir_generator.program->entry_function = entry_function;
-
-    // Set type_informations global
-    {
-        auto result = constant_pool_add_constant(
-            &compiler.constant_pool,
-            upcast(type_system_make_array(
-                upcast(type_system.predefined_types.type_information_type), true, type_system.internal_type_infos.size
-            )),
-            array_create_static_as_bytes(type_system.internal_type_infos.data, type_system.internal_type_infos.size)
-        );
-        assert(result.success, "Type information must be valid");
-        assert(type_system.types.size == type_system.internal_type_infos.size, "");
-
-        IR_Instruction move_instr;
-        move_instr.type = IR_Instruction_Type::MOVE;
-        move_instr.options.move.destination = ir_data_access_create_global(compiler.semantic_analyser->global_type_informations);
-        move_instr.options.move.source = ir_generator_generate_cast(
-            entry_function->code, ir_data_access_create_constant(result.constant),
-            ir_data_access_get_type(&move_instr.options.move.destination), Info_Cast_Type::ARRAY_TO_SLICE
-        );
-        dynamic_array_push_back(&entry_function->code->instructions, move_instr);
-    }
-
-    // Initialize all globals
-    auto& globals = compiler.semantic_analyser->program->globals;
-    for (int i = 0; i < globals.size; i++)
-    {
-        auto global = globals[i];
-        if (!global->has_initial_value) continue;
-
-        ir_generator.current_pass = global->definition_workload->base.current_pass;
-        IR_Instruction move_instr;
-        move_instr.type = IR_Instruction_Type::MOVE;
-        move_instr.options.move.destination = ir_data_access_create_global(global);
-        move_instr.options.move.source = ir_generator_generate_expression(entry_function->code, global->init_expr);
-        dynamic_array_push_back(&entry_function->code->instructions, move_instr);
-    }
-
-    // Call main
-    {
-        IR_Instruction call_instr;
-        call_instr.type = IR_Instruction_Type::FUNCTION_CALL;
-        call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
-        call_instr.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(1);
-        call_instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, ir_generator.modtree->main_function);
-        dynamic_array_push_back(&entry_function->code->instructions, call_instr);
-    }
-
-    // Exit
-    {
-        IR_Instruction exit_instr;
-        exit_instr.type = IR_Instruction_Type::RETURN;
-        exit_instr.options.return_instr.type = IR_Instruction_Return_Type::EXIT;
-        exit_instr.options.return_instr.options.exit_code = Exit_Code::SUCCESS;
-        dynamic_array_push_back(&entry_function->code->instructions, exit_instr);
-    }
-
-    // Queue entry function
-    Function_Stub entry_stub;
-    entry_stub.mod_func = 0;
-    entry_stub.ir_func = entry_function;
-    dynamic_array_push_back(&ir_generator.queue_functions, entry_stub);
-
     // Queue and generate all functions
     for (int i = 0; i < ir_generator.modtree->functions.size; i++) {
         ir_generator_queue_function(ir_generator.modtree->functions[i]);
     }
     ir_generator_generate_queued_items(gen_bytecode);
+
+    // Generate entry function
+    {
+        auto& type_system = compiler.type_system;
+        auto entry_function = ir_function_create(type_system_make_function({}), 0);
+        ir_generator.program->entry_function = entry_function;
+
+        // Set type_informations global
+        {
+            auto result = constant_pool_add_constant(
+                &compiler.constant_pool,
+                upcast(type_system_make_array(
+                    upcast(type_system.predefined_types.type_information_type), true, type_system.internal_type_infos.size
+                )),
+                array_create_static_as_bytes(type_system.internal_type_infos.data, type_system.internal_type_infos.size)
+            );
+            assert(result.success, "Type information must be valid");
+            assert(type_system.types.size == type_system.internal_type_infos.size, "");
+
+            IR_Instruction move_instr;
+            move_instr.type = IR_Instruction_Type::MOVE;
+            move_instr.options.move.destination = ir_data_access_create_global(compiler.semantic_analyser->global_type_informations);
+            move_instr.options.move.source = ir_generator_generate_cast(
+                entry_function->code, ir_data_access_create_constant(result.constant),
+                ir_data_access_get_type(&move_instr.options.move.destination), Info_Cast_Type::ARRAY_TO_SLICE
+            );
+            dynamic_array_push_back(&entry_function->code->instructions, move_instr);
+        }
+
+        // Initialize all globals
+        auto& globals = compiler.semantic_analyser->program->globals;
+        for (int i = 0; i < globals.size; i++)
+        {
+            auto global = globals[i];
+            if (!global->has_initial_value) continue;
+
+            ir_generator.current_pass = global->definition_workload->base.current_pass;
+            IR_Instruction move_instr;
+            move_instr.type = IR_Instruction_Type::MOVE;
+            move_instr.options.move.destination = ir_data_access_create_global(global);
+            move_instr.options.move.source = ir_generator_generate_expression(entry_function->code, global->init_expr);
+            dynamic_array_push_back(&entry_function->code->instructions, move_instr);
+        }
+
+        // Call main
+        {
+            IR_Instruction call_instr;
+            call_instr.type = IR_Instruction_Type::FUNCTION_CALL;
+            call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
+            call_instr.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(1);
+            call_instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, ir_generator.modtree->main_function);
+            dynamic_array_push_back(&entry_function->code->instructions, call_instr);
+        }
+
+        // Exit
+        {
+            IR_Instruction exit_instr;
+            exit_instr.type = IR_Instruction_Type::RETURN;
+            exit_instr.options.return_instr.type = IR_Instruction_Return_Type::EXIT;
+            exit_instr.options.return_instr.options.exit_code = Exit_Code::SUCCESS;
+            dynamic_array_push_back(&entry_function->code->instructions, exit_instr);
+        }
+
+        // Queue and generate entry function
+        Function_Stub entry_stub;
+        entry_stub.mod_func = 0;
+        entry_stub.ir_func = entry_function;
+        dynamic_array_push_back(&ir_generator.queue_functions, entry_stub);
+        ir_generator_generate_queued_items(gen_bytecode);
+    }
 }
 
 // Generator

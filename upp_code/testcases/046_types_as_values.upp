@@ -3,9 +3,9 @@ adder::(a:int,b:int)->int
 
 main::()
 	//
-		In this language we have a Type-Type, which is internally just an integer representing
+		In this language we have a Type-Type,which is internally just an integer representing
 		one of all types created in the given program
-	a:Type=bool
+	a:Type_Handle=bool
 	
 	// Most of the time we want types to be comptime values
 	x::int
@@ -21,20 +21,20 @@ main::()
 	assert(z!=[]bool)// Difference between arrays and slices!
 	
 	// To find the type of an expression, we can use the hardcoded type_of function
-		bool_type:Type=type_of(5*7==35)
+		bool_type:Type_Handle=type_of(5*7==35)
 		assert(bool_type==bool)
 		
 		// In type theory, type_of(Type) would probably be something like Type_Type,
 		// and type_of(type_of(type_of(Type))) would be Type_Type_Type_Type
 		// But in this language, we just stay at Type because the previous behavior isn't really usefull
 		// in any practical applications
-		assert(type_of(int)==Type)
-		assert(type_of(Type)==Type)
-		assert(type_of(type_of(Type))==Type)
+		assert(type_of(int)==Type_Handle)
+		assert(type_of(Type_Handle)==Type_Handle)
+		assert(type_of(type_of(Type_Handle))==Type_Handle)
 	
 	//
-		Ok, so we can compare types, but why is this a usefull feature?
-		For once, if a value of a type-variable is compile time known (See constant propagator test),
+		Ok,so we can compare types,but why is this a usefull feature?
+		For once,if a value of a type-variable is compile time known(See constant propagator test),
 		we can use this value to instanciate other variables with the given type
 	x_type:x
 	y_type:y

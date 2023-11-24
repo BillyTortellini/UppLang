@@ -693,7 +693,7 @@ Struct_Progress* struct_progress_create(Symbol* symbol, AST::Expression* struct_
 
     // Create progress
     auto progress = analysis_progress_allocate_internal<Struct_Progress>();
-    progress->struct_type = type_system_make_struct_empty(struct_info.type, symbol, progress);
+    progress->struct_type = type_system_make_struct_empty(struct_info.type, (symbol == 0 ? 0 : symbol->id), progress);
 
     // Set Symbol
     if (symbol != 0) {
@@ -1053,22 +1053,22 @@ Comptime_Result comptime_result_apply_cast(Comptime_Result value, Info_Cast_Type
     case Info_Cast_Type::U64_TO_POINTER: return comptime_result_make_not_comptime("Pointers aren't currently handled for comptime evaluation");
     case Info_Cast_Type::ARRAY_TO_SLICE: {
         Upp_Slice_Base* slice = stack_allocator_allocate<Upp_Slice_Base>(&analyser.allocator_values);
-        slice->data_ptr = value.data;
+        slice->data = value.data;
         slice->size = downcast<Type_Array>(value.data_type)->element_count;
         return comptime_result_make_available(slice, result_type);
     }
     case Info_Cast_Type::TO_ANY: {
         Upp_Any* any = stack_allocator_allocate<Upp_Any>(&analyser.allocator_values);
-        any->type = result_type->internal_index;
+        any->type = result_type->type_handle;
         any->data = value.data;
         return comptime_result_make_available(any, result_type);
     }
     case Info_Cast_Type::FROM_ANY: {
         Upp_Any* given = (Upp_Any*)value.data;
-        if (given->type >= compiler.type_system.types.size) {
+        if (given->type.index >= (u32) compiler.type_system.types.size) {
             return comptime_result_make_not_comptime("Any contained invalid type_id");
         }
-        Type_Base* any_type = compiler.type_system.types[given->type];
+        Type_Base* any_type = compiler.type_system.types[given->type.index];
         if (!types_are_equal(any_type, value.data_type)) {
             return comptime_result_make_not_comptime("Any type_handle value doesn't match result type, actually not sure if this can happen");
         }
@@ -1104,7 +1104,7 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
         return comptime_result_make_available(&compiler.constant_pool.buffer[upp_const.offset], upp_const.type);
     }
     case Expression_Result_Type::TYPE: {
-        return comptime_result_make_available(&info->options.type->internal_index, types.type_handle);
+        return comptime_result_make_available(&info->options.type->type_handle, types.type_handle);
     }
     case Expression_Result_Type::NOTHING: {
         return comptime_result_make_not_comptime("Void not comptime!");
@@ -1283,7 +1283,7 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
         }
         else if (value_array.data_type->type == Type_Type::SLICE) {
             Upp_Slice_Base* slice = (Upp_Slice_Base*)value_array.data;
-            base_ptr = (byte*)slice->data_ptr;
+            base_ptr = (byte*)slice->data;
             array_size = slice->size;
         }
         else {
@@ -2687,8 +2687,8 @@ void analysis_workload_append_to_string(Workload_Base* workload, String* string)
         break;
     }
     case Analysis_Workload_Type::STRUCT_ANALYSIS: {
-        Symbol* symbol = downcast<Workload_Struct_Analysis>(workload)->progress->struct_type->symbol;
-        const char* struct_id = symbol == 0 ? "Anonymous_Struct" : symbol->id->characters;
+        auto name = downcast<Workload_Struct_Analysis>(workload)->progress->struct_type->name;
+        const char* struct_id = name.available? name.value->characters : "Anonymous_Struct";
         string_append_formated(string, "Struct-Analysis \"%s\"", struct_id);
         break;
     }
@@ -2697,9 +2697,9 @@ void analysis_workload_append_to_string(Workload_Base* workload, String* string)
         string_append_formated(string, "Struct-Reachable-Resolve [");
         auto cluster = downcast<Workload_Struct_Reachable_Resolve>(analysis_workload_find_associated_cluster(workload));
         for (int i = 0; i < cluster->struct_types.size; i++) {
-            Symbol* symbol = cluster->struct_types[i]->symbol;
-            const char* fn_id = symbol == 0 ? "Anonymous" : symbol->id->characters;
-            string_append_formated(string, "%s, ", fn_id);
+            auto name = cluster->struct_types[i]->name;
+            const char* struct_id = name.available? name.value->characters : "Anonymous_Struct";
+            string_append_formated(string, "%s, ", struct_id);
         }
         string_append_formated(string, "]");
 
@@ -3205,7 +3205,7 @@ void analysis_workload_entry(void* userdata)
         {
             Type_Array* array_type = reachable->unfinished_array_types[i];
             assert(!(array_type->element_type->size == 0 && array_type->element_type->alignment == 0), "");
-            array_type->base.size = array_type->element_type->alignment * array_type->element_count;
+            array_type->base.size = array_type->element_type->size * array_type->element_count;
             array_type->base.alignment = array_type->element_type->alignment;
             type_system_finish_array(array_type);
         }
@@ -3510,19 +3510,28 @@ Info_Cast_Type semantic_analyser_check_cast_type(Type_Base* source_type, Type_Ba
     if (types_are_equal(source_type, destination_type)) return Info_Cast_Type::NO_CAST;
     bool cast_valid = false;
     Info_Cast_Type cast_type = Info_Cast_Type::INVALID;
+
+    // Void pointer casting
+    if (source_type->type == Type_Type::VOID_POINTER) {
+        if (destination_type->type == Type_Type::POINTER) {
+            return Info_Cast_Type::POINTERS;
+        }
+        return Info_Cast_Type::INVALID;
+    }
+    else if (destination_type->type == Type_Type::VOID_POINTER) {
+        if (source_type->type == Type_Type::POINTER) {
+            return Info_Cast_Type::POINTERS;
+        }
+        return Info_Cast_Type::INVALID;
+    }
+
     // Pointer casting
     if (source_type->type == Type_Type::POINTER || destination_type->type == Type_Type::POINTER)
     {
         if (source_type->type == Type_Type::POINTER && destination_type->type == Type_Type::POINTER)
         {
             cast_type = Info_Cast_Type::POINTERS;
-            if (implicit_cast) {
-                cast_valid = types_are_equal(source_type, types.void_pointer_type) ||
-                    types_are_equal(destination_type, types.void_pointer_type);
-            }
-            else {
-                cast_valid = true;
-            }
+            cast_valid = !implicit_cast;
         }
     }
     else if (source_type->type == Type_Type::FUNCTION || destination_type->type == Type_Type::FUNCTION) {
@@ -4609,7 +4618,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                     EXIT_ERROR(function_signature->return_type.value);
                 }
                 else {
-                    EXIT_ERROR(types.error_type);
+                    expression_info_set_no_value(info);
+                    return info;
                 }
             }
 
@@ -4633,7 +4643,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 EXIT_VALUE(function_signature->return_type.value);
             }
             else {
-                EXIT_VALUE(types.error_type);
+                expression_info_set_no_value(info);
+                return info;
             }
         }
         else
@@ -4790,8 +4801,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             break;
         case Literal_Type::STRING: {
             String* string = read.options.string;
-            string_buffer.character_buffer_data = string->characters;
-            string_buffer.character_buffer_size = string->capacity;
+            string_buffer.character_buffer.data = string->characters;
+            string_buffer.character_buffer.size = string->capacity;
             string_buffer.size = string->size;
 
             literal_type = upcast(types.string_type);
@@ -4807,7 +4818,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
     {
         auto& members = expr->options.enum_members;
         Type_Enum* enum_type = type_system_make_enum_empty(0);
-        int next_member_value = 1;
+        int next_member_value = 1; // Note: Enum values all start at 1, so 0 represents an invalid enum
         for (int i = 0; i < members.size; i++)
         {
             auto& member_node = members[i];
@@ -5575,6 +5586,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             if (operand_type->type == Type_Type::POINTER) {
                 types_are_valid = ptr_valid;
             }
+            else if (operand_type->type == Type_Type::VOID_POINTER) {
+                types_are_valid = ptr_valid;
+            }
             else if (operand_type->type == Type_Type::PRIMITIVE)
             {
                 auto primitive = downcast<Type_Primitive>(operand_type);
@@ -5741,12 +5755,33 @@ Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression* expre
     auto& type_system = compiler.type_system;
     auto result = semantic_analyser_analyse_expression_internal(expression, context);
     SET_ACTIVE_EXPR_INFO(result);
+
+    // Handle nothing/void
     if (result->result_type == Expression_Result_Type::NOTHING && context.type != Expression_Context_Type::NO_VALUE) {
         log_semantic_error("Expected value from expression, but got void/nothing", expression);
         result->result_type = Expression_Result_Type::VALUE;
         result->contains_errors = true;
         result->options.value_type = compiler.type_system.predefined_types.error_type;
+        context.type = Expression_Context_Type::UNKNOWN;
     }
+    else if (result->result_type != Expression_Result_Type::NOTHING && context.type == Expression_Context_Type::NO_VALUE) {
+        log_semantic_error("Value is not used", expression);
+        result->result_type = Expression_Result_Type::VALUE;
+        result->contains_errors = true;
+        result->options.value_type = compiler.type_system.predefined_types.error_type;
+        context.type = Expression_Context_Type::UNKNOWN;
+    }
+    else if (result->result_type == Expression_Result_Type::NOTHING && context.type == Expression_Context_Type::NO_VALUE) {
+        // Here we set the result type to error, but we don't treat it as an error
+        result->result_type = Expression_Result_Type::VALUE;
+        result->contains_errors = false;
+        result->options.value_type = upcast(compiler.type_system.predefined_types.empty_struct_type);
+        result->post_op.type_afterwards = upcast(compiler.type_system.predefined_types.empty_struct_type);
+        context.type = Expression_Context_Type::UNKNOWN;
+        return result;
+    }
+
+
     if (result->result_type != Expression_Result_Type::VALUE && result->result_type != Expression_Result_Type::CONSTANT) return result;
     result->post_op = expression_context_apply(expression_info_get_type(result, true), context, true, expression);
     return result;
@@ -5791,8 +5826,8 @@ Type_Base* semantic_analyser_try_convert_value_to_type(AST::Expression* expressi
             constant = result->options.constant;
         }
 
-        auto type_index = upp_constant_to_value<u64>(&compiler.constant_pool, constant);
-        if (type_index >= type_system.internal_type_infos.size) {
+        auto type_index = upp_constant_to_value<u32>(&compiler.constant_pool, constant);
+        if (type_index >= (u32)type_system.internal_type_infos.size) {
             // Note: Always log this error, because this should never happen!
             log_semantic_error("Expression contains invalid type handle", expression);
             return types.error_type;
@@ -5840,7 +5875,7 @@ Type_Base* semantic_analyser_analyse_expression_value(AST::Expression* expressio
         return result->post_op.type_afterwards; // Here context was already applied, so we return
     }
     case Expression_Result_Type::TYPE: {
-        expression_info_set_constant(result, types.type_handle, array_create_static_as_bytes(&result->options.type->internal_index, 1), AST::upcast(expression));
+        expression_info_set_constant(result, types.type_handle, array_create_static_as_bytes(&result->options.type->type_handle, 1), AST::upcast(expression));
         break;
     }
     case Expression_Result_Type::NOTHING:
@@ -6634,7 +6669,7 @@ void semantic_analyser_reset()
             Symbol* result = symbol_table_define_symbol(root, identifier_pool_add(pool, string_create_static(name)), Symbol_Type::TYPE, 0, false);
             result->options.type = type;
             if (type->type == Type_Type::STRUCT) {
-                downcast<Type_Struct>(type)->symbol = result;
+                downcast<Type_Struct>(type)->name = optional_make_success(result->id);
             }
             return result;
         };
@@ -6657,6 +6692,7 @@ void semantic_analyser_reset()
         symbols.type_type_information = define_type_symbol("Type_Info", upcast(types.type_information_type));
         symbols.type_any = define_type_symbol("Any",                    upcast(types.any_type));
         symbols.type_empty = define_type_symbol("_",                    upcast(types.empty_struct_type));
+        symbols.type_empty = define_type_symbol("void_pointer",         upcast(types.void_pointer_type));
 
         auto define_hardcoded_symbol = [&](const char* name, Hardcoded_Type type) -> Symbol* {
             Symbol* result = symbol_table_define_symbol(root, identifier_pool_add(pool, string_create_static(name)), Symbol_Type::HARDCODED_FUNCTION, 0, false);

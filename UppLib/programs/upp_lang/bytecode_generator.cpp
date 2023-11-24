@@ -375,7 +375,7 @@ Bytecode_Type type_base_to_bytecode_type(Type_Base* type)
 {
     assert(type->type == Type_Type::PRIMITIVE || type->type == Type_Type::ENUM || type->type == Type_Type::TYPE_HANDLE, "HEY");
     if (type->type == Type_Type::TYPE_HANDLE) {
-        return Bytecode_Type::UINT64;
+        return Bytecode_Type::UINT32;
     }
     if (type->type == Type_Type::ENUM) {
         return Bytecode_Type::INT32;
@@ -923,7 +923,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             }
 
             Type_Base* operand_types = ir_data_access_get_type(&binary_op->operand_left);
-            if (operand_types->type == Type_Type::POINTER) {
+            if (operand_types->type == Type_Type::POINTER || operand_types->type == Type_Type::VOID_POINTER) {
                 instr.op4 = (int)Bytecode_Type::INT64;
             }
             else {
