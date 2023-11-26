@@ -1064,7 +1064,8 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
         }
         case Expression_Result_Type::POLYMORPHIC_FUNCTION: 
         {
-            auto function = call_info->options.polymorphic.instance->progress->function;
+            assert(call_info->options.polymorphic_function->type == Function_Progress_Type::POLYMORPHIC_INSTANCE, "Must be instance at ir_code");
+            auto function = call_info->options.polymorphic_function->function;
             assert(function->is_runnable, "Instances that reach ir-generator must not be polymorphic!");
             call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
             call_instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, function);
@@ -1120,7 +1121,8 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
             IR_Data_Access access;
             access.type = IR_Data_Access_Type::PARAMETER;
             access.is_memory_access = false;
-            access.index = symbol->options.parameter.type_index;
+            assert(!symbol->options.parameter_workload->parameter.is_polymorphic, "In IR-Code parameter lookups must already be comptime!");
+            access.index = symbol->options.parameter_workload->parameter.index_in_non_polymorphic_signature;
             access.option.function = ir_block->function;
             return access;
         }
@@ -1796,7 +1798,7 @@ void ir_generator_queue_function(ModTree_Function* function) {
         return;
     }
     if (function->progress != 0) {
-        assert((function->progress->poly_instance == 0 || function->progress->poly_instance->instance_index != 0), "Function cannot be polymorhic here!");
+        assert((function->progress->type != Function_Progress_Type::POLYMORPHIC_BASE), "Function cannot be polymorhic here!");
     }
     if (hashtable_find_element(&ir_generator.function_mapping, function) != 0) return;
     ir_function_create(function->signature, function);

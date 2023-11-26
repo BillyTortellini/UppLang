@@ -6,7 +6,6 @@
 #include "compiler_misc.hpp" // Upp_Constant
 
 // struct Function_Progress;
-// struct Polymorphic_Base;
 struct ModTree_Global;
 struct Type_Base;
 struct Workload_Definition;
@@ -19,7 +18,6 @@ struct Symbol_Table;
 struct Symbol_Data;
 
 struct Function_Progress;
-struct Polymorphic_Base;
 
 namespace AST
 {
@@ -56,18 +54,13 @@ struct Symbol
         Type_Base* variable_type;
         Module_Progress* module_progress;
         Function_Progress* function;
+        Function_Progress* polymorphic_function;
         Workload_Definition* definition_workload;
         Workload_Import_Resolve* alias_workload;
-        Polymorphic_Base* polymorphic_function;
         Hardcoded_Type hardcoded;
         Type_Base* type;
         ModTree_Global* global;
-        struct {
-            bool is_polymorphic;
-            int ast_index;  // Index in ast_signature_node
-            int type_index; // Index in function_signature
-            Workload_Function_Parameter* workload;
-        } parameter;
+        Workload_Function_Parameter* parameter_workload;
         Upp_Constant constant;
     } options;
 

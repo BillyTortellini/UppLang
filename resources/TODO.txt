@@ -1,9 +1,16 @@
-
-Removed void, so now expressions can return void in some places...
-
 TODO:
-    Function signature stores if it's polymorphic, also parameters store if they are polymorphic
+    1. Function header decides upfront if it's polymorphic or not
+    2. If it is, it creates the polymorphic base? --> And argument dependencies are added there?
+        Argument order vs argument dependency?
+        Dependency carries more information, and I guess I can just store which are important and which not...
+    Polymorphic functions with default parameter + named arguments
+        - Function signature stores if it's polymorphic, also parameters store if they are polymorphic
 
+Why is the polymorphic base also a polymorphic instance?
+e.g. Why isn't there a normal function, a base-function and other?
+    - Maybe for future proofing?
+
+        
 All things that are functions:
     * Normal functions
     * Anonymous functions
@@ -12,10 +19,6 @@ All things that are functions:
     * External Functions
     * Function-Pointer
     * Hardcoded functions
-
-
-What does the type system really do?
-
 
 Polymorphism:
 What's happening

@@ -455,12 +455,6 @@ Type_Base* type_system_deduplicate_and_create_internal_info_for_type(Type_Base* 
                 auto p1 = downcast<Type_Function>(sig1);
                 auto p2 = downcast<Type_Function>(sig2);
 
-                // Polymorphic functions currently aren't deduplicated
-                if (p1->is_polymorphic || p2->is_polymorphic) {
-                    are_equal = false;
-                    break;
-                }
-
                 // Check return types
                 if (p1->return_type.available != p2->return_type.available) {
                     are_equal = false;
@@ -484,7 +478,13 @@ Type_Base* type_system_deduplicate_and_create_internal_info_for_type(Type_Base* 
                     auto& param1 = p1->parameters[i];
                     auto& param2 = p2->parameters[i];
                     if (!types_are_equal(param1.type, param2.type) || param1.name.available != param2.name.available ||
-                        param1.is_polymorphic != param2.is_polymorphic || param1.has_default_value != param2.has_default_value) {
+                        param1.is_polymorphic != param2.is_polymorphic || param1.has_default_value != param2.has_default_value) 
+                    {
+                        are_equal = false;
+                        break;
+                    }
+                    if ((param1.is_polymorphic && param1.index_in_polymorphic_evaluation_order != param2.index_in_polymorphic_evaluation_order) ||
+                        (!param1.is_polymorphic && param1.index_in_non_polymorphic_signature != param2.index_in_non_polymorphic_signature)) {
                         are_equal = false;
                         break;
                     }
@@ -668,18 +668,7 @@ Type_Function type_system_make_function_empty()
     return result;
 }
 
-void type_system_add_parameter_to_empty_function(Type_Function& function, Type_Base* param_type, Optional<String*> param_name) {
-    Function_Parameter parameter;
-    parameter.type = param_type;
-    parameter.has_default_value = false;
-    parameter.default_value.available = false;
-    parameter.is_polymorphic = false;
-    parameter.name = param_name;
-    dynamic_array_push_back(&function.parameters, parameter);
-}
-
 Type_Function* type_system_finish_function(Type_Function function, Type_Base* return_type) {
-    function.is_polymorphic = false; // Change at soem point!
     if (return_type == 0) {
         function.return_type = optional_make_failure<Type_Base*>();
     }
@@ -702,6 +691,15 @@ Type_Function* type_system_make_function(Dynamic_Array<Function_Parameter> param
     else {
         result.return_type = optional_make_success(return_type);
     }
+
+    int non_comptime_counter = 0;
+    for (int i = 0; i < parameters.size; i++) {
+        if (!parameters[i].is_polymorphic) {
+            parameters[i].index_in_non_polymorphic_signature = non_comptime_counter;
+            non_comptime_counter += 1;
+        }
+    }
+
     return type_system_register_type(result);
 }
 
