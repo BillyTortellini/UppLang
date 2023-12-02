@@ -1066,7 +1066,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
         {
             assert(call_info->options.polymorphic_function->type == Function_Progress_Type::POLYMORPHIC_INSTANCE, "Must be instance at ir_code");
             auto function = call_info->options.polymorphic_function->function;
-            assert(function->is_runnable, "Instances that reach ir-generator must not be polymorphic!");
+            assert(function->is_runnable, "Instances that reach ir-generator must be runnable!");
             call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
             call_instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, function);
             break;

@@ -8,9 +8,8 @@ TODO:
 
 Why is the polymorphic base also a polymorphic instance?
 e.g. Why isn't there a normal function, a base-function and other?
-    - Maybe for future proofing?
+    - Maybe for future proofing, e.g. i don't really know?
 
-        
 All things that are functions:
     * Normal functions
     * Anonymous functions
@@ -52,10 +51,9 @@ Some changes I'm thinking about:
 
 
 TODO:
-    * Change type system to have sub-types for different types...
     * Update function polymorphism (Works with named_arguments, in-expression values $x:int, x:$T, working with overloads)
 
-    * Struct rework (Allow other definitions inside the struct namespace, like functions/modules)
+    * Struct/Union rework (Allow other definitions inside the struct namespace, like functions/modules)
     * Polymorphism for structs
     * Local-Context for casting, operator overloading, dot-calls
 
