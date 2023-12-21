@@ -2196,7 +2196,7 @@ void syntax_editor_render()
                     type = upcast(hardcoded_type_to_signature(symbol->options.hardcoded));
                     break;
                 case Symbol_Type::PARAMETER: {
-                    type = symbol->options.parameter_workload->parameter.type;
+                    type = symbol->options.parameter->type;
                     break;
                 }
                 case Symbol_Type::TYPE:

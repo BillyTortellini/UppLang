@@ -4,6 +4,19 @@
 
 using AST::Structure_Type;
 
+Function_Parameter function_parameter_make_empty(Symbol* symbol, Workload_Function_Parameter* workload) {
+    Function_Parameter result;
+    result.default_value.available = false;
+    result.has_default_value = false;
+    result.parameter_type = Parameter_Type::NORMAL;
+    result.normal.index_in_non_polymorphic_signature = -1;  // Generated when finishing type
+    result.name.available = false;
+    result.type = compiler.type_system.predefined_types.error_type;
+    result.symbol = symbol;
+    result.workload = workload;
+    return result;
+}
+
 void type_base_destroy(Type_Base* base) 
 {
     if (base->type == Type_Type::FUNCTION) {
@@ -403,7 +416,31 @@ Type_Base* type_system_deduplicate_and_create_internal_info_for_type(Type_Base* 
 {
     auto& type_system = compiler.type_system;
     double reg_start_time = timer_current_time_in_seconds(type_system.timer);
+    
+    // Finalize function (Parameter infos)
+    if (base_type->type == Type_Type::FUNCTION) {
+        auto function = downcast<Type_Function>(base_type);
+        auto& parameters = function->parameters;
 
+        function->polymorphic_parameter_count = 0;
+        function->parameters_with_default_value_count = 0;
+        int non_comptime_counter = 0;
+        for (int i = 0; i < parameters.size; i++) {
+            auto& param = parameters[i];
+            if (param.has_default_value) {
+                function->parameters_with_default_value_count += 1;
+            }
+            if (param.parameter_type == Parameter_Type::NORMAL) {
+                param.normal.index_in_non_polymorphic_signature = non_comptime_counter;
+                non_comptime_counter += 1;
+            }
+            else if (param.parameter_type == Parameter_Type::POLYMORPHIC) {
+                function->polymorphic_parameter_count += 1;
+            }
+        }
+    }
+    
+    // Check if type is already registered
     if (base_type->type != Type_Type::STRUCT || base_type->type == Type_Type::ENUM) // Structs aren't deduplicated
     {
         // Check if type already exists
@@ -478,14 +515,21 @@ Type_Base* type_system_deduplicate_and_create_internal_info_for_type(Type_Base* 
                     auto& param1 = p1->parameters[i];
                     auto& param2 = p2->parameters[i];
                     if (!types_are_equal(param1.type, param2.type) || param1.name.available != param2.name.available ||
-                        param1.is_polymorphic != param2.is_polymorphic || param1.has_default_value != param2.has_default_value) 
+                        param1.parameter_type != param2.parameter_type || param1.has_default_value != param2.has_default_value) 
                     {
                         are_equal = false;
                         break;
                     }
-                    if ((param1.is_polymorphic && param1.index_in_polymorphic_evaluation_order != param2.index_in_polymorphic_evaluation_order) ||
-                        (!param1.is_polymorphic && param1.index_in_non_polymorphic_signature != param2.index_in_non_polymorphic_signature)) {
-                        are_equal = false;
+                    switch (param1.parameter_type) {
+                    case Parameter_Type::NORMAL: 
+                        are_equal = param1.normal.index_in_non_polymorphic_signature == param2.normal.index_in_non_polymorphic_signature; 
+                        break;
+                    case Parameter_Type::POLYMORPHIC:
+                        are_equal = param1.polymorphic.index_in_polymorphic_evaluation_order == param2.polymorphic.index_in_polymorphic_evaluation_order; 
+                        break;
+                    default:panic("");
+                    }
+                    if (!are_equal) {
                         break;
                     }
                     if (param1.name.available && param1.name.value != param2.name.value) {
@@ -502,7 +546,22 @@ Type_Base* type_system_deduplicate_and_create_internal_info_for_type(Type_Base* 
             }
             }
 
-            if (are_equal) {
+            if (are_equal) 
+            {
+                // For Functions deduplication, we need to update pointers of parameter symbols and workloads
+                if (base_type->type == Type_Type::FUNCTION) {
+                    auto& params = downcast<Type_Function>(base_type)->parameters;
+                    auto& other_params = downcast<Type_Function>(sig2)->parameters;
+                    for (int i = 0; i < params.size; i++) {
+                        auto& param = params[i];
+                        if (param.symbol != 0) {
+                            assert(param.symbol->type == Symbol_Type::PARAMETER, "");
+                            param.symbol->options.parameter = &other_params[i];
+                        }
+                    }
+                }
+
+                // Destroy new type because it's a duplicate, return already existing type 
                 type_base_destroy(base_type);
                 return sig2;
             }
@@ -678,7 +737,7 @@ Type_Function* type_system_finish_function(Type_Function function, Type_Base* re
     return type_system_register_type(function);
 }
 
-Type_Function* type_system_make_function(Dynamic_Array<Function_Parameter> parameters, Type_Base* return_type = 0)
+Type_Function* type_system_make_function(Dynamic_Array<Function_Parameter> parameters, Type_Base* return_type)
 {
     Type_Function result;
     result.base.type = Type_Type::FUNCTION;
@@ -690,14 +749,6 @@ Type_Function* type_system_make_function(Dynamic_Array<Function_Parameter> param
     }
     else {
         result.return_type = optional_make_success(return_type);
-    }
-
-    int non_comptime_counter = 0;
-    for (int i = 0; i < parameters.size; i++) {
-        if (!parameters[i].is_polymorphic) {
-            parameters[i].index_in_non_polymorphic_signature = non_comptime_counter;
-            non_comptime_counter += 1;
-        }
     }
 
     return type_system_register_type(result);
@@ -1104,13 +1155,10 @@ void type_system_add_predefined_types(Type_System* system)
     {
         auto& ts = *system;
         auto make_param = [&](Type_Base* signature, const char* name) -> Function_Parameter {
-            Function_Parameter param;
-            param.type = signature;
-            param.name = optional_make_success(identifier_pool_add(&compiler.identifier_pool, string_create_static(name)));
-            param.has_default_value = false;
-            param.default_value.available = false;
-            param.is_polymorphic = false;
-            return param;
+            auto parameter = function_parameter_make_empty();
+            parameter.name = optional_make_success(identifier_pool_add(&compiler.identifier_pool, string_create_static(name)));
+            parameter.type = signature;
+            return parameter;
         };
         types->type_assert =       type_system_make_function({ make_param(upcast(types->bool_type), "condition") });
         types->type_free =         type_system_make_function({ make_param(types->void_pointer_type, "pointer") });

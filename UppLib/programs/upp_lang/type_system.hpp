@@ -10,22 +10,39 @@ struct Struct_Progress;
 struct Timer;
 struct Type_Base;
 struct String;
-
+struct Workload_Function_Parameter;
 
 // Helpers
+enum class Parameter_Type
+{
+    NORMAL,
+    POLYMORPHIC
+};
+
 struct Function_Parameter
 {
     Optional<String*> name;
     Type_Base* type;
+    Workload_Function_Parameter* workload; // May be null for extern/hardcoded functions
+    Symbol* symbol; // May be null for extern/hardcoded functions
+
     // Note: It can be the case that a default value exists, but the upp_constant is not available because there was an error,
     //       and we need to be able to seperate these cases.
     bool has_default_value;
     Optional<Upp_Constant> default_value;
+
     // Polymorphic infos
-    bool is_polymorphic;
-    int index_in_polymorphic_evaluation_order;
-    int index_in_non_polymorphic_signature; // Only valid for non-polymorpic values
+    Parameter_Type parameter_type;
+    union {
+        struct {
+            int index_in_non_polymorphic_signature;
+        } normal;
+        struct {
+            int index_in_polymorphic_evaluation_order;
+        } polymorphic;
+    };
 };
+Function_Parameter function_parameter_make_empty(Symbol* symbol = 0, Workload_Function_Parameter* workload = 0);
 
 struct Struct_Member
 {
@@ -105,6 +122,9 @@ struct Type_Function
     Type_Base base;
     Dynamic_Array<Function_Parameter> parameters;
     Optional<Type_Base*> return_type;
+
+    int parameters_with_default_value_count;
+    int polymorphic_parameter_count; // Also includes implicit polymorphic parameters
 };
 
 struct Type_Slice {
@@ -313,6 +333,7 @@ Type_Slice* type_system_make_slice(Type_Base* element_type);
 Type_Array* type_system_make_array(Type_Base* element_type, bool count_known, int element_count);
 
 // Note: Takes ownership of parameter_types!
+Type_Function* type_system_make_function(Dynamic_Array<Function_Parameter> parameters, Type_Base* return_type = 0); // Takes ownership of parameters!
 Type_Function* type_system_make_function(std::initializer_list<Function_Parameter> parameter_types, Type_Base* return_type = 0);
 Type_Function type_system_make_function_empty();
 Type_Function* type_system_finish_function(Type_Function function, Type_Base* return_type = 0);

@@ -9,7 +9,6 @@
 struct ModTree_Global;
 struct Type_Base;
 struct Workload_Definition;
-struct Workload_Function_Parameter;
 struct Workload_Import_Resolve;
 struct Module_Progress;
 
@@ -18,6 +17,7 @@ struct Symbol_Table;
 struct Symbol_Data;
 
 struct Function_Progress;
+struct Function_Parameter;
 
 namespace AST
 {
@@ -60,13 +60,13 @@ struct Symbol
         Hardcoded_Type hardcoded;
         Type_Base* type;
         ModTree_Global* global;
-        Workload_Function_Parameter* parameter_workload;
+        Function_Parameter* parameter;
         Upp_Constant constant;
     } options;
 
     String* id;
     Symbol_Table* origin_table;
-    AST::Node* definition_node; // Note: This is a base because it could be either AST::Definition, AST::Parameter or AST::Import
+    AST::Node* definition_node; // Note: This is a base because it could be either AST::Definition, AST::Parameter, AST::Import or AST::Expression::Polymorphic_Symbol
     bool internal;  // Internal symbols are only valid if referenced in the same internal scope (Variables, parameters). Required for anonymous structs or functions.
     Dynamic_Array<AST::Symbol_Lookup*> references;
 };

@@ -172,8 +172,7 @@ struct Workload_Function_Parameter
     Function_Progress* progress;
     AST::Parameter* node;
     int parameter_index;
-    Symbol* symbol;
-    Function_Parameter parameter; // Note: This value also get's copied into function signature
+    Function_Parameter* parameter;
 };
 
 struct Workload_Function_Header
@@ -182,7 +181,6 @@ struct Workload_Function_Header
     Function_Progress* progress;
     AST::Expression* function_node;
     Dynamic_Array<Workload_Function_Parameter*> parameter_order;
-    int non_polymorphic_parameter_counter;
 };
 
 struct Workload_Function_Body
@@ -395,7 +393,7 @@ struct Expression_Post_Op
 {
     int deref_count;
     bool take_address_of;
-    Info_Cast_Type cast;
+    Info_Cast_Type implicit_cast;
     Type_Base* type_afterwards;
 };
 
@@ -416,8 +414,9 @@ struct Expression_Info
 
     bool contains_errors; // If this expression contains any errors (Not recursive), currently only used for comptime-calculation
     union {
-        Info_Cast_Type cast_type; // Note: Cast-Expression results may be further implicitly casted and because of this expression_info can hold 2 cast types
+        Info_Cast_Type explicit_cast; // Note: Cast-Expression results may be further implicitly casted and because of this expression_info can hold 2 cast types
         Type_Function* function_call_signature; // Used by code-generation for accessing default values
+        Function_Parameter* implicit_parameter;
     } specifics;
 
     Expression_Context context; // Maybe I don't even want to store the context
@@ -455,7 +454,6 @@ struct Case_Info
 
 struct Parameter_Info {
     Symbol* symbol;
-    Workload_Function_Parameter* param_workload; // May be null
 };
 
 struct Definition_Symbol_Info {

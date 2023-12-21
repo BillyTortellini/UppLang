@@ -1441,6 +1441,14 @@ namespace Parser
             PARSE_SUCCESS(result);
         }
 
+        if (test_operator(Operator::DOLLAR) && test_token_offset(Token_Type::IDENTIFIER, 1)) {
+            result->type = Expression_Type::POLYMORPHIC_SYMBOL;
+            advance_token();
+            result->options.polymorphic_symbol_id = get_token()->options.identifier;
+            advance_token();
+            PARSE_SUCCESS(result);
+        }
+
         // Auto operators
         if (test_operator(Operator::DOT))
         {
@@ -1722,7 +1730,6 @@ namespace Parser
         Expression* start_expr = parse_single_expression(parent);
         if (start_expr == 0) return 0;
 
-        // PERF: The arrays could be stored in the parser, and just get reseted here
         Dynamic_Array<Binop_Link> links = dynamic_array_create_empty<Binop_Link>(1);
         SCOPE_EXIT(dynamic_array_destroy(&links));
         while (true)

@@ -24,7 +24,7 @@ bool enable_c_compilation = false;
 
 // Output stages
 bool output_identifiers = false;
-bool output_ast = true;
+bool output_ast = false;
 bool output_type_system = false;
 bool output_root_table = false;
 bool output_ir = false;
@@ -185,7 +185,7 @@ void compiler_reset_data(bool keep_data_for_incremental_compile, Compile_Type co
     bool generate_code = compile_type == Compile_Type::BUILD_CODE;
     do_output = enable_output && !(output_only_on_code_gen && !generate_code);
     if (do_output) {
-        logg("\n\n\n   COMPILING\n---------------\n");
+        // logg("\n\n\n   COMPILING\n---------------\n");
     }
     compiler.time_compile_start = timer_current_time_in_seconds(compiler.timer);
     compiler.generate_code = generate_code;

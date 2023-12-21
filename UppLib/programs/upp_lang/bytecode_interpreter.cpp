@@ -784,7 +784,7 @@ bool bytecode_interpreter_execute_current_instruction(Bytecode_Interpreter* inte
             int size = *(int*)(argument_start + 16);
 
             if (size == 0) {break;}
-            if (size >= 100000) {
+            if (size >= 10000) {
                 interpreter->error_occured = true;
                 interpreter->exit_code = Exit_Code::OUT_OF_BOUNDS;
                 return true;

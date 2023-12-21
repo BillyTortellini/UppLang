@@ -1,3 +1,85 @@
+
+Big oof about implicit parameters:
+    - I currently think that implicit parameters should always be filled out with with type-matching, and not something else...
+        What do I mean by that?
+        Well, types are trees, so you would expect some types to be whatever xD lol
+
+Because how do I match implicit parameters? E.g. when are their values set?
+    add :: (a: $T)
+        ...
+    add(15)
+    add(false)
+
+    foo :: ($T: Type, a: T)
+
+Base-Analysis: 
+    Currently we store all parameters, and a parameter order for dependencies between parameters...
+    
+Conclusions:
+    - Implicit parameters will still need parameter-order
+
+Thoughts:
+    I currently envision implicit types like this:
+    Base-Analysis: 
+        1. On Analysis: Create a new Data_Type, a Polymorphic_Type which just stores the symbol or something like that
+        2. Then the base type of the parameter is a "polymorphic type"
+    Instanciation:
+        1. Arguments get's analysed without context if the base type is polymorphic
+        2. Argument type get's matched with the polymorphic type (Trying to infer the value of the polymorphic symbol from the argument-type)
+            e.g. *int + *T --> T = int
+        What if: foo :: (a: (x: $T, y: T))
+            here we first have to match (Which may fail), then generate the created type by inserting the matchings
+
+Implementation:
+    1. Roll back last changes I guess, I probably don't want implicit parameters as actual function parameters...
+    2. Search for polymorphic symbols in header analysis, create error symbol for those
+    3. Create new implicit type_base, create new symbol type for those, on base analysis return error type (And set error flag!)
+    4. Instanciation: Analyse argument without context I guess, then do type-matching to find the value. Then raise error and don't instanciate
+    5. Store the value of the implicit parameter in the instance, and do normal instance analysis
+    6. Think about parameter order and correctly record dependencies between parameters for implicit types
+    
+
+        
+
+
+Things that aren't going to work:
+    - Argument to parameter matching (Implicit parameters should be ignored)
+    - Analysis of implicit parameter 
+        * In base analysis: Set base type to type_handle (Or if explicit type is expected to that one I guess)
+        * In instanciation: Hard, this will suck
+    - Polymorphic evaluation order for implicit parameters (On lookup these should wait for the parent workload...)
+
+Implicit polymorphism:
+Problems:
+    - Symbols need to be defined before they can be accessed 
+        --> E.g. these things need to be defined before parameter analysis
+            So we need a pre-processing step to find these things and 
+
+Plan:
+    Parser can parse an expression that: $ID which is a polymorphic expression thingy? Probably has a symbol...
+    Symbol get's defined in the header thingy
+    - Function header adds parameter, extra boolean tag to indicate it's not a normal parameter,
+        Parameter matching doesn't use the extra parameters
+        Note: Now you always want to loop over arguments, not parameters, since those are potentially larger...
+    Analyser throws error's except when analysing parameters...
+
+a :: (x: $T)
+
+During header analysis:
+    1. Generate workloads for all parameters --> Generated dynamic array of parameters
+    2. Iteratively search for implicit polymorphism parameters, add them to the parameters of the function signature
+
+Then we have 3 phases:
+    1. First analysis --> Once we encounter the implicit polymorphic symbol in analysis, we want to know what type it is, or we set to type-type without int for now...
+    2. Base analysis of function --> Handle like normal polymorphic parameter, e.g. not available
+    3. Instanciation, header analysis -->
+
+
+Currently parameter symbols point to their parameter workload
+Almost all symbol lookups check the workload->parameter, but one also needs the workload to add dependencies...
+To be fair we can have pointers to parameters once we know the parameter count, and don't change the array anymore.
+But we have to refresh the pointers after finishing the function...
+
 TODO:
     1. Function header decides upfront if it's polymorphic or not
     2. If it is, it creates the polymorphic base? --> And argument dependencies are added there?

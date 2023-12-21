@@ -982,6 +982,9 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
         panic("HEY");
         break;
     }
+    case AST::Expression_Type::POLYMORPHIC_SYMBOL: {
+        panic("Shouldn't happen!");
+    }
     case AST::Expression_Type::FUNCTION_CALL:
     {
         auto& call = expression->options.call;
@@ -1121,8 +1124,8 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
             IR_Data_Access access;
             access.type = IR_Data_Access_Type::PARAMETER;
             access.is_memory_access = false;
-            assert(!symbol->options.parameter_workload->parameter.is_polymorphic, "In IR-Code parameter lookups must already be comptime!");
-            access.index = symbol->options.parameter_workload->parameter.index_in_non_polymorphic_signature;
+            assert(symbol->options.parameter->parameter_type == Parameter_Type::NORMAL, "In IR-Code parameter lookups must already be comptime!");
+            access.index = symbol->options.parameter->normal.index_in_non_polymorphic_signature;
             access.option.function = ir_block->function;
             return access;
         }
@@ -1318,7 +1321,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
     case AST::Expression_Type::CAST:
     {
         auto source = ir_generator_generate_expression(ir_block, expression->options.cast.operand);
-        return ir_generator_generate_cast(ir_block, source, expression_info_get_type(info, true), info->specifics.cast_type);
+        return ir_generator_generate_cast(ir_block, source, expression_info_get_type(info, true), info->specifics.explicit_cast);
     }
     case AST::Expression_Type::BAKE_BLOCK:
     case AST::Expression_Type::BAKE_EXPR:
@@ -1357,7 +1360,7 @@ IR_Data_Access ir_generator_generate_expression(IR_Code_Block* ir_block, AST::Ex
             access = ir_data_access_create_dereference(ir_block, access);
         }
     }
-    return ir_generator_generate_cast(ir_block, access, info->post_op.type_afterwards, info->post_op.cast);
+    return ir_generator_generate_cast(ir_block, access, info->post_op.type_afterwards, info->post_op.implicit_cast);
 }
 
 void ir_generator_work_through_defers(IR_Code_Block* ir_block, int defer_to_index, bool rewind_stack)
