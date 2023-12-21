@@ -351,9 +351,203 @@ void type_append_to_string(String* string, Type_Base* signature) {
 /*
     TYPE_SYSTEM
 */
+
+// Note: This tests structural equality, wheres the current types-are-equal test for the same pointer...
+bool types_are_structurally_equal(Type_Base** a_ptr, Type_Base** b_ptr)
+{
+    Type_Base* a = *a_ptr;
+    Type_Base* b = *b_ptr;
+    if (a->type != b->type || a->size != b->size || a->alignment != b->alignment) {
+        return false;
+    }
+    if (a == b) {
+        return true;
+    }
+
+    switch (a->type)
+    {
+    case Type_Type::TYPE_HANDLE:
+    case Type_Type::VOID_POINTER:
+    case Type_Type::ERROR_TYPE: 
+        return true;
+    case Type_Type::STRUCT:
+    case Type_Type::ENUM: 
+        // Structs and enums are currently never deduplicated (Note: I think this could change without troubeling anything)
+        return false;
+    case Type_Type::PRIMITIVE: {
+        auto p1 = downcast<Type_Primitive>(a);
+        auto p2 = downcast<Type_Primitive>(b);
+        // Note that size has been compared previously
+        return p1->primitive_type == p2->primitive_type && p1->is_signed == p2->is_signed;
+    }
+    case Type_Type::POINTER: {
+        auto p1 = downcast<Type_Pointer>(a);
+        auto p2 = downcast<Type_Pointer>(b);
+        return types_are_equal(p1->points_to_type, p2->points_to_type); 
+    }
+    case Type_Type::ARRAY: {
+        auto p1 = downcast<Type_Array>(a);
+        auto p2 = downcast<Type_Array>(b);
+        if (!types_are_equal(p1->element_type, p2->element_type) || p1->count_known != p2->count_known) {
+            return false;
+        }
+        if (p1->count_known) {
+            return p1->element_count == p2->element_count;
+        }
+        return true;
+    }
+    case Type_Type::SLICE: {
+        auto p1 = downcast<Type_Slice>(a);
+        auto p2 = downcast<Type_Slice>(b);
+        return types_are_equal(p1->element_type, p2->element_type);
+    }
+    case Type_Type::FUNCTION:
+    {
+        auto p1 = downcast<Type_Function>(a);
+        auto p2 = downcast<Type_Function>(b);
+
+        // Check return types
+        if (p1->return_type.available != p2->return_type.available) {
+            return false;
+        }
+        if (p1->return_type.available) {
+            if (!types_are_equal(p1->return_type.value, p2->return_type.value)) {
+                return false;
+            }
+        }
+
+        // Check parameters
+        if (p1->parameters.size != p2->parameters.size) {
+            return false;
+        }
+        for (int i = 0; i < p1->parameters.size; i++)
+        {
+            auto& param1 = p1->parameters[i];
+            auto& param2 = p2->parameters[i];
+            if (!types_are_equal(param1.type, param2.type) || param1.name.available != param2.name.available ||
+                param1.parameter_type != param2.parameter_type || param1.has_default_value != param2.has_default_value)
+            {
+                return false;
+            }
+            switch (param1.parameter_type) {
+            case Parameter_Type::NORMAL:
+                if (param1.normal.index_in_non_polymorphic_signature != param2.normal.index_in_non_polymorphic_signature) {
+                    return false;
+                }
+                break;
+            case Parameter_Type::POLYMORPHIC:
+                if (param1.polymorphic.index_in_polymorphic_evaluation_order != param2.polymorphic.index_in_polymorphic_evaluation_order) {
+                    return false;
+                }
+                break;
+            default:panic("");
+            }
+            if (param1.name.available && param1.name.value != param2.name.value) {
+                return false;
+            }
+
+            // If default values exist, we don't deduplicate the function, because comparison may be wrong currently
+            if (param1.has_default_value || param2.has_default_value) {
+                return false;
+            }
+        }
+        return true;
+    }
+    default: panic("");
+    }
+
+    panic("");
+    return false;
+}
+
+u64 hash_type(Type_Base** type_ptr) {
+    Type_Base* type = *type_ptr;
+    i32 type_type_value = (int)type->type;
+    u64 hash = hash_combine(hash_i32(&type->size), hash_combine(hash_i32(&type->alignment), hash_i32(&type_type_value)));
+    switch (type->type)
+    {
+    case Type_Type::VOID_POINTER:
+    case Type_Type::TYPE_HANDLE:
+    case Type_Type::ERROR_TYPE: break;
+    case Type_Type::ARRAY: {
+        Type_Array* array = downcast<Type_Array>(type);
+        hash = hash_combine(hash, hash_pointer(array->element_type));
+        if (array->count_known) {
+            hash = hash_combine(hash, hash_i32(&array->element_count));
+        }
+        break;
+    }
+    case Type_Type::SLICE: {
+        Type_Slice* slice = downcast<Type_Slice>(type);
+        hash = hash_combine(hash, hash_pointer(slice->element_type));
+        break;
+    }
+    case Type_Type::POINTER: {
+        Type_Pointer* pointer = downcast<Type_Pointer>(type);
+        hash = hash_combine(hash, hash_pointer(pointer->points_to_type));
+        break;
+    }
+    case Type_Type::ENUM: {
+        Type_Enum* e = downcast<Type_Enum>(type);
+        if (e->name != 0) {
+            hash = hash_combine(hash, hash_string(e->name));
+        }
+        for (int i = 0; i < e->members.size; i++) {
+            auto& member = e->members[i];
+            hash = hash_combine(hash, hash_string(member.name));
+        }
+        break;
+    }
+    case Type_Type::STRUCT: {
+        Type_Struct* s = downcast<Type_Struct>(type);
+        if (s->name.available) {
+            hash = hash_combine(hash, hash_string(s->name.value));
+        }
+        int struct_type_value = (int)s->struct_type;
+        hash = hash_combine(hash, hash_i32(&struct_type_value));
+        for (int i = 0; i < s->members.size; i++) {
+            auto& member = s->members[i];
+            hash = hash_combine(hash, hash_pointer(member.type));
+            hash = hash_combine(hash, hash_string(member.id));
+        }
+        break;
+    }
+    case Type_Type::PRIMITIVE: {
+        Type_Primitive* primitive = downcast<Type_Primitive>(type);
+        if (primitive->is_signed) {
+            hash = hash + 16823431;
+        }
+        int primitive_type_value = (int)primitive->primitive_type;
+        hash = hash_combine(hash, hash_i32(&primitive_type_value));
+        break;
+    }
+    case Type_Type::FUNCTION: {
+        Type_Function* function = downcast<Type_Function>(type);
+        if (function->return_type.available) {
+            hash = hash_combine(hash, hash_pointer(&function->return_type.value));
+        }
+        for (int i = 0; i < function->parameters.size; i++) {
+            auto& param = function->parameters[i];
+            if (param.has_default_value) {
+                hash = hash + 123412347;
+            }
+            if (param.name.available) {
+                hash = hash_combine(hash, hash_string(param.name.value));
+            }
+            hash = hash_combine(hash, hash_pointer(param.type));
+        }
+        break;
+    }
+    default: panic("");
+    }
+
+    return hash;
+}
+
 Type_System type_system_create(Timer* timer)
 {
     Type_System result;
+    result.registered_types = hashset_create_empty(32, hash_type, types_are_structurally_equal);
     result.types = dynamic_array_create_empty<Type_Base*>(256);
     result.internal_type_infos = dynamic_array_create_empty<Internal_Type_Information>(256);
     result.timer = timer;
@@ -365,6 +559,7 @@ void type_system_destroy(Type_System* system) {
     type_system_reset(system);
     dynamic_array_destroy(&system->types);
     dynamic_array_destroy(&system->internal_type_infos);
+    hashset_destroy(&system->registered_types);
 }
 
 template<typename T>
@@ -380,6 +575,7 @@ void type_system_reset(Type_System* system)
         delete system->types[i];
     }
     dynamic_array_reset(&system->types);
+    hashset_reset(&system->registered_types);
     for (int i = 0; i < system->internal_type_infos.size; i++)
     {
         Internal_Type_Information* info = &system->internal_type_infos[i];
@@ -411,13 +607,12 @@ void type_system_reset(Type_System* system)
     dynamic_array_reset(&system->internal_type_infos);
 }
 
-
 Type_Base* type_system_deduplicate_and_create_internal_info_for_type(Type_Base* base_type)
 {
     auto& type_system = compiler.type_system;
     double reg_start_time = timer_current_time_in_seconds(type_system.timer);
-    
-    // Finalize function (Parameter infos)
+
+    // Finalize function (Calcualte parameter infos)
     if (base_type->type == Type_Type::FUNCTION) {
         auto function = downcast<Type_Function>(base_type);
         auto& parameters = function->parameters;
@@ -439,132 +634,28 @@ Type_Base* type_system_deduplicate_and_create_internal_info_for_type(Type_Base* 
             }
         }
     }
-    
+
     // Check if type is already registered
-    if (base_type->type != Type_Type::STRUCT || base_type->type == Type_Type::ENUM) // Structs aren't deduplicated
     {
-        // Check if type already exists
-        for (int i = 0; i < type_system.types.size; i++)
+        Type_Base** existing = hashset_find(&type_system.registered_types, base_type);
+        if (existing != 0) 
         {
-            bool are_equal = false;
-            Type_Base* sig1 = base_type;
-            Type_Base* sig2 = type_system.types[i];
-            if (sig1->type != sig2->type || sig1->size != sig2->size && sig1->alignment != sig2->alignment) {
-                continue;
+            // For Functions deduplication, we need to update pointers of parameter symbols and workloads
+            if (base_type->type == Type_Type::FUNCTION) {
+                auto& params = downcast<Type_Function>(base_type)->parameters;
+                auto& other_params = downcast<Type_Function>(*existing)->parameters;
+                for (int i = 0; i < params.size; i++) {
+                    auto& param = params[i];
+                    if (param.symbol != 0) {
+                        assert(param.symbol->type == Symbol_Type::PARAMETER, "");
+                        param.symbol->options.parameter = &other_params[i];
+                    }
+                }
             }
 
-            switch (sig1->type)
-            {
-            case Type_Type::TYPE_HANDLE:
-            case Type_Type::VOID_POINTER:
-            case Type_Type::ERROR_TYPE: are_equal = true; break;
-            case Type_Type::STRUCT:
-            case Type_Type::ENUM: are_equal = false; break;
-            case Type_Type::PRIMITIVE: { 
-                auto p1 = downcast<Type_Primitive>(sig1);
-                auto p2 = downcast<Type_Primitive>(sig2);
-                are_equal = p1->primitive_type == p2->primitive_type && p1->is_signed == p2->is_signed;
-                break;
-            }
-            case Type_Type::POINTER: {
-                auto p1 = downcast<Type_Pointer>(sig1);
-                auto p2 = downcast<Type_Pointer>(sig2);
-                are_equal = types_are_equal(p1->points_to_type, p2->points_to_type); break;
-                break;
-            }
-            case Type_Type::ARRAY: {
-                auto p1 = downcast<Type_Array>(sig1);
-                auto p2 = downcast<Type_Array>(sig2);
-                are_equal = types_are_equal(p1->element_type, p2->element_type) && p1->count_known == p2->count_known;
-                if (are_equal && p1->count_known) {
-                    are_equal = p1->element_count == p2->element_count;
-                }
-                break;
-            }
-            case Type_Type::SLICE: {
-                auto p1 = downcast<Type_Slice>(sig1);
-                auto p2 = downcast<Type_Slice>(sig2);
-                are_equal = types_are_equal(p1->element_type, p2->element_type);
-                break;
-            }
-            case Type_Type::FUNCTION:
-            {
-                auto p1 = downcast<Type_Function>(sig1);
-                auto p2 = downcast<Type_Function>(sig2);
-
-                // Check return types
-                if (p1->return_type.available != p2->return_type.available) {
-                    are_equal = false;
-                    break;
-                }
-                if (p1->return_type.available) {
-                    if (!types_are_equal(p1->return_type.value, p2->return_type.value)) {
-                        are_equal = false;
-                        break;
-                    }
-                }
-
-                // Check parameters
-                if (p1->parameters.size != p2->parameters.size) {
-                    are_equal = false;
-                    break;
-                }
-                are_equal = true;
-                for (int i = 0; i < p1->parameters.size; i++) 
-                {
-                    auto& param1 = p1->parameters[i];
-                    auto& param2 = p2->parameters[i];
-                    if (!types_are_equal(param1.type, param2.type) || param1.name.available != param2.name.available ||
-                        param1.parameter_type != param2.parameter_type || param1.has_default_value != param2.has_default_value) 
-                    {
-                        are_equal = false;
-                        break;
-                    }
-                    switch (param1.parameter_type) {
-                    case Parameter_Type::NORMAL: 
-                        are_equal = param1.normal.index_in_non_polymorphic_signature == param2.normal.index_in_non_polymorphic_signature; 
-                        break;
-                    case Parameter_Type::POLYMORPHIC:
-                        are_equal = param1.polymorphic.index_in_polymorphic_evaluation_order == param2.polymorphic.index_in_polymorphic_evaluation_order; 
-                        break;
-                    default:panic("");
-                    }
-                    if (!are_equal) {
-                        break;
-                    }
-                    if (param1.name.available && param1.name.value != param2.name.value) {
-                        are_equal = false;
-                        break;
-                    }
-                    // If default values exist, we don't deduplicate the function, because comparison may be wrong currently
-                    if (param1.has_default_value || param2.has_default_value) {
-                        are_equal = false;
-                        break;
-                    }
-                }
-                break;
-            }
-            }
-
-            if (are_equal) 
-            {
-                // For Functions deduplication, we need to update pointers of parameter symbols and workloads
-                if (base_type->type == Type_Type::FUNCTION) {
-                    auto& params = downcast<Type_Function>(base_type)->parameters;
-                    auto& other_params = downcast<Type_Function>(sig2)->parameters;
-                    for (int i = 0; i < params.size; i++) {
-                        auto& param = params[i];
-                        if (param.symbol != 0) {
-                            assert(param.symbol->type == Symbol_Type::PARAMETER, "");
-                            param.symbol->options.parameter = &other_params[i];
-                        }
-                    }
-                }
-
-                // Destroy new type because it's a duplicate, return already existing type 
-                type_base_destroy(base_type);
-                return sig2;
-            }
+            // Destroy new type because it's a duplicate, return already existing type 
+            type_base_destroy(base_type);
+            return *existing;
         }
     }
 
@@ -646,16 +737,18 @@ Type_Base* type_system_deduplicate_and_create_internal_info_for_type(Type_Base* 
 }
 
 template<typename T>
-T* type_system_register_type(T value) 
+T* type_system_register_type(T value)
 {
     Type_Base* deduplicated = type_system_deduplicate_and_create_internal_info_for_type(upcast(&value));
     if (deduplicated != 0) {
         return downcast<T>(deduplicated);
     }
-    
+
     T* new_type = new T;
     *new_type = value;
     dynamic_array_push_back(&compiler.type_system.types, upcast(new_type));
+    bool worked = hashset_insert_element(&compiler.type_system.registered_types, upcast(new_type));
+    assert(worked, "Must work after deduplication!");
     return new_type;
 }
 
@@ -909,7 +1002,7 @@ void type_system_finish_enum(Type_Enum* enum_type)
     auto& type_system = compiler.type_system;
     auto& base = enum_type->base;
     auto& members = enum_type->members;
-    assert(base.type_handle.index < (u32) type_system.internal_type_infos.size, "");
+    assert(base.type_handle.index < (u32)type_system.internal_type_infos.size, "");
     assert(type_system.internal_type_infos.size == type_system.types.size, "");
     assert(base.size == 0 && base.alignment == 0, "");
 
@@ -933,7 +1026,7 @@ void type_system_finish_enum(Type_Enum* enum_type)
     else {
         internal_info->options.enumeration.name.character_buffer.size = enum_type->name->capacity;
         internal_info->options.enumeration.name.character_buffer.data = enum_type->name->characters;
-        internal_info->options.enumeration.name.size =                  enum_type->name->size;
+        internal_info->options.enumeration.name.size = enum_type->name->size;
     }
     int member_count = members.size;
     internal_info->options.enumeration.members.size = member_count;
@@ -953,7 +1046,7 @@ void type_system_finish_array(Type_Array* array)
 {
     auto& type_system = compiler.type_system;
     auto& base = array->base;
-    assert(base.type_handle.index < (u32) type_system.internal_type_infos.size, "");
+    assert(base.type_handle.index < (u32)type_system.internal_type_infos.size, "");
     assert(type_system.internal_type_infos.size == type_system.types.size, "");
     assert(base.size == 0 && base.alignment == 0, "");
     assert(array->base.type == Type_Type::ARRAY, "");
@@ -1160,26 +1253,26 @@ void type_system_add_predefined_types(Type_System* system)
             parameter.type = signature;
             return parameter;
         };
-        types->type_assert =       type_system_make_function({ make_param(upcast(types->bool_type), "condition") });
-        types->type_free =         type_system_make_function({ make_param(types->void_pointer_type, "pointer") });
-        types->type_malloc =       type_system_make_function({ make_param(upcast(types->i32_type), "size") }, upcast(types->void_pointer_type));
-        types->type_type_info =    type_system_make_function({ make_param(upcast(types->type_handle), "type_handle") }, upcast(types->type_information_type));
-        types->type_type_of =      type_system_make_function({ make_param(upcast(types->empty_struct_type), "value") }, upcast(types->type_handle));
-        types->type_print_bool =   type_system_make_function({ make_param(upcast(types->bool_type), "value") });
-        types->type_print_i32 =    type_system_make_function({ make_param(upcast(types->i32_type), "value") });
-        types->type_print_f32 =    type_system_make_function({ make_param(upcast(types->f32_type), "value") });
-        types->type_print_line =   type_system_make_function({});
+        types->type_assert = type_system_make_function({ make_param(upcast(types->bool_type), "condition") });
+        types->type_free = type_system_make_function({ make_param(types->void_pointer_type, "pointer") });
+        types->type_malloc = type_system_make_function({ make_param(upcast(types->i32_type), "size") }, upcast(types->void_pointer_type));
+        types->type_type_info = type_system_make_function({ make_param(upcast(types->type_handle), "type_handle") }, upcast(types->type_information_type));
+        types->type_type_of = type_system_make_function({ make_param(upcast(types->empty_struct_type), "value") }, upcast(types->type_handle));
+        types->type_print_bool = type_system_make_function({ make_param(upcast(types->bool_type), "value") });
+        types->type_print_i32 = type_system_make_function({ make_param(upcast(types->i32_type), "value") });
+        types->type_print_f32 = type_system_make_function({ make_param(upcast(types->f32_type), "value") });
+        types->type_print_line = type_system_make_function({});
         types->type_print_string = type_system_make_function({ make_param(upcast(types->string_type), "value") });
-        types->type_read_i32 =     type_system_make_function({});
-        types->type_read_f32 =     type_system_make_function({});
-        types->type_read_bool =    type_system_make_function({});
-        types->type_random_i32 =   type_system_make_function({}, upcast(types->i32_type));
+        types->type_read_i32 = type_system_make_function({});
+        types->type_read_f32 = type_system_make_function({});
+        types->type_read_bool = type_system_make_function({});
+        types->type_random_i32 = type_system_make_function({}, upcast(types->i32_type));
     }
 }
 
 
 
-void type_system_print(Type_System * system)
+void type_system_print(Type_System* system)
 {
     String msg = string_create_empty(256);
     SCOPE_EXIT(string_destroy(&msg));

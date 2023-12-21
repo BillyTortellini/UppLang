@@ -315,11 +315,14 @@ struct Type_System
 {
     Timer* timer;
     double register_time;
+    Predefined_Types predefined_types;
 
+    // Note: Both registered_types and types array contain the same types, I just keep the types array for convenience
+    Hashset<Type_Base*> registered_types;
     Dynamic_Array<Type_Base*> types;
     Dynamic_Array<Internal_Type_Information> internal_type_infos;
     u64 next_internal_index;
-    Predefined_Types predefined_types;
+
 };
 
 Type_System type_system_create(Timer* timer);

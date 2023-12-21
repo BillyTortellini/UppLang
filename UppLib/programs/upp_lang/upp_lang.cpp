@@ -184,6 +184,7 @@ void test_things()
                 hashtable_insert_element(&table, j * 472, "Hello there\n");
             }
             const char** result = hashtable_find_element(&table, 7);
+            assert(result != 0 && table.element_count == 33, "");
             hashtable_reset(&table);
             hashtable_destroy(&table);
         }
@@ -219,6 +220,9 @@ void print_base(Base* base) {
 
 void upp_lang_main()
 {
+    //test_things();
+    //return;
+
     Window* window = window_create("Test", 0);
     SCOPE_EXIT(window_destroy(window));
     Window_State* window_state = window_get_window_state(window);

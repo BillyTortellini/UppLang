@@ -12,6 +12,7 @@ struct Hashtable_Entry
     K key;
     V value;
     Hashtable_Entry<K, V>* next;
+    u64 hash_value;
     bool valid;
 };
 
@@ -163,7 +164,7 @@ V* hashtable_find_element(Hashtable<K, V>* table, K key)
     int entry_index = hash % table->entries.size;
     Hashtable_Entry<K,V>* entry = &table->entries.data[entry_index];
     while (entry != 0 && entry->valid) {
-        if (table->equals_function(&entry->key, &key)) {
+        if (entry->hash_value == hash && table->equals_function(&entry->key, &key)) {
             return &entry->value;
         }
         entry = entry->next;
@@ -185,7 +186,7 @@ Optional<Key_Value_Reference<K, V>> hashtable_find_element_key_and_value(Hashtab
     int entry_index = hash % table->entries.size;
     Hashtable_Entry<K,V>* entry = &table->entries.data[entry_index];
     while (entry != 0 && entry->valid) {
-        if (table->equals_function(&entry->key, &key)) {
+        if (entry->hash_value == hash && table->equals_function(&entry->key, &key)) {
             Key_Value_Reference<K, V> ref;
             ref.key = &entry->key;
             ref.value = &entry->value;
@@ -229,13 +230,14 @@ bool hashtable_insert_element(Hashtable<K, V>* table, K key, V value)
         entry->valid = true;
         entry->key = key;
         entry->value = value;
+        entry->hash_value = hash;
         entry->next = 0;
         table->element_count++;
         return true;
     }
 
     while (true) {
-        if (table->equals_function(&entry->key, &key)) {
+        if (entry->hash_value == hash && table->equals_function(&entry->key, &key)) {
             return false;
         }
         if (entry->next == 0) { // Insert element as next
@@ -243,6 +245,7 @@ bool hashtable_insert_element(Hashtable<K, V>* table, K key, V value)
             next->valid = true;
             next->key = key;
             next->value = value;
+            next->hash_value = hash;
             next->next = 0;
             entry->next = next;
             table->element_count++;
@@ -266,7 +269,7 @@ bool hashtable_remove_element(Hashtable<K, V>* table, K key)
     }
 
     Hashtable_Entry<K, V>* next = entry->next;
-    if (table->equals_function(&entry->key, &key)) {
+    if (entry->hash_value == hash && table->equals_function(&entry->key, &key)) {
         if (next != 0) {
             *entry = *next;
             delete next;
@@ -281,7 +284,7 @@ bool hashtable_remove_element(Hashtable<K, V>* table, K key)
 
     while (next != 0)
     {
-        if (table->equals_function(&next->key, &key)) {
+        if (next->hash_value == hash && table->equals_function(&next->key, &key)) {
             entry->next = next->next;
             delete next;
             table->element_count -= 1;

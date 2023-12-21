@@ -12,6 +12,7 @@ struct Hashset_Entry
 {
     T value;
     Hashset_Entry<T>* next;
+    u64 hash_value;
     bool valid;
 };
 
@@ -162,12 +163,28 @@ bool hashset_contains(Hashset<T>* set, T elem)
     Hashset_Entry<T>* entry = &set->entries.data[entry_index];
     if (!entry->valid) return false;
     while (entry != 0) {
-        if (set->equals_function(&entry->value, &elem)) {
+        SCOPE_EXIT(entry = entry->next);
+        if (entry->hash_value == hash && set->equals_function(&entry->value, &elem)) {
             return true;
         }
-        entry = entry->next;
     }
     return false;
+}
+
+template <typename T>
+T* hashset_find(Hashset<T>* set, T elem)
+{
+    u64 hash = set->hash_function(&elem);
+    int entry_index = hash % set->entries.size;
+    Hashset_Entry<T>* entry = &set->entries.data[entry_index];
+    if (!entry->valid) return 0;
+    while (entry != 0) {
+        SCOPE_EXIT(entry = entry->next);
+        if (entry->hash_value == hash && set->equals_function(&entry->value, &elem)) {
+            return &entry->value;
+        }
+    }
+    return 0;
 }
 
 // Returns true if element was inserted, else false (If value already exists)
@@ -183,6 +200,7 @@ bool hashset_insert_element(Hashset<T>* set, T value)
     Hashset_Entry<T>* entry = &(set->entries.data[entry_index]);
     if (!entry->valid) {
         entry->valid = true;
+        entry->hash_value = hash;
         entry->value = value;
         entry->next = 0;
         set->element_count++;
@@ -190,7 +208,7 @@ bool hashset_insert_element(Hashset<T>* set, T value)
     }
 
     while (true) {
-        if (set->equals_function(&entry->value, &value)) {
+        if (entry->hash_value == hash && set->equals_function(&entry->value, &value)) {
             return false;
         }
         if (entry->next == 0) { // Insert element as next
@@ -198,6 +216,7 @@ bool hashset_insert_element(Hashset<T>* set, T value)
             entry->next = next;
             next->valid = true;
             next->value = value;
+            next->hash_value = hash;
             next->next = 0;
             set->element_count++;
             return true;
@@ -237,8 +256,9 @@ bool hashset_remove_element(Hashset<T>* set, T value)
         return false;
     }
 
+    // Check if entry is the first in slot-list
     Hashset_Entry<T>* next = entry->next;
-    if (set->equals_function(&entry->value, &value)) {
+    if (entry->hash_value == hash && set->equals_function(&entry->value, &value)) {
         if (next != 0) {
             *entry = *next;
             delete next;
@@ -251,9 +271,10 @@ bool hashset_remove_element(Hashset<T>* set, T value)
         return true;
     }
 
+    // Otherwise try to find correct item in slot-list
     while (next != 0)
     {
-        if (set->equals_function(&next->value, &value)) {
+        if (entry->hash_value == next->hash_value && set->equals_function(&next->value, &value)) {
             entry->next = next->next;
             delete next;
             set->element_count -= 1;

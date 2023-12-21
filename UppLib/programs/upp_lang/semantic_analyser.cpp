@@ -3010,14 +3010,14 @@ void analysis_workload_entry(void* userdata)
             search_for_implicit_polymorphic_parameters(param_node->type, implicit_parameter_nodes);
             for (int j = 0; j < implicit_parameter_nodes.size; j++) {
                 auto implicit_node = implicit_parameter_nodes[j];
-                // assert(implicit_node->type == AST::Expression_Type::POLYMORPHIC_SYMBOL, "");
+                assert(implicit_node->type == AST::Expression_Type::POLYMORPHIC_SYMBOL, "");
                 // progress->type = Function_Progress_Type::POLYMORPHIC_BASE;
 
-                // // Create symbol
-                // Symbol* symbol = symbol_table_define_symbol(
-                //     header_workload->base.current_symbol_table, implicit_node->options.polymorphic_symbol_id,
-                //     Symbol_Type::PARAMETER, AST::upcast(implicit_node), true
-                // );
+                // Create symbol
+                Symbol* symbol = symbol_table_define_symbol(
+                    header_workload->base.current_symbol_table, implicit_node->options.polymorphic_symbol_id,
+                    Symbol_Type::ERROR_SYMBOL, AST::upcast(implicit_node), true
+                );
             }
         }
 
