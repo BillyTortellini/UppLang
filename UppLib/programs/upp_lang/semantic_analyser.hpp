@@ -28,6 +28,7 @@ struct Function_Progress;
 struct Struct_Progress;
 struct Bake_Progress;
 struct Module_Progress;
+struct Type_Polymorphic;
 
 namespace Parser
 {
@@ -39,6 +40,7 @@ namespace AST
     struct Node;
     struct Code_Block;
     struct Path_Lookup;
+    struct Expression;
 }
 
 
@@ -125,10 +127,11 @@ struct Workload_Base
     Analysis_Pass* current_pass;
     Dynamic_Array<AST::Code_Block*> block_stack; // NOTE: This is here because it is required by Bake-Analysis and code-block, also for statement blocks...
 
-    // Note: This is a non-owning pointer, required for re-analysing the header during poly-instanciation
+    // Note: This is a non-owning array, required for re-analysing the header during poly-instanciation
     //       When encountering a polymorphic parameter, and this is not set, then we can assume that we are in base analysis
-    //       Also order is the same as polymorphic_evaluation_order
+    //       If a value is set, we can assue we are either in instanciation stage or in the instance function analysis
     Array<Upp_Constant> polymorphic_values; 
+    Array<Type_Base*> implicit_polymorphic_types;
 
     // Dependencies
     List<Workload_Base*> dependencies;
@@ -260,12 +263,15 @@ struct Function_Progress
     union {
         struct {
             Dynamic_Array<Function_Progress*> instances;  // Required for de-duplication
-            Dynamic_Array<int> comptime_argument_evaluation_order; // In which order the comptime values (Array contains indices to parameters)
+            Dynamic_Array<Type_Polymorphic*> implicit_parameters;
+            Dynamic_Array<int> polymorphic_parameter_indices; // Indices of comptime (explicit polymorphic) parameters in signature
+            Dynamic_Array<int> comptime_argument_evaluation_order; // Argument evaluation order for instanciation (Contains indices to parameters)
         } polymorphic_base;
         struct 
         {
             Function_Progress* polymorphic_base;
-            Array<Upp_Constant> parameter_values; // Order is the same as base comptime argument evaluation order!
+            Array<Upp_Constant> parameter_values;
+            Array<Type_Base*> implicit_parameter_values; 
             int instanciation_depth;
         } polymorhic_instance;
     };
@@ -655,6 +661,7 @@ struct Semantic_Analyser
     ModTree_Global* global_type_informations;
     Predefined_Symbols predefined_symbols;
     Workload_Executer* workload_executer;
+    Hashtable<AST::Expression*, Type_Polymorphic*> implicit_parameter_node_mapping;
 
     // Symbol tables
     Symbol_Table* root_symbol_table;

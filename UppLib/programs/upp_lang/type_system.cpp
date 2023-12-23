@@ -40,6 +40,12 @@ void type_append_to_string_with_children(String* string, Type_Base* signature, b
 {
     switch (signature->type)
     {
+    case Type_Type::POLYMORPHIC: {
+        Type_Polymorphic* polymorphic = downcast<Type_Polymorphic>(signature);
+        assert(polymorphic->symbol != 0, "");
+        string_append_formated(string, "$%s", polymorphic->symbol->id->characters);
+        break;
+    }
     case Type_Type::VOID_POINTER:
         string_append_formated(string, "void_pointer");
         break;
@@ -210,6 +216,10 @@ void type_append_value_to_string(Type_Base* type, byte* value_ptr, String* strin
         string_append_formated(string, "]");
         break;
     }
+    case Type_Type::POLYMORPHIC: {
+        string_append_formated(string, "Polymorphic?");
+        break;
+    }
     case Type_Type::VOID_POINTER:
     case Type_Type::POINTER:
     {
@@ -370,9 +380,11 @@ bool types_are_structurally_equal(Type_Base** a_ptr, Type_Base** b_ptr)
     case Type_Type::VOID_POINTER:
     case Type_Type::ERROR_TYPE: 
         return true;
+    case Type_Type::POLYMORPHIC:
     case Type_Type::STRUCT:
     case Type_Type::ENUM: 
-        // Structs and enums are currently never deduplicated (Note: I think this could change without troubeling anything)
+        // Structs, polymorphic-types and enums are currently never deduplicated 
+        // (Note: I think this could change for structs/enums at some point)
         return false;
     case Type_Type::PRIMITIVE: {
         auto p1 = downcast<Type_Primitive>(a);
@@ -429,19 +441,6 @@ bool types_are_structurally_equal(Type_Base** a_ptr, Type_Base** b_ptr)
             {
                 return false;
             }
-            switch (param1.parameter_type) {
-            case Parameter_Type::NORMAL:
-                if (param1.normal.index_in_non_polymorphic_signature != param2.normal.index_in_non_polymorphic_signature) {
-                    return false;
-                }
-                break;
-            case Parameter_Type::POLYMORPHIC:
-                if (param1.polymorphic.index_in_polymorphic_evaluation_order != param2.polymorphic.index_in_polymorphic_evaluation_order) {
-                    return false;
-                }
-                break;
-            default:panic("");
-            }
             if (param1.name.available && param1.name.value != param2.name.value) {
                 return false;
             }
@@ -460,7 +459,8 @@ bool types_are_structurally_equal(Type_Base** a_ptr, Type_Base** b_ptr)
     return false;
 }
 
-u64 hash_type(Type_Base** type_ptr) {
+u64 hash_type(Type_Base** type_ptr) 
+{
     Type_Base* type = *type_ptr;
     i32 type_type_value = (int)type->type;
     u64 hash = hash_combine(hash_i32(&type->size), hash_combine(hash_i32(&type->alignment), hash_i32(&type_type_value)));
@@ -469,6 +469,14 @@ u64 hash_type(Type_Base** type_ptr) {
     case Type_Type::VOID_POINTER:
     case Type_Type::TYPE_HANDLE:
     case Type_Type::ERROR_TYPE: break;
+    case Type_Type::POLYMORPHIC: {
+        Type_Polymorphic* polymorphic = downcast<Type_Polymorphic>(type);
+        hash = hash_combine(hash, hash_string(polymorphic->symbol->id));
+        if (polymorphic->is_reference) {
+            hash += 12343427;
+        }
+        break;
+    }
     case Type_Type::ARRAY: {
         Type_Array* array = downcast<Type_Array>(type);
         hash = hash_combine(hash, hash_pointer(array->element_type));
@@ -612,29 +620,6 @@ Type_Base* type_system_deduplicate_and_create_internal_info_for_type(Type_Base* 
     auto& type_system = compiler.type_system;
     double reg_start_time = timer_current_time_in_seconds(type_system.timer);
 
-    // Finalize function (Calcualte parameter infos)
-    if (base_type->type == Type_Type::FUNCTION) {
-        auto function = downcast<Type_Function>(base_type);
-        auto& parameters = function->parameters;
-
-        function->polymorphic_parameter_count = 0;
-        function->parameters_with_default_value_count = 0;
-        int non_comptime_counter = 0;
-        for (int i = 0; i < parameters.size; i++) {
-            auto& param = parameters[i];
-            if (param.has_default_value) {
-                function->parameters_with_default_value_count += 1;
-            }
-            if (param.parameter_type == Parameter_Type::NORMAL) {
-                param.normal.index_in_non_polymorphic_signature = non_comptime_counter;
-                non_comptime_counter += 1;
-            }
-            else if (param.parameter_type == Parameter_Type::POLYMORPHIC) {
-                function->polymorphic_parameter_count += 1;
-            }
-        }
-    }
-
     // Check if type is already registered
     {
         Type_Base** existing = hashset_find(&type_system.registered_types, base_type);
@@ -659,6 +644,97 @@ Type_Base* type_system_deduplicate_and_create_internal_info_for_type(Type_Base* 
         }
     }
 
+    // Finalize type (For functions, calculate parameter infos)
+    //      Note that this must not change the hash/is_equals results for this type
+    if (base_type->type == Type_Type::FUNCTION) 
+    {
+        auto function = downcast<Type_Function>(base_type);
+        auto& parameters = function->parameters;
+
+        function->polymorphic_parameter_count = 0;
+        function->parameters_with_default_value_count = 0;
+        int non_comptime_counter = 0;
+        for (int i = 0; i < parameters.size; i++) {
+            auto& param = parameters[i];
+            param.index = i;
+            if (param.has_default_value) {
+                function->parameters_with_default_value_count += 1;
+            }
+            if (param.parameter_type == Parameter_Type::NORMAL) {
+                param.normal.index_in_non_polymorphic_signature = non_comptime_counter;
+                non_comptime_counter += 1;
+            }
+            else if (param.parameter_type == Parameter_Type::POLYMORPHIC) {
+                function->polymorphic_parameter_count += 1;
+            }
+        }
+    }
+
+    // Figure out if type is polymorphic (Also store this)
+    {
+        bool is_polymorphic = false;
+        switch (base_type->type)
+        {
+        case Type_Type::POLYMORPHIC: {
+            is_polymorphic = true;
+            break;
+        }
+        case Type_Type::TYPE_HANDLE:
+        case Type_Type::ERROR_TYPE: 
+        case Type_Type::PRIMITIVE:
+        case Type_Type::VOID_POINTER:
+        case Type_Type::ENUM: {
+            is_polymorphic = false;
+            break;
+        }
+        case Type_Type::ARRAY: {
+            auto array = downcast<Type_Array>(base_type);
+            is_polymorphic = array->element_type->contains_polymorphic_type;
+            break;
+        }
+        case Type_Type::SLICE: {
+            auto slice = downcast<Type_Slice>(base_type);
+            is_polymorphic = slice->element_type->contains_polymorphic_type;
+            break;
+        }
+        case Type_Type::POINTER: {
+            auto pointer = downcast<Type_Pointer>(base_type);
+            is_polymorphic = pointer->points_to_type->contains_polymorphic_type;
+            break;
+        }
+        case Type_Type::STRUCT: {
+            auto& members = downcast<Type_Struct>(base_type)->members;
+            for (int i = 0; i < members.size; i++) {
+                auto& member = members[i];
+                if (member.type->contains_polymorphic_type) {
+                    is_polymorphic = true;
+                    break;
+                }
+            }
+            break;
+        }
+        case Type_Type::FUNCTION: {
+            auto function = downcast<Type_Function>(base_type);
+            if (function->return_type.available) {
+                if (function->return_type.value->contains_polymorphic_type) {
+                    is_polymorphic = true;
+                    break;
+                }
+            }
+            for (int i = 0; i < function->parameters.size && !is_polymorphic; i++) {
+                if (function->parameters[i].type->contains_polymorphic_type) {
+                    is_polymorphic = true;
+                    break;
+                }
+            }
+            break;
+        }
+        default: panic("");
+        }
+
+        base_type->contains_polymorphic_type = is_polymorphic;
+    }
+
     // Create Interal type-info and internal index
     {
         base_type->type_handle.index = type_system.internal_type_infos.size;
@@ -676,6 +752,7 @@ Type_Base* type_system_deduplicate_and_create_internal_info_for_type(Type_Base* 
         case Type_Type::ERROR_TYPE:
         case Type_Type::TYPE_HANDLE:
         case Type_Type::VOID_POINTER:
+        case Type_Type::POLYMORPHIC:
             break; // There are no options for these types
 
         case Type_Type::FUNCTION:
@@ -762,6 +839,26 @@ Type_Primitive* type_system_make_primitive(Primitive_Type type, int size, bool i
     result.is_signed = is_signed;
     result.primitive_type = type;
     return type_system_register_type(result);
+}
+
+Type_Polymorphic* type_system_make_polymorphic(Symbol* symbol, Workload_Function_Parameter* parameter_workload, Function_Progress* progress, int index) 
+{
+    Type_Polymorphic result;
+    result.base.type = Type_Type::POLYMORPHIC;
+    result.base.size = 1;
+    result.base.alignment = 1;
+    result.symbol = symbol;
+    result.parameter_workload = parameter_workload;
+    result.progress = progress;
+    result.index = index;
+    result.is_reference = false;
+    result.mirrored_type = 0;
+
+    Type_Polymorphic* registered_base = type_system_register_type(result);
+    result.is_reference = true;
+    result.mirrored_type = registered_base;
+    registered_base->mirrored_type = type_system_register_type(result);
+    return registered_base;
 }
 
 Type_Pointer* type_system_make_pointer(Type_Base* child_type)
@@ -909,6 +1006,7 @@ void type_system_finish_struct(Type_Struct* structure)
     // Calculate member offset/alignment + size
     int offset = 0;
     int alignment = 1;
+    structure->base.contains_polymorphic_type = false;
     for (int i = 0; i < members.size; i++)
     {
         Struct_Member* member = &members[i];
@@ -923,6 +1021,10 @@ void type_system_finish_struct(Type_Struct* structure)
             offset += member->type->size;
         }
         alignment = math_maximum(member->type->alignment, alignment);
+
+        if (member->type->contains_polymorphic_type) {
+            structure->base.contains_polymorphic_type = true;
+        }
     }
 
     // Add tag if Union
@@ -1054,6 +1156,7 @@ void type_system_finish_array(Type_Array* array)
     // Finish array
     base.size = array->element_type->size * array->element_count;
     base.alignment = array->element_type->alignment;
+    base.contains_polymorphic_type = array->element_type->contains_polymorphic_type;
 
     // Update internal info to mirror struct info
     Internal_Type_Information* internal_info = &type_system.internal_type_infos[base.type_handle.index];
@@ -1133,6 +1236,7 @@ void type_system_add_predefined_types(Type_System* system)
 
     // Type Information
     {
+        // NOTE: The members have to be added in the same order as the Type_Type, since this value is used as the tag!
         Type_Struct* option_type = type_system_make_struct_empty(Structure_Type::UNION, make_id("Type_Info_Option"), 0);
         add_member_cstr(option_type, "void_pointer", upcast(types->empty_struct_type));
         add_member_cstr(option_type, "type_handle", upcast(types->empty_struct_type));
@@ -1228,6 +1332,7 @@ void type_system_add_predefined_types(Type_System* system)
             test_type_similarity<Internal_Type_Slice>(upcast(slice_type));
             add_member_cstr(option_type, "slice", upcast(slice_type));
         }
+        add_member_cstr(option_type, "polymorphic", upcast(types->empty_struct_type));
         type_system_finish_struct(option_type);
         test_type_similarity<Internal_Type_Info_Options>(upcast(option_type));
 
@@ -1332,5 +1437,9 @@ Optional<Struct_Member> type_signature_find_member_by_id(Type_Base* type, String
 
 bool types_are_equal(Type_Base* a, Type_Base* b) {
     return a == b;
+}
+
+bool type_is_unknown(Type_Base* a) { 
+    return a->type == Type_Type::ERROR_TYPE || a->type == Type_Type::POLYMORPHIC;
 }
 

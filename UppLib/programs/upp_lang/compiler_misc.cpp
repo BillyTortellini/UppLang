@@ -209,6 +209,7 @@ bool type_signature_contains_references(Type_Base* signature)
     {
     case Type_Type::PRIMITIVE: return false;
     case Type_Type::VOID_POINTER: return true;
+    case Type_Type::POLYMORPHIC: return false;
     case Type_Type::POINTER: return true;
     case Type_Type::FUNCTION: return true;
     case Type_Type::STRUCT: 
@@ -260,6 +261,7 @@ Optional<const char*> constant_pool_record_references(Constant_Pool* pool, int d
     void* raw_data = &pool->buffer[data_offset];
     switch (signature->type)
     {
+    case Type_Type::POLYMORPHIC:
     case Type_Type::PRIMITIVE:
         break;
     case Type_Type::VOID_POINTER: {

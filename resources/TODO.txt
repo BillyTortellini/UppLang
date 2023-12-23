@@ -1,96 +1,29 @@
 
-Big oof about implicit parameters:
-    - I currently think that implicit parameters should always be filled out with with type-matching, and not something else...
-        What do I mean by that?
-        Well, types are trees, so you would expect some types to be whatever xD lol
+TODO - Implicit Parameters:
 
-Because how do I match implicit parameters? E.g. when are their values set?
-    add :: (a: $T)
-        ...
-    add(15)
-    add(false)
+DONE
+    * There currently is no differentiation between $T and T in matching, but only $T should be matched
+        --> This means that we should have 2 polymorphic types (Which are connected, one a reference and the other normal...)
+            --> Symbol-Lookup return the reference type, whereas $T returns the real thingy
+    * get_info in analyser_expression_internal causes errors because we analyse the parameter type multiple times currently
+        --> Do the filling out part with types, move the whole thing to type-system file
+        --> Set expression info and already analysed --> No need to analyse twice!
+        --> Use another (lol) analysis pass again --> (Not gonna lie, this seems kinda ok for this use case)
+    * Polymorphic Type should be treated like error type (E.g. don't log errors, just do not runnable)
+        Check all things where we handle "error type", and also add check for polymorphic type...
+        Situations:
+            - Unary/Binary operators
+            - Casting
+            - Auto enum, struct initializer
 
-    foo :: ($T: Type, a: T)
-
-Base-Analysis: 
-    Currently we store all parameters, and a parameter order for dependencies between parameters...
-    
-Conclusions:
-    - Implicit parameters will still need parameter-order
-
-Thoughts:
-    I currently envision implicit types like this:
-    Base-Analysis: 
-        1. On Analysis: Create a new Data_Type, a Polymorphic_Type which just stores the symbol or something like that
-        2. Then the base type of the parameter is a "polymorphic type"
-    Instanciation:
-        1. Arguments get's analysed without context if the base type is polymorphic
-        2. Argument type get's matched with the polymorphic type (Trying to infer the value of the polymorphic symbol from the argument-type)
-            e.g. *int + *T --> T = int
-        What if: foo :: (a: (x: $T, y: T))
-            here we first have to match (Which may fail), then generate the created type by inserting the matchings
-
-Implementation:
-    1. Roll back last changes I guess, I probably don't want implicit parameters as actual function parameters...
-    2. Search for polymorphic symbols in header analysis, create error symbol for those
-    3. Create new implicit type_base, create new symbol type for those, on base analysis return error type (And set error flag!)
-    4. Instanciation: Analyse argument without context I guess, then do type-matching to find the value. Then raise error and don't instanciate
-    5. Store the value of the implicit parameter in the instance, and do normal instance analysis
-    6. Think about parameter order and correctly record dependencies between parameters for implicit types
+    o. Make two different types for Polymorphic Type: Base-Type and reference. 
+        This is required because for matching only the base-type should be matched, and references shouldn't count...
+            e.g. foo :: (x: struct { a: T, b:$K }, a: $T)
+            Here when analysing x, the value for T shouldn't be set!
     
 
         
 
-
-Things that aren't going to work:
-    - Argument to parameter matching (Implicit parameters should be ignored)
-    - Analysis of implicit parameter 
-        * In base analysis: Set base type to type_handle (Or if explicit type is expected to that one I guess)
-        * In instanciation: Hard, this will suck
-    - Polymorphic evaluation order for implicit parameters (On lookup these should wait for the parent workload...)
-
-Implicit polymorphism:
-Problems:
-    - Symbols need to be defined before they can be accessed 
-        --> E.g. these things need to be defined before parameter analysis
-            So we need a pre-processing step to find these things and 
-
-Plan:
-    Parser can parse an expression that: $ID which is a polymorphic expression thingy? Probably has a symbol...
-    Symbol get's defined in the header thingy
-    - Function header adds parameter, extra boolean tag to indicate it's not a normal parameter,
-        Parameter matching doesn't use the extra parameters
-        Note: Now you always want to loop over arguments, not parameters, since those are potentially larger...
-    Analyser throws error's except when analysing parameters...
-
-a :: (x: $T)
-
-During header analysis:
-    1. Generate workloads for all parameters --> Generated dynamic array of parameters
-    2. Iteratively search for implicit polymorphism parameters, add them to the parameters of the function signature
-
-Then we have 3 phases:
-    1. First analysis --> Once we encounter the implicit polymorphic symbol in analysis, we want to know what type it is, or we set to type-type without int for now...
-    2. Base analysis of function --> Handle like normal polymorphic parameter, e.g. not available
-    3. Instanciation, header analysis -->
-
-
-Currently parameter symbols point to their parameter workload
-Almost all symbol lookups check the workload->parameter, but one also needs the workload to add dependencies...
-To be fair we can have pointers to parameters once we know the parameter count, and don't change the array anymore.
-But we have to refresh the pointers after finishing the function...
-
-TODO:
-    1. Function header decides upfront if it's polymorphic or not
-    2. If it is, it creates the polymorphic base? --> And argument dependencies are added there?
-        Argument order vs argument dependency?
-        Dependency carries more information, and I guess I can just store which are important and which not...
-    Polymorphic functions with default parameter + named arguments
-        - Function signature stores if it's polymorphic, also parameters store if they are polymorphic
-
-Why is the polymorphic base also a polymorphic instance?
-e.g. Why isn't there a normal function, a base-function and other?
-    - Maybe for future proofing, e.g. i don't really know?
 
 All things that are functions:
     * Normal functions
@@ -101,308 +34,55 @@ All things that are functions:
     * Function-Pointer
     * Hardcoded functions
 
-Polymorphism:
-What's happening
- * Parameter analysis --> finding out that the function is polymorphic
- * Base analysis      --> Analysing with unknown
- * Instanciation 
-    - Argument analysis
-    - Deduplication
-    - Instanced analysis
 
-Maybe annoying:
-    Polymorphic parameters aren't part of the type-system, so they need to be stored elsewhere
-    --> Why? because... fuck you
-
-Examples:
----------
-add :: (a: int, $b: int) -> int 
-    return a + b
-Note: During base analysis, b type is int, but value is not available
-
-add :: (a: T, $T: Type) -> int 
-    return a + b
-Note: During base analysis, a is of unknown-type
-
-Some changes I'm thinking about:
-    Function-Type Signature just knows if it's polymorphic 
-    --> probably bad, because type-signature should be comparabale, and castable, and all that crap
-    --> but what if I just don't care, and I just create a normal type-signature too?
-    So where are all the function parameter things stored?
-
-
-
-TODO:
-    * Update function polymorphism (Works with named_arguments, in-expression values $x:int, x:$T, working with overloads)
+--------------------
+- MISSING FEATURES -
+--------------------
+Core: (Required for programming)
+    * Update function polymorphism 
+        Missing: 
+            * Polymorphic return type
+            * Overloading/Template specification --> Basically try to pick least templated version that still matches types when overloading
+            * Polymorphic array count --> [$C]int
+            * Default values for polymorphic values?
 
     * Struct/Union rework (Allow other definitions inside the struct namespace, like functions/modules)
     * Polymorphism for structs
-    * Local-Context for casting, operator overloading, dot-calls
+    * Local-Context for casting, operator overloading, dot-calls, iterators, auto-pointer dereferencing
 
-    - Test-Cases:
-        * Struct unpacking
-        * Function overloading
-    * Context system for memory allocations -->
+    * Allocator system
+    * Incremental semantic analysis
     * Better loops (foreach, maybe a simple for ;; loop?)
+    * Incremental C-Compilation
+
+Additional:
+    * Better C-Importer
+    * Code-Editor features
+    * Annotations (For automatization of print or serialization)
     * Put initial symbols (int, float, bool + hardcoded functions) into another namespace Upp/Compiler/custom thingy?
     * Auto function? .->
     * Block-Expressions?
-    * Templated functions
-    * Templated structs
+    * Conditional compilation (#if), probably only for multiple operating systems, maybe also for datastructures?
+    * Macros?
+    * Backtick defer, backtick variable definition
+    * Varargs (Other syntax for pass as slice...)
+    * Literal overhaul
+    * Using on structs
+    * Location information (Mostly for logging)
+
+Code improvements:
+    * Deduplication of comptime instances when the generated ir-code is the same
+    * Comptime function pointers just call the function
+    * Analysis-Pass hashtable could be improved by combining blocks of ast-code into regions (But!: Incremental parsing)
+-----------------
+
+Missing Test-Cases:
+    * Struct unpacking
+    * Function overloading
+    * Function polymorphism/implicit polymorphism
 
 
 
-    * Function overloading:
-        How to decide which function to pick:
-            - Number of arguments (Note: default values)
-            - Given named arguments --> If name unique...
-            - Argument types (Of arguments that are discernable --> Expression_Context must be disabled for those)
-                What if arguments can cast to both types? --> If one does not require a cast, then take that? For math functions this would be neeto
-            - Expected return type
-        With templates I think this gets more complicated, because templates already require a given order 
-            in which to evaluate the arguments... --> Which is currently done badly, so we'll just disable it for the time
-    
-
-    Overloading:
-        On function call to a symbol-read --> 
-            Intercept this and handle this in another way...
-            For all symbols that are functions or otherwise callable -->
-
-Soooo, what actually needs to be done for polymorphic arguments?
-    foo :: ($count: int, $T: Type, a: [count]T)
-        What currently happens is that parameters are analysed, and a dependency graph is formed.
-        On-Call arguments are evaluated in this order
-
-    What I would like to do:
-        * Named parameters for polymorphic functions
-        * Polymorphic arguments may also have default values
-        * Also implicit polymorphism with $T, $C, or others
-        
-
-
-
-
-
-            
-
-
-Features that I may want to do next:
-    - Symbol-Imports with using, so that namespaces can be used reasonably, for Symbols, e.g. using A~* or using x.a
-    - Struct polymorphism
-    - Implicit Polymorphism in functions (e.g. (x: $T, y: T)), return value also...
-    - Struct inner definitions + dot-calls
-    - Function overloading + selecting the correct function
-    - Named function arguments, maybe named returns?
-    - Multiple returns/multiple assignment
-    - Conditional compilation (Symbol tables cannot be queried until the comptime value is resolved)
-    - Support for better Union-types (e.g. better switch statement, also subtypes of unions)
-    - Incremental Semantic Analysis (--> leads to caching #bakes)
-    - For-Loops (for i := 0; i < 10; i += 1), foreach (for a in array)
-    - Reintegrate C-compilation + Rework C-Importer to just generate an Upp-file with definitions
-    - Context system? (Allocators and others)
-    - ImGui for Editor (Rendering rework)
-    - Code-Editor features (auto formatting, visual mode, motions and delete...)
-    - Expression blocks, implicit lambdas (.->)
-    - Annotations for structs, queriable in type-system
-    - Custom iterators
-    - Operator overloads, some kind of context for casts stuff...
-
-
-TODO Later:
-    - Templates should work again
-    - Symbol-Resolution and Symbol tables should not be inside AST, but rather in Analysis_Info
-    - Maybe rework struct dependencies (Do we need clustering, are event-type workloads a thing?)
-    - Error logging inteface should be simpler...
-
-
-
-
-STILL TOP PRIORITY:
-    Think about Problems, but do it in the SIMPLEST, even if NOT MOST-EFFICIENT Way
-
-
-Polymorphic Functions:
-    a :: ($T: Type, a: T, b: T)
-
-Polymorphism stages:
-    * Symbol Resolution
-        - Parameter Types should be able to 'see' other parameter symbols
-        - Parameters must only be able to access comptime parameters
-        - Inner definitions (functions, structs, parameters) should not be able to access parameters
-    * Function Declaration Parsing
-        - No cyclic dependencies between parameters, otherwise error + quit analysis (Could do better somehow)
-        - First comptime parameters need to be parsed, afterwards normal parameters (to get base-function signature)
-    * Base case analysis
-        - Unknowns must not cause Errors during base analysis
-        - If errors occur in base analysis function instanciation should be impossible
-    * Function instanciations (calls)
-        - If parameter count is invalid, return
-        - First comptime parameters need to be analysed in dependency order
-        - Dependent Polymorphic-Parameter types need to be resolved before each parameter is analysed (Given the now known comptime values)
-        - The type-signature of the function needs to be resolved after poly-parameters, normal parameter analysis can happen now
-        - Function body workload must only execute if base analysis succeeded, otherwise we can stop the workload
-        - Recursive instanciations must be impossible (depth limit)
-        - De-duplicating instances with same comptime values (General comptime value de-duplication would be nice)
-    * IR-Generator
-        - Function calls that instanciate functions need to reference which function was instanciated
-        - Comptime arguments need to be flagged so that code-gen doesn't include them
-
-
-
-Given:
-    * Polymorphic function Header
-    * Function call with function arguments
-
-Check/Todo NEW:
- * Poly-Parameters accessing other poly-parameters
-    1. Parameter-Symbols need to be able to 'see' each other
-        test :: ($T: Type, a: T)     --> function_signature: (a: unknown)
-        test :: ($C: int, a: [C]int) --> function signature: (a: [Unknown]int)
-
-        test :: (a: int, b: a) // Error, accessing a non-polymorphic parameter in function header
-        test :: (b: a, a: int) // Error, accessing something...
-        Just implement this and throw an error when we encounter these symbols
-    X. Make instanciations in correct order work
-        test :: ($T: Type, a: T) // E.g. when analysing the function, we 
-    2. Instanciations need to work.
-        I:   Generate all poly-values
-        II:  Check if already instanciated
-        III: Re-analyse function header with polymorphic values 
-        IV:  Continue as normal ^^
-    3. Parameter order is gonna get be importent
-        test :: (a: T, $T: Type) --> function signature of base: a: Unknown
-        test :: (a: T, $T: int) --> Error: Expected type, found int (a: T)
-        test :: (a: [C]int, $C: int) --> function signature: (a: [Unknown]int)
-    4. There may be dependencies between the poly-parameters:
-        test :: ($T: Type, $C: int, $A: [C]T) // A should be [Unknown]Unknown
-        test :: ($T: Type, $C: Type, $A: [C]T) // Error, expected int in array!
-        test :: ($T: Type, $C: T, $A: [C]int) // C is unkown type, works
-    x. Return type should also be included (Can only read poly-params, not create them)
-        test :: ($T: Type) -> T // signature: () -> Unknown
-
- * Implicit poly-parameters
- * Better errors (e.g. show where instanciation happens + instaciation values) --> See ya later
-
-DONE:
- * Polymorphic functios instanciation other polymorphic functions
- * De-duplicate instanciations
- * Assigning a void type to a variable...
- * Recursive instanciations need to be handled
-    1. Instances remember their instanciation site + their instance depth (E.g. instanciated inside another polymorphic function)
-    2. Before instancing, we check if the new instance-depth would be greater than some value, if it is, we need to error out
-    3. For errors, we could search for an instancing loop, and if we find one, we can report it, otherwise...
-    4. The most 'ideal' version is to search for loops + limit the instance depth.
-
-
-TODO:
- - Analyse non-comptime arguments in polymorphic function need to be disabled (Already analysed)
-        Currently there is a active/disabled thing for arguments in expression info
-        Is only used by semantic analyser to check which/if all struct-members are initialized in struct initializer.
-        For named parameters and stuff we will also need some additional info, to determine the evaluation order!
- - IR_Code need to know which function was picked during the analysis + which arguments to analyse (E.g. skip over comptime ones)
- - Body-Workload needs to check if the base instance body was successfull, otherwise we can error out !
-
-Refactors:
-    * Modtree_Function could also hold the Function-Progress, since we don't ever create a modtree function out of nothing...
-        In the same spirit type_signature struct could hold a struct-progress (May be null for auto-generated structs), 
-        and definitions maybe too?
-    * Removing Analysis_Progress as base for (funciton-, definition-, bake-, ... progresses), since it could be replaced by something simpler
-
-Polymorphic Instanciation Questions:
-    * How is the function signature calculated?
-        Later I probably need to create a new analysis pass for the function header, but for now I can just use the signature of the base function
-    * Where is the function symbol used? Can multiple functions reference the same symbol?
-        Doesn't matter
-    * I need to create a new workload, how is this done from outside the workload executer?
-        Should work on the fly without any problems
-
-    * Progress_Items maps Analysis_Items to a progress, why is this necessary again?
-        Also there is currently a check when adding a body workload that it definitly gets inserted here
-    * Why do I need the analysis progress stuff again?
-        Seems to be only used in add_analysis_items, to add Analysis_Item dependencies (e.g. inner stuff I think)
-
-    * I need to generate a function-progress for this function (I think), is this currently possible for poly-instances?
-        Yes, because i can just generate a functio progress...
-
-    * Do I need to touch progress_was_made in workload_executer?
-        I guess not since I alrady make progress by executing the workload
-    * Do I need a Cluster_Compile workload or is this one added after the body analysis?
-        No, I need it
-    * Does Cluster_Compile check if the function is runnable?
-    * Before body analysis I need to check if the base analysis succeeded
-
-
-TODO:
- * Being able to instanciate polymorphic functions --> 
-    1. Expression_Result_Type probably needs Polymorphic function now   X
-    2. We need some method of determining (on function call) which parameters are comptime and which aren't (currently only stored in ast)  X
-        * When we have infered polymorphics we probably want to get a suitable datastructure for that
-    3. When we have function calls to polymorphic functions, we need to comptime-analyse the comptime values, create upp-constants,
-       and instanciate the polymorphic function. This means creating a new ModTree-Function, and
-       creating a new body + compile workload (Which depend on the base function + need to check that base functio doesn't contain errors)
-
-Observation:
-    * Currently if array size is not available, maybe I just want to set it to error for the time being
-      It should probably be handled as unknown, but i guess here we have one problem: 
-
-There are Expression_Results currently include
-    * Constant (A known constant, e.g. bake, comptime definition, literals)
-    * Value ()
-
-Implementation Plan:
-Add polymorphic parameters (Values):
-    test :: ($x: int)
-        print_i32(x)
-
-ONLY Base analysis should work for starters, this means no function calls, but the initial
-analysis should be working with unknown values. 
-
-E.g. Parameter symbols (x) should be polymorphic parameters
-
-Question: Should analysis of a polymorphic parameter return a 
-    Expression_Result_Type::CONSTANT or
-    Expression_Result_Type::VALUE?
-When evaluating a comptime expression, I always need to check for polymorphic parameters, since they are UNKNOWN
-
-buffer_size :: 32 + int // Evaluates to not evaluable, what is the definition then?
-
-
-        
-
-DONE:
- * Polymorphic functions should store their polymorphic parameters in a list (For caching)
- * Treat base-analysis as Instanciation with all values set to unknown, lookup instance values when analysing the function
- * Comptime functions should not be generated to ir-code!
- * Check out how comptime stuff currently works
-
-
-
-
-
-
-
-Implementation:
-Store function as polymorphic, add symbol to whatever, errors.
-
-Theres still the question if i want to 
-
-Polymorphism/Generics/Templates:
---------------------------------
-1. Comptime parameters for functions
-    add_fixed :: (a: int, $value: int) -> int
-        // Note that value should be usable as comptime value
-        buffer: [value]int
-        return a + value
-
-    add_fixed(15, 32 * 100)
-
-    This already requires us to be able to analyse a function multiple times.
-    Also comptime value de-duplication would be good.
-
-    This also gets us back to the question what we want to analyse 
-
-2. Type parameters should also work
-    
 
 Main usage for templates:
  - Generic data-structures (E.g. dynamic-array, hashtable)
@@ -415,64 +95,15 @@ Hashable :: struct
    hash: (T: Type) -> u64
    equals: (T: Type) -> bool
 
-Hashtable :: struct(Hashable: Hashable, Value_Type: Type)
+Hashtable :: struct(h: Hashable, Value_Type: Type)
     entries: []struct
         valid: bool
-        key: Hashable.type
+        key: hashable.type
         value: Value_Type
         hash: u64
     element_count: u32
     
     
-
-
-
-
-
-
-
-
-
-
-Named-Function arguments (Also struct initializer):
----------------------------------------------------
-Given: 
-    Caller: list of arguments (With and without names), which we can analyze
-
-Problem:
-    We don't store parameter-names for functions, where should they be stored?
-    The problem here is that we probably also want to support all function calls? Function pointer, hardcoded functions, normal functions:
-        - Hardcoded-Functions
-        - Type_of, size_of, new
-        Type-Signature
-
-Plan:
-    Verschiedene type-signatures für verschiedenen namen von parametern.
-    Eigene funktion für vergleichen von type_signature pointern, die ausbessern
-Ist es ein problem wenn wir mehrere type-signatures haben?
-
-TODO:
-    1. Type_Signature equal funktion schreiben, alle == ausbessern DONE
-    2. Namen in type_signature abspeichern (E.g. type_signature_create_function mit anderen argumenten)
-     --> Immer wenn eine neue type-signature kommt, muss ich die vergleichen können, nicht vergessen!
-    4. type-signature equal bei funktionen muss dann namen auch vergleichen, sonst nur pointer vergleich
-        --> Wir machens jetz sou dass funktionen zeugs haben können jo
-    5. Funktion call logic für parameter/argumente einbauen
-
-
-
-Implementation Plan (Features):
--------------------------------
- * Templates/Generics/Whatever (Simple version without too much dependency complications)
- * C-Integration (Calling c function, beeing able to create a win32 window)
- * Keyboard recorder/replay (Testing multiple inputs in a single frame, creates testcases, maybe with saving and replaying for tests?)
- t status
- * Named arguments in function calls
- * Better namespace stuff probably (Importing symbols from namespaces...)
- * Editor features (movements, motions, ...)
- * Loops
- * Incremental Analysis + Code-Gen
-
 
 
 Design-Goals/Requirements:
@@ -498,10 +129,6 @@ Hierarchy:
  - Editing is hard
  + Scales good with huge code files
 
-    
-
-
-
 If I do precise inter-block changes, what needs to happen for each change?
 
 First off, how will to algorithm to re-evaluate Items look like:
@@ -513,6 +140,8 @@ First off, how will to algorithm to re-evaluate Items look like:
 What about lines that aren't items yet? e.g. Empty-lines, lines with errors?
 There is no error statement, so how do they work? Just save it as an added line?
 Removed lines don't matter if there are no items
+
+
 
 
 
@@ -619,7 +248,7 @@ Better Editor Experience:
 
 
 
-Next features:
+Next features: (OLD)
 --------------
  * Syntax-Guided Editor (Undo-Redo, copy-paste, code-completion, jump to definition, auto-formating, vim-commands, animations, code folding)
  * Polymorphism/Generics/Templates (Template rework: No more templated modules, templated types, templated functions)

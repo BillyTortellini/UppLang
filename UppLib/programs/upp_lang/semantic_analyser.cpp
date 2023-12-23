@@ -1406,7 +1406,7 @@ Expression_Context expression_context_make_no_value_expected() {
 }
 
 Expression_Context expression_context_make_specific_type(Type_Base* signature) {
-    if (signature->type == Type_Type::ERROR_TYPE) {
+    if (type_is_unknown(signature)) {
         return expression_context_make_unknown(true);
     }
     Expression_Context context;
@@ -2714,8 +2714,8 @@ void analyse_parameter_type_and_value(Function_Parameter& parameter, AST::Parame
 {
     parameter.name = optional_make_success(parameter_node->name);
     if (parameter_node->is_comptime) {
-        parameter.parameter_type = Parameter_Type::POLYMORPHIC;
-        parameter.polymorphic.index_in_polymorphic_evaluation_order = -1;
+        // Polymorphic index must have been set before
+        assert(parameter.parameter_type == Parameter_Type::POLYMORPHIC, "");
     }
     else {
         parameter.parameter_type = Parameter_Type::NORMAL;
@@ -2734,7 +2734,7 @@ void analyse_parameter_type_and_value(Function_Parameter& parameter, AST::Parame
     parameter.has_default_value = true;
     auto default_value_type = semantic_analyser_analyse_expression_value(
         parameter_node->default_value.value, expression_context_make_specific_type(parameter.type));
-    if (parameter.type->type == Type_Type::ERROR_TYPE || default_value_type != parameter.type) {
+    if (type_is_unknown(parameter.type) || default_value_type != parameter.type) {
         return;
     }
 
@@ -2758,6 +2758,8 @@ void analysis_workload_entry(void* userdata)
     workload->current_symbol_table = workload->parent_table;
     workload->polymorphic_values.data = 0;
     workload->polymorphic_values.size = 0;
+    workload->implicit_polymorphic_types.data = 0;
+    workload->implicit_polymorphic_types.size = 0;
 
     switch (workload->type)
     {
@@ -2973,6 +2975,10 @@ void analysis_workload_entry(void* userdata)
         parameters.size = parameter_nodes.size;
         Dynamic_Array<AST::Expression*> implicit_parameter_nodes = dynamic_array_create_empty<AST::Expression*>(1);
         SCOPE_EXIT(dynamic_array_destroy(&implicit_parameter_nodes));
+        Dynamic_Array<Type_Polymorphic*> implicit_parameters = dynamic_array_create_empty<Type_Polymorphic*>(1);
+        SCOPE_EXIT(if (progress->type != Function_Progress_Type::POLYMORPHIC_BASE) { dynamic_array_destroy(&implicit_parameters); });
+        Dynamic_Array<int> polymorphic_parameter_indices = dynamic_array_create_empty<int>(1);
+        SCOPE_EXIT(if (progress->type != Function_Progress_Type::POLYMORPHIC_BASE) { dynamic_array_destroy(&polymorphic_parameter_indices); });
 
         // Analyse parameters (Create Symbols and Workloads and initialize parameter infos)
         for (int i = 0; i < parameter_nodes.size; i++)
@@ -2987,9 +2993,12 @@ void analysis_workload_entry(void* userdata)
 
             // Initialize parameter info
             parameter = function_parameter_make_empty(symbol, 0);
+            parameter.index = i;
             if (param_node->is_comptime) {
                 progress->type = Function_Progress_Type::POLYMORPHIC_BASE;
                 parameter.parameter_type = Parameter_Type::POLYMORPHIC;
+                parameter.polymorphic_index = polymorphic_parameter_indices.size;
+                dynamic_array_push_back(&polymorphic_parameter_indices, i);
             }
 
             // Create workload
@@ -3008,16 +3017,22 @@ void analysis_workload_entry(void* userdata)
             // Add implicit parameters
             dynamic_array_reset(&implicit_parameter_nodes);
             search_for_implicit_polymorphic_parameters(param_node->type, implicit_parameter_nodes);
-            for (int j = 0; j < implicit_parameter_nodes.size; j++) {
+            for (int j = 0; j < implicit_parameter_nodes.size; j++) 
+            {
                 auto implicit_node = implicit_parameter_nodes[j];
                 assert(implicit_node->type == AST::Expression_Type::POLYMORPHIC_SYMBOL, "");
-                // progress->type = Function_Progress_Type::POLYMORPHIC_BASE;
+                progress->type = Function_Progress_Type::POLYMORPHIC_BASE;
 
                 // Create symbol
                 Symbol* symbol = symbol_table_define_symbol(
                     header_workload->base.current_symbol_table, implicit_node->options.polymorphic_symbol_id,
-                    Symbol_Type::ERROR_SYMBOL, AST::upcast(implicit_node), true
+                    Symbol_Type::IMPLICIT_PARAMETER, AST::upcast(implicit_node), true
                 );
+                // Create type
+                symbol->options.implicit = type_system_make_polymorphic(symbol, param_workload, progress, implicit_parameters.size);
+                hashtable_insert_element(&semantic_analyser.implicit_parameter_node_mapping, implicit_node, symbol->options.implicit);
+                // Store in implicit parameter array
+                dynamic_array_push_back(&implicit_parameters, symbol->options.implicit);
             }
         }
 
@@ -3039,6 +3054,8 @@ void analysis_workload_entry(void* userdata)
         if (progress->type == Function_Progress_Type::POLYMORPHIC_BASE) {
             progress->polymorphic_base.comptime_argument_evaluation_order = dynamic_array_create_empty<int>(1);
             progress->polymorphic_base.instances = dynamic_array_create_empty<Function_Progress*>(1);
+            progress->polymorphic_base.implicit_parameters = implicit_parameters;
+            progress->polymorphic_base.polymorphic_parameter_indices = polymorphic_parameter_indices;
             function->is_runnable = false; // Polymorphic base cannot be runnable
             if (function->symbol != 0) {
                 function->symbol->type = Symbol_Type::POLYMORPHIC_FUNCTION;
@@ -3065,10 +3082,10 @@ void analysis_workload_entry(void* userdata)
         workload->current_function = param_workload->progress->function;
         analyse_parameter_type_and_value(*param_workload->parameter, param_workload->node);
         // Set index in evaluation order if comptime
-        if (param_workload->node->is_comptime) {
+        if (param_workload->parameter->parameter_type == Parameter_Type::POLYMORPHIC || param_workload->parameter->type->contains_polymorphic_type) 
+        {
             assert(param_workload->progress->type == Function_Progress_Type::POLYMORPHIC_BASE, "");
             auto& evaluation_order = param_workload->progress->polymorphic_base.comptime_argument_evaluation_order;
-            param_workload->parameter->polymorphic.index_in_polymorphic_evaluation_order = evaluation_order.size;
             dynamic_array_push_back(&evaluation_order, param_workload->parameter_index);
         }
         break;
@@ -3093,6 +3110,7 @@ void analysis_workload_entry(void* userdata)
             }
 
             workload->polymorphic_values = instance.parameter_values;
+            workload->implicit_polymorphic_types = instance.implicit_parameter_values;
         }
 
         // Analyse body
@@ -3473,7 +3491,7 @@ Info_Cast_Type semantic_analyser_check_cast_type(Type_Base* source_type, Type_Ba
     auto& analyser = semantic_analyser;
     auto& type_system = compiler.type_system;
     auto& types = type_system.predefined_types;
-    if (types_are_equal(source_type, types.error_type) || types_are_equal(destination_type, types.error_type)) {
+    if (type_is_unknown(source_type) || type_is_unknown(destination_type)) {
         semantic_analyser_set_error_flag(true);
         return Info_Cast_Type::NO_CAST;
     }
@@ -3669,6 +3687,14 @@ Expression_Info analyse_symbol_as_expression(Symbol* symbol, Expression_Context 
         analysis_workload_add_dependency_internal(workload, upcast(symbol->options.polymorphic_function->header_workload), failure_info);
         break;
     }
+    case Symbol_Type::IMPLICIT_PARAMETER: {
+        // If I'm _not_ currently on the same workload, wait for parameter workload so that parameter order is generated correctly
+        auto other = symbol->options.implicit->parameter_workload;
+        if (upcast(other) != workload) {
+            analysis_workload_add_dependency_internal(workload, upcast(other), failure_info);
+        }
+        break;
+    }
     case Symbol_Type::PARAMETER:
     {
         if (symbol->options.parameter->workload != 0) {
@@ -3750,11 +3776,28 @@ Expression_Info analyse_symbol_as_expression(Symbol* symbol, Expression_Context 
         expression_info_set_error(&result, error_type);
         return result;
     }
+    case Symbol_Type::IMPLICIT_PARAMETER:
+    {
+        auto poly = symbol->options.implicit;
+        if (!poly->is_reference) {
+            poly = poly->mirrored_type;
+        }
+        expression_info_set_type(&result, upcast(poly));
+        // Check if instanciated values are available
+        if (workload->implicit_polymorphic_types.data != 0) {
+            auto instance_type = workload->implicit_polymorphic_types[symbol->options.implicit->index];
+            if (instance_type != 0) {
+                expression_info_set_type(&result, instance_type);
+            }
+        }
+        break;
+    }
     case Symbol_Type::PARAMETER:
     {
         auto& param = *(symbol->options.parameter);
         auto workload = semantic_analyser.current_workload;
-        if (param.parameter_type == Parameter_Type::NORMAL) {
+        if (param.parameter_type == Parameter_Type::NORMAL) 
+        {
             if (workload->type == Analysis_Workload_Type::FUNCTION_PARAMETER || workload->type == Analysis_Workload_Type::FUNCTION_HEADER) {
                 log_semantic_error("Accessing parameter_nodes in function header is only valid for comptime parameter_nodes", upcast(error_report_node));
                 expression_info_set_error(&result, param.type);
@@ -3774,17 +3817,15 @@ Expression_Info analyse_symbol_as_expression(Symbol* symbol, Expression_Context 
                 return result;
             }
         }
-        else {
-            auto progress = analysis_workload_try_get_function_progress(workload);
-            assert(progress != 0, "Should be true since we are accessing a parameter");
+        else 
+        {
             if (workload->polymorphic_values.data == 0) {
-                assert(progress->type == Function_Progress_Type::POLYMORPHIC_BASE, "");
                 expression_info_set_value(&result, param.type);
                 return result;
             }
             else {
                 // Note: This may be the case during either Instanciation (Normal function) or inside the instance function analysis
-                expression_info_set_constant(&result, workload->polymorphic_values[param.polymorphic.index_in_polymorphic_evaluation_order]);
+                expression_info_set_constant(&result, workload->polymorphic_values[param.polymorphic_index]);
                 return result;
             }
         }
@@ -3842,7 +3883,7 @@ struct Function_Overload_Candidate
     bool overloading_arg_can_be_cast;
 };
 
-// Checks for multiple arguments, and named/unnamed argument order errors
+// Checks for same identifier arguments, and named/unnamed argument order errors
 bool arguments_check_for_errors(Dynamic_Array<AST::Argument*>& arguments, int* out_unnamed_argument_count)
 {
     // Detect named arguments errors
@@ -4072,6 +4113,89 @@ void arguments_analyse_in_unknown_context(Dynamic_Array<AST::Argument*>& argumen
 }
 
 
+bool match_polymorphic_type(Type_Base* polymorphic_type, Type_Base* match_against, Hashset<Type_Base*>& already_visited, Array<Type_Base*>& implicit_parameter_types)
+{
+    if (!polymorphic_type->contains_polymorphic_type) {
+        return types_are_equal(polymorphic_type, match_against);
+    }
+    if (hashset_contains(&already_visited, polymorphic_type)) {
+        return true;
+    }
+    hashset_insert_element(&already_visited, polymorphic_type);
+
+    // Note: Not sure about this assert, but I think when evaluating poly arguments in correct order this shouldn't happen
+    assert(!match_against->contains_polymorphic_type, ""); 
+
+    // Check if we found match
+    if (polymorphic_type->type == Type_Type::POLYMORPHIC) 
+    {
+        auto poly_type = downcast<Type_Polymorphic>(polymorphic_type);
+        if (poly_type->is_reference) {
+            return true; // Don't match references
+        }
+        assert(implicit_parameter_types[poly_type->index] == 0, "We shouldn't match the same parameter more than once");
+        implicit_parameter_types[poly_type->index] = match_against;
+        return true;
+    }
+
+    // Exit early if expected types don't match
+    if (polymorphic_type->type != match_against->type) {
+        return false;
+    }
+
+    switch (polymorphic_type->type)
+    {
+    case Type_Type::ARRAY: 
+        return match_polymorphic_type(downcast<Type_Array>(polymorphic_type)->element_type, downcast<Type_Array>(match_against)->element_type, already_visited, implicit_parameter_types);
+    case Type_Type::SLICE:
+        return match_polymorphic_type(downcast<Type_Slice>(polymorphic_type)->element_type, downcast<Type_Slice>(match_against)->element_type, already_visited, implicit_parameter_types);
+    case Type_Type::POINTER:
+        return match_polymorphic_type(downcast<Type_Pointer>(polymorphic_type)->points_to_type, downcast<Type_Pointer>(match_against)->points_to_type, already_visited, implicit_parameter_types);
+    case Type_Type::STRUCT: {
+        auto a = downcast<Type_Struct>(polymorphic_type);
+        auto b = downcast<Type_Struct>(match_against);
+        if (a->struct_type != b->struct_type || a->members.size != b->members.size) {
+            return false;
+        }
+        for (int i = 0; i < a->members.size; i++) {
+            if (!match_polymorphic_type(a->members[i].type, b->members[i].type, already_visited, implicit_parameter_types)) {
+                return false;
+            }
+        }
+        return true;
+    }
+    case Type_Type::FUNCTION: {
+        auto a = downcast<Type_Function>(polymorphic_type);
+        auto b = downcast<Type_Function>(match_against);
+        if (a->parameters.size != b->parameters.size || a->return_type.available != b->return_type.available) {
+            return false;
+        }
+        for (int i = 0; i < a->parameters.size; i++) {
+            if (!match_polymorphic_type(a->parameters[i].type, b->parameters[i].type, already_visited, implicit_parameter_types)) {
+                return false;
+            }
+        }
+        if (a->return_type.available) {
+            if (!match_polymorphic_type(a->return_type.value, b->return_type.value, already_visited, implicit_parameter_types)) {
+                return false;
+            }
+        }
+        return true;
+    }
+    case Type_Type::ENUM:
+    case Type_Type::ERROR_TYPE:
+    case Type_Type::VOID_POINTER:
+    case Type_Type::PRIMITIVE:
+    case Type_Type::TYPE_HANDLE: panic("Should be handled by previous code-path (E.g. non polymorphic!)");
+    case Type_Type::POLYMORPHIC: panic("Previous code path should have handled this!");
+    default: panic("");
+    }
+    
+    panic("");
+    return true;
+}
+
+
 #define SET_ACTIVE_EXPR_INFO(new_info)\
     Expression_Info* _backup_info = semantic_analyser.current_workload->current_expression; \
     semantic_analyser.current_workload->current_expression = new_info; \
@@ -4151,7 +4275,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             EXIT_ERROR(types.error_type);
         }
 
-        // Find all overload candidates
+        // Find all overload candidate symbols
         Dynamic_Array<Function_Overload_Candidate> candidates = dynamic_array_create_empty<Function_Overload_Candidate>(1);
         SCOPE_EXIT(dynamic_array_destroy(&candidates));
         if (call.expr->type == AST::Expression_Type::PATH_LOOKUP)
@@ -4186,7 +4310,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             dynamic_array_push_back(&candidates, candidate);
         }
 
-        // Analyse expression_infos of candidates, and filter out the ones that aren't functions
+        // Analyse candidate analysis results (Expression_Infos), and filter out the ones that aren't functions
         bool only_single_candidate_given = candidates.size == 1;
         for (int i = 0; i < candidates.size; i++)
         {
@@ -4212,7 +4336,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             {
                 // TODO: Check if this is comptime known, then we dont need a function pointer call
                 auto type = function_expr_info.options.type;
-                if (type->type == Type_Type::ERROR_TYPE) {
+                if (type_is_unknown(type)) {
                     remove_candidate = true;
                 }
                 else if (type->type == Type_Type::FUNCTION) {
@@ -4265,289 +4389,333 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             }
         }
 
-        // Disambiguate overloads by argument names/count
-        if (candidates.size > 1)
+        // Do Overload resolution
+        if (candidates.size != 1)
         {
-            auto& arguments = call.arguments;
-            const int named_argument_count = arguments.size - unnamed_argument_count;
-            for (int i = 0; i < candidates.size; i++)
+            // Disambiguate overloads by argument names/count
+            if (candidates.size > 1)
             {
-                auto& candidate = candidates[i];
-                auto signature = candidate.function_signature;
-                if (!arguments_match_to_function_parameters(arguments, unnamed_argument_count, signature, false)) {
-                    dynamic_array_swap_remove(&candidates, i);
-                    i -= 1;
+                auto& arguments = call.arguments;
+                const int named_argument_count = arguments.size - unnamed_argument_count;
+                for (int i = 0; i < candidates.size; i++)
+                {
+                    auto& candidate = candidates[i];
+                    auto signature = candidate.function_signature;
+                    if (!arguments_match_to_function_parameters(arguments, unnamed_argument_count, signature, false)) {
+                        dynamic_array_swap_remove(&candidates, i);
+                        i -= 1;
+                    }
                 }
             }
-        }
 
-        // Disambiguate overloads by argument types
-        if (candidates.size > 1)
-        {
-            auto disambiguate_based_on_overload_type = [&](Dynamic_Array<Function_Overload_Candidate>& candidates, Type_Base* expected_type)
+            // Disambiguate overloads by argument types
+            if (candidates.size > 1)
             {
-                bool matching_candidate_exists = false;
-                bool castable_candidate_exists = false;
-                for (int j = 0; j < candidates.size; j++)
+                auto disambiguate_based_on_overload_type = [&](Dynamic_Array<Function_Overload_Candidate>& candidates, Type_Base* expected_type)
                 {
-                    auto& candidate = candidates[j];
-                    candidate.overloading_arg_can_be_cast = false;
-                    candidate.overloading_arg_matches_type = false;
-                    if (types_are_equal(candidate.overloading_param_type, expected_type)) {
-                        candidate.overloading_arg_matches_type = true;
-                        matching_candidate_exists = true;
-                    }
-                    else {
-                        Expression_Post_Op post_op = expression_context_apply(
-                            expected_type, expression_context_make_specific_type(candidate.overloading_param_type), false);
-                        if (post_op.implicit_cast != Info_Cast_Type::INVALID) {
-                            candidate.overloading_arg_can_be_cast = true;
-                            castable_candidate_exists = true;
+                    bool matching_candidate_exists = false;
+                    bool castable_candidate_exists = false;
+                    for (int j = 0; j < candidates.size; j++)
+                    {
+                        auto& candidate = candidates[j];
+                        candidate.overloading_arg_can_be_cast = false;
+                        candidate.overloading_arg_matches_type = false;
+                        if (types_are_equal(candidate.overloading_param_type, expected_type)) {
+                            candidate.overloading_arg_matches_type = true;
+                            matching_candidate_exists = true;
                         }
-                    }
-                }
-
-                // Remove candidates that aren't as fit as other candidates
-                for (int j = 0; j < candidates.size; j++)
-                {
-                    auto& candidate = candidates[j];
-                    bool remove = false;
-                    if (candidate.overloading_arg_matches_type) {
-                        continue;
-                    }
-                    else if (candidate.overloading_arg_can_be_cast) {
-                        if (matching_candidate_exists) {
-                            remove = true;
-                        }
-                    }
-                    else {
-                        if (matching_candidate_exists || castable_candidate_exists) {
-                            remove = true;
-                        }
-                    }
-
-                    if (remove) {
-                        dynamic_array_swap_remove(&candidates, j);
-                        j -= 1;
-                    }
-                }
-            };
-
-            // For the remaining functions, check which argument types are different, and differentiate based on that 
-            for (int i = 0; i < arguments.size && candidates.size > 1; i++)
-            {
-                auto arg = arguments[i];
-                auto arg_info = get_info(arg);
-
-                // Find parameter types of all candidates
-                bool parameter_types_are_different = false;
-                for (int j = 0; j < candidates.size; j++)
-                {
-                    auto& candidate = candidates[j];
-                    auto& params = candidates[j].function_signature->parameters;
-                    Type_Base* param_type = 0;
-                    if (arg->name.available) {
-                        // Find named argument
-                        for (int k = 0; k < params.size; k++) {
-                            if (params[k].name.available && params[k].name.value == arg->name.value) {
-                                param_type = params[k].type;
-                                break;
+                        else {
+                            Expression_Post_Op post_op = expression_context_apply(
+                                expected_type, expression_context_make_specific_type(candidate.overloading_param_type), false);
+                            if (post_op.implicit_cast != Info_Cast_Type::INVALID) {
+                                candidate.overloading_arg_can_be_cast = true;
+                                castable_candidate_exists = true;
                             }
                         }
                     }
-                    else {
-                        param_type = params[i].type;
+
+                    // Remove candidates that aren't as fit as other candidates
+                    for (int j = 0; j < candidates.size; j++)
+                    {
+                        auto& candidate = candidates[j];
+                        bool remove = false;
+                        if (candidate.overloading_arg_matches_type) {
+                            continue;
+                        }
+                        else if (candidate.overloading_arg_can_be_cast) {
+                            if (matching_candidate_exists) {
+                                remove = true;
+                            }
+                        }
+                        else {
+                            if (matching_candidate_exists || castable_candidate_exists) {
+                                remove = true;
+                            }
+                        }
+
+                        if (remove) {
+                            dynamic_array_swap_remove(&candidates, j);
+                            j -= 1;
+                        }
                     }
-                    assert(param_type != 0, "Must have been found at this point, arguments were checked before!");
+                };
 
-                    candidate.overloading_param_type = param_type;
-                    if (j != 0 && candidates[0].overloading_param_type != param_type) {
-                        parameter_types_are_different = true;
+                // For the remaining functions, check which argument types are different, and differentiate based on that 
+                for (int i = 0; i < arguments.size && candidates.size > 1; i++)
+                {
+                    auto arg = arguments[i];
+                    auto arg_info = get_info(arg);
+
+                    // Find parameter types of all candidates
+                    bool parameter_types_are_different = false;
+                    for (int j = 0; j < candidates.size; j++)
+                    {
+                        auto& candidate = candidates[j];
+                        auto& params = candidates[j].function_signature->parameters;
+                        Type_Base* param_type = 0;
+                        if (arg->name.available) {
+                            // Find named argument
+                            for (int k = 0; k < params.size; k++) {
+                                if (params[k].name.available && params[k].name.value == arg->name.value) {
+                                    param_type = params[k].type;
+                                    break;
+                                }
+                            }
+                        }
+                        else {
+                            param_type = params[i].type;
+                        }
+                        assert(param_type != 0, "Must have been found at this point, arguments were checked before!");
+
+                        candidate.overloading_param_type = param_type;
+                        if (j != 0 && candidates[0].overloading_param_type != param_type) {
+                            parameter_types_are_different = true;
+                        }
                     }
-                }
 
-                // Check if we can differentiate the function based on this type
-                if (!parameter_types_are_different) {
-                    continue;
-                }
-
-                // For each candidate figure out if argument does/doesn't match or can be cast
-                auto argument_type = semantic_analyser_analyse_expression_value(arg->value, expression_context_make_unknown());
-                arg_info->already_analysed = true;
-                arg_info->context_application_missing = true;
-                disambiguate_based_on_overload_type(candidates, argument_type);
-            }
-
-            // If we still have candidiates, try to differentiate based on return type
-            if (candidates.size > 1 && context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED)
-            {
-                auto expected_return_type = context.signature;
-                bool return_types_are_different = false;
-                for (int j = 0; j < candidates.size; j++) {
-                    auto return_type = candidates[j].function_signature->return_type;
-                    if (!return_type.available) {
+                    // Check if we can differentiate the function based on this type
+                    if (!parameter_types_are_different) {
                         continue;
                     }
-                    candidates[j].overloading_param_type = return_type.value;
-                    if (j > 0 && !types_are_equal(candidates[0].overloading_param_type, return_type.value)) {
-                        return_types_are_different = true;
+
+                    // For each candidate figure out if argument does/doesn't match or can be cast
+                    auto argument_type = semantic_analyser_analyse_expression_value(arg->value, expression_context_make_unknown());
+                    arg_info->already_analysed = true;
+                    arg_info->context_application_missing = true;
+                    disambiguate_based_on_overload_type(candidates, argument_type);
+                }
+
+                // If we still have candidiates, try to differentiate based on return type
+                if (candidates.size > 1 && context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED)
+                {
+                    auto expected_return_type = context.signature;
+                    bool return_types_are_different = false;
+                    for (int j = 0; j < candidates.size; j++) {
+                        auto return_type = candidates[j].function_signature->return_type;
+                        if (!return_type.available) {
+                            continue;
+                        }
+                        candidates[j].overloading_param_type = return_type.value;
+                        if (j > 0 && !types_are_equal(candidates[0].overloading_param_type, return_type.value)) {
+                            return_types_are_different = true;
+                        }
+                    }
+
+                    if (return_types_are_different) {
+                        disambiguate_based_on_overload_type(candidates, expected_return_type);
+                    }
+                }
+            }
+
+            // Report error if overloads couldn't be disambiguated
+            if (candidates.size != 1)
+            {
+                // Log errors
+                if (candidates.size > 1) {
+                    log_semantic_error("Could not disambiguate between function overloads", call.expr);
+                    for (int i = 0; i < candidates.size; i++) {
+                        if (candidates[i].function_signature != 0) {
+                            log_error_info_function_type(candidates[i].function_signature);
+                        }
+                    }
+                }
+                else if (candidates.size == 0) {
+                    log_semantic_error("None of the function overloads are valid", call.expr);
+                    for (int i = 0; i < candidates.size; i++) {
+                        if (candidates[i].function_signature != 0) {
+                            log_error_info_function_type(candidates[i].function_signature);
+                        }
                     }
                 }
 
-                if (return_types_are_different) {
-                    disambiguate_based_on_overload_type(candidates, expected_return_type);
-                }
+                // Analyse remaining arguments as something else
+                arguments_analyse_in_unknown_context(arguments);
+                EXIT_ERROR(types.error_type);
             }
         }
 
-        if (candidates.size == 1)
+        // Set expression/Symbol read info
+        auto candidate = candidates[0];
+        auto call_expr_info = pass_get_node_info(semantic_analyser.current_workload->current_pass, call.expr, Info_Query::CREATE_IF_NULL);
+        if (call.expr->type == AST::Expression_Type::PATH_LOOKUP && candidate.symbol != 0) {
+            path_lookup_set_result_symbol(call.expr->options.path_lookup, candidate.symbol);
+            *call_expr_info = candidate.expression_info;
+        }
+
+        // Do argument to parameter mapping (May have been done before for overload disambiguation)
+        bool success = arguments_match_to_function_parameters(
+            arguments, unnamed_argument_count, candidate.function_signature, true, upcast(expr), Parser::Section::ENCLOSURE);
+        if (!success) {
+            arguments_analyse_in_unknown_context(arguments);
+            if (candidate.function_signature->return_type.available) {
+                EXIT_ERROR(candidate.function_signature->return_type.value);
+            }
+            else {
+                expression_info_set_no_value(info);
+                return info;
+            }
+        }
+
+        // Further Call_Type dependend processing (polymorphic/hardcoded function handling)
+        switch (candidate.call_type)
         {
-            // Success
-            auto candidate = candidates[0];
-
-            // Set expression/Symbol read info
-            auto call_expr_info = pass_get_node_info(semantic_analyser.current_workload->current_pass, call.expr, Info_Query::CREATE_IF_NULL);
-            if (call.expr->type == AST::Expression_Type::PATH_LOOKUP && candidate.symbol != 0) {
-                path_lookup_set_result_symbol(call.expr->options.path_lookup, candidate.symbol);
-                *call_expr_info = candidate.expression_info;
-            }
-
-            // Redo argument to parameter mapping
-            bool success = arguments_match_to_function_parameters(
-                arguments, unnamed_argument_count, candidate.function_signature, true, upcast(expr), Parser::Section::ENCLOSURE);
-            if (!success) {
-                arguments_analyse_in_unknown_context(arguments);
-                if (candidate.function_signature->return_type.available) {
-                    EXIT_ERROR(candidate.function_signature->return_type.value);
-                }
-                else {
-                    expression_info_set_no_value(info);
-                    return info;
-                }
-            }
-
-            // Further processing of last candidate (polymorphic/hardcoded function handling)
-            switch (candidate.call_type)
+        case Function_Call_Type::NORMAL:
+        case Function_Call_Type::FUNCTION_POINTER: {
+            break;
+        }
+        case Function_Call_Type::HARDCODED:
+        {
+            if (candidate.options.hardcoded == Hardcoded_Type::TYPE_OF)
             {
-            case Function_Call_Type::NORMAL:
-            case Function_Call_Type::FUNCTION_POINTER: {
-                break;
-            }
-            case Function_Call_Type::HARDCODED:
-            {
-                if (candidate.options.hardcoded == Hardcoded_Type::TYPE_OF)
+                auto& arg = call.arguments[0];
+                auto arg_result = semantic_analyser_analyse_expression_any(arg->value, expression_context_make_unknown());
+                switch (arg_result->result_type)
                 {
-                    auto& arg = call.arguments[0];
-                    auto arg_result = semantic_analyser_analyse_expression_any(arg->value, expression_context_make_unknown());
-                    switch (arg_result->result_type)
-                    {
-                    case Expression_Result_Type::VALUE: {
-                        EXIT_TYPE(arg_result->options.type);
-                    }
-                    case Expression_Result_Type::HARDCODED_FUNCTION: {
-                        log_semantic_error("Cannot use type_of on hardcoded functions!", arg->value);
-                        EXIT_ERROR(types.error_type);
-                    }
-                    case Expression_Result_Type::NOTHING: {
-                        log_semantic_error("Expected value", arg->value);
-                        EXIT_ERROR(types.error_type);
-                    }
-                    case Expression_Result_Type::CONSTANT: {
-                        EXIT_TYPE(arg_result->options.constant.type);
-                    }
-                    case Expression_Result_Type::FUNCTION: {
-                        EXIT_TYPE(upcast(arg_result->options.function->signature));
-                    }
-                    case Expression_Result_Type::TYPE: {
-                        EXIT_TYPE(upcast(types.type_handle));
-                    }
-                    case Expression_Result_Type::POLYMORPHIC_FUNCTION: {
-                        log_semantic_error("Type of cannot handle polymorphic functions", arg->value);
-                        log_error_info_expression_result_type(arg_result->result_type);
-                        EXIT_ERROR(types.error_type);
-                    }
-                    default: panic("");
-                    }
-
-                    panic("");
-                    EXIT_ERROR(arg_result->options.type);
+                case Expression_Result_Type::VALUE: {
+                    EXIT_TYPE(arg_result->options.type);
                 }
-                break;
-            }
-            case Function_Call_Type::POLYMORPHIC:
-            {
-                auto base_progress = candidate.options.polymorphic;
-                assert(base_progress->type == Function_Progress_Type::POLYMORPHIC_BASE, "");
-                auto& poly_base = base_progress->polymorphic_base;
-
-                // Check if we've hit recursion limit for function instanciation
-                int instanciation_depth = 0;
-                {
-                    auto current_function_progress = analysis_workload_try_get_function_progress(semantic_analyser.current_workload);
-                    if (current_function_progress != 0 &&
-                        current_function_progress->type == Function_Progress_Type::POLYMORPHIC_INSTANCE) {
-                        instanciation_depth = current_function_progress->polymorhic_instance.instanciation_depth + 1;
-                    }
-                }
-                if (instanciation_depth > 10) {
-                    log_semantic_error("Reached maximum polymorphic instanciation depth 10, not analysing further", call.expr, Parser::Section::FIRST_TOKEN);
-                    arguments_analyse_in_unknown_context(arguments);
+                case Expression_Result_Type::HARDCODED_FUNCTION: {
+                    log_semantic_error("Cannot use type_of on hardcoded functions!", arg->value);
                     EXIT_ERROR(types.error_type);
                 }
+                case Expression_Result_Type::NOTHING: {
+                    log_semantic_error("Expected value", arg->value);
+                    EXIT_ERROR(types.error_type);
+                }
+                case Expression_Result_Type::CONSTANT: {
+                    EXIT_TYPE(arg_result->options.constant.type);
+                }
+                case Expression_Result_Type::FUNCTION: {
+                    EXIT_TYPE(upcast(arg_result->options.function->signature));
+                }
+                case Expression_Result_Type::TYPE: {
+                    EXIT_TYPE(upcast(types.type_handle));
+                }
+                case Expression_Result_Type::POLYMORPHIC_FUNCTION: {
+                    log_semantic_error("Type of cannot handle polymorphic functions", arg->value);
+                    log_error_info_expression_result_type(arg_result->result_type);
+                    EXIT_ERROR(types.error_type);
+                }
+                default: panic("");
+                }
 
-                // Evaluate polymorphic parameters in correct order
-                Array<Upp_Constant> comptime_arguments = array_create_empty<Upp_Constant>(poly_base.comptime_argument_evaluation_order.size);
-                bool success = true;
-                bool log_error_on_failure = false;
-                SCOPE_EXIT(if (!success) { array_destroy(&comptime_arguments); });
-                Analysis_Pass* header_reanalysis_pass = analysis_pass_allocate(semantic_analyser.current_workload, upcast(expr));
-                for (int i = 0; i < poly_base.comptime_argument_evaluation_order.size && success; i++)
+                panic("");
+                EXIT_ERROR(arg_result->options.type);
+            }
+            break;
+        }
+        case Function_Call_Type::POLYMORPHIC:
+        {
+            auto base_progress = candidate.options.polymorphic;
+            assert(base_progress->type == Function_Progress_Type::POLYMORPHIC_BASE, "");
+            auto& poly_base = base_progress->polymorphic_base;
+
+            // Check if we've hit recursion limit for function instanciation
+            int instanciation_depth = 0;
+            {
+                auto current_function_progress = analysis_workload_try_get_function_progress(semantic_analyser.current_workload);
+                if (current_function_progress != 0 &&
+                    current_function_progress->type == Function_Progress_Type::POLYMORPHIC_INSTANCE) {
+                    instanciation_depth = current_function_progress->polymorhic_instance.instanciation_depth + 1;
+                }
+            }
+            if (instanciation_depth > 10) {
+                log_semantic_error("Reached maximum polymorphic instanciation depth 10, not analysing further", call.expr, Parser::Section::FIRST_TOKEN);
+                arguments_analyse_in_unknown_context(arguments);
+                EXIT_ERROR(types.error_type);
+            }
+
+            // Prepare instanciation data
+            bool success = true;
+            bool log_error_on_failure = false;
+            Array<Upp_Constant> comptime_arguments = array_create_empty<Upp_Constant>(poly_base.polymorphic_parameter_indices.size);
+            SCOPE_EXIT(if (!success) { array_destroy(&comptime_arguments); });
+            Array<Type_Base*> implicit_parameter_types = array_create_empty<Type_Base*>(poly_base.implicit_parameters.size);
+            SCOPE_EXIT(if (!success) { array_destroy(&implicit_parameter_types); });
+            for (int i = 0; i < implicit_parameter_types.size; i++) {
+                implicit_parameter_types[i] = 0;
+            }
+            Analysis_Pass* comptime_evaluation_pass = analysis_pass_allocate(semantic_analyser.current_workload, upcast(expr));
+            Hashset<Type_Base*> matching_helper = hashset_create_pointer_empty<Type_Base*>(1);
+            SCOPE_EXIT(hashset_destroy(&matching_helper));
+
+            // Analyse polymorphic arguments in correct order
+            for (int i = 0; i < poly_base.comptime_argument_evaluation_order.size && success; i++)
+            {
+                int parameter_index = poly_base.comptime_argument_evaluation_order[i];
+                auto& parameter_node =
+                    base_progress->header_workload->function_node->options.function.signature->options.function_signature.parameters[parameter_index];
+
+                // Find argument node
+                AST::Argument* argument_node = 0;
+                if (parameter_index < unnamed_argument_count) {
+                    argument_node = arguments[parameter_index];
+                }
+                else {
+                    for (int j = unnamed_argument_count; j < arguments.size; j++) {
+                        assert(arguments[j]->name.available, "");
+                        if (arguments[j]->name.value == parameter_node->name) {
+                            argument_node = arguments[j];
+                            break;
+                        }
+                    }
+                    assert(argument_node != 0, "");
+                }
+
+                auto arg_info = get_info(argument_node);
+                arg_info->is_polymorphic = parameter_node->is_comptime;
+                arg_info->already_analysed = false;
+                arg_info->context_application_missing = false;
+
+                // Re-analyse base-header to get valid poly-argument type (Since this type can change with filled out polymorphic values)
+                Type_Base* parameter_type = 0;
                 {
-                    int parameter_index = poly_base.comptime_argument_evaluation_order[i];
-                    auto& parameter_node =
-                        base_progress->header_workload->function_node->options.function.signature->options.function_signature.parameters[parameter_index];
-
-                    // Find argument node
-                    AST::Argument* argument_node = 0;
-                    if (parameter_index < unnamed_argument_count) {
-                        argument_node = arguments[parameter_index];
+                    RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->current_pass, comptime_evaluation_pass);
+                    RESTORE_ON_SCOPE_EXIT(analyser.current_workload->polymorphic_values, comptime_arguments);
+                    RESTORE_ON_SCOPE_EXIT(analyser.current_workload->current_symbol_table, base_progress->function->parameter_table);
+                    RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->implicit_polymorphic_types, implicit_parameter_types);
+                    parameter_type = semantic_analyser_analyse_expression_type(parameter_node->type);
+                    if (type_is_unknown(parameter_type) && !parameter_type->contains_polymorphic_type) {
+                        success = false;
                     }
-                    else {
-                        for (int j = unnamed_argument_count; j < arguments.size; j++) {
-                            assert(arguments[j]->name.available, "");
-                            if (arguments[j]->name.value == parameter_node->name) {
-                                argument_node = arguments[j];
-                                break;
-                            }
-                        }
-                        assert(argument_node != 0, "");
-                    }
+                }
 
-                    auto arg_info = get_info(argument_node);
-                    arg_info->is_polymorphic = true;
-                    arg_info->already_analysed = true;
-                    arg_info->context_application_missing = false;
-
-                    // Re-analyse base-header to get valid poly-argument type (Since this type can change with filled out polymorphic values)
-                    Type_Base* parameter_type = 0;
-                    {
-                        RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->current_pass, header_reanalysis_pass);
-                        RESTORE_ON_SCOPE_EXIT(analyser.current_workload->polymorphic_values, comptime_arguments);
-                        RESTORE_ON_SCOPE_EXIT(analyser.current_workload->current_symbol_table, base_progress->function->parameter_table);
-                        parameter_type = semantic_analyser_analyse_expression_type(parameter_node->type);
-                        if (parameter_type->type == Type_Type::ERROR_TYPE) {
-                            success = false;
-                        }
-                    }
-
+                // If this is a comptime argument, calculate comptime value
+                if (arg_info->is_polymorphic)
+                {
                     // Analyse Argument and try to get comptime value
                     if (types_are_equal(parameter_type, upcast(types.type_handle))) {
                         // In this case we are looking for a comptime value for a type, so well call analyse type
                         semantic_analyser_analyse_expression_type(argument_node->value);
                     }
                     else {
-                        semantic_analyser_analyse_expression_value(argument_node->value, expression_context_make_specific_type(parameter_type));
+                        Expression_Context context = expression_context_make_unknown();
+                        if (!parameter_type->contains_polymorphic_type) {
+                            context = expression_context_make_specific_type(parameter_type);
+                        }
+                        semantic_analyser_analyse_expression_value(argument_node->value, context);
                     }
+                    arg_info->already_analysed = true;
 
                     bool was_unavailable = false;
                     auto comptime_result = expression_calculate_comptime_value(
@@ -4563,149 +4731,158 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                     }
                 }
 
-                if (!success) {
-                    if (log_error_on_failure) {
-                        log_semantic_error("Some values couldn't be calculated at comptime!", AST::upcast(expr), Parser::Section::ENCLOSURE);
-                    }
-                    arguments_analyse_in_unknown_context(arguments);
-                    EXIT_ERROR(types.error_type);
-                }
-
-                // Check if we have already instanciated the function with given parameters
-                Function_Progress* instance = 0;
+                // Do type-matching for implicit parameters
+                if (parameter_type->contains_polymorphic_type) 
                 {
-                    for (int i = 0; i < poly_base.instances.size; i++)
-                    {
-                        auto& test_instance = poly_base.instances[i]->polymorhic_instance;
-                        bool all_matching = true;
-                        for (int j = 0; j < poly_base.comptime_argument_evaluation_order.size; j++) {
-                            if (!constant_pool_compare_constants(&compiler.constant_pool, test_instance.parameter_values[j], comptime_arguments[j])) {
-                                all_matching = false;
-                                break;
-                            }
-                        }
-
-                        if (all_matching) {
-                            success = false; // Delete current array
-                            instance = poly_base.instances[i];
-                        }
+                    Type_Base* argument_type;
+                    if (arg_info->already_analysed) {
+                        argument_type = get_info(argument_node->value)->post_op.type_afterwards;
+                    }
+                    else {
+                        argument_type = semantic_analyser_analyse_expression_value(argument_node->value, expression_context_make_unknown());
+                    }
+                    arg_info->already_analysed = true;
+                    arg_info->context_application_missing = !arg_info->is_polymorphic; // Note: If matching succeeds, the types should be equal, this just adds another check if that's true
+                    hashset_reset(&matching_helper);
+                    bool match_success = match_polymorphic_type(parameter_type, argument_type, matching_helper, implicit_parameter_types);
+                    if (!match_success) {
+                        log_semantic_error("Could not match argument type with polymorphic type!", upcast(argument_node));
+                        log_error_info_given_type(argument_type);
+                        log_error_info_expected_type(parameter_type);
+                        success = false;
                     }
                 }
-
-                // Create new instance if necessary
-                if (instance == 0)
-                {
-                    // Analyse the rest of the function signature to get the instance function signature
-                    Type_Function* instance_function_type = 0;
-                    {
-                        RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->polymorphic_values, comptime_arguments);
-                        RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->current_pass, header_reanalysis_pass);
-                        RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->current_symbol_table, base_progress->function->parameter_table);
-                        auto& signature_node = base_progress->header_workload->function_node->options.function.signature->options.function_signature;
-                        auto base_signature = base_progress->function->signature;
-
-                        Type_Function unfinished = type_system_make_function_empty();
-                        for (int i = 0; i < signature_node.parameters.size; i++)
-                        {
-                            auto param_node = signature_node.parameters[i];
-                            if (param_node->is_comptime) {
-                                continue;
-                            }
-                            Function_Parameter parameter = function_parameter_make_empty(0, 0);
-                            analyse_parameter_type_and_value(parameter, param_node);
-                            dynamic_array_push_back(&unfinished.parameters, parameter);
-                        }
-                        Type_Base* return_type = 0;
-                        if (signature_node.return_value.available) {
-                            return_type = semantic_analyser_analyse_expression_type(signature_node.return_value.value);
-                        }
-                        instance_function_type = type_system_finish_function(unfinished, return_type);
-                    }
-
-                    // Create new instance progress
-                    instance = function_progress_create_with_modtree_function(0, base_progress->header_workload->function_node, instance_function_type, base_progress);
-                    instance->type = Function_Progress_Type::POLYMORPHIC_INSTANCE;
-                    instance->polymorhic_instance.instanciation_depth = instanciation_depth;
-                    instance->polymorhic_instance.parameter_values = comptime_arguments;
-                    instance->polymorhic_instance.polymorphic_base = base_progress;
-                    dynamic_array_push_back(&poly_base.instances, instance);
-                }
-
-                // Re-assign argument to parameter mapping with new instance function-signature
-                for (int i = 0; i < arguments.size; i++) {
-                    auto arg = arguments[i];
-                    auto info = get_info(arg);
-                    if (info->is_polymorphic) {
-                        continue;
-                    }
-                    info->argument_index = base_progress->function->signature->parameters[info->argument_index].polymorphic.index_in_polymorphic_evaluation_order;
-                }
-
-                // Store instanciation info in expression_info
-                call_expr_info->options.polymorphic_function = instance;
-                candidate.function_signature = instance->function->signature;
-                semantic_analyser_register_function_call(instance->function);
-                break;
-            }
-            default: panic("");
             }
 
-            call_expr_info->specifics.function_call_signature = candidate.function_signature;
-            auto function_signature = candidate.function_signature;
+            if (!success) {
+                if (log_error_on_failure) {
+                    log_semantic_error("Some values couldn't be calculated at comptime!", AST::upcast(expr), Parser::Section::ENCLOSURE);
+                }
+                arguments_analyse_in_unknown_context(arguments);
+                EXIT_ERROR(types.error_type);
+            }
 
-            // Analyse arguments
-            auto& params = function_signature->parameters;
-            for (int i = 0; i < arguments.size; i++)
+            // Check if we have already instanciated the function with given parameters
+            Function_Progress* instance = 0;
             {
+                for (int i = 0; i < poly_base.instances.size; i++)
+                {
+                    auto& test_instance = poly_base.instances[i]->polymorhic_instance;
+                    bool all_matching = true;
+                    for (int j = 0; j < poly_base.polymorphic_parameter_indices.size; j++) {
+                        if (!constant_pool_compare_constants(&compiler.constant_pool, test_instance.parameter_values[j], comptime_arguments[j])) {
+                            all_matching = false;
+                            break;
+                        }
+                    }
+                    for (int j = 0; j < poly_base.implicit_parameters.size; j++) {
+                        if (!types_are_equal(test_instance.implicit_parameter_values[j], implicit_parameter_types[j])) {
+                            all_matching = false;
+                            break;
+                        }
+                    }
+
+                    if (all_matching) {
+                        success = false; // Delete current array
+                        instance = poly_base.instances[i];
+                    }
+                }
+            }
+
+            // Create new instance if necessary
+            if (instance == 0)
+            {
+                // Analyse the rest of the function signature to get the instance function signature
+                Type_Function* instance_function_type = 0;
+                {
+                    Analysis_Pass* instance_parameter_evaluation_pass = analysis_pass_allocate(semantic_analyser.current_workload, upcast(expr));
+                    RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->polymorphic_values, comptime_arguments);
+                    RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->current_pass, instance_parameter_evaluation_pass);
+                    RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->current_symbol_table, base_progress->function->parameter_table);
+                    RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->implicit_polymorphic_types, implicit_parameter_types);
+                    auto& signature_node = base_progress->header_workload->function_node->options.function.signature->options.function_signature;
+                    auto base_signature = base_progress->function->signature;
+
+                    Type_Function unfinished = type_system_make_function_empty();
+                    for (int i = 0; i < signature_node.parameters.size; i++)
+                    {
+                        auto param_node = signature_node.parameters[i];
+                        if (param_node->is_comptime) {
+                            continue;
+                        }
+                        Function_Parameter parameter = function_parameter_make_empty(0, 0);
+                        analyse_parameter_type_and_value(parameter, param_node);
+                        assert(!parameter.type->contains_polymorphic_type, "");
+                        dynamic_array_push_back(&unfinished.parameters, parameter);
+                    }
+                    Type_Base* return_type = 0;
+                    if (signature_node.return_value.available) {
+                        return_type = semantic_analyser_analyse_expression_type(signature_node.return_value.value);
+                    }
+                    instance_function_type = type_system_finish_function(unfinished, return_type);
+                }
+
+                // Create new instance progress
+                instance = function_progress_create_with_modtree_function(0, base_progress->header_workload->function_node, instance_function_type, base_progress);
+                instance->type = Function_Progress_Type::POLYMORPHIC_INSTANCE;
+                instance->polymorhic_instance.instanciation_depth = instanciation_depth;
+                instance->polymorhic_instance.parameter_values = comptime_arguments;
+                instance->polymorhic_instance.polymorphic_base = base_progress;
+                instance->polymorhic_instance.implicit_parameter_values = implicit_parameter_types;
+                dynamic_array_push_back(&poly_base.instances, instance);
+            }
+
+            // Re-assign argument to parameter mapping with new instance function-signature
+            for (int i = 0; i < arguments.size; i++) {
                 auto arg = arguments[i];
-                auto arg_info = get_info(arg);
-
-                // Check if already handled
-                if (arg_info->context_application_missing) {
-                    auto value_info = get_info(arg->value);
-                    auto arg_context = expression_context_make_specific_type(params[arg_info->argument_index].type);
-                    value_info->post_op = expression_context_apply(
-                        expression_info_get_type(value_info, true), arg_context, true, arg->value);
+                auto info = get_info(arg);
+                if (info->is_polymorphic) {
                     continue;
                 }
-                if (arg_info->already_analysed) { // Inclues both already analysed during overload disambiguation and polymorphic values
-                    continue;
-                }
+                info->argument_index = base_progress->function->signature->parameters[info->argument_index].normal.index_in_non_polymorphic_signature;
+            }
 
-                // Analyse argument
-                semantic_analyser_analyse_expression_value(arg->value, expression_context_make_specific_type(params[arg_info->argument_index].type));
-            }
-            if (function_signature->return_type.available) {
-                EXIT_VALUE(function_signature->return_type.value);
-            }
-            else {
-                expression_info_set_no_value(info);
-                return info;
-            }
+            // Store instanciation info in expression_info
+            call_expr_info->options.polymorphic_function = instance;
+            candidate.function_signature = instance->function->signature;
+            semantic_analyser_register_function_call(instance->function);
+            break;
         }
-        else
+        default: panic("");
+        }
+
+        // Store final function signature for code generation
+        call_expr_info->specifics.function_call_signature = candidate.function_signature;
+
+        // Analyse arguments
+        auto function_signature = candidate.function_signature;
+        auto& params = function_signature->parameters;
+        for (int i = 0; i < arguments.size; i++)
         {
-            // Log errors
-            if (candidates.size > 1) {
-                log_semantic_error("Could not disambiguate between function overloads", call.expr);
-                for (int i = 0; i < candidates.size; i++) {
-                    if (candidates[i].function_signature != 0) {
-                        log_error_info_function_type(candidates[i].function_signature);
-                    }
-                }
+            auto arg = arguments[i];
+            auto arg_info = get_info(arg);
+
+            // Check if already handled
+            if (arg_info->context_application_missing) {
+                auto value_info = get_info(arg->value);
+                auto arg_context = expression_context_make_specific_type(params[arg_info->argument_index].type);
+                value_info->post_op = expression_context_apply(
+                    expression_info_get_type(value_info, true), arg_context, true, arg->value);
+                continue;
             }
-            else if (candidates.size == 0) {
-                log_semantic_error("None of the function overloads are valid", call.expr);
-                for (int i = 0; i < candidates.size; i++) {
-                    if (candidates[i].function_signature != 0) {
-                        log_error_info_function_type(candidates[i].function_signature);
-                    }
-                }
+            if (arg_info->already_analysed) { // Inclues both already analysed during overload disambiguation and polymorphic values
+                continue;
             }
 
-            // Analyse remaining arguments as something else
-            arguments_analyse_in_unknown_context(arguments);
-            EXIT_ERROR(types.error_type);
+            // Analyse argument
+            semantic_analyser_analyse_expression_value(arg->value, expression_context_make_specific_type(params[arg_info->argument_index].type));
+        }
+        if (function_signature->return_type.available) {
+            EXIT_VALUE(function_signature->return_type.value);
+        }
+        else {
+            expression_info_set_no_value(info);
+            return info;
         }
 
         panic("Not a valid code path, the if before should terminate!");
@@ -4724,8 +4901,27 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         return info;
     }
     case AST::Expression_Type::POLYMORPHIC_SYMBOL: {
-        log_semantic_error("Currently working on this!", expr);
-        EXIT_ERROR(types.error_type);
+        // Note: The mapping is only registered during header analysis, otherwise we have an invalid usage of this expression
+        auto polymorphic_type_opt = hashtable_find_element(&semantic_analyser.implicit_parameter_node_mapping, expr);
+        if (polymorphic_type_opt == 0) {
+            log_semantic_error("Implicit polymorphic parameter only valid in function header!", expr);
+            EXIT_ERROR(types.error_type);
+        }
+
+        // Check if instanciated values are available
+        auto poly_type = *polymorphic_type_opt;
+        if (poly_type->is_reference) {
+            poly_type = poly_type->mirrored_type; // Note: Here we return the base type
+        }
+        auto result_type = upcast(poly_type);
+        auto& workload = semantic_analyser.current_workload;
+        if (workload->implicit_polymorphic_types.data != 0) {
+            auto instance_type = workload->implicit_polymorphic_types[poly_type->index];
+            if (instance_type != 0) {
+                result_type = instance_type;
+            }
+        }
+        EXIT_TYPE(result_type);
     }
     case AST::Expression_Type::CAST:
     {
@@ -5598,7 +5794,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         auto right_type = semantic_analyser_analyse_expression_value(binop_node.right, operand_context);
 
         // Check for unknowns
-        if (types_are_equal(left_type, types.error_type) || types_are_equal(right_type, types.error_type)) {
+        if (type_is_unknown(left_type) || type_is_unknown(right_type)) {
             EXIT_ERROR(types.error_type);
         }
 
@@ -5705,8 +5901,8 @@ Expression_Post_Op expression_context_apply(
     }
 
     // If either requested type or value type is unknown, just raise error flag
-    if (types_are_equal(initial_type, types.error_type) ||
-        (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED && types_are_equal(context.signature, types.error_type)))
+    if (type_is_unknown(initial_type) ||
+        (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED && type_is_unknown(context.signature)))
     {
         if (log_errors) {
             semantic_analyser_set_error_flag(true);
@@ -5807,7 +6003,7 @@ Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression* expre
         result->options.value_type = compiler.type_system.predefined_types.error_type;
         context.type = Expression_Context_Type::UNKNOWN;
     }
-    else if (result->result_type != Expression_Result_Type::NOTHING && result->post_op.type_afterwards->type != Type_Type::ERROR_TYPE && context.type == Expression_Context_Type::NO_VALUE) {
+    else if (result->result_type != Expression_Result_Type::NOTHING && !type_is_unknown(result->post_op.type_afterwards) && context.type == Expression_Context_Type::NO_VALUE) {
         log_semantic_error("Value is not used", expression);
         result->result_type = Expression_Result_Type::VALUE;
         result->contains_errors = true;
@@ -5842,7 +6038,7 @@ Type_Base* semantic_analyser_try_convert_value_to_type(AST::Expression* expressi
     case Expression_Result_Type::CONSTANT:
     case Expression_Result_Type::VALUE:
     {
-        if (types_are_equal(result->post_op.type_afterwards, types.error_type)) {
+        if (type_is_unknown(result->post_op.type_afterwards)) {
             semantic_analyser_set_error_flag(true);
             return types.error_type;
         }
@@ -6012,7 +6208,10 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
                 context = expression_context_make_specific_type(expected_return_type.value);
             }
             auto return_type = semantic_analyser_analyse_expression_value(return_stat.value, context);
-            bool is_unknown = types_are_equal(return_type, types.error_type);
+            bool is_unknown = type_is_unknown(return_type);
+            if (expected_return_type.available) {
+                is_unknown = is_unknown || type_is_unknown(expected_return_type.value);
+            }
 
             if (analyser.current_workload->type == Analysis_Workload_Type::BAKE_ANALYSIS)
             {
@@ -6463,7 +6662,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
                     }
 
                     // Check if definition type and expected type matches
-                    if (symbol->type == Symbol_Type::VARIABLE_UNDEFINED || (symbol->type == Symbol_Type::VARIABLE && symbol->options.variable_type->type == Type_Type::ERROR_TYPE)) {
+                    if (symbol->type == Symbol_Type::VARIABLE_UNDEFINED || (symbol->type == Symbol_Type::VARIABLE && type_is_unknown(symbol->options.variable_type))) {
                         symbol->type = Symbol_Type::VARIABLE;
                         symbol->options.variable_type = given_type;
                     }
@@ -6480,7 +6679,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
                 Expression_Context context = expression_context_make_unknown();
                 if (i < symbol_nodes.size) {
                     auto symbol = get_info(symbol_nodes[i])->symbol;
-                    if (symbol->type == Symbol_Type::VARIABLE && symbol->options.variable_type->type != Type_Type::ERROR_TYPE) {
+                    if (symbol->type == Symbol_Type::VARIABLE && !type_is_unknown(symbol->options.variable_type)) {
                         context = expression_context_make_specific_type(symbol->options.variable_type);
                     }
                 }
@@ -6636,10 +6835,13 @@ void function_progress_destroy(Function_Progress* progress) {
         auto& base = progress->polymorphic_base;
         dynamic_array_destroy(&base.instances);
         dynamic_array_destroy(&base.comptime_argument_evaluation_order);
+        dynamic_array_destroy(&base.implicit_parameters);
+        dynamic_array_destroy(&base.polymorphic_parameter_indices);
     }
     else if (progress->type == Function_Progress_Type::POLYMORPHIC_INSTANCE) {
         auto& instance = progress->polymorhic_instance;
         array_destroy(&instance.parameter_values);
+        array_destroy(&instance.implicit_parameter_values);
     }
     delete progress;
 }
@@ -6652,6 +6854,7 @@ void semantic_analyser_reset()
     {
         semantic_analyser.root_module = 0;
         semantic_analyser.current_workload = 0;
+        hashtable_reset(&semantic_analyser.implicit_parameter_node_mapping);
 
         // Errors
         for (int i = 0; i < semantic_analyser.errors.size; i++) {
@@ -6807,12 +7010,14 @@ Semantic_Analyser* semantic_analyser_initialize()
     semantic_analyser.ast_to_info_mapping = hashtable_create_empty<AST_Info_Key, Analysis_Info*>(1, ast_info_key_hash, ast_info_equals);
     semantic_analyser.allocated_symbol_tables = dynamic_array_create_empty<Symbol_Table*>(16);
     semantic_analyser.allocated_symbols = dynamic_array_create_empty<Symbol*>(16);
+    semantic_analyser.implicit_parameter_node_mapping = hashtable_create_pointer_empty<AST::Expression*, Type_Polymorphic*>(1);
     return &semantic_analyser;
 }
 
 void semantic_analyser_destroy()
 {
     hashset_destroy(&semantic_analyser.symbol_lookup_visited);
+    hashtable_destroy(&semantic_analyser.implicit_parameter_node_mapping);
 
     for (int i = 0; i < semantic_analyser.errors.size; i++) {
         dynamic_array_destroy(&semantic_analyser.errors[i].information);

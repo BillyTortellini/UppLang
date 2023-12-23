@@ -15,6 +15,7 @@ struct Module_Progress;
 struct Symbol;
 struct Symbol_Table;
 struct Symbol_Data;
+struct Type_Polymorphic;
 
 struct Function_Progress;
 struct Function_Parameter;
@@ -33,15 +34,18 @@ enum class Symbol_Type
     DEFINITION_UNFINISHED,   // A Definition that isn't ready yet (global variable or comptime value)
     VARIABLE_UNDEFINED,      // A variable/parameter/global that hasn't been defined yet
 
-    ALIAS_OR_IMPORTED_SYMBOL, // Alias created by import, e.g. import Algorithms~bubble_sort as sort
     HARDCODED_FUNCTION,
     FUNCTION,
     POLYMORPHIC_FUNCTION,
-    TYPE,
-    COMPTIME_VALUE,
+
     VARIABLE,
     GLOBAL,
     PARAMETER,
+
+    TYPE,
+    IMPLICIT_PARAMETER, // Implicit polymorphic type, e.g. "$T"
+    COMPTIME_VALUE,
+    ALIAS_OR_IMPORTED_SYMBOL, // Alias created by import, e.g. import Algorithms~bubble_sort as sort
     MODULE,
     ERROR_SYMBOL, 
 };
@@ -62,6 +66,7 @@ struct Symbol
         ModTree_Global* global;
         Function_Parameter* parameter;
         Upp_Constant constant;
+        Type_Polymorphic* implicit;
     } options;
 
     String* id;

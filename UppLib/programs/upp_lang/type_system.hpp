@@ -11,6 +11,7 @@ struct Timer;
 struct Type_Base;
 struct String;
 struct Workload_Function_Parameter;
+struct Function_Progress;
 
 // Helpers
 enum class Parameter_Type
@@ -25,6 +26,7 @@ struct Function_Parameter
     Type_Base* type;
     Workload_Function_Parameter* workload; // May be null for extern/hardcoded functions
     Symbol* symbol; // May be null for extern/hardcoded functions
+    int index; // Index in parameter array of function signature
 
     // Note: It can be the case that a default value exists, but the upp_constant is not available because there was an error,
     //       and we need to be able to seperate these cases.
@@ -37,9 +39,7 @@ struct Function_Parameter
         struct {
             int index_in_non_polymorphic_signature;
         } normal;
-        struct {
-            int index_in_polymorphic_evaluation_order;
-        } polymorphic;
+        int polymorphic_index;
     };
 };
 Function_Parameter function_parameter_make_empty(Symbol* symbol = 0, Workload_Function_Parameter* workload = 0);
@@ -78,6 +78,7 @@ enum class Type_Type
     ENUM,
     ARRAY, // Array with compile-time known size, like [5]int
     SLICE, // Array with dynamic size, []int
+    POLYMORPHIC
 };
 
 struct Type_Base
@@ -86,6 +87,19 @@ struct Type_Base
     int size; // in byte
     int alignment; // in byte
     Type_Handle type_handle;
+    bool contains_polymorphic_type; // Means the type-tree contains at least one polymorphic node...
+};
+
+struct Type_Polymorphic
+{
+    Type_Base base;
+    Symbol* symbol;
+    Workload_Function_Parameter* parameter_workload;
+    Function_Progress* progress;
+    int index;
+
+    bool is_reference;
+    Type_Polymorphic* mirrored_type; // Pointer to either the reference type or the "base" polymorphic-type
 };
 
 enum class Primitive_Type
@@ -322,7 +336,6 @@ struct Type_System
     Dynamic_Array<Type_Base*> types;
     Dynamic_Array<Internal_Type_Information> internal_type_infos;
     u64 next_internal_index;
-
 };
 
 Type_System type_system_create(Timer* timer);
@@ -331,6 +344,7 @@ void type_system_reset(Type_System* system);
 void type_system_print(Type_System* system);
 void type_system_add_predefined_types(Type_System* system);
 
+Type_Polymorphic* type_system_make_polymorphic(Symbol* symbol, Workload_Function_Parameter* parameter_workload, Function_Progress* progress, int index);
 Type_Pointer* type_system_make_pointer(Type_Base* child_type);
 Type_Slice* type_system_make_slice(Type_Base* element_type);
 Type_Array* type_system_make_array(Type_Base* element_type, bool count_known, int element_count);
@@ -350,6 +364,7 @@ void type_system_finish_enum(Type_Enum* enum_type);
 void type_system_finish_array(Type_Array* array);
 
 bool types_are_equal(Type_Base* a, Type_Base* b);
+bool type_is_unknown(Type_Base* a);
 Optional<Enum_Item> enum_type_find_member_by_value(Type_Enum* enum_type, int value);
 Optional<Struct_Member> type_signature_find_member_by_id(Type_Base* type, String* id);  // Valid for both structs, unions and slices
 
@@ -364,6 +379,7 @@ inline Type_Base* upcast(Type_Array* value)     { return (Type_Base*)value; }
 inline Type_Base* upcast(Type_Slice* value)     { return (Type_Base*)value; }
 inline Type_Base* upcast(Type_Primitive* value) { return (Type_Base*)value; }
 inline Type_Base* upcast(Type_Pointer* value)   { return (Type_Base*)value; }
+inline Type_Base* upcast(Type_Polymorphic* value)   { return (Type_Base*)value; }
 
 inline Type_Type get_type_type(Type_Struct* unused) { return Type_Type::STRUCT; }
 inline Type_Type get_type_type(Type_Function* unused) { return Type_Type::FUNCTION; }
@@ -372,6 +388,7 @@ inline Type_Type get_type_type(Type_Array* unused) { return Type_Type::ARRAY; }
 inline Type_Type get_type_type(Type_Slice* unused) { return Type_Type::SLICE; }
 inline Type_Type get_type_type(Type_Primitive* unused) { return Type_Type::PRIMITIVE; }
 inline Type_Type get_type_type(Type_Pointer* unused) { return Type_Type::POINTER; }
+inline Type_Type get_type_type(Type_Polymorphic* unused) { return Type_Type::POLYMORPHIC; }
 inline Type_Type get_type_type(Type_Base* base) { return base->type; }
 
 template<typename T>

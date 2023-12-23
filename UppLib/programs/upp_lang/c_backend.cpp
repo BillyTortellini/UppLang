@@ -366,6 +366,11 @@ void c_generator_register_type_name(C_Generator* generator, Type_Base* type)
         string_append_formated(&type_name, "*");
         break;
     }
+    case Type_Type::POLYMORPHIC:
+    {
+        string_append_formated(&type_name, "void*");
+        break;
+    }
     case Type_Type::PRIMITIVE:
     {
         auto primitive = downcast<Type_Primitive>(type);
@@ -876,7 +881,7 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
     // Create all Type_Signatures
     for (int i = 0; i < generator->compiler->type_system.types.size; i++) {
         Type_Base* type = generator->compiler->type_system.types[i];
-        if (types_are_equal(type, types.error_type)) continue;
+        if (type_is_unknown(type)) continue;
         c_generator_register_type_name(generator, generator->compiler->type_system.types[i]);
     }
 
