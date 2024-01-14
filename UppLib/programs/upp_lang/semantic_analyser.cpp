@@ -42,15 +42,11 @@ void analysis_workload_entry(void* userdata);
 void analysis_workload_append_to_string(Workload_Base* workload, String* string);
 void workload_executer_wait_for_dependency_resolution();
 Dependency_Failure_Info dependency_failure_info_make_none();
-void analysis_workload_add_struct_dependency(
-    Struct_Progress* my_workload, 
-    Struct_Progress* other_progress, 
-    Dependency_Type type,
-    Dependency_Failure_Info failure_info = dependency_failure_info_make_none());
 void analysis_workload_add_dependency_internal(
     Workload_Base* workload,
     Workload_Base* dependency,
     Dependency_Failure_Info failure_info = dependency_failure_info_make_none());
+void wait_for_type_size_to_finish(Type_Base* type, Dependency_Failure_Info failure_info = dependency_failure_info_make_none());
 
 
 // HELPERS
@@ -59,8 +55,7 @@ namespace Helpers
     Analysis_Workload_Type get_workload_type(Workload_Import_Resolve* workload) { return Analysis_Workload_Type::IMPORT_RESOLVE; };
     Analysis_Workload_Type get_workload_type(Workload_Module_Analysis* workload) { return Analysis_Workload_Type::MODULE_ANALYSIS; };
     Analysis_Workload_Type get_workload_type(Workload_Definition* workload) { return Analysis_Workload_Type::DEFINITION; };
-    Analysis_Workload_Type get_workload_type(Workload_Struct_Analysis* workload) { return Analysis_Workload_Type::STRUCT_ANALYSIS; };
-    Analysis_Workload_Type get_workload_type(Workload_Struct_Reachable_Resolve* workload) { return Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE; };
+    Analysis_Workload_Type get_workload_type(Workload_Structure* workload) { return Analysis_Workload_Type::STRUCT_ANALYSIS; };
     Analysis_Workload_Type get_workload_type(Workload_Function_Header* workload) { return Analysis_Workload_Type::FUNCTION_HEADER; };
     Analysis_Workload_Type get_workload_type(Workload_Function_Parameter* workload) { return Analysis_Workload_Type::FUNCTION_PARAMETER; };
     Analysis_Workload_Type get_workload_type(Workload_Function_Body* workload) { return Analysis_Workload_Type::FUNCTION_BODY; };
@@ -77,8 +72,7 @@ Workload_Base* upcast(Workload_Function_Header* workload) {return &workload->bas
 Workload_Base* upcast(Workload_Function_Parameter* workload) {return &workload->base;}
 Workload_Base* upcast(Workload_Function_Body* workload) {return &workload->base;}
 Workload_Base* upcast(Workload_Function_Cluster_Compile* workload) {return &workload->base;}
-Workload_Base* upcast(Workload_Struct_Analysis* workload) {return &workload->base;}
-Workload_Base* upcast(Workload_Struct_Reachable_Resolve* workload) {return &workload->base;}
+Workload_Base* upcast(Workload_Structure* workload) {return &workload->base;}
 Workload_Base* upcast(Workload_Definition* workload) {return &workload->base;}
 Workload_Base* upcast(Workload_Bake_Analysis* workload) {return &workload->base;}
 Workload_Base* upcast(Workload_Bake_Execution* workload) {return &workload->base;}
@@ -603,37 +597,24 @@ Function_Progress* function_progress_create_with_modtree_function(
     return progress;
 }
 
-Struct_Progress* struct_progress_create(Symbol* symbol, AST::Expression* struct_node)
+Workload_Structure* structure_workload_create(Symbol* symbol, AST::Expression* struct_node)
 {
     assert(struct_node->type == AST::Expression_Type::STRUCTURE_TYPE, "Has to be struct!");
     auto& struct_info = struct_node->options.structure;
 
     // Create progress
-    auto progress = analysis_progress_allocate_internal<Struct_Progress>();
-    progress->struct_type = type_system_make_struct_empty(struct_info.type, (symbol == 0 ? 0 : symbol->id), progress);
+    auto workload = workload_executer_allocate_workload<Workload_Structure>(upcast(struct_node));
+    workload->arrays_depending_on_struct_size = dynamic_array_create_empty<Type_Array*>(1);
+    workload->struct_type = type_system_make_struct_empty(struct_info.type, (symbol == 0 ? 0 : symbol->id), workload);
+    workload->struct_node = struct_node;
 
     // Set Symbol
     if (symbol != 0) {
         symbol->type = Symbol_Type::TYPE;
-        symbol->options.type = upcast(progress->struct_type);
+        symbol->options.type = upcast(workload->struct_type);
     }
 
-    // Add workloads
-    progress->analysis_workload = workload_executer_allocate_workload<Workload_Struct_Analysis>(upcast(struct_node));
-    progress->analysis_workload->progress = progress;
-    progress->analysis_workload->dependency_type = Dependency_Type::MEMBER_IN_MEMORY;
-    progress->analysis_workload->struct_node = struct_node;
-
-    progress->reachable_resolve_workload = workload_executer_allocate_workload<Workload_Struct_Reachable_Resolve>(0);
-    progress->reachable_resolve_workload->progress = progress;
-    progress->reachable_resolve_workload->unfinished_array_types = dynamic_array_create_empty<Type_Array*>(1);
-    progress->reachable_resolve_workload->struct_types = dynamic_array_create_empty<Type_Struct*>(1);
-    dynamic_array_push_back(&progress->reachable_resolve_workload->struct_types, progress->struct_type);
-
-    // Add dependencies between workloads
-    analysis_workload_add_dependency_internal(upcast(progress->reachable_resolve_workload), upcast(progress->analysis_workload));
-
-    return progress;
+    return workload;
 }
 
 Bake_Progress* bake_progress_create(AST::Expression* bake_expr)
@@ -804,7 +785,7 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
         }
         case AST::Expression_Type::STRUCTURE_TYPE: {
             // Note: Creating the progress also sets the symbol type
-            auto workload = upcast(struct_progress_create(symbol, value)->analysis_workload);
+            auto workload = upcast(structure_workload_create(symbol, value));
             if (symbol_finish_workload != 0) {
                 analysis_workload_add_dependency_internal(workload, symbol_finish_workload);
             }
@@ -1037,6 +1018,7 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
     }
 
     auto result_type = expression_info_get_type(info, true);
+    wait_for_type_size_to_finish(result_type);
     switch (expr->type)
     {
     case AST::Expression_Type::ARRAY_TYPE:
@@ -1573,10 +1555,8 @@ void analysis_workload_destroy(Workload_Base* workload)
     list_destroy(&workload->dependents);
     dynamic_array_destroy(&workload->reachable_clusters);
     dynamic_array_destroy(&workload->block_stack);
-    if (workload->type == Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE) {
-        auto reachable = downcast<Workload_Struct_Reachable_Resolve>(workload);
-        dynamic_array_destroy(&reachable->struct_types);
-        dynamic_array_destroy(&reachable->unfinished_array_types);
+    if (workload->type == Analysis_Workload_Type::STRUCT_ANALYSIS) {
+        dynamic_array_destroy(&downcast<Workload_Structure>(workload)->arrays_depending_on_struct_size);
     }
     else if (workload->type == Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE) {
         auto cluster = downcast<Workload_Function_Cluster_Compile>(workload);
@@ -1778,7 +1758,7 @@ Symbol* path_lookup_resolve_to_single_symbol(AST::Path_Lookup* path)
     // Resolve path
     auto symbol_table = path_lookup_resolve_only_path_parts(path);
     if (symbol_table == 0) {
-        return false;
+        return error;
     }
 
     // Resolve symbol
@@ -1881,7 +1861,7 @@ void workload_executer_remove_dependency(Workload_Base* workload, Workload_Base*
 
 Workload_Base* analysis_workload_find_associated_cluster(Workload_Base* workload)
 {
-    assert(workload->type == Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE || workload->type == Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE, "");
+    assert(workload->type == Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE, "");
     if (workload->cluster == 0) {
         return workload;
     }
@@ -1924,8 +1904,7 @@ bool cluster_workload_check_for_cyclic_dependency(
 void analysis_workload_add_cluster_dependency(Workload_Base* add_to_workload, Workload_Base* dependency, Dependency_Failure_Info failure_info = dependency_failure_info_make_none())
 {
     auto graph = &workload_executer;
-    assert((add_to_workload->type == Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE && dependency->type == Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE) ||
-        (add_to_workload->type == Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE && dependency->type == Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE), "");
+    assert(add_to_workload->type == dependency->type && dependency->type == Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE, "");
     Workload_Base* merge_into = analysis_workload_find_associated_cluster(add_to_workload);
     Workload_Base* merge_from = analysis_workload_find_associated_cluster(dependency);
     if (merge_into == merge_from || merge_from->is_finished) {
@@ -1979,27 +1958,11 @@ void analysis_workload_add_cluster_dependency(Workload_Base* add_to_workload, Wo
         list_reset(&merge_cluster->dependencies);
 
         // Merge all analysis item values
-        switch (merge_into->type)
-        {
-        case Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE:
         {
             auto& functions_into = downcast<Workload_Function_Cluster_Compile>(merge_into)->functions;
             auto& functions_from = downcast<Workload_Function_Cluster_Compile>(merge_cluster)->functions;
             dynamic_array_append_other(&functions_into, &functions_from);
             dynamic_array_reset(&functions_from);
-            break;
-        }
-        case Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE:
-        {
-            auto struct_into = downcast<Workload_Struct_Reachable_Resolve>(merge_into);
-            auto struct_from = downcast<Workload_Struct_Reachable_Resolve>(merge_cluster);
-            dynamic_array_append_other(&struct_into->struct_types, &struct_from->struct_types);
-            dynamic_array_reset(&struct_from->struct_types);
-            dynamic_array_append_other(&struct_into->unfinished_array_types, &struct_from->unfinished_array_types);
-            dynamic_array_reset(&struct_from->unfinished_array_types);
-            break;
-        }
-        default: panic("Clustering only on function clusters and reachable resolve cluster!");
         }
 
         // Add reachables to merged
@@ -2027,38 +1990,6 @@ void analysis_workload_add_cluster_dependency(Workload_Base* add_to_workload, Wo
                 }
             }
         }
-    }
-}
-
-void analysis_workload_add_struct_dependency(Struct_Progress* progress, Struct_Progress* other, Dependency_Type type, Dependency_Failure_Info failure_info)
-{
-    auto graph = &workload_executer;
-    if (progress->reachable_resolve_workload->base.is_finished || other->reachable_resolve_workload->base.is_finished) return;
-
-    switch (type)
-    {
-    case Dependency_Type::NORMAL: {
-        // Struct member references another struct, but not as a type
-        // E.g. Foo :: struct { value: Bar.{...}; }
-        analysis_workload_add_dependency_internal(upcast(progress->analysis_workload), upcast(other->reachable_resolve_workload), failure_info);
-        break;
-    }
-    case Dependency_Type::MEMBER_IN_MEMORY: {
-        // Struct member references other member in memory
-        // E.g. Foo :: struct { value: Bar; }
-        analysis_workload_add_dependency_internal(upcast(progress->analysis_workload), upcast(other->analysis_workload), failure_info);
-        analysis_workload_add_cluster_dependency(upcast(progress->reachable_resolve_workload), upcast(other->reachable_resolve_workload), failure_info);
-        break;
-    }
-    case Dependency_Type::MEMBER_REFERENCE:
-    {
-        // Struct member contains some sort of reference to other member
-        // E.g. Foo :: struct { value: *Bar; }
-        // This means we need to unify the Reachable-Clusters
-        analysis_workload_add_cluster_dependency(upcast(progress->reachable_resolve_workload), upcast(other->reachable_resolve_workload), failure_info);
-        break;
-    }
-    default: panic("");
     }
 }
 
@@ -2457,7 +2388,6 @@ void workload_executer_resolve()
             case Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE: str = "Cluster Compile "; break;
 
             case Analysis_Workload_Type::STRUCT_ANALYSIS: str = "Struct Analysis "; break;
-            case Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE: str = "Struct Reachable"; break;
             }
             logg("Time in %s %3.4fms\n", str, time_per_workload_type[i] * 1000);
         }
@@ -2597,23 +2527,9 @@ void analysis_workload_append_to_string(Workload_Base* workload, String* string)
         break;
     }
     case Analysis_Workload_Type::STRUCT_ANALYSIS: {
-        auto name = downcast<Workload_Struct_Analysis>(workload)->progress->struct_type->name;
+        auto name = downcast<Workload_Structure>(workload)->struct_type->name;
         const char* struct_id = name.available? name.value->characters : "Anonymous_Struct";
         string_append_formated(string, "Struct-Analysis \"%s\"", struct_id);
-        break;
-    }
-    case Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE: {
-        //const char* struct_id = symbol == 0 ? "Anonymous_Struct" : symbol->id->characters;
-        string_append_formated(string, "Struct-Reachable-Resolve [");
-        auto cluster = downcast<Workload_Struct_Reachable_Resolve>(analysis_workload_find_associated_cluster(workload));
-        for (int i = 0; i < cluster->struct_types.size; i++) {
-            auto name = cluster->struct_types[i]->name;
-            const char* struct_id = name.available? name.value->characters : "Anonymous_Struct";
-            string_append_formated(string, "%s, ", struct_id);
-        }
-        string_append_formated(string, "]");
-
-
         break;
     }
     default: panic("");
@@ -2628,6 +2544,21 @@ Module_Progress* workload_executer_add_module_discovery(AST::Module* module, boo
     return progress;
 }
 
+void wait_for_type_size_to_finish(Type_Base* type, Dependency_Failure_Info failure_info) 
+{
+    if (!type_size_is_unfinished(type)) {
+        return;
+    }
+    auto waiting_for_type = type;
+    while (waiting_for_type->type == Type_Type::ARRAY) {
+        waiting_for_type = downcast<Type_Array>(waiting_for_type)->element_type;
+    }
+    assert(waiting_for_type->type == Type_Type::STRUCT, "");
+    auto structure = downcast<Type_Struct>(waiting_for_type);
+
+    analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(structure->workload), failure_info);
+    workload_executer_wait_for_dependency_resolution();
+}
 
 
 // WORKLOAD EXECUTION AND OTHERS
@@ -3149,13 +3080,13 @@ void analysis_workload_entry(void* userdata)
     }
     case Analysis_Workload_Type::STRUCT_ANALYSIS:
     {
-        auto workload_structure = downcast<Workload_Struct_Analysis>(workload);
+        auto workload_structure = downcast<Workload_Structure>(workload);
 
         auto& struct_node = workload_structure->struct_node->options.structure;
-        Type_Struct* struct_signature = workload_structure->progress->struct_type;
+        Type_Struct* struct_signature = workload_structure->struct_type;
         auto& members = struct_signature->members;
-        workload_structure->dependency_type = Dependency_Type::MEMBER_IN_MEMORY;
 
+        // Analyse all members
         for (int i = 0; i < struct_node.members.size; i++)
         {
             auto member_node = struct_node.members[i];
@@ -3183,19 +3114,26 @@ void analysis_workload_entry(void* userdata)
             assert(!(member.type->size == 0 && member.type->alignment == 0), "Must not happen with current Dependency-System");
             dynamic_array_push_back(&members, member);
         }
-        type_system_finish_struct(struct_signature);
-        break;
-    }
-    case Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE:
-    {
-        auto reachable = downcast<Workload_Struct_Reachable_Resolve>(workload);
-        for (int i = 0; i < reachable->unfinished_array_types.size; i++)
+        
+        // Add size dependencies to other structs
+        for (int i = 0; i < members.size; i++) 
         {
-            Type_Array* array_type = reachable->unfinished_array_types[i];
-            assert(!(array_type->element_type->size == 0 && array_type->element_type->alignment == 0), "");
-            array_type->base.size = array_type->element_type->size * array_type->element_count;
-            array_type->base.alignment = array_type->element_type->alignment;
-            type_system_finish_array(array_type);
+            auto& member = members[i];
+            bool has_failed = false;
+            wait_for_type_size_to_finish(member.type, dependency_failure_info_make(&has_failed, 0));
+
+            if (has_failed) {
+                member.type = type_system.predefined_types.error_type;
+                log_semantic_error("Struct contains itself, this can only work with references", upcast(struct_node.members[i]), Parser::Section::IDENTIFIER);
+            }
+        }
+
+        type_system_finish_struct(struct_signature);
+
+        // Finish all arrays waiting on this struct 
+        for (int i = 0; i < workload_structure->arrays_depending_on_struct_size.size; i++) {
+            Type_Array* array = workload_structure->arrays_depending_on_struct_size[i];
+            type_system_finish_array(array);
         }
         break;
     }
@@ -3707,19 +3645,35 @@ Expression_Info analyse_symbol_as_expression(Symbol* symbol, Expression_Context 
         Type_Base* type = symbol->options.type;
         if (type->type == Type_Type::STRUCT)
         {
-            Struct_Progress* other_progress = downcast<Type_Struct>(type)->progress;
-            if (other_progress != 0) {
-                if (workload->type == Analysis_Workload_Type::STRUCT_ANALYSIS) {
-                    auto current = downcast<Workload_Struct_Analysis>(workload);
-                    analysis_workload_add_struct_dependency(current->progress, other_progress, current->dependency_type, failure_info);
-                }
-                else {
-                    analysis_workload_add_dependency_internal(workload, upcast(other_progress->reachable_resolve_workload), failure_info);
-                }
+            auto* struct_workload = downcast<Type_Struct>(type)->workload;
+            if (struct_workload == 0) {
+                assert(!type_size_is_unfinished(type), "");
+                break;
             }
-            else {
-                // Progress may be 0 if its a predefined struct
-                assert(!(type->size == 0 && type->alignment == 0), "");
+
+            switch (workload->type)
+            {
+            case Analysis_Workload_Type::DEFINITION: {
+                analysis_workload_add_dependency_internal(workload, upcast(struct_workload), failure_info);
+                break;
+            }
+            case Analysis_Workload_Type::BAKE_ANALYSIS: {
+                analysis_workload_add_dependency_internal(
+                    upcast(downcast<Workload_Bake_Analysis>(workload)->progress->execute_workload), 
+                    upcast(struct_workload), 
+                    failure_info
+                );
+                break;
+            }
+            case Analysis_Workload_Type::FUNCTION_BODY:
+            case Analysis_Workload_Type::FUNCTION_HEADER:
+            case Analysis_Workload_Type::FUNCTION_PARAMETER: {
+                auto progress = analysis_workload_try_get_function_progress(workload);
+                analysis_workload_add_dependency_internal(upcast(progress->compile_workload), upcast(struct_workload));
+                break;
+            }
+            case Analysis_Workload_Type::STRUCT_ANALYSIS: break;
+            default: panic("Invalid code path");
             }
         }
         break;
@@ -4217,35 +4171,6 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 #define EXIT_ERROR(type) expression_info_set_error(info, type); return info;
 #define EXIT_HARDCODED(hardcoded) expression_info_set_hardcoded(info, hardcoded); return info;
 #define EXIT_FUNCTION(function) expression_info_set_function(info, function); return info;
-
-    // Special handling for Structs, because of Cluster-Compile
-    Dependency_Type _backup_type;
-    bool switch_type_back = false;
-    if (semantic_analyser.current_workload->type == Analysis_Workload_Type::STRUCT_ANALYSIS) {
-        switch_type_back = true;
-        auto& dependency_type = downcast<Workload_Struct_Analysis>(semantic_analyser.current_workload)->dependency_type;
-        _backup_type = dependency_type;
-
-        using AST::Expression_Type;
-        if (dependency_type != Dependency_Type::NORMAL) {
-            if (expr->type == Expression_Type::FUNCTION_SIGNATURE || expr->type == Expression_Type::SLICE_TYPE ||
-                (expr->type == Expression_Type::UNARY_OPERATION && expr->options.unop.type == AST::Unop::POINTER)) {
-                dependency_type = Dependency_Type::MEMBER_REFERENCE;
-            }
-            else if (!(expr->type == Expression_Type::PATH_LOOKUP ||
-                expr->type == Expression_Type::ARRAY_TYPE ||
-                expr->type == Expression_Type::STRUCTURE_TYPE))
-            {
-                // Reset to normal if we don't have a type expression
-                dependency_type = Dependency_Type::NORMAL;
-            }
-        }
-    }
-    SCOPE_EXIT(
-        if (switch_type_back) {
-            downcast<Workload_Struct_Analysis>(semantic_analyser.current_workload)->dependency_type = _backup_type;
-        }
-    );
 
     switch (expr->type)
     {
@@ -5122,7 +5047,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 break;
             }
             case AST::Expression_Type::STRUCTURE_TYPE: {
-                workload = upcast(struct_progress_create(0, expr)->analysis_workload);
+                workload = upcast(structure_workload_create(0, expr));
                 break;
             }
             case AST::Expression_Type::BAKE_BLOCK:
@@ -5172,21 +5097,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             break;
         }
         case Analysis_Workload_Type::STRUCT_ANALYSIS: {
-            // Wait for workload
-            auto progress = downcast<Workload_Struct_Analysis>(workload)->progress;
-            if (semantic_analyser.current_workload->type == Analysis_Workload_Type::STRUCT_ANALYSIS) {
-                auto current = downcast<Workload_Struct_Analysis>(semantic_analyser.current_workload)->progress;
-                analysis_workload_add_struct_dependency(current, progress, current->analysis_workload->dependency_type);
-            }
-            else {
-                analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(progress->reachable_resolve_workload));
-            }
-            workload_executer_wait_for_dependency_resolution();
-
-            // Return value
-            auto struct_type = progress->struct_type;
-            assert(!(struct_type->base.size == 0 && struct_type->base.alignment == 0), "");
-            EXIT_TYPE(upcast(struct_type));
+            EXIT_TYPE(upcast(downcast<Workload_Structure>(workload)->struct_type));
             break;
         }
         case Analysis_Workload_Type::MODULE_ANALYSIS: {
@@ -5195,7 +5106,6 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         }
         case Analysis_Workload_Type::DEFINITION:
         case Analysis_Workload_Type::EVENT:
-        case Analysis_Workload_Type::STRUCT_REACHABLE_RESOLVE:
         case Analysis_Workload_Type::BAKE_EXECUTION:
         case Analysis_Workload_Type::FUNCTION_BODY:
         case Analysis_Workload_Type::IMPORT_RESOLVE:
@@ -5238,28 +5148,13 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
     {
         auto& array_node = expr->options.array_type;
 
-        // Analyse size value
-        {
-            // Special handling for struct dependencies, FUTURE: Maybe rework/remove this here...
-            Dependency_Type _backup_type;
-            bool do_backup = false;
-            if (semantic_analyser.current_workload->type == Analysis_Workload_Type::STRUCT_ANALYSIS) {
-                do_backup = true;
-                auto analysis = downcast<Workload_Struct_Analysis>(semantic_analyser.current_workload);
-                _backup_type = analysis->dependency_type;
-                analysis->dependency_type = Dependency_Type::NORMAL;
-            }
+        // Analyse size expression
+        semantic_analyser_analyse_expression_value(
+            array_node.size_expr, expression_context_make_specific_type(upcast(types.i32_type))
+        );
 
-            semantic_analyser_analyse_expression_value(
-                array_node.size_expr, expression_context_make_specific_type(upcast(types.i32_type))
-            );
-
-            if (do_backup) {
-                downcast<Workload_Struct_Analysis>(semantic_analyser.current_workload)->dependency_type = _backup_type;
-            }
-        }
-
-        int array_size = 0;
+        // Calculate comptime size
+        int array_size = 0; // Note: Here I actually mean the element count, not the data-type size
         bool array_size_known = false;
         auto comptime = expression_calculate_comptime_value(array_node.size_expr, "Array size must be know at compile time");
         if (comptime.available) {
@@ -5272,22 +5167,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         }
 
         Type_Base* element_type = semantic_analyser_analyse_expression_type(array_node.type_expr);
-        Type_Array* array_type = type_system_make_array(element_type, array_size_known, array_size);
-
-        // Add to unfinished array size if necessary
-        if (element_type->size == 0 && element_type->alignment == 0)
-        {
-            assert(analyser.current_workload->type == Analysis_Workload_Type::STRUCT_ANALYSIS, "");
-            auto progress = downcast<Workload_Struct_Analysis>(analyser.current_workload)->progress;
-            assert(!progress->reachable_resolve_workload->base.is_finished, "Finished structs cannot be of size + alignment 0");
-            dynamic_array_push_back(
-                &downcast<Workload_Struct_Reachable_Resolve>(
-                    analysis_workload_find_associated_cluster(upcast(progress->reachable_resolve_workload))
-                    )->unfinished_array_types,
-                array_type
-            );
-        }
-        EXIT_TYPE(upcast(array_type));
+        EXIT_TYPE(upcast(type_system_make_array(element_type, array_size_known, array_size)));
     }
     case AST::Expression_Type::SLICE_TYPE:
     {
@@ -5337,6 +5217,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             arguments_analyse_in_unknown_context(arguments);
             EXIT_ERROR(type);
         }
+        wait_for_type_size_to_finish(type);
+
         auto struct_signature = downcast<Type_Struct>(type);
         assert(!(struct_signature->base.size == 0 && struct_signature->base.alignment == 0), "");
         auto& members = struct_signature->members;
@@ -5537,6 +5419,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             auto base_type = access_expr_info->post_op.type_afterwards;
             if (base_type->type == Type_Type::STRUCT)
             {
+                wait_for_type_size_to_finish(base_type);
                 auto& members = downcast<Type_Struct>(base_type)->members;
                 Struct_Member* found = 0;
                 for (int i = 0; i < members.size; i++) {

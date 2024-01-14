@@ -6,10 +6,10 @@
 #include "ast.hpp"
 
 struct Symbol;
-struct Struct_Progress;
 struct Timer;
 struct Type_Base;
 struct String;
+struct Workload_Structure;
 struct Workload_Function_Parameter;
 struct Function_Progress;
 
@@ -155,7 +155,7 @@ struct Type_Struct {
     Struct_Member tag_member; // Only valid for unions
 
     Optional<String*> name;
-    Struct_Progress* progress; // May be null if it's a predefined struct
+    Workload_Structure* workload; // May be null if it's a predefined struct
 };
 
 struct Type_Enum
@@ -357,7 +357,7 @@ Type_Function* type_system_finish_function(Type_Function function, Type_Base* re
 
 // Note: empty types need to be finished before they are used!
 Type_Enum* type_system_make_enum_empty(String* name);
-Type_Struct* type_system_make_struct_empty(AST::Structure_Type struct_type, String* name = 0, Struct_Progress* progress = 0);
+Type_Struct* type_system_make_struct_empty(AST::Structure_Type struct_type, String* name = 0, Workload_Structure* workload = 0);
 void struct_add_member(Type_Struct* structure, String* id, Type_Base* member_type);
 void type_system_finish_struct(Type_Struct* structure);
 void type_system_finish_enum(Type_Enum* enum_type);
@@ -365,6 +365,7 @@ void type_system_finish_array(Type_Array* array);
 
 bool types_are_equal(Type_Base* a, Type_Base* b);
 bool type_is_unknown(Type_Base* a);
+bool type_size_is_unfinished(Type_Base* a);
 Optional<Enum_Item> enum_type_find_member_by_value(Type_Enum* enum_type, int value);
 Optional<Struct_Member> type_signature_find_member_by_id(Type_Base* type, String* id);  // Valid for both structs, unions and slices
 

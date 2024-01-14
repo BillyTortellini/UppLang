@@ -1,6 +1,7 @@
 #include "type_system.hpp"
 #include "compiler.hpp"
 #include "symbol_table.hpp"
+#include "semantic_analyser.hpp"
 
 using AST::Structure_Type;
 
@@ -885,8 +886,34 @@ Type_Array* type_system_make_array(Type_Base* element_type, bool count_known, in
     else {
         result.element_count = 1;
     }
-    result.base.size = element_type->size * result.element_count;
-    return type_system_register_type(result);
+
+    // Note: Size and alignment are set if register type doesn't return duplicate
+    if (type_size_is_unfinished(element_type)) {
+        result.base.size = -1;
+        result.base.alignment = -1;
+    }
+    else {
+        result.base.size = element_type->size * result.element_count;
+        result.base.alignment = element_type->alignment;
+    }
+
+    auto registered = type_system_register_type(result);
+
+    // Add array to struct queue if necessary
+    if (type_size_is_unfinished(upcast(registered))) 
+    {
+        Type_Base* waiting_for_type = registered->element_type;
+        while (waiting_for_type->type == Type_Type::ARRAY) {
+            waiting_for_type = downcast<Type_Array>(waiting_for_type)->element_type;
+        }
+        assert(waiting_for_type->type == Type_Type::STRUCT, "Currently only structs can have size not finished");
+        auto structure = downcast<Type_Struct>(waiting_for_type);
+        assert(type_size_is_unfinished(upcast(structure)), "Otherwise the size would be known!");
+        assert(structure->workload != 0, "Unfinished type must have progress");
+        dynamic_array_push_back(&structure->workload->arrays_depending_on_struct_size, registered);
+    }
+    
+    return registered;
 }
 
 Type_Slice* type_system_make_slice(Type_Base* element_type)
@@ -953,19 +980,19 @@ Type_Function* type_system_make_function(std::initializer_list<Function_Paramete
     return type_system_make_function(params, return_type);
 }
 
-Type_Struct* type_system_make_struct_empty(AST::Structure_Type struct_type, String* name, Struct_Progress* progress)
+Type_Struct* type_system_make_struct_empty(AST::Structure_Type struct_type, String* name, Workload_Structure* workload)
 {
     Type_Struct result;
     result.base.type = Type_Type::STRUCT;
-    result.base.size = 0;
-    result.base.alignment = 0;
+    result.base.size = -1;
+    result.base.alignment = -1;
     if (name != 0) {
         result.name = optional_make_success(name);
     }
     else {
         result.name.available = false;
     }
-    result.progress = progress;
+    result.workload = workload;
     result.tag_member.id = 0;
     result.tag_member.offset = 0;
     result.tag_member.type = 0;
@@ -1001,7 +1028,7 @@ void type_system_finish_struct(Type_Struct* structure)
     auto& base = structure->base;
     assert(base.type_handle.index < (u32)type_system.internal_type_infos.size, "");
     assert(type_system.internal_type_infos.size == type_system.types.size, "");
-    assert(base.size == 0 && base.alignment == 0, "");
+    assert(type_size_is_unfinished(upcast(structure)), "");
 
     // Calculate member offset/alignment + size
     int offset = 0;
@@ -1150,7 +1177,7 @@ void type_system_finish_array(Type_Array* array)
     auto& base = array->base;
     assert(base.type_handle.index < (u32)type_system.internal_type_infos.size, "");
     assert(type_system.internal_type_infos.size == type_system.types.size, "");
-    assert(base.size == 0 && base.alignment == 0, "");
+    assert(type_size_is_unfinished(upcast(array)), "");
     assert(array->base.type == Type_Type::ARRAY, "");
 
     // Finish array
@@ -1443,3 +1470,6 @@ bool type_is_unknown(Type_Base* a) {
     return a->type == Type_Type::ERROR_TYPE || a->type == Type_Type::POLYMORPHIC;
 }
 
+bool type_size_is_unfinished(Type_Base* a) {
+    return a->size == -1 && a->alignment == -1;
+}

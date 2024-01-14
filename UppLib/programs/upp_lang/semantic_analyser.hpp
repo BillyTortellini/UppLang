@@ -25,7 +25,6 @@ struct Workload_Base;
 struct Workload_Import_Resolve;
 
 struct Function_Progress;
-struct Struct_Progress;
 struct Bake_Progress;
 struct Module_Progress;
 struct Type_Polymorphic;
@@ -81,13 +80,6 @@ struct ModTree_Program
 
 
 // WORKLOADS
-enum class Dependency_Type
-{
-    NORMAL,
-    MEMBER_IN_MEMORY,
-    MEMBER_REFERENCE,
-};
-
 enum class Analysis_Workload_Type
 {
     EVENT, // Empty workload, which can have dependencies and dependents
@@ -101,7 +93,6 @@ enum class Analysis_Workload_Type
     FUNCTION_CLUSTER_COMPILE,
 
     STRUCT_ANALYSIS,
-    STRUCT_REACHABLE_RESOLVE,
 
     BAKE_ANALYSIS,
     BAKE_EXECUTION,
@@ -139,7 +130,6 @@ struct Workload_Base
 
     // Note: Clustering is required for Workloads where cyclic dependencies on the same workload-type are allowed,
     //       like recursive functions or structs containing pointers to themselves
-    // FUTURE: Maybe we can rework clustering to be a little more genera and easier to use
     Workload_Base* cluster;
     Dynamic_Array<Workload_Base*> reachable_clusters;
 };
@@ -200,20 +190,13 @@ struct Workload_Function_Cluster_Compile
     Dynamic_Array<ModTree_Function*> functions;
 };
 
-struct Workload_Struct_Analysis
+struct Workload_Structure
 {
     Workload_Base base;
-    Struct_Progress* progress;
-    AST::Expression* struct_node;
-    Dependency_Type dependency_type;
-};
 
-struct Workload_Struct_Reachable_Resolve
-{
-    Workload_Base base;
-    Struct_Progress* progress;
-    Dynamic_Array<Type_Struct*> struct_types;
-    Dynamic_Array<Type_Array*> unfinished_array_types;
+    Type_Struct* struct_type;
+    Dynamic_Array<Type_Array*> arrays_depending_on_struct_size;
+    AST::Expression* struct_node;
 };
 
 struct Workload_Definition
@@ -275,14 +258,6 @@ struct Function_Progress
             int instanciation_depth;
         } polymorhic_instance;
     };
-};
-
-struct Struct_Progress
-{
-    Type_Struct* struct_type;
-
-    Workload_Struct_Analysis* analysis_workload;
-    Workload_Struct_Reachable_Resolve* reachable_resolve_workload;
 };
 
 struct Bake_Progress

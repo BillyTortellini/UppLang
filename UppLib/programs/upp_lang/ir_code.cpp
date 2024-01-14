@@ -1729,6 +1729,7 @@ void ir_generator_generate_queued_items(bool gen_bytecode)
         }
         ir_generator.current_pass = mod_func->code_workload->current_pass;
 
+        // Generate function code
         {
             assert(mod_func->code_workload != 0, "");
             if (mod_func->code_workload->type == Analysis_Workload_Type::BAKE_ANALYSIS)
