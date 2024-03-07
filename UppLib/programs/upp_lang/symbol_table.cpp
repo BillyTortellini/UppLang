@@ -194,6 +194,9 @@ void symbol_append_to_string(Symbol* symbol, String* string)
     case Symbol_Type::DEFINITION_UNFINISHED:
         string_append_formated(string, "Definition Unfinished");
         break;
+    case Symbol_Type::STRUCT_PARAMETER:
+        string_append_formated(string, "Struct parameter");
+        break;
     case Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL:
         string_append_formated(string, "Alias or imported symbol");
         break;

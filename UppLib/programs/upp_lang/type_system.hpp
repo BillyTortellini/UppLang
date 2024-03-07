@@ -87,7 +87,7 @@ struct Type_Base
     int size; // in byte
     int alignment; // in byte
     Type_Handle type_handle;
-    bool contains_polymorphic_type; // Means the type-tree contains at least one polymorphic node...
+    bool contains_polymorphic_type; // Means the type-tree contains at least one polymorphic_function node...
 };
 
 struct Type_Polymorphic
@@ -99,7 +99,7 @@ struct Type_Polymorphic
     int index;
 
     bool is_reference;
-    Type_Polymorphic* mirrored_type; // Pointer to either the reference type or the "base" polymorphic-type
+    Type_Polymorphic* mirrored_type; // Pointer to either the reference type or the "base" polymorphic_function-type
 };
 
 enum class Primitive_Type
@@ -138,7 +138,7 @@ struct Type_Function
     Optional<Type_Base*> return_type;
 
     int parameters_with_default_value_count;
-    int polymorphic_parameter_count; // Also includes implicit polymorphic parameters
+    int polymorphic_parameter_count; // Also includes implicit polymorphic_function parameters
 };
 
 struct Type_Slice {
@@ -334,7 +334,7 @@ struct Type_System
     // Note: Both registered_types and types array contain the same types, I just keep the types array for convenience
     Hashset<Type_Base*> registered_types;
     Dynamic_Array<Type_Base*> types;
-    Dynamic_Array<Internal_Type_Information> internal_type_infos;
+    Dynamic_Array<Internal_Type_Information*> internal_type_infos;
     u64 next_internal_index;
 };
 

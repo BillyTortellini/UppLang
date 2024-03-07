@@ -181,7 +181,7 @@ C_Generator c_generator_create()
     result.section_globals = string_create_empty(4096);
     result.section_constants = string_create_empty(4096);
     result.array_index_stack = dynamic_array_create_empty<int>(16);
-    result.translation_constant_to_name = hashtable_create_pointer_empty<Upp_Constant*, String>(128);
+    result.translation_constant_to_name = dynamic_array_create_empty<String>(64);
     result.translation_type_to_name = hashtable_create_pointer_empty<Type_Base*, String>(128);
     result.translation_function_to_name = hashtable_create_pointer_empty<IR_Function*, String>(128);
     result.translation_code_block_to_name = hashtable_create_pointer_empty<IR_Code_Block*, String>(128);
@@ -202,11 +202,6 @@ void delete_type_names(Type_Base** signature, String* value)
 }
 
 void delete_function_names(IR_Function** function, String* value)
-{
-    string_destroy(value);
-}
-
-void delete_constant_names(Upp_Constant** function, String* value)
 {
     string_destroy(value);
 }
@@ -237,14 +232,17 @@ void c_generator_destroy(C_Generator* generator)
     dynamic_array_destroy(&generator->array_index_stack);
     hashtable_for_each(&generator->translation_type_to_name, delete_type_names);
     hashtable_destroy(&generator->translation_type_to_name);
-    hashtable_for_each(&generator->translation_constant_to_name, delete_constant_names);
-    hashtable_destroy(&generator->translation_constant_to_name);
     hashtable_for_each(&generator->translation_function_to_name, delete_function_names);
     hashtable_destroy(&generator->translation_function_to_name);
     hashtable_for_each(&generator->translation_code_block_to_name, delete_code_block_names);
     hashtable_destroy(&generator->translation_code_block_to_name);
     hashtable_destroy(&generator->type_to_dependency_mapping);
     dynamic_array_destroy(&generator->type_dependencies);
+
+    for (int i = 0; i < generator->translation_constant_to_name.size; i++) {
+        string_destroy(&generator->translation_constant_to_name[i]);
+    }
+    dynamic_array_destroy(&generator->translation_constant_to_name);
 }
 
 void c_generator_register_type_name(C_Generator* generator, Type_Base* type);
@@ -475,7 +473,7 @@ void c_generator_output_data_access(C_Generator* generator, String* output, IR_D
     case IR_Data_Access_Type::CONSTANT:
     {
         Upp_Constant* constant = &generator->compiler->constant_pool.constants[access.index];
-        String* str = hashtable_find_element(&generator->translation_constant_to_name, constant);
+        String* str = &generator->translation_constant_to_name[constant->constant_index];
         assert(str != 0, "");
         string_append_formated(output, str->characters);
         break;
@@ -564,6 +562,7 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
                 c_generator_output_cast(generator, output, call->destination);
             }
 
+            bool call_handled = false;
             switch (call->call_type)
             {
             case IR_Instruction_Call_Type::FUNCTION_CALL: {
@@ -616,12 +615,27 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
                 case Hardcoded_Type::FREE_POINTER:
                     string_append_formated(output, "free_pointer");
                     break;
+                case Hardcoded_Type::TYPE_INFO: 
+                {
+                    auto& global_infos = generator->global_type_informations;
+                    string_append_formated(output, "((%s).data[", 
+                        generator->translation_constant_to_name[global_infos.constant_index].characters);
+                    assert(call->arguments.size == 1, "");
+                    c_generator_output_data_access(generator, output, call->arguments[0]);
+                    string_append_formated(output, "])");
+                    call_handled = true;
+                    break;
+                }
                 default: panic("What");
                 }
                 break;
             }
             default: panic("What");
             }
+            if (call_handled) {
+                break;
+            }
+
             string_append_formated(output, "(");
             for (int j = 0; j < call->arguments.size; j++)
             {
@@ -861,9 +875,32 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
         hashtable_reset(&generator->translation_function_to_name);
         hashtable_for_each(&generator->translation_code_block_to_name, delete_code_block_names);
         hashtable_reset(&generator->translation_code_block_to_name);
-        hashtable_for_each(&generator->translation_constant_to_name, delete_constant_names);
-        hashtable_reset(&generator->translation_constant_to_name);
+
+        for (int i = 0; i < generator->translation_constant_to_name.size; i++) {
+            string_destroy(&generator->translation_constant_to_name[i]);
+        }
+        dynamic_array_reset(&generator->translation_constant_to_name);
+
         generator->name_counter = 0;
+    }
+
+    // Create type_info global
+    {
+        auto& type_system = compiler->type_system;
+        auto type_info_type = type_system.predefined_types.type_information_type;
+
+        Upp_Slice<Internal_Type_Information*> type_info_slice;
+        type_info_slice.data_ptr = type_system.internal_type_infos.data;
+        type_info_slice.size = type_system.internal_type_infos.size;
+        Array<byte> bytes = array_create_static_as_bytes(&type_info_slice, 1);
+
+        auto result = constant_pool_add_constant(
+            &compiler->constant_pool, upcast(type_system_make_slice(upcast(type_system_make_pointer(upcast(type_info_type))))), bytes
+        );
+
+        assert(result.success, "Type information must be valid/serializable");
+        assert(type_system.types.size == type_system.internal_type_infos.size, "");
+        generator->global_type_informations = result.constant;
     }
 
     // Create known type_signatures
@@ -885,106 +922,124 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
         c_generator_register_type_name(generator, generator->compiler->type_system.types[i]);
     }
 
-    // Create constant buffer
+    // Generate strings for all constant-accesses
     {
-        string_append_formated(&generator->section_constants, "byte constant_buffer[] = {");
-        for (int i = 0; i < generator->compiler->constant_pool.buffer.size; i++) {
-            if (i % 30 == 0) {
-                string_append_formated(&generator->section_constants, "\n    ");
-            }
-            string_append_formated(&generator->section_constants, "%3d", generator->compiler->constant_pool.buffer[i]);
-            if (i + 1 != generator->compiler->constant_pool.buffer.size) {
-                string_append_formated(&generator->section_constants, ", ");
-            }
-        }
-        string_append_formated(&generator->section_constants, "\n};\n");
-    }
-    // Create all constants
-    for (int i = 0; i < generator->compiler->constant_pool.constants.size; i++)
-    {
-        Upp_Constant* constant = &generator->compiler->constant_pool.constants[i];
-        void* raw_data = &generator->compiler->constant_pool.buffer[constant->offset];
-        Type_Base* type = constant->type;
+        auto& constants = compiler->constant_pool.constants;
+        Array<int> constant_start_byte_in_buffer = array_create_empty<int>(constants.size);
+        SCOPE_EXIT(array_destroy(&constant_start_byte_in_buffer));
+        int constant_buffer_pos = 0;
+        string_append_formated(&generator->section_constants, "byte constant_buffer[] = {\n   ");
+        dynamic_array_reserve(&generator->translation_constant_to_name, constants.size);
+        generator->translation_constant_to_name.size = constants.size;
 
-        String output = string_create_empty(8);
-        if (type->type == Type_Type::PRIMITIVE)
+        for (int i = 0; i < constants.size; i++)
         {
-            auto primitive = downcast<Type_Primitive>(type);
-            switch (primitive->primitive_type)
+            Upp_Constant& constant = constants[i];
+            void* raw_data = constant.memory;
+            Type_Base* type = constant.type;
+
+            // Write data into constant buffer
             {
-            case Primitive_Type::BOOLEAN: {
-                bool val = *(bool*)raw_data;
-                string_append_formated(&output, "%s", val ? "true" : "false");
-                break;
-            }
-            case Primitive_Type::INTEGER: {
-                int value = 0;
-                if (primitive->is_signed)
-                {
-                    switch (type->size)
-                    {
-                    case 1: value = (i32) * (i8*)raw_data; break;
-                    case 2: value = (i32) * (i16*)raw_data; break;
-                    case 4: value = (i32) * (i32*)raw_data; break;
-                    case 8: value = (i32) * (i64*)raw_data; break;
-                    default: panic("HEY");
-                    }
+                // Write 0 to fill up alignment
+                while (constant_buffer_pos % type->alignment != 0) {
+                    string_append_formated(&generator->section_constants, "  0, ");
+                    constant_buffer_pos += 1;
                 }
-                else
-                {
-                    switch (type->size)
-                    {
-                    case 1: value = (i32) * (u8*)raw_data; break;
-                    case 2: value = (i32) * (u16*)raw_data; break;
-                    case 4: value = (i32) * (u32*)raw_data; break;
-                    case 8: value = (i32) * (u64*)raw_data; break;
-                    default: panic("HEY");
-                    }
+                // Copy bytes into buffer
+                constant_start_byte_in_buffer[constant.constant_index] = constant_buffer_pos;
+                for (int j = 0; j < type->size; j++) {
+                    string_append_formated(&generator->section_constants, "%3d, ", constant.memory[i]);
                 }
-                string_append_formated(&output, "%d", value);
-                break;
+                constant_buffer_pos += type->size;
+                // End with newline
+                string_append_formated(&generator->section_constants, "%\n   ", constant.memory[i]);
             }
-            case Primitive_Type::FLOAT: {
-                if (type->size == 4) {
-                    string_append_formated(&output, "%3.2f", *(float*)raw_data);
-                }
-                else if (type->size == 8) {
-                    string_append_formated(&output, "%3.2f", *(float*)raw_data);
-                }
-                else panic("HEY");
-                break;
-            }
-            default: panic("HEY");
-            }
-        }
-        else if (type->type == Type_Type::VOID_POINTER  && *(void**)raw_data == nullptr) {
-            string_append_formated(&output, "nullptr");
-        }
-        else if (type->type == Type_Type::TYPE_HANDLE) {
-            string_append_formated(&output, "(u64)%d", *(u64*)raw_data);
-        }
-        else {
-            string_append_formated(&output, "(*(");
-            c_generator_output_type_reference(generator, &output, type);
-            string_append_formated(&output, "*) &constant_buffer[%d])", constant->offset);
-        }
-        hashtable_insert_element(&generator->translation_constant_to_name, constant, output);
-    }
 
-    // Implement constant reference resolution
-    {
-        string_append_formated(&generator->section_function_implementations, "\n void init_const_references(){\n");
-        for (int i = 0; i < generator->compiler->constant_pool.references.size; i++)
+            // Create access strings
+            String output = string_create_empty(8);
+            if (type->type == Type_Type::PRIMITIVE)
+            {
+                auto primitive = downcast<Type_Primitive>(type);
+                switch (primitive->primitive_type)
+                {
+                case Primitive_Type::BOOLEAN: {
+                    bool val = *(bool*)raw_data;
+                    string_append_formated(&output, "%s", val ? "true" : "false");
+                    break;
+                }
+                case Primitive_Type::INTEGER: {
+                    int value = 0;
+                    if (primitive->is_signed)
+                    {
+                        switch (type->size)
+                        {
+                        case 1: value = (i32) * (i8*)raw_data; break;
+                        case 2: value = (i32) * (i16*)raw_data; break;
+                        case 4: value = (i32) * (i32*)raw_data; break;
+                        case 8: value = (i32) * (i64*)raw_data; break;
+                        default: panic("HEY");
+                        }
+                    }
+                    else
+                    {
+                        switch (type->size)
+                        {
+                        case 1: value = (i32) * (u8*)raw_data; break;
+                        case 2: value = (i32) * (u16*)raw_data; break;
+                        case 4: value = (i32) * (u32*)raw_data; break;
+                        case 8: value = (i32) * (u64*)raw_data; break;
+                        default: panic("HEY");
+                        }
+                    }
+                    string_append_formated(&output, "%d", value);
+                    break;
+                }
+                case Primitive_Type::FLOAT: {
+                    if (type->size == 4) {
+                        string_append_formated(&output, "%f", *(float*)raw_data);
+                    }
+                    else if (type->size == 8) {
+                        string_append_formated(&output, "%f", *(double*)raw_data);
+                    }
+                    else panic("HEY");
+                    break;
+                }
+                default: panic("HEY");
+                }
+            }
+            else if (type->type == Type_Type::VOID_POINTER && *(void**)raw_data == nullptr) {
+                string_append_formated(&output, "nullptr");
+            }
+            else if (type->type == Type_Type::TYPE_HANDLE) {
+                string_append_formated(&output, "(u64)%d", *(u64*)raw_data);
+            }
+            else 
+            {
+                // Access through constant-buffer reference
+                string_append_formated(&output, "(*(");
+                c_generator_output_type_reference(generator, &output, type);
+                string_append_formated(&output, "*) &constant_buffer[%d])", constant_start_byte_in_buffer[constant.constant_index]);
+            }
+
+            generator->translation_constant_to_name[constant.constant_index] = output;
+        }
+        string_append_formated(&generator->section_constants, "\n    0\n};\n");
+
+        // Update references between constants at program startup
         {
-            Upp_Constant_Reference* reference = &generator->compiler->constant_pool.references[i];
-            string_append_formated(
-                &generator->section_function_implementations,
-                "    *((void**) &constant_buffer[%d]) = &constant_buffer[%d];\n",
-                reference->ptr_offset, reference->buffer_destination_offset
-            );
+            string_append_formated(&generator->section_function_implementations, "\n void init_const_references(){\n");
+            for (int i = 0; i < generator->compiler->constant_pool.references.size; i++)
+            {
+                Upp_Constant_Reference* reference = &generator->compiler->constant_pool.references[i];
+                string_append_formated(
+                    &generator->section_function_implementations,
+                    "    *((void**) &constant_buffer[%d]) = &constant_buffer[%d];\n",
+                    constant_start_byte_in_buffer[reference->constant.constant_index] + reference->pointer_member_byte_offset, 
+                    constant_start_byte_in_buffer[reference->points_to.constant_index]
+                );
+            }
+            string_append_formated(&generator->section_function_implementations, "}\n\n");
         }
-        string_append_formated(&generator->section_function_implementations, "}\n\n");
-
     }
 
     // Create globals Definitions

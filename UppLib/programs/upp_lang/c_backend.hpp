@@ -57,12 +57,14 @@ struct C_Generator
     Hashtable<Type_Base*, int> type_to_dependency_mapping;
     Dynamic_Array<C_Type_Definition_Dependency> type_dependencies;
 
-    Hashtable<Upp_Constant*, String> translation_constant_to_name;
+    Dynamic_Array<String> translation_constant_to_name;
     Hashtable<Type_Base*, String> translation_type_to_name;
     Hashtable<IR_Function*, String> translation_function_to_name;
     Hashtable<IR_Code_Block*, String> translation_code_block_to_name;
     Dynamic_Array<int> array_index_stack;
     int current_function_index;
+
+    Upp_Constant global_type_informations;
 };
 
 C_Generator c_generator_create();

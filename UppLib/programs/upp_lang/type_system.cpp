@@ -119,6 +119,24 @@ void type_append_to_string_with_children(String* string, Type_Base* signature, b
         else {
             string_append_formated(string, "Struct");
         }
+
+        // Append polymorphic instance values
+        if (struct_type->workload != 0) {
+            if (struct_type->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
+                string_append_formated(string, "(");
+                SCOPE_EXIT(string_append_formated(string, ")"));
+                auto& instance = struct_type->workload->polymorhic_instance;
+                auto& base = instance.polymorphic_base->polymorphic_base;
+                for (int i = 0; i < instance.parameter_values.size; i++) {
+                    auto& constant = instance.parameter_values[i];
+                    type_append_value_to_string(constant.type, constant.memory, string);
+                    if (i != instance.parameter_values.size - 1) {
+                        string_append_formated(string, ", ");
+                    }
+                }
+            }
+        }
+
         if (print_child)
         {
             string_append_formated(string, "{");
@@ -175,8 +193,13 @@ void type_append_value_to_string(Type_Base* type, byte* value_ptr, String* strin
     case Type_Type::ERROR_TYPE:
         break;
     case Type_Type::TYPE_HANDLE: {
-        u64 value = *(u64*)value_ptr;
-        string_append_formated(string, "Type_Handle, type_handle: %d", value);
+        u32 value = *(u32*)value_ptr;
+        if (value >= compiler.type_system.types.size) {
+            string_append_formated(string, "Invalid Type-Handle, value: %d", value);
+            break;
+        }
+        Type_Base* type = compiler.type_system.types[value];
+        type_append_to_string(string, type);
         break;
     }
     case Type_Type::ARRAY:
@@ -384,7 +407,7 @@ bool types_are_structurally_equal(Type_Base** a_ptr, Type_Base** b_ptr)
     case Type_Type::POLYMORPHIC:
     case Type_Type::STRUCT:
     case Type_Type::ENUM: 
-        // Structs, polymorphic-types and enums are currently never deduplicated 
+        // Structs, polymorphic_function-types and enums are currently never deduplicated 
         // (Note: I think this could change for structs/enums at some point)
         return false;
     case Type_Type::PRIMITIVE: {
@@ -553,12 +576,41 @@ u64 hash_type(Type_Base** type_ptr)
     return hash;
 }
 
+void internal_type_info_destroy(Internal_Type_Information* info)
+{
+    switch (info->options.tag)
+    {
+    case Type_Type::ENUM: {
+        if (info->options.enumeration.members.data_ptr != 0) {
+            delete[]info->options.enumeration.members.data_ptr;
+            info->options.enumeration.members.data_ptr = 0;
+        }
+        break;
+    }
+    case Type_Type::FUNCTION:
+        if (info->options.function.parameters.data_ptr != 0) {
+            delete[]info->options.function.parameters.data_ptr;
+            info->options.function.parameters.data_ptr = 0;
+        }
+        break;
+    case Type_Type::STRUCT: {
+        if (info->options.structure.members.data_ptr != 0) {
+            delete[]info->options.structure.members.data_ptr;
+            info->options.structure.members.data_ptr = 0;
+        }
+        break;
+    }
+    default: break;
+    }
+    delete info;
+}
+
 Type_System type_system_create(Timer* timer)
 {
     Type_System result;
     result.registered_types = hashset_create_empty(32, hash_type, types_are_structurally_equal);
     result.types = dynamic_array_create_empty<Type_Base*>(256);
-    result.internal_type_infos = dynamic_array_create_empty<Internal_Type_Information>(256);
+    result.internal_type_infos = dynamic_array_create_empty<Internal_Type_Information*>(256);
     result.timer = timer;
     result.register_time = 0;
     return result;
@@ -567,8 +619,12 @@ Type_System type_system_create(Timer* timer)
 void type_system_destroy(Type_System* system) {
     type_system_reset(system);
     dynamic_array_destroy(&system->types);
-    dynamic_array_destroy(&system->internal_type_infos);
     hashset_destroy(&system->registered_types);
+
+    for (int i = 0; i < system->internal_type_infos.size; i++) {
+        internal_type_info_destroy(system->internal_type_infos[i]);
+    }
+    dynamic_array_destroy(&system->internal_type_infos);
 }
 
 template<typename T>
@@ -585,33 +641,9 @@ void type_system_reset(Type_System* system)
     }
     dynamic_array_reset(&system->types);
     hashset_reset(&system->registered_types);
-    for (int i = 0; i < system->internal_type_infos.size; i++)
-    {
-        Internal_Type_Information* info = &system->internal_type_infos[i];
-        switch (info->options.tag)
-        {
-        case Type_Type::ENUM: {
-            if (info->options.enumeration.members.data_ptr != 0) {
-                delete[]info->options.enumeration.members.data_ptr;
-                info->options.enumeration.members.data_ptr = 0;
-            }
-            break;
-        }
-        case Type_Type::FUNCTION:
-            if (info->options.function.parameters.data_ptr != 0) {
-                delete[]info->options.function.parameters.data_ptr;
-                info->options.function.parameters.data_ptr = 0;
-            }
-            break;
-        case Type_Type::STRUCT: {
-            if (info->options.structure.members.data_ptr != 0) {
-                delete[]info->options.structure.members.data_ptr;
-                info->options.structure.members.data_ptr = 0;
-            }
-            break;
-        }
-        default: break;
-        }
+
+    for (int i = 0; i < system->internal_type_infos.size; i++) {
+        internal_type_info_destroy(system->internal_type_infos[i]);
     }
     dynamic_array_reset(&system->internal_type_infos);
 }
@@ -624,7 +656,7 @@ Type_Base* type_system_deduplicate_and_create_internal_info_for_type(Type_Base* 
     // Check if type is already registered
     {
         Type_Base** existing = hashset_find(&type_system.registered_types, base_type);
-        if (existing != 0) 
+        if (existing != 0)
         {
             // For Functions deduplication, we need to update pointers of parameter symbols and workloads
             if (base_type->type == Type_Type::FUNCTION) {
@@ -647,7 +679,7 @@ Type_Base* type_system_deduplicate_and_create_internal_info_for_type(Type_Base* 
 
     // Finalize type (For functions, calculate parameter infos)
     //      Note that this must not change the hash/is_equals results for this type
-    if (base_type->type == Type_Type::FUNCTION) 
+    if (base_type->type == Type_Type::FUNCTION)
     {
         auto function = downcast<Type_Function>(base_type);
         auto& parameters = function->parameters;
@@ -671,7 +703,7 @@ Type_Base* type_system_deduplicate_and_create_internal_info_for_type(Type_Base* 
         }
     }
 
-    // Figure out if type is polymorphic (Also store this)
+    // Figure out if type is polymorphic_function (Also store this)
     {
         bool is_polymorphic = false;
         switch (base_type->type)
@@ -681,7 +713,7 @@ Type_Base* type_system_deduplicate_and_create_internal_info_for_type(Type_Base* 
             break;
         }
         case Type_Type::TYPE_HANDLE:
-        case Type_Type::ERROR_TYPE: 
+        case Type_Type::ERROR_TYPE:
         case Type_Type::PRIMITIVE:
         case Type_Type::VOID_POINTER:
         case Type_Type::ENUM: {
@@ -805,7 +837,10 @@ Type_Base* type_system_deduplicate_and_create_internal_info_for_type(Type_Base* 
         }
         default: panic("");
         }
-        dynamic_array_push_back(&type_system.internal_type_infos, info);
+
+        auto new_info = new Internal_Type_Information;
+        *new_info = info;
+        dynamic_array_push_back(&type_system.internal_type_infos, new_info);
     }
 
     double reg_end_time = timer_current_time_in_seconds(type_system.timer);
@@ -842,7 +877,7 @@ Type_Primitive* type_system_make_primitive(Primitive_Type type, int size, bool i
     return type_system_register_type(result);
 }
 
-Type_Polymorphic* type_system_make_polymorphic(Symbol* symbol, Workload_Function_Parameter* parameter_workload, Function_Progress* progress, int index) 
+Type_Polymorphic* type_system_make_polymorphic(Symbol* symbol, Workload_Function_Parameter* parameter_workload, Function_Progress* progress, int index)
 {
     Type_Polymorphic result;
     result.base.type = Type_Type::POLYMORPHIC;
@@ -900,7 +935,7 @@ Type_Array* type_system_make_array(Type_Base* element_type, bool count_known, in
     auto registered = type_system_register_type(result);
 
     // Add array to struct queue if necessary
-    if (type_size_is_unfinished(upcast(registered))) 
+    if (type_size_is_unfinished(upcast(registered)))
     {
         Type_Base* waiting_for_type = registered->element_type;
         while (waiting_for_type->type == Type_Type::ARRAY) {
@@ -912,7 +947,7 @@ Type_Array* type_system_make_array(Type_Base* element_type, bool count_known, in
         assert(structure->workload != 0, "Unfinished type must have progress");
         dynamic_array_push_back(&structure->workload->arrays_depending_on_struct_size, registered);
     }
-    
+
     return registered;
 }
 
@@ -1088,7 +1123,7 @@ void type_system_finish_struct(Type_Struct* structure)
 
 
     // Update internal info to mirror struct info
-    Internal_Type_Information* internal_info = &type_system.internal_type_infos[base.type_handle.index];
+    Internal_Type_Information* internal_info = type_system.internal_type_infos[base.type_handle.index];
     internal_info->size = base.size;
     internal_info->alignment = base.alignment;
     internal_info->type_handle = base.type_handle;
@@ -1140,7 +1175,7 @@ void type_system_finish_enum(Type_Enum* enum_type)
     base.alignment = 4;
 
     // Update internal info to mirror struct info
-    Internal_Type_Information* internal_info = &type_system.internal_type_infos[base.type_handle.index];
+    Internal_Type_Information* internal_info = type_system.internal_type_infos[base.type_handle.index];
     internal_info->size = base.size;
     internal_info->alignment = base.alignment;
     internal_info->type_handle = base.type_handle;
@@ -1186,7 +1221,7 @@ void type_system_finish_array(Type_Array* array)
     base.contains_polymorphic_type = array->element_type->contains_polymorphic_type;
 
     // Update internal info to mirror struct info
-    Internal_Type_Information* internal_info = &type_system.internal_type_infos[base.type_handle.index];
+    Internal_Type_Information* internal_info = type_system.internal_type_infos[base.type_handle.index];
     internal_info->size = base.size;
     internal_info->alignment = base.alignment;
     internal_info->type_handle = base.type_handle;
@@ -1388,7 +1423,7 @@ void type_system_add_predefined_types(Type_System* system)
         types->type_assert = type_system_make_function({ make_param(upcast(types->bool_type), "condition") });
         types->type_free = type_system_make_function({ make_param(types->void_pointer_type, "pointer") });
         types->type_malloc = type_system_make_function({ make_param(upcast(types->i32_type), "size") }, upcast(types->void_pointer_type));
-        types->type_type_info = type_system_make_function({ make_param(upcast(types->type_handle), "type_handle") }, upcast(types->type_information_type));
+        types->type_type_info = type_system_make_function({ make_param(upcast(types->type_handle), "type_handle") }, upcast(type_system_make_pointer(upcast(types->type_information_type))));
         types->type_type_of = type_system_make_function({ make_param(upcast(types->empty_struct_type), "value") }, upcast(types->type_handle));
         types->type_print_bool = type_system_make_function({ make_param(upcast(types->bool_type), "value") });
         types->type_print_i32 = type_system_make_function({ make_param(upcast(types->i32_type), "value") });
@@ -1466,7 +1501,7 @@ bool types_are_equal(Type_Base* a, Type_Base* b) {
     return a == b;
 }
 
-bool type_is_unknown(Type_Base* a) { 
+bool type_is_unknown(Type_Base* a) {
     return a->type == Type_Type::ERROR_TYPE || a->type == Type_Type::POLYMORPHIC;
 }
 

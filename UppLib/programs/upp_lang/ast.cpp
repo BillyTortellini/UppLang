@@ -72,7 +72,11 @@ namespace AST
                 break;
             }
             case Expression_Type::STRUCTURE_TYPE: {
-                auto& members = expr->options.structure.members;
+                auto& s = expr->options.structure;
+                if (s.parameters.data != 0) {
+                    dynamic_array_destroy(&s.parameters);
+                }
+                auto& members = s.members;
                 if (members.data != 0) {
                     dynamic_array_destroy(&members);
                 }
@@ -290,6 +294,7 @@ namespace AST
             }
             case Expression_Type::STRUCTURE_TYPE: {
                 auto& str = expr->options.structure;
+                FILL_ARRAY(str.parameters);
                 FILL_ARRAY(str.members);
                 break;
             }
@@ -559,6 +564,7 @@ namespace AST
             }
             case Expression_Type::STRUCTURE_TYPE: {
                 auto& str = expr->options.structure;
+                FILL_ARRAY(str.parameters);
                 FILL_ARRAY(str.members);
                 break;
             }

@@ -68,6 +68,8 @@ struct ModTree_Global
     bool has_initial_value;
     AST::Expression* init_expr;
     Workload_Definition* definition_workload; // For code generation
+
+    void* memory; // Used by interpreter
 };
 
 struct ModTree_Program
@@ -118,8 +120,11 @@ struct Workload_Base
     Analysis_Pass* current_pass;
     Dynamic_Array<AST::Code_Block*> block_stack; // NOTE: This is here because it is required by Bake-Analysis and code-block, also for statement blocks...
 
+    int real_error_count;
+    int errors_due_to_unknown_count;
+
     // Note: This is a non-owning array, required for re-analysing the header during poly-instanciation
-    //       When encountering a polymorphic parameter, and this is not set, then we can assume that we are in base analysis
+    //       When encountering a polymorphic_function parameter, and this is not set, then we can assume that we are in base analysis
     //       If a value is set, we can assue we are either in instanciation stage or in the instance function analysis
     Array<Upp_Constant> polymorphic_values; 
     Array<Type_Base*> implicit_polymorphic_types;
@@ -190,13 +195,14 @@ struct Workload_Function_Cluster_Compile
     Dynamic_Array<ModTree_Function*> functions;
 };
 
-struct Workload_Structure
+struct Struct_Parameter
 {
-    Workload_Base base;
+    Type_Base* parameter_type;
+    Symbol* symbol;
 
-    Type_Struct* struct_type;
-    Dynamic_Array<Type_Array*> arrays_depending_on_struct_size;
-    AST::Expression* struct_node;
+    // Note: Same as function parameter, e.g. either a default value is not available or it doesn't exist
+    bool has_default_value;
+    Optional<Upp_Constant> default_value;
 };
 
 struct Workload_Definition
@@ -222,18 +228,39 @@ struct Workload_Bake_Execution
     AST::Expression* bake_node;
 };
 
-
-
-// ANALYSIS_PROGRESS
-
-// Polymorphism
-enum class Function_Progress_Type
+enum class Polymorphic_Analysis_Type
 {
     NORMAL, //
     POLYMORPHIC_BASE,
     POLYMORPHIC_INSTANCE
 };
 
+struct Workload_Structure
+{
+    Workload_Base base;
+
+    Type_Struct* struct_type;
+    Dynamic_Array<Type_Array*> arrays_depending_on_struct_size;
+    AST::Expression* struct_node;
+
+    Polymorphic_Analysis_Type polymorphic_type;
+    union {
+        struct {
+            Dynamic_Array<Workload_Structure*> instances;  // Required for de-duplication
+            Array<Struct_Parameter> parameters;
+            Symbol_Table* symbol_table;
+        } polymorphic_base;
+        struct {
+            Workload_Structure* polymorphic_base;
+            Array<Upp_Constant> parameter_values;
+            int instanciation_depth;
+        } polymorhic_instance;
+    };
+};
+
+
+
+// ANALYSIS_PROGRESS
 struct Function_Progress
 {
     ModTree_Function* function;
@@ -242,12 +269,12 @@ struct Function_Progress
     Workload_Function_Body* body_workload;
     Workload_Function_Cluster_Compile* compile_workload;
 
-    Function_Progress_Type type;
+    Polymorphic_Analysis_Type type;
     union {
         struct {
             Dynamic_Array<Function_Progress*> instances;  // Required for de-duplication
             Dynamic_Array<Type_Polymorphic*> implicit_parameters;
-            Dynamic_Array<int> polymorphic_parameter_indices; // Indices of comptime (explicit polymorphic) parameters in signature
+            Dynamic_Array<int> polymorphic_parameter_indices; // Indices of comptime (explicit polymorphic_function) parameters in signature
             Dynamic_Array<int> comptime_argument_evaluation_order; // Argument evaluation order for instanciation (Contains indices to parameters)
         } polymorphic_base;
         struct 
@@ -263,6 +290,7 @@ struct Function_Progress
 struct Bake_Progress
 {
     ModTree_Function* bake_function;
+    Type_Base* result_type;
     Optional<Upp_Constant> result;
 
     Workload_Bake_Analysis* analysis_workload;
@@ -359,13 +387,14 @@ enum class Expression_Result_Type
     HARDCODED_FUNCTION,
     POLYMORPHIC_FUNCTION,
     CONSTANT,
+    POLYMORPHIC_STRUCT,
     NOTHING, // Functions returning void
 };
 
 struct Argument_Info
 {
     int argument_index; // For named arguments/parameters this gives the according parameter index
-    bool is_polymorphic; // If polymorphic, the argument shouldn't generate code during code-generation
+    bool is_polymorphic; // If polymorphic_function, the argument shouldn't generate code during code-generation
     bool already_analysed; // During analysis, don't reanalyse arguments that were already analyse
     bool context_application_missing; // If already analyse, we may still need to apply the context
 };
@@ -386,6 +415,7 @@ struct Expression_Info
     {
         Type_Base* value_type;
         Type_Base* type;
+        Workload_Structure* polymorphic_struct;
         ModTree_Function* function;
         Function_Progress* polymorphic_function; // Either base or if the function was instanciated an instance progress
         Hardcoded_Type hardcoded;
@@ -633,7 +663,6 @@ struct Semantic_Analyser
     // Other
     Workload_Base* current_workload;
     Module_Progress* root_module;
-    ModTree_Global* global_type_informations;
     Predefined_Symbols predefined_symbols;
     Workload_Executer* workload_executer;
     Hashtable<AST::Expression*, Type_Polymorphic*> implicit_parameter_node_mapping;
@@ -644,6 +673,7 @@ struct Semantic_Analyser
 
     // Allocations
     Stack_Allocator comptime_value_allocator;
+    Stack_Allocator global_variable_memory_pool;
     Dynamic_Array<Symbol_Table*> allocated_symbol_tables;
     Dynamic_Array<Symbol*> allocated_symbols;
     Dynamic_Array<Analysis_Pass*> allocated_passes;

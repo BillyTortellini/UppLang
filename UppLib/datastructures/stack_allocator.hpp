@@ -15,6 +15,7 @@ void stack_allocator_destroy(Stack_Allocator* allocator);
 
 void* stack_allocator_allocate_size(Stack_Allocator* allocator, size_t size, size_t alignment);
 void stack_allocator_reset(Stack_Allocator* allocator);
+bool stack_allocator_contains_address_range(Stack_Allocator* allocator, void* address, int byte_count);
 
 template<typename T>
 T* stack_allocator_allocate(Stack_Allocator* allocator) {

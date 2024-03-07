@@ -128,7 +128,7 @@ void ir_data_access_append_to_string(IR_Data_Access* access, String* string, IR_
         string_append_formated(string, "Constant #%d ", access->index);
         type_append_to_string(string, constant->type);
         string_append_formated(string, " ", access->index);
-        type_append_value_to_string(constant->type, &compiler.constant_pool.buffer[constant->offset], string);
+        type_append_value_to_string(constant->type, constant->memory, string);
         break;
     }
     case IR_Data_Access_Type::GLOBAL_DATA: {
@@ -921,6 +921,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
     }
     case Expression_Result_Type::HARDCODED_FUNCTION:
     case Expression_Result_Type::POLYMORPHIC_FUNCTION:
+    case Expression_Result_Type::POLYMORPHIC_STRUCT:
         panic("must not happen");
     case Expression_Result_Type::VALUE:
         break; // Rest of this function
@@ -1031,30 +1032,6 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
                 dynamic_array_push_back(&if_instr.options.if_instr.false_branch->instructions, exit_instr);
                 return call_instr.options.call.destination;
             }
-            case Hardcoded_Type::TYPE_INFO:
-            {
-                IR_Data_Access index_access = ir_generator_generate_expression(ir_block, call.arguments[0]->value);
-                auto index_type = ir_data_access_get_type(&index_access);
-                if (types_are_equal(index_type, upcast(types.type_handle))) {
-                    index_access = ir_generator_generate_cast(ir_block, index_access, upcast(types.i32_type), Info_Cast_Type::INTEGERS);
-                }
-                else {
-                    panic("Should be type_type!");
-                }
-
-                // Array index access
-                IR_Instruction instr;
-                instr.type = IR_Instruction_Type::ADDRESS_OF;
-                instr.options.address_of.destination = ir_data_access_create_intermediate(
-                    ir_block, upcast(type_system_make_pointer(upcast(types.type_information_type))));
-                instr.options.address_of.type = IR_Instruction_Address_Of_Type::ARRAY_ELEMENT;
-                instr.options.address_of.source = ir_data_access_create_global(compiler.semantic_analyser->global_type_informations);
-                instr.options.address_of.options.index_access = index_access;
-                dynamic_array_push_back(&ir_block->instructions, instr);
-                instr.options.address_of.destination.is_memory_access = true;
-
-                return instr.options.address_of.destination;
-            }
             case Hardcoded_Type::TYPE_OF: {
                 panic("Should be handled in semantic analyser");
                 break;
@@ -1067,13 +1044,14 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
         }
         case Expression_Result_Type::POLYMORPHIC_FUNCTION: 
         {
-            assert(call_info->options.polymorphic_function->type == Function_Progress_Type::POLYMORPHIC_INSTANCE, "Must be instance at ir_code");
+            assert(call_info->options.polymorphic_function->type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE, "Must be instance at ir_code");
             auto function = call_info->options.polymorphic_function->function;
             assert(function->is_runnable, "Instances that reach ir-generator must be runnable!");
             call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
             call_instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, function);
             break;
         }
+        case Expression_Result_Type::POLYMORPHIC_STRUCT:
         case Expression_Result_Type::TYPE: {
             panic("Must not happen after semantic analysis!");
             break;
@@ -1101,7 +1079,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
         // Generate code for arguments
         for (int j = 0; j < call.arguments.size; j++) {
             auto info = get_info(call.arguments[j]);
-            if (!info->is_polymorphic) { // Skip polymorphic arguments
+            if (!info->is_polymorphic) { // Skip polymorphic_function arguments
                 call_instr.options.call.arguments[info->argument_index] = ir_generator_generate_expression(ir_block, call.arguments[j]->value);
             }
         }
@@ -1709,11 +1687,6 @@ void ir_generator_generate_queued_items(bool gen_bytecode)
     SCOPE_EXIT(compiler_switch_timing_task(before_task));
     compiler_switch_timing_task(Timing_Task::CODE_GEN);
 
-    // Execute schema for partial compilation (See Bytecode_Generator.hpp)
-    if (gen_bytecode) {
-        bytecode_generator_update_globals(compiler.bytecode_generator);
-    }
-
     // Generate Blocks
     for (int i = 0; i < ir_generator.queue_functions.size; i++)
     {
@@ -1802,7 +1775,7 @@ void ir_generator_queue_function(ModTree_Function* function) {
         return;
     }
     if (function->progress != 0) {
-        assert((function->progress->type != Function_Progress_Type::POLYMORPHIC_BASE), "Function cannot be polymorhic here!");
+        assert((function->progress->type != Polymorphic_Analysis_Type::POLYMORPHIC_BASE), "Function cannot be polymorhic here!");
     }
     if (hashtable_find_element(&ir_generator.function_mapping, function) != 0) return;
     ir_function_create(function->signature, function);
@@ -1821,28 +1794,6 @@ void ir_generator_finish(bool gen_bytecode)
         auto& type_system = compiler.type_system;
         auto entry_function = ir_function_create(type_system_make_function({}), 0);
         ir_generator.program->entry_function = entry_function;
-
-        // Set type_informations global
-        {
-            auto result = constant_pool_add_constant(
-                &compiler.constant_pool,
-                upcast(type_system_make_array(
-                    upcast(type_system.predefined_types.type_information_type), true, type_system.internal_type_infos.size
-                )),
-                array_create_static_as_bytes(type_system.internal_type_infos.data, type_system.internal_type_infos.size)
-            );
-            assert(result.success, "Type information must be valid");
-            assert(type_system.types.size == type_system.internal_type_infos.size, "");
-
-            IR_Instruction move_instr;
-            move_instr.type = IR_Instruction_Type::MOVE;
-            move_instr.options.move.destination = ir_data_access_create_global(compiler.semantic_analyser->global_type_informations);
-            move_instr.options.move.source = ir_generator_generate_cast(
-                entry_function->code, ir_data_access_create_constant(result.constant),
-                ir_data_access_get_type(&move_instr.options.move.destination), Info_Cast_Type::ARRAY_TO_SLICE
-            );
-            dynamic_array_push_back(&entry_function->code->instructions, move_instr);
-        }
 
         // Initialize all globals
         auto& globals = compiler.semantic_analyser->program->globals;

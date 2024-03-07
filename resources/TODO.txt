@@ -1,4 +1,399 @@
 
+Note:
+    Currently we are using the 
+        polymorphic_values array in the workload for analysis, does this work when we have structs inside structs?
+
+Struct Templating:
+Start off ezy:
+A :: struct(T: Type_Handle)
+
+Differences to Function-Polymorphism:
+    * Parameters cannot access each other, so symbol_tablWhat to do if we cannot analyse the polymorphic parameter type? Probably just set as error type I guess?e for parameter analysis is different from member analysis
+        --> This also means that we do not require member analyis, which is neat
+    * Function_Progress stores the instance
+
+Well, let's start off with the parser, which just has to parse an additional arguments array, which
+    can be ignored in the analyser
+
+So some problems I am seeing with this:
+    * Solution: Expression_Info can be polymorphic function 
+        --> When analysing an expression, you would disallow polymorphic types, except when you want to enable them (Function call)
+
+
+Things that need to work:
+    - Base analysis
+    - Instanciation
+
+Implementation Order:
+    - Add polymorphic-struct as expression-result + maybe as symbol?
+    - Add tag to struct to mark it as polymorphic
+
+Base-Analysis:
+    1. Analyse arguments, create symbols
+    2. During base-analysis, accessing symbols returns the correct type, but is not comptime known. (And shouldn't error on comptime known)
+    3. Accesing type-types would result in an error type I presume
+
+Instanciation:
+    1. Functions calls work on polymorphic structs
+    2. Analyse all arguments as comptime, if one fails return error type
+    3. Otherwise create a new workload that also analyses the struct, but this time it uses the instanciated values on symbol lookup
+    4. Implement symbol analysis of polymorphic struct by either being in the base analysis or not...
+
+Error-Handling:
+    Well if structs have errors, we can still generate and run code with the error types, so I guess this is how struct errors propagate
+
+
+
+Polymorphism for structs:
+    A :: struct(T: Type_Handle, C: int)
+        x: [C]T
+
+    add :: (x: A($T, $C), b: A(T, C)) -> A(T, C)
+        result: A(T, C)
+        for i = 0; i < C; i++
+            result[i] = x[i] + b[i]
+        return result
+
+    // But also implicitly
+    add :: (x: A) -> int
+
+    Dynamic_Array :: struct(T: Type_Handle)
+        buffer: []T
+        size: int
+
+So what do I need:
+    Structs need to work similarly to functions: 
+        1. First we need to have a parameter analysis
+        2. We need to have both a base analysis with unknowns + instance analysis
+        3. Instanciation requires argument/parameter matching, and re-analysing the struct...
+            * On normal symbol read, throw error, only instances are valid...
+
+How do structs currently work:
+    1. Discovery: Difference between unnamed and named structs
+        Both generate a new workload
+
+Further Requirements:
+    * Only named structs can be polymorphic
+    * Structs cannot have implicit polymorphis T :: struct(a: $T)
+    * All arguments are automatically expected to be comptime
+
+Probably what's gonna happen:
+    1. I have to rewrite struct dependencies, and remove the circular dependency thing
+    2. Starting of with just named parameters which can only be types
+        A :: struct(T)
+            x: *T
+    3. Then adding the rest gradually...
+
+
+A :: struct (T)
+    value: int
+
+B :: struct
+    x: A(B)
+
+B analysis will create an instance of A(B), and if I add a struct dependency on this...
+    During instanciation, I will have to analyse the parameters, and there I need member-in-memory?
+
+This creates an instance of A(B), which then depends on the fucking size, although it doesn't work...
+
+So new struct-analysis workloads:
+    1. In module discovery check if struct is polymorphic --> Tag struct as polymorphic
+        Create workloads
+    2. Workload Struct_Analysis --> Analysis members and types of members 
+
+Related:
+ * Encountering struct symbol: Return the "unfinished" type
+ * Member-access: Wait for member-analysis workload
+ * Size_of, bakes or type_info that requires size: --> Wait for size_finish workload 
+    So calling type_info in a bake/function may have to add all-reachable types as dependencies
+    But calling type_info can be done on any arbitrary type_handle, not just comptime known types...
+    can I access global type_informations array? Maybe just disallow that, and we'll be gucci,
+ * Function compilation --> Wait for size_finish workload
+    Here the problem is how to find out if functions require the size of structs 
+    --> always on intermediate results (Variable register size), member access(offset calculation)
+        Can I make ir_code wait on workloads? Probably not, but it would make things a little easier
+
+So things I don't like with current code:
+    - Different dependency types (Member in memory, normal, reference...) --> Seems hacky, when type-analysis afterwards would suffice
+    - Array size analysis sucks ass
+    - Functions cannot be analysed even when members aren't used
+    - Not sure if system works with Templates
+
+
+
+APPROACH 1: REMOVAL OF CLUSTER WORKLOADS:
+-----------------------------------------
+    --> Bytecode_Interpreter calls to type_info can add dependency to execution
+    --> Bytecode_Interpreter calls to other functions can add dependency to execution (Other function compilation...)
+    --> IR_Code generation can also add dependency on size_finished
+    --> Removal of workload clustering (Struct finish and cluster compilation)
+
+Problems with this:
+    - Quite big change in architecture, e.g. lot of work --> means lots of bugs and other things
+        To be fair, I don't even think that the changes are that big, ir-code just needs a current whatever and we are gucci
+    - Bytecode execution now will have a stronger separation to compiled execution 
+        But I think we already had that because compiled execution has more problems:
+            * Turing completeness, cannot stop except if we run as another process
+            * What if it calls file_systems and things and we want to do incremental compilation
+            * Generally calls to extern functions...
+            * Cannot track calls to type_info --> This one may actually be easily solvable...
+    - Type_Information Array needs to contain pointers, because bytecode execution may halt
+        and invalidate the array addresses (resize), access to the array should be forbidden
+    - Bytecode Interpreter should have read only access to type_information array
+
+Pros:
+    + Less restrictions on workloads, functions can be compiled and run even with unfinished structs (Pointers/Slices)
+    + No more cluster dependencies --> Less complexity
+
+
+
+            analysis_workload_add_struct_dependency(current->progress, other_progress, current->dependency_type, failure_info);
+
+APPROACH 2: NEW TYPE_SIZE WORKLOAD
+----------------------------------
+Structs and arrays store if the size is ready, otherwise pointer to size-ready workload
+Alter Workload: Struct_Analysis, which after member types are analysed
+    1. Calculates size and waits on other size workloads
+        If cyclic dependency is detected, set the whole member to error-type
+    2. Adds struct-reachable workloads by looking at member types
+Symbol_Read of Struct: Add Cluster dependency to compile workload, but DONT wait on compile workload
+Member-Access: Wait for size workload (Because member could change to error type!)
+Array_Creation: If element_type still has to wait (Either other array or struct)
+    Array-Type contains: Waiting_on_workload (Waits on struct size), 
+    Struct-Size-Workload: List of arrays waiting on this struct (Finish in order! because of arrays of arrays)
+    No additional dependencies needed, because struct dependency would have already been added
+
+
+
+Some current thoughts:
+    - Function_Cluster_Compile is probably usefull to not have to run functions before all errors are found
+    - Bytecode_Interpreter calling type_info pauses is probably not even that bad, because
+        maybe in the future we want also other functions calling back into the analyser...
+
+Ok, so what I'm pretty clear about is:
+    - Remove Struct_Reachable_Resolve, it's very hard to think about why this is needed and
+        also why it even works (Not even sure it works in all cases). E.g. is it assured that all type_infos
+        are initialized when the reachable resolve finished? Are all ways in which local variables are initialized
+        assured to have the struct finished (E.g. bake returns type, macros other things in the future)
+      Replacement:
+        IR_Code Generator can now add dependencies on struct-size workloads (If type of member variable size isn't finished)
+        Interpreter now also has to be able to add dependencies when calling 'type_info' 
+    - Function_Cluster_Compile should probably stay, but I'm not sure yet why or if there are other ways to make this work
+        if we could remove it, then the workload clustering could be removed, which is 1. probably slow and 2. hard to understand
+        Also, we may want to move the function calls/gets called from modtree-function to ir-function
+
+Implementation:
+    Things that Bytecode should do:
+        * Function-Code in separate areas of memory (So I don't have to keep updating references), each function tracks it's own references
+        * Globals should be referenced by index, not by a memory address (Actually probably would cause problems with pointerz)
+    Bytecode partial compilation kinda sucks, except that well references can just work if you do cluster compiling
+        e.g. you create all stubs first and then you don't need to track the references
+    Remove struct reachable resolve, only have analysis now --> 
+        IR_Code generation now reports:
+            * Structs required for finishing code
+            * Function calls/references other functions
+        After analysis of the function we just do compilation and then finish
+
+
+
+CURRENTLY WORKING ON: Pausable Bytecode-Interpreter:
+    FINISH TESTCASES
+    Required changes:
+    - Type_Info for c-interpreter must work again (Add internal type infos as constants and add array access)
+    - Data accessed in interpreter must not relocate during pauses, this includes:
+        * Internal_Type_Infos are currently allocated in dynamic array in type system, must be pointerz (DONE)
+        * Constant pool access (DONE)
+        * Global variable storage (DONE)
+    - Write fucking testcase for constants with wacky memory stuff
+    - Type_Info should check type size and pause execution
+
+
+
+
+
+
+Design Things:
+    - Implicit Operators, operator overloading
+    - Structs/Union rework
+
+Struct/Union rework:
+Problem:
+    If you do subtyping, where all types have different parameters, you cannot allocated them in an array...
+    But this depends strongly on the current situation, so maybe I want to support both opertions?
+    Also there is the problem with having things in read only memory or not, and other stuff...
+
+Let's go through the approaches of different languages:
+    Zig:
+        * Tagged unions
+    Rust:
+        * Enums 
+        * Dyn traits
+    OO-Languages:
+        * Usually only Inheritance
+Final thoughts:
+I think just having tagged unions for this is fine, but I would also want some mechanism to differentiate based on types!
+
+Address :: union
+    ipv4: [4]byte
+    ipv6: String
+    other: struct
+        registered: false
+        id: int
+
+Operations on Tagged-Unions:
+    a := Address.ipv4{.[127, 0, 0, 1]}
+    * Get Union tag (Returns anonymous enum type) --> Maybe make builtin-function? Should also be pointer-able
+        x := get_tag(a)
+    * Set Union tag
+        x: Address
+        set_tag(x, .ipv4)
+    * Get Union tag type
+        x: union_tag_type(Address)
+    * Switch over union
+        switch a
+            .ipv4 -> x 
+                print_array(x)
+            .ipv6 -> ipv6
+                print_string(ipv6)
+    * Accessing values:
+        if get_tag(a) == .ipv4:
+            a.ipv4 = .[1, 2, 3, 4]
+        else 
+            a.ipv6 = "Hello there!"
+            
+
+Problems and confusion with tagged-union "subtypes":
+    * Difference between tag type and subtype:
+        Address.ipv4   // This is a type
+        Address(union_tag_type(Address).ipv4)
+        a := Address(.ipv4)
+        get_tag(a) == .ipv4
+        a.ipv4     // This is a value, but not a subtype value...
+        I think this just disallows the use of a.ipv6, which will result in an error on this type...
+        // Can I use a as whatever now? --> No, I don't think so
+
+    * Automatic casting  
+        a: Address.ipv4 
+        b: Address.ipv6 
+        foo :: (x: Address) -> ...
+        foo(a)
+        foo(b)
+
+Note: The above would be fine, the problem I am currently having is how to handle
+      something like inheriting attributes
+
+C:  
+    struct Node_Base{
+        Node_Type type;
+        int index;
+        const char* name
+    }
+
+    struct Node_Expr {
+        Node_Base base;
+        int literal_value;
+    }
+    
+    struct Node_Definition {
+        Node_Base base;
+        String* id;
+        initial_value: Node_Expr*;
+    }
+
+Translated to Upp:
+    Node :: struct
+        index: string
+        name: String
+        subtype: union
+            expression: struct
+                left: *Node(.expression)
+                right: *Node(.expression)
+                binop: enum
+                    ADDITION,
+                    SUBTRACTION,
+                    MULTIPLICATION
+            int_literal: int
+            definition: struct
+                id: String
+                initial_value: Node(.expression)
+
+    a: Node
+    a.id   !Error: Node does not have a member id
+    b: Node(.int_literal) = .{}
+    b.expression =
+    c: Node(.definition)
+
+Problems that I see coming:
+    What if specific type contains names that clash with upper namespace?
+        A :: struct
+            a: int
+            b: union
+                a: bool
+                c: String
+        x: A
+        set_tag(x.b, .a)
+        x.b.a = false
+
+        y: A(.a)
+        z := y.a !Which one?
+
+    What if this is stacked?
+        A :: struct
+            b: struct
+                c: union
+                    x: int
+                    y: bool
+        
+        x: A(c = .x) // Should this work?
+        x.b // type-of = anonymous_b(.x)
+
+        I feel like this shouldn't work
+
+So for a union the semantics of subtypes are easy, because you can just treat the union as the type of the variant
+    Address :: union
+        id: int
+        ipv4: [4]byte
+        ipv6: String
+
+    // Note: I don't think these should work, because we also need to initialize the tag somewhere?
+    y: Address(.ipv6) = "Hello there"
+    x: Address(.ipv4) = byte.[127, 0, 0, 1]
+    z: Address(.id) = 15
+
+    // Maybe the initializiation would require a struct-initializer?
+    y: Address(.ipv6) = .{"Hello there"}
+
+    a: int = z // Should work through a cast?
+    b: Address = z // Should also work (upcast)
+   
+But this already seems weird, as you can use the union as another type...
+    
+
+Why do I want to be able to reference subtypes in the this way in general?
+    1. Type-Safety: 
+            Makes the program more save, and also abe to model more specific information:
+             * I cannot just assign any Union to the specific variant, I first have to do a check (Maybe putting it on auto-cast)
+             * Accessing a non-active member throws an error 
+    2. Convenient member accesses:
+        By knowing the specific variant, there is no need to specify the variant for member accesses anymore
+            x: Node
+            x.subtype.expression.left
+            y: Node(.expression)
+            y.left
+
+            
+        
+
+
+
+
+
+Notes:
+    Why don't I do comptime calulcations of all expressions? Not the calculation, but the fact if it is comptime or not?
+        Note that we could calculate for some functions if they include some sorts of recursion, and if they don't, we are fiiine
+
+
+
 TODO - Implicit Parameters:
 
 DONE
@@ -46,9 +441,9 @@ Core: (Required for programming)
             * Polymorphic array count --> [$C]int
             * Default values for polymorphic values?
 
-    * Struct/Union rework (Allow other definitions inside the struct namespace, like functions/modules)
     * Polymorphism for structs
     * Local-Context for casting, operator overloading, dot-calls, iterators, auto-pointer dereferencing
+    * Union rework 
 
     * Allocator system
     * Incremental semantic analysis

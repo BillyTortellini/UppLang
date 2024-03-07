@@ -30,7 +30,6 @@ Bytecode_Generator bytecode_generator_create()
     result.function_parameter_stack_offset_index = hashtable_create_pointer_empty<IR_Function*, int>(64);
     result.code_block_register_stack_offset_index = hashtable_create_pointer_empty<IR_Code_Block*, int>(64);
     result.stack_offsets = dynamic_array_create_empty<Dynamic_Array<int>>(64);
-    result.global_data_offsets = dynamic_array_create_empty<int>(256);
 
     // Fill outs
     result.fill_out_gotos = dynamic_array_create_empty<Goto_Label>(64);
@@ -49,7 +48,6 @@ void bytecode_generator_destroy(Bytecode_Generator* generator)
     hashtable_destroy(&generator->function_locations);
     hashtable_destroy(&generator->function_parameter_stack_offset_index);
     hashtable_destroy(&generator->code_block_register_stack_offset_index);
-    dynamic_array_destroy(&generator->global_data_offsets);
     for (int i = 0; i < generator->stack_offsets.size; i++) {
         dynamic_array_destroy(&generator->stack_offsets[i]);
     }
@@ -126,7 +124,7 @@ int bytecode_generator_data_access_to_stack_offset(Bytecode_Generator* generator
     case IR_Data_Access_Type::CONSTANT: {
         Bytecode_Instruction load_instruction;
         load_instruction.instruction_type = Instruction_Type::READ_CONSTANT;
-        load_instruction.op2 = generator->compiler->constant_pool.constants[access.index].offset;
+        load_instruction.op2 = access.index;
         if (access.is_memory_access) {
             load_instruction.op1 = bytecode_generator_create_temporary_stack_offset(generator, types.void_pointer_type);
             load_instruction.op3 = 8;
@@ -142,7 +140,7 @@ int bytecode_generator_data_access_to_stack_offset(Bytecode_Generator* generator
     case IR_Data_Access_Type::GLOBAL_DATA: {
         Bytecode_Instruction load_instruction;
         load_instruction.instruction_type = Instruction_Type::READ_GLOBAL;
-        load_instruction.op2 = generator->global_data_offsets[access.index];
+        load_instruction.op2 = access.index;
         if (access.is_memory_access) {
             load_instruction.op1 = bytecode_generator_create_temporary_stack_offset(generator, types.void_pointer_type);
             load_instruction.op3 = 8;
@@ -211,7 +209,7 @@ void bytecode_generator_write_stack_offset_to_destination(Bytecode_Generator* ge
                 generator,
                 instruction_make_3(
                     Instruction_Type::WRITE_GLOBAL,
-                    generator->global_data_offsets[destination.index],
+                    destination.index,
                     stack_offset,
                     type->size
                 )
@@ -274,7 +272,7 @@ int bytecode_generator_add_instruction_and_set_destination(Bytecode_Generator* g
                 generator,
                 instruction_make_3(
                     Instruction_Type::WRITE_GLOBAL,
-                    generator->global_data_offsets[destination.index],
+                    destination.index,
                     source_reg_offset,
                     type->size
                 )
@@ -344,11 +342,11 @@ int bytecode_generator_get_pointer_to_access(Bytecode_Generator* generator, IR_D
     }
     case IR_Data_Access_Type::GLOBAL_DATA:
         load_instr.instruction_type = Instruction_Type::LOAD_GLOBAL_ADDRESS;
-        offset = generator->global_data_offsets[access.index];
+        offset = access.index;
         break;
     case IR_Data_Access_Type::CONSTANT:
         load_instr.instruction_type = Instruction_Type::LOAD_CONSTANT_ADDRESS;
-        offset = generator->compiler->constant_pool.constants[access.index].offset;
+        offset = access.index;
         break;
     }
     load_instr.op1 = bytecode_generator_create_temporary_stack_offset(generator, compiler.type_system.predefined_types.void_pointer_type);
@@ -509,12 +507,12 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 {
                 case IR_Data_Access_Type::CONSTANT: {
                     load_instruction.instruction_type = Instruction_Type::READ_CONSTANT;
-                    load_instruction.op2 = generator->compiler->constant_pool.constants[argument_access->index].offset;
+                    load_instruction.op2 = argument_access->index;
                     break;
                 }
                 case IR_Data_Access_Type::GLOBAL_DATA: {
                     load_instruction.instruction_type = Instruction_Type::READ_GLOBAL;
-                    load_instruction.op2 = generator->global_data_offsets[argument_access->index];
+                    load_instruction.op2 = argument_access->index;
                     break;
                 }
                 case IR_Data_Access_Type::PARAMETER: {
@@ -1004,7 +1002,6 @@ void bytecode_generator_reset(Bytecode_Generator* generator, Compiler* compiler)
         hashtable_reset(&generator->function_locations);
         hashtable_reset(&generator->code_block_register_stack_offset_index);
         hashtable_reset(&generator->function_parameter_stack_offset_index);
-        dynamic_array_reset(&generator->global_data_offsets);
         for (int i = 0; i < generator->stack_offsets.size; i++) {
             dynamic_array_destroy(&generator->stack_offsets[i]);
         }
@@ -1015,7 +1012,6 @@ void bytecode_generator_reset(Bytecode_Generator* generator, Compiler* compiler)
         dynamic_array_reset(&generator->fill_out_calls);
         dynamic_array_reset(&generator->fill_out_function_ptr_loads);
     }
-    generator->global_data_size = 0;
 }
 
 void bytecode_generator_compile_function(Bytecode_Generator* generator, IR_Function* function)
@@ -1025,18 +1021,6 @@ void bytecode_generator_compile_function(Bytecode_Generator* generator, IR_Funct
     dynamic_array_push_back(&generator->stack_offsets, parameter_stack_offsets);
     hashtable_insert_element(&generator->function_parameter_stack_offset_index, function, generator->stack_offsets.size - 1);
     bytecode_generator_generate_function_code(generator, function);
-}
-
-void bytecode_generator_update_globals(Bytecode_Generator* generator)
-{
-    // Only updates newly_added globals
-    auto& globals = compiler.semantic_analyser->program->globals;
-    for (int i = generator->global_data_offsets.size; i < globals.size; i++) {
-        Type_Base* signature = globals[i]->type;
-        generator->global_data_size = align_offset_next_multiple(generator->global_data_size, signature->alignment);
-        dynamic_array_push_back(&generator->global_data_offsets, generator->global_data_size);
-        generator->global_data_size += signature->size;
-    }
 }
 
 void bytecode_generator_update_references(Bytecode_Generator* generator)
@@ -1264,7 +1248,6 @@ void bytecode_generator_append_bytecode_to_string(Bytecode_Generator* generator,
             hashtable_iterator_next(&function_iter);
         }
     }
-    string_append_formated(string, "Global size: %d\n\n", generator->global_data_size);
     string_append_formated(string, "Code: \n");
     for (int i = 0; i < generator->instructions.size; i++)
     {

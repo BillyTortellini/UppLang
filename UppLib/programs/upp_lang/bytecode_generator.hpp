@@ -43,9 +43,9 @@ enum class Instruction_Type
     WRITE_MEMORY, // op1 = address_reg, op2 = value_reg, op3 = size
     READ_MEMORY, // op1 = dest_reg, op2 = address_reg, op3 = size
     MEMORY_COPY, // op1 = dest_address_reg, op2 = src_address_reg, op3 = size
-    READ_GLOBAL, // op1 = dest_address_reg, op2 = global offset, op3 = size
-    WRITE_GLOBAL, // op1 = dest_global offset, op2 = src_reg, op3 = size
-    READ_CONSTANT, // op1 = dest_reg, op2 = constant offset, op3 = constant size
+    READ_GLOBAL, // op1 = dest_address_reg, op2 = global index, op3 = size
+    WRITE_GLOBAL, // op1 = dest_global index, op2 = src_reg, op3 = size
+    READ_CONSTANT, // op1 = dest_reg, op2 = constant index, op3 = constant size
     U64_ADD_CONSTANT_I32, // op1 = dest_reg, op2 = src, op3 = constant offset
     U64_MULTIPLY_ADD_I32, // op1 = dest_reg, op2 = base_reg, op3 = index_reg, op4 = size
 
@@ -60,9 +60,9 @@ enum class Instruction_Type
 
     LOAD_RETURN_VALUE, // op1 = dst_reg, op2 = size
     LOAD_REGISTER_ADDRESS, // op1 = dest_reg, op2 = register_to_load
-    LOAD_GLOBAL_ADDRESS, // op1 = dest_reg, op2 = global offset
-    LOAD_FUNCTION_LOCATION, // op1 = dest_reg, op2 = funciton_index
-    LOAD_CONSTANT_ADDRESS, // op1 = dest_reg, op2 = constant_offset
+    LOAD_GLOBAL_ADDRESS, // op1 = dest_reg, op2 = global index
+    LOAD_FUNCTION_LOCATION, // op1 = dest_reg, op2 = function index
+    LOAD_CONSTANT_ADDRESS, // op1 = dest_reg, op2 = constant index
 
     CAST_INTEGER_DIFFERENT_SIZE, // op1 = dst_reg, op2 = src_reg, op3 = dst_type, op4 = src_type
     CAST_FLOAT_DIFFERENT_SIZE, // op1 = dst_reg, op2 = src_reg, op3 = dst_type, op4 = src_type
@@ -120,9 +120,7 @@ struct Bytecode_Generator
     Dynamic_Array<Dynamic_Array<int>> stack_offsets;
     Hashtable<IR_Code_Block*, int> code_block_register_stack_offset_index;
     Hashtable<IR_Function*, int> function_parameter_stack_offset_index;
-    Dynamic_Array<int> global_data_offsets;
 
-    int global_data_size;
     int entry_point_index;
     int maximum_function_stack_depth;
 
@@ -157,7 +155,6 @@ void bytecode_generator_reset(Bytecode_Generator* generator, Compiler* compiler)
             by interpreter before a function run...
 */
 void bytecode_generator_compile_function(Bytecode_Generator* generator, IR_Function* function);
-void bytecode_generator_update_globals(Bytecode_Generator* generator);
 void bytecode_generator_update_references(Bytecode_Generator* generator);
 void bytecode_generator_set_entry_function(Bytecode_Generator* generator);
 

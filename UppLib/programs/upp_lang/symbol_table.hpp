@@ -10,6 +10,7 @@ struct ModTree_Global;
 struct Type_Base;
 struct Workload_Definition;
 struct Workload_Import_Resolve;
+struct Workload_Structure;
 struct Module_Progress;
 
 struct Symbol;
@@ -43,7 +44,8 @@ enum class Symbol_Type
     PARAMETER,
 
     TYPE,
-    IMPLICIT_PARAMETER, // Implicit polymorphic type, e.g. "$T"
+    IMPLICIT_PARAMETER, // Implicit polymorphic_function type, e.g. "$T"
+    STRUCT_PARAMETER,
     COMPTIME_VALUE,
     ALIAS_OR_IMPORTED_SYMBOL, // Alias created by import, e.g. import Algorithms~bubble_sort as sort
     MODULE,
@@ -67,6 +69,10 @@ struct Symbol
         Function_Parameter* parameter;
         Upp_Constant constant;
         Type_Polymorphic* implicit;
+        struct {
+            Workload_Structure* workload;
+            int parameter_index;
+        } struct_parameter;
     } options;
 
     String* id;

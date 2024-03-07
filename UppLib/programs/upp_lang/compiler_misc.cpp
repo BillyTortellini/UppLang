@@ -72,7 +72,7 @@ void hardcoded_type_append_to_string(String* string, Hardcoded_Type hardcoded)
 
 bool exit_code_is_valid(int value)
 {
-    return value >= (int)Exit_Code::SUCCESS && value <= (int)Exit_Code::INVALID_SWITCH_CASE;
+    return value >= (int)Exit_Code::SUCCESS && value <= (int)Exit_Code::TYPE_INFO_WAITING_FOR_TYPE_FINISHED;
 }
 
 void exit_code_append_to_string(String* string, Exit_Code code)
@@ -112,98 +112,86 @@ void exit_code_append_to_string(String* string, Exit_Code code)
     case Exit_Code::CODE_ERROR_OCCURED:
         string_append_formated(string, "CODE_ERROR_OCCURED");
         break;
+    case Exit_Code::TYPE_INFO_WAITING_FOR_TYPE_FINISHED:
+        string_append_formated(string, "TYPE_INFO_WAITING_FOR_TYPE_FINISHED");
+        break;
     default: panic("Hey");
     }
 }
 
+// CORRECTNESS: Structs may have padding, and padding memory may be uninitialized, so just a mem_compare may be insufficient
+//              To be fair, currently this only leads to constants not being deduplicated, so it's not a big deal,
+//              but if other code uses this deduplication to check if two constants are the same, it could lead to problems
 bool compare_array_memory(Constant_Deduplication* a, Constant_Deduplication* b) {
+    double start = timer_current_time_in_seconds(compiler.timer);
+    SCOPE_EXIT(compiler.constant_pool.time_in_comparison += timer_current_time_in_seconds(compiler.timer) - start;);
+
+    if (!types_are_equal(a->type, b->type)) {
+        return false;
+    }
     if (a->data_size_in_byte != b->data_size_in_byte) {
         return false;
     }
     if (a->pool != b->pool) {
         return false;
     }
-
-    void* a_ptr = a->data;
-    if (a->is_pool_data) {
-        a_ptr = &a->pool->buffer[a->offset];
-    }
-    void* b_ptr = b->data;
-    if (b->is_pool_data) {
-        b_ptr = &b->pool->buffer[b->offset];
-    }
-     
-    return memory_compare(a_ptr, b_ptr, a->data_size_in_byte);
+    return memory_compare(a->data, b->data, a->data_size_in_byte);
 }
 
 u64 hash_deduplication(Constant_Deduplication* a) {
-    void* a_ptr = a->data;
-    if (a->is_pool_data) {
-        a_ptr = &a->pool->buffer[a->offset];
-    }
-    if (a->data_size_in_byte == 0 || a_ptr == 0) {
+    double start = timer_current_time_in_seconds(compiler.timer);
+    SCOPE_EXIT(compiler.constant_pool.time_in_comparison += timer_current_time_in_seconds(compiler.timer) - start;);
+    if (a->data_size_in_byte == 0 || a->data == 0) {
         return 0;
     }
 
     Array<byte> memory;
-    memory.data = (byte*)a_ptr;
+    memory.data = (byte*)a->data;
     memory.size = a->data_size_in_byte;
-    return hash_memory(memory);
+    u64 hash = hash_memory(memory);
+    hash = hash_combine(hash, hash_i32(&a->data_size_in_byte));
+    hash = hash_combine(hash, hash_pointer(a->type));
+    return hash;
 }
 
 // Constant Pool
 Constant_Pool constant_pool_create(Type_System* type_system)
 {
     Constant_Pool result;
-    result.buffer = dynamic_array_create_empty<byte>(2048);
+    result.constant_memory = stack_allocator_create_empty(2048);
     result.constants = dynamic_array_create_empty<Upp_Constant>(2048);
     result.references = dynamic_array_create_empty<Upp_Constant_Reference>(128);
-    result.saved_pointers = hashtable_create_pointer_empty<void*, int>(32);
-    result.deduplication_table = hashtable_create_empty<Constant_Deduplication, int>(16, hash_deduplication, compare_array_memory);
+    result.saved_pointers = hashtable_create_pointer_empty<void*, Upp_Constant>(32);
+    result.deduplication_table = hashtable_create_empty<Constant_Deduplication, Upp_Constant>(16, hash_deduplication, compare_array_memory);
     result.type_system = type_system;
-    result.max_buffer_size = 1024 * 1024; // 1 MB of constant buffer is allowed per default
     return result;
 }
 
 void constant_pool_destroy(Constant_Pool* pool) 
 {
-    dynamic_array_destroy(&pool->buffer);
+    stack_allocator_destroy(&pool->constant_memory);
     dynamic_array_destroy(&pool->constants);
     dynamic_array_destroy(&pool->references);
     hashtable_destroy(&pool->saved_pointers);
     hashtable_destroy(&pool->deduplication_table);
 }
 
-struct Offset_Result
-{
-    bool success;
-    const char* error_message;
-    int offset;
-};
-
-Offset_Result offset_result_make_success(int offset) {
-    Offset_Result result;
+Constant_Pool_Result constant_pool_result_make_success(Constant_Pool* pool, Upp_Constant constant) {
+    Constant_Pool_Result result;
     result.success = true;
-    result.offset = offset;
     result.error_message = "";
+    result.constant = constant;
     return result;
 }
 
-Offset_Result offset_result_make_error(const char* error) {
-    Offset_Result result;
+Constant_Pool_Result constant_pool_result_make_error(const char* error) {
+    Constant_Pool_Result result;
     result.success = false;
     result.error_message = error;
-    result.offset = -1;
     return result;
 }
 
-Offset_Result constant_pool_add_constant_internal(Constant_Pool* pool, Type_Base* signature, Array<byte> bytes);
-
-void* upp_constant_get_pointer(Constant_Pool* pool, Upp_Constant constant) {
-    return (void*)&pool->buffer[constant.offset];
-}
-
-bool type_signature_contains_references(Type_Base* signature)
+bool type_signature_contains_references_rec(Type_Base* signature)
 {
     switch (signature->type)
     {
@@ -217,14 +205,14 @@ bool type_signature_contains_references(Type_Base* signature)
         auto& members = downcast<Type_Struct>(signature)->members;
         for (int i = 0; i < members.size; i++) {
             Struct_Member* member = &members[i];
-            if (type_signature_contains_references(member->type)) {
+            if (type_signature_contains_references_rec(member->type)) {
                 return true;
             }
         }
         return false;
     }
     case Type_Type::ENUM: return false;
-    case Type_Type::ARRAY: return type_signature_contains_references(downcast<Type_Array>(signature)->element_type);
+    case Type_Type::ARRAY: return type_signature_contains_references_rec(downcast<Type_Array>(signature)->element_type);
     case Type_Type::SLICE: return true;
     case Type_Type::TYPE_HANDLE: return false;
     case Type_Type::ERROR_TYPE: return false;
@@ -232,6 +220,14 @@ bool type_signature_contains_references(Type_Base* signature)
     }
 
     return false;
+}
+
+bool type_signature_contains_references(Type_Base* signature) {
+    double start = timer_current_time_in_seconds(compiler.timer);
+    auto result = type_signature_contains_references_rec(signature);
+    double end = timer_current_time_in_seconds(compiler.timer);
+    compiler.constant_pool.time_contains_reference += end - start;
+    return result;
 }
 
 bool constant_pool_compare_constants(Constant_Pool* pool, Upp_Constant a, Upp_Constant b)
@@ -246,19 +242,51 @@ bool constant_pool_compare_constants(Constant_Pool* pool, Upp_Constant a, Upp_Co
     */
 
     if (a.type != b.type) return false;
-    if (a.constant_index == b.constant_index || a.offset == b.offset) return true;
+    if (a.constant_index == b.constant_index || a.memory == b.memory) return true;
 
-    byte* pool_data = (byte*) pool->buffer.data;
-    byte* raw_data_a = &pool_data[a.offset];
-    byte* raw_data_b = &pool_data[b.offset];
     Type_Base* signature = a.type;
-    return memory_compare(raw_data_a, raw_data_b, signature->size);
+    return memory_compare(a.memory, b.memory, signature->size);
 }
 
-// Return the error message
-Optional<const char*> constant_pool_record_references(Constant_Pool* pool, int data_offset, Type_Base* signature)
+Constant_Pool_Result constant_pool_add_constant_internal(Constant_Pool* pool, Type_Base* signature, Array<byte> bytes);
+
+// Returns an error_message on failure
+// Also, this message gets invoced on e.g. all struct members of a struct (But with a non-zero offset from base)
+Optional<const char*> constant_pool_deepcopy_references_recursive(Constant_Pool* pool, Upp_Constant constant, Type_Base* signature, int offset_from_base)
 {
-    void* raw_data = &pool->buffer[data_offset];
+    pool->deepcopy_counts += 1;
+
+    auto record_pointer_reference = [&](void** pointer_ptr, Type_Base* type) -> Optional<const char*>
+    {
+        void* pointer = *pointer_ptr;
+        // Check if pointer is null
+        if (pointer == nullptr) {
+            return optional_make_failure<const char*>(); // Nullptrs can be stored as nullpointer, so this is fine
+        }
+        if (!memory_is_readable(pointer, type->size)) {
+            return optional_make_success("Constant data contains invalid pointer that isn't null");
+        }
+
+        Constant_Pool_Result referenced_constant = constant_pool_add_constant_internal(
+            pool, type, array_create_static_as_bytes((byte*)pointer, type->size)
+        );
+        if (!referenced_constant.success) return optional_make_success(referenced_constant.error_message);
+
+        // Update pointer
+        *pointer_ptr = referenced_constant.constant.memory;
+
+        // Store reference
+        Upp_Constant_Reference reference;
+        reference.constant = constant;
+        reference.pointer_member_byte_offset = (byte*)pointer_ptr - constant.memory;
+        assert(reference.pointer_member_byte_offset >= 0 && reference.pointer_member_byte_offset <= constant.type->size, "");
+        reference.points_to = referenced_constant.constant;
+        dynamic_array_push_back(&pool->references, reference);
+
+        return optional_make_failure<const char*>();
+    };
+
+    byte* raw_data = (byte*)constant.memory + offset_from_base;
     switch (signature->type)
     {
     case Type_Type::POLYMORPHIC:
@@ -273,26 +301,8 @@ Optional<const char*> constant_pool_record_references(Constant_Pool* pool, int d
     }
     case Type_Type::POINTER:
     {
-        void* ptr_value = *(void**)raw_data;
-        if (ptr_value == nullptr) {
-            break;
-        }
         Type_Base* points_to = downcast<Type_Pointer>(signature)->points_to_type;
-        if (memory_is_readable(ptr_value, points_to->size)) 
-        {
-            Upp_Constant_Reference reference;
-            reference.ptr_offset = data_offset;
-            Offset_Result ptr_result = constant_pool_add_constant_internal(
-                pool, points_to, array_create_static_as_bytes((byte*)ptr_value, points_to->size)
-            );
-            if (!ptr_result.success) return optional_make_success(ptr_result.error_message);
-            reference.buffer_destination_offset = ptr_result.offset;
-            dynamic_array_push_back(&pool->references, reference);
-        }
-        else {
-            return optional_make_success("Constant data contains invalid pointer that isn't null");
-        }
-        break;
+        return record_pointer_reference((void**)raw_data, points_to);
     }
     case Type_Type::FUNCTION: {
         return optional_make_success("Cannot save function pointers as constants currently!");
@@ -300,34 +310,17 @@ Optional<const char*> constant_pool_record_references(Constant_Pool* pool, int d
     case Type_Type::STRUCT:
     {
         auto& type_system = compiler.type_system;
+
+        // Check if it's any type
         auto& any_type = type_system.predefined_types.any_type;
-        if (types_are_equal(signature, upcast(any_type))) 
+        if (types_are_equal(signature, upcast(any_type)))
         {
             Upp_Any* any = (Upp_Any*)raw_data;
             if (any->type.index >= (u32)type_system.types.size) {
                 return optional_make_success("Any contained invalid type index");
             }
             Type_Base* pointed_to_type = type_system.types[any->type.index];
-
-            // Check pointer
-            if (any->data == 0) {
-                break; // If nullptr, then we don't have a reference, so serialization is fine at this point
-            }
-            else if (memory_is_readable(any->data, pointed_to_type->size)) 
-            {
-                Upp_Constant_Reference reference;
-                reference.ptr_offset = data_offset;
-                Offset_Result data_result = constant_pool_add_constant_internal(pool, pointed_to_type, 
-                    array_create_static_as_bytes((byte*)any->data, pointed_to_type->size)
-                );
-                if (!data_result.success) return optional_make_success(data_result.error_message);
-                reference.buffer_destination_offset = data_result.offset;
-                dynamic_array_push_back(&pool->references, reference);
-            }
-            else {
-                return optional_make_success("Constant data contained slice with invalid data-pointer");
-            }
-            break; // Don't further handle any
+            return record_pointer_reference((void**)raw_data, pointed_to_type);
         }
 
         // Loop over each member and call this function
@@ -335,11 +328,11 @@ Optional<const char*> constant_pool_record_references(Constant_Pool* pool, int d
         auto& members = structure->members;
         switch (structure->struct_type)
         {
-        case AST::Structure_Type::STRUCT: 
+        case AST::Structure_Type::STRUCT:
         {
             for (int i = 0; i < members.size; i++) {
                 Struct_Member* member = &members[i];
-                auto member_error_opt = constant_pool_record_references(pool, data_offset + member->offset, member->type);
+                auto member_error_opt = constant_pool_deepcopy_references_recursive(pool, constant, member->type, offset_from_base + member->offset);
                 if (member_error_opt.available) return member_error_opt;
             }
             break;
@@ -350,7 +343,7 @@ Optional<const char*> constant_pool_record_references(Constant_Pool* pool, int d
             }
             break;
         }
-        case AST::Structure_Type::UNION: 
+        case AST::Structure_Type::UNION:
         {
             Type_Base* tag_type = structure->tag_member.type;
             assert(tag_type->type == Type_Type::ENUM, "");
@@ -359,7 +352,7 @@ Optional<const char*> constant_pool_record_references(Constant_Pool* pool, int d
 
             int tag_value = *(int*)((byte*)raw_data + structure->tag_member.offset);
             int found_member_index = -1;
-            for (int i = 0; i < enum_members.size; i++) 
+            for (int i = 0; i < enum_members.size; i++)
             {
                 auto member = &enum_members[i];
                 if (member->value == tag_value) {
@@ -368,7 +361,7 @@ Optional<const char*> constant_pool_record_references(Constant_Pool* pool, int d
             }
             if (found_member_index != -1) {
                 Struct_Member* member = &members[found_member_index];
-                auto member_status = constant_pool_record_references(pool, data_offset + member->offset, member->type);
+                auto member_status = constant_pool_deepcopy_references_recursive(pool, constant, member->type, offset_from_base + member->offset);
                 if (member_status.available) return member_status;
             }
             else {
@@ -391,38 +384,25 @@ Optional<const char*> constant_pool_record_references(Constant_Pool* pool, int d
         if (type_signature_contains_references(array->element_type)) {
             for (int i = 0; i < array->element_count; i++) {
                 int element_offset = i * array->element_type->size;
-                auto element_status = constant_pool_record_references(pool, data_offset + element_offset, array->element_type);
+                auto element_status = constant_pool_deepcopy_references_recursive(pool, constant, array->element_type, offset_from_base + element_offset);
                 if (element_status.available) return element_status;
             }
         }
         break;
     }
-    case Type_Type::SLICE: 
+    case Type_Type::SLICE:
     {
         // Check if pointer is valid, if true, save slice data
         auto slice_type = downcast<Type_Slice>(signature);
-        Upp_Slice_Base slice = *(Upp_Slice_Base*)raw_data;
-        if (slice.data == nullptr || slice.size == 0) {
+        Upp_Slice_Base* slice = (Upp_Slice_Base*)raw_data;
+        if (slice->data == nullptr || slice->size == 0) {
             break;
         }
-        if (slice.size <= 0) {
+        if (slice->size <= 0) {
             return optional_make_success("Constant data contained slice with negative size");
         }
-        if (memory_is_readable(slice.data, slice_type->element_type->size * slice.size)) 
-        {
-            Upp_Constant_Reference reference;
-            reference.ptr_offset = data_offset;
-            Offset_Result data_result = constant_pool_add_constant_internal(
-                pool, upcast(type_system_make_array(slice_type->element_type, true, slice.size)), 
-                array_create_static_as_bytes((byte*)slice.data, slice_type->element_type->size * slice.size)
-            );
-            if (!data_result.success) return optional_make_success(data_result.error_message);
-            reference.buffer_destination_offset = data_result.offset;
-            dynamic_array_push_back(&pool->references, reference);
-        }
-        else {
-            return optional_make_success("Constant data contained slice with invalid data-pointer");
-        }
+
+        return record_pointer_reference((void**)&slice->data, upcast(type_system_make_array(slice_type->element_type, true, slice->size)));
     }
     case Type_Type::TYPE_HANDLE:
     case Type_Type::ERROR_TYPE:
@@ -433,98 +413,78 @@ Optional<const char*> constant_pool_record_references(Constant_Pool* pool, int d
     return optional_make_failure<const char*>();
 }
 
-Offset_Result constant_pool_add_constant_internal(Constant_Pool* pool, Type_Base* signature, Array<byte> bytes)
+Constant_Pool_Result constant_pool_add_constant_internal(Constant_Pool* pool, Type_Base* signature, Array<byte> bytes)
 {
-    // Check if deduplication is possible (Currently for values without references, maybe change later...)
-    bool type_contains_references = type_signature_contains_references(signature);
-    if (!type_contains_references) {
-        Constant_Deduplication deduplication;
-        deduplication.pool = pool;
-        deduplication.data_size_in_byte = signature->size;
-        deduplication.is_pool_data = false;
-        deduplication.offset = -1;
-        deduplication.data = bytes.data;
-        int* offset_opt = hashtable_find_element(&pool->deduplication_table, deduplication);
-        if (offset_opt != 0) {
-            return offset_result_make_success(*offset_opt);
-        }
-    }
+    pool->added_internal_constants += 1;
+
+    auto checkpoint = stack_checkpoint_make(&pool->constant_memory);
+    int rewind_constant_count = pool->constants.size;
+    int rewind_reference_count = pool->references.size;
 
     // Handle cyclic references (Stop adding to pool once same pointer was found)
     {
-        int* found_offset = hashtable_find_element(&pool->saved_pointers, (void*)bytes.data);
-        if (found_offset != 0) {
-            return offset_result_make_success(*found_offset);
+        Upp_Constant* already_saved_index = hashtable_find_element(&pool->saved_pointers, (void*)bytes.data);
+        if (already_saved_index != 0) {
+            return constant_pool_result_make_success(pool, *already_saved_index);
         }
     }
 
-
-    if (pool->buffer.size + signature->alignment + signature->size > pool->max_buffer_size) {
-        return offset_result_make_error("Constant pool reached maximum buffer size");
+    // Check if deduplication is possible (Currently for values without references, maybe change later...)
+    bool type_contains_references = type_signature_contains_references(signature);
+    if (!type_contains_references) {
+        pool->duplication_checks += 1;
+        Constant_Deduplication deduplication;
+        deduplication.pool = pool;
+        deduplication.data_size_in_byte = signature->size;
+        deduplication.data = bytes.data;
+        deduplication.type = signature;
+        Upp_Constant* deduplicated = hashtable_find_element(&pool->deduplication_table, deduplication);
+        if (deduplicated != 0) {
+            return constant_pool_result_make_success(pool, *deduplicated);
+        }
     }
 
-    // Reserve enough memory in pool
-    dynamic_array_reserve(&pool->buffer, pool->buffer.size + signature->alignment + signature->size);
+    // Create shallow copy in pool memory
+    Upp_Constant constant;
+    constant.constant_index = pool->constants.size;
+    constant.type = signature;
+    constant.memory = (byte*)stack_allocator_allocate_size(&pool->constant_memory, signature->size, signature->alignment);
+    dynamic_array_push_back(&pool->constants, constant);
+    memory_copy(constant.memory, bytes.data, signature->size);
+    hashtable_insert_element(&pool->saved_pointers, (void*)bytes.data, constant);
 
-    // Align pool to type alignment
-    while (pool->buffer.size % signature->alignment != 0) {
-        dynamic_array_push_back(&pool->buffer, (byte)0);
-    }
-
-    // Copy data to pool
-    int start_offset = pool->buffer.size;
-    for (int i = 0; i < bytes.size; i++) {
-        dynamic_array_push_back(&pool->buffer, bytes[i]);
-    }
-    hashtable_insert_element(&pool->saved_pointers, (void*)bytes.data, start_offset);
-
-    // Handle references inside constant data
-    auto error_message = constant_pool_record_references(pool, start_offset, signature);
+    // Convert shallow copy to deepcopy by copying all references
+    auto error_message = constant_pool_deepcopy_references_recursive(pool, constant, signature, 0);
     if (error_message.available) {
-        dynamic_array_rollback_to_size(&pool->buffer, start_offset);
-        return offset_result_make_error(error_message.value);
+        stack_checkpoint_rewind(checkpoint);
+        dynamic_array_rollback_to_size(&pool->constants, rewind_constant_count);
+        dynamic_array_rollback_to_size(&pool->references, rewind_reference_count);
+        return constant_pool_result_make_error(error_message.value);
     }
 
     // Add to deduplication list
     if (!type_contains_references) {
         Constant_Deduplication deduplication;
         deduplication.pool = pool;
+        deduplication.type = constant.type;
         deduplication.data_size_in_byte = signature->size;
-        deduplication.is_pool_data = true;
-        deduplication.offset = start_offset;
-        deduplication.data = 0;
-        hashtable_insert_element(&pool->deduplication_table, deduplication, start_offset);
+        deduplication.data = constant.memory;
+        hashtable_insert_element(&pool->deduplication_table, deduplication, constant);
     }
 
-    return offset_result_make_success(start_offset);
+    return constant_pool_result_make_success(pool, constant);
 }
 
 Constant_Pool_Result constant_pool_add_constant(Constant_Pool* pool, Type_Base* signature, Array<byte> bytes)
 {
-    int rewind_index = pool->buffer.size;
+    pool->added_internal_constants = 0;
+    pool->duplication_checks = 0;
+    pool->time_contains_reference = 0;
+    pool->deepcopy_counts = 0;
+    pool->time_in_comparison = 0;
+    pool->time_in_hash = 0;
     hashtable_reset(&pool->saved_pointers);
-    Offset_Result offset_result = constant_pool_add_constant_internal(pool, signature, bytes);
-    if (!offset_result.success) {
-        Constant_Pool_Result result;
-        result.success = false;
-        result.error_message = offset_result.error_message;
-        result.constant.constant_index = -1;
-        result.constant.offset = -1;
-        result.constant.type = 0;
-        return result;
-    }
-
-    Upp_Constant constant;
-    constant.type = signature;
-    constant.offset = offset_result.offset;
-    constant.constant_index = pool->constants.size;
-    dynamic_array_push_back(&pool->constants, constant);
-
-    Constant_Pool_Result result;
-    result.success = true;
-    result.error_message = "";
-    result.constant = constant;
-    return result;
+    return constant_pool_add_constant_internal(pool, signature, bytes);
 }
 
 
@@ -793,7 +753,7 @@ void fiber_pool_test()
         finished = fiber_pool_switch_to_handel(pausing);
     }
     logg("Returned from pausing!\n");
-    
+
     assert(pool->allocated_fibers.size == 2, "Must not have allocated 3, since only max of 2 fibers at a time were active\n");
 }
 

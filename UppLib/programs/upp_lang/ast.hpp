@@ -300,6 +300,7 @@ namespace AST
             } array_type;
             Expression* slice_type;
             struct {
+                Dynamic_Array<Parameter*> parameters;
                 Dynamic_Array<Definition*> members;
                 Structure_Type type;
             } structure;

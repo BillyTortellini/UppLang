@@ -24,7 +24,7 @@ bool enable_c_compilation = false;
 
 // Output stages
 bool output_identifiers = false;
-bool output_ast = false;
+bool output_ast = true;
 bool output_type_system = false;
 bool output_root_table = false;
 bool output_ir = false;
@@ -88,6 +88,7 @@ Compiler* compiler_initialize(Timer* timer)
     compiler.extern_sources = extern_sources_create();
     compiler.cached_imports = hashtable_create_empty<String, Code_Source*>(1, hash_string, string_equals);
     compiler.fiber_pool = fiber_pool_create();
+    compiler.random = random_make_time_initalized();
 
     Parser::initialize();
     lexer_initialize(&compiler.identifier_pool);
@@ -97,8 +98,6 @@ Compiler* compiler_initialize(Timer* timer)
     compiler.ir_generator = ir_generator_initialize();
     compiler.bytecode_generator = new Bytecode_Generator;
     *compiler.bytecode_generator = bytecode_generator_create();
-    compiler.bytecode_interpreter = new Bytecode_Interpreter;
-    *compiler.bytecode_interpreter = bytecode_intepreter_create();
     compiler.c_generator = new C_Generator;
     *compiler.c_generator = c_generator_create();
     compiler.c_compiler = new C_Compiler;
@@ -131,8 +130,6 @@ void compiler_destroy()
     ir_generator_destroy();
     bytecode_generator_destroy(compiler.bytecode_generator);
     delete compiler.bytecode_generator;
-    bytecode_interpreter_destroy(compiler.bytecode_interpreter);
-    delete compiler.bytecode_interpreter;
     c_generator_destroy(compiler.c_generator);
     delete compiler.c_generator;
     c_compiler_destroy(compiler.c_compiler);
@@ -250,7 +247,6 @@ void compiler_reset_data(bool keep_data_for_incremental_compile, Compile_Type co
         semantic_analyser_reset();
         ir_generator_reset();
         bytecode_generator_reset(compiler.bytecode_generator, &compiler);
-        bytecode_interpreter_reset(compiler.bytecode_interpreter, &compiler);
     }
 }
 
@@ -466,13 +462,11 @@ Exit_Code compiler_execute()
         }
         else
         {
-            double bytecode_start = timer_current_time_in_seconds(compiler.timer);
-            compiler.bytecode_interpreter->instruction_limit_enabled = true;
-            compiler.bytecode_interpreter->instruction_limit = 10000;
-            bytecode_interpreter_run_function(compiler.bytecode_interpreter, compiler.bytecode_generator->entry_point_index);
-            double bytecode_end = timer_current_time_in_seconds(compiler.timer);
-            float bytecode_time = (bytecode_end - bytecode_start);
-            return compiler.bytecode_interpreter->exit_code;
+            Bytecode_Thread* thread = bytecode_thread_create(10000);
+            SCOPE_EXIT(bytecode_thread_destroy(thread));
+            bytecode_thread_set_initial_state(thread, compiler.bytecode_generator->entry_point_index);
+            bytecode_thread_execute(thread);
+            return thread->exit_code;
         }
     }
     return Exit_Code::COMPILATION_FAILED;

@@ -50,6 +50,16 @@ void* stack_allocator_allocate_size(Stack_Allocator* allocator, size_t size, siz
     return data;
 }
 
+bool stack_allocator_contains_address_range(Stack_Allocator* allocator, void* address, int byte_count) {
+    for (int i = allocator->memory.size - 1; i >= 0;i--) { // Note: Travers memories in reverse order, because there is a higher chance to find the address in larger regions
+        auto& memory = allocator->memory[i];
+        if ((void*)memory.data <= address && (void*)(memory.data + memory.size) >= (void*)(((byte*)address) + byte_count)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void stack_allocator_reset(Stack_Allocator* allocator) {
     allocator->current_pool_index = 0;
     allocator->stack_pointer = 0;

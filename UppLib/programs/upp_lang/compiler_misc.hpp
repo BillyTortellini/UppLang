@@ -2,6 +2,7 @@
 
 #include "../../datastructures/dynamic_array.hpp"
 #include "../../datastructures/hashtable.hpp"
+#include "../../datastructures/stack_allocator.hpp"
 #include "../../datastructures/string.hpp"
 #include "../../win32/process.hpp"
 
@@ -61,6 +62,7 @@ enum class Exit_Code
     CODE_ERROR_OCCURED,
     ANY_CAST_INVALID,
     INVALID_SWITCH_CASE,
+    TYPE_INFO_WAITING_FOR_TYPE_FINISHED
 };
 
 bool exit_code_is_valid(int value);
@@ -98,15 +100,15 @@ struct Code_Source
 struct Upp_Constant
 {
     Type_Base* type;
-    int offset;
+    byte* memory;
     int constant_index;
 };
 
 struct Upp_Constant_Reference
 {
-    // Where the pointer is stored in the buffer, e.g. *(void**)&pool.buffer[ptr_offset] = &pool.buffer[buffer_destination_offset];
-    int ptr_offset;
-    int buffer_destination_offset; 
+    Upp_Constant constant;
+    int pointer_member_byte_offset;
+    Upp_Constant points_to; 
 };
 
 struct Constant_Pool_Result
@@ -119,9 +121,8 @@ struct Constant_Pool_Result
 struct Constant_Pool;
 struct Constant_Deduplication {
     Constant_Pool* pool;
+    Type_Base* type;
     int data_size_in_byte;
-    bool is_pool_data;
-    int offset;
     void* data;
 };
 
@@ -129,23 +130,28 @@ struct Constant_Pool
 {
     Type_System* type_system;
     Dynamic_Array<Upp_Constant> constants;
-    Dynamic_Array<Upp_Constant_Reference> references;
-    Dynamic_Array<byte> buffer;
-    Hashtable<void*, int> saved_pointers;
-    Hashtable<Constant_Deduplication, int> deduplication_table;
-    int max_buffer_size;
+    Dynamic_Array<Upp_Constant_Reference> references; // Required for serialization
+    Stack_Allocator constant_memory;
+    Hashtable<void*, Upp_Constant> saved_pointers;
+    Hashtable<Constant_Deduplication, Upp_Constant> deduplication_table; 
+    
+    int deepcopy_counts;
+    int added_internal_constants;
+    int duplication_checks;
+    double time_contains_reference;
+    double time_in_comparison;
+    double time_in_hash;
 };
 
 Constant_Pool constant_pool_create(Type_System* type_system);
 void constant_pool_destroy(Constant_Pool* pool);
 Constant_Pool_Result constant_pool_add_constant(Constant_Pool* pool, Type_Base* signature, Array<byte> bytes);
 bool constant_pool_compare_constants(Constant_Pool* pool, Upp_Constant a, Upp_Constant b);
-void* upp_constant_get_pointer(Constant_Pool* pool, Upp_Constant constant);
 template<typename T>
 T upp_constant_to_value(Constant_Pool* pool, Upp_Constant constant)
 {
     assert(constant.type->size == sizeof(T), "");
-    return *((T*)&pool->buffer[constant.offset]);
+    return *(T*)constant.memory;
 }
 
 

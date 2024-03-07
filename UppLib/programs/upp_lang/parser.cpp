@@ -1563,6 +1563,7 @@ namespace Parser
         {
             result->type = Expression_Type::STRUCTURE_TYPE;
             result->options.structure.members = dynamic_array_create_empty<Definition*>(1);
+            result->options.structure.parameters = dynamic_array_create_empty<Parameter*>(1);
             if (test_keyword_offset(Keyword::STRUCT, 0)) {
                 result->options.structure.type = AST::Structure_Type::STRUCT;
             }
@@ -1573,6 +1574,12 @@ namespace Parser
                 result->options.structure.type = AST::Structure_Type::UNION;
             }
             advance_token();
+
+            // Parse struct parameters
+            if (test_parenthesis('(')) {
+                parse_parenthesis_comma_seperated(&result->base, &result->options.structure.parameters, parse_parameter, Parenthesis_Type::PARENTHESIS);
+            }
+
             parse_follow_block(AST::upcast(result), Block_Context::STRUCT);
             PARSE_SUCCESS(result);
         }
