@@ -125,8 +125,7 @@ void type_append_to_string_with_children(String* string, Type_Base* signature, b
             if (struct_type->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
                 string_append_formated(string, "(");
                 SCOPE_EXIT(string_append_formated(string, ")"));
-                auto& instance = struct_type->workload->polymorhic_instance;
-                auto& base = instance.polymorphic_base->polymorphic_base;
+                auto& instance = struct_type->workload->polymorphic_info.instance;
                 for (int i = 0; i < instance.parameter_values.size; i++) {
                     auto& constant = instance.parameter_values[i];
                     type_append_value_to_string(constant.type, constant.memory, string);
@@ -1015,7 +1014,7 @@ Type_Function* type_system_make_function(std::initializer_list<Function_Paramete
     return type_system_make_function(params, return_type);
 }
 
-Type_Struct* type_system_make_struct_empty(AST::Structure_Type struct_type, String* name, Workload_Structure* workload)
+Type_Struct* type_system_make_struct_empty(AST::Structure_Type struct_type, String* name, Workload_Structure_Body* workload)
 {
     Type_Struct result;
     result.base.type = Type_Type::STRUCT;

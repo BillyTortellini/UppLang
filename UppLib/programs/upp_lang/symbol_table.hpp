@@ -10,7 +10,7 @@ struct ModTree_Global;
 struct Type_Base;
 struct Workload_Definition;
 struct Workload_Import_Resolve;
-struct Workload_Structure;
+struct Workload_Structure_Polymorphic;
 struct Module_Progress;
 
 struct Symbol;
@@ -70,7 +70,7 @@ struct Symbol
         Upp_Constant constant;
         Type_Polymorphic* implicit;
         struct {
-            Workload_Structure* workload;
+            Workload_Structure_Polymorphic* workload;
             int parameter_index;
         } struct_parameter;
     } options;

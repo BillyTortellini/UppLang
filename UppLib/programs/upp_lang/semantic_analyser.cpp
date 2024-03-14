@@ -55,7 +55,8 @@ namespace Helpers
     Analysis_Workload_Type get_workload_type(Workload_Import_Resolve* workload) { return Analysis_Workload_Type::IMPORT_RESOLVE; };
     Analysis_Workload_Type get_workload_type(Workload_Module_Analysis* workload) { return Analysis_Workload_Type::MODULE_ANALYSIS; };
     Analysis_Workload_Type get_workload_type(Workload_Definition* workload) { return Analysis_Workload_Type::DEFINITION; };
-    Analysis_Workload_Type get_workload_type(Workload_Structure* workload) { return Analysis_Workload_Type::STRUCT_ANALYSIS; };
+    Analysis_Workload_Type get_workload_type(Workload_Structure_Body* workload) { return Analysis_Workload_Type::STRUCT_BODY; };
+    Analysis_Workload_Type get_workload_type(Workload_Structure_Polymorphic* workload) { return Analysis_Workload_Type::STRUCT_POLYMORPHIC; };
     Analysis_Workload_Type get_workload_type(Workload_Function_Header* workload) { return Analysis_Workload_Type::FUNCTION_HEADER; };
     Analysis_Workload_Type get_workload_type(Workload_Function_Parameter* workload) { return Analysis_Workload_Type::FUNCTION_PARAMETER; };
     Analysis_Workload_Type get_workload_type(Workload_Function_Body* workload) { return Analysis_Workload_Type::FUNCTION_BODY; };
@@ -72,7 +73,8 @@ Workload_Base* upcast(Workload_Function_Header* workload) { return &workload->ba
 Workload_Base* upcast(Workload_Function_Parameter* workload) { return &workload->base; }
 Workload_Base* upcast(Workload_Function_Body* workload) { return &workload->base; }
 Workload_Base* upcast(Workload_Function_Cluster_Compile* workload) { return &workload->base; }
-Workload_Base* upcast(Workload_Structure* workload) { return &workload->base; }
+Workload_Base* upcast(Workload_Structure_Body* workload) { return &workload->base; }
+Workload_Base* upcast(Workload_Structure_Polymorphic* workload) { return &workload->base; }
 Workload_Base* upcast(Workload_Definition* workload) { return &workload->base; }
 Workload_Base* upcast(Workload_Bake_Analysis* workload) { return &workload->base; }
 Workload_Base* upcast(Workload_Bake_Execution* workload) { return &workload->base; }
@@ -610,10 +612,10 @@ int get_current_polymorphic_instanciation_depth()
 {
     auto workload = semantic_analyser.current_workload;
     if (workload == 0) return 0;
-    if (workload->type == Analysis_Workload_Type::STRUCT_ANALYSIS) {
-        auto struct_workload = downcast<Workload_Structure>(semantic_analyser.current_workload);
+    if (workload->type == Analysis_Workload_Type::STRUCT_BODY) {
+        auto struct_workload = downcast<Workload_Structure_Body>(semantic_analyser.current_workload);
         if (struct_workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
-            return struct_workload->polymorhic_instance.instanciation_depth;
+            return struct_workload->polymorphic_info.instance.instanciation_depth;
         }
         return 0;
     }
@@ -627,60 +629,48 @@ int get_current_polymorphic_instanciation_depth()
     return 0;
 }
 
-Workload_Structure* structure_workload_create_instance(Workload_Structure* base, Array<Upp_Constant> argument_values)
-{
-    assert(base->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE, "");
-
-    // Create workload
-    auto workload = workload_executer_allocate_workload<Workload_Structure>(upcast(base->struct_node));
-    workload->arrays_depending_on_struct_size = dynamic_array_create_empty<Type_Array*>(1);
-    workload->struct_type = type_system_make_struct_empty(
-        base->struct_type->struct_type, (base->struct_type->name.available ? base->struct_type->name.value : 0), workload);
-    workload->struct_node = base->struct_node;
-    workload->base.polymorphic_values = argument_values;
-
-    // Setup instance info
-    workload->polymorphic_type = Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE;
-    workload->polymorhic_instance.instanciation_depth = get_current_polymorphic_instanciation_depth() + 1;
-    workload->polymorhic_instance.parameter_values = argument_values;
-    workload->polymorhic_instance.polymorphic_base = base;
-
-    analysis_workload_add_dependency_internal(upcast(workload), upcast(base));
-    dynamic_array_push_back(&base->polymorphic_base.instances, workload);
-
-    return workload;
-}
-
-Workload_Structure* structure_workload_create(Symbol* symbol, AST::Expression* struct_node)
+Workload_Structure_Body* workload_structure_create(AST::Expression* struct_node, Symbol* symbol, bool is_polymorphic_instance)
 {
     assert(struct_node->type == AST::Expression_Type::STRUCTURE_TYPE, "Has to be struct!");
     auto& struct_info = struct_node->options.structure;
 
-    // Create progress
-    auto workload = workload_executer_allocate_workload<Workload_Structure>(upcast(struct_node));
-    workload->arrays_depending_on_struct_size = dynamic_array_create_empty<Type_Array*>(1);
-    workload->struct_type = type_system_make_struct_empty(struct_info.type, (symbol == 0 ? 0 : symbol->id), workload);
-    workload->struct_node = struct_node;
+    // Create body workload
+    auto body_workload = workload_executer_allocate_workload<Workload_Structure_Body>(upcast(struct_node));
+    body_workload->arrays_depending_on_struct_size = dynamic_array_create_empty<Type_Array*>(1);
+    body_workload->struct_type = type_system_make_struct_empty(struct_info.type, (symbol == 0 ? 0 : symbol->id), body_workload);
+    body_workload->struct_node = struct_node;
+    body_workload->polymorphic_type = Polymorphic_Analysis_Type::NORMAL;
+
+    if (is_polymorphic_instance) {
+        body_workload->polymorphic_type = Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE;
+        // Note: Polymorphic instance infos aren't filled out here!
+        return body_workload;
+    }
 
     // Set Symbol
     if (symbol != 0) {
         symbol->type = Symbol_Type::TYPE;
-        symbol->options.type = upcast(workload->struct_type);
+        symbol->options.type = upcast(body_workload->struct_type);
     }
 
     // Check for polymorphism
     if (struct_info.parameters.size != 0) {
-        workload->polymorphic_type = Polymorphic_Analysis_Type::POLYMORPHIC_BASE;
-        workload->polymorphic_base.instances = dynamic_array_create_empty<Workload_Structure*>(1);
-        workload->polymorphic_base.parameters = array_create_empty<Struct_Parameter>(struct_info.parameters.size);
-        workload->polymorphic_base.symbol_table = semantic_analyser.current_workload->current_symbol_table;
-    }
-    else {
-        workload->polymorphic_type = Polymorphic_Analysis_Type::NORMAL;
+        auto poly_workload = workload_executer_allocate_workload<Workload_Structure_Polymorphic>(upcast(struct_node));
+        poly_workload->body_workload = body_workload;
+        poly_workload->instances = dynamic_array_create_empty<Structure_Polymorphic_Instance*>(1);
+        poly_workload->parameters = array_create_empty<Struct_Parameter>(struct_info.parameters.size);
+        poly_workload->symbol_table = semantic_analyser.current_workload->current_symbol_table;
+
+        body_workload->polymorphic_type = Polymorphic_Analysis_Type::POLYMORPHIC_BASE;
+        body_workload->polymorphic_info.polymorphic_base = poly_workload;
+        analysis_workload_add_dependency_internal(upcast(body_workload), upcast(poly_workload));
     }
 
-    return workload;
+    return body_workload;
 }
+
+
+
 
 Bake_Progress* bake_progress_create(AST::Expression* bake_expr, Type_Base* expected_type)
 {
@@ -851,7 +841,7 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
         }
         case AST::Expression_Type::STRUCTURE_TYPE: {
             // Note: Creating the progress also sets the symbol type
-            auto workload = upcast(structure_workload_create(symbol, value));
+            auto workload = upcast(workload_structure_create(value, symbol, false));
             if (symbol_finish_workload != 0) {
                 analysis_workload_add_dependency_internal(workload, symbol_finish_workload);
             }
@@ -1136,7 +1126,7 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
             // Note: If we would be in a comptime instance, and the value would be available, the expression_result_type would have been constant,
             //       and we wouldn't be in this code-path (Look at analysis of path_lookup for comptime parameters)
             return comptime_result_make_unavailable(
-                symbol->options.struct_parameter.workload->polymorphic_base.parameters[symbol->options.struct_parameter.parameter_index].parameter_type, 
+                symbol->options.struct_parameter.workload->parameters[symbol->options.struct_parameter.parameter_index].parameter_type, 
                 "Value not available in polymorphic base");
         }
         else if (symbol->type == Symbol_Type::ERROR_SYMBOL) {
@@ -1523,7 +1513,7 @@ void expression_info_set_type(Expression_Info* info, Type_Base* type)
         if (s->workload != 0) {
             if (s->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE) {
                 info->result_type = Expression_Result_Type::POLYMORPHIC_STRUCT;
-                info->options.polymorphic_struct = s->workload;
+                info->options.polymorphic_struct = s->workload->polymorphic_info.polymorphic_base;
             }
         }
     }
@@ -1587,7 +1577,7 @@ Type_Base* expression_info_get_type(Expression_Info* info, bool before_context_i
     case Expression_Result_Type::TYPE: return types.type_handle;
     case Expression_Result_Type::NOTHING: return types.error_type;
     case Expression_Result_Type::POLYMORPHIC_FUNCTION: return upcast(info->options.polymorphic_function->function->signature);
-    case Expression_Result_Type::POLYMORPHIC_STRUCT: return upcast(info->options.polymorphic_struct->struct_type);
+    case Expression_Result_Type::POLYMORPHIC_STRUCT: return upcast(info->options.polymorphic_struct->body_workload->struct_type);
     default: panic("");
     }
     return types.error_type;
@@ -1645,28 +1635,32 @@ void workload_executer_destroy()
 
 void analysis_workload_destroy(Workload_Base* workload)
 {
+    switch (workload->type)
+    {
+    case Analysis_Workload_Type::STRUCT_BODY: {
+        auto str = downcast<Workload_Structure_Body>(workload);
+        dynamic_array_destroy(&str->arrays_depending_on_struct_size);
+        if (str->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
+            array_destroy(&str->polymorphic_info.instance.parameter_values);
+        }
+        break;
+    }
+    case Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE: {
+        auto cluster = downcast<Workload_Function_Cluster_Compile>(workload);
+        dynamic_array_destroy(&cluster->functions);
+        break;
+    }
+    case Analysis_Workload_Type::FUNCTION_HEADER: {
+        dynamic_array_destroy(&downcast<Workload_Function_Header>(workload)->parameter_order);
+        break;
+    }
+    default: break;
+    }
+    
     list_destroy(&workload->dependencies);
     list_destroy(&workload->dependents);
     dynamic_array_destroy(&workload->reachable_clusters);
     dynamic_array_destroy(&workload->block_stack);
-    if (workload->type == Analysis_Workload_Type::STRUCT_ANALYSIS) {
-        auto str = downcast<Workload_Structure>(workload);
-        dynamic_array_destroy(&str->arrays_depending_on_struct_size);
-        if (str->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE) {
-            dynamic_array_destroy(&str->polymorphic_base.instances);
-            array_destroy(&str->polymorphic_base.parameters);
-        }
-        else if (str->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
-            array_destroy(&str->polymorhic_instance.parameter_values);
-        }
-    }
-    else if (workload->type == Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE) {
-        auto cluster = downcast<Workload_Function_Cluster_Compile>(workload);
-        dynamic_array_destroy(&cluster->functions);
-    }
-    else if (workload->type == Analysis_Workload_Type::FUNCTION_HEADER) {
-        dynamic_array_destroy(&downcast<Workload_Function_Header>(workload)->parameter_order);
-    }
     delete workload;
 }
 
@@ -2489,7 +2483,8 @@ void workload_executer_resolve()
             case Analysis_Workload_Type::FUNCTION_BODY: str = "Body            "; break;
             case Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE: str = "Cluster Compile "; break;
 
-            case Analysis_Workload_Type::STRUCT_ANALYSIS: str = "Struct Analysis "; break;
+            case Analysis_Workload_Type::STRUCT_BODY: str = "Struct Body Analysis "; break;
+            case Analysis_Workload_Type::STRUCT_POLYMORPHIC: str = "Struct Polymorphic Header "; break;
             default: panic("hey");
             }
             logg("Time in %s %3.4fms\n", str, time_per_workload_type[i] * 1000);
@@ -2629,8 +2624,14 @@ void analysis_workload_append_to_string(Workload_Base* workload, String* string)
         string_append_formated(string, "Header \"%s\"", fn_id);
         break;
     }
-    case Analysis_Workload_Type::STRUCT_ANALYSIS: {
-        auto name = downcast<Workload_Structure>(workload)->struct_type->name;
+    case Analysis_Workload_Type::STRUCT_BODY: {
+        auto name = downcast<Workload_Structure_Body>(workload)->struct_type->name;
+        const char* struct_id = name.available ? name.value->characters : "Anonymous_Struct";
+        string_append_formated(string, "Struct-Analysis \"%s\"", struct_id);
+        break;
+    }
+    case Analysis_Workload_Type::STRUCT_POLYMORPHIC: {
+        auto name = downcast<Workload_Structure_Polymorphic>(workload)->body_workload->struct_type->name;
         const char* struct_id = name.available ? name.value->characters : "Anonymous_Struct";
         string_append_formated(string, "Struct-Analysis \"%s\"", struct_id);
         break;
@@ -2994,7 +2995,7 @@ void analysis_workload_entry(void* userdata)
             case Expression_Result_Type::POLYMORPHIC_STRUCT: {
                 // TODO: Maybe also disallow this if this is an alias, as above
                 symbol->type = Symbol_Type::TYPE;
-                symbol->options.type = upcast(result->options.polymorphic_struct->struct_type);
+                symbol->options.type = upcast(result->options.polymorphic_struct->body_workload->struct_type);
                 break;
             }
             default: panic("");
@@ -3187,57 +3188,58 @@ void analysis_workload_entry(void* userdata)
         }
         break;
     }
-    case Analysis_Workload_Type::STRUCT_ANALYSIS:
+    case Analysis_Workload_Type::STRUCT_POLYMORPHIC: {
+        auto workload_poly = downcast<Workload_Structure_Polymorphic>(workload);
+        auto& struct_node = workload_poly->body_workload->struct_node->options.structure;
+
+        // Create new symbol-table, define symbols and analyse parameters
+        Symbol_Table* parameter_table = symbol_table_create_with_parent(analyser.current_workload->current_symbol_table, false);
+        for (int i = 0; i < struct_node.parameters.size; i++) 
+        {
+            auto& param_node = struct_node.parameters[i];
+            auto& struct_param = workload_poly->parameters[i];
+
+            // Create symbol
+            Symbol* symbol = symbol_table_define_symbol(
+                parameter_table, param_node->name, Symbol_Type::STRUCT_PARAMETER, AST::upcast(param_node), true
+            );
+            symbol->options.struct_parameter.workload = workload_poly;
+            symbol->options.struct_parameter.parameter_index = i;
+
+            // Analyse base type
+            struct_param.symbol = symbol;
+            struct_param.parameter_type = semantic_analyser_analyse_expression_type(param_node->type);
+
+            // Analyes default value
+            struct_param.has_default_value = param_node->default_value.available;
+            struct_param.default_value.available = false;
+            if (param_node->default_value.available && !type_is_unknown(struct_param.parameter_type)) {
+                semantic_analyser_analyse_expression_value(
+                    param_node->default_value.value, expression_context_make_specific_type(struct_param.parameter_type));
+                struct_param.default_value = expression_calculate_comptime_value(param_node->default_value.value, "Default values must be comptime");
+            }
+        }
+
+        // Store/Set correct symbol table for base-analysis and instance analysis
+        workload_poly->symbol_table = parameter_table;
+        workload_poly->body_workload->base.current_symbol_table = parameter_table;
+        break;
+    }
+    case Analysis_Workload_Type::STRUCT_BODY:
     {
-        auto workload_structure = downcast<Workload_Structure>(workload);
+        auto workload_structure = downcast<Workload_Structure_Body>(workload);
 
         auto& struct_node = workload_structure->struct_node->options.structure;
         Type_Struct* struct_signature = workload_structure->struct_type;
         auto& members = struct_signature->members;
 
-        // If struct is polymorphic_function, create new symbol-table, define symbols and analyse parameters
-        if (workload_structure->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE)
-        {
-            auto& polymorphic_base = workload_structure->polymorphic_base;
-            Symbol_Table* parameter_table = symbol_table_create_with_parent(analyser.current_workload->current_symbol_table, false);
-
-            // Create symbols and analyse base type of all parameters
-            for (int i = 0; i < struct_node.parameters.size; i++) 
-            {
-                auto& param_node = struct_node.parameters[i];
-                auto& struct_param = workload_structure->polymorphic_base.parameters[i];
-
-                // Create symbol
-                Symbol* symbol = symbol_table_define_symbol(
-                    parameter_table, param_node->name, Symbol_Type::STRUCT_PARAMETER, AST::upcast(param_node), true
-                );
-                symbol->options.struct_parameter.workload = workload_structure;
-                symbol->options.struct_parameter.parameter_index = i;
-
-                // Analyse base type
-                struct_param.symbol = symbol;
-                struct_param.parameter_type = semantic_analyser_analyse_expression_type(param_node->type);
-
-                // Analyes default value
-                struct_param.has_default_value = param_node->default_value.available;
-                struct_param.default_value.available = false;
-                if (param_node->default_value.available && !type_is_unknown(struct_param.parameter_type)) {
-                    semantic_analyser_analyse_expression_value(
-                        param_node->default_value.value, expression_context_make_specific_type(struct_param.parameter_type));
-                    struct_param.default_value = expression_calculate_comptime_value(param_node->default_value.value, "Default values must be comptime");
-                }
-            }
-
-            // Note: We shouldn't set the symbol table before this point, as struct parameters should not be able to reference each other currently
-            analyser.current_workload->current_symbol_table = parameter_table;
-            workload_structure->polymorphic_base.symbol_table = parameter_table;
-        }
-        else if (workload_structure->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
-            auto& instance = workload_structure->polymorhic_instance;
-            assert(instance.polymorphic_base->base.is_finished, "At this point the base has to be finished");
+        // Check if we are a instance analysis
+        if (workload_structure->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
+            auto& instance = workload_structure->polymorphic_info.instance;
+            assert(instance.parent->base.is_finished, "At this point the base has to be finished");
 
             // If an error occured in the polymorphic base, set all struct members to error-type
-            if (instance.polymorphic_base->base.real_error_count != 0) {
+            if (instance.parent->base.real_error_count != 0) {
                 for (int i = 0; i < struct_node.members.size; i++) {
                     auto member_node = struct_node.members[i];
                     struct_add_member(struct_signature, member_node->symbols[0]->name, types.error_type);
@@ -3245,8 +3247,11 @@ void analysis_workload_entry(void* userdata)
                 type_system_finish_struct(struct_signature);
                 break;
             }
-            semantic_analyser.current_workload->current_symbol_table = instance.polymorphic_base->polymorphic_base.symbol_table;
+            semantic_analyser.current_workload->current_symbol_table = instance.parent->symbol_table;
             semantic_analyser.current_workload->polymorphic_values = instance.parameter_values;
+        }
+        else if (workload_structure->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE) {
+            semantic_analyser.current_workload->current_symbol_table = workload_structure->polymorphic_info.polymorphic_base->symbol_table;
         }
 
         // Analyse all members
@@ -3870,7 +3875,7 @@ Expression_Info analyse_symbol_as_expression(Symbol* symbol, Expression_Context 
                 analysis_workload_add_dependency_internal(upcast(progress->compile_workload), upcast(struct_workload));
                 break;
             }
-            case Analysis_Workload_Type::STRUCT_ANALYSIS: break;
+            case Analysis_Workload_Type::STRUCT_BODY: break;
             default: panic("Invalid code path");
             }
         }
@@ -3991,22 +3996,22 @@ Expression_Info analyse_symbol_as_expression(Symbol* symbol, Expression_Context 
     }
     case Symbol_Type::STRUCT_PARAMETER: {
         auto& parameter = symbol->options.struct_parameter;
-        assert(parameter.workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE, "");
-        assert(workload->type == Analysis_Workload_Type::STRUCT_ANALYSIS, "");
-        auto current_struct_workload = downcast<Workload_Structure>(workload);
+        assert(workload->type == Analysis_Workload_Type::STRUCT_BODY, "Struct parameters should only be accessible in struct body");
+        auto current_struct_workload = downcast<Workload_Structure_Body>(workload);
+        assert(current_struct_workload->polymorphic_type != Polymorphic_Analysis_Type::NORMAL, "");
 
-        if (workload->polymorphic_values.data != 0) {
-            // Instance analysis
-            assert(current_struct_workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE, "Poly values shouldn't be set otherwise");
-            expression_info_set_constant(&result, workload->polymorphic_values[parameter.parameter_index]);
+        switch (current_struct_workload->polymorphic_type)
+        {
+        case Polymorphic_Analysis_Type::POLYMORPHIC_BASE: {
+            assert(current_struct_workload->polymorphic_info.polymorphic_base == parameter.workload, "I think this should be the case for now...");
+            expression_info_set_value(&result, parameter.workload->parameters[parameter.parameter_index].parameter_type);
             return result;
         }
-        else {
-            // Base analysis
-            assert(current_struct_workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE, "Poly values shouldn't be set otherwise");
-            assert(current_struct_workload == parameter.workload, "I think this should be the case");
-            expression_info_set_value(&result, parameter.workload->polymorphic_base.parameters[parameter.parameter_index].parameter_type);
+        case Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE: {
+            expression_info_set_constant(&result, current_struct_workload->polymorphic_info.instance.parameter_values[parameter.parameter_index]);
             return result;
+        }
+        default: panic("Normal shouldn't happen here!");
         }
     }
     case Symbol_Type::COMPTIME_VALUE: {
@@ -4047,7 +4052,7 @@ struct Callable
         ModTree_Function* function;
         Hardcoded_Type hardcoded;
         Function_Progress* polymorphic_function;
-        Workload_Structure* polymorphic_struct;
+        Workload_Structure_Polymorphic* polymorphic_struct;
         Type_Struct* structure;
     } options;
 
@@ -4085,7 +4090,7 @@ Optional<Callable> callable_try_create_from_expression_info(Expression_Info& inf
     {
         callable.type = Callable_Type::POLYMORPHIC_STRUCT;
         callable.options.polymorphic_struct = info.options.polymorphic_struct;
-        callable.parameter_count = info.options.polymorphic_struct->polymorphic_base.parameters.size;
+        callable.parameter_count = info.options.polymorphic_struct->parameters.size;
         break;
     }
     case Expression_Result_Type::VALUE:
@@ -4169,7 +4174,7 @@ Callable_Parameter_Info callable_get_parameter_info(const Callable& callable, in
     switch (callable.type)
     {
     case Callable_Type::POLYMORPHIC_STRUCT: {
-        auto& param = callable.options.polymorphic_struct->polymorphic_base.parameters[parameter_index];
+        auto& param = callable.options.polymorphic_struct->parameters[parameter_index];
         result.type = param.parameter_type;
         result.name = optional_make_success(param.symbol->id);
         result.has_default_value = param.has_default_value;
@@ -5013,7 +5018,6 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         }
         case Callable_Type::POLYMORPHIC_STRUCT: {
             auto base = candidate.options.polymorphic_struct;
-            assert(base->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE, "");
 
             int instanciation_depth = get_current_polymorphic_instanciation_depth() + 1;
             if (instanciation_depth > MAX_POLYMORPHIC_INSTANCIATION_DEPTH) {
@@ -5024,13 +5028,13 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
             // Analyse all arguments as comptime values
             bool error_occured = false;
-            Array<Upp_Constant> comptime_values = array_create_empty<Upp_Constant>(base->polymorphic_base.parameters.size);
+            Array<Upp_Constant> comptime_values = array_create_empty<Upp_Constant>(base->parameters.size);
             SCOPE_EXIT(if (error_occured) { array_destroy(&comptime_values); });
 
             for (int i = 0; i < arguments.size; i++) {
                 auto& arg = arguments[i];
                 auto arg_info = get_info(arg);
-                auto expected_type = base->polymorphic_base.parameters[arg_info->argument_index].parameter_type;
+                auto expected_type = base->parameters[arg_info->argument_index].parameter_type;
 
                 if (!arg_info->already_analysed) { // If arguments have been analysed during overload disambiguation
                     auto context = expression_context_make_specific_type(expected_type);
@@ -5058,15 +5062,12 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
             // Check if we have already instanciated the structure with given parameters
             {
-                for (int i = 0; i < base->polymorphic_base.instances.size; i++)
+                for (int i = 0; i < base->instances.size; i++)
                 {
-                    auto& test_instance = base->polymorphic_base.instances[i];
+                    Structure_Polymorphic_Instance* test_instance = base->instances[i];
                     bool all_matching = true;
-                    for (int j = 0; j < base->polymorphic_base.parameters.size; j++) {
-                        if (!constant_pool_compare_constants(&compiler.constant_pool, 
-                                test_instance->polymorhic_instance.parameter_values[j], 
-                                comptime_values[j])) 
-                        {
+                    for (int j = 0; j < base->parameters.size; j++) {
+                        if (!constant_pool_compare_constants(&compiler.constant_pool, test_instance->parameter_values[j], comptime_values[j])) {
                             all_matching = false;
                             break;
                         }
@@ -5074,14 +5075,25 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
                     if (all_matching) {
                         error_occured = true; // So that array is deleted
-                        EXIT_TYPE(upcast(test_instance->struct_type));
+                        int offset = offsetof(Workload_Structure_Body, polymorphic_info);
+                        Workload_Structure_Body* body = (Workload_Structure_Body*) &(((byte*)test_instance)[-offset]);
+                        assert(body->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE, "");
+                        EXIT_TYPE(upcast(body->struct_type));
                     }
                 }
             }
 
             // Create new struct instance
-            Workload_Structure* instance = structure_workload_create_instance(base, comptime_values);
-            EXIT_TYPE(upcast(instance->struct_type));
+            auto body_workload = workload_structure_create(base->body_workload->struct_node, 0, true);
+            body_workload->polymorphic_type = Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE;
+            Structure_Polymorphic_Instance* instance = &body_workload->polymorphic_info.instance;
+            instance->instanciation_depth = get_current_polymorphic_instanciation_depth() + 1;
+            instance->parameter_values = comptime_values;
+            instance->parent = base;
+            
+            analysis_workload_add_dependency_internal(upcast(body_workload), upcast(base->body_workload));
+            dynamic_array_push_back(&base->instances, instance);
+            EXIT_TYPE(upcast(body_workload->struct_type));
         }
         case Callable_Type::STRUCT_INITIALIZER: {
             panic("Shouldn't happen in this function!\n");
@@ -5361,7 +5373,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 break;
             }
             case AST::Expression_Type::STRUCTURE_TYPE: {
-                workload = upcast(structure_workload_create(0, expr));
+                workload = upcast(workload_structure_create(expr, 0, false));
                 break;
             }
             case AST::Expression_Type::BAKE_BLOCK:
@@ -5414,8 +5426,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             EXIT_FUNCTION(progress->function);
             break;
         }
-        case Analysis_Workload_Type::STRUCT_ANALYSIS: {
-            EXIT_TYPE(upcast(downcast<Workload_Structure>(workload)->struct_type));
+        case Analysis_Workload_Type::STRUCT_BODY: {
+            EXIT_TYPE(upcast(downcast<Workload_Structure_Body>(workload)->struct_type));
             break;
         }
         case Analysis_Workload_Type::MODULE_ANALYSIS: {

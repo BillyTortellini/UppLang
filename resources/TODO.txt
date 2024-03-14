@@ -1,4 +1,42 @@
 
+Allocator :: struct
+    allocator_data: Any
+    allocate: (size: int, alignment: int) -> *void 
+    free: (ptr: *void, size: int) -> *void 
+    realloc: (ptr: *void, previous_size: int, new_size: int) -> *void
+
+TODO:
+ * Add header workload for structs --> So that Recursive data-structures are working
+ * Make implicit polymorhpism work with structs, e.g. insert_element :: (table: Hashtable($T))
+ * Remove Progress things and replace them with actual workloads
+ * Make different symbol types + Add symbol type for structure (User defined, as this requires more carefull handling?)
+ * Rename Type_Base to Datatype?
+
+Struct-Polymorphism TODO:
+ * Referencing themselves, e.g.
+    Node :: struct(T:Type)
+        next: *Node(T)
+ * Access to poly-values through member access
+        x: A(T=int)
+        y :: x.T * 3
+ * Working with Polymorphic functions:
+    
+Hashable :: struct(T: Type)
+    equals: (a: *T, b: *T) -> bool
+    hash: (a: *T) -> u64
+
+hashtable_insert :: (table: *Hashtable($H), element: *H.T) -> bool
+    hash := H.hash(entry)
+    import Compiler~builtin~modulo as %
+    entry := *table.entries[hash % table.size]
+    if entry.empty
+        entry.value = element
+        entry.empty = false
+        entry.hash = hash
+        return true
+
+
+
 Note:
     Currently we are using the 
         polymorphic_values array in the workload for analysis, does this work when we have structs inside structs?
@@ -438,17 +476,17 @@ Core: (Required for programming)
         Missing: 
             * Polymorphic return type
             * Overloading/Template specification --> Basically try to pick least templated version that still matches types when overloading
+                --> Probably not something that I want in a long time...
             * Polymorphic array count --> [$C]int
             * Default values for polymorphic values?
 
     * Polymorphism for structs
-    * Local-Context for casting, operator overloading, dot-calls, iterators, auto-pointer dereferencing
-    * Union rework 
+    * Local-Context for casting, operator overloading, dot-calls, iterators, auto-pointer dereferencing, loops
+    * Union rework, e.g. Addressable sub-types + better switch
 
     * Allocator system
-    * Incremental semantic analysis
-    * Better loops (foreach, maybe a simple for ;; loop?)
-    * Incremental C-Compilation
+    * Incremental compiler
+    * C-Function calling rework
 
 Additional:
     * Better C-Importer

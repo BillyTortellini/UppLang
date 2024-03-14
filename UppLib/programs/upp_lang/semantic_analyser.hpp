@@ -23,6 +23,8 @@ struct Analysis_Pass;
 struct Workload_Definition;
 struct Workload_Base;
 struct Workload_Import_Resolve;
+struct Workload_Structure_Polymorphic;
+struct Workload_Structure_Body;
 
 struct Function_Progress;
 struct Bake_Progress;
@@ -94,7 +96,8 @@ enum class Analysis_Workload_Type
     FUNCTION_BODY,
     FUNCTION_CLUSTER_COMPILE,
 
-    STRUCT_ANALYSIS,
+    STRUCT_POLYMORPHIC,
+    STRUCT_BODY,
 
     BAKE_ANALYSIS,
     BAKE_EXECUTION,
@@ -228,14 +231,23 @@ struct Workload_Bake_Execution
     AST::Expression* bake_node;
 };
 
+
+// Structures
 enum class Polymorphic_Analysis_Type
 {
-    NORMAL, //
+    NORMAL,
     POLYMORPHIC_BASE,
     POLYMORPHIC_INSTANCE
 };
 
-struct Workload_Structure
+struct Structure_Polymorphic_Instance
+{
+    Workload_Structure_Polymorphic* parent;
+    Array<Upp_Constant> parameter_values;
+    int instanciation_depth;
+};
+
+struct Workload_Structure_Body
 {
     Workload_Base base;
 
@@ -245,18 +257,21 @@ struct Workload_Structure
 
     Polymorphic_Analysis_Type polymorphic_type;
     union {
-        struct {
-            Dynamic_Array<Workload_Structure*> instances;  // Required for de-duplication
-            Array<Struct_Parameter> parameters;
-            Symbol_Table* symbol_table;
-        } polymorphic_base;
-        struct {
-            Workload_Structure* polymorphic_base;
-            Array<Upp_Constant> parameter_values;
-            int instanciation_depth;
-        } polymorhic_instance;
-    };
+        Structure_Polymorphic_Instance instance;
+        Workload_Structure_Polymorphic* polymorphic_base;
+    } polymorphic_info;
 };
+
+struct Workload_Structure_Polymorphic
+{
+    Workload_Base base;
+    Workload_Structure_Body* body_workload;
+
+    Dynamic_Array<Structure_Polymorphic_Instance*> instances;  // Required for de-duplication
+    Array<Struct_Parameter> parameters;
+    Symbol_Table* symbol_table;
+};
+
 
 
 
@@ -415,7 +430,7 @@ struct Expression_Info
     {
         Type_Base* value_type;
         Type_Base* type;
-        Workload_Structure* polymorphic_struct;
+        Workload_Structure_Polymorphic* polymorphic_struct;
         ModTree_Function* function;
         Function_Progress* polymorphic_function; // Either base or if the function was instanciated an instance progress
         Hardcoded_Type hardcoded;

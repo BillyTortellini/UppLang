@@ -9,7 +9,7 @@ struct Symbol;
 struct Timer;
 struct Type_Base;
 struct String;
-struct Workload_Structure;
+struct Workload_Structure_Body;
 struct Workload_Function_Parameter;
 struct Function_Progress;
 
@@ -155,7 +155,7 @@ struct Type_Struct {
     Struct_Member tag_member; // Only valid for unions
 
     Optional<String*> name;
-    Workload_Structure* workload; // May be null if it's a predefined struct
+    Workload_Structure_Body* workload; // May be null if it's a predefined struct
 };
 
 struct Type_Enum
@@ -357,7 +357,7 @@ Type_Function* type_system_finish_function(Type_Function function, Type_Base* re
 
 // Note: empty types need to be finished before they are used!
 Type_Enum* type_system_make_enum_empty(String* name);
-Type_Struct* type_system_make_struct_empty(AST::Structure_Type struct_type, String* name = 0, Workload_Structure* workload = 0);
+Type_Struct* type_system_make_struct_empty(AST::Structure_Type struct_type, String* name = 0, Workload_Structure_Body* workload = 0);
 void struct_add_member(Type_Struct* structure, String* id, Type_Base* member_type);
 void type_system_finish_struct(Type_Struct* structure);
 void type_system_finish_enum(Type_Enum* enum_type);

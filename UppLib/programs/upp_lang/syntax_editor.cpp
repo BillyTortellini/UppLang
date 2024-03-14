@@ -2201,7 +2201,7 @@ void syntax_editor_render()
                 }
                 case Symbol_Type::STRUCT_PARAMETER: {
                     auto& str_param = symbol->options.struct_parameter;
-                    type = str_param.workload->polymorphic_base.parameters[str_param.parameter_index].parameter_type;
+                    type = str_param.workload->parameters[str_param.parameter_index].parameter_type;
                     break;
                 }
                 case Symbol_Type::TYPE:
