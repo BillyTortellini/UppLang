@@ -15,6 +15,7 @@ Function_Parameter function_parameter_make_empty(Symbol* symbol, Workload_Functi
     result.type = compiler.type_system.predefined_types.error_type;
     result.symbol = symbol;
     result.workload = workload;
+    result.has_dependencies_on_other_parameters = false;
     return result;
 }
 
@@ -35,6 +36,9 @@ void type_base_destroy(Type_Base* base)
         auto enum_type = downcast<Type_Enum>(base);
         dynamic_array_destroy(&enum_type->members);
     }
+    else if (base->type == Type_Type::STRUCT_INSTANCE_TEMPLATE) {
+        array_destroy(&downcast<Type_Struct_Instance_Template>(base)->matchable_arguments);
+    }
 }
 
 void type_append_to_string_with_children(String* string, Type_Base* signature, bool print_child)
@@ -45,6 +49,10 @@ void type_append_to_string_with_children(String* string, Type_Base* signature, b
         Type_Polymorphic* polymorphic = downcast<Type_Polymorphic>(signature);
         assert(polymorphic->symbol != 0, "");
         string_append_formated(string, "$%s", polymorphic->symbol->id->characters);
+        break;
+    }
+    case Type_Type::STRUCT_INSTANCE_TEMPLATE: {
+        string_append_formated(string, "Struct instance template");
         break;
     }
     case Type_Type::VOID_POINTER:
@@ -190,6 +198,8 @@ void type_append_value_to_string(Type_Base* type, byte* value_ptr, String* strin
     case Type_Type::FUNCTION:
         break;
     case Type_Type::ERROR_TYPE:
+        break;
+    case Type_Type::STRUCT_INSTANCE_TEMPLATE:
         break;
     case Type_Type::TYPE_HANDLE: {
         u32 value = *(u32*)value_ptr;
@@ -405,8 +415,9 @@ bool types_are_structurally_equal(Type_Base** a_ptr, Type_Base** b_ptr)
         return true;
     case Type_Type::POLYMORPHIC:
     case Type_Type::STRUCT:
+    case Type_Type::STRUCT_INSTANCE_TEMPLATE:
     case Type_Type::ENUM: 
-        // Structs, polymorphic_function-types and enums are currently never deduplicated 
+        // Structs, struct-types and enums are currently never deduplicated 
         // (Note: I think this could change for structs/enums at some point)
         return false;
     case Type_Type::PRIMITIVE: {
@@ -492,6 +503,7 @@ u64 hash_type(Type_Base** type_ptr)
     case Type_Type::VOID_POINTER:
     case Type_Type::TYPE_HANDLE:
     case Type_Type::ERROR_TYPE: break;
+    case Type_Type::STRUCT_INSTANCE_TEMPLATE: break;
     case Type_Type::POLYMORPHIC: {
         Type_Polymorphic* polymorphic = downcast<Type_Polymorphic>(type);
         hash = hash_combine(hash, hash_string(polymorphic->symbol->id));
@@ -683,7 +695,6 @@ Type_Base* type_system_deduplicate_and_create_internal_info_for_type(Type_Base* 
         auto function = downcast<Type_Function>(base_type);
         auto& parameters = function->parameters;
 
-        function->polymorphic_parameter_count = 0;
         function->parameters_with_default_value_count = 0;
         int non_comptime_counter = 0;
         for (int i = 0; i < parameters.size; i++) {
@@ -696,17 +707,18 @@ Type_Base* type_system_deduplicate_and_create_internal_info_for_type(Type_Base* 
                 param.normal.index_in_non_polymorphic_signature = non_comptime_counter;
                 non_comptime_counter += 1;
             }
-            else if (param.parameter_type == Parameter_Type::POLYMORPHIC) {
-                function->polymorphic_parameter_count += 1;
-            }
         }
     }
 
-    // Figure out if type is polymorphic_function (Also store this)
+    // Figure out if type is polymorphic (Also store this)
     {
         bool is_polymorphic = false;
         switch (base_type->type)
         {
+        case Type_Type::STRUCT_INSTANCE_TEMPLATE: {
+            is_polymorphic = true;
+            break;
+        }
         case Type_Type::POLYMORPHIC: {
             is_polymorphic = true;
             break;
@@ -785,6 +797,7 @@ Type_Base* type_system_deduplicate_and_create_internal_info_for_type(Type_Base* 
         case Type_Type::TYPE_HANDLE:
         case Type_Type::VOID_POINTER:
         case Type_Type::POLYMORPHIC:
+        case Type_Type::STRUCT_INSTANCE_TEMPLATE:
             break; // There are no options for these types
 
         case Type_Type::FUNCTION:
@@ -876,7 +889,7 @@ Type_Primitive* type_system_make_primitive(Primitive_Type type, int size, bool i
     return type_system_register_type(result);
 }
 
-Type_Polymorphic* type_system_make_polymorphic(Symbol* symbol, Workload_Function_Parameter* parameter_workload, Function_Progress* progress, int index)
+Type_Polymorphic* type_system_make_polymorphic(Symbol* symbol, Workload_Function_Parameter* parameter_workload, int index)
 {
     Type_Polymorphic result;
     result.base.type = Type_Type::POLYMORPHIC;
@@ -884,10 +897,10 @@ Type_Polymorphic* type_system_make_polymorphic(Symbol* symbol, Workload_Function
     result.base.alignment = 1;
     result.symbol = symbol;
     result.parameter_workload = parameter_workload;
-    result.progress = progress;
     result.index = index;
     result.is_reference = false;
     result.mirrored_type = 0;
+    result.datatype = compiler.type_system.predefined_types.type_handle;
 
     Type_Polymorphic* registered_base = type_system_register_type(result);
     result.is_reference = true;
@@ -895,6 +908,23 @@ Type_Polymorphic* type_system_make_polymorphic(Symbol* symbol, Workload_Function
     registered_base->mirrored_type = type_system_register_type(result);
     return registered_base;
 }
+
+Type_Struct_Instance_Template* type_system_make_struct_instance_template(
+    Workload_Structure_Polymorphic* base, Array<Matchable_Argument> arguments)
+{
+    Type_Struct_Instance_Template result;
+    result.base.type = Type_Type::STRUCT_INSTANCE_TEMPLATE;
+    result.base.size = 1;
+    result.base.alignment = 1;
+    result.base.contains_polymorphic_type = true;
+
+    result.matchable_arguments = arguments;
+    result.struct_base = base;
+    return type_system_register_type(result);
+
+}
+
+
 
 Type_Pointer* type_system_make_pointer(Type_Base* child_type)
 {
@@ -914,6 +944,7 @@ Type_Array* type_system_make_array(Type_Base* element_type, bool count_known, in
     result.base.alignment = element_type->alignment;
     result.element_type = element_type;
     result.count_known = count_known;
+    result.polymorphic_count_variable = 0;
     if (count_known) {
         result.element_count = element_count;
     }
@@ -1501,7 +1532,7 @@ bool types_are_equal(Type_Base* a, Type_Base* b) {
 }
 
 bool type_is_unknown(Type_Base* a) {
-    return a->type == Type_Type::ERROR_TYPE || a->type == Type_Type::POLYMORPHIC;
+    return a->type == Type_Type::ERROR_TYPE || a->type == Type_Type::POLYMORPHIC || a->type == Type_Type::STRUCT_INSTANCE_TEMPLATE;
 }
 
 bool type_size_is_unfinished(Type_Base* a) {

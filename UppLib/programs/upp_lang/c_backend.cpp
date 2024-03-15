@@ -369,6 +369,11 @@ void c_generator_register_type_name(C_Generator* generator, Type_Base* type)
         string_append_formated(&type_name, "void*");
         break;
     }
+    case Type_Type::STRUCT_INSTANCE_TEMPLATE:
+    {
+        string_append_formated(&type_name, "void*");
+        break;
+    }
     case Type_Type::PRIMITIVE:
     {
         auto primitive = downcast<Type_Primitive>(type);

@@ -10,6 +10,7 @@ struct Timer;
 struct Type_Base;
 struct String;
 struct Workload_Structure_Body;
+struct Workload_Structure_Polymorphic;
 struct Workload_Function_Parameter;
 struct Function_Progress;
 
@@ -35,6 +36,7 @@ struct Function_Parameter
 
     // Polymorphic infos
     Parameter_Type parameter_type;
+    bool has_dependencies_on_other_parameters;
     union {
         struct {
             int index_in_non_polymorphic_signature;
@@ -78,7 +80,8 @@ enum class Type_Type
     ENUM,
     ARRAY, // Array with compile-time known size, like [5]int
     SLICE, // Array with dynamic size, []int
-    POLYMORPHIC
+    POLYMORPHIC,
+    STRUCT_INSTANCE_TEMPLATE
 };
 
 struct Type_Base
@@ -87,7 +90,7 @@ struct Type_Base
     int size; // in byte
     int alignment; // in byte
     Type_Handle type_handle;
-    bool contains_polymorphic_type; // Means the type-tree contains at least one polymorphic_function node...
+    bool contains_polymorphic_type; // Means the type-tree contains at least one polymorphic-type node...
 };
 
 struct Type_Polymorphic
@@ -95,11 +98,36 @@ struct Type_Polymorphic
     Type_Base base;
     Symbol* symbol;
     Workload_Function_Parameter* parameter_workload;
-    Function_Progress* progress;
     int index;
+    Type_Base* datatype; 
 
     bool is_reference;
-    Type_Polymorphic* mirrored_type; // Pointer to either the reference type or the "base" polymorphic_function-type
+    Type_Polymorphic* mirrored_type; // Pointer to either the reference type or the "base" polymorphic-type
+};
+
+enum class Matchable_Argument_Type
+{
+    POLYMORPHIC_SYMBOL,
+    TYPE_CONTAINING_POLYMORPHIC,
+    CONSTANT_VALUE,
+};
+
+struct Matchable_Argument
+{
+    // A matchable argument is either a type or a value
+    Matchable_Argument_Type type;
+    union {
+        Type_Polymorphic* polymorphic_symbol;
+        Type_Base* polymorphic_type;
+        Upp_Constant constant;
+    } options;
+};
+
+struct Type_Struct_Instance_Template
+{
+    Type_Base base;
+    Workload_Structure_Polymorphic* struct_base;
+    Array<Matchable_Argument> matchable_arguments;
 };
 
 enum class Primitive_Type
@@ -129,6 +157,8 @@ struct Type_Array
     Type_Base* element_type;
     bool count_known; // False in case of polymorphism(Comptime values) or when Errors occured
     int element_count;
+
+    Type_Polymorphic* polymorphic_count_variable; // May be null if it doesn't exist
 };
 
 struct Type_Function
@@ -138,7 +168,6 @@ struct Type_Function
     Optional<Type_Base*> return_type;
 
     int parameters_with_default_value_count;
-    int polymorphic_parameter_count; // Also includes implicit polymorphic_function parameters
 };
 
 struct Type_Slice {
@@ -344,7 +373,9 @@ void type_system_reset(Type_System* system);
 void type_system_print(Type_System* system);
 void type_system_add_predefined_types(Type_System* system);
 
-Type_Polymorphic* type_system_make_polymorphic(Symbol* symbol, Workload_Function_Parameter* parameter_workload, Function_Progress* progress, int index);
+Type_Polymorphic* type_system_make_polymorphic(Symbol* symbol, Workload_Function_Parameter* parameter_workload, int index);
+Type_Struct_Instance_Template* type_system_make_struct_instance_template(
+    Workload_Structure_Polymorphic* base, Array<Matchable_Argument> arguments);
 Type_Pointer* type_system_make_pointer(Type_Base* child_type);
 Type_Slice* type_system_make_slice(Type_Base* element_type);
 Type_Array* type_system_make_array(Type_Base* element_type, bool count_known, int element_count);
@@ -381,6 +412,7 @@ inline Type_Base* upcast(Type_Slice* value)     { return (Type_Base*)value; }
 inline Type_Base* upcast(Type_Primitive* value) { return (Type_Base*)value; }
 inline Type_Base* upcast(Type_Pointer* value)   { return (Type_Base*)value; }
 inline Type_Base* upcast(Type_Polymorphic* value)   { return (Type_Base*)value; }
+inline Type_Base* upcast(Type_Struct_Instance_Template* value)   { return (Type_Base*)value; }
 
 inline Type_Type get_type_type(Type_Struct* unused) { return Type_Type::STRUCT; }
 inline Type_Type get_type_type(Type_Function* unused) { return Type_Type::FUNCTION; }
@@ -390,6 +422,7 @@ inline Type_Type get_type_type(Type_Slice* unused) { return Type_Type::SLICE; }
 inline Type_Type get_type_type(Type_Primitive* unused) { return Type_Type::PRIMITIVE; }
 inline Type_Type get_type_type(Type_Pointer* unused) { return Type_Type::POINTER; }
 inline Type_Type get_type_type(Type_Polymorphic* unused) { return Type_Type::POLYMORPHIC; }
+inline Type_Type get_type_type(Type_Struct_Instance_Template* base) { return Type_Type::STRUCT_INSTANCE_TEMPLATE; }
 inline Type_Type get_type_type(Type_Base* base) { return base->type; }
 
 template<typename T>

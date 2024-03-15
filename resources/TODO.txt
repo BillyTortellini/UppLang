@@ -1,26 +1,56 @@
 
+
+
+
+TODO:
+ * Store how many implicit parameters are per 'normal' parameter, and check if all match or if some are "lost"
+ * Disable default parameters values for polymorphic parameters or params with implicit polymorphism
+ * x:bool = 12 --> 2 error messages
+ * Return type + default values may cause some problems with dependencies
+ * Rename polymorphic type to something more correct
+ * Comptime constant function pointerz should transform to correct function
+ * Anonymous structs inside polymorphic structs
+  
+
+DONE:
+ * Array and Polymorphic struct implicit parameters
+ * Improve function polymorphisms 
+
+
+ * Make implicit polymorphism work with structs, 
+    e.g. 
+        a :: (table: Hashtable($T), element: $T)
+        a :: ($T: Type, $C: Type, table: Hashtable($T, $C))
+    --> Maybe implicit polymorphism can also be values, not just types...
+ * Polymorphic return type on functions
+    x: Vector(int, 4) = vector_init_zero()
+
+    vector_init_zero :: () -> $V
+        result: V
+        for i: int; i < V.T; i += 1
+            result.data[i] = 0
+        return result
+            
+    vector_init_value :: (value: T) -> Vector($T, $C)
+
+Ideas:
+ * Maybe seperate a Overload_Candidate and Callable, and remove polymorphic parameters from Type_Function
+ * Upp_Constants should be deduplicated by default, it feels like this is an easy problem...
+ * AST Expressions should be subtyped...
+ * Make different symbol types + Add symbol type for structure (User defined, as this requires more carefull handling?)
+ * Rename Type_Base to Datatype?
+
+DONE:
+ * Add header workload for structs --> So that Recursive data-structures are working
+ * Accessing members of both the type and values of the type
+
+
 Allocator :: struct
     allocator_data: Any
     allocate: (size: int, alignment: int) -> *void 
     free: (ptr: *void, size: int) -> *void 
     realloc: (ptr: *void, previous_size: int, new_size: int) -> *void
 
-TODO:
- * Add header workload for structs --> So that Recursive data-structures are working
- * Make implicit polymorhpism work with structs, e.g. insert_element :: (table: Hashtable($T))
- * Remove Progress things and replace them with actual workloads
- * Make different symbol types + Add symbol type for structure (User defined, as this requires more carefull handling?)
- * Rename Type_Base to Datatype?
-
-Struct-Polymorphism TODO:
- * Referencing themselves, e.g.
-    Node :: struct(T:Type)
-        next: *Node(T)
- * Access to poly-values through member access
-        x: A(T=int)
-        y :: x.T * 3
- * Working with Polymorphic functions:
-    
 Hashable :: struct(T: Type)
     equals: (a: *T, b: *T) -> bool
     hash: (a: *T) -> u64
@@ -37,26 +67,11 @@ hashtable_insert :: (table: *Hashtable($H), element: *H.T) -> bool
 
 
 
-Note:
-    Currently we are using the 
-        polymorphic_values array in the workload for analysis, does this work when we have structs inside structs?
 
-Struct Templating:
-Start off ezy:
-A :: struct(T: Type_Handle)
 
-Differences to Function-Polymorphism:
-    * Parameters cannot access each other, so symbol_tablWhat to do if we cannot analyse the polymorphic parameter type? Probably just set as error type I guess?e for parameter analysis is different from member analysis
-        --> This also means that we do not require member analyis, which is neat
-    * Function_Progress stores the instance
-
-Well, let's start off with the parser, which just has to parse an additional arguments array, which
-    can be ignored in the analyser
-
-So some problems I am seeing with this:
-    * Solution: Expression_Info can be polymorphic function 
-        --> When analysing an expression, you would disallow polymorphic types, except when you want to enable them (Function call)
-
+-----------
+--- OLD ---
+-----------
 
 Things that need to work:
     - Base analysis
@@ -472,15 +487,13 @@ All things that are functions:
 - MISSING FEATURES -
 --------------------
 Core: (Required for programming)
-    * Update function polymorphism 
+    * Update function + struct polymorphism 
         Missing: 
             * Polymorphic return type
             * Overloading/Template specification --> Basically try to pick least templated version that still matches types when overloading
                 --> Probably not something that I want in a long time...
-            * Polymorphic array count --> [$C]int
             * Default values for polymorphic values?
 
-    * Polymorphism for structs
     * Local-Context for casting, operator overloading, dot-calls, iterators, auto-pointer dereferencing, loops
     * Union rework, e.g. Addressable sub-types + better switch
 

@@ -198,6 +198,7 @@ bool type_signature_contains_references_rec(Type_Base* signature)
     case Type_Type::PRIMITIVE: return false;
     case Type_Type::VOID_POINTER: return true;
     case Type_Type::POLYMORPHIC: return false;
+    case Type_Type::STRUCT_INSTANCE_TEMPLATE: return false;
     case Type_Type::POINTER: return true;
     case Type_Type::FUNCTION: return true;
     case Type_Type::STRUCT: 
@@ -290,6 +291,7 @@ Optional<const char*> constant_pool_deepcopy_references_recursive(Constant_Pool*
     switch (signature->type)
     {
     case Type_Type::POLYMORPHIC:
+    case Type_Type::STRUCT_INSTANCE_TEMPLATE:
     case Type_Type::PRIMITIVE:
         break;
     case Type_Type::VOID_POINTER: {

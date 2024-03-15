@@ -130,7 +130,7 @@ struct Workload_Base
     //       When encountering a polymorphic_function parameter, and this is not set, then we can assume that we are in base analysis
     //       If a value is set, we can assue we are either in instanciation stage or in the instance function analysis
     Array<Upp_Constant> polymorphic_values; 
-    Array<Type_Base*> implicit_polymorphic_types;
+    Array<Upp_Constant> implicit_polymorphic_values;
 
     // Dependencies
     List<Workload_Base*> dependencies;
@@ -287,16 +287,16 @@ struct Function_Progress
     Polymorphic_Analysis_Type type;
     union {
         struct {
-            Dynamic_Array<Function_Progress*> instances;  // Required for de-duplication
+            int comptime_parameter_count;
             Dynamic_Array<Type_Polymorphic*> implicit_parameters;
-            Dynamic_Array<int> polymorphic_parameter_indices; // Indices of comptime (explicit polymorphic_function) parameters in signature
-            Dynamic_Array<int> comptime_argument_evaluation_order; // Argument evaluation order for instanciation (Contains indices to parameters)
+            Dynamic_Array<int> parameter_analysis_order;  // Order in which arguments need to be evaluated in for instanciation
+            Dynamic_Array<Function_Progress*> instances;  // Required for de-duplication
         } polymorphic_base;
         struct 
         {
             Function_Progress* polymorphic_base;
             Array<Upp_Constant> parameter_values;
-            Array<Type_Base*> implicit_parameter_values; 
+            Array<Upp_Constant> implicit_parameter_values; 
             int instanciation_depth;
         } polymorhic_instance;
     };
@@ -422,6 +422,13 @@ struct Expression_Post_Op
     Type_Base* type_afterwards;
 };
 
+enum class Member_Access_Type
+{
+    STRUCT_MEMBER_ACCESS,
+    STRUCT_POLYMORHPIC_PARAMETER_ACCESS,
+    OTHER
+};
+
 struct Expression_Info
 {
     // All types in "options" union are before the expression context has been applied
@@ -438,11 +445,16 @@ struct Expression_Info
         Upp_Constant constant;
     } options;
 
-    bool contains_errors; // If this expression contains any errors (Not recursive), currently only used for comptime-calculation
+    bool contains_errors; // If this expression contains any errors (Not recursive), currently only used for comptime-calculation (And code editor I guess?)
     union {
         Info_Cast_Type explicit_cast; // Note: Cast-Expression results may be further implicitly casted and because of this expression_info can hold 2 cast types
         Type_Function* function_call_signature; // Used by code-generation for accessing default values
         Function_Parameter* implicit_parameter;
+        struct {
+            Member_Access_Type type;
+            Workload_Structure_Body* struct_workload;
+            int index; // Either normal member index, or polymorphic parameter index
+        } member_access;
     } specifics;
 
     Expression_Context context; // Maybe I don't even want to store the context
