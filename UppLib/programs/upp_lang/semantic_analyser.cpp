@@ -25,16 +25,16 @@ static Semantic_Analyser semantic_analyser;
 static Workload_Executer workload_executer;
 
 // PROTOTYPES
-ModTree_Function* modtree_function_create_empty(Type_Function* signature, Symbol* symbol, Function_Progress* progress, Symbol_Table* param_table);
+ModTree_Function* modtree_function_create_empty(Datatype_Function* signature, Symbol* symbol, Function_Progress* progress, Symbol_Table* param_table);
 void analysis_workload_destroy(Workload_Base* workload);
 Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression* expression, Expression_Context context);
-Type_Base* semantic_analyser_analyse_expression_value(AST::Expression* rc_expression, Expression_Context context);
-Type_Base* semantic_analyser_analyse_expression_type(AST::Expression* rc_expression);
-Type_Base* semantic_analyser_try_convert_value_to_type(AST::Expression* expression);
+Datatype* semantic_analyser_analyse_expression_value(AST::Expression* rc_expression, Expression_Context context);
+Datatype* semantic_analyser_analyse_expression_type(AST::Expression* rc_expression);
+Datatype* semantic_analyser_try_convert_value_to_type(AST::Expression* expression);
 Control_Flow semantic_analyser_analyse_block(AST::Code_Block* code_block);
 
 Expression_Post_Op expression_context_apply(
-    Type_Base* initial_type, Expression_Context context,
+    Datatype* initial_type, Expression_Context context,
     bool log_errors, AST::Expression* error_report_node = 0, Parser::Section error_section = Parser::Section::WHOLE);
 
 bool workload_executer_switch_to_workload(Workload_Base* workload);
@@ -46,7 +46,7 @@ void analysis_workload_add_dependency_internal(
     Workload_Base* workload,
     Workload_Base* dependency,
     Dependency_Failure_Info failure_info = dependency_failure_info_make_none());
-void wait_for_type_size_to_finish(Type_Base* type, Dependency_Failure_Info failure_info = dependency_failure_info_make_none());
+Datatype_Memory_Info* type_wait_for_size_info_to_finish(Datatype* type, Dependency_Failure_Info failure_info = dependency_failure_info_make_none());
 
 
 // HELPERS
@@ -89,7 +89,7 @@ T* downcast(Workload_Base* workload) {
 
 
 
-Type_Function* hardcoded_type_to_signature(Hardcoded_Type type)
+Datatype_Function* hardcoded_type_to_signature(Hardcoded_Type type)
 {
     auto& an = compiler.type_system.predefined_types;
     switch (type)
@@ -318,7 +318,7 @@ void log_error_info_argument_count(int given_argument_count, int expected_argume
     dynamic_array_push_back(&semantic_analyser.errors[semantic_analyser.errors.size - 1].information, info);
 }
 
-void log_error_info_invalid_member(Type_Struct* struct_signature, String* id) {
+void log_error_info_invalid_member(Datatype_Struct* struct_signature, String* id) {
     Error_Information info = error_information_make_empty(Error_Information_Type::INVALID_MEMBER);
     info.options.invalid_member.member_id = id;
     info.options.invalid_member.struct_signature = struct_signature;
@@ -344,13 +344,13 @@ void log_error_info_exit_code(Exit_Code code) {
     dynamic_array_push_back(&semantic_analyser.errors[semantic_analyser.errors.size - 1].information, info);
 }
 
-void log_error_info_given_type(Type_Base* type) {
+void log_error_info_given_type(Datatype* type) {
     Error_Information info = error_information_make_empty(Error_Information_Type::GIVEN_TYPE);
     info.options.type = type;
     dynamic_array_push_back(&semantic_analyser.errors[semantic_analyser.errors.size - 1].information, info);
 }
 
-void log_error_info_expected_type(Type_Base* type) {
+void log_error_info_expected_type(Datatype* type) {
     Error_Information info = error_information_make_empty(Error_Information_Type::EXPECTED_TYPE);
     info.options.type = type;
     dynamic_array_push_back(&semantic_analyser.errors[semantic_analyser.errors.size - 1].information, info);
@@ -362,13 +362,13 @@ void log_error_info_missing_parameter(Function_Parameter parameter) {
     dynamic_array_push_back(&semantic_analyser.errors[semantic_analyser.errors.size - 1].information, info);
 }
 
-void log_error_info_function_type(Type_Function* type) {
+void log_error_info_function_type(Datatype_Function* type) {
     Error_Information info = error_information_make_empty(Error_Information_Type::FUNCTION_TYPE);
     info.options.function = type;
     dynamic_array_push_back(&semantic_analyser.errors[semantic_analyser.errors.size - 1].information, info);
 }
 
-void log_error_info_binary_op_type(Type_Base* left_type, Type_Base* right_type) {
+void log_error_info_binary_op_type(Datatype* left_type, Datatype* right_type) {
     Error_Information info = error_information_make_empty(Error_Information_Type::BINARY_OP_TYPES);
     info.options.binary_op_types.left_type = left_type;
     info.options.binary_op_types.right_type = right_type;
@@ -546,7 +546,7 @@ T* workload_executer_allocate_workload(AST::Node* mapping_node)
 
 // Note: If base progress != 0, then instance information (Progress-Type + instanciation depth) will not be set by this function
 Function_Progress* function_progress_create_with_modtree_function(
-    Symbol* symbol, AST::Expression* function_node, Type_Function* function_type, Function_Progress* base_progress = 0)
+    Symbol* symbol, AST::Expression* function_node, Datatype_Function* function_type, Function_Progress* base_progress = 0)
 {
     assert(function_node->type == AST::Expression_Type::FUNCTION, "Has to be function!");
 
@@ -636,7 +636,7 @@ Workload_Structure_Body* workload_structure_create(AST::Expression* struct_node,
 
     // Create body workload
     auto body_workload = workload_executer_allocate_workload<Workload_Structure_Body>(upcast(struct_node));
-    body_workload->arrays_depending_on_struct_size = dynamic_array_create_empty<Type_Array*>(1);
+    body_workload->arrays_depending_on_struct_size = dynamic_array_create_empty<Datatype_Array*>(1);
     body_workload->struct_type = type_system_make_struct_empty(struct_info.type, (symbol == 0 ? 0 : symbol->id), body_workload);
     body_workload->struct_node = struct_node;
     body_workload->polymorphic_type = Polymorphic_Analysis_Type::NORMAL;
@@ -672,7 +672,7 @@ Workload_Structure_Body* workload_structure_create(AST::Expression* struct_node,
 
 
 
-Bake_Progress* bake_progress_create(AST::Expression* bake_expr, Type_Base* expected_type)
+Bake_Progress* bake_progress_create(AST::Expression* bake_expr, Datatype* expected_type)
 {
     assert(bake_expr->type == AST::Expression_Type::BAKE_EXPR ||
         bake_expr->type == AST::Expression_Type::BAKE_BLOCK, "Must be bake!");
@@ -874,7 +874,7 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
 
 
 // MOD_TREE (Note: Doesn't set symbol to anything!)
-ModTree_Function* modtree_function_create_empty(Type_Function* signature, Symbol* symbol, Function_Progress* progress, Symbol_Table* param_table)
+ModTree_Function* modtree_function_create_empty(Datatype_Function* signature, Symbol* symbol, Function_Progress* progress, Symbol_Table* param_table)
 {
     ModTree_Function* function = new ModTree_Function;
     function->symbol = symbol;
@@ -899,16 +899,16 @@ void modtree_function_destroy(ModTree_Function* function)
     delete function;
 }
 
-ModTree_Global* modtree_program_add_global(Type_Base* type)
+ModTree_Global* modtree_program_add_global(Datatype* type)
 {
-    wait_for_type_size_to_finish(type);
+    auto type_size = type_wait_for_size_info_to_finish(type);
 
     auto global = new ModTree_Global;
     global->type = type;
     global->has_initial_value = false;
     global->init_expr = 0;
     global->index = semantic_analyser.program->globals.size;
-    global->memory = stack_allocator_allocate_size(&semantic_analyser.global_variable_memory_pool, type->size, type->alignment);
+    global->memory = stack_allocator_allocate_size(&semantic_analyser.global_variable_memory_pool, type_size->size, type_size->alignment);
     dynamic_array_push_back(&semantic_analyser.program->globals, global);
     return global;
 }
@@ -952,12 +952,12 @@ struct Comptime_Result
     Comptime_Result_Type type;
     const char* message;
     void* data;
-    Type_Base* data_type;
+    Datatype* data_type;
 };
 
 Comptime_Result expression_calculate_comptime_value_internal(AST::Expression* expr);
 
-Comptime_Result comptime_result_make_available(void* data, Type_Base* type) {
+Comptime_Result comptime_result_make_available(void* data, Datatype* type) {
     Comptime_Result result;
     result.type = Comptime_Result_Type::AVAILABLE;
     result.data = data;
@@ -966,7 +966,7 @@ Comptime_Result comptime_result_make_available(void* data, Type_Base* type) {
     return result;
 }
 
-Comptime_Result comptime_result_make_unavailable(Type_Base* type, const char* message) {
+Comptime_Result comptime_result_make_unavailable(Datatype* type, const char* message) {
     Comptime_Result result;
     result.type = Comptime_Result_Type::UNAVAILABLE;
     result.data_type = type;
@@ -984,7 +984,7 @@ Comptime_Result comptime_result_make_not_comptime(const char* message) {
     return result;
 }
 
-Comptime_Result comptime_result_apply_cast(Comptime_Result value, Info_Cast_Type cast_type, Type_Base* result_type)
+Comptime_Result comptime_result_apply_cast(Comptime_Result value, Info_Cast_Type cast_type, Datatype* result_type)
 {
     auto& analyser = semantic_analyser;
     if (value.type == Comptime_Result_Type::NOT_COMPTIME) {
@@ -1011,7 +1011,7 @@ Comptime_Result comptime_result_apply_cast(Comptime_Result value, Info_Cast_Type
     case Info_Cast_Type::ARRAY_TO_SLICE: {
         Upp_Slice_Base* slice = stack_allocator_allocate<Upp_Slice_Base>(&analyser.comptime_value_allocator);
         slice->data = value.data;
-        slice->size = downcast<Type_Array>(value.data_type)->element_count;
+        slice->size = downcast<Datatype_Array>(value.data_type)->element_count;
         return comptime_result_make_available(slice, result_type);
     }
     case Info_Cast_Type::TO_ANY: {
@@ -1025,7 +1025,7 @@ Comptime_Result comptime_result_apply_cast(Comptime_Result value, Info_Cast_Type
         if (given->type.index >= (u32)compiler.type_system.types.size) {
             return comptime_result_make_not_comptime("Any contained invalid type_id");
         }
-        Type_Base* any_type = compiler.type_system.types[given->type.index];
+        Datatype* any_type = compiler.type_system.types[given->type.index];
         if (!types_are_equal(any_type, value.data_type)) {
             return comptime_result_make_not_comptime("Any type_handle value doesn't match result type, actually not sure if this can happen");
         }
@@ -1035,7 +1035,9 @@ Comptime_Result comptime_result_apply_cast(Comptime_Result value, Info_Cast_Type
     }
     if ((int)instr_type == -1) panic("");
 
-    void* result_buffer = stack_allocator_allocate_size(&analyser.comptime_value_allocator, result_type->size, result_type->alignment);
+    type_wait_for_size_info_to_finish(result_type);
+    auto& size_info = result_type->memory_info.value;
+    void* result_buffer = stack_allocator_allocate_size(&analyser.comptime_value_allocator, size_info.size, size_info.alignment);
     bytecode_execute_cast_instr(
         instr_type, result_buffer, value.data,
         type_base_to_bytecode_type(result_type),
@@ -1083,7 +1085,7 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
     }
 
     auto result_type = expression_info_get_type(info, true);
-    wait_for_type_size_to_finish(result_type);
+    auto result_type_size = type_wait_for_size_info_to_finish(result_type);
     switch (expr->type)
     {
     case AST::Expression_Type::ARRAY_TYPE:
@@ -1100,7 +1102,7 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
     case AST::Expression_Type::ERROR_EXPR: {
         return comptime_result_make_unavailable(types.error_type, "Analysis contained errors");
     }
-    case AST::Expression_Type::POLYMORPHIC_SYMBOL: {
+    case AST::Expression_Type::TEMPLATE_PARAMETER: {
         return comptime_result_make_unavailable(result_type, "In base analysis the value of the polymorphic symbol is not available!");
     }
     case AST::Expression_Type::PATH_LOOKUP:
@@ -1110,7 +1112,7 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
             auto& upp_const = symbol->options.constant;
             return comptime_result_make_available(upp_const.memory, upp_const.type);
         }
-        else if (symbol->type == Symbol_Type::IMPLICIT_PARAMETER)
+        else if (symbol->type == Symbol_Type::TEMPLATE_PARAMETER)
         {
             auto implicit = symbol->options.implicit;
             if (semantic_analyser.current_workload->implicit_polymorphic_values.data != 0) {
@@ -1187,7 +1189,7 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
         default: panic("");
         }
 
-        void* result_buffer = stack_allocator_allocate_size(&analyser.comptime_value_allocator, result_type->size, result_type->alignment);
+        void* result_buffer = stack_allocator_allocate_size(&analyser.comptime_value_allocator, result_type_size->size, result_type_size->alignment);
         if (bytecode_execute_binary_instr(instr_type, type_base_to_bytecode_type(left_val.data_type), result_buffer, left_val.data, right_val.data)) {
             return comptime_result_make_available(result_buffer, result_type);
         }
@@ -1222,7 +1224,7 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
             return comptime_result_make_unavailable(result_type, value.message);
         }
 
-        void* result_buffer = stack_allocator_allocate_size(&analyser.comptime_value_allocator, result_type->size, result_type->alignment);
+        void* result_buffer = stack_allocator_allocate_size(&analyser.comptime_value_allocator, result_type_size->size, result_type_size->alignment);
         bytecode_execute_unary_instr(instr_type, type_base_to_bytecode_type(value.data_type), result_buffer, value.data);
         return comptime_result_make_available(result_buffer, result_type);
     }
@@ -1232,7 +1234,6 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
     }
     case AST::Expression_Type::ARRAY_ACCESS:
     {
-        Type_Base* element_type = result_type;
         Comptime_Result value_array = expression_calculate_comptime_value_internal(expr->options.array_access.array_expr);
         Comptime_Result value_index = expression_calculate_comptime_value_internal(expr->options.array_access.index_expr);
         if (value_array.type == Comptime_Result_Type::NOT_COMPTIME) {
@@ -1251,11 +1252,11 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
 
         byte* base_ptr = 0;
         int array_size = 0;
-        if (value_array.data_type->type == Type_Type::ARRAY) {
+        if (value_array.data_type->type == Datatype_Type::ARRAY) {
             base_ptr = (byte*)value_array.data;
-            array_size = downcast<Type_Array>(value_array.data_type)->element_count;
+            array_size = downcast<Datatype_Array>(value_array.data_type)->element_count;
         }
-        else if (value_array.data_type->type == Type_Type::SLICE) {
+        else if (value_array.data_type->type == Datatype_Type::SLICE) {
             Upp_Slice_Base* slice = (Upp_Slice_Base*)value_array.data;
             base_ptr = (byte*)slice->data;
             array_size = slice->size;
@@ -1265,14 +1266,14 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
         }
 
         int index = *(int*)value_index.data;
-        int element_offset = index * element_type->size;
+        int element_offset = index * result_type_size->size;
         if (index >= array_size || index < 0) {
             return comptime_result_make_not_comptime("Array out of bounds access");
         }
-        if (!memory_is_readable(base_ptr, element_type->size)) {
+        if (!memory_is_readable(base_ptr, result_type_size->size)) {
             return comptime_result_make_not_comptime("Slice/Array access to invalid memory");
         }
-        return comptime_result_make_available(&base_ptr[element_offset], element_type);
+        return comptime_result_make_available(&base_ptr[element_offset], result_type);
     }
     case AST::Expression_Type::MEMBER_ACCESS: {
         auto& access_info = info->specifics.member_access;
@@ -1311,7 +1312,7 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
         return comptime_result_make_not_comptime("Array initializers not implemented yet for comptime values");
         // NOTE: Maybe this works in the future, but it dependes if we can always finish the struct size after analysis
         /*
-        Type_Base* element_type = result_type->options.array.element_type;
+        Datatype* element_type = result_type->options.array.element_type;
         if (element_type->size == 0 && element_type->alignment == 0) {
             return comptime_analysis_make_error();
         }
@@ -1339,7 +1340,7 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
         // NOTE: Maybe this works in the future
         return comptime_result_make_not_comptime("Struct initializer not yet implemented for comptime values");
         /*
-        Type_Base* struct_type = result_type->options.array.element_type;
+        Datatype* struct_type = result_type->options.array.element_type;
         void* result_buffer = stack_allocator_allocate_size(&analyser->comptime_value_allocator, result_type->size, result_type->alignment);
         for (int i = 0; i < expr->options.struct_initializer.size; i++)
         {
@@ -1401,8 +1402,9 @@ Optional<Upp_Constant> expression_calculate_comptime_value(AST::Expression* expr
         return optional_make_failure<Upp_Constant>();
     }
 
-    auto bytes = array_create_static<byte>((byte*)comptime_result.data, comptime_result.data_type->size);
-    Constant_Pool_Result result = constant_pool_add_constant(&compiler.constant_pool, comptime_result.data_type, bytes);
+    assert(!type_size_is_unfinished(comptime_result.data_type), "");
+    auto bytes = array_create_static<byte>((byte*)comptime_result.data, comptime_result.data_type->memory_info.value.size);
+    Constant_Pool_Result result = constant_pool_add_constant(comptime_result.data_type, bytes);
     if (!result.success) {
         log_semantic_error(error_message_on_failure, expr);
         log_error_info_constant_status(result.error_message);
@@ -1416,7 +1418,6 @@ bool expression_has_memory_address(AST::Expression* expr)
 {
     auto info = get_info(expr);
     auto type = info->post_op.type_afterwards;
-    if (type->size == 0 && type->alignment != 0) return false; // I forgot if this case has any real use cases currently
 
     switch (info->result_type)
     {
@@ -1483,8 +1484,8 @@ Expression_Context expression_context_make_no_value_expected() {
     return context;
 }
 
-Expression_Context expression_context_make_specific_type(Type_Base* signature) {
-    if (type_is_unknown(signature)) {
+Expression_Context expression_context_make_specific_type(Datatype* signature) {
+    if (datatype_is_unknown(signature)) {
         return expression_context_make_unknown(true);
     }
     Expression_Context context;
@@ -1496,14 +1497,14 @@ Expression_Context expression_context_make_specific_type(Type_Base* signature) {
 
 
 // Result
-void expression_info_set_value(Expression_Info* info, Type_Base* result_type)
+void expression_info_set_value(Expression_Info* info, Datatype* result_type)
 {
     info->result_type = Expression_Result_Type::VALUE;
     info->options.value_type = result_type;
     info->post_op.type_afterwards = result_type;
 }
 
-void expression_info_set_error(Expression_Info* info, Type_Base* result_type)
+void expression_info_set_error(Expression_Info* info, Datatype* result_type)
 {
     info->result_type = Expression_Result_Type::VALUE;
     info->options.value_type = result_type;
@@ -1525,14 +1526,14 @@ void expression_info_set_hardcoded(Expression_Info* info, Hardcoded_Type hardcod
     info->post_op.type_afterwards = upcast(hardcoded_type_to_signature(hardcoded));
 }
 
-void expression_info_set_type(Expression_Info* info, Type_Base* type)
+void expression_info_set_type(Expression_Info* info, Datatype* type)
 {
     info->result_type = Expression_Result_Type::TYPE;
     info->options.type = type;
     info->post_op.type_afterwards = compiler.type_system.predefined_types.type_handle;
 
-    if (type->type == Type_Type::STRUCT) {
-        auto s = downcast<Type_Struct>(type);
+    if (type->type == Datatype_Type::STRUCT) {
+        auto s = downcast<Datatype_Struct>(type);
         if (s->workload != 0) {
             if (s->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE) {
                 info->result_type = Expression_Result_Type::POLYMORPHIC_STRUCT;
@@ -1560,10 +1561,10 @@ void expression_info_set_polymorphic_function(Expression_Info* info, Function_Pr
     info->post_op.type_afterwards = upcast(poly_base->function->signature);
 }
 
-void expression_info_set_constant(Expression_Info* info, Type_Base* signature, Array<byte> bytes, AST::Node* error_report_node)
+void expression_info_set_constant(Expression_Info* info, Datatype* signature, Array<byte> bytes, AST::Node* error_report_node)
 {
     auto& analyser = semantic_analyser;
-    auto result = constant_pool_add_constant(&compiler.constant_pool, signature, bytes);
+    auto result = constant_pool_add_constant(signature, bytes);
     if (!result.success)
     {
         assert(error_report_node != 0, "Error"); // Error report node may only be null if we know that adding the constant cannot fail.
@@ -1575,7 +1576,7 @@ void expression_info_set_constant(Expression_Info* info, Type_Base* signature, A
     expression_info_set_constant(info, result.constant);
 }
 
-void expression_info_set_constant_enum(Expression_Info* info, Type_Base* enum_type, i32 value) {
+void expression_info_set_constant_enum(Expression_Info* info, Datatype* enum_type, i32 value) {
     expression_info_set_constant(info, enum_type, array_create_static((byte*)&value, sizeof(i32)), 0);
 }
 
@@ -1584,7 +1585,7 @@ void expression_info_set_constant_i32(Expression_Info* info, i32 value) {
 }
 
 // Returns result type of a value
-Type_Base* expression_info_get_type(Expression_Info* info, bool before_context_is_applied)
+Datatype* expression_info_get_type(Expression_Info* info, bool before_context_is_applied)
 {
     if (!before_context_is_applied) {
         return info->post_op.type_afterwards;
@@ -2671,21 +2672,25 @@ Module_Progress* workload_executer_add_module_discovery(AST::Module* module, boo
     return progress;
 }
 
-void wait_for_type_size_to_finish(Type_Base* type, Dependency_Failure_Info failure_info)
+Datatype_Memory_Info* type_wait_for_size_info_to_finish(Datatype* type, Dependency_Failure_Info failure_info)
 {
     if (!type_size_is_unfinished(type)) {
-        return;
+        return &type->memory_info.value;
     }
     auto waiting_for_type = type;
-    while (waiting_for_type->type == Type_Type::ARRAY) {
-        waiting_for_type = downcast<Type_Array>(waiting_for_type)->element_type;
+    while (waiting_for_type->type == Datatype_Type::ARRAY) {
+        waiting_for_type = downcast<Datatype_Array>(waiting_for_type)->element_type;
     }
-    assert(waiting_for_type->type == Type_Type::STRUCT, "");
-    auto structure = downcast<Type_Struct>(waiting_for_type);
+    assert(waiting_for_type->type == Datatype_Type::STRUCT, "");
+    auto structure = downcast<Datatype_Struct>(waiting_for_type);
 
     analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(structure->workload), failure_info);
     workload_executer_wait_for_dependency_resolution();
+
+    assert(!type_size_is_unfinished(type), "");
+    return &type->memory_info.value;
 }
+
 
 
 // WORKLOAD EXECUTION AND OTHERS
@@ -2741,7 +2746,7 @@ Workload_Import_Resolve* create_import_workload(AST::Import* import_node)
 
 void search_for_implicit_polymorphic_parameters(AST::Expression* expression, Dynamic_Array<AST::Expression*>& append_to)
 {
-    if (expression->type == AST::Expression_Type::POLYMORPHIC_SYMBOL) {
+    if (expression->type == AST::Expression_Type::TEMPLATE_PARAMETER) {
         dynamic_array_push_back(&append_to, expression);
         return;
     }
@@ -2800,7 +2805,7 @@ void analyse_parameter_type_and_value(Function_Parameter& parameter, AST::Parame
     parameter.has_default_value = true;
     auto default_value_type = semantic_analyser_analyse_expression_value(
         parameter_node->default_value.value, expression_context_make_specific_type(parameter.type));
-    if (type_is_unknown(parameter.type) || default_value_type != parameter.type) {
+    if (datatype_is_unknown(parameter.type) || default_value_type != parameter.type) {
         return;
     }
 
@@ -2947,7 +2952,7 @@ void analysis_workload_entry(void* userdata)
         if (!definition->is_comptime) // Global variable definition
         {
             Expression_Context context = expression_context_make_unknown();
-            Type_Base* type = 0;
+            Datatype* type = 0;
             if (definition->type_node != 0) {
                 type = semantic_analyser_analyse_expression_type(definition->type_node);
             }
@@ -3047,7 +3052,7 @@ void analysis_workload_entry(void* userdata)
         parameters.size = parameter_nodes.size;
         Dynamic_Array<AST::Expression*> implicit_parameter_nodes = dynamic_array_create_empty<AST::Expression*>(1);
         SCOPE_EXIT(dynamic_array_destroy(&implicit_parameter_nodes));
-        Dynamic_Array<Type_Polymorphic*> implicit_parameters = dynamic_array_create_empty<Type_Polymorphic*>(1);
+        Dynamic_Array<Datatype_Template_Parameter*> implicit_parameters = dynamic_array_create_empty<Datatype_Template_Parameter*>(1);
         SCOPE_EXIT(if (progress->type != Polymorphic_Analysis_Type::POLYMORPHIC_BASE) { dynamic_array_destroy(&implicit_parameters); });
         Dynamic_Array<int> polymorphic_parameter_indices = dynamic_array_create_empty<int>(1);
         SCOPE_EXIT(if (progress->type != Polymorphic_Analysis_Type::POLYMORPHIC_BASE) { dynamic_array_destroy(&polymorphic_parameter_indices); });
@@ -3094,16 +3099,16 @@ void analysis_workload_entry(void* userdata)
             for (int j = 0; j < implicit_parameter_nodes.size; j++)
             {
                 auto implicit_node = implicit_parameter_nodes[j];
-                assert(implicit_node->type == AST::Expression_Type::POLYMORPHIC_SYMBOL, "");
+                assert(implicit_node->type == AST::Expression_Type::TEMPLATE_PARAMETER, "");
                 progress->type = Polymorphic_Analysis_Type::POLYMORPHIC_BASE;
 
                 // Create symbol
                 Symbol* symbol = symbol_table_define_symbol(
                     header_workload->base.current_symbol_table, implicit_node->options.polymorphic_symbol_id,
-                    Symbol_Type::IMPLICIT_PARAMETER, AST::upcast(implicit_node), true
+                    Symbol_Type::TEMPLATE_PARAMETER, AST::upcast(implicit_node), true
                 );
                 // Create type
-                symbol->options.implicit = type_system_make_polymorphic(symbol, param_workload, implicit_parameters.size);
+                symbol->options.implicit = type_system_make_template_parameter(symbol, param_workload, implicit_parameters.size);
                 hashtable_insert_element(&semantic_analyser.implicit_parameter_node_mapping, implicit_node, symbol->options.implicit);
                 // Store in implicit parameter array
                 dynamic_array_push_back(&implicit_parameters, symbol->options.implicit);
@@ -3142,7 +3147,7 @@ void analysis_workload_entry(void* userdata)
 
         // Create type-signature 
         {
-            Type_Base* return_type = 0;
+            Datatype* return_type = 0;
             if (signature_node.return_value.available) {
                 return_type = semantic_analyser_analyse_expression_type(signature_node.return_value.value);
             }
@@ -3155,9 +3160,10 @@ void analysis_workload_entry(void* userdata)
         auto param_workload = downcast<Workload_Function_Parameter>(workload);
         workload->current_function = param_workload->progress->function;
         analyse_parameter_type_and_value(*param_workload->parameter, param_workload->node);
+
         // Set index in evaluation order if comptime
         if (param_workload->parameter->parameter_type == Parameter_Type::POLYMORPHIC || 
-            param_workload->parameter->type->contains_polymorphic_type ||
+            param_workload->parameter->type->contains_type_template ||
             param_workload->parameter->has_dependencies_on_other_parameters)
         {
             assert(param_workload->progress->type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE, "");
@@ -3248,7 +3254,7 @@ void analysis_workload_entry(void* userdata)
             // Analyes default value
             struct_param.has_default_value = param_node->default_value.available;
             struct_param.default_value.available = false;
-            if (param_node->default_value.available && !type_is_unknown(struct_param.parameter_type)) {
+            if (param_node->default_value.available && !datatype_is_unknown(struct_param.parameter_type)) {
                 semantic_analyser_analyse_expression_value(
                     param_node->default_value.value, expression_context_make_specific_type(struct_param.parameter_type));
                 struct_param.default_value = expression_calculate_comptime_value(param_node->default_value.value, "Default values must be comptime");
@@ -3265,7 +3271,7 @@ void analysis_workload_entry(void* userdata)
         auto workload_structure = downcast<Workload_Structure_Body>(workload);
 
         auto& struct_node = workload_structure->struct_node->options.structure;
-        Type_Struct* struct_signature = workload_structure->struct_type;
+        Datatype_Struct* struct_signature = workload_structure->struct_type;
         auto& members = struct_signature->members;
 
         // Check if we are a instance analysis
@@ -3314,8 +3320,16 @@ void analysis_workload_entry(void* userdata)
             member.id = name;
             member.offset = 0;
             member.type = semantic_analyser_analyse_expression_type(type_expression);
-            assert(!(member.type->size == 0 && member.type->alignment == 0), "Must not happen with current Dependency-System");
 
+            // Wait for member size to be known 
+            {
+                bool has_failed = false;
+                type_wait_for_size_info_to_finish(member.type, dependency_failure_info_make(&has_failed, 0));
+                if (has_failed) {
+                    member.type = type_system.predefined_types.error_type;
+                    log_semantic_error("Struct contains itself, this can only work with references", upcast(struct_node.members[i]), Parser::Section::IDENTIFIER);
+                }
+            }
             // Check if name is already in use
             bool name_available = true;
             for (int j = 0; j < members.size && name_available; j++) {
@@ -3338,24 +3352,11 @@ void analysis_workload_entry(void* userdata)
             }
         }
 
-        // Add size dependencies to other structs
-        for (int i = 0; i < members.size; i++)
-        {
-            auto& member = members[i];
-            bool has_failed = false;
-            wait_for_type_size_to_finish(member.type, dependency_failure_info_make(&has_failed, 0));
-
-            if (has_failed) {
-                member.type = type_system.predefined_types.error_type;
-                log_semantic_error("Struct contains itself, this can only work with references", upcast(struct_node.members[i]), Parser::Section::IDENTIFIER);
-            }
-        }
-
         type_system_finish_struct(struct_signature);
 
         // Finish all arrays waiting on this struct 
         for (int i = 0; i < workload_structure->arrays_depending_on_struct_size.size; i++) {
-            Type_Array* array = workload_structure->arrays_depending_on_struct_size[i];
+            Datatype_Array* array = workload_structure->arrays_depending_on_struct_size[i];
             type_system_finish_array(array);
         }
         break;
@@ -3417,6 +3418,10 @@ void analysis_workload_entry(void* userdata)
             }
         }
 
+        // Wait for result type size
+        auto result_type = progress->bake_function->signature->return_type.value;
+        type_wait_for_size_info_to_finish(result_type);
+
         // Compile
         ir_generator_queue_function(bake_function);
         ir_generator_generate_queued_items(true);
@@ -3433,7 +3438,7 @@ void analysis_workload_entry(void* userdata)
             if (thread->exit_code == Exit_Code::TYPE_INFO_WAITING_FOR_TYPE_FINISHED) 
             {
                 bool cyclic_dependency_occured = false;
-                wait_for_type_size_to_finish(thread->waiting_for_type_finish_type, dependency_failure_info_make(&cyclic_dependency_occured));
+                type_wait_for_size_info_to_finish(thread->waiting_for_type_finish_type, dependency_failure_info_make(&cyclic_dependency_occured));
                 if (cyclic_dependency_occured) {
                     log_semantic_error("Bake requires type_info which waits on bake, cyclic dependency!", execute->bake_node, Parser::Section::KEYWORD);
                     progress->result = optional_make_failure<Upp_Constant>();
@@ -3451,12 +3456,11 @@ void analysis_workload_entry(void* userdata)
             }
         }
 
-        // Add resutl to constant pool
+        // Add result to constant pool
         void* value_ptr = thread->return_register;
         assert(progress->bake_function->signature->return_type.available, "Bake return type must have been stated at this point...");
-        auto result_type = progress->bake_function->signature->return_type.value;
         Constant_Pool_Result pool_result = constant_pool_add_constant(
-            &compiler.constant_pool, result_type, array_create_static<byte>((byte*)value_ptr, result_type->size));
+            result_type, array_create_static<byte>((byte*)value_ptr, result_type->memory_info.value.size));
         if (!pool_result.success) {
             log_semantic_error("Couldn't serialize bake result", execute->bake_node, Parser::Section::KEYWORD);
             log_error_info_constant_status(pool_result.error_message);
@@ -3481,7 +3485,7 @@ case Analysis_Workload_Type::EXTERN_HEADER_IMPORT:
     {
         logg("Importing header successfull: %s\n", header_name_id->characters);
         dynamic_array_push_back(&compiler.extern_sources.headers_to_include, header_name_id);
-        Hashtable<C_Import_Type*, Type_Base*> type_conversion_table = hashtable_create_pointer_empty<C_Import_Type*, Type_Base*>(256);
+        Hashtable<C_Import_Type*, Datatype*> type_conversion_table = hashtable_create_pointer_empty<C_Import_Type*, Datatype*>(256);
         SCOPE_EXIT(hashtable_destroy(&type_conversion_table));
 
         AST_Node* import_id_node = extern_node->child_start;
@@ -3503,8 +3507,8 @@ case Analysis_Workload_Type::EXTERN_HEADER_IMPORT:
             {
             case C_Import_Symbol_Type::TYPE:
             {
-                Type_Base* type = import_c_type(analyser, import_symbol->data_type, &type_conversion_table);
-                if (type->type == Type_Type::STRUCT) {
+                Datatype* type = import_c_type(analyser, import_symbol->data_type, &type_conversion_table);
+                if (type->type == Datatype_Type::STRUCT) {
                     hashtable_insert_element(&compiler.extern_sources.extern_type_signatures, type, import_id);
                 }
                 symbol_table_define_symbol(
@@ -3521,7 +3525,7 @@ case Analysis_Workload_Type::EXTERN_HEADER_IMPORT:
                 extern_fn->options.extern_function.id = import_id;
                 extern_fn->signature = import_c_type(analyser, import_symbol->data_type, &type_conversion_table);
                 extern_fn->options.extern_function.function_signature = extern_fn->signature;
-                assert(extern_fn->signature->type == Type_Type::FUNCTION, "HEY");
+                assert(extern_fn->signature->type == Datatype_Type::FUNCTION, "HEY");
 
                 dynamic_array_push_back(&workload.options.extern_header.parent_module->functions, extern_fn);
                 extern_fn->symbol = symbol_table_define_symbol(
@@ -3553,11 +3557,11 @@ case Analysis_Workload_Type::EXTERN_HEADER_IMPORT:
             C_Import_Symbol* import_sym = iter.value;
             if (import_sym->type == C_Import_Symbol_Type::TYPE)
             {
-                Type_Base** signature = hashtable_find_element(&type_conversion_table, import_sym->data_type);
+                Datatype** signature = hashtable_find_element(&type_conversion_table, import_sym->data_type);
                 if (signature != 0)
                 {
-                    Type_Base* type = *signature;
-                    if (type->type == Type_Type::STRUCT) {
+                    Datatype* type = *signature;
+                    if (type->type == Datatype_Type::STRUCT) {
                         hashtable_insert_element(&compiler.extern_sources.extern_type_signatures, type, id);
                     }
                     symbol_table_define_symbol(
@@ -3589,7 +3593,7 @@ case Analysis_Workload_Type::EXTERN_FUNCTION_DECLARATION:
     {
     case Analysis_Result_Type::SUCCESS:
     {
-        if (result.options.type->type != Type_Type::FUNCTION) {
+        if (result.options.type->type != Datatype_Type::FUNCTION) {
             Semantic_Error error;
             error.type = Semantic_Error_Type::INVALID_TYPE_FUNCTION_IMPORT_EXPECTED_FUNCTION_POINTER;
             error.error_node = extern_node->child_start;
@@ -3603,7 +3607,7 @@ case Analysis_Workload_Type::EXTERN_FUNCTION_DECLARATION:
         extern_fn->options.extern_function.id = extern_node->id;
         extern_fn->signature = result.options.type;
         extern_fn->options.extern_function.function_signature = extern_fn->signature;
-        assert(extern_fn->signature->type == Type_Type::FUNCTION, "HEY");
+        assert(extern_fn->signature->type == Datatype_Type::FUNCTION, "HEY");
         dynamic_array_push_back(&extern_fn->parent_module->functions, extern_fn);
         dynamic_array_push_back(&compiler.extern_sources.extern_functions, extern_fn->options.extern_function);
 
@@ -3662,12 +3666,12 @@ void semantic_analyser_register_function_call(ModTree_Function* call_to)
     }
 }
 
-Info_Cast_Type semantic_analyser_check_cast_type(Type_Base* source_type, Type_Base* destination_type, bool implicit_cast)
+Info_Cast_Type semantic_analyser_check_cast_type(Datatype* source_type, Datatype* destination_type, bool implicit_cast)
 {
     auto& analyser = semantic_analyser;
     auto& type_system = compiler.type_system;
     auto& types = type_system.predefined_types;
-    if (type_is_unknown(source_type) || type_is_unknown(destination_type)) {
+    if (datatype_is_unknown(source_type) || datatype_is_unknown(destination_type)) {
         semantic_analyser_set_error_flag(true);
         return Info_Cast_Type::NO_CAST;
     }
@@ -3676,32 +3680,32 @@ Info_Cast_Type semantic_analyser_check_cast_type(Type_Base* source_type, Type_Ba
     Info_Cast_Type cast_type = Info_Cast_Type::INVALID;
 
     // Void pointer casting
-    if (source_type->type == Type_Type::VOID_POINTER) {
-        if (destination_type->type == Type_Type::POINTER) {
+    if (source_type->type == Datatype_Type::VOID_POINTER) {
+        if (destination_type->type == Datatype_Type::POINTER) {
             return Info_Cast_Type::POINTERS;
         }
         return Info_Cast_Type::INVALID;
     }
-    else if (destination_type->type == Type_Type::VOID_POINTER) {
-        if (source_type->type == Type_Type::POINTER) {
+    else if (destination_type->type == Datatype_Type::VOID_POINTER) {
+        if (source_type->type == Datatype_Type::POINTER) {
             return Info_Cast_Type::POINTERS;
         }
         return Info_Cast_Type::INVALID;
     }
 
     // Pointer casting
-    if (source_type->type == Type_Type::POINTER || destination_type->type == Type_Type::POINTER)
+    if (source_type->type == Datatype_Type::POINTER || destination_type->type == Datatype_Type::POINTER)
     {
-        if (source_type->type == Type_Type::POINTER && destination_type->type == Type_Type::POINTER)
+        if (source_type->type == Datatype_Type::POINTER && destination_type->type == Datatype_Type::POINTER)
         {
             cast_type = Info_Cast_Type::POINTERS;
             cast_valid = !implicit_cast;
         }
     }
-    else if (source_type->type == Type_Type::FUNCTION && destination_type->type == Type_Type::FUNCTION) {
+    else if (source_type->type == Datatype_Type::FUNCTION && destination_type->type == Datatype_Type::FUNCTION) {
         // Check if types are the same
-        auto src_fn = downcast<Type_Function>(source_type);
-        auto dst_fn = downcast<Type_Function>(destination_type);
+        auto src_fn = downcast<Datatype_Function>(source_type);
+        auto dst_fn = downcast<Datatype_Function>(destination_type);
         cast_valid = true;
         cast_type = Info_Cast_Type::POINTERS;
         if (src_fn->parameters.size != dst_fn->parameters.size) {
@@ -3724,24 +3728,26 @@ Info_Cast_Type semantic_analyser_check_cast_type(Type_Base* source_type, Type_Ba
         }
     }
     // Primitive Casting:
-    else if (source_type->type == Type_Type::PRIMITIVE && destination_type->type == Type_Type::PRIMITIVE)
+    else if (source_type->type == Datatype_Type::PRIMITIVE && destination_type->type == Datatype_Type::PRIMITIVE)
     {
-        auto src_primitive = downcast<Type_Primitive>(source_type);
-        auto dst_primitive = downcast<Type_Primitive>(destination_type);
+        auto src_primitive = downcast<Datatype_Primitive>(source_type);
+        auto dst_primitive = downcast<Datatype_Primitive>(destination_type);
+        auto src_size = source_type->memory_info.value.size;
+        auto dst_size = destination_type->memory_info.value.size;
         if (src_primitive->primitive_type == Primitive_Type::INTEGER && dst_primitive->primitive_type == Primitive_Type::INTEGER)
         {
             cast_type = Info_Cast_Type::INTEGERS;
             cast_valid = true;
             if (implicit_cast) {
                 if (src_primitive->is_signed == dst_primitive->is_signed) {
-                    cast_valid = source_type->size < destination_type->size;
+                    cast_valid = src_size < dst_size;
                 }
                 else {
                     if (src_primitive->is_signed) {
                         cast_valid = false;
                     }
                     else {
-                        cast_valid = destination_type->size > source_type->size; // E.g. u8 to i32, u32 to i64
+                        cast_valid = dst_size > src_size; // E.g. u8 to i32, u32 to i64
                     }
                 }
             }
@@ -3761,7 +3767,7 @@ Info_Cast_Type semantic_analyser_check_cast_type(Type_Base* source_type, Type_Ba
             cast_type = Info_Cast_Type::FLOATS;
             cast_valid = true;
             if (implicit_cast) {
-                cast_valid = source_type->size < destination_type->size;
+                cast_valid = src_size < dst_size;
             }
         }
         else { // Booleans can never be cast
@@ -3769,21 +3775,21 @@ Info_Cast_Type semantic_analyser_check_cast_type(Type_Base* source_type, Type_Ba
         }
     }
     // Array casting
-    else if (source_type->type == Type_Type::ARRAY && destination_type->type == Type_Type::SLICE)
+    else if (source_type->type == Datatype_Type::ARRAY && destination_type->type == Datatype_Type::SLICE)
     {
-        auto src_array = downcast<Type_Array>(source_type);
-        auto dst_slice = downcast<Type_Slice>(destination_type);
+        auto src_array = downcast<Datatype_Array>(source_type);
+        auto dst_slice = downcast<Datatype_Slice>(destination_type);
         if (types_are_equal(src_array->element_type, dst_slice->element_type)) {
             cast_type = Info_Cast_Type::ARRAY_TO_SLICE;
             cast_valid = true;
         }
     }
     // Enum casting
-    else if (source_type->type == Type_Type::ENUM || destination_type->type == Type_Type::ENUM)
+    else if (source_type->type == Datatype_Type::ENUM || destination_type->type == Datatype_Type::ENUM)
     {
         bool enum_is_source = false;
-        Type_Base* other = 0;
-        if (source_type->type == Type_Type::ENUM) {
+        Datatype* other = 0;
+        if (source_type->type == Datatype_Type::ENUM) {
             enum_is_source = true;
             other = destination_type;
         }
@@ -3792,7 +3798,7 @@ Info_Cast_Type semantic_analyser_check_cast_type(Type_Base* source_type, Type_Ba
             other = source_type;
         }
 
-        if (other->type == Type_Type::PRIMITIVE && downcast<Type_Primitive>(other)->primitive_type == Primitive_Type::INTEGER) {
+        if (other->type == Datatype_Type::PRIMITIVE && downcast<Datatype_Primitive>(other)->primitive_type == Primitive_Type::INTEGER) {
             cast_type = enum_is_source ? Info_Cast_Type::ENUM_TO_INT : Info_Cast_Type::INT_TO_ENUM;
             cast_valid = !implicit_cast;
         }
@@ -3812,7 +3818,7 @@ Info_Cast_Type semantic_analyser_check_cast_type(Type_Base* source_type, Type_Ba
     return Info_Cast_Type::INVALID;
 }
 
-void expression_info_set_cast(Expression_Info* info, Info_Cast_Type cast_type, Type_Base* result_type)
+void expression_info_set_cast(Expression_Info* info, Info_Cast_Type cast_type, Datatype* result_type)
 {
     info->post_op.type_afterwards = result_type;
     info->post_op.implicit_cast = cast_type;
@@ -3863,7 +3869,7 @@ Expression_Info analyse_symbol_as_expression(Symbol* symbol, Expression_Context 
         analysis_workload_add_dependency_internal(workload, upcast(symbol->options.polymorphic_function->header_workload), failure_info);
         break;
     }
-    case Symbol_Type::IMPLICIT_PARAMETER: {
+    case Symbol_Type::TEMPLATE_PARAMETER: {
         auto other = symbol->options.implicit->parameter_workload;
         analysis_workload_add_dependency_internal(workload, upcast(other), failure_info);
         if (workload->type == Analysis_Workload_Type::FUNCTION_PARAMETER) {
@@ -3884,10 +3890,10 @@ Expression_Info analyse_symbol_as_expression(Symbol* symbol, Expression_Context 
     }
     case Symbol_Type::TYPE:
     {
-        Type_Base* type = symbol->options.type;
-        if (type->type == Type_Type::STRUCT)
+        Datatype* type = symbol->options.type;
+        if (type->type == Datatype_Type::STRUCT)
         {
-            auto struct_workload = downcast<Type_Struct>(type)->workload;
+            auto struct_workload = downcast<Datatype_Struct>(type)->workload;
             if (struct_workload == 0) {
                 assert(!type_size_is_unfinished(type), "");
                 break;
@@ -3984,7 +3990,7 @@ Expression_Info analyse_symbol_as_expression(Symbol* symbol, Expression_Context 
         expression_info_set_error(&result, error_type);
         return result;
     }
-    case Symbol_Type::IMPLICIT_PARAMETER:
+    case Symbol_Type::TEMPLATE_PARAMETER:
     {
         auto poly = symbol->options.implicit;
         // Always use the reference type (Since in this code_path we are reading a Implicit_Parameter symbol)
@@ -4103,19 +4109,19 @@ struct Callable
         Hardcoded_Type hardcoded;
         Function_Progress* polymorphic_function;
         Workload_Structure_Polymorphic* polymorphic_struct;
-        Type_Struct* structure;
+        Datatype_Struct* structure;
     } options;
 
     int parameter_count;
-    Optional<Type_Base*> return_value_type;
-    Type_Function* function_signature; // Only valid for specific callable types, otherwise 0
+    Optional<Datatype*> return_value_type;
+    Datatype_Function* function_signature; // Only valid for specific callable types, otherwise 0
 
     // Source info
     Symbol* symbol; // May be null
     Expression_Info expression_info; // May be empty
 
     // For convenience when resolving overloads
-    Type_Base* overloading_param_type;
+    Datatype* overloading_param_type;
     bool overloading_arg_matches_type;
     bool overloading_arg_can_be_cast;
 };
@@ -4147,9 +4153,9 @@ Optional<Callable> callable_try_create_from_expression_info(Expression_Info& inf
     {
         // TODO: Check if this is comptime known, then we dont need a function pointer call
         auto type = info.options.type;
-        if (type->type == Type_Type::FUNCTION) {
+        if (type->type == Datatype_Type::FUNCTION) {
             callable.type = Callable_Type::FUNCTION_POINTER;
-            callable.function_signature = downcast<Type_Function>(type);
+            callable.function_signature = downcast<Datatype_Function>(type);
         }
         else {
             return optional_make_failure<Callable>();
@@ -4189,7 +4195,7 @@ Optional<Callable> callable_try_create_from_expression_info(Expression_Info& inf
     return optional_make_success(callable);
 }
 
-Callable callable_create_from_struct_initializer(Type_Struct* struct_type)
+Callable callable_create_from_struct_initializer(Datatype_Struct* struct_type)
 {
     Callable result;
     result.type = Callable_Type::STRUCT_INITIALIZER;
@@ -4203,7 +4209,7 @@ Callable callable_create_from_struct_initializer(Type_Struct* struct_type)
 
 struct Callable_Parameter_Info
 {
-    Type_Base* type;
+    Datatype* type;
     Optional<String*> name;
     bool has_default_value;
 };
@@ -4393,9 +4399,9 @@ void arguments_analyse_in_unknown_context(Dynamic_Array<AST::Argument*>& argumen
 }
 
 
-bool match_polymorphic_type(Type_Base* polymorphic_type, Type_Base* match_against, Hashset<Type_Base*>& already_visited, Array<Upp_Constant>& implicit_parameter_values)
+bool match_templated_type(Datatype* polymorphic_type, Datatype* match_against, Hashset<Datatype*>& already_visited, Array<Upp_Constant>& implicit_parameter_values)
 {
-    if (!polymorphic_type->contains_polymorphic_type) {
+    if (!polymorphic_type->contains_type_template) {
         return types_are_equal(polymorphic_type, match_against);
     }
     if (hashset_contains(&already_visited, polymorphic_type)) {
@@ -4404,30 +4410,30 @@ bool match_polymorphic_type(Type_Base* polymorphic_type, Type_Base* match_agains
     hashset_insert_element(&already_visited, polymorphic_type);
 
     // Note: Not sure about this assert, but I think when evaluating poly arguments in correct order this shouldn't happen
-    assert(!match_against->contains_polymorphic_type, "");
+    assert(!match_against->contains_type_template, "");
 
     // Check if we found match
-    if (polymorphic_type->type == Type_Type::POLYMORPHIC)
+    if (polymorphic_type->type == Datatype_Type::TEMPLATE_PARAMETER)
     {
-        auto poly_type = downcast<Type_Polymorphic>(polymorphic_type);
+        auto poly_type = downcast<Datatype_Template_Parameter>(polymorphic_type);
         if (poly_type->is_reference) {
             return true; // Don't match references
         }
         assert(implicit_parameter_values[poly_type->index].constant_index == -1, "We shouldn't match the same parameter more than once");
         auto pool_result = constant_pool_add_constant(
-            &compiler.constant_pool, compiler.type_system.predefined_types.type_handle, array_create_static_as_bytes(&match_against->type_handle, 1));
+            compiler.type_system.predefined_types.type_handle, array_create_static_as_bytes(&match_against->type_handle, 1));
         assert(pool_result.success, "Type handle must work as constant!");
         implicit_parameter_values[poly_type->index] = pool_result.constant;
         return true;
     }
-    else if (polymorphic_type->type == Type_Type::STRUCT_INSTANCE_TEMPLATE) 
+    else if (polymorphic_type->type == Datatype_Type::STRUCT_INSTANCE_TEMPLATE) 
     {
         // Check for errors
-        auto struct_template = downcast<Type_Struct_Instance_Template>(polymorphic_type);
-        if (match_against->type != Type_Type::STRUCT) {
+        auto struct_template = downcast<Datatype_Struct_Instance_Template>(polymorphic_type);
+        if (match_against->type != Datatype_Type::STRUCT) {
             return false;
         }
-        auto struct_type = downcast<Type_Struct>(match_against);
+        auto struct_type = downcast<Datatype_Struct>(match_against);
         if (struct_type->workload == 0) {
             return false;
         }
@@ -4447,8 +4453,8 @@ bool match_polymorphic_type(Type_Base* polymorphic_type, Type_Base* match_agains
             Upp_Constant& match_to_value = struct_instance.parameter_values[i];
             switch (argument_to_match.type)
             {
-            case Matchable_Argument_Type::POLYMORPHIC_SYMBOL: {
-                auto poly_type = argument_to_match.options.polymorphic_symbol;
+            case Matchable_Argument_Type::TEMPLATE_PARAMETER: {
+                auto poly_type = argument_to_match.options.template_parameter;
                 implicit_parameter_values[poly_type->index] = match_to_value;
                 break;
             }
@@ -4456,16 +4462,16 @@ bool match_polymorphic_type(Type_Base* polymorphic_type, Type_Base* match_agains
                 // Constant values have to match, otherwise the type does not fit, e.g.
                 //     foo :: (x: A($T, 5))
                 //     foo(A(int, 3)) --> Does not fit
-                if (!constant_pool_compare_constants(&compiler.constant_pool, match_to_value, argument_to_match.options.constant)) {
+                if (!upp_constant_is_equal(match_to_value, argument_to_match.options.constant)) {
                     return false;
                 }
                 break;
             }
-            case Matchable_Argument_Type::TYPE_CONTAINING_POLYMORPHIC: {
-                assert(match_to_value.type->type == Type_Type::TYPE_HANDLE, "Must be the case since this is the type of the polymorphic parameter");
-                Type_Base* concrete_type = compiler.type_system.types[upp_constant_to_value<Type_Handle>(&compiler.constant_pool, match_to_value).index];
-                assert(!concrete_type->contains_polymorphic_type, "");
-                if (!match_polymorphic_type(argument_to_match.options.polymorphic_type, concrete_type, already_visited, implicit_parameter_values)) {
+            case Matchable_Argument_Type::TYPE_CONTAINING_TEMPLATE: {
+                assert(match_to_value.type->type == Datatype_Type::TYPE_HANDLE, "Must be the case since this is the type of the polymorphic parameter");
+                Datatype* concrete_type = compiler.type_system.types[upp_constant_to_value<Upp_Type_Handle>(match_to_value).index];
+                assert(!concrete_type->contains_type_template, "");
+                if (!match_templated_type(argument_to_match.options.templated_type, concrete_type, already_visited, implicit_parameter_values)) {
                     return false;
                 }
                 break;
@@ -4484,13 +4490,13 @@ bool match_polymorphic_type(Type_Base* polymorphic_type, Type_Base* match_agains
 
     switch (polymorphic_type->type)
     {
-    case Type_Type::STRUCT_INSTANCE_TEMPLATE: {
+    case Datatype_Type::STRUCT_INSTANCE_TEMPLATE: {
         panic("This is what we needz!");
         break;
     }
-    case Type_Type::ARRAY: {
-        auto other_array = downcast<Type_Array>(match_against);
-        auto this_array = downcast<Type_Array>(polymorphic_type);
+    case Datatype_Type::ARRAY: {
+        auto other_array = downcast<Datatype_Array>(match_against);
+        auto this_array = downcast<Datatype_Array>(polymorphic_type);
 
         // Check if we can match array size
         if (this_array->polymorphic_count_variable != 0) {
@@ -4502,55 +4508,55 @@ bool match_polymorphic_type(Type_Base* polymorphic_type, Type_Base* match_agains
 
             // Match implicit parameter to element count
             auto pool_result = constant_pool_add_constant(
-                &compiler.constant_pool, upcast(compiler.type_system.predefined_types.i32_type), array_create_static_as_bytes(&element_count, 1));
+                upcast(compiler.type_system.predefined_types.i32_type), array_create_static_as_bytes(&element_count, 1));
             assert(pool_result.success, "I32 type must work as constant");
             implicit_parameter_values[this_array->polymorphic_count_variable->index] = pool_result.constant;
         }
 
         // Continue matching element type
-        return match_polymorphic_type(downcast<Type_Array>(polymorphic_type)->element_type, downcast<Type_Array>(match_against)->element_type, already_visited, implicit_parameter_values);
+        return match_templated_type(downcast<Datatype_Array>(polymorphic_type)->element_type, downcast<Datatype_Array>(match_against)->element_type, already_visited, implicit_parameter_values);
     }
-    case Type_Type::SLICE:
-        return match_polymorphic_type(downcast<Type_Slice>(polymorphic_type)->element_type, downcast<Type_Slice>(match_against)->element_type, already_visited, implicit_parameter_values);
-    case Type_Type::POINTER:
-        return match_polymorphic_type(downcast<Type_Pointer>(polymorphic_type)->points_to_type, downcast<Type_Pointer>(match_against)->points_to_type, already_visited, implicit_parameter_values);
-    case Type_Type::STRUCT: {
-        auto a = downcast<Type_Struct>(polymorphic_type);
-        auto b = downcast<Type_Struct>(match_against);
+    case Datatype_Type::SLICE:
+        return match_templated_type(downcast<Datatype_Slice>(polymorphic_type)->element_type, downcast<Datatype_Slice>(match_against)->element_type, already_visited, implicit_parameter_values);
+    case Datatype_Type::POINTER:
+        return match_templated_type(downcast<Datatype_Pointer>(polymorphic_type)->points_to_type, downcast<Datatype_Pointer>(match_against)->points_to_type, already_visited, implicit_parameter_values);
+    case Datatype_Type::STRUCT: {
+        auto a = downcast<Datatype_Struct>(polymorphic_type);
+        auto b = downcast<Datatype_Struct>(match_against);
         if (a->struct_type != b->struct_type || a->members.size != b->members.size) {
             return false;
         }
         for (int i = 0; i < a->members.size; i++) {
-            if (!match_polymorphic_type(a->members[i].type, b->members[i].type, already_visited, implicit_parameter_values)) {
+            if (!match_templated_type(a->members[i].type, b->members[i].type, already_visited, implicit_parameter_values)) {
                 return false;
             }
         }
         return true;
     }
-    case Type_Type::FUNCTION: {
-        auto a = downcast<Type_Function>(polymorphic_type);
-        auto b = downcast<Type_Function>(match_against);
+    case Datatype_Type::FUNCTION: {
+        auto a = downcast<Datatype_Function>(polymorphic_type);
+        auto b = downcast<Datatype_Function>(match_against);
         if (a->parameters.size != b->parameters.size || a->return_type.available != b->return_type.available) {
             return false;
         }
         for (int i = 0; i < a->parameters.size; i++) {
-            if (!match_polymorphic_type(a->parameters[i].type, b->parameters[i].type, already_visited, implicit_parameter_values)) {
+            if (!match_templated_type(a->parameters[i].type, b->parameters[i].type, already_visited, implicit_parameter_values)) {
                 return false;
             }
         }
         if (a->return_type.available) {
-            if (!match_polymorphic_type(a->return_type.value, b->return_type.value, already_visited, implicit_parameter_values)) {
+            if (!match_templated_type(a->return_type.value, b->return_type.value, already_visited, implicit_parameter_values)) {
                 return false;
             }
         }
         return true;
     }
-    case Type_Type::ENUM:
-    case Type_Type::ERROR_TYPE:
-    case Type_Type::VOID_POINTER:
-    case Type_Type::PRIMITIVE:
-    case Type_Type::TYPE_HANDLE: panic("Should be handled by previous code-path (E.g. non polymorphic!)");
-    case Type_Type::POLYMORPHIC: panic("Previous code path should have handled this!");
+    case Datatype_Type::ENUM:
+    case Datatype_Type::ERROR_TYPE:
+    case Datatype_Type::VOID_POINTER:
+    case Datatype_Type::PRIMITIVE:
+    case Datatype_Type::TYPE_HANDLE: panic("Should be handled by previous code-path (E.g. non polymorphic!)");
+    case Datatype_Type::TEMPLATE_PARAMETER: panic("Previous code path should have handled this!");
     default: panic("");
     }
 
@@ -4709,7 +4715,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             // Disambiguate overloads by argument types
             if (candidates.size > 1)
             {
-                auto remove_candidates_based_on_better_type_match = [&](Dynamic_Array<Callable>& candidates, Type_Base* expected_type)
+                auto remove_candidates_based_on_better_type_match = [&](Dynamic_Array<Callable>& candidates, Datatype* expected_type)
                 {
                     bool matching_candidate_exists = false;
                     bool castable_candidate_exists = false;
@@ -4769,7 +4775,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                     for (int j = 0; j < candidates.size; j++)
                     {
                         auto& candidate = candidates[j];
-                        Type_Base* param_type = 0;
+                        Datatype* param_type = 0;
                         if (arg->name.available) {
                             // Find named argument
                             for (int k = 0; k < candidate.parameter_count; k++) {
@@ -4808,7 +4814,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 {
                     auto expected_return_type = context.signature;
                     bool can_differentiate_based_on_return_type = false;
-                    Type_Base* last_return_type = 0;
+                    Datatype* last_return_type = 0;
                     for (int i = 0; i < candidates.size; i++) {
                         auto& candidate = candidates[i];
                         if (!candidate.return_value_type.available) {
@@ -4961,7 +4967,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 implicit_parameter_values[i].type = 0;
             }
 
-            Array<Type_Base*> instance_parameter_types = array_create_empty<Type_Base*>(
+            Array<Datatype*> instance_parameter_types = array_create_empty<Datatype*>(
                 base_progress->function->signature->parameters.size - poly_base.comptime_parameter_count
             );
             for (int i = 0; i < base_progress->function->signature->parameters.size; i++) {
@@ -4973,7 +4979,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             SCOPE_EXIT(array_destroy(&instance_parameter_types));
 
             Analysis_Pass* comptime_evaluation_pass = 0; // Is allocated on demand because in many cases we won't need to reanalyse header parameters
-            Hashset<Type_Base*> matching_helper = hashset_create_pointer_empty<Type_Base*>(1);
+            Hashset<Datatype*> matching_helper = hashset_create_pointer_empty<Datatype*>(1);
             SCOPE_EXIT(hashset_destroy(&matching_helper));
 
             // Analyse arguments in correct order
@@ -5007,7 +5013,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 arg_info->context_application_missing = false;
 
                 // Get instance parameter-type
-                Type_Base* parameter_type = 0;
+                Datatype* parameter_type = 0;
                 if (base_parameter.has_dependencies_on_other_parameters) {
                     // Re-analyse base-header to get valid poly-argument type (Since this depenends on other parameters)
                     //      e.g. foo :: ($T: Type_Handle, a: T)
@@ -5023,7 +5029,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 else {
                     parameter_type = base_parameter.type;
                 }
-                if (type_is_unknown(parameter_type) && !parameter_type->contains_polymorphic_type) {
+                if (datatype_is_unknown(parameter_type) && !parameter_type->contains_type_template) {
                     success = false;
                 }
 
@@ -5037,7 +5043,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                     }
                     else {
                         Expression_Context context = expression_context_make_specific_type(parameter_type);
-                        if (parameter_type->contains_polymorphic_type) {
+                        if (parameter_type->contains_type_template) {
                             // If parameter type has implicit polymorphic symbols, then we don't want any casts,
                             //    so that we can later match the result-type with the implicit symbols
                             //    e.g. a :: make($x: $T)
@@ -5063,10 +5069,10 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 }
 
                 // Match implicit parameters
-                if (parameter_type->contains_polymorphic_type)
+                if (parameter_type->contains_type_template)
                 {
                     // Analyse argument if this has not been done before
-                    Type_Base* argument_type;
+                    Datatype* argument_type;
                     if (arg_info->already_analysed) {
                         argument_type = get_info(argument_node->value)->post_op.type_afterwards;
                     }
@@ -5078,7 +5084,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
                     // Match types
                     hashset_reset(&matching_helper);
-                    bool match_success = match_polymorphic_type(parameter_type, argument_type, matching_helper, implicit_parameter_values);
+                    bool match_success = match_templated_type(parameter_type, argument_type, matching_helper, implicit_parameter_values);
                     if (!match_success) {
                         log_semantic_error("Could not match argument with implicit-polymorphic symbols!", upcast(argument_node));
                         log_error_info_given_type(argument_type);
@@ -5109,13 +5115,13 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                     auto& test_instance = poly_base.instances[i]->polymorhic_instance;
                     bool all_matching = true;
                     for (int j = 0; j < poly_base.comptime_parameter_count; j++) {
-                        if (!constant_pool_compare_constants(&compiler.constant_pool, test_instance.parameter_values[j], comptime_argument_values[j])) {
+                        if (!upp_constant_is_equal(test_instance.parameter_values[j], comptime_argument_values[j])) {
                             all_matching = false;
                             break;
                         }
                     }
                     for (int j = 0; j < poly_base.implicit_parameters.size; j++) {
-                        if (!constant_pool_compare_constants(&compiler.constant_pool, test_instance.implicit_parameter_values[j], implicit_parameter_values[j])) {
+                        if (!upp_constant_is_equal(test_instance.implicit_parameter_values[j], implicit_parameter_values[j])) {
                             all_matching = false;
                             break;
                         }
@@ -5131,11 +5137,11 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             // Create new instance if necessary
             if (instance == 0)
             {
-                Type_Function* instance_function_type = 0;
+                Datatype_Function* instance_function_type = 0;
                 {
                     auto& signature_node = base_progress->header_workload->function_node->options.function.signature->options.function_signature;
 
-                    Type_Function unfinished = type_system_make_function_empty();
+                    Datatype_Function unfinished = type_system_make_function_empty();
                     for (int i = 0; i < base_progress->function->signature->parameters.size; i++)
                     {
                         auto& base_param = base_progress->function->signature->parameters[i];
@@ -5144,7 +5150,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                         }
 
                         Function_Parameter parameter = function_parameter_make_empty(base_param.symbol, base_param.workload);
-                        if (base_param.has_dependencies_on_other_parameters || base_param.type->contains_polymorphic_type) {
+                        if (base_param.has_dependencies_on_other_parameters || base_param.type->contains_type_template) {
                             parameter.has_default_value = false;
                         }
                         else {
@@ -5156,11 +5162,11 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                         parameter.normal.index_in_non_polymorphic_signature = parameter.index;
                         parameter.parameter_type = Parameter_Type::NORMAL;
                         parameter.type = instance_parameter_types[parameter.index];
-                        assert(!parameter.type->contains_polymorphic_type, "");
+                        assert(!parameter.type->contains_type_template, "");
                         dynamic_array_push_back(&unfinished.parameters, parameter);
                     }
 
-                    Type_Base* return_type = 0;
+                    Datatype* return_type = 0;
                     // Re-analyse return type, as this isn't handled the same as parameter yet
                     if (signature_node.return_value.available) {
                         if (comptime_evaluation_pass == 0) {
@@ -5227,7 +5233,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 matchable_argument.type = Matchable_Argument_Type::CONSTANT_VALUE;
                 
                 // Check if expression is a polymorphic symbol
-                if (arg->value->type == AST::Expression_Type::POLYMORPHIC_SYMBOL) {
+                if (arg->value->type == AST::Expression_Type::TEMPLATE_PARAMETER) {
                     create_struct_instance_template = true;
                     auto polymorphic_type_opt = hashtable_find_element(&semantic_analyser.implicit_parameter_node_mapping, arg->value);
                     if (polymorphic_type_opt == 0) {
@@ -5237,8 +5243,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                     }
                     auto poly_type = *polymorphic_type_opt;
 
-                    matchable_argument.type = Matchable_Argument_Type::POLYMORPHIC_SYMBOL;
-                    matchable_argument.options.polymorphic_symbol = poly_type;
+                    matchable_argument.type = Matchable_Argument_Type::TEMPLATE_PARAMETER;
+                    matchable_argument.options.template_parameter = poly_type;
                     continue;
                 }
 
@@ -5259,14 +5265,14 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                     continue;
                 }
 
-                if (expected_type->type == Type_Type::TYPE_HANDLE) {
-                    Type_Handle handle = upp_constant_to_value<Type_Handle>(&compiler.constant_pool, constant.value);
-                    Type_Base* type = type_system->types[handle.index];
-                    assert(type->type != Type_Type::POLYMORPHIC, "Should be handled in the special case above");
-                    if (type->contains_polymorphic_type) {
+                if (expected_type->type == Datatype_Type::TYPE_HANDLE) {
+                    Upp_Type_Handle handle = upp_constant_to_value<Upp_Type_Handle>(constant.value);
+                    Datatype* type = type_system->types[handle.index];
+                    assert(type->type != Datatype_Type::TEMPLATE_PARAMETER, "Should be handled in the special case above");
+                    if (type->contains_type_template) {
                         create_struct_instance_template = true;
-                        matchable_argument.type = Matchable_Argument_Type::TYPE_CONTAINING_POLYMORPHIC;
-                        matchable_argument.options.polymorphic_type = type;
+                        matchable_argument.type = Matchable_Argument_Type::TYPE_CONTAINING_TEMPLATE;
+                        matchable_argument.options.templated_type = type;
                         continue;
                     }
                 }
@@ -5293,7 +5299,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                     Structure_Polymorphic_Instance* test_instance = base->instances[i];
                     bool all_matching = true;
                     for (int j = 0; j < base->parameters.size; j++) {
-                        if (!constant_pool_compare_constants(&compiler.constant_pool, test_instance->parameter_values[j], argument_values[j].options.constant)) {
+                        if (!upp_constant_is_equal(test_instance->parameter_values[j], argument_values[j].options.constant)) {
                             all_matching = false;
                             break;
                         }
@@ -5384,7 +5390,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         *info = analyse_symbol_as_expression(symbol, context, path->last);
         return info;
     }
-    case AST::Expression_Type::POLYMORPHIC_SYMBOL: {
+    case AST::Expression_Type::TEMPLATE_PARAMETER: {
         // Note: The mapping is only registered during header analysis, otherwise we have an invalid usage of this expression
         auto polymorphic_type_opt = hashtable_find_element(&semantic_analyser.implicit_parameter_node_mapping, expr);
         if (polymorphic_type_opt == 0) {
@@ -5405,7 +5411,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
     case AST::Expression_Type::CAST:
     {
         auto cast = &expr->options.cast;
-        Type_Base* destination_type = 0;
+        Datatype* destination_type = 0;
         if (cast->to_type.available) {
             destination_type = semantic_analyser_analyse_expression_type(cast->to_type.value);
         }
@@ -5434,7 +5440,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             }
             else {
                 operand_context = expression_context_make_specific_type(upcast(types.u64_type));
-                if (destination_type->type != Type_Type::POINTER) {
+                if (destination_type->type != Datatype_Type::POINTER) {
                     log_semantic_error("Destination type must be pointer", expr);
                     log_error_info_given_type(destination_type);
                 }
@@ -5469,7 +5475,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             break;
         }
         case AST::Cast_Type::PTR_TO_RAW: {
-            if (operand_type->type != Type_Type::POINTER) {
+            if (operand_type->type != Datatype_Type::POINTER) {
                 log_semantic_error("To raw cast require a pointer value", expr);
                 log_error_info_given_type(operand_type);
             }
@@ -5491,7 +5497,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
     {
         auto& read = expr->options.literal_read;
         void* value_ptr;
-        Type_Base* literal_type;
+        Datatype* literal_type;
         void* null_pointer = 0;
         Upp_String string_buffer;
 
@@ -5526,13 +5532,13 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         }
         default: panic("");
         }
-        expression_info_set_constant(info, literal_type, array_create_static<byte>((byte*)value_ptr, literal_type->size), AST::upcast(expr));
+        expression_info_set_constant(info, literal_type, array_create_static<byte>((byte*)value_ptr, literal_type->memory_info.value.size), AST::upcast(expr));
         return info;
     }
     case AST::Expression_Type::ENUM_TYPE:
     {
         auto& members = expr->options.enum_members;
-        Type_Enum* enum_type = type_system_make_enum_empty(0);
+        Datatype_Enum* enum_type = type_system_make_enum_empty(0);
         int next_member_value = 1; // Note: Enum values all start at 1, so 0 represents an invalid enum
         for (int i = 0; i < members.size; i++)
         {
@@ -5542,7 +5548,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 semantic_analyser_analyse_expression_value(member_node->value.value, expression_context_make_specific_type(upcast(types.i32_type)));
                 auto constant = expression_calculate_comptime_value(member_node->value.value, "Enum value must be comptime known");
                 if (constant.available) {
-                    next_member_value = upp_constant_to_value<i32>(&compiler.constant_pool, constant.value);
+                    next_member_value = upp_constant_to_value<i32>(constant.value);
                 }
             }
 
@@ -5606,7 +5612,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             }
             case AST::Expression_Type::BAKE_BLOCK:
             case AST::Expression_Type::BAKE_EXPR: {
-                Type_Base* expected_type = 0;
+                Datatype* expected_type = 0;
                 if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED) {
                     expected_type = context.signature;
                 }
@@ -5696,7 +5702,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             analyse_parameter_type_and_value(parameter, param_node);
             dynamic_array_push_back(&unfinished.parameters, parameter);
         }
-        Type_Base* return_type = 0;
+        Datatype* return_type = 0;
         if (sig.return_value.available) {
             return_type = semantic_analyser_analyse_expression_type(sig.return_value.value);
         }
@@ -5717,18 +5723,18 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         auto comptime = expression_calculate_comptime_value(array_node.size_expr, "Array size must be know at compile time");
         if (comptime.available) {
             array_size_known = true;
-            array_size = upp_constant_to_value<int>(&compiler.constant_pool, comptime.value);
+            array_size = upp_constant_to_value<int>(comptime.value);
             if (array_size <= 0) {
                 log_semantic_error("Array size must be greater than zero", array_node.size_expr);
                 array_size_known = false;
             }
         }
 
-        Type_Base* element_type = semantic_analyser_analyse_expression_type(array_node.type_expr);
+        Datatype* element_type = semantic_analyser_analyse_expression_type(array_node.type_expr);
         auto result = type_system_make_array(element_type, array_size_known, array_size);
 
         // Handle implicit polymorphic symbols for array size, e.g. foo :: (a: [$C]int)
-        if (array_node.size_expr->type == AST::Expression_Type::POLYMORPHIC_SYMBOL) {
+        if (array_node.size_expr->type == AST::Expression_Type::TEMPLATE_PARAMETER) {
             auto polymorphic_type_opt = hashtable_find_element(&semantic_analyser.implicit_parameter_node_mapping, array_node.size_expr);
             if (polymorphic_type_opt == 0) {
                 log_semantic_error("Implicit polymorphic parameter only valid in function header!", array_node.size_expr);
@@ -5737,7 +5743,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             auto poly_type = *polymorphic_type_opt;
 
             result->polymorphic_count_variable = poly_type;
-            result->base.contains_polymorphic_type = true;
+            result->base.contains_type_template = true;
         }
 
         EXIT_TYPE(upcast(result));
@@ -5749,12 +5755,12 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
     case AST::Expression_Type::NEW_EXPR:
     {
         auto& new_node = expr->options.new_expr;
-        Type_Base* allocated_type = semantic_analyser_analyse_expression_type(new_node.type_expr);
-        assert(!(allocated_type->size == 0 && allocated_type->alignment == 0), "HEY");
+        Datatype* allocated_type = semantic_analyser_analyse_expression_type(new_node.type_expr);
+        // Wait for type size since ir-generator needs it to function properly
+        type_wait_for_size_info_to_finish(allocated_type);
 
-        Type_Base* result_type = 0;
-        if (new_node.count_expr.available)
-        {
+        Datatype* result_type = 0;
+        if (new_node.count_expr.available) {
             result_type = upcast(type_system_make_slice(allocated_type));
             semantic_analyser_analyse_expression_value(new_node.count_expr.value, expression_context_make_specific_type(upcast(types.i32_type)));
         }
@@ -5769,7 +5775,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         auto& arguments = init_node.arguments;
 
         // Find struct type
-        Type_Base* type = 0;
+        Datatype* type = 0;
         if (init_node.type_expr.available) {
             type = semantic_analyser_analyse_expression_type(init_node.type_expr.value);
         }
@@ -5784,16 +5790,15 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         }
 
         // Check type errors
-        if (type->type != Type_Type::STRUCT) {
+        if (type->type != Datatype_Type::STRUCT) {
             log_semantic_error("Struct initializer requires structure type", expr);
             log_error_info_given_type(type);
             arguments_analyse_in_unknown_context(arguments);
             EXIT_ERROR(type);
         }
-        wait_for_type_size_to_finish(type);
+        type_wait_for_size_info_to_finish(type);
 
-        auto struct_signature = downcast<Type_Struct>(type);
-        assert(!(struct_signature->base.size == 0 && struct_signature->base.alignment == 0), "");
+        auto struct_signature = downcast<Datatype_Struct>(type);
         auto& members = struct_signature->members;
 
         // Special case for UNIONS, where only one member can be specified
@@ -5873,7 +5878,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
     case AST::Expression_Type::ARRAY_INITIALIZER:
     {
         auto& init_node = expr->options.array_initializer;
-        Type_Base* element_type = 0;
+        Datatype* element_type = 0;
         if (init_node.type_expr.available) {
             element_type = semantic_analyser_analyse_expression_type(init_node.type_expr.value);
         }
@@ -5881,11 +5886,11 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         {
             if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED)
             {
-                if (context.signature->type == Type_Type::ARRAY) {
-                    element_type = downcast<Type_Array>(context.signature)->element_type;
+                if (context.signature->type == Datatype_Type::ARRAY) {
+                    element_type = downcast<Datatype_Array>(context.signature)->element_type;
                 }
-                else if (context.signature->type == Type_Type::SLICE) {
-                    element_type = downcast<Type_Slice>(context.signature)->element_type;
+                else if (context.signature->type == Datatype_Type::SLICE) {
+                    element_type = downcast<Datatype_Slice>(context.signature)->element_type;
                 }
                 else {
                     element_type = 0;
@@ -5897,7 +5902,6 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             }
         }
 
-        assert(!(element_type->size == 0 && element_type->alignment == 0), "");
         int array_element_count = init_node.values.size;
         // There are no 0-sized arrays, only 0-sized slices. So if we encounter an empty initializer, e.g. type.[], we return an empty slice
         if (array_element_count == 0) {
@@ -5916,12 +5920,12 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             access_node.array_expr, expression_context_make_auto_dereference()
         );
 
-        Type_Base* element_type = 0;
-        if (array_type->type == Type_Type::ARRAY) {
-            element_type = downcast<Type_Array>(array_type)->element_type;
+        Datatype* element_type = 0;
+        if (array_type->type == Datatype_Type::ARRAY) {
+            element_type = downcast<Datatype_Array>(array_type)->element_type;
         }
-        else if (array_type->type == Type_Type::SLICE) {
-            element_type = downcast<Type_Slice>(array_type)->element_type;
+        else if (array_type->type == Datatype_Type::SLICE) {
+            element_type = downcast<Datatype_Slice>(array_type)->element_type;
         }
         else {
             log_semantic_error("Array access can only currently happen on array or slice types", expr);
@@ -5940,12 +5944,12 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         auto access_expr_info = semantic_analyser_analyse_expression_any(member_node.expr, expression_context_make_auto_dereference());
 
         info->specifics.member_access.type = Member_Access_Type::OTHER;
-        auto search_struct_type_for_polymorphic_parameter_access = [&](Type_Struct* struct_type) -> Optional<Type_Base*> {
+        auto search_struct_type_for_polymorphic_parameter_access = [&](Datatype_Struct* struct_type) -> Optional<Datatype*> {
             if (struct_type->workload == 0) {
-                return optional_make_failure<Type_Base*>();
+                return optional_make_failure<Datatype*>();
             }
             if (struct_type->workload->polymorphic_type == Polymorphic_Analysis_Type::NORMAL) {
-                return optional_make_failure<Type_Base*>();
+                return optional_make_failure<Datatype*>();
             }
 
             auto struct_workload = struct_type->workload;
@@ -5968,23 +5972,23 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 }
             }
 
-            return optional_make_failure<Type_Base*>();
+            return optional_make_failure<Datatype*>();
         };
 
         switch (access_expr_info->result_type)
         {
         case Expression_Result_Type::TYPE:
         {
-            Type_Base* base_type = access_expr_info->options.type;
-            if (type_is_unknown(base_type)) {
+            Datatype* base_type = access_expr_info->options.type;
+            if (datatype_is_unknown(base_type)) {
                 semantic_analyser_set_error_flag(true);
                 EXIT_ERROR(types.error_type);
             }
 
             // Handle struct parameter access and union tag access
-            if (base_type->type == Type_Type::STRUCT)
+            if (base_type->type == Datatype_Type::STRUCT)
             {
-                auto structure = downcast<Type_Struct>(base_type);
+                auto structure = downcast<Datatype_Struct>(base_type);
                 auto poly_parameter_access = search_struct_type_for_polymorphic_parameter_access(structure);
                 if (poly_parameter_access.available) {
                     EXIT_VALUE(poly_parameter_access.value);
@@ -5992,16 +5996,16 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
                 // Enable . access for union types to access tag, e.g. if get_tag(addr) == Address.ipv4
                 if (structure->struct_type == AST::Structure_Type::UNION) {
-                    base_type = downcast<Type_Struct>(base_type)->tag_member.type;
+                    base_type = downcast<Datatype_Struct>(base_type)->tag_member.type;
                 }
             }
 
-            if (base_type->type != Type_Type::ENUM) {
+            if (base_type->type != Datatype_Type::ENUM) {
                 log_semantic_error("Member access for given type not possible", member_node.expr);
                 log_error_info_given_type(base_type);
                 EXIT_ERROR(types.error_type);
             }
-            auto enum_type = downcast<Type_Enum>(base_type);
+            auto enum_type = downcast<Datatype_Enum>(base_type);
             auto& members = enum_type->members;
 
             Enum_Item* found = 0;
@@ -6045,15 +6049,15 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         case Expression_Result_Type::CONSTANT:
         {
             auto base_type = access_expr_info->post_op.type_afterwards;
-            if (type_is_unknown(base_type)) {
+            if (datatype_is_unknown(base_type)) {
                 semantic_analyser_set_error_flag(true);
                 EXIT_ERROR(types.error_type);
             }
 
-            if (base_type->type == Type_Type::STRUCT)
+            if (base_type->type == Datatype_Type::STRUCT)
             {
-                wait_for_type_size_to_finish(base_type);
-                auto structure = downcast<Type_Struct>(base_type);
+                type_wait_for_size_info_to_finish(base_type);
+                auto structure = downcast<Datatype_Struct>(base_type);
                 auto& members = structure->members;
                 for (int i = 0; i < members.size; i++) {
                     Struct_Member* member = &members[i];
@@ -6073,7 +6077,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 log_error_info_id(member_node.name);
                 EXIT_ERROR(types.error_type);
             }
-            else if (base_type->type == Type_Type::ARRAY || base_type->type == Type_Type::SLICE)
+            else if (base_type->type == Datatype_Type::ARRAY || base_type->type == Datatype_Type::SLICE)
             {
                 if (member_node.name != compiler.id_size && member_node.name != compiler.id_data) {
                     log_semantic_error("Arrays/Slices only have either .size or .data as members", expr);
@@ -6081,9 +6085,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                     EXIT_ERROR(types.error_type);
                 }
 
-                if (base_type->type == Type_Type::ARRAY)
+                if (base_type->type == Datatype_Type::ARRAY)
                 {
-                    auto array = downcast<Type_Array>(base_type);
+                    auto array = downcast<Datatype_Array>(base_type);
                     if (member_node.name == compiler.id_size) {
                         if (array->count_known) {
                             expression_info_set_constant_i32(info, array->element_count);
@@ -6100,7 +6104,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 }
                 else // Slice
                 {
-                    auto slice = downcast<Type_Slice>(base_type);
+                    auto slice = downcast<Datatype_Slice>(base_type);
                     Struct_Member member;
                     if (member_node.name == compiler.id_size) {
                         member = slice->size_member;
@@ -6132,13 +6136,13 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             log_semantic_error("Could not determine context for auto enum", expr);
             EXIT_ERROR(types.error_type);
         }
-        if (context.signature->type != Type_Type::ENUM) {
+        if (context.signature->type != Datatype_Type::ENUM) {
             log_semantic_error("Context requires a type that is not an enum, so .NAME syntax is not valid", expr);
             log_error_info_given_type(context.signature);
             EXIT_ERROR(types.error_type);
         }
 
-        auto& members = downcast<Type_Enum>(context.signature)->members;
+        auto& members = downcast<Datatype_Enum>(context.signature)->members;
         Enum_Item* found = 0;
         for (int i = 0; i < members.size; i++) {
             auto member = &members[i];
@@ -6177,8 +6181,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             if (is_negate)
             {
                 bool valid = false;
-                if (operand_type->type == Type_Type::PRIMITIVE) {
-                    auto primitive = downcast<Type_Primitive>(operand_type);
+                if (operand_type->type == Datatype_Type::PRIMITIVE) {
+                    auto primitive = downcast<Datatype_Primitive>(operand_type);
                     valid = primitive->is_signed && primitive->primitive_type != Primitive_Type::BOOLEAN;
                 }
                 if (!valid) {
@@ -6198,7 +6202,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             case Expression_Result_Type::VALUE:
             case Expression_Result_Type::CONSTANT:
             {
-                Type_Base* operand_type = operand_result->post_op.type_afterwards;
+                Datatype* operand_type = operand_result->post_op.type_afterwards;
                 if (!expression_has_memory_address(unary_node.expr)) {
                     log_semantic_error("Cannot get memory address of a temporary value", expr);
                 }
@@ -6230,13 +6234,13 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         case AST::Unop::DEREFERENCE:
         {
             auto operand_type = semantic_analyser_analyse_expression_value(unary_node.expr, expression_context_make_unknown());
-            Type_Base* result_type = types.error_type;
-            if (operand_type->type != Type_Type::POINTER || types_are_equal(operand_type, types.void_pointer_type)) {
+            Datatype* result_type = types.error_type;
+            if (operand_type->type != Datatype_Type::POINTER || types_are_equal(operand_type, types.void_pointer_type)) {
                 log_semantic_error("Cannot dereference non-pointer value", expr);
                 log_error_info_given_type(operand_type);
             }
             else {
-                result_type = downcast<Type_Pointer>(operand_type)->points_to_type;
+                result_type = downcast<Datatype_Pointer>(operand_type)->points_to_type;
             }
             EXIT_VALUE(result_type);
         }
@@ -6313,18 +6317,18 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
         // Evaluate operands
         auto left_type = semantic_analyser_analyse_expression_value(binop_node.left, operand_context);
-        if (enum_valid && left_type->type == Type_Type::ENUM) {
+        if (enum_valid && left_type->type == Datatype_Type::ENUM) {
             operand_context = expression_context_make_specific_type(left_type);
         }
         auto right_type = semantic_analyser_analyse_expression_value(binop_node.right, operand_context);
 
         // Check for unknowns
-        if (type_is_unknown(left_type) || type_is_unknown(right_type)) {
+        if (datatype_is_unknown(left_type) || datatype_is_unknown(right_type)) {
             EXIT_ERROR(types.error_type);
         }
 
         // Try implicit casting if types dont match
-        Type_Base* operand_type = left_type;
+        Datatype* operand_type = left_type;
         bool types_are_valid = true;
 
         if (!types_are_equal(left_type, right_type))
@@ -6347,15 +6351,15 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         // Check if given type is valid
         if (types_are_valid)
         {
-            if (operand_type->type == Type_Type::POINTER) {
+            if (operand_type->type == Datatype_Type::POINTER) {
                 types_are_valid = ptr_valid;
             }
-            else if (operand_type->type == Type_Type::VOID_POINTER) {
+            else if (operand_type->type == Datatype_Type::VOID_POINTER) {
                 types_are_valid = ptr_valid;
             }
-            else if (operand_type->type == Type_Type::PRIMITIVE)
+            else if (operand_type->type == Datatype_Type::PRIMITIVE)
             {
-                auto primitive = downcast<Type_Primitive>(operand_type);
+                auto primitive = downcast<Datatype_Primitive>(operand_type);
                 if (primitive->primitive_type == Primitive_Type::INTEGER && !int_valid) {
                     types_are_valid = false;
                 }
@@ -6366,10 +6370,10 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                     types_are_valid = false;
                 }
             }
-            else if (operand_type->type == Type_Type::ENUM) {
+            else if (operand_type->type == Datatype_Type::ENUM) {
                 types_are_valid = enum_valid;
             }
-            else if (operand_type->type == Type_Type::TYPE_HANDLE) {
+            else if (operand_type->type == Datatype_Type::TYPE_HANDLE) {
                 types_are_valid = type_type_valid;
             }
             else {
@@ -6401,7 +6405,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
 // If errors occured, cast_type is set to INVALID
 Expression_Post_Op expression_context_apply(
-    Type_Base* initial_type, Expression_Context context, bool log_errors, AST::Expression* error_report_node, Parser::Section error_section)
+    Datatype* initial_type, Expression_Context context, bool log_errors, AST::Expression* error_report_node, Parser::Section error_section)
 {
     auto& type_system = compiler.type_system;
     auto& types = type_system.predefined_types;
@@ -6426,8 +6430,8 @@ Expression_Post_Op expression_context_apply(
     }
 
     // If either requested type or value type is unknown, just raise error flag
-    if (type_is_unknown(initial_type) ||
-        (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED && type_is_unknown(context.signature)))
+    if (datatype_is_unknown(initial_type) ||
+        (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED && datatype_is_unknown(context.signature)))
     {
         if (log_errors) {
             semantic_analyser_set_error_flag(true);
@@ -6451,11 +6455,11 @@ Expression_Post_Op expression_context_apply(
             break;
         case Expression_Context_Type::SPECIFIC_TYPE_EXPECTED:
         {
-            Type_Base* temp = context.signature;
+            Datatype* temp = context.signature;
             wanted_pointer_depth = 0;
-            while (temp->type == Type_Type::POINTER) {
+            while (temp->type == Datatype_Type::POINTER) {
                 wanted_pointer_depth++;
-                temp = downcast<Type_Pointer>(temp)->points_to_type;
+                temp = downcast<Datatype_Pointer>(temp)->points_to_type;
             }
             break;
         }
@@ -6464,10 +6468,10 @@ Expression_Post_Op expression_context_apply(
 
         // Find out given pointer level
         int given_pointer_depth = 0;
-        Type_Base* iter = initial_type;
-        while (iter->type == Type_Type::POINTER) {
+        Datatype* iter = initial_type;
+        while (iter->type == Datatype_Type::POINTER) {
             given_pointer_depth++;
-            iter = downcast<Type_Pointer>(iter)->points_to_type;
+            iter = downcast<Datatype_Pointer>(iter)->points_to_type;
         }
 
         if (given_pointer_depth + 1 == wanted_pointer_depth && context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED)
@@ -6481,8 +6485,8 @@ Expression_Post_Op expression_context_apply(
             // Auto-Dereference to given level
             result.deref_count = given_pointer_depth - wanted_pointer_depth;
             for (int i = 0; i < result.deref_count; i++) {
-                assert(result.type_afterwards->type == Type_Type::POINTER, "");
-                result.type_afterwards = downcast<Type_Pointer>(result.type_afterwards)->points_to_type;
+                assert(result.type_afterwards->type == Datatype_Type::POINTER, "");
+                result.type_afterwards = downcast<Datatype_Pointer>(result.type_afterwards)->points_to_type;
             }
         }
     }
@@ -6528,7 +6532,7 @@ Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression* expre
         result->options.value_type = compiler.type_system.predefined_types.error_type;
         context.type = Expression_Context_Type::UNKNOWN;
     }
-    else if (result->result_type != Expression_Result_Type::NOTHING && !type_is_unknown(result->post_op.type_afterwards) && context.type == Expression_Context_Type::NO_VALUE) {
+    else if (result->result_type != Expression_Result_Type::NOTHING && !datatype_is_unknown(result->post_op.type_afterwards) && context.type == Expression_Context_Type::NO_VALUE) {
         log_semantic_error("Value is not used", expression);
         result->result_type = Expression_Result_Type::VALUE;
         result->contains_errors = true;
@@ -6551,7 +6555,7 @@ Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression* expre
     return result;
 }
 
-Type_Base* semantic_analyser_analyse_expression_type(AST::Expression* expression)
+Datatype* semantic_analyser_analyse_expression_type(AST::Expression* expression)
 {
     auto& type_system = compiler.type_system;
     auto& types = type_system.predefined_types;
@@ -6565,7 +6569,7 @@ Type_Base* semantic_analyser_analyse_expression_type(AST::Expression* expression
     case Expression_Result_Type::CONSTANT:
     case Expression_Result_Type::VALUE:
     {
-        if (type_is_unknown(result->post_op.type_afterwards)) {
+        if (datatype_is_unknown(result->post_op.type_afterwards)) {
             semantic_analyser_set_error_flag(true);
             return types.error_type;
         }
@@ -6580,7 +6584,7 @@ Type_Base* semantic_analyser_analyse_expression_type(AST::Expression* expression
         Upp_Constant constant;
         if (result->result_type == Expression_Result_Type::VALUE) {
             auto comptime_opt = expression_calculate_comptime_value(expression, "Expression is a type, but it isn't known at compile time");
-            Type_Base* result_type = types.error_type;
+            Datatype* result_type = types.error_type;
             if (comptime_opt.available) {
                 constant = comptime_opt.value;
             }
@@ -6592,7 +6596,7 @@ Type_Base* semantic_analyser_analyse_expression_type(AST::Expression* expression
             constant = result->options.constant;
         }
 
-        auto type_index = upp_constant_to_value<u32>(&compiler.constant_pool, constant);
+        auto type_index = upp_constant_to_value<u32>(constant);
         if (type_index >= (u32)type_system.internal_type_infos.size) {
             // Note: Always log this error, because this should never happen!
             log_semantic_error("Expression contains invalid type handle", expression);
@@ -6624,7 +6628,7 @@ Type_Base* semantic_analyser_analyse_expression_type(AST::Expression* expression
     return types.error_type;
 }
 
-Type_Base* semantic_analyser_analyse_expression_value(AST::Expression* expression, Expression_Context context)
+Datatype* semantic_analyser_analyse_expression_value(AST::Expression* expression, Expression_Context context)
 {
     auto& type_system = compiler.type_system;
     auto& types = type_system.predefined_types;
@@ -6724,7 +6728,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
         auto& return_stat = statement->options.return_value;
         ModTree_Function* current_function = semantic_analyser.current_workload->current_function;
         assert(current_function != 0, "No statements outside of function body");
-        Optional<Type_Base*> expected_return_type = optional_make_failure<Type_Base*>();
+        Optional<Datatype*> expected_return_type = optional_make_failure<Datatype*>();
         if (current_function->signature != 0) {
             expected_return_type = current_function->signature->return_type;
         }
@@ -6743,9 +6747,9 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
             }
 
             auto return_type = semantic_analyser_analyse_expression_value(return_stat.value, context);
-            bool is_unknown = type_is_unknown(return_type);
+            bool is_unknown = datatype_is_unknown(return_type);
             if (expected_return_type.available) {
-                is_unknown = is_unknown || type_is_unknown(expected_return_type.value);
+                is_unknown = is_unknown || datatype_is_unknown(expected_return_type.value);
             }
 
             if (analyser.current_workload->type == Analysis_Workload_Type::BAKE_ANALYSIS)
@@ -6888,16 +6892,16 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
         auto& switch_node = statement->options.switch_statement;
 
         auto switch_type = semantic_analyser_analyse_expression_value(switch_node.condition, expression_context_make_auto_dereference());
-        if (switch_type->type == Type_Type::STRUCT && downcast<Type_Struct>(switch_type)->struct_type == AST::Structure_Type::UNION) {
-            switch_type = downcast<Type_Struct>(switch_type)->tag_member.type;
+        if (switch_type->type == Datatype_Type::STRUCT && downcast<Datatype_Struct>(switch_type)->struct_type == AST::Structure_Type::UNION) {
+            switch_type = downcast<Datatype_Struct>(switch_type)->tag_member.type;
         }
-        else if (switch_type->type != Type_Type::ENUM)
+        else if (switch_type->type != Datatype_Type::ENUM)
         {
             log_semantic_error("Switch only works on either enum or union types", switch_node.condition);
             log_error_info_given_type(switch_type);
         }
 
-        Expression_Context case_context = switch_type->type == Type_Type::ENUM ?
+        Expression_Context case_context = switch_type->type == Datatype_Type::ENUM ?
             expression_context_make_specific_type(switch_type) : expression_context_make_unknown();
         Control_Flow switch_flow = Control_Flow::SEQUENTIAL;
         bool default_found = false;
@@ -6930,7 +6934,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
                 auto comptime = expression_calculate_comptime_value(case_node->value.value, "Switch case must be known at compile time");
                 if (comptime.available) {
                     case_info->is_valid = true;
-                    case_info->case_value = upp_constant_to_value<int>(&compiler.constant_pool, comptime.value);
+                    case_info->case_value = upp_constant_to_value<int>(comptime.value);
                 }
                 else {
                     case_info->is_valid = false;
@@ -6974,8 +6978,8 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
         }
 
         // Check if all possible cases are handled
-        if (!default_found && switch_type->type == Type_Type::ENUM) {
-            if (unique_count < downcast<Type_Enum>(switch_type)->members.size) {
+        if (!default_found && switch_type->type == Datatype_Type::ENUM) {
+            if (unique_count < downcast<Datatype_Enum>(switch_type)->members.size) {
                 log_semantic_error("Not all cases are handled by switch", statement);
             }
         }
@@ -6995,7 +6999,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
     case AST::Statement_Type::DELETE_STATEMENT:
     {
         auto delete_type = semantic_analyser_analyse_expression_value(statement->options.delete_expr, expression_context_make_unknown());
-        if (delete_type->type != Type_Type::POINTER && delete_type->type != Type_Type::SLICE) {
+        if (delete_type->type != Datatype_Type::POINTER && delete_type->type != Datatype_Type::SLICE) {
             log_semantic_error("Delete is only valid on pointer or slice types", statement->options.delete_expr);
             log_error_info_given_type(delete_type);
         }
@@ -7009,7 +7013,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
         if (assignment_node.right_side.size == 1) // Could be Broadcast
         {
             // Analyse left side
-            Type_Base* left_side_type = 0;
+            Datatype* left_side_type = 0;
             bool left_side_all_same_type = true;
             for (int i = 0; i < assignment_node.left_side.size; i++)
             {
@@ -7030,12 +7034,12 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
             if (assignment_node.left_side.size > 1)
             {
                 // Broadcast or Struct-Split
-                Type_Base* right_type = semantic_analyser_analyse_expression_value(assignment_node.right_side[0], expression_context_make_unknown());
-                if (right_type->type == Type_Type::STRUCT && downcast<Type_Struct>(right_type)->struct_type == AST::Structure_Type::STRUCT)
+                Datatype* right_type = semantic_analyser_analyse_expression_value(assignment_node.right_side[0], expression_context_make_unknown());
+                if (right_type->type == Datatype_Type::STRUCT && downcast<Datatype_Struct>(right_type)->struct_type == AST::Structure_Type::STRUCT)
                 {
                     info->specifics.is_struct_split = true;
                     // Found struct split, check if all members have correct type
-                    auto& members = downcast<Type_Struct>(right_type)->members;
+                    auto& members = downcast<Datatype_Struct>(right_type)->members;
                     if (members.size < assignment_node.left_side.size) {
                         log_semantic_error("Struct-Split not working, not enough members to fill all left side values", upcast(assignment_node.right_side[0]));
                     }
@@ -7153,12 +7157,12 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
             {
                 // Broadcast/Struct-split
                 auto value_type = semantic_analyser_analyse_expression_value(definition->values[0], expression_context_make_unknown());
-                bool is_split = value_type->type == Type_Type::STRUCT && downcast<Type_Struct>(value_type)->struct_type == AST::Structure_Type::STRUCT;
+                bool is_split = value_type->type == Datatype_Type::STRUCT && downcast<Datatype_Struct>(value_type)->struct_type == AST::Structure_Type::STRUCT;
                 info->specifics.is_struct_split = is_split;
 
                 // On split, report error for excess/missing symbols
                 if (is_split) {
-                    auto& members = downcast<Type_Struct>(value_type)->members;
+                    auto& members = downcast<Datatype_Struct>(value_type)->members;
                     for (int j = members.size; j < symbol_nodes.size; j++) {
                         log_semantic_error("Struct does not have enough values to fill this variable", upcast(symbol_nodes[j]));
                     }
@@ -7174,9 +7178,9 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
                     assert(symbol->type == Symbol_Type::VARIABLE || symbol->type == Symbol_Type::VARIABLE_UNDEFINED, "");
 
                     // Get expected type
-                    Type_Base* given_type;
+                    Datatype* given_type;
                     if (is_split) {
-                        auto& members = downcast<Type_Struct>(value_type)->members;
+                        auto& members = downcast<Datatype_Struct>(value_type)->members;
                         if (j < members.size) {
                             given_type = members[j].type;
                         }
@@ -7192,7 +7196,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
                     }
 
                     // Check if definition type and expected type matches
-                    if (symbol->type == Symbol_Type::VARIABLE_UNDEFINED || (symbol->type == Symbol_Type::VARIABLE && type_is_unknown(symbol->options.variable_type))) {
+                    if (symbol->type == Symbol_Type::VARIABLE_UNDEFINED || (symbol->type == Symbol_Type::VARIABLE && datatype_is_unknown(symbol->options.variable_type))) {
                         symbol->type = Symbol_Type::VARIABLE;
                         symbol->options.variable_type = given_type;
                     }
@@ -7209,7 +7213,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
                 Expression_Context context = expression_context_make_unknown();
                 if (i < symbol_nodes.size) {
                     auto symbol = get_info(symbol_nodes[i])->symbol;
-                    if (symbol->type == Symbol_Type::VARIABLE && !type_is_unknown(symbol->options.variable_type)) {
+                    if (symbol->type == Symbol_Type::VARIABLE && !datatype_is_unknown(symbol->options.variable_type)) {
                         context = expression_context_make_specific_type(symbol->options.variable_type);
                     }
                 }
@@ -7456,11 +7460,11 @@ void semantic_analyser_reset()
         auto& symbols = semantic_analyser.predefined_symbols;
         auto& types = compiler.type_system.predefined_types;
 
-        auto define_type_symbol = [&](const char* name, Type_Base* type) -> Symbol* {
+        auto define_type_symbol = [&](const char* name, Datatype* type) -> Symbol* {
             Symbol* result = symbol_table_define_symbol(root, identifier_pool_add(pool, string_create_static(name)), Symbol_Type::TYPE, 0, false);
             result->options.type = type;
-            if (type->type == Type_Type::STRUCT) {
-                downcast<Type_Struct>(type)->name = optional_make_success(result->id);
+            if (type->type == Datatype_Type::STRUCT) {
+                downcast<Datatype_Struct>(type)->name = optional_make_success(result->id);
             }
             return result;
         };
@@ -7536,7 +7540,7 @@ Semantic_Analyser* semantic_analyser_initialize()
     semantic_analyser.ast_to_info_mapping = hashtable_create_empty<AST_Info_Key, Analysis_Info*>(1, ast_info_key_hash, ast_info_equals);
     semantic_analyser.allocated_symbol_tables = dynamic_array_create_empty<Symbol_Table*>(16);
     semantic_analyser.allocated_symbols = dynamic_array_create_empty<Symbol*>(16);
-    semantic_analyser.implicit_parameter_node_mapping = hashtable_create_pointer_empty<AST::Expression*, Type_Polymorphic*>(1);
+    semantic_analyser.implicit_parameter_node_mapping = hashtable_create_pointer_empty<AST::Expression*, Datatype_Template_Parameter*>(1);
     return &semantic_analyser;
 }
 
@@ -7626,7 +7630,7 @@ void semantic_error_append_to_string(Semantic_Error e, String* string)
             if (info->options.parameter.name.available) {
                 string_append_formated(string, "\"%s\": ", info->options.parameter.name.value->characters);
             }
-            type_append_to_string(string, info->options.parameter.type);
+            datatype_append_to_string(string, info->options.parameter.type);
             break;
         case Error_Information_Type::ID:
             string_append_formated(string, "\n  Name: %s", info->options.id->characters);
@@ -7653,21 +7657,21 @@ void semantic_error_append_to_string(Semantic_Error e, String* string)
         }
         case Error_Information_Type::GIVEN_TYPE:
             string_append_formated(string, "\n  Given Type:    ");
-            type_append_to_string(string, info->options.type);
+            datatype_append_to_string(string, info->options.type);
             break;
         case Error_Information_Type::EXPECTED_TYPE:
             string_append_formated(string, "\n  Expected Type: ");
-            type_append_to_string(string, info->options.type);
+            datatype_append_to_string(string, info->options.type);
             break;
         case Error_Information_Type::FUNCTION_TYPE:
             string_append_formated(string, "\n  Function Type: ");
-            type_append_to_string(string, info->options.type);
+            datatype_append_to_string(string, info->options.type);
             break;
         case Error_Information_Type::BINARY_OP_TYPES:
             string_append_formated(string, "\n  Left Operand type:  ");
-            type_append_to_string(string, info->options.binary_op_types.left_type);
+            datatype_append_to_string(string, info->options.binary_op_types.left_type);
             string_append_formated(string, "\n  Right Operand type: ");
-            type_append_to_string(string, info->options.binary_op_types.right_type);
+            datatype_append_to_string(string, info->options.binary_op_types.right_type);
             break;
         case Error_Information_Type::EXPRESSION_RESULT_TYPE:
         {

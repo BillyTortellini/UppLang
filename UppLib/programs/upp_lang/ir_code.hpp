@@ -9,8 +9,7 @@ struct IR_Function;
 struct IR_Data_Access;
 struct IR_Code_Block;
 struct IR_Program;
-struct Type_Base;
-struct Constant_Pool;
+struct Datatype;
 struct Analysis_Pass;
 
 enum class IR_Data_Access_Type
@@ -32,7 +31,7 @@ struct IR_Data_Access
     } option;
     int index;
 };
-Type_Base* ir_data_access_get_type(IR_Data_Access* access);
+Datatype* ir_data_access_get_type(IR_Data_Access* access);
 
 struct IR_Instruction_Move
 {
@@ -71,7 +70,7 @@ struct IR_Instruction_Call
         IR_Function* function;
         IR_Data_Access pointer_access;
         struct {
-            Type_Function* signature;
+            Datatype_Function* signature;
             Hardcoded_Type type;
         } hardcoded;
         Extern_Function_Identifier extern_function;
@@ -164,7 +163,7 @@ struct IR_Instruction;
 struct IR_Code_Block
 {
     IR_Function* function;
-    Dynamic_Array<Type_Base*> registers;
+    Dynamic_Array<Datatype*> registers;
     Dynamic_Array<IR_Instruction> instructions;
 };
 
@@ -224,7 +223,7 @@ struct IR_Program;
 struct IR_Function
 {
     IR_Program* program;
-    Type_Function* function_type;
+    Datatype_Function* function_type;
     IR_Code_Block* code;
 };
 
@@ -290,7 +289,7 @@ IR_Program* ir_program_create(Type_System* type_system);
 void ir_program_destroy(IR_Program* program);
 
 void ir_program_append_to_string(IR_Program* program, String* string);
-Type_Base* ir_data_access_get_type(IR_Data_Access* access);
+Datatype* ir_data_access_get_type(IR_Data_Access* access);
 
 
 

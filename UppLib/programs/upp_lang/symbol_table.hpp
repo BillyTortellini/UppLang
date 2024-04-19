@@ -4,10 +4,11 @@
 #include "../../datastructures/dynamic_array.hpp"
 #include "../../datastructures/hashtable.hpp"
 #include "compiler_misc.hpp" // Upp_Constant
+#include "constant_pool.hpp"
 
 // struct Function_Progress;
 struct ModTree_Global;
-struct Type_Base;
+struct Datatype;
 struct Workload_Definition;
 struct Workload_Import_Resolve;
 struct Workload_Structure_Polymorphic;
@@ -16,7 +17,7 @@ struct Module_Progress;
 struct Symbol;
 struct Symbol_Table;
 struct Symbol_Data;
-struct Type_Polymorphic;
+struct Datatype_Template_Parameter;
 
 struct Function_Progress;
 struct Function_Parameter;
@@ -44,7 +45,7 @@ enum class Symbol_Type
     PARAMETER,
 
     TYPE,
-    IMPLICIT_PARAMETER, // Implicit polymorphic_function type, e.g. "$T"
+    TEMPLATE_PARAMETER, // Type template in polymorphic function, e.g. "$T"
     STRUCT_PARAMETER,
     COMPTIME_VALUE,
     ALIAS_OR_IMPORTED_SYMBOL, // Alias created by import, e.g. import Algorithms~bubble_sort as sort
@@ -57,18 +58,18 @@ struct Symbol
     Symbol_Type type;
     union
     {
-        Type_Base* variable_type;
+        Datatype* variable_type;
         Module_Progress* module_progress;
         Function_Progress* function;
         Function_Progress* polymorphic_function;
         Workload_Definition* definition_workload;
         Workload_Import_Resolve* alias_workload;
         Hardcoded_Type hardcoded;
-        Type_Base* type;
+        Datatype* type;
         ModTree_Global* global;
         Function_Parameter* parameter;
         Upp_Constant constant;
-        Type_Polymorphic* implicit;
+        Datatype_Template_Parameter* implicit;
         struct {
             Workload_Structure_Polymorphic* workload;
             int parameter_index;

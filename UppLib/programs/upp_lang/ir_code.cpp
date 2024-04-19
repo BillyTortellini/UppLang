@@ -59,7 +59,7 @@ IR_Code_Block* ir_code_block_create(IR_Function* function)
     IR_Code_Block* block = new IR_Code_Block();
     block->function = function;
     block->instructions = dynamic_array_create_empty<IR_Instruction>(64);
-    block->registers = dynamic_array_create_empty<Type_Base*>(32);
+    block->registers = dynamic_array_create_empty<Datatype*>(32);
     return block;
 }
 
@@ -73,7 +73,7 @@ void ir_code_block_destroy(IR_Code_Block* block)
     delete block;
 }
 
-IR_Function* ir_function_create(Type_Function* signature, ModTree_Function* origin_func)
+IR_Function* ir_function_create(Datatype_Function* signature, ModTree_Function* origin_func)
 {
     IR_Function* function = new IR_Function();
     function->code = ir_code_block_create(function);
@@ -126,26 +126,26 @@ void ir_data_access_append_to_string(IR_Data_Access* access, String* string, IR_
     case IR_Data_Access_Type::CONSTANT: {
         Upp_Constant* constant = &compiler.constant_pool.constants[access->index];
         string_append_formated(string, "Constant #%d ", access->index);
-        type_append_to_string(string, constant->type);
+        datatype_append_to_string(string, constant->type);
         string_append_formated(string, " ", access->index);
-        type_append_value_to_string(constant->type, constant->memory, string);
+        datatype_append_value_to_string(constant->type, constant->memory, string);
         break;
     }
     case IR_Data_Access_Type::GLOBAL_DATA: {
         string_append_formated(string, "Global #%d, type: ", access->index);
-        type_append_to_string(string, ir_data_access_get_type(access));
+        datatype_append_to_string(string, ir_data_access_get_type(access));
         break;
     }
     case IR_Data_Access_Type::PARAMETER: {
-        Type_Base* sig = access->option.function->function_type->parameters[access->index].type;
+        Datatype* sig = access->option.function->function_type->parameters[access->index].type;
         string_append_formated(string, "Param #%d, type: ", access->index);
-        type_append_to_string(string, sig);
+        datatype_append_to_string(string, sig);
         break;
     }
     case IR_Data_Access_Type::REGISTER: {
-        Type_Base* sig = access->option.definition_block->registers[access->index];
+        Datatype* sig = access->option.definition_block->registers[access->index];
         string_append_formated(string, "Register #%d, type: ", access->index);
-        type_append_to_string(string, sig);
+        datatype_append_to_string(string, sig);
         if (access->option.definition_block != current_block) {
             string_append_formated(string, " (Not local)", access->index);
         }
@@ -200,7 +200,7 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
             break;
         case IR_Instruction_Address_Of_Type::STRUCT_MEMBER:
             string_append_formated(string, "STRUCT_MEMBER, offset: %d, type: ", address_of->options.member.offset);
-            type_append_to_string(string, address_of->options.member.type);
+            datatype_append_to_string(string, address_of->options.member.type);
             break;
         }
         break;
@@ -337,7 +337,7 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
         string_append_formated(string, "FUNCTION_CALL\n");
         indent_string(string, indentation + 1);
 
-        Type_Function* function_sig;
+        Datatype_Function* function_sig;
         switch (call->call_type)
         {
         case IR_Instruction_Call_Type::FUNCTION_CALL:
@@ -345,8 +345,8 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
             break;
         case IR_Instruction_Call_Type::FUNCTION_POINTER_CALL: {
             auto type = ir_data_access_get_type(&call->options.pointer_access);
-            assert(type->type == Type_Type::FUNCTION, "Function pointer call must be of function type!");
-            function_sig = downcast<Type_Function>(type);
+            assert(type->type == Datatype_Type::FUNCTION, "Function pointer call must be of function type!");
+            function_sig = downcast<Datatype_Function>(type);
             break;
         }
         case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
@@ -354,8 +354,8 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
             break;
         case IR_Instruction_Call_Type::EXTERN_FUNCTION_CALL: {
             auto type = call->options.extern_function.function_signature;
-            assert(type->type == Type_Type::FUNCTION, "External function type must be of function type!");
-            function_sig = downcast<Type_Function>(type);
+            assert(type->type == Datatype_Type::FUNCTION, "External function type must be of function type!");
+            function_sig = downcast<Datatype_Function>(type);
             break;
         }
         default:
@@ -394,7 +394,7 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
             break;
         case IR_Instruction_Call_Type::EXTERN_FUNCTION_CALL:
             string_append_formated(string, "EXTERN_FUNCTION_CALL, type: ");
-            type_append_to_string(string, call->options.extern_function.function_signature);
+            datatype_append_to_string(string, call->options.extern_function.function_signature);
             break;
         }
         break;
@@ -422,16 +422,16 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
     }
     case IR_Instruction_Type::SWITCH: 
     {
-        Type_Base* value_type = ir_data_access_get_type(&instruction->options.switch_instr.condition_access);
-        Type_Enum* enum_type = 0;
-        if (value_type->type == Type_Type::STRUCT) {
-            auto structure = downcast<Type_Struct>(value_type);
+        Datatype* value_type = ir_data_access_get_type(&instruction->options.switch_instr.condition_access);
+        Datatype_Enum* enum_type = 0;
+        if (value_type->type == Datatype_Type::STRUCT) {
+            auto structure = downcast<Datatype_Struct>(value_type);
             assert(structure->struct_type == AST::Structure_Type::UNION, "");
-            enum_type = downcast<Type_Enum>(structure->tag_member.type);
+            enum_type = downcast<Datatype_Enum>(structure->tag_member.type);
         }
         else {
-            assert(value_type->type == Type_Type::ENUM, "If not union, this must be an enum");
-            enum_type = downcast<Type_Enum>(value_type);
+            assert(value_type->type == Datatype_Type::ENUM, "If not union, this must be an enum");
+            enum_type = downcast<Datatype_Enum>(value_type);
         }
         string_append_formated(string, "SWITCH\n");
         indent_string(string, indentation + 1);
@@ -517,7 +517,7 @@ void ir_code_block_append_to_string(IR_Code_Block* code_block, String* string, i
     for (int i = 0; i < code_block->registers.size; i++) {
         indent_string(string, indentation + 1);
         string_append_formated(string, "#%d: ", i);
-        type_append_to_string(string, code_block->registers[i]);
+        datatype_append_to_string(string, code_block->registers[i]);
         string_append_formated(string, "\n");
     }
     indent_string(string, indentation);
@@ -532,7 +532,7 @@ void ir_function_append_to_string(IR_Function* function, String* string, int ind
 {
     indent_string(string, indentation);
     string_append_formated(string, "Function-Type:");
-    type_append_to_string(string, upcast(function->function_type));
+    datatype_append_to_string(string, upcast(function->function_type));
     string_append_formated(string, "\n");
     ir_code_block_append_to_string(function->code, string, indentation);
 }
@@ -551,9 +551,9 @@ void ir_program_append_to_string(IR_Program* program, String* string)
 
 
 // Data Access
-Type_Base* ir_data_access_get_type(IR_Data_Access* access)
+Datatype* ir_data_access_get_type(IR_Data_Access* access)
 {
-    Type_Base* sig = 0;
+    Datatype* sig = 0;
     switch (access->type)
     {
     case IR_Data_Access_Type::GLOBAL_DATA:
@@ -571,8 +571,8 @@ Type_Base* ir_data_access_get_type(IR_Data_Access* access)
     default: panic("Hey!");
     }
     if (access->is_memory_access) {
-        assert(sig->type == Type_Type::POINTER, "");
-        return downcast<Type_Pointer>(sig)->points_to_type;
+        assert(sig->type == Datatype_Type::POINTER, "");
+        return downcast<Datatype_Pointer>(sig)->points_to_type;
     }
     return sig;
 }
@@ -586,15 +586,15 @@ IR_Data_Access ir_data_access_create_global(ModTree_Global* global)
     return access;
 }
 
-IR_Data_Access ir_data_access_create_intermediate(IR_Code_Block* block, Type_Base* signature)
+IR_Data_Access ir_data_access_create_intermediate(IR_Code_Block* block, Datatype* signature)
 {
     assert(block != 0, "");
     IR_Data_Access access;
     access.is_memory_access = false;
     access.type = IR_Data_Access_Type::REGISTER;
     access.option.definition_block = block;
-    assert(signature->type != Type_Type::ERROR_TYPE, "Cannot have register with unknown type");
-    assert(!(signature->size == 0), "Cannot have register with 0 size!");
+    assert(signature->type != Datatype_Type::ERROR_TYPE, "Cannot have register with unknown type");
+    assert(!type_size_is_unfinished(signature), "Cannot have register with 0 size!");
     dynamic_array_push_back(&block->registers, signature);
     access.index = block->registers.size - 1;
     return access;
@@ -609,8 +609,8 @@ IR_Data_Access ir_data_access_create_dereference(IR_Code_Block* block, IR_Data_A
         access.is_memory_access = true;
         return access;
     }
-    Type_Base* ptr_type = ir_data_access_get_type(&access);
-    assert(ptr_type->type == Type_Type::POINTER, "");
+    Datatype* ptr_type = ir_data_access_get_type(&access);
+    assert(ptr_type->type == Datatype_Type::POINTER, "");
     IR_Data_Access ptr_access = ir_data_access_create_intermediate(block, ptr_type);
     IR_Instruction instr;
     instr.type = IR_Instruction_Type::MOVE;
@@ -651,12 +651,12 @@ IR_Data_Access ir_data_access_create_member(IR_Code_Block* block, IR_Data_Access
     return member_instr.options.address_of.destination;
 }
 
-IR_Data_Access ir_data_access_create_constant(Type_Base* signature, Array<byte> bytes)
+IR_Data_Access ir_data_access_create_constant(Datatype* signature, Array<byte> bytes)
 {
     IR_Data_Access access;
     access.is_memory_access = false;
     access.type = IR_Data_Access_Type::CONSTANT;
-    auto result = constant_pool_add_constant(&compiler.constant_pool, signature, bytes);
+    auto result = constant_pool_add_constant(signature, bytes);
     assert(result.success, "Must always work");
     access.index = result.constant.constant_index;
     return access;
@@ -705,13 +705,13 @@ Symbol* get_info(AST::Definition_Symbol* node) {
     return pass_get_node_info(ir_generator.current_pass, node, Info_Query::READ_NOT_NULL)->symbol;
 }
 
-IR_Data_Access ir_generator_generate_cast(IR_Code_Block* ir_block, IR_Data_Access source, Type_Base* result_type, Info_Cast_Type cast_type)
+IR_Data_Access ir_generator_generate_cast(IR_Code_Block* ir_block, IR_Data_Access source, Datatype* result_type, Info_Cast_Type cast_type)
 {
     if (cast_type == Info_Cast_Type::NO_CAST) return source;
     auto type_system = &compiler.type_system;
     auto& types = type_system->predefined_types;
     auto source_type = ir_data_access_get_type(&source);
-    auto make_simple_cast = [](IR_Code_Block* ir_block, IR_Data_Access source, Type_Base* result_type, IR_Cast_Type cast_type) -> IR_Data_Access
+    auto make_simple_cast = [](IR_Code_Block* ir_block, IR_Data_Access source, Datatype* result_type, IR_Cast_Type cast_type) -> IR_Data_Access
     {
         IR_Instruction instr;
         instr.type = IR_Instruction_Type::CAST;
@@ -766,8 +766,8 @@ IR_Data_Access ir_generator_generate_cast(IR_Code_Block* ir_block, IR_Data_Acces
     }
     case Info_Cast_Type::ARRAY_TO_SLICE:
     {
-        Type_Slice* slice_type = downcast<Type_Slice>(result_type);
-        Type_Array* array_type = downcast<Type_Array>(source_type);
+        Datatype_Slice* slice_type = downcast<Datatype_Slice>(result_type);
+        Datatype_Array* array_type = downcast<Datatype_Array>(source_type);
         IR_Data_Access slice_access = ir_data_access_create_intermediate(ir_block, upcast(slice_type));
         // Set size
         {
@@ -983,7 +983,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
         panic("HEY");
         break;
     }
-    case AST::Expression_Type::POLYMORPHIC_SYMBOL: {
+    case AST::Expression_Type::TEMPLATE_PARAMETER: {
         panic("Shouldn't happen!");
     }
     case AST::Expression_Type::FUNCTION_CALL:
@@ -1114,7 +1114,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
     case AST::Expression_Type::STRUCT_INITIALIZER:
     {
         IR_Data_Access struct_access = ir_data_access_create_intermediate(ir_block, result_type);
-        auto struct_type = downcast<Type_Struct>(ir_data_access_get_type(&struct_access));
+        auto struct_type = downcast<Datatype_Struct>(ir_data_access_get_type(&struct_access));
         auto& members = struct_type->members;
 
         auto struct_init = expression->options.struct_initializer;
@@ -1123,7 +1123,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
             auto arg = struct_init.arguments[i];
             auto arg_info = get_info(arg);
             
-            assert(result_type->type == Type_Type::STRUCT, "");
+            assert(result_type->type == Datatype_Type::STRUCT, "");
 
             IR_Instruction move_instr;
             move_instr.type = IR_Instruction_Type::MOVE;
@@ -1150,13 +1150,13 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
     {
         auto& array_init = expression->options.array_initializer;
         IR_Data_Access array_access = ir_data_access_create_intermediate(ir_block, result_type);
-        if (result_type->type == Type_Type::SLICE)
+        if (result_type->type == Datatype_Type::SLICE)
         {
             assert(array_init.values.size == 0, "");
             Upp_Slice_Base slice_base;
             slice_base.data = 0;
             slice_base.size = 0;
-            auto slice_constant = constant_pool_add_constant(&compiler.constant_pool, result_type, array_create_static_as_bytes(&slice_base, 1));
+            auto slice_constant = constant_pool_add_constant(result_type, array_create_static_as_bytes(&slice_base, 1));
             assert(slice_constant.success, "Empty slice must succeed!");
 
             IR_Instruction move;
@@ -1167,8 +1167,8 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
         }
         else
         {
-            assert(result_type->type == Type_Type::ARRAY, "");
-            auto array = downcast<Type_Array>(result_type);
+            assert(result_type->type == Datatype_Type::ARRAY, "");
+            auto array = downcast<Datatype_Array>(result_type);
             assert(array->element_count == array_init.values.size, "");
             for (int i = 0; i < array_init.values.size; i++)
             {
@@ -1216,7 +1216,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
         auto src_type = get_info(mem_access.expr)->post_op.type_afterwards;
 
         // Handle special case of array.data, which basically becomes an address of
-        if (src_type->type == Type_Type::ARRAY)
+        if (src_type->type == Datatype_Type::ARRAY)
         {
             assert(mem_access.name == compiler.id_data, "Member access on array must be data or handled elsewhere!");
             if (source.is_memory_access) {
@@ -1245,11 +1245,12 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
         auto& new_expr = expression->options.new_expr;
         auto type_info = get_info(new_expr.type_expr);
         assert(type_info->result_type == Expression_Result_Type::TYPE, "Hey");
-        int element_size = type_info->options.type->size;
+        assert(type_info->options.type->memory_info.available, "");
+        int element_size = type_info->options.type->memory_info.value.size;
         if (new_expr.count_expr.available)
         {
-            assert(result_type->type == Type_Type::SLICE, "HEY");
-            auto slice_type = downcast<Type_Slice>(result_type);
+            assert(result_type->type == Datatype_Type::SLICE, "HEY");
+            auto slice_type = downcast<Datatype_Slice>(result_type);
             IR_Data_Access array_access = ir_data_access_create_intermediate(ir_block, result_type); // Array
             IR_Data_Access array_data_access = ir_data_access_create_member(ir_block, array_access, slice_type->data_member);
             IR_Data_Access array_size_access = ir_data_access_create_member(ir_block, array_access, slice_type->size_member);
@@ -1385,7 +1386,7 @@ void ir_generator_generate_block(IR_Code_Block* ir_block, AST::Code_Block* ast_b
             }
 
             IR_Data_Access broadcast_value;
-            Type_Base* broadcast_type;
+            Datatype* broadcast_type;
             if (definition->values.size == 1) {
                 broadcast_value = ir_generator_generate_expression(ir_block, definition->values[0]);
                 broadcast_type = ir_data_access_get_type(&broadcast_value);
@@ -1412,9 +1413,9 @@ void ir_generator_generate_block(IR_Code_Block* ir_block, AST::Code_Block* ast_b
                     move.options.move.destination = access;
                     move.options.move.source = broadcast_value;
                     if (is_split) {
-                        assert(broadcast_type->type == Type_Type::STRUCT, "");
+                        assert(broadcast_type->type == Datatype_Type::STRUCT, "");
                         move.options.move.source = ir_data_access_create_member(
-                            ir_block, broadcast_value, downcast<Type_Struct>(broadcast_type)->members[i]);
+                            ir_block, broadcast_value, downcast<Datatype_Struct>(broadcast_type)->members[i]);
                     }
                     dynamic_array_push_back(&ir_block->instructions, move);
                 }
@@ -1481,14 +1482,14 @@ void ir_generator_generate_block(IR_Code_Block* ir_block, AST::Code_Block* ast_b
 
             // Check for union access
             auto cond_type = ir_data_access_get_type(&instr.options.switch_instr.condition_access);
-            if (cond_type->type == Type_Type::STRUCT) {
-                auto structure = downcast<Type_Struct>(cond_type);
+            if (cond_type->type == Datatype_Type::STRUCT) {
+                auto structure = downcast<Datatype_Struct>(cond_type);
                 assert(structure->struct_type == AST::Structure_Type::UNION, "");
                 instr.options.switch_instr.condition_access =
                     ir_data_access_create_member(ir_block, instr.options.switch_instr.condition_access, structure->tag_member);
             }
             else {
-                assert(cond_type->type == Type_Type::ENUM, "");
+                assert(cond_type->type == Datatype_Type::ENUM, "");
             }
 
             AST::Switch_Case* default_case = 0;
@@ -1618,7 +1619,7 @@ void ir_generator_generate_block(IR_Code_Block* ir_block, AST::Code_Block* ast_b
             bool is_struct_split = get_info(statement)->specifics.is_struct_split;
 
             IR_Data_Access broadcast_value;
-            Type_Base* broadcast_type = 0;
+            Datatype* broadcast_type = 0;
             if (as.right_side.size == 1) {
                 broadcast_value = ir_generator_generate_expression(ir_block, as.right_side[0]);
                 broadcast_type = ir_data_access_get_type(&broadcast_value);
@@ -1631,9 +1632,9 @@ void ir_generator_generate_block(IR_Code_Block* ir_block, AST::Code_Block* ast_b
                 instr.options.move.destination = ir_generator_generate_expression(ir_block, as.left_side[i]);
                 if (as.right_side.size == 1) {
                     if (is_struct_split) {
-                        assert(broadcast_type->type == Type_Type::STRUCT, "");
+                        assert(broadcast_type->type == Datatype_Type::STRUCT, "");
                         instr.options.move.source = ir_data_access_create_member(
-                            ir_block, broadcast_value, downcast<Type_Struct>(broadcast_type)->members[i]);
+                            ir_block, broadcast_value, downcast<Datatype_Struct>(broadcast_type)->members[i]);
                     }
                     else {
                         instr.options.move.source = broadcast_value;
@@ -1662,9 +1663,9 @@ void ir_generator_generate_block(IR_Code_Block* ir_block, AST::Code_Block* ast_b
 
             IR_Data_Access delete_access = ir_generator_generate_expression(ir_block, statement->options.delete_expr);
             auto delete_type = ir_data_access_get_type(&delete_access);
-            if (delete_type->type == Type_Type::SLICE) {
+            if (delete_type->type == Datatype_Type::SLICE) {
                 delete_access = ir_data_access_create_member(
-                    ir_block, delete_access, downcast<Type_Slice>(delete_type)->data_member);
+                    ir_block, delete_access, downcast<Datatype_Slice>(delete_type)->data_member);
             }
 
             dynamic_array_push_back(&instr.options.call.arguments, delete_access);

@@ -22,7 +22,7 @@ struct Bytecode_Thread
 
     // Result infos
     Exit_Code exit_code;
-    Type_Base* waiting_for_type_finish_type;
+    Datatype* waiting_for_type_finish_type;
     bool error_occured;
 
     // General settings

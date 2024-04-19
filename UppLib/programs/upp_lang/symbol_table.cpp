@@ -206,7 +206,7 @@ void symbol_append_to_string(Symbol* symbol, String* string)
     case Symbol_Type::GLOBAL:
         string_append_formated(string, "Global");
         break;
-    case Symbol_Type::IMPLICIT_PARAMETER:
+    case Symbol_Type::TEMPLATE_PARAMETER:
         string_append_formated(string, "Implicit Parameter");
         break;
     case Symbol_Type::TYPE:

@@ -977,7 +977,7 @@ void bytecode_thread_print_state(Bytecode_Thread* interpreter)
         Intermediate_Register* reg = &func->registers[i];
         int stack_offset = thread->generator->variable_stack_offsets[i];
         byte* reg_data_ptr = thread->stack_pointer + stack_offset;
-        Type_Base* reg_type = reg->type_signature;
+        Datatype* reg_type = reg->type_signature;
         if (reg->type == Intermediate_Register_Type::PARAMETER) {
             logg("Parameter %d (Offset %d): ", reg->parameter_index, stack_offset);
         }

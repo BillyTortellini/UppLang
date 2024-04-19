@@ -7,6 +7,7 @@
 #include "../../utility/random.hpp"
 #include "type_system.hpp"
 #include "compiler_misc.hpp"
+#include "constant_pool.hpp"
 
 struct Compiler;
 struct AST_Parser;

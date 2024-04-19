@@ -1442,7 +1442,7 @@ namespace Parser
         }
 
         if (test_operator(Operator::DOLLAR) && test_token_offset(Token_Type::IDENTIFIER, 1)) {
-            result->type = Expression_Type::POLYMORPHIC_SYMBOL;
+            result->type = Expression_Type::TEMPLATE_PARAMETER;
             advance_token();
             result->options.polymorphic_symbol_id = get_token()->options.identifier;
             advance_token();

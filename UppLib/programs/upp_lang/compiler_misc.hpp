@@ -8,7 +8,7 @@
 
 #include "lexer.hpp"
 
-struct Type_Base;
+struct Datatype;
 struct String;
 struct Type_System;
 struct Module_Progress;
@@ -96,70 +96,10 @@ struct Code_Source
 
 
 
-// Constant Pool
-struct Upp_Constant
-{
-    Type_Base* type;
-    byte* memory;
-    int constant_index;
-};
-
-struct Upp_Constant_Reference
-{
-    Upp_Constant constant;
-    int pointer_member_byte_offset;
-    Upp_Constant points_to; 
-};
-
-struct Constant_Pool_Result
-{
-    bool success;
-    const char* error_message;
-    Upp_Constant constant;
-};
-
-struct Constant_Pool;
-struct Constant_Deduplication {
-    Constant_Pool* pool;
-    Type_Base* type;
-    int data_size_in_byte;
-    void* data;
-};
-
-struct Constant_Pool
-{
-    Type_System* type_system;
-    Dynamic_Array<Upp_Constant> constants;
-    Dynamic_Array<Upp_Constant_Reference> references; // Required for serialization
-    Stack_Allocator constant_memory;
-    Hashtable<void*, Upp_Constant> saved_pointers;
-    Hashtable<Constant_Deduplication, Upp_Constant> deduplication_table; 
-    
-    int deepcopy_counts;
-    int added_internal_constants;
-    int duplication_checks;
-    double time_contains_reference;
-    double time_in_comparison;
-    double time_in_hash;
-};
-
-Constant_Pool constant_pool_create(Type_System* type_system);
-void constant_pool_destroy(Constant_Pool* pool);
-Constant_Pool_Result constant_pool_add_constant(Constant_Pool* pool, Type_Base* signature, Array<byte> bytes);
-bool constant_pool_compare_constants(Constant_Pool* pool, Upp_Constant a, Upp_Constant b);
-template<typename T>
-T upp_constant_to_value(Constant_Pool* pool, Upp_Constant constant)
-{
-    assert(constant.type->size == sizeof(T), "");
-    return *(T*)constant.memory;
-}
-
-
-
 // Extern Sources
 struct Extern_Function_Identifier
 {
-    Type_Base* function_signature;
+    Datatype* function_signature;
     String* id;
 };
 
@@ -174,7 +114,7 @@ struct Extern_Sources
     Dynamic_Array<String*> source_files_to_compile;
     Dynamic_Array<String*> lib_files;
     Dynamic_Array<Extern_Function_Identifier> extern_functions;
-    Hashtable<Type_Base*, String*> extern_type_signatures; // Extern types to name id, e.g. HWND should not create its own structure, but use name HWND as type
+    Hashtable<Datatype*, String*> extern_type_signatures; // Extern types to name id, e.g. HWND should not create its own structure, but use name HWND as type
 };
 
 Extern_Sources extern_sources_create();

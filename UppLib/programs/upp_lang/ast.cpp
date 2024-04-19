@@ -199,7 +199,7 @@ namespace AST
                 FILL(unop.expr);
                 break;
             }
-            case Expression_Type::POLYMORPHIC_SYMBOL: {
+            case Expression_Type::TEMPLATE_PARAMETER: {
                 break;
             }
             case Expression_Type::NEW_EXPR: {
@@ -469,7 +469,7 @@ namespace AST
                 FILL(unop.expr);
                 break;
             }
-            case Expression_Type::POLYMORPHIC_SYMBOL: {
+            case Expression_Type::TEMPLATE_PARAMETER: {
                 break;
             }
             case Expression_Type::NEW_EXPR: {
@@ -724,7 +724,7 @@ namespace AST
             {
             case Expression_Type::BINARY_OPERATION: string_append_formated(str, "BINARY_OPERATION"); break;
             case Expression_Type::UNARY_OPERATION: string_append_formated(str, "UNARY_OPERATION"); break;
-            case Expression_Type::POLYMORPHIC_SYMBOL: string_append_formated(str, "POLYMORPHIC_SYMBOL %s", expr->options.polymorphic_symbol_id->characters); break;
+            case Expression_Type::TEMPLATE_PARAMETER: string_append_formated(str, "TEMPLATE_PARAMETER %s", expr->options.polymorphic_symbol_id->characters); break;
             case Expression_Type::FUNCTION_CALL: string_append_formated(str, "FUNCTION_CALL"); break;
             case Expression_Type::NEW_EXPR: string_append_formated(str, "NEW_EXPR"); break;
             case Expression_Type::CAST: string_append_formated(str, "CAST"); break;

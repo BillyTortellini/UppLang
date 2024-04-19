@@ -315,6 +315,9 @@
     <ClInclude Include="rendering\basic2D.hpp">
       <Filter>Header Files\Rendering\2D</Filter>
     </ClInclude>
+    <ClInclude Include="programs\upp_lang\constant_pool.hpp">
+      <Filter>Header Files\Programs\Upp_Lang</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="datastructures\array.cpp">
@@ -505,6 +508,9 @@
     </ClCompile>
     <ClCompile Include="rendering\basic2D.cpp">
       <Filter>Source Files\Rendering\2D</Filter>
+    </ClCompile>
+    <ClCompile Include="programs\upp_lang\constant_pool.cpp">
+      <Filter>Source Files\Programs\Upp_Lang</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

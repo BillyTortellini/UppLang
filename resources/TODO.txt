@@ -1,48 +1,33 @@
 
+Can structs contain template types?
+ No? I guess not, as all structs are unique this isn't an issue
+So we can then answer the questions about the deduplication with a no.
 
-
+When do I need constant values that are frigging graphs or some shit like that?
+ - Probably never I guess
+ - Strings? I guess this is kinda necessary if I want to do file loading or something like that
+ - How hard is the de-duplication for graph-like structures? Not that hard... 
+    1. Remove pointers from hashing
+    2. Check if normal structure equals that of any existing value, if yes, recurse to check if the pointers are the same
+    3. If everything is the same don't add shit, otherwise add shit...
+ Btw. Not deduplicating upp_constants may also be a reasonable solution for now...
 
 TODO:
- * Store how many implicit parameters are per 'normal' parameter, and check if all match or if some are "lost"
- * Disable default parameters values for polymorphic parameters or params with implicit polymorphism
- * x:bool = 12 --> 2 error messages
- * Return type + default values may cause some problems with dependencies
- * Rename polymorphic type to something more correct
- * Comptime constant function pointerz should transform to correct function
- * Anonymous structs inside polymorphic structs
-  
+----------------------------
+Polymorphism related things:
+ * Handle default values for polymorphic arguments in some way (Probably just prohibit), what if default values depend on comptime values
+ * Comptime function pointers should work
+ * Better implicit matching -> E.g. error messages + better checks
+    Store how many implicit parameters are per 'normal' parameter, and check if all match or if some are "lost"
+ * Allow polymorphic return type (E.g. match with expected type in context, also needs dependencies)
+ * Check how we should handle anonymous structs inside polymorphic structs/functions
+Others
+ * BUG-FIX: x:bool = 12 --> 2 error messages
+ * Upp_Constants should be deduplicated by default, I feel like this is an easy problem...
+ * Code improvements: 
+    - Rename polymorphic type to something more correct
+    - Maybe seperate a Overload_Candidate and Callable, and remove polymorphic parameters from Type_Function
 
-DONE:
- * Array and Polymorphic struct implicit parameters
- * Improve function polymorphisms 
-
-
- * Make implicit polymorphism work with structs, 
-    e.g. 
-        a :: (table: Hashtable($T), element: $T)
-        a :: ($T: Type, $C: Type, table: Hashtable($T, $C))
-    --> Maybe implicit polymorphism can also be values, not just types...
- * Polymorphic return type on functions
-    x: Vector(int, 4) = vector_init_zero()
-
-    vector_init_zero :: () -> $V
-        result: V
-        for i: int; i < V.T; i += 1
-            result.data[i] = 0
-        return result
-            
-    vector_init_value :: (value: T) -> Vector($T, $C)
-
-Ideas:
- * Maybe seperate a Overload_Candidate and Callable, and remove polymorphic parameters from Type_Function
- * Upp_Constants should be deduplicated by default, it feels like this is an easy problem...
- * AST Expressions should be subtyped...
- * Make different symbol types + Add symbol type for structure (User defined, as this requires more carefull handling?)
- * Rename Type_Base to Datatype?
-
-DONE:
- * Add header workload for structs --> So that Recursive data-structures are working
- * Accessing members of both the type and values of the type
 
 
 Allocator :: struct
@@ -488,11 +473,6 @@ All things that are functions:
 --------------------
 Core: (Required for programming)
     * Update function + struct polymorphism 
-        Missing: 
-            * Polymorphic return type
-            * Overloading/Template specification --> Basically try to pick least templated version that still matches types when overloading
-                --> Probably not something that I want in a long time...
-            * Default values for polymorphic values?
 
     * Local-Context for casting, operator overloading, dot-calls, iterators, auto-pointer dereferencing, loops
     * Union rework, e.g. Addressable sub-types + better switch

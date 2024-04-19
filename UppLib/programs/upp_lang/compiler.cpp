@@ -84,7 +84,7 @@ Compiler* compiler_initialize(Timer* timer)
 {
     compiler.timer = timer;
     compiler.identifier_pool = identifier_pool_create();
-    compiler.constant_pool = constant_pool_create(&compiler.type_system);
+    compiler.constant_pool = constant_pool_create();
     compiler.extern_sources = extern_sources_create();
     compiler.cached_imports = hashtable_create_empty<String, Code_Source*>(1, hash_string, string_equals);
     compiler.fiber_pool = fiber_pool_create();
@@ -215,7 +215,7 @@ void compiler_reset_data(bool keep_data_for_incremental_compile, Compile_Type co
         // Reset Data
         fiber_pool_check_all_handles_completed(compiler.fiber_pool);
         constant_pool_destroy(&compiler.constant_pool);
-        compiler.constant_pool = constant_pool_create(&compiler.type_system);
+        compiler.constant_pool = constant_pool_create();
         extern_sources_destroy(&compiler.extern_sources);
         compiler.extern_sources = extern_sources_create();
 

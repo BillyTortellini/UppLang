@@ -225,7 +225,7 @@ namespace AST
         MODULE,
         FUNCTION,
         FUNCTION_SIGNATURE,
-        POLYMORPHIC_SYMBOL, // $T
+        TEMPLATE_PARAMETER, // $T
 
         STRUCTURE_TYPE, // Struct, union, c_union
         ENUM_TYPE,

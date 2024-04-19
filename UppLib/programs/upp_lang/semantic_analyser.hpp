@@ -9,12 +9,12 @@
 #include "type_system.hpp"
 #include "compiler_misc.hpp"
 #include "parser.hpp"
+#include "constant_pool.hpp"
 
 struct Symbol;
 struct Symbol_Table;
 struct Compiler;
 struct ModTree_Function;
-struct Upp_Constant;
 struct Semantic_Error;
 struct Error_Information;
 struct Expression_Info;
@@ -29,7 +29,7 @@ struct Workload_Structure_Body;
 struct Function_Progress;
 struct Bake_Progress;
 struct Module_Progress;
-struct Type_Polymorphic;
+struct Datatype_Template_Parameter;
 
 namespace Parser
 {
@@ -49,7 +49,7 @@ namespace AST
 // Modtree TODO: Rename this into something more sensible, like Upp-Function
 struct ModTree_Function
 {
-    Type_Function* signature;
+    Datatype_Function* signature;
     Symbol* symbol; // May be 0 (e.g. anonymous functions, bake)
     Symbol_Table* parameter_table; 
     Workload_Base* code_workload; // Workload that generated the semantic info required for code-gen (Either Function-body or Bake-Analysis)
@@ -64,7 +64,7 @@ struct ModTree_Function
 
 struct ModTree_Global
 {
-    Type_Base* type;
+    Datatype* type;
     int index;
 
     bool has_initial_value;
@@ -200,7 +200,7 @@ struct Workload_Function_Cluster_Compile
 
 struct Struct_Parameter
 {
-    Type_Base* parameter_type;
+    Datatype* parameter_type;
     Symbol* symbol;
 
     // Note: Same as function parameter, e.g. either a default value is not available or it doesn't exist
@@ -251,8 +251,8 @@ struct Workload_Structure_Body
 {
     Workload_Base base;
 
-    Type_Struct* struct_type;
-    Dynamic_Array<Type_Array*> arrays_depending_on_struct_size;
+    Datatype_Struct* struct_type;
+    Dynamic_Array<Datatype_Array*> arrays_depending_on_struct_size;
     AST::Expression* struct_node;
 
     Polymorphic_Analysis_Type polymorphic_type;
@@ -288,7 +288,7 @@ struct Function_Progress
     union {
         struct {
             int comptime_parameter_count;
-            Dynamic_Array<Type_Polymorphic*> implicit_parameters;
+            Dynamic_Array<Datatype_Template_Parameter*> implicit_parameters;
             Dynamic_Array<int> parameter_analysis_order;  // Order in which arguments need to be evaluated in for instanciation
             Dynamic_Array<Function_Progress*> instances;  // Required for de-duplication
         } polymorphic_base;
@@ -305,7 +305,7 @@ struct Function_Progress
 struct Bake_Progress
 {
     ModTree_Function* bake_function;
-    Type_Base* result_type;
+    Datatype* result_type;
     Optional<Upp_Constant> result;
 
     Workload_Bake_Analysis* analysis_workload;
@@ -391,7 +391,7 @@ struct Expression_Context
 {
     Expression_Context_Type type;
     bool unknown_due_to_error; // If true the context is unknown because an error occured, otherwise there is no info
-    Type_Base* signature;
+    Datatype* signature;
 };
 
 enum class Expression_Result_Type
@@ -419,7 +419,7 @@ struct Expression_Post_Op
     int deref_count;
     bool take_address_of;
     Info_Cast_Type implicit_cast;
-    Type_Base* type_afterwards;
+    Datatype* type_afterwards;
 };
 
 enum class Member_Access_Type
@@ -435,8 +435,8 @@ struct Expression_Info
     Expression_Result_Type result_type;
     union
     {
-        Type_Base* value_type;
-        Type_Base* type;
+        Datatype* value_type;
+        Datatype* type;
         Workload_Structure_Polymorphic* polymorphic_struct;
         ModTree_Function* function;
         Function_Progress* polymorphic_function; // Either base or if the function was instanciated an instance progress
@@ -448,7 +448,7 @@ struct Expression_Info
     bool contains_errors; // If this expression contains any errors (Not recursive), currently only used for comptime-calculation (And code editor I guess?)
     union {
         Info_Cast_Type explicit_cast; // Note: Cast-Expression results may be further implicitly casted and because of this expression_info can hold 2 cast types
-        Type_Function* function_call_signature; // Used by code-generation for accessing default values
+        Datatype_Function* function_call_signature; // Used by code-generation for accessing default values
         Function_Parameter* implicit_parameter;
         struct {
             Member_Access_Type type;
@@ -543,7 +543,7 @@ Parameter_Info* pass_get_node_info(Analysis_Pass* pass, AST::Parameter* node, In
 Path_Lookup_Info* pass_get_node_info(Analysis_Pass* pass, AST::Path_Lookup* node, Info_Query query);
 Module_Info* pass_get_node_info(Analysis_Pass* pass, AST::Module* node, Info_Query query);
 
-Type_Base* expression_info_get_type(Expression_Info* info, bool before_context_is_applied);
+Datatype* expression_info_get_type(Expression_Info* info, bool before_context_is_applied);
 
 
 
@@ -645,16 +645,16 @@ struct Error_Information
         String* id;
         Symbol* symbol;
         Exit_Code exit_code;
-        Type_Base* type;
-        Type_Function* function;
+        Datatype* type;
+        Datatype_Function* function;
         struct {
-            Type_Struct* struct_signature;
+            Datatype_Struct* struct_signature;
             String* member_id;
         } invalid_member;
         Workload_Base* cycle_workload;
         struct {
-            Type_Base* left_type;
-            Type_Base* right_type;
+            Datatype* left_type;
+            Datatype* right_type;
         } binary_op_types;
         Expression_Result_Type expression_type;
         const char* constant_message;
@@ -692,7 +692,7 @@ struct Semantic_Analyser
     Module_Progress* root_module;
     Predefined_Symbols predefined_symbols;
     Workload_Executer* workload_executer;
-    Hashtable<AST::Expression*, Type_Polymorphic*> implicit_parameter_node_mapping;
+    Hashtable<AST::Expression*, Datatype_Template_Parameter*> implicit_parameter_node_mapping;
 
     // Symbol tables
     Symbol_Table* root_symbol_table;
@@ -713,7 +713,7 @@ void semantic_analyser_destroy();
 void semantic_analyser_reset();
 void semantic_analyser_finish();
 
-Type_Function* hardcoded_type_to_signature(Hardcoded_Type type);
+Datatype_Function* hardcoded_type_to_signature(Hardcoded_Type type);
 
 
 
