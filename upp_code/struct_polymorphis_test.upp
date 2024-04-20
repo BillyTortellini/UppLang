@@ -1,0 +1,12 @@
+
+Bar::struct(T:Type_Handle)
+	value:T
+
+foo::(b:Bar($T),c:T)
+	x:=b.value+c
+	print_i32(x)
+
+main::()
+	b:Bar(int)
+	b.value=15
+	foo(b,5)

@@ -1107,8 +1107,23 @@ void type_system_finish_struct(Datatype_Struct* structure)
     // Add tag if Union
     if (structure->struct_type == Structure_Type::UNION)
     {
+        // Create tag enum name
+        String* tag_enum_name = 0;
+        {
+            String name;
+            if (structure->name.available) {
+                name = string_copy(*structure->name.value);
+            }
+            else {
+                name = string_create("anon_struct");
+            }
+            string_append_formated(&name, "~tag");
+            tag_enum_name = identifier_pool_add(&compiler.identifier_pool, name);
+            string_destroy(&name);
+        }
+
         // Create tag enum type
-        Datatype_Enum* tag_type = type_system_make_enum_empty(nullptr);
+        Datatype_Enum* tag_type = type_system_make_enum_empty(tag_enum_name);
         for (int i = 0; i < members.size; i++) {
             Struct_Member* struct_member = &members[i];
             Enum_Item tag_member;
@@ -1138,6 +1153,7 @@ void type_system_finish_struct(Datatype_Struct* structure)
     }
 
     // Finalize alignment
+    memory.size = math_maximum(1, memory.size);
     memory.size = math_round_next_multiple(memory.size, memory.alignment);
 
 
@@ -1155,22 +1171,28 @@ void type_system_finish_struct(Datatype_Struct* structure)
         internal_info->options.structure.name.size = 0;
     }
     else {
-        internal_info->options.structure.name.character_buffer.size = structure->name.value->capacity;
+        internal_info->options.structure.name.character_buffer.size = structure->name.value->size;
         internal_info->options.structure.name.character_buffer.data = structure->name.value->characters;
         internal_info->options.structure.name.size = structure->name.value->size;
     }
     int member_count = members.size;
     internal_info->options.structure.members.size = member_count;
-    internal_info->options.structure.members.data_ptr = new Internal_Type_Struct_Member[member_count];
-    for (int i = 0; i < member_count; i++)
+    if (member_count != 0)
     {
-        Internal_Type_Struct_Member* internal_member = &internal_info->options.structure.members.data_ptr[i];
-        Struct_Member* member = &members[i];
-        internal_member->name.size = member->id->size;
-        internal_member->name.character_buffer.size = member->id->capacity;
-        internal_member->name.character_buffer.data = member->id->characters;
-        internal_member->offset = member->offset;
-        internal_member->type = member->type->type_handle;
+        internal_info->options.structure.members.data_ptr = new Internal_Type_Struct_Member[member_count];
+        for (int i = 0; i < member_count; i++)
+        {
+            Internal_Type_Struct_Member* internal_member = &internal_info->options.structure.members.data_ptr[i];
+            Struct_Member* member = &members[i];
+            internal_member->name.size = member->id->size;
+            internal_member->name.character_buffer.size = member->id->size;
+            internal_member->name.character_buffer.data = member->id->characters;
+            internal_member->offset = member->offset;
+            internal_member->type = member->type->type_handle;
+        }
+    }
+    else {
+        internal_info->options.structure.members.data_ptr = 0;
     }
     internal_info->options.structure.type.tag = structure->struct_type;
     if ((int)internal_info->options.structure.type.tag == 0) {
@@ -1296,17 +1318,17 @@ void type_system_add_predefined_types(Type_System* system)
     }
 
     using AST::Structure_Type;
-    // Empty structure
     auto make_id = [&](const char* name) -> String* { return identifier_pool_add(&compiler.identifier_pool, string_create_static(name)); };
-    {
-        types->empty_struct_type = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Empty_Struct"), 0);
-        type_system_finish_struct(types->empty_struct_type);
-    }
-
     auto add_member_cstr = [&](Datatype_Struct* struct_type, const char* member_name, Datatype* member_type) {
         String* id = identifier_pool_add(&compiler.identifier_pool, string_create_static(member_name));
         struct_add_member(struct_type, id, member_type);
     };
+
+    // Empty structure
+    {
+        types->empty_struct_type = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Empty_Struct"), 0);
+        type_system_finish_struct(types->empty_struct_type);
+    }
 
     // String
     {

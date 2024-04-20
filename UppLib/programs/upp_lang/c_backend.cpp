@@ -890,19 +890,21 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
         generator->name_counter = 0;
     }
 
+    // Note: All _new_ types should be generated before adding the type_info global
+    auto& types = generator->compiler->type_system.predefined_types;
+    auto type_info_slice_type = type_system_make_slice(upcast(type_system_make_pointer(upcast(types.type_information_type))));
+    auto type_u8_array = type_system_make_slice(upcast(types.u8_type));
+
     // Create type_info global
     {
         auto& type_system = compiler->type_system;
-        auto type_info_type = type_system.predefined_types.type_information_type;
 
         Upp_Slice<Internal_Type_Information*> type_info_slice;
         type_info_slice.data_ptr = type_system.internal_type_infos.data;
         type_info_slice.size = type_system.internal_type_infos.size;
         Array<byte> bytes = array_create_static_as_bytes(&type_info_slice, 1);
 
-        auto result = constant_pool_add_constant(
-            upcast(type_system_make_slice(upcast(type_system_make_pointer(upcast(type_info_type))))), bytes
-        );
+        auto result = constant_pool_add_constant(upcast(type_info_slice_type), bytes);
 
         assert(result.success, "Type information must be valid/serializable");
         assert(type_system.types.size == type_system.internal_type_infos.size, "");
@@ -910,13 +912,11 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
     }
 
     // Create known type_signatures
-    auto& types = generator->compiler->type_system.predefined_types;
     {
         String type_str = string_create("Datatype_Type");
         hashtable_insert_element(&generator->translation_type_to_name, types.type_handle, type_str);
         String str = string_create("Unsized_Array_U8");
-        Datatype* sig = upcast(type_system_make_slice(upcast(types.u8_type)));
-        hashtable_insert_element(&generator->translation_type_to_name, sig, str);
+        hashtable_insert_element(&generator->translation_type_to_name, upcast(type_u8_array), str);
         String str_str = string_create("Upp_String");
         hashtable_insert_element(&generator->translation_type_to_name, upcast(types.string_type), str_str);
     }

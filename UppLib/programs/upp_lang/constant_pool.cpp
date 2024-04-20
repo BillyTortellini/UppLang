@@ -81,7 +81,7 @@ Pointer_Info pointer_info_make(void** pointer_address, Datatype* points_to_type,
 }
 
 // Doesn't record null-pointers, as those aren't necessary, returns false if a void-pointer isn't set null
-// Doesn't check slice sizes, but checks any type
+// Checks slice size and checks any type
 bool record_pointers_and_set_padding_bytes_zero_recursive(
     Datatype* signature, int array_size, Array<byte> bytes, int start_offset, int offset_per_element, Dynamic_Array<Pointer_Info>& pointer_infos)
 {
@@ -125,9 +125,15 @@ bool record_pointers_and_set_padding_bytes_zero_recursive(
 
             // Fill padding
             assert(sizeof(Upp_Slice_Base) == 16 && sizeof(slice->size) == 4, "Setting the padding to zero is only required when slices have i32 as size");
-            memory_set_bytes(((byte*)slice) + 20, 4, 0);
+            memory_set_bytes(((byte*)slice) + 12, 4, 0);
 
             // Record pointer
+            if (slice->size == 0) { // Sanitize slice
+                slice->data = 0;
+            }
+            else if (slice->size < 0) { 
+                return false;
+            }
             if (slice->data == 0) {
                 continue;
             }
@@ -150,13 +156,13 @@ bool record_pointers_and_set_padding_bytes_zero_recursive(
         if (!array->count_known) {
             return true;
         }
-        // Handle arrays of arrays
+        // Handle arrays of arrays efficiently
         if (array_size == 1 || offset_per_element == memory_info.size) {
             return record_pointers_and_set_padding_bytes_zero_recursive(
                 array->element_type, array->element_count * array_size, bytes, start_offset, array->element_type->memory_info.value.size, pointer_infos);
         }
 
-        // In this case elements don't have a uniform stride, so we have to call all arrays seperately if we are inside an array
+        // Search all arrays seperately
         for (int i = 0; i < array_size; i++) {
             int element_offset = start_offset + offset_per_element * i;
             bool success = record_pointers_and_set_padding_bytes_zero_recursive(
@@ -183,7 +189,7 @@ bool record_pointers_and_set_padding_bytes_zero_recursive(
 
                 // Fill padding to 0
                 assert(sizeof(Upp_Any) == 16 && sizeof(any->type) == 4, "Setting the padding to zero is only required when slices have i32 as size");
-                memory_set_bytes(((byte*)any) + 20, 4, 0);
+                memory_set_bytes(((byte*)any) + 12, 4, 0);
 
                 if (any->data == 0) {
                     continue;
@@ -204,29 +210,26 @@ bool record_pointers_and_set_padding_bytes_zero_recursive(
             for (int member_index = 0; member_index < members.size; member_index++) {
                 Struct_Member* member = &members[member_index];
 
-                // Check if padding exists
+                // Set padding to zero
                 int padding_after_member = 0;
-                if (member_index == members.size) {
+                if (member_index == members.size - 1) {
                     padding_after_member = memory_info.size - (member->offset + member->type->memory_info.value.size);
                 }
                 else {
                     padding_after_member = members[member_index + 1].offset - (member->offset + member->type->memory_info.value.size);
                 }
-
-                for (int i = 0; i < array_size; i++) {
-                    int member_offset = start_offset + offset_per_element * i + member->offset;
-
-                    // Set padding to 0
-                    if (padding_after_member != 0) {
-                        memory_set_bytes(bytes.data + member_offset, padding_after_member, 0);
+                if (padding_after_member != 0) {
+                    for (int i = 0; i < array_size; i++) {
+                        int member_offset = start_offset + offset_per_element * i + member->offset;
+                        memory_set_bytes(bytes.data + member_offset + member->type->memory_info.value.size, padding_after_member, 0);
                     }
+                }
 
-                    // Search members for references
-                    bool success = record_pointers_and_set_padding_bytes_zero_recursive(
-                        member->type, array_size, bytes, start_offset + member->offset, offset_per_element, pointer_infos);
-                    if (!success) {
-                        return false;
-                    }
+                // Search members for references 
+                bool success = record_pointers_and_set_padding_bytes_zero_recursive(
+                    member->type, array_size, bytes, start_offset + member->offset, offset_per_element, pointer_infos);
+                if (!success) {
+                    return false;
                 }
             }
 
@@ -259,7 +262,7 @@ bool record_pointers_and_set_padding_bytes_zero_recursive(
 
                 // Search member for references
                 bool success = record_pointers_and_set_padding_bytes_zero_recursive(
-                    active_member.type, 1, bytes, start_offset, active_member.type->memory_info.value.size, pointer_infos);
+                    active_member.type, 1, bytes, union_offset, active_member.type->memory_info.value.size, pointer_infos);
                 if (!success) {
                     return false;
                 }
@@ -354,6 +357,12 @@ Constant_Pool_Result constant_pool_add_constant_internal(Datatype* signature, in
         // Update pointer
         *pointer_info.pointer_address = referenced_constant.constant.memory;
     }
+    SCOPE_EXIT( // Restore original pointer values
+        for (int i = 0; i < pointer_infos.size; i++) {
+            auto& pointer_info = pointer_infos[i];
+            *pointer_info.pointer_address = pointer_info.pointer_value;
+        }
+    );
 
     // Check if deduplication possible (Memory hash + memory equals of shallow copy with updated pointers)
     {
@@ -375,7 +384,7 @@ Constant_Pool_Result constant_pool_add_constant_internal(Datatype* signature, in
     hashtable_insert_element(&pool->saved_pointers, (void*)bytes.data, constant);
     hashtable_insert_element(&pool->deduplication_table, bytes, constant);
 
-    // Store references and restore original pointer values (of original memory)
+    // Store references
     for (int i = 0; i < pointer_infos.size; i++)
     {
         auto& pointer_info = pointer_infos[i];
@@ -386,9 +395,6 @@ Constant_Pool_Result constant_pool_add_constant_internal(Datatype* signature, in
         assert(reference.pointer_member_byte_offset >= 0 && reference.pointer_member_byte_offset <= bytes.size, "");
         reference.points_to = pointer_info.added_internal_constant;
         dynamic_array_push_back(&pool->references, reference);
-
-        // Restore original pointer
-        *pointer_info.pointer_address = pointer_info.pointer_value;
     }
 
     // Return success
