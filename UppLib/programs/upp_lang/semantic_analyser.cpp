@@ -3026,6 +3026,13 @@ void analysis_workload_entry(void* userdata)
                 // TODO: Maybe also disallow this if this is an alias, as above
                 symbol->type = Symbol_Type::TYPE;
                 symbol->options.type = result->options.type;
+
+                if (result->options.type->type == Datatype_Type::ENUM) {
+                    auto enum_type = downcast<Datatype_Enum>(result->options.type);
+                    if (enum_type->name == 0) {
+                        enum_type->name = symbol->id;
+                    }
+                }
                 break;
             }
             case Expression_Result_Type::POLYMORPHIC_STRUCT: {

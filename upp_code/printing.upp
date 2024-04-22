@@ -35,9 +35,12 @@ print_any::(any:Any)
 			else
 				print_string("UNNAMED_STRUCT")
 			i:=0
+			print_string("{")
 			while i<structure.members.size
 				member:=structure.members[i]
+				print_string(member.name)
 				i=i+1
+			print_string("}")
 		default
 			print_string("NOT_IMPLEMENTED")
 

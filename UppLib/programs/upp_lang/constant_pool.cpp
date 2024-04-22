@@ -364,25 +364,37 @@ Constant_Pool_Result constant_pool_add_constant_internal(Datatype* signature, in
         }
     );
 
+    // Start creating constant
+    Upp_Constant constant;
+    constant.constant_index = pool->constants.size;
+    constant.array_size = array_size;
+    constant.type = signature;
+    constant.memory = 0;
+
     // Check if deduplication possible (Memory hash + memory equals of shallow copy with updated pointers)
     {
         pool->duplication_checks += 1;
         Upp_Constant* deduplicated = hashtable_find_element(&pool->deduplication_table, bytes);
         if (deduplicated != 0) {
-            return constant_pool_result_make_success(*deduplicated);
+            // Handle the case where different types have the same layout in memory
+            if (types_are_equal(deduplicated->type, signature)) {
+                return constant_pool_result_make_success(*deduplicated);
+            }
+            else {
+                // In this case we want to reuse the memory currently
+                constant.memory = deduplicated->memory;
+            }
+        }
+        else {
+            constant.memory = (byte*)stack_allocator_allocate_size(&pool->constant_memory, bytes.size, memory_info.alignment);
+            memory_copy(constant.memory, bytes.data, bytes.size);
+            hashtable_insert_element(&pool->deduplication_table, array_create_static(constant.memory, bytes.size), constant);
         }
     }
 
-    // Create new constant
-    Upp_Constant constant;
-    constant.constant_index = pool->constants.size;
-    constant.array_size = array_size;
-    constant.type = signature;
-    constant.memory = (byte*)stack_allocator_allocate_size(&pool->constant_memory, bytes.size, memory_info.alignment);
+    // Add constant to table
     dynamic_array_push_back(&pool->constants, constant);
-    memory_copy(constant.memory, bytes.data, bytes.size);
     hashtable_insert_element(&pool->saved_pointers, (void*)bytes.data, constant);
-    hashtable_insert_element(&pool->deduplication_table, bytes, constant);
 
     // Store references
     for (int i = 0; i < pointer_infos.size; i++)
