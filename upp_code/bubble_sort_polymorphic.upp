@@ -1,0 +1,45 @@
+
+test::()
+	print_string("Hello")
+
+other::()
+	print_string("Other")
+
+bubble_sort::(array:[]$T,less_fn:(a:T,b:T)->bool)
+	i:=0
+	while i<array.size
+		j:=i+1
+		while j<array.size
+			if!less_fn(array[i],array[j])
+				swap:=array[i]
+				array[i]=array[j]
+				array[j]=swap
+			j=j+1
+		i=i+1
+
+global::#bake
+	if random_i32()%2==0
+		return test
+	return other
+
+Player::struct
+	name:String
+	age:int
+
+main::()
+	players:[]Player=Player.[.{"Frank",15},.{"Pete",12},.{"Dude",10},.{"Some",-5}]
+	player_age_compare::(a:Player,b:Player)->bool
+		return a.age<b.age
+	
+	bubble_sort(players,player_age_compare)
+	
+		i:=0
+		while i<players.size
+			p:=players[i]
+			print_string(p.name)
+			print_string(", ")
+			print_i32(p.age)
+			print_line()
+			i=i+1
+	
+	global()

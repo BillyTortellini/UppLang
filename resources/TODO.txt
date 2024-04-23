@@ -1,4 +1,26 @@
 
+Finishing polymorphism:
+ * Comptime function pointers need to work
+ * Anonymous structs inside structs with templates --> kinda need to share the template
+ * Polymorphic return type
+ * Correct polymorphic matching
+
+
+TODO:
+ - Make function pointers work with bytecode again
+ - C-Compiler:
+    * Function pointers in constants need to work 
+        1. Loading function-pointer constants
+        2. Setting the references before the actual program starts
+
+Comptime function pointers:
+    --> Obviously the value needs to be 64bit pointer, store a function index per function...
+    What about different function types (e.g. default values and all that crap?)
+    I assume that we can still store those, but the type is just different
+    Constant-Pool needs to store those correctly...
+    How is this handled when calling functions? (Bytecode)
+
+
 Can structs contain template types?
  No? I guess not, as all structs are unique this isn't an issue
 So we can then answer the questions about the deduplication with a no.
@@ -15,7 +37,6 @@ When do I need constant values that are frigging graphs or some shit like that?
 TODO:
 ----------------------------
 Polymorphism related things:
- * Handle default values for polymorphic arguments in some way (Probably just prohibit), what if default values depend on comptime values
  * Comptime function pointers should work
  * Better implicit matching -> E.g. error messages + better checks
     Store how many implicit parameters are per 'normal' parameter, and check if all match or if some are "lost"
@@ -23,11 +44,14 @@ Polymorphism related things:
  * Check how we should handle anonymous structs inside polymorphic structs/functions
 Others
  * BUG-FIX: x:bool = 12 --> 2 error messages
- * Upp_Constants should be deduplicated by default, I feel like this is an easy problem...
  * Code improvements: 
     - Rename polymorphic type to something more correct
     - Maybe seperate a Overload_Candidate and Callable, and remove polymorphic parameters from Type_Function
 
+DONE:
+ * Upp_Constants should be deduplicated by default, I feel like this is an easy problem...
+ * Handle default values for polymorphic arguments in some way (Probably just prohibit), what if default values depend on comptime values
+    
 
 
 Allocator :: struct
@@ -478,8 +502,8 @@ Core: (Required for programming)
     * Union rework, e.g. Addressable sub-types + better switch
 
     * Allocator system
-    * Incremental compiler
     * C-Function calling rework
+    * Incremental compiler
 
 Additional:
     * Better C-Importer

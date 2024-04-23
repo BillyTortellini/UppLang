@@ -6,6 +6,7 @@
 #include "../../datastructures/hashtable.hpp"
 
 struct Datatype;
+struct ModTree_Function;
 
 struct Constant_Handle
 {
@@ -27,6 +28,13 @@ struct Upp_Constant_Reference
     Upp_Constant points_to; 
 };
 
+struct Upp_Constant_Function_Reference
+{
+    Upp_Constant constant;
+    int offset_from_constant_start;
+    ModTree_Function* points_to; // May not be null? otherwise we just wouldn't record it I guess
+};
+
 struct Constant_Pool_Result
 {
     bool success;
@@ -34,13 +42,21 @@ struct Constant_Pool_Result
     Upp_Constant constant;
 };
 
+// Constants are deduplicated based on the type and on the _shallow_ memory
+struct Deduplication_Info
+{
+    Datatype* type;
+    Array<byte> memory;
+};
+
 struct Constant_Pool
 {
     Dynamic_Array<Upp_Constant> constants;
     Dynamic_Array<Upp_Constant_Reference> references; // Required for serialization
+    Dynamic_Array<Upp_Constant_Function_Reference> function_references; // Required for serialization
     Stack_Allocator constant_memory;
     Hashtable<void*, Upp_Constant> saved_pointers;
-    Hashtable<Array<byte>, Upp_Constant> deduplication_table; 
+    Hashtable<Deduplication_Info, Upp_Constant> deduplication_table; 
     
     // Statistics tracking
     int deepcopy_counts;

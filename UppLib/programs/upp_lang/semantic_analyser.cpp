@@ -882,6 +882,7 @@ ModTree_Function* modtree_function_create_empty(Datatype_Function* signature, Sy
     function->code_workload = 0;
     function->progress = progress;
     function->parameter_table = param_table;
+    function->function_index_plus_one = semantic_analyser.program->functions.size + 1;
 
     function->called_from = dynamic_array_create_empty<ModTree_Function*>(1);
     function->calls = dynamic_array_create_empty<ModTree_Function*>(1);
@@ -1069,8 +1070,7 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
         return comptime_result_make_not_comptime("Void not comptime!");
     }
     case Expression_Result_Type::FUNCTION: {
-        // TODO: Function pointer reads should work in the future
-        return comptime_result_make_not_comptime("Function pointers for comptime values aren't supported currently");
+        return comptime_result_make_available(&info->options.function->function_index_plus_one, upcast(types.i64_type));
     }
     case Expression_Result_Type::POLYMORPHIC_STRUCT: {
         return comptime_result_make_not_comptime("Cannot make comptime type_handle out of polymorphic struct");
@@ -2805,6 +2805,12 @@ void analyse_parameter_type_and_value(Function_Parameter& parameter, AST::Parame
     parameter.has_default_value = true;
     auto default_value_type = semantic_analyser_analyse_expression_value(
         parameter_node->default_value.value, expression_context_make_specific_type(parameter.type));
+    if (parameter_node->is_comptime) {
+        log_semantic_error("Comptime parameters cannot have default values", upcast(parameter_node->default_value.value));
+        parameter.has_default_value = false;
+        parameter.default_value.available = false;
+        return;
+    }
     if (datatype_is_unknown(parameter.type) || default_value_type != parameter.type) {
         return;
     }
@@ -4144,7 +4150,6 @@ Optional<Callable> callable_try_create_from_expression_info(Expression_Info& inf
 
     switch (info.result_type)
     {
-    case Expression_Result_Type::CONSTANT:
     case Expression_Result_Type::NOTHING: 
     case Expression_Result_Type::TYPE: {
         return optional_make_failure<Callable>();
@@ -4167,6 +4172,22 @@ Optional<Callable> callable_try_create_from_expression_info(Expression_Info& inf
         else {
             return optional_make_failure<Callable>();
         }
+        break;
+    }
+    case Expression_Result_Type::CONSTANT: {
+        auto& constant = info.options.constant;
+        if (constant.type->type != Datatype_Type::FUNCTION) {
+            return optional_make_failure<Callable>();
+        }
+
+        int function_index = (int)(*(i64*)constant.memory) - 1;
+        if (function_index < 0 || function_index >= semantic_analyser.program->functions.size) {
+            return optional_make_failure<Callable>();
+        }
+
+        callable.type = Callable_Type::FUNCTION;
+        callable.options.function = semantic_analyser.program->functions[function_index];
+        callable.function_signature = downcast<Datatype_Function>(constant.type);
         break;
     }
     case Expression_Result_Type::FUNCTION: {
@@ -6707,7 +6728,8 @@ bool code_block_is_defer(AST::Code_Block* block)
 bool inside_defer()
 {
     // TODO: Probably doesn't work inside a bake!
-    assert(semantic_analyser.current_workload->type == Analysis_Workload_Type::FUNCTION_BODY, "Must be in body otherwise no workload exists");
+    assert(semantic_analyser.current_workload->type == Analysis_Workload_Type::FUNCTION_BODY ||
+           semantic_analyser.current_workload->type == Analysis_Workload_Type::BAKE_ANALYSIS, "Must be in body otherwise no workload exists");
     auto& block_stack = semantic_analyser.current_workload->block_stack;
     for (int i = block_stack.size - 1; i > 0; i--)
     {
@@ -7267,8 +7289,10 @@ Control_Flow semantic_analyser_analyse_block(AST::Code_Block* block)
     // Create symbols and workloads for definitions inside the block
     {
         auto progress = semantic_analyser.current_workload->current_function->progress;
-        assert(progress != 0, "Do bakes not use analyse block? Maybe this is wrong...");
-        bool dont_define_comptimes = progress->type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE;
+        bool dont_define_comptimes = false;
+        if (progress != 0) {
+            dont_define_comptimes = progress->type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE;
+        }
         for (int i = 0; i < block->statements.size; i++) {
             if (block->statements[i]->type == AST::Statement_Type::DEFINITION) {
                 auto definition = block->statements[i]->options.definition;

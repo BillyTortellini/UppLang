@@ -4,6 +4,7 @@
 #include "../../utility/random.hpp"
 #include "compiler.hpp"
 #include <Windows.h>
+#include "ir_code.hpp"
 
 Bytecode_Thread* bytecode_thread_create(int instruction_limit)
 {
@@ -700,8 +701,21 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
             return true;
         }
 
-        int jmp_to_instr = *(int*)(thread->stack_pointer + i->op1);
-        if (jmp_to_instr < 0 || jmp_to_instr > instructions.size) {
+        // Check if function pointer is 0 and other things
+        int jmp_to_instr_index;
+        {
+            int function_index = (int)(*(i64*)(thread->stack_pointer + i->op1)) - 1;
+            auto& functions = compiler.semantic_analyser->program->functions;
+            if (function_index < 0 || function_index >= functions.size) {
+                thread->exit_code = Exit_Code::CODE_ERROR_OCCURED;
+                return true;
+            }
+
+            auto ir_function = *hashtable_find_element(&compiler.ir_generator->function_mapping, functions[function_index]);
+            jmp_to_instr_index = *hashtable_find_element(&compiler.bytecode_generator->function_locations, ir_function);
+        }
+
+        if (jmp_to_instr_index < 0 || jmp_to_instr_index > instructions.size) {
             thread->exit_code = Exit_Code::RETURN_VALUE_OVERFLOW;
             return true;
         }
@@ -710,7 +724,7 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
         thread->stack_pointer = thread->stack_pointer + i->op2;
         *((int*)thread->stack_pointer) = thread->instruction_index + 1; // Push return address
         *(byte**)(thread->stack_pointer + 8) = base_pointer; // Push current stack_pointer
-        thread->instruction_index = jmp_to_instr; // Jump to function
+        thread->instruction_index = jmp_to_instr_index; // Jump to function
 
         return false;
     }
@@ -876,7 +890,7 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
         *(void**)(thread->stack_pointer + i->op1) = (void*)(constant_pool.constants[i->op2].memory);
         break;
     case Instruction_Type::LOAD_FUNCTION_LOCATION:
-        *(int*)(thread->stack_pointer + i->op1) = i->op2; // Note: Function pointers are encoded as function indices in interpreter
+        *(i64*)(thread->stack_pointer + i->op1) = (i64)i->op2; // Note: Function pointers are encoded as function indices in interpreter
         break;
     case Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE: 
     case Instruction_Type::CAST_FLOAT_DIFFERENT_SIZE: 

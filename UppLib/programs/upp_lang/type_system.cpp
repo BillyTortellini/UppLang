@@ -1117,7 +1117,7 @@ void type_system_finish_struct(Datatype_Struct* structure)
             else {
                 name = string_create("anon_struct");
             }
-            string_append_formated(&name, "~tag");
+            string_append_formated(&name, "__tag");
             tag_enum_name = identifier_pool_add(&compiler.identifier_pool, name);
             string_destroy(&name);
         }

@@ -890,7 +890,7 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
         generator->name_counter = 0;
     }
 
-    // Note: All _new_ types should be generated before adding the type_info global
+    // Note: All _new_ types should be created (in type_system) before adding the type_info global
     auto& types = generator->compiler->type_system.predefined_types;
     auto type_info_slice_type = type_system_make_slice(upcast(type_system_make_pointer(upcast(types.type_information_type))));
     auto type_u8_array = type_system_make_slice(upcast(types.u8_type));
@@ -928,6 +928,71 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
         c_generator_register_type_name(generator, generator->compiler->type_system.types[i]);
     }
 
+    // Create globals Definitions
+    {
+        auto& globals = compiler->semantic_analyser->program->globals;
+        for (int i = 0; i < globals.size; i++) {
+            auto type = globals[i]->type;
+            c_generator_output_type_reference(generator, &generator->section_globals, type);
+            string_append_formated(&generator->section_globals, " global_%d;\n", i);
+        }
+    }
+
+    // Create extern function prototypes
+    for (int i = 0; i < generator->compiler->extern_sources.extern_functions.size; i++)
+    {
+        Extern_Function_Identifier* function = &generator->compiler->extern_sources.extern_functions[i];
+        Datatype_Function* function_signature = downcast<Datatype_Function>(function->function_signature);
+        auto& parameters = function_signature->parameters;
+        if (function_signature->return_type.available) {
+            c_generator_output_type_reference(generator, &generator->section_function_prototypes, function_signature->return_type.value);
+        }
+        else {
+            string_append_formated(&generator->section_function_prototypes, "void");
+        }
+        string_append_formated(&generator->section_function_prototypes, " %s(", function->id->characters);
+        for (int j = 0; j < parameters.size; j++) {
+            Datatype* param_type = parameters[j].type;
+            c_generator_output_type_reference(generator, &generator->section_function_prototypes, param_type);
+            if (j != parameters.size - 1) {
+                string_append_formated(&generator->section_function_prototypes, ", ");
+            }
+        }
+        string_append_formated(&generator->section_function_prototypes, ");\n");
+    }
+
+    // Create function prototypes
+    for (int i = 0; i < generator->program->functions.size; i++)
+    {
+        IR_Function* function = generator->program->functions[i];
+        Datatype_Function* function_signature = function->function_type;
+        auto& parameters = function_signature->parameters;
+        if (function_signature->return_type.available) {
+            c_generator_output_type_reference(generator, &generator->section_function_prototypes, function_signature->return_type.value);
+        }
+        else {
+            string_append_formated(&generator->section_function_prototypes, "void");
+        }
+        string_append_formated(&generator->section_function_prototypes, " ");
+        {
+            String function_name = string_create_empty(16);
+            string_append_formated(&function_name, "function_%d", generator->name_counter);
+            generator->name_counter++;
+            hashtable_insert_element(&generator->translation_function_to_name, function, function_name);
+            string_append_formated(&generator->section_function_prototypes, function_name.characters);
+        }
+
+        string_append_formated(&generator->section_function_prototypes, "(");
+        for (int j = 0; j < parameters.size; j++) {
+            Datatype* param_type = parameters[j].type;
+            c_generator_output_type_reference(generator, &generator->section_function_prototypes, param_type);
+            if (j != parameters.size - 1) {
+                string_append_formated(&generator->section_function_prototypes, ", ");
+            }
+        }
+        string_append_formated(&generator->section_function_prototypes, ");\n");
+    }
+
     // Generate strings for all constant-accesses
     {
         auto& constants = compiler->constant_pool.constants;
@@ -957,11 +1022,11 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
                 // Copy bytes into buffer
                 constant_start_byte_in_buffer[constant.constant_index] = constant_buffer_pos;
                 for (int j = 0; j < constant_size; j++) {
-                    string_append_formated(&generator->section_constants, "%3d, ", constant.memory[i]);
+                    string_append_formated(&generator->section_constants, "%3d, ", constant.memory[j]);
                 }
                 constant_buffer_pos += constant_size;
                 // End with newline
-                string_append_formated(&generator->section_constants, "%\n   ", constant.memory[i]);
+                string_append_formated(&generator->section_constants, "\n   ");
             }
 
             // Create access strings
@@ -1047,73 +1112,21 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
                     constant_start_byte_in_buffer[reference->points_to.constant_index]
                 );
             }
+            for (int i = 0; i < generator->compiler->constant_pool.function_references.size; i++)
+            {
+                Upp_Constant_Function_Reference& reference = generator->compiler->constant_pool.function_references[i];
+                auto modtree_function = reference.points_to;
+                auto ir_function = *hashtable_find_element(&ir_generator.function_mapping, modtree_function);
+                auto function_name = hashtable_find_element(&generator->translation_function_to_name, ir_function);
+                string_append_formated(
+                    &generator->section_function_implementations,
+                    "    *((void**) &constant_buffer[%d]) = (void*) &%s;\n",
+                    constant_start_byte_in_buffer[reference.constant.constant_index] + reference.offset_from_constant_start, 
+                    function_name->characters
+                );
+            }
             string_append_formated(&generator->section_function_implementations, "}\n\n");
         }
-    }
-
-    // Create globals Definitions
-    {
-        auto& globals = compiler->semantic_analyser->program->globals;
-        for (int i = 0; i < globals.size; i++) {
-            auto type = globals[i]->type;
-            c_generator_output_type_reference(generator, &generator->section_globals, type);
-            string_append_formated(&generator->section_globals, " global_%d;\n", i);
-        }
-    }
-
-    // Create extern function prototypes
-    for (int i = 0; i < generator->compiler->extern_sources.extern_functions.size; i++)
-    {
-        Extern_Function_Identifier* function = &generator->compiler->extern_sources.extern_functions[i];
-        Datatype_Function* function_signature = downcast<Datatype_Function>(function->function_signature);
-        auto& parameters = function_signature->parameters;
-        if (function_signature->return_type.available) {
-            c_generator_output_type_reference(generator, &generator->section_function_prototypes, function_signature->return_type.value);
-        }
-        else {
-            string_append_formated(&generator->section_function_prototypes, "void");
-        }
-        string_append_formated(&generator->section_function_prototypes, " %s(", function->id->characters);
-        for (int j = 0; j < parameters.size; j++) {
-            Datatype* param_type = parameters[j].type;
-            c_generator_output_type_reference(generator, &generator->section_function_prototypes, param_type);
-            if (j != parameters.size - 1) {
-                string_append_formated(&generator->section_function_prototypes, ", ");
-            }
-        }
-        string_append_formated(&generator->section_function_prototypes, ");\n");
-    }
-
-    // Create function prototypes
-    for (int i = 0; i < generator->program->functions.size; i++)
-    {
-        IR_Function* function = generator->program->functions[i];
-        Datatype_Function* function_signature = function->function_type;
-        auto& parameters = function_signature->parameters;
-        if (function_signature->return_type.available) {
-            c_generator_output_type_reference(generator, &generator->section_function_prototypes, function_signature->return_type.value);
-        }
-        else {
-            string_append_formated(&generator->section_function_prototypes, "void");
-        }
-        string_append_formated(&generator->section_function_prototypes, " ");
-        {
-            String function_name = string_create_empty(16);
-            string_append_formated(&function_name, "function_%d", generator->name_counter);
-            generator->name_counter++;
-            hashtable_insert_element(&generator->translation_function_to_name, function, function_name);
-            string_append_formated(&generator->section_function_prototypes, function_name.characters);
-        }
-
-        string_append_formated(&generator->section_function_prototypes, "(");
-        for (int j = 0; j < parameters.size; j++) {
-            Datatype* param_type = parameters[j].type;
-            c_generator_output_type_reference(generator, &generator->section_function_prototypes, param_type);
-            if (j != parameters.size - 1) {
-                string_append_formated(&generator->section_function_prototypes, ", ");
-            }
-        }
-        string_append_formated(&generator->section_function_prototypes, ");\n");
     }
 
     // Create function code

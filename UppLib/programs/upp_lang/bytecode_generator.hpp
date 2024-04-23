@@ -61,7 +61,7 @@ enum class Instruction_Type
     LOAD_RETURN_VALUE, // op1 = dst_reg, op2 = size
     LOAD_REGISTER_ADDRESS, // op1 = dest_reg, op2 = register_to_load
     LOAD_GLOBAL_ADDRESS, // op1 = dest_reg, op2 = global index
-    LOAD_FUNCTION_LOCATION, // op1 = dest_reg, op2 = function index
+    LOAD_FUNCTION_LOCATION, // op1 = dest_reg, op2 = function index (Update: Only puts function index as i64 into dest_reg)
     LOAD_CONSTANT_ADDRESS, // op1 = dest_reg, op2 = constant index
 
     CAST_INTEGER_DIFFERENT_SIZE, // op1 = dst_reg, op2 = src_reg, op3 = dst_type, op4 = src_type
@@ -131,7 +131,6 @@ struct Bytecode_Generator
     Hashtable<IR_Code_Block*, int> continue_location;
     Hashtable<IR_Code_Block*, int> break_location;
     Dynamic_Array<Function_Reference> fill_out_calls;
-    Dynamic_Array<Function_Reference> fill_out_function_ptr_loads;
     Dynamic_Array<Goto_Label> fill_out_gotos;
     Dynamic_Array<int> label_locations;
 

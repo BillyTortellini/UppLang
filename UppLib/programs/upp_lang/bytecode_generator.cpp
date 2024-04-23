@@ -35,7 +35,6 @@ Bytecode_Generator bytecode_generator_create()
     result.fill_out_gotos = dynamic_array_create_empty<Goto_Label>(64);
     result.label_locations = dynamic_array_create_empty<int>(64);
     result.fill_out_calls = dynamic_array_create_empty<Function_Reference>(64);
-    result.fill_out_function_ptr_loads = dynamic_array_create_empty<Function_Reference>(64);
     return result;
 }
 
@@ -57,7 +56,6 @@ void bytecode_generator_destroy(Bytecode_Generator* generator)
     dynamic_array_destroy(&generator->fill_out_gotos);
     dynamic_array_destroy(&generator->label_locations);
     dynamic_array_destroy(&generator->fill_out_calls);
-    dynamic_array_destroy(&generator->fill_out_function_ptr_loads);
 } 
 
 Bytecode_Instruction instruction_make_0(Instruction_Type type) {
@@ -838,12 +836,10 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 break;
             }
             case IR_Instruction_Address_Of_Type::FUNCTION: {
-                Function_Reference ref;
-                ref.function = address_of->options.function;
-                ref.instruction_index = bytecode_generator_add_instruction_and_set_destination(generator,
-                    address_of->destination, instruction_make_2(Instruction_Type::LOAD_FUNCTION_LOCATION, PLACEHOLDER, PLACEHOLDER)
+                bytecode_generator_add_instruction_and_set_destination(generator,
+                    address_of->destination, instruction_make_2(
+                        Instruction_Type::LOAD_FUNCTION_LOCATION, PLACEHOLDER, (int)address_of->options.function->origin->function_index_plus_one)
                 );
-                dynamic_array_push_back(&generator->fill_out_function_ptr_loads, ref);
                 break;
             }
             case IR_Instruction_Address_Of_Type::STRUCT_MEMBER: {
@@ -1033,7 +1029,6 @@ void bytecode_generator_reset(Bytecode_Generator* generator, Compiler* compiler)
         dynamic_array_reset(&generator->label_locations);
         dynamic_array_reset(&generator->fill_out_gotos);
         dynamic_array_reset(&generator->fill_out_calls);
-        dynamic_array_reset(&generator->fill_out_function_ptr_loads);
     }
 }
 
@@ -1056,15 +1051,6 @@ void bytecode_generator_update_references(Bytecode_Generator* generator)
         generator->instructions[call_loc.instruction_index].op1 = *location;
     }
     dynamic_array_reset(&generator->fill_out_calls);
-
-    // Fill out all function pointer loads
-    for (int i = 0; i < generator->fill_out_function_ptr_loads.size; i++) {
-        Function_Reference& call_loc = generator->fill_out_function_ptr_loads[i];
-        int* location = hashtable_find_element(&generator->function_locations, call_loc.function);
-        assert(location != 0, "Should not happen");
-        generator->instructions[call_loc.instruction_index].op2 = *location;
-    }
-    dynamic_array_reset(&generator->fill_out_function_ptr_loads);
 
     // Fill out all open gotos
     for (int i = 0; i < generator->fill_out_gotos.size; i++) {

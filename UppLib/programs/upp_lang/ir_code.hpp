@@ -225,6 +225,7 @@ struct IR_Function
     IR_Program* program;
     Datatype_Function* function_type;
     IR_Code_Block* code;
+    ModTree_Function* origin;
 };
 
 struct IR_Program

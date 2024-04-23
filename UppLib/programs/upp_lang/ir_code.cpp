@@ -79,6 +79,7 @@ IR_Function* ir_function_create(Datatype_Function* signature, ModTree_Function* 
     function->code = ir_code_block_create(function);
     function->function_type = signature;
     function->program = ir_generator.program;
+    function->origin = origin_func;
     dynamic_array_push_back(&ir_generator.program->functions, function);
 
     if (origin_func != 0) {
