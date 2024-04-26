@@ -42,7 +42,7 @@ struct Function_Parameter
         struct {
             int index_in_non_polymorphic_signature;
         } normal;
-        int polymorphic_index;
+        int value_access_index;
     };
 };
 Function_Parameter function_parameter_make_empty(Symbol* symbol = 0, Workload_Function_Parameter* workload = 0);
@@ -109,8 +109,7 @@ struct Datatype_Template_Parameter
     Datatype base;
     Symbol* symbol;
     Workload_Function_Parameter* parameter_workload;
-    int index;
-    Datatype* datatype; 
+    int value_access_index;
 
     bool is_reference;
     Datatype_Template_Parameter* mirrored_type; // Pointer to either the reference type or the "base" polymorphic-type
@@ -384,7 +383,7 @@ void type_system_reset(Type_System* system);
 void type_system_print(Type_System* system);
 void type_system_add_predefined_types(Type_System* system);
 
-Datatype_Template_Parameter* type_system_make_template_parameter(Symbol* symbol, Workload_Function_Parameter* parameter_workload, int index);
+Datatype_Template_Parameter* type_system_make_template_parameter(Symbol* symbol, Workload_Function_Parameter* parameter_workload);
 Datatype_Struct_Instance_Template* type_system_make_struct_instance_template(
     Workload_Structure_Polymorphic* base, Array<Matchable_Argument> arguments);
 Datatype_Pointer* type_system_make_pointer(Datatype* child_type);

@@ -19,10 +19,10 @@ Symbol_Table* symbol_table_create()
     return result;
 }
 
-Symbol_Table* symbol_table_create_with_parent(Symbol_Table* parent_table, bool internal)
+Symbol_Table* symbol_table_create_with_parent(Symbol_Table* parent_table, Symbol_Access_Level access_level)
 {
     Symbol_Table* result = symbol_table_create();
-    symbol_table_add_include_table(result, parent_table, true, internal, 0);
+    symbol_table_add_include_table(result, parent_table, true, access_level, 0);
     return result;
 }
 
@@ -36,7 +36,8 @@ void symbol_table_destroy(Symbol_Table* symbol_table)
     delete symbol_table;
 }
 
-void symbol_table_add_include_table(Symbol_Table* symbol_table, Symbol_Table* included_table, bool transitive, bool internal, AST::Node* include_node)
+void symbol_table_add_include_table(
+    Symbol_Table* symbol_table, Symbol_Table* included_table, bool transitive, Symbol_Access_Level access_level, AST::Node* include_node)
 {
     // Check for errors
     if (symbol_table == included_table) {
@@ -53,7 +54,7 @@ void symbol_table_add_include_table(Symbol_Table* symbol_table, Symbol_Table* in
 
     // Add include
     Included_Table included;
-    included.is_internal = internal;
+    included.access_level = access_level;
     included.transitive = transitive;
     included.table = included_table;
     dynamic_array_push_back(&symbol_table->included_tables, included);
@@ -64,7 +65,7 @@ void symbol_destroy(Symbol* symbol) {
     delete symbol;
 }
 
-Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbol_Type type, AST::Node* definition_node, bool is_internal)
+Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbol_Type type, AST::Node* definition_node, Symbol_Access_Level access_level)
 {
     assert(id != 0, "HEY");
 
@@ -75,7 +76,7 @@ Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbo
     new_sym->id = id;
     new_sym->type = type;
     new_sym->origin_table = symbol_table;
-    new_sym->internal = is_internal;
+    new_sym->access_level = access_level;
     new_sym->references = dynamic_array_create_empty<AST::Symbol_Lookup*>(1);
 
     // Check if symbol is already defined
@@ -118,7 +119,7 @@ Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbo
 
 
 void symbol_table_query_id_recursive(
-    Symbol_Table* table, String* id, bool search_includes, bool internals_ok, Dynamic_Array<Symbol*>* results
+    Symbol_Table* table, String* id, bool search_includes, Symbol_Access_Level access_level, Dynamic_Array<Symbol*>* results
 )
 {
     // Check if already visited
@@ -136,10 +137,12 @@ void symbol_table_query_id_recursive(
         if (symbols != 0) {
             for (int i = 0; i < symbols->size; i++) {
                 Symbol* symbol = (*symbols)[i];
-                if (!(symbol->internal && !internals_ok)) {
+                if ((int)symbol->access_level <= (int)access_level) {
                     dynamic_array_push_back(results, symbol);
-                    if (symbol->internal) {
-                        stop_further_lookup = true; // Once a internal symbol is found (variable/parameter), stop the search
+                    if (symbol->access_level == Symbol_Access_Level::INTERNAL) {
+                        // Once a internal symbol is found (variable/parameter), stop the search. 
+                        // Update: Why is this the case? Probably because overloading for variables isn't available yet?
+                        stop_further_lookup = true;
                     }
                 }
             }
@@ -166,15 +169,15 @@ void symbol_table_query_id_recursive(
             included.table,
             id,
             included.transitive,
-            internals_ok && included.is_internal,
+            (Symbol_Access_Level)(math_minimum((int) access_level, (int) included.access_level)),
             results
         );
     }
 }
 
-void symbol_table_query_id(Symbol_Table* table, String* id, bool search_includes, bool internals_ok, Dynamic_Array<Symbol*>* results) {
+void symbol_table_query_id(Symbol_Table* table, String* id, bool search_includes, Symbol_Access_Level access_level, Dynamic_Array<Symbol*>* results) {
     hashset_reset(&compiler.semantic_analyser->symbol_lookup_visited);
-    return symbol_table_query_id_recursive(table, id, search_includes, internals_ok, results);
+    return symbol_table_query_id_recursive(table, id, search_includes, access_level, results);
 }
 
 void symbol_append_to_string(Symbol* symbol, String* string)

@@ -898,7 +898,7 @@ void code_completion_find_suggestions()
         if (symbol_table != 0) {
             auto results = dynamic_array_create_empty<Symbol*>(1);
             SCOPE_EXIT(dynamic_array_destroy(&results));
-            symbol_table_query_id(symbol_table, 0, specific_table == 0, true, &results);
+            symbol_table_query_id(symbol_table, 0, specific_table == 0, Symbol_Access_Level::INTERNAL, &results);
             for (int i = 0; i < results.size; i++) {
                 code_completion_add_and_rank(*results[i]->id, partially_typed);
             }
@@ -2201,7 +2201,7 @@ void syntax_editor_render()
                 }
                 case Symbol_Type::STRUCT_PARAMETER: {
                     auto& str_param = symbol->options.struct_parameter;
-                    type = str_param.workload->parameters[str_param.parameter_index].parameter_type;
+                    type = str_param.workload->base_parameter_types[str_param.parameter_index];
                     break;
                 }
                 case Symbol_Type::TYPE:

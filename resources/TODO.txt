@@ -5,20 +5,45 @@ Finishing polymorphism:
  * Polymorphic return type
  * Correct polymorphic matching
 
+Anonymous structs inside structs:
+---------------------------------
+    A :: struct(T: Type_Handle)
+        b: struct
+            c: T
 
-TODO:
- - Make function pointers work with bytecode again
- - C-Compiler:
-    * Function pointers in constants need to work 
-        1. Loading function-pointer constants
-        2. Setting the references before the actual program starts
+Should this work?
+    Probably, I usually use quite a lot of structs 'inside' structs
 
-Comptime function pointers:
-    --> Obviously the value needs to be 64bit pointer, store a function index per function...
-    What about different function types (e.g. default values and all that crap?)
-    I assume that we can still store those, but the type is just different
-    Constant-Pool needs to store those correctly...
-    How is this handled when calling functions? (Bytecode)
+How does this currently work?
+    When encountering anonymous structs, a new struct workload is created
+    Same with #bake and others...
+    Why exactly does this happen? Not quite sure anymore
+    Then, the current workload waits on the new workload to finish, and
+    accesses the results of the new workload.
+To be fair, as we don't have more complicated struct workloads,
+    we _could_ just analyse this like a normal workload
+
+Currently:
+    Anonymous functions/structs/bake create a new workload, and wait on that
+    workload to finish.
+Other solutions:
+    As anonymous
+
+General problems with internal definitions:
+    * Internal/External symbol tables
+    * Should the anonymous definitions be analysed multiple times?
+        - In theory it depends if they are using polymorphic symbols...
+        - I don't want to run too many bakes if I can avoid it...
+
+Why is bake even a workload to begin with?
+    For deduplication it kinda makes sense...
+
+What are the approaches:
+    1. Make it so that anonymous stru
+    
+
+
+-----------------------------------------------------
 
 
 Can structs contain template types?
@@ -522,7 +547,6 @@ Additional:
 
 Code improvements:
     * Deduplication of comptime instances when the generated ir-code is the same
-    * Comptime function pointers just call the function
     * Analysis-Pass hashtable could be improved by combining blocks of ast-code into regions (But!: Incremental parsing)
 -----------------
 

@@ -30,7 +30,6 @@ void analysis_workload_destroy(Workload_Base* workload);
 Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression* expression, Expression_Context context);
 Datatype* semantic_analyser_analyse_expression_value(AST::Expression* rc_expression, Expression_Context context);
 Datatype* semantic_analyser_analyse_expression_type(AST::Expression* rc_expression);
-Datatype* semantic_analyser_try_convert_value_to_type(AST::Expression* expression);
 Control_Flow semantic_analyser_analyse_block(AST::Code_Block* code_block);
 
 Expression_Post_Op expression_context_apply(
@@ -129,6 +128,19 @@ Dependency_Failure_Info dependency_failure_info_make(bool* fail_indicator, AST::
     return info;
 }
 
+Polymorphic_Access_Info polymorphic_access_info_make_base(Array<Datatype*> types) {
+    Polymorphic_Access_Info result;
+    result.analysis_type = Polymorphic_Analysis_Type::POLYMORPHIC_BASE;
+    result.base_datatypes = types;
+    return result;
+}
+
+Polymorphic_Access_Info polymorphic_access_info_make_instance(Array<Upp_Constant> instance_values) {
+    Polymorphic_Access_Info result;
+    result.analysis_type = Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE;
+    result.instance_values = instance_values;
+    return result;
+}
 
 // Analysis Info
 Analysis_Info* pass_get_base_info(Analysis_Pass* pass, AST::Node* node, Info_Query query) {
@@ -530,11 +542,25 @@ T* workload_executer_allocate_workload(AST::Node* mapping_node)
     workload->reachable_clusters = dynamic_array_create_empty<Workload_Base*>(1);
     workload->block_stack = dynamic_array_create_empty<AST::Code_Block*>(1);
     workload->current_pass = analysis_pass_allocate(workload, mapping_node);
-    workload->parent_table = semantic_analyser.root_symbol_table;
     workload->real_error_count = 0;
     workload->errors_due_to_unknown_count = 0;
+    workload->polymorphic_access_info.analysis_type = Polymorphic_Analysis_Type::NON_POLYMORPHIC;
+    workload->symbol_access_level = Symbol_Access_Level::INTERNAL;
+    workload->current_function = 0;
+    workload->current_expression = 0;
+    workload->statement_reachable = true;
+
+    if (semantic_analyser.current_workload != 0) {
+        workload->polymorphic_instanciation_depth = semantic_analyser.current_workload->polymorphic_instanciation_depth;
+    }
+    else {
+        workload->polymorphic_instanciation_depth = 0;
+    }
     if (semantic_analyser.current_workload != 0 && semantic_analyser.current_workload->current_symbol_table != 0) {
-        workload->parent_table = semantic_analyser.current_workload->current_symbol_table;
+        workload->current_symbol_table = semantic_analyser.current_workload->current_symbol_table;
+    }
+    else {
+        workload->current_symbol_table = semantic_analyser.root_symbol_table;
     }
 
     // Add to workload queue
@@ -546,13 +572,14 @@ T* workload_executer_allocate_workload(AST::Node* mapping_node)
 
 // Note: If base progress != 0, then instance information (Progress-Type + instanciation depth) will not be set by this function
 Function_Progress* function_progress_create_with_modtree_function(
-    Symbol* symbol, AST::Expression* function_node, Datatype_Function* function_type, Function_Progress* base_progress = 0)
+    Symbol* symbol, AST::Expression* function_node, Datatype_Function* function_type, 
+    Function_Progress* base_progress = 0, Symbol_Access_Level symbol_access_level = Symbol_Access_Level::GLOBAL)
 {
     assert(function_node->type == AST::Expression_Type::FUNCTION, "Has to be function!");
 
     Symbol_Table* parameter_table = 0;
     if (base_progress == 0) {
-        parameter_table = symbol_table_create_with_parent(semantic_analyser.current_workload->current_symbol_table, false);
+        parameter_table = symbol_table_create_with_parent(semantic_analyser.current_workload->current_symbol_table, symbol_access_level);
     }
     else {
         assert(base_progress->type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE, "");
@@ -562,7 +589,7 @@ Function_Progress* function_progress_create_with_modtree_function(
     // Create progress
     auto progress = new Function_Progress;
     dynamic_array_push_back(&semantic_analyser.allocated_function_progresses, progress);
-    progress->type = Polymorphic_Analysis_Type::NORMAL;
+    progress->type = Polymorphic_Analysis_Type::NON_POLYMORPHIC;
     progress->function = modtree_function_create_empty(function_type, symbol, progress, parameter_table);
 
     // Set Symbol info
@@ -578,7 +605,8 @@ Function_Progress* function_progress_create_with_modtree_function(
         header_workload->progress = progress;
         header_workload->function_node = function_node;
         header_workload->parameter_order = dynamic_array_create_empty<Workload_Function_Parameter*>(1);
-        header_workload->base.parent_table = progress->function->parameter_table;
+        header_workload->base.current_symbol_table = progress->function->parameter_table;
+        header_workload->base.current_function = progress->function;
     }
     else {
         progress->header_workload = base_progress->header_workload; // Note: Not sure if this is ever necessary, but we link to base progress header
@@ -587,11 +615,13 @@ Function_Progress* function_progress_create_with_modtree_function(
     progress->body_workload = workload_executer_allocate_workload<Workload_Function_Body>(upcast(function_node->options.function.body));
     progress->body_workload->body_node = function_node->options.function.body;
     progress->body_workload->progress = progress;
-    progress->body_workload->base.parent_table = parameter_table; // Sets correct symbol table for code
+    progress->body_workload->base.current_symbol_table = parameter_table; // Sets correct symbol table for code
+    progress->body_workload->base.current_function = progress->function;
     progress->function->code_workload = upcast(progress->body_workload);
 
     progress->compile_workload = workload_executer_allocate_workload<Workload_Function_Cluster_Compile>(0);
     progress->compile_workload->functions = dynamic_array_create_empty<ModTree_Function*>(1);
+    progress->compile_workload->base.current_function = progress->function;
     dynamic_array_push_back(&progress->compile_workload->functions, progress->function);
     progress->compile_workload->progress = progress;
 
@@ -608,28 +638,8 @@ Function_Progress* function_progress_create_with_modtree_function(
     return progress;
 }
 
-int get_current_polymorphic_instanciation_depth()
-{
-    auto workload = semantic_analyser.current_workload;
-    if (workload == 0) return 0;
-    if (workload->type == Analysis_Workload_Type::STRUCT_BODY) {
-        auto struct_workload = downcast<Workload_Structure_Body>(semantic_analyser.current_workload);
-        if (struct_workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
-            return struct_workload->polymorphic_info.instance.instanciation_depth;
-        }
-        return 0;
-    }
-    
-    auto current_function_progress = analysis_workload_try_get_function_progress(workload);
-    if (current_function_progress != 0 &&
-        current_function_progress->type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
-        return current_function_progress->polymorhic_instance.instanciation_depth;
-    }
-
-    return 0;
-}
-
-Workload_Structure_Body* workload_structure_create(AST::Expression* struct_node, Symbol* symbol, bool is_polymorphic_instance)
+Workload_Structure_Body* workload_structure_create(AST::Expression* struct_node, Symbol* symbol, 
+    bool is_polymorphic_instance, Symbol_Access_Level access_level = Symbol_Access_Level::GLOBAL)
 {
     assert(struct_node->type == AST::Expression_Type::STRUCTURE_TYPE, "Has to be struct!");
     auto& struct_info = struct_node->options.structure;
@@ -639,10 +649,12 @@ Workload_Structure_Body* workload_structure_create(AST::Expression* struct_node,
     body_workload->arrays_depending_on_struct_size = dynamic_array_create_empty<Datatype_Array*>(1);
     body_workload->struct_type = type_system_make_struct_empty(struct_info.type, (symbol == 0 ? 0 : symbol->id), body_workload);
     body_workload->struct_node = struct_node;
-    body_workload->polymorphic_type = Polymorphic_Analysis_Type::NORMAL;
+    body_workload->polymorphic_type = Polymorphic_Analysis_Type::NON_POLYMORPHIC;
+    body_workload->base.symbol_access_level = access_level;
 
     if (is_polymorphic_instance) {
         body_workload->polymorphic_type = Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE;
+        body_workload->base.current_symbol_table = 0; // This has to be set to base-analysis symbol table at some point
         // Note: Polymorphic instance infos aren't filled out here!
         return body_workload;
     }
@@ -656,10 +668,11 @@ Workload_Structure_Body* workload_structure_create(AST::Expression* struct_node,
     // Check for polymorphism
     if (struct_info.parameters.size != 0) {
         auto poly_workload = workload_executer_allocate_workload<Workload_Structure_Polymorphic>(upcast(struct_node));
+        poly_workload->base.symbol_access_level = access_level;
         poly_workload->body_workload = body_workload;
         poly_workload->instances = dynamic_array_create_empty<Structure_Polymorphic_Instance*>(1);
-        poly_workload->parameters = array_create_empty<Struct_Parameter>(struct_info.parameters.size);
-        poly_workload->symbol_table = semantic_analyser.current_workload->current_symbol_table;
+        poly_workload->parameters = array_create_empty<Struct_Parameter_Info>(struct_info.parameters.size);
+        poly_workload->base_parameter_types = array_create_empty<Datatype*>(struct_info.parameters.size);
 
         body_workload->polymorphic_type = Polymorphic_Analysis_Type::POLYMORPHIC_BASE;
         body_workload->polymorphic_info.polymorphic_base = poly_workload;
@@ -686,6 +699,7 @@ Bake_Progress* bake_progress_create(AST::Expression* bake_expr, Datatype* expect
     progress->analysis_workload = workload_executer_allocate_workload<Workload_Bake_Analysis>(upcast(bake_expr));
     progress->analysis_workload->bake_node = bake_expr;
     progress->analysis_workload->progress = progress;
+    progress->analysis_workload->base.symbol_access_level = Symbol_Access_Level::POLYMORPHIC;
     progress->bake_function->code_workload = upcast(progress->analysis_workload);
 
     progress->execute_workload = workload_executer_allocate_workload<Workload_Bake_Execution>(0);
@@ -712,13 +726,13 @@ Module_Progress* module_progress_create(AST::Module* module, Symbol* symbol, Sym
     {
         auto analysis = progress->module_analysis;
         analysis->module_node = module;
-        analysis->base.parent_table = parent_symbol_table;
-        analysis->symbol_table = symbol_table_create_with_parent(parent_symbol_table, false);
+        analysis->base.current_symbol_table = parent_symbol_table;
+        analysis->symbol_table = symbol_table_create_with_parent(parent_symbol_table, Symbol_Access_Level::GLOBAL);
         analysis->last_import_workload = 0;
         analysis->progress = progress;
         analysis->parent_analysis = 0;
         if (semantic_analyser.current_workload != 0 && semantic_analyser.current_workload->current_symbol_table != 0) {
-            analysis->base.parent_table = semantic_analyser.current_workload->current_symbol_table;
+            analysis->base.current_symbol_table = semantic_analyser.current_workload->current_symbol_table;
         }
     }
 
@@ -758,7 +772,8 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
     for (int i = 0; i < definition->symbols.size; i++) {
         auto info = get_info(definition->symbols[i], true);
         info->symbol = symbol_table_define_symbol(
-            current_table, definition->symbols[i]->name, initial_symbol_type, AST::upcast(definition->symbols[i]), is_local_variable
+            current_table, definition->symbols[i]->name, initial_symbol_type, AST::upcast(definition->symbols[i]), 
+            is_local_variable ? Symbol_Access_Level::INTERNAL : Symbol_Access_Level::GLOBAL
         );
     }
 
@@ -1084,6 +1099,7 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
     default:panic("");
     }
 
+    auto& access_info = semantic_analyser.current_workload->polymorphic_access_info;
     auto result_type = expression_info_get_type(info, true);
     auto result_type_size = type_wait_for_size_info_to_finish(result_type);
     switch (expr->type)
@@ -1108,20 +1124,13 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
     case AST::Expression_Type::PATH_LOOKUP:
     {
         auto symbol = get_info(expr->options.path_lookup)->symbol;
-        if (symbol->type == Symbol_Type::COMPTIME_VALUE) {
-            auto& upp_const = symbol->options.constant;
-            return comptime_result_make_available(upp_const.memory, upp_const.type);
-        }
-        else if (symbol->type == Symbol_Type::TEMPLATE_PARAMETER)
+        if (symbol->type == Symbol_Type::TEMPLATE_PARAMETER)
         {
-            auto implicit = symbol->options.implicit;
-            if (semantic_analyser.current_workload->implicit_polymorphic_values.data != 0) {
-                auto constant = semantic_analyser.current_workload->implicit_polymorphic_values[implicit->index];
-                return comptime_result_make_available(constant.memory, constant.type);
-            }
-            else {
-                return comptime_result_make_unavailable(implicit->datatype, "Cannot access implicit parameter value in base analysis");
-            }
+            auto template_parameter = symbol->options.template_parameter;
+            assert(access_info.analysis_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE,
+                "In normal analysis we shouldn't be able to access this and in instance this would be already set to constant");
+            return comptime_result_make_unavailable(
+                access_info.base_datatypes[template_parameter->value_access_index], "Cannot access implicit parameter value in base analysis");
         }
         else if (symbol->type == Symbol_Type::PARAMETER)
         {
@@ -1130,17 +1139,16 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
                 return comptime_result_make_not_comptime("Function parameter is not polymorphic");
             }
             else {
-                // Note: If we would be in a comptime instance, and the value would be available, the expression_result_type would have been constant,
-                //       and we wouldn't be in this code-path (Look at analysis of path_lookup for comptime parameters)
+                assert(access_info.analysis_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE,
+                    "In normal analysis we shouldn't be able to access this and in instance this would be already set to constant");
                 return comptime_result_make_unavailable(param.type, "Value not available in polymorphic base");
             }
         }
         else if (symbol->type == Symbol_Type::STRUCT_PARAMETER) {
-            // Note: If we would be in a comptime instance, and the value would be available, the expression_result_type would have been constant,
-            //       and we wouldn't be in this code-path (Look at analysis of path_lookup for comptime parameters)
+            assert(access_info.analysis_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE,
+                "In normal analysis we shouldn't be able to access this and in instance this would be already set to constant");
             return comptime_result_make_unavailable(
-                symbol->options.struct_parameter.workload->parameters[symbol->options.struct_parameter.parameter_index].parameter_type, 
-                "Value not available in polymorphic base");
+                access_info.base_datatypes[symbol->options.struct_parameter.parameter_index], "Value not available in polymorphic base");
         }
         else if (symbol->type == Symbol_Type::ERROR_SYMBOL) {
             return comptime_result_make_unavailable(types.error_type, "Analysis contained errors");
@@ -1661,6 +1669,13 @@ void analysis_workload_destroy(Workload_Base* workload)
 {
     switch (workload->type)
     {
+    case Analysis_Workload_Type::STRUCT_POLYMORPHIC: {
+        auto poly = downcast<Workload_Structure_Polymorphic>(workload);
+        dynamic_array_destroy(&poly->instances);
+        array_destroy(&poly->parameters);
+        array_destroy(&poly->base_parameter_types);
+        break;
+    }
     case Analysis_Workload_Type::STRUCT_BODY: {
         auto str = downcast<Workload_Structure_Body>(workload);
         dynamic_array_destroy(&str->arrays_depending_on_struct_size);
@@ -1724,10 +1739,11 @@ void path_lookup_set_result_symbol(AST::Path_Lookup* path, Symbol* symbol) {
 }
 
 // Queries symbol table for the id, and waits for all found symbol workloads to finish before continuing
-void symbol_lookup_resolve(AST::Symbol_Lookup* lookup, Symbol_Table* symbol_table, bool search_parents, bool internals_ok, Dynamic_Array<Symbol*>& results)
+void symbol_lookup_resolve(
+    AST::Symbol_Lookup* lookup, Symbol_Table* symbol_table, bool search_parents, Symbol_Access_Level access_level, Dynamic_Array<Symbol*>& results)
 {
     // Find all symbols with this id
-    symbol_table_query_id(symbol_table, lookup->name, search_parents, internals_ok, &results);
+    symbol_table_query_id(symbol_table, lookup->name, search_parents, access_level, &results);
 
     // Wait for alias symbols to finish their resolution
     for (int i = 0; i < results.size; i++)
@@ -1761,7 +1777,7 @@ void symbol_lookup_resolve(AST::Symbol_Lookup* lookup, Symbol_Table* symbol_tabl
 }
 
 // Logs an error if overloaded symbols was found
-Symbol* symbol_lookup_resolve_to_single_symbol(AST::Symbol_Lookup* lookup, Symbol_Table* symbol_table, bool search_parents, bool internals_ok)
+Symbol* symbol_lookup_resolve_to_single_symbol(AST::Symbol_Lookup* lookup, Symbol_Table* symbol_table, bool search_parents, Symbol_Access_Level access_level)
 {
     auto info = pass_get_node_info(semantic_analyser.current_workload->current_pass, lookup, Info_Query::CREATE_IF_NULL);
     auto error = semantic_analyser.predefined_symbols.error_symbol;
@@ -1769,7 +1785,7 @@ Symbol* symbol_lookup_resolve_to_single_symbol(AST::Symbol_Lookup* lookup, Symbo
     // Find all overloads
     auto results = dynamic_array_create_empty<Symbol*>(1);
     SCOPE_EXIT(dynamic_array_destroy(&results));
-    symbol_lookup_resolve(lookup, symbol_table, search_parents, internals_ok, results);
+    symbol_lookup_resolve(lookup, symbol_table, search_parents, access_level, results);
 
     // Handle result array
     if (results.size == 0) {
@@ -1805,7 +1821,7 @@ Symbol_Table* path_lookup_resolve_only_path_parts(AST::Path_Lookup* path)
         auto part = path->parts[i];
 
         // Find symbol of path part
-        Symbol* symbol = symbol_lookup_resolve_to_single_symbol(part, table, i == 0, false);
+        Symbol* symbol = symbol_lookup_resolve_to_single_symbol(part, table, i == 0, Symbol_Access_Level::GLOBAL);
         if (symbol == error) {
             path_lookup_set_info_to_error_symbol(path, workload);
             return 0;
@@ -1851,7 +1867,7 @@ Symbol_Table* path_lookup_resolve_only_path_parts(AST::Path_Lookup* path)
     return table;
 }
 
-// Note: After resolving overloaded symbols, the caller should 1. the symbol_info for the symbol_read, and 2. add a reference to the symbol
+// Note: After resolving overloaded symbols, the caller should 1. Set the symbol_info for the symbol_read, and 2. add a reference to the symbol
 //       Returns true if the path was resolved, otherwise false if there was an error while resolving the path...
 bool path_lookup_resolve(AST::Path_Lookup* path, Dynamic_Array<Symbol*>& symbols)
 {
@@ -1864,8 +1880,13 @@ bool path_lookup_resolve(AST::Path_Lookup* path, Dynamic_Array<Symbol*>& symbols
         return false;
     }
 
+    Symbol_Access_Level access_level = analyser.current_workload->symbol_access_level;
+    if (path->parts.size != 1) { // When a path is specified always use the least strong access level
+        access_level = Symbol_Access_Level::GLOBAL;
+    }
+
     // Resolve symbol
-    symbol_lookup_resolve(path->last, symbol_table, path->parts.size == 1, path->parts.size == 1, symbols);
+    symbol_lookup_resolve(path->last, symbol_table, path->parts.size == 1, access_level, symbols);
     get_info(path, true)->symbol = error;
     return true;
 }
@@ -1881,8 +1902,13 @@ Symbol* path_lookup_resolve_to_single_symbol(AST::Path_Lookup* path)
         return error;
     }
 
+    Symbol_Access_Level access_level = analyser.current_workload->symbol_access_level;
+    if (path->parts.size != 1) { // When a path is specified always use the least strong access level
+        access_level = Symbol_Access_Level::GLOBAL;
+    }
+
     // Resolve symbol
-    Symbol* symbol = symbol_lookup_resolve_to_single_symbol(path->last, symbol_table, path->parts.size == 1, path->parts.size == 1);
+    Symbol* symbol = symbol_lookup_resolve_to_single_symbol(path->last, symbol_table, path->parts.size == 1, access_level);
     path_lookup_set_result_symbol(path, symbol);
     return symbol;
 }
@@ -2687,7 +2713,9 @@ Datatype_Memory_Info* type_wait_for_size_info_to_finish(Datatype* type, Dependen
     analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(structure->workload), failure_info);
     workload_executer_wait_for_dependency_resolution();
 
-    assert(!type_size_is_unfinished(type), "");
+    if (failure_info.fail_indicator == 0) {
+        assert(!type_size_is_unfinished(type), "");
+    }
     return &type->memory_info.value;
 }
 
@@ -2699,7 +2727,7 @@ Workload_Import_Resolve* create_import_workload(AST::Import* import_node)
     // Check for Syntax-Errors
     if (import_node->type != AST::Import_Type::FILE) {
         if (import_node->path->parts.size == 1 && import_node->alias_name == 0 && import_node->type == AST::Import_Type::SINGLE_SYMBOL) {
-            log_semantic_error("Cannot import single symbol, or have an alias with same name!", upcast(import_node->path));
+            log_semantic_error("Cannot import single symbol, it's already accessible!", upcast(import_node->path));
             return 0;
         }
         if (import_node->path->last->name == import_node->alias_name) {
@@ -2724,6 +2752,7 @@ Workload_Import_Resolve* create_import_workload(AST::Import* import_node)
     import_workload->alias_for_symbol = 0;
 
     // Define Symbols if there are any
+    // NOTE: Symbol_Access_Level::GLOBAL may be wrong when importing a local variable, but I'm not even sure this works
     auto workload = semantic_analyser.current_workload;
     if (import_node->type == AST::Import_Type::SINGLE_SYMBOL) {
         auto name = import_node->path->last->name;
@@ -2731,13 +2760,13 @@ Workload_Import_Resolve* create_import_workload(AST::Import* import_node)
             name = import_node->alias_name;
         }
         import_workload->symbol = symbol_table_define_symbol(
-            workload->current_symbol_table, name, Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, upcast(import_node), false
+            workload->current_symbol_table, name, Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, upcast(import_node), Symbol_Access_Level::GLOBAL
         );
         import_workload->symbol->options.alias_workload = import_workload;
     }
     else if (import_node->type == AST::Import_Type::FILE && import_node->alias_name != 0) {
         import_workload->symbol = symbol_table_define_symbol(
-            workload->current_symbol_table, import_node->alias_name, Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, upcast(import_node), false
+            workload->current_symbol_table, import_node->alias_name, Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, upcast(import_node), Symbol_Access_Level::GLOBAL
         );
         import_workload->symbol->options.alias_workload = import_workload;
     }
@@ -2796,6 +2825,12 @@ void analyse_parameter_type_and_value(Function_Parameter& parameter, AST::Parame
     // Analyse parameter
     parameter.type = semantic_analyser_analyse_expression_type(parameter_node->type);
 
+    // Update symbol access level 
+    auto& level = semantic_analyser.current_workload->symbol_access_level;
+    auto backup_level = level;
+    level = Symbol_Access_Level::GLOBAL;
+    SCOPE_EXIT(level = backup_level);
+
     // Analyse default value
     if (!parameter_node->default_value.available) {
         parameter.default_value.available = false;
@@ -2828,15 +2863,6 @@ void analysis_workload_entry(void* userdata)
     auto& type_system = compiler.type_system;
     auto& types = type_system.predefined_types;
     analyser.current_workload = workload;
-
-    workload->current_function = 0;
-    workload->current_expression = 0;
-    workload->statement_reachable = true;
-    workload->current_symbol_table = workload->parent_table;
-    workload->polymorphic_values.data = 0;
-    workload->polymorphic_values.size = 0;
-    workload->implicit_polymorphic_values.data = 0;
-    workload->implicit_polymorphic_values.size = 0;
 
     switch (workload->type)
     {
@@ -2898,7 +2924,7 @@ void analysis_workload_entry(void* userdata)
             if (node->alias_name == 0) {
                 // Install into current symbol_table
                 symbol_table_add_include_table(
-                    import_workload->base.current_symbol_table, module_progress->module_analysis->symbol_table, false, false, upcast(node)
+                    import_workload->base.current_symbol_table, module_progress->module_analysis->symbol_table, false, Symbol_Access_Level::GLOBAL, upcast(node)
                 );
             }
             else {
@@ -2938,7 +2964,7 @@ void analysis_workload_entry(void* userdata)
                         semantic_analyser.current_workload->current_symbol_table,
                         progress->module_analysis->symbol_table,
                         node->type == AST::Import_Type::MODULE_SYMBOLS_TRANSITIVE,
-                        false,
+                        Symbol_Access_Level::GLOBAL,
                         upcast(node)
                     );
                 }
@@ -3059,7 +3085,6 @@ void analysis_workload_entry(void* userdata)
         ModTree_Function* function = header_workload->progress->function;
         auto& signature_node = header_workload->function_node->options.function.signature->options.function_signature;
         auto& parameter_nodes = signature_node.parameters;
-        workload->current_function = function;
 
         Dynamic_Array<Function_Parameter> parameters = dynamic_array_create_empty<Function_Parameter>(parameter_nodes.size); // Note: Ownership is later transfered to type
         parameters.size = parameter_nodes.size;
@@ -3067,8 +3092,6 @@ void analysis_workload_entry(void* userdata)
         SCOPE_EXIT(dynamic_array_destroy(&implicit_parameter_nodes));
         Dynamic_Array<Datatype_Template_Parameter*> implicit_parameters = dynamic_array_create_empty<Datatype_Template_Parameter*>(1);
         SCOPE_EXIT(if (progress->type != Polymorphic_Analysis_Type::POLYMORPHIC_BASE) { dynamic_array_destroy(&implicit_parameters); });
-        Dynamic_Array<int> polymorphic_parameter_indices = dynamic_array_create_empty<int>(1);
-        SCOPE_EXIT(if (progress->type != Polymorphic_Analysis_Type::POLYMORPHIC_BASE) { dynamic_array_destroy(&polymorphic_parameter_indices); });
 
         // Analyse parameters (Create Symbols and Workloads and initialize parameter infos)
         int comptime_parameter_count = 0;
@@ -3079,18 +3102,18 @@ void analysis_workload_entry(void* userdata)
 
             // Create symbol
             Symbol* symbol = symbol_table_define_symbol(
-                header_workload->base.current_symbol_table, param_node->name, Symbol_Type::PARAMETER, AST::upcast(param_node), true
+                header_workload->base.current_symbol_table, param_node->name, Symbol_Type::PARAMETER, AST::upcast(param_node),
+                (param_node->is_comptime ? Symbol_Access_Level::POLYMORPHIC : Symbol_Access_Level::INTERNAL)
             );
 
             // Initialize parameter info
             parameter = function_parameter_make_empty(symbol, 0);
             parameter.index = i;
             if (param_node->is_comptime) {
-                comptime_parameter_count += 1;
                 progress->type = Polymorphic_Analysis_Type::POLYMORPHIC_BASE;
                 parameter.parameter_type = Parameter_Type::POLYMORPHIC;
-                parameter.polymorphic_index = polymorphic_parameter_indices.size;
-                dynamic_array_push_back(&polymorphic_parameter_indices, i);
+                parameter.value_access_index = comptime_parameter_count;
+                comptime_parameter_count += 1;
             }
 
             // Create workload
@@ -3098,8 +3121,8 @@ void analysis_workload_entry(void* userdata)
             parameter.workload = param_workload;
             param_workload->progress = progress;
             param_workload->node = param_node;
-            param_workload->base.parent_table = header_workload->base.current_symbol_table;
             param_workload->parameter_index = i;
+            param_workload->base.current_function = function;
             analysis_workload_add_dependency_internal(upcast(header_workload), upcast(param_workload));
 
             // Set analysis info
@@ -3118,13 +3141,13 @@ void analysis_workload_entry(void* userdata)
                 // Create symbol
                 Symbol* symbol = symbol_table_define_symbol(
                     header_workload->base.current_symbol_table, implicit_node->options.polymorphic_symbol_id,
-                    Symbol_Type::TEMPLATE_PARAMETER, AST::upcast(implicit_node), true
+                    Symbol_Type::TEMPLATE_PARAMETER, AST::upcast(implicit_node), Symbol_Access_Level::POLYMORPHIC
                 );
                 // Create type
-                symbol->options.implicit = type_system_make_template_parameter(symbol, param_workload, implicit_parameters.size);
-                hashtable_insert_element(&semantic_analyser.implicit_parameter_node_mapping, implicit_node, symbol->options.implicit);
+                symbol->options.template_parameter = type_system_make_template_parameter(symbol, param_workload);
+                hashtable_insert_element(&semantic_analyser.valid_template_parameters, implicit_node, symbol->options.template_parameter);
                 // Store in implicit parameter array
-                dynamic_array_push_back(&implicit_parameters, symbol->options.implicit);
+                dynamic_array_push_back(&implicit_parameters, symbol->options.template_parameter);
             }
         }
 
@@ -3136,18 +3159,30 @@ void analysis_workload_entry(void* userdata)
             }
             if (param.symbol != 0) {
                 param.symbol->options.parameter = &param;
-                // if (param.parameter_type == Parameter_Type::IMPLICIT) {
-                //     get_info(downcast<AST::Expression>(param.symbol->definition_node), true)->specifics.implicit_parameter = &param;
-                // }
             }
         }
 
-        // Switch progress to polymorphic_function if polymorphic_function parameters were encountered
+        // Switch progress to polymorphic if polymorphic parameters were encountered
         if (progress->type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE) {
-            progress->polymorphic_base.parameter_analysis_order = dynamic_array_create_empty<int>(1);
-            progress->polymorphic_base.instances = dynamic_array_create_empty<Function_Progress*>(1);
-            progress->polymorphic_base.implicit_parameters = implicit_parameters;
-            progress->polymorphic_base.comptime_parameter_count = comptime_parameter_count;
+            auto& base = progress->polymorphic_base;
+            base.parameter_analysis_order = dynamic_array_create_empty<int>(1);
+            base.instances = dynamic_array_create_empty<Function_Progress*>(1);
+            base.implicit_parameters = implicit_parameters;
+            base.comptime_parameter_count = comptime_parameter_count;
+            base.polymorphic_parameter_types = array_create_empty<Datatype*>(comptime_parameter_count + implicit_parameters.size);
+            for (int i = 0; i < base.polymorphic_parameter_types.size; i++) {
+                base.polymorphic_parameter_types[i] = types.error_type;
+                if (i >= comptime_parameter_count) {
+                    implicit_parameters[i - comptime_parameter_count]->value_access_index = i;
+                    implicit_parameters[i - comptime_parameter_count]->mirrored_type->value_access_index = i;
+                }
+            }
+
+            // Set polymorphic access infos
+            header_workload->base.polymorphic_access_info = polymorphic_access_info_make_base(base.polymorphic_parameter_types);
+            progress->body_workload->base.polymorphic_access_info = header_workload->base.polymorphic_access_info;
+
+            // Update function + symbol
             function->is_runnable = false; // Polymorphic base cannot be runnable
             if (function->symbol != 0) {
                 function->symbol->type = Symbol_Type::POLYMORPHIC_FUNCTION;
@@ -3171,8 +3206,16 @@ void analysis_workload_entry(void* userdata)
     case Analysis_Workload_Type::FUNCTION_PARAMETER:
     {
         auto param_workload = downcast<Workload_Function_Parameter>(workload);
-        workload->current_function = param_workload->progress->function;
+        // Copy access infos from header-workload
+        param_workload->base.polymorphic_access_info = param_workload->progress->header_workload->base.polymorphic_access_info;
+        // Analyse type
         analyse_parameter_type_and_value(*param_workload->parameter, param_workload->node);
+
+        // Update base parameter type if in base analysis
+        if (param_workload->parameter->parameter_type == Parameter_Type::POLYMORPHIC) {
+            assert(param_workload->base.polymorphic_access_info.analysis_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE, "");
+            param_workload->base.polymorphic_access_info.base_datatypes[param_workload->parameter->value_access_index] = param_workload->parameter->type;
+        }
 
         // Set index in evaluation order if comptime
         if (param_workload->parameter->parameter_type == Parameter_Type::POLYMORPHIC || 
@@ -3203,9 +3246,6 @@ void analysis_workload_entry(void* userdata)
                 function->is_runnable = false;
                 break;
             }
-
-            workload->polymorphic_values = instance.parameter_values;
-            workload->implicit_polymorphic_values = instance.implicit_parameter_values;
         }
 
         // Analyse body
@@ -3247,7 +3287,7 @@ void analysis_workload_entry(void* userdata)
         auto& struct_node = workload_poly->body_workload->struct_node->options.structure;
 
         // Create new symbol-table, define symbols and analyse parameters
-        Symbol_Table* parameter_table = symbol_table_create_with_parent(analyser.current_workload->current_symbol_table, false);
+        Symbol_Table* parameter_table = symbol_table_create_with_parent(analyser.current_workload->current_symbol_table, Symbol_Access_Level::GLOBAL);
         for (int i = 0; i < struct_node.parameters.size; i++) 
         {
             auto& param_node = struct_node.parameters[i];
@@ -3255,28 +3295,31 @@ void analysis_workload_entry(void* userdata)
 
             // Create symbol
             Symbol* symbol = symbol_table_define_symbol(
-                parameter_table, param_node->name, Symbol_Type::STRUCT_PARAMETER, AST::upcast(param_node), true
+                parameter_table, param_node->name, Symbol_Type::STRUCT_PARAMETER, AST::upcast(param_node), Symbol_Access_Level::POLYMORPHIC
             );
             symbol->options.struct_parameter.workload = workload_poly;
             symbol->options.struct_parameter.parameter_index = i;
 
             // Analyse base type
             struct_param.symbol = symbol;
-            struct_param.parameter_type = semantic_analyser_analyse_expression_type(param_node->type);
+            auto base_param_type = semantic_analyser_analyse_expression_type(param_node->type);
+            workload_poly->base_parameter_types[i] = base_param_type;
 
             // Analyes default value
             struct_param.has_default_value = param_node->default_value.available;
             struct_param.default_value.available = false;
-            if (param_node->default_value.available && !datatype_is_unknown(struct_param.parameter_type)) {
+            if (param_node->default_value.available && !datatype_is_unknown(base_param_type)) {
                 semantic_analyser_analyse_expression_value(
-                    param_node->default_value.value, expression_context_make_specific_type(struct_param.parameter_type));
+                    param_node->default_value.value, expression_context_make_specific_type(base_param_type));
                 struct_param.default_value = expression_calculate_comptime_value(param_node->default_value.value, "Default values must be comptime");
             }
         }
 
         // Store/Set correct symbol table for base-analysis and instance analysis
-        workload_poly->symbol_table = parameter_table;
+        workload_poly->base.current_symbol_table = parameter_table;
         workload_poly->body_workload->base.current_symbol_table = parameter_table;
+        workload_poly->body_workload->base.polymorphic_access_info = polymorphic_access_info_make_base(workload_poly->base_parameter_types);
+        workload_poly->body_workload->base.symbol_access_level = Symbol_Access_Level::POLYMORPHIC;
         break;
     }
     case Analysis_Workload_Type::STRUCT_BODY:
@@ -3291,9 +3334,10 @@ void analysis_workload_entry(void* userdata)
         if (workload_structure->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
             auto& instance = workload_structure->polymorphic_info.instance;
             assert(instance.parent->base.is_finished, "At this point the base has to be finished");
+            assert(instance.parent->body_workload->base.is_finished, "Body base must be also finished");
 
             // If an error occured in the polymorphic base, set all struct members to error-type
-            if (instance.parent->base.real_error_count != 0) {
+            if (instance.parent->base.real_error_count != 0 || instance.parent->body_workload->base.real_error_count != 0) {
                 for (int i = 0; i < struct_node.members.size; i++) {
                     auto member_node = struct_node.members[i];
                     struct_add_member(struct_signature, member_node->symbols[0]->name, types.error_type);
@@ -3301,11 +3345,6 @@ void analysis_workload_entry(void* userdata)
                 type_system_finish_struct(struct_signature);
                 break;
             }
-            semantic_analyser.current_workload->current_symbol_table = instance.parent->symbol_table;
-            semantic_analyser.current_workload->polymorphic_values = instance.parameter_values;
-        }
-        else if (workload_structure->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE) {
-            semantic_analyser.current_workload->current_symbol_table = workload_structure->polymorphic_info.polymorphic_base->symbol_table;
         }
 
         // Analyse all members
@@ -3883,11 +3922,8 @@ Expression_Info analyse_symbol_as_expression(Symbol* symbol, Expression_Context 
         break;
     }
     case Symbol_Type::TEMPLATE_PARAMETER: {
-        auto other = symbol->options.implicit->parameter_workload;
+        auto other = symbol->options.template_parameter->parameter_workload;
         analysis_workload_add_dependency_internal(workload, upcast(other), failure_info);
-        if (workload->type == Analysis_Workload_Type::FUNCTION_PARAMETER) {
-            downcast<Workload_Function_Parameter>(workload)->parameter->has_dependencies_on_other_parameters = true;
-        }
         break;
     }
     case Symbol_Type::PARAMETER:
@@ -3895,9 +3931,6 @@ Expression_Info analyse_symbol_as_expression(Symbol* symbol, Expression_Context 
         auto parameter = symbol->options.parameter;
         if (parameter->workload != 0) {
             analysis_workload_add_dependency_internal(workload, upcast(parameter->workload), failure_info);
-            if (workload->type == Analysis_Workload_Type::FUNCTION_PARAMETER) {
-                downcast<Workload_Function_Parameter>(workload)->parameter->has_dependencies_on_other_parameters = true;
-            }
         }
         break;
     }
@@ -3948,7 +3981,7 @@ Expression_Info analyse_symbol_as_expression(Symbol* symbol, Expression_Context 
         break;
     }
     case Symbol_Type::STRUCT_PARAMETER: {
-        // If i can access this symbol this means the analysis must have finished by now
+        // If i can access this symbol this means the header-analysis must have finished by now
         break;
     }
     default: break;
@@ -4005,18 +4038,29 @@ Expression_Info analyse_symbol_as_expression(Symbol* symbol, Expression_Context 
     }
     case Symbol_Type::TEMPLATE_PARAMETER:
     {
-        auto poly = symbol->options.implicit;
-        // Always use the reference type (Since in this code_path we are reading a Implicit_Parameter symbol)
+        auto poly = symbol->options.template_parameter;
+        // Always use the reference type (Since in this code_path we are reading a parameter symbol)
         if (!poly->is_reference) {
             poly = poly->mirrored_type;
         }
+        
+        if (workload->type == Analysis_Workload_Type::FUNCTION_PARAMETER) {
+            auto param_workload = downcast<Workload_Function_Parameter>(workload);
+            // Anonymous functions should not register this flag
+            if (param_workload->progress == poly->parameter_workload->progress) {
+                param_workload->parameter->has_dependencies_on_other_parameters = true;
+            }
+        }
 
-        if (workload->implicit_polymorphic_values.data == 0) {
-            expression_info_set_value(&result, poly->datatype);
+        auto& access_info = workload->polymorphic_access_info;
+        assert(access_info.analysis_type != Polymorphic_Analysis_Type::NON_POLYMORPHIC, "");
+        if (access_info.analysis_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE) {
+            // TODO: Not sure this is correct? base_datatype is usually set to error, or if it's known it could be a value?
+            expression_info_set_value(&result, access_info.base_datatypes[poly->value_access_index]);
         }
         else {
             // Otherwise use instance value
-            auto& value = workload->implicit_polymorphic_values[symbol->options.implicit->index];
+            auto& value = access_info.instance_values[poly->value_access_index];
             assert(value.constant_index != -1, "I think this must be instanciated at this point?");
             expression_info_set_constant(&result, value);
         }
@@ -4026,15 +4070,16 @@ Expression_Info analyse_symbol_as_expression(Symbol* symbol, Expression_Context 
     {
         auto& param = *(symbol->options.parameter);
         auto workload = semantic_analyser.current_workload;
+
         if (param.parameter_type == Parameter_Type::NORMAL) 
         {
             if (workload->type == Analysis_Workload_Type::FUNCTION_PARAMETER || workload->type == Analysis_Workload_Type::FUNCTION_HEADER) {
-                log_semantic_error("Accessing parameter_nodes in function header is only valid for comptime parameter_nodes", upcast(error_report_node));
+                log_semantic_error("Accessing parameters in function header is only valid for comptime parameters", upcast(error_report_node));
                 expression_info_set_error(&result, param.type);
                 return result;
             }
             auto progress = analysis_workload_try_get_function_progress(workload);
-            assert(progress != 0, "Should be true after previous check");
+            assert(progress != 0, "We should be in function-body workload with previous check, since normal parameters have internal symbol access");
 
             if (progress->type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
                 // Note: Here we cannot use param.type, since this would refer to the base type of a non-polymorphic_function parameter.
@@ -4049,13 +4094,22 @@ Expression_Info analyse_symbol_as_expression(Symbol* symbol, Expression_Context 
         }
         else 
         {
-            if (workload->polymorphic_values.data == 0) {
-                expression_info_set_value(&result, param.type);
+            if (workload->type == Analysis_Workload_Type::FUNCTION_PARAMETER) {
+                auto param_workload = downcast<Workload_Function_Parameter>(workload);
+                if (param_workload->progress == param.workload->progress) {
+                    // Anonymous functions should not register this flag
+                    param_workload->parameter->has_dependencies_on_other_parameters = true;
+                }
+            }
+
+            auto access_info = workload->polymorphic_access_info;
+            assert(access_info.analysis_type != Polymorphic_Analysis_Type::NON_POLYMORPHIC, "Why can we access non-polymorphic parameter here");
+            if (access_info.analysis_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE) {
+                expression_info_set_value(&result, access_info.base_datatypes[param.value_access_index]);
                 return result;
             }
             else {
-                // Note: This may be the case during either Instanciation (Normal function) or inside the instance function analysis
-                expression_info_set_constant(&result, workload->polymorphic_values[param.polymorphic_index]);
+                expression_info_set_constant(&result, access_info.instance_values[param.value_access_index]);
                 return result;
             }
         }
@@ -4065,22 +4119,15 @@ Expression_Info analyse_symbol_as_expression(Symbol* symbol, Expression_Context 
     }
     case Symbol_Type::STRUCT_PARAMETER: {
         auto& parameter = symbol->options.struct_parameter;
-        assert(workload->type == Analysis_Workload_Type::STRUCT_BODY, "Struct parameters should only be accessible in struct body");
-        auto current_struct_workload = downcast<Workload_Structure_Body>(workload);
-        assert(current_struct_workload->polymorphic_type != Polymorphic_Analysis_Type::NORMAL, "");
-
-        switch (current_struct_workload->polymorphic_type)
-        {
-        case Polymorphic_Analysis_Type::POLYMORPHIC_BASE: {
-            assert(current_struct_workload->polymorphic_info.polymorphic_base == parameter.workload, "I think this should be the case for now...");
-            expression_info_set_value(&result, parameter.workload->parameters[parameter.parameter_index].parameter_type);
+        auto& access_info = workload->polymorphic_access_info;
+        assert(access_info.analysis_type != Polymorphic_Analysis_Type::NON_POLYMORPHIC, "Why can we access non-polymorphic parameter here");
+        if (access_info.analysis_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE) {
+            expression_info_set_value(&result, access_info.base_datatypes[parameter.parameter_index]);
             return result;
         }
-        case Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE: {
-            expression_info_set_constant(&result, current_struct_workload->polymorphic_info.instance.parameter_values[parameter.parameter_index]);
+        else {
+            expression_info_set_constant(&result, access_info.instance_values[parameter.parameter_index]);
             return result;
-        }
-        default: panic("Normal shouldn't happen here!");
         }
     }
     case Symbol_Type::COMPTIME_VALUE: {
@@ -4259,7 +4306,7 @@ Callable_Parameter_Info callable_get_parameter_info(const Callable& callable, in
     {
     case Callable_Type::POLYMORPHIC_STRUCT: {
         auto& param = callable.options.polymorphic_struct->parameters[parameter_index];
-        result.type = param.parameter_type;
+        result.type = callable.options.polymorphic_struct->base_parameter_types[parameter_index];
         result.name = optional_make_success(param.symbol->id);
         result.has_default_value = param.has_default_value;
         return result;
@@ -4447,11 +4494,11 @@ bool match_templated_type(Datatype* polymorphic_type, Datatype* match_against, H
         if (poly_type->is_reference) {
             return true; // Don't match references
         }
-        assert(implicit_parameter_values[poly_type->index].constant_index == -1, "We shouldn't match the same parameter more than once");
+        assert(implicit_parameter_values[poly_type->value_access_index].constant_index == -1, "We shouldn't match the same parameter more than once");
         auto pool_result = constant_pool_add_constant(
             compiler.type_system.predefined_types.type_handle, array_create_static_as_bytes(&match_against->type_handle, 1));
         assert(pool_result.success, "Type handle must work as constant!");
-        implicit_parameter_values[poly_type->index] = pool_result.constant;
+        implicit_parameter_values[poly_type->value_access_index] = pool_result.constant;
         return true;
     }
     else if (polymorphic_type->type == Datatype_Type::STRUCT_INSTANCE_TEMPLATE) 
@@ -4483,7 +4530,7 @@ bool match_templated_type(Datatype* polymorphic_type, Datatype* match_against, H
             {
             case Matchable_Argument_Type::TEMPLATE_PARAMETER: {
                 auto poly_type = argument_to_match.options.template_parameter;
-                implicit_parameter_values[poly_type->index] = match_to_value;
+                implicit_parameter_values[poly_type->value_access_index] = match_to_value;
                 break;
             }
             case Matchable_Argument_Type::CONSTANT_VALUE: {
@@ -4538,7 +4585,7 @@ bool match_templated_type(Datatype* polymorphic_type, Datatype* match_against, H
             auto pool_result = constant_pool_add_constant(
                 upcast(compiler.type_system.predefined_types.i32_type), array_create_static_as_bytes(&element_count, 1));
             assert(pool_result.success, "I32 type must work as constant");
-            implicit_parameter_values[this_array->polymorphic_count_variable->index] = pool_result.constant;
+            implicit_parameter_values[this_array->polymorphic_count_variable->value_access_index] = pool_result.constant;
         }
 
         // Continue matching element type
@@ -4974,7 +5021,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             auto& poly_base = base_progress->polymorphic_base;
 
             // Check if we've hit recursion limit for function instanciation
-            int instanciation_depth = get_current_polymorphic_instanciation_depth() + 1;
+            int instanciation_depth = analyser.current_workload->polymorphic_instanciation_depth + 1;
             if (instanciation_depth > MAX_POLYMORPHIC_INSTANCIATION_DEPTH) {
                 log_semantic_error("Reached maximum polymorphic instanciation depth 10, not analysing further", call.expr, Parser::Section::FIRST_TOKEN);
                 arguments_analyse_in_unknown_context(arguments);
@@ -4985,15 +5032,14 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             bool success = true;
             bool log_error_on_failure = false;
 
-            Array<Upp_Constant> comptime_argument_values = array_create_empty<Upp_Constant>(poly_base.comptime_parameter_count);
-            SCOPE_EXIT(if (!success) { array_destroy(&comptime_argument_values); });
-            Array<Upp_Constant> implicit_parameter_values = array_create_empty<Upp_Constant>(poly_base.implicit_parameters.size);
-            SCOPE_EXIT(if (!success) { array_destroy(&implicit_parameter_values); });
-            for (int i = 0; i < implicit_parameter_values.size; i++) {
-                implicit_parameter_values[i].constant_index = -1;
-                implicit_parameter_values[i].memory = 0;
-                implicit_parameter_values[i].type = 0;
+            Array<Upp_Constant> instance_parameter_values = array_create_empty<Upp_Constant>(poly_base.polymorphic_parameter_types.size);
+            SCOPE_EXIT(if (!success) { array_destroy(&instance_parameter_values); });
+            for (int i = 0; i < instance_parameter_values.size; i++) {
+                instance_parameter_values[i].constant_index = -1;
+                instance_parameter_values[i].memory = 0;
+                instance_parameter_values[i].type = 0;
             }
+            Polymorphic_Access_Info instance_access_info = polymorphic_access_info_make_instance(instance_parameter_values);
 
             Array<Datatype*> instance_parameter_types = array_create_empty<Datatype*>(
                 base_progress->function->signature->parameters.size - poly_base.comptime_parameter_count
@@ -5049,9 +5095,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                         comptime_evaluation_pass = analysis_pass_allocate(semantic_analyser.current_workload, upcast(expr));
                     } 
                     RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->current_pass, comptime_evaluation_pass);
-                    RESTORE_ON_SCOPE_EXIT(analyser.current_workload->polymorphic_values, comptime_argument_values);
+                    RESTORE_ON_SCOPE_EXIT(analyser.current_workload->polymorphic_access_info, instance_access_info);
                     RESTORE_ON_SCOPE_EXIT(analyser.current_workload->current_symbol_table, base_progress->function->parameter_table);
-                    RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->implicit_polymorphic_values, implicit_parameter_values);
                     parameter_type = semantic_analyser_analyse_expression_type(parameter_node->type);
                 }
                 else {
@@ -5092,7 +5137,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                         }
                     }
                     else {
-                        comptime_argument_values[i] = comptime_result.value;
+                        instance_parameter_values[base_parameter.value_access_index] = comptime_result.value;
                     }
                 }
 
@@ -5112,7 +5157,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
                     // Match types
                     hashset_reset(&matching_helper);
-                    bool match_success = match_templated_type(parameter_type, argument_type, matching_helper, implicit_parameter_values);
+                    bool match_success = match_templated_type(parameter_type, argument_type, matching_helper, instance_parameter_values);
                     if (!match_success) {
                         log_semantic_error("Could not match argument with implicit-polymorphic symbols!", upcast(argument_node));
                         log_error_info_given_type(argument_type);
@@ -5142,14 +5187,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 {
                     auto& test_instance = poly_base.instances[i]->polymorhic_instance;
                     bool all_matching = true;
-                    for (int j = 0; j < poly_base.comptime_parameter_count; j++) {
-                        if (!upp_constant_is_equal(test_instance.parameter_values[j], comptime_argument_values[j])) {
-                            all_matching = false;
-                            break;
-                        }
-                    }
-                    for (int j = 0; j < poly_base.implicit_parameters.size; j++) {
-                        if (!upp_constant_is_equal(test_instance.implicit_parameter_values[j], implicit_parameter_values[j])) {
+                    for (int j = 0; j < instance_parameter_values.size; j++) {
+                        if (!upp_constant_is_equal(test_instance.instance_parameter_values[j], instance_parameter_values[j])) {
                             all_matching = false;
                             break;
                         }
@@ -5195,13 +5234,12 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                     }
 
                     Datatype* return_type = 0;
-                    // Re-analyse return type, as this isn't handled the same as parameter yet
+                    // Re-analyse return type, as this isn't handled the same as parameters yet
                     if (signature_node.return_value.available) {
                         if (comptime_evaluation_pass == 0) {
                             comptime_evaluation_pass = analysis_pass_allocate(semantic_analyser.current_workload, upcast(expr));
                         }
-                        RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->polymorphic_values, comptime_argument_values);
-                        RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->implicit_polymorphic_values, implicit_parameter_values);
+                        RESTORE_ON_SCOPE_EXIT(analyser.current_workload->polymorphic_access_info, instance_access_info);
                         RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->current_pass, comptime_evaluation_pass);
                         RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->current_symbol_table, base_progress->function->parameter_table);
                         return_type = semantic_analyser_analyse_expression_type(signature_node.return_value.value);
@@ -5213,11 +5251,13 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 // Create new instance progress
                 instance = function_progress_create_with_modtree_function(0, base_progress->header_workload->function_node, instance_function_type, base_progress);
                 instance->type = Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE;
-                instance->polymorhic_instance.instanciation_depth = instanciation_depth;
-                instance->polymorhic_instance.parameter_values = comptime_argument_values;
-                instance->polymorhic_instance.implicit_parameter_values = implicit_parameter_values;
+                instance->polymorhic_instance.instance_parameter_values = instance_parameter_values;
                 instance->polymorhic_instance.polymorphic_base = base_progress;
                 dynamic_array_push_back(&poly_base.instances, instance);
+
+                instance->body_workload->base.polymorphic_instanciation_depth += 1;
+                instance->body_workload->base.polymorphic_access_info = polymorphic_access_info_make_instance(instance_parameter_values);
+                instance->body_workload->base.current_symbol_table = base_progress->function->parameter_table;
             }
 
             // Re-assign argument to parameter mapping with new instance function-signature
@@ -5239,8 +5279,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         case Callable_Type::POLYMORPHIC_STRUCT: {
             auto base = candidate.options.polymorphic_struct;
 
-            int instanciation_depth = get_current_polymorphic_instanciation_depth() + 1;
-            if (instanciation_depth > MAX_POLYMORPHIC_INSTANCIATION_DEPTH) {
+            if (analyser.current_workload->polymorphic_instanciation_depth + 1 >= MAX_POLYMORPHIC_INSTANCIATION_DEPTH) {
                 log_semantic_error("Reached maximum polymorphic instanciation depth 10, not analysing further", call.expr, Parser::Section::FIRST_TOKEN);
                 arguments_analyse_in_unknown_context(arguments);
                 EXIT_ERROR(types.error_type);
@@ -5255,7 +5294,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             for (int i = 0; i < arguments.size; i++) {
                 auto& arg = arguments[i];
                 auto arg_info = get_info(arg);
-                auto expected_type = base->parameters[arg_info->argument_index].parameter_type;
+                auto expected_type = base->base_parameter_types[arg_info->argument_index];
 
                 auto& matchable_argument = argument_values[i];
                 matchable_argument.type = Matchable_Argument_Type::CONSTANT_VALUE;
@@ -5263,7 +5302,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 // Check if expression is a polymorphic symbol
                 if (arg->value->type == AST::Expression_Type::TEMPLATE_PARAMETER) {
                     create_struct_instance_template = true;
-                    auto polymorphic_type_opt = hashtable_find_element(&semantic_analyser.implicit_parameter_node_mapping, arg->value);
+                    auto polymorphic_type_opt = hashtable_find_element(&semantic_analyser.valid_template_parameters, arg->value);
                     if (polymorphic_type_opt == 0) {
                         log_semantic_error("Implicit polymorphic parameter only valid in function header!", arg->value);
                         error_occured = true;
@@ -5343,10 +5382,10 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             }
 
             // Create new struct instance
-            auto body_workload = workload_structure_create(base->body_workload->struct_node, 0, true);
+            auto body_workload = workload_structure_create(base->body_workload->struct_node, 0, true, Symbol_Access_Level::POLYMORPHIC);
+            body_workload->base.polymorphic_instanciation_depth += 1;
             body_workload->polymorphic_type = Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE;
             Structure_Polymorphic_Instance* instance = &body_workload->polymorphic_info.instance;
-            instance->instanciation_depth = get_current_polymorphic_instanciation_depth() + 1;
             instance->parameter_values = array_create_empty<Upp_Constant>(argument_values.size); 
             for (int i = 0; i < argument_values.size; i++) {
                 auto& value = argument_values[i];
@@ -5355,6 +5394,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             }
             instance->parent = base;
             
+            body_workload->base.polymorphic_access_info = polymorphic_access_info_make_instance(instance->parameter_values);
+            body_workload->base.current_symbol_table = base->base.current_symbol_table;
             analysis_workload_add_dependency_internal(upcast(body_workload), upcast(base->body_workload));
             dynamic_array_push_back(&base->instances, instance);
             EXIT_TYPE(upcast(body_workload->struct_type));
@@ -5420,18 +5461,19 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
     }
     case AST::Expression_Type::TEMPLATE_PARAMETER: {
         // Note: The mapping is only registered during header analysis, otherwise we have an invalid usage of this expression
-        auto polymorphic_type_opt = hashtable_find_element(&semantic_analyser.implicit_parameter_node_mapping, expr);
+        auto polymorphic_type_opt = hashtable_find_element(&semantic_analyser.valid_template_parameters, expr);
         if (polymorphic_type_opt == 0) {
             log_semantic_error("Implicit polymorphic parameter only valid in function header!", expr);
             EXIT_ERROR(types.error_type);
         }
         auto poly_type = *polymorphic_type_opt;
-
         assert(!poly_type->is_reference, "We can never be the reference if we are at the symbol, e.g. $T is not a symbol-read like T");
+
+        auto& access_info = analyser.current_workload->polymorphic_access_info;
+        assert(access_info.analysis_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE, "");
         if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED) {
             // A polymorphic symbol can be of any datatype until it is matched
-            poly_type->datatype = context.signature;
-            poly_type->mirrored_type->datatype = context.signature;
+            access_info.base_datatypes[poly_type->value_access_index] = context.signature;
             EXIT_VALUE(context.signature);
         }
         EXIT_TYPE(upcast(poly_type));
@@ -5611,108 +5653,52 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         log_semantic_error("Module not valid in this context", AST::upcast(expr));
         EXIT_ERROR(types.error_type);
     }
-    case AST::Expression_Type::FUNCTION:
-    case AST::Expression_Type::STRUCTURE_TYPE:
+    case AST::Expression_Type::FUNCTION: {
+        // Create new function progress and wait for header analyis to finish
+        auto progress = function_progress_create_with_modtree_function(0, expr, 0, nullptr, Symbol_Access_Level::POLYMORPHIC);
+        progress->header_workload->base.polymorphic_access_info = analyser.current_workload->polymorphic_access_info;
+        progress->body_workload->base.polymorphic_access_info = analyser.current_workload->polymorphic_access_info;
+        analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(progress->header_workload));
+        workload_executer_wait_for_dependency_resolution();
+
+        // Return function
+        semantic_analyser_register_function_call(progress->function);
+        EXIT_FUNCTION(progress->function);
+    }
+    case AST::Expression_Type::STRUCTURE_TYPE: {
+        auto workload = workload_structure_create(expr, 0, false, Symbol_Access_Level::POLYMORPHIC);
+        workload->base.polymorphic_access_info = analyser.current_workload->polymorphic_access_info;
+        EXIT_TYPE(upcast(workload->struct_type));
+    }
     case AST::Expression_Type::BAKE_BLOCK:
-    case AST::Expression_Type::BAKE_EXPR:
-    {
-        // Search for already generated workloads on this node
-        Workload_Base* workload = 0;
-        {
-            auto passes = hashtable_find_element(&semantic_analyser.ast_to_pass_mapping, AST::upcast(expr));
-            if (passes != 0) {
-                assert(passes->passes.size == 1, "With the current system, only one workload should ever exist for a anonymous definition!");
-                workload = passes->passes[0]->origin_workload;
-            }
+    case AST::Expression_Type::BAKE_EXPR: {
+        // Create bake progress and wait for it to finish
+        Datatype* expected_type = 0;
+        if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED) {
+            expected_type = context.signature;
         }
+        auto progress = bake_progress_create(expr, expected_type);
+        progress->analysis_workload->base.polymorphic_access_info = analyser.current_workload->polymorphic_access_info;
+        analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(progress->execute_workload));
+        workload_executer_wait_for_dependency_resolution();
 
-        // Create new workload if none exists yet
-        if (workload == 0) {
-            switch (expr->type)
-            {
-            case AST::Expression_Type::FUNCTION: {
-                workload = upcast(function_progress_create_with_modtree_function(0, expr, 0)->header_workload);
-                break;
-            }
-            case AST::Expression_Type::STRUCTURE_TYPE: {
-                workload = upcast(workload_structure_create(expr, 0, false));
-                break;
-            }
-            case AST::Expression_Type::BAKE_BLOCK:
-            case AST::Expression_Type::BAKE_EXPR: {
-                Datatype* expected_type = 0;
-                if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED) {
-                    expected_type = context.signature;
-                }
-                workload = upcast(bake_progress_create(expr, expected_type)->analysis_workload);
-                break;
-            }
-            default:panic("Cannot happen anymore");
-            }
+        // Handle result
+        auto bake_result = &progress->result;
+        if (bake_result->available) {
+            expression_info_set_constant(info, bake_result->value);
+            return info;
         }
-
-        // Possibly wait for workload and then return result
-        switch (workload->type)
-        {
-        case Analysis_Workload_Type::BAKE_ANALYSIS: {
-            // Wait for bake to finish
-            auto progress = downcast<Workload_Bake_Analysis>(workload)->progress;
-            analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(progress->execute_workload));
-            workload_executer_wait_for_dependency_resolution();
-
-            // Handle result
-            auto bake_result = &progress->result;
-            if (bake_result->available) {
-                expression_info_set_constant(info, bake_result->value);
-                return info;
+        else {
+            auto return_type = progress->bake_function->signature->return_type;
+            if (return_type.available) {
+                EXIT_ERROR(return_type.value);
             }
             else {
-                auto return_type = progress->bake_function->signature->return_type;
-                if (return_type.available) {
-                    EXIT_ERROR(return_type.value);
-                }
-                else {
-                    EXIT_ERROR(types.error_type);
-                }
+                EXIT_ERROR(types.error_type);
             }
-            break;
-        };
-        case Analysis_Workload_Type::FUNCTION_HEADER: {
-            // Wait for workload
-            auto progress = downcast<Workload_Function_Header>(workload)->progress;
-            analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(progress->header_workload));
-            workload_executer_wait_for_dependency_resolution();
-
-            // Return value
-            semantic_analyser_register_function_call(progress->function);
-            EXIT_FUNCTION(progress->function);
-            break;
         }
-        case Analysis_Workload_Type::STRUCT_BODY: {
-            EXIT_TYPE(upcast(downcast<Workload_Structure_Body>(workload)->struct_type));
-            break;
-        }
-        case Analysis_Workload_Type::MODULE_ANALYSIS: {
-            log_semantic_error("Anonymous modules aren't currently supported", expr);
-            EXIT_ERROR(types.error_type);
-        }
-        case Analysis_Workload_Type::DEFINITION:
-        case Analysis_Workload_Type::EVENT:
-        case Analysis_Workload_Type::BAKE_EXECUTION:
-        case Analysis_Workload_Type::FUNCTION_BODY:
-        case Analysis_Workload_Type::IMPORT_RESOLVE:
-        case Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE:
-        default:
-        {
-            panic("Invalid codepath, ");
-            EXIT_ERROR(types.error_type);
-            break;
-        }
-        }
-
-        panic("Invalid code path");
+        panic("invalid_code_path");
         EXIT_ERROR(types.error_type);
-        break;
     }
     case AST::Expression_Type::FUNCTION_SIGNATURE:
     {
@@ -5723,7 +5709,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         {
             auto& param_node = sig.parameters[i];
             if (param_node->is_comptime) {
-                log_semantic_error("Comptime parameter_nodes are only allowed in functions, not in signatures!", AST::upcast(param_node));
+                log_semantic_error("Comptime parameters are only allowed in functions, not in signatures!", AST::upcast(param_node));
                 continue;
             }
             Function_Parameter parameter = function_parameter_make_empty();
@@ -5763,12 +5749,16 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
         // Handle implicit polymorphic symbols for array size, e.g. foo :: (a: [$C]int)
         if (array_node.size_expr->type == AST::Expression_Type::TEMPLATE_PARAMETER) {
-            auto polymorphic_type_opt = hashtable_find_element(&semantic_analyser.implicit_parameter_node_mapping, array_node.size_expr);
+            auto polymorphic_type_opt = hashtable_find_element(&semantic_analyser.valid_template_parameters, array_node.size_expr);
             if (polymorphic_type_opt == 0) {
                 log_semantic_error("Implicit polymorphic parameter only valid in function header!", array_node.size_expr);
                 EXIT_TYPE(types.error_type);
             }
             auto poly_type = *polymorphic_type_opt;
+
+            auto& access_info = semantic_analyser.current_workload->polymorphic_access_info;
+            assert(access_info.analysis_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE, "");
+            access_info.base_datatypes[poly_type->value_access_index] = upcast(types.i32_type);
 
             result->polymorphic_count_variable = poly_type;
             result->base.contains_type_template = true;
@@ -5976,7 +5966,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             if (struct_type->workload == 0) {
                 return optional_make_failure<Datatype*>();
             }
-            if (struct_type->workload->polymorphic_type == Polymorphic_Analysis_Type::NORMAL) {
+            if (struct_type->workload->polymorphic_type == Polymorphic_Analysis_Type::NON_POLYMORPHIC) {
                 return optional_make_failure<Datatype*>();
             }
 
@@ -5996,7 +5986,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                     info->specifics.member_access.type = Member_Access_Type::STRUCT_POLYMORHPIC_PARAMETER_ACCESS;
                     info->specifics.member_access.index = i;
                     info->specifics.member_access.struct_workload = struct_workload;
-                    return optional_make_success(parameter.parameter_type);
+                    return optional_make_success(polymorphic->base_parameter_types[i]);
                 }
             }
 
@@ -6225,6 +6215,18 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         {
             // TODO: I think I can check if the context is a specific type + pointer and continue with child type
             auto operand_result = semantic_analyser_analyse_expression_any(unary_node.expr, expression_context_make_unknown());
+
+            // Handle constant type_handles correctly
+            if (operand_result->result_type == Expression_Result_Type::CONSTANT &&
+                operand_result->options.constant.type->type == Datatype_Type::TYPE_HANDLE) 
+            {
+                auto handle = upp_constant_to_value<Upp_Type_Handle>(operand_result->options.constant);
+                if ((int)handle.index < 0 || (int)handle.index >= type_system->types.size) {
+                    log_semantic_error("Constant type handle is invalid", unary_node.expr);
+                }
+                EXIT_TYPE(upcast(type_system_make_pointer(type_system->types[handle.index])));
+            }
+
             switch (operand_result->result_type)
             {
             case Expression_Result_Type::VALUE:
@@ -7283,7 +7285,7 @@ Control_Flow semantic_analyser_analyse_block(AST::Code_Block* block)
     block_info->flow = Control_Flow::SEQUENTIAL;
 
     // Create symbol table for block
-    block_info->symbol_table = symbol_table_create_with_parent(semantic_analyser.current_workload->current_symbol_table, true);
+    block_info->symbol_table = symbol_table_create_with_parent(semantic_analyser.current_workload->current_symbol_table, Symbol_Access_Level::INTERNAL);
     RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->current_symbol_table, block_info->symbol_table);
 
     // Create symbols and workloads for definitions inside the block
@@ -7401,11 +7403,11 @@ void function_progress_destroy(Function_Progress* progress) {
         dynamic_array_destroy(&base.instances);
         dynamic_array_destroy(&base.parameter_analysis_order);
         dynamic_array_destroy(&base.implicit_parameters);
+        array_destroy(&base.polymorphic_parameter_types);
     }
     else if (progress->type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
         auto& instance = progress->polymorhic_instance;
-        array_destroy(&instance.parameter_values);
-        array_destroy(&instance.implicit_parameter_values);
+        array_destroy(&instance.instance_parameter_values);
     }
     delete progress;
 }
@@ -7418,7 +7420,7 @@ void semantic_analyser_reset()
     {
         semantic_analyser.root_module = 0;
         semantic_analyser.current_workload = 0;
-        hashtable_reset(&semantic_analyser.implicit_parameter_node_mapping);
+        hashtable_reset(&semantic_analyser.valid_template_parameters);
 
         // Errors
         for (int i = 0; i < semantic_analyser.errors.size; i++) {
@@ -7492,7 +7494,8 @@ void semantic_analyser_reset()
         auto& types = compiler.type_system.predefined_types;
 
         auto define_type_symbol = [&](const char* name, Datatype* type) -> Symbol* {
-            Symbol* result = symbol_table_define_symbol(root, identifier_pool_add(pool, string_create_static(name)), Symbol_Type::TYPE, 0, false);
+            Symbol* result = symbol_table_define_symbol(
+                root, identifier_pool_add(pool, string_create_static(name)), Symbol_Type::TYPE, 0, Symbol_Access_Level::GLOBAL);
             result->options.type = type;
             if (type->type == Datatype_Type::STRUCT) {
                 downcast<Datatype_Struct>(type)->name = optional_make_success(result->id);
@@ -7521,7 +7524,8 @@ void semantic_analyser_reset()
         symbols.type_empty = define_type_symbol("void_pointer", upcast(types.void_pointer_type));
 
         auto define_hardcoded_symbol = [&](const char* name, Hardcoded_Type type) -> Symbol* {
-            Symbol* result = symbol_table_define_symbol(root, identifier_pool_add(pool, string_create_static(name)), Symbol_Type::HARDCODED_FUNCTION, 0, false);
+            Symbol* result = symbol_table_define_symbol(
+                root, identifier_pool_add(pool, string_create_static(name)), Symbol_Type::HARDCODED_FUNCTION, 0, Symbol_Access_Level::GLOBAL);
             result->options.hardcoded = type;
             return result;
         };
@@ -7571,14 +7575,14 @@ Semantic_Analyser* semantic_analyser_initialize()
     semantic_analyser.ast_to_info_mapping = hashtable_create_empty<AST_Info_Key, Analysis_Info*>(1, ast_info_key_hash, ast_info_equals);
     semantic_analyser.allocated_symbol_tables = dynamic_array_create_empty<Symbol_Table*>(16);
     semantic_analyser.allocated_symbols = dynamic_array_create_empty<Symbol*>(16);
-    semantic_analyser.implicit_parameter_node_mapping = hashtable_create_pointer_empty<AST::Expression*, Datatype_Template_Parameter*>(1);
+    semantic_analyser.valid_template_parameters = hashtable_create_pointer_empty<AST::Expression*, Datatype_Template_Parameter*>(1);
     return &semantic_analyser;
 }
 
 void semantic_analyser_destroy()
 {
     hashset_destroy(&semantic_analyser.symbol_lookup_visited);
-    hashtable_destroy(&semantic_analyser.implicit_parameter_node_mapping);
+    hashtable_destroy(&semantic_analyser.valid_template_parameters);
     stack_allocator_destroy(&semantic_analyser.global_variable_memory_pool);
 
     for (int i = 0; i < semantic_analyser.errors.size; i++) {

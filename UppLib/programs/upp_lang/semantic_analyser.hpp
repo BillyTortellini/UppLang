@@ -10,6 +10,7 @@
 #include "compiler_misc.hpp"
 #include "parser.hpp"
 #include "constant_pool.hpp"
+#include "symbol_table.hpp"
 
 struct Symbol;
 struct Symbol_Table;
@@ -85,6 +86,22 @@ struct ModTree_Program
 
 
 // WORKLOADS
+enum class Polymorphic_Analysis_Type
+{
+    NON_POLYMORPHIC,
+    POLYMORPHIC_BASE,
+    POLYMORPHIC_INSTANCE
+};
+
+struct Polymorphic_Access_Info
+{
+    Polymorphic_Analysis_Type analysis_type;
+    union {
+        Array<Datatype*> base_datatypes; // Non-owning array
+        Array<Upp_Constant> instance_values; // Non-owning array
+    };
+};
+
 enum class Analysis_Workload_Type
 {
     EVENT, // Empty workload, which can have dependencies and dependents
@@ -112,7 +129,6 @@ struct Workload_Base
     bool is_finished;
     bool was_started;
     Fiber_Pool_Handle fiber_handle;
-    Symbol_Table* parent_table; // Active table at time of workload creation
 
     // Information required to be consistent during workload switches
     // Note: These members are automatically set in functions like analyse_expression, analyse_statement...
@@ -121,17 +137,18 @@ struct Workload_Base
     Expression_Info* current_expression;
     bool statement_reachable;
     Symbol_Table* current_symbol_table;
+    Symbol_Access_Level symbol_access_level;
     Analysis_Pass* current_pass;
     Dynamic_Array<AST::Code_Block*> block_stack; // NOTE: This is here because it is required by Bake-Analysis and code-block, also for statement blocks...
 
     int real_error_count;
     int errors_due_to_unknown_count;
 
-    // Note: This is a non-owning array, required for re-analysing the header during poly-instanciation
-    //       When encountering a polymorphic_function parameter, and this is not set, then we can assume that we are in base analysis
-    //       If a value is set, we can assue we are either in instanciation stage or in the instance function analysis
-    Array<Upp_Constant> polymorphic_values; 
-    Array<Upp_Constant> implicit_polymorphic_values;
+    // Note: All workloads need information when accessing polymorphic values. The main two use-cases are:
+    //        * Re-analysing the header during poly-instanciation of functions
+    //        * Accessing polymorphic-symbols inside child-workloads (Anonymous functions/anonymous structs, bake)
+    Polymorphic_Access_Info polymorphic_access_info;
+    int polymorphic_instanciation_depth; 
 
     // Dependencies
     List<Workload_Base*> dependencies;
@@ -199,16 +216,6 @@ struct Workload_Function_Cluster_Compile
     Dynamic_Array<ModTree_Function*> functions;
 };
 
-struct Struct_Parameter
-{
-    Datatype* parameter_type;
-    Symbol* symbol;
-
-    // Note: Same as function parameter, e.g. either a default value is not available or it doesn't exist
-    bool has_default_value;
-    Optional<Upp_Constant> default_value;
-};
-
 struct Workload_Definition
 {
     Workload_Base base;
@@ -232,20 +239,11 @@ struct Workload_Bake_Execution
     AST::Expression* bake_node;
 };
 
-
 // Structures
-enum class Polymorphic_Analysis_Type
-{
-    NORMAL,
-    POLYMORPHIC_BASE,
-    POLYMORPHIC_INSTANCE
-};
-
 struct Structure_Polymorphic_Instance
 {
     Workload_Structure_Polymorphic* parent;
     Array<Upp_Constant> parameter_values;
-    int instanciation_depth;
 };
 
 struct Workload_Structure_Body
@@ -263,16 +261,24 @@ struct Workload_Structure_Body
     } polymorphic_info;
 };
 
+struct Struct_Parameter_Info
+{
+    Symbol* symbol;
+
+    // Note: Same as function parameter, e.g. either a default value is not available or it doesn't exist
+    bool has_default_value;
+    Optional<Upp_Constant> default_value;
+};
+
 struct Workload_Structure_Polymorphic
 {
     Workload_Base base;
     Workload_Structure_Body* body_workload;
 
     Dynamic_Array<Structure_Polymorphic_Instance*> instances;  // Required for de-duplication
-    Array<Struct_Parameter> parameters;
-    Symbol_Table* symbol_table;
+    Array<Datatype*> base_parameter_types;
+    Array<Struct_Parameter_Info> parameters;
 };
-
 
 
 
@@ -292,13 +298,12 @@ struct Function_Progress
             Dynamic_Array<Datatype_Template_Parameter*> implicit_parameters;
             Dynamic_Array<int> parameter_analysis_order;  // Order in which arguments need to be evaluated in for instanciation
             Dynamic_Array<Function_Progress*> instances;  // Required for de-duplication
+            Array<Datatype*> polymorphic_parameter_types;
         } polymorphic_base;
         struct 
         {
             Function_Progress* polymorphic_base;
-            Array<Upp_Constant> parameter_values;
-            Array<Upp_Constant> implicit_parameter_values; 
-            int instanciation_depth;
+            Array<Upp_Constant> instance_parameter_values;
         } polymorhic_instance;
     };
 };
@@ -693,7 +698,7 @@ struct Semantic_Analyser
     Module_Progress* root_module;
     Predefined_Symbols predefined_symbols;
     Workload_Executer* workload_executer;
-    Hashtable<AST::Expression*, Datatype_Template_Parameter*> implicit_parameter_node_mapping;
+    Hashtable<AST::Expression*, Datatype_Template_Parameter*> valid_template_parameters;
 
     // Symbol tables
     Symbol_Table* root_symbol_table;

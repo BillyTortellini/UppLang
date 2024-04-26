@@ -31,6 +31,15 @@ namespace AST
 
 
 // Symbol Table
+
+// Note: Both symbols and symbol-table includes have access levels
+enum class Symbol_Access_Level
+{
+    GLOBAL = 0,      // Can be accessed everywhere (comptime definitions, functions, structs)
+    POLYMORPHIC = 1, // Access level for polymorphic parameters (anonymous structs/lambdas/bake)
+    INTERNAL = 2     // Access level for variables/parameters of functions, which only have meaningful values during execution
+};
+
 enum class Symbol_Type
 {
     DEFINITION_UNFINISHED,   // A Definition that isn't ready yet (global variable or comptime value)
@@ -69,7 +78,7 @@ struct Symbol
         ModTree_Global* global;
         Function_Parameter* parameter;
         Upp_Constant constant;
-        Datatype_Template_Parameter* implicit;
+        Datatype_Template_Parameter* template_parameter;
         struct {
             Workload_Structure_Polymorphic* workload;
             int parameter_index;
@@ -79,14 +88,14 @@ struct Symbol
     String* id;
     Symbol_Table* origin_table;
     AST::Node* definition_node; // Note: This is a base because it could be either AST::Definition, AST::Parameter, AST::Import or AST::Expression::Polymorphic_Symbol
-    bool internal;  // Internal symbols are only valid if referenced in the same internal scope (Variables, parameters). Required for anonymous structs or functions.
+    Symbol_Access_Level access_level;
     Dynamic_Array<AST::Symbol_Lookup*> references;
 };
 
 struct Included_Table
 {
     bool transitive;
-    bool is_internal; // If it's internal we can access internal symbols of the parent table
+    Symbol_Access_Level access_level;
     Symbol_Table* table;
 };
 
@@ -103,14 +112,14 @@ struct Symbol_Error
 };
 
 Symbol_Table* symbol_table_create();
-Symbol_Table* symbol_table_create_with_parent(Symbol_Table* parent_table, bool internal);
+Symbol_Table* symbol_table_create_with_parent(Symbol_Table* parent_table, Symbol_Access_Level access_level);
 void symbol_table_destroy(Symbol_Table* symbol_table);
 void symbol_destroy(Symbol* symbol);
 
-Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbol_Type type, AST::Node* definition_node, bool is_internal);
-void symbol_table_add_include_table(Symbol_Table* symbol_table, Symbol_Table* included_table, bool transitive, bool internal, AST::Node* include_node);
+Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbol_Type type, AST::Node* definition_node, Symbol_Access_Level access_level);
+void symbol_table_add_include_table(Symbol_Table* symbol_table, Symbol_Table* included_table, bool transitive, Symbol_Access_Level access_level, AST::Node* include_node);
 // Note: when id == 0, all symbols that are possible will be added
-void symbol_table_query_id(Symbol_Table* table, String* id, bool search_includes, bool internals_ok, Dynamic_Array<Symbol*>* results);
+void symbol_table_query_id(Symbol_Table* table, String* id, bool search_includes, Symbol_Access_Level access_level, Dynamic_Array<Symbol*>* results);
 
 void symbol_table_append_to_string(String* string, Symbol_Table* table, bool print_root);
 void symbol_append_to_string(Symbol* symbol, String* string);

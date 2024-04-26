@@ -208,7 +208,7 @@ void datatype_append_value_to_string(Datatype* type, byte* value_ptr, String* st
         break;
     case Datatype_Type::TYPE_HANDLE: {
         u32 value = *(u32*)value_ptr;
-        if (value >= compiler.type_system.types.size) {
+        if (value >= (u32)compiler.type_system.types.size) {
             string_append_formated(string, "Invalid Type-Handle, value: %d", value);
             break;
         }
@@ -860,7 +860,7 @@ Datatype_Primitive* type_system_make_primitive(Primitive_Type type, int size, bo
     return type_system_register_type(result);
 }
 
-Datatype_Template_Parameter* type_system_make_template_parameter(Symbol* symbol, Workload_Function_Parameter* parameter_workload, int index)
+Datatype_Template_Parameter* type_system_make_template_parameter(Symbol* symbol, Workload_Function_Parameter* parameter_workload)
 {
     Datatype_Template_Parameter result;
     result.base = datatype_make_simple_base(Datatype_Type::TEMPLATE_PARAMETER, 1, 1);
@@ -868,10 +868,9 @@ Datatype_Template_Parameter* type_system_make_template_parameter(Symbol* symbol,
 
     result.symbol = symbol;
     result.parameter_workload = parameter_workload;
-    result.index = index;
+    result.value_access_index = -1;
     result.is_reference = false;
     result.mirrored_type = 0;
-    result.datatype = compiler.type_system.predefined_types.type_handle;
 
     // Create mirror type exactly the same way as normal type, but set mirror flag
     Datatype_Template_Parameter* registered_base = type_system_register_type(result);
