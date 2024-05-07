@@ -28,7 +28,6 @@ vec3 symbol_type_to_color(Symbol_Type type)
     case Symbol_Type::FUNCTION: return Syntax_Color::FUNCTION; 
     case Symbol_Type::MODULE: return Syntax_Color::MODULE; 
     case Symbol_Type::TYPE: return Syntax_Color::TYPE; 
-    case Symbol_Type::TEMPLATE_PARAMETER: return Syntax_Color::TYPE; 
     case Symbol_Type::VARIABLE: return Syntax_Color::VARIABLE; 
     case Symbol_Type::COMPTIME_VALUE: return Syntax_Color::VARIABLE; 
     case Symbol_Type::DEFINITION_UNFINISHED: return Syntax_Color::IDENTIFIER_FALLBACK; 
@@ -37,7 +36,7 @@ vec3 symbol_type_to_color(Symbol_Type type)
     case Symbol_Type::VARIABLE_UNDEFINED: return Syntax_Color::VARIABLE; 
     case Symbol_Type::GLOBAL: return Syntax_Color::VARIABLE; 
     case Symbol_Type::PARAMETER: return Syntax_Color::VARIABLE; 
-    case Symbol_Type::STRUCT_PARAMETER: return Syntax_Color::VARIABLE; 
+    case Symbol_Type::POLYMORPHIC_VALUE: return Syntax_Color::VARIABLE; 
     case Symbol_Type::POLYMORPHIC_FUNCTION: return Syntax_Color::FUNCTION; 
     default: panic("");
     }

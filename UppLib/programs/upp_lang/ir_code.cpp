@@ -1045,8 +1045,8 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
         }
         case Expression_Result_Type::POLYMORPHIC_FUNCTION: 
         {
-            assert(call_info->options.polymorphic_function->type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE, "Must be instance at ir_code");
-            auto function = call_info->options.polymorphic_function->function;
+            auto function = call_info->options.polymorphic_function.instance_fn;
+            assert(function != nullptr, "Must be instanciated at ir_code");
             assert(function->is_runnable, "Instances that reach ir-generator must be runnable!");
             call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
             call_instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, function);
@@ -1069,8 +1069,8 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
             auto& param = function_signature->parameters[i];
             if (param.has_default_value) {
                 // Initialize all default arguments with their default value, if they are supplied, this will be overwritten
-                assert(param.default_value.available, "Must be, otherwise we shouldn't get to this point");
-                dynamic_array_push_back(&call_instr.options.call.arguments, ir_data_access_create_constant(param.default_value.value));
+                assert(param.default_value_opt.available, "Must be, otherwise we shouldn't get to this point");
+                dynamic_array_push_back(&call_instr.options.call.arguments, ir_data_access_create_constant(param.default_value_opt.value));
             }
             else {
                 dynamic_array_push_back_dummy(&call_instr.options.call.arguments);
@@ -1103,8 +1103,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
             IR_Data_Access access;
             access.type = IR_Data_Access_Type::PARAMETER;
             access.is_memory_access = false;
-            assert(symbol->options.parameter->parameter_type == Parameter_Type::NORMAL, "In IR-Code parameter lookups must already be comptime!");
-            access.index = symbol->options.parameter->normal.index_in_non_polymorphic_signature;
+            access.index = symbol->options.parameter.index_in_non_polymorphic_signature;
             access.option.function = ir_block->function;
             return access;
         }

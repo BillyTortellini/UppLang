@@ -1,9 +1,62 @@
 
 Finishing polymorphism:
+ * Struct polymorphism parameters probably also needs the same information as function parameters...
+    For structs taking in other polymorphic structs...
+ * Single $T means it's a type by default in function + struct
+ * Tests!
+ * Write dynamic_array, list and hashtable (Requires some hashing function...)
+
+
+DONE:
+ * Being able to set implicit parameters as named arguments ...
+ * Correct polymorphic matching (Check if all types have matched, none were missed e.g.)
+ * Add type-safety for polymorphic functions (IN WORK)
+ * Remove polymorphic information from normal function parameters, add to polymorphic base, add new symbol for polymorphic parameter
+ * Remove workloads for function parameters, just search for Symbol-Read references and set them to valid, similar to type-parameters
  * Comptime function pointers need to work
- * Anonymous structs inside structs with templates --> kinda need to share the template
  * Polymorphic return type
- * Correct polymorphic matching
+ * Anonymous structs inside structs with templates --> kinda need to share the template
+
+
+Example code: Hashtable
+
+Hashable :: struct(T: Type)
+    equals: (a: T, b: T) -> bool
+    hash: (a: T) -> u64
+
+Hash_Entry :: struct(T: Type)
+    hash: u64
+    valid: bool
+    entry: T
+    next: *Hash_Entry(T)
+
+Hashtable :: struct(H: Hashable($T), default_value: T)
+    entries: []T
+    element_count: int
+
+Result :: struct($T, Status_Type: Type = bool)
+    value: T
+    success: Status_Type
+
+find :: (table: Hashtable($H), value: H.T) -> *H.T
+    hash := H.hash(value)
+    index := something(hash)
+    if index != -1
+        return entry[i]
+    return *entry[i]
+
+create :: (capacity: int) -> Hashtable($H)
+
+x, success := Hashtable~find(table, 15)
+    
+
+
+
+
+
+
+
+
 
 Anonymous structs inside structs:
 ---------------------------------
@@ -524,7 +577,7 @@ Core: (Required for programming)
     * Update function + struct polymorphism 
 
     * Local-Context for casting, operator overloading, dot-calls, iterators, auto-pointer dereferencing, loops
-    * Union rework, e.g. Addressable sub-types + better switch
+    * Union rework, e.g. Addressable sub-types + better switch (Const types?)
 
     * Allocator system
     * C-Function calling rework

@@ -2163,7 +2163,8 @@ void syntax_editor_render()
 
         // Check if it is definition or Symbol Read
         Symbol* symbol = code_query_get_ast_node_symbol(node);
-        if (symbol != 0)
+        auto pass = code_query_get_analysis_pass(node);
+        if (symbol != 0 && pass != 0)
         {
             // Highlight all instances of the symbol
             vec3 color = vec3(1.0f, 1.0f, 0.3f) * 0.3f;
@@ -2196,12 +2197,19 @@ void syntax_editor_render()
                     type = upcast(hardcoded_type_to_signature(symbol->options.hardcoded));
                     break;
                 case Symbol_Type::PARAMETER: {
-                    type = symbol->options.parameter->type;
+                    auto progress = analysis_workload_try_get_function_progress(pass->origin_workload);
+                    type = progress->function->signature->parameters[symbol->options.parameter.index_in_non_polymorphic_signature].type;
                     break;
                 }
-                case Symbol_Type::STRUCT_PARAMETER: {
-                    auto& str_param = symbol->options.struct_parameter;
-                    type = str_param.workload->base_parameter_types[str_param.parameter_index];
+                case Symbol_Type::POLYMORPHIC_VALUE: {
+                    assert(pass->origin_workload->polymorphic_values.data != nullptr, "");
+                    const auto& value = pass->origin_workload->polymorphic_values[symbol->options.polymorphic_value.access_index];
+                    if (value.only_datatype_known) {
+                        type = value.options.type;
+                    }
+                    else {
+                        type = value.options.value.type;
+                    }
                     break;
                 }
                 case Symbol_Type::TYPE:

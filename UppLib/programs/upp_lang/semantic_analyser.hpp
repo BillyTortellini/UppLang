@@ -93,13 +93,13 @@ enum class Polymorphic_Analysis_Type
     POLYMORPHIC_INSTANCE
 };
 
-struct Polymorphic_Access_Info
+struct Polymorphic_Value
 {
-    Polymorphic_Analysis_Type analysis_type;
+    bool only_datatype_known; // In base analysis/during instanciation only the datatype may be known
     union {
-        Array<Datatype*> base_datatypes; // Non-owning array
-        Array<Upp_Constant> instance_values; // Non-owning array
-    };
+        Datatype* type;
+        Upp_Constant value;
+    } options;
 };
 
 enum class Analysis_Workload_Type
@@ -110,7 +110,6 @@ enum class Analysis_Workload_Type
     IMPORT_RESOLVE,   // 
 
     FUNCTION_HEADER,
-    FUNCTION_PARAMETER,
     FUNCTION_BODY,
     FUNCTION_CLUSTER_COMPILE,
 
@@ -147,7 +146,7 @@ struct Workload_Base
     // Note: All workloads need information when accessing polymorphic values. The main two use-cases are:
     //        * Re-analysing the header during poly-instanciation of functions
     //        * Accessing polymorphic-symbols inside child-workloads (Anonymous functions/anonymous structs, bake)
-    Polymorphic_Access_Info polymorphic_access_info;
+    Array<Polymorphic_Value> polymorphic_values; // May be null, in which case we shouldn't be able to access polymorphics at all
     int polymorphic_instanciation_depth; 
 
     // Dependencies
@@ -184,22 +183,11 @@ struct Workload_Import_Resolve
     Symbol* alias_for_symbol; // May be 0 if its an import
 };
 
-struct Workload_Function_Header;
-struct Workload_Function_Parameter
-{
-    Workload_Base base;
-    Function_Progress* progress;
-    AST::Parameter* node;
-    int parameter_index;
-    Function_Parameter* parameter;
-};
-
 struct Workload_Function_Header
 {
     Workload_Base base;
     Function_Progress* progress;
     AST::Expression* function_node;
-    Dynamic_Array<Workload_Function_Parameter*> parameter_order;
 };
 
 struct Workload_Function_Body
@@ -239,13 +227,63 @@ struct Workload_Bake_Execution
     AST::Expression* bake_node;
 };
 
-// Structures
-struct Structure_Polymorphic_Instance
+
+
+// Polymorphism
+struct Polymorphic_Parameter
 {
-    Workload_Structure_Polymorphic* parent;
-    Array<Upp_Constant> parameter_values;
+    Function_Parameter infos;
+
+    // Polymorphic infos
+    bool is_comptime;
+    union {
+        int value_access_index; // For comptime parameters
+        int index_in_non_polymorphic_signature; // For normal parameters
+    } options;
+    Dynamic_Array<int> depends_on;
+    Dynamic_Array<int> dependees;
+    int dependency_count;
 };
 
+struct Implicit_Parameter_Infos
+{
+    int defined_in_parameter_index;
+    AST::Expression* expression;
+    String* id;
+    Datatype_Template_Parameter* template_parameter;
+};
+
+struct Polymorphic_Base_Info;
+struct Polymorphic_Instance_Info
+{
+    Polymorphic_Base_Info* base_info;
+    Array<Polymorphic_Value> instance_parameter_values;
+
+    bool is_function_instance;
+    union {
+        Function_Progress* function_instance;
+        Workload_Structure_Body* struct_instance;
+    } options;
+};
+
+struct Polymorphic_Base_Info
+{
+    Array<Polymorphic_Parameter> parameters; // If return type exists, it's the last value in parameters
+    Dynamic_Array<int> parameter_analysis_order;  // Order in which arguments need to be evaluated in for instanciation
+    Dynamic_Array<Implicit_Parameter_Infos> implicit_parameter_infos; 
+    Array<Polymorphic_Value> base_parameter_values; // During base analysis only types of parameters are known
+    Dynamic_Array<Polymorphic_Instance_Info> instances;
+
+    // For convenience
+    int return_type_index;
+    AST::Expression* return_type_node;
+    Dynamic_Array<AST::Parameter*> parameter_nodes;
+    Symbol_Table* symbol_table;
+};
+
+
+
+// Structures
 struct Workload_Structure_Body
 {
     Workload_Base base;
@@ -256,18 +294,12 @@ struct Workload_Structure_Body
 
     Polymorphic_Analysis_Type polymorphic_type;
     union {
-        Structure_Polymorphic_Instance instance;
-        Workload_Structure_Polymorphic* polymorphic_base;
-    } polymorphic_info;
-};
-
-struct Struct_Parameter_Info
-{
-    Symbol* symbol;
-
-    // Note: Same as function parameter, e.g. either a default value is not available or it doesn't exist
-    bool has_default_value;
-    Optional<Upp_Constant> default_value;
+        Workload_Structure_Polymorphic* base;
+        struct {
+            Workload_Structure_Polymorphic* parent;
+            int instance_index;
+        } instance;
+    } polymorphic;
 };
 
 struct Workload_Structure_Polymorphic
@@ -275,14 +307,18 @@ struct Workload_Structure_Polymorphic
     Workload_Base base;
     Workload_Structure_Body* body_workload;
 
-    Dynamic_Array<Structure_Polymorphic_Instance*> instances;  // Required for de-duplication
-    Array<Datatype*> base_parameter_types;
-    Array<Struct_Parameter_Info> parameters;
+    Polymorphic_Base_Info info;
 };
 
 
 
 // ANALYSIS_PROGRESS
+
+struct Polymorphic_Function_Base
+{
+    Polymorphic_Base_Info base_info;
+};
+
 struct Function_Progress
 {
     ModTree_Function* function;
@@ -293,19 +329,9 @@ struct Function_Progress
 
     Polymorphic_Analysis_Type type;
     union {
-        struct {
-            int comptime_parameter_count;
-            Dynamic_Array<Datatype_Template_Parameter*> implicit_parameters;
-            Dynamic_Array<int> parameter_analysis_order;  // Order in which arguments need to be evaluated in for instanciation
-            Dynamic_Array<Function_Progress*> instances;  // Required for de-duplication
-            Array<Datatype*> polymorphic_parameter_types;
-        } polymorphic_base;
-        struct 
-        {
-            Function_Progress* polymorphic_base;
-            Array<Upp_Constant> instance_parameter_values;
-        } polymorhic_instance;
-    };
+        Polymorphic_Function_Base base;
+        Polymorphic_Function_Base* instance_base;
+    } polymorphic;
 };
 
 struct Bake_Progress
@@ -445,7 +471,10 @@ struct Expression_Info
         Datatype* type;
         Workload_Structure_Polymorphic* polymorphic_struct;
         ModTree_Function* function;
-        Function_Progress* polymorphic_function; // Either base or if the function was instanciated an instance progress
+        struct {
+            Polymorphic_Function_Base* base;
+            ModTree_Function* instance_fn;
+        } polymorphic_function;
         Hardcoded_Type hardcoded;
         Symbol_Table* module_table;
         Upp_Constant constant;
@@ -718,6 +747,7 @@ Semantic_Analyser* semantic_analyser_initialize();
 void semantic_analyser_destroy();
 void semantic_analyser_reset();
 void semantic_analyser_finish();
+Function_Progress* analysis_workload_try_get_function_progress(Workload_Base* workload);
 
 Datatype_Function* hardcoded_type_to_signature(Hardcoded_Type type);
 

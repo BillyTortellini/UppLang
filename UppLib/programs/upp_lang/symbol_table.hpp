@@ -20,6 +20,7 @@ struct Symbol_Data;
 struct Datatype_Template_Parameter;
 
 struct Function_Progress;
+struct Polymorphic_Function_Base;
 struct Function_Parameter;
 
 namespace AST
@@ -54,8 +55,7 @@ enum class Symbol_Type
     PARAMETER,
 
     TYPE,
-    TEMPLATE_PARAMETER, // Type template in polymorphic function, e.g. "$T"
-    STRUCT_PARAMETER,
+    POLYMORPHIC_VALUE, // Either comptime parameter, implicit parameter, or struct parameter
     COMPTIME_VALUE,
     ALIAS_OR_IMPORTED_SYMBOL, // Alias created by import, e.g. import Algorithms~bubble_sort as sort
     MODULE,
@@ -70,19 +70,22 @@ struct Symbol
         Datatype* variable_type;
         Module_Progress* module_progress;
         Function_Progress* function;
-        Function_Progress* polymorphic_function;
+        Polymorphic_Function_Base* polymorphic_function;
         Workload_Definition* definition_workload;
         Workload_Import_Resolve* alias_workload;
         Hardcoded_Type hardcoded;
         Datatype* type;
         ModTree_Global* global;
-        Function_Parameter* parameter;
-        Upp_Constant constant;
-        Datatype_Template_Parameter* template_parameter;
         struct {
-            Workload_Structure_Polymorphic* workload;
-            int parameter_index;
-        } struct_parameter;
+            Function_Progress* function;
+            int index_in_polymorphic_signature;
+            int index_in_non_polymorphic_signature;
+        } parameter;
+        struct {
+            int defined_in_parameter_index;
+            int access_index;
+        } polymorphic_value;
+        Upp_Constant constant;
     } options;
 
     String* id;

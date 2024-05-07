@@ -197,8 +197,8 @@ void symbol_append_to_string(Symbol* symbol, String* string)
     case Symbol_Type::DEFINITION_UNFINISHED:
         string_append_formated(string, "Definition Unfinished");
         break;
-    case Symbol_Type::STRUCT_PARAMETER:
-        string_append_formated(string, "Struct parameter");
+    case Symbol_Type::POLYMORPHIC_VALUE:
+        string_append_formated(string, "Polymorphic value");
         break;
     case Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL:
         string_append_formated(string, "Alias or imported symbol");
@@ -208,9 +208,6 @@ void symbol_append_to_string(Symbol* symbol, String* string)
         break;
     case Symbol_Type::GLOBAL:
         string_append_formated(string, "Global");
-        break;
-    case Symbol_Type::TEMPLATE_PARAMETER:
-        string_append_formated(string, "Implicit Parameter");
         break;
     case Symbol_Type::TYPE:
         string_append_formated(string, "Type");

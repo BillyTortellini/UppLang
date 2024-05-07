@@ -12,40 +12,18 @@ struct Datatype;
 struct String;
 struct Workload_Structure_Body;
 struct Workload_Structure_Polymorphic;
-struct Workload_Function_Parameter;
 struct Function_Progress;
+struct Polymorphic_Value;
 
 // Helpers
-enum class Parameter_Type
-{
-    NORMAL,
-    POLYMORPHIC
-};
-
 struct Function_Parameter
 {
     Optional<String*> name;
     Datatype* type;
-    Workload_Function_Parameter* workload; // May be null for extern/hardcoded functions
-    Symbol* symbol; // May be null for extern/hardcoded functions
-    int index; // Index in parameter array of function signature
-
-    // Note: It can be the case that a default value exists, but the upp_constant is not available because there was an error,
-    //       and we need to be able to seperate these cases.
     bool has_default_value;
-    Optional<Upp_Constant> default_value;
-
-    // Polymorphic infos
-    Parameter_Type parameter_type;
-    bool has_dependencies_on_other_parameters;
-    union {
-        struct {
-            int index_in_non_polymorphic_signature;
-        } normal;
-        int value_access_index;
-    };
+    Optional<Upp_Constant> default_value_opt; // Note: Even if a parameter has a default value, the value may not be available
 };
-Function_Parameter function_parameter_make_empty(Symbol* symbol = 0, Workload_Function_Parameter* workload = 0);
+Function_Parameter function_parameter_make_empty();
 
 struct Struct_Member
 {
@@ -108,8 +86,8 @@ struct Datatype_Template_Parameter
 {
     Datatype base;
     Symbol* symbol;
-    Workload_Function_Parameter* parameter_workload;
     int value_access_index;
+    int defined_in_parameter_index;
 
     bool is_reference;
     Datatype_Template_Parameter* mirrored_type; // Pointer to either the reference type or the "base" polymorphic-type
@@ -122,22 +100,11 @@ enum class Matchable_Argument_Type
     CONSTANT_VALUE,
 };
 
-struct Matchable_Argument
-{
-    // A matchable argument is either a type or a value
-    Matchable_Argument_Type type;
-    union {
-        Datatype_Template_Parameter* template_parameter;
-        Datatype* templated_type;
-        Upp_Constant constant;
-    } options;
-};
-
 struct Datatype_Struct_Instance_Template
 {
     Datatype base;
     Workload_Structure_Polymorphic* struct_base;
-    Array<Matchable_Argument> matchable_arguments;
+    Array<Polymorphic_Value> instance_values;
 };
 
 enum class Primitive_Type
@@ -383,9 +350,9 @@ void type_system_reset(Type_System* system);
 void type_system_print(Type_System* system);
 void type_system_add_predefined_types(Type_System* system);
 
-Datatype_Template_Parameter* type_system_make_template_parameter(Symbol* symbol, Workload_Function_Parameter* parameter_workload);
+Datatype_Template_Parameter* type_system_make_template_parameter(Symbol* symbol, int value_access_index, int defined_in_parameter_index);
 Datatype_Struct_Instance_Template* type_system_make_struct_instance_template(
-    Workload_Structure_Polymorphic* base, Array<Matchable_Argument> arguments);
+    Workload_Structure_Polymorphic* base, Array<Polymorphic_Value> instance_values);
 Datatype_Pointer* type_system_make_pointer(Datatype* child_type);
 Datatype_Slice* type_system_make_slice(Datatype* element_type);
 Datatype_Array* type_system_make_array(Datatype* element_type, bool count_known, int element_count);

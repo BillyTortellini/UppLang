@@ -5,17 +5,12 @@
 
 using AST::Structure_Type;
 
-Function_Parameter function_parameter_make_empty(Symbol* symbol, Workload_Function_Parameter* workload) {
+Function_Parameter function_parameter_make_empty() {
     Function_Parameter result;
-    result.default_value.available = false;
-    result.has_default_value = false;
-    result.parameter_type = Parameter_Type::NORMAL;
-    result.normal.index_in_non_polymorphic_signature = -1;  // Generated when finishing type
     result.name.available = false;
     result.type = compiler.type_system.predefined_types.error_type;
-    result.symbol = symbol;
-    result.workload = workload;
-    result.has_dependencies_on_other_parameters = false;
+    result.has_default_value = false;
+    result.default_value_opt.available = false;
     return result;
 }
 
@@ -37,7 +32,7 @@ void type_base_destroy(Datatype* base)
         dynamic_array_destroy(&enum_type->members);
     }
     else if (base->type == Datatype_Type::STRUCT_INSTANCE_TEMPLATE) {
-        array_destroy(&downcast<Datatype_Struct_Instance_Template>(base)->matchable_arguments);
+        array_destroy(&downcast<Datatype_Struct_Instance_Template>(base)->instance_values);
     }
 }
 
@@ -134,11 +129,14 @@ void type_append_to_string_with_children(String* string, Datatype* signature, bo
             if (struct_type->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
                 string_append_formated(string, "(");
                 SCOPE_EXIT(string_append_formated(string, ")"));
-                auto& instance = struct_type->workload->polymorphic_info.instance;
-                for (int i = 0; i < instance.parameter_values.size; i++) {
-                    auto& constant = instance.parameter_values[i];
+                auto& instance = struct_type->workload->polymorphic.instance;
+                auto instance_values = instance.parent->info.instances[instance.instance_index].instance_parameter_values;
+                for (int i = 0; i < instance_values.size; i++) {
+                    auto& poly_value = instance_values[i];
+                    assert(!poly_value.only_datatype_known, "True for instances");
+                    auto& constant = poly_value.options.value;
                     datatype_append_value_to_string(constant.type, constant.memory, string);
-                    if (i != instance.parameter_values.size - 1) {
+                    if (i != instance_values.size - 1) {
                         string_append_formated(string, ", ");
                     }
                 }
@@ -486,7 +484,7 @@ bool types_are_structurally_equal(Datatype** a_ptr, Datatype** b_ptr)
             auto& param1 = p1->parameters[i];
             auto& param2 = p2->parameters[i];
             if (!types_are_equal(param1.type, param2.type) || param1.name.available != param2.name.available ||
-                param1.parameter_type != param2.parameter_type || param1.has_default_value != param2.has_default_value)
+                param1.has_default_value != param2.has_default_value)
             {
                 return false;
             }
@@ -690,19 +688,6 @@ Datatype* type_system_deduplicate_and_create_internal_info_for_type(Datatype* ba
         Datatype** existing = hashset_find(&type_system.registered_types, base_type);
         if (existing != 0)
         {
-            // For Functions deduplication, we need to update pointers of parameter symbols and workloads
-            if (base_type->type == Datatype_Type::FUNCTION) {
-                auto& params = downcast<Datatype_Function>(base_type)->parameters;
-                auto& other_params = downcast<Datatype_Function>(*existing)->parameters;
-                for (int i = 0; i < params.size; i++) {
-                    auto& param = params[i];
-                    if (param.symbol != 0) {
-                        assert(param.symbol->type == Symbol_Type::PARAMETER, "");
-                        param.symbol->options.parameter = &other_params[i];
-                    }
-                }
-            }
-
             // Destroy new type because it's a duplicate, return already existing type 
             type_base_destroy(base_type);
             return *existing;
@@ -720,13 +705,8 @@ Datatype* type_system_deduplicate_and_create_internal_info_for_type(Datatype* ba
         int non_comptime_counter = 0;
         for (int i = 0; i < parameters.size; i++) {
             auto& param = parameters[i];
-            param.index = i;
             if (param.has_default_value) {
                 function->parameters_with_default_value_count += 1;
-            }
-            if (param.parameter_type == Parameter_Type::NORMAL) {
-                param.normal.index_in_non_polymorphic_signature = non_comptime_counter;
-                non_comptime_counter += 1;
             }
         }
     }
@@ -860,17 +840,17 @@ Datatype_Primitive* type_system_make_primitive(Primitive_Type type, int size, bo
     return type_system_register_type(result);
 }
 
-Datatype_Template_Parameter* type_system_make_template_parameter(Symbol* symbol, Workload_Function_Parameter* parameter_workload)
+Datatype_Template_Parameter* type_system_make_template_parameter(Symbol* symbol, int value_access_index, int defined_in_parameter_index)
 {
     Datatype_Template_Parameter result;
     result.base = datatype_make_simple_base(Datatype_Type::TEMPLATE_PARAMETER, 1, 1);
     result.base.contains_type_template = true;
 
     result.symbol = symbol;
-    result.parameter_workload = parameter_workload;
-    result.value_access_index = -1;
     result.is_reference = false;
     result.mirrored_type = 0;
+    result.defined_in_parameter_index = defined_in_parameter_index;
+    result.value_access_index = value_access_index;
 
     // Create mirror type exactly the same way as normal type, but set mirror flag
     Datatype_Template_Parameter* registered_base = type_system_register_type(result);
@@ -881,13 +861,13 @@ Datatype_Template_Parameter* type_system_make_template_parameter(Symbol* symbol,
 }
 
 Datatype_Struct_Instance_Template* type_system_make_struct_instance_template(
-    Workload_Structure_Polymorphic* base, Array<Matchable_Argument> arguments)
+    Workload_Structure_Polymorphic* base, Array<Polymorphic_Value> instance_values)
 {
     Datatype_Struct_Instance_Template result;
     result.base = datatype_make_simple_base(Datatype_Type::STRUCT_INSTANCE_TEMPLATE, 1, 1);
     result.base.contains_type_template = true;
 
-    result.matchable_arguments = arguments;
+    result.instance_values = instance_values;
     result.struct_base = base;
     return type_system_register_type(result);
 
@@ -984,6 +964,13 @@ Datatype_Function* type_system_finish_function(Datatype_Function function, Datat
     }
     else {
         function.return_type = optional_make_success(return_type);
+    }
+    for (int i = 0; i < function.parameters.size; i++) {
+        auto& param = function.parameters[i];
+        if (param.type->contains_type_template) {
+            function.base.contains_type_template = true;
+            break;
+        }
     }
     return type_system_register_type(function);
 }
