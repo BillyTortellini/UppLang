@@ -1,0 +1,13 @@
+
+Foo :: struct($T: Type_Handle, $C: int)
+	data: [C]T
+	
+main::()
+	b: Foo(bool, 15)
+	x: b.T = false
+	y: [b.C]int
+	y[3] = 12
+	
+	assert(type_of(x) == bool)
+	assert(y[3] == 12)
+	

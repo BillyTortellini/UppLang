@@ -1,0 +1,24 @@
+
+Foo::struct(T:Type_Handle,C:int,unop:(a:T)->T)
+	data:[C]T
+
+bar::(foo:Foo($T,$C,$unop),b:T)->T
+	x:Foo(T,C,unop)
+	x.data[1]=b
+	return unop(x.data[1])
+
+negate::(a:int)->int
+	return-a
+	
+fnegate::(a:f32)->f32
+	return-a
+
+main::()
+	x:Foo(int,4,negate)
+	value:=bar(x,15)
+	assert(value==-15)
+	
+	y:Foo(float,4,fnegate)
+	f:=bar(y,1)
+	assert(f<=-0.999&&f>=-1.001)
+	

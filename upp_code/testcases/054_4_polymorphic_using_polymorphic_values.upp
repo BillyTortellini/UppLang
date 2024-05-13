@@ -1,0 +1,10 @@
+
+foo::($C:int)
+	x: [C]i64
+	y := C*2+5
+	
+main::()
+	foo(5)
+	foo(6)
+	foo(5)
+	

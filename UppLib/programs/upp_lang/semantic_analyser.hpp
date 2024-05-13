@@ -142,6 +142,7 @@ struct Workload_Base
 
     int real_error_count;
     int errors_due_to_unknown_count;
+    bool ignore_unknown_errors;
 
     // Note: All workloads need information when accessing polymorphic values. The main two use-cases are:
     //        * Re-analysing the header during poly-instanciation of functions

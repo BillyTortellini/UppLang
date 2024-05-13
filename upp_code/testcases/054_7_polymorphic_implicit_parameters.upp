@@ -1,0 +1,8 @@
+
+foo::(x: $T, b: T)
+	
+
+main::()
+	foo(3, 4)
+	foo(false, true)
+	

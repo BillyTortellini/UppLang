@@ -1,9 +1,15 @@
 
+Fix wacky block error thingy --> Something with parenthesis at the end of function
+
+    bar::(a:int,b:int,c:[5]*int])
+Bar::struct
+    x:struct
+        y:int
+    y:struct
+        x:int
+
+
 Finishing polymorphism:
- * Struct polymorphism parameters probably also needs the same information as function parameters...
-    For structs taking in other polymorphic structs...
- * Single $T means it's a type by default in function + struct
- * Tests!
  * Write dynamic_array, list and hashtable (Requires some hashing function...)
 
 

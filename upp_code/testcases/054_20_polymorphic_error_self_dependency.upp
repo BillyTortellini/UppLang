@@ -1,0 +1,10 @@
+
+bar::(a:int,b:int,c:[5]*int)
+	
+
+foo::(function:(a:T,b:$T,c:[C]*T),$C:int)->int
+	return 5
+	
+main::()
+	x:=foo(bar,6)
+	

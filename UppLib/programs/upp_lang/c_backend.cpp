@@ -332,7 +332,7 @@ void c_generator_register_type_name(C_Generator* generator, Datatype* type)
         break;
     }
     case Datatype_Type::ERROR_TYPE:
-        panic("Should not happen in c_backend!");
+        string_append_formated(&type_name, "ERROR_TYPE_BACKEND_"); // See hardcoded_functions.h for definition
         break;
     case Datatype_Type::FUNCTION: 
     {
@@ -366,12 +366,12 @@ void c_generator_register_type_name(C_Generator* generator, Datatype* type)
     }
     case Datatype_Type::TEMPLATE_PARAMETER:
     {
-        string_append_formated(&type_name, "void*");
+        string_append_formated(&type_name, "TEMPLATE_TYPE_BACKEND_"); // See hardcoded_functions.h for definition
         break;
     }
     case Datatype_Type::STRUCT_INSTANCE_TEMPLATE:
     {
-        string_append_formated(&type_name, "void*");
+        string_append_formated(&type_name, "TEMPLATE_TYPE_BACKEND_");  // See hardcoded_functions.h for definition
         break;
     }
     case Datatype_Type::PRIMITIVE:
@@ -628,7 +628,7 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
                         generator->translation_constant_to_name[global_infos.constant_index].characters);
                     assert(call->arguments.size == 1, "");
                     c_generator_output_data_access(generator, output, call->arguments[0]);
-                    string_append_formated(output, "])");
+                    string_append_formated(output, "]);\n");
                     call_handled = true;
                     break;
                 }
@@ -924,8 +924,7 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
     // Create all Type_Signatures
     for (int i = 0; i < generator->compiler->type_system.types.size; i++) {
         Datatype* type = generator->compiler->type_system.types[i];
-        if (datatype_is_unknown(type)) continue;
-        c_generator_register_type_name(generator, generator->compiler->type_system.types[i]);
+        c_generator_register_type_name(generator, type);
     }
 
     // Create globals Definitions

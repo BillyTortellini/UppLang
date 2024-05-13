@@ -274,7 +274,7 @@ bool record_pointers_and_set_padding_bytes_zero_recursive(
             {
                 int union_offset = start_offset + offset_per_element * i;
                 int enum_value = *(int*)(bytes.data + union_offset + structure->tag_member.offset);
-                if (enum_value <= 0 || enum_value >= tag_enum->members.size + 1) { // 0 is currently not a valid tag value
+                if (enum_value <= 0 || enum_value > tag_enum->members.size) { // 0 is currently not a valid tag value
                     return false;
                 }
 

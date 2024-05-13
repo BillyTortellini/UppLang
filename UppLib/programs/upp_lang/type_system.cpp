@@ -43,7 +43,10 @@ void type_append_to_string_with_children(String* string, Datatype* signature, bo
     case Datatype_Type::TEMPLATE_PARAMETER: {
         Datatype_Template_Parameter* polymorphic = downcast<Datatype_Template_Parameter>(signature);
         assert(polymorphic->symbol != 0, "");
-        string_append_formated(string, "$%s", polymorphic->symbol->id->characters);
+        if (!polymorphic->is_reference) {
+            string_append_formated(string, "$");
+        }
+        string_append_formated(string, "%s", polymorphic->symbol->id->characters);
         break;
     }
     case Datatype_Type::STRUCT_INSTANCE_TEMPLATE: {
@@ -285,7 +288,7 @@ void datatype_append_value_to_string(Datatype* type, byte* value_ptr, String* st
             string_append_formated(string, "%s{", struct_type->name.value->characters);
         }
         else {
-            string_append_formated(string, "%Struct{", struct_type->name.value->characters);
+            string_append_formated(string, "Struct{");
         }
         switch (struct_type->struct_type)
         {
@@ -513,7 +516,7 @@ u64 hash_type(Datatype** type_ptr)
     u64 hash = 2342342;
     if (type->memory_info.available) {
         auto& memory = type->memory_info.value;
-        hash_combine(hash_i32(&memory.size), hash_combine(hash_i32(&memory.alignment), hash_i32(&type_type_value)));
+        hash = hash_combine(hash_i32(&memory.size), hash_combine(hash_i32(&memory.alignment), hash_i32(&type_type_value)));
     }
 
     switch (type->type)
@@ -587,7 +590,7 @@ u64 hash_type(Datatype** type_ptr)
     case Datatype_Type::FUNCTION: {
         Datatype_Function* function = downcast<Datatype_Function>(type);
         if (function->return_type.available) {
-            hash = hash_combine(hash, hash_pointer(&function->return_type.value));
+            hash = hash_combine(hash, hash_pointer(function->return_type.value));
         }
         for (int i = 0; i < function->parameters.size; i++) {
             auto& param = function->parameters[i];
@@ -1054,7 +1057,6 @@ void type_system_finish_struct(Datatype_Struct* structure)
     {
         Struct_Member* member = &members[i];
         assert(!type_size_is_unfinished(member->type) && member->type->memory_info.available, "");
-        assert(!member->type->contains_type_template, "Disallowed for structs");
         auto& member_memory = member->type->memory_info.value;
 
         // Calculate member offsets/padding
@@ -1432,7 +1434,8 @@ void type_system_add_predefined_types(Type_System* system)
             test_type_similarity<Internal_Type_Slice>(upcast(slice_type));
             add_member_cstr(option_type, "slice", upcast(slice_type));
         }
-        add_member_cstr(option_type, "polymorphic", upcast(types->empty_struct_type));
+        add_member_cstr(option_type, "template_type", upcast(types->empty_struct_type));
+        add_member_cstr(option_type, "struct_instance_template", upcast(types->empty_struct_type));
         type_system_finish_struct(option_type);
         test_type_similarity<Internal_Type_Info_Options>(upcast(option_type));
 

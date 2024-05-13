@@ -1,0 +1,7 @@
+
+foo::($C:int)
+	foo(C + 1)
+	
+main::()
+	a := foo(1)
+	

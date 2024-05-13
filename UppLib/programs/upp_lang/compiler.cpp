@@ -27,7 +27,7 @@ bool output_identifiers = false;
 bool output_ast = false;
 bool output_type_system = false;
 bool output_root_table = false;
-bool output_ir = false;
+bool output_ir = true;
 bool output_bytecode = false;
 bool output_timing = true;
 
@@ -668,6 +668,30 @@ void compiler_run_testcases(Timer* timer, bool force_run)
         test_case_make("051_invalid_continue_no_loop.upp", false),
         test_case_make("052_invalid_lables.upp", false),
         test_case_make("053_named_flow_defer.upp", true),
+        test_case_make("054_1_polymorphic_empty_function.upp", true),
+        test_case_make("054_2_polymorphic_simple_call.upp", true),
+        test_case_make("054_3_polymorphic_multiple_calls.upp", true),
+        test_case_make("054_4_polymorphic_using_polymorphic_values.upp", true),
+        test_case_make("054_5_polymorphic_polymorphic_calculation.upp", true),
+        test_case_make("054_6_polymorphic_parameter_dependencies.upp", true),
+        test_case_make("054_7_polymorphic_implicit_parameters.upp", true),
+        test_case_make("054_8_polymorphic_return_value.upp", true),
+        test_case_make("054_9_polymorphic_error_cyclic_dependency.upp", false),
+        test_case_make("054_10_polymorphic_error_recursive_instanciation.upp", false),
+        test_case_make("054_11_polymorphic_explicit_implicit.upp", true),
+        test_case_make("054_12_polymorphic_struct_instance.upp", true),
+        test_case_make("054_13_polymorphic_error_recursive_struct.upp", false),
+        test_case_make("054_14_polymorphic_recursive_struct.upp", true),
+        test_case_make("054_15_polymorphic_struct_templates.upp", true),
+        test_case_make("054_16_polymorphic_struct_value_access.upp", true),
+        test_case_make("054_17_polymorphic_struct_nested_templates.upp", true),
+        test_case_make("054_18_polymorphic_struct_nested_returns.upp", true),
+        test_case_make("054_19_polymorphic_parameter_self_dependency.upp", true),
+        test_case_make("054_20_polymorphic_error_self_dependency.upp", false),
+        test_case_make("054_21_polymorphic_anonymous_structs.upp", true),
+        test_case_make("054_22_polymorphic_lambdas.upp", true),
+        test_case_make("054_23_polymorphic_comptime_function_pointer.upp", true),
+        test_case_make("054_24_polymorphic_bake.upp", true),
     };
     int test_case_count = sizeof(test_cases) / sizeof(Test_Case);
 

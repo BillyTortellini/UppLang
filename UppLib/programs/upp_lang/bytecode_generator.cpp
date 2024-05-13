@@ -482,6 +482,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
         {
             IR_Instruction_Call* call = &instr->options.call;
             Datatype_Function* function_sig = 0;
+            int function_pointer_stack_offset = -1;
             switch (call->call_type)
             {
             case IR_Instruction_Call_Type::FUNCTION_CALL:
@@ -489,6 +490,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 break;
             case IR_Instruction_Call_Type::FUNCTION_POINTER_CALL:
                 function_sig = downcast<Datatype_Function>(ir_data_access_get_type(&call->options.pointer_access));
+                function_pointer_stack_offset = bytecode_generator_data_access_to_stack_offset(generator, call->options.pointer_access);
                 break;
             case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
                 function_sig = call->options.hardcoded.signature;
@@ -580,13 +582,10 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 break;
             }
             case IR_Instruction_Call_Type::FUNCTION_POINTER_CALL: {
+                assert(function_pointer_stack_offset != -1, "");
                 bytecode_generator_add_instruction(
                     generator,
-                    instruction_make_2(
-                        Instruction_Type::CALL_FUNCTION_POINTER,
-                        bytecode_generator_data_access_to_stack_offset(generator, call->options.pointer_access),
-                        argument_stack_offset
-                    )
+                    instruction_make_2(Instruction_Type::CALL_FUNCTION_POINTER, function_pointer_stack_offset, argument_stack_offset)
                 );
                 break;
             }

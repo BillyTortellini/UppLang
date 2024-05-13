@@ -1,0 +1,13 @@
+
+Foo::struct(T:Type_Handle)
+	padding: i64
+	value: T
+	
+main::()
+	a: Foo(int)
+	b: Foo(bool)
+	a.value = 15
+	b.value = false
+	
+	assert(a.value == 15)
+	assert(b.value == false)

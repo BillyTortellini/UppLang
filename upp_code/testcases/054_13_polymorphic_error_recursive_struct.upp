@@ -1,0 +1,6 @@
+
+Foo::struct(T:Type_Handle)
+	padding: Foo(int)
+	
+main::()
+	

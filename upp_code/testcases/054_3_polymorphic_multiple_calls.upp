@@ -1,0 +1,7 @@
+
+foo::($C:int)
+	
+main::()
+	foo(5)
+	foo(6)
+	foo(5)

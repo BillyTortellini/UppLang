@@ -1,0 +1,22 @@
+
+double::(a:$T)->T
+	return a*2
+
+double_2::(a:T)->$T
+	return a*2
+
+main::()
+	a:=double(3)
+	b:=double(4.5)
+	a2:int=double_2(3)
+	b2:float=double_2(4.5)
+	
+	assert(type_of(a)==int)
+	assert(type_of(a2)==int)
+	assert(a==6)
+	assert(a2==6)
+	assert(type_of(b)==float)
+	assert(type_of(b2)==float)
+	assert(b>=8.999&&b<=9.001)
+	assert(b2>=8.999&&b2<=9.001)
+	

@@ -47,6 +47,7 @@ struct Upp_Type_Handle
     u32 index;
 };
 
+// NOTE: This enum has to be in synch with type_info options, see add_predefined_types
 enum class Datatype_Type
 {
     VOID_POINTER = 1, // Note: Void type does not exist, but void pointers are here for interoperability with C

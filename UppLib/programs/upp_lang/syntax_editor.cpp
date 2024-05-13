@@ -413,8 +413,8 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
     }
     syntax_editor.code_changed_since_last_compile = false;
     syntax_editor.last_compile_was_with_code_gen = generate_code;
-    compiler_compile_incremental(&syntax_editor.history, (generate_code ? Compile_Type::BUILD_CODE : Compile_Type::ANALYSIS_ONLY));
-    // compiler_compile_clean(syntax_editor.code, (generate_code ? Compile_Type::BUILD_CODE : Compile_Type::ANALYSIS_ONLY), string_create(syntax_editor.file_path));
+    //compiler_compile_incremental(&syntax_editor.history, (generate_code ? Compile_Type::BUILD_CODE : Compile_Type::ANALYSIS_ONLY));
+    compiler_compile_clean(syntax_editor.code, (generate_code ? Compile_Type::BUILD_CODE : Compile_Type::ANALYSIS_ONLY), string_create(syntax_editor.file_path));
 
     // Collect errors from all compiler stages
     {

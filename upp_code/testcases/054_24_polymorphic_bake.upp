@@ -1,0 +1,44 @@
+
+string_equals::(a:String,b:String)->bool
+	if a.size!=b.size
+		return false
+	
+	i:=0
+	while i<a.size
+		if a.character_buffer[i]!=b.character_buffer[i]
+			return false
+		i=i+1
+	
+	return true
+
+offset_off::(a:$T,$name:String)->int
+	offset:=#bake
+		info:=type_info(T)
+		if info.options.tag==.structure
+			members:=info.options.structure.members
+			i:=0
+			while i<members.size
+				member:=members[i]
+				if string_equals(member.name,name)
+					return member.offset
+				i=i+1
+		return-1
+	return offset
+
+Foo::struct
+	a:bool
+	b:bool
+	value:int
+	padding:i64
+	c:float
+
+main::()
+	foo:Foo
+	
+	offset_a:=offset_off(foo,"a")
+	offset_value:=offset_off(foo,"value")
+	offset_c:=offset_off(foo,"c")
+	
+	assert(offset_a==0)
+	assert(offset_value==4)
+	assert(offset_c==16)

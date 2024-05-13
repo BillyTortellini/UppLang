@@ -558,7 +558,7 @@ Datatype* ir_data_access_get_type(IR_Data_Access* access)
     switch (access->type)
     {
     case IR_Data_Access_Type::GLOBAL_DATA:
-        return ir_generator.modtree->globals[access->index]->type;
+        sig = ir_generator.modtree->globals[access->index]->type;
         break;
     case IR_Data_Access_Type::CONSTANT:
         sig = compiler.constant_pool.constants[access->index].type;

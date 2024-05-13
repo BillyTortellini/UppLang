@@ -1,0 +1,9 @@
+
+foo::(a:$T)->T
+	bar:=(value:T)->T
+		return value*2+2*3
+	return bar(a)
+	
+main::()
+	x:=foo(5)
+	assert(x==16)

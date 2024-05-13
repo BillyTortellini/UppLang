@@ -1,0 +1,11 @@
+
+negate :: (a: int) -> int
+	return -a
+
+foo :: (a: $T, $fn: (a: T)->T) -> T
+	return fn(a)
+	
+main::()
+	a := foo(5, negate)
+	assert(a == -5)
+	
