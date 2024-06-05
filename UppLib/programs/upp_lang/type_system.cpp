@@ -942,10 +942,10 @@ Datatype_Slice* type_system_make_slice(Datatype* element_type)
     result.base.contains_type_template = element_type->contains_type_template;
 
     result.element_type = element_type;
-    result.data_member.id = compiler.id_data;
+    result.data_member.id = compiler.predefined_ids.data;
     result.data_member.type = upcast(type_system_make_pointer(element_type));
     result.data_member.offset = 0;
-    result.size_member.id = compiler.id_size;
+    result.size_member.id = compiler.predefined_ids.size;
     result.size_member.type = upcast(compiler.type_system.predefined_types.i32_type);
     result.size_member.offset = 8;
     return type_system_register_type(result);
@@ -1124,7 +1124,7 @@ void type_system_finish_struct(Datatype_Struct* structure)
 
         // Create tag as struct member
         Struct_Member union_tag;
-        union_tag.id = compiler.id_tag;
+        union_tag.id = compiler.predefined_ids.tag;
         int prev_size = memory.size;
         memory.size = math_round_next_multiple(memory.size, tag_memory.alignment);
         if (prev_size != memory.size) {
@@ -1305,6 +1305,24 @@ void type_system_add_predefined_types(Type_System* system)
         types->void_pointer_type = type_system_register_type(void_pointer);
     }
 
+    {
+        types->cast_mode = type_system_make_enum_empty(compiler.predefined_ids.cast_mode);
+        auto& members = types->cast_mode->members;
+        auto& ids = compiler.predefined_ids;
+        auto add_enum_member = [&](Datatype_Enum* enum_type, String* name, int value) {
+            Enum_Item item;
+            item.name = name;
+            item.value = value;
+            dynamic_array_push_back(&enum_type->members, item);
+        };
+        add_enum_member(types->cast_mode, ids.cast_mode_auto, 1);
+        add_enum_member(types->cast_mode, ids.cast_mode_implicit, 2);
+        add_enum_member(types->cast_mode, ids.cast_mode_explicit, 3);
+        add_enum_member(types->cast_mode, ids.cast_mode_none, 4);
+        type_system_finish_enum(types->cast_mode);
+    }
+
+
     using AST::Structure_Type;
     auto make_id = [&](const char* name) -> String* { return identifier_pool_add(&compiler.identifier_pool, string_create_static(name)); };
     auto add_member_cstr = [&](Datatype_Struct* struct_type, const char* member_name, Datatype* member_type) {
@@ -1475,6 +1493,13 @@ void type_system_add_predefined_types(Type_System* system)
         types->type_read_f32 = type_system_make_function({});
         types->type_read_bool = type_system_make_function({});
         types->type_random_i32 = type_system_make_function({}, upcast(types->i32_type));
+
+        types->type_add_custom_cast = type_system_make_function({
+                make_param(upcast(types->any_type), "cast_function"), 
+                make_param(upcast(types->cast_mode), "cast_mode") 
+            }, 
+            upcast(types->i32_type)
+        );
     }
 }
 
@@ -1510,6 +1535,7 @@ Optional<Enum_Item> enum_type_find_member_by_value(Datatype_Enum* enum_type, int
 
 Optional<Struct_Member> type_signature_find_member_by_id(Datatype* type, String* id)
 {
+    auto& ids = compiler.predefined_ids;
     switch (type->type)
     {
     case Datatype_Type::STRUCT:
@@ -1520,7 +1546,7 @@ Optional<Struct_Member> type_signature_find_member_by_id(Datatype* type, String*
             auto& member = members[i];
             if (member.id == id) return optional_make_success(member);
         }
-        if (structure->struct_type == AST::Structure_Type::UNION && id == compiler.id_tag) {
+        if (structure->struct_type == AST::Structure_Type::UNION && id == ids.tag) {
             return optional_make_success(structure->tag_member);
         }
         break;
@@ -1528,10 +1554,10 @@ Optional<Struct_Member> type_signature_find_member_by_id(Datatype* type, String*
     case Datatype_Type::SLICE:
     {
         auto slice = downcast<Datatype_Slice>(type);
-        if (id == compiler.id_data) {
+        if (id == ids.data) {
             return optional_make_success(slice->data_member);
         }
-        else if (id == compiler.id_size) {
+        else if (id == ids.size) {
             return optional_make_success(slice->size_member);
         }
         break;

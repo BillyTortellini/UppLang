@@ -1,16 +1,114 @@
 
-Fix wacky block error thingy --> Something with parenthesis at the end of function
+For custom-casts, I think the order should be:
 
-    bar::(a:int,b:int,c:[5]*int])
-Bar::struct
-    x:struct
-        y:int
-    y:struct
-        x:int
+TODO:
+    * Custom casts with polymorphic things?
+        --> Polymorphic function with one "normal" argument, argument has to be struct-template
+        --> Hashtable of polymorphic structs with the functions and sheet
+        --> Instanciate function with given type when cast may be required...
+    * Write testcases for simple casts (e.g. make all testcases work again)
+
+DONE:
+    * Add custom casts 
+    * Remove raw_casts from AST
+    * Pointer to u64 and back
+    * Syntax editor auto-complete
+    * Pointer_to_bool cast
+    * Check that auto-dereference works correctly for assignments
+    * Implement all casting related options
+    * Context changes in code-blocks (Not just module)
+    * Importing context-changes from other modules
+
+Syntax:
+    context integer_size_upcast = .IMPLICIT
+
+Semantic Analysis:
+    * Context is bound to symbol table? --> Root symbol table sets the default options
+    * Symbol tables have a pointer (which is either owning or non-owning) to the operator_context
+        --> Changing the context in a symbol table should be ezy
+    * When doing casts first the operators are looked up
+    
+
+TODO:
+    1. add operator as keyword
+    2. Parse the thing correctly
+        * Modules now may also hold operators
+    3. Semantic analyser needs to hold operator-context (Probably in current symbol table), which is also inherited
+        * Before normal analysis of functions/structs/whatever can happen, the operators need to be resolved
+
+When do I analyse the operators in Modules?
+    1. Analyse modules (Find/add all symbols)
+    2. Handle imports
 
 
-Finishing polymorphism:
- * Write dynamic_array, list and hashtable (Requires some hashing function...)
+
+
+Operator context design:
+------------------------
+Operations that should depend on the context:
+ * Casts (Valid/Invalid casts)
+    operator cast integer_size_upcast = something
+    operator cast add(cast_function, can_fail=true?-->Causes panic I guess)
+ * pointer dereferencing/auto address of (Kinda casting like)
+    operator cast auto_dereference = true
+    operator cast auto_address_of = false
+ * dot-calls
+    operator
+ * Importing operators from other scopes (Probably just goes through things and set's them again) 
+    operator import Dynamic_Array~Operations
+ * Custom member accesses (e.g. set a setter/getter function for some new name...)
+ * Operator Overloading
+    - Binary operations +, -, *, /, %, ==, <, <=
+    - Unary operations (Probably only - for math operations)
+    - Array access [] (For datastructures)
+ * Iterators
+
+
+
+
+--------------------
+- MISSING FEATURES -
+--------------------
+Core: (Required for programming)
+    * Operator-Context for casting, operator overloading, dot-calls, iterators, auto-pointer dereferencing, loops
+    * Union rework, e.g. Addressable sub-types + better switch (Const types/parameters)
+
+    * Allocator system
+    * C-Function calling rework
+    * Incremental compiler
+
+Additional:
+    * Better C-Importer
+    * Code-Editor features
+    * Code generation with #insert (Or something like that, maybe bytecode insertion? (But should somehow be checked for validity?))
+    * Annotations (For automatization of print or serialization)
+    * Put initial symbols (int, float, bool + hardcoded functions) into another namespace Upp/Compiler/custom thingy?
+    * Auto function? .-> e.g. search(array, .-> x.name == "What")
+    * Block-Expressions?
+    * Conditional compilation (#if), probably only for multiple operating systems, maybe also for datastructures?
+    * Macros?
+    * Backtick defer, backtick variable definition
+    * Varargs (Other syntax for pass as slice...)
+    * Literal overhaul
+    * Using on structs
+    * Location information (Mostly for logging)
+
+-----------------
+Code improvements:
+    * Deduplication of comptime instances when the generated ir-code is the same
+    * Analysis-Pass hashtable could be improved by combining blocks of ast-code into regions (But!: Incremental parsing)
+
+-----------------
+Missing Test-Cases:
+    * Struct unpacking
+    * Function overloading
+    * Function polymorphism/implicit polymorphism
+    * Imports
+
+-----------------
+
+
+
 
 
 DONE:
@@ -574,45 +672,6 @@ All things that are functions:
     * External Functions
     * Function-Pointer
     * Hardcoded functions
-
-
---------------------
-- MISSING FEATURES -
---------------------
-Core: (Required for programming)
-    * Update function + struct polymorphism 
-
-    * Local-Context for casting, operator overloading, dot-calls, iterators, auto-pointer dereferencing, loops
-    * Union rework, e.g. Addressable sub-types + better switch (Const types?)
-
-    * Allocator system
-    * C-Function calling rework
-    * Incremental compiler
-
-Additional:
-    * Better C-Importer
-    * Code-Editor features
-    * Annotations (For automatization of print or serialization)
-    * Put initial symbols (int, float, bool + hardcoded functions) into another namespace Upp/Compiler/custom thingy?
-    * Auto function? .->
-    * Block-Expressions?
-    * Conditional compilation (#if), probably only for multiple operating systems, maybe also for datastructures?
-    * Macros?
-    * Backtick defer, backtick variable definition
-    * Varargs (Other syntax for pass as slice...)
-    * Literal overhaul
-    * Using on structs
-    * Location information (Mostly for logging)
-
-Code improvements:
-    * Deduplication of comptime instances when the generated ir-code is the same
-    * Analysis-Pass hashtable could be improved by combining blocks of ast-code into regions (But!: Incremental parsing)
------------------
-
-Missing Test-Cases:
-    * Struct unpacking
-    * Function overloading
-    * Function polymorphism/implicit polymorphism
 
 
 

@@ -8,6 +8,14 @@
 
 // PROTOTYPES
 
+bool datatype_pair_equals(Datatype_Pair* a, Datatype_Pair* b) {
+    return types_are_equal(a->from, b->from) && types_are_equal(a->to, b->to);
+}
+
+u64 datatype_pair_hash(Datatype_Pair* pair) {
+    return hash_combine(hash_pointer(pair->from), hash_pointer(pair->to));
+}
+
 // SYMBOL TABLE FUNCTIONS
 Symbol_Table* symbol_table_create()
 {
@@ -16,6 +24,7 @@ Symbol_Table* symbol_table_create()
     dynamic_array_push_back(&analyser->allocated_symbol_tables, result);
     result->included_tables = dynamic_array_create_empty<Included_Table>(1);
     result->symbols = hashtable_create_pointer_empty<String*, Dynamic_Array<Symbol*>>(1);
+    result->operator_context = 0;
     return result;
 }
 
@@ -23,6 +32,7 @@ Symbol_Table* symbol_table_create_with_parent(Symbol_Table* parent_table, Symbol
 {
     Symbol_Table* result = symbol_table_create();
     symbol_table_add_include_table(result, parent_table, true, access_level, 0);
+    result->operator_context = parent_table->operator_context;
     return result;
 }
 
@@ -107,7 +117,7 @@ Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbo
         if (!overload_valid) {
             // Note: Here we still return a new symbol, but this symbol can never be referenced, because it isn't added in the symbol table
             log_semantic_error("Symbol already defined in this scope", definition_node);
-            new_sym->id = compiler.id_invalid_symbol_name;
+            new_sym->id = compiler.predefined_ids.invalid_symbol_name;
             return new_sym;
         }
     }

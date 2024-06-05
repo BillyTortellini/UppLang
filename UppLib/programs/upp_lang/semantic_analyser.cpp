@@ -28,11 +28,11 @@ static Workload_Executer workload_executer;
 ModTree_Function* modtree_function_create_empty(Datatype_Function* signature, Symbol* symbol, Function_Progress* progress, Symbol_Table* param_table);
 void analysis_workload_destroy(Workload_Base* workload);
 Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression* expression, Expression_Context context);
-Datatype* semantic_analyser_analyse_expression_value(AST::Expression* rc_expression, Expression_Context context);
+Datatype* semantic_analyser_analyse_expression_value(AST::Expression* rc_expression, Expression_Context context, bool no_value_expected = false);
 Datatype* semantic_analyser_analyse_expression_type(AST::Expression* rc_expression);
 Control_Flow semantic_analyser_analyse_block(AST::Code_Block* code_block, bool polymorphic_symbol_access = false);
 
-Expression_Post_Op expression_context_apply(
+Expression_Cast_Info expression_context_apply(
     Datatype* initial_type, Expression_Context context,
     bool log_errors, AST::Expression* error_report_node = 0, Parser::Section error_section = Parser::Section::WHOLE);
 
@@ -47,6 +47,10 @@ void analysis_workload_add_dependency_internal(
     Dependency_Failure_Info failure_info = dependency_failure_info_make_none());
 Datatype_Memory_Info* type_wait_for_size_info_to_finish(Datatype* type, Dependency_Failure_Info failure_info = dependency_failure_info_make_none());
 void polymorphic_base_info_destroy(Polymorphic_Base_Info* info);
+bool arguments_check_for_naming_errors(Dynamic_Array<AST::Argument*>& arguments, int* out_unnamed_argument_count = 0);
+Operator_Context* symbol_table_install_new_operator_context(Symbol_Table* symbol_table);
+void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> context_changes, Operator_Context* context);
+
 
 
 // HELPERS
@@ -60,6 +64,7 @@ namespace Helpers
     Analysis_Workload_Type get_workload_type(Workload_Function_Header* workload) { return Analysis_Workload_Type::FUNCTION_HEADER; };
     Analysis_Workload_Type get_workload_type(Workload_Function_Body* workload) { return Analysis_Workload_Type::FUNCTION_BODY; };
     Analysis_Workload_Type get_workload_type(Workload_Function_Cluster_Compile* workload) { return Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE; };
+    Analysis_Workload_Type get_workload_type(Workload_Operator_Context_Change* workload) { return Analysis_Workload_Type::OPERATOR_CONTEXT_CHANGE; };
     Analysis_Workload_Type get_workload_type(Workload_Bake_Analysis* workload) { return Analysis_Workload_Type::BAKE_ANALYSIS; };
     Analysis_Workload_Type get_workload_type(Workload_Bake_Execution* workload) { return Analysis_Workload_Type::BAKE_EXECUTION; };
     Analysis_Workload_Type get_workload_type(Workload_Event* workload) { return Analysis_Workload_Type::EVENT; };
@@ -77,6 +82,7 @@ Workload_Base* upcast(Workload_Definition* workload) { return &workload->base; }
 Workload_Base* upcast(Workload_Bake_Analysis* workload) { return &workload->base; }
 Workload_Base* upcast(Workload_Bake_Execution* workload) { return &workload->base; }
 Workload_Base* upcast(Workload_Event* workload) { return &workload->base; }
+Workload_Base* upcast(Workload_Operator_Context_Change* workload) { return &workload->base; }
 
 template <typename T>
 T* downcast(Workload_Base* workload) {
@@ -665,14 +671,11 @@ Module_Progress* module_progress_create(AST::Module* module, Symbol* symbol, Sym
     {
         auto analysis = progress->module_analysis;
         analysis->module_node = module;
-        analysis->base.current_symbol_table = parent_symbol_table;
         analysis->symbol_table = symbol_table_create_with_parent(parent_symbol_table, Symbol_Access_Level::GLOBAL);
+        analysis->base.current_symbol_table = analysis->symbol_table;
         analysis->last_import_workload = 0;
         analysis->progress = progress;
         analysis->parent_analysis = 0;
-        if (semantic_analyser.current_workload != 0 && semantic_analyser.current_workload->current_symbol_table != 0) {
-            analysis->base.current_symbol_table = semantic_analyser.current_workload->current_symbol_table;
-        }
     }
 
     // Create event workload
@@ -757,6 +760,13 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
         symbol_finish_workload = upcast(downcast<Workload_Module_Analysis>(semantic_analyser.current_workload)->progress->event_symbol_table_ready);
     }
 
+    Workload_Base* operator_context_workload = 0;
+    if (semantic_analyser.current_workload->current_symbol_table != 0) {
+        if (semantic_analyser.current_workload->current_symbol_table->operator_context->workload != 0) {
+            operator_context_workload = upcast(semantic_analyser.current_workload->current_symbol_table->operator_context->workload);
+        }
+    }
+
     // Create workload for functions, structs and modules directly
     Symbol* symbol = get_info(definition->symbols[0])->symbol;
     if (definition->is_comptime)
@@ -790,6 +800,9 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
             if (symbol_finish_workload != 0) {
                 analysis_workload_add_dependency_internal(workload, symbol_finish_workload);
             }
+            if (operator_context_workload != 0) {
+                analysis_workload_add_dependency_internal(workload, operator_context_workload);
+            }
             return;
         }
         case AST::Expression_Type::STRUCTURE_TYPE: {
@@ -797,6 +810,9 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
             auto workload = upcast(workload_structure_create(value, symbol, false));
             if (symbol_finish_workload != 0) {
                 analysis_workload_add_dependency_internal(workload, symbol_finish_workload);
+            }
+            if (operator_context_workload != 0) {
+                analysis_workload_add_dependency_internal(workload, operator_context_workload);
             }
             return;
         }
@@ -818,6 +834,9 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
     }
     if (symbol_finish_workload != 0) {
         analysis_workload_add_dependency_internal(upcast(definition_workload), symbol_finish_workload);
+    }
+    if (operator_context_workload != 0) {
+        analysis_workload_add_dependency_internal(upcast(definition_workload), operator_context_workload);
     }
 
     symbol->type = Symbol_Type::DEFINITION_UNFINISHED;
@@ -938,7 +957,7 @@ Comptime_Result comptime_result_make_not_comptime(const char* message) {
     return result;
 }
 
-Comptime_Result comptime_result_apply_cast(Comptime_Result value, Info_Cast_Type cast_type, Datatype* result_type)
+Comptime_Result comptime_result_apply_cast(Comptime_Result value, Cast_Type cast_type, Datatype* result_type)
 {
     auto& analyser = semantic_analyser;
     if (value.type == Comptime_Result_Type::NOT_COMPTIME) {
@@ -951,33 +970,33 @@ Comptime_Result comptime_result_apply_cast(Comptime_Result value, Info_Cast_Type
     Instruction_Type instr_type = (Instruction_Type)-1;
     switch (cast_type)
     {
-    case Info_Cast_Type::INVALID: return comptime_result_make_unavailable(result_type, "Expression contains invalid cast"); // Invalid means an error was already logged
-    case Info_Cast_Type::NO_CAST: return value;
-    case Info_Cast_Type::FLOATS: instr_type = Instruction_Type::CAST_FLOAT_DIFFERENT_SIZE; break;
-    case Info_Cast_Type::FLOAT_TO_INT: instr_type = Instruction_Type::CAST_FLOAT_INTEGER; break;
-    case Info_Cast_Type::INT_TO_FLOAT: instr_type = Instruction_Type::CAST_INTEGER_FLOAT; break;
-    case Info_Cast_Type::INTEGERS: instr_type = Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE; break;
-    case Info_Cast_Type::ENUM_TO_INT: instr_type = Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE; break;
-    case Info_Cast_Type::INT_TO_ENUM: instr_type = Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE; break;
-    case Info_Cast_Type::POINTERS: 
-    case Info_Cast_Type::U64_TO_POINTER:
-    case Info_Cast_Type::POINTER_TO_U64: {
+    case Cast_Type::INVALID: return comptime_result_make_unavailable(result_type, "Expression contains invalid cast"); // Invalid means an error was already logged
+    case Cast_Type::NO_CAST: return value;
+    case Cast_Type::FLOATS: instr_type = Instruction_Type::CAST_FLOAT_DIFFERENT_SIZE; break;
+    case Cast_Type::FLOAT_TO_INT: instr_type = Instruction_Type::CAST_FLOAT_INTEGER; break;
+    case Cast_Type::INT_TO_FLOAT: instr_type = Instruction_Type::CAST_INTEGER_FLOAT; break;
+    case Cast_Type::INTEGERS: instr_type = Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE; break;
+    case Cast_Type::ENUM_TO_INT: instr_type = Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE; break;
+    case Cast_Type::INT_TO_ENUM: instr_type = Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE; break;
+    case Cast_Type::POINTERS: 
+    case Cast_Type::U64_TO_POINTER:
+    case Cast_Type::POINTER_TO_U64: {
         // Pointers values can be interchanged with other pointers or with u64 values
         return comptime_result_make_available(value.data, result_type); 
     }
-    case Info_Cast_Type::ARRAY_TO_SLICE: {
+    case Cast_Type::ARRAY_TO_SLICE: {
         Upp_Slice_Base* slice = stack_allocator_allocate<Upp_Slice_Base>(&analyser.comptime_value_allocator);
         slice->data = value.data;
         slice->size = downcast<Datatype_Array>(value.data_type)->element_count;
         return comptime_result_make_available(slice, result_type);
     }
-    case Info_Cast_Type::TO_ANY: {
+    case Cast_Type::TO_ANY: {
         Upp_Any* any = stack_allocator_allocate<Upp_Any>(&analyser.comptime_value_allocator);
         any->type = result_type->type_handle;
         any->data = value.data;
         return comptime_result_make_available(any, result_type);
     }
-    case Info_Cast_Type::FROM_ANY: {
+    case Cast_Type::FROM_ANY: {
         Upp_Any* given = (Upp_Any*)value.data;
         if (given->type.index >= (u32)compiler.type_system.types.size) {
             return comptime_result_make_not_comptime("Any contained invalid type_id");
@@ -987,6 +1006,12 @@ Comptime_Result comptime_result_apply_cast(Comptime_Result value, Info_Cast_Type
             return comptime_result_make_not_comptime("Any type_handle value doesn't match result type, actually not sure if this can happen");
         }
         return comptime_result_make_available(given->data, any_type);
+    }
+    case Cast_Type::POINTER_NULL_CHECK: {
+        void* pointer_value = (void*)value.data;
+        bool* result = stack_allocator_allocate<bool>(&analyser.comptime_value_allocator);
+        *result = pointer_value != nullptr;
+        return comptime_result_make_available(result, upcast(compiler.type_system.predefined_types.bool_type));
     }
     default: panic("");
     }
@@ -1138,8 +1163,14 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
                 Instruction_Type::UNARY_OP_NEGATE : Instruction_Type::UNARY_OP_NOT;
             break;
         }
-        case AST::Unop::POINTER:
+        case AST::Unop::POINTER: {
+            Comptime_Result expr_result = expression_calculate_comptime_value_internal(expr->options.unop.expr);
+            // Special case: This could be a pointer type, and not a address_of operation, so we need to check for this case
+            if (expr_result.type == Comptime_Result_Type::UNAVAILABLE) {
+                return expr_result;
+            }
             return comptime_result_make_not_comptime("Address of not supported for comptime values");
+        }
         case AST::Unop::DEREFERENCE:
             return comptime_result_make_not_comptime("Dereferencing not supported for comptime values");
         default: panic("");
@@ -1158,8 +1189,7 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
         return comptime_result_make_available(result_buffer, result_type);
     }
     case AST::Expression_Type::CAST: {
-        auto operand = expression_calculate_comptime_value_internal(expr->options.cast.operand);
-        return comptime_result_apply_cast(operand, info->specifics.explicit_cast, result_type);
+        return expression_calculate_comptime_value_internal(expr->options.cast.operand);
     }
     case AST::Expression_Type::ARRAY_ACCESS:
     {
@@ -1334,12 +1364,12 @@ Comptime_Result expression_calculate_comptime_value_internal(AST::Expression* ex
     }
 
     auto info = get_info(expr);
-    if (info->post_op.deref_count != 0 || info->post_op.take_address_of) {
+    if (info->cast_info.deref_count != 0 || info->cast_info.take_address_of) {
         // Cannot handle pointers for comptime currently
         return comptime_result_make_not_comptime("Pointer handling not supported by comptime values");
     }
 
-    return comptime_result_apply_cast(result_no_context, info->post_op.implicit_cast, info->post_op.type_afterwards);
+    return comptime_result_apply_cast(result_no_context, info->cast_info.cast_type, info->cast_info.type_afterwards);
 }
 
 Optional<Upp_Constant> expression_calculate_comptime_value(AST::Expression* expr, const char* error_message_on_failure, bool* was_not_available = 0)
@@ -1378,7 +1408,7 @@ Optional<Upp_Constant> expression_calculate_comptime_value(AST::Expression* expr
 bool expression_has_memory_address(AST::Expression* expr)
 {
     auto info = get_info(expr);
-    auto type = info->post_op.type_afterwards;
+    auto type = info->cast_info.type_afterwards;
 
     switch (info->result_type)
     {
@@ -1395,7 +1425,7 @@ bool expression_has_memory_address(AST::Expression* expr)
     default:panic("");
     }
 
-    if (info->post_op.implicit_cast == Info_Cast_Type::FROM_ANY) {
+    if (info->cast_info.cast_type == Cast_Type::FROM_ANY) {
         // From Any is basically a pointer dereference
         return true;
     }
@@ -1411,9 +1441,6 @@ bool expression_has_memory_address(AST::Expression* expr)
         // There are special cases where memory loss is not detected, e.g. &(new int)
         return expr->options.unop.type == AST::Unop::DEREFERENCE;
     }
-    case AST::Expression_Type::CAST:
-        // From Any is basically a pointer dereference
-        return info->specifics.explicit_cast == Info_Cast_Type::FROM_ANY;
     case AST::Expression_Type::ERROR_EXPR:
         // Errors shouldn't generate other errors
         return true;
@@ -1439,19 +1466,15 @@ Expression_Context expression_context_make_auto_dereference() {
     return context;
 }
 
-Expression_Context expression_context_make_no_value_expected() {
-    Expression_Context context;
-    context.type = Expression_Context_Type::NO_VALUE;
-    return context;
-}
-
-Expression_Context expression_context_make_specific_type(Datatype* signature) {
+Expression_Context expression_context_make_specific_type(Datatype* signature, bool is_assignment = false, Cast_Mode cast_mode = Cast_Mode::AUTO) {
     if (datatype_is_unknown(signature)) {
         return expression_context_make_unknown(true);
     }
     Expression_Context context;
     context.type = Expression_Context_Type::SPECIFIC_TYPE_EXPECTED;
-    context.signature = signature;
+    context.expected_type.type = signature;
+    context.expected_type.is_assignment_context = is_assignment;
+    context.expected_type.cast_mode = cast_mode;
     return context;
 }
 
@@ -1462,14 +1485,14 @@ void expression_info_set_value(Expression_Info* info, Datatype* result_type)
 {
     info->result_type = Expression_Result_Type::VALUE;
     info->options.value_type = result_type;
-    info->post_op.type_afterwards = result_type;
+    info->cast_info.type_afterwards = result_type;
 }
 
 void expression_info_set_error(Expression_Info* info, Datatype* result_type)
 {
     info->result_type = Expression_Result_Type::VALUE;
     info->options.value_type = result_type;
-    info->post_op.type_afterwards = result_type;
+    info->cast_info.type_afterwards = result_type;
     info->contains_errors = true;
 }
 
@@ -1477,21 +1500,21 @@ void expression_info_set_function(Expression_Info* info, ModTree_Function* funct
 {
     info->result_type = Expression_Result_Type::FUNCTION;
     info->options.function = function;
-    info->post_op.type_afterwards = upcast(function->signature);
+    info->cast_info.type_afterwards = upcast(function->signature);
 }
 
 void expression_info_set_hardcoded(Expression_Info* info, Hardcoded_Type hardcoded)
 {
     info->result_type = Expression_Result_Type::HARDCODED_FUNCTION;
     info->options.hardcoded = hardcoded;
-    info->post_op.type_afterwards = upcast(hardcoded_type_to_signature(hardcoded));
+    info->cast_info.type_afterwards = upcast(hardcoded_type_to_signature(hardcoded));
 }
 
 void expression_info_set_type(Expression_Info* info, Datatype* type)
 {
     info->result_type = Expression_Result_Type::TYPE;
     info->options.type = type;
-    info->post_op.type_afterwards = compiler.type_system.predefined_types.type_handle;
+    info->cast_info.type_afterwards = compiler.type_system.predefined_types.type_handle;
 
     if (type->type == Datatype_Type::STRUCT) {
         auto s = downcast<Datatype_Struct>(type);
@@ -1507,20 +1530,20 @@ void expression_info_set_type(Expression_Info* info, Datatype* type)
 void expression_info_set_no_value(Expression_Info* info) {
     info->result_type = Expression_Result_Type::NOTHING;
     info->options.type = compiler.type_system.predefined_types.error_type;
-    info->post_op.type_afterwards = compiler.type_system.predefined_types.error_type;
+    info->cast_info.type_afterwards = compiler.type_system.predefined_types.error_type;
 }
 
 void expression_info_set_constant(Expression_Info* info, Upp_Constant constant) {
     info->result_type = Expression_Result_Type::CONSTANT;
     info->options.constant = constant;
-    info->post_op.type_afterwards = constant.type;
+    info->cast_info.type_afterwards = constant.type;
 }
 
 void expression_info_set_polymorphic_function(Expression_Info* info, Polymorphic_Function_Base* poly_base, ModTree_Function* instance = 0) {
     info->result_type = Expression_Result_Type::POLYMORPHIC_FUNCTION;
     info->options.polymorphic_function.base = poly_base;
     info->options.polymorphic_function.instance_fn = instance;
-    info->post_op.type_afterwards = compiler.type_system.predefined_types.error_type; // Not sure if this is correct for function pointers, but should be fine
+    info->cast_info.type_afterwards = compiler.type_system.predefined_types.error_type; // Not sure if this is correct for function pointers, but should be fine
 }
 
 void expression_info_set_constant(Expression_Info* info, Datatype* signature, Array<byte> bytes, AST::Node* error_report_node)
@@ -1550,7 +1573,7 @@ void expression_info_set_constant_i32(Expression_Info* info, i32 value) {
 Datatype* expression_info_get_type(Expression_Info* info, bool before_context_is_applied)
 {
     if (!before_context_is_applied) {
-        return info->post_op.type_afterwards;
+        return info->cast_info.type_afterwards;
     }
 
     auto& types = compiler.type_system.predefined_types;
@@ -1561,7 +1584,7 @@ Datatype* expression_info_get_type(Expression_Info* info, bool before_context_is
     case Expression_Result_Type::FUNCTION: return upcast(info->options.function->signature);
     case Expression_Result_Type::HARDCODED_FUNCTION: return upcast(hardcoded_type_to_signature(info->options.hardcoded));
     case Expression_Result_Type::TYPE: return types.type_handle;
-    case Expression_Result_Type::NOTHING:
+    case Expression_Result_Type::NOTHING: return upcast(types.empty_struct_type);
     case Expression_Result_Type::POLYMORPHIC_FUNCTION:
     case Expression_Result_Type::POLYMORPHIC_STRUCT: {
         // Not sure about this at all...
@@ -2475,6 +2498,7 @@ void workload_executer_resolve()
             case Analysis_Workload_Type::DEFINITION: str = "Definition      "; break;
             case Analysis_Workload_Type::MODULE_ANALYSIS: str = "Module Analysis "; break;
             case Analysis_Workload_Type::IMPORT_RESOLVE: str = "Import Resolve   "; break;
+            case Analysis_Workload_Type::OPERATOR_CONTEXT_CHANGE: str = "Operator Context Change   "; break;
             case Analysis_Workload_Type::EVENT: str = "Event           "; break;
 
             case Analysis_Workload_Type::FUNCTION_HEADER: str = "Header          "; break;
@@ -2552,6 +2576,11 @@ void analysis_workload_append_to_string(Workload_Base* workload, String* string)
     case Analysis_Workload_Type::MODULE_ANALYSIS: {
         auto module = downcast<Workload_Module_Analysis>(workload);
         string_append_formated(string, "Module analysis %s", module->progress->symbol == 0 ? "ROOT" : module->progress->symbol->id->characters);
+        break;
+    }
+    case Analysis_Workload_Type::OPERATOR_CONTEXT_CHANGE: {
+        auto module = downcast<Workload_Operator_Context_Change>(workload)->parent_workload;
+        string_append_formated(string, "Operator_Context_Change %s", module->progress->symbol == 0 ? "ROOT" : module->progress->symbol->id->characters);
         break;
     }
     case Analysis_Workload_Type::IMPORT_RESOLVE: {
@@ -3039,7 +3068,6 @@ void polymorphic_base_info_destroy(Polymorphic_Base_Info* info) {
     array_destroy(&info->base_parameter_values);
 }
 
-
 Workload_Import_Resolve* create_import_workload(AST::Import* import_node)
 {
     // Check for Syntax-Errors
@@ -3127,6 +3155,29 @@ void analysis_workload_entry(void* userdata)
             analysis_workload_add_dependency_internal(upcast(analysis->progress->event_symbol_table_ready), upcast(analysis->last_import_workload));
         }
 
+        // Check if operator context changes
+        if (module_node->context_changes.size != 0) 
+        {
+            // Create new operator context
+            auto symbol_table = analysis->symbol_table;
+            auto parent_context = symbol_table->operator_context;
+            auto context = symbol_table_install_new_operator_context(symbol_table);
+
+            // Create new workload
+            Workload_Operator_Context_Change* context_change = workload_executer_allocate_workload<Workload_Operator_Context_Change>(nullptr);
+            context_change->module_node = analysis->module_node;
+            context_change->parent_workload = analysis;
+            context_change->context = context;
+            symbol_table->operator_context->workload = context_change;
+            context->workload = context_change;
+
+            // Add dependencies
+            analysis_workload_add_dependency_internal(upcast(context_change), upcast(analysis->progress->event_symbol_table_ready));
+            if (parent_context->workload != 0) {
+                analysis_workload_add_dependency_internal(upcast(context_change), upcast(parent_context->workload));
+            }
+        }
+
         // Create workloads for definitions
         for (int i = 0; i < module_node->definitions.size; i++) {
             analyser_create_symbol_and_workload_for_definition(module_node->definitions[i]);
@@ -3135,6 +3186,12 @@ void analysis_workload_entry(void* userdata)
     }
     case Analysis_Workload_Type::EVENT: {
         // INFO: Events are only proxies for empty workloads
+        break;
+    }
+    case Analysis_Workload_Type::OPERATOR_CONTEXT_CHANGE: 
+    {
+        auto change_workload = downcast<Workload_Operator_Context_Change>(workload);
+        analyse_operator_context_changes(change_workload->module_node->context_changes, change_workload->context);
         break;
     }
     case Analysis_Workload_Type::IMPORT_RESOLVE:
@@ -3853,162 +3910,14 @@ void semantic_analyser_register_function_call(ModTree_Function* call_to)
     }
 }
 
-Info_Cast_Type semantic_analyser_check_cast_type(Datatype* source_type, Datatype* destination_type, bool implicit_cast)
-{
-    auto& analyser = semantic_analyser;
-    auto& type_system = compiler.type_system;
-    auto& types = type_system.predefined_types;
-    if (datatype_is_unknown(source_type) || datatype_is_unknown(destination_type)) {
-        semantic_analyser_set_error_flag(true);
-        return Info_Cast_Type::NO_CAST;
-    }
-    if (types_are_equal(source_type, destination_type)) return Info_Cast_Type::NO_CAST;
-    bool cast_valid = false;
-    Info_Cast_Type cast_type = Info_Cast_Type::INVALID;
-
-    // Void pointer casting
-    if (source_type->type == Datatype_Type::VOID_POINTER) {
-        if (destination_type->type == Datatype_Type::POINTER) {
-            return Info_Cast_Type::POINTERS;
-        }
-        return Info_Cast_Type::INVALID;
-    }
-    else if (destination_type->type == Datatype_Type::VOID_POINTER) {
-        if (source_type->type == Datatype_Type::POINTER) {
-            return Info_Cast_Type::POINTERS;
-        }
-        return Info_Cast_Type::INVALID;
-    }
-
-    // Pointer casting
-    if (source_type->type == Datatype_Type::POINTER || destination_type->type == Datatype_Type::POINTER)
-    {
-        if (source_type->type == Datatype_Type::POINTER && destination_type->type == Datatype_Type::POINTER)
-        {
-            cast_type = Info_Cast_Type::POINTERS;
-            cast_valid = !implicit_cast;
-        }
-    }
-    else if (source_type->type == Datatype_Type::FUNCTION && destination_type->type == Datatype_Type::FUNCTION) {
-        // Check if types are the same
-        auto src_fn = downcast<Datatype_Function>(source_type);
-        auto dst_fn = downcast<Datatype_Function>(destination_type);
-        cast_valid = true;
-        cast_type = Info_Cast_Type::POINTERS;
-        if (src_fn->parameters.size != dst_fn->parameters.size) {
-            cast_valid = false;
-        }
-        else {
-            for (int i = 0; i < src_fn->parameters.size; i++) {
-                auto& param1 = src_fn->parameters[i];
-                auto& param2 = dst_fn->parameters[i];
-                if (!types_are_equal(param1.type, param2.type)) {
-                    cast_valid = false;
-                }
-            }
-        }
-        if (src_fn->return_type.available != dst_fn->return_type.available) {
-            cast_valid = false;
-        }
-        else if (src_fn->return_type.available) {
-            cast_valid = types_are_equal(src_fn->return_type.value, dst_fn->return_type.value);
-        }
-    }
-    // Primitive Casting:
-    else if (source_type->type == Datatype_Type::PRIMITIVE && destination_type->type == Datatype_Type::PRIMITIVE)
-    {
-        auto src_primitive = downcast<Datatype_Primitive>(source_type);
-        auto dst_primitive = downcast<Datatype_Primitive>(destination_type);
-        auto src_size = source_type->memory_info.value.size;
-        auto dst_size = destination_type->memory_info.value.size;
-        if (src_primitive->primitive_type == Primitive_Type::INTEGER && dst_primitive->primitive_type == Primitive_Type::INTEGER)
-        {
-            cast_type = Info_Cast_Type::INTEGERS;
-            cast_valid = true;
-            if (implicit_cast) {
-                if (src_primitive->is_signed == dst_primitive->is_signed) {
-                    cast_valid = src_size < dst_size;
-                }
-                else {
-                    if (src_primitive->is_signed) {
-                        cast_valid = false;
-                    }
-                    else {
-                        cast_valid = dst_size > src_size; // E.g. u8 to i32, u32 to i64
-                    }
-                }
-            }
-        }
-        else if (dst_primitive->primitive_type == Primitive_Type::FLOAT && src_primitive->primitive_type == Primitive_Type::INTEGER)
-        {
-            cast_type = Info_Cast_Type::INT_TO_FLOAT;
-            cast_valid = true;
-        }
-        else if (dst_primitive->primitive_type == Primitive_Type::INTEGER && src_primitive->primitive_type == Primitive_Type::FLOAT)
-        {
-            cast_type = Info_Cast_Type::FLOAT_TO_INT;
-            cast_valid = !implicit_cast;
-        }
-        else if (dst_primitive->primitive_type == Primitive_Type::FLOAT && src_primitive->primitive_type == Primitive_Type::FLOAT)
-        {
-            cast_type = Info_Cast_Type::FLOATS;
-            cast_valid = true;
-            if (implicit_cast) {
-                cast_valid = src_size < dst_size;
-            }
-        }
-        else { // Booleans can never be cast
-            cast_valid = false;
-        }
-    }
-    // Array casting
-    else if (source_type->type == Datatype_Type::ARRAY && destination_type->type == Datatype_Type::SLICE)
-    {
-        auto src_array = downcast<Datatype_Array>(source_type);
-        auto dst_slice = downcast<Datatype_Slice>(destination_type);
-        if (types_are_equal(src_array->element_type, dst_slice->element_type)) {
-            cast_type = Info_Cast_Type::ARRAY_TO_SLICE;
-            cast_valid = true;
-        }
-    }
-    // Enum casting
-    else if (source_type->type == Datatype_Type::ENUM || destination_type->type == Datatype_Type::ENUM)
-    {
-        bool enum_is_source = false;
-        Datatype* other = 0;
-        if (source_type->type == Datatype_Type::ENUM) {
-            enum_is_source = true;
-            other = destination_type;
-        }
-        else {
-            enum_is_source = false;
-            other = source_type;
-        }
-
-        if (other->type == Datatype_Type::PRIMITIVE && downcast<Datatype_Primitive>(other)->primitive_type == Primitive_Type::INTEGER) {
-            cast_type = enum_is_source ? Info_Cast_Type::ENUM_TO_INT : Info_Cast_Type::INT_TO_ENUM;
-            cast_valid = !implicit_cast;
-        }
-    }
-    // Any casting
-    else if (types_are_equal(destination_type, upcast(types.any_type)))
-    {
-        cast_valid = true;
-        cast_type = Info_Cast_Type::TO_ANY;
-    }
-    else if (types_are_equal(source_type, upcast(types.any_type))) {
-        cast_valid = !implicit_cast;
-        cast_type = Info_Cast_Type::FROM_ANY;
-    }
-
-    if (cast_valid) return cast_type;
-    return Info_Cast_Type::INVALID;
+Cast_Mode operator_context_get_cast_mode_setting(Operator_Context* context, AST::Context_Setting setting) {
+    assert((int)setting >= 0 && (int)setting < AST::CONTEXT_SETTING_CAST_MODE_COUNT, "");
+    return context->cast_mode_settings[(int)setting];
 }
 
-void expression_info_set_cast(Expression_Info* info, Info_Cast_Type cast_type, Datatype* result_type)
-{
-    info->post_op.type_afterwards = result_type;
-    info->post_op.implicit_cast = cast_type;
+bool operator_context_get_boolean_setting(Operator_Context* context, AST::Context_Setting setting) {
+    assert((int)setting >= AST::CONTEXT_SETTING_CAST_MODE_COUNT && (int)setting < (int)AST::Context_Setting::MAX_ENUM_VALUE, "");
+    return context->boolean_settings[(int)setting - AST::CONTEXT_SETTING_CAST_MODE_COUNT];
 }
 
 Expression_Info expression_info_make_empty(Expression_Context context)
@@ -4020,10 +3929,11 @@ Expression_Info expression_info_make_empty(Expression_Context context)
     info.result_type = Expression_Result_Type::VALUE;
     info.options.value_type = error_type;
     info.context = context;
-    info.post_op.type_afterwards = error_type;
-    info.post_op.implicit_cast = Info_Cast_Type::NO_CAST;
-    info.post_op.deref_count = 0;
-    info.post_op.take_address_of = false;
+    info.cast_info.type_afterwards = error_type;
+    info.cast_info.cast_type = Cast_Type::NO_CAST;
+    info.cast_info.deref_count = 0;
+    info.cast_info.take_address_of = false;
+    info.cast_info.options.error_msg = nullptr;
     return info;
 }
 
@@ -4218,7 +4128,11 @@ struct Callable
     Callable_Type type;
     union {
         ModTree_Function* function;
-        Hardcoded_Type hardcoded;
+        struct {
+            Hardcoded_Type type;
+            Datatype_Function* signature;
+        } hardcoded;
+        Datatype_Function* function_pointer_type;
         struct {
             Polymorphic_Base_Info* base;
             bool is_function;
@@ -4227,11 +4141,16 @@ struct Callable
                 Workload_Structure_Polymorphic* polymorphic_struct;
             } options;
         } polymorphic;
-        Datatype_Struct* structure;
+        Datatype_Struct* structure; // For struct-intitializer
     } options;
 
     int parameter_count;
-    int only_named_arguments_after_index;
+    int only_named_arguments_after_index; // This is used for implicit template arguments, which should only be specified by name
+};
+
+struct Overload_Candidate
+{
+    Callable callable;
     Optional<Datatype*> return_value_type;
     Datatype_Function* function_signature; // Only valid for specific callable types, otherwise 0
 
@@ -4245,27 +4164,30 @@ struct Callable
     bool overloading_arg_can_be_cast;
 };
 
-Optional<Callable> callable_try_create_from_expression_info(Expression_Info& info, Symbol* origin_symbol = 0)
+Optional<Overload_Candidate> overload_candidate_try_create_from_expression_info(Expression_Info& info, Symbol* origin_symbol = 0)
 {
-    Callable callable;
-    callable.function_signature = 0;
+    Overload_Candidate candidate;
+    candidate.symbol = origin_symbol;
+    candidate.expression_info = info; // Copies info (Question: Why?)
+    candidate.function_signature = 0;
+    candidate.return_value_type.available = false;
+
+    Callable& callable = candidate.callable;
     callable.parameter_count = -1;
-    callable.expression_info = info; // Copies info
-    callable.return_value_type.available = false;
-    callable.symbol = origin_symbol;
     callable.only_named_arguments_after_index = -1;
 
     switch (info.result_type)
     {
     case Expression_Result_Type::NOTHING:
     case Expression_Result_Type::TYPE: {
-        return optional_make_failure<Callable>();
+        return optional_make_failure<Overload_Candidate>();
     }
     case Expression_Result_Type::POLYMORPHIC_STRUCT:
     case Expression_Result_Type::POLYMORPHIC_FUNCTION:
     {
-        callable.type = Callable_Type::POLYMORPHIC;
         auto& poly = callable.options.polymorphic;
+
+        callable.type = Callable_Type::POLYMORPHIC;
         poly.is_function = info.result_type == Expression_Result_Type::POLYMORPHIC_FUNCTION;
         if (poly.is_function) {
             poly.options.polymorphic_function = info.options.polymorphic_function.base;
@@ -4290,68 +4212,67 @@ Optional<Callable> callable_try_create_from_expression_info(Expression_Info& inf
         auto type = info.options.type;
         if (type->type == Datatype_Type::FUNCTION) {
             callable.type = Callable_Type::FUNCTION_POINTER;
-            callable.function_signature = downcast<Datatype_Function>(type);
+            callable.options.function_pointer_type = candidate.function_signature;
+            candidate.function_signature = downcast<Datatype_Function>(type);
         }
         else {
-            return optional_make_failure<Callable>();
+            return optional_make_failure<Overload_Candidate>();
         }
         break;
     }
     case Expression_Result_Type::CONSTANT: {
         auto& constant = info.options.constant;
         if (constant.type->type != Datatype_Type::FUNCTION) {
-            return optional_make_failure<Callable>();
+            return optional_make_failure<Overload_Candidate>();
         }
 
         int function_index = (int)(*(i64*)constant.memory) - 1;
         if (function_index < 0 || function_index >= semantic_analyser.program->functions.size) {
-            return optional_make_failure<Callable>();
+            return optional_make_failure<Overload_Candidate>();
         }
 
         callable.type = Callable_Type::FUNCTION;
         callable.options.function = semantic_analyser.program->functions[function_index];
-        callable.function_signature = downcast<Datatype_Function>(constant.type);
+        candidate.function_signature = downcast<Datatype_Function>(constant.type);
         break;
     }
     case Expression_Result_Type::FUNCTION: {
         callable.type = Callable_Type::FUNCTION;
         callable.options.function = info.options.function;
-        callable.function_signature = info.options.function->signature;
+        candidate.function_signature = info.options.function->signature;
         break;
     }
     case Expression_Result_Type::HARDCODED_FUNCTION:
     {
         callable.type = Callable_Type::HARDCODED;
-        callable.options.hardcoded = info.options.hardcoded;
-        callable.function_signature = hardcoded_type_to_signature(callable.options.hardcoded);
-        callable.parameter_count = callable.function_signature->parameters.size;
+        callable.options.hardcoded.type = info.options.hardcoded;
+        callable.options.hardcoded.signature = hardcoded_type_to_signature(info.options.hardcoded);
+        callable.parameter_count = callable.options.hardcoded.signature->parameters.size;
+        candidate.function_signature = callable.options.hardcoded.signature;
         break;
     }
     default: panic("");
     }
 
     if (callable.parameter_count == -1) {
-        assert(callable.function_signature != 0, "");
-        callable.parameter_count = callable.function_signature->parameters.size;
-        callable.return_value_type = callable.function_signature->return_type;
+        assert(candidate.function_signature != 0, "");
+        callable.parameter_count = candidate.function_signature->parameters.size;
+        candidate.return_value_type = candidate.function_signature->return_type;
     }
     if (callable.only_named_arguments_after_index == -1) {
         callable.only_named_arguments_after_index = callable.parameter_count;
     }
 
-    return optional_make_success(callable);
+    return optional_make_success(candidate);
 }
 
-Callable callable_create_from_struct_initializer(Datatype_Struct* struct_type)
+Callable callable_create_struct_initializer(Datatype_Struct* struct_type)
 {
     Callable result;
     result.type = Callable_Type::STRUCT_INITIALIZER;
-    result.function_signature = 0;
     result.options.structure = struct_type;
     result.parameter_count = struct_type->members.size;
     result.only_named_arguments_after_index = result.parameter_count;
-    result.symbol = 0;
-    result.return_value_type.available = false;
     return result;
 }
 
@@ -4360,9 +4281,11 @@ Function_Parameter callable_get_parameter_info(const Callable& callable, int par
     Function_Parameter result;
     assert(parameter_index >= 0 && parameter_index < callable.parameter_count, "");
 
+    Datatype_Function* signature = 0;
     switch (callable.type)
     {
-    case Callable_Type::POLYMORPHIC: {
+    case Callable_Type::POLYMORPHIC: 
+    {
         auto& base_info = *callable.options.polymorphic.base;
 
         // Check if it's an implicit parameter
@@ -4391,18 +4314,27 @@ Function_Parameter callable_get_parameter_info(const Callable& callable, int par
         result.type = member.type;
         return result;
     }
-    default: {
-        assert(callable.function_signature != 0, "");
-        return callable.function_signature->parameters[parameter_index];
+    case Callable_Type::FUNCTION: {
+        signature = callable.options.function->signature;
+        break;
     }
+    case Callable_Type::HARDCODED: {
+        signature = callable.options.hardcoded.signature;
+        break;
+    }
+    case Callable_Type::FUNCTION_POINTER: {
+        signature = callable.options.function_pointer_type;
+        break;
+    }
+    default: panic("");    
     }
 
-    panic("Hey");
-    return function_parameter_make_empty();
+    assert(signature, "");
+    return signature->parameters[parameter_index];
 }
 
 // Checks for same identifier arguments, and named/unnamed argument order errors
-bool arguments_check_for_naming_errors(Dynamic_Array<AST::Argument*>& arguments, int* out_unnamed_argument_count = 0)
+bool arguments_check_for_naming_errors(Dynamic_Array<AST::Argument*>& arguments, int* out_unnamed_argument_count)
 {
     // Detect named arguments errors
     bool argument_error_occured = false;
@@ -4558,6 +4490,7 @@ void arguments_analyse_in_unknown_context(Dynamic_Array<AST::Argument*>& argumen
 }
 
 
+
 // The value of the constant must equal the value access index after matching
 struct Matching_Constraint
 {
@@ -4649,7 +4582,7 @@ bool match_templated_type_internal(Datatype* polymorphic_type, Datatype* match_a
             else { 
                 if (match_to_value.type->type == Datatype_Type::TYPE_HANDLE) {
                     Upp_Type_Handle handle_value = upp_constant_to_value<Upp_Type_Handle>(match_to_value);
-                    if (handle_value.index >= compiler.type_system.types.size) {
+                    if (handle_value.index >= (u32)compiler.type_system.types.size) {
                         return false;
                     }
                     Datatype* match_against = compiler.type_system.types[handle_value.index];
@@ -4864,7 +4797,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         }
 
         // Find all overload candidates
-        Dynamic_Array<Callable> candidates = dynamic_array_create_empty<Callable>(1);
+        Dynamic_Array<Overload_Candidate> candidates = dynamic_array_create_empty<Overload_Candidate>(1);
         SCOPE_EXIT(dynamic_array_destroy(&candidates));
         if (call.expr->type == AST::Expression_Type::PATH_LOOKUP)
         {
@@ -4884,11 +4817,11 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             {
                 auto& symbol = symbols[i];
                 auto info = analyse_symbol_as_expression(symbol, expression_context_make_auto_dereference(), call.expr->options.path_lookup->last);
-                auto callable_opt = callable_try_create_from_expression_info(info, symbol);
+                auto callable_opt = overload_candidate_try_create_from_expression_info(info, symbol);
                 if (callable_opt.available) {
                     dynamic_array_push_back(&candidates, callable_opt.value);
                 }
-                else if (datatype_is_unknown(info.post_op.type_afterwards)) {
+                else if (datatype_is_unknown(info.cast_info.type_afterwards)) {
                     encountered_unknown = true;
                 }
             }
@@ -4909,12 +4842,12 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         else
         {
             auto* info = semantic_analyser_analyse_expression_any(call.expr, expression_context_make_auto_dereference());
-            auto callable_opt = callable_try_create_from_expression_info(*info);
+            auto callable_opt = overload_candidate_try_create_from_expression_info(*info);
             if (callable_opt.available) {
                 dynamic_array_push_back(&candidates, callable_opt.value);
             }
             else {
-                if (!datatype_is_unknown(info->post_op.type_afterwards)) {
+                if (!datatype_is_unknown(info->cast_info.type_afterwards)) {
                     log_semantic_error("Expression is not callable!", upcast(call.expr->options.path_lookup->last));
                     log_error_info_expression_result_type(info->result_type);
                 }
@@ -4933,7 +4866,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             if (candidates.size > 1) {
                 for (int i = 0; i < candidates.size; i++) {
                     auto& candidate = candidates[i];
-                    if (candidate.type == Callable_Type::POLYMORPHIC) {
+                    if (candidate.callable.type == Callable_Type::POLYMORPHIC) {
                         log_semantic_error("Overload-resolution with polymorphic types currently not implemented", upcast(call.expr->options.path_lookup->last));
                         EXIT_ERROR(types.error_type);
                     }
@@ -4948,7 +4881,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 for (int i = 0; i < candidates.size; i++)
                 {
                     auto& candidate = candidates[i];
-                    if (!arguments_match_to_parameters(arguments, candidate, unnamed_argument_count, false)) {
+                    if (!arguments_match_to_parameters(arguments, candidate.callable, unnamed_argument_count, false)) {
                         dynamic_array_swap_remove(&candidates, i);
                         i -= 1;
                     }
@@ -4958,7 +4891,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             // Disambiguate overloads by argument types
             if (candidates.size > 1)
             {
-                auto remove_candidates_based_on_better_type_match = [&](Dynamic_Array<Callable>& candidates, Datatype* expected_type)
+                auto remove_candidates_based_on_better_type_match = [&](Dynamic_Array<Overload_Candidate>& candidates, Datatype* expected_type)
                 {
                     bool matching_candidate_exists = false;
                     bool castable_candidate_exists = false;
@@ -4972,9 +4905,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                             matching_candidate_exists = true;
                         }
                         else {
-                            Expression_Post_Op post_op = expression_context_apply(
+                            Expression_Cast_Info post_op = expression_context_apply(
                                 expected_type, expression_context_make_specific_type(candidate.overloading_param_type), false);
-                            if (post_op.implicit_cast != Info_Cast_Type::INVALID) {
+                            if (post_op.cast_type != Cast_Type::INVALID) {
                                 candidate.overloading_arg_can_be_cast = true;
                                 castable_candidate_exists = true;
                             }
@@ -5021,8 +4954,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                         Datatype* param_type = 0;
                         if (arg->name.available) {
                             // Find named argument
-                            for (int k = 0; k < candidate.parameter_count; k++) {
-                                auto& param = callable_get_parameter_info(candidate, k);
+                            for (int k = 0; k < candidate.callable.parameter_count; k++) {
+                                auto& param = callable_get_parameter_info(candidate.callable, k);
                                 if (param.name.available && param.name.value == arg->name.value) {
                                     param_type = param.type;
                                     break;
@@ -5030,7 +4963,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                             }
                         }
                         else {
-                            param_type = callable_get_parameter_info(candidate, i).type;
+                            param_type = callable_get_parameter_info(candidate.callable, i).type;
                         }
                         assert(param_type != 0, "Must have been found at this point, arguments were checked before!");
 
@@ -5055,7 +4988,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 // If we still have candidiates, try to differentiate based on return type
                 if (candidates.size > 1 && context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED)
                 {
-                    auto expected_return_type = context.signature;
+                    auto expected_return_type = context.expected_type.type;
                     bool can_differentiate_based_on_return_type = false;
                     Datatype* last_return_type = 0;
                     for (int i = 0; i < candidates.size; i++) {
@@ -5117,7 +5050,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         }
 
         // Do argument to parameter mapping (May have been done before for overload disambiguation)
-        bool success = arguments_match_to_parameters(arguments, candidate, unnamed_argument_count, true, upcast(expr), Parser::Section::ENCLOSURE);
+        bool success = arguments_match_to_parameters(arguments, candidate.callable, unnamed_argument_count, true, upcast(expr), Parser::Section::ENCLOSURE);
         if (!success) {
             arguments_analyse_in_unknown_context(arguments);
             if (candidate.return_value_type.available) {
@@ -5130,7 +5063,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         }
 
         // Further callable type dependend processing (polymorphic instanciation or hardcoded function handling)
-        switch (candidate.type)
+        switch (candidate.callable.type)
         {
         case Callable_Type::FUNCTION:
         case Callable_Type::FUNCTION_POINTER: {
@@ -5138,7 +5071,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         }
         case Callable_Type::HARDCODED:
         {
-            if (candidate.options.hardcoded == Hardcoded_Type::TYPE_OF)
+            if (candidate.callable.options.hardcoded.type == Hardcoded_Type::TYPE_OF)
             {
                 auto& arg = call.arguments[0];
                 auto arg_result = semantic_analyser_analyse_expression_any(arg->value, expression_context_make_unknown());
@@ -5184,7 +5117,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         }
         case Callable_Type::POLYMORPHIC:
         {
-            auto& poly_base = *candidate.options.polymorphic.base;
+            auto& poly_callable = candidate.callable.options.polymorphic;
+            auto& poly_base = *candidate.callable.options.polymorphic.base;
             auto& parameter_nodes = poly_base.parameter_nodes;
             const int return_type_index = poly_base.return_type_index;
 
@@ -5198,8 +5132,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
             // Don't instanciate if there is an error in the base analysis
             {
-                if (candidate.options.polymorphic.is_function) {
-                    Function_Progress* base_progress = polymorphic_function_base_to_function_progress(candidate.options.polymorphic.options.polymorphic_function);
+                if (poly_callable.is_function) {
+                    Function_Progress* base_progress = polymorphic_function_base_to_function_progress(poly_callable.options.polymorphic_function);
                     if (base_progress->header_workload->base.real_error_count > 0) {
                         EXIT_ERROR(types.error_type);
                     }
@@ -5208,7 +5142,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                     }
                 }
                 else {
-                    auto polymorphic_struct = candidate.options.polymorphic.options.polymorphic_struct;
+                    auto polymorphic_struct = poly_callable.options.polymorphic_struct;
                     if (polymorphic_struct->base.real_error_count > 0) {
                         EXIT_ERROR(types.error_type);
                     }
@@ -5342,15 +5276,15 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
                         // Match types
                         bool match_success = match_templated_type(
-                            return_type, context.signature, matched_implicit_parameter_count,
+                            return_type, context.expected_type.type, matched_implicit_parameter_count,
                             matching_helper, instance_values, matching_constraints);
                         if (!match_success) {
                             log_semantic_error("Could not match return-type with context-type", expr, Parser::Section::ENCLOSURE);
-                            log_error_info_given_type(context.signature);
+                            log_error_info_given_type(context.expected_type.type);
                             log_error_info_expected_type(return_type);
                             success = false;
                         }
-                        return_type = context.signature;
+                        return_type = context.expected_type.type;
                     }
 
                     instance_parameter_types[parameter_index] = return_type;
@@ -5359,7 +5293,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
                 // Handle normal parameters
                 auto& parameter_node = parameter_nodes[parameter_index];
-                assert(parameter_node->is_comptime == base_parameter.is_comptime || !candidate.options.polymorphic.is_function, "");
+                assert(parameter_node->is_comptime == base_parameter.is_comptime || !poly_callable.is_function, "");
 
                 // Find argument node
                 AST::Argument* argument_node = 0;
@@ -5452,7 +5386,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                     // Check if we need to create a struct template
                     if (value_type->contains_type_template) 
                     {
-                        assert(!candidate.options.polymorphic.is_function, "");
+                        assert(!poly_callable.is_function, "");
                         instance_values[parameter_index] = polymorphic_value_make_type(value_type);
                         create_struct_template = true;
                         continue;
@@ -5468,7 +5402,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                         if (constant.type->type == Datatype_Type::TYPE_HANDLE) 
                         {
                             Upp_Type_Handle handle = upp_constant_to_value<Upp_Type_Handle>(constant);
-                            if (handle.index >= type_system->types.size) {
+                            if (handle.index >= (u32) type_system->types.size) {
                                 success = false;
                                 log_semantic_error("Invalid constant type handle index", upcast(argument_node));
                                 arguments_analyse_in_unknown_context(arguments);
@@ -5477,7 +5411,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
                             Datatype* constant_type = type_system->types[handle.index];
                             if (constant_type->contains_type_template) {
-                                assert(!candidate.options.polymorphic.is_function, "");
+                                assert(!poly_callable.is_function, "");
                                 instance_values[parameter_index] = polymorphic_value_make_type(constant_type);
                                 create_struct_template = true;
                                 continue;
@@ -5501,7 +5435,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                     // Analyse argument if this has not been done before
                     Datatype* argument_type;
                     if (arg_info->already_analysed) {
-                        argument_type = get_info(argument_node->value)->post_op.type_afterwards;
+                        argument_type = get_info(argument_node->value)->cast_info.type_afterwards;
                     }
                     else {
                         argument_type = semantic_analyser_analyse_expression_value(argument_node->value, expression_context_make_unknown());
@@ -5530,8 +5464,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             // Create struct template if requested
             if (create_struct_template && success)
             {
-                assert(!candidate.options.polymorphic.is_function, "");
-                auto poly_struct = candidate.options.polymorphic.options.polymorphic_struct;
+                assert(!poly_callable.is_function, "");
+                auto poly_struct = poly_callable.options.polymorphic_struct;
 
                 auto result_template_type = type_system_make_struct_instance_template(poly_struct, instance_values);
                 instance_values.data = 0; // Since we transfer ownership we should signal that we don't want to delete this
@@ -5581,10 +5515,10 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 Polymorphic_Instance_Info instance;
                 instance.base_info = &poly_base;
                 instance.instance_parameter_values = instance_values;
-                instance.is_function_instance = candidate.options.polymorphic.is_function;
+                instance.is_function_instance = poly_callable.is_function;
                 instance_index = poly_base.instances.size;
 
-                if (candidate.options.polymorphic.is_function) 
+                if (poly_callable.is_function) 
                 {
                     // Create instance function signature
                     Datatype_Function* instance_function_type = 0;
@@ -5619,7 +5553,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                         instance_function_type = type_system_finish_function(unfinished, return_type);
                     }
 
-                    auto poly_function = candidate.options.polymorphic.options.polymorphic_function;
+                    auto poly_function = poly_callable.options.polymorphic_function;
                     auto poly_progress = polymorphic_function_base_to_function_progress(poly_function);
 
                     // Create new instance progress
@@ -5638,7 +5572,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 }
                 else
                 {
-                    auto poly_struct = candidate.options.polymorphic.options.polymorphic_struct;
+                    auto poly_struct = poly_callable.options.polymorphic_struct;
 
                     // Create new struct instance
                     auto body_workload = workload_structure_create(poly_struct->body_workload->struct_node, 0, true, Symbol_Access_Level::POLYMORPHIC);
@@ -5659,7 +5593,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             }
 
             // Exit now if we are instanciating struct
-            if (!candidate.options.polymorphic.is_function) {
+            if (!poly_callable.is_function) {
                 EXIT_TYPE(upcast(poly_base.instances[instance_index].options.struct_instance->struct_type));
             }
 
@@ -5674,8 +5608,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             }
 
             // Store instanciation info in expression_info
-            assert(call_expr_info->result_type == Expression_Result_Type::POLYMORPHIC_FUNCTION && candidate.options.polymorphic.is_function, "");
-            call_expr_info->options.polymorphic_function.base = candidate.options.polymorphic.options.polymorphic_function;
+            assert(call_expr_info->result_type == Expression_Result_Type::POLYMORPHIC_FUNCTION && poly_callable.is_function, "");
+            call_expr_info->options.polymorphic_function.base = poly_callable.options.polymorphic_function;
             ModTree_Function* function = poly_base.instances[instance_index].options.function_instance->function;
             call_expr_info->options.polymorphic_function.instance_fn = function;
             candidate.function_signature = function->signature;
@@ -5707,7 +5641,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             if (arg_info->context_application_missing) {
                 auto value_info = get_info(arg->value);
                 auto arg_context = expression_context_make_specific_type(params[arg_info->argument_index].type);
-                value_info->post_op = expression_context_apply(
+                value_info->cast_info = expression_context_apply(
                     expression_info_get_type(value_info, true), arg_context, true, arg->value);
                 continue;
             }
@@ -5764,87 +5698,24 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
     case AST::Expression_Type::CAST:
     {
         auto cast = &expr->options.cast;
-        Datatype* destination_type = 0;
+        Expression_Context operand_context;
         if (cast->to_type.available) {
-            destination_type = semantic_analyser_analyse_expression_type(cast->to_type.value);
+            auto destination_type = semantic_analyser_analyse_expression_type(cast->to_type.value);
+            operand_context = expression_context_make_specific_type(destination_type, false, Cast_Mode::EXPLICIT);
         }
-
-        // Determine Context and Destination Type
-        Expression_Context operand_context = expression_context_make_unknown();
-        switch (cast->type)
+        else 
         {
-        case AST::Cast_Type::TYPE_TO_TYPE:
-        {
-            if (destination_type == 0)
-            {
-                if (context.type != Expression_Context_Type::SPECIFIC_TYPE_EXPECTED) {
-                    log_semantic_error("No context is available for auto cast", expr);
-                    EXIT_ERROR(types.error_type);
-                }
-                destination_type = context.signature;
-            }
-            break;
-        }
-        case AST::Cast_Type::RAW_TO_PTR:
-        {
-            if (destination_type == 0) {
-                log_semantic_error("Raw to pointer cast requires destination type", expr);
-                destination_type = types.error_type;
+            if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED) {
+                operand_context = expression_context_make_specific_type(context.expected_type.type, false, Cast_Mode::IMPLICIT);
             }
             else {
-                operand_context = expression_context_make_specific_type(upcast(types.u64_type));
-                if (destination_type->type != Datatype_Type::POINTER) {
-                    log_semantic_error("Destination type must be pointer", expr);
-                    log_error_info_given_type(destination_type);
-                }
+                log_semantic_error("No context is available for auto cast", expr);
+                operand_context = expression_context_make_unknown(true);
             }
-            break;
-        }
-        case AST::Cast_Type::PTR_TO_RAW:
-        {
-            if (destination_type != 0) {
-                log_semantic_error("Must not specify destination type when casting to raw", expr);
-            }
-            destination_type = upcast(types.u64_type);
-            break;
-        }
-        default: panic("");
         }
 
-        auto operand_type = semantic_analyser_analyse_expression_value(cast->operand, operand_context);
-        Info_Cast_Type cast_type;
-        // Determine Cast type
-        switch (cast->type)
-        {
-        case AST::Cast_Type::TYPE_TO_TYPE:
-        {
-            assert(destination_type != 0, "");
-            cast_type = semantic_analyser_check_cast_type(operand_type, destination_type, false);
-            if (cast_type == Info_Cast_Type::INVALID) {
-                log_semantic_error("No cast available between given types", expr);
-                log_error_info_given_type(operand_type);
-                log_error_info_expected_type(destination_type);
-            }
-            break;
-        }
-        case AST::Cast_Type::PTR_TO_RAW: {
-            if (operand_type->type != Datatype_Type::POINTER) {
-                log_semantic_error("To raw cast require a pointer value", expr);
-                log_error_info_given_type(operand_type);
-            }
-            cast_type = Info_Cast_Type::POINTER_TO_U64;
-            break;
-        }
-        case AST::Cast_Type::RAW_TO_PTR:
-        {
-            cast_type = Info_Cast_Type::U64_TO_POINTER;
-            break;
-        }
-        default: panic("");
-        }
-
-        info->specifics.explicit_cast = cast_type;
-        EXIT_VALUE(destination_type);
+        auto result_type = semantic_analyser_analyse_expression_value(cast->operand, operand_context);
+        EXIT_VALUE(result_type);
     }
     case AST::Expression_Type::LITERAL_READ:
     {
@@ -5854,7 +5725,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         void* null_pointer = 0;
         Upp_String string_buffer;
 
-        // Missing: float, nummptr
+        // Missing: float, nullptr
         switch (read.type)
         {
         case Literal_Type::BOOLEAN:
@@ -5869,10 +5740,6 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             literal_type = upcast(types.i32_type);
             value_ptr = &read.options.int_val;
             break;
-        case Literal_Type::NULL_VAL:
-            literal_type = types.void_pointer_type;
-            value_ptr = &null_pointer;
-            break;
         case Literal_Type::STRING: {
             String* string = read.options.string;
             string_buffer.character_buffer.data = string->characters;
@@ -5881,6 +5748,21 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
             literal_type = upcast(types.string_type);
             value_ptr = &string_buffer;
+            break;
+        }
+        case Literal_Type::NULL_VAL: 
+        {
+            literal_type = types.void_pointer_type;
+            value_ptr = &null_pointer;
+            if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED)
+            {
+                if (context.expected_type.type->type == Datatype_Type::POINTER ||
+                    context.expected_type.type->type == Datatype_Type::VOID_POINTER ||
+                    context.expected_type.type->type == Datatype_Type::FUNCTION)
+                {
+                    literal_type = context.expected_type.type;
+                }
+            }
             break;
         }
         default: panic("");
@@ -5958,7 +5840,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         // Create bake progress and wait for it to finish
         Datatype* expected_type = 0;
         if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED) {
-            expected_type = context.signature;
+            expected_type = context.expected_type.type;
         }
         auto progress = bake_progress_create(expr, expected_type);
         progress->analysis_workload->base.polymorphic_values = analyser.current_workload->polymorphic_values;
@@ -6072,7 +5954,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         }
         else {
             if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED) {
-                type = context.signature;
+                type = context.expected_type.type;
             }
             else {
                 log_semantic_error("Could not determine struct type from context", expr, Parser::Section::FIRST_TOKEN);
@@ -6156,7 +6038,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             EXIT_ERROR(upcast(struct_signature));
         }
         bool argument_matching_error = !arguments_match_to_parameters(
-            arguments, callable_create_from_struct_initializer(struct_signature), unnamed_argument_count, true, upcast(expr), Parser::Section::ENCLOSURE);
+            arguments, callable_create_struct_initializer(struct_signature), unnamed_argument_count, true, upcast(expr), Parser::Section::ENCLOSURE);
         if (argument_matching_error) {
             arguments_analyse_in_unknown_context(arguments);
             EXIT_ERROR(upcast(struct_signature));
@@ -6182,11 +6064,11 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         {
             if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED)
             {
-                if (context.signature->type == Datatype_Type::ARRAY) {
-                    element_type = downcast<Datatype_Array>(context.signature)->element_type;
+                if (context.expected_type.type->type == Datatype_Type::ARRAY) {
+                    element_type = downcast<Datatype_Array>(context.expected_type.type)->element_type;
                 }
-                else if (context.signature->type == Datatype_Type::SLICE) {
-                    element_type = downcast<Datatype_Slice>(context.signature)->element_type;
+                else if (context.expected_type.type->type == Datatype_Type::SLICE) {
+                    element_type = downcast<Datatype_Slice>(context.expected_type.type)->element_type;
                 }
                 else {
                     element_type = 0;
@@ -6242,6 +6124,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
     {
         auto& member_node = expr->options.member_access;
         auto access_expr_info = semantic_analyser_analyse_expression_any(member_node.expr, expression_context_make_auto_dereference());
+        auto& ids = compiler.predefined_ids;
 
         info->specifics.member_access.type = Member_Access_Type::OTHER;
         auto search_struct_type_for_polymorphic_parameter_access = [&](Datatype_Struct* struct_type) -> Optional<Polymorphic_Value> {
@@ -6373,7 +6256,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         case Expression_Result_Type::VALUE:
         case Expression_Result_Type::CONSTANT:
         {
-            auto base_type = access_expr_info->post_op.type_afterwards;
+            auto base_type = access_expr_info->cast_info.type_afterwards;
             if (datatype_is_unknown(base_type)) {
                 semantic_analyser_set_error_flag(true);
                 EXIT_ERROR(types.error_type);
@@ -6411,7 +6294,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             }
             else if (base_type->type == Datatype_Type::ARRAY || base_type->type == Datatype_Type::SLICE)
             {
-                if (member_node.name != compiler.id_size && member_node.name != compiler.id_data) {
+                if (member_node.name != ids.size && member_node.name != ids.data) {
                     log_semantic_error("Arrays/Slices only have either .size or .data as members", expr);
                     log_error_info_id(member_node.name);
                     EXIT_ERROR(types.error_type);
@@ -6420,7 +6303,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 if (base_type->type == Datatype_Type::ARRAY)
                 {
                     auto array = downcast<Datatype_Array>(base_type);
-                    if (member_node.name == compiler.id_size) {
+                    if (member_node.name == ids.size) {
                         if (array->count_known) {
                             expression_info_set_constant_i32(info, array->element_count);
                         }
@@ -6438,7 +6321,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 {
                     auto slice = downcast<Datatype_Slice>(base_type);
                     Struct_Member member;
-                    if (member_node.name == compiler.id_size) {
+                    if (member_node.name == ids.size) {
                         member = slice->size_member;
                     }
                     else {
@@ -6468,13 +6351,13 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             log_semantic_error("Could not determine context for auto enum", expr);
             EXIT_ERROR(types.error_type);
         }
-        if (context.signature->type != Datatype_Type::ENUM) {
+        if (context.expected_type.type->type != Datatype_Type::ENUM) {
             log_semantic_error("Context requires a type that is not an enum, so .NAME syntax is not valid", expr);
-            log_error_info_given_type(context.signature);
+            log_error_info_given_type(context.expected_type.type);
             EXIT_ERROR(types.error_type);
         }
 
-        auto& members = downcast<Datatype_Enum>(context.signature)->members;
+        auto& members = downcast<Datatype_Enum>(context.expected_type.type)->members;
         Enum_Item* found = 0;
         for (int i = 0; i < members.size; i++) {
             auto member = &members[i];
@@ -6493,7 +6376,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             value = found->value;
         }
 
-        expression_info_set_constant_enum(info, context.signature, value);
+        expression_info_set_constant_enum(info, context.expected_type.type, value);
         return info;
     }
     case AST::Expression_Type::UNARY_OPERATION:
@@ -6546,7 +6429,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             case Expression_Result_Type::VALUE:
             case Expression_Result_Type::CONSTANT:
             {
-                Datatype* operand_type = operand_result->post_op.type_afterwards;
+                Datatype* operand_type = operand_result->cast_info.type_afterwards;
                 if (datatype_is_unknown(operand_type)) {
                     semantic_analyser_set_error_flag(true);
                     EXIT_ERROR(operand_type);
@@ -6665,10 +6548,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
         // Evaluate operands
         auto left_type = semantic_analyser_analyse_expression_value(binop_node.left, operand_context);
-        if (enum_valid && left_type->type == Datatype_Type::ENUM) {
-            operand_context = expression_context_make_specific_type(left_type);
-        }
-        auto right_type = semantic_analyser_analyse_expression_value(binop_node.right, operand_context);
+        // NOTE: For now, the left type dictates what type we are expecting, this will change with operator overloading
+        auto right_type = semantic_analyser_analyse_expression_value(binop_node.right, expression_context_make_specific_type(left_type));
 
         // Check for unknowns
         if (datatype_is_unknown(left_type) || datatype_is_unknown(right_type)) {
@@ -6678,23 +6559,6 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         // Try implicit casting if types dont match
         Datatype* operand_type = left_type;
         bool types_are_valid = true;
-
-        if (!types_are_equal(left_type, right_type))
-        {
-            auto left_cast = semantic_analyser_check_cast_type(left_type, right_type, true);
-            auto right_cast = semantic_analyser_check_cast_type(right_type, left_type, true);
-            if (left_cast != Info_Cast_Type::INVALID) {
-                expression_info_set_cast(get_info(binop_node.left), left_cast, right_type);
-                operand_type = right_type;
-            }
-            else if (right_cast != Info_Cast_Type::INVALID) {
-                expression_info_set_cast(get_info(binop_node.right), right_cast, left_type);
-                operand_type = left_type;
-            }
-            else {
-                types_are_valid = false;
-            }
-        }
 
         // Check if given type is valid
         if (types_are_valid)
@@ -6751,12 +6615,370 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 #undef EXIT_FUNCTION
 }
 
-// If errors occured, cast_type is set to INVALID
-Expression_Post_Op expression_context_apply(
+Cast_Type check_cast_type_no_auto_operations(Expression_Cast_Info& result, Datatype* source_type, Datatype* destination_type, Cast_Mode cast_mode)
+{
+    auto& analyser = semantic_analyser;
+    auto& type_system = compiler.type_system;
+    auto& types = type_system.predefined_types;
+    auto& operator_context = semantic_analyser.current_workload->current_symbol_table->operator_context;
+
+    // Check for simple cases
+    if (datatype_is_unknown(source_type) || datatype_is_unknown(destination_type)) {
+        return Cast_Type::UNKNOWN;
+    }
+    if (types_are_equal(source_type, destination_type)) return Cast_Type::NO_CAST;
+
+    // Figure out type of cast + what mode is allowed
+    Cast_Type cast_type = Cast_Type::INVALID;
+    Cast_Mode allowed_mode = Cast_Mode::NONE;
+
+    // Check built-in cast types
+    switch (source_type->type)
+    {
+    case Datatype_Type::ARRAY: 
+    {
+        if (destination_type->type == Datatype_Type::SLICE) {
+            auto source_array = downcast<Datatype_Array>(source_type);
+            auto dest_slice = downcast<Datatype_Slice>(destination_type);
+            if (types_are_equal(source_array->element_type, dest_slice->element_type)) {
+                cast_type = Cast_Type::ARRAY_TO_SLICE;
+                allowed_mode = operator_context_get_cast_mode_setting(operator_context, AST::Context_Setting::ARRAY_TO_SLICE);
+            }
+        }
+        break;
+    }
+    case Datatype_Type::ENUM:
+    {
+        if (destination_type->type == Datatype_Type::PRIMITIVE)
+        {
+            auto primitive = downcast<Datatype_Primitive>(destination_type);
+            if (primitive->primitive_type == Primitive_Type::INTEGER) {
+                cast_type = Cast_Type::ENUM_TO_INT;
+                allowed_mode = operator_context_get_cast_mode_setting(operator_context, AST::Context_Setting::ENUM_TO_INT);
+            }
+        }
+        break;
+    }
+    case Datatype_Type::FUNCTION:
+    {
+        if (destination_type->type == Datatype_Type::FUNCTION)
+        {
+            // Note: Casting between two different function signatures only works if they have the same parameter/return types.
+            //       In C this would always result in the same type, but in upp the parameter names/default values change the function type
+            auto src_fn = downcast<Datatype_Function>(source_type);
+            auto dst_fn = downcast<Datatype_Function>(destination_type);
+            bool cast_valid = true;
+
+            if (src_fn->parameters.size != dst_fn->parameters.size) {
+                cast_valid = false;
+            }
+            else {
+                for (int i = 0; i < src_fn->parameters.size; i++) {
+                    auto& param1 = src_fn->parameters[i];
+                    auto& param2 = dst_fn->parameters[i];
+                    if (!types_are_equal(param1.type, param2.type)) {
+                        cast_valid = false;
+                    }
+                }
+            }
+            if (src_fn->return_type.available != dst_fn->return_type.available) {
+                cast_valid = false;
+            }
+            else if (src_fn->return_type.available) {
+                cast_valid = types_are_equal(src_fn->return_type.value, dst_fn->return_type.value);
+            }
+
+            if (cast_valid) {
+                cast_type = Cast_Type::POINTERS; // Not sure if we want to have different types for this
+                allowed_mode = Cast_Mode::AUTO; // Maybe we want to add this to the expression context at some point?
+            }
+        }
+        else if (destination_type->type == Datatype_Type::VOID_POINTER)
+        {
+            cast_type = Cast_Type::POINTERS; // Not sure if we want to have different types for this
+            allowed_mode = operator_context_get_cast_mode_setting(operator_context, AST::Context_Setting::FUNCTION_POINTER_TO_VOID);
+        }
+        else if (destination_type->type == Datatype_Type::PRIMITIVE) {
+            auto primitive = downcast<Datatype_Primitive>(destination_type);
+            if (primitive->primitive_type == Primitive_Type::BOOLEAN) {
+                cast_type = Cast_Type::POINTER_NULL_CHECK;
+                allowed_mode = operator_context_get_cast_mode_setting(operator_context, AST::Context_Setting::FUNCTION_POINTER_TO_BOOL);
+            }
+        }
+        else if (types_are_equal(destination_type, upcast(types.u64_type))) {
+            cast_type = Cast_Type::POINTER_TO_U64;
+            allowed_mode = operator_context_get_cast_mode_setting(operator_context, AST::Context_Setting::POINTER_TO_U64);
+        }
+        break;
+    }
+    case Datatype_Type::POINTER:
+    {
+        if (destination_type->type == Datatype_Type::VOID_POINTER) {
+            cast_type = Cast_Type::POINTERS;
+            allowed_mode = operator_context_get_cast_mode_setting(operator_context, AST::Context_Setting::POINTER_TO_VOID_POINTER);
+        }
+        else if (destination_type->type == Datatype_Type::POINTER) {
+            cast_type = Cast_Type::POINTERS;
+            allowed_mode = operator_context_get_cast_mode_setting(operator_context, AST::Context_Setting::POINTER_TO_POINTER);
+        }
+        else if (types_are_equal(destination_type, upcast(types.u64_type))) {
+            cast_type = Cast_Type::POINTER_TO_U64;
+            allowed_mode = operator_context_get_cast_mode_setting(operator_context, AST::Context_Setting::POINTER_TO_U64);
+        }
+        else if (destination_type->type == Datatype_Type::PRIMITIVE) {
+            auto primitive = downcast<Datatype_Primitive>(destination_type);
+            if (primitive->primitive_type == Primitive_Type::BOOLEAN) {
+                cast_type = Cast_Type::POINTER_NULL_CHECK;
+                allowed_mode = operator_context_get_cast_mode_setting(operator_context, AST::Context_Setting::POINTER_TO_BOOL);
+            }
+        }
+        break;
+    }
+    case Datatype_Type::VOID_POINTER:
+    {
+        if (destination_type->type == Datatype_Type::POINTER) {
+            cast_type = Cast_Type::POINTERS;
+            allowed_mode = operator_context_get_cast_mode_setting(operator_context, AST::Context_Setting::VOID_POINTER_TO_POINTER);
+        }
+        else if (destination_type->type == Datatype_Type::FUNCTION) {
+            cast_type = Cast_Type::POINTERS;
+            allowed_mode = operator_context_get_cast_mode_setting(operator_context, AST::Context_Setting::VOID_TO_FUNCTION_POINTER);
+        }
+        else if (destination_type->type == Datatype_Type::PRIMITIVE) {
+            auto primitive = downcast<Datatype_Primitive>(destination_type);
+            if (primitive->primitive_type == Primitive_Type::BOOLEAN) {
+                cast_type = Cast_Type::POINTER_NULL_CHECK;
+                allowed_mode = operator_context_get_cast_mode_setting(operator_context, AST::Context_Setting::VOID_POINTER_TO_BOOL);
+            }
+        }
+        else if (types_are_equal(destination_type, upcast(types.u64_type))) {
+            cast_type = Cast_Type::POINTER_TO_U64;
+            allowed_mode = operator_context_get_cast_mode_setting(operator_context, AST::Context_Setting::POINTER_TO_U64);
+        }
+        break;
+    }
+    case Datatype_Type::PRIMITIVE:
+    {
+        auto src_primitive = downcast<Datatype_Primitive>(source_type);
+        if (destination_type->type == Datatype_Type::PRIMITIVE)
+        {
+            auto dst_primitive = downcast<Datatype_Primitive>(destination_type);
+            auto src_size = source_type->memory_info.value.size;
+            auto dst_size = destination_type->memory_info.value.size;
+
+            // Figure out allowed mode and cast type
+            if (src_primitive->primitive_type == Primitive_Type::INTEGER && dst_primitive->primitive_type == Primitive_Type::INTEGER)
+            {
+                cast_type = Cast_Type::INTEGERS;
+                if (src_primitive->is_signed == dst_primitive->is_signed)
+                {
+                    if (dst_size > src_size) {
+                        allowed_mode = operator_context_get_cast_mode_setting(operator_context, AST::Context_Setting::INTEGER_SIZE_UPCAST);
+                    }
+                    else {
+                        allowed_mode = operator_context_get_cast_mode_setting(operator_context, AST::Context_Setting::INTEGER_SIZE_DOWNCAST);
+                    }
+                }
+                else {
+                    // Signed to unsigned
+                    if (dst_size == src_size) {
+                        if (src_primitive->is_signed) {
+                            allowed_mode = operator_context_get_cast_mode_setting(operator_context, AST::Context_Setting::INTEGER_SIGNED_TO_UNSIGNED);
+                        }
+                        else {
+                            allowed_mode = operator_context_get_cast_mode_setting(operator_context, AST::Context_Setting::INTEGER_UNSIGNED_TO_SIGNED);
+                        }
+                    }
+                    else {
+                        // Currently we don't allow both a signed cast (Between signed and unsigned) and a size cast in one, e.g. u8 -> i32, i64 -> u16
+                        allowed_mode = Cast_Mode::NONE;
+                    }
+                }
+            }
+            else if (dst_primitive->primitive_type == Primitive_Type::FLOAT && src_primitive->primitive_type == Primitive_Type::INTEGER)
+            {
+                cast_type = Cast_Type::INT_TO_FLOAT;
+                allowed_mode = Cast_Mode::AUTO;
+            }
+            else if (dst_primitive->primitive_type == Primitive_Type::INTEGER && src_primitive->primitive_type == Primitive_Type::FLOAT)
+            {
+                cast_type = Cast_Type::FLOAT_TO_INT;
+                allowed_mode = Cast_Mode::IMPLICIT;
+            }
+            else if (dst_primitive->primitive_type == Primitive_Type::FLOAT && src_primitive->primitive_type == Primitive_Type::FLOAT)
+            {
+                cast_type = Cast_Type::FLOATS;
+                if (dst_size > src_size) {
+                    allowed_mode = operator_context_get_cast_mode_setting(operator_context, AST::Context_Setting::FLOAT_SIZE_UPCAST);
+                }
+                else {
+                    allowed_mode = operator_context_get_cast_mode_setting(operator_context, AST::Context_Setting::FLOAT_SIZE_DOWNCAST);
+                }
+            }
+            else { // Booleans can never be cast
+                allowed_mode = Cast_Mode::NONE;
+            }
+        }
+        else if (destination_type->type == Datatype_Type::ENUM)
+        {
+            if (src_primitive->primitive_type == Primitive_Type::INTEGER) {
+                cast_type = Cast_Type::INT_TO_ENUM;
+                allowed_mode = operator_context_get_cast_mode_setting(operator_context, AST::Context_Setting::INT_TO_ENUM);
+            }
+        }
+        break;
+    }
+    default: break;
+    }
+
+    // Check any casting
+    if (cast_type == Cast_Type::INVALID)
+    {
+        if (types_are_equal(destination_type, upcast(types.any_type)))
+        {
+            cast_type = Cast_Type::TO_ANY;
+            allowed_mode = operator_context_get_cast_mode_setting(operator_context, AST::Context_Setting::TO_ANY);
+        }
+        else if (types_are_equal(source_type, upcast(types.any_type))) {
+            cast_type = Cast_Type::FROM_ANY;
+            allowed_mode = operator_context_get_cast_mode_setting(operator_context, AST::Context_Setting::FROM_ANY);
+        }
+    }
+
+    // Check for custom casts
+    if (cast_type == Cast_Type::INVALID)
+    {
+        Datatype_Pair pair;
+        pair.from = source_type;
+        pair.to = destination_type;
+        Custom_Cast* custom_cast = hashtable_find_element(&operator_context->custom_casts, pair);
+        if (custom_cast != 0) 
+        {
+            cast_type = Cast_Type::CUSTOM_CAST;
+            allowed_mode = custom_cast->cast_mode;
+            result.options.custom_cast_function = custom_cast->function;
+            // Note: It may be bad to call register_function_call here (Because it could be a unwanted side-effect during e.g. operator overloading)
+            semantic_analyser_register_function_call(custom_cast->function);
+        }
+    }
+
+    // Check if we are in allowed cast mode
+    if ((int)allowed_mode > (int)cast_mode) {
+        return Cast_Type::INVALID;
+    }
+    return cast_type;
+}
+
+Expression_Cast_Info semantic_analyser_check_if_cast_possible(Datatype* source_type, Datatype* destination_type, Cast_Mode cast_mode, bool auto_operations_valid = true)
+{
+    auto& analyser = semantic_analyser;
+    auto& type_system = compiler.type_system;
+    auto& types = type_system.predefined_types;
+    auto& operator_context = semantic_analyser.current_workload->current_symbol_table->operator_context;
+
+    Expression_Cast_Info result;
+    result.cast_type = Cast_Type::INVALID;
+    result.deref_count = 0;
+    result.take_address_of = false;
+    result.options.error_msg = nullptr;
+    result.type_afterwards = destination_type;
+
+    // Pointer null check (Done before auto dereference/address_of)
+    if (types_are_equal(destination_type, upcast(types.bool_type)))
+    {
+        Cast_Mode allowed_mode = Cast_Mode::NONE;
+        if (source_type->type == Datatype_Type::POINTER) {
+            allowed_mode = operator_context_get_cast_mode_setting(operator_context, AST::Context_Setting::POINTER_TO_BOOL);
+        }
+        else if (source_type->type == Datatype_Type::VOID_POINTER) {
+            allowed_mode = operator_context_get_cast_mode_setting(operator_context, AST::Context_Setting::VOID_POINTER_TO_BOOL);
+        }
+        else if (source_type->type == Datatype_Type::FUNCTION) {
+            allowed_mode = operator_context_get_cast_mode_setting(operator_context, AST::Context_Setting::FUNCTION_POINTER_TO_BOOL);
+        }
+
+        // Check if pointer null check is allowed
+        if ((int)allowed_mode <= (int)cast_mode) 
+        {
+            // Check for ambiguities with bool-pointers
+            if (source_type->type == Datatype_Type::POINTER)
+            {
+                auto pointer_type = downcast<Datatype_Pointer>(source_type);
+                Datatype* points_to_type = pointer_type->points_to_type;
+                while (points_to_type->type == Datatype_Type::POINTER) {
+                    points_to_type = downcast<Datatype_Pointer>(points_to_type)->points_to_type;
+                }
+
+                // Disallow pointer null check for pointer to bool, as this only causes ambiguity
+                if (types_are_equal(points_to_type, upcast(types.bool_type))) {
+                    result.cast_type = Cast_Type::INVALID;
+                    result.options.error_msg = "Cannot do pointer null check here, because there is ambiguities with bool-pointers";
+                    result.type_afterwards = upcast(types.bool_type);
+                    return result;
+                }
+            }
+
+            result.cast_type = Cast_Type::POINTER_NULL_CHECK;
+            result.type_afterwards = upcast(types.bool_type);
+            return result;
+        }
+    }
+
+    // Test if we can cast without auto-address of/dereference
+    result.cast_type = check_cast_type_no_auto_operations(result, source_type, destination_type, cast_mode);
+    if (result.cast_type != Cast_Type::INVALID) {
+        return result;
+    }
+
+    // Otherwise check if casts are possible after auto dereference/address-of (Can be helpful for custom casts)
+    bool auto_dereference = auto_operations_valid && operator_context_get_boolean_setting(operator_context, AST::Context_Setting::AUTO_DEREFERENCE);
+    bool auto_address_of = auto_operations_valid && operator_context_get_boolean_setting(operator_context, AST::Context_Setting::AUTO_ADDRESS_OF);
+    if (auto_dereference && source_type->type == Datatype_Type::POINTER)
+    {
+        Datatype_Pointer* pointer_type = downcast<Datatype_Pointer>(source_type);
+        result.deref_count += 1;
+        while (true)
+        {
+            auto points_to = pointer_type->points_to_type;
+            result.cast_type = check_cast_type_no_auto_operations(result, points_to, destination_type, cast_mode);
+            if (result.cast_type != Cast_Type::INVALID) {
+                return result;
+            }
+
+            if (points_to->type != Datatype_Type::POINTER) {
+                break;
+            }
+            else {
+                pointer_type = downcast<Datatype_Pointer>(points_to);
+                result.deref_count += 1;
+            }
+        }
+
+        result.deref_count = 0;
+    }
+
+    if (auto_address_of)
+    {
+        auto address_of_type = upcast(type_system_make_pointer(source_type));
+        result.cast_type = check_cast_type_no_auto_operations(result, address_of_type, destination_type, cast_mode);
+        if (result.cast_type != Cast_Type::INVALID) {
+            result.take_address_of = true;
+            return result;
+        }
+
+        result.take_address_of = false;
+    }
+
+    result.cast_type = Cast_Type::INVALID;
+    return result;
+}
+
+Expression_Cast_Info expression_context_apply(
     Datatype* initial_type, Expression_Context context, bool log_errors, AST::Expression* error_report_node, Parser::Section error_section)
 {
     auto& type_system = compiler.type_system;
     auto& types = type_system.predefined_types;
+    auto& operator_context = semantic_analyser.current_workload->current_symbol_table->operator_context;
 
     // Set active expression info
     Expression_Info* _backup_info = semantic_analyser.current_workload->current_expression;
@@ -6765,110 +6987,58 @@ Expression_Post_Op expression_context_apply(
         semantic_analyser.current_workload->current_expression = get_info(error_report_node);
     }
 
-    Expression_Post_Op result;
+    assert(!(context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED && datatype_is_unknown(context.expected_type.type)), 
+        "Should be checked when in context_make_specific_type");
+
+    Expression_Cast_Info result;
     result.type_afterwards = initial_type;
     result.deref_count = 0;
     result.take_address_of = false;
-    result.implicit_cast = Info_Cast_Type::INVALID;
+    result.cast_type = Cast_Type::INVALID;
+    result.options.error_msg = "";
 
-    // Do nothing if context is unknown
-    if (context.type == Expression_Context_Type::UNKNOWN) {
-        result.implicit_cast = Info_Cast_Type::NO_CAST;
+    switch (context.type)
+    {
+    case Expression_Context_Type::UNKNOWN: {
+        result.cast_type = Cast_Type::NO_CAST;
         return result;
     }
-
-    // If type is unknown, just return invalid cast
-    if (datatype_is_unknown(initial_type)) {
-        if (log_errors) {
-            semantic_analyser_set_error_flag(true);
-        }
+    case Expression_Context_Type::AUTO_DEREFERENCE: {
         result.type_afterwards = initial_type;
-        result.implicit_cast = Info_Cast_Type::INVALID;
+        while (result.type_afterwards->type == Datatype_Type::POINTER) {
+            result.deref_count += 1;
+            result.type_afterwards = downcast<Datatype_Pointer>(result.type_afterwards)->points_to_type;
+        }
+        result.cast_type = Cast_Type::NO_CAST;
         return result;
     }
+    case Expression_Context_Type::SPECIFIC_TYPE_EXPECTED: {
+        result = semantic_analyser_check_if_cast_possible(
+            initial_type, context.expected_type.type, context.expected_type.cast_mode, 
+            !(context.expected_type.is_assignment_context && context.expected_type.type->type == Datatype_Type::POINTER)
+        );
 
-    // If a type is expected, but it is of unknown type, return the unknown type
-    if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED && datatype_is_unknown(context.signature)) {
-        if (log_errors) {
-            semantic_analyser_set_error_flag(true);
-        }
-        result.type_afterwards = context.signature;
-        result.implicit_cast = Info_Cast_Type::INVALID;
-        return result;
-    }
-
-    // Auto pointer dereferencing/address of
-    {
-        int wanted_pointer_depth = 0;
-        switch (context.type)
+        // Check for errors
+        if (log_errors)
         {
-        case Expression_Context_Type::UNKNOWN: {
-            result.implicit_cast = Info_Cast_Type::NO_CAST;
-            return result;
-        }
-        case Expression_Context_Type::AUTO_DEREFERENCE:
-            wanted_pointer_depth = 0;
-            break;
-        case Expression_Context_Type::SPECIFIC_TYPE_EXPECTED:
-        {
-            Datatype* temp = context.signature;
-            wanted_pointer_depth = 0;
-            while (temp->type == Datatype_Type::POINTER) {
-                wanted_pointer_depth++;
-                temp = downcast<Datatype_Pointer>(temp)->points_to_type;
-            }
-            break;
-        }
-        default: panic("");
-        }
-
-        // Find out given pointer level
-        int given_pointer_depth = 0;
-        Datatype* iter = initial_type;
-        while (iter->type == Datatype_Type::POINTER) {
-            given_pointer_depth++;
-            iter = downcast<Datatype_Pointer>(iter)->points_to_type;
-        }
-
-        if (given_pointer_depth + 1 == wanted_pointer_depth && context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED)
-        {
-            // Auto address of
-            result.take_address_of = true;
-            result.type_afterwards = upcast(type_system_make_pointer(initial_type));
-        }
-        else
-        {
-            // Auto-Dereference to given level
-            result.deref_count = given_pointer_depth - wanted_pointer_depth;
-            for (int i = 0; i < result.deref_count; i++) {
-                assert(result.type_afterwards->type == Datatype_Type::POINTER, "");
-                result.type_afterwards = downcast<Datatype_Pointer>(result.type_afterwards)->points_to_type;
-            }
-        }
-    }
-
-    // Implicit casting
-    if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED)
-    {
-        if (!types_are_equal(result.type_afterwards, context.signature))
-        {
-            Info_Cast_Type cast_type = semantic_analyser_check_cast_type(result.type_afterwards, context.signature, true);
-            if (cast_type == Info_Cast_Type::INVALID) {
-                if (log_errors) {
-                    log_semantic_error("Cannot implicitly cast from given to expected type", error_report_node, error_section);
-                    log_error_info_given_type(initial_type);
-                    log_error_info_expected_type(context.signature);
+            if (result.cast_type == Cast_Type::INVALID) 
+            {
+                semantic_analyser_set_error_flag(false);
+                log_semantic_error("Cannot cast to required type", error_report_node, error_section);
+                if (result.options.error_msg != 0) {
+                    log_error_info_comptime_msg(result.options.error_msg);
                 }
+                log_error_info_given_type(initial_type);
+                log_error_info_expected_type(context.expected_type.type);
             }
-            result.implicit_cast = cast_type;
-            result.type_afterwards = context.signature;
+            else if (result.cast_type == Cast_Type::UNKNOWN) {
+                semantic_analyser_set_error_flag(true);
+            }
         }
-        else {
-            result.implicit_cast = Info_Cast_Type::NO_CAST;
-        }
+
+        return result;
     }
-    else {
-        result.implicit_cast = Info_Cast_Type::NO_CAST;
+    default: panic("");
     }
 
     return result;
@@ -6880,34 +7050,9 @@ Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression* expre
     auto result = semantic_analyser_analyse_expression_internal(expression, context);
     SET_ACTIVE_EXPR_INFO(result);
 
-    // Handle nothing/void
-    if (result->result_type == Expression_Result_Type::NOTHING && context.type != Expression_Context_Type::NO_VALUE) {
-        log_semantic_error("Expected value from expression, but got void/nothing", expression);
-        result->result_type = Expression_Result_Type::VALUE;
-        result->contains_errors = true;
-        result->options.value_type = compiler.type_system.predefined_types.error_type;
-        context.type = Expression_Context_Type::UNKNOWN;
-    }
-    else if (result->result_type != Expression_Result_Type::NOTHING && !datatype_is_unknown(result->post_op.type_afterwards) && context.type == Expression_Context_Type::NO_VALUE) {
-        log_semantic_error("Value is not used", expression);
-        result->result_type = Expression_Result_Type::VALUE;
-        result->contains_errors = true;
-        result->options.value_type = compiler.type_system.predefined_types.error_type;
-        context.type = Expression_Context_Type::UNKNOWN;
-    }
-    else if (result->result_type == Expression_Result_Type::NOTHING && context.type == Expression_Context_Type::NO_VALUE) {
-        // Here we set the result type to error, but we don't treat it as an error
-        result->result_type = Expression_Result_Type::VALUE;
-        result->contains_errors = false;
-        result->options.value_type = upcast(compiler.type_system.predefined_types.empty_struct_type);
-        result->post_op.type_afterwards = upcast(compiler.type_system.predefined_types.empty_struct_type);
-        context.type = Expression_Context_Type::UNKNOWN;
-        return result;
-    }
-
-
+    // Apply context if we are dealing with values
     if (result->result_type != Expression_Result_Type::VALUE && result->result_type != Expression_Result_Type::CONSTANT) return result;
-    result->post_op = expression_context_apply(expression_info_get_type(result, true), context, true, expression);
+    result->cast_info = expression_context_apply(expression_info_get_type(result, true), context, true, expression);
     return result;
 }
 
@@ -6925,17 +7070,17 @@ Datatype* semantic_analyser_analyse_expression_type(AST::Expression* expression)
     case Expression_Result_Type::CONSTANT:
     case Expression_Result_Type::VALUE:
     {
-        if (datatype_is_unknown(result->post_op.type_afterwards)) {
-            if (result->post_op.type_afterwards->type != Datatype_Type::TEMPLATE_PARAMETER &&
-                result->post_op.type_afterwards->type != Datatype_Type::STRUCT_INSTANCE_TEMPLATE) {
+        if (datatype_is_unknown(result->cast_info.type_afterwards)) {
+            if (result->cast_info.type_afterwards->type != Datatype_Type::TEMPLATE_PARAMETER &&
+                result->cast_info.type_afterwards->type != Datatype_Type::STRUCT_INSTANCE_TEMPLATE) {
                 semantic_analyser_set_error_flag(true);
             }
-            return result->post_op.type_afterwards;
+            return result->cast_info.type_afterwards;
         }
-        if (!types_are_equal(result->post_op.type_afterwards, types.type_handle))
+        if (!types_are_equal(result->cast_info.type_afterwards, types.type_handle))
         {
             log_semantic_error("Expression cannot be converted to type", expression);
-            log_error_info_given_type(result->post_op.type_afterwards);
+            log_error_info_given_type(result->cast_info.type_afterwards);
             return types.error_type;
         }
 
@@ -6992,25 +7137,49 @@ Datatype* semantic_analyser_analyse_expression_type(AST::Expression* expression)
     return types.error_type;
 }
 
-Datatype* semantic_analyser_analyse_expression_value(AST::Expression* expression, Expression_Context context)
+Datatype* semantic_analyser_analyse_expression_value(AST::Expression* expression, Expression_Context context, bool no_value_expected)
 {
     auto& type_system = compiler.type_system;
     auto& types = type_system.predefined_types;
 
     auto result = semantic_analyser_analyse_expression_any(expression, context);
     SET_ACTIVE_EXPR_INFO(result);
+
+    // Handle nothing/void
+    {
+        if (result->result_type == Expression_Result_Type::NOTHING && !no_value_expected) {
+            log_semantic_error("Expected value from expression, but got void/nothing", expression);
+            result->result_type = Expression_Result_Type::VALUE;
+            result->contains_errors = true;
+            result->options.value_type = compiler.type_system.predefined_types.error_type;
+            context.type = Expression_Context_Type::UNKNOWN;
+        }
+        else if (result->result_type != Expression_Result_Type::NOTHING && !datatype_is_unknown(result->cast_info.type_afterwards) && no_value_expected) {
+            log_semantic_error("Value is not used", expression);
+            result->result_type = Expression_Result_Type::VALUE;
+            result->contains_errors = true;
+            result->options.value_type = compiler.type_system.predefined_types.error_type;
+            context.type = Expression_Context_Type::UNKNOWN;
+        }
+        else if (result->result_type == Expression_Result_Type::NOTHING && no_value_expected) {
+            // Here we set the result type to error, but we don't treat it as an error (Note: This only affects how the ir-code currently generates code)
+            result->result_type = Expression_Result_Type::VALUE;
+            result->contains_errors = false;
+            result->options.value_type = upcast(compiler.type_system.predefined_types.empty_struct_type);
+            result->cast_info.type_afterwards = upcast(compiler.type_system.predefined_types.empty_struct_type);
+            context.type = Expression_Context_Type::UNKNOWN;
+            result->cast_info.type_afterwards;
+        }
+    }
+
     switch (result->result_type)
     {
+    case Expression_Result_Type::CONSTANT:
     case Expression_Result_Type::VALUE: {
-        return result->post_op.type_afterwards; // Here context was already applied, so we return
+        return result->cast_info.type_afterwards; // Here context was already applied (See analyse_expression_any), so we return
     }
     case Expression_Result_Type::TYPE: {
         expression_info_set_constant(result, types.type_handle, array_create_static_as_bytes(&result->options.type->type_handle, 1), AST::upcast(expression));
-        break;
-    }
-    case Expression_Result_Type::NOTHING:
-    case Expression_Result_Type::CONSTANT:
-    {
         break;
     }
     case Expression_Result_Type::FUNCTION:
@@ -7033,11 +7202,299 @@ Datatype* semantic_analyser_analyse_expression_value(AST::Expression* expression
         log_semantic_error("Cannot convert polymorphic struct to type_handle", expression);
         return types.error_type;
     }
+    case Expression_Result_Type::NOTHING: panic("Should be handled in previous code path");
     default: panic("");
     }
 
-    result->post_op = expression_context_apply(expression_info_get_type(result, true), context, true, expression);
-    return result->post_op.type_afterwards;
+    result->cast_info = expression_context_apply(expression_info_get_type(result, true), context, true, expression);
+    return result->cast_info.type_afterwards;
+}
+
+
+
+// OPERATOR CONTEXT
+Operator_Context* symbol_table_install_new_operator_context(Symbol_Table* symbol_table)
+{
+    // Create new operator context
+    auto context = new Operator_Context;
+    dynamic_array_push_back(&semantic_analyser.allocated_operator_contexts, context);
+
+    // Root context
+    auto parent_context = symbol_table->operator_context;
+    if (parent_context == 0) 
+    {
+        context->custom_casts = hashtable_create_empty<Datatype_Pair, Custom_Cast>(1, datatype_pair_hash, datatype_pair_equals);
+        for (int i = 0; i < AST::CONTEXT_SETTING_CAST_MODE_COUNT; i++) {
+            context->cast_mode_settings[i] = Cast_Mode::EXPLICIT;
+        }
+        for (int i = 0; i < AST::CONTEXT_SETTING_BOOLEAN_COUNT; i++) {
+            context->boolean_settings[i] = false;
+        }
+    }
+    else
+    {
+        // Copy settings from parent context
+        *context = *parent_context; // Shallow copy first, then fill the new hashtable
+        context->custom_casts = hashtable_create_empty<Datatype_Pair, Custom_Cast>(parent_context->custom_casts.element_count, datatype_pair_hash, datatype_pair_equals);
+        {
+            auto iter = hashtable_iterator_create(&parent_context->custom_casts);
+            while (hashtable_iterator_has_next(&iter)) {
+                hashtable_insert_element(&context->custom_casts, *iter.key, *iter.value);
+                hashtable_iterator_next(&iter);
+            }
+        }
+    }
+
+    context->workload = 0;
+    symbol_table->operator_context = context;
+    return context;
+}
+
+struct Operator_Context_Value
+{
+    bool is_cast_mode;
+    union {
+        Cast_Mode* cast_mode;
+        bool* bool_value;
+    } options;
+};
+
+Operator_Context_Value operator_context_value_from_setting(Operator_Context* context, AST::Context_Setting setting)
+{
+    Operator_Context_Value result;
+    if ((int)setting < AST::CONTEXT_SETTING_CAST_MODE_COUNT) {
+        result.is_cast_mode = true;
+        result.options.cast_mode = &context->cast_mode_settings[(int)setting];
+    }
+    else {
+        result.is_cast_mode = false;
+        result.options.bool_value = &context->boolean_settings[(int)setting - AST::CONTEXT_SETTING_CAST_MODE_COUNT];
+    }
+    return result;
+}
+
+void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> context_changes, Operator_Context* context)
+{
+    auto& ids = compiler.predefined_ids;
+    auto& types = compiler.type_system.predefined_types;
+
+    for (int i = 0; i < context_changes.size; i++)
+    {
+        auto change_node = context_changes[i];
+
+        switch (change_node->type)
+        {
+        case AST::Context_Change_Type::IMPORT_CONTEXT:
+        {
+            auto& path = change_node->options.context_import_path;
+            auto symbol = path_lookup_resolve_to_single_symbol(path);
+
+            // Check if symbol is module
+            if (symbol->type != Symbol_Type::MODULE)
+            {
+                if (symbol->type == Symbol_Type::ERROR_SYMBOL) {
+                    continue;
+                }
+                log_semantic_error("Operator context import requires a module to be passed, but other symbol was specified", upcast(path));
+                log_error_info_symbol(symbol);
+                continue;
+            }
+
+            auto module_analysis = symbol->options.module_progress->module_analysis;
+            auto other_context = symbol->options.module_progress->module_analysis->symbol_table->operator_context;
+
+            // Skip imports if there are no imports in that module
+            if (module_analysis->module_node->context_changes.size == 0) {
+                continue;
+            }
+
+            // Wait for other context changes to finish (So we can copy it's results)
+            if (other_context->workload != 0)
+            {
+                bool dependency_failed = false;
+                analysis_workload_add_dependency_internal(
+                    semantic_analyser.current_workload,
+                    upcast(other_context->workload),
+                    dependency_failure_info_make(&dependency_failed, change_node->options.context_import_path->last)
+                );
+                workload_executer_wait_for_dependency_resolution();
+                if (dependency_failed) {
+                    continue; // If there were cyclic dependencies, just skip importing the options
+                }
+            }
+
+            // Apply all changes from other module here
+            for (int j = 0; j < module_analysis->module_node->context_changes.size; j++)
+            {
+                auto other_change = module_analysis->module_node->context_changes[j];
+                // TODO: Currently custom casts from other contexts are also skipped, this shouldn't normally be the case
+                if (other_change->type != AST::Context_Change_Type::SETTING_CHANGE) { // Imports aren't transitive
+                    continue;
+                }
+                if (other_change->options.change.is_invalid) {
+                    continue;
+                }
+
+                Operator_Context_Value copy_to_value = operator_context_value_from_setting(context, other_change->options.change.setting);
+                Operator_Context_Value copy_from_value = operator_context_value_from_setting(other_context, other_change->options.change.setting);
+                assert(copy_to_value.is_cast_mode == copy_from_value.is_cast_mode, "");
+
+                if (copy_to_value.is_cast_mode) {
+                    *copy_to_value.options.cast_mode = *copy_from_value.options.cast_mode;
+                }
+                else {
+                    *copy_to_value.options.bool_value = *copy_from_value.options.bool_value;
+                }
+            }
+
+            break;
+        }
+        case AST::Context_Change_Type::SETTING_CHANGE:
+        {
+            // Check if cast identifier is valid
+            auto& setting = change_node->options.change;
+            if (setting.is_invalid) {
+                log_semantic_error("Invalid name for operator context change", upcast(change_node), Parser::Section::IDENTIFIER);
+                continue;
+            }
+
+            // Analyse setting value
+            Operator_Context_Value value_to_change = operator_context_value_from_setting(context, setting.setting);
+            auto expr = setting.expression;
+            if (value_to_change.is_cast_mode)
+            {
+                semantic_analyser_analyse_expression_value(expr, expression_context_make_specific_type(upcast(types.cast_mode)));
+                auto result = expression_calculate_comptime_value(expr, "Cast_Mode has to be comptime known");
+                if (!result.available) {
+                    continue;
+                }
+
+                // Check if enum value is valid
+                Cast_Mode cast_mode = upp_constant_to_value<Cast_Mode>(result.value);
+                if ((int)cast_mode <= 0 || (int)cast_mode > (int)Cast_Mode::NONE) {
+                    log_semantic_error("Cast mode value is invalid", expr);
+                    continue;
+                }
+
+                // Store value
+                *value_to_change.options.cast_mode = cast_mode;
+            }
+            else
+            {
+                semantic_analyser_analyse_expression_value(expr, expression_context_make_specific_type(upcast(types.bool_type)));
+                auto result = expression_calculate_comptime_value(expr, "Operator context value has to be comptime known");
+                if (!result.available) {
+                    continue;
+                }
+
+                bool bool_value = upp_constant_to_value<bool>(result.value);
+                *value_to_change.options.bool_value = bool_value;
+            }
+            break;
+        }
+        case AST::Context_Change_Type::CUSTOM_CAST: 
+        {
+            // Syntax: context add_custom_cast(cast_function = fn, cast_mode = Cast_Mode.IMPLICIT)
+            auto& arguments = change_node->options.custom_cast_arguments;
+
+            // Check for general argument errors, and find corresponding arguments
+            AST::Expression* function_argument_node = nullptr;
+            AST::Expression* cast_mode_argument_node = nullptr;
+            {
+                int unnamed_argument_count = 0;
+                if (arguments_check_for_naming_errors(arguments, &unnamed_argument_count)) {
+                    arguments_analyse_in_unknown_context(arguments);
+                    break;
+                }
+
+                Callable callable;
+                callable.type = Callable_Type::FUNCTION_POINTER;
+                callable.only_named_arguments_after_index = 2;
+                callable.parameter_count = 2;
+                callable.options.function_pointer_type = types.type_add_custom_cast;
+                if (!arguments_match_to_parameters(arguments, callable, unnamed_argument_count, true, upcast(change_node), Parser::Section::ENCLOSURE)) {
+                    break;
+                }
+
+                assert(arguments.size == 2, "Should be true if previous check worked");
+                AST::Expression* ordered_arguments[2];
+                ordered_arguments[get_info(arguments[0], false)->argument_index] = arguments[0]->value;
+                ordered_arguments[get_info(arguments[1], false)->argument_index] = arguments[1]->value;
+                function_argument_node = ordered_arguments[0];
+                cast_mode_argument_node = ordered_arguments[1];
+            }
+
+            // Analyse cast mode
+            Cast_Mode cast_mode = Cast_Mode::NONE;
+            bool errors_occured = false;
+            {
+                semantic_analyser_analyse_expression_value(cast_mode_argument_node, expression_context_make_specific_type(upcast(types.cast_mode)));
+                auto result = expression_calculate_comptime_value(cast_mode_argument_node, "Cast_Mode has to be comptime known in custom cast");
+                if (result.available) {
+                    // Check if enum value is valid
+                    cast_mode = upp_constant_to_value<Cast_Mode>(result.value);
+                    if ((int)cast_mode <= 0 || (int)cast_mode > (int)Cast_Mode::NONE) {
+                        log_semantic_error("Cast mode value is invalid", cast_mode_argument_node);
+                        errors_occured = true;
+                        cast_mode = Cast_Mode::NONE;
+                    }
+                }
+                else {
+                    errors_occured = true;
+                }
+
+                if (!errors_occured && cast_mode == Cast_Mode::NONE) {
+                    log_semantic_error("Using Cast_Mode::NONE for custom casts does nothing", cast_mode_argument_node);
+                    errors_occured = true;
+                }
+            }
+
+            // Analyse function expression
+            ModTree_Function* function = 0;
+            {
+                Expression_Info* expr_info = semantic_analyser_analyse_expression_any(function_argument_node, expression_context_make_unknown());
+                if (expr_info->result_type != Expression_Result_Type::FUNCTION) {
+                    log_semantic_error("For custom casts, cast_function argument must be a function", function_argument_node, Parser::Section::FIRST_TOKEN);
+                    log_error_info_expression_result_type(expr_info->result_type);
+                    break;
+                }
+                else {
+                    function = expr_info->options.function;
+                }
+                if (errors_occured) {
+                    break;
+                }
+            }
+
+            // Check if function-signature is valid for custom casts
+            Datatype_Pair pair;
+            {
+                auto signature = function->signature;
+                if (signature->parameters.size != 1) {
+                    log_semantic_error("For custom casts, the function signature must only have one argument", function_argument_node);
+                    break;
+                }
+                pair.from = signature->parameters[0].type;
+
+                if (!signature->return_type.available) {
+                    log_semantic_error("For custom casts, the function signature must have a return-type", function_argument_node);
+                    break;
+                }
+                pair.to = signature->return_type.value;
+            }
+
+            // Add this cast to operator context if it doesn't already exist
+            Custom_Cast custom_cast;
+            custom_cast.cast_mode = cast_mode;
+            custom_cast.function = function;
+            hashtable_insert_element(&context->custom_casts, pair, custom_cast);
+
+            break;
+        }
+        default: panic("");
+        }
+
+    }
 }
 
 
@@ -7218,8 +7675,8 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
         if (expression_node->type != AST::Expression_Type::FUNCTION_CALL) {
             log_semantic_error("Expression statement must be a function call", statement);
         }
-        // Note(Martin): This is a special case, in expression statements a void_type is valid
-        semantic_analyser_analyse_expression_value(expression_node, expression_context_make_no_value_expected());
+        // Note(Martin): This is a special case, in expression statements the expression may not have a value
+        semantic_analyser_analyse_expression_value(expression_node, expression_context_make_unknown(), true);
         EXIT(Control_Flow::SEQUENTIAL);
     }
     case AST::Statement_Type::BLOCK:
@@ -7364,6 +7821,10 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
     case AST::Statement_Type::DELETE_STATEMENT:
     {
         auto delete_type = semantic_analyser_analyse_expression_value(statement->options.delete_expr, expression_context_make_unknown());
+        if (datatype_is_unknown(delete_type)) {
+            semantic_analyser_set_error_flag(true);
+            EXIT(Control_Flow::SEQUENTIAL);
+        }
         if (delete_type->type != Datatype_Type::POINTER && delete_type->type != Datatype_Type::SLICE) {
             log_semantic_error("Delete is only valid on pointer or slice types", statement->options.delete_expr);
             log_error_info_given_type(delete_type);
@@ -7430,7 +7891,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
             }
             else {
                 // Normal value assignment
-                semantic_analyser_analyse_expression_value(assignment_node.right_side[0], expression_context_make_specific_type(left_side_type));
+                semantic_analyser_analyse_expression_value(assignment_node.right_side[0], expression_context_make_specific_type(left_side_type, true));
             }
         }
         else
@@ -7443,7 +7904,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
                 }
 
                 if (i < assignment_node.right_side.size) {
-                    semantic_analyser_analyse_expression_value(assignment_node.right_side[i], expression_context_make_specific_type(left_type));
+                    semantic_analyser_analyse_expression_value(assignment_node.right_side[i], expression_context_make_specific_type(left_type, true));
                 }
             }
 
@@ -7620,7 +8081,7 @@ Control_Flow semantic_analyser_analyse_block(AST::Code_Block* block, bool polymo
 
     // Create symbol table for block
     block_info->symbol_table = symbol_table_create_with_parent(
-        semantic_analyser.current_workload->current_symbol_table, 
+        semantic_analyser.current_workload->current_symbol_table,
         polymorphic_symbol_access ? Symbol_Access_Level::POLYMORPHIC : Symbol_Access_Level::INTERNAL);
     RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->current_symbol_table, block_info->symbol_table);
 
@@ -7666,6 +8127,14 @@ Control_Flow semantic_analyser_analyse_block(AST::Code_Block* block, bool polymo
         }
     }
 
+    // Handle operator context after imports
+    if (block->context_changes.size != 0)
+    {
+        auto operator_context = symbol_table_install_new_operator_context(block_info->symbol_table);
+        analyse_operator_context_changes(block->context_changes, operator_context);
+    }
+
+    // Check if block id is unique
     auto& block_stack = semantic_analyser.current_workload->block_stack;
     if (block->block_id.available)
     {
@@ -7677,8 +8146,8 @@ Control_Flow semantic_analyser_analyse_block(AST::Code_Block* block, bool polymo
         }
     }
 
+    // Analyse statements
     int rewind_block_count = block_stack.size;
-
     bool rewind_reachable = semantic_analyser.current_workload->statement_reachable;
     SCOPE_EXIT(dynamic_array_rollback_to_size(&block_stack, rewind_block_count));
     SCOPE_EXIT(semantic_analyser.current_workload->statement_reachable = rewind_reachable);
@@ -7703,10 +8172,11 @@ Control_Flow semantic_analyser_analyse_block(AST::Code_Block* block, bool polymo
 void semantic_analyser_finish()
 {
     auto& type_system = compiler.type_system;
+    auto& ids = compiler.predefined_ids;
 
     // Check if main is defined
     semantic_analyser.program->main_function = 0;
-    Dynamic_Array<Symbol*>* main_symbols = hashtable_find_element(&semantic_analyser.root_module->module_analysis->symbol_table->symbols, compiler.id_main);
+    Dynamic_Array<Symbol*>* main_symbols = hashtable_find_element(&semantic_analyser.root_module->module_analysis->symbol_table->symbols, ids.main);
     if (main_symbols == 0) {
         log_semantic_error("Main function not defined", (AST::Node*)nullptr);
         return;
@@ -7768,6 +8238,11 @@ void semantic_analyser_reset()
         }
         dynamic_array_reset(&semantic_analyser.allocated_function_progresses);
 
+        for (int i = 0; i < semantic_analyser.allocated_operator_contexts.size; i++) {
+            delete semantic_analyser.allocated_operator_contexts[i];
+        }
+        dynamic_array_reset(&semantic_analyser.allocated_operator_contexts);
+
         if (semantic_analyser.program != 0) {
             modtree_program_destroy();
         }
@@ -7787,7 +8262,6 @@ void semantic_analyser_reset()
             symbol_destroy(semantic_analyser.allocated_symbols[i]);
         }
         dynamic_array_reset(&semantic_analyser.allocated_symbols);
-        semantic_analyser.root_symbol_table = symbol_table_create();
 
         // AST-Mappings
         {
@@ -7813,6 +8287,13 @@ void semantic_analyser_reset()
             }
             dynamic_array_reset(&semantic_analyser.allocated_passes);
         }
+    }
+
+    // Create root table and default operator context
+    {
+        auto root_table = symbol_table_create();
+        semantic_analyser.root_symbol_table = root_table;
+        symbol_table_install_new_operator_context(root_table);
     }
 
     // Create predefined Symbols 
@@ -7895,6 +8376,7 @@ Semantic_Analyser* semantic_analyser_initialize()
     semantic_analyser.comptime_value_allocator = stack_allocator_create_empty(2048);
     semantic_analyser.workload_executer = workload_executer_initialize();
     semantic_analyser.allocated_function_progresses = dynamic_array_create_empty<Function_Progress*>(1);
+    semantic_analyser.allocated_operator_contexts = dynamic_array_create_empty<Operator_Context*>(1);
     semantic_analyser.progress_allocator = stack_allocator_create_empty(2048);
     semantic_analyser.global_variable_memory_pool = stack_allocator_create_empty(1024);
     semantic_analyser.program = 0;
@@ -7957,6 +8439,13 @@ void semantic_analyser_destroy()
         function_progress_destroy(semantic_analyser.allocated_function_progresses[i]);
     }
     dynamic_array_destroy(&semantic_analyser.allocated_function_progresses);
+
+    for (int i = 0; i < semantic_analyser.allocated_operator_contexts.size; i++) {
+        auto context = semantic_analyser.allocated_operator_contexts[i];
+        hashtable_destroy(&context->custom_casts);
+        delete semantic_analyser.allocated_operator_contexts[i];
+    }
+    dynamic_array_destroy(&semantic_analyser.allocated_operator_contexts);
 
     stack_allocator_destroy(&semantic_analyser.comptime_value_allocator);
     stack_allocator_destroy(&semantic_analyser.progress_allocator);

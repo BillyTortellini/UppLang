@@ -77,6 +77,7 @@ String syntax_keyword_as_string(Keyword keyword)
     {
     case Keyword::IMPORT: return string_create_static("import");
     case Keyword::AS: return string_create_static("as");
+    case Keyword::CONTEXT: return string_create_static("context");
     case Keyword::BAKE: return string_create_static("#bake");
     case Keyword::BREAK: return string_create_static("break");
     case Keyword::CASE: return string_create_static("case");

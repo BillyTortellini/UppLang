@@ -107,7 +107,8 @@ enum class Analysis_Workload_Type
     EVENT, // Empty workload, which can have dependencies and dependents
 
     MODULE_ANALYSIS, // This is basically just symbol discovery
-    IMPORT_RESOLVE,   // 
+    IMPORT_RESOLVE,  
+    OPERATOR_CONTEXT_CHANGE,
 
     FUNCTION_HEADER,
     FUNCTION_BODY,
@@ -166,12 +167,22 @@ struct Workload_Event
     const char* description;
 };
 
+struct Workload_Module_Analysis;
+struct Workload_Operator_Context_Change
+{
+    Workload_Base base;
+    Workload_Module_Analysis* parent_workload;
+    AST::Module* module_node;
+    Operator_Context* context;
+};
+
 struct Workload_Module_Analysis
 {
     Workload_Base base;
     Module_Progress* progress;
     AST::Module* module_node;
     Symbol_Table* symbol_table;
+
     Workload_Import_Resolve* last_import_workload;
     Workload_Module_Analysis* parent_analysis;
 };
@@ -393,66 +404,58 @@ Module_Progress* workload_executer_add_module_discovery(AST::Module* module, boo
 
 
 // Analysis Information
-enum class Info_Cast_Type
-{
-    INTEGERS, // Implicit to bigger
-    FLOATS, // Implicit to bigger
-    FLOAT_TO_INT,
-    INT_TO_FLOAT, // Implicit
-    POINTERS, // Implicit from/to void*
-    POINTER_TO_U64,
-    U64_TO_POINTER,
-    ENUM_TO_INT,
-    INT_TO_ENUM,
-    ARRAY_TO_SLICE, // Implicit
-    TO_ANY,
-    FROM_ANY,
-
-    NO_CAST, // No cast required
-    INVALID, // No cast can create the desired result, but we still handle it as a cast
-};
-
 enum class Expression_Context_Type
 {
     UNKNOWN,                // Type is not known
-    AUTO_DEREFERENCE,       // Type is not known, but we want pointer level 0, e.g. a value 
+    AUTO_DEREFERENCE,       // Type is not known, but we want pointer level 0, e.g. a value (e.g. member-access, slice-access, ...)
     SPECIFIC_TYPE_EXPECTED, // Type is known, pointer level items + implicit casting enabled
-    NO_VALUE                // We expect no value, as it is immediately dropped (Expression statement)
 };
 
 struct Expression_Context
 {
     Expression_Context_Type type;
     bool unknown_due_to_error; // If true the context is unknown because an error occured, otherwise there is no info
-    Datatype* signature;
+    struct {
+        Datatype* type;
+        bool is_assignment_context;
+        Cast_Mode cast_mode;
+    } expected_type;
 };
 
-enum class Expression_Result_Type
+enum class Cast_Type
 {
-    VALUE,
-    TYPE,
-    FUNCTION,
-    HARDCODED_FUNCTION,
-    POLYMORPHIC_FUNCTION,
-    CONSTANT,
-    POLYMORPHIC_STRUCT,
-    NOTHING, // Functions returning void
+    INTEGERS,
+    FLOATS,
+    FLOAT_TO_INT,
+    INT_TO_FLOAT,
+    POINTERS,
+    POINTER_TO_U64,
+    U64_TO_POINTER,
+    ENUM_TO_INT,
+    INT_TO_ENUM,
+    ARRAY_TO_SLICE, 
+    TO_ANY,
+    FROM_ANY,
+    POINTER_NULL_CHECK,
+    CUSTOM_CAST,
+
+    NO_CAST, // No cast needed, source-type == destination-type
+    UNKNOWN, // Either source or destination type are/contain error/unknown type
+    INVALID, // Cast is not valid
 };
 
-struct Argument_Info
-{
-    int argument_index; // For named arguments/parameters this gives the according parameter index
-    bool is_polymorphic; // If polymorphic_function, the argument shouldn't generate code during code-generation
-    bool already_analysed; // During analysis, don't reanalyse arguments that were already analyse
-    bool context_application_missing; // If already analyse, we may still need to apply the context
-};
-
-struct Expression_Post_Op
+// The dereferences/address_of is applied before the cast
+struct Expression_Cast_Info
 {
     int deref_count;
     bool take_address_of;
-    Info_Cast_Type implicit_cast;
+    Cast_Type cast_type;
     Datatype* type_afterwards;
+
+    struct {
+        ModTree_Function* custom_cast_function;
+        const char* error_msg; // Null, except if the cast is invalid
+    } options;
 };
 
 enum class Member_Access_Type
@@ -460,6 +463,18 @@ enum class Member_Access_Type
     STRUCT_MEMBER_ACCESS,
     STRUCT_POLYMORHPIC_PARAMETER_ACCESS,
     OTHER
+};
+
+enum class Expression_Result_Type
+{
+    VALUE,
+    TYPE,
+    CONSTANT,
+    FUNCTION,
+    HARDCODED_FUNCTION,
+    POLYMORPHIC_FUNCTION,
+    POLYMORPHIC_STRUCT,
+    NOTHING, // Functions returning void
 };
 
 struct Expression_Info
@@ -483,7 +498,6 @@ struct Expression_Info
 
     bool contains_errors; // If this expression contains any errors (Not recursive), currently only used for comptime-calculation (And code editor I guess?)
     union {
-        Info_Cast_Type explicit_cast; // Note: Cast-Expression results may be further implicitly casted and because of this expression_info can hold 2 cast types
         Datatype_Function* function_call_signature; // Used by code-generation for accessing default values
         Function_Parameter* implicit_parameter;
         struct {
@@ -494,7 +508,15 @@ struct Expression_Info
     } specifics;
 
     Expression_Context context; // Maybe I don't even want to store the context
-    Expression_Post_Op post_op;
+    Expression_Cast_Info cast_info;
+};
+
+struct Argument_Info
+{
+    int argument_index; // For named arguments/parameters this gives the according parameter index
+    bool is_polymorphic; // If polymorphic_function, the argument shouldn't generate code during code-generation
+    bool already_analysed; // During analysis, don't reanalyse arguments that were already analyse
+    bool context_application_missing; // If already analyse, we may still need to apply the context
 };
 
 enum class Control_Flow
@@ -741,6 +763,7 @@ struct Semantic_Analyser
     Dynamic_Array<Symbol*> allocated_symbols;
     Dynamic_Array<Analysis_Pass*> allocated_passes;
     Dynamic_Array<Function_Progress*> allocated_function_progresses;
+    Dynamic_Array<Operator_Context*> allocated_operator_contexts;
     Stack_Allocator progress_allocator;
 };
 

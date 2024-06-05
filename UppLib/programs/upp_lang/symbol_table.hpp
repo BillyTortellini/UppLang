@@ -5,9 +5,11 @@
 #include "../../datastructures/hashtable.hpp"
 #include "compiler_misc.hpp" // Upp_Constant
 #include "constant_pool.hpp"
+#include "ast.hpp"
 
 // struct Function_Progress;
 struct ModTree_Global;
+struct ModTree_Function;
 struct Datatype;
 struct Workload_Definition;
 struct Workload_Import_Resolve;
@@ -30,8 +32,42 @@ namespace AST
 }
 
 
+// OPERATOR CONTEXT
+enum class Cast_Mode
+{
+    AUTO = 1,
+    IMPLICIT,
+    EXPLICIT,
+    NONE
+};
 
-// Symbol Table
+struct Datatype_Pair
+{
+    Datatype* from;
+    Datatype* to;
+};
+
+bool datatype_pair_equals(Datatype_Pair* a, Datatype_Pair* b);
+u64 datatype_pair_hash(Datatype_Pair* pair);
+
+struct Custom_Cast
+{
+    ModTree_Function* function;
+    Cast_Mode cast_mode;
+};
+
+struct Workload_Operator_Context_Change;
+struct Operator_Context
+{
+    Workload_Operator_Context_Change* workload; // May be null (In case of root operator context)
+    Cast_Mode cast_mode_settings[AST::CONTEXT_SETTING_CAST_MODE_COUNT];
+    bool boolean_settings[AST::CONTEXT_SETTING_BOOLEAN_COUNT];
+    Hashtable<Datatype_Pair, Custom_Cast> custom_casts;
+};
+
+
+
+// SYMBOLS
 
 // Note: Both symbols and symbol-table includes have access levels
 enum class Symbol_Access_Level
@@ -95,6 +131,9 @@ struct Symbol
     Dynamic_Array<AST::Symbol_Lookup*> references;
 };
 
+
+
+// SYMBOL TABLE
 struct Included_Table
 {
     bool transitive;
@@ -106,6 +145,7 @@ struct Symbol_Table
 {
     Dynamic_Array<Included_Table> included_tables;
     Hashtable<String*, Dynamic_Array<Symbol*>> symbols;
+    Operator_Context* operator_context;
 };
 
 struct Symbol_Error

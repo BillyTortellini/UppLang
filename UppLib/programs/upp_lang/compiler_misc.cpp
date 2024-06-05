@@ -201,7 +201,7 @@ void identifier_pool_print(Identifier_Pool* pool)
 
 
 // FIBER POOL
-struct Fiber_Startup_Info // Just a helper struct for setting up initial fibers in pool
+struct Fiber_Startup_Info // Just a helper struct for change up initial fibers in pool
 {
     Fiber_Pool* pool;
     int index_in_pool;

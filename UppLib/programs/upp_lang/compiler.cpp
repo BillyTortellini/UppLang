@@ -27,7 +27,7 @@ bool output_identifiers = false;
 bool output_ast = false;
 bool output_type_system = false;
 bool output_root_table = false;
-bool output_ir = true;
+bool output_ir = false;
 bool output_bytecode = false;
 bool output_timing = true;
 
@@ -201,15 +201,54 @@ void compiler_reset_data(bool keep_data_for_incremental_compile, Compile_Type co
     compiler_switch_timing_task(Timing_Task::RESET);
     {
         // NOTE: Identifier pool is not beeing reset because Syntax-Editor already does incremental lexing
-        compiler.id_size = identifier_pool_add(&compiler.identifier_pool, string_create_static("size"));
-        compiler.id_data = identifier_pool_add(&compiler.identifier_pool, string_create_static("data"));
-        compiler.id_tag = identifier_pool_add(&compiler.identifier_pool, string_create_static("tag"));
-        compiler.id_main = identifier_pool_add(&compiler.identifier_pool, string_create_static("main"));
-        compiler.id_type_of = identifier_pool_add(&compiler.identifier_pool, string_create_static("type_of"));
-        compiler.id_type_info = identifier_pool_add(&compiler.identifier_pool, string_create_static("type_info"));
-        compiler.id_empty_string = identifier_pool_add(&compiler.identifier_pool, string_create_static(""));
-        compiler.id_invalid_symbol_name = identifier_pool_add(&compiler.identifier_pool, string_create_static("__INVALID_SYMBOL_NAME"));
-        compiler.id_struct = identifier_pool_add(&compiler.identifier_pool, string_create_static("Struct"));
+        // Predefined ids
+        {
+            auto& ids = compiler.predefined_ids;
+            ids.size = identifier_pool_add(&compiler.identifier_pool, string_create_static("size"));
+            ids.data = identifier_pool_add(&compiler.identifier_pool, string_create_static("data"));
+            ids.tag = identifier_pool_add(&compiler.identifier_pool, string_create_static("tag"));
+            ids.main = identifier_pool_add(&compiler.identifier_pool, string_create_static("main"));
+            ids.type_of = identifier_pool_add(&compiler.identifier_pool, string_create_static("type_of"));
+            ids.type_info = identifier_pool_add(&compiler.identifier_pool, string_create_static("type_info"));
+            ids.empty_string = identifier_pool_add(&compiler.identifier_pool, string_create_static(""));
+            ids.invalid_symbol_name = identifier_pool_add(&compiler.identifier_pool, string_create_static("__INVALID_SYMBOL_NAME"));
+            ids.id_struct = identifier_pool_add(&compiler.identifier_pool, string_create_static("Struct"));
+
+            ids.cast_mode = identifier_pool_add(&compiler.identifier_pool, string_create_static("Cast_Mode"));
+            ids.cast_mode_auto = identifier_pool_add(&compiler.identifier_pool, string_create_static("AUTO"));
+            ids.cast_mode_implicit = identifier_pool_add(&compiler.identifier_pool, string_create_static("IMPLICIT"));
+            ids.cast_mode_explicit = identifier_pool_add(&compiler.identifier_pool, string_create_static("EXPLICIT"));
+            ids.cast_mode_none = identifier_pool_add(&compiler.identifier_pool, string_create_static("NONE"));
+
+            ids.context_settings[(int)AST::Context_Setting::ARRAY_TO_SLICE] = identifier_pool_add(&compiler.identifier_pool, string_create_static("array_to_slice"));
+            ids.context_settings[(int)AST::Context_Setting::INTEGER_SIZE_UPCAST] = identifier_pool_add(&compiler.identifier_pool, string_create_static("integer_size_upcast"));
+            ids.context_settings[(int)AST::Context_Setting::INTEGER_SIZE_DOWNCAST] = identifier_pool_add(&compiler.identifier_pool, string_create_static("integer_size_downcast"));
+            ids.context_settings[(int)AST::Context_Setting::INTEGER_SIGNED_TO_UNSIGNED] = identifier_pool_add(&compiler.identifier_pool, string_create_static("integer_signed_to_unsigned"));
+            ids.context_settings[(int)AST::Context_Setting::INTEGER_UNSIGNED_TO_SIGNED] = identifier_pool_add(&compiler.identifier_pool, string_create_static("integer_unsigned_to_signed"));
+            ids.context_settings[(int)AST::Context_Setting::FLOAT_SIZE_UPCAST] = identifier_pool_add(&compiler.identifier_pool, string_create_static("float_size_upcast"));
+            ids.context_settings[(int)AST::Context_Setting::FLOAT_SIZE_DOWNCAST] = identifier_pool_add(&compiler.identifier_pool, string_create_static("float_size_downcast"));
+            ids.context_settings[(int)AST::Context_Setting::INT_TO_FLOAT] = identifier_pool_add(&compiler.identifier_pool, string_create_static("int_to_float"));
+            ids.context_settings[(int)AST::Context_Setting::FLOAT_TO_INT] = identifier_pool_add(&compiler.identifier_pool, string_create_static("float_to_int"));
+            ids.context_settings[(int)AST::Context_Setting::POINTER_TO_POINTER] = identifier_pool_add(&compiler.identifier_pool, string_create_static("pointer_to_pointer"));
+            ids.context_settings[(int)AST::Context_Setting::VOID_POINTER_TO_POINTER] = identifier_pool_add(&compiler.identifier_pool, string_create_static("void_pointer_to_pointer"));
+            ids.context_settings[(int)AST::Context_Setting::POINTER_TO_VOID_POINTER] = identifier_pool_add(&compiler.identifier_pool, string_create_static("pointer_to_void_pointer"));
+            ids.context_settings[(int)AST::Context_Setting::POINTER_TO_U64] = identifier_pool_add(&compiler.identifier_pool, string_create_static("pointer_to_u64"));
+            ids.context_settings[(int)AST::Context_Setting::U64_TO_POINTER] = identifier_pool_add(&compiler.identifier_pool, string_create_static("u64_to_pointer"));
+            ids.context_settings[(int)AST::Context_Setting::FUNCTION_POINTER_TO_VOID] = identifier_pool_add(&compiler.identifier_pool, string_create_static("function_pointer_to_void"));
+            ids.context_settings[(int)AST::Context_Setting::VOID_TO_FUNCTION_POINTER] = identifier_pool_add(&compiler.identifier_pool, string_create_static("void_to_function_pointer"));
+            ids.context_settings[(int)AST::Context_Setting::POINTER_TO_BOOL] = identifier_pool_add(&compiler.identifier_pool, string_create_static("pointer_to_bool"));
+            ids.context_settings[(int)AST::Context_Setting::FUNCTION_POINTER_TO_BOOL] = identifier_pool_add(&compiler.identifier_pool, string_create_static("function_pointer_to_bool"));
+            ids.context_settings[(int)AST::Context_Setting::VOID_POINTER_TO_BOOL] = identifier_pool_add(&compiler.identifier_pool, string_create_static("void_pointer_to_bool"));
+            ids.context_settings[(int)AST::Context_Setting::TO_ANY] = identifier_pool_add(&compiler.identifier_pool, string_create_static("to_any"));
+            ids.context_settings[(int)AST::Context_Setting::FROM_ANY] = identifier_pool_add(&compiler.identifier_pool, string_create_static("from_any"));
+            ids.context_settings[(int)AST::Context_Setting::ENUM_TO_INT] = identifier_pool_add(&compiler.identifier_pool, string_create_static("enum_to_int"));
+            ids.context_settings[(int)AST::Context_Setting::INT_TO_ENUM] = identifier_pool_add(&compiler.identifier_pool, string_create_static("int_to_enum"));
+            ids.context_settings[(int)AST::Context_Setting::ARRAY_TO_SLICE] = identifier_pool_add(&compiler.identifier_pool, string_create_static("array_to_slice"));
+            ids.context_settings[(int)AST::Context_Setting::AUTO_ADDRESS_OF] = identifier_pool_add(&compiler.identifier_pool, string_create_static("auto_address_of"));
+            ids.context_settings[(int)AST::Context_Setting::AUTO_DEREFERENCE] = identifier_pool_add(&compiler.identifier_pool, string_create_static("auto_dereference"));
+            
+            ids.add_custom_cast = identifier_pool_add(&compiler.identifier_pool, string_create_static("add_custom_cast"));
+        }
 
         // FUTURE: When we have incremental compilation we cannot just reset everything anymore
         // Reset Data

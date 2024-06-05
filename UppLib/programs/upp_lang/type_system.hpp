@@ -313,6 +313,7 @@ struct Predefined_Types
     Datatype_Struct* empty_struct_type;
     Datatype_Struct* type_information_type;
     Datatype_Struct* any_type;
+    Datatype_Enum* cast_mode;
 
     // Types for built-in/hardcoded functions
     Datatype_Function* type_assert;
@@ -329,6 +330,8 @@ struct Predefined_Types
     Datatype_Function* type_read_f32;
     Datatype_Function* type_read_bool;
     Datatype_Function* type_random_i32;
+
+    Datatype_Function* type_add_custom_cast;
 };
 
 // TYPE SYSTEM

@@ -655,7 +655,7 @@ void gui_layout_layout_children(int node_index, int dim)
             // Set sizes depending on threshold
             for (int i = 0; i < constraints.size; i++) {
                 auto& constraint = constraints[i];
-                if (constraint.is_max_constraint) { // Since min constraints handle setting the size we can skip max constraints
+                if (constraint.is_max_constraint) { // Since min constraints handle change the size we can skip max constraints
                     continue;
                 }
                 auto& node = gui.nodes[constraint.node_index];

@@ -773,6 +773,7 @@ void code_completion_find_suggestions()
     auto node = Parser::find_smallest_enclosing_node(&compiler.main_source->parsed_code->root->base, cursor_token_index);
 
     bool fill_from_symbol_table = false;
+    bool fill_context_options = false;
     Symbol_Table* specific_table = 0;
 
     // Check for specific contexts where we can fill the suggestions more smartly (e.g. when typing struct member, module-path, auto-enum, ...)
@@ -882,12 +883,20 @@ void code_completion_find_suggestions()
             }
         }
     }
+    else if (node->type == AST::Node_Type::CONTEXT_CHANGE) {
+        if (editor.space_before_cursor && cursor_token_index.token == 0) {
+            fill_context_options = true;
+        }
+        else if (cursor_token_index.token == 1 && !editor.space_before_cursor) {
+            fill_context_options = true;
+        }
+    }
     else {
         fill_from_symbol_table = true;
     }
 
     // Early exit if nothing has been typed (And we aren't on member access or similar)
-    if (partially_typed.size == 0 && fill_from_symbol_table && specific_table == 0) {
+    if (partially_typed.size == 0 && fill_from_symbol_table && specific_table == 0 && !fill_context_options) {
         return;
     }
 
@@ -903,6 +912,14 @@ void code_completion_find_suggestions()
                 code_completion_add_and_rank(*results[i]->id, partially_typed);
             }
         }
+    }
+    else if (fill_context_options)
+    {
+        auto& ids = compiler.predefined_ids;
+        for (int i = 0; i < (int)AST::Context_Setting::MAX_ENUM_VALUE; i++) {
+            code_completion_add_and_rank(*ids.context_settings[i], partially_typed);
+        }
+        code_completion_add_and_rank(*ids.add_custom_cast, partially_typed);
     }
 
     if (suggestions.size == 0) return;

@@ -706,194 +706,6 @@ Symbol* get_info(AST::Definition_Symbol* node) {
     return pass_get_node_info(ir_generator.current_pass, node, Info_Query::READ_NOT_NULL)->symbol;
 }
 
-IR_Data_Access ir_generator_generate_cast(IR_Code_Block* ir_block, IR_Data_Access source, Datatype* result_type, Info_Cast_Type cast_type)
-{
-    if (cast_type == Info_Cast_Type::NO_CAST) return source;
-    auto type_system = &compiler.type_system;
-    auto& types = type_system->predefined_types;
-    auto source_type = ir_data_access_get_type(&source);
-    auto make_simple_cast = [](IR_Code_Block* ir_block, IR_Data_Access source, Datatype* result_type, IR_Cast_Type cast_type) -> IR_Data_Access
-    {
-        IR_Instruction instr;
-        instr.type = IR_Instruction_Type::CAST;
-        instr.options.cast.type = cast_type;
-        instr.options.cast.source = source;
-        instr.options.cast.destination = ir_data_access_create_intermediate(ir_block, result_type);
-        dynamic_array_push_back(&ir_block->instructions, instr);
-        return instr.options.cast.destination;
-    };
-
-    IR_Data_Access result_access;
-    switch (cast_type)
-    {
-    case Info_Cast_Type::INVALID:
-    case Info_Cast_Type::NO_CAST:
-        panic("Should have been handled elsewhere!");
-    case Info_Cast_Type::INTEGERS: {
-        result_access = make_simple_cast(ir_block, source, result_type, IR_Cast_Type::INTEGERS);
-        break;
-    }
-    case Info_Cast_Type::FLOATS: {
-        result_access = make_simple_cast(ir_block, source, result_type, IR_Cast_Type::FLOATS);
-        break;
-    }
-    case Info_Cast_Type::FLOAT_TO_INT: {
-        result_access = make_simple_cast(ir_block, source, result_type, IR_Cast_Type::FLOAT_TO_INT);
-        break;
-    }
-    case Info_Cast_Type::INT_TO_FLOAT: {
-        result_access = make_simple_cast(ir_block, source, result_type, IR_Cast_Type::INT_TO_FLOAT);
-        break;
-    }
-    case Info_Cast_Type::POINTERS: {
-        result_access = make_simple_cast(ir_block, source, result_type, IR_Cast_Type::POINTERS);
-        break;
-    }
-    case Info_Cast_Type::POINTER_TO_U64: {
-        result_access = make_simple_cast(ir_block, source, result_type, IR_Cast_Type::POINTER_TO_U64);
-        break;
-    }
-    case Info_Cast_Type::U64_TO_POINTER: {
-        result_access = make_simple_cast(ir_block, source, result_type, IR_Cast_Type::U64_TO_POINTER);
-        break;
-    }
-    case Info_Cast_Type::ENUM_TO_INT: {
-        result_access = make_simple_cast(ir_block, source, result_type, IR_Cast_Type::ENUM_TO_INT);
-        break;
-    }
-    case Info_Cast_Type::INT_TO_ENUM: {
-        result_access = make_simple_cast(ir_block, source, result_type, IR_Cast_Type::INT_TO_ENUM);
-        break;
-    }
-    case Info_Cast_Type::ARRAY_TO_SLICE:
-    {
-        Datatype_Slice* slice_type = downcast<Datatype_Slice>(result_type);
-        Datatype_Array* array_type = downcast<Datatype_Array>(source_type);
-        IR_Data_Access slice_access = ir_data_access_create_intermediate(ir_block, upcast(slice_type));
-        // Set size
-        {
-            IR_Instruction instr;
-            instr.type = IR_Instruction_Type::MOVE;
-            instr.options.move.destination = ir_data_access_create_member(ir_block, slice_access, slice_type->size_member);
-            assert(array_type->count_known, "");
-            instr.options.move.source = ir_data_access_create_constant_i32(array_type->element_count);
-            dynamic_array_push_back(&ir_block->instructions, instr);
-        }
-        // Set data
-        {
-            IR_Instruction instr;
-            instr.type = IR_Instruction_Type::ADDRESS_OF;
-            instr.options.address_of.type = IR_Instruction_Address_Of_Type::DATA;
-            instr.options.address_of.source = source;
-            instr.options.address_of.destination = ir_data_access_create_member(ir_block, slice_access, slice_type->data_member);
-            dynamic_array_push_back(&ir_block->instructions, instr);
-        }
-        return slice_access;
-    }
-    case Info_Cast_Type::FROM_ANY:
-    {
-        // Check if type matches given type, if not error out
-        IR_Data_Access access_operand = source;
-        IR_Data_Access access_valid_cast = ir_data_access_create_intermediate(ir_block, upcast(types.bool_type));
-        IR_Data_Access access_result = ir_data_access_create_intermediate(ir_block, result_type);
-        {
-            IR_Instruction cmp_instr;
-            cmp_instr.type = IR_Instruction_Type::BINARY_OP;
-            cmp_instr.options.binary_op.type = AST::Binop::EQUAL;
-            cmp_instr.options.binary_op.operand_left = ir_data_access_create_constant(
-                types.type_handle,
-                array_create_static_as_bytes<u32>(&result_type->type_handle.index, 1)
-            );
-            cmp_instr.options.binary_op.operand_right = ir_data_access_create_member(ir_block, access_operand, types.any_type->members[1]);
-            cmp_instr.options.binary_op.destination = access_valid_cast;
-            dynamic_array_push_back(&ir_block->instructions, cmp_instr);
-        }
-        IR_Code_Block* branch_valid = ir_code_block_create(ir_block->function);
-        IR_Code_Block* branch_invalid = ir_code_block_create(ir_block->function);
-        {
-            IR_Instruction if_instr;
-            if_instr.type = IR_Instruction_Type::IF;
-            if_instr.options.if_instr.condition = access_valid_cast;
-            if_instr.options.if_instr.false_branch = branch_invalid;
-            if_instr.options.if_instr.true_branch = branch_valid;
-            dynamic_array_push_back(&ir_block->instructions, if_instr);
-        }
-        {
-            // True_Branch
-            IR_Data_Access any_data_access = ir_data_access_create_member(branch_valid, access_operand, types.any_type->members[0]);
-            {
-                IR_Instruction cast_instr;
-                cast_instr.type = IR_Instruction_Type::CAST;
-                cast_instr.options.cast.type = IR_Cast_Type::POINTERS;
-                cast_instr.options.cast.source = any_data_access;
-                cast_instr.options.cast.destination = ir_data_access_create_intermediate(
-                    branch_valid, upcast(type_system_make_pointer(result_type))
-                );
-                dynamic_array_push_back(&branch_valid->instructions, cast_instr);
-                any_data_access = cast_instr.options.cast.destination;
-            }
-            IR_Instruction move_instr;
-            move_instr.type = IR_Instruction_Type::MOVE;
-            move_instr.options.move.destination = access_result;
-            move_instr.options.move.source = ir_data_access_create_dereference(branch_valid, any_data_access);
-            dynamic_array_push_back(&branch_valid->instructions, move_instr);
-        }
-        {
-            // False branch
-            IR_Instruction exit_instr;
-            exit_instr.type = IR_Instruction_Type::RETURN;
-            exit_instr.options.return_instr.type = IR_Instruction_Return_Type::EXIT;
-            exit_instr.options.return_instr.options.exit_code = Exit_Code::ANY_CAST_INVALID;
-            dynamic_array_push_back(&branch_invalid->instructions, exit_instr);
-        }
-        return access_result;
-    }
-    case Info_Cast_Type::TO_ANY:
-    {
-        IR_Data_Access operand_access = source;
-        if (operand_access.type == IR_Data_Access_Type::CONSTANT && !operand_access.is_memory_access)
-        {
-            IR_Instruction instr;
-            instr.type = IR_Instruction_Type::MOVE;
-            instr.options.move.destination = ir_data_access_create_intermediate(ir_block, source_type);
-            instr.options.move.source = operand_access;
-            dynamic_array_push_back(&ir_block->instructions, instr);
-            operand_access = instr.options.move.destination;
-        }
-
-        IR_Data_Access any_access = ir_data_access_create_intermediate(ir_block, upcast(types.any_type));
-        // Set data
-        {
-            IR_Instruction instr;
-            instr.type = IR_Instruction_Type::ADDRESS_OF;
-            instr.options.address_of.type = IR_Instruction_Address_Of_Type::DATA;
-            instr.options.address_of.source = operand_access;
-            // In theory a cast from pointer to voidptr would be better, but I think I can ignore it
-            instr.options.address_of.destination = ir_data_access_create_member(
-                ir_block, any_access, types.any_type->members[0]
-            );
-            dynamic_array_push_back(&ir_block->instructions, instr);
-        }
-        // Set type
-        {
-            IR_Instruction instr;
-            instr.type = IR_Instruction_Type::MOVE;
-            instr.options.move.destination = ir_data_access_create_member(
-                ir_block, any_access, types.any_type->members[1]
-            );
-            instr.options.move.source = ir_data_access_create_constant(
-                upcast(types.type_handle),
-                array_create_static_as_bytes(&source_type->type_handle, 1)
-            );
-            dynamic_array_push_back(&ir_block->instructions, instr);
-        }
-        return any_access;
-    }
-    default: panic("");
-    }
-    return result_access;
-}
-
 IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block, AST::Expression* expression)
 {
     auto info = get_info(expression);
@@ -1213,12 +1025,12 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
     {
         auto mem_access = expression->options.member_access;
         auto source = ir_generator_generate_expression(ir_block, mem_access.expr);
-        auto src_type = get_info(mem_access.expr)->post_op.type_afterwards;
+        auto src_type = get_info(mem_access.expr)->cast_info.type_afterwards;
 
         // Handle special case of array.data, which basically becomes an address of
         if (src_type->type == Datatype_Type::ARRAY)
         {
-            assert(mem_access.name == compiler.id_data, "Member access on array must be data or handled elsewhere!");
+            assert(mem_access.name == compiler.predefined_ids.data, "Member access on array must be data or handled elsewhere!");
             if (source.is_memory_access) {
                 source.is_memory_access = false;
                 return source;
@@ -1297,10 +1109,8 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
         panic("Unreachable");
         break;
     }
-    case AST::Expression_Type::CAST:
-    {
-        auto source = ir_generator_generate_expression(ir_block, expression->options.cast.operand);
-        return ir_generator_generate_cast(ir_block, source, expression_info_get_type(info, true), info->specifics.explicit_cast);
+    case AST::Expression_Type::CAST: {
+        return ir_generator_generate_expression(ir_block, expression->options.cast.operand);
     }
     case AST::Expression_Type::BAKE_BLOCK:
     case AST::Expression_Type::BAKE_EXPR:
@@ -1326,20 +1136,223 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
 
 IR_Data_Access ir_generator_generate_expression(IR_Code_Block* ir_block, AST::Expression* expression)
 {
-    auto info = get_info(expression);
-    auto access = ir_generator_generate_expression_no_cast(ir_block, expression);
+    // Generate expression
+    auto source = ir_generator_generate_expression_no_cast(ir_block, expression);
 
-    // Apply context operations
-    if (info->post_op.take_address_of) {
-        access = ir_data_access_create_address_of(ir_block, access);
+    // Generate cast
+    auto info = get_info(expression);
+    auto& cast_info = info->cast_info;
+    auto cast_type = cast_info.cast_type;
+
+    // Auto operations
+    if (cast_info.take_address_of) {
+        source = ir_data_access_create_address_of(ir_block, source);
     }
     else
     {
-        for (int i = 0; i < info->post_op.deref_count; i++) {
-            access = ir_data_access_create_dereference(ir_block, access);
+        for (int i = 0; i < cast_info.deref_count; i++) {
+            source = ir_data_access_create_dereference(ir_block, source);
         }
     }
-    return ir_generator_generate_cast(ir_block, access, info->post_op.type_afterwards, info->post_op.implicit_cast);
+    if (cast_type == Cast_Type::NO_CAST) return source;
+
+    auto type_system = &compiler.type_system;
+    auto& types = type_system->predefined_types;
+    auto source_type = ir_data_access_get_type(&source);
+    auto make_simple_cast = [](IR_Code_Block* ir_block, IR_Data_Access source, Datatype* result_type, IR_Cast_Type cast_type) -> IR_Data_Access
+    {
+        IR_Instruction instr;
+        instr.type = IR_Instruction_Type::CAST;
+        instr.options.cast.type = cast_type;
+        instr.options.cast.source = source;
+        instr.options.cast.destination = ir_data_access_create_intermediate(ir_block, result_type);
+        dynamic_array_push_back(&ir_block->instructions, instr);
+        return instr.options.cast.destination;
+    };
+
+    switch (cast_type)
+    {
+    case Cast_Type::INVALID:
+    case Cast_Type::NO_CAST:
+        panic("Should have been handled elsewhere!");
+    case Cast_Type::INTEGERS: {
+        return make_simple_cast(ir_block, source, cast_info.type_afterwards, IR_Cast_Type::INTEGERS);
+    }
+    case Cast_Type::FLOATS: {
+        return make_simple_cast(ir_block, source, cast_info.type_afterwards, IR_Cast_Type::FLOATS);
+    }
+    case Cast_Type::FLOAT_TO_INT: {
+        return make_simple_cast(ir_block, source, cast_info.type_afterwards, IR_Cast_Type::FLOAT_TO_INT);
+    }
+    case Cast_Type::INT_TO_FLOAT: {
+        return make_simple_cast(ir_block, source, cast_info.type_afterwards, IR_Cast_Type::INT_TO_FLOAT);
+    }
+    case Cast_Type::POINTERS: {
+        return make_simple_cast(ir_block, source, cast_info.type_afterwards, IR_Cast_Type::POINTERS);
+    }
+    case Cast_Type::POINTER_TO_U64: {
+        return make_simple_cast(ir_block, source, cast_info.type_afterwards, IR_Cast_Type::POINTER_TO_U64);
+    }
+    case Cast_Type::U64_TO_POINTER: {
+        return make_simple_cast(ir_block, source, cast_info.type_afterwards, IR_Cast_Type::U64_TO_POINTER);
+    }
+    case Cast_Type::ENUM_TO_INT: {
+        return make_simple_cast(ir_block, source, cast_info.type_afterwards, IR_Cast_Type::ENUM_TO_INT);
+    }
+    case Cast_Type::INT_TO_ENUM: {
+        return make_simple_cast(ir_block, source, cast_info.type_afterwards, IR_Cast_Type::INT_TO_ENUM);
+    }
+    case Cast_Type::ARRAY_TO_SLICE:
+    {
+        Datatype_Slice* slice_type = downcast<Datatype_Slice>(cast_info.type_afterwards);
+        Datatype_Array* array_type = downcast<Datatype_Array>(source_type);
+        IR_Data_Access slice_access = ir_data_access_create_intermediate(ir_block, upcast(slice_type));
+        // Set size
+        {
+            IR_Instruction instr;
+            instr.type = IR_Instruction_Type::MOVE;
+            instr.options.move.destination = ir_data_access_create_member(ir_block, slice_access, slice_type->size_member);
+            assert(array_type->count_known, "");
+            instr.options.move.source = ir_data_access_create_constant_i32(array_type->element_count);
+            dynamic_array_push_back(&ir_block->instructions, instr);
+        }
+        // Set data
+        {
+            IR_Instruction instr;
+            instr.type = IR_Instruction_Type::ADDRESS_OF;
+            instr.options.address_of.type = IR_Instruction_Address_Of_Type::DATA;
+            instr.options.address_of.source = source;
+            instr.options.address_of.destination = ir_data_access_create_member(ir_block, slice_access, slice_type->data_member);
+            dynamic_array_push_back(&ir_block->instructions, instr);
+        }
+        return slice_access;
+    }
+    case Cast_Type::CUSTOM_CAST: {
+        IR_Instruction instr;
+        instr.type = IR_Instruction_Type::FUNCTION_CALL;
+        instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
+        instr.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(1);
+        dynamic_array_push_back(&instr.options.call.arguments, source);
+        instr.options.call.destination = ir_data_access_create_intermediate(ir_block, cast_info.type_afterwards);
+        instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, cast_info.options.custom_cast_function);
+        dynamic_array_push_back(&ir_block->instructions, instr);
+        return instr.options.call.destination;
+    }
+    case Cast_Type::POINTER_NULL_CHECK: {
+        IR_Instruction instr;
+        instr.type = IR_Instruction_Type::BINARY_OP;
+        instr.options.binary_op.type = AST::Binop::NOT_EQUAL; // Note: Pointer equals would be more correct, but currently only equals is used as binop
+        instr.options.binary_op.operand_left = source;
+        void* null_ptr = nullptr;
+        instr.options.binary_op.operand_right = ir_data_access_create_constant(types.void_pointer_type, array_create_static_as_bytes(&null_ptr, 1));
+        instr.options.binary_op.destination = ir_data_access_create_intermediate(ir_block, upcast(types.bool_type));
+        dynamic_array_push_back(&ir_block->instructions, instr);
+        return instr.options.binary_op.destination;
+    }
+    case Cast_Type::FROM_ANY:
+    {
+        // Check if type matches given type, if not error out
+        IR_Data_Access access_operand = source;
+        IR_Data_Access access_valid_cast = ir_data_access_create_intermediate(ir_block, upcast(types.bool_type));
+        IR_Data_Access access_result = ir_data_access_create_intermediate(ir_block, cast_info.type_afterwards);
+        {
+            IR_Instruction cmp_instr;
+            cmp_instr.type = IR_Instruction_Type::BINARY_OP;
+            cmp_instr.options.binary_op.type = AST::Binop::EQUAL;
+            cmp_instr.options.binary_op.operand_left = ir_data_access_create_constant(
+                types.type_handle,
+                array_create_static_as_bytes<u32>(&cast_info.type_afterwards->type_handle.index, 1)
+            );
+            cmp_instr.options.binary_op.operand_right = ir_data_access_create_member(ir_block, access_operand, types.any_type->members[1]);
+            cmp_instr.options.binary_op.destination = access_valid_cast;
+            dynamic_array_push_back(&ir_block->instructions, cmp_instr);
+        }
+        IR_Code_Block* branch_valid = ir_code_block_create(ir_block->function);
+        IR_Code_Block* branch_invalid = ir_code_block_create(ir_block->function);
+        {
+            IR_Instruction if_instr;
+            if_instr.type = IR_Instruction_Type::IF;
+            if_instr.options.if_instr.condition = access_valid_cast;
+            if_instr.options.if_instr.false_branch = branch_invalid;
+            if_instr.options.if_instr.true_branch = branch_valid;
+            dynamic_array_push_back(&ir_block->instructions, if_instr);
+        }
+        {
+            // True_Branch
+            IR_Data_Access any_data_access = ir_data_access_create_member(branch_valid, access_operand, types.any_type->members[0]);
+            {
+                IR_Instruction cast_instr;
+                cast_instr.type = IR_Instruction_Type::CAST;
+                cast_instr.options.cast.type = IR_Cast_Type::POINTERS;
+                cast_instr.options.cast.source = any_data_access;
+                cast_instr.options.cast.destination = ir_data_access_create_intermediate(
+                    branch_valid, upcast(type_system_make_pointer(cast_info.type_afterwards))
+                );
+                dynamic_array_push_back(&branch_valid->instructions, cast_instr);
+                any_data_access = cast_instr.options.cast.destination;
+            }
+            IR_Instruction move_instr;
+            move_instr.type = IR_Instruction_Type::MOVE;
+            move_instr.options.move.destination = access_result;
+            move_instr.options.move.source = ir_data_access_create_dereference(branch_valid, any_data_access);
+            dynamic_array_push_back(&branch_valid->instructions, move_instr);
+        }
+        {
+            // False branch
+            IR_Instruction exit_instr;
+            exit_instr.type = IR_Instruction_Type::RETURN;
+            exit_instr.options.return_instr.type = IR_Instruction_Return_Type::EXIT;
+            exit_instr.options.return_instr.options.exit_code = Exit_Code::ANY_CAST_INVALID;
+            dynamic_array_push_back(&branch_invalid->instructions, exit_instr);
+        }
+        return access_result;
+    }
+    case Cast_Type::TO_ANY:
+    {
+        IR_Data_Access operand_access = source;
+        if (operand_access.type == IR_Data_Access_Type::CONSTANT && !operand_access.is_memory_access)
+        {
+            IR_Instruction instr;
+            instr.type = IR_Instruction_Type::MOVE;
+            instr.options.move.destination = ir_data_access_create_intermediate(ir_block, source_type);
+            instr.options.move.source = operand_access;
+            dynamic_array_push_back(&ir_block->instructions, instr);
+            operand_access = instr.options.move.destination;
+        }
+
+        IR_Data_Access any_access = ir_data_access_create_intermediate(ir_block, upcast(types.any_type));
+        // Set data
+        {
+            IR_Instruction instr;
+            instr.type = IR_Instruction_Type::ADDRESS_OF;
+            instr.options.address_of.type = IR_Instruction_Address_Of_Type::DATA;
+            instr.options.address_of.source = operand_access;
+            // In theory a cast from pointer to voidptr would be better, but I think I can ignore it
+            instr.options.address_of.destination = ir_data_access_create_member(
+                ir_block, any_access, types.any_type->members[0]
+            );
+            dynamic_array_push_back(&ir_block->instructions, instr);
+        }
+        // Set type
+        {
+            IR_Instruction instr;
+            instr.type = IR_Instruction_Type::MOVE;
+            instr.options.move.destination = ir_data_access_create_member(
+                ir_block, any_access, types.any_type->members[1]
+            );
+            instr.options.move.source = ir_data_access_create_constant(
+                upcast(types.type_handle),
+                array_create_static_as_bytes(&source_type->type_handle, 1)
+            );
+            dynamic_array_push_back(&ir_block->instructions, instr);
+        }
+        return any_access;
+    }
+    default: panic("");
+    }
+
+    panic("");
+    return ir_data_access_create_intermediate(ir_block, upcast(types.bool_type)); // Just random code
 }
 
 void ir_generator_work_through_defers(IR_Code_Block* ir_block, int defer_to_index, bool rewind_stack)

@@ -42,7 +42,7 @@ enum class Operator
     ASSIGN_ADD,
     ASSIGN_SUB,
     ASSIGN_MULT,
-    ASSIGN_DIV
+    ASSIGN_DIV,
 };
 
 enum class Operator_Type
@@ -77,6 +77,7 @@ enum class Keyword
     BAKE,
     IMPORT,
     AS,
+    CONTEXT,
 
     MAX_ENUM_VALUE,
 };

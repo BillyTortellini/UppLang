@@ -41,13 +41,6 @@ namespace AST
         DEREFERENCE, // &
     };
 
-    enum class Cast_Type
-    {
-        PTR_TO_RAW,
-        RAW_TO_PTR,
-        TYPE_TO_TYPE,
-    };
-
     enum class Node_Position_Type
     {
         TOKEN_INDEX,
@@ -87,7 +80,7 @@ namespace AST
     {
         EXPRESSION,
         STATEMENT,
-        DEFINITION_SYMBOL, // Jus an id
+        DEFINITION_SYMBOL, // Just an id
         DEFINITION, // ::, :=, : ... =, ...: ...
         CODE_BLOCK,
         MODULE,
@@ -97,9 +90,10 @@ namespace AST
         PARAMETER,         // Name/Type compination with optional default value + comptime
         SYMBOL_LOOKUP,     // A single identifier lookup
         PATH_LOOKUP,       // Possibliy multiple symbol-lookups together (e.g. Utils~Logger~log)
-        IMPORT,             // Aliases/Symbol-Import/File-Loading
+        IMPORT,            // Aliases/Symbol-Import/File-Loading
         ENUM_MEMBER,       // ID with or without value-expr
         SWITCH_CASE,       // Expression 
+        CONTEXT_CHANGE,    // Changing some operator context
     };
 
     struct Node
@@ -128,6 +122,65 @@ namespace AST
         String* file_name;
     };
 
+    const int CONTEXT_SETTING_CAST_MODE_COUNT = 23;
+    const int CONTEXT_SETTING_BOOLEAN_COUNT = 2;
+
+    enum class Context_Setting
+    {
+        INTEGER_SIZE_UPCAST = 0,
+        INTEGER_SIZE_DOWNCAST,
+        INTEGER_SIGNED_TO_UNSIGNED,
+        INTEGER_UNSIGNED_TO_SIGNED,
+        FLOAT_SIZE_UPCAST,
+        FLOAT_SIZE_DOWNCAST,
+        INT_TO_FLOAT,
+        FLOAT_TO_INT,
+        POINTER_TO_POINTER,
+        VOID_POINTER_TO_POINTER,
+        POINTER_TO_VOID_POINTER,
+        POINTER_TO_U64,
+        U64_TO_POINTER,
+        FUNCTION_POINTER_TO_VOID,
+        VOID_TO_FUNCTION_POINTER,
+        POINTER_TO_BOOL,
+        FUNCTION_POINTER_TO_BOOL,
+        VOID_POINTER_TO_BOOL,
+        TO_ANY,
+        FROM_ANY,
+        ENUM_TO_INT,
+        INT_TO_ENUM,
+        ARRAY_TO_SLICE,
+
+        AUTO_DEREFERENCE,
+        AUTO_ADDRESS_OF,
+
+        MAX_ENUM_VALUE
+    };
+
+    enum class Context_Change_Type
+    {
+        SETTING_CHANGE,
+        IMPORT_CONTEXT,
+        CUSTOM_CAST,
+    };
+
+
+    struct Argument;
+    struct Context_Change
+    {
+        Node base;
+        Context_Change_Type type;
+        union {
+            struct {
+                Context_Setting setting;
+                bool is_invalid;
+                Expression* expression;
+            } change;
+            Path_Lookup* context_import_path;
+            Dynamic_Array<Argument*> custom_cast_arguments;
+        } options;
+    };
+
     struct Symbol_Lookup
     {
         Node base;
@@ -148,6 +201,7 @@ namespace AST
         Node base;
         Dynamic_Array<Definition*> definitions;
         Dynamic_Array<Import*> import_nodes;
+        Dynamic_Array<Context_Change*> context_changes;
     };
 
     struct Enum_Member
@@ -192,6 +246,7 @@ namespace AST
     {
         Node base;
         Dynamic_Array<Statement*> statements;
+        Dynamic_Array<Context_Change*> context_changes;
         Optional<String*> block_id;
     };
 
@@ -262,7 +317,6 @@ namespace AST
                 Optional<Expression*> count_expr;
             } new_expr;
             struct {
-                Cast_Type type;
                 Optional<Expression*> to_type;
                 Expression* operand;
             } cast;
@@ -393,6 +447,7 @@ namespace AST
         bool type_correct(Path_Lookup* base);
         bool type_correct(Symbol_Lookup* base);
         bool type_correct(Code_Block* base);
+        bool type_correct(Context_Change* base);
     }
 
     template<typename T>
@@ -407,5 +462,7 @@ namespace AST
     AST::Node* upcast(T* node) {
         return &node->base;
     }
+
+    String* context_setting_to_string(Context_Setting setting);
 }
 

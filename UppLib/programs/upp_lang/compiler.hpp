@@ -34,6 +34,33 @@ enum class Compile_Type
     BUILD_CODE,
 };
 
+struct Predefined_IDs
+{
+    // Other
+    String* main;
+    String* id_struct;
+    String* empty_string;
+    String* invalid_symbol_name;
+    String* cast_mode;
+    String* cast_mode_auto;
+    String* cast_mode_implicit;
+    String* cast_mode_explicit;
+    String* cast_mode_none;
+
+    // Hardcoded functions
+    String* type_of;
+    String* type_info;
+
+    // Members
+    String* data;
+    String* size;
+    String* tag;
+
+    // Context members 
+    String* context_settings[(int)AST::Context_Setting::MAX_ENUM_VALUE];
+    String* add_custom_cast;
+};
+
 // Compiler
 struct Compiler
 {
@@ -45,6 +72,7 @@ struct Compiler
 
     // Helpers
     Identifier_Pool identifier_pool;
+    Predefined_IDs predefined_ids;
     Fiber_Pool* fiber_pool;
 
     Constant_Pool constant_pool;
@@ -59,7 +87,6 @@ struct Compiler
     C_Generator* c_generator;
     C_Compiler* c_compiler;
 
-
     // Timing stuff
     Timer* timer;
     Timing_Task task_current;
@@ -73,16 +100,6 @@ struct Compiler
     double time_code_exec;
     double time_reset;
 
-    // IDs
-    String* id_data;
-    String* id_size;
-    String* id_tag;
-    String* id_main;
-    String* id_type_of;
-    String* id_type_info;
-    String* id_empty_string;
-    String* id_invalid_symbol_name;
-    String* id_struct;
 };
 
 extern Compiler compiler;

@@ -1,5 +1,7 @@
 #include "ast.hpp"
 
+#include "compiler.hpp"
+
 namespace AST
 {
     void base_destroy(Node* node)
@@ -14,6 +16,14 @@ namespace AST
         case Node_Type::DEFINITION_SYMBOL: 
         case Node_Type::ENUM_MEMBER: 
             break;
+        case Node_Type::CONTEXT_CHANGE: {
+            auto change = (Context_Change*)node;
+            if (change->type != Context_Change_Type::CUSTOM_CAST) {
+                break;
+            }
+            dynamic_array_destroy(&change->options.custom_cast_arguments);
+            break;
+        }
         case Node_Type::DEFINITION: {
             auto def = (Definition*)node;
             dynamic_array_destroy(&def->values);
@@ -30,6 +40,9 @@ namespace AST
             if (block->statements.data != 0) {
                 dynamic_array_destroy(&block->statements);
             }
+            if (block->context_changes.data != 0) {
+                dynamic_array_destroy(&block->context_changes);
+            }
             break;
         }
         case Node_Type::MODULE: {
@@ -39,6 +52,9 @@ namespace AST
             }
             if (module->import_nodes.data != 0) {
                 dynamic_array_destroy(&module->import_nodes);
+            }
+            if (module->context_changes.data != 0) {
+                dynamic_array_destroy(&module->context_changes);
             }
             break;
         }
@@ -154,6 +170,7 @@ namespace AST
         }
         case Node_Type::CODE_BLOCK: {
             auto block = (Code_Block*)node;
+            FILL_ARRAY(block->context_changes);
             FILL_ARRAY(block->statements);
             break;
         }
@@ -170,6 +187,26 @@ namespace AST
         case Node_Type::SYMBOL_LOOKUP: {
             break;
         }
+        case Node_Type::CONTEXT_CHANGE: {
+            auto context = (Context_Change*)node;
+            switch (context->type)
+            {
+            case Context_Change_Type::CUSTOM_CAST: {
+                FILL_ARRAY(context->options.custom_cast_arguments);
+                break;
+            }
+            case Context_Change_Type::SETTING_CHANGE: {
+                FILL(context->options.change.expression);
+                break;
+            }
+            case Context_Change_Type::IMPORT_CONTEXT: {
+                FILL(context->options.context_import_path);
+                break;
+            }
+            default: panic("");
+            }
+            break;
+        }
         case Node_Type::IMPORT: {
             auto import = (Import*)node;
             if (import->type != Import_Type::FILE) {
@@ -180,6 +217,7 @@ namespace AST
         case Node_Type::MODULE: {
             auto module = (Module*)node;
             FILL_ARRAY(module->import_nodes);
+            FILL_ARRAY(module->context_changes);
             FILL_ARRAY(module->definitions);
             break;
         }
@@ -409,6 +447,26 @@ namespace AST
         case Node_Type::SYMBOL_LOOKUP: {
             break;
         }
+        case Node_Type::CONTEXT_CHANGE: {
+            auto context = (Context_Change*)node;
+            switch (context->type)
+            {
+            case Context_Change_Type::CUSTOM_CAST: {
+                FILL_ARRAY(context->options.custom_cast_arguments);
+                break;
+            }
+            case Context_Change_Type::SETTING_CHANGE: {
+                FILL(context->options.change.expression);
+                break;
+            }
+            case Context_Change_Type::IMPORT_CONTEXT: {
+                FILL(context->options.context_import_path);
+                break;
+            }
+            default: panic("");
+            }
+            break;
+        }
         case Node_Type::IMPORT: {
             auto import = (Import*)node;
             if (import->type != Import_Type::FILE) {
@@ -434,6 +492,7 @@ namespace AST
         }
         case Node_Type::CODE_BLOCK: {
             auto block = (Code_Block*)node;
+            FILL_ARRAY(block->context_changes);
             FILL_ARRAY(block->statements);
             break;
         }
@@ -450,6 +509,7 @@ namespace AST
         case Node_Type::MODULE: {
             auto module = (Module*)node;
             FILL_ARRAY(module->import_nodes);
+            FILL_ARRAY(module->context_changes);
             FILL_ARRAY(module->definitions);
             break;
         }
@@ -686,6 +746,26 @@ namespace AST
             }
             break;
         }
+        case Node_Type::CONTEXT_CHANGE: {
+            auto context = (Context_Change*)base;
+            switch (context->type)
+            {
+            case Context_Change_Type::CUSTOM_CAST: {
+                string_append_formated(str, "CUSTOM_CAST");
+                break;
+            }
+            case Context_Change_Type::SETTING_CHANGE: {
+                string_append_formated(str, "CONTEXT_CHANGE %s", context_setting_to_string(context->options.change.setting)->characters);
+                break;
+            }
+            case Context_Change_Type::IMPORT_CONTEXT: {
+                string_append_formated(str, "CONTEXT_IMPORT");
+                break;
+            }
+            default: panic("");
+            }
+            break;
+        }
         case Node_Type::PATH_LOOKUP:
             string_append_formated(str, "PATH_LOOKUP ");
             break;
@@ -854,6 +934,9 @@ namespace AST
 
     namespace Helpers
     {
+        bool type_correct(Context_Change* base) {
+            return base->base.type == Node_Type::CONTEXT_CHANGE;
+        }
         bool type_correct(Symbol_Lookup* base) {
             return base->base.type == Node_Type::SYMBOL_LOOKUP;
         }
@@ -981,5 +1064,9 @@ namespace AST
         result.start = node_position_make_block_start(index);
         result.end = node_position_make_block_end(index);
         return result;
+    }
+
+    String* context_setting_to_string(Context_Setting setting) {
+        return compiler.predefined_ids.context_settings[(int)setting];
     }
 }

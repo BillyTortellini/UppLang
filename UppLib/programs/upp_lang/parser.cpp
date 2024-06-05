@@ -408,6 +408,7 @@ namespace Parser
         // Parse Items
         while (true)
         {
+            auto pos_before_item = parser.state.pos;
             auto item = parse_fn(parent);
             if (item != 0)
             {
@@ -427,6 +428,11 @@ namespace Parser
                     if (stop_fn(*get_token())) {
                         return;
                     }
+                }
+                // If we are at the start of a new line, we also want to quit here (E.g. defining a struct)
+                auto& pos = parser.state.pos;
+                if (pos.token == 0 && pos.line_index.line_index != pos_before_item.line_index.line_index) {
+                    return;
                 }
             }
             
@@ -532,9 +538,16 @@ namespace Parser
             }
 
             if (recovery_point.available) {
-                log_error_to_pos("Couldn't parse list item", recovery_point.value);
+                if (item != 0) {
+                    log_error_to_pos("Encountered unexpected tokens at the end of list item", recovery_point.value);
+                }
+                else {
+                    log_error_to_pos("Couldn't parse list item", recovery_point.value);
+                }
                 parser.state.pos = recovery_point.value;
-                advance_token();
+                if (comma_pos.available) {
+                    advance_token(); // Skip one over comma
+                }
             }
             else
             {
@@ -561,6 +574,7 @@ namespace Parser
     Expression* parse_single_expression_or_error(Node* parent);
     void block_parse_remove_items_from_ast(Block_Parse* block_parse);
     void block_parse_add_items_to_ast(Block_Parse* block_parse);
+    Argument* parse_argument(Node* parent);
 
     // Block Parsing
     void ast_node_destroy_recursively(AST::Node* node) {
@@ -646,6 +660,7 @@ namespace Parser
             code_block->base.range = node_range_make_block(block_index);
             code_block->base.bounding_range = node_range_make_block(block_index);
             code_block->statements = dynamic_array_create_empty<Statement*>(1);
+            code_block->context_changes = dynamic_array_create_empty<Context_Change*>(1);
             code_block->block_id = optional_make_failure<String*>();
             parse_source_block(AST::upcast(code_block), block_index, Block_Context::STATEMENTS);
             return AST::upcast(statement);
@@ -709,6 +724,74 @@ namespace Parser
                 result->alias_name = get_token(1)->options.identifier;
                 advance_token();
                 advance_token();
+            }
+            PARSE_SUCCESS(result);
+        }
+
+        Context_Change* parse_context_change(Node* parent)
+        {
+            auto& ids = compiler.predefined_ids;
+
+            CHECKPOINT_SETUP;
+            if (!test_keyword_offset(Keyword::CONTEXT, 0)) {
+                CHECKPOINT_EXIT;
+            }
+
+            auto result = allocate_base<Context_Change>(parent, Node_Type::CONTEXT_CHANGE);
+            advance_token();
+
+            if (test_keyword(Keyword::IMPORT)) {
+                result->type = Context_Change_Type::IMPORT_CONTEXT;
+                advance_token();
+
+                auto path = parse_path_lookup(upcast(result));
+                if (path == 0) {
+                    CHECKPOINT_EXIT;
+                }
+
+                result->options.context_import_path = path;
+                PARSE_SUCCESS(result);
+            }
+
+            // Check for identifier
+            String* id = compiler.predefined_ids.invalid_symbol_name;
+            if (test_token(Token_Type::IDENTIFIER)) {
+                id = get_token()->options.identifier;
+                advance_token();
+            }
+            else {
+                log_error_range_offset("Expected identifier after context keyword", 0);
+            }
+
+            // Check if it's custom cast
+            if (id == ids.add_custom_cast && test_parenthesis('('))
+            {
+                result->type = Context_Change_Type::CUSTOM_CAST;
+                result->options.custom_cast_arguments = dynamic_array_create_empty<Argument*>(1);
+                parse_parenthesis_comma_seperated(&result->base, &result->options.custom_cast_arguments, parse_argument, Parenthesis_Type::PARENTHESIS);
+                PARSE_SUCCESS(result);
+            }
+
+            result->type = Context_Change_Type::SETTING_CHANGE;
+            result->options.change.is_invalid = true;
+            result->options.change.setting = Context_Setting::VOID_TO_FUNCTION_POINTER; // Just something to have invalid initialized
+            for (int i = 0; i < (int)Context_Setting::MAX_ENUM_VALUE; i++) {
+                Context_Setting setting = (Context_Setting)i;
+                if (AST::context_setting_to_string(setting) == id) {
+                    result->options.change.is_invalid = false;
+                    result->options.change.setting = setting;
+                    break;
+                }
+            }
+
+            if (test_operator(Operator::ASSIGN)) {
+                advance_token();
+                result->options.change.expression = parse_expression_or_error_expr(upcast(result));
+            }
+            else {
+                result->options.change.expression = allocate_base<Expression>(upcast(result), Node_Type::EXPRESSION);
+                result->options.change.expression->type = Expression_Type::ERROR_EXPR;
+                node_finalize_range(upcast(result->options.change.expression)); 
             }
             PARSE_SUCCESS(result);
         }
@@ -788,6 +871,10 @@ namespace Parser
             if (import_node != 0) {
                 return AST::upcast(import_node);
             }
+            auto context_change = parse_context_change(parent);
+            if (context_change != 0) {
+                return AST::upcast(context_change);
+            }
             return nullptr;
         }
 
@@ -812,7 +899,7 @@ namespace Parser
             PARSE_SUCCESS(result);
         }
 
-        Statement* parse_statement(Node* parent)
+        AST::Statement* parse_statement(Node* parent)
         {
             CHECKPOINT_SETUP;
             auto result = allocate_base<Statement>(parent, Node_Type::STATEMENT);
@@ -1014,6 +1101,17 @@ namespace Parser
             CHECKPOINT_EXIT;
         }
 
+        AST::Node* parse_statement_or_context_change(Node* parent)
+        {
+            // Check for context change
+            auto context_change = parse_context_change(parent);
+            if (context_change != 0) {
+                return upcast(context_change);
+            }
+
+            return upcast(parse_statement(parent));
+        }
+
         Enum_Member* parse_enum_member(Node* parent)
         {
             if (!test_token(Token_Type::IDENTIFIER)) {
@@ -1095,7 +1193,7 @@ namespace Parser
             result.node = Block_Items::parse_module_item(parent);
             break;
         case Block_Context::STATEMENTS:
-            result.node = AST::upcast(Block_Items::parse_statement(parent));
+            result.node = Block_Items::parse_statement_or_context_change(parent);
             break;
         case Block_Context::STRUCT:
             result.node = AST::upcast(Block_Items::parse_definition(parent));
@@ -1248,6 +1346,7 @@ namespace Parser
             result->base.range = node_range_make_block(follow_block_opt.value);
         }
         result->statements = dynamic_array_create_empty<Statement*>(1);
+        result->context_changes = dynamic_array_create_empty<Context_Change*>(1);
         result->block_id = parse_block_label(related_expression);
         parse_follow_block(AST::upcast(result), Block_Context::STATEMENTS);
         PARSE_SUCCESS(result);
@@ -1323,7 +1422,7 @@ namespace Parser
             else {
                 auto& pos = parser.state.pos;
                 log_error("Expected identifier", node_range_make(token_index_advance(pos, -1), pos)); // Put error on the ~
-                lookup->name = compiler.id_empty_string;
+                lookup->name = compiler.predefined_ids.empty_string;
             }
             SET_END_RANGE(lookup);
 
@@ -1382,37 +1481,21 @@ namespace Parser
         }
 
         // Casts
+        if (test_keyword(Keyword::CAST))
         {
-            bool is_cast = true;
-            Cast_Type type;
-            if (test_keyword_offset(Keyword::CAST, 0)) {
-                type = Cast_Type::TYPE_TO_TYPE;
-            }
-            else if (test_keyword_offset(Keyword::CAST_PTR, 0)) {
-                type = Cast_Type::RAW_TO_PTR;
-            }
-            else if (test_keyword_offset(Keyword::CAST_RAW, 0)) {
-                type = Cast_Type::PTR_TO_RAW;
-            }
-            else {
-                is_cast = false;
-            }
-            if (is_cast)
+            advance_token();
+            result->type = Expression_Type::CAST;
+            auto& cast = result->options.cast;
+            cast.to_type.available = false;
+            if (test_parenthesis_offset('{', 0))
             {
                 advance_token();
-                result->type = Expression_Type::CAST;
-                auto& cast = result->options.cast;
-                cast.type = type;
-                if (test_parenthesis_offset('{', 0))
-                {
-                    advance_token();
-                    cast.to_type = optional_make_success(parse_single_expression_or_error(&result->base));
-                    if (!finish_parenthesis<Parenthesis_Type::BRACES>()) CHECKPOINT_EXIT;
-                }
-
-                cast.operand = parse_single_expression_or_error(&result->base);
-                PARSE_SUCCESS(result);
+                cast.to_type = optional_make_success(parse_single_expression_or_error(&result->base));
+                if (!finish_parenthesis<Parenthesis_Type::BRACES>()) CHECKPOINT_EXIT;
             }
+
+            cast.operand = parse_single_expression_or_error(&result->base);
+            PARSE_SUCCESS(result);
         }
 
         // Array/Slice
@@ -1481,7 +1564,7 @@ namespace Parser
                 else {
                     auto& pos = parser.state.pos;
                     log_error("Missing member name", node_range_make(token_index_advance(pos, -1), pos));
-                    result->options.auto_enum = compiler.id_empty_string;
+                    result->options.auto_enum = compiler.predefined_ids.empty_string;
                 }
                 PARSE_SUCCESS(result);
             }
@@ -1594,6 +1677,7 @@ namespace Parser
             auto module = allocate_base<Module>(&result->base, Node_Type::MODULE);
             module->definitions = dynamic_array_create_empty<Definition*>(1);
             module->import_nodes = dynamic_array_create_empty<Import*>(1);
+            module->context_changes = dynamic_array_create_empty<Context_Change*>(1);
             advance_token();
             parse_follow_block(AST::upcast(module), Block_Context::MODULE);
             node_finalize_range(AST::upcast(module));
@@ -1645,7 +1729,7 @@ namespace Parser
                 else {
                     auto& pos = parser.state.pos;
                     log_error("Missing member name", node_range_make(token_index_advance(pos, -1), pos));
-                    result->options.member_access.name = compiler.id_empty_string;
+                    result->options.member_access.name = compiler.predefined_ids.empty_string;
                 }
                 PARSE_SUCCESS(result);
             }
@@ -1829,6 +1913,7 @@ namespace Parser
         root = allocate_base<Module>(0, Node_Type::MODULE);
         root->definitions = dynamic_array_create_empty<Definition*>(1);
         root->import_nodes = dynamic_array_create_empty<Import*>(1);
+        root->context_changes = dynamic_array_create_empty<Context_Change*>(1);
 
         // Parse root
         parse_source_block(AST::upcast(root), block_index_make_root(code), Block_Context::MODULE);
@@ -1849,6 +1934,7 @@ namespace Parser
             auto module = AST::downcast<AST::Module>(block_parse->parent);
             dynamic_array_reset(&module->definitions);
             dynamic_array_reset(&module->import_nodes);
+            dynamic_array_reset(&module->context_changes);
             break;
         }
         case Block_Context::ENUM: {
@@ -1868,6 +1954,7 @@ namespace Parser
             }
             auto block = AST::downcast<AST::Code_Block>(block_parse->parent);
             dynamic_array_reset(&block->statements);
+            dynamic_array_reset(&block->context_changes);
             break;
         }
         case Block_Context::STRUCT: {
@@ -1916,6 +2003,9 @@ namespace Parser
                 else if (item->type == AST::Node_Type::DEFINITION) {
                     dynamic_array_push_back(&module->definitions, AST::downcast<AST::Definition>(item));
                 }
+                else if (item->type == AST::Node_Type::CONTEXT_CHANGE) {
+                    dynamic_array_push_back(&module->context_changes, AST::downcast<AST::Context_Change>(item));
+                }
                 else {
                     panic("HEY");
                 }
@@ -1943,7 +2033,13 @@ namespace Parser
             auto block = AST::downcast<AST::Code_Block>(block_parse->parent);
             for (int i = 0; i < block_parse->items.size; i++) {
                 auto& item = block_parse->items[i].node;
-                dynamic_array_push_back(&block->statements, AST::downcast<AST::Statement>(item));
+                if (item->type == Node_Type::STATEMENT) {
+                    dynamic_array_push_back(&block->statements, AST::downcast<AST::Statement>(item));
+                }
+                else {
+                    assert(item->type == Node_Type::CONTEXT_CHANGE, "");
+                    dynamic_array_push_back(&block->context_changes, AST::downcast<AST::Context_Change>(item));
+                }
             }
             break;
         }
