@@ -234,6 +234,10 @@ Module_Info* pass_get_node_info(Analysis_Pass* pass, AST::Module* node, Info_Que
     return &pass_get_base_info(pass, AST::upcast(node), query)->module_info;
 }
 
+Context_Change_Info* pass_get_node_info(Analysis_Pass* pass, AST::Context_Change* node, Info_Query query) {
+    return &pass_get_base_info(pass, AST::upcast(node), query)->context_info;
+}
+
 
 
 // Helpers
@@ -275,6 +279,10 @@ Path_Lookup_Info* get_info(AST::Path_Lookup* node, bool create = false) {
 
 Module_Info* get_info(AST::Module* module, bool create = false) {
     return pass_get_node_info(semantic_analyser.current_workload->current_pass, module, create ? Info_Query::CREATE : Info_Query::READ_NOT_NULL);
+}
+
+Context_Change_Info* get_info(AST::Context_Change* context_change, bool create = false) {
+    return pass_get_node_info(semantic_analyser.current_workload->current_pass, context_change, create ? Info_Query::CREATE : Info_Query::READ_NOT_NULL);
 }
 
 
@@ -4123,6 +4131,16 @@ enum Callable_Type
     STRUCT_INITIALIZER,
 };
 
+struct Callable_Polymorphic_Info
+{
+    Polymorphic_Base_Info* base;
+    bool is_function;
+    union {
+        Polymorphic_Function_Base* polymorphic_function;
+        Workload_Structure_Polymorphic* polymorphic_struct;
+    } options;
+};
+
 struct Callable
 {
     Callable_Type type;
@@ -4133,14 +4151,7 @@ struct Callable
             Datatype_Function* signature;
         } hardcoded;
         Datatype_Function* function_pointer_type;
-        struct {
-            Polymorphic_Base_Info* base;
-            bool is_function;
-            union {
-                Polymorphic_Function_Base* polymorphic_function;
-                Workload_Structure_Polymorphic* polymorphic_struct;
-            } options;
-        } polymorphic;
+        Callable_Polymorphic_Info polymorphic;
         Datatype_Struct* structure; // For struct-intitializer
     } options;
 
@@ -4284,7 +4295,7 @@ Function_Parameter callable_get_parameter_info(const Callable& callable, int par
     Datatype_Function* signature = 0;
     switch (callable.type)
     {
-    case Callable_Type::POLYMORPHIC: 
+    case Callable_Type::POLYMORPHIC:
     {
         auto& base_info = *callable.options.polymorphic.base;
 
@@ -4326,7 +4337,7 @@ Function_Parameter callable_get_parameter_info(const Callable& callable, int par
         signature = callable.options.function_pointer_type;
         break;
     }
-    default: panic("");    
+    default: panic("");
     }
 
     assert(signature, "");
@@ -4579,7 +4590,7 @@ bool match_templated_type_internal(Datatype* polymorphic_type, Datatype* match_a
                 auto param_type = downcast<Datatype_Template_Parameter>(match_type);
                 match_polymorphic_type_to_constant(param_type, match_to_value);
             }
-            else { 
+            else {
                 if (match_to_value.type->type == Datatype_Type::TYPE_HANDLE) {
                     Upp_Type_Handle handle_value = upp_constant_to_value<Upp_Type_Handle>(match_to_value);
                     if (handle_value.index >= (u32)compiler.type_system.types.size) {
@@ -4718,6 +4729,162 @@ bool match_templated_type(Datatype* polymorphic_type, Datatype* match_against, i
 }
 
 const int MAX_POLYMORPHIC_INSTANCIATION_DEPTH = 10;
+
+bool check_if_polymorphic_instanciation_limit_reached() {
+    int instanciation_depth = semantic_analyser.current_workload->polymorphic_instanciation_depth + 1;
+    return instanciation_depth > MAX_POLYMORPHIC_INSTANCIATION_DEPTH;
+}
+
+bool check_if_polymorphic_callable_contains_errors(Callable_Polymorphic_Info poly_callable)
+{
+    auto& analyser = semantic_analyser;
+
+    if (poly_callable.is_function) {
+        Function_Progress* base_progress = polymorphic_function_base_to_function_progress(poly_callable.options.polymorphic_function);
+        if (base_progress->header_workload->base.real_error_count > 0) {
+            return true;
+        }
+        if (base_progress->body_workload->base.is_finished && base_progress->body_workload->base.real_error_count > 0) {
+            return true;
+        }
+    }
+    else {
+        auto polymorphic_struct = poly_callable.options.polymorphic_struct;
+        if (polymorphic_struct->base.real_error_count > 0) {
+            return true;
+        }
+        if (polymorphic_struct->body_workload->base.is_finished && polymorphic_struct->body_workload->base.real_error_count > 0) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// On successfull instanciation (Not deduplicated) takes ownership of instance-values (If this is the case, instance_values.data is set to null)
+int polymorphic_base_instanciate(
+    Polymorphic_Base_Info& poly_base,
+    Array<Polymorphic_Value>& instance_values,
+    Array<Datatype*> instance_parameter_types,
+    const Callable_Polymorphic_Info& poly_callable)
+{
+    const auto& return_type_index = poly_base.return_type_index;
+
+    // Check if we already have an instance with the given values
+    int instance_index = -1;
+    {
+        for (int i = 0; i < poly_base.instances.size; i++)
+        {
+            auto& test_instance = poly_base.instances[i];
+            bool all_matching = true;
+            for (int j = 0; j < instance_values.size; j++) {
+                auto& value = instance_values[j];
+                auto& compare_to = test_instance.instance_parameter_values[j];
+                assert(!value.only_datatype_known && !compare_to.only_datatype_known, "");
+                if (!upp_constant_is_equal(value.options.value, compare_to.options.value)) {
+                    all_matching = false;
+                    break;
+                }
+            }
+
+            if (all_matching) {
+                instance_index = i;
+                break;
+            }
+        }
+    }
+
+    // Create new instance if necessary
+    if (instance_index == -1)
+    {
+        Polymorphic_Instance_Info instance;
+        instance.base_info = &poly_base;
+        instance.instance_parameter_values = instance_values;
+        instance.is_function_instance = poly_callable.is_function;
+        instance_index = poly_base.instances.size;
+
+        if (poly_callable.is_function)
+        {
+            // Create instance function signature
+            Datatype_Function* instance_function_type = 0;
+            {
+                Datatype_Function unfinished = type_system_make_function_empty();
+                for (int i = 0; i < poly_base.parameters.size; i++)
+                {
+                    auto& base_param = poly_base.parameters[i];
+                    if (base_param.is_comptime || i == return_type_index) {
+                        continue;
+                    }
+
+                    Function_Parameter parameter = function_parameter_make_empty();
+                    if (base_param.depends_on.size > 0 || base_param.infos.type->contains_type_template) {
+                        parameter.has_default_value = false;
+                    }
+                    else {
+                        parameter.has_default_value = base_param.infos.has_default_value;
+                        parameter.default_value_opt = base_param.infos.default_value_opt;
+                    }
+                    parameter.name = base_param.infos.name;
+                    parameter.type = instance_parameter_types[i];
+                    assert(!parameter.type->contains_type_template, "");
+                    dynamic_array_push_back(&unfinished.parameters, parameter);
+                }
+
+                Datatype* return_type = 0;
+                if (return_type_index != -1) {
+                    return_type = instance_parameter_types[return_type_index];
+                }
+
+                instance_function_type = type_system_finish_function(unfinished, return_type);
+            }
+
+            auto poly_function = poly_callable.options.polymorphic_function;
+            auto poly_progress = polymorphic_function_base_to_function_progress(poly_function);
+
+            // Create new instance progress
+            auto instance_progress = function_progress_create_with_modtree_function(
+                0, poly_progress->header_workload->function_node, instance_function_type, poly_progress);
+            instance_progress->type = Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE;
+            instance_progress->polymorphic.instance_base = poly_function;
+
+            // Update body workload to use instance values
+            instance_progress->body_workload->base.polymorphic_instanciation_depth += 1;
+            instance_progress->body_workload->base.polymorphic_values = instance_values;
+            instance_progress->body_workload->base.current_symbol_table = poly_base.symbol_table;
+
+            // Store reference in instance_info
+            instance.options.function_instance = instance_progress;
+        }
+        else
+        {
+            auto poly_struct = poly_callable.options.polymorphic_struct;
+
+            // Create new struct instance
+            auto body_workload = workload_structure_create(poly_struct->body_workload->struct_node, 0, true, Symbol_Access_Level::POLYMORPHIC);
+            body_workload->struct_type->name = poly_struct->body_workload->struct_type->name;
+            body_workload->polymorphic_type = Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE;
+            body_workload->polymorphic.instance.instance_index = instance_index;
+            body_workload->polymorphic.instance.parent = poly_struct;
+
+            body_workload->base.polymorphic_instanciation_depth += 1;
+            body_workload->base.polymorphic_values = instance_values;;
+            body_workload->base.current_symbol_table = poly_base.symbol_table;
+
+            analysis_workload_add_dependency_internal(upcast(body_workload), upcast(poly_struct->body_workload));
+
+            instance.options.struct_instance = body_workload;
+        }
+
+        dynamic_array_push_back(&poly_base.instances, instance);
+        instance_values.data = 0;
+        instance_values.size = 0;
+    }
+
+    return instance_index;
+}
+
+
+
 
 #define SET_ACTIVE_EXPR_INFO(new_info)\
     Expression_Info* _backup_info = semantic_analyser.current_workload->current_expression; \
@@ -5122,34 +5289,13 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             auto& parameter_nodes = poly_base.parameter_nodes;
             const int return_type_index = poly_base.return_type_index;
 
-            // Check if we've hit recursion limit for function instanciation
-            int instanciation_depth = analyser.current_workload->polymorphic_instanciation_depth + 1;
-            if (instanciation_depth > MAX_POLYMORPHIC_INSTANCIATION_DEPTH) {
-                log_semantic_error("Reached maximum polymorphic instanciation depth 10, not analysing further", call.expr, Parser::Section::FIRST_TOKEN);
+            if (check_if_polymorphic_instanciation_limit_reached()) {
+                log_semantic_error("Polymorphic instanciation limit reached!", call.expr, Parser::Section::FIRST_TOKEN);
                 arguments_analyse_in_unknown_context(arguments);
                 EXIT_ERROR(types.error_type);
             }
-
-            // Don't instanciate if there is an error in the base analysis
-            {
-                if (poly_callable.is_function) {
-                    Function_Progress* base_progress = polymorphic_function_base_to_function_progress(poly_callable.options.polymorphic_function);
-                    if (base_progress->header_workload->base.real_error_count > 0) {
-                        EXIT_ERROR(types.error_type);
-                    }
-                    if (base_progress->body_workload->base.is_finished && base_progress->body_workload->base.real_error_count > 0) {
-                        EXIT_ERROR(types.error_type);
-                    }
-                }
-                else {
-                    auto polymorphic_struct = poly_callable.options.polymorphic_struct;
-                    if (polymorphic_struct->base.real_error_count > 0) {
-                        EXIT_ERROR(types.error_type);
-                    }
-                    if (polymorphic_struct->body_workload->base.is_finished && polymorphic_struct->body_workload->base.real_error_count > 0) {
-                        EXIT_ERROR(types.error_type);
-                    }
-                }
+            if (check_if_polymorphic_callable_contains_errors(poly_callable)) {
+                EXIT_ERROR(types.error_type);
             }
 
             // Prepare instanciation data
@@ -5158,7 +5304,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             bool create_struct_template = false;
 
             Array<Polymorphic_Value> instance_values = array_create_empty<Polymorphic_Value>(poly_base.base_parameter_values.size);
-            SCOPE_EXIT(if (!success && instance_values.data != 0) { array_destroy(&instance_values); });
+            SCOPE_EXIT(if (instance_values.data != 0) { array_destroy(&instance_values); });
             for (int i = 0; i < instance_values.size; i++) {
                 assert(poly_base.base_parameter_values[i].only_datatype_known, "");
                 instance_values[i] = poly_base.base_parameter_values[i];
@@ -5204,7 +5350,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
                     const auto& implicit = poly_base.implicit_parameter_infos[parameter_nodes.size - arg_info->argument_index];
 
-                    Datatype* value_type = semantic_analyser_analyse_expression_value(arg_node->value, context);
+                    Datatype* value_type = semantic_analyser_analyse_expression_value(arg_node->value, expression_context_make_unknown(false));
                     arg_info->already_analysed = true;
                     arg_info->is_polymorphic = true;
 
@@ -5248,7 +5394,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 if (parameter_index == return_type_index)
                 {
                     Datatype* return_type = base_parameter.infos.type;
-                    if (base_parameter.depends_on.size > 0 || reanalyse_param_flags[parameter_index]) 
+                    if (base_parameter.depends_on.size > 0 || reanalyse_param_flags[parameter_index])
                     {
                         auto workload = semantic_analyser.current_workload;
                         if (comptime_evaluation_pass == 0) {
@@ -5318,7 +5464,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
                 // Get instance parameter-type
                 Datatype* parameter_type = 0;
-                if ((base_parameter.depends_on.size > 0 || reanalyse_param_flags[parameter_index])) 
+                if ((base_parameter.depends_on.size > 0 || reanalyse_param_flags[parameter_index]))
                 {
                     // Re-analyse base-header to get valid poly-argument type (Since this depends on other parameters)
                     //      e.g. foo :: ($T: Type_Handle, a: T)
@@ -5384,7 +5530,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                     arg_info->already_analysed = true;
 
                     // Check if we need to create a struct template
-                    if (value_type->contains_type_template) 
+                    if (value_type->contains_type_template)
                     {
                         assert(!poly_callable.is_function, "");
                         instance_values[parameter_index] = polymorphic_value_make_type(value_type);
@@ -5399,10 +5545,10 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                     if (comptime_result.available) {
                         auto constant = comptime_result.value;
                         // Check for struct_template
-                        if (constant.type->type == Datatype_Type::TYPE_HANDLE) 
+                        if (constant.type->type == Datatype_Type::TYPE_HANDLE)
                         {
                             Upp_Type_Handle handle = upp_constant_to_value<Upp_Type_Handle>(constant);
-                            if (handle.index >= (u32) type_system->types.size) {
+                            if (handle.index >= (u32)type_system->types.size) {
                                 success = false;
                                 log_semantic_error("Invalid constant type handle index", upcast(argument_node));
                                 arguments_analyse_in_unknown_context(arguments);
@@ -5484,113 +5630,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 assert(matched_implicit_parameter_count == poly_base.implicit_parameter_infos.size, "Should be the case if everything worked");
             }
 
-            // Check if we already have an instance with the given values
-            int instance_index = -1;
-            {
-                for (int i = 0; i < poly_base.instances.size; i++)
-                {
-                    auto& test_instance = poly_base.instances[i];
-                    bool all_matching = true;
-                    for (int j = 0; j < instance_values.size; j++) {
-                        auto& value = instance_values[j];
-                        auto& compare_to = test_instance.instance_parameter_values[j];
-                        assert(!value.only_datatype_known && !compare_to.only_datatype_known, "");
-                        if (!upp_constant_is_equal(value.options.value, compare_to.options.value)) {
-                            all_matching = false;
-                            break;
-                        }
-                    }
-
-                    if (all_matching) {
-                        success = false; // Delete current array
-                        instance_index = i;
-                        break;
-                    }
-                }
-            }
-
-            // Create new instance if necessary
-            if (instance_index == -1)
-            {
-                Polymorphic_Instance_Info instance;
-                instance.base_info = &poly_base;
-                instance.instance_parameter_values = instance_values;
-                instance.is_function_instance = poly_callable.is_function;
-                instance_index = poly_base.instances.size;
-
-                if (poly_callable.is_function) 
-                {
-                    // Create instance function signature
-                    Datatype_Function* instance_function_type = 0;
-                    {
-                        Datatype_Function unfinished = type_system_make_function_empty();
-                        for (int i = 0; i < poly_base.parameters.size; i++)
-                        {
-                            auto& base_param = poly_base.parameters[i];
-                            if (base_param.is_comptime || i == return_type_index) {
-                                continue;
-                            }
-
-                            Function_Parameter parameter = function_parameter_make_empty();
-                            if (base_param.depends_on.size > 0 || base_param.infos.type->contains_type_template) {
-                                parameter.has_default_value = false;
-                            }
-                            else {
-                                parameter.has_default_value = base_param.infos.has_default_value;
-                                parameter.default_value_opt = base_param.infos.default_value_opt;
-                            }
-                            parameter.name = base_param.infos.name;
-                            parameter.type = instance_parameter_types[i];
-                            assert(!parameter.type->contains_type_template, "");
-                            dynamic_array_push_back(&unfinished.parameters, parameter);
-                        }
-
-                        Datatype* return_type = 0;
-                        if (return_type_index != -1) {
-                            return_type = instance_parameter_types[return_type_index];
-                        }
-
-                        instance_function_type = type_system_finish_function(unfinished, return_type);
-                    }
-
-                    auto poly_function = poly_callable.options.polymorphic_function;
-                    auto poly_progress = polymorphic_function_base_to_function_progress(poly_function);
-
-                    // Create new instance progress
-                    auto instance_progress = function_progress_create_with_modtree_function(
-                        0, poly_progress->header_workload->function_node, instance_function_type, poly_progress);
-                    instance_progress->type = Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE;
-                    instance_progress->polymorphic.instance_base = poly_function;
-
-                    // Update body workload to use instance values
-                    instance_progress->body_workload->base.polymorphic_instanciation_depth += 1;
-                    instance_progress->body_workload->base.polymorphic_values = instance_values;
-                    instance_progress->body_workload->base.current_symbol_table = poly_base.symbol_table;
-
-                    // Store reference in instance_info
-                    instance.options.function_instance = instance_progress;
-                }
-                else
-                {
-                    auto poly_struct = poly_callable.options.polymorphic_struct;
-
-                    // Create new struct instance
-                    auto body_workload = workload_structure_create(poly_struct->body_workload->struct_node, 0, true, Symbol_Access_Level::POLYMORPHIC);
-                    body_workload->polymorphic_type = Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE;
-                    body_workload->polymorphic.instance.instance_index = instance_index;
-                    body_workload->polymorphic.instance.parent = poly_struct;
-
-                    body_workload->base.polymorphic_instanciation_depth += 1;
-                    body_workload->base.polymorphic_values = instance_values;;
-                    body_workload->base.current_symbol_table = poly_base.symbol_table;
-
-                    analysis_workload_add_dependency_internal(upcast(body_workload), upcast(poly_struct->body_workload));
-
-                    instance.options.struct_instance = body_workload;
-                }
-
-                dynamic_array_push_back(&poly_base.instances, instance);
-            }
+            // Create instance
+            int instance_index = polymorphic_base_instanciate(poly_base, instance_values, instance_parameter_types, poly_callable);
 
             // Exit now if we are instanciating struct
             if (!poly_callable.is_function) {
@@ -5703,7 +5744,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             auto destination_type = semantic_analyser_analyse_expression_type(cast->to_type.value);
             operand_context = expression_context_make_specific_type(destination_type, false, Cast_Mode::EXPLICIT);
         }
-        else 
+        else
         {
             if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED) {
                 operand_context = expression_context_make_specific_type(context.expected_type.type, false, Cast_Mode::IMPLICIT);
@@ -5750,7 +5791,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             value_ptr = &string_buffer;
             break;
         }
-        case Literal_Type::NULL_VAL: 
+        case Literal_Type::NULL_VAL:
         {
             literal_type = types.void_pointer_type;
             value_ptr = &null_pointer;
@@ -5957,7 +5998,12 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 type = context.expected_type.type;
             }
             else {
-                log_semantic_error("Could not determine struct type from context", expr, Parser::Section::FIRST_TOKEN);
+                if (!(context.type == Expression_Context_Type::UNKNOWN && context.unknown_due_to_error)) {
+                    log_semantic_error("Could not determine struct type from context", expr, Parser::Section::FIRST_TOKEN);
+                }
+                else {
+                    semantic_analyser_set_error_flag(true);
+                }
                 EXIT_ERROR(types.error_type);
             }
         }
@@ -6137,7 +6183,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             if (struct_workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE) {
                 polymorphic = &struct_workload->polymorphic.base->info;
             }
-            else if (struct_workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE){
+            else if (struct_workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
                 polymorphic = &struct_workload->polymorphic.instance.parent->info;
             }
             else {
@@ -6615,6 +6661,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 #undef EXIT_FUNCTION
 }
 
+
 Cast_Type check_cast_type_no_auto_operations(Expression_Cast_Info& result, Datatype* source_type, Datatype* destination_type, Cast_Mode cast_mode)
 {
     auto& analyser = semantic_analyser;
@@ -6635,7 +6682,7 @@ Cast_Type check_cast_type_no_auto_operations(Expression_Cast_Info& result, Datat
     // Check built-in cast types
     switch (source_type->type)
     {
-    case Datatype_Type::ARRAY: 
+    case Datatype_Type::ARRAY:
     {
         if (destination_type->type == Datatype_Type::SLICE) {
             auto source_array = downcast<Datatype_Array>(source_type);
@@ -6852,13 +6899,87 @@ Cast_Type check_cast_type_no_auto_operations(Expression_Cast_Info& result, Datat
         pair.from = source_type;
         pair.to = destination_type;
         Custom_Cast* custom_cast = hashtable_find_element(&operator_context->custom_casts, pair);
-        if (custom_cast != 0) 
+        if (custom_cast != 0)
         {
             cast_type = Cast_Type::CUSTOM_CAST;
             allowed_mode = custom_cast->cast_mode;
             result.options.custom_cast_function = custom_cast->function;
             // Note: It may be bad to call register_function_call here (Because it could be a unwanted side-effect during e.g. operator overloading)
             semantic_analyser_register_function_call(custom_cast->function);
+        }
+    }
+
+    // Check for polymorphic casts
+    if (cast_type == Cast_Type::INVALID && 
+        operator_context->custom_casts_polymorphic.size != 0 &&
+        !check_if_polymorphic_instanciation_limit_reached())
+    {
+        Hashset<Datatype*> already_visited = hashset_create_pointer_empty<Datatype*>(1);
+        Dynamic_Array<Matching_Constraint> constraints = dynamic_array_create_empty<Matching_Constraint>(1);
+        SCOPE_EXIT(hashset_destroy(&already_visited));
+        SCOPE_EXIT(dynamic_array_destroy(&constraints));
+        for (int i = 0; i < operator_context->custom_casts_polymorphic.size && cast_type == Cast_Type::INVALID; i++)
+        {
+            const auto& custom_cast = operator_context->custom_casts_polymorphic[i];
+            auto& poly_base = custom_cast.function->base_info;
+            Polymorphic_Parameter& return_param = poly_base.parameters[poly_base.return_type_index];
+            assert(custom_cast.argument_type->contains_type_template, "");
+
+            // Early exit if return type is known and does not match
+            if (return_param.depends_on.size == 0 && !types_are_equal(return_param.infos.type, destination_type)) {
+                continue;
+            }
+
+            // Check if argument would match with poly-type
+            Array<Polymorphic_Value> poly_values = array_create_empty<Polymorphic_Value>(poly_base.base_parameter_values.size);
+            SCOPE_EXIT(if (poly_values.data != 0) { array_destroy(&poly_values); });
+            int match_count = 0;
+            bool match_success = match_templated_type(custom_cast.argument_type, source_type, match_count, already_visited, poly_values, constraints);
+            if (!match_success) {
+                continue;
+            }
+
+            // Get return type (may require re-analysis)
+            Datatype* cast_return_type;
+            if (return_param.depends_on.size == 0) {
+                cast_return_type = return_param.infos.type; // Use base type in this case
+                assert(!cast_return_type->contains_type_template, "Should be checked before being added to custom cast array");
+            }
+            else {
+                // Reanalysis is required here
+                auto workload = semantic_analyser.current_workload;
+                Analysis_Pass* reanalysis_pass = analysis_pass_allocate(workload, upcast(poly_base.return_type_node));
+                RESTORE_ON_SCOPE_EXIT(workload->current_pass, reanalysis_pass);
+                RESTORE_ON_SCOPE_EXIT(workload->polymorphic_values, poly_values);
+                RESTORE_ON_SCOPE_EXIT(workload->current_symbol_table, poly_base.symbol_table);
+                RESTORE_ON_SCOPE_EXIT(workload->ignore_unknown_errors, true);
+                cast_return_type = semantic_analyser_analyse_expression_type(poly_base.return_type_node);
+            }
+
+            // Stop if it's not the type we are looking for
+            if (!types_are_equal(cast_return_type, destination_type)) {
+                continue;
+            }
+
+            // Instanciate polymorphic function
+            Callable_Polymorphic_Info poly_callable;
+            poly_callable.base = &custom_cast.function->base_info;
+            poly_callable.is_function = true;
+            poly_callable.options.polymorphic_function = custom_cast.function;
+            Array<Datatype*> instance_parameter_types = array_create_empty<Datatype*>(poly_base.parameters.size);
+            SCOPE_EXIT(array_destroy(&instance_parameter_types));
+            memory_set_bytes(instance_parameter_types.data, instance_parameter_types.size * sizeof(Datatype*), 0);
+            instance_parameter_types[0] = source_type;
+            instance_parameter_types[poly_base.return_type_index] = destination_type;
+            int instance_index = polymorphic_base_instanciate(poly_base, poly_values, instance_parameter_types, poly_callable);
+
+            // Success
+            cast_type = Cast_Type::CUSTOM_CAST;
+            allowed_mode = custom_cast.cast_mode;
+            result.options.custom_cast_function = poly_base.instances[instance_index].options.function_instance->function;
+            // Note: It may be bad to call register_function_call here (Because it could be a unwanted side-effect during e.g. operator overloading)
+            semantic_analyser_register_function_call(result.options.custom_cast_function);
+            break;
         }
     }
 
@@ -6898,7 +7019,7 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(Datatype* source_t
         }
 
         // Check if pointer null check is allowed
-        if ((int)allowed_mode <= (int)cast_mode) 
+        if ((int)allowed_mode <= (int)cast_mode)
         {
             // Check for ambiguities with bool-pointers
             if (source_type->type == Datatype_Type::POINTER)
@@ -6987,7 +7108,7 @@ Expression_Cast_Info expression_context_apply(
         semantic_analyser.current_workload->current_expression = get_info(error_report_node);
     }
 
-    assert(!(context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED && datatype_is_unknown(context.expected_type.type)), 
+    assert(!(context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED && datatype_is_unknown(context.expected_type.type)),
         "Should be checked when in context_make_specific_type");
 
     Expression_Cast_Info result;
@@ -7014,14 +7135,14 @@ Expression_Cast_Info expression_context_apply(
     }
     case Expression_Context_Type::SPECIFIC_TYPE_EXPECTED: {
         result = semantic_analyser_check_if_cast_possible(
-            initial_type, context.expected_type.type, context.expected_type.cast_mode, 
+            initial_type, context.expected_type.type, context.expected_type.cast_mode,
             !(context.expected_type.is_assignment_context && context.expected_type.type->type == Datatype_Type::POINTER)
         );
 
         // Check for errors
         if (log_errors)
         {
-            if (result.cast_type == Cast_Type::INVALID) 
+            if (result.cast_type == Cast_Type::INVALID)
             {
                 semantic_analyser_set_error_flag(false);
                 log_semantic_error("Cannot cast to required type", error_report_node, error_section);
@@ -7221,8 +7342,9 @@ Operator_Context* symbol_table_install_new_operator_context(Symbol_Table* symbol
 
     // Root context
     auto parent_context = symbol_table->operator_context;
-    if (parent_context == 0) 
+    if (parent_context == 0)
     {
+        context->custom_casts_polymorphic = dynamic_array_create_empty<Custom_Cast_Polymorphic>(1);
         context->custom_casts = hashtable_create_empty<Datatype_Pair, Custom_Cast>(1, datatype_pair_hash, datatype_pair_equals);
         for (int i = 0; i < AST::CONTEXT_SETTING_CAST_MODE_COUNT; i++) {
             context->cast_mode_settings[i] = Cast_Mode::EXPLICIT;
@@ -7235,6 +7357,8 @@ Operator_Context* symbol_table_install_new_operator_context(Symbol_Table* symbol
     {
         // Copy settings from parent context
         *context = *parent_context; // Shallow copy first, then fill the new hashtable
+        context->custom_casts_polymorphic = dynamic_array_create_empty<Custom_Cast_Polymorphic>(parent_context->custom_casts_polymorphic.size);
+        dynamic_array_append_other(&context->custom_casts_polymorphic, &parent_context->custom_casts_polymorphic);
         context->custom_casts = hashtable_create_empty<Datatype_Pair, Custom_Cast>(parent_context->custom_casts.element_count, datatype_pair_hash, datatype_pair_equals);
         {
             auto iter = hashtable_iterator_create(&parent_context->custom_casts);
@@ -7281,6 +7405,8 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
     for (int i = 0; i < context_changes.size; i++)
     {
         auto change_node = context_changes[i];
+        auto info = get_info(change_node, true);
+        info->is_valid_for_import = false;
 
         switch (change_node->type)
         {
@@ -7327,24 +7453,47 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
             for (int j = 0; j < module_analysis->module_node->context_changes.size; j++)
             {
                 auto other_change = module_analysis->module_node->context_changes[j];
-                // TODO: Currently custom casts from other contexts are also skipped, this shouldn't normally be the case
-                if (other_change->type != AST::Context_Change_Type::SETTING_CHANGE) { // Imports aren't transitive
-                    continue;
-                }
-                if (other_change->options.change.is_invalid) {
+                auto other_change_info = pass_get_node_info(other_context->workload->base.current_pass, other_change, Info_Query::READ_NOT_NULL);
+                if (!other_change_info->is_valid_for_import) {
                     continue;
                 }
 
-                Operator_Context_Value copy_to_value = operator_context_value_from_setting(context, other_change->options.change.setting);
-                Operator_Context_Value copy_from_value = operator_context_value_from_setting(other_context, other_change->options.change.setting);
-                assert(copy_to_value.is_cast_mode == copy_from_value.is_cast_mode, "");
+                switch (other_change->type)
+                {
+                case AST::Context_Change_Type::CUSTOM_CAST: {
+                    if (other_change_info->is_polymorphic_custom_cast) {
+                        dynamic_array_push_back(&context->custom_casts_polymorphic, other_context->custom_casts_polymorphic[other_change_info->options.polymorphic_cast_index]);
+                    }
+                    else {
+                        Custom_Cast* cast = hashtable_find_element(&other_context->custom_casts, other_change_info->options.custom_cast_pair);
+                        assert(cast != 0, "Must have been inserted, on error the info should indicate that it's not valid for import");
+                        hashtable_insert_element(&context->custom_casts, other_change_info->options.custom_cast_pair, *cast);
+                    }
+                    break;
+                }
+                case AST::Context_Change_Type::SETTING_CHANGE: 
+                {
+                    if (other_change->options.change.is_invalid) {
+                        continue;
+                    }
+                    Operator_Context_Value copy_to_value = operator_context_value_from_setting(context, other_change->options.change.setting);
+                    Operator_Context_Value copy_from_value = operator_context_value_from_setting(other_context, other_change->options.change.setting);
+                    assert(copy_to_value.is_cast_mode == copy_from_value.is_cast_mode, "");
 
-                if (copy_to_value.is_cast_mode) {
-                    *copy_to_value.options.cast_mode = *copy_from_value.options.cast_mode;
+                    if (copy_to_value.is_cast_mode) {
+                        *copy_to_value.options.cast_mode = *copy_from_value.options.cast_mode;
+                    }
+                    else {
+                        *copy_to_value.options.bool_value = *copy_from_value.options.bool_value;
+                    }
+                    break;
                 }
-                else {
-                    *copy_to_value.options.bool_value = *copy_from_value.options.bool_value;
+                case AST::Context_Change_Type::IMPORT_CONTEXT:
+                    // Context imports are somewhat not transitive (e.g. since setting-change imports use the last value set, this could have been set by a import...)
+                    break;
+                default: panic("");
                 }
+
             }
 
             break;
@@ -7390,9 +7539,11 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
                 bool bool_value = upp_constant_to_value<bool>(result.value);
                 *value_to_change.options.bool_value = bool_value;
             }
+
+            info->is_valid_for_import = true;
             break;
         }
-        case AST::Context_Change_Type::CUSTOM_CAST: 
+        case AST::Context_Change_Type::CUSTOM_CAST:
         {
             // Syntax: context add_custom_cast(cast_function = fn, cast_mode = Cast_Mode.IMPLICIT)
             auto& arguments = change_node->options.custom_cast_arguments;
@@ -7450,50 +7601,112 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
             }
 
             // Analyse function expression
-            ModTree_Function* function = 0;
+            Expression_Info* expr_info = semantic_analyser_analyse_expression_any(function_argument_node, expression_context_make_unknown());
+            switch (expr_info->result_type)
             {
-                Expression_Info* expr_info = semantic_analyser_analyse_expression_any(function_argument_node, expression_context_make_unknown());
-                if (expr_info->result_type != Expression_Result_Type::FUNCTION) {
-                    log_semantic_error("For custom casts, cast_function argument must be a function", function_argument_node, Parser::Section::FIRST_TOKEN);
-                    log_error_info_expression_result_type(expr_info->result_type);
-                    break;
+            case Expression_Result_Type::FUNCTION:
+            {
+                ModTree_Function* function = expr_info->options.function;
+
+                // Check if function-signature is valid for custom casts
+                Datatype_Pair pair;
+                {
+                    auto signature = function->signature;
+                    if (signature->parameters.size != 1) {
+                        log_semantic_error("For custom casts, the function signature must only have one argument", function_argument_node);
+                        break;
+                    }
+                    pair.from = signature->parameters[0].type;
+
+                    if (!signature->return_type.available) {
+                        log_semantic_error("For custom casts, the function signature must have a return-type", function_argument_node);
+                        break;
+                    }
+                    pair.to = signature->return_type.value;
+                }
+
+                // Add this cast to operator context if it doesn't already exist
+                Custom_Cast custom_cast;
+                custom_cast.cast_mode = cast_mode;
+                custom_cast.function = function;
+                bool worked = hashtable_insert_element(&context->custom_casts, pair, custom_cast);
+                if (!worked) {
+                    log_semantic_error("Custom cast already exists for given types", function_argument_node);
+                    log_error_info_given_type(pair.from);
+                    log_error_info_given_type(pair.to);
                 }
                 else {
-                    function = expr_info->options.function;
+                    info->is_valid_for_import = true;
+                    info->is_polymorphic_custom_cast = false;
+                    info->options.custom_cast_pair = pair;
                 }
-                if (errors_occured) {
-                    break;
-                }
+                break;
             }
-
-            // Check if function-signature is valid for custom casts
-            Datatype_Pair pair;
+            case Expression_Result_Type::POLYMORPHIC_FUNCTION:
             {
-                auto signature = function->signature;
-                if (signature->parameters.size != 1) {
-                    log_semantic_error("For custom casts, the function signature must only have one argument", function_argument_node);
-                    break;
+                // Check if poly-function has valid signature
+                auto poly_function = expr_info->options.polymorphic_function.base->base_info;
+                Datatype* param_type = 0;
+                {
+                    if (poly_function.return_type_index == -1) {
+                        log_semantic_error("Custom cast requires function to have return type", function_argument_node);
+                        break;
+                    }
+                    auto& return_value = poly_function.parameters[poly_function.return_type_index];
+                    bool error = false;
+                    for (int j = 0; j < poly_function.implicit_parameter_infos.size; j++) {
+                        auto& implicit_info = poly_function.implicit_parameter_infos[j];
+                        if (implicit_info.defined_in_parameter_index == poly_function.return_type_index) {
+                            log_semantic_error("Custom cast requires poly function return type to not implicit parameters", function_argument_node);
+                            error = true;
+                            break;
+                        }
+                    }
+                    if (error) {
+                        break;
+                    }
+                    if (poly_function.parameters.size != 2) {
+                        log_semantic_error("Custom cast requires function to have exactly 1 parameter", function_argument_node);
+                        break;
+                    }
+                    auto& param = poly_function.parameters[0];
+                    if (param.depends_on.size != 0) {
+                        log_semantic_error("Custom cast requires polymorphic function argument to not have dependencies on return-type", function_argument_node);
+                        break;
+                    }
+                    if (param.is_comptime) {
+                        log_semantic_error("Custom cast requires polymorphic function argument to not be comptime", function_argument_node);
+                        break;
+                    }
+                    param_type = param.infos.type;
+                    if (!param_type->contains_type_template) {
+                        log_semantic_error("Custom cast requires polymorphic function argument contain a type-template", function_argument_node);
+                        break;
+                    }
                 }
-                pair.from = signature->parameters[0].type;
 
-                if (!signature->return_type.available) {
-                    log_semantic_error("For custom casts, the function signature must have a return-type", function_argument_node);
-                    break;
-                }
-                pair.to = signature->return_type.value;
+                Custom_Cast_Polymorphic custom_cast;
+                custom_cast.cast_mode = cast_mode;
+                custom_cast.function = expr_info->options.polymorphic_function.base;
+                custom_cast.argument_type = param_type;
+                info->is_valid_for_import = true;
+                info->is_polymorphic_custom_cast = true;
+                info->options.polymorphic_cast_index = context->custom_casts_polymorphic.size;
+                dynamic_array_push_back(&context->custom_casts_polymorphic, custom_cast);
+                break;
             }
-
-            // Add this cast to operator context if it doesn't already exist
-            Custom_Cast custom_cast;
-            custom_cast.cast_mode = cast_mode;
-            custom_cast.function = function;
-            hashtable_insert_element(&context->custom_casts, pair, custom_cast);
+            default: {
+                errors_occured = true;
+                log_semantic_error("For custom casts, cast_function argument must be a function", function_argument_node, Parser::Section::FIRST_TOKEN);
+                log_error_info_expression_result_type(expr_info->result_type);
+                break;
+            }
+            }
 
             break;
         }
         default: panic("");
         }
-
     }
 }
 
@@ -8443,6 +8656,7 @@ void semantic_analyser_destroy()
     for (int i = 0; i < semantic_analyser.allocated_operator_contexts.size; i++) {
         auto context = semantic_analyser.allocated_operator_contexts[i];
         hashtable_destroy(&context->custom_casts);
+        dynamic_array_destroy(&context->custom_casts_polymorphic);
         delete semantic_analyser.allocated_operator_contexts[i];
     }
     dynamic_array_destroy(&semantic_analyser.allocated_operator_contexts);

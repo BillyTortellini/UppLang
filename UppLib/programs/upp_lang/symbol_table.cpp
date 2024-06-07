@@ -7,7 +7,6 @@
 #include "ast.hpp"
 
 // PROTOTYPES
-
 bool datatype_pair_equals(Datatype_Pair* a, Datatype_Pair* b) {
     return types_are_equal(a->from, b->from) && types_are_equal(a->to, b->to);
 }

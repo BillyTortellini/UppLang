@@ -287,7 +287,7 @@ struct Polymorphic_Base_Info
     Dynamic_Array<Polymorphic_Instance_Info> instances;
 
     // For convenience
-    int return_type_index;
+    int return_type_index; // I guess -1 if no return type?
     AST::Expression* return_type_node;
     Dynamic_Array<AST::Parameter*> parameter_nodes;
     Symbol_Table* symbol_table;
@@ -519,6 +519,16 @@ struct Argument_Info
     bool context_application_missing; // If already analyse, we may still need to apply the context
 };
 
+struct Context_Change_Info
+{
+    bool is_valid_for_import;
+    bool is_polymorphic_custom_cast;
+    union {
+        Datatype_Pair custom_cast_pair;
+        int polymorphic_cast_index;
+    } options;
+};
+
 enum class Control_Flow
 {
     SEQUENTIAL, // One sequential path exists, but there may be paths that aren't sequential
@@ -580,6 +590,7 @@ union Analysis_Info
     Symbol_Lookup_Info symbol_lookup_info;
     Path_Lookup_Info path_info;
     Module_Info module_info;
+    Context_Change_Info context_info;
 };
 
 enum class Info_Query
@@ -600,6 +611,7 @@ Definition_Symbol_Info* pass_get_node_info(Analysis_Pass* pass, AST::Definition_
 Parameter_Info* pass_get_node_info(Analysis_Pass* pass, AST::Parameter* node, Info_Query query);
 Path_Lookup_Info* pass_get_node_info(Analysis_Pass* pass, AST::Path_Lookup* node, Info_Query query);
 Module_Info* pass_get_node_info(Analysis_Pass* pass, AST::Module* node, Info_Query query);
+Context_Change_Info* pass_get_node_info(Analysis_Pass* pass, AST::Context_Change* node, Info_Query query);
 
 Datatype* expression_info_get_type(Expression_Info* info, bool before_context_is_applied);
 

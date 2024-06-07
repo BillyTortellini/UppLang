@@ -56,6 +56,13 @@ struct Custom_Cast
     Cast_Mode cast_mode;
 };
 
+struct Custom_Cast_Polymorphic
+{
+    Datatype* argument_type;
+    Polymorphic_Function_Base* function;
+    Cast_Mode cast_mode;
+};
+
 struct Workload_Operator_Context_Change;
 struct Operator_Context
 {
@@ -63,6 +70,7 @@ struct Operator_Context
     Cast_Mode cast_mode_settings[AST::CONTEXT_SETTING_CAST_MODE_COUNT];
     bool boolean_settings[AST::CONTEXT_SETTING_BOOLEAN_COUNT];
     Hashtable<Datatype_Pair, Custom_Cast> custom_casts;
+    Dynamic_Array<Custom_Cast_Polymorphic> custom_casts_polymorphic;
 };
 
 

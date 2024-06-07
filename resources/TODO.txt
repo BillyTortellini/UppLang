@@ -1,14 +1,12 @@
 
-For custom-casts, I think the order should be:
-
 TODO:
-    * Custom casts with polymorphic things?
-        --> Polymorphic function with one "normal" argument, argument has to be struct-template
-        --> Hashtable of polymorphic structs with the functions and sheet
-        --> Instanciate function with given type when cast may be required...
-    * Write testcases for simple casts (e.g. make all testcases work again)
+    * Symbol overload should work for modules, and modules are only accessible in path-lookups/specific scenarios?
+    * Write testcases for casts (e.g. make all testcases work again)
 
 DONE:
+    * Context-change imports should work for custom_casts
+    * Bug-Fix: y:Optional(int)=optional_make_failure(T=int) --> Should work, problem with setting implicit values with named parameters
+    * Polymorphic casts
     * Add custom casts 
     * Remove raw_casts from AST
     * Pointer to u64 and back
