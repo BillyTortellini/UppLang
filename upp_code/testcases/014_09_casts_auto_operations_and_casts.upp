@@ -1,0 +1,12 @@
+
+
+main::()
+	// When using auto-address of and auto-dereference in combination
+	// with casts, it's important to note that the auto-operations
+	// are always applied first, and never after the cast
+	
+	i:int=15
+	ip:*int=*i
+	
+	context auto_dereference=true
+	num64:i64=cast{i64}ip

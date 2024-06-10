@@ -1757,7 +1757,8 @@ void symbol_lookup_resolve(
 }
 
 // Logs an error if overloaded symbols was found
-Symbol* symbol_lookup_resolve_to_single_symbol(AST::Symbol_Lookup* lookup, Symbol_Table* symbol_table, bool search_parents, Symbol_Access_Level access_level)
+Symbol* symbol_lookup_resolve_to_single_symbol(
+    AST::Symbol_Lookup* lookup, Symbol_Table* symbol_table, bool search_parents, Symbol_Access_Level access_level, bool prefer_module_symbols_on_overload = false)
 {
     auto info = pass_get_node_info(semantic_analyser.current_workload->current_pass, lookup, Info_Query::CREATE_IF_NULL);
     auto error = semantic_analyser.predefined_symbols.error_symbol;
@@ -1776,7 +1777,53 @@ Symbol* symbol_lookup_resolve_to_single_symbol(AST::Symbol_Lookup* lookup, Symbo
         info->symbol = results[0];
         dynamic_array_push_back(&info->symbol->references, lookup);
     }
-    else { // size > 1
+    else // size > 1
+    { 
+        if (prefer_module_symbols_on_overload)
+        {
+            Module_Progress* module_progress = 0;
+            bool multiple_modules_found = false;
+            for (int i = 0; i < results.size; i++) {
+                auto symbol = results[i];
+                if (symbol->type == Symbol_Type::MODULE) {
+                    if (module_progress == 0) {
+                        module_progress = symbol->options.module_progress;
+                    }
+                    else {
+                        multiple_modules_found = true;
+                    }
+                }
+            }
+
+            if (module_progress != 0 && !multiple_modules_found) {
+                info->symbol = module_progress->symbol;
+                dynamic_array_push_back(&info->symbol->references, lookup);
+                return info->symbol;
+            }
+        }
+        else
+        {
+            // If there is only one non-module symbol, take that one
+            Symbol* non_module_symbol = 0;
+            bool multiple_non_module_symbols_found = false;
+            for (int i = 0; i < results.size; i++) {
+                auto symbol = results[i];
+                if (symbol->type != Symbol_Type::MODULE) {
+                    if (non_module_symbol == 0) {
+                        non_module_symbol = symbol;
+                    }
+                    else {
+                        multiple_non_module_symbols_found = true;
+                    }
+                }
+            }
+            if (non_module_symbol != 0 && !multiple_non_module_symbols_found) {
+                info->symbol = non_module_symbol;
+                dynamic_array_push_back(&info->symbol->references, lookup);
+                return info->symbol;
+            }
+        }
+
         log_semantic_error("Multiple results found for this symbol, cannot decided", upcast(lookup));
         for (int i = 0; i < results.size; i++) {
             log_error_info_symbol(results[i]);
@@ -1801,7 +1848,7 @@ Symbol_Table* path_lookup_resolve_only_path_parts(AST::Path_Lookup* path)
         auto part = path->parts[i];
 
         // Find symbol of path part
-        Symbol* symbol = symbol_lookup_resolve_to_single_symbol(part, table, i == 0, Symbol_Access_Level::GLOBAL);
+        Symbol* symbol = symbol_lookup_resolve_to_single_symbol(part, table, i == 0, Symbol_Access_Level::GLOBAL, true);
         if (symbol == error) {
             path_lookup_set_info_to_error_symbol(path, workload);
             return 0;
@@ -1871,7 +1918,7 @@ bool path_lookup_resolve(AST::Path_Lookup* path, Dynamic_Array<Symbol*>& symbols
     return true;
 }
 
-Symbol* path_lookup_resolve_to_single_symbol(AST::Path_Lookup* path)
+Symbol* path_lookup_resolve_to_single_symbol(AST::Path_Lookup* path, bool prefer_module_symbols_on_overload)
 {
     auto& analyser = semantic_analyser;
     auto error = semantic_analyser.predefined_symbols.error_symbol;
@@ -1888,7 +1935,7 @@ Symbol* path_lookup_resolve_to_single_symbol(AST::Path_Lookup* path)
     }
 
     // Resolve symbol
-    Symbol* symbol = symbol_lookup_resolve_to_single_symbol(path->last, symbol_table, path->parts.size == 1, access_level);
+    Symbol* symbol = symbol_lookup_resolve_to_single_symbol(path->last, symbol_table, path->parts.size == 1, access_level, prefer_module_symbols_on_overload);
     path_lookup_set_result_symbol(path, symbol);
     return symbol;
 }
@@ -3234,10 +3281,10 @@ void analysis_workload_entry(void* userdata)
             break;
         }
         else if (node->type == AST::Import_Type::SINGLE_SYMBOL) {
-            import_workload->alias_for_symbol = path_lookup_resolve_to_single_symbol(node->path);
+            import_workload->alias_for_symbol = path_lookup_resolve_to_single_symbol(node->path, true);
         }
         else { // Import * or **
-            Symbol* symbol = path_lookup_resolve_to_single_symbol(node->path);
+            Symbol* symbol = path_lookup_resolve_to_single_symbol(node->path, true);
             assert(symbol->type != Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, "Must not happen here");
             if (symbol->type == Symbol_Type::MODULE)
             {
@@ -4094,6 +4141,7 @@ Expression_Info analyse_symbol_as_expression(Symbol* symbol, Expression_Context 
 
         auto& value = poly_values[access_index];
         if (value.only_datatype_known) {
+            semantic_analyser_set_error_flag(true);
             expression_info_set_value(&result, value.options.type);
         }
         else {
@@ -4983,6 +5031,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             for (int i = 0; i < symbols.size; i++)
             {
                 auto& symbol = symbols[i];
+                if (symbol->type == Symbol_Type::MODULE) {
+                    continue;
+                }
                 auto info = analyse_symbol_as_expression(symbol, expression_context_make_auto_dereference(), call.expr->options.path_lookup->last);
                 auto callable_opt = overload_candidate_try_create_from_expression_info(info, symbol);
                 if (callable_opt.available) {
@@ -5709,7 +5760,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         auto path = expr->options.path_lookup;
 
         // Resolve symbol
-        Symbol* symbol = path_lookup_resolve_to_single_symbol(path);
+        Symbol* symbol = path_lookup_resolve_to_single_symbol(path, false);
         assert(symbol != 0, "In error cases this should be set to error, never 0!");
 
         // Analyse symbol
@@ -6873,6 +6924,14 @@ Cast_Type check_cast_type_no_auto_operations(Expression_Cast_Info& result, Datat
                 allowed_mode = operator_context_get_cast_mode_setting(operator_context, AST::Context_Setting::INT_TO_ENUM);
             }
         }
+        else if (types_are_equal(source_type, upcast(types.u64_type)) && 
+                (destination_type->type == Datatype_Type::POINTER || 
+                destination_type->type == Datatype_Type::VOID_POINTER) ||
+                destination_type->type == Datatype_Type::FUNCTION) 
+        {
+            cast_type = Cast_Type::U64_TO_POINTER;
+            allowed_mode = operator_context_get_cast_mode_setting(operator_context, AST::Context_Setting::U64_TO_POINTER);
+        }
         break;
     }
     default: break;
@@ -7125,6 +7184,10 @@ Expression_Cast_Info expression_context_apply(
         return result;
     }
     case Expression_Context_Type::AUTO_DEREFERENCE: {
+        if (!operator_context_get_boolean_setting(operator_context, AST::Context_Setting::AUTO_DEREFERENCE)) {
+            result.cast_type = Cast_Type::NO_CAST;
+            return result;
+        }
         result.type_afterwards = initial_type;
         while (result.type_afterwards->type == Datatype_Type::POINTER) {
             result.deref_count += 1;
@@ -7413,7 +7476,7 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
         case AST::Context_Change_Type::IMPORT_CONTEXT:
         {
             auto& path = change_node->options.context_import_path;
-            auto symbol = path_lookup_resolve_to_single_symbol(path);
+            auto symbol = path_lookup_resolve_to_single_symbol(path, true);
 
             // Check if symbol is module
             if (symbol->type != Symbol_Type::MODULE)
@@ -7426,15 +7489,21 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
                 continue;
             }
 
+            // Wait for other context changes to finish (So we can copy it's results)
             auto module_analysis = symbol->options.module_progress->module_analysis;
-            auto other_context = symbol->options.module_progress->module_analysis->symbol_table->operator_context;
-
-            // Skip imports if there are no imports in that module
-            if (module_analysis->module_node->context_changes.size == 0) {
-                continue;
+            {
+                bool dependency_failed = false;
+                analysis_workload_add_dependency_internal(
+                    semantic_analyser.current_workload, upcast(module_analysis),
+                    dependency_failure_info_make(&dependency_failed, change_node->options.context_import_path->last)
+                );
+                workload_executer_wait_for_dependency_resolution();
+                if (dependency_failed) {
+                    continue; // If there were cyclic dependencies, just skip importing the options
+                }
             }
 
-            // Wait for other context changes to finish (So we can copy it's results)
+            auto other_context = module_analysis->symbol_table->operator_context;
             if (other_context->workload != 0)
             {
                 bool dependency_failed = false;
@@ -7448,6 +7517,13 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
                     continue; // If there were cyclic dependencies, just skip importing the options
                 }
             }
+
+
+            // Skip imports if there are no imports in that module
+            if (module_analysis->module_node->context_changes.size == 0) {
+                continue;
+            }
+
 
             // Apply all changes from other module here
             for (int j = 0; j < module_analysis->module_node->context_changes.size; j++)

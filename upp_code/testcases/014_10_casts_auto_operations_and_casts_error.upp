@@ -1,0 +1,11 @@
+
+increment::(a:*int)
+	&a=&a+1
+
+main::()
+	// Auto operations are never applied after a cast
+	i:int=15
+	u:=cast{u32}i
+	context integer_unsigned_to_signed=.AUTO
+	context auto_dereference=true
+	increment(u)

@@ -1,0 +1,19 @@
+
+main::()
+	// Using auto-address of introduces an ambiguity when
+	// assigning normal values to pointers
+	
+	context auto_address_of=true
+	i:=10
+	x:=5
+	ip:=*i
+	xp:=*x
+	
+	// In the following case, there is an ambiguity
+	xp=i
+	
+	// With auto-address of, do we want to assign the value or the pointer?
+	// Because of this, an error is thrown here, and the correct way to do
+	// both things would be these:
+	xp=*i
+	&xp=i

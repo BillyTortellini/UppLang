@@ -11,4 +11,5 @@ main::()
 	a.next=*b
 	b.value=15
 	
+	context auto_dereference=true
 	assert(a.next.value==15)

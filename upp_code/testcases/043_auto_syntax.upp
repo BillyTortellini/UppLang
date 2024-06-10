@@ -17,12 +17,13 @@ Color::enum
 	BLUE
 
 main::()
+	context array_to_slice=.AUTO
 	//
 		The following Operations also have shorthand notations so
 		that the type is not necessary anymore
-		Enum Access:Color.RED --> .RED
-		Struct Initializer: Player.{...} --> .{...}
-		Array Initalizer:int.[...] --> .[...]
+		Enum Access:Color.RED-->.RED
+		Struct Initializer:Player.{...}-->.{...}
+		Array Initalizer:int.[...]-->.[...]
 		
 		This only works if the type of the resulting value
 		can be infered from the usage context

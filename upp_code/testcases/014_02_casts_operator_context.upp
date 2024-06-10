@@ -1,0 +1,32 @@
+
+
+main::()
+	// With the operator-context it's possible to change the cast-mode of cast operations
+	context integer_size_upcast=.EXPLICIT
+	
+	// There are 4 different cast modes
+	// NONE -> Disallowes this kind of cast
+	
+	// EXPLICIT -> requires the cast keyword + destination type
+	// This is the default for all cast types
+	num_0:int=15
+	num_1:i64=cast{i64}num_0
+	
+	// IMPLICIT -> If the destination type can be infered from context,
+	//             then only using the cast keyword is enough
+	context integer_signed_to_unsigned=.IMPLICIT
+	num_2:u32=cast num_0
+	
+	// AUTO -> If the destination type can be infered, no keyword is required for the cast
+	context int_to_float=.AUTO
+	float_0:float=num_0
+
+// Changes to the context can also be made for the whole module
+context integer_unsigned_to_signed=.IMPLICIT
+
+foo::()
+	// Context changes are inherited to module items
+	a:u32=cast{u32}15
+	b:int=cast a
+
+

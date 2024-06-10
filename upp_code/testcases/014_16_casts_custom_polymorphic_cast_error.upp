@@ -1,0 +1,8 @@
+
+
+foo::(a:$T,x:int)->bool
+	return false
+
+
+main::()
+	context add_custom_cast(foo,.AUTO)

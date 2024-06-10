@@ -1,0 +1,13 @@
+
+
+int_to_bool::(a:int)->bool
+	return a%2==0
+
+main::()
+	// The operator-context allows users to define custom casts
+	context add_custom_cast(int_to_bool,.AUTO)
+	// The supplied function must have exactly one parameter and a return-type
+	
+	value:int=15
+	boolean:bool=value
+	assert(!boolean)

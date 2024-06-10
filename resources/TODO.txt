@@ -1,9 +1,14 @@
 
 TODO:
-    * Symbol overload should work for modules, and modules are only accessible in path-lookups/specific scenarios?
+    * Literals float and int should auto-cast to larger/smaller or signed/unsigned values if the context allows for it...
     * Write testcases for casts (e.g. make all testcases work again)
+    auto address-of, auto dereference
+    Pointer arithmetic
+    pointer_to_bool
+    module and struct overloading
 
 DONE:
+    * Symbol overload should work for modules, and modules are only accessible in path-lookups/specific scenarios?
     * Context-change imports should work for custom_casts
     * Bug-Fix: y:Optional(int)=optional_make_failure(T=int) --> Should work, problem with setting implicit values with named parameters
     * Polymorphic casts

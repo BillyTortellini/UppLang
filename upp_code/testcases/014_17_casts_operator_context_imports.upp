@@ -1,0 +1,23 @@
+
+// As to not have to repeat the operator context,
+// It is possible to import all used operators from other modules
+
+Integer_Auto_Casts::module
+	context integer_size_upcast=.AUTO
+	context integer_unsigned_to_signed=.AUTO
+	context integer_signed_to_unsigned=.AUTO
+
+is_even::(n:int)->bool
+	return n%2==0
+
+Integer_Is_Even::module
+	context add_custom_cast(is_even,.AUTO)
+
+main::()
+	context import Integer_Auto_Casts
+	context import Integer_Is_Even
+	
+	i:=15
+	u:u32=i*2
+	large:i64=i*100
+	test:bool=i

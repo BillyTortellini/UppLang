@@ -1,0 +1,25 @@
+
+
+double::(n:int)->int
+	return n*2
+
+Player::struct
+	name:String
+	age:int
+
+main::()
+	// With the auto-dereference option, values are automatically dereferenced
+	// if it's known from the context that a dereference is required
+	
+	i:=15
+	ip:=*i
+	
+	context auto_dereference=true
+	a:=double(ip)
+	b:=double(i)
+	assert(a==b)
+	
+	// This also means struct member access on pointers works
+	p:=Player.{"Frank",15}
+	pp:=*p
+	assert(pp.age==15)

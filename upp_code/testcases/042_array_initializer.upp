@@ -12,6 +12,8 @@ add_ints::(ints:[]int)->int
 	return sum
 
 main::()
+	context array_to_slice=.AUTO
+	
 	// Array init syntax
 	x:[5]int=int.[0,1,2,3,4]
 	assert(x[0]==0&&x[1]==1&&x[2]==2)
@@ -31,5 +33,5 @@ main::()
 	// Since there is no 0 sized array (Types without a size do no exist)
 	// empty array initializers return a Slice of size 0 and nullptr
 	slice:=int.[]
-	assert(slice.size==0&&cast_raw slice.data==cast{u64}0)
+	assert(slice.size==0&&slice.data*==null)
 

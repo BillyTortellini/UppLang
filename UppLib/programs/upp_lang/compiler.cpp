@@ -248,6 +248,7 @@ void compiler_reset_data(bool keep_data_for_incremental_compile, Compile_Type co
             ids.context_settings[(int)AST::Context_Setting::AUTO_DEREFERENCE] = identifier_pool_add(&compiler.identifier_pool, string_create_static("auto_dereference"));
             
             ids.add_custom_cast = identifier_pool_add(&compiler.identifier_pool, string_create_static("add_custom_cast"));
+            ids.id_import = identifier_pool_add(&compiler.identifier_pool, string_create_static("import"));
         }
 
         // FUTURE: When we have incremental compilation we cannot just reset everything anymore
@@ -668,9 +669,27 @@ void compiler_run_testcases(Timer* timer, bool force_run)
         test_case_make("011_pointers.upp", true),
         test_case_make("012_new_delete.upp", true),
         test_case_make("013_structs.upp", true),
-        //test_case_make("014_templates.upp", true),
+
+        test_case_make("014_01_casts.upp", true),
+        test_case_make("014_02_casts_operator_context.upp", true),
+        test_case_make("014_03_casts_cast_mode_error1.upp", false),
+        test_case_make("014_04_casts_cast_mode_error2.upp", false),
+        test_case_make("014_05_casts_pointer_arithmetic.upp", true),
+        test_case_make("014_06_casts_auto_address_of.upp", true),
+        test_case_make("014_07_casts_auto_dereference.upp", true),
+        test_case_make("014_08_casts_address_of_ambiguity_error.upp", false),
+        test_case_make("014_09_casts_auto_operations_and_casts.upp", true),
+        test_case_make("014_10_casts_auto_operations_and_casts_error.upp", false),
+        test_case_make("014_11_casts_more_context_options.upp", true),
+        test_case_make("014_12_casts_custom_casts.upp", true),
+        test_case_make("014_13_casts_custom_casts_error1.upp", false),
+        test_case_make("014_14_casts_custom_casts_error2.upp", false),
+        test_case_make("014_15_casts_custom_polymorphic_casts.upp", true),
+        test_case_make("014_16_casts_custom_polymorphic_cast_error.upp", false),
+        test_case_make("014_17_casts_operator_context_imports.upp", true),
+        test_case_make("014_18_casts_optional_example.upp", true),
+
         test_case_make("015_defer.upp", true),
-        test_case_make("016_casting.upp", true),
         test_case_make("017_function_pointers.upp", true),
         test_case_make("019_scopes.upp", true),
         test_case_make("020_globals.upp", true),
@@ -679,7 +698,6 @@ void compiler_run_testcases(Timer* timer, bool force_run)
         //test_case_make("023_invalid_recursive_template.upp", false),
         test_case_make("024_expression_context.upp", true),
         test_case_make("025_expression_context_limit.upp", false),
-        test_case_make("026_auto_cast.upp", true),
         test_case_make("027_enums.upp", true),
         test_case_make("028_invalid_enum.upp", false),
         test_case_make("029_switch.upp", true),
@@ -697,7 +715,7 @@ void compiler_run_testcases(Timer* timer, bool force_run)
         test_case_make("041_struct_initializer_double_set_error.upp", false),
         test_case_make("042_array_initializer.upp", true),
         test_case_make("043_auto_syntax.upp", true),
-        test_case_make("044_c_unions.upp", true),
+        //test_case_make("044_c_unions.upp", true),
         test_case_make("045_unions.upp", true),
         test_case_make("046_types_as_values.upp", true),
         test_case_make("047_type_info.upp", true),

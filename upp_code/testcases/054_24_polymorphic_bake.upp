@@ -12,6 +12,8 @@ string_equals::(a:String,b:String)->bool
 	return true
 
 offset_off::(a:$T,$name:String)->int
+	context auto_dereference=true
+	
 	offset:=#bake
 		info:=type_info(T)
 		if info.options.tag==.structure

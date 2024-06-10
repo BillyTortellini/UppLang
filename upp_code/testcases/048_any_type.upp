@@ -1,3 +1,4 @@
+
 Player::struct
 	age:int
 	name:String
@@ -8,6 +9,10 @@ main::()
 		The Any type in this language is our version of the C-Style void*.
 		The difference is that Any also stores the type of the given value.
 		This type serves the same purpose as the tag of tagged unions.
+	
+	context to_any=.AUTO
+	context array_to_slice=.AUTO
+	
 	val_int:int=5
 	val_bool:bool=false
 	val_player:Player=.{name="What",age=5,alive=true}
@@ -37,7 +42,7 @@ main::()
 	
 	// Any type variables almost behave like variables in dynamically typed languages
 	i_val:i32=0
-	u_val:u32=cast 0
+	u_val:u32=cast{u32}0
 	any_adder(i_val)
 	any_adder(u_val)
 	
@@ -82,6 +87,7 @@ mini_calc::(ops:[]Any)->struct
 	success:bool
 	value:int
 
+	context from_any=.IMPLICIT
 	i:=0
 	result:=0
 	status:enum

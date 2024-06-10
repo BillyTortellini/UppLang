@@ -1,7 +1,7 @@
 //
 	The problem with C unions is that their usage is quite limited,
 	because we do not know which union-value is currently active/valid.
-	To achieve a tagged union similar to C, we would need something like this:
+	To achieve a tagged union similar to C,we would need something like this:
 
 C_Style::module
 	C_Address_Tag::enum
@@ -17,12 +17,12 @@ C_Style::module
 
 //
 	This is exactly how Unions in Upp are implemented internally.
-	It may not seem very significant to add this to a language, 
-	because it 'only' removes some typing, but it brings good consequences:
-	1. It signals the intent of the programmer more clearly (1 concept instead of struct + enum)
-	2. The tag almost always stays in sync with the active union member
-	3. Probably the most important: The compiler/other tools (e.g. debugger) now knows what the tag is supposed to represent
-	4. Because the use of the tag value is clear, metaprogramming can now automatically create print or serialize procedures
+	It may not seem very significant to add this to a language,
+	because it'only'removes some typing,but it brings good consequences:
+	1.It signals the intent of the programmer more clearly(1 concept instead of struct+enum)
+	2.The tag almost always stays in sync with the active union member
+	3.Probably the most important:The compiler/other tools(e.g.debugger)now knows what the tag is supposed to represent
+	4.Because the use of the tag value is clear,metaprogramming can now automatically create print or serialize procedures
 
 Address::union
 	ipv4:[4]byte
@@ -53,7 +53,8 @@ main::()
 	// The tag is now just an enum member, and can be accessed like other members
 		addr_v4:Address
 		addr_v4.tag=Address.ipv4
-		addr_v4.ipv4=byte.[cast 0,cast 0,cast 0,cast 0]
+		value:u8=cast{u8}cast{u32}0
+		addr_v4.ipv4=byte.[value,value,value,value]
 		
 		addr_v5:Address
 		addr_v5.tag=Address.ipv5
@@ -69,7 +70,8 @@ main::()
 			//assert(address_version_if(addr_v6)==6)
 	
 	// Struct initialization syntax also works with unions, but only one member can be specified
-		addr_v4:=Address.{ipv4=byte.[cast 1,cast 1,cast 1,cast 1]}
+		val1:=cast{u8}cast{u32}1
+		addr_v4:=Address.{ipv4=byte.[val1,val1,val1,val1]}
 		addr_v5:=Address.{ipv5=false}
 		addr_v6:=Address.{ipv6="COFFEF"}
 		

@@ -1,0 +1,10 @@
+
+foo::(ip:*int)
+	&ip=&ip+1
+
+main::()
+	// The context also allows the use of auto-address of
+	context auto_address_of=true
+	value:int=15
+	foo(value)
+	assert(value==16)

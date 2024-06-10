@@ -1,3 +1,6 @@
+context auto_dereference=true
+context auto_address_of=true
+
 Player::struct
 	age:int
 	name:String

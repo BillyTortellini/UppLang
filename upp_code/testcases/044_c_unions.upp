@@ -3,6 +3,11 @@ RGBA::c_union
 	raw:[4]byte
 
 main::()
+	// At some point literals should behave as expected (e.g. cast to u8)
+	// Since they don't currently, i use the following
+	// Also this should really never work in a release build, as this is
+	// undefined behavior (memcpy should work)
+	
 	// C_Unions are as expected, the same as Unions in C.
 	rgba:RGBA
 	rgba.raw[0]=cast 1

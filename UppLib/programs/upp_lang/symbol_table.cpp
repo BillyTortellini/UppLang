@@ -98,17 +98,44 @@ Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbo
         assert(symbols != 0, "Just inserted!");
     }
     else {
-        // Overloading is only allowed for functions
-        bool overload_valid = true;
-        if (type != Symbol_Type::FUNCTION && type != Symbol_Type::POLYMORPHIC_FUNCTION) {
-            overload_valid = false;
+        // Overloading is only allowed for functions or a struct + module combo
+        auto symbol_is_struct = [&](Symbol* symbol) -> bool {
+            if (symbol->type != Symbol_Type::TYPE) return false;
+            auto type = symbol->options.type;
+            return type->type == Datatype_Type::STRUCT;
+        };
+
+        bool overload_valid = false;
+        if (type == Symbol_Type::FUNCTION || type == Symbol_Type::POLYMORPHIC_FUNCTION)
+        {
+            overload_valid = true;
+            for (int i = 0; i < symbols->size; i++) {
+                auto other_type = (*symbols)[i]->type;
+                if (other_type != Symbol_Type::FUNCTION && other_type != Symbol_Type::POLYMORPHIC_FUNCTION) {
+                    overload_valid = false;
+                    break;
+                }
+            }
         }
-        else {
-            // Even if this symbol_type would be valid for overloading, we still have to check the already defined symbol types
+        else if (type == Symbol_Type::MODULE) 
+        {
+            overload_valid = true;
             for (int i = 0; i < symbols->size; i++) {
                 auto other_symbol = (*symbols)[i];
-                if (other_symbol->type != Symbol_Type::FUNCTION && other_symbol->type != Symbol_Type::POLYMORPHIC_FUNCTION) {
+                if (!symbol_is_struct(other_symbol)) {
                     overload_valid = false;
+                    break;
+                }
+            }
+        }
+        else if (symbol_is_struct(new_sym))
+        {
+            overload_valid = true;
+            for (int i = 0; i < symbols->size; i++) {
+                auto other_symbol = (*symbols)[i];
+                if (other_symbol->type != Symbol_Type::MODULE) {
+                    overload_valid = false;
+                    break;
                 }
             }
         }

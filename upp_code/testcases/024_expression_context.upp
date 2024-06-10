@@ -1,20 +1,23 @@
 //
-	A thing that people seem to enjoy about the Syntax of 
+	A thing that people seem to enjoy about the Syntax of
 	Dynamically typed languages is that you don't need to specify the type
-	of a variable to use it. In Upp I try to emulate this by with the following features:
+	of a variable to use it.In Upp I try to emulate this by with the following features:
 	
-	1. Type Inference (Definitions)
-	  x := 15 // type is deduced from expression, beeing an int
-	2. Pointer Usage
-	  x := 15 + integer_pointer // Pointer is beeing dereference automatically
-	3. Casts
-	  x: int = cast 15.5 // Cast from float to int is done through context
-	4. Auto-Expressions (Struct initializer, array-initializer, enum)
-	  a: Person = .{name="Frank", age=32}
-	  b: Color = .RED
-	  x: []int = .[1, 2, 3]
+	1.Type Inference(Definitions)
+	x:=15// type is deduced from expression, beeing an int
+	2.Pointer Usage
+	x:=15+integer_pointer// Pointer is beeing dereference automatically
+	3.Casts
+	x:int=cast 15.5// Cast from float to int is done through context
+	4.Auto-Expressions(Struct initializer,array-initializer,enum)
+	a:Person=.{name="Frank",age=32}
+	b:Color=.RED
+	x:[]int=.[1,2,3]
 	
 	This is done by tracking the context of the Expression
+
+context auto_dereference=true
+context auto_address_of=true
 
 Sum::struct
 	a:int
@@ -90,8 +93,8 @@ main::()
 		
 		i:i32=128
 		p:*i32=*i
-		i_cast:u64=cast{u64}i
-		p_cast:u64=cast_raw p
+		i_cast:u64=cast{u64}cast{u32}i
+		p_cast:u64=cast{u64}p
 		assert(i_cast!=p_cast)
 	
 	

@@ -1,0 +1,7 @@
+
+foo::()->int
+	return 5
+
+main::()
+	// Exactly one argument is required
+	context add_custom_cast(foo,.IMPLICIT)

@@ -59,6 +59,7 @@ struct Predefined_IDs
     // Context members 
     String* context_settings[(int)AST::Context_Setting::MAX_ENUM_VALUE];
     String* add_custom_cast;
+    String* id_import;
 };
 
 // Compiler

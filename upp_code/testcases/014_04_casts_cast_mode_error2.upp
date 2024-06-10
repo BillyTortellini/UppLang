@@ -1,0 +1,6 @@
+
+main::()
+	// Requires cast mode auto
+	i:=15
+	context integer_size_upcast=.IMPLICIT
+	y:i64=i

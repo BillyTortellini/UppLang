@@ -1,0 +1,19 @@
+
+
+// Custom casts also work on polymorphic functions
+Optional::struct($T:Type_Handle)
+	value:T
+	available:bool
+
+is_available::(opt:Optional($T))->bool
+	return opt.available
+
+main::()
+	context add_custom_cast(is_available,.AUTO)
+	value:Optional(int)=.{15,true}
+	
+	if value
+		assert(true)
+	else
+		assert(false)
+	
