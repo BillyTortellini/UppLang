@@ -505,6 +505,9 @@ struct Expression_Info
             Workload_Structure_Body* struct_workload;
             int index; // Either normal member index, or polymorphic parameter index
         } member_access;
+        struct {
+            ModTree_Function* overload_function; // Is null if it's a primitive binop (e.g. not overloaded)
+        } binop;
     } specifics;
 
     Expression_Context context; // Maybe I don't even want to store the context

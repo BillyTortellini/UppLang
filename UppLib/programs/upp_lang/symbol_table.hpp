@@ -63,6 +63,23 @@ struct Custom_Cast_Polymorphic
     Cast_Mode cast_mode;
 };
 
+struct Operator_Overload_Key
+{
+    // Note: Left and right types are always stored as the base types of pointers + pointer level
+    //       This makes it easier to check if operators already exist and if it's possible to cast
+    Datatype* left_type;
+    Datatype* right_type;
+    Upp_Operator op;
+};
+
+struct Operator_Overload
+{
+    int left_pointer_level;
+    int right_pointer_level;
+    Datatype* result_type;
+    ModTree_Function* function;
+};
+
 struct Workload_Operator_Context_Change;
 struct Operator_Context
 {
@@ -70,6 +87,7 @@ struct Operator_Context
     Cast_Mode cast_mode_settings[AST::CONTEXT_SETTING_CAST_MODE_COUNT];
     bool boolean_settings[AST::CONTEXT_SETTING_BOOLEAN_COUNT];
     Hashtable<Datatype_Pair, Custom_Cast> custom_casts;
+    Hashtable<Operator_Overload_Key, Operator_Overload> operator_overloads;
     Dynamic_Array<Custom_Cast_Polymorphic> custom_casts_polymorphic;
 };
 

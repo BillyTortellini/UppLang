@@ -1,9 +1,9 @@
 
 Operator Overloads:
- - Like custom_casts:
+    context add_operator_overload(.ADDITION, function)
 
-
-context add_operator_overload(.ADDITION, function)
+ * Comparisons with < and <= should somehow be query-able with < and <=
+ * Question: Do I need all operators: <, =, <= (Note: <= could be done more performantly than a < b || a == b), so I guess yes
 
 
 TODO:

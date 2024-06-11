@@ -6579,6 +6579,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
     }
     case AST::Expression_Type::BINARY_OPERATION:
     {
+        info->specifics.binop.overload_function = 0;
         auto& binop_node = expr->options.binop;
 
         // Determine what operands are valid
@@ -6586,9 +6587,11 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         bool float_valid = false;
         bool bool_valid = false;
         bool ptr_valid = false;
-        bool result_type_is_bool = false;
         bool enum_valid = false;
         bool type_type_valid = false;
+        bool auto_operations_valid = true;
+        bool result_type_is_fixed = false;
+        Datatype* result_type = 0;
         Expression_Context operand_context;
         switch (binop_node.type)
         {
@@ -6598,11 +6601,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         case AST::Binop::DIVISION:
             float_valid = true;
             int_valid = true;
-            operand_context = expression_context_make_auto_dereference();
             break;
         case AST::Binop::MODULO:
             int_valid = true;
-            operand_context = expression_context_make_auto_dereference();
             break;
         case AST::Binop::GREATER:
         case AST::Binop::GREATER_OR_EQUAL:
@@ -6610,16 +6611,18 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         case AST::Binop::LESS_OR_EQUAL:
             float_valid = true;
             int_valid = true;
-            result_type_is_bool = true;
+            result_type_is_fixed = true;
+            result_type = upcast(types.bool_type);
             enum_valid = true;
-            operand_context = expression_context_make_auto_dereference();
             break;
         case AST::Binop::POINTER_EQUAL:
-        case AST::Binop::POINTER_NOT_EQUAL:
+        case AST::Binop::POINTER_NOT_EQUAL: {
             ptr_valid = true;
-            operand_context = expression_context_make_unknown();
-            result_type_is_bool = true;
+            result_type_is_fixed = true;
+            result_type = upcast(types.bool_type);
+            auto_operations_valid = false;
             break;
+        }
         case AST::Binop::EQUAL:
         case AST::Binop::NOT_EQUAL:
             float_valid = true;
@@ -6628,37 +6631,73 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             ptr_valid = true;
             enum_valid = true;
             type_type_valid = true;
-            operand_context = expression_context_make_auto_dereference();
-            result_type_is_bool = true;
+            result_type_is_fixed = true;
+            result_type = upcast(types.bool_type);
             break;
         case AST::Binop::AND:
         case AST::Binop::OR:
             bool_valid = true;
-            result_type_is_bool = true;
-            operand_context = expression_context_make_specific_type(upcast(types.bool_type));
+            result_type_is_fixed = true;
+            result_type = upcast(types.bool_type);
             break;
         case AST::Binop::INVALID:
-            operand_context = expression_context_make_unknown();
             break;
         default: panic("");
         }
 
         // Evaluate operands
-        auto left_type = semantic_analyser_analyse_expression_value(binop_node.left, operand_context);
-        // NOTE: For now, the left type dictates what type we are expecting, this will change with operator overloading
-        auto right_type = semantic_analyser_analyse_expression_value(binop_node.right, expression_context_make_specific_type(left_type));
+        Datatype* left_type;
+        Datatype* right_type;
+        int left_type_pointer_level = 0;
+        int right_type_pointer_level = 0;
+        {
+            // If we are dealing with auto-expression, make sure to analyse in the right order
+            bool left_requires_context = binop_node.left->type == AST::Expression_Type::AUTO_ENUM || 
+                binop_node.left->type == AST::Expression_Type::ARRAY_INITIALIZER ||
+                binop_node.left->type == AST::Expression_Type::STRUCT_INITIALIZER ||
+                (binop_node.left->type == AST::Expression_Type::CAST && !binop_node.left->options.cast.to_type.available);
+            bool right_requires_context = binop_node.right->type == AST::Expression_Type::AUTO_ENUM || 
+                binop_node.right->type == AST::Expression_Type::ARRAY_INITIALIZER ||
+                binop_node.right->type == AST::Expression_Type::STRUCT_INITIALIZER ||
+                (binop_node.right->type == AST::Expression_Type::CAST && !binop_node.right->options.cast.to_type.available);
+
+            if ((left_requires_context && right_requires_context) || (!left_requires_context && !right_requires_context)) {
+                left_type = semantic_analyser_analyse_expression_value(binop_node.left, expression_context_make_unknown());
+                right_type = semantic_analyser_analyse_expression_value(binop_node.right, expression_context_make_unknown());
+            }
+            else if (left_requires_context && !right_requires_context) {
+                right_type = semantic_analyser_analyse_expression_value(binop_node.right, expression_context_make_unknown());
+                left_type = semantic_analyser_analyse_expression_value(binop_node.left, expression_context_make_specific_type(right_type));
+            }
+            else if (!left_requires_context && right_requires_context) {
+                left_type = semantic_analyser_analyse_expression_value(binop_node.left, expression_context_make_unknown());
+                right_type = semantic_analyser_analyse_expression_value(binop_node.right, expression_context_make_specific_type(left_type));
+            }
+
+            // Dereference types
+            if (auto_operations_valid) {
+                while (left_type->type == Datatype_Type::POINTER) {
+                    left_type_pointer_level += 1;
+                    left_type = downcast<Datatype_Pointer>(left_type)->points_to_type;
+                }
+                while (right_type->type == Datatype_Type::POINTER) {
+                    right_type_pointer_level += 1;
+                    right_type = downcast<Datatype_Pointer>(right_type)->points_to_type;
+                }
+            }
+        }
 
         // Check for unknowns
         if (datatype_is_unknown(left_type) || datatype_is_unknown(right_type)) {
             EXIT_ERROR(types.error_type);
         }
 
-        // Try implicit casting if types dont match
+        // Check if binop is a primitive operation (ints, floats, bools)
         Datatype* operand_type = left_type;
         bool types_are_valid = true;
-
-        // Check if given type is valid
-        if (types_are_valid)
+        int expected_pointer_level_left = 0;
+        int expected_pointer_level_right = 0;
+        if (types_are_valid && types_are_equal(left_type, right_type))
         {
             if (operand_type->type == Datatype_Type::POINTER) {
                 types_are_valid = ptr_valid;
@@ -6690,11 +6729,96 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             }
         }
 
+        // Check for operator overloads if types aren't valid
+        auto& operator_context = semantic_analyser.current_workload->current_symbol_table->operator_context;
+        if (!types_are_valid)
+        {
+            Operator_Overload_Key key;
+            key.left_type = left_type;
+            key.right_type = right_type;
+            key.op = (Upp_Operator)-1; // Initialize as invalid
+            switch (binop_node.type)
+            {
+            case AST::Binop::ADDITION: key.op = Upp_Operator::ADDITION;
+            case AST::Binop::SUBTRACTION: key.op = Upp_Operator::SUBTRACTION;
+            case AST::Binop::MULTIPLICATION: key.op = Upp_Operator::MULTIPLICATION;
+            case AST::Binop::DIVISION: key.op = Upp_Operator::DIVISION;
+            case AST::Binop::MODULO: key.op = Upp_Operator::MODULO;
+            case AST::Binop::EQUAL: key.op = Upp_Operator::EQUAL;
+            case AST::Binop::LESS: key.op = Upp_Operator::LESS_THAN;
+            case AST::Binop::LESS_OR_EQUAL: key.op = Upp_Operator::LESS_EQUAL;
+            default: break;
+            }
+
+            auto overload = hashtable_find_element(&operator_context->operator_overloads, key);
+            if (overload != nullptr)
+            {
+                expected_pointer_level_left = overload->left_pointer_level;
+                expected_pointer_level_right = overload->right_pointer_level;
+                info->specifics.binop.overload_function = overload->function;
+                semantic_analyser_register_function_call(overload->function);
+            }
+        }
+
+        // Check that expected pointer levels are correct (And apply auto operations if possible)
+        if (types_are_valid && auto_operations_valid)
+        {
+            bool auto_deref = operator_context_get_boolean_setting(operator_context, AST::Context_Setting::AUTO_DEREFERENCE);
+            bool auto_address_of = operator_context_get_boolean_setting(operator_context, AST::Context_Setting::AUTO_ADDRESS_OF);
+
+            auto try_set_pointer_level_of_expression = [&](Expression_Info* info, int given_pointer_level, int expected_pointer_level) -> bool 
+            {
+                if (given_pointer_level == expected_pointer_level) {
+                    return true;
+                }
+                // We cannot change the pointer level after a cast (Currently)
+                if (info->cast_info.cast_type != Cast_Type::NO_CAST) {
+                    return false;
+                }
+
+                bool valid = false;
+                if (given_pointer_level > expected_pointer_level && auto_deref) 
+                {
+                    int deref_count = given_pointer_level - expected_pointer_level;
+                    if (info->cast_info.take_address_of) {
+                        deref_count = deref_count - 1;
+                        info->cast_info.take_address_of = false;
+                    }
+                    info->cast_info.deref_count += deref_count;
+                    valid = true;
+                }
+                else if (given_pointer_level + 1 == expected_pointer_level &&
+                    expression_has_memory_address(binop_node.left) && 
+                    !info->cast_info.take_address_of && 
+                    auto_address_of) 
+                {
+                    info->cast_info.take_address_of = true;
+                    valid = true;
+                }
+
+                // Set type to correct type
+                if (valid) {
+                    info->cast_info.type_afterwards = left_type;
+                    for (int i = 0; i < expected_pointer_level; i++) {
+                        info->cast_info.type_afterwards = upcast(type_system_make_pointer(info->cast_info.type_afterwards));
+                    }
+                }
+            };
+
+            if (!try_set_pointer_level_of_expression(get_info(binop_node.left), left_type_pointer_level, expected_pointer_level_left)) {
+                types_are_valid = false;
+            }
+            if (!try_set_pointer_level_of_expression(get_info(binop_node.right), right_type_pointer_level, expected_pointer_level_right)) {
+                types_are_valid = false;
+            }
+        }
+
         if (!types_are_valid) {
             log_semantic_error("Types aren't valid for binary operation", expr);
             log_error_info_binary_op_type(left_type, right_type);
+            EXIT_ERROR(types.error_type);
         }
-        EXIT_VALUE(result_type_is_bool ? upcast(types.bool_type) : operand_type);
+        EXIT_VALUE(result_type_is_fixed ? result_type : operand_type);
     }
     default: {
         panic("Not all expression covered!\n");
@@ -7395,6 +7519,17 @@ Datatype* semantic_analyser_analyse_expression_value(AST::Expression* expression
 }
 
 
+u64 operator_overload_key_hash(Operator_Overload_Key* key) {
+    u64 hash = hash_pointer(key->left_type);
+    hash = hash_combine(hash, hash_pointer(key->right_type));
+    int op_as_int = (int)key->op;
+    hash = hash_combine(hash, hash_i32(&op_as_int));
+    return hash;
+}
+
+bool operator_overload_key_equals(Operator_Overload_Key* a, Operator_Overload_Key* b) {
+    return types_are_equal(a->left_type, b->left_type) && types_are_equal(a->right_type, b->right_type) && a->op == b->op;
+}
 
 // OPERATOR CONTEXT
 Operator_Context* symbol_table_install_new_operator_context(Symbol_Table* symbol_table)
@@ -7409,6 +7544,7 @@ Operator_Context* symbol_table_install_new_operator_context(Symbol_Table* symbol
     {
         context->custom_casts_polymorphic = dynamic_array_create_empty<Custom_Cast_Polymorphic>(1);
         context->custom_casts = hashtable_create_empty<Datatype_Pair, Custom_Cast>(1, datatype_pair_hash, datatype_pair_equals);
+        context->operator_overloads = hashtable_create_empty<Operator_Overload_Key, Operator_Overload>(1, operator_overload_key_hash, operator_overload_key_equals);
         for (int i = 0; i < AST::CONTEXT_SETTING_CAST_MODE_COUNT; i++) {
             context->cast_mode_settings[i] = Cast_Mode::EXPLICIT;
         }
@@ -7427,6 +7563,14 @@ Operator_Context* symbol_table_install_new_operator_context(Symbol_Table* symbol
             auto iter = hashtable_iterator_create(&parent_context->custom_casts);
             while (hashtable_iterator_has_next(&iter)) {
                 hashtable_insert_element(&context->custom_casts, *iter.key, *iter.value);
+                hashtable_iterator_next(&iter);
+            }
+        }
+        context->operator_overloads = hashtable_create_empty<Operator_Overload_Key, Operator_Overload>(1, operator_overload_key_hash, operator_overload_key_equals);
+        {
+            auto iter = hashtable_iterator_create(&parent_context->operator_overloads);
+            while (hashtable_iterator_has_next(&iter)) {
+                hashtable_insert_element(&context->operator_overloads, *iter.key, *iter.value);
                 hashtable_iterator_next(&iter);
             }
         }
@@ -7862,8 +8006,31 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
                     }
                 }
 
+                bool is_binary_operator = false;
+                bool result_type_must_be_bool = false;
+                switch (overloaded_operator)
+                {
+                case Upp_Operator::ADDITION: is_binary_operator = true; break;
+                case Upp_Operator::SUBTRACTION: is_binary_operator = true; break;
+                case Upp_Operator::MULTIPLICATION: is_binary_operator = true; break;
+                case Upp_Operator::DIVISION: is_binary_operator = true; break;
+                case Upp_Operator::MODULO: is_binary_operator = true; break;
+                case Upp_Operator::EQUAL: is_binary_operator = true; result_type_must_be_bool = true; break;
+                case Upp_Operator::LESS_EQUAL: is_binary_operator = true; result_type_must_be_bool = true; break;
+                case Upp_Operator::LESS_THAN: is_binary_operator = true; result_type_must_be_bool = true; break;
+                default: {
+                    log_semantic_error("Upp_Operators that aren't binops are currently not supported!", operator_argument_node);
+                    errors_occured = true;
+                    break;
+                }
+                }
+
                 // Analyse function argument
                 Expression_Info* expr_info = semantic_analyser_analyse_expression_any(function_argument_node, expression_context_make_unknown());
+                if (errors_occured) {
+                    break;
+                }
+
                 switch (expr_info->result_type)
                 {
                 case Expression_Result_Type::FUNCTION:
@@ -7871,45 +8038,71 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
                     ModTree_Function* function = expr_info->options.function;
 
                     // Check if function-signature is valid for custom casts
-                    Datatype_Pair pair;
+                    Datatype* left_type, *right_type, *return_type;
                     {
                         auto signature = function->signature;
-                        if (signature->parameters.size != 1) {
-                            log_semantic_error("For custom casts, the function signature must only have one argument", function_argument_node);
+                        if (signature->parameters.size != (is_binary_operator ? 2 : 1)) {
+                            log_semantic_error("For operator_overloads, the function signature must only have one argument", function_argument_node);
+                            errors_occured = true;
                             break;
                         }
-                        pair.from = signature->parameters[0].type;
+                        left_type = signature->parameters[0].type;
+                        right_type = signature->parameters[1].type;
 
                         if (!signature->return_type.available) {
-                            log_semantic_error("For custom casts, the function signature must have a return-type", function_argument_node);
+                            log_semantic_error("For operator overloads, the function signature must have a return-type", function_argument_node);
+                            errors_occured = true;
                             break;
                         }
-                        pair.to = signature->return_type.value;
+                        return_type = signature->return_type.value;
+
+                        if (result_type_must_be_bool && !types_are_equal(return_type, upcast(types.bool_type))) {
+                            log_semantic_error("For comparions operator overloads, the function return type must be bool", function_argument_node);
+                            errors_occured = true;
+                        }
                     }
 
                     // Add this cast to operator context if it doesn't already exist
                     if (errors_occured) {
                         break;
                     }
-                    Custom_Cast custom_cast;
-                    custom_cast.cast_mode = cast_mode;
-                    custom_cast.function = function;
-                    bool worked = hashtable_insert_element(&context->custom_casts, pair, custom_cast);
+                    Operator_Overload_Key key;
+                    key.left_type = left_type;
+                    key.right_type = right_type;
+                    key.op = overloaded_operator;
+                    Operator_Overload overload;
+                    overload.function = function;
+                    overload.left_pointer_level = 0;
+                    overload.right_pointer_level = 0;
+                    overload.result_type = return_type;
+
+                    // Dereferene pointer types
+                    while (key.left_type->type == Datatype_Type::POINTER) {
+                        overload.left_pointer_level += 1;
+                        key.left_type = downcast<Datatype_Pointer>(key.left_type)->points_to_type;
+                    }
+                    while (key.right_type->type == Datatype_Type::POINTER) {
+                        overload.right_pointer_level += 1;
+                        key.right_type = downcast<Datatype_Pointer>(key.right_type)->points_to_type;
+                    }
+
+                    // Try to insert into operator context
+                    bool worked = hashtable_insert_element(&context->operator_overloads, key, overload);
                     if (!worked) {
-                        log_semantic_error("Custom cast already exists for given types", function_argument_node);
-                        log_error_info_given_type(pair.from);
-                        log_error_info_given_type(pair.to);
+                        log_semantic_error("Overload already exists for given types", function_argument_node);
+                        log_error_info_given_type(key.left_type);
+                        log_error_info_given_type(key.right_type);
                     }
                     else {
-                        info->is_valid_for_import = true;
-                        info->is_polymorphic_custom_cast = false;
-                        info->options.custom_cast_pair = pair;
+                        info->is_valid_for_import = false; // Change that at some point
+                        // info->is_polymorphic_custom_cast = false;
+                        // info->options.custom_cast_pair = pair;
                     }
                     break;
                 }
                 default: 
                     errors_occured = true;
-                    log_semantic_error("For custom casts, cast_function argument must be a function", function_argument_node, Parser::Section::FIRST_TOKEN);
+                    log_semantic_error("For custom casts, cast_function argument must be a function (Poly functions are on the todo-list)", function_argument_node, Parser::Section::FIRST_TOKEN);
                     log_error_info_expression_result_type(expr_info->result_type);
                     break;
                 }
@@ -8868,6 +9061,7 @@ void semantic_analyser_destroy()
     for (int i = 0; i < semantic_analyser.allocated_operator_contexts.size; i++) {
         auto context = semantic_analyser.allocated_operator_contexts[i];
         hashtable_destroy(&context->custom_casts);
+        hashtable_destroy(&context->operator_overloads);
         dynamic_array_destroy(&context->custom_casts_polymorphic);
         delete semantic_analyser.allocated_operator_contexts[i];
     }
