@@ -157,13 +157,18 @@ namespace AST
         MAX_ENUM_VALUE
     };
 
+    enum class Context_Function
+    {
+        ADD_CUSTOM_CAST,
+        ADD_OPERATOR_OVERLOAD
+    };
+
     enum class Context_Change_Type
     {
         SETTING_CHANGE,
         IMPORT_CONTEXT,
-        CUSTOM_CAST,
+        CONTEXT_FUNCTION_CALL,
     };
-
 
     struct Argument;
     struct Context_Change
@@ -177,7 +182,10 @@ namespace AST
                 Expression* expression;
             } change;
             Path_Lookup* context_import_path;
-            Dynamic_Array<Argument*> custom_cast_arguments;
+            struct {
+                Context_Function function;
+                Dynamic_Array<Argument*> arguments;
+            } call;
         } options;
     };
 

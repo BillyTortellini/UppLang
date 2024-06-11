@@ -18,10 +18,10 @@ namespace AST
             break;
         case Node_Type::CONTEXT_CHANGE: {
             auto change = (Context_Change*)node;
-            if (change->type != Context_Change_Type::CUSTOM_CAST) {
+            if (change->type != Context_Change_Type::CONTEXT_FUNCTION_CALL) {
                 break;
             }
-            dynamic_array_destroy(&change->options.custom_cast_arguments);
+            dynamic_array_destroy(&change->options.call.arguments);
             break;
         }
         case Node_Type::DEFINITION: {
@@ -191,8 +191,8 @@ namespace AST
             auto context = (Context_Change*)node;
             switch (context->type)
             {
-            case Context_Change_Type::CUSTOM_CAST: {
-                FILL_ARRAY(context->options.custom_cast_arguments);
+            case Context_Change_Type::CONTEXT_FUNCTION_CALL: {
+                FILL_ARRAY(context->options.call.arguments);
                 break;
             }
             case Context_Change_Type::SETTING_CHANGE: {
@@ -451,8 +451,8 @@ namespace AST
             auto context = (Context_Change*)node;
             switch (context->type)
             {
-            case Context_Change_Type::CUSTOM_CAST: {
-                FILL_ARRAY(context->options.custom_cast_arguments);
+            case Context_Change_Type::CONTEXT_FUNCTION_CALL: {
+                FILL_ARRAY(context->options.call.arguments);
                 break;
             }
             case Context_Change_Type::SETTING_CHANGE: {
@@ -750,7 +750,7 @@ namespace AST
             auto context = (Context_Change*)base;
             switch (context->type)
             {
-            case Context_Change_Type::CUSTOM_CAST: {
+            case Context_Change_Type::CONTEXT_FUNCTION_CALL: {
                 string_append_formated(str, "CUSTOM_CAST");
                 break;
             }

@@ -204,7 +204,23 @@ struct Upp_Any
     Upp_Type_Handle type;
 };
 
-
+enum class Upp_Operator
+{
+    // Binops
+    ADDITION = 1,
+    SUBTRACTION,
+    MULTIPLICATION,
+    DIVISION,
+    MODULO,
+    LESS_THAN,
+    LESS_EQUAL,
+    EQUAL,
+    // Others
+    ARRAY_ACCESS,
+    NEGATE,
+    
+    MAX_ENUM_VALUE
+};
 
 // TYPE-INFORMATION STRUCTS (Usable in Upp)
 struct Internal_Type_Primitive
@@ -314,6 +330,7 @@ struct Predefined_Types
     Datatype_Struct* type_information_type;
     Datatype_Struct* any_type;
     Datatype_Enum* cast_mode;
+    Datatype_Enum* upp_operator;
 
     // Types for built-in/hardcoded functions
     Datatype_Function* type_assert;
@@ -332,6 +349,7 @@ struct Predefined_Types
     Datatype_Function* type_random_i32;
 
     Datatype_Function* type_add_custom_cast;
+    Datatype_Function* type_add_operator_overload;
 };
 
 // TYPE SYSTEM

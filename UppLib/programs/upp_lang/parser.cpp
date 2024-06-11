@@ -764,11 +764,17 @@ namespace Parser
             }
 
             // Check if it's custom cast
-            if (id == ids.add_custom_cast && test_parenthesis('('))
+            if ((id == ids.add_custom_cast || id == ids.add_operator_overload) && test_parenthesis('('))
             {
-                result->type = Context_Change_Type::CUSTOM_CAST;
-                result->options.custom_cast_arguments = dynamic_array_create_empty<Argument*>(1);
-                parse_parenthesis_comma_seperated(&result->base, &result->options.custom_cast_arguments, parse_argument, Parenthesis_Type::PARENTHESIS);
+                result->type = Context_Change_Type::CONTEXT_FUNCTION_CALL;
+                result->options.call.arguments = dynamic_array_create_empty<Argument*>(1);
+                if (id == ids.add_custom_cast) {
+                    result->options.call.function = Context_Function::ADD_CUSTOM_CAST;
+                }
+                else {
+                    result->options.call.function = Context_Function::ADD_OPERATOR_OVERLOAD;
+                }
+                parse_parenthesis_comma_seperated(&result->base, &result->options.call.arguments, parse_argument, Parenthesis_Type::PARENTHESIS);
                 PARSE_SUCCESS(result);
             }
 

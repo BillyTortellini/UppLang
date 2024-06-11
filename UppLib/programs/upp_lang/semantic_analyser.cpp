@@ -7536,7 +7536,7 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
 
                 switch (other_change->type)
                 {
-                case AST::Context_Change_Type::CUSTOM_CAST: {
+                case AST::Context_Change_Type::CONTEXT_FUNCTION_CALL: {
                     if (other_change_info->is_polymorphic_custom_cast) {
                         dynamic_array_push_back(&context->custom_casts_polymorphic, other_context->custom_casts_polymorphic[other_change_info->options.polymorphic_cast_index]);
                     }
@@ -7619,164 +7619,300 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
             info->is_valid_for_import = true;
             break;
         }
-        case AST::Context_Change_Type::CUSTOM_CAST:
+        case AST::Context_Change_Type::CONTEXT_FUNCTION_CALL:
         {
             // Syntax: context add_custom_cast(cast_function = fn, cast_mode = Cast_Mode.IMPLICIT)
-            auto& arguments = change_node->options.custom_cast_arguments;
+            auto& context_call = change_node->options.call;
+            auto& arguments = context_call.arguments;
 
-            // Check for general argument errors, and find corresponding arguments
-            AST::Expression* function_argument_node = nullptr;
-            AST::Expression* cast_mode_argument_node = nullptr;
+            if (context_call.function == AST::Context_Function::ADD_CUSTOM_CAST)
             {
-                int unnamed_argument_count = 0;
-                if (arguments_check_for_naming_errors(arguments, &unnamed_argument_count)) {
-                    arguments_analyse_in_unknown_context(arguments);
-                    break;
+                // Check for general argument errors, and find corresponding arguments
+                AST::Expression* function_argument_node = nullptr;
+                AST::Expression* cast_mode_argument_node = nullptr;
+                {
+                    int unnamed_argument_count = 0;
+                    if (arguments_check_for_naming_errors(arguments, &unnamed_argument_count)) {
+                        arguments_analyse_in_unknown_context(arguments);
+                        break;
+                    }
+
+                    Callable callable;
+                    callable.type = Callable_Type::FUNCTION_POINTER;
+                    callable.only_named_arguments_after_index = 2;
+                    callable.parameter_count = 2;
+                    callable.options.function_pointer_type = types.type_add_custom_cast;
+                    if (!arguments_match_to_parameters(arguments, callable, unnamed_argument_count, true, upcast(change_node), Parser::Section::ENCLOSURE)) {
+                        break;
+                    }
+
+                    assert(arguments.size == 2, "Should be true if previous check worked");
+                    AST::Expression* ordered_arguments[2];
+                    ordered_arguments[get_info(arguments[0], false)->argument_index] = arguments[0]->value;
+                    ordered_arguments[get_info(arguments[1], false)->argument_index] = arguments[1]->value;
+                    function_argument_node = ordered_arguments[0];
+                    cast_mode_argument_node = ordered_arguments[1];
                 }
 
-                Callable callable;
-                callable.type = Callable_Type::FUNCTION_POINTER;
-                callable.only_named_arguments_after_index = 2;
-                callable.parameter_count = 2;
-                callable.options.function_pointer_type = types.type_add_custom_cast;
-                if (!arguments_match_to_parameters(arguments, callable, unnamed_argument_count, true, upcast(change_node), Parser::Section::ENCLOSURE)) {
-                    break;
-                }
-
-                assert(arguments.size == 2, "Should be true if previous check worked");
-                AST::Expression* ordered_arguments[2];
-                ordered_arguments[get_info(arguments[0], false)->argument_index] = arguments[0]->value;
-                ordered_arguments[get_info(arguments[1], false)->argument_index] = arguments[1]->value;
-                function_argument_node = ordered_arguments[0];
-                cast_mode_argument_node = ordered_arguments[1];
-            }
-
-            // Analyse cast mode
-            Cast_Mode cast_mode = Cast_Mode::NONE;
-            bool errors_occured = false;
-            {
-                semantic_analyser_analyse_expression_value(cast_mode_argument_node, expression_context_make_specific_type(upcast(types.cast_mode)));
-                auto result = expression_calculate_comptime_value(cast_mode_argument_node, "Cast_Mode has to be comptime known in custom cast");
-                if (result.available) {
-                    // Check if enum value is valid
-                    cast_mode = upp_constant_to_value<Cast_Mode>(result.value);
-                    if ((int)cast_mode <= 0 || (int)cast_mode > (int)Cast_Mode::NONE) {
-                        log_semantic_error("Cast mode value is invalid", cast_mode_argument_node);
+                // Analyse cast mode
+                Cast_Mode cast_mode = Cast_Mode::NONE;
+                bool errors_occured = false;
+                {
+                    semantic_analyser_analyse_expression_value(cast_mode_argument_node, expression_context_make_specific_type(upcast(types.cast_mode)));
+                    auto result = expression_calculate_comptime_value(cast_mode_argument_node, "Cast_Mode has to be comptime known in custom cast");
+                    if (result.available) {
+                        // Check if enum value is valid
+                        cast_mode = upp_constant_to_value<Cast_Mode>(result.value);
+                        if ((int)cast_mode <= 0 || (int)cast_mode > (int)Cast_Mode::NONE) {
+                            log_semantic_error("Cast mode value is invalid", cast_mode_argument_node);
+                            errors_occured = true;
+                            cast_mode = Cast_Mode::NONE;
+                        }
+                    }
+                    else {
                         errors_occured = true;
-                        cast_mode = Cast_Mode::NONE;
+                    }
+
+                    if (!errors_occured && cast_mode == Cast_Mode::NONE) {
+                        log_semantic_error("Using Cast_Mode::NONE for custom casts does nothing", cast_mode_argument_node);
+                        errors_occured = true;
                     }
                 }
-                else {
-                    errors_occured = true;
-                }
 
-                if (!errors_occured && cast_mode == Cast_Mode::NONE) {
-                    log_semantic_error("Using Cast_Mode::NONE for custom casts does nothing", cast_mode_argument_node);
-                    errors_occured = true;
-                }
-            }
-
-            // Analyse function expression
-            Expression_Info* expr_info = semantic_analyser_analyse_expression_any(function_argument_node, expression_context_make_unknown());
-            switch (expr_info->result_type)
-            {
-            case Expression_Result_Type::FUNCTION:
-            {
-                ModTree_Function* function = expr_info->options.function;
-
-                // Check if function-signature is valid for custom casts
-                Datatype_Pair pair;
+                // Analyse function expression
+                Expression_Info* expr_info = semantic_analyser_analyse_expression_any(function_argument_node, expression_context_make_unknown());
+                switch (expr_info->result_type)
                 {
-                    auto signature = function->signature;
-                    if (signature->parameters.size != 1) {
-                        log_semantic_error("For custom casts, the function signature must only have one argument", function_argument_node);
-                        break;
-                    }
-                    pair.from = signature->parameters[0].type;
-
-                    if (!signature->return_type.available) {
-                        log_semantic_error("For custom casts, the function signature must have a return-type", function_argument_node);
-                        break;
-                    }
-                    pair.to = signature->return_type.value;
-                }
-
-                // Add this cast to operator context if it doesn't already exist
-                Custom_Cast custom_cast;
-                custom_cast.cast_mode = cast_mode;
-                custom_cast.function = function;
-                bool worked = hashtable_insert_element(&context->custom_casts, pair, custom_cast);
-                if (!worked) {
-                    log_semantic_error("Custom cast already exists for given types", function_argument_node);
-                    log_error_info_given_type(pair.from);
-                    log_error_info_given_type(pair.to);
-                }
-                else {
-                    info->is_valid_for_import = true;
-                    info->is_polymorphic_custom_cast = false;
-                    info->options.custom_cast_pair = pair;
-                }
-                break;
-            }
-            case Expression_Result_Type::POLYMORPHIC_FUNCTION:
-            {
-                // Check if poly-function has valid signature
-                auto poly_function = expr_info->options.polymorphic_function.base->base_info;
-                Datatype* param_type = 0;
+                case Expression_Result_Type::FUNCTION:
                 {
-                    if (poly_function.return_type_index == -1) {
-                        log_semantic_error("Custom cast requires function to have return type", function_argument_node);
+                    ModTree_Function* function = expr_info->options.function;
+
+                    // Check if function-signature is valid for custom casts
+                    Datatype_Pair pair;
+                    {
+                        auto signature = function->signature;
+                        if (signature->parameters.size != 1) {
+                            log_semantic_error("For custom casts, the function signature must only have one argument", function_argument_node);
+                            break;
+                        }
+                        pair.from = signature->parameters[0].type;
+
+                        if (!signature->return_type.available) {
+                            log_semantic_error("For custom casts, the function signature must have a return-type", function_argument_node);
+                            break;
+                        }
+                        pair.to = signature->return_type.value;
+                    }
+
+                    // Add this cast to operator context if it doesn't already exist
+                    if (errors_occured) {
                         break;
                     }
-                    auto& return_value = poly_function.parameters[poly_function.return_type_index];
-                    bool error = false;
-                    for (int j = 0; j < poly_function.implicit_parameter_infos.size; j++) {
-                        auto& implicit_info = poly_function.implicit_parameter_infos[j];
-                        if (implicit_info.defined_in_parameter_index == poly_function.return_type_index) {
-                            log_semantic_error("Custom cast requires poly function return type to not implicit parameters", function_argument_node);
-                            error = true;
+                    Custom_Cast custom_cast;
+                    custom_cast.cast_mode = cast_mode;
+                    custom_cast.function = function;
+                    bool worked = hashtable_insert_element(&context->custom_casts, pair, custom_cast);
+                    if (!worked) {
+                        log_semantic_error("Custom cast already exists for given types", function_argument_node);
+                        log_error_info_given_type(pair.from);
+                        log_error_info_given_type(pair.to);
+                    }
+                    else {
+                        info->is_valid_for_import = true;
+                        info->is_polymorphic_custom_cast = false;
+                        info->options.custom_cast_pair = pair;
+                    }
+                    break;
+                }
+                case Expression_Result_Type::POLYMORPHIC_FUNCTION:
+                {
+                    // Check if poly-function has valid signature
+                    auto poly_function = expr_info->options.polymorphic_function.base->base_info;
+                    Datatype* param_type = 0;
+                    {
+                        if (poly_function.return_type_index == -1) {
+                            log_semantic_error("Custom cast requires function to have return type", function_argument_node);
+                            break;
+                        }
+                        auto& return_value = poly_function.parameters[poly_function.return_type_index];
+                        bool error = false;
+                        for (int j = 0; j < poly_function.implicit_parameter_infos.size; j++) {
+                            auto& implicit_info = poly_function.implicit_parameter_infos[j];
+                            if (implicit_info.defined_in_parameter_index == poly_function.return_type_index) {
+                                log_semantic_error("Custom cast requires poly function return type to not implicit parameters", function_argument_node);
+                                error = true;
+                                break;
+                            }
+                        }
+                        if (error) {
+                            break;
+                        }
+                        if (poly_function.parameters.size != 2) {
+                            log_semantic_error("Custom cast requires function to have exactly 1 parameter", function_argument_node);
+                            break;
+                        }
+                        auto& param = poly_function.parameters[0];
+                        if (param.depends_on.size != 0) {
+                            log_semantic_error("Custom cast requires polymorphic function argument to not have dependencies on return-type", function_argument_node);
+                            break;
+                        }
+                        if (param.is_comptime) {
+                            log_semantic_error("Custom cast requires polymorphic function argument to not be comptime", function_argument_node);
+                            break;
+                        }
+                        param_type = param.infos.type;
+                        if (!param_type->contains_type_template) {
+                            log_semantic_error("Custom cast requires polymorphic function argument contain a type-template", function_argument_node);
                             break;
                         }
                     }
-                    if (error) {
+
+                    if (errors_occured) {
                         break;
                     }
-                    if (poly_function.parameters.size != 2) {
-                        log_semantic_error("Custom cast requires function to have exactly 1 parameter", function_argument_node);
+                    Custom_Cast_Polymorphic custom_cast;
+                    custom_cast.cast_mode = cast_mode;
+                    custom_cast.function = expr_info->options.polymorphic_function.base;
+                    custom_cast.argument_type = param_type;
+                    info->is_valid_for_import = true;
+                    info->is_polymorphic_custom_cast = true;
+                    info->options.polymorphic_cast_index = context->custom_casts_polymorphic.size;
+                    dynamic_array_push_back(&context->custom_casts_polymorphic, custom_cast);
+                    break;
+                }
+                default: {
+                    errors_occured = true;
+                    log_semantic_error("For custom casts, cast_function argument must be a function", function_argument_node, Parser::Section::FIRST_TOKEN);
+                    log_error_info_expression_result_type(expr_info->result_type);
+                    break;
+                }
+                }
+            }
+            else {
+                assert(context_call.function == AST::Context_Function::ADD_OPERATOR_OVERLOAD, "");
+
+                // context add_operator_overload(Upp_Operator.ADDITION, custom_function, commutative=false)
+
+                // Check for general argument errors, and find corresponding arguments
+                AST::Expression* operator_argument_node = nullptr;
+                AST::Expression* function_argument_node = nullptr;
+                AST::Expression* commutative_argument_node = nullptr; // May stay null
+                {
+                    int unnamed_argument_count = 0;
+                    if (arguments_check_for_naming_errors(arguments, &unnamed_argument_count)) {
+                        arguments_analyse_in_unknown_context(arguments);
                         break;
                     }
-                    auto& param = poly_function.parameters[0];
-                    if (param.depends_on.size != 0) {
-                        log_semantic_error("Custom cast requires polymorphic function argument to not have dependencies on return-type", function_argument_node);
+
+                    Callable callable;
+                    callable.type = Callable_Type::FUNCTION_POINTER;
+                    callable.only_named_arguments_after_index = 3;
+                    callable.parameter_count = 3;
+                    callable.options.function_pointer_type = types.type_add_operator_overload;
+                    if (!arguments_match_to_parameters(arguments, callable, unnamed_argument_count, true, upcast(change_node), Parser::Section::ENCLOSURE)) {
                         break;
                     }
-                    if (param.is_comptime) {
-                        log_semantic_error("Custom cast requires polymorphic function argument to not be comptime", function_argument_node);
-                        break;
-                    }
-                    param_type = param.infos.type;
-                    if (!param_type->contains_type_template) {
-                        log_semantic_error("Custom cast requires polymorphic function argument contain a type-template", function_argument_node);
-                        break;
+
+                    for (int j = 0; j < arguments.size; j++) {
+                        auto arg_info = get_info(arguments[j]);
+                        if (arg_info->argument_index == 0) {
+                            operator_argument_node = arguments[j]->value;
+                        }
+                        else if (arg_info->argument_index == 1) {
+                            function_argument_node = arguments[j]->value;
+                        }
+                        else if (arg_info->argument_index == 2) {
+                            commutative_argument_node = arguments[j]->value;
+                        }
+                        else {
+                            panic("");
+                        }
                     }
                 }
 
-                Custom_Cast_Polymorphic custom_cast;
-                custom_cast.cast_mode = cast_mode;
-                custom_cast.function = expr_info->options.polymorphic_function.base;
-                custom_cast.argument_type = param_type;
-                info->is_valid_for_import = true;
-                info->is_polymorphic_custom_cast = true;
-                info->options.polymorphic_cast_index = context->custom_casts_polymorphic.size;
-                dynamic_array_push_back(&context->custom_casts_polymorphic, custom_cast);
-                break;
-            }
-            default: {
-                errors_occured = true;
-                log_semantic_error("For custom casts, cast_function argument must be a function", function_argument_node, Parser::Section::FIRST_TOKEN);
-                log_error_info_expression_result_type(expr_info->result_type);
-                break;
-            }
+                // Analyse operator 
+                bool errors_occured = false;
+                Upp_Operator overloaded_operator;
+                {
+                    semantic_analyser_analyse_expression_value(operator_argument_node,expression_context_make_specific_type(upcast(types.upp_operator)));
+                    auto value = expression_calculate_comptime_value(operator_argument_node, "Upp_Operator must be comptime for overload");
+                    if (value.available) {
+                        overloaded_operator = upp_constant_to_value<Upp_Operator>(value.value);
+                        if ((int)overloaded_operator <= 0 || (int)overloaded_operator >= (int)Upp_Operator::MAX_ENUM_VALUE) {
+                            errors_occured = true;
+                            log_semantic_error("Value for Upp_Operator was not a valid enum value", operator_argument_node);
+                        }
+                    }
+                    else {
+                        errors_occured = true;
+                    }
+                }
+
+                // Analyse commutative
+                bool is_commutative = false;
+                if (commutative_argument_node != 0)
+                {
+                    semantic_analyser_analyse_expression_value(commutative_argument_node, expression_context_make_specific_type(upcast(types.bool_type)));
+                    auto value = expression_calculate_comptime_value(operator_argument_node, "'Commutative' argument must be comptime for overload");
+                    if (value.available) {
+                        is_commutative = upp_constant_to_value<bool>(value.value);
+                    }
+                    else {
+                        errors_occured = true;
+                    }
+                }
+
+                // Analyse function argument
+                Expression_Info* expr_info = semantic_analyser_analyse_expression_any(function_argument_node, expression_context_make_unknown());
+                switch (expr_info->result_type)
+                {
+                case Expression_Result_Type::FUNCTION:
+                {
+                    ModTree_Function* function = expr_info->options.function;
+
+                    // Check if function-signature is valid for custom casts
+                    Datatype_Pair pair;
+                    {
+                        auto signature = function->signature;
+                        if (signature->parameters.size != 1) {
+                            log_semantic_error("For custom casts, the function signature must only have one argument", function_argument_node);
+                            break;
+                        }
+                        pair.from = signature->parameters[0].type;
+
+                        if (!signature->return_type.available) {
+                            log_semantic_error("For custom casts, the function signature must have a return-type", function_argument_node);
+                            break;
+                        }
+                        pair.to = signature->return_type.value;
+                    }
+
+                    // Add this cast to operator context if it doesn't already exist
+                    if (errors_occured) {
+                        break;
+                    }
+                    Custom_Cast custom_cast;
+                    custom_cast.cast_mode = cast_mode;
+                    custom_cast.function = function;
+                    bool worked = hashtable_insert_element(&context->custom_casts, pair, custom_cast);
+                    if (!worked) {
+                        log_semantic_error("Custom cast already exists for given types", function_argument_node);
+                        log_error_info_given_type(pair.from);
+                        log_error_info_given_type(pair.to);
+                    }
+                    else {
+                        info->is_valid_for_import = true;
+                        info->is_polymorphic_custom_cast = false;
+                        info->options.custom_cast_pair = pair;
+                    }
+                    break;
+                }
+                default: 
+                    errors_occured = true;
+                    log_semantic_error("For custom casts, cast_function argument must be a function", function_argument_node, Parser::Section::FIRST_TOKEN);
+                    log_error_info_expression_result_type(expr_info->result_type);
+                    break;
+                }
             }
 
             break;

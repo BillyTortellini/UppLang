@@ -1,11 +1,14 @@
 
+Operator Overloads:
+ - Like custom_casts:
+
+
+context add_operator_overload(.ADDITION, function)
+
+
 TODO:
     * Literals float and int should auto-cast to larger/smaller or signed/unsigned values if the context allows for it...
-    * Write testcases for casts (e.g. make all testcases work again)
-    auto address-of, auto dereference
-    Pointer arithmetic
-    pointer_to_bool
-    module and struct overloading
+    * Polymorphic custom casts could use Struct-Template if possible to reduce time...
 
 DONE:
     * Symbol overload should work for modules, and modules are only accessible in path-lookups/specific scenarios?

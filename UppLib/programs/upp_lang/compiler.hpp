@@ -58,8 +58,21 @@ struct Predefined_IDs
 
     // Context members 
     String* context_settings[(int)AST::Context_Setting::MAX_ENUM_VALUE];
-    String* add_custom_cast;
     String* id_import;
+    String* add_custom_cast;
+
+    String* add_operator_overload;
+    String* upp_operator;
+    String* operator_addition;
+    String* operator_subtraction;
+    String* operator_multiplication;
+    String* operator_division;
+    String* operator_modulo;
+    String* operator_less_than;
+    String* operator_less_equal;
+    String* operator_equal;
+    String* operator_negate;
+    String* operator_array_access;
 };
 
 // Compiler

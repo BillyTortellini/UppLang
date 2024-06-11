@@ -1306,9 +1306,9 @@ void type_system_add_predefined_types(Type_System* system)
     }
 
     {
-        types->cast_mode = type_system_make_enum_empty(compiler.predefined_ids.cast_mode);
-        auto& members = types->cast_mode->members;
         auto& ids = compiler.predefined_ids;
+        types->cast_mode = type_system_make_enum_empty(ids.cast_mode);
+        auto& members = types->cast_mode->members;
         auto add_enum_member = [&](Datatype_Enum* enum_type, String* name, int value) {
             Enum_Item item;
             item.name = name;
@@ -1320,6 +1320,19 @@ void type_system_add_predefined_types(Type_System* system)
         add_enum_member(types->cast_mode, ids.cast_mode_explicit, 3);
         add_enum_member(types->cast_mode, ids.cast_mode_none, 4);
         type_system_finish_enum(types->cast_mode);
+
+        types->upp_operator = type_system_make_enum_empty(ids.upp_operator);
+        add_enum_member(types->upp_operator, ids.operator_addition, 1);
+        add_enum_member(types->upp_operator, ids.operator_subtraction, 2);
+        add_enum_member(types->upp_operator, ids.operator_multiplication, 3);
+        add_enum_member(types->upp_operator, ids.operator_division, 4);
+        add_enum_member(types->upp_operator, ids.operator_modulo, 5);
+        add_enum_member(types->upp_operator, ids.operator_less_than, 6);
+        add_enum_member(types->upp_operator, ids.operator_less_equal, 7);
+        add_enum_member(types->upp_operator, ids.operator_equal, 8);
+        add_enum_member(types->upp_operator, ids.operator_array_access, 9);
+        add_enum_member(types->upp_operator, ids.operator_negate, 10);
+        type_system_finish_enum(types->upp_operator);
     }
 
 
@@ -1473,7 +1486,7 @@ void type_system_add_predefined_types(Type_System* system)
     // Hardcoded Functions
     {
         auto& ts = *system;
-        auto make_param = [&](Datatype* signature, const char* name) -> Function_Parameter {
+        auto make_param = [&](Datatype* signature, const char* name, bool has_default_value = false) -> Function_Parameter {
             auto parameter = function_parameter_make_empty();
             parameter.name = optional_make_success(identifier_pool_add(&compiler.identifier_pool, string_create_static(name)));
             parameter.type = signature;
@@ -1497,8 +1510,13 @@ void type_system_add_predefined_types(Type_System* system)
         types->type_add_custom_cast = type_system_make_function({
                 make_param(upcast(types->any_type), "cast_function"), 
                 make_param(upcast(types->cast_mode), "cast_mode") 
-            }, 
-            upcast(types->i32_type)
+            } 
+        );
+        types->type_add_operator_overload = type_system_make_function({
+                make_param(upcast(types->upp_operator), "operator"), 
+                make_param(upcast(types->any_type), "function"),
+                make_param(upcast(types->bool_type), "commutative", true)
+            }
         );
     }
 }

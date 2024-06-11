@@ -249,6 +249,18 @@ void compiler_reset_data(bool keep_data_for_incremental_compile, Compile_Type co
             
             ids.add_custom_cast = identifier_pool_add(&compiler.identifier_pool, string_create_static("add_custom_cast"));
             ids.id_import = identifier_pool_add(&compiler.identifier_pool, string_create_static("import"));
+            ids.add_operator_overload = identifier_pool_add(&compiler.identifier_pool, string_create_static("add_operator_overload"));
+            ids.upp_operator = identifier_pool_add(&compiler.identifier_pool, string_create_static("Upp_Operator"));
+            ids.operator_addition = identifier_pool_add(&compiler.identifier_pool, string_create_static("ADDTION"));
+            ids.operator_subtraction = identifier_pool_add(&compiler.identifier_pool, string_create_static("SUBTRACTION"));
+            ids.operator_multiplication = identifier_pool_add(&compiler.identifier_pool, string_create_static("MULTIPLICATION"));
+            ids.operator_division = identifier_pool_add(&compiler.identifier_pool, string_create_static("DIVISION"));
+            ids.operator_modulo = identifier_pool_add(&compiler.identifier_pool, string_create_static("MODULO"));
+            ids.operator_less_than = identifier_pool_add(&compiler.identifier_pool, string_create_static("LESS_THAN"));
+            ids.operator_less_equal = identifier_pool_add(&compiler.identifier_pool, string_create_static("LESS_EQUAL"));
+            ids.operator_equal = identifier_pool_add(&compiler.identifier_pool, string_create_static("EQUAL"));
+            ids.operator_negate = identifier_pool_add(&compiler.identifier_pool, string_create_static("NEGATE"));
+            ids.operator_array_access = identifier_pool_add(&compiler.identifier_pool, string_create_static("ARRAY_ACCESS"));
         }
 
         // FUTURE: When we have incremental compilation we cannot just reset everything anymore
