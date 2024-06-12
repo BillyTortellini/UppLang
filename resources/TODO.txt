@@ -1,16 +1,21 @@
 
-Operator Overloads:
-    context add_operator_overload(.ADDITION, function)
-
- * Comparisons with < and <= should somehow be query-able with < and <=
- * Question: Do I need all operators: <, =, <= (Note: <= could be done more performantly than a < b || a == b), so I guess yes
-
-
 TODO:
+    * Polymorphic operator overloads (And probably a more reasonable way to instanciate polymorphic functions)
+    * Overloads for [] and - (Unary operations)
+
+    * Context cast-settings should also use function-call syntax, e.g. context change_cast_setting(.INTEGER_SIZE_UPCAST, .AUTO)
     * Literals float and int should auto-cast to larger/smaller or signed/unsigned values if the context allows for it...
-    * Polymorphic custom casts could use Struct-Template if possible to reduce time...
+    * Create operators +=, -=, *=, /=, %= 
+    * Polymorphic custom casts could use Struct-Template if possible for performance
 
 DONE:
+    * Operator overloads should work with context import
+    * If commutative and types aren't equal, then add overload as commutative (Default should be false)
+    * Add all binary operators
+    * Implement commutative for operators
+    * Adding overloads with Strings, e.g. "+", "-"
+    * Calculate comptime value of binary operations should not work with overloads, same with casts!
+
     * Symbol overload should work for modules, and modules are only accessible in path-lookups/specific scenarios?
     * Context-change imports should work for custom_casts
     * Bug-Fix: y:Optional(int)=optional_make_failure(T=int) --> Should work, problem with setting implicit values with named parameters
@@ -58,15 +63,15 @@ Operations that should depend on the context:
  * pointer dereferencing/auto address of (Kinda casting like)
     operator cast auto_dereference = true
     operator cast auto_address_of = false
- * dot-calls
-    operator
  * Importing operators from other scopes (Probably just goes through things and set's them again) 
     operator import Dynamic_Array~Operations
- * Custom member accesses (e.g. set a setter/getter function for some new name...)
+
  * Operator Overloading
     - Binary operations +, -, *, /, %, ==, <, <=
     - Unary operations (Probably only - for math operations)
     - Array access [] (For datastructures)
+ * dot-calls
+ * Custom member accesses (e.g. set a setter/getter function for some new name...)
  * Iterators
 
 

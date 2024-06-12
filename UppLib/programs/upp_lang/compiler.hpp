@@ -63,16 +63,8 @@ struct Predefined_IDs
 
     String* add_operator_overload;
     String* upp_operator;
-    String* operator_addition;
-    String* operator_subtraction;
-    String* operator_multiplication;
-    String* operator_division;
-    String* operator_modulo;
-    String* operator_less_than;
-    String* operator_less_equal;
-    String* operator_equal;
-    String* operator_negate;
-    String* operator_array_access;
+    String* upp_operator_enum_values[(int)Upp_Operator::MAX_ENUM_VALUE];
+    String* upp_operator_corresponding_tokens[(int)Upp_Operator::MAX_ENUM_VALUE]; // E.g. +, -, *, /
 };
 
 // Compiler

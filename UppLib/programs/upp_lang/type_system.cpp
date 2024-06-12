@@ -1322,16 +1322,9 @@ void type_system_add_predefined_types(Type_System* system)
         type_system_finish_enum(types->cast_mode);
 
         types->upp_operator = type_system_make_enum_empty(ids.upp_operator);
-        add_enum_member(types->upp_operator, ids.operator_addition, 1);
-        add_enum_member(types->upp_operator, ids.operator_subtraction, 2);
-        add_enum_member(types->upp_operator, ids.operator_multiplication, 3);
-        add_enum_member(types->upp_operator, ids.operator_division, 4);
-        add_enum_member(types->upp_operator, ids.operator_modulo, 5);
-        add_enum_member(types->upp_operator, ids.operator_less_than, 6);
-        add_enum_member(types->upp_operator, ids.operator_less_equal, 7);
-        add_enum_member(types->upp_operator, ids.operator_equal, 8);
-        add_enum_member(types->upp_operator, ids.operator_array_access, 9);
-        add_enum_member(types->upp_operator, ids.operator_negate, 10);
+        for (int i = 1; i < (int)Upp_Operator::MAX_ENUM_VALUE; i++) {
+            add_enum_member(types->upp_operator, ids.upp_operator_enum_values[i], i);
+        }
         type_system_finish_enum(types->upp_operator);
     }
 
@@ -1490,6 +1483,7 @@ void type_system_add_predefined_types(Type_System* system)
             auto parameter = function_parameter_make_empty();
             parameter.name = optional_make_success(identifier_pool_add(&compiler.identifier_pool, string_create_static(name)));
             parameter.type = signature;
+            parameter.has_default_value = has_default_value;
             return parameter;
         };
         types->type_assert = type_system_make_function({ make_param(upcast(types->bool_type), "condition") });

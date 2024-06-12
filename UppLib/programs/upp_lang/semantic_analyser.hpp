@@ -507,6 +507,7 @@ struct Expression_Info
         } member_access;
         struct {
             ModTree_Function* overload_function; // Is null if it's a primitive binop (e.g. not overloaded)
+            bool switch_left_and_right;
         } binop;
     } specifics;
 
@@ -529,6 +530,11 @@ struct Context_Change_Info
     union {
         Datatype_Pair custom_cast_pair;
         int polymorphic_cast_index;
+        struct {
+            Operator_Overload_Key key;
+            bool has_commutative_version;
+            Operator_Overload_Key commutative_key;
+        } operator_overload;
     } options;
 };
 

@@ -921,6 +921,7 @@ void code_completion_find_suggestions()
         }
         code_completion_add_and_rank(*ids.add_custom_cast, partially_typed);
         code_completion_add_and_rank(*ids.id_import, partially_typed);
+        code_completion_add_and_rank(*ids.add_operator_overload, partially_typed);
     }
 
     if (suggestions.size == 0) return;

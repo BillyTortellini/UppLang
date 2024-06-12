@@ -6,6 +6,7 @@
 #include "compiler_misc.hpp" // Upp_Constant
 #include "constant_pool.hpp"
 #include "ast.hpp"
+#include "type_system.hpp"
 
 // struct Function_Progress;
 struct ModTree_Global;
@@ -78,6 +79,7 @@ struct Operator_Overload
     int right_pointer_level;
     Datatype* result_type;
     ModTree_Function* function;
+    bool switch_left_and_right; // For commutative versions
 };
 
 struct Workload_Operator_Context_Change;

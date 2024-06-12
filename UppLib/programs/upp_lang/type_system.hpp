@@ -212,12 +212,18 @@ enum class Upp_Operator
     MULTIPLICATION,
     DIVISION,
     MODULO,
+    EQUAL,
+    NOT_EQUAL,
     LESS_THAN,
     LESS_EQUAL,
-    EQUAL,
+    GREATER_THAN,
+    GREATER_EQUAL,
+    AND,
+    OR,
+
     // Others
-    ARRAY_ACCESS,
-    NEGATE,
+    // ARRAY_ACCESS,
+    // NEGATE,
     
     MAX_ENUM_VALUE
 };

@@ -747,6 +747,29 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
     case AST::Expression_Type::BINARY_OPERATION:
     {
         auto& binop = expression->options.binop;
+
+        // Handle overloads
+        if (info->specifics.binop.overload_function != 0) {
+            IR_Instruction instr;
+            instr.type = IR_Instruction_Type::FUNCTION_CALL;
+            instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
+            instr.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(2);
+            auto left = ir_generator_generate_expression(ir_block, binop.left);
+            auto right = ir_generator_generate_expression(ir_block, binop.right);
+            if (info->specifics.binop.switch_left_and_right) {
+                dynamic_array_push_back(&instr.options.call.arguments, right);
+                dynamic_array_push_back(&instr.options.call.arguments, left);
+            }
+            else {
+                dynamic_array_push_back(&instr.options.call.arguments, left);
+                dynamic_array_push_back(&instr.options.call.arguments, right);
+            }
+            instr.options.call.destination = ir_data_access_create_intermediate(ir_block, info->options.value_type);
+            instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, info->specifics.binop.overload_function);
+            dynamic_array_push_back(&ir_block->instructions, instr);
+            return instr.options.call.destination;
+        }
+
         IR_Instruction instr;
         instr.type = IR_Instruction_Type::BINARY_OP;
         instr.options.binary_op.type = binop.type;

@@ -1021,6 +1021,9 @@ Comptime_Result comptime_result_apply_cast(Comptime_Result value, Cast_Type cast
         *result = pointer_value != nullptr;
         return comptime_result_make_available(result, upcast(compiler.type_system.predefined_types.bool_type));
     }
+    case Cast_Type::CUSTOM_CAST: {
+        return comptime_result_make_not_comptime("Custom casts cannot be calculated at comptime");
+    }
     default: panic("");
     }
     if ((int)instr_type == -1) panic("");
@@ -1111,6 +1114,10 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
     }
     case AST::Expression_Type::BINARY_OPERATION:
     {
+        if (info->specifics.binop.overload_function != 0) {
+            return comptime_result_make_not_comptime("Overloaded operators cannot be calculated at comptime");
+        }
+
         Comptime_Result left_val = expression_calculate_comptime_value_internal(expr->options.binop.left);
         Comptime_Result right_val = expression_calculate_comptime_value_internal(expr->options.binop.right);
         if (left_val.type != Comptime_Result_Type::AVAILABLE || right_val.type != Comptime_Result_Type::AVAILABLE)
@@ -6581,70 +6588,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
     {
         info->specifics.binop.overload_function = 0;
         auto& binop_node = expr->options.binop;
+        const bool is_pointer_comparison = binop_node.type == AST::Binop::POINTER_EQUAL || binop_node.type == AST::Binop::POINTER_NOT_EQUAL;
 
         // Determine what operands are valid
-        bool int_valid = false;
-        bool float_valid = false;
-        bool bool_valid = false;
-        bool ptr_valid = false;
-        bool enum_valid = false;
-        bool type_type_valid = false;
-        bool auto_operations_valid = true;
-        bool result_type_is_fixed = false;
-        Datatype* result_type = 0;
-        Expression_Context operand_context;
-        switch (binop_node.type)
-        {
-        case AST::Binop::ADDITION:
-        case AST::Binop::SUBTRACTION:
-        case AST::Binop::MULTIPLICATION:
-        case AST::Binop::DIVISION:
-            float_valid = true;
-            int_valid = true;
-            break;
-        case AST::Binop::MODULO:
-            int_valid = true;
-            break;
-        case AST::Binop::GREATER:
-        case AST::Binop::GREATER_OR_EQUAL:
-        case AST::Binop::LESS:
-        case AST::Binop::LESS_OR_EQUAL:
-            float_valid = true;
-            int_valid = true;
-            result_type_is_fixed = true;
-            result_type = upcast(types.bool_type);
-            enum_valid = true;
-            break;
-        case AST::Binop::POINTER_EQUAL:
-        case AST::Binop::POINTER_NOT_EQUAL: {
-            ptr_valid = true;
-            result_type_is_fixed = true;
-            result_type = upcast(types.bool_type);
-            auto_operations_valid = false;
-            break;
-        }
-        case AST::Binop::EQUAL:
-        case AST::Binop::NOT_EQUAL:
-            float_valid = true;
-            int_valid = true;
-            bool_valid = true;
-            ptr_valid = true;
-            enum_valid = true;
-            type_type_valid = true;
-            result_type_is_fixed = true;
-            result_type = upcast(types.bool_type);
-            break;
-        case AST::Binop::AND:
-        case AST::Binop::OR:
-            bool_valid = true;
-            result_type_is_fixed = true;
-            result_type = upcast(types.bool_type);
-            break;
-        case AST::Binop::INVALID:
-            break;
-        default: panic("");
-        }
-
         // Evaluate operands
         Datatype* left_type;
         Datatype* right_type;
@@ -6675,7 +6621,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             }
 
             // Dereference types
-            if (auto_operations_valid) {
+            if (!is_pointer_comparison) {
                 while (left_type->type == Datatype_Type::POINTER) {
                     left_type_pointer_level += 1;
                     left_type = downcast<Datatype_Pointer>(left_type)->points_to_type;
@@ -6692,13 +6638,79 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             EXIT_ERROR(types.error_type);
         }
 
-        // Check if binop is a primitive operation (ints, floats, bools)
-        Datatype* operand_type = left_type;
-        bool types_are_valid = true;
+        // Handle pointer comparisons
+        if (is_pointer_comparison)
+        {
+            if (!types_are_equal(left_type, right_type)) {
+                log_semantic_error("Pointer comparison only works if both types are the same", expr, Parser::Section::WHOLE_NO_CHILDREN);
+            }
+            EXIT_VALUE(upcast(types.bool_type));
+        }
+
+        // Check if types are valid for binop
+        bool types_are_valid = false;
         int expected_pointer_level_left = 0;
         int expected_pointer_level_right = 0;
-        if (types_are_valid && types_are_equal(left_type, right_type))
+        Datatype* result_type = types.error_type;
+
+        // Check if binop is a primitive operation (ints, floats, bools, pointers)
+        if (types_are_equal(left_type, right_type))
         {
+            result_type = left_type;
+
+            bool int_valid = false;
+            bool float_valid = false;
+            bool bool_valid = false;
+            bool ptr_valid = false;
+            bool enum_valid = false;
+            bool type_type_valid = false;
+            switch (binop_node.type)
+            {
+            case AST::Binop::ADDITION:
+            case AST::Binop::SUBTRACTION:
+            case AST::Binop::MULTIPLICATION:
+            case AST::Binop::DIVISION:
+                float_valid = true;
+                int_valid = true;
+                break;
+            case AST::Binop::MODULO:
+                int_valid = true;
+                break;
+            case AST::Binop::GREATER:
+            case AST::Binop::GREATER_OR_EQUAL:
+            case AST::Binop::LESS:
+            case AST::Binop::LESS_OR_EQUAL:
+                float_valid = true;
+                int_valid = true;
+                result_type = upcast(types.bool_type);
+                enum_valid = true;
+                break;
+            case AST::Binop::POINTER_EQUAL:
+            case AST::Binop::POINTER_NOT_EQUAL: {
+                panic("Should have been handled before");
+                break;
+            }
+            case AST::Binop::EQUAL:
+            case AST::Binop::NOT_EQUAL:
+                float_valid = true;
+                int_valid = true;
+                bool_valid = true;
+                ptr_valid = true;
+                enum_valid = true;
+                type_type_valid = true;
+                result_type = upcast(types.bool_type);
+                break;
+            case AST::Binop::AND:
+            case AST::Binop::OR:
+                bool_valid = true;
+                result_type = upcast(types.bool_type);
+                break;
+            case AST::Binop::INVALID:
+                break;
+            default: panic("");
+            }
+
+            Datatype* operand_type = left_type;
             if (operand_type->type == Datatype_Type::POINTER) {
                 types_are_valid = ptr_valid;
             }
@@ -6708,14 +6720,14 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             else if (operand_type->type == Datatype_Type::PRIMITIVE)
             {
                 auto primitive = downcast<Datatype_Primitive>(operand_type);
-                if (primitive->primitive_type == Primitive_Type::INTEGER && !int_valid) {
-                    types_are_valid = false;
+                if (primitive->primitive_type == Primitive_Type::INTEGER) {
+                    types_are_valid = int_valid;
                 }
-                if (primitive->primitive_type == Primitive_Type::FLOAT && !float_valid) {
-                    types_are_valid = false;
+                else if (primitive->primitive_type == Primitive_Type::FLOAT) {
+                    types_are_valid = float_valid;
                 }
-                if (primitive->primitive_type == Primitive_Type::BOOLEAN && !bool_valid) {
-                    types_are_valid = false;
+                else if (primitive->primitive_type == Primitive_Type::BOOLEAN) {
+                    types_are_valid = bool_valid;
                 }
             }
             else if (operand_type->type == Datatype_Type::ENUM) {
@@ -6729,7 +6741,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             }
         }
 
-        // Check for operator overloads if types aren't valid
+        // Check for operator overloads if it isn't a primitive operation
         auto& operator_context = semantic_analyser.current_workload->current_symbol_table->operator_context;
         if (!types_are_valid)
         {
@@ -6739,14 +6751,19 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             key.op = (Upp_Operator)-1; // Initialize as invalid
             switch (binop_node.type)
             {
-            case AST::Binop::ADDITION: key.op = Upp_Operator::ADDITION;
-            case AST::Binop::SUBTRACTION: key.op = Upp_Operator::SUBTRACTION;
-            case AST::Binop::MULTIPLICATION: key.op = Upp_Operator::MULTIPLICATION;
-            case AST::Binop::DIVISION: key.op = Upp_Operator::DIVISION;
-            case AST::Binop::MODULO: key.op = Upp_Operator::MODULO;
-            case AST::Binop::EQUAL: key.op = Upp_Operator::EQUAL;
-            case AST::Binop::LESS: key.op = Upp_Operator::LESS_THAN;
-            case AST::Binop::LESS_OR_EQUAL: key.op = Upp_Operator::LESS_EQUAL;
+            case AST::Binop::ADDITION: key.op = Upp_Operator::ADDITION; break;
+            case AST::Binop::SUBTRACTION: key.op = Upp_Operator::SUBTRACTION; break;
+            case AST::Binop::MULTIPLICATION: key.op = Upp_Operator::MULTIPLICATION; break;
+            case AST::Binop::DIVISION: key.op = Upp_Operator::DIVISION; break;
+            case AST::Binop::MODULO: key.op = Upp_Operator::MODULO; break;
+            case AST::Binop::EQUAL: key.op = Upp_Operator::EQUAL; break;
+            case AST::Binop::NOT_EQUAL: key.op = Upp_Operator::EQUAL; break;
+            case AST::Binop::LESS: key.op = Upp_Operator::LESS_THAN; break;
+            case AST::Binop::LESS_OR_EQUAL: key.op = Upp_Operator::LESS_EQUAL; break;
+            case AST::Binop::GREATER: key.op = Upp_Operator::GREATER_THAN; break;
+            case AST::Binop::GREATER_OR_EQUAL: key.op = Upp_Operator::GREATER_EQUAL; break;
+            case AST::Binop::AND: key.op = Upp_Operator::AND; break;
+            case AST::Binop::OR: key.op = Upp_Operator::OR; break;
             default: break;
             }
 
@@ -6756,18 +6773,23 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 expected_pointer_level_left = overload->left_pointer_level;
                 expected_pointer_level_right = overload->right_pointer_level;
                 info->specifics.binop.overload_function = overload->function;
+                info->specifics.binop.switch_left_and_right = overload->switch_left_and_right;
                 semantic_analyser_register_function_call(overload->function);
+
+                types_are_valid = true;
+                result_type = overload->result_type;
             }
         }
 
         // Check that expected pointer levels are correct (And apply auto operations if possible)
-        if (types_are_valid && auto_operations_valid)
+        if (types_are_valid && !is_pointer_comparison)
         {
             bool auto_deref = operator_context_get_boolean_setting(operator_context, AST::Context_Setting::AUTO_DEREFERENCE);
             bool auto_address_of = operator_context_get_boolean_setting(operator_context, AST::Context_Setting::AUTO_ADDRESS_OF);
 
-            auto try_set_pointer_level_of_expression = [&](Expression_Info* info, int given_pointer_level, int expected_pointer_level) -> bool 
+            auto try_set_pointer_level_of_expression = [&](AST::Expression* expr, Datatype* deref_type, int given_pointer_level, int expected_pointer_level) -> bool 
             {
+                auto info = get_info(expr);
                 if (given_pointer_level == expected_pointer_level) {
                     return true;
                 }
@@ -6775,21 +6797,22 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 if (info->cast_info.cast_type != Cast_Type::NO_CAST) {
                     return false;
                 }
+                // Remove address of (I don't think this case ever happens, but just in case)
+                if (info->cast_info.take_address_of) {
+                    info->cast_info.take_address_of = false;
+                    assert(info->cast_info.type_afterwards->type == Datatype_Type::POINTER, "Should be true after address of");
+                    info->cast_info.type_afterwards = downcast<Datatype_Pointer>(info->cast_info.type_afterwards)->points_to_type;
+                    assert(given_pointer_level > 0, "Should also be true");
+                    given_pointer_level -= 1;
+                }
 
                 bool valid = false;
-                if (given_pointer_level > expected_pointer_level && auto_deref) 
-                {
-                    int deref_count = given_pointer_level - expected_pointer_level;
-                    if (info->cast_info.take_address_of) {
-                        deref_count = deref_count - 1;
-                        info->cast_info.take_address_of = false;
-                    }
-                    info->cast_info.deref_count += deref_count;
+                if (given_pointer_level > expected_pointer_level && auto_deref) {
+                    info->cast_info.deref_count += given_pointer_level - expected_pointer_level;
                     valid = true;
                 }
                 else if (given_pointer_level + 1 == expected_pointer_level &&
-                    expression_has_memory_address(binop_node.left) && 
-                    !info->cast_info.take_address_of && 
+                    expression_has_memory_address(expr) &&  
                     auto_address_of) 
                 {
                     info->cast_info.take_address_of = true;
@@ -6798,17 +6821,18 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
                 // Set type to correct type
                 if (valid) {
-                    info->cast_info.type_afterwards = left_type;
+                    info->cast_info.type_afterwards = deref_type;
                     for (int i = 0; i < expected_pointer_level; i++) {
                         info->cast_info.type_afterwards = upcast(type_system_make_pointer(info->cast_info.type_afterwards));
                     }
                 }
+                return valid;
             };
 
-            if (!try_set_pointer_level_of_expression(get_info(binop_node.left), left_type_pointer_level, expected_pointer_level_left)) {
+            if (!try_set_pointer_level_of_expression(binop_node.left, left_type, left_type_pointer_level, expected_pointer_level_left)) {
                 types_are_valid = false;
             }
-            if (!try_set_pointer_level_of_expression(get_info(binop_node.right), right_type_pointer_level, expected_pointer_level_right)) {
+            if (!try_set_pointer_level_of_expression(binop_node.right, right_type, right_type_pointer_level, expected_pointer_level_right)) {
                 types_are_valid = false;
             }
         }
@@ -6818,7 +6842,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             log_error_info_binary_op_type(left_type, right_type);
             EXIT_ERROR(types.error_type);
         }
-        EXIT_VALUE(result_type_is_fixed ? result_type : operand_type);
+        EXIT_VALUE(result_type);
     }
     default: {
         panic("Not all expression covered!\n");
@@ -7673,6 +7697,11 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
             for (int j = 0; j < module_analysis->module_node->context_changes.size; j++)
             {
                 auto other_change = module_analysis->module_node->context_changes[j];
+                assert(other_context->workload != 0, "Should be the case for module contexts!");
+                if (other_context->workload == 0) { // To get rid of the warning
+                    continue;
+                }
+
                 auto other_change_info = pass_get_node_info(other_context->workload->base.current_pass, other_change, Info_Query::READ_NOT_NULL);
                 if (!other_change_info->is_valid_for_import) {
                     continue;
@@ -7680,14 +7709,29 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
 
                 switch (other_change->type)
                 {
-                case AST::Context_Change_Type::CONTEXT_FUNCTION_CALL: {
-                    if (other_change_info->is_polymorphic_custom_cast) {
-                        dynamic_array_push_back(&context->custom_casts_polymorphic, other_context->custom_casts_polymorphic[other_change_info->options.polymorphic_cast_index]);
+                case AST::Context_Change_Type::CONTEXT_FUNCTION_CALL: 
+                {
+                    if (other_change->options.call.function == AST::Context_Function::ADD_CUSTOM_CAST) 
+                    {
+                        if (other_change_info->is_polymorphic_custom_cast) {
+                            dynamic_array_push_back(&context->custom_casts_polymorphic, other_context->custom_casts_polymorphic[other_change_info->options.polymorphic_cast_index]);
+                        }
+                        else {
+                            Custom_Cast* cast = hashtable_find_element(&other_context->custom_casts, other_change_info->options.custom_cast_pair);
+                            assert(cast != 0, "Must have been inserted, on error the info should indicate that it's not valid for import");
+                            hashtable_insert_element(&context->custom_casts, other_change_info->options.custom_cast_pair, *cast);
+                        }
                     }
                     else {
-                        Custom_Cast* cast = hashtable_find_element(&other_context->custom_casts, other_change_info->options.custom_cast_pair);
-                        assert(cast != 0, "Must have been inserted, on error the info should indicate that it's not valid for import");
-                        hashtable_insert_element(&context->custom_casts, other_change_info->options.custom_cast_pair, *cast);
+                        auto& overload_info = other_change_info->options.operator_overload;
+                        Operator_Overload* overload = hashtable_find_element(&other_context->operator_overloads, overload_info.key);
+                        assert(overload != 0, "Should have been set");
+                        hashtable_insert_element(&context->operator_overloads, overload_info.key, *overload);
+                        if (overload_info.has_commutative_version) {
+                            overload = hashtable_find_element(&other_context->operator_overloads, overload_info.commutative_key);
+                            assert(overload != 0, "Should have been set");
+                            hashtable_insert_element(&context->operator_overloads, overload_info.commutative_key, *overload);
+                        }
                     }
                     break;
                 }
@@ -7954,6 +7998,7 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
                     callable.parameter_count = 3;
                     callable.options.function_pointer_type = types.type_add_operator_overload;
                     if (!arguments_match_to_parameters(arguments, callable, unnamed_argument_count, true, upcast(change_node), Parser::Section::ENCLOSURE)) {
+                        arguments_analyse_in_unknown_context(arguments);
                         break;
                     }
 
@@ -7976,19 +8021,41 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
 
                 // Analyse operator 
                 bool errors_occured = false;
-                Upp_Operator overloaded_operator;
+                Upp_Operator overloaded_operator = Upp_Operator::ADDITION; // Initialize with something
                 {
-                    semantic_analyser_analyse_expression_value(operator_argument_node,expression_context_make_specific_type(upcast(types.upp_operator)));
-                    auto value = expression_calculate_comptime_value(operator_argument_node, "Upp_Operator must be comptime for overload");
-                    if (value.available) {
-                        overloaded_operator = upp_constant_to_value<Upp_Operator>(value.value);
-                        if ((int)overloaded_operator <= 0 || (int)overloaded_operator >= (int)Upp_Operator::MAX_ENUM_VALUE) {
-                            errors_occured = true;
-                            log_semantic_error("Value for Upp_Operator was not a valid enum value", operator_argument_node);
+                    if (operator_argument_node->type == AST::Expression_Type::LITERAL_READ &&
+                        operator_argument_node->options.literal_read.type == Literal_Type::STRING)
+                    {
+                        semantic_analyser_analyse_expression_value(operator_argument_node, expression_context_make_unknown()); // So that infos are set
+                        auto id = operator_argument_node->options.literal_read.options.string;
+                        int found_value = -1;
+                        for (int i = 0; i < (int)Upp_Operator::MAX_ENUM_VALUE; i++) {
+                            if (id == ids.upp_operator_corresponding_tokens[i]) {
+                                found_value = i;
+                                break;
+                            }
                         }
+
+                        if (found_value == -1) {
+                            log_semantic_error("Operator string is not valid", operator_argument_node);
+                            break;
+                        }
+                        overloaded_operator = (Upp_Operator)found_value;
                     }
-                    else {
-                        errors_occured = true;
+                    else
+                    {
+                        semantic_analyser_analyse_expression_value(operator_argument_node, expression_context_make_specific_type(upcast(types.upp_operator)));
+                        auto value = expression_calculate_comptime_value(operator_argument_node, "Upp_Operator must be comptime for overload");
+                        if (value.available) {
+                            overloaded_operator = upp_constant_to_value<Upp_Operator>(value.value);
+                            if ((int)overloaded_operator <= 0 || (int)overloaded_operator >= (int)Upp_Operator::MAX_ENUM_VALUE) {
+                                errors_occured = true;
+                                log_semantic_error("Value for Upp_Operator was not a valid enum value", operator_argument_node);
+                            }
+                        }
+                        else {
+                            errors_occured = true;
+                        }
                     }
                 }
 
@@ -7997,32 +8064,13 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
                 if (commutative_argument_node != 0)
                 {
                     semantic_analyser_analyse_expression_value(commutative_argument_node, expression_context_make_specific_type(upcast(types.bool_type)));
-                    auto value = expression_calculate_comptime_value(operator_argument_node, "'Commutative' argument must be comptime for overload");
+                    auto value = expression_calculate_comptime_value(commutative_argument_node, "'Commutative' argument must be comptime for overload");
                     if (value.available) {
                         is_commutative = upp_constant_to_value<bool>(value.value);
                     }
                     else {
                         errors_occured = true;
                     }
-                }
-
-                bool is_binary_operator = false;
-                bool result_type_must_be_bool = false;
-                switch (overloaded_operator)
-                {
-                case Upp_Operator::ADDITION: is_binary_operator = true; break;
-                case Upp_Operator::SUBTRACTION: is_binary_operator = true; break;
-                case Upp_Operator::MULTIPLICATION: is_binary_operator = true; break;
-                case Upp_Operator::DIVISION: is_binary_operator = true; break;
-                case Upp_Operator::MODULO: is_binary_operator = true; break;
-                case Upp_Operator::EQUAL: is_binary_operator = true; result_type_must_be_bool = true; break;
-                case Upp_Operator::LESS_EQUAL: is_binary_operator = true; result_type_must_be_bool = true; break;
-                case Upp_Operator::LESS_THAN: is_binary_operator = true; result_type_must_be_bool = true; break;
-                default: {
-                    log_semantic_error("Upp_Operators that aren't binops are currently not supported!", operator_argument_node);
-                    errors_occured = true;
-                    break;
-                }
                 }
 
                 // Analyse function argument
@@ -8041,7 +8089,7 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
                     Datatype* left_type, *right_type, *return_type;
                     {
                         auto signature = function->signature;
-                        if (signature->parameters.size != (is_binary_operator ? 2 : 1)) {
+                        if (signature->parameters.size !=  2) {
                             log_semantic_error("For operator_overloads, the function signature must only have one argument", function_argument_node);
                             errors_occured = true;
                             break;
@@ -8055,11 +8103,6 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
                             break;
                         }
                         return_type = signature->return_type.value;
-
-                        if (result_type_must_be_bool && !types_are_equal(return_type, upcast(types.bool_type))) {
-                            log_semantic_error("For comparions operator overloads, the function return type must be bool", function_argument_node);
-                            errors_occured = true;
-                        }
                     }
 
                     // Add this cast to operator context if it doesn't already exist
@@ -8072,6 +8115,7 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
                     key.op = overloaded_operator;
                     Operator_Overload overload;
                     overload.function = function;
+                    overload.switch_left_and_right = false;
                     overload.left_pointer_level = 0;
                     overload.right_pointer_level = 0;
                     overload.result_type = return_type;
@@ -8087,22 +8131,53 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
                     }
 
                     // Try to insert into operator context
-                    bool worked = hashtable_insert_element(&context->operator_overloads, key, overload);
-                    if (!worked) {
-                        log_semantic_error("Overload already exists for given types", function_argument_node);
-                        log_error_info_given_type(key.left_type);
-                        log_error_info_given_type(key.right_type);
+                    {
+                        bool worked = hashtable_insert_element(&context->operator_overloads, key, overload);
+                        if (worked)
+                        {
+                            info->is_valid_for_import = true; // Change that at some point
+                            info->options.operator_overload.key = key;
+                            info->options.operator_overload.has_commutative_version = false;
+                        }
+                        else {
+                            log_semantic_error("Overload already exists for given types", function_argument_node);
+                            log_error_info_given_type(key.left_type);
+                            log_error_info_given_type(key.right_type);
+                        }
                     }
-                    else {
-                        info->is_valid_for_import = false; // Change that at some point
-                        // info->is_polymorphic_custom_cast = false;
-                        // info->options.custom_cast_pair = pair;
+
+                    // Insert commutative version if requested
+                    if (is_commutative && !types_are_equal(key.left_type, key.right_type)) 
+                    {
+                        Operator_Overload_Key other_key;
+                        other_key.left_type = key.right_type;
+                        other_key.right_type = key.left_type;
+                        other_key.op = key.op;
+
+                        Operator_Overload other_overload = overload;
+                        other_overload.left_pointer_level = overload.right_pointer_level;
+                        other_overload.right_pointer_level = overload.left_pointer_level;
+                        other_overload.switch_left_and_right = true;
+                        bool worked = hashtable_insert_element(&context->operator_overloads, other_key, other_overload);
+                        if (worked)
+                        {
+                            info->options.operator_overload.has_commutative_version = true;
+                            info->options.operator_overload.commutative_key = other_key;
+                        }
+                        else {
+                            log_semantic_error("Overload already exists for given types (Commutative version)", function_argument_node);
+                            log_error_info_given_type(other_key.left_type);
+                            log_error_info_given_type(other_key.right_type);
+                        }
                     }
+
                     break;
                 }
                 default: 
                     errors_occured = true;
-                    log_semantic_error("For custom casts, cast_function argument must be a function (Poly functions are on the todo-list)", function_argument_node, Parser::Section::FIRST_TOKEN);
+                    log_semantic_error(
+                        "For operator overloads, function argument must be a function (Poly functions are on the todo-list)", 
+                        function_argument_node, Parser::Section::FIRST_TOKEN);
                     log_error_info_expression_result_type(expr_info->result_type);
                     break;
                 }
