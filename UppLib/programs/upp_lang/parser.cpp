@@ -251,7 +251,7 @@ namespace Parser
                Maybe I need to think more about this, but this shouldn't be true for code-blocks
             3. It also generates bounding ranges, which are used to efficiently map from tokens to nodes.
                These are different from the normal token ranges, since e.g. 
-               in the expression "32 + fib(15)" the binop + has a token range of 1, and the bounding range contains all children
+               in the expression "32 + fib(15)" the overload + has a token range of 1, and the bounding range contains all children
         */
 
         // Set end of node
@@ -1865,7 +1865,7 @@ namespace Parser
             dynamic_array_push_back(&links, link);
         }
 
-        // Now build the binop tree
+        // Now build the overload tree
         if (links.size == 0) PARSE_SUCCESS(start_expr);
         int index = 0;
         Expression* result = parse_priority_level(start_expr, 0, &links, &index);
@@ -2700,7 +2700,10 @@ namespace Parser
                 auto child_range = node_range_to_token_range(child->range);
                 if (!index_equal(sub_range.start, child_range.start)) {
                     sub_range.end = child_range.start;
-                    dynamic_array_push_back(ranges, sub_range);
+                    // Extra check, as bounding range may differ from normal range (E.g. child starts before parent range)
+                    if (index_compare(sub_range.start, sub_range.end) == 1) {
+                        dynamic_array_push_back(ranges, sub_range);
+                    }
                 }
                 sub_range.start = child_range.end;
 
@@ -2709,7 +2712,10 @@ namespace Parser
             }
             if (!index_equal(sub_range.start, range.end)) {
                 sub_range.end = range.end;
-                dynamic_array_push_back(ranges, sub_range);
+                // Extra check, as bounding range may differ from normal range
+                if (index_compare(sub_range.start, sub_range.end) == 1) {
+                    dynamic_array_push_back(ranges, sub_range);
+                }
             }
             break;
         }

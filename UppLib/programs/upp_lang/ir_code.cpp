@@ -749,14 +749,14 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
         auto& binop = expression->options.binop;
 
         // Handle overloads
-        if (info->specifics.binop.overload_function != 0) {
+        if (info->specifics.overload.function != 0) {
             IR_Instruction instr;
             instr.type = IR_Instruction_Type::FUNCTION_CALL;
             instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
             instr.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(2);
             auto left = ir_generator_generate_expression(ir_block, binop.left);
             auto right = ir_generator_generate_expression(ir_block, binop.right);
-            if (info->specifics.binop.switch_left_and_right) {
+            if (info->specifics.overload.switch_left_and_right) {
                 dynamic_array_push_back(&instr.options.call.arguments, right);
                 dynamic_array_push_back(&instr.options.call.arguments, left);
             }
@@ -765,7 +765,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
                 dynamic_array_push_back(&instr.options.call.arguments, right);
             }
             instr.options.call.destination = ir_data_access_create_intermediate(ir_block, info->options.value_type);
-            instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, info->specifics.binop.overload_function);
+            instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, info->specifics.overload.function);
             dynamic_array_push_back(&ir_block->instructions, instr);
             return instr.options.call.destination;
         }
@@ -787,7 +787,21 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
     }
     case AST::Expression_Type::UNARY_OPERATION:
     {
+        auto& unop = expression->options.unop;
         IR_Data_Access access = ir_generator_generate_expression(ir_block, expression->options.unop.expr);
+
+        if (info->specifics.overload.function != 0) {
+            IR_Instruction instr;
+            instr.type = IR_Instruction_Type::FUNCTION_CALL;
+            instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
+            instr.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(1);
+            dynamic_array_push_back(&instr.options.call.arguments, access);
+            instr.options.call.destination = ir_data_access_create_intermediate(ir_block, info->options.value_type);
+            instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, info->specifics.overload.function);
+            dynamic_array_push_back(&ir_block->instructions, instr);
+            return instr.options.call.destination;
+        }
+
         switch (expression->options.unop.type)
         {
         case AST::Unop::POINTER: {
@@ -897,7 +911,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
 
         // Generate arguments 
         call_instr.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(call.arguments.size);
-        auto function_signature = call_info->specifics.function_call_signature;
+        auto function_signature = info->specifics.function_call_signature;
 
         // Add default/dummy arguments
         for (int i = 0; i < function_signature->parameters.size; i++) {
@@ -915,8 +929,8 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
         // Generate code for arguments
         for (int j = 0; j < call.arguments.size; j++) {
             auto info = get_info(call.arguments[j]);
-            if (!info->is_polymorphic) { // Skip polymorphic_function arguments
-                call_instr.options.call.arguments[info->argument_index] = ir_generator_generate_expression(ir_block, call.arguments[j]->value);
+            if (!info->ignore_during_code_generation) { // Skip polymorphic_function arguments
+                call_instr.options.call.arguments[info->parameter_index] = ir_generator_generate_expression(ir_block, call.arguments[j]->value);
             }
         }
 
@@ -962,7 +976,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
 
             IR_Instruction move_instr;
             move_instr.type = IR_Instruction_Type::MOVE;
-            move_instr.options.move.destination = ir_data_access_create_member(ir_block, struct_access, members[arg_info->argument_index]);
+            move_instr.options.move.destination = ir_data_access_create_member(ir_block, struct_access, members[arg_info->parameter_index]);
             move_instr.options.move.source = ir_generator_generate_expression(ir_block, arg->value);
             dynamic_array_push_back(&ir_block->instructions, move_instr);
         }
@@ -971,7 +985,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
         if (struct_type->struct_type == AST::Structure_Type::UNION)
         {
             assert(struct_init.arguments.size == 1, "");
-            int member_index = get_info(struct_init.arguments[0])->argument_index;
+            int member_index = get_info(struct_init.arguments[0])->parameter_index;
 
             IR_Instruction move_instr;
             move_instr.type = IR_Instruction_Type::MOVE;
@@ -1033,6 +1047,21 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
     }
     case AST::Expression_Type::ARRAY_ACCESS:
     {
+        if (info->specifics.overload.function != 0) 
+        {
+            auto& access = expression->options.array_access;
+            IR_Instruction instr;
+            instr.type = IR_Instruction_Type::FUNCTION_CALL;
+            instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
+            instr.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(2);
+            dynamic_array_push_back(&instr.options.call.arguments, ir_generator_generate_expression(ir_block, access.array_expr));
+            dynamic_array_push_back(&instr.options.call.arguments, ir_generator_generate_expression(ir_block, access.index_expr));
+            instr.options.call.destination = ir_data_access_create_intermediate(ir_block, info->options.value_type);
+            instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, info->specifics.overload.function);
+            dynamic_array_push_back(&ir_block->instructions, instr);
+            return instr.options.call.destination;
+        }
+
         IR_Instruction instr;
         instr.type = IR_Instruction_Type::ADDRESS_OF;
         instr.options.address_of.destination = ir_data_access_create_intermediate(ir_block, upcast(type_system_make_pointer(result_type)));
@@ -1264,7 +1293,7 @@ IR_Data_Access ir_generator_generate_expression(IR_Code_Block* ir_block, AST::Ex
     case Cast_Type::POINTER_NULL_CHECK: {
         IR_Instruction instr;
         instr.type = IR_Instruction_Type::BINARY_OP;
-        instr.options.binary_op.type = AST::Binop::NOT_EQUAL; // Note: Pointer equals would be more correct, but currently only equals is used as binop
+        instr.options.binary_op.type = AST::Binop::NOT_EQUAL; // Note: Pointer equals would be more correct, but currently only equals is used as overload
         instr.options.binary_op.operand_left = source;
         void* null_ptr = nullptr;
         instr.options.binary_op.operand_right = ir_data_access_create_constant(types.void_pointer_type, array_create_static_as_bytes(&null_ptr, 1));

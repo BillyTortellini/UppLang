@@ -222,8 +222,9 @@ enum class Upp_Operator
     OR,
 
     // Others
-    // ARRAY_ACCESS,
-    // NEGATE,
+    NEGATE,
+    NOT,
+    ARRAY_ACCESS,
     
     MAX_ENUM_VALUE
 };

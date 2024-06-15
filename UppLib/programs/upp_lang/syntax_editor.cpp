@@ -447,6 +447,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
             Parser::ast_base_get_section_token_range(node, error.section, &error_ranges);
             for (int j = 0; j < error_ranges.size; j++) {
                 auto& range = error_ranges[j];
+                assert(index_compare(range.start, range.end) >= 0, "hey");
                 String string = string_create_empty(4);
                 semantic_error_append_to_string(error, &string);
                 dynamic_array_push_back(&editor.errors, error_display_make(string, range));
@@ -1829,7 +1830,7 @@ void operator_space_before_after(Token_Index index, bool& space_before, bool& sp
     space_after = false;
 
     bool use_info = true;
-    // Approximate if Operator is binop or not (Sometimes this cannot be detected with parsing alone)
+    // Approximate if Operator is overload or not (Sometimes this cannot be detected with parsing alone)
     if (op_info.type == Operator_Type::BOTH)
     {
         // Current approximation for is_binop: The current and previous type has to be a value

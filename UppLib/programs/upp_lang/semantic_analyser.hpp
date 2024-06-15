@@ -326,6 +326,7 @@ struct Workload_Structure_Polymorphic
 
 // ANALYSIS_PROGRESS
 
+// This type only exist so we can have a pointer to a polymorphic function base (Which is always the member in Function_Progress)
 struct Polymorphic_Function_Base
 {
     Polymorphic_Base_Info base_info;
@@ -506,21 +507,29 @@ struct Expression_Info
             int index; // Either normal member index, or polymorphic parameter index
         } member_access;
         struct {
-            ModTree_Function* overload_function; // Is null if it's a primitive binop (e.g. not overloaded)
+            ModTree_Function* function; // Is null if it's a primitive overload (e.g. not overloaded)
             bool switch_left_and_right;
-        } binop;
+        } overload;
     } specifics;
 
     Expression_Context context; // Maybe I don't even want to store the context
     Expression_Cast_Info cast_info;
 };
 
+enum class Argument_State
+{
+    NOT_ANALYSED,
+    CAST_MISSING,
+    ANALYSED
+};
+
 struct Argument_Info
 {
-    int argument_index; // For named arguments/parameters this gives the according parameter index
-    bool is_polymorphic; // If polymorphic_function, the argument shouldn't generate code during code-generation
-    bool already_analysed; // During analysis, don't reanalyse arguments that were already analyse
-    bool context_application_missing; // If already analyse, we may still need to apply the context
+    Argument_State state;
+    AST::Expression* value;
+    int parameter_index; 
+    bool reanalyse_param_type_flag;
+    bool ignore_during_code_generation; // If polymorphic_function, the argument shouldn't generate code during code-generation
 };
 
 struct Context_Change_Info

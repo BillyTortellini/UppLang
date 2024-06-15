@@ -77,9 +77,13 @@ struct Operator_Overload
 {
     int left_pointer_level;
     int right_pointer_level;
-    Datatype* result_type;
-    ModTree_Function* function;
     bool switch_left_and_right; // For commutative versions
+
+    bool is_polymorphic;
+    union {
+        ModTree_Function* function;
+        Polymorphic_Function_Base* polymorphic;
+    } options;
 };
 
 struct Workload_Operator_Context_Change;

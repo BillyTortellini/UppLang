@@ -1,9 +1,9 @@
 
 double::(a:$T)->T
-	return a*2
+	return a*cast{T}2
 
 double_2::(a:T)->$T
-	return a*2
+	return a*cast{T}2
 
 main::()
 	a:=double(3)

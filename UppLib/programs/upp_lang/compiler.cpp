@@ -270,6 +270,9 @@ void compiler_reset_data(bool keep_data_for_incremental_compile, Compile_Type co
             ids.upp_operator_enum_values[(int)Upp_Operator::GREATER_THAN] = add_id("GREATER_THAN");
             ids.upp_operator_enum_values[(int)Upp_Operator::AND] = add_id("AND");
             ids.upp_operator_enum_values[(int)Upp_Operator::OR] = add_id("OR");
+            ids.upp_operator_enum_values[(int)Upp_Operator::NOT] = add_id("NOT");
+            ids.upp_operator_enum_values[(int)Upp_Operator::NEGATE] = add_id("NEGATE");
+            ids.upp_operator_enum_values[(int)Upp_Operator::ARRAY_ACCESS] = add_id("ARRAY_ACCESS");
 
             ids.upp_operator_corresponding_tokens[0] = add_id(" _ INVALID _ ");
             ids.upp_operator_corresponding_tokens[(int)Upp_Operator::ADDITION] = add_id("+");
@@ -285,6 +288,9 @@ void compiler_reset_data(bool keep_data_for_incremental_compile, Compile_Type co
             ids.upp_operator_corresponding_tokens[(int)Upp_Operator::GREATER_THAN] = add_id(">");
             ids.upp_operator_corresponding_tokens[(int)Upp_Operator::AND] = add_id("&&");
             ids.upp_operator_corresponding_tokens[(int)Upp_Operator::OR] = add_id("||");
+            ids.upp_operator_corresponding_tokens[(int)Upp_Operator::NOT] = add_id("!");
+            ids.upp_operator_corresponding_tokens[(int)Upp_Operator::NEGATE] = add_id("-");
+            ids.upp_operator_corresponding_tokens[(int)Upp_Operator::ARRAY_ACCESS] = add_id("[]");
         }
 
         // FUTURE: When we have incremental compilation we cannot just reset everything anymore
